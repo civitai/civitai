@@ -489,3 +489,28 @@ describe('withTags', () => {
     expect(withTags(tags, ' , smile ')).toBe(tags);
   });
 });
+
+describe('per-model flag gates', () => {
+  const imageTypes = (flags: string[]) => cardsForMedia('image', new Set(flags)).map((c) => c.type);
+
+  it('offers Krea 2 only to a viewer with krea2-training', () => {
+    expect(imageTypes([])).not.toContain('krea2');
+    expect(imageTypes(['krea2-training'])).toContain('krea2');
+  });
+
+  it('offers only the Z-Image versions whose flag is on, and seeds a run on one of them', () => {
+    const zimage = cardByType('zimage')!;
+    const flags = new Set(['zimage-base-training']);
+    expect(versionOptions(zimage, flags).map((v) => v.key)).toEqual(['zimagebase']);
+    expect(newRun(zimage, flags).versionKey).toBe('zimagebase');
+    expect(imageTypes([])).not.toContain('zimage');
+  });
+
+  it('hides the LTX card when none of its versions is enabled, and skips a gated default', () => {
+    const videoTypes = (flags: string[]) =>
+      cardsForMedia('video', new Set(flags)).map((c) => c.type);
+    expect(videoTypes([])).not.toContain('ltx');
+    const ltx = cardByType('ltx')!;
+    expect(newRun(ltx, new Set(['ltx23-training'])).versionKey).toBe('ltx23');
+  });
+});

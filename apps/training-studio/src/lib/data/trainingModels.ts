@@ -75,6 +75,9 @@ export interface ModelVersionInfo {
    * `latest` both resolve to the currently-unresolvable `2512` resource, so we pin `2509` (verified). */
   version?: string;
   isNew?: boolean;
+  /** Flipt gate for this version alone, where the main-app trainer gates a version rather than the
+   *  whole family (Z-Image Turbo/Base, the LTX versions). Same semantics as `ModelCard.flagKey`. */
+  flagKey?: string;
 }
 
 /** One base-model card (a family group). */
@@ -140,6 +143,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'flux2',
+    flagKey: 'flux2-training',
     name: 'Flux.2',
     code: 'F2',
     media: 'image',
@@ -161,6 +165,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'flux2klein',
+    flagKey: 'flux2-klein-training',
     name: 'Flux.2 Klein',
     code: 'FK',
     media: 'image',
@@ -325,6 +330,7 @@ export const MODEL_CARDS: ModelCard[] = [
     versions: [
       {
         key: 'zimageturbo',
+        flagKey: 'zimage-turbo-training',
         label: 'Turbo',
         note: 'fast',
         air: 'urn:air:zimageturbo:checkpoint:civitai:2168935@2442439',
@@ -333,6 +339,7 @@ export const MODEL_CARDS: ModelCard[] = [
       },
       {
         key: 'zimagebase',
+        flagKey: 'zimage-base-training',
         label: 'Base',
         air: 'urn:air:zimagebase:checkpoint:civitai:2342797@2635223',
         baseModel: 'ZImageBase',
@@ -342,6 +349,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'hidream-o1',
+    flagKey: 'hidream-o1-training',
     name: 'HiDream O1',
     code: 'HD',
     media: 'image',
@@ -361,6 +369,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'ernie',
+    flagKey: 'ernie-training',
     name: 'Ernie',
     code: 'ER',
     media: 'image',
@@ -379,6 +388,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'anima',
+    flagKey: 'anima-training',
     name: 'Anima',
     code: 'AN',
     media: 'image',
@@ -400,6 +410,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'boogu',
+    flagKey: 'boogu-training',
     name: 'Boogu',
     code: 'BO',
     media: 'image',
@@ -419,6 +430,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'krea2',
+    flagKey: 'krea2-training',
     name: 'Krea 2',
     code: 'K2',
     media: 'image',
@@ -439,6 +451,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'mageflow',
+    flagKey: 'mageflow-training',
     name: 'Mage-Flow',
     code: 'MF',
     media: 'image',
@@ -638,6 +651,7 @@ export const MODEL_CARDS: ModelCard[] = [
     versions: [
       {
         key: 'ltx25',
+        flagKey: 'ltx25-training',
         label: '2.5',
         note: 'latest',
         air: 'urn:air:ltxv25:repository:huggingface:Lightricks/LTX-Video@main.tar',
@@ -647,6 +661,7 @@ export const MODEL_CARDS: ModelCard[] = [
       },
       {
         key: 'ltx23',
+        flagKey: 'ltx23-training',
         label: '2.3',
         air: 'urn:air:ltxv23:checkpoint:civitai:2445735@2749908',
         baseModel: 'LTXV 2.3',
@@ -654,6 +669,7 @@ export const MODEL_CARDS: ModelCard[] = [
       },
       {
         key: 'ltx2',
+        flagKey: 'ltx2-training',
         label: '2.0',
         air: 'urn:air:ltx2:checkpoint:civitai:2291192@2578325',
         baseModel: 'LTXV2',
@@ -663,6 +679,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'minimaxh3',
+    flagKey: 'minimaxh3-training',
     name: 'MiniMax H3',
     code: 'H3',
     media: 'video',
@@ -876,14 +893,28 @@ export const seenFor = (loraTypeId: string, media: Media): number => {
 export const cardByType = (type: string): ModelCard | undefined =>
   MODEL_CARDS.find((c) => c.type === type);
 
-/** A gated card is visible only when its `flagKey` is in the viewer's enabled set; an ungated card always
- *  is. */
-export const isCardVisible = (card: ModelCard, enabledFlags: ReadonlySet<string>): boolean =>
-  !card.flagKey || enabledFlags.has(card.flagKey);
+const isGateOpen = (flagKey: string | undefined, enabledFlags: ReadonlySet<string>): boolean =>
+  !flagKey || enabledFlags.has(flagKey);
 
-/** The distinct gate keys used across the catalog. Empty when no card is gated. */
+/** The card's versions the viewer can see, in catalog order. `enabledFlags` omitted → all of them. */
+export const visibleVersions = (
+  card: ModelCard,
+  enabledFlags?: ReadonlySet<string>
+): ModelVersionInfo[] =>
+  enabledFlags ? card.versions.filter((v) => isGateOpen(v.flagKey, enabledFlags)) : card.versions;
+
+/** A card is visible when its own `flagKey` (if any) is enabled for the viewer and at least one of its
+ *  versions is. */
+export const isCardVisible = (card: ModelCard, enabledFlags: ReadonlySet<string>): boolean =>
+  isGateOpen(card.flagKey, enabledFlags) && visibleVersions(card, enabledFlags).length > 0;
+
+/** The distinct gate keys used across the catalog, card and version level. */
 export const catalogFlagKeys = (): string[] => [
-  ...new Set(MODEL_CARDS.map((c) => c.flagKey).filter((k): k is string => !!k)),
+  ...new Set(
+    MODEL_CARDS.flatMap((c) => [c.flagKey, ...c.versions.map((v) => v.flagKey)]).filter(
+      (k): k is string => !!k
+    )
+  ),
 ];
 
 /** The gates of the cards that train pairs — the edit helpers are offered only to a viewer who can see

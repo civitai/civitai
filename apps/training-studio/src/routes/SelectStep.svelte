@@ -19,6 +19,7 @@
   import {
     MEDIA_OPTIONS,
     cardsForMedia,
+    visibleVersions,
     editCards,
     loraTypeById,
     releasedLabel,
@@ -80,7 +81,7 @@
   let loraType = $state<string>(untrack(() => initial?.loraType ?? 'character'));
   let runs = $state<Run[]>(
     untrack(() =>
-      initial ? [...initial.runs] : [newRun(recommendedCardFor('character', 'image', enabledFlags))]
+      initial ? [...initial.runs] : [newRun(recommendedCardFor('character', 'image', enabledFlags), enabledFlags)]
     )
   );
   let focus = $state(0);
@@ -167,7 +168,7 @@
     editSection = true;
     media = 'image';
     loraType = 'edit';
-    runs = [newRun(visibleEditCards[0])];
+    runs = [newRun(visibleEditCards[0], enabledFlags)];
     userPickedModel = false;
     focus = 0;
     sweepOpen = false;
@@ -187,7 +188,7 @@
     const next = typesForMedia(m);
     const t = next.find((o) => o.id === loraType) ?? next[0]!;
     loraType = t.id;
-    runs = [newRun(recommendedCardFor(t.id, m, enabledFlags))];
+    runs = [newRun(recommendedCardFor(t.id, m, enabledFlags), enabledFlags)];
     userPickedModel = false;
     focus = 0;
     sweepOpen = false;
@@ -196,20 +197,20 @@
   function pickType(id: string) {
     loraType = id;
     if (runs.length === 1 && !userPickedModel) {
-      runs = [newRun(recommendedCardFor(id, media, enabledFlags))];
+      runs = [newRun(recommendedCardFor(id, media, enabledFlags), enabledFlags)];
       focus = 0;
     }
   }
 
   function pickBase(card: ModelCard) {
     if (multi && !sweepCompatible(card, runCard(primary))) return; // dataset-shape lock
-    runs = runs.map((r, i) => (i === focus ? { ...newRun(card), id: r.id } : r));
+    runs = runs.map((r, i) => (i === focus ? { ...newRun(card, enabledFlags), id: r.id } : r));
     userPickedModel = true;
   }
 
   function useRecommended() {
     if (!recommendedCard) return;
-    runs = [newRun(recommendedCard)];
+    runs = [newRun(recommendedCard, enabledFlags)];
     focus = 0;
     userPickedModel = false;
   }
@@ -519,6 +520,7 @@
           {@const selected = card.type === focused.cardType}
           {@const disabled = multi && !selected && !sweepCompatible(card, runCard(primary))}
           {@const cardPrice = price(card.type)}
+          {@const versionCount = visibleVersions(card, enabledFlags).length}
           <button
             type="button"
             role="radio"
@@ -529,7 +531,7 @@
             aria-label={`${card.name}. ${card.description} ${
               cardPrice != null ? `From ${cardPrice.toLocaleString()} Buzz.` : 'Price not available.'
             } ${card.flag ? `${card.flag}. ` : ''}${
-              card.versions.length > 1 ? `${card.versions.length} versions. ` : ''
+              versionCount > 1 ? `${versionCount} versions. ` : ''
             }${disabled ? `Unavailable. ${sweepLockReason(card)}` : ''}`}
             title={disabled ? sweepLockReason(card) : undefined}
             class="group relative flex flex-col rounded-md border p-3 text-left transition
@@ -575,14 +577,14 @@
               {#if releasedLabel(card.released)}
                 <span class="font-mono text-xs text-dark-2">{releasedLabel(card.released)}</span>
               {/if}
-              {#if card.versions.length > 1}
+              {#if versionCount > 1}
                 <span
                   aria-hidden="true"
-                  title={`${card.versions.length} versions`}
+                  title={`${versionCount} versions`}
                   class="ml-auto inline-flex items-center gap-0.5 rounded-sm border border-dark-4 px-1 py-px font-mono text-xs leading-none text-dark-2"
                 >
                   <IconStack2 size={10} stroke={2} />
-                  {card.versions.length}
+                  {versionCount}
                 </span>
               {/if}
             </div>
@@ -618,7 +620,7 @@
       {#if !multi}
         {@const card = selectedCard}
         {@const runPrice = price(primary.cardType)}
-        {@const versions = versionOptions(card)}
+        {@const versions = versionOptions(card, enabledFlags)}
         <div class="mt-3 rounded-md border border-dark-4 bg-dark-6 p-3">
           <div class="flex items-center gap-3">
             <div class="min-w-0">
@@ -734,7 +736,7 @@
                 {/if}
               </div>
               <div class="mt-2.5 flex flex-wrap gap-2" role="radiogroup" aria-label={`Run ${ri + 1} version`}>
-                {#each versionOptions(card) as v (v.key)}
+                {#each versionOptions(card, enabledFlags) as v (v.key)}
                   <button
                     type="button"
                     role="radio"

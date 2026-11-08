@@ -11,6 +11,7 @@ import {
   MAX_NON_PRODIGY_LR,
   paramsForVersion,
   cardsForMedia,
+  visibleVersions,
   ecosystemTakesSampleImages,
   versionStepDefault,
   versionSuffix,
@@ -136,15 +137,19 @@ export function runVersionLabel(run: Run): string {
 }
 
 /** The version choices a card offers on Select: its catalog versions, then Custom where allowed. */
-export function versionOptions(card: ModelCard): { key: string; label: string }[] {
+export function versionOptions(
+  card: ModelCard,
+  enabledFlags?: ReadonlySet<string>
+): { key: string; label: string }[] {
   return [
-    ...card.versions.map((v) => ({ key: v.key, label: v.label })),
+    ...visibleVersions(card, enabledFlags).map((v) => ({ key: v.key, label: v.label })),
     ...(allowsCustomBase(card) ? [{ key: CUSTOM_VERSION_KEY, label: 'Custom' }] : []),
   ];
 }
 
-export function newRun(card: ModelCard): Run {
-  const first = card.versions[0];
+/** A run on the card's first version the viewer can see (`enabledFlags` omitted → `versions[0]`). */
+export function newRun(card: ModelCard, enabledFlags?: ReadonlySet<string>): Run {
+  const first = visibleVersions(card, enabledFlags)[0] ?? card.versions[0];
   if (!first) throw new Error(`Base-model card ${card.type} has no versions`);
   return { id: nextRunId(), cardType: card.type, versionKey: first.key };
 }
