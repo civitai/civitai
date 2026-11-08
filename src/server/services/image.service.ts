@@ -60,6 +60,7 @@ import {
 import {
   hasBlockMarker,
   imageReviewedSql,
+  pendingLevelImageSql,
   pendingOthersImageConditions,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
 } from '~/server/common/image-visibility';
@@ -6457,9 +6458,9 @@ export const getImagesForModelVersion = async ({
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(...pendingOthersImageConditions(userId));
       imageWhere.push(
-        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
+        ...pendingOthersImageConditions(userId),
+        pendingLevelImageSql(userId, browsingLevel)
       );
     }
   } else {
@@ -6716,9 +6717,9 @@ export const getImagesForPosts = async ({
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(...pendingOthersImageConditions(userId));
       imageWhere.push(
-        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
+        ...pendingOthersImageConditions(userId),
+        pendingLevelImageSql(userId, browsingLevel)
       );
     } else {
       imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
