@@ -523,6 +523,54 @@ describe('getModelEarlyAccessRefundRequirement', () => {
     expect(result.totalBuzz).toBe(200);
   });
 
+  it('keeps a gift when every purchase on its row is refunded', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { giftLinkId: 4, 'gift-permissions': 1, 'download-buzzTransactionId': 'tx-dl' },
+          addedAt: boughtRecently(),
+        },
+      ],
+      amounts: { 'tx-dl': 500 },
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    // The gift granted generation only, so the refunded download's bit goes and generation stays.
+    expect(result.purchases).toEqual([
+      {
+        modelVersionId: VERSION_ID,
+        buyerId: BUYER_ID,
+        buzzTransactionIds: ['tx-dl'],
+        narrow: {
+          revokePermissions: 2,
+          removeKeys: ['download-buzzTransactionId', 'download-purchasedAt'],
+        },
+      },
+    ]);
+    expect(result.exemptBuyerCount).toBe(0);
+  });
+
+  it('revokes no bit from a gift row that did not record what the gift granted', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { giftLinkId: 4, 'download-buzzTransactionId': 'tx-dl' },
+          addedAt: boughtRecently(),
+        },
+      ],
+      amounts: { 'tx-dl': 500 },
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.purchases[0].narrow?.revokePermissions).toBe(0);
+  });
+
   it('dates a purchase with an unreadable purchasedAt by the row', async () => {
     setupRefundData({
       accessRows: [
@@ -653,11 +701,6 @@ describe('unpublishModelById — early access refund gate', () => {
     // Narrowed, not deleted: the generation purchase was paid for and not refunded. What the
     // narrowing writes is pinned on Postgres in model-early-access-refund.pglite.test.ts.
     expect(mockDbWrite.entityAccess.deleteMany).not.toHaveBeenCalled();
-    expect(
-      mockDbWrite.$executeRaw.mock.calls.some((c: unknown[]) =>
-        (c[0] as string[]).join('?').includes('UPDATE "EntityAccess"')
-      )
-    ).toBe(true);
   });
 
   it('refuses to refund from an owner account that cannot cover the total', async () => {

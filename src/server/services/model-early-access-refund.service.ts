@@ -9,6 +9,11 @@ import {
   getUserBuzzAccountByAccountTypes,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
+import {
+  EARLY_ACCESS_PURCHASES,
+  GIFT_PERMISSIONS_KEY,
+  revokeModelVersionAccess,
+} from '~/server/services/model-version-access.service';
 import { paidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
 import { isWithinPaidAccessRefundWindow } from '~/server/utils/early-access-helpers';
 import { throwBadRequestError, throwInsufficientFundsError } from '~/server/utils/errorHandling';
@@ -42,8 +47,8 @@ export type ModelEarlyAccessRefundRequirement = {
     buyerId: number;
     buzzTransactionIds: string[];
     /**
-     * Set when the buyer also holds an older purchase on this version that is not refunded: the
-     * grant is narrowed instead of deleted. Absent, the whole grant goes.
+     * Set when the row also holds something not refunded (an older purchase or a gift): the grant
+     * is narrowed instead of deleted. Absent, the whole grant goes.
      */
     narrow?: { revokePermissions: number; removeKeys: string[] };
   }[];
@@ -57,21 +62,6 @@ export type ModelEarlyAccessRefundRequirement = {
    */
   exemptBuyerCount: number;
 };
-
-/** The purchases one grant row can hold, and what each one grants (see `earlyAccessPurchase`). */
-const EARLY_ACCESS_PURCHASES = [
-  {
-    transactionKey: 'download-buzzTransactionId',
-    purchasedAtKey: 'download-purchasedAt',
-    permissions:
-      EntityAccessPermission.EarlyAccessGeneration | EntityAccessPermission.EarlyAccessDownload,
-  },
-  {
-    transactionKey: 'generation-buzzTransactionId',
-    purchasedAtKey: 'generation-purchasedAt',
-    permissions: EntityAccessPermission.EarlyAccessGeneration,
-  },
-] as const;
 
 // Early access is sold per model VERSION, so the refund set is computed version-by-version and each
 // purchase keeps its modelVersionId. Unpublishing a whole model aggregates every version's set;
@@ -95,7 +85,6 @@ const EARLY_ACCESS_PURCHASES = [
 // (generation, then download later), so each is dated by its own `<type>-purchasedAt`; rows written
 // before that key existed fall back to the row's addedAt. Grant rows are read fresh from the
 // primary (dbWrite), not the cache/replica — this guard protects buyers' money.
-
 const getEarlyAccessRefundRequirementForVersions = async (
   versions: { id: number; meta: Prisma.JsonValue }[]
 ): Promise<ModelEarlyAccessRefundRequirement> => {
@@ -138,16 +127,22 @@ const getEarlyAccessRefundRequirementForVersions = async (
     const kept = held.filter((purchase) => !purchase.refundable);
     if (kept.length > 0) exemptBuyers.add(row.accessorId);
     if (refunded.length === 0) continue;
+    // A gift is not refunded, so its bits stay. A gift row without its recorded bits keeps all.
+    const giftBits =
+      rowMeta.giftLinkId == null
+        ? 0
+        : typeof rowMeta[GIFT_PERMISSIONS_KEY] === 'number'
+        ? (rowMeta[GIFT_PERMISSIONS_KEY] as number)
+        : EntityAccessPermission.EarlyAccessGeneration | EntityAccessPermission.EarlyAccessDownload;
+    const keptBits = kept.reduce((bits, purchase) => bits | purchase.kind.permissions, giftBits);
     purchases.push({
       modelVersionId: row.accessToId,
       buyerId: row.accessorId,
       buzzTransactionIds: refunded.map((purchase) => purchase.transactionId),
-      ...(kept.length > 0 && {
+      ...((kept.length > 0 || giftBits > 0) && {
         narrow: {
-          // Only bits no kept purchase also grants, so the kept purchase and any gift keep theirs.
           revokePermissions:
-            refunded.reduce((bits, purchase) => bits | purchase.kind.permissions, 0) &
-            ~kept.reduce((bits, purchase) => bits | purchase.kind.permissions, 0),
+            refunded.reduce((bits, purchase) => bits | purchase.kind.permissions, 0) & ~keptBits,
           removeKeys: refunded.flatMap(({ kind }) => [kind.transactionKey, kind.purchasedAtKey]),
         },
       }),
@@ -248,25 +243,13 @@ export const refundModelEarlyAccessPurchases = async ({
         });
       }
       // Revoke the now-refunded purchase so a retry after a mid-loop failure skips it instead of
-      // refunding it twice. Neither write throws on a row that is already gone: the money already
-      // moved, so that must not abort the loop.
-      if (purchase.narrow) {
-        await dbWrite.$executeRaw`
-          UPDATE "EntityAccess"
-             SET "permissions" = "permissions" & ~${purchase.narrow.revokePermissions}::int,
-                 "meta" = "meta" - ${purchase.narrow.removeKeys}::text[]
-           WHERE "accessToId" = ${purchase.modelVersionId} AND "accessToType" = 'ModelVersion'
-             AND "accessorId" = ${purchase.buyerId} AND "accessorType" = 'User'`;
-      } else {
-        await dbWrite.entityAccess.deleteMany({
-          where: {
-            accessToId: purchase.modelVersionId,
-            accessToType: 'ModelVersion',
-            accessorId: purchase.buyerId,
-            accessorType: 'User',
-          },
-        });
-      }
+      // refunding it twice. It doesn't throw on a row that is already gone: the money already moved, so
+      // that must not abort the loop.
+      await revokeModelVersionAccess({
+        userId: purchase.buyerId,
+        modelVersionId: purchase.modelVersionId,
+        narrow: purchase.narrow,
+      });
       refundedCount++;
     } catch (error) {
       logToAxiom({
