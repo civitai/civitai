@@ -155,15 +155,27 @@ export async function turfHiddenIds(
 ) {
   const hidden = new Set<number>();
   if (!ids.length || (!hide.turf && !hide.worn)) return hidden;
-  const [hatted, worn] = await Promise.all([
-    hide.turf ? sysRedis.smIsMember(turfKeys(event.name).hatted, ids.map(String)) : null,
-    hide.worn
-      ? sysRedis.hmGet(
-          eventPointKeys(event.name).hats,
-          ids.map((id) => `Image:${id}`)
-        )
-      : null,
-  ]);
+  let hatted: unknown[] | null, worn: unknown[] | null;
+  try {
+    [hatted, worn] = await Promise.all([
+      hide.turf ? sysRedis.smIsMember(turfKeys(event.name).hatted, ids.map(String)) : null,
+      hide.worn
+        ? sysRedis.hmGet(
+            eventPointKeys(event.name).hats,
+            ids.map((id) => `Image:${id}`)
+          )
+        : null,
+    ]);
+  } catch (error) {
+    // A preference, not a gate: on a failed read show everything rather than fail the feed.
+    void logToAxiom({
+      type: 'warning',
+      name: 'event-turf',
+      message: 'feed show filter failed',
+      error: (error as Error).message,
+    });
+    return hidden;
+  }
   ids.forEach((id, i) => {
     if (hatted?.[i] || worn?.[i]) hidden.add(id);
   });

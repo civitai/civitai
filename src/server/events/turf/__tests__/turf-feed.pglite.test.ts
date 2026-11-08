@@ -315,6 +315,16 @@ describe('the Show filters', () => {
     ]);
     expect([...(await turfHiddenIds(e, ids, {}))]).toEqual([]);
   });
+
+  // Deliberate: the Show filters are a player's preference, not a safety gate, and the filter store
+  // sends them on every images feed. A Redis failure must show the images, not fail the page.
+  it('a failed read hides nothing instead of failing the feed', async () => {
+    const turfed = await imageWith(1, 0);
+    await sync(turfed);
+    const e = await event();
+    redisMock.sysRedis.smIsMember.mockRejectedValueOnce(new Error('redis down'));
+    expect([...(await turfHiddenIds(e, [turfed], { turf: true, worn: true }))]).toEqual([]);
+  });
 });
 
 describe('filling a filtered page', () => {
