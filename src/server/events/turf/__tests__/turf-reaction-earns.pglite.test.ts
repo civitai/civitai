@@ -53,6 +53,12 @@ vi.mock('~/server/services/placement-moderation.service', async (importOriginal)
 vi.mock('~/server/events/event-access', () => ({
   flagAudienceAmong: async (_flag: string, ids: number[]) => new Set(ids),
 }));
+// What the service logs: a case expecting `true` also expects nothing logged, so a swallowed error
+// reads as itself rather than as a bare `false`.
+const logged = vi.hoisted(() => [] as unknown[]);
+vi.mock('~/server/logging/client', () => ({
+  logToAxiom: async (entry: unknown) => void logged.push(entry),
+}));
 const pointsOn = vi.hoisted(() => ({ value: true }));
 vi.mock('~/server/events/points/enabled', async (importOriginal) => ({
   ...(await importOriginal<typeof PointsEnabled>()),
@@ -179,7 +185,11 @@ const place = async (imageId: number, reactionEarnsMs = 30_000) =>
 
 describe('placing answers whether a reaction there would pay your team', () => {
   it('yes: your team leads and a teammate besides you is credited', async () => {
-    expect(await place(await image([[TEAMMATE, 'Blue']]))).toEqual({ reactionEarns: true });
+    logged.length = 0;
+    const placed = await place(await image([[TEAMMATE, 'Blue']]));
+    expect(logged).toEqual([]);
+    expect(lua.errors).toEqual([]);
+    expect(placed).toEqual({ reactionEarns: true });
   });
 
   it('no: you are the only credited player, and the award never pays the reactor', async () => {
