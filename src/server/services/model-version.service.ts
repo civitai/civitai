@@ -216,7 +216,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
-import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
+import { hasCompleteSfwFace, resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -2787,6 +2787,9 @@ export const earlyAccessPurchase = async ({
           name: true,
           userId: true,
           nsfw: true,
+          nsfwLevel: true,
+          sfwName: true,
+          sfwCoverImageId: true,
         },
       },
     },
@@ -2815,6 +2818,12 @@ export const earlyAccessPurchase = async ({
 
   if (buzzType === 'blue' && !acceptsBlueBuzz(terms)) {
     throw throwBadRequestError('This model version does not accept Blue Buzz.');
+  }
+
+  // A mature model without a .com face is off civitai.com; a stale page or direct call must not sell
+  // it in .com's currency. Neutral message: it must not disclose the model's .com status.
+  if (buzzType === 'green' && modelVersion.model.nsfw && !hasCompleteSfwFace(modelVersion.model)) {
+    throw throwBadRequestError('This model version is not available with this currency.');
   }
 
   // The EA donation goal is the forward relation (DonationGoal entity target), not a config back-link.
