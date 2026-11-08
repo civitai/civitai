@@ -336,7 +336,8 @@ describe('cacheIt key hash', () => {
   });
 
   it('values JSON writes alike get different hashes', () => {
-    expect(cacheItKeyHash({ id: 1n })).not.toBe(cacheItKeyHash({ id: '1n' }));
+    expect(cacheItKeyHash({ id: BigInt(1) })).not.toBe(cacheItKeyHash({ id: '1' }));
+    expect(cacheItKeyHash({ id: BigInt(1) })).not.toBe(cacheItKeyHash({ id: 1 }));
     const at = new Date('2026-01-01T00:00:00.000Z');
     expect(cacheItKeyHash({ at })).not.toBe(cacheItKeyHash({ at: at.toISOString() }));
   });
