@@ -26,6 +26,7 @@ import {
 import { drainEventPointsPush, markEventPointsDirty } from '~/server/events/points/push';
 import type { EventPointType } from '~/server/events/points/types';
 import { sysRedis } from '~/server/redis/client';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { teamAwardsBy } from '~/server/events/scoring/team-awards';
 import type { TeamAward } from '~/server/events/base.event';
@@ -179,7 +180,7 @@ export function refereeQueryParams(
 
 const MAX_INT32 = 2147483647;
 
-// Who must not earn or give points. Hidden (banned, deleted, excluded from leaderboards): looked up
+// Who must not earn or give points. Hidden (banned, deleted, excluded from event points): looked up
 // in Postgres among the people the recomputed rows involve. New accounts: every id from the first
 // account registered inside the new-account window, since ids are assigned in registration order.
 // A threshold, not a list: a month of signups is ~250k ids, past what fits in a query's URL.
@@ -203,7 +204,7 @@ async function restrictedUsers(event: RefereeEvent, window: Window) {
     const rows = await dbRead.$queryRaw<{ id: number }[]>`
       SELECT id FROM "User"
       WHERE id = ANY(${part}::int[])
-        AND ("bannedAt" IS NOT NULL OR "deletedAt" IS NOT NULL OR "excludeFromLeaderboards")
+        AND ("bannedAt" IS NOT NULL OR "deletedAt" IS NOT NULL OR (flags & ${UserFlag.ExcludeFromEventPoints}::int) <> 0)
     `;
     hidden.push(...rows.map((r) => r.id));
   }
