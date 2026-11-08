@@ -72,6 +72,10 @@ async function bundle(manifest: Record<string, unknown>): Promise<Buffer> {
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
+/** A resolved submit's follow-up lands later, behind a dynamic import: let it land inside the
+ *  test that caused it, so it cannot be counted by the next one. */
+const settleFollowUps = () =>
+  vi.waitFor(() => expect(followUps.onNewPendingSubmission).toHaveBeenCalled());
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -94,6 +98,7 @@ describe('submitVersion — deep manifest validation at submit', () => {
     });
     expect(result.slug).toBe('my-app');
     expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
+    await settleFollowUps();
   });
 
   it('refuses a manifest approve would refuse, with EVERY validator error, before anything is stored', async () => {
@@ -155,6 +160,7 @@ describe('submitVersion — deep manifest validation at submit', () => {
         submitterIsModerator: true,
       })
     ).resolves.toMatchObject({ slug: 'my-app' });
+    await settleFollowUps();
   });
 
   it('validates against the SERVER-owned trust tier, not one the manifest declares', async () => {
@@ -193,7 +199,6 @@ describe('submitVersion — follow-ups of a new pending request', () => {
       version: '0.1.0',
       appName: 'My App',
       submittedByUserId: 1,
-      submitterIsModerator: false,
       origin: 'upload',
     });
   });
