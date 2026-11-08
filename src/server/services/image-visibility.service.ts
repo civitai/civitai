@@ -97,6 +97,34 @@ export function imageVisibilityConditions({
   ];
 }
 
+async function selectVisibleImage({
+  id,
+  userId,
+  isModerator,
+}: {
+  id: number;
+  userId?: number;
+  isModerator?: boolean;
+}) {
+  const [visible] = await dbRead.$queryRaw<
+    { id: number; userId: number; nsfwLevel: number; postId: number | null }[]
+  >`
+    SELECT i.id, i."userId", i."nsfwLevel", i."postId"
+    FROM "Image" i
+    LEFT JOIN "Post" p ON p.id = i."postId"
+    WHERE ${Prisma.join(
+      [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })],
+      ' AND '
+    )}
+  `;
+  return visible;
+}
+
+/** Whether a signed-out viewer may open the image by id: the anonymous `imageVisibilityConditions`. */
+export async function isImageVisibleSignedOut(id: number) {
+  return !!(await selectVisibleImage({ id }));
+}
+
 /**
  * The image's owner, rating and post, or NOT_FOUND unless the viewer may see its generation data:
  * `image.get`'s visibility conditions plus its handler's owner block check.
@@ -116,17 +144,7 @@ export async function assertImageVisibleToViewer({
    */
   confirmBlockOnPrimary?: boolean;
 }) {
-  const [visible] = await dbRead.$queryRaw<
-    { id: number; userId: number; nsfwLevel: number; postId: number | null }[]
-  >`
-    SELECT i.id, i."userId", i."nsfwLevel", i."postId"
-    FROM "Image" i
-    LEFT JOIN "Post" p ON p.id = i."postId"
-    WHERE ${Prisma.join(
-      [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })],
-      ' AND '
-    )}
-  `;
+  const visible = await selectVisibleImage({ id, userId, isModerator });
   if (!visible) throw throwNotFoundError();
   if (userId && !isModerator) {
     // Imported here: user.service sits in the image.service import cycle.
