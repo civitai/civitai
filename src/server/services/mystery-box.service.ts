@@ -20,9 +20,11 @@ import {
 } from '~/server/services/buzz.service';
 import {
   countHeldItems,
+  countHeldItemsBySourceSuffix,
   findHeldItemById,
   findHeldItemBySource,
   grantItem,
+  listHeldItemsBySourcePrefix,
   ITEM_DEFINITION_STATUS,
   ITEM_TYPE,
   listHeldItems,
@@ -758,21 +760,6 @@ async function countPendingBoxClaims(
   return { boxes, packs };
 }
 
-/** The unopened first boxes of this user's packs of this box: each still owes a guaranteed draw. */
-function countHeldGuaranteedBoxes(
-  tx: Prisma.TransactionClient,
-  { boxDefinitionId, userId }: { boxDefinitionId: number; userId: number }
-) {
-  return tx.item.count({
-    where: {
-      itemDefinitionId: boxDefinitionId,
-      holderType: 'user',
-      holderId: userId,
-      sourceKey: { endsWith: packBoxSourceKey('', 1) },
-    },
-  });
-}
-
 export type MysteryBoxShopItem = {
   id: number;
   itemDefinitionId: number;
@@ -794,22 +781,6 @@ export type MysteryBoxPurchaseResult = {
   boxItemIds: string[];
   boxDefinitionId: number;
 };
-
-/** The boxes a pack purchase granted that this user still holds, its guaranteed box first. */
-function findHeldPackBoxes(
-  client: Prisma.TransactionClient,
-  { transactionId, userId }: { transactionId: string; userId: number }
-) {
-  return client.item.findMany({
-    where: {
-      sourceKey: { startsWith: packBoxSourcePrefix(transactionId) },
-      holderType: 'user',
-      holderId: userId,
-    },
-    select: { id: true, itemDefinitionId: true },
-    orderBy: { sourceKey: 'asc' },
-  });
-}
 
 const purchaseResult = (items: { id: bigint; itemDefinitionId: number }[]) => ({
   kind: 'box' as const,
@@ -865,7 +836,10 @@ export async function purchaseMysteryBox({
   if (idempotencyKey) {
     const sourceKey = shopPurchaseTransactionId('box', userId, shopItemId, idempotencyKey);
     const held = pack
-      ? await findHeldPackBoxes(dbWrite, { transactionId: sourceKey, userId })
+      ? await listHeldItemsBySourcePrefix(dbWrite, {
+          sourcePrefix: packBoxSourcePrefix(sourceKey),
+          userId,
+        })
       : await findHeldItemBySource(dbWrite, { sourceKey, userId }).then((item) =>
           item ? [item] : []
         );
@@ -976,9 +950,11 @@ export async function purchaseMysteryBox({
           const guaranteedLeft = pool.filter((entry) =>
             guaranteedTierIds.includes(entry.tierId)
           ).length;
-          const guaranteedHeld = await countHeldGuaranteedBoxes(tx, {
-            boxDefinitionId: box.id,
+          // An unopened first box of a pack still owes its guaranteed draw.
+          const guaranteedHeld = await countHeldItemsBySourceSuffix(tx, {
+            itemDefinitionId: box.id,
             userId,
+            sourceSuffix: packBoxSourceKey('', 1),
           });
           if (guaranteedLeft < guaranteedHeld + pending.packs + 1)
             throw throwBadRequestError(
@@ -1038,6 +1014,9 @@ export async function purchaseMysteryBox({
           unitAmount,
           buzzTransactionId: transactionId,
           refunded: false,
+          // The terms its boxes were sold under, read by the open and the refunds: the listing's can
+          // change after the sale.
+          ...(pack ? { meta: { pack } } : {}),
         },
       });
       if (!pack)
@@ -1136,8 +1115,8 @@ const openingResult = (
 const NOT_YOUR_BOX = 'This box is not yours to open';
 
 /**
- * The tiers a held box must draw from, when it is the first box of a pack: read from the listing
- * its purchase was made on, never from the key alone.
+ * The tiers a held box must draw from, when it is the first box of a pack: read from its purchase,
+ * never from the key alone.
  */
 async function guaranteedTiersOf(
   tx: Prisma.TransactionClient,
@@ -1151,11 +1130,11 @@ async function guaranteedTiersOf(
   if (packBox?.n !== 1) return undefined;
   const purchase = await tx.userCosmeticShopPurchases.findUnique({
     where: { buzzTransactionId: packBox.transactionId },
-    select: { userId: true, shopItem: { select: { itemDefinitionId: true, meta: true } } },
+    select: { userId: true, meta: true, shopItem: { select: { itemDefinitionId: true } } },
   });
   if (purchase?.userId !== userId || purchase.shopItem.itemDefinitionId !== boxDefinitionId)
     return undefined;
-  const terms = packTermsOrNull(purchase.shopItem.meta);
+  const terms = packTermsOrNull(purchase.meta);
   return terms && terms !== 'malformed' ? terms.guaranteedTierIds : undefined;
 }
 

@@ -38,6 +38,7 @@ import {
   mysteryBoxOddsPageUrl,
   revealChance,
   tierColor,
+  guaranteedTierSummaries,
   tierSummaries,
 } from '~/components/MysteryBox/mystery-box.utils';
 import type { OpenPhase } from '~/components/MysteryBox/useMysteryBoxOpen';
@@ -251,11 +252,7 @@ function PackOdds({
   view: MysteryBoxView;
   pack: NonNullable<MysteryBoxView['packListing']>;
 }) {
-  const guaranteed = tierSummaries({
-    ...view,
-    tiers: view.tiers.filter((t) => pack.guaranteedTierIds.includes(t.id)),
-    contents: view.contents.filter((c) => pack.guaranteedTierIds.includes(c.tierId)),
-  });
+  const guaranteed = guaranteedTierSummaries(view, pack.guaranteedTierIds);
   const names = guaranteed.map((t) => t.tier.name).join(' or ');
   const anyLeft = guaranteed.some((t) => t.left > 0);
   return (
@@ -268,7 +265,7 @@ function PackOdds({
         guaranteed.map((t) => (
           <Group key={t.tier.id} justify="space-between" wrap="nowrap">
             <Text size="xs" c="dimmed">
-              Guaranteed box: {t.tier.name}
+              Guaranteed box: {t.tier.name} (nothing owned)
             </Text>
             <Text size="xs">
               <b>{formatChance(t.probability, 1)}</b>
@@ -529,7 +526,7 @@ function OpenStage({
                   Open next ({view.heldBoxItemIds.length} left)
                 </Button>
               )}
-              {!actions.canOpen && actions.canBuy && view.listing && (
+              {actions.canBuy && view.listing && (
                 <Button color="yellow" onClick={onAgain} loading={busy} data-testid="box-again">
                   Open another · {numberWithCommas(view.listing.unitAmount)}
                 </Button>

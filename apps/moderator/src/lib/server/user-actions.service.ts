@@ -28,7 +28,7 @@ import {
   boxOpenClaimKey,
   boxPackTermsOf,
   MOD_GRANT_SOURCE_PREFIX,
-  packBoxSourceKey,
+  packBoxSourcePrefix,
 } from '@civitai/shared/mystery-box';
 import { dbRead, dbWrite } from './db';
 import { ACCOUNT_STANDING_REBUST_MS, REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
@@ -1117,13 +1117,14 @@ export async function refundShopPurchase(input: {
   const purchase = await dbWrite
     .selectFrom('UserCosmeticShopPurchases as p')
     .innerJoin('CosmeticShopItem as csi', 'csi.id', 'p.shopItemId')
-    .select(['p.refunded', 'csi.itemDefinitionId', 'csi.meta'])
+    .select(['p.refunded', 'p.meta', 'p.unitAmount', 'csi.itemDefinitionId'])
     .where('p.buzzTransactionId', '=', input.buzzTransactionId)
     .where('p.userId', '=', input.userId)
     .executeTakeFirst();
 
   if (!purchase) return { ok: false, error: 'That purchase does not belong to this user.' };
   if (purchase.refunded) return { ok: false, error: 'That purchase is already refunded.' };
+  const pack = purchase.itemDefinitionId != null ? boxPackTermsOf(purchase.meta) : undefined;
 
   let removed: RemovedHolding[];
   try {
@@ -1145,24 +1146,10 @@ export async function refundShopPurchase(input: {
       // Routed by the listing, not by a NULL `cosmeticId`: a box purchase has none either.
       const boxDefinitionId = purchase.itemDefinitionId;
       if (boxDefinitionId == null) return takeBackCosmetics(trx, input);
-      const pack = boxPackTermsOf(purchase.meta);
-      if (!pack)
-        return takeBackBox(trx, {
-          userId: input.userId,
-          sourceKey: input.buzzTransactionId,
-          boxDefinitionId,
-        });
-      // One charge paid for every box of a pack, so the whole pack comes back together.
-      const removedFromPack: RemovedHolding[] = [];
-      for (let n = 1; n <= pack.size; n++)
-        removedFromPack.push(
-          ...(await takeBackBox(trx, {
-            userId: input.userId,
-            sourceKey: packBoxSourceKey(input.buzzTransactionId, n),
-            boxDefinitionId,
-          }))
-        );
-      return removedFromPack;
+      const target = { userId: input.userId, boxDefinitionId };
+      return pack
+        ? takeBackPack(trx, { ...target, buzzTransactionId: input.buzzTransactionId })
+        : takeBackBox(trx, { ...target, sourceKey: input.buzzTransactionId });
     });
   } catch (error) {
     if (error instanceof RefundRefused) return { ok: false, error: error.message };
@@ -1174,10 +1161,73 @@ export async function refundShopPurchase(input: {
   // without this the refunded badge or frame keeps rendering on their profile, comments and images for
   // up to 24 hours after the panel says it is gone.
   await bustUserCosmeticCaches(input.userId);
-  const warning = await refreshRemovedHoldings(removed, 'Refunded');
+  const refreshWarning = await refreshRemovedHoldings(removed, 'Refunded');
+  const warning =
+    [pack && packTakedownWarning(purchase.meta, purchase.unitAmount, pack.size), refreshWarning]
+      .filter(Boolean)
+      .join(' ') || undefined;
 
   await logAction('shopRefund', input.userId, input.moderatorId);
   return { ok: true, warning };
+}
+
+/**
+ * A takedown pays a pack box its share as it pulls the box's hat, and leaves the purchase unrefunded
+ * for the rest of the pack. The moderator returns the Buzz by hand, so they are told what was paid.
+ */
+function packTakedownWarning(meta: unknown, unitAmount: number, size: number) {
+  const refunds = (meta as { packTakedownRefunds?: Record<string, { paidAt?: unknown }> } | null)
+    ?.packTakedownRefunds;
+  const paid = Object.values(refunds ?? {}).filter((refund) => refund?.paidAt).length;
+  if (!paid) return undefined;
+  const share = Math.floor(unitAmount / size);
+  return `A takedown already paid back ${paid} of this pack's boxes (${
+    paid * share
+  } Buzz); return only the rest.`;
+}
+
+/**
+ * Every box of a pack, held or opened, by its purchase's key prefix: one charge paid for all of them,
+ * so they come back together. A box whose opening a takedown already refunded is passed over.
+ */
+async function takeBackPack(
+  trx: Transaction<DB>,
+  {
+    userId,
+    buzzTransactionId,
+    boxDefinitionId,
+  }: { userId: number; buzzTransactionId: string; boxDefinitionId: number }
+) {
+  const prefix = packBoxSourcePrefix(buzzTransactionId);
+  const held = await trx
+    .deleteFrom('Item')
+    .where(sql<boolean>`starts_with("sourceKey", ${prefix})`)
+    .where('itemDefinitionId', '=', boxDefinitionId)
+    .where('holderType', '=', 'user')
+    .where('holderId', '=', userId)
+    .executeTakeFirst();
+  const openings = await trx
+    .updateTable('BoxOpening')
+    .set({ rewardStatus: BOX_OPENING_REWARD_STATUS.refunded })
+    .where('userId', '=', userId)
+    .where('boxDefinitionId', '=', boxDefinitionId)
+    .where(sql<boolean>`starts_with("boxSourceKey", ${prefix})`)
+    .where('rewardStatus', '=', BOX_OPENING_REWARD_STATUS.granted)
+    .returning('boxItemId')
+    .execute();
+  if (Number(held.numDeletedRows) === 0 && openings.length === 0)
+    throw new RefundRefused('Neither the boxes nor what they gave are on this account.');
+  if (!openings.length) return [];
+  return trx
+    .deleteFrom('UserCosmetic')
+    .where('userId', '=', userId)
+    .where(
+      'claimKey',
+      'in',
+      openings.map((opening) => boxOpenClaimKey(opening.boxItemId))
+    )
+    .returning(REMOVED_HOLDING)
+    .execute();
 }
 
 /** A refusal found inside the refund transaction; thrown to roll it back. */

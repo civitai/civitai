@@ -267,7 +267,8 @@ export type OwedPackBoxRefund = {
   /** The pack purchase's charge prefix. */
   buzzTransactionId: string;
   unitAmount: number;
-  listingMeta: Prisma.JsonValue;
+  /** The purchase's meta, which holds the pack terms it was sold under. */
+  purchaseMeta: Prisma.JsonValue;
 };
 
 /**
@@ -283,7 +284,7 @@ export function listOwedPackBoxRefunds({
 }) {
   return dbWrite.$queryRaw<OwedPackBoxRefund[]>`
     SELECT o."boxItemId", o."boxSourceKey", o."userId", p."buzzTransactionId", p."unitAmount",
-      s.meta AS "listingMeta"
+      p.meta AS "purchaseMeta"
     FROM "BoxOpening" o
     JOIN "ItemDefinition" d ON d.id = o."rewardDefinitionId"
     JOIN "UserCosmeticShopPurchases" p

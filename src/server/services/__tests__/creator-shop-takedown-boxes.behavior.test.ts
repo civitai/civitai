@@ -669,18 +669,19 @@ describe('takedownCosmeticShopItem on a pack box that drew it', () => {
   const PACK_TX = 'item-purchase-v1-101-60-packkey';
   const packKey = (n: number) => `${PACK_TX}#pack-${String(n).padStart(2, '0')}`;
 
-  /** A 10-pack bought for 4,500: box 3 drew the taken-down cosmetic, box 4 the kept one. */
-  const seedPack = async () => {
+  /** A pack bought for `price`: box 3 drew the taken-down cosmetic, box 4 the kept one. */
+  const seedPack = async ({ price = 4500, size = 10 } = {}) => {
     const boxId = await seedBox();
     const [{ id: listingId }] = await q<{ id: number }>(
       `INSERT INTO "CosmeticShopItem" ("unitAmount", title, "itemDefinitionId", listed, meta)
-       VALUES (4500, 'Box 10-pack', $1, false, $2) RETURNING id`,
-      [boxId, JSON.stringify({ pack: { size: 10, guaranteedTierIds: [1] } })]
+       VALUES ($1, 'Box pack', $2, false, $3) RETURNING id`,
+      // The listing's terms have changed since the sale: the purchase's are the ones paid out.
+      [price, boxId, JSON.stringify({ pack: { size: size + 5, guaranteedTierIds: [1] } })]
     );
     await q(
-      `INSERT INTO "UserCosmeticShopPurchases" ("buzzTransactionId", "userId", "shopItemId", "unitAmount", refunded)
-       VALUES ($1, $2, $3, 4500, false)`,
-      [PACK_TX, BUYER, listingId]
+      `INSERT INTO "UserCosmeticShopPurchases" ("buzzTransactionId", "userId", "shopItemId", "unitAmount", refunded, meta)
+       VALUES ($1, $2, $3, $4, false, $5)`,
+      [PACK_TX, BUYER, listingId, price, JSON.stringify({ pack: { size, guaranteedTierIds: [1] } })]
     );
     const open = (boxItemId: number, n: number, cosmeticId: number) =>
       q(
@@ -714,7 +715,7 @@ describe('takedownCosmeticShopItem on a pack box that drew it', () => {
         toAccountId: BUYER,
         toAccountType: 'yellow',
         amount: 450,
-        externalTransactionId: `${packKey(3)}:takedown-refund`,
+        externalTransactionId: `takedown-pack-share:${packKey(3)}`,
       }),
     ]);
     expect(refundedPrefixes()).toEqual([]);
@@ -736,8 +737,15 @@ describe('takedownCosmeticShopItem on a pack box that drew it', () => {
 
     expect([retried.boxRefundedValue, retried.failures]).toEqual([450, []]);
     expect(credits()).toEqual([
-      expect.objectContaining({ externalTransactionId: `${packKey(3)}:takedown-refund` }),
+      expect.objectContaining({ externalTransactionId: `takedown-pack-share:${packKey(3)}` }),
     ]);
+  });
+
+  it('pays a share rounded down, so the shares never add up to more than the pack cost', async () => {
+    await seedPack({ price: 1350, size: 4 });
+    const result = await takedown();
+    expect(credits()).toEqual([expect.objectContaining({ amount: 337 })]);
+    expect(result.boxRefundedValue).toBe(337);
   });
 
   it('counts a share refused as a duplicate as paid', async () => {

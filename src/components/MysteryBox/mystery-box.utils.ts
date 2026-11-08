@@ -58,6 +58,17 @@ export function tierSummaries<C extends OddsContent>(view: OddsView<C>): TierSum
     });
 }
 
+/** The odds of a pack's guaranteed box: the box's own, over only the guaranteed tiers. */
+export function guaranteedTierSummaries<C extends OddsContent>(
+  view: OddsView<C>,
+  guaranteedTierIds: number[]
+) {
+  return tierSummaries({
+    tiers: view.tiers.filter((t) => guaranteedTierIds.includes(t.id)),
+    contents: view.contents.filter((c) => guaranteedTierIds.includes(c.tierId)),
+  });
+}
+
 export function collectedCount(view: Pick<MysteryBoxView, 'contents'>) {
   const left = view.contents.filter((c) => c.left).length;
   return { collected: view.contents.length - left, left, total: view.contents.length };

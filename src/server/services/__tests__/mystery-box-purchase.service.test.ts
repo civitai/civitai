@@ -469,7 +469,11 @@ describe('buying a pack of boxes', () => {
       externalTransactionIdPrefix: packTxId(KEY_A),
     });
     expect(world.purchases).toEqual([
-      expect.objectContaining({ buzzTransactionId: packTxId(KEY_A), unitAmount: PACK_PRICE }),
+      expect.objectContaining({
+        buzzTransactionId: packTxId(KEY_A),
+        unitAmount: PACK_PRICE,
+        meta: PACK_META,
+      }),
     ]);
   });
 
@@ -479,6 +483,33 @@ describe('buying a pack of boxes', () => {
     const second = await buyPack();
     expect(second).toEqual({ ...first, boxItemId: '2', boxItemIds: ['2', '3'] });
     expect(mocks.createMultiTx).toHaveBeenCalledTimes(1);
+  });
+
+  it('sells a pack that exactly fits what is left beyond the boxes already held', async () => {
+    world.contents = [hat(1), hat(2), hat(3), rare(4)];
+    world.items.push({
+      id: 90n,
+      itemDefinitionId: BOX_ID,
+      holderId: BUYER_ID,
+      sourceKey: 'earlier',
+      quantity: 1,
+    });
+    await buyPack();
+    expect(world.items).toHaveLength(4);
+  });
+
+  it('a pending pack holds the last guaranteed hat against another pack', async () => {
+    world.contents = [hat(1), hat(2), hat(3), hat(5), hat(6), hat(7), rare(4)];
+    claims.rows.set(packTxId(KEY_B), {
+      transactionId: packTxId(KEY_B),
+      userId: BUYER_ID,
+      shopItemId: SECOND_LISTING_ID,
+      amount: PACK_PRICE,
+      attempts: 1,
+      status: 'pending',
+    });
+    await expect(buyPack()).rejects.toThrow('guaranteed pull');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
   it('refuses when fewer than a pack are left beyond the boxes already held', async () => {

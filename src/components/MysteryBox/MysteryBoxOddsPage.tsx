@@ -16,6 +16,7 @@ import {
   baseOddsView,
   formatChance,
   tierColor,
+  guaranteedTierSummaries,
   tierSummaries,
 } from '~/components/MysteryBox/mystery-box.utils';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
@@ -44,14 +45,7 @@ export function MysteryBoxOddsPage({
   const tiers = useMemo(() => tierSummaries(view), [view]);
   const pack = page.pack;
   const packTiers = useMemo(
-    () =>
-      pack
-        ? tierSummaries({
-            ...view,
-            tiers: view.tiers.filter((t) => pack.guaranteedTierIds.includes(t.id)),
-            contents: view.contents.filter((c) => pack.guaranteedTierIds.includes(c.tierId)),
-          })
-        : [],
+    () => (pack ? guaranteedTierSummaries(view, pack.guaranteedTierIds) : []),
     [view, pack]
   );
   const packTierNames = packTiers.map((t) => t.tier.name).join(' or ');

@@ -2482,11 +2482,12 @@ type PrefixRefund = Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
 /**
  * Pays one pack box its share of the pack's charge, into the account the charge came from. Its
  * external id is the box's own, so a retry after a landed attempt is refused as a duplicate (409),
- * which is read as paid. Returns the Buzz paid.
+ * which is read as paid; it doesn't start with the charge's prefix, so it is never listed as part of
+ * the charge. Returns the Buzz paid.
  */
 async function refundPackBoxShare(owed: OwedPackBoxRefund, title: string) {
-  const pack = boxPackTermsOf(owed.listingMeta);
-  if (!pack) throw new Error(`Purchase ${owed.buzzTransactionId} is not on a pack listing`);
+  const pack = boxPackTermsOf(owed.purchaseMeta);
+  if (!pack) throw new Error(`Purchase ${owed.buzzTransactionId} records no pack terms`);
   const amount = Math.floor(owed.unitAmount / pack.size);
   if (amount <= 0) return 0;
   const accountTypes = new Set(
@@ -2509,7 +2510,7 @@ async function refundPackBoxShare(owed: OwedPackBoxRefund, title: string) {
         amount,
         type: TransactionType.Refund,
         description: `Cosmetic removed - ${title}`,
-        externalTransactionId: `${owed.boxSourceKey}:takedown-refund`,
+        externalTransactionId: `takedown-pack-share:${owed.boxSourceKey}`,
       })
     );
   } catch (error) {

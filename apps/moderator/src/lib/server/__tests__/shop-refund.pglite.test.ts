@@ -72,7 +72,9 @@ CREATE TABLE "UserCosmeticShopPurchases" (
   "userId" INTEGER NOT NULL,
   "cosmeticId" INTEGER,
   "shopItemId" INTEGER NOT NULL REFERENCES "CosmeticShopItem"("id"),
-  "refunded" BOOLEAN NOT NULL
+  "refunded" BOOLEAN NOT NULL,
+  "unitAmount" INTEGER NOT NULL DEFAULT 0,
+  "meta" JSONB
 );
 CREATE TABLE "UserCosmeticShopPurchaseCosmetic" (
   "buzzTransactionId" TEXT NOT NULL,
@@ -186,11 +188,17 @@ afterEach(async () => {
   dbHandle.current = null;
 });
 
-const purchase = (tx: string, shopItemId: number, cosmeticId: number | null, userId = BUYER) =>
+const purchase = (
+  tx: string,
+  shopItemId: number,
+  cosmeticId: number | null,
+  userId = BUYER,
+  meta: object | null = null
+) =>
   db.query(
-    `INSERT INTO "UserCosmeticShopPurchases" ("buzzTransactionId", "userId", "cosmeticId", "shopItemId", "refunded")
-     VALUES ($1, $2, $3, $4, false)`,
-    [tx, userId, cosmeticId, shopItemId]
+    `INSERT INTO "UserCosmeticShopPurchases" ("buzzTransactionId", "userId", "cosmeticId", "shopItemId", "refunded", "unitAmount", "meta")
+     VALUES ($1, $2, $3, $4, false, 1350, $5)`,
+    [tx, userId, cosmeticId, shopItemId, meta && JSON.stringify(meta)]
   );
 const holdBox = (tx: string, userId = BUYER) =>
   db.query(
@@ -383,9 +391,12 @@ describe('refundShopPurchase: a mystery box', () => {
 
 describe('refundShopPurchase: a pack of boxes', () => {
   const packKey = (n: number) => `pack-a#pack-0${n}`;
+  const PACK_TERMS = { pack: { size: 3, guaranteedTierIds: [1] } };
+  const packPurchase = (meta: object = PACK_TERMS) =>
+    purchase('pack-a', BOX_PACK_LISTING, null, BUYER, meta);
 
   it('takes back every box of the pack, held or opened, and flags the purchase once', async () => {
-    await purchase('pack-a', BOX_PACK_LISTING, null);
+    await packPurchase();
     await openedBox(packKey(1), 77, 2, HAT);
     await holdBox(packKey(2));
     await holdBox(packKey(3));
@@ -400,17 +411,36 @@ describe('refundShopPurchase: a pack of boxes', () => {
     expect(await isRefunded('pack-a')).toBe(true);
   });
 
-  it('refuses, and takes back nothing, when one box of the pack is on neither list', async () => {
-    await purchase('pack-a', BOX_PACK_LISTING, null);
-    await holdBox(packKey(1));
-    await holdBox(packKey(2));
+  it('refuses, and flags nothing, when none of the pack is on the account', async () => {
+    await packPurchase();
 
     await expect(refund('pack-a')).resolves.toEqual({
       ok: false,
-      error: 'Neither the box nor what it gave is on this account.',
+      error: 'Neither the boxes nor what they gave are on this account.',
     });
-    expect(await heldBoxes()).toEqual([packKey(1), packKey(2)]);
     expect(await isRefunded('pack-a')).toBe(false);
+  });
+
+  it('passes over a box a takedown already refunded, and tells the moderator what it paid', async () => {
+    await packPurchase({
+      ...PACK_TERMS,
+      packTakedownRefunds: { 77: { shopItemId: 5, paidAt: 'x' } },
+    });
+    await openedBox(packKey(1), 77, 2, HAT);
+    await db.query(`UPDATE "BoxOpening" SET "rewardStatus" = 'refunded' WHERE "boxItemId" = 77`);
+    await db.query(`DELETE FROM "UserCosmetic" WHERE "claimKey" = 'box-open-77'`);
+    await holdBox(packKey(2));
+    await holdBox(packKey(3));
+
+    const result = await refund('pack-a');
+
+    expect(result).toEqual({
+      ok: true,
+      warning:
+        "A takedown already paid back 1 of this pack's boxes (450 Buzz); return only the rest.",
+    });
+    expect(await heldBoxes()).toEqual([]);
+    expect(await isRefunded('pack-a')).toBe(true);
   });
 
   it("a single box's refund never reaches a pack's boxes under a key it prefixes", async () => {

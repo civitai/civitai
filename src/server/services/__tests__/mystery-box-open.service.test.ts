@@ -106,7 +106,8 @@ let world: {
   purchases: {
     buzzTransactionId: string;
     userId: number;
-    shopItem: { itemDefinitionId: number | null; meta: unknown };
+    meta: unknown;
+    shopItem: { itemDefinitionId: number | null };
   }[];
   log: string[];
   /** Runs inside the transaction once the holder lock is held. */
@@ -641,7 +642,8 @@ describe("a pack's boxes", () => {
   ) => ({
     buzzTransactionId: PACK_TX,
     userId,
-    shopItem: { itemDefinitionId, meta },
+    meta,
+    shopItem: { itemDefinitionId },
   });
   const PACK_META = { pack: { size: 10, guaranteedTierIds: [RARE] } };
 
@@ -683,7 +685,8 @@ describe("a pack's boxes", () => {
   });
 
   it.each([
-    ['a listing selling one box', packPurchase({})],
+    ['a purchase of one box', packPurchase(null)],
+    ['a purchase whose pack terms do not parse', packPurchase({ pack: { size: 10 } })],
     ["another user's purchase", packPurchase(PACK_META, OTHER_USER)],
     ["another box's listing", packPurchase(PACK_META, HOLDER, BOX_ID + 1)],
   ])('a key shaped like a first box is not guaranteed on %s', async (_label, purchase) => {
