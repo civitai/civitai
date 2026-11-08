@@ -75,11 +75,11 @@ export const appContentRating = (app: Pick<CatalogApp, 'listing' | 'block'>): st
 export type EntitySets = Map<string, Entity[]>;
 
 /**
- * The entity schemas that carry an app's content, and so its rating: each of their streams is
- * narrowed per audience ({@link readableBy}) and its cursors are bound to the audience
- * (`cursor.ts`). `registry:schema` is one: beside the fixed entity schemas it holds every
- * collection schema, whose URN names its app and whose body is that app's declared schema. The
- * one schema left out, `service`, is the runtime record, which belongs to no app.
+ * The entity schemas that carry an app's content, and so its rating, and are narrowed per
+ * audience (`audience.ts` describes how). `registry:schema` is one: beside the fixed entity
+ * schemas it holds every collection schema, whose URN names its app and whose body is that app's
+ * declared schema. The one schema left out, `service`, is the runtime record, which belongs to no
+ * app.
  */
 export const RATED_SCHEMAS: ReadonlySet<string> = new Set([
   APP_SCHEMA,
@@ -110,16 +110,19 @@ function appUrnOf(schema: string, e: Entity): unknown {
 }
 
 /**
- * The entities of `schema` that `audience` may read, from one read of every entity. An app, its
- * releases and its collection schemas carry the rating the app entity publishes
- * ({@link appContentRating}, the rating the document streams narrow by) and are admitted by one
- * predicate over it ({@link audienceAdmits}), so a subscription is sent an app's entities exactly
- * when it is sent its documents. An entity whose app entity is not in the read has no rating to
- * admit, so it is not sent. On the schema stream the fixed entity schemas are sent to everyone.
- * An app's `forkOf` names another app: it is dropped from the body sent to an audience that may
- * not read that app (the entity's `rev` is that body's, so a re-rating of the parent reaches
- * the fork's subscribers as an upsert with or without it). A schema outside
- * {@link RATED_SCHEMAS} is returned whole.
+ * The entities of `schema` that `audience` may read, from one read of every entity: the narrowing
+ * `audience.ts` describes, applied to the catalog. Specific to this function:
+ *   - the rating an app, its releases and its collection schemas are admitted by is the
+ *     `contentRating` of the app entity's body ({@link appContentRating}, the rating the document
+ *     streams narrow by too);
+ *   - an entity whose app entity is not in the read has no rating to admit, so it is not sent;
+ *   - on the schema stream the fixed entity schemas are sent to everyone;
+ *   - an app's `forkOf` names another app: it is dropped from the body sent to an audience that
+ *     may not read that app (the entity's `rev` is that body's, so a re-rating of the parent
+ *     reaches the fork's subscribers as an upsert with or without it, and an entity whose body
+ *     differs per audience has a rev per audience);
+ *   - a schema outside {@link RATED_SCHEMAS} is returned whole.
+ * Pure; the polling adapter memoizes it per read (`createReadableMemo` in `cursor.ts`).
  */
 export function readableBy(sets: EntitySets, schema: string, audience: Audience): Entity[] {
   const all = sets.get(schema) ?? [];
@@ -288,4 +291,22 @@ export function buildEntities(
     );
   }
   return sets;
+}
+
+/**
+ * {@link buildEntities} once per catalog read: while `readApps` returns the same apps (a shared
+ * read, `sharedRead` in `cursor.ts`), every call returns the same sets, so the polls of every
+ * subscription share one build and one narrowing per audience (`createReadableMemo`). Only the
+ * latest build is held.
+ */
+export function buildEntitiesPerRead(
+  readApps: () => Promise<readonly CatalogApp[]>,
+  opts: Parameters<typeof buildEntities>[1]
+): () => Promise<EntitySets> {
+  let last: { apps: readonly CatalogApp[]; sets: EntitySets } | null = null;
+  return async () => {
+    const apps = await readApps();
+    if (last?.apps !== apps) last = { apps, sets: buildEntities(apps, opts) };
+    return last.sets;
+  };
 }

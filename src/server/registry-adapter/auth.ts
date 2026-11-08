@@ -98,6 +98,16 @@ export async function authenticate(
 /**
  * How often an open stream's token is re-verified, on average: each wait is drawn from ±20% of
  * it, so streams opened in a burst do not re-check the database in a burst.
+ *
+ * Each open stream re-checks its own token; the result is deliberately not cached per token. A
+ * re-check is the site's bearer lookup (`getSessionFromBearerToken`): for an OAuth access token,
+ * one indexed read of the key row (such tokens bypass the site's key cache), one session read and
+ * one consent read, every ~5 minutes per stream. That is a few reads per second at thousands of
+ * open streams, and the lookup is what notices a revocation, a ban or a changed browsing setting.
+ * A per-token cache would save reads only for a token holding several streams at once, and would
+ * have to stay shorter than this interval to keep the same revocation bound, so it buys little and
+ * adds a second place where staleness could hide. Revisit if one token commonly holds many
+ * streams.
  */
 export const TOKEN_RECHECK_MS = 5 * 60 * 1000;
 const RECHECK_JITTER = 0.2;

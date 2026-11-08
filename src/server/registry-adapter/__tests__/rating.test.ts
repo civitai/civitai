@@ -4,7 +4,11 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import type { Principal, Recheck } from '~/server/registry-adapter/auth';
-import { ANONYMOUS_AUDIENCE, audienceForUser } from '~/server/registry-adapter/audience';
+import {
+  ANONYMOUS_AUDIENCE,
+  audienceAdmits,
+  audienceForUser,
+} from '~/server/registry-adapter/audience';
 import { watchPrincipal } from '~/server/registry-adapter/auth';
 import { abortableSleep, createPollingAdapter } from '~/server/registry-adapter/cursor';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
@@ -297,50 +301,73 @@ describe('🔴 a document stream carries an app’s documents only to a token th
     expect(res.text.includes(DOC)).toBe(sent);
   });
 
+  // A rating this source does not know may be a mature one, so it fails closed: only an audience
+  // that may read R and X is sent the app's documents.
+  it.each([
+    [null, 'unrated', false],
+    ['r-token', 'unrated', false],
+    ['x-off-token', 'unrated', false],
+    ['x-token', 'unrated', true],
+    [null, '', false],
+    ['x-token', '', true],
+  ])(
+    'token %s, app rated %j (not a known rating): documents sent = %s',
+    async (token, rating, sent) => {
+      const port = await httpServer(source({ rating }).adapter);
+      const res = await get(port, q(NOTES), token ? bearer(token) : {});
+      expect(res.status).toBe(200);
+      expect(events(res.text)).toEqual(sent ? ['upsert', 'live'] : ['live']);
+      expect(res.text.includes(DOC)).toBe(sent);
+    }
+  );
+
+  // Each re-rating below is made when the stream reaches `live`, from the reader's own progress,
+  // never on a wall-clock timer: the snapshot is the old rating's, and every poll after `live`
+  // reads the new one.
   it('🔴 an app re-rated upward past what the token may read: its documents arrive as deletes', async () => {
     const world = { rating: 'r' };
     const port = await httpServer(source(world).adapter);
-    const rerate = setTimeout(() => (world.rating = 'x'), 50);
-    try {
-      const res = await get(port, q(NOTES), bearer('r-token'), (t) => t.includes('event: delete'));
-      expect(events(res.text)).toEqual(['upsert', 'live', 'delete']);
-      expect(res.text).toContain(`data: {"urn":"${DOC}"`);
-    } finally {
-      clearTimeout(rerate);
-    }
+    const res = await get(port, q(NOTES), bearer('r-token'), (t) => {
+      if (t.includes('event: live')) world.rating = 'x';
+      return t.includes('event: delete');
+    });
+    expect(events(res.text)).toEqual(['upsert', 'live', 'delete']);
+    expect(res.text).toContain(`data: {"urn":"${DOC}"`);
   });
 
   it('positive control: the same re-rating leaves an X token’s stream alone', async () => {
     const world = { rating: 'r' };
-    const port = await httpServer(source(world).adapter);
-    const rerate = setTimeout(() => (world.rating = 'x'), 50);
-    try {
-      // Read for long enough that the re-rating has been polled many times over (poll is 5ms).
-      const started = Date.now();
-      const res = await get(
-        port,
-        q(NOTES),
-        bearer('x-token'),
-        (t) => t.includes('event: delete') || Date.now() - started > 400
-      );
-      expect(events(res.text).slice(0, 2)).toEqual(['upsert', 'live']);
-      expect(events(res.text)).not.toContain('delete');
-    } finally {
-      clearTimeout(rerate);
-    }
+    const { adapter, cat } = source(world);
+    const port = await httpServer(adapter);
+    // Re-rated at `live`; once the stream carries the edit made after that, edit again. The poll
+    // that sends the second edit began after the first edit was received, so after the re-rating:
+    // reaching it proves the stream was polled under the new rating, with no clock involved.
+    let step = 0;
+    const res = await get(port, q(NOTES), bearer('x-token'), (t) => {
+      if (step === 0 && t.includes('event: live')) {
+        step = 1;
+        world.rating = 'x';
+        edit(cat, 'second');
+      }
+      if (step === 1 && t.includes('"second"')) {
+        step = 2;
+        edit(cat, 'third');
+      }
+      return t.includes('"third"') || t.includes('event: delete');
+    });
+    expect(events(res.text)).toEqual(['upsert', 'live', 'upsert', 'upsert']);
+    expect(res.text).toContain('"third"');
   });
 
   it('an app re-rated down to one the token may read: its documents arrive as upserts', async () => {
     const world = { rating: 'x' };
     const port = await httpServer(source(world).adapter);
-    const rerate = setTimeout(() => (world.rating = 'r'), 50);
-    try {
-      const res = await get(port, q(NOTES), bearer('r-token'), (t) => t.includes('event: upsert'));
-      expect(events(res.text)).toEqual(['live', 'upsert']);
-      expect(res.text).toContain(DOC);
-    } finally {
-      clearTimeout(rerate);
-    }
+    const res = await get(port, q(NOTES), bearer('r-token'), (t) => {
+      if (t.includes('event: live')) world.rating = 'r';
+      return t.includes('event: upsert');
+    });
+    expect(events(res.text)).toEqual(['live', 'upsert']);
+    expect(res.text).toContain(DOC);
   });
 });
 
@@ -1003,5 +1030,72 @@ describe('🔴 a fork names its parent only to an audience that may read the par
     });
     expect(afterLive(res.text).map((s) => `${s.event} ${s.urn}`)).toEqual([`upsert ${PARENT}`]);
     expect(forkBody(res.text).forkOf).toBe(PARENT);
+  });
+});
+
+describe('🔴 audienceAdmits fails closed on a rating this source does not know', () => {
+  const R_AUDIENCE = audienceForUser({ showNsfw: true, browsingLevel: UP_TO_R });
+  const audiences = { anonymous: ANONYMOUS_AUDIENCE, r: R_AUDIENCE, x: X_AUDIENCE };
+  it.each<[string | null | undefined, boolean, boolean, boolean]>([
+    // [rating, anonymous, r, x]
+    ['g', true, true, true],
+    ['pg13', true, true, true],
+    ['PG', true, true, true],
+    ['r', false, true, true],
+    ['R', false, true, true],
+    ['x', false, false, true],
+    [null, false, false, true],
+    [undefined, false, false, true],
+    ['', false, false, true],
+    ['unrated', false, false, true],
+    ['pg-13', false, false, true],
+  ])('rating %j: anonymous %s, R %s, X %s', (rating, anon, r, x) => {
+    expect([
+      audienceAdmits(audiences.anonymous, rating),
+      audienceAdmits(audiences.r, rating),
+      audienceAdmits(audiences.x, rating),
+    ]).toEqual([anon, r, x]);
+  });
+});
+
+describe('🔴 an app with no rating reaches only an audience that may read every rating', () => {
+  // An off-site listing whose rating was never set: no block to fall back to, so the app entity's
+  // `contentRating` is null.
+  const unrated = (slug: string, rating: string | null): CatalogApp => {
+    const base = app('pg');
+    return {
+      listing: {
+        ...base.listing,
+        slug,
+        name: slug,
+        kind: 'offsite',
+        contentRating: rating,
+        externalUrl: `https://${slug}.example`,
+      },
+      block: null,
+      approved: [],
+    };
+  };
+  const apps = (rating: string | null) => () =>
+    [listedApp('sun-notes', 'pg'), unrated('tide-log', rating)];
+
+  it.each([
+    [null, false],
+    ['r-token', false],
+    ['x-off-token', false],
+    ['x-token', true],
+  ])('an off-site app rated null, token %s: sent = %s', async (token, sent) => {
+    const port = await httpServer(catalogSource(apps(null)));
+    const res = await get(port, q(APPS), token ? bearer(token) : {});
+    expect(upsertedUrns(res.text)).toEqual(
+      sent ? [urnOfApp('sun-notes'), urnOfApp('tide-log')] : [urnOfApp('sun-notes')]
+    );
+    expect(res.text.includes('tide-log')).toBe(sent);
+  });
+
+  it('positive control: the same off-site app rated pg is sent to anonymous', async () => {
+    const port = await httpServer(catalogSource(apps('pg')));
+    const res = await get(port, q(APPS));
+    expect(upsertedUrns(res.text)).toEqual([urnOfApp('sun-notes'), urnOfApp('tide-log')]);
   });
 });
