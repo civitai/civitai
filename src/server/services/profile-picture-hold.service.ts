@@ -244,7 +244,7 @@ export async function runProfilePictureSync({ limit = 1000 }: { limit?: number }
 
 /**
  * Whether `url` is, or carries the key of, one of this user's images that is Blocked or under any
- * review. Any review, not only csam: refusing on csam alone would tell the owner which kind it is.
+ * review.
  */
 export async function isUnservableOwnImageUrl(userId: number, url: string): Promise<boolean> {
   const urls = [...new Set([url, ...keysIn(url)])];

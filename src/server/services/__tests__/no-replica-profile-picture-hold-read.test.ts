@@ -24,7 +24,7 @@ const SHARED: Record<string, number> = {
   'src/server/services/user.service.ts': 5,
   // isExemptFromAiVerification.
   'src/server/services/image-scan-result.service.ts': 1,
-  // unusedAuthorImage (every caller passes dbWrite or a dbWrite transaction), and the cover check.
+  // unusedAuthorImage and the cover check.
   'src/server/services/article.service.ts': 2,
   // The EXCLUDED reason, a string.
   'src/server/services/personal-data-export/registry.ts': 1,

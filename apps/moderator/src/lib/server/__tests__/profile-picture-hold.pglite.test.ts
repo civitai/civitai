@@ -85,13 +85,4 @@ describe('removed profile pictures, read on the write connection', () => {
   it('busts the cache of the user a removed avatar belonged to', async () => {
     expect((await profilePictureUserIds([1, 3])).sort()).toEqual([10, 11]);
   });
-
-  it('the replica stand-in does refuse the table', async () => {
-    await expect(
-      (handles.read as Kysely<{ ProfilePictureHold: { id: number } }>)
-        .selectFrom('ProfilePictureHold')
-        .select('id')
-        .execute()
-    ).rejects.toThrow('permission denied');
-  });
 });

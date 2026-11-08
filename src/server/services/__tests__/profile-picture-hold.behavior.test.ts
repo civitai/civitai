@@ -625,6 +625,18 @@ describe('flagged, then blocked', () => {
     expect(await holds(HELD_OWNER)).toEqual([{ imageId: avatar(HELD_OWNER), reason: 'flagged' }]);
   });
 
+  it('keeps the blocked record, and drops the flagged one, when an unblock is not put back', async () => {
+    await flagThenBlock(OWNER);
+    await db.query(`UPDATE "User" SET "profilePictureId" = $1 WHERE id = $2`, [
+      OWNER * 100 + 2,
+      OWNER,
+    ]);
+    await unblock(avatar(OWNER));
+    await runProfilePictureSync();
+    expect(await pointer(OWNER)).toBe(OWNER * 100 + 2);
+    expect(await records(OWNER)).toEqual([{ reason: 'blocked', exportable: true }]);
+  });
+
   it('restores on unblock and removes both records', async () => {
     await flagThenBlock(OWNER);
     await unblock(avatar(OWNER));
