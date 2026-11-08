@@ -54,8 +54,9 @@
 --
 -- Readers: none breaks. Every query in this repo that reads `userActivities` names its columns,
 -- except the personal-data export (src/server/services/personal-data-export/sources/clickhouse.ts),
--- which reads `SELECT *` under a name-based deny list: `source` passes that list, so it will appear
--- in the exported account-activity rows once applied.
+-- which reads `SELECT *`. It EXCLUDES `source` by decision (the `drop` list on its
+-- `default.userActivities` entry): on a mute or unmute the column carries the moderation reason, and
+-- the row is exported to its actor. `landingPage` is still exported.
 
 -- No trailing semicolon and nothing after the statement: ClickHouse rejects the file as a
 -- multi-statement query otherwise, so it can be run as-is.
