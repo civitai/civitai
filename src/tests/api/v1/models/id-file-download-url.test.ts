@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { toApiModelFile } from '~/server/common/model-helpers';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { assertDownloadUrlsResolve } from '~/tests/api/v1/download-url-seam.helper';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -419,6 +420,7 @@ describe('GET /api/v1/models/[id] — a Public training dataset', () => {
     sizeKB: 6666,
     hashes: [],
     metadata: {
+      format: 'Other',
       ownRights: true,
       shareDataset: true,
       trainingResults: { version: 2, epochs: [{ epochNumber: 1 }] },
@@ -428,7 +430,8 @@ describe('GET /api/v1/models/[id] — a Public training dataset', () => {
     vi.clearAllMocks();
     mockGetModelsWithVersions.mockImplementation(async ({ input }: any) => {
       const item = modelItem(input.ids[0]);
-      item.modelVersions[0].files = [...FILES, DATASET] as any;
+      // The real narrowing getModelsWithVersions applies to every file.
+      item.modelVersions[0].files = [...FILES, DATASET].map(toApiModelFile) as any;
       return { items: [item] };
     });
   });
@@ -438,7 +441,7 @@ describe('GET /api/v1/models/[id] — a Public training dataset', () => {
   it('is listed without its metadata', async () => {
     const res: any = await invoke('7');
     expect(file(res, 15)).toBeDefined();
-    expect(file(res, 15).metadata ?? {}).toEqual({});
+    expect(file(res, 15).metadata).toEqual({});
   });
 
   it('a model file beside it keeps its metadata', async () => {

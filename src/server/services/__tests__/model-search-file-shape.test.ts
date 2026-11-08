@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { toApiModelFile } from '~/server/common/model-helpers';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 /**
@@ -147,6 +148,7 @@ describe('runModelSearch (GET /api/v1/models) — a Public training dataset', ()
   beforeEach(() => {
     vi.clearAllMocks();
     const item = shapedItem();
+    // The real narrowing getModelsWithVersions applies to every file.
     item.modelVersions[0].files = [
       ...FILES,
       {
@@ -156,19 +158,20 @@ describe('runModelSearch (GET /api/v1/models) — a Public training dataset', ()
         sizeKB: 6666,
         hashes: [],
         metadata: {
+          format: 'Other',
           ownRights: true,
           shareDataset: true,
           trainingResults: { version: 2, epochs: [{ epochNumber: 1 }] },
         },
-      } as any,
-    ];
+      },
+    ].map(toApiModelFile) as any;
     mockGetModelsWithVersions.mockResolvedValue({ items: [item], nextCursor: undefined });
   });
 
   it('is listed without its metadata', async () => {
     const file = (await run()).find((f) => f.id === 15);
     expect(file).toBeDefined();
-    expect(file.metadata ?? {}).toEqual({});
+    expect(file.metadata).toEqual({});
   });
 
   it('a model file beside it keeps its metadata', async () => {
