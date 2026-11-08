@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as GetOrchestratorToken from '~/server/orchestrator/get-orchestrator-token';
 import type * as ServerAuthSession from '~/server/auth/get-server-auth-session';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -129,6 +130,11 @@ beforeEach(() => {
   getOrchestratorToken.mockResolvedValue('orchestrator-token');
 });
 
+const refusedLogs = () =>
+  loggingMock.logToAxiom.mock.calls.filter(
+    ([event]) => (event as { name?: string })?.name === 'orchestrator-endpoint-scope-refused'
+  );
+
 // A key holding AI Services scopes, but not this route's one.
 const otherAIServicesScope = (route: (typeof routes)[number]) =>
   route.scope === TokenScope.AIServicesRead
@@ -136,18 +142,21 @@ const otherAIServicesScope = (route: (typeof routes)[number]) =>
     : TokenScope.AIServicesRead;
 
 describe.each(routes)('/api/$name', (route) => {
-  it('serves a cookie session', async () => {
+  it('serves a cookie session, without a refused log', async () => {
     expect((await call(route)).status).toBe(200);
     expect(serviceCalls()).toBe(1);
+    expect(refusedLogs()).toHaveLength(0);
   });
 
-  it('serves a full-scope key', async () => {
+  it('serves a full-scope key, without a refused log', async () => {
     expect((await call(route, TokenScope.Full)).status).toBe(200);
+    expect(refusedLogs()).toHaveLength(0);
   });
 
-  it('serves a key holding only the route scope', async () => {
+  it('serves a key holding only the route scope, without a refused log', async () => {
     expect((await call(route, route.scope)).status).toBe(200);
     expect(serviceCalls()).toBe(1);
+    expect(refusedLogs()).toHaveLength(0);
   });
 
   it('refuses a key without the route scope, before fetching a token', async () => {
@@ -155,10 +164,33 @@ describe.each(routes)('/api/$name', (route) => {
     expect(status).toBe(403);
     expect(getOrchestratorToken).not.toHaveBeenCalled();
     expect(serviceCalls()).toBe(0);
+    expect(refusedLogs()).toHaveLength(1);
   });
 
-  it('refuses a key holding only the other AI Services scope', async () => {
-    expect((await call(route, otherAIServicesScope(route))).status).toBe(403);
+  it('refuses a key holding only the other AI Services scope and logs it, without user, key or address', async () => {
+    const tokenScope = otherAIServicesScope(route);
+    expect((await call(route, tokenScope)).status).toBe(403);
+    const logs = refusedLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0][0]).toEqual({
+      name: 'orchestrator-endpoint-scope-refused',
+      type: 'info',
+      route: `/api/${route.name}`,
+      requiredScope: route.scope,
+      tokenScope,
+      apiKeyType: ApiKeyType.User,
+      client: 'personal-key',
+      clientIdHash: undefined,
+    });
+  });
+
+  it('logs a refused OAuth client by a hash of its id, not the id', async () => {
+    const clientId = 'oauth-client-123';
+    await call(route, otherAIServicesScope(route), { type: 'oauth', id: clientId });
+    const [[event]] = refusedLogs() as [[{ client: string; clientIdHash: string }]];
+    expect(event.client).toBe('oauth');
+    expect(event.clientIdHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(JSON.stringify(event)).not.toContain(clientId);
   });
 
   it('answers 403 when the orchestrator token is refused for the caller', async () => {
@@ -167,5 +199,6 @@ describe.each(routes)('/api/$name', (route) => {
     );
     expect((await call(route, route.scope)).status).toBe(403);
     expect(serviceCalls()).toBe(0);
+    expect(refusedLogs()).toHaveLength(0);
   });
 });

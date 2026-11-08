@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { RESTRICTED_ACCOUNT_MESSAGE } from '~/server/common/content-restriction';
 import { env } from '~/env/server';
-import { getRequestCredential } from '~/server/auth/request-credential';
+import { credentialLogFields, getRequestCredential } from '~/server/auth/request-credential';
 import { dbWrite } from '~/server/db/client';
 import { observeTokenIdentityMismatch } from '~/server/orchestrator/orchestrator-identity-metrics';
 import { getOrMintCachedToken } from '~/server/orchestrator/orchestrator-token-cache';
@@ -209,6 +209,14 @@ async function assertCredentialMayUseOrchestrator(userId: number, ctx?: Context)
     .catch(() => undefined);
   if (account !== undefined && !isSystemAccountMeta(account?.meta)) return;
 
+  // No user, key or IP.
+  logToAxiom({
+    name: 'orchestrator-token-system-read-refused',
+    type: 'info',
+    route: ctx.req.url?.split('?')[0],
+    accountUnreadable: account === undefined,
+    ...credentialLogFields(credential),
+  }).catch(() => undefined);
   throw new TRPCError({
     code: 'FORBIDDEN',
     message: 'Your API key does not have the required scope for this action',

@@ -13,7 +13,7 @@ import { checkNotUpToDate } from '~/server/db/db-helpers';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { getRequestCredential } from '~/server/auth/request-credential';
+import { credentialLogFields, getRequestCredential } from '~/server/auth/request-credential';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 import { generateSecretHash } from '~/server/utils/key-generator';
@@ -935,6 +935,14 @@ export function OrchestratorEndpoint(
       credential.tokenScope !== TokenScope.Full &&
       !Flags.hasFlag(credential.tokenScope, requiredScope)
     ) {
+      // No user, key or IP.
+      logToAxiom({
+        name: 'orchestrator-endpoint-scope-refused',
+        type: 'info',
+        route: req.url?.split('?')[0],
+        requiredScope,
+        ...credentialLogFields(credential),
+      }).catch(() => undefined);
       return res
         .status(403)
         .json({ error: 'Your API key does not have the required scope for this action' });

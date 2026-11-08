@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SYSTEM_ACCOUNT_META } from '@civitai/auth';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ApiKeyService from '~/server/services/api-key.service';
@@ -56,6 +57,10 @@ const cachedStanding = () =>
     data: { muted: false, banned: false, exists: true },
     cachedAt: Date.now(),
   } as never);
+const refusedLogs = () =>
+  loggingMock.logToAxiom.mock.calls.filter(
+    ([event]) => (event as { name?: string })?.name === 'orchestrator-token-system-read-refused'
+  );
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -77,6 +82,7 @@ describe('the orchestrator token for a system account', () => {
     await expect(
       getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(refusedLogs()).toHaveLength(1);
     expect(getTemporaryUserApiKey).not.toHaveBeenCalled();
   });
 
@@ -84,14 +90,17 @@ describe('the orchestrator token for a system account', () => {
     // Cached by an earlier call made with a write key.
     redisMock.sysRedis.hGet.mockResolvedValue(null as never);
     await expect(getOrchestratorToken(USER, keyCaller(WRITE_SCOPE))).resolves.toBe('fresh-token');
+    expect(refusedLogs()).toHaveLength(0);
     redisMock.sysRedis.hGet.mockResolvedValue(encodeOwnedToken(USER, 'cached-token') as never);
     await expect(getOrchestratorToken(USER, keyCaller(WRITE_SCOPE))).resolves.toBe('cached-token');
+    expect(refusedLogs()).toHaveLength(0);
     redisMock.sysRedis.hGet.mockClear();
     getTemporaryUserApiKey.mockClear();
 
     await expect(
       getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(refusedLogs()).toHaveLength(1);
     expect(redisMock.sysRedis.hGet).not.toHaveBeenCalled();
     expect(getTemporaryUserApiKey).not.toHaveBeenCalled();
   });
@@ -103,13 +112,32 @@ describe('the orchestrator token for a system account', () => {
     await expect(
       getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(refusedLogs()).toHaveLength(1);
+    expect(refusedLogs()[0][0]).toMatchObject({ accountUnreadable: true });
     expect(getTemporaryUserApiKey).not.toHaveBeenCalled();
+  });
+
+  it('logs a refusal with its route and credential kind, without user, key or address', async () => {
+    await expect(
+      getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(refusedLogs()[0][0]).toEqual({
+      name: 'orchestrator-token-system-read-refused',
+      type: 'info',
+      route: '/api/trpc/orchestrator.getStatus',
+      accountUnreadable: false,
+      tokenScope: TokenScopePresets.ReadOnly,
+      apiKeyType: ApiKeyType.User,
+      client: 'personal-key',
+      clientIdHash: undefined,
+    });
   });
 
   it('is refused when the session copy has no meta', async () => {
     await expect(
       getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly, { sessionMeta: undefined }))
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(refusedLogs()).toHaveLength(1);
   });
 
   it('is refused when the account marker is stored as a string', async () => {
@@ -117,20 +145,24 @@ describe('the orchestrator token for a system account', () => {
     await expect(
       getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(refusedLogs()).toHaveLength(1);
   });
 
   it('is issued to a key with AI Services write scope', async () => {
     await expect(getOrchestratorToken(USER, keyCaller(WRITE_SCOPE))).resolves.toBe('fresh-token');
+    expect(refusedLogs()).toHaveLength(0);
   });
 
   it('is issued to a full-scope key', async () => {
     await expect(getOrchestratorToken(USER, keyCaller(TokenScope.Full))).resolves.toBe(
       'fresh-token'
     );
+    expect(refusedLogs()).toHaveLength(0);
   });
 
   it('is issued to server-side calls with no request', async () => {
     await expect(getOrchestratorToken(USER)).resolves.toBe('fresh-token');
+    expect(refusedLogs()).toHaveLength(0);
   });
 });
 
@@ -143,6 +175,7 @@ describe('the orchestrator token for an ordinary account', () => {
     await expect(getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))).resolves.toBe(
       'fresh-token'
     );
+    expect(refusedLogs()).toHaveLength(0);
   });
 
   it('is issued to a read-only key without reading the account, when the session copy says ordinary', async () => {
@@ -150,10 +183,12 @@ describe('the orchestrator token for an ordinary account', () => {
     await expect(getOrchestratorToken(USER, keyCaller(TokenScopePresets.ReadOnly))).resolves.toBe(
       'fresh-token'
     );
+    expect(refusedLogs()).toHaveLength(0);
     expect(dbMock.dbWrite.user.findUnique).not.toHaveBeenCalled();
   });
 
   it('is issued to a session', async () => {
     await expect(getOrchestratorToken(USER, sessionCaller())).resolves.toBe('fresh-token');
+    expect(refusedLogs()).toHaveLength(0);
   });
 });
