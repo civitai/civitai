@@ -130,7 +130,7 @@ describe('the older non-commercial base models', () => {
     );
     expect(getEffectiveDifferentLicense(true, 'Flux.2 D')).toBe(false);
     expect(sameLicenseBaseModels).toContain('Flux.2 D');
-    expect(sameLicenseBaseModels).not.toContain('Flux.1 D');
-    expect(getEffectiveDifferentLicense(true, 'Flux.1 D')).toBe(true);
+    expect(sameLicenseBaseModels).not.toContain('SDXL 1.0');
+    expect(getEffectiveDifferentLicense(true, 'SDXL 1.0')).toBe(true);
   });
 });

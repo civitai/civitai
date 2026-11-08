@@ -32,6 +32,7 @@
   import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
   import SampleGrid from '$lib/components/SampleGrid.svelte';
   import GradientTile from '$lib/components/GradientTile.svelte';
+  import { TRAINING_REVIEW_COPY } from '@civitai/shared/training-review';
   import {
     canDeleteRun,
     RUN_STATE_BADGE,
@@ -380,6 +381,14 @@
                 class="flex items-center gap-2 rounded-md border border-red-500/20 bg-red-500/5 px-3 py-4 text-xs text-dark-2"
               >
                 <IconAlertTriangle size={15} stroke={2} class="shrink-0 text-red-400" /> This run didn't complete.
+              </div>
+            {:else if r.state === 'review' || r.state === 'rejected' || r.state === 'unreviewed'}
+              <div class="rounded-md border border-dark-4 bg-dark-7 px-3 py-4 text-xs text-dark-2">
+                {r.state === 'review'
+                  ? TRAINING_REVIEW_COPY.pendingTitle
+                  : r.state === 'rejected'
+                    ? TRAINING_REVIEW_COPY.notApprovedTitle
+                    : TRAINING_REVIEW_COPY.unreviewedTitle}. Open the run for details.
               </div>
             {:else if r.sampleUrls.length > 0 && r.media !== 'audio'}
               <SampleGrid urls={r.sampleUrls} cols={4} isVideo={r.isVideo} />

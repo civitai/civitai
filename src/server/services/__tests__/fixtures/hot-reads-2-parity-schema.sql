@@ -51,6 +51,7 @@ CREATE TABLE "hot_reads_2_parity"."User" (
   "muted"                   BOOLEAN      NOT NULL DEFAULT false,
   "bannedAt"                TIMESTAMP(3),
   "excludeFromLeaderboards" BOOLEAN      NOT NULL DEFAULT false,
+  "flags"                   INTEGER      NOT NULL DEFAULT 0,
   "profilePictureId"        INTEGER,
   "settings"                JSONB        DEFAULT '{}',
   "publicSettings"          JSONB        DEFAULT '{}'

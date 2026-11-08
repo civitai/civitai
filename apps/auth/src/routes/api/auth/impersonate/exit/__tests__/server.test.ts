@@ -59,7 +59,7 @@ describe('POST /api/auth/impersonate/exit', () => {
       (r) => r.status,
       (e: { status: number }) => e.status
     );
-    expect(status).toBe(403);
+    expect(status).toBe(410);
     expect(h.mintUserSession).not.toHaveBeenCalled();
     expect(h.invalidateUserSessions).toHaveBeenCalledWith(100);
   });

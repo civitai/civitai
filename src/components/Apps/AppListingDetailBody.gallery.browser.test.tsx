@@ -165,6 +165,7 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     installCount: 4213,
+    openCount: 2718,
     // Default: no public source repo → the Details rail renders no `Source` row.
     sourceRepoUrl: null,
     betaMessage: null,

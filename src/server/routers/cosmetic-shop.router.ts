@@ -15,6 +15,7 @@ import {
   upsertCosmeticInput,
   upsertCosmeticShopItemInput,
   upsertCosmeticShopSectionInput,
+  shopItemsFeaturedHistoryInput,
 } from '~/server/schema/cosmetic-shop.schema';
 import {
   addShopItemToSection,
@@ -23,6 +24,7 @@ import {
   getPaginatedCosmeticShopItems,
   getSectionById,
   getShopItemById,
+  getEventTagSuggestions,
   getShopItemEventTags,
   getShopItemSections,
   getShopSections,
@@ -38,6 +40,7 @@ import {
   upsertCosmeticShopItem,
   upsertCosmeticShopSection,
 } from '~/server/services/cosmetic-shop.service';
+import { getShopItemsFeaturedHistory } from '~/server/services/cosmetic-shop-featured-log.service';
 import {
   moderatorProcedure,
   protectedProcedure,
@@ -93,10 +96,11 @@ export const cosmeticShopRouter = router({
       return upsertCosmeticShopSection({
         ...input,
         userId: ctx.user.id,
+        tracker: ctx.track,
       });
     }),
-  deleteShopSection: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => {
-    return deleteCosmeticShopSection(input);
+  deleteShopSection: moderatorProcedure.input(getByIdSchema).mutation(({ input, ctx }) => {
+    return deleteCosmeticShopSection({ ...input, tracker: ctx.track });
   }),
   updateSectionsOrder: moderatorProcedure
     .input(updateCosmeticShopSectionsOrderInput)
@@ -108,14 +112,18 @@ export const cosmeticShopRouter = router({
     .query(({ input }) => getShopItemSections(input)),
   addShopItemToSection: moderatorProcedure
     .input(shopItemSectionInput)
-    .mutation(({ input }) => addShopItemToSection(input)),
+    .mutation(({ input, ctx }) => addShopItemToSection({ ...input, tracker: ctx.track })),
   removeShopItemFromSection: moderatorProcedure
     .input(shopItemSectionInput)
-    .mutation(({ input }) => removeShopItemFromSection(input)),
+    .mutation(({ input, ctx }) => removeShopItemFromSection({ ...input, tracker: ctx.track })),
+  getShopItemsFeaturedHistory: moderatorProcedure
+    .input(shopItemsFeaturedHistoryInput)
+    .query(({ input }) => getShopItemsFeaturedHistory(input)),
   // Event tags are moderator data: they decide what an official section sells.
   getShopItemEventTags: moderatorProcedure
     .input(shopItemSectionInput.pick({ shopItemId: true }))
     .query(({ input }) => getShopItemEventTags(input)),
+  getEventTagSuggestions: moderatorProcedure.query(() => getEventTagSuggestions()),
   setShopItemEventTags: moderatorProcedure
     .input(setShopItemEventTagsInput)
     .mutation(({ input }) => setShopItemEventTags(input)),

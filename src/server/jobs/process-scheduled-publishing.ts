@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
+import { onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { constants, POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 import { uniq, uniqBy } from 'lodash-es';
@@ -36,6 +37,15 @@ const REWARD_SWEEP_LIMIT = 5000;
 // The due selects skip a model a content wipe kept as the go-live statements do, or its side effects
 // (cache busts, index updates) fire again every run on a model that never goes live.
 
+// Backstop for when the scan webhook did not unpublish a failed-scan version first.
+const noFailedScanFileSql = (versionId: string) => Prisma.sql`
+  NOT EXISTS (
+    SELECT 1 FROM "ModelFile" mf
+    WHERE mf."modelVersionId" = ${Prisma.raw(versionId)}
+      AND (mf."pickleScanResult" = 'Danger' OR mf."virusScanResult" = 'Danger')
+  )
+`;
+
 /** Scheduled models due by `now`. */
 export const scheduledModelsDueSql = (now: Date) => Prisma.sql`
   SELECT id, "userId"
@@ -70,6 +80,7 @@ export const scheduledVersionsDueSql = (now: Date) => Prisma.sql`
     AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
     AND ${notRemovedWithOwnerSql('m.meta')}
     AND EXISTS (SELECT 1 FROM "ModelFile" mf WHERE mf."modelVersionId" = mv.id)
+    AND ${noFailedScanFileSql('mv.id')}
 `;
 
 /** Unpublished posts by the model's owner on a scheduled version due by `now`. */
@@ -83,6 +94,7 @@ export const scheduledPostsDueSql = (now: Date) => Prisma.sql`
     AND m."userId" = p."userId"
     AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
     AND ${notRemovedWithOwnerSql('m.meta')}
+    AND ${noFailedScanFileSql('mv.id')}
 `;
 
 // DB clock, truncated: sync_model_to_metric drops a lastVersionAt later than NOW(), and the
@@ -124,6 +136,7 @@ export const scheduledPostsGoLiveSql = (
     AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
     AND m.status::text NOT IN (${Prisma.join(constants.modPublishOnlyStatuses)})
     AND ${notRemovedWithOwnerSql('m.meta')}
+    AND ${noFailedScanFileSql('mv.id')}
   RETURNING p.id, p."userId"
 `;
 
@@ -143,6 +156,7 @@ export const scheduledVersionsGoLiveSql = (ids: number[], now: Date) => Prisma.s
     AND m.status::text NOT IN (${Prisma.join(constants.modPublishOnlyStatuses)})
     -- A model a content wipe kept goes live only by a moderator's hand.
     AND ${notRemovedWithOwnerSql('m.meta')}
+    AND ${noFailedScanFileSql('mv.id')}
   RETURNING mv.id
 `;
 
@@ -427,6 +441,9 @@ export const processScheduledPublishing = createJob(
     // set also carries normally-published drafts, so anything driven off it has to
     // tolerate being handed the same post id twice.
     const publishedPosts = uniqBy([...flippedPosts, ...newlyLivePosts], 'id');
+    // Before the unguarded engagements: a re-published chapter 1 gets its story spark back.
+    if (publishedPosts.length)
+      void onStorySparkPostsRestored({ postIds: publishedPosts.map((p) => p.id) });
 
     for (const post of publishedPosts) {
       await eventEngine.processEngagement({

@@ -29,6 +29,7 @@ import {
   isHattedEntity,
   isHattedEntityOnceLoaded,
   removeEventPoints,
+  type EventPointGrant,
 } from './award';
 import { isEventPointsEnabledSync } from './enabled';
 import { storySparksScoredKey, utcDay } from './keys';
@@ -152,15 +153,22 @@ const reactionTarget = ({ entityType, entityId, userId }: ReactionInput, time: D
   };
 };
 
-export async function onReactionCreated(input: ReactionInput): Promise<void> {
+/**
+ * Awards the reaction's points. The returned promise resolves with the live grants as soon as they
+ * are known, before the ledger insert, or with none once the award ends without any. Never rejects.
+ */
+export function onReactionCreated(input: ReactionInput): Promise<EventPointGrant[]> {
   const time = new Date();
-  try {
-    const action = reactionTarget(input, time);
-    if (!action || !isHattedEntity(action.entityType, action.entityId)) return;
-    await awardEventPoints([action]);
-  } catch (error) {
-    swallow('event-points:reaction')(error);
-  }
+  return new Promise((resolve) => {
+    const award = async () => {
+      const action = reactionTarget(input, time);
+      if (!action || !isHattedEntity(action.entityType, action.entityId)) return;
+      await awardEventPoints([action], resolve);
+    };
+    award()
+      .catch(swallow('event-points:reaction'))
+      .finally(() => resolve([]));
+  });
 }
 
 export async function onReactionRemoved(input: ReactionInput): Promise<void> {
@@ -229,29 +237,21 @@ const commentAction = (userId: number, { entityType, entityId }: Entity, time: D
   sourceId: `CommentV2:${entityType}:${entityId}:${userId}`,
 });
 
-/**
- * A new comment. Top-level comments on an Image or Article name their entity directly; a v2 reply
- * (`entityType: 'comment'`) is resolved through its thread to the root entity. A CommentV3 comment,
- * reply or not, names its section's entity.
- */
+/** A new comment, reply or not, named by its section's entity. */
 export async function onCommentCreated({
   userId,
   entityType,
   entityId,
-  threadId,
 }: {
   userId: number;
   entityType: string;
   entityId: number;
-  threadId?: number;
 }): Promise<void> {
   const time = new Date();
   try {
     let target: Entity | undefined;
     if (entityType === 'image') target = { entityType: 'Image', entityId };
     else if (entityType === 'article') target = { entityType: 'Article', entityId };
-    else if (entityType === 'comment' && threadId)
-      target = (await commentRoots([threadId])).get(threadId);
     if (!target || !isHattedEntity(target.entityType, target.entityId)) return;
     await awardEventPoints([commentAction(userId, target, time)]);
   } catch (error) {

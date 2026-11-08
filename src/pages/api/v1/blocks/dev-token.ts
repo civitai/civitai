@@ -1,6 +1,7 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { isSystemAccountMeta } from '@civitai/auth';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
@@ -381,6 +382,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     return;
   }
   const user = session.user as SessionUser;
+  // System accounts are service identities, not app developers.
+  if (isSystemAccountMeta(user.meta)) {
+    res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
+    return;
+  }
 
   // 1b. Token-type gate — accept EITHER a personal API key OR a scoped OAuth
   // token, MIRRORING EXACTLY the submit-version route's OAuth gate

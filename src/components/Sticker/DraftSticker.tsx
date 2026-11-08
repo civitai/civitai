@@ -17,6 +17,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import type { ReactNode } from 'react';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
@@ -34,6 +35,7 @@ import { payoutCopy, stickerPurchaseCopy } from '~/components/Sticker/payout-cop
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { DRAFT_STICKER_Z } from '~/components/Sticker/placement-layers';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
+import { StickerMomentControl } from '~/components/Sticker/StickerMomentControl';
 import { purchaseCanBeRetriedFresh, useBuyStickerUses } from '~/components/Sticker/sticker.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import type { StickerTreatment } from '~/components/Sticker/treatments/sticker-treatments';
@@ -43,14 +45,12 @@ import {
   STICKER_PLACEMENT_MIN_OPACITY,
   snapScaleOvershoot,
 } from '~/shared/utils/sticker-placement';
+import { encodeStickerTrack, momentStickerTrack } from '~/shared/utils/sticker-track';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { DraftPurchase, StickerDraft } from '~/store/sticker-placement-draft.store';
-import {
-  pointerToSurfaceFraction,
-  useStickerPlacementDraftStore,
-} from '~/store/sticker-placement-draft.store';
+import { pointerToSurfaceFraction, useDraftStoreHook } from '~/store/sticker-placement-draft.store';
 
 /** Enough for the label and the currency badge at the smallest allowed sticker. */
 const BUY_BUTTON_MIN_WIDTH = 132;
@@ -63,6 +63,13 @@ const BUY_BUTTON_MIN_WIDTH = 132;
 const NOTE_WIDTH = 220;
 
 const HIDDEN = { visibility: 'hidden' } as const;
+
+const ARROW_STEPS: Record<string, [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+};
 
 /** Clear air between the sticker and the chrome, on whichever side it lands. */
 const BUY_BUTTON_GAP = 8;
@@ -153,10 +160,16 @@ export function DraftSticker({
   ownerUsername,
   onGesture,
   onDuplicate,
+  video,
   purchase,
+  commit,
+  artwork,
+  opaque,
+  liftOverTray,
 }: {
   draft: StickerDraft;
-  art: ResolvedSticker;
+  /** The sticker's artwork; or pass `artwork` to draw something else in its place. */
+  art?: ResolvedSticker;
   /** Only decides what is on top. Every draft carries its own controls. */
   selected: boolean;
   dressed: StickerTreatment;
@@ -178,6 +191,8 @@ export function DraftSticker({
    * component cannot.
    */
   onDuplicate?: (id: string) => string | null;
+  /** The video being placed on, which offers pinning to a moment. Absent elsewhere. */
+  video?: HTMLVideoElement | null;
   /**
    * What this draft still has to buy, decided ACROSS the drafts on the image
    * rather than frozen onto this one when it was created.
@@ -188,10 +203,23 @@ export function DraftSticker({
    * the host recomputes it and passes it down.
    */
   purchase?: DraftPurchase;
+  /**
+   * Replaces the note, payout and buy cluster under the toolbar, for a host that
+   * saves the draft through its own mutation (a Hat Turf hat). With it set, the
+   * pricing props are unused and nothing here can charge.
+   */
+  commit?: ReactNode;
+  /** Drawn instead of `art`, filling the draft's width (a Hat Turf hat's fitted art). */
+  artwork?: ReactNode;
+  /** No opacity control: the draft stays fully opaque (a Hat Turf hat). */
+  opaque?: boolean;
+  /** Pull the cluster over the draft when the tray covers it, not only past the clip (a Hat Turf hat). */
+  liftOverTray?: boolean;
 }) {
-  const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
-  const markPaidForUse = useStickerPlacementDraftStore((state) => state.markPaidForUse);
-  const previewing = useStickerPlacementDraftStore((state) => state.previewing);
+  const useStore = useDraftStoreHook();
+  const markPurchased = useStore((state) => state.markPurchased);
+  const markPaidForUse = useStore((state) => state.markPaidForUse);
+  const previewing = useStore((state) => state.previewing);
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
   const queryUtils = trpc.useUtils();
   // 🔴 ONE KEY PER STICKER PER SESSION, HELD IN THE STORE — not one per draft.
@@ -201,8 +229,8 @@ export function DraftSticker({
   // something you only get once; duplicating put those two buttons a click
   // apart. The per-use path below is unaffected: each use genuinely is another
   // purchase.
-  const packPurchaseKey = useStickerPlacementDraftStore((state) => state.packPurchaseKey);
-  const clearPackPurchaseKey = useStickerPlacementDraftStore((state) => state.clearPackPurchaseKey);
+  const packPurchaseKey = useStore((state) => state.packPurchaseKey);
+  const clearPackPurchaseKey = useStore((state) => state.clearPackPurchaseKey);
   const buyUses = useBuyStickerUses();
 
   const buySticker = async () => {
@@ -286,9 +314,9 @@ export function DraftSticker({
     }
   };
 
-  const select = useStickerPlacementDraftStore((state) => state.select);
-  const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
-  const move = useStickerPlacementDraftStore((state) => state.move);
+  const select = useStore((state) => state.select);
+  const cancelDraft = useStore((state) => state.cancelDraft);
+  const move = useStore((state) => state.move);
 
   // `null` until somebody presses the control, which is what lets the default
   // track an offer that arrives with a query rather than freezing whatever was
@@ -341,22 +369,23 @@ export function DraftSticker({
 
   // Both the tray and the carousel's clipped viewport can swallow the cluster,
   // so it moves above the sticker when that is the better of the two positions.
-  // The two standoffs ride along because they come from the same measurement,
-  // and because the side they apply to is decided in the same breath — see the
-  // note above `setPosition` in `measure`.
-  const [{ flipped, below, above }, setPosition] = useState({
+  // The two standoffs and the lift ride along because they come from the same
+  // measurement, and because the side they apply to is decided in the same
+  // breath — see the note above `setPosition` in `measure`.
+  const [{ flipped, below, above, lift }, setPosition] = useState({
     flipped: false,
+    lift: 0,
     below: 0,
     above: 0,
   });
-  const trayElement = useStickerPlacementDraftStore((state) => state.tray);
+  const trayElement = useStore((state) => state.tray);
 
   // `measure` is what the ResizeObserver and the window listener are bound to,
   // so it has to keep its identity across a drag — otherwise re-binding them is
-  // back on the pointermove path, which is the whole problem. It reads the two
+  // back on the pointermove path, which is the whole problem. It reads the
   // values it needs through a ref instead of closing over them.
-  const frame = useRef({ flipped, rotation: draft.rotation });
-  frame.current = { flipped, rotation: draft.rotation };
+  const frame = useRef({ flipped, lift, liftOverTray, rotation: draft.rotation });
+  frame.current = { flipped, lift, liftOverTray, rotation: draft.rotation };
 
   const clip = useRef<HTMLElement | null>(null);
 
@@ -365,8 +394,8 @@ export function DraftSticker({
     const button = buttonRef.current;
     if (!element || !button) return;
 
-    const { flipped, rotation } = frame.current;
-    const tray = useStickerPlacementDraftStore.getState().tray;
+    const { flipped, lift, liftOverTray, rotation } = frame.current;
+    const tray = useStore.getState().tray;
     // 🔴 THE SIDE AND THE TWO STANDOFFS MOVE IN ONE UPDATE. Writing the margin
     // to the node while the class comes from state splits them across a render:
     // the element then carries the standoff for the side it just left, and the
@@ -379,6 +408,8 @@ export function DraftSticker({
       tray: tray?.getBoundingClientRect() ?? null,
       clip: clip.current?.getBoundingClientRect() ?? null,
       flipped,
+      lift,
+      liftOverTray,
       rotation,
       knobOffset: KNOB_OFFSET,
       outset: HANDLE_OUTSET,
@@ -391,11 +422,12 @@ export function DraftSticker({
     setPosition((current) =>
       current.flipped === next.flipped &&
       current.below === next.below &&
-      current.above === next.above
+      current.above === next.above &&
+      current.lift === next.lift
         ? current
         : next
     );
-  }, []);
+  }, [useStore]);
 
   const remeasure = useCallback(() => {
     clip.current = rootRef.current ? nearestClipElement(rootRef.current) : null;
@@ -458,7 +490,7 @@ export function DraftSticker({
       event.preventDefault();
       event.stopPropagation();
 
-      const point = pointerToSurfaceFraction(event.clientX, event.clientY);
+      const point = pointerToSurfaceFraction(event.clientX, event.clientY, useStore);
       const element = rootRef.current;
       if (!point || !element) return;
 
@@ -552,28 +584,52 @@ export function DraftSticker({
   // neighbour under the finger holding it.
   const pressPanel = (event: React.PointerEvent) => {
     event.stopPropagation();
-    if (!useStickerPlacementDraftStore.getState().interaction) select(draft.id);
+    if (!useStore.getState().interaction) select(draft.id);
   };
+
+  // A take in progress, which nothing may place until it is finished.
+  const [capturing, setCapturing] = useState(false);
 
   // One payload for both buttons, so the two offers cannot drift into placing
   // different stickers. `free` is the only thing that differs, and it selects a
   // path rather than asserting anything — the server re-decides all of it.
-  const placementInput = () => ({
-    imageId: draft.imageId,
-    free: placingFree,
-    data: {
-      cosmeticId: draft.cosmeticId,
-      x: draft.x,
-      y: draft.y,
-      scale: snapScaleOvershoot(draft.scale, creatorMaxScale),
-      rotation: draft.rotation,
-      flip: draft.flip,
-      opacity: draft.opacity,
-      // Sent only when there is something to send, so an opened-then-abandoned
-      // field is the same as never opening it.
-      ...(note.trim() ? { comment: note } : {}),
-    },
-  });
+  const placementInput = () => {
+    const scale = snapScaleOvershoot(draft.scale, creatorMaxScale);
+    return {
+      imageId: draft.imageId,
+      free: placingFree,
+      ...(draft.recording?.length
+        ? {
+            track: encodeStickerTrack(
+              draft.recording.map((pose) => ({
+                ...pose,
+                scale: snapScaleOvershoot(pose.scale, creatorMaxScale),
+              }))
+            ),
+          }
+        : draft.moment
+        ? {
+            track: momentStickerTrack(
+              { x: draft.x, y: draft.y, scale, rotation: draft.rotation },
+              draft.moment.startMs,
+              draft.moment.durationMs
+            ),
+          }
+        : {}),
+      data: {
+        cosmeticId: draft.cosmeticId,
+        x: draft.x,
+        y: draft.y,
+        scale,
+        rotation: draft.rotation,
+        flip: draft.flip,
+        opacity: draft.opacity,
+        // Sent only when there is something to send, so an opened-then-abandoned
+        // field is the same as never opening it.
+        ...(note.trim() ? { comment: note } : {}),
+      },
+    };
+  };
 
   /**
    * A second copy of this sticker, already arranged.
@@ -676,22 +732,24 @@ export function DraftSticker({
     </Tooltip>
   );
 
-  const artworkImage = (
-    <EdgeImage
-      src={art.url}
-      alt={`:${art.slug}:`}
-      options={{ width: 512, anim: art.animated, optimized: true }}
-      style={{
-        width: '100%',
-        height: 'auto',
-        display: 'block',
-        pointerEvents: 'none',
-        ...dressed.imageStyle?.detail,
-        ...stickerArtworkStyle(draft),
-      }}
-      draggable={false}
-    />
-  );
+  const artworkImage =
+    artwork ??
+    (art && (
+      <EdgeImage
+        src={art.url}
+        alt={`:${art.slug}:`}
+        options={{ width: 512, anim: art.animated, optimized: true }}
+        style={{
+          width: '100%',
+          height: 'auto',
+          display: 'block',
+          pointerEvents: 'none',
+          ...dressed.imageStyle?.detail,
+          ...stickerArtworkStyle(draft),
+        }}
+        draggable={false}
+      />
+    ));
 
   return (
     /**
@@ -737,6 +795,18 @@ export function DraftSticker({
           touchAction: 'none',
         }}
         onPointerDown={begin('move')}
+        // The keyboard path to the same move: arrows nudge, Shift for a bigger step.
+        tabIndex={0}
+        data-arrow-keys
+        aria-label="Sticker position: arrow keys to move"
+        onKeyDown={(event) => {
+          const step = event.shiftKey ? 0.05 : 0.01;
+          const delta = ARROW_STEPS[event.key];
+          if (!delta) return;
+          event.preventDefault();
+          // The store clamps to the image.
+          move(draft.id, { x: draft.x + delta[0] * step, y: draft.y + delta[1] * step });
+        }}
       >
         {/* The rotated wrapper's own transform makes it a stacking context, so a
             negative z-index here stays behind the sticker without reaching
@@ -803,7 +873,7 @@ export function DraftSticker({
           // no constant is right at both ends of the scale range or at both ends
           // of the rotation range. Set from the same state as the class above,
           // never written to the node separately.
-          ...(flipped ? { marginBottom: above } : { marginTop: below }),
+          ...(flipped ? { marginBottom: above - lift } : { marginTop: below - lift }),
         }}
         // Outside the rotated body but still inside the draft, and the layer
         // starts a move from a press anywhere on it, so without this every press
@@ -830,72 +900,93 @@ export function DraftSticker({
         >
           {duplicateControl}
           {flipControl}
-          {opacityControl}
+          {!opaque && opacityControl}
           {removeControl}
         </div>
 
-        {/* Optional, and folded away until asked for: a field on every draft
-            would sit over the artwork through the whole arrangement, which is
-            the one thing this overlay is trying not to do. */}
-        {writingNote ? (
-          <Textarea
-            autoFocus
-            size="xs"
-            autosize
-            minRows={2}
-            maxRows={4}
-            w={NOTE_WIDTH}
-            className="whitespace-normal"
-            placeholder="Say something with it (optional)"
-            maxLength={STICKER_COMMENT_MAX_LENGTH}
-            value={note}
-            onChange={(event) => setNote(event.currentTarget.value)}
+        {video && (
+          <StickerMomentControl
+            video={video}
+            moment={draft.moment}
+            following={selected}
+            onChange={(moment) => useStore.getState().move(draft.id, { moment })}
+            recorder={{
+              recording: draft.recording,
+              onRecordingChange: (recording) => useStore.getState().move(draft.id, { recording }),
+              pose: () => {
+                const now = useStore.getState().drafts.find(({ id }) => id === draft.id) ?? draft;
+                return { x: now.x, y: now.y, scale: now.scale, rotation: now.rotation };
+              },
+              onPose: (pose) => useStore.getState().move(draft.id, pose),
+              onCapturing: setCapturing,
+            }}
           />
-        ) : (
-          <UnstyledButton
-            className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5 text-xs text-white"
-            onClick={() => setWritingNote(true)}
-          >
-            <IconMessage size={12} />
-            Add a note
-          </UnstyledButton>
         )}
 
-        {/* Above the button in both states: this is who the press underneath it
+        {commit ?? (
+          <>
+            {/* Optional, and folded away until asked for: a field on every draft
+            would sit over the artwork through the whole arrangement, which is
+            the one thing this overlay is trying not to do. */}
+            {writingNote ? (
+              <Textarea
+                autoFocus
+                size="xs"
+                autosize
+                minRows={2}
+                maxRows={4}
+                w={NOTE_WIDTH}
+                className="whitespace-normal"
+                placeholder="Say something with it (optional)"
+                maxLength={STICKER_COMMENT_MAX_LENGTH}
+                value={note}
+                onChange={(event) => setNote(event.currentTarget.value)}
+              />
+            ) : (
+              <UnstyledButton
+                className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5 text-xs text-white"
+                onClick={() => setWritingNote(true)}
+              >
+                <IconMessage size={12} />
+                Add a note
+              </UnstyledButton>
+            )}
+
+            {/* Above the button in both states: this is who the press underneath it
             pays, so it reads as a label on the button rather than a footnote
             after the decision. Capped and truncated because the cluster is
             `w-max`, and its width feeds the overlap test that decides whether
             the button flips above the sticker. */}
-        {payout && (
-          <div className="max-w-[240px] truncate rounded-full bg-black/80 px-2 py-0.5 text-center">
-            <Text size="xs" fw={500} c="yellow.4" className="leading-tight" title={payout.name}>
-              {payout.lead}
-              {payout.name ? ' ' : ''}
-              {payout.name && <span className="font-bold">{payout.name}</span>}
-            </Text>
-          </div>
-        )}
+            {payout && (
+              <div className="max-w-[240px] truncate rounded-full bg-black/80 px-2 py-0.5 text-center">
+                <Text size="xs" fw={500} c="yellow.4" className="leading-tight" title={payout.name}>
+                  {payout.lead}
+                  {payout.name ? ' ' : ''}
+                  {payout.name && <span className="font-bold">{payout.name}</span>}
+                </Text>
+              </div>
+            )}
 
-        {/* Both ways to pay for a spent sticker, where both are open. One use is
+            {/* Both ways to pay for a spent sticker, where both are open. One use is
             what placing this draft actually costs; the pack is the listing's own
             price, offered only while it is genuinely on sale. */}
-        {offersBoth && (
-          <SegmentedControl
-            size="xs"
-            radius="xl"
-            value={buyMode}
-            onChange={(value) => setBuyMode(value as 'use' | 'pack')}
-            data={[
-              { label: '1 use', value: 'use' },
-              {
-                label: packUses == null ? 'Pack' : `${numberWithCommas(packUses)} uses`,
-                value: 'pack',
-              },
-            ]}
-          />
-        )}
+            {offersBoth && (
+              <SegmentedControl
+                size="xs"
+                radius="xl"
+                value={buyMode}
+                onChange={(value) => setBuyMode(value as 'use' | 'pack')}
+                data={[
+                  { label: '1 use', value: 'use' },
+                  {
+                    label: packUses == null ? 'Pack' : `${numberWithCommas(packUses)} uses`,
+                    value: 'pack',
+                  },
+                ]}
+              />
+            )}
 
-        {/* The other two-way choice, and deliberately the same control as the
+            {/* The other two-way choice, and deliberately the same control as the
             one above it: this is the same kind of decision — which of two
             offers you are taking — made a step later, so giving it a different
             shape would make them read as unrelated. They never coexist; the one
@@ -905,104 +996,111 @@ export function DraftSticker({
             deliberately does not. This is the last moment the placer can change
             their mind, and it is what makes auto-accept and review read as two
             different offers rather than a setting nobody can see. */}
-        {!purchase && freeOffer && (
-          <SegmentedControl
-            size="xs"
-            radius="xl"
-            value={payMode}
-            onChange={(value) => setPayChoice(value as 'free' | 'paid')}
-            data={[
-              { label: freeOptionLabel(), value: 'free' },
-              { label: `${numberWithCommas(price)} Buzz`, value: 'paid' },
-            ]}
-          />
-        )}
+            {!purchase && freeOffer && (
+              <SegmentedControl
+                size="xs"
+                radius="xl"
+                value={payMode}
+                onChange={(value) => setPayChoice(value as 'free' | 'paid')}
+                data={[
+                  { label: freeOptionLabel(), value: 'free' },
+                  { label: `${numberWithCommas(price)} Buzz`, value: 'paid' },
+                ]}
+              />
+            )}
 
-        {purchase && effectiveMode === 'pack' && purchase.pack ? (
-          <BuzzTransactionButton
-            size="sm"
-            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            buzzAmount={purchase.pack.unitAmount}
-            accountTypes={purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
-            label={purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
-            loading={purchasingShopItem}
-            onPerformTransaction={buySticker}
-          />
-        ) : purchase ? (
-          // Owned, and out of uses. One use, because one is what placing this
-          // draft spends.
-          <BuzzTransactionButton
-            size="sm"
-            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            buzzAmount={purchase.perUse ?? 0}
-            accountTypes={spendTypes}
-            label="Buy a use"
-            loading={buyUses.isPending}
-            // A sticker sold before per-use pricing existed has no price to
-            // charge, and the listing price is not a stand-in for one. Says so
-            // rather than offering a button that cannot work.
-            error={
-              purchase.perUse == null
-                ? 'This sticker sells no extra uses, and it is not on sale right now'
-                : undefined
-            }
-            onPerformTransaction={buyOneUse}
-          />
-        ) : placingFree ? (
-          // Not a `BuzzTransactionButton`. That control exists to show a price
-          // and check a balance against it, and a free placement has neither —
-          // rendering it at zero would put a currency badge on something nobody
-          // is paying for, and its account picker would ask which Buzz to spend.
-          // The use it does spend is shown by the tray's own count, and refused
-          // by the server independently.
-          <Button
-            size="sm"
-            radius="xl"
-            color="yellow"
-            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            loading={place.isPending}
-            onClick={() => place.mutate(placementInput())}
-          >
-            Place free
-          </Button>
-        ) : (
-          <BuzzTransactionButton
-            size="sm"
-            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            buzzAmount={price}
-            accountTypes={spendTypes}
-            label="Place"
-            loading={place.isPending}
-            onPerformTransaction={() => place.mutate(placementInput())}
-          />
-        )}
+            {purchase && effectiveMode === 'pack' && purchase.pack ? (
+              <BuzzTransactionButton
+                size="sm"
+                style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+                buzzAmount={purchase.pack.unitAmount}
+                accountTypes={purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
+                label={purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
+                loading={purchasingShopItem}
+                onPerformTransaction={buySticker}
+              />
+            ) : purchase ? (
+              // Owned, and out of uses. One use, because one is what placing this
+              // draft spends.
+              <BuzzTransactionButton
+                size="sm"
+                style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+                buzzAmount={purchase.perUse ?? 0}
+                accountTypes={spendTypes}
+                label="Buy a use"
+                loading={buyUses.isPending}
+                // A sticker sold before per-use pricing existed has no price to
+                // charge, and the listing price is not a stand-in for one. Says so
+                // rather than offering a button that cannot work.
+                error={
+                  purchase.perUse == null
+                    ? 'This sticker sells no extra uses, and it is not on sale right now'
+                    : undefined
+                }
+                onPerformTransaction={buyOneUse}
+              />
+            ) : capturing || draft.recording?.length === 0 ? (
+              // Placing now would send the last finished take, or a still sticker before the first.
+              <Text size="xs" c="white" className="rounded-full bg-black/80 px-2 py-0.5">
+                {capturing ? 'Finish recording to place' : 'Record the movement to place'}
+              </Text>
+            ) : placingFree ? (
+              // Not a `BuzzTransactionButton`. That control exists to show a price
+              // and check a balance against it, and a free placement has neither —
+              // rendering it at zero would put a currency badge on something nobody
+              // is paying for, and its account picker would ask which Buzz to spend.
+              // The use it does spend is shown by the tray's own count, and refused
+              // by the server independently.
+              <Button
+                size="sm"
+                radius="xl"
+                color="yellow"
+                style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+                loading={place.isPending}
+                onClick={() => place.mutate(placementInput())}
+              >
+                Place free
+              </Button>
+            ) : (
+              <BuzzTransactionButton
+                size="sm"
+                style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+                buzzAmount={price}
+                accountTypes={spendTypes}
+                label="Place"
+                loading={place.isPending}
+                onPerformTransaction={() => place.mutate(placementInput())}
+              />
+            )}
 
-        {/* Under the button, not above it: it is a consequence of pressing, and
+            {/* Under the button, not above it: it is a consequence of pressing, and
             above the control it read as a description of the option. Same chip
             shape and same triangle as the second-payment warning below, because
             they are the same kind of thing — a cost you meet by pressing.
 
             Only where it is true. On an auto-accept space the placement is live
             the moment it is made, so there is no decline to warn about. */}
-        {placingFree && freeOffer && !freeOffer.instant && (
-          <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
-            <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
-            <Text size="xs" c="gray.3" className="leading-tight">
-              {FREE_REVIEW_CAVEAT}
-            </Text>
-          </div>
-        )}
+            {placingFree && freeOffer && !freeOffer.instant && (
+              <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
+                <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
+                <Text size="xs" c="gray.3" className="leading-tight">
+                  {FREE_REVIEW_CAVEAT}
+                </Text>
+              </div>
+            )}
 
-        {/* The second payment, said before the first one is made. Someone who
+            {/* The second payment, said before the first one is made. Someone who
             buys a sticker to put it here and then meets another price has been
             surprised with their own money. */}
-        {purchase && (
-          <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
-            <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
-            <Text size="xs" c="gray.3" className="leading-tight">
-              Then {numberWithCommas(price)} Buzz to place it
-            </Text>
-          </div>
+            {purchase && (
+              <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
+                <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
+                <Text size="xs" c="gray.3" className="leading-tight">
+                  Then {numberWithCommas(price)} Buzz to place it
+                </Text>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

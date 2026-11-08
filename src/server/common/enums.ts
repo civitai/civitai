@@ -157,6 +157,8 @@ export enum SignalMessages {
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   WorkflowUpdate = 'orchestrator:workflow-update',
+  /** Also sent for a remix-app workflow's steps, so the remix tray need not watch every generation. */
+  RemixAppUpdate = 'orchestrator:remix-app-update',
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
   ResourceLoadUpdate = 'resource-load:update',
@@ -184,6 +186,8 @@ export enum SignalMessages {
   EventPointsHat = 'event-points:hat',
   EventPointsTeams = 'event-points:teams',
   EventPointsOwner = 'event-points:owner',
+  // To one user only: their own live total, while they watch it (watch.ts selfWatchMember).
+  EventPointsSelf = 'event-points:self',
   EventPointsTurf = 'event-points:turf',
 }
 

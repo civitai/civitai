@@ -130,6 +130,15 @@ describe('who is in Hat Turf', () => {
     expect(await inTurf(OPTED_IN)).toBe(true);
   });
 
+  // The detail invite opens by itself only for someone who never joined; a leaver is not nagged.
+  it('only someone who joined and then left is a leaver', async () => {
+    const left = async (userId: number) => (await getTurfStock('e', userId)).left;
+    expect(await left(OPTED_OUT)).toBe(true);
+    expect(await left(NEVER_SET)).toBe(false);
+    expect(await left(OPTED_IN)).toBe(false);
+    expect(await left(NO_HAT)).toBe(false);
+  });
+
   // Deliberate: turf is played on anyone's image; an owner need not join. Gating on the owner again
   // is a product decision for the event owner, not a code cleanup.
   it('every visible image is open, whatever its owner chose', async () => {

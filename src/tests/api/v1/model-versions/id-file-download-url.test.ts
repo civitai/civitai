@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import { assertDownloadUrlsResolve } from '~/tests/api/v1/download-url-seam.helper';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -41,6 +42,12 @@ vi.mock('~/server/db/client', () => {
   // client; a partial mock makes Vitest throw on the first one it can't find.
   return { dbRead: stub, dbWrite: stub, dbKV: stub, dbReadLong: stub, dbReadReplica: stub };
 });
+// The metric-privacy read (`prepareModelVersionResponse`) is a Kysely statement; no row is a version
+// with no privacy inputs, as the Prisma `null` was.
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getModelVersionPrivacyRow: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/model.service', () => ({ getVaeFiles: mockGetVaeFiles }));
 vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersion: mockGetImages,

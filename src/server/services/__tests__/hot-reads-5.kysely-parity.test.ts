@@ -5,6 +5,7 @@ import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
+import { readTaggedGolden } from '~/server/db/__tests__/tagged-golden';
 import {
   compiledRelations,
   declaredViews,
@@ -14,28 +15,18 @@ import {
 } from '~/server/db/__tests__/no-view-ledger';
 import {
   countUnclaimedPrizesViaKysely,
-  countUnclaimedPrizesViaPrisma,
   readDismissedAnnouncementIdsViaKysely,
-  readDismissedAnnouncementIdsViaPrisma,
   readHomeBlockViaKysely,
   readHomeBlockViaPrisma,
   readImageNsfwLevelAndOwnerViaKysely,
-  readImageNsfwLevelAndOwnerViaPrisma,
   readImagePostIdViaKysely,
   readImageReactionIdViaKysely,
-  readImageReactionIdViaPrisma,
   readKeyValueViaKysely,
-  readKeyValueViaPrisma,
   readModelMetaViaKysely,
-  readModelMetaViaPrisma,
   readModelVersionForFileViaKysely,
-  readModelVersionForFileViaPrisma,
   readModelVersionIdsViaKysely,
-  readModelVersionIdsViaPrisma,
   readPostCollaboratorsViaKysely,
-  readPostCollaboratorsViaPrisma,
   readPostModel3dViaKysely,
-  readPostModel3dViaPrisma,
   readUserResourceReviewsViaKysely,
   readUserResourceReviewsViaPrisma,
   type DismissedAnnouncementIdsInput,
@@ -45,20 +36,24 @@ import {
 import { DomainColor, ReviewReactions } from '~/shared/utils/prisma/enums';
 
 /**
- * Parity gate for the reads behind `kysely-hot-reads-5`. Both paths run against the same rows in
- * the same database and must return the same value, `toStrictEqual`: the same keys in the same
- * order, timestamps as UTC Dates, enums as strings, JSON as parsed values, NULL as `null`, counts
- * as numbers. A read with no `orderBy` (the dismissed ids, the collaborators, the version ids, the
- * reviews) is unordered on both sides, so both are compared sorted.
+ * The hot-reads-5 Kysely reads (hot-reads-5.reads.ts). Each must return, `toStrictEqual`, the value
+ * the Prisma read it replaced returned for the same rows: the same keys in the same order,
+ * timestamps as UTC Dates, enums as strings, JSON as parsed values, NULL as `null`, counts as
+ * numbers. A read with no `orderBy` (the dismissed ids, the collaborators, the version ids, the
+ * reviews) is unordered, so it is compared sorted.
  *
- * Every branch the twins map is a case with literal fixtures: a missing row, a NULL column, a NULL
+ * Every branch a read maps is a case with literal fixtures: a missing row, a NULL column, a NULL
  * relation, an orphaned relation, each filter and each enum the reads return.
  *
- * The Prisma side of each read is the reader the service runs (hot-reads-5.reads.ts), with one
- * exception: the `reaction.toggle` access check reads the whole image row through Prisma and keeps
- * its `postId`, and this fixture holds only some Image columns, so that read is compared against
- * the Prisma read of the `postId` column alone (`readImagePostIdViaPrisma` returns exactly that
- * column of that row).
+ * Those values are fixtures/hot-reads-5-golden.json: the Prisma reads' output for these same
+ * fixture rows. A change to the fixture rows needs the golden re-derived by hand.
+ *
+ * Three reads are still compared live, because their Prisma side still serves a path: the home
+ * block (`readHomeBlockViaPrisma`, for a call with no `id`), a user's reviews
+ * (`readUserResourceReviewsViaPrisma`, inside a transaction), and the image `postId` of the
+ * `reaction.toggle` access check. That check reads the whole image row through Prisma and keeps its
+ * `postId`; this fixture holds only some Image columns, so it is compared against the Prisma read of
+ * the `postId` column alone.
  *
  * Runs in CI: the `unit` job points KYSELY_HOT_READS_5_PARITY_DATABASE_URL at its throwaway
  * Postgres service, and a test below fails if that wiring is lost, so the suite cannot skip itself
@@ -139,6 +134,8 @@ const NOW = new Date('2026-05-10T12:00:00.000Z');
 
 const sortNumbers = (ids: number[]) => [...ids].sort((a, b) => a - b);
 const byId = <T extends { id: number }>(rows: T[]) => [...rows].sort((a, b) => a.id - b.id);
+
+const golden = readTaggedGolden(resolve(here, 'fixtures/hot-reads-5-golden.json'));
 
 describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma returned', () => {
   const prisma = new PrismaClient({ datasourceUrl: parityUrl && withSchema(parityUrl) });
@@ -289,9 +286,8 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
 
   describe('a KeyValue row', () => {
     it.each(['object', 'array', 'string', 'number', 'json-null', 'missing'])('%s', async (key) => {
-      const viaPrisma = await readKeyValueViaPrisma(prisma, key);
       const viaKysely = await readKeyValueViaKysely(kysely, key);
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`keyvalue:${key}`));
     });
 
     it('control: JSON values come back parsed, a JSON null as null, a missing key as null', async () => {
@@ -315,9 +311,8 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
       ['a Model3D id pointing at no row', POST_DANGLING_M3D],
       ['a missing post', POST_MISSING],
     ])('%s', async (_, postId) => {
-      const viaPrisma = await readPostModel3dViaPrisma(prisma, postId);
       const viaKysely = await readPostModel3dViaKysely(kysely, postId);
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`model3d:${_}`));
     });
 
     it('control: each branch reads the fixture expected', async () => {
@@ -349,9 +344,8 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
     ];
 
     it.each(cases)('%s', async (_, input) => {
-      const viaPrisma = await readDismissedAnnouncementIdsViaPrisma(prisma, input);
       const viaKysely = await readDismissedAnnouncementIdsViaKysely(kysely, input);
-      expect(sortNumbers(viaKysely)).toStrictEqual(sortNumbers(viaPrisma));
+      expect(sortNumbers(viaKysely)).toStrictEqual(golden.take(`dismissed:${_}`));
     });
 
     it('control: the live window and the domain filter each drop the rows expected', async () => {
@@ -378,7 +372,7 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
   });
 
   describe("a post's collaborators", () => {
-    const sortCollaborators = (read: Awaited<ReturnType<typeof readPostCollaboratorsViaPrisma>>) =>
+    const sortCollaborators = (read: Awaited<ReturnType<typeof readPostCollaboratorsViaKysely>>) =>
       read && {
         entity: read.entity,
         collaborators: [...read.collaborators]
@@ -398,9 +392,8 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
       ['no collaborators', POST_NO_M3D],
       ['a missing post', POST_MISSING],
     ])('%s', async (_, postId) => {
-      const viaPrisma = await readPostCollaboratorsViaPrisma(prisma, postId);
       const viaKysely = await readPostCollaboratorsViaKysely(kysely, prisma, postId);
-      expect(sortCollaborators(viaKysely)).toStrictEqual(sortCollaborators(viaPrisma));
+      expect(sortCollaborators(viaKysely)).toStrictEqual(golden.take(`collaborators:${_}`));
     });
 
     it('control: the rows, their users and the post owner are the fixture expected', async () => {
@@ -486,9 +479,8 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
       ['one open prize', OWNER],
       ['no prizes', NO_ONE],
     ])('%s', async (_, userId) => {
-      const viaPrisma = await countUnclaimedPrizesViaPrisma(prisma, userId);
       const viaKysely = await countUnclaimedPrizesViaKysely(kysely, userId);
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`prizes:${_}`));
     });
 
     it('control: claimed and voided prizes are not counted', async () => {
@@ -503,9 +495,8 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
       ['two versions', MODEL_TAKEN_DOWN],
       ['no versions', MODEL_EMPTY],
     ])('%s', async (_, modelId) => {
-      const viaPrisma = await readModelVersionIdsViaPrisma(prisma, modelId);
       const viaKysely = await readModelVersionIdsViaKysely(kysely, modelId);
-      expect(byId(viaKysely)).toStrictEqual(byId(viaPrisma));
+      expect(byId(viaKysely)).toStrictEqual(golden.take(`version-ids:${_}`));
     });
 
     it('control: the ids are the fixture expected', async () => {
@@ -571,9 +562,8 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
       ['an orphaned version (its model is gone)', MV_ORPHAN],
       ['a missing version', MV_MISSING],
     ])('%s', async (_, id) => {
-      const viaPrisma = await readModelVersionForFileViaPrisma(prisma, id);
       const viaKysely = await readModelVersionForFileViaKysely(kysely, id);
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`file-version:${_}`));
     });
 
     it('control: the version and its model read the fixture expected', async () => {
@@ -620,9 +610,8 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
     ];
 
     it.each(keys)('the reaction id: %s', async (_, key) => {
-      const viaPrisma = await readImageReactionIdViaPrisma(prisma, key);
       const viaKysely = await readImageReactionIdViaKysely(kysely, key);
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`reaction-id:${_}`));
     });
 
     it.each([
@@ -630,9 +619,8 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
       ['another image', IMG_NO_POST],
       ['a missing image', IMG_MISSING],
     ])('the nsfw level and owner: %s', async (_, id) => {
-      const viaPrisma = await readImageNsfwLevelAndOwnerViaPrisma(prisma, id);
       const viaKysely = await readImageNsfwLevelAndOwnerViaKysely(kysely, id);
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`nsfw-owner:${_}`));
     });
 
     it.each([
@@ -675,9 +663,8 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
       ['an empty meta', MODEL_TAKEN_DOWN],
       ['a missing model', MODEL_MISSING],
     ])('%s', async (_, id) => {
-      const viaPrisma = await readModelMetaViaPrisma(prisma, id);
       const viaKysely = await readModelMetaViaKysely(kysely, id);
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`meta:${_}`));
     });
 
     it('control: the meta reads the fixture expected', async () => {
@@ -687,6 +674,11 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
       });
       expect(await readModelMetaViaKysely(kysely, MODEL_MISSING)).toBeNull();
     });
+  });
+
+  // Last in the block: every captured case is still asserted above, so none can be dropped quietly.
+  it('every golden case is asserted', () => {
+    expect(golden.unused()).toEqual([]);
   });
 });
 

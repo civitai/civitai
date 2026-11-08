@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useState } from 'react';
 import type { CSSProperties } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -47,7 +48,8 @@ export function EventDecorationOverlay({
   wornOn?: EventDecorationEntity;
 }) {
   const hatLayer = useHatLayer();
-  if (decoration.type !== 'hat') return null;
+  const shown = useShowEventCosmetics();
+  if (!shown || decoration.type !== 'hat') return null;
   const hat = (width?: number) => (
     <CardHat
       url={decoration.url}

@@ -13,6 +13,7 @@ import {
 import { downloadGeneratedImages } from '~/components/ImageGeneration/utils/downloadGeneratedImages';
 import type { UpdateImageStepMetadataArgs } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import {
+  GENERATOR_QUEUE_INPUT,
   matchesMarkerTags,
   useGetTextToImageRequests,
   useUpdateImageStepMetadata,
@@ -49,7 +50,7 @@ export function GeneratedImageActions({
 }) {
   const router = useRouter();
   const showCreatePostError = useShowCreatePostError();
-  const { data, markerTags } = useGetTextToImageRequests();
+  const { data, markerTags } = useGetTextToImageRequests(GENERATOR_QUEUE_INPUT);
   const { running, helpers, returnUrl } = useTourContext();
   const selectableImages = useMemo(
     () =>
@@ -139,7 +140,7 @@ export function GeneratedImageActions({
       });
       deselect();
     } catch (e) {
-      showCreatePostError((e as Error).message);
+      showCreatePostError(e as Error);
     }
   };
 

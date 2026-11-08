@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 
 import { env } from '~/env/server';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getLoginLink } from '~/utils/login-helpers';
 import { getFileWithPermission } from '~/server/services/file.service';
@@ -49,7 +49,7 @@ export default PublicEndpoint(
     const ipBlacklist = parseIpBlocklist(await getDownloadBlocklistValue('ip-blacklist'));
     if (ip && ipBlacklist.includes(ip)) return forbidden(req, res);
 
-    const session = await getServerAuthSession({ req, res });
+    const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
     if (!!session?.user) {
       const userBlacklist = parseUserBlocklist(await getDownloadBlocklistValue('user-blacklist'));
       if (userBlacklist.includes(session.user.id.toString())) return forbidden(req, res);
@@ -120,7 +120,7 @@ export default PublicEndpoint(
       // against a ModelFile with the same ID, serving the wrong file content.
       const { url } = await getDownloadUrl(file.url, file.name);
 
-      const tracker = new Tracker(req, res);
+      const tracker = new Tracker(req, res, session);
       tracker
         .file({ type: 'Download', entityId: file.entityId, entityType: file.entityType })
         .catch(handleLogError);

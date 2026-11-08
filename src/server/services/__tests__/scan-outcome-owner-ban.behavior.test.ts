@@ -37,10 +37,12 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 import { resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+const holder = vi.hoisted(() => ({ db: null as unknown as PGlite, holdReadFails: false }));
 
 const BANNED = 7;
 const ACTIVE = 8;
+const HELD = 12;
+const REPORTED = 13;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -61,6 +63,16 @@ beforeAll(async () => {
       "scannedAt" timestamp(3),
       metadata jsonb,
       "scanJobs" jsonb
+    );
+    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
+    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
+    CREATE TABLE "CsamReport" (
+      id serial PRIMARY KEY,
+      "userId" int,
+      details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]',
+      "reportSentAt" timestamp(3),
+      "archivedAt" timestamp(3)
     );
   `);
 });
@@ -85,12 +97,21 @@ beforeEach(async () => {
     if (text.includes('TagsOnImageDetails'))
       return [{ id: 10, name: 'tag', type: 'Label', nsfwLevel: 1, confidence: 90 }];
     if (text.includes('is_new_user')) return [{ isNewUser: false }];
+    // ownerHeld's statement: its hold SQL arrives as a nested value, not in `strings`.
+    if (text.includes(' AS held ')) {
+      if (holder.holdReadFails) throw new Error('hold read failed');
+      return (await runOnPglite(strings, values)).rows;
+    }
     if (text.includes('"User"')) return (await runOnPglite(strings, values)).rows;
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);
+  holder.holdReadFails = false;
   await holder.db.exec(`
-    TRUNCATE "Image", "User";
-    INSERT INTO "User" (id, "bannedAt") VALUES (${BANNED}, now()), (${ACTIVE}, NULL);
+    TRUNCATE "Image", "User", "EvidenceHeldUser", "EvidenceHoldImage", "CsamReport";
+    INSERT INTO "User" (id, "bannedAt")
+      VALUES (${BANNED}, now()), (${ACTIVE}, NULL), (${HELD}, NULL), (${REPORTED}, NULL);
+    INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${HELD});
+    INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED});
   `);
 });
 
@@ -207,6 +228,51 @@ describe("a clean scan landing on a banned owner's blocked image", () => {
       blockedFor: blockedFor ?? 'moderated',
       nsfwLevel: 32,
     });
+  });
+});
+
+describe("a clean scan landing on a held owner's or a kept blocked image", () => {
+  const BLOCKED = { ingestion: 'Blocked', blockedFor: 'moderated', nsfwLevel: 32 };
+
+  it.each([
+    ['its owner is under a hold marker', HELD],
+    ['a holding report names its owner', REPORTED],
+  ] as const)('keeps the image blocked when %s', async (_, owner) => {
+    await insertImage(20, owner, 'Blocked', 'moderated');
+
+    const outcome = await scan(loaded(20, owner, 'Blocked', 'moderated'));
+
+    expect(outcome.ingestion).toBe('Blocked');
+    expect(await imageRow(20)).toEqual(BLOCKED);
+  });
+
+  it("keeps an image a hold kept, though its owner's hold has ended", async () => {
+    await insertImage(21, ACTIVE, 'Blocked', 'moderated');
+    await holder.db.exec(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (21)`);
+
+    const outcome = await scan(loaded(21, ACTIVE, 'Blocked', 'moderated'));
+
+    expect(outcome.ingestion).toBe('Blocked');
+    expect(await imageRow(21)).toEqual(BLOCKED);
+  });
+
+  it('keeps the image blocked when the hold cannot be read', async () => {
+    await insertImage(22, ACTIVE, 'Blocked', 'moderated');
+    holder.holdReadFails = true;
+
+    const outcome = await scan(loaded(22, ACTIVE, 'Blocked', 'moderated'));
+
+    expect(outcome.ingestion).toBe('Blocked');
+    expect(await imageRow(22)).toEqual(BLOCKED);
+  });
+
+  it("publishes a held owner's image that was never blocked", async () => {
+    await insertImage(23, HELD, 'Pending', null);
+
+    const outcome = await scan(loaded(23, HELD, 'Pending', null));
+
+    expect(outcome.ingestion).toBe('Scanned');
+    expect(await imageRow(23)).toEqual({ ingestion: 'Scanned', blockedFor: null, nsfwLevel: 1 });
   });
 });
 

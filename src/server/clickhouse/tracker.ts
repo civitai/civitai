@@ -20,6 +20,7 @@ import type {
   VIEW_TYPES,
 } from '~/server/schema/track.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
+import type { CommentEntityType } from '~/shared/utils/prisma/enums';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import type { ReportEntity } from '~/shared/utils/report-helpers';
 import dayjs from '~/shared/utils/dayjs';
@@ -171,7 +172,13 @@ export type UserActivityType =
   | 'RemoveContent'
   | 'ExcludedFromLeaderboard'
   | 'UnexcludedFromLeaderboard';
-export type ModelVersionActivty = 'Create' | 'Publish' | 'Download' | 'Unpublish' | 'HideDownload';
+export type ModelVersionActivty =
+  | 'Create'
+  | 'Publish'
+  | 'Download'
+  | 'Unpublish'
+  | 'HideDownload'
+  | 'GenerationFetch';
 export type ModelActivty =
   | 'Create'
   | 'Publish'
@@ -228,6 +235,17 @@ export type CommentType =
   | 'Review'
   | 'Bounty'
   | 'BountyEntry';
+/**
+ * The `comments.type` a new top-level comment on each CommentV3 entity type is tracked as; a reply is
+ * `Comment`, and an entity type without an entry is not tracked.
+ */
+export const commentTrackTypes: Partial<Record<CommentEntityType, CommentType>> = {
+  post: 'Post',
+  image: 'Image',
+  review: 'Review',
+  bounty: 'Bounty',
+  bountyEntry: 'BountyEntry',
+};
 export type CommentActivity = 'Create' | 'Delete' | 'Update' | 'Hide' | 'Unhide';
 export type PostActivityType = 'Create' | 'Publish' | 'Tags' | 'Delete';
 export type ImageActivityType =
@@ -318,6 +336,19 @@ export const ActionType = [
   // Fields ride in `details` (migrations/2026-11-04-experiment-exposure-hat-turf-actions.sql).
   'Experiment_Exposure',
   'HatTurf_Action',
+  // App store acquisition funnel (migrations/2026-11-07-app-store-funnel-actions.sql, plus the
+  // tracker restart in migrations/README.md). `AppStore_Action` is client-postable (impression /
+  // card_click / detail_view / cta_click in `details.action`). `App_Visit` is SERVER-ONLY, like
+  // `App_Open`: one row per followed off-site "Visit", written by the `/apps/go/<listingId>`
+  // redirect, so it has no `trackActionSchema` arm.
+  'AppStore_Action',
+  'App_Visit',
+  // App Blocks in-app telemetry, emitted by the two block hosts: an error the viewer saw after the
+  // app loaded, and one row per host session on unmount/pagehide. Same Enum16 hazard as above
+  // (migrations/2026-11-07-app-telemetry-error-session-actions.sql, plus the tracker restart):
+  // until both are applied the tracker drops these rows silently and nothing else changes.
+  'App_Error',
+  'App_Session',
 ] as const;
 
 // Written without ip and userAgent, whoever calls: `actions` has no TTL, and these feed per-user
@@ -325,6 +356,12 @@ export const ActionType = [
 const ACTOR_META_FREE_ACTION_TYPES: ReadonlySet<ActionType> = new Set([
   'Experiment_Exposure',
   'HatTurf_Action',
+  // Store funnel rows (impressions are high-volume) need only the user id. NOT `App_Open` /
+  // `App_Visit`: their counts de-dupe per actor at read time and need the ip fallback.
+  'AppStore_Action',
+  // Operational app telemetry: per-app error and engagement rates need the user id at most.
+  'App_Error',
+  'App_Session',
 ]);
 export type ActionType = (typeof ActionType)[number];
 

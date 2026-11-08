@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isBadgeShownOnProfile, splitProfileBadges } from '~/shared/utils/badge-visibility';
+import {
+  isBadgeShownOnProfile,
+  keepOwnedBadgeIds,
+  withUnownedBadgeIds,
+  splitProfileBadges,
+} from '~/shared/utils/badge-visibility';
 
 describe('isBadgeShownOnProfile', () => {
   it('shows a badge when the owner has set nothing', () => {
@@ -63,5 +68,31 @@ describe('splitProfileBadges', () => {
     );
     expect(highlightedBadges).toEqual([]);
     expect(ids(otherBadges)).toEqual([3]);
+  });
+});
+
+describe('keepOwnedBadgeIds', () => {
+  it('drops an unowned id from the middle and keeps the pick order', () => {
+    expect(keepOwnedBadgeIds([7, 99, 9, 3], [3, 7, 9])).toEqual([7, 9, 3]);
+  });
+
+  it('treats a missing list as empty', () => {
+    expect(keepOwnedBadgeIds(undefined, [1])).toEqual([]);
+    expect(keepOwnedBadgeIds(null, [1])).toEqual([]);
+  });
+});
+
+describe('withUnownedBadgeIds', () => {
+  it('keeps a hidden id the user does not own right now behind the new picks', () => {
+    // Saved hidden [98 (away), 3]; the user hides 5 and un-hides 3.
+    expect(withUnownedBadgeIds([5], [98, 3], [3, 5, 7])).toEqual([5, 98]);
+  });
+
+  it('keeps nothing extra when every saved id is owned', () => {
+    expect(withUnownedBadgeIds([3, 7], [7, 3], [3, 7])).toEqual([3, 7]);
+  });
+
+  it('treats a missing saved list as empty', () => {
+    expect(withUnownedBadgeIds([1], undefined, [1])).toEqual([1]);
   });
 });

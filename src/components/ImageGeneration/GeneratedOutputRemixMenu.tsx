@@ -83,7 +83,7 @@ function GeneratedOutputRemixMenuContent({
         createPost: () => createPost.mutateAsync({}),
       });
     } catch (e) {
-      showCreatePostError((e as Error).message);
+      showCreatePostError(e as Error);
     }
   };
 

@@ -33,7 +33,7 @@ export const model3dHub = defineGraph<RootCtx>()
       ...ecosystemFieldSchemas(
         _ext.workflow,
         hiddenEcosystems,
-        ecosystemStates.map((e) => e.key),
+        ecosystemStates,
         usableEcosystems
       ),
       default: defaultValue,

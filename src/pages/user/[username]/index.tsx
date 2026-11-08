@@ -9,9 +9,12 @@ import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { useMilestoneLanding } from '~/components/CreatorJourney/useMilestoneLanding';
 import {
   getAllAvailableProfileSections,
+  getShowcaseSectionByKey,
   ProfileSectionComponent,
   shouldDisplayUserNullState,
 } from '~/components/Profile/profile.utils';
+import { CustomShowcaseSection } from '~/components/Profile/Sections/CustomShowcaseSection';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 import type { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
@@ -61,15 +64,21 @@ function ProfileOverview() {
   const { data: userOverview } = trpc.userProfile.overview.useQuery({ username });
 
   useMilestoneLanding(user);
+  const { profileShowcases } = useFeatureFlags();
+  const showcaseSections = useMemo(
+    () => (profileShowcases ? user?.profile?.showcaseSections ?? [] : []),
+    [profileShowcases, user]
+  );
 
   const sections = useMemo(
     () =>
       !user
         ? []
         : getAllAvailableProfileSections(
-            user.profile?.profileSectionsSettings as ProfileSectionSchema[]
+            user.profile?.profileSectionsSettings as ProfileSectionSchema[],
+            showcaseSections
           ).filter((section) => section.enabled),
-    [user]
+    [user, showcaseSections]
   );
 
   if (isLoading) {
@@ -87,6 +96,7 @@ function ProfileOverview() {
   const shouldDisplayUserNullStateBool = shouldDisplayUserNullState({
     overview: userOverview,
     userWithProfile: user,
+    showcaseSections,
   });
 
   return (
@@ -120,6 +130,16 @@ function ProfileOverview() {
       ) : (
         <Stack gap={0}>
           {sections.map((section) => {
+            const showcase = getShowcaseSectionByKey(section.key, showcaseSections);
+            if (showcase)
+              return (
+                <CustomShowcaseSection
+                  key={section.key}
+                  section={showcase}
+                  user={{ ...user, username: user.username as string }}
+                />
+              );
+
             const Section = ProfileSectionComponent[section.key as ProfileSectionType];
 
             if (!Section) {

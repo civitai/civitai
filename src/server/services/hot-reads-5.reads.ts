@@ -16,47 +16,40 @@ import {
   listPostCollaborators,
   listUserResourceReviews,
 } from '@civitai/db-queries/hot-reads-5';
-import { activeAnnouncementWhere } from '~/server/services/announcement-window';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { resourceReviewSimpleSelect } from '~/server/selectors/resourceReview.selector';
-import type { ReviewReactions } from '~/shared/utils/prisma/enums';
-import { DomainColor, EntityType } from '~/shared/utils/prisma/enums';
+import type {
+  EntityCollaboratorStatus,
+  EntityType,
+  ReviewReactions,
+} from '~/shared/utils/prisma/enums';
+import { DomainColor } from '~/shared/utils/prisma/enums';
 
 /**
- * The reads behind `kysely-hot-reads-5`, each as a Prisma reader and its Kysely twin taking the
- * client, so the parity suite (__tests__/hot-reads-5.kysely-parity.test.ts) runs the very code the
- * services run. The Prisma readers are the original reads, moved here verbatim; each twin returns
- * the value its Prisma reader returns (same keys in the same order, Dates as Dates, enums as their
- * text, `null` where Prisma gives `null`).
+ * Kysely reads, each returning the value the Prisma read it replaced returned (same keys in the same
+ * order, Dates as Dates, enums as their text, `null` where Prisma gave `null`). Each takes the
+ * client, so __tests__/hot-reads-5.kysely-parity.test.ts runs the very code the services run. The
+ * three Prisma readers left here still serve a path: the home block with no `id`, a review read
+ * inside a transaction, and the image a `reaction.toggle` access check cannot find.
  */
 
 // A `KeyValue` row by key (`getPlacementConfig`, placement.service.ts; the announcement allowance
 // config, announcement-allowance.service.ts).
 
-export function readKeyValueViaPrisma(db: PrismaClient, key: string) {
-  return db.keyValue.findUnique({ where: { key } });
-}
-
 export async function readKeyValueViaKysely(
   db: Kysely<DB>,
   key: string
-): Promise<Awaited<ReturnType<typeof readKeyValueViaPrisma>>> {
+): Promise<{ key: string; value: Prisma.JsonValue } | null> {
   const row = await getKeyValue(db, key);
   return row ? { key: row.key, value: row.value as Prisma.JsonValue } : null;
 }
 
 // A post's linked Model3D (`getVisibleModel3DIdForPost`, model3d.service.ts).
 
-export function readPostModel3dViaPrisma(db: PrismaClient, postId: number) {
-  return db.post.findUnique({
-    where: { id: postId },
-    select: {
-      model3d: { select: { id: true, userId: true, status: true, deletedAt: true } },
-    },
-  });
-}
-
-type PostModel3dRead = Awaited<ReturnType<typeof readPostModel3dViaPrisma>>;
+/** The Prisma `post.findUnique` shape: `null` for a missing post, `model3d: null` for no Model3D. */
+type PostModel3dRead = Prisma.PostGetPayload<{
+  select: { model3d: { select: { id: true; userId: true; status: true; deletedAt: true } } };
+}> | null;
 
 export async function readPostModel3dViaKysely(
   db: Kysely<DB>,
@@ -77,32 +70,13 @@ export async function readPostModel3dViaKysely(
 
 // The ids of the live announcements a user dismissed (`getDismissedAnnouncementIds`,
 // announcement.service.ts). "Live" is `activeAnnouncementWhere(now)` (announcement-window.ts); the
-// Kysely conditions are its twin, and the parity suite pins the two on the same rows.
+// Kysely conditions are its twin, and the parity suite pins them to what the Prisma read returned.
 
 export type DismissedAnnouncementIdsInput = {
   userId: number;
   now: Date;
   domain?: DomainColor;
 };
-
-/** Its `new Date()` is the caller's `now`. */
-export async function readDismissedAnnouncementIdsViaPrisma(
-  db: PrismaClient,
-  { userId, now, domain }: DismissedAnnouncementIdsInput
-) {
-  const rows = await db.announcementDismissal.findMany({
-    where: {
-      userId,
-      announcement: {
-        ...activeAnnouncementWhere(now),
-        ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
-      },
-    },
-    select: { announcementId: true },
-  });
-
-  return rows.map((x) => x.announcementId);
-}
 
 export async function readDismissedAnnouncementIdsViaKysely(
   db: Kysely<DB>,
@@ -118,37 +92,22 @@ export async function readDismissedAnnouncementIdsViaKysely(
 
 // A post's owner and its collaborators (`getEntityCollaborators`, entity-collaborator.service.ts).
 
-/** The post's owner, then (for an existing post) its collaborators. */
-export async function readPostCollaboratorsViaPrisma(db: PrismaClient, postId: number) {
-  const entity = await db.post.findUnique({
-    where: { id: postId },
-    select: { userId: true },
-  });
-  if (!entity) return null;
-
-  const collaborators = await db.entityCollaborator.findMany({
-    where: { entityId: postId, entityType: EntityType.Post },
-    select: {
-      user: {
-        select: userWithCosmeticsSelect,
-      },
-      entityId: true,
-      entityType: true,
-      status: true,
-    },
-  });
-  return { entity, collaborators };
-}
-
-type PostCollaboratorsRead = NonNullable<
-  Awaited<ReturnType<typeof readPostCollaboratorsViaPrisma>>
->;
-type CollaboratorUser = PostCollaboratorsRead['collaborators'][number]['user'];
+type CollaboratorUser = Prisma.UserGetPayload<{ select: typeof userWithCosmeticsSelect }>;
+/** The post's owner and its collaborators, in the shape the Prisma reads built. */
+type PostCollaboratorsRead = {
+  entity: { userId: number };
+  collaborators: {
+    user: CollaboratorUser;
+    entityId: number;
+    entityType: EntityType;
+    status: EntityCollaboratorStatus;
+  }[];
+};
 
 /**
  * The owner and the collaborator rows in ONE Kysely statement. A post with collaborators (rare)
  * then reads their users through Prisma with the same `userWithCosmeticsSelect`, so the nested
- * user (cosmetics, profile picture) is exactly the shape the Prisma read builds.
+ * user (cosmetics, profile picture) is exactly the shape the Prisma read built.
  */
 export async function readPostCollaboratorsViaKysely(
   db: Kysely<DB>,
@@ -216,22 +175,11 @@ export async function readHomeBlockViaKysely(
 
 // The unclaimed prize count (`countUnclaimedPrizes`, prize.service.ts).
 
-export function countUnclaimedPrizesViaPrisma(db: PrismaClient, userId: number) {
-  return db.prize.count({ where: { userId, claimedAt: null, voidedAt: null } });
-}
-
 export function countUnclaimedPrizesViaKysely(db: Kysely<DB>, userId: number) {
   return countUnclaimedPrizes(db, userId);
 }
 
 // A model's version ids (`getUserEngagedModelVersionsHandler`, user.controller.ts).
-
-export function readModelVersionIdsViaPrisma(db: PrismaClient, modelId: number) {
-  return db.modelVersion.findMany({
-    where: { modelId },
-    select: { id: true },
-  });
-}
 
 export function readModelVersionIdsViaKysely(
   db: Kysely<DB>,
@@ -248,6 +196,7 @@ export type UserResourceReviewInput = {
   userId: number;
 };
 
+/** The Prisma read, for a caller inside a transaction. */
 export function readUserResourceReviewsViaPrisma(
   db: PrismaClient | Prisma.TransactionClient,
   { modelId, modelVersionId, userId }: UserResourceReviewInput
@@ -267,48 +216,37 @@ export function readUserResourceReviewsViaKysely(
 
 // The model version a download resolves (`getFileForModelVersion`, file.service.ts).
 
-export function readModelVersionForFileViaPrisma(db: PrismaClient, modelVersionId: number) {
-  return db.modelVersion.findFirst({
-    // `model: { is: {} }` requires the (required) `model` relation to exist.
-    // Without it, a ModelVersion whose `model` was hard-deleted (orphaned FK)
-    // makes Prisma throw "Inconsistent query result: Field model is required to
-    // return data, got null" at query execution → caught upstream → 500 on every
-    // download lookup for that version. With the filter the DB drops the orphan
-    // row, findFirst returns null, and we fall through to the `not-found` (404)
-    // branch below — a model-less version is genuinely not downloadable. Same
-    // class/fix as #2637 (relation-existence filter on orphaned required
-    // relations).
-    where: { id: modelVersionId, model: { is: {} } },
-    select: {
-      id: true,
-      status: true,
-      model: {
-        select: {
-          id: true,
-          name: true,
-          type: true,
-          publishedAt: true,
-          status: true,
-          userId: true,
-          mode: true,
-          nsfw: true,
-          availability: true,
-          poi: true,
-        },
-      },
-      name: true,
-      trainedWords: true,
-      createdAt: true,
-      requireAuth: true,
-      usageControl: true,
-      baseModel: true,
-    },
-  });
-}
-
-type ModelVersionForFile = NonNullable<
-  Awaited<ReturnType<typeof readModelVersionForFileViaPrisma>>
->;
+/**
+ * The version and its model, in the shape the Prisma `modelVersion.findFirst` returned. A version
+ * whose model row was hard-deleted (an orphaned foreign key) is `null`: the inner join drops it,
+ * where Prisma needed a `model: { is: {} }` filter to avoid throwing on the missing relation.
+ */
+type ModelVersionForFile = Prisma.ModelVersionGetPayload<{
+  select: {
+    id: true;
+    status: true;
+    model: {
+      select: {
+        id: true;
+        name: true;
+        type: true;
+        publishedAt: true;
+        status: true;
+        userId: true;
+        mode: true;
+        nsfw: true;
+        availability: true;
+        poi: true;
+      };
+    };
+    name: true;
+    trainedWords: true;
+    createdAt: true;
+    requireAuth: true;
+    usageControl: true;
+    baseModel: true;
+  };
+}>;
 
 export async function readModelVersionForFileViaKysely(
   db: Kysely<DB>,
@@ -346,33 +284,11 @@ export async function readModelVersionForFileViaKysely(
 
 export type ImageReactionKey = { userId: number; reaction: ReviewReactions; imageId: number };
 
-export function readImageReactionIdViaPrisma(
-  db: PrismaClient,
-  { userId, reaction, imageId }: ImageReactionKey
-) {
-  return db.imageReaction.findFirst({
-    where: { userId, reaction, imageId },
-    select: { id: true },
-  });
-}
-
 export async function readImageReactionIdViaKysely(
   db: Kysely<DB>,
   key: ImageReactionKey
 ): Promise<{ id: number } | null> {
   return (await getImageReactionId(db, key)) ?? null;
-}
-
-export function readImageNsfwLevelAndOwnerViaPrisma(db: PrismaClient, id: number) {
-  return db.image.findFirst({
-    where: {
-      id,
-    },
-    select: {
-      nsfwLevel: true,
-      userId: true,
-    },
-  });
 }
 
 export async function readImageNsfwLevelAndOwnerViaKysely(
@@ -402,15 +318,11 @@ export async function readImagePostIdViaKysely(
 
 // A model's `meta` (`getModelCollectionShowcaseHandler`, model.controller.ts, through `getModel`).
 
-/** The Prisma read `getModel({ id, select: { id: true, meta: true } })` makes (`findModel`). */
-export function readModelMetaViaPrisma(db: PrismaClient, id: number) {
-  return db.model.findFirst({ where: { id }, select: { id: true, meta: true } });
-}
-
+/** What `getModel({ id, select: { id: true, meta: true } })` returned, or `null`. */
 export async function readModelMetaViaKysely(
   db: Kysely<DB>,
   id: number
-): Promise<Awaited<ReturnType<typeof readModelMetaViaPrisma>>> {
+): Promise<{ id: number; meta: Prisma.JsonValue } | null> {
   const row = await getModelMeta(db, id);
   return row ? { id: row.id, meta: row.meta as Prisma.JsonValue } : null;
 }

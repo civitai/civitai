@@ -21,11 +21,7 @@ import { getStaticContent, resolveTosHash } from '~/server/services/content.serv
 import { LegalHoldError } from '~/server/services/legal-hold.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readModelVersionIdsViaKysely,
-  readModelVersionIdsViaPrisma,
-} from '~/server/services/hot-reads-5.reads';
+import { readModelVersionIdsViaKysely } from '~/server/services/hot-reads-5.reads';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { recordUserFeatureToggle } from '~/server/prom/feature-toggle.metrics';
 import { getUserFollows } from '~/server/redis/caches';
@@ -119,6 +115,7 @@ import {
   isUsernamePermitted,
   restoreUser,
   setLeaderboardEligibility,
+  setEventPointsExclusion,
   setUserMuted,
   setUserSetting,
   setEmailVerificationRequired,
@@ -239,7 +236,11 @@ export const getUserCreatorHandler = async ({
       isModerator: ctx.user?.isModerator,
     });
     if (!user) throw throwNotFoundError('Could not find user');
-    if (!ctx.user?.isModerator) user.excludeFromLeaderboards = false; // Mask from non-moderators
+    if (!ctx.user?.isModerator) {
+      // Mask from non-moderators
+      user.excludeFromLeaderboards = false;
+      user.excludeFromEventPoints = false;
+    }
 
     return user;
   } catch (error) {
@@ -904,9 +905,7 @@ export const getUserEngagedModelVersionsHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const userId = ctx.user.id;
-  const versions = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
-    ? await readModelVersionIdsViaKysely((await loadKyselyDb()).kyselyRead, input.id)
-    : await readModelVersionIdsViaPrisma(dbRead, input.id);
+  const versions = await readModelVersionIdsViaKysely((await loadKyselyDb()).kyselyRead, input.id);
   const modelVersionIds = versions.map((x) => x.id);
 
   try {
@@ -1784,6 +1783,14 @@ export const getUserPurchasedRewardsHandler = async ({ ctx }: { ctx: ProtectedCo
     throw throwDbError(error);
   }
 };
+
+export async function setEventPointsExclusionHandler({
+  input,
+}: {
+  input: SetLeaderboardEligibilitySchema;
+}) {
+  await setEventPointsExclusion(input);
+}
 
 export async function setLeaderboardEligibilityHandler({
   ctx,

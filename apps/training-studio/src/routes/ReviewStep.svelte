@@ -58,6 +58,7 @@
     runVersion,
     sampleImagesProblem,
     runVersionLabel,
+    blockedSelectionMessage,
     filledPrompts,
     teLocked,
     withTrigger,
@@ -125,6 +126,8 @@
 
   // Moderators can switch training off on the main app; the flow's banner carries their message.
   const trainingDisabled = $derived(serviceStatus.value?.available === false);
+  // A run on a model that went down after it was picked (a stale tab, a restored draft).
+  const blockedMessage = $derived(blockedSelectionMessage(selection.runs, serviceStatus.value));
 
   // Green (membership) Buzz can't pay for NSFW training, so spending it requires an explicit attestation.
   let attestSfw = $state(false);
@@ -229,7 +232,7 @@
   const spend = $derived(
     nonBlueSpend(total, buzzMode.value, { mature, member: membership === true })
   );
-  const ackKey = $derived(matureAckKey(spend?.amount ?? total, matureCount));
+  const ackKey = $derived(matureAckKey(total, spend?.amount, matureCount));
   let ackedFor = $state<string | null>(null);
   const ackMissing = $derived(matureAckMissing(ackedFor, ackKey));
   const runCostLabel = (i: number) => {
@@ -418,8 +421,8 @@
   );
   // Blank rows generate no sample image, so they are not counted.
   const filledCount = $derived(filledPrompts(prompts.map((p) => p.text)).length);
-  // Blue always spends first (it isn't offered in the picker), so the moment the price exceeds the
-  // Blue balance the remainder comes out of yellow/green — real money. Testers were charged Yellow
+  // With Blue first on (the default), the moment the price exceeds the Blue balance the remainder
+  // comes out of yellow/green — real money. Testers were charged Yellow
   // without ever being told, and the same run cost Blue one day and Yellow the next as balances
   // drifted. Anything beyond Blue requires an explicit confirmation naming the amount — and when
   // the balance is UNKNOWN (a host without getBuzzBalances, a buzz-service blip), fail safe:
@@ -439,6 +442,7 @@
     if (
       starting ||
       trainingDisabled ||
+      blockedMessage ||
       total == null ||
       (needsAttestation && !attestSfw) ||
       ackMissing ||
@@ -455,7 +459,7 @@
   }
 
   async function reallyStart() {
-    if (starting || trainingDisabled) return;
+    if (starting || trainingDisabled || blockedMessage) return;
     spendDialogOpen = false;
     starting = true;
     startError = '';
@@ -968,8 +972,12 @@
           {/if}
           {#if membership === true}
             Mature content can't be paid with <span class="text-emerald-400">Green</span> Buzz.
-            <span class="text-blue-400">Blue</span> Buzz pays first, and anything beyond it is charged
-            in <span class="text-yellow-400">Yellow</span> Buzz.
+            {#if buzzMode.blueFirst}
+              <span class="text-blue-400">Blue</span> Buzz pays first, and anything beyond it is
+              charged in <span class="text-yellow-400">Yellow</span> Buzz.
+            {:else}
+              It is charged in <span class="text-yellow-400">Yellow</span> Buzz.
+            {/if}
           {:else}
             <span class="text-blue-400">Blue</span> and <span class="text-emerald-400">Green</span> Buzz
             can't pay for mature content without a membership, so {membership === undefined
@@ -995,9 +1003,12 @@
                 >{spend.amount.toLocaleString()} Yellow Buzz</strong
               >
               will be charged because this dataset has mature images.
-            {:else}
+            {:else if buzzMode.blueFirst}
               I understand this dataset has mature images, so anything beyond my
               <span class="text-blue-400">Blue</span> Buzz is charged in
+              <span class="text-yellow-400">Yellow</span> Buzz.
+            {:else}
+              I understand this dataset has mature images, so it is charged in
               <span class="text-yellow-400">Yellow</span> Buzz.
             {/if}
           </label>
@@ -1024,6 +1035,7 @@
       onclick={start}
       disabled={starting ||
         trainingDisabled ||
+        !!blockedMessage ||
         total == null ||
         (needsAttestation && !attestSfw) ||
         ackMissing ||
@@ -1041,6 +1053,8 @@
       <p class="mt-2 text-center font-mono text-xs text-dark-2">
         Training is currently disabled — see the notice above.
       </p>
+    {:else if blockedMessage}
+      <p class="mt-2 text-center font-mono text-xs text-buzz">{blockedMessage}</p>
     {:else if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
     {:else if imagesProblem}
@@ -1071,7 +1085,10 @@
         {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz
       </Dialog.Title>
       <Dialog.Description>
-        {#if confirmSpend?.uncertain}
+        {#if !buzzMode.blueFirst}
+          Blue Buzz first is off, so all <strong>{confirmSpend?.amount.toLocaleString()}</strong> of
+          this run will come out of your {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.
+        {:else if confirmSpend?.uncertain}
           Blue Buzz spends first, but your balance couldn't be read — up to
           <strong>{confirmSpend?.amount.toLocaleString()}</strong> of this run may come out of your
           {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.

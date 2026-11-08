@@ -77,9 +77,15 @@ export {
   type SessionRegistryRedis,
   type SessionKeys,
   type InvalidateInfo,
+  impersonatorCutKey,
 } from './session-registry';
 export { SESSION_REGISTRY_KEYS } from './session-registry-keys';
-export { familyId, familyClaims, SESSION_LINEAGE_MAX_AGE_MS } from './family';
+export {
+  familyId,
+  familyClaims,
+  IMPERSONATION_MAX_AGE_MS,
+  SESSION_LINEAGE_MAX_AGE_MS,
+} from './family';
 export type { FamilyClaims } from './family';
 export {
   cookiePrefix,
@@ -125,4 +131,9 @@ export { hubLoginUrl, hubLogoutUrl, type ProviderId, type HubLoginUrlOptions } f
 export { appRole, appRoles, hasAppRole, APP_ROLE_SEPARATOR } from './roles'; // app-namespaced role helpers (read SessionUser.roles by prefix)
 export type { SessionUser, SessionClaims } from './types';
 export * from './app-token';
-export { isSystemAccountMeta, SYSTEM_ACCOUNT_META } from './system-account'; // User.meta marker for API-key-only accounts (hub refuses sign-in, no onboarding bonus)
+export {
+  allowsModeratorWriteKeys,
+  isSystemAccountMeta,
+  parseMeta,
+  SYSTEM_ACCOUNT_META,
+} from './system-account'; // User.meta marker for API-key-only accounts (hub refuses sign-in, no onboarding bonus)

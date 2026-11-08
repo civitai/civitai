@@ -109,6 +109,7 @@ beforeAll(async () => {
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       "ingestion"       "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
       "blockedFor"      text,
+      "acceptableMinor" boolean NOT NULL DEFAULT false,
       "needsReview"     text,
       "metadata"        jsonb,
       "scanJobs"        jsonb
@@ -123,9 +124,15 @@ beforeAll(async () => {
       "permissions" "CollectionContributorPermission"[] NOT NULL
     );
     CREATE TABLE "Article" (
-      "id" integer PRIMARY KEY, "coverId" integer, "status" text, "publishedAt" timestamp, "ingestion" text
+      "id" integer PRIMARY KEY, "coverId" integer, "status" text, "publishedAt" timestamp, "ingestion" text,
+      "bannerId" integer
     );
     CREATE TABLE "ImageConnection" ("imageId" integer, "entityId" integer, "entityType" text);
+    CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "CollectionItem" (
+      id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "addedById" int,
+      status text NOT NULL
+    );
     CREATE TABLE "Bounty" ("id" integer PRIMARY KEY, "userId" integer, "availability" text);
     CREATE TABLE "BountyEntry" ("id" integer PRIMARY KEY, "bountyId" integer);
 

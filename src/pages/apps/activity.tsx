@@ -70,6 +70,7 @@ import {
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
   BLOCK_SPEND_SCOPE,
 } from '~/shared/constants/block-scope.constants';
+import { APPS_STORE_HREF } from '~/shared/constants/apps-routes.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -356,7 +357,12 @@ function EmptyState({ label }: { label: string }) {
           {label}
         </Text>
         {canSeeStore && (
-          <Anchor component={Link} href="/apps" size="sm" data-testid="apps-empty-marketplace-link">
+          <Anchor
+            component={Link}
+            href={APPS_STORE_HREF}
+            size="sm"
+            data-testid="apps-empty-marketplace-link"
+          >
             Browse the marketplace
           </Anchor>
         )}
@@ -672,19 +678,12 @@ function GrantCard({ grant, defaultOpened }: { grant: ActivityGrant; defaultOpen
         <div id={panelId} hidden={!opened}>
           <Stack gap="xs">
             <Divider />
-            {/* 🔴 AN EXPLICIT `emptyLabel`, PER ROW CLASS. This was a bare
-                `<BlockScopeList scopes={grant.scopes} />`, which fell through to the component's
-                own default — "This app doesn't request any permissions — it only consumes data
-                from the host-bridge postMessage protocol." That was filed as an UNREACHABLE nit
-                while every row came from an install or a consent; the activity-only row makes it
-                REACHABLE AND WRONG BY CONSTRUCTION, since such a row carries `scopes: []` and
-                exists precisely because the app made scope-gated API calls. Telling that viewer
-                the app has no access is the one direction a permissions page must never be wrong
-                in. `scopeGrantEmptyScopeLabel` owns both labels so the two consumers of this
-                component cannot drift. */}
-            {/* 🔴 `ScopeConsentList`, NOT `BlockScopeList` DIRECTLY — and it is the SAME mount
+            {/* Explicit emptyLabel: an activity-only row has `scopes: []` yet the app made scope-gated
+                calls, so the list's default 'no permissions' text would be wrong.
+                `scopeGrantEmptyScopeLabel` owns both labels. */}
+            {/* 🔴 `ScopeConsentList`, NOT A BARE PERMISSION LIST — and it is the SAME mount
                 `src/components/AppBlocks/AppPermissionsActivityDrawer.tsx` uses, handed the same
-                single `grant` object. It wraps `BlockScopeList` and adds the per-scope revoke
+                single `grant` object. It renders the permission rows and adds the per-scope revoke
                 control, the app-level "you last removed a permission on <date>" line, and the
                 inline failure notice. The shared component is the anti-drift mechanism: this page
                 and that drawer have already needed three separate one-sided corrections, and a
@@ -694,7 +693,7 @@ function GrantCard({ grant, defaultOpened }: { grant: ActivityGrant; defaultOpen
             <ScopeConsentList grant={grant} emptyLabel={scopeGrantEmptyScopeLabel(grant.origin)} />
             {/* ⚠️ NO SECOND RECENT-ACTIVITY POINTER HERE. An earlier revision rendered an
                 `<Anchor>` reading "See what it did under Recent activity" directly beneath
-                `<BlockScopeList>` — whose `emptyLabel` for this row class already ENDS with
+                the permission list — whose `emptyLabel` for this row class already ENDS with
                 "…is under Recent activity". Two adjacent DOM nodes saying the same thing, the
                 second of them adding a `useRouter()` call to this component for its href alone.
                 It was also inaccurate in its own right: `activityTabQuery('activity', …)` lands
@@ -705,7 +704,7 @@ function GrantCard({ grant, defaultOpened }: { grant: ActivityGrant; defaultOpen
         </div>
         {/* Only for an app the viewer has actually GRANTED the spend scope to —
             `spendScopeGranted` is the viewer's GRANT ROW, not the app-side set rendered by
-            `BlockScopeList` just above (which is `manifest.scopes ∩ approved_scopes`, what
+            `ScopeConsentList` just above (which is `manifest.scopes ∩ approved_scopes`, what
             the app may be granted). ⚠️ This sentence used to contrast the grant with "the
             manifest"; that named the wrong set once the displayed list became the
             intersection. The identical sentence in `AppPermissionsActivityDrawer` was

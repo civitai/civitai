@@ -145,10 +145,10 @@ const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
       WHERE a.id = ${entityId} AND u.username IS NOT NULL
     )`,
 
-  // An offering has no page of its own; it is listed in its seller's shop.
+  // An offering has no page of its own; its card in the seller's shop carries the `service-<id>` anchor.
   serviceOffering: (entityId) =>
     sql<string | null>`(
-      SELECT '/user/' || u.username || '/shop'
+      SELECT '/user/' || u.username || '/shop#service-' || o.id
       FROM "ServiceOffering" o JOIN "User" u ON u.id = o."sellerId"
       WHERE o.id = ${entityId} AND u.username IS NOT NULL
     )`,

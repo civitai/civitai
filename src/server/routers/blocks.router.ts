@@ -1,3 +1,4 @@
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError, getTRPCErrorFromUnknown, type TRPCMiddlewareFunction } from '@trpc/server';
 import * as z from 'zod';
@@ -70,9 +71,16 @@ import {
 } from '~/server/services/buzz.service';
 import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz-read.projection';
 import {
+  recordAppBlockSubmitFailure,
   recordBlockBridgeRateLimitRefusal,
   recordConfirmedQuoteOvercharge,
+  recordSucceededWithoutMedia,
+  submitFailureAppBlockLabel,
 } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  appSubmitFailureFromError,
+  appSubmitFailureFromResult,
+} from '~/shared/constants/app-telemetry.constants';
 import {
   checkBlockCatalogRateLimit,
   checkBlockEstimateCellsRateLimit,
@@ -242,6 +250,7 @@ import {
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
+  classifySucceededWithoutMedia,
   buildBlockWorkflowStepsMetadata,
   WORKFLOW_METADATA_BLOCK_STEPS_KEY,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
@@ -428,6 +437,31 @@ const TERMINAL_BLOCK_WORKFLOW_STATUSES = new Set<BlockWorkflowStatus>([
   'expired',
   'canceled',
 ]);
+
+/**
+ * `civitai_app_block_submit_failures_total` for `submitWorkflow`. A middleware rather than a call
+ * per branch: the procedure has seven `kind` arms and two dozen refusal sites, and failures are
+ * both THROWN (limiters, scope, validation, orchestrator) and RETURNED as a failed snapshot (the
+ * per-call budget and workflow-ceiling refusals). Placed before `.input()`, so a body the schema
+ * refuses counts as `validation` too.
+ *
+ * The app id is known only once the token is verified inside the procedure, which writes it into
+ * the holder this middleware hands down; a failure before that is labelled `unknown`.
+ */
+export type BlockSubmitTelemetry = { appBlockIdLabel: string };
+const recordSubmitFailures = middleware(async ({ next }) => {
+  const blockSubmitTelemetry: BlockSubmitTelemetry = { appBlockIdLabel: 'unknown' };
+  const result = await next({ ctx: { blockSubmitTelemetry } });
+  try {
+    const reason = result.ok
+      ? appSubmitFailureFromResult(result.data)
+      : appSubmitFailureFromError(result.error);
+    if (reason) recordAppBlockSubmitFailure(blockSubmitTelemetry.appBlockIdLabel, reason);
+  } catch {
+    // instrument-only — never let classification change the submit's outcome
+  }
+  return result;
+});
 
 /**
  * H-2: every blocks router procedure gates on the Flipt flag. When the
@@ -2179,6 +2213,8 @@ export const blocksRouter = router({
         // NSFW-APP-RED-ONLY: mature (r/x) apps render in a model slot only on a
         // red-capable host. Threaded from the request host.
         redCapable: isRedCapableRequest(ctx),
+        // …and only for a viewer whose browsing level includes that rating (else omitted).
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
       });
     }),
 
@@ -4441,7 +4477,9 @@ export const blocksRouter = router({
         !ctx.user?.isModerator,
         // NSFW-APP-RED-ONLY: a mature (r/x) app's detail resolves to NOT_FOUND
         // off a red-capable host (mirrors the run-page SSR 404).
-        isRedCapableRequest(ctx)
+        isRedCapableRequest(ctx),
+        // …and on one, an r/x app the viewer's browsing level excludes is NOT_FOUND too.
+        getRequestBrowsingLevel(ctx)
       );
       if (!detail) throw throwNotFoundError('App block not found');
       // LISTING-VISIBILITY GATE: a testers-only / private app the viewer may not see is
@@ -5012,15 +5050,23 @@ export const blocksRouter = router({
       // read-model write failure must NEVER fail the poll (its contract is to
       // return the snapshot). `updateBlockWorkflowStatus` is an indexed UPDATE
       // that no-ops (0 rows) when the row was never recorded (dev:live tokens).
+      //
+      // The write is TRANSITION-ONLY (1 only when the row's status changed), and
+      // that 1 is what makes the succeeded-without-media counter once-per-
+      // workflow: this branch runs on EVERY poll of a finished workflow.
       if (TERMINAL_BLOCK_WORKFLOW_STATUSES.has(snapshot.status)) {
         try {
           const { updateBlockWorkflowStatus } = await import(
             '~/server/services/blocks/block-workflows.service'
           );
-          await updateBlockWorkflowStatus({
+          const transitioned = await updateBlockWorkflowStatus({
             workflowId: input.workflowId,
             status: snapshot.status,
           });
+          if (transitioned === 1) {
+            const noMedia = classifySucceededWithoutMedia(workflow, snapshot);
+            if (noMedia) recordSucceededWithoutMedia(noMedia.stepType, noMedia.reason);
+          }
         } catch {
           /* best-effort: a read-model write failure never breaks the poll */
         }
@@ -6801,6 +6847,7 @@ export const blocksRouter = router({
    * reservation.**
    */
   submitWorkflow: publicProcedure
+    .use(recordSubmitFailures)
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
     // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(
@@ -6827,6 +6874,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
+      ctx.blockSubmitTelemetry.appBlockIdLabel = submitFailureAppBlockLabel(claims);
       // Above every `kind` branch: each returns early, and nothing is resolved or reserved yet.
       const rate = await checkBlockSubmitRateLimit(claims.blockInstanceId, claims.sub);
       if (!rate.allowed) {
@@ -8815,6 +8863,12 @@ export const blocksRouter = router({
           message: 'Account is not eligible for git access',
         });
       }
+      // A write credential lets the caller file versions, so the caller (owner or collaborator)
+      // must have accepted, as on submitVersion.
+      const { assertAcceptedAppDeveloperTermsTrpc } = await import(
+        '~/server/services/blocks/app-developer-terms.service'
+      );
+      await assertAcceptedAppDeveloperTermsTrpc(ctx.user!.id);
 
       const slug = block.blockId;
 
@@ -9077,6 +9131,13 @@ export const blocksRouter = router({
           message: 'Account is not eligible to edit apps',
         });
       }
+      // The owner too: the commit below files its review request in the owner's name, which
+      // refuses after the commit has landed if the owner has not accepted.
+      const { assertAcceptedAppDeveloperTermsTrpc, assertOwnerAcceptedAppDeveloperTerms } =
+        await import('~/server/services/blocks/app-developer-terms.service');
+      await assertAcceptedAppDeveloperTermsTrpc(ctx.user!.id);
+      if (block.app.userId !== ctx.user!.id)
+        await assertOwnerAcceptedAppDeveloperTerms(block.app.userId);
       // The canonical Forgejo repo only exists once the first version is
       // ZIP-approved (approveRequest pre-creates civitai-apps/<slug>); until
       // then there's nothing to commit to.
@@ -9314,6 +9375,12 @@ export const blocksRouter = router({
           message: 'Account is not eligible for git access',
         });
       }
+      // Gated like getMyAppRepo although it grants only `read`: the token it returns is the same
+      // push token, and an accepted collaborator already holds `write` from accepting the invite.
+      const { assertAcceptedAppDeveloperTermsTrpc } = await import(
+        '~/server/services/blocks/app-developer-terms.service'
+      );
+      await assertAcceptedAppDeveloperTermsTrpc(ctx.user!.id);
       const slug = block.blockId;
       if (block.status !== 'approved') {
         return {
@@ -14932,7 +14999,7 @@ function buildWorkflowTags(
     WORKFLOW_TAGS.IMAGE,
     workflowType,
     baseModel,
-    'app-block',
+    WORKFLOW_TAGS.APP_BLOCK,
     // Per-app subqueue tag — the SAME helper `blocks.queryAppWorkflows` filters
     // on, so the STAMP and the READ can never desync (see appBlockTag).
     appBlockTag(claims.appId),

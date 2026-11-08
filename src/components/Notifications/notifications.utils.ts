@@ -1,9 +1,9 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import type { InfiniteData, Query, QueryClient, QueryKey } from '@tanstack/react-query';
-import { useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useGetAnnouncements } from '~/components/Announcements/announcements.utils';
 import {
   selectUndismissedAnnouncements,
@@ -37,7 +37,6 @@ export const useQueryNotifications = (
     { limit: 100, ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      placeholderData: keepPreviousData,
       ...withPlaceholderData(options),
     }
   );
@@ -330,6 +329,70 @@ export const useMarkReadNotification = () => {
   return mutation;
 };
 
+/** Subtracts what the server reports it cleared, per category, from the badge counts. */
+export function applyClearedToCounts<T extends NotificationCounts>(
+  old: T,
+  cleared: Array<{ category: string; count: number }>
+): T {
+  const next: NotificationCounts = { ...old };
+  for (const { category, count } of cleared) {
+    const key = category.toLowerCase();
+    if (NON_CATEGORY_COUNT_KEYS.has(key) || !(key in next)) continue;
+    next[key] = Math.max(0, next[key] - count);
+    next.all = Math.max(0, (next.all ?? 0) - count);
+  }
+  return next as T;
+}
+
+// Per page load, so stepping back and forth through a carousel asks once per image.
+const imagesMarkedOnView = new Set<number>();
+
+export function shouldMarkImageMilestonesRead(
+  imageId: number | undefined,
+  unreadMilestones: number,
+  alreadyAsked: ReadonlySet<number>
+): imageId is number {
+  return imageId != null && unreadMilestones > 0 && !alreadyAsked.has(imageId);
+}
+
+/** Clears the viewer's milestone notifications for an image they own when they view it. */
+export function useMarkImageMilestonesReadOnView(ownImageId: number | undefined) {
+  const currentUser = useCurrentUser();
+  // The bell's own query and options, read directly: `useQueryNotificationsCount` also mounts the
+  // announcement queries, which the image viewer has no use for.
+  const { data: counts } = trpc.user.checkNotifications.useQuery(undefined, {
+    enabled: !!currentUser,
+    gcTime: Infinity,
+    staleTime: Infinity,
+  });
+  const milestone = counts?.milestone ?? 0;
+  const queryUtils = trpc.useUtils();
+  const queryClient = useQueryClient();
+  const { mutate } = trpc.notification.markImageMilestonesRead.useMutation({
+    onSuccess(cleared, { imageId }) {
+      if (!cleared.length) return;
+      queryUtils.user.checkNotifications.setData(undefined, (old) =>
+        old ? applyClearedToCounts(old, cleared) : old
+      );
+      queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
+        { queryKey: getQueryKey(trpc.notification.getAllByUser), exact: false },
+        produce((old) => {
+          for (const page of old?.pages ?? [])
+            for (const item of page.items)
+              if (item.type === 'image-reaction-milestone' && item.details?.imageId === imageId)
+                item.read = true;
+        })
+      );
+    },
+  });
+
+  useEffect(() => {
+    if (!shouldMarkImageMilestonesRead(ownImageId, milestone, imagesMarkedOnView)) return;
+    imagesMarkedOnView.add(ownImageId);
+    mutate({ imageId: ownImageId });
+  }, [ownImageId, milestone, mutate]);
+}
+
 /**
  * The cached notification lists a newly-signalled notification is written into: All + its category.
  *
@@ -401,17 +464,53 @@ export async function insertSignalledNotification(
     } catch {}
   }
 
-  // update All + "Category" cache
+  let wasUnread = false;
   for (const filter of listFilters) {
     queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
       filter,
       produce((old) => {
         if (!old || !old.pages || !old.pages.length) return;
-        const firstPage = old.pages[0];
-        firstPage.items.unshift(newUpdated);
+        // A debounced notification is re-surfaced under the same id, so the signal can name a row
+        // the list already holds: move it to the top rather than adding a second one.
+        for (const page of old.pages) {
+          const index = page.items.findIndex((item) => item.id == newUpdated.id);
+          if (index === -1) continue;
+          if (!page.items[index].read) wasUnread = true;
+          page.items.splice(index, 1);
+        }
+        old.pages[0].items.unshift(newUpdated);
       })
     );
   }
+
+  return { wasUnread };
+}
+
+/** The badge bump for a signal: the notification's category and All, each by one. */
+export function applySignalToCounts<T extends NotificationCounts>(
+  old: T | undefined,
+  category: string
+): T {
+  const next = { ...old, all: old?.all ?? 0 } as NotificationCounts;
+  const key = category.toLowerCase();
+  next[key] = (next[key] ?? 0) + 1;
+  next.all++;
+  return next as T;
+}
+
+/**
+ * Applies a notification:new signal to the cache: the row into its lists, and one onto the badge
+ * unless a loaded list already held it unread, since that unread row is already counted.
+ */
+export async function handleNotificationSignal(
+  queryClient: Pick<QueryClient, 'getQueriesData' | 'setQueriesData'>,
+  listKey: QueryKey[number],
+  updated: NotificationGetAllItem,
+  setCounts: (updater: (old: NotificationCounts | undefined) => NotificationCounts) => void,
+  fetchImpl: typeof fetch = fetch
+) {
+  const { wasUnread } = await insertSignalledNotification(queryClient, listKey, updated, fetchImpl);
+  if (!wasUnread) setCounts((old) => applySignalToCounts(old, updated.category));
 }
 
 export const useNotificationSignal = () => {
@@ -420,24 +519,13 @@ export const useNotificationSignal = () => {
 
   const onUpdate = useCallback(
     async (updated: NotificationGetAllItem) => {
-      await insertSignalledNotification(
+      await handleNotificationSignal(
         queryClient,
         getQueryKey(trpc.notification.getAllByUser)[0],
-        updated
+        updated,
+        (updater) =>
+          queryUtils.user.checkNotifications.setData(undefined, (old) => updater(old) as typeof old)
       );
-
-      queryUtils.user.checkNotifications.setData(undefined, (old) => {
-        // Writes two named keys only, so unlike the mark-read updater it cannot
-        // touch a non-category count. The cast is the index access, not a claim
-        // that every key here is a category.
-        const newCounts = { ...old, all: old?.all ?? 0 } as NonNullable<typeof old> &
-          Record<string, number>;
-        newCounts[updated.category.toLowerCase()] =
-          (newCounts[updated.category.toLowerCase()] ?? 0) + 1;
-        newCounts['all']++;
-
-        return newCounts;
-      });
     },
     [queryClient, queryUtils]
   );

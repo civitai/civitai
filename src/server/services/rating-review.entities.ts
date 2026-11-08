@@ -52,7 +52,7 @@ const MODERATOR_NSFW_LOCK_ACTIVITIES = [
   'revertPoiAutoHash',
 ];
 
-async function hasSystemNsfwLock(
+export async function hasSystemNsfwLock(
   modelId: number,
   m: { nsfw: boolean; lockedProperties: string[] | null; meta: unknown }
 ) {

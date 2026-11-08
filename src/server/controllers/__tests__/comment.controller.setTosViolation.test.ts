@@ -3,8 +3,8 @@ import type * as CommentService from '~/server/services/comment.service';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as Rewards from '~/server/rewards';
 
-// A legacy comment its author deleted can be kept hidden for a hold. Flagging it still actions and
-// rewards its reports, but its author must not hear about a comment they removed.
+// Flagging a legacy comment already hidden for ToS still actions and rewards its reports, but its
+// author is not told again.
 
 const { isLegacyCommentHidden, updateReports, createNotification, reward } = vi.hoisted(() => ({
   isLegacyCommentHidden: vi.fn(async (_id: number) => false),

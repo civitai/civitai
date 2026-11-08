@@ -75,7 +75,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 const countsOf = (rows: ReturnType<typeof sticker>[]) =>
-  JSON.stringify(computeImageTurf(rows, 25, (t) => (t === 'Blue' ? 11 : 12)).counts);
+  JSON.stringify(
+    computeImageTurf(
+      rows,
+      () => 25,
+      (t) => (t === 'Blue' ? 11 : 12)
+    ).counts
+  );
 
 describe('syncTurfImages', () => {
   it('pushes counts only for the images whose counts changed', async () => {
@@ -203,6 +209,8 @@ const contestOf = (sql: string) => {
   const at = sql.indexOf('EXISTS ( SELECT 1 FROM "CollectionItem"');
   return at < 0 ? '' : sql.slice(at, sql.indexOf(')', sql.indexOf("'Contest'", at)) + 1);
 };
+const OWNER_ALLOWS_TURF =
+  'EXISTS (SELECT 1 FROM "User" ow WHERE ow.id = i."userId" AND ow."bannedAt" IS NULL AND ow."deletedAt" IS NULL AND (ow.settings -> ? ->> ?) IS DISTINCT FROM \'true\')';
 const sqlOf = (call: unknown[]) => {
   const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
   return Prisma.sql(strings, ...values).sql.replace(/\s+/g, ' ');
@@ -218,6 +226,7 @@ describe('the stickers a turf push carries', () => {
     team,
     cosmeticId: team === 'Blue' ? 11 : 12,
     data: { x: 0.1 * id, y: 0.5 },
+    art: null,
     createdAt: at(hour),
     drawable,
   });
@@ -242,6 +251,9 @@ describe('the stickers a turf push carries', () => {
       team: 'Blue',
       cosmeticId: 11,
       data: { x: 0.1 * 6, y: 0.5 },
+      art: null,
+      // Carried so a pushed card reveals in placement order, as a read does.
+      createdAt: at(3),
     });
   });
 
@@ -260,7 +272,9 @@ describe('the stickers a turf push carries', () => {
       ' WHERE s.event = ? AND s."imageId" = ANY(?::int[]) AND s."removedAt" IS NULL AND' +
         visibleOf(read) +
         '"blockedFor" IS NULL AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT ' +
-        contestOf(read)
+        contestOf(read) +
+        ' AND ' +
+        OWNER_ALLOWS_TURF
     );
 
     realWrite();
@@ -275,6 +289,8 @@ describe('the stickers a turf push carries', () => {
     // The push reads the contest rule too, and carries nothing for an entry (turf-contest.pglite).
     expect(contestOf(read)).not.toBe('');
     expect(live).toContain(`${contestOf(read)} AS contest`);
+    // The owner's switch on both reads (turf-owner-off.pglite).
+    expect(live).toContain(`AND ${OWNER_ALLOWS_TURF}`);
   });
 
   it('rides on the push a placement sends, with no extra read', async () => {
@@ -300,7 +316,13 @@ describe('reconcileTurf', () => {
     const event = (await getTurfEvent('e', NOW))!;
     const a = { ...sticker(900, 5, 'Blue'), eligible: true };
     const b = { ...sticker(901, 6, 'Pink'), eligible: true };
-    const bCounts = JSON.stringify(computeImageTurf([b], 25, () => 12).counts);
+    const bCounts = JSON.stringify(
+      computeImageTurf(
+        [b],
+        () => 25,
+        () => 12
+      ).counts
+    );
     // After the snapshot, an older sync moved 901: the write differs for both, so both are pushed.
     realWrite({ [KEYS.counts]: { 'Image:901': 'moved since' } });
     redisMock.sysRedis.hGetAll.mockResolvedValueOnce({ 'Image:901': bCounts }); // 900 changed, 901 not

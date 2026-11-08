@@ -58,7 +58,7 @@ export default function AppInvitesPage() {
           <AppTransferOffers />
           <AppInvitesBody />
           <Text size="sm" c="dimmed">
-            Once you accept, the app appears in <Link href={MY_APPS_HREF}>My apps</Link>.
+            Once you accept, the app appears in <Link href={MY_APPS_HREF}>My builds</Link>.
           </Text>
         </Stack>
       </AppsPageLayout>

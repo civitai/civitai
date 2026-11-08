@@ -14,6 +14,17 @@ vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) =>
 import { NsfwLevel } from '~/server/common/enums';
 import { approveExternalRequest } from '~/server/services/blocks/offsite-listing.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * 🔴 APPROVING A NON-SHADOW **ON-SITE** LISTING REQUEST — a shape that did not exist

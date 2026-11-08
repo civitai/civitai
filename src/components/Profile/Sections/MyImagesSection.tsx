@@ -106,7 +106,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
 
               <ImagesProvider images={images}>
                 {images.map((image) => (
-                  <ImageCard data={image} key={image.id} />
+                  <ImageCard data={image} key={image.id} hideCreator />
                 ))}
               </ImagesProvider>
               {isRefetching && <Loader className={classes.loader} />}

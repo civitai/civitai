@@ -283,6 +283,7 @@ describe('newBlockIdError', () => {
     expect(creators).toEqual([
       'src/pages/api/v1/developer/block-manifests.ts',
       'src/server/services/blocks/publish-request.service.ts',
+      'src/server/services/remix-app-registry.service.ts',
     ]);
     expect(scan.callersOf('newBlockIdError')).toEqual(creators);
   });

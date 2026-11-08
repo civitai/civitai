@@ -1,6 +1,5 @@
 import type { FC, Ref } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ParsedUrlQuery } from 'querystring';
 import { useComputedColorScheme } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { env } from '~/env/client';
@@ -10,6 +9,7 @@ import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-s
 import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
 import { checkStudioModelLive } from '~/components/Training/studio-model-live';
 import { checkStudioTriggerWord } from '~/components/Training/studio-trigger-word-check';
+import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import { SwitchToClassicTrainerAlert } from '~/components/Training/TrainingStudioSwitch';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -49,12 +49,6 @@ const hrefFor = (loc: StudioLocation) =>
     : loc.view === 'new'
     ? '/training-studio?view=new'
     : `/training-studio?run=${encodeURIComponent(loc.workflowId)}`;
-
-const locationFromQuery = (query: ParsedUrlQuery): StudioLocation => {
-  if (typeof query.run === 'string' && query.run) return { view: 'run', workflowId: query.run };
-  if (query.view === 'new') return { view: 'new' };
-  return { view: 'home' };
-};
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -208,6 +202,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           canGenerateUnpublished,
           isPaidMember,
           pricingUrl: '/pricing',
+          supportUrl: SUPPORT_LINKS.portal,
           enabledModelFlags,
         },
         hrefFor,

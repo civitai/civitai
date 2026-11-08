@@ -6,6 +6,7 @@ vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: { trigger } }))
 vi.mock('next/dynamic', () => ({ default: () => () => null }));
 
 import {
+  claimUpdatePrompt,
   createUpdateAwareFetch,
   isFirstPartyRequest,
 } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
@@ -385,5 +386,68 @@ describe('createUpdateAwareFetch — site alerts version', () => {
     expect(await seen()).toBe(500);
     expect(await seen('not-a-number')).toBe(500);
     expect(await seen('700')).toBe(700);
+  });
+});
+
+describe('claimUpdatePrompt', () => {
+  const store = new Map<string, string>();
+  beforeEach(() => {
+    store.clear();
+    vi.stubGlobal('sessionStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => store.set(k, v),
+    });
+    return () => vi.unstubAllGlobals();
+  });
+
+  it('holds the prompt back for a few minutes after it was shown in this tab', () => {
+    const t = 1_000_000;
+    expect(claimUpdatePrompt(t)).toBe(true);
+    expect(claimUpdatePrompt(t + 60_000)).toBe(false);
+    expect(claimUpdatePrompt(t + 5 * 60_000)).toBe(true);
+  });
+
+  it('keeps a reloaded tab from being prompted again inside the cooldown', async () => {
+    const outdated = () =>
+      createUpdateAwareFetch(
+        vi.fn().mockResolvedValue(responseWith({ 'x-update-required': 'true' })),
+        ORIGIN
+      )('/api/trpc/x');
+    await outdated();
+    await outdated();
+    expect(trigger).toHaveBeenCalledTimes(1);
+
+    store.clear();
+    await outdated();
+    expect(trigger).toHaveBeenCalledTimes(2);
+  });
+
+  it('prompts a page again once the cooldown it was held back by runs out', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: 1_000_000 });
+    try {
+      claimUpdatePrompt();
+      const fetch = createUpdateAwareFetch(
+        vi.fn().mockResolvedValue(responseWith({ 'x-update-required': 'true' })),
+        ORIGIN
+      );
+      await fetch('/api/trpc/x');
+      expect(trigger).not.toHaveBeenCalled();
+
+      vi.setSystemTime(1_000_000 + 5 * 60_000);
+      await fetch('/api/trpc/x');
+      expect(trigger).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still prompts when storage throws', () => {
+    vi.stubGlobal('sessionStorage', {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+    });
+    expect(claimUpdatePrompt()).toBe(true);
+    expect(claimUpdatePrompt()).toBe(true);
   });
 });

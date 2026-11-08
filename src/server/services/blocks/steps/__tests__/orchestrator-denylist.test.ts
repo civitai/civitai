@@ -65,6 +65,16 @@ describe('orchestrator denylist — the predicate', () => {
     expect(isPlatformInternalStepType('chatCompletion')).toBe(false);
   });
 
+  // A raw `comfy` graph is denied on the app-reachable arms; the platform's own
+  // generation graph builds `comfy` steps without passing through this guard.
+  it('refuses a raw comfy step, in any casing, without touching customComfy', () => {
+    for (const t of ['comfy', 'Comfy', 'COMFY']) {
+      expect(isPlatformInternalStepType(t)).toBe(true);
+      expect(() => assertStepTypeAllowed(t)).toThrow(PlatformInternalStepTypeError);
+    }
+    expect(isPlatformInternalStepType('customComfy')).toBe(false);
+  });
+
   it('allows an ordinary generation type', () => {
     expect(() => assertStepTypeAllowed('imageGen')).not.toThrow();
     expect(() => assertStepTypeAllowed('videoGen')).not.toThrow();
@@ -111,6 +121,7 @@ describe('orchestrator denylist — the predicate', () => {
    */
   it('denies exactly this set — every entry pinned', () => {
     expect([...PLATFORM_INTERNAL_STEP_TYPES].sort()).toEqual([
+      'comfy',
       'comfyNodepackSnapshot',
       'imageScanning',
       'mediaHash',

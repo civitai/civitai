@@ -84,6 +84,7 @@ const rowFor = (id: number) => ({
   publicSettings: {},
   settings: { creatorShop: { enabled: id === USER } },
   excludeFromLeaderboards: true,
+  excludeFromEventPoints: true,
   links: [],
   stats: null,
   rank: null,
@@ -169,7 +170,9 @@ describe('creator card cache: hit, miss, TTL', () => {
         ctx: { user: { id: 1, isModerator } },
       } as never);
     expect((await asUser(false))?.excludeFromLeaderboards).toBe(false);
+    expect((await asUser(false))?.excludeFromEventPoints).toBe(false);
     expect((await asUser(true))?.excludeFromLeaderboards).toBe(true);
+    expect((await asUser(true))?.excludeFromEventPoints).toBe(true);
     expect(creatorReads()).toBe(1);
   });
 

@@ -1,3 +1,7 @@
+import {
+  AppDeveloperTermsNotAcceptedError,
+  appDeveloperTermsRefusalMessage,
+} from '~/shared/constants/app-developer-terms.constants';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Minimal NextApiRequest/Response stand-in (avoids node-mocks-http), mirroring
@@ -477,6 +481,22 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     });
   });
 
+  it('403s an App Developer Terms refusal, with the terms URL and where to accept on the web', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockSubmitVersion.mockRejectedValueOnce(
+      new AppDeveloperTermsNotAcceptedError(appDeveloperTermsRefusalMessage('https://civitai.com'))
+    );
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(403);
+    const { message } = res._getJSONData() as { message: string };
+    expect(message).toContain('https://civitai.com/content/app-developer-terms');
+    expect(message).toContain('https://civitai.com/apps/submit');
+  });
+
   it('surfaces a service-thrown error as 400', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockSubmitVersion.mockRejectedValueOnce(new Error('bundle exceeds 50 MiB'));
@@ -487,6 +507,29 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(400);
     expect((res._getJSONData() as { message: string }).message).toContain('50 MiB');
+  });
+
+  it('🔴 a permission-hook refusal also returns the structured storageHookErrors', async () => {
+    const { StorageHookRefusal } = await import('~/server/services/apps/storage-hooks');
+    const problems = [
+      {
+        collection: 'cards',
+        file: 'hooks/cards.js',
+        reason: 'sha_mismatch' as const,
+        expected: 'a'.repeat(64),
+        actual: 'b'.repeat(64),
+      },
+    ];
+    const refusal = new StorageHookRefusal(problems);
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockSubmitVersion.mockRejectedValueOnce(refusal);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(400);
+    expect(res._getJSONData()).toEqual({ message: refusal.message, storageHookErrors: problems });
   });
 
   // ---------------------------------------------------------------------------

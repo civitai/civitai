@@ -1,4 +1,3 @@
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { keepHeldReviewsCte } from '~/server/services/held-review.service';
 import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { Prisma } from '@prisma/client';
@@ -8,17 +7,13 @@ import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 
-import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
 import {
   readUserResourceReviewsViaKysely,
   readUserResourceReviewsViaPrisma,
 } from '~/server/services/hot-reads-5.reads';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import {
-  readUserReviewsViaKysely,
-  readUserReviewsViaPrisma,
-} from '~/server/services/hot-reads-6.reads';
+import { readUserReviewsViaKysely } from '~/server/services/hot-reads-6.reads';
 import { onModelReviewsChanged } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -95,14 +90,14 @@ export const getUserResourceReview = async ({
   tx,
 }: GetUserResourceReviewInput & { userId: number; tx?: Prisma.TransactionClient }) => {
   if (!userId) throw throwAuthorizationError();
-  if (!tx && (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5)))
+  if (!tx)
     return readUserResourceReviewsViaKysely(await getKyselyWithoutLag('resourceReview', userId), {
       modelId,
       modelVersionId,
       userId,
     });
-  const dbClient = tx ?? (await getDbWithoutLag('resourceReview', userId));
-  const results = await readUserResourceReviewsViaPrisma(dbClient, {
+  // Inside a transaction the read stays on that transaction, through Prisma.
+  const results = await readUserResourceReviewsViaPrisma(tx, {
     modelId,
     modelVersionId,
     userId,
@@ -123,13 +118,11 @@ export const getResourceReviewsByUserId = async ({
   // unfiltered = existing behavior for the current whole-history callers.
   modelIds?: number[];
 }) => {
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-    return readUserReviewsViaKysely((await loadKyselyDb()).kyselyRead, {
-      userId,
-      recommended,
-      modelIds,
-    });
-  return readUserReviewsViaPrisma(dbRead, { userId, recommended, modelIds });
+  return readUserReviewsViaKysely((await loadKyselyDb()).kyselyRead, {
+    userId,
+    recommended,
+    modelIds,
+  });
 };
 
 export const getResourceReviews = async ({ resourceIds }: GetResourceReviewsInput) => {
@@ -451,14 +444,13 @@ export const upsertResourceReview = async ({
 };
 
 /**
- * Deletes the reviews `reviews` selects, copying a held author's into "HeldResourceReview" and
- * detaching held threads in the same statement. Returns the deleted rows.
+ * Deletes the reviews `reviews` selects, copying a held author's into "HeldResourceReview" in the
+ * same statement. Returns the deleted rows.
  */
 async function deleteReviews(reviews: Prisma.Sql) {
   const markerView = await holdMarkerViewExists();
   return dbWrite.$queryRaw<ResourceReview[]>`
-    WITH ${detachHeldThreadsCte({ reviewId: reviews }, markerView)},
-    ${keepHeldReviewsCte(reviews, markerView)}
+    WITH ${keepHeldReviewsCte(reviews, markerView)}
     DELETE FROM "ResourceReview" WHERE id IN (${reviews})
     RETURNING id, "modelId", "modelVersionId", rating, recommended, details, "userId", "createdAt",
       "updatedAt", exclude, nsfw, "tosViolation", metadata`;
@@ -595,6 +587,12 @@ type ResourceReviewRow = {
   imageCount: number;
   commentCount: number;
 };
+// `details` is editor HTML, so an emptied review can be `<p></p>` rather than NULL.
+export const writtenReviewSql = Prisma.sql`(
+  NOT rr.exclude AND NOT rr."tosViolation" AND NOT rr.nsfw
+  AND btrim(regexp_replace(coalesce(rr.details, ''), '<[^>]*>|&nbsp;', '', 'g')) <> ''
+)`;
+
 export const getPagedResourceReviews = async ({
   input,
   userId,
@@ -602,9 +600,10 @@ export const getPagedResourceReviews = async ({
   input: GetResourceReviewPagedInput;
   userId?: number;
 }) => {
-  const { limit, page, modelVersionId, username } = input;
+  const { limit, page, modelVersionId, username, writtenOnly } = input;
   const skip = page && page > 0 ? limit * (page - 1) : 0;
   const AND = [Prisma.sql`rr."modelVersionId" = ${modelVersionId}`];
+  if (writtenOnly) AND.push(writtenReviewSql);
   if (username) {
     const user = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
     if (user) AND.push(Prisma.sql`rr."userId" = ${user.id}`);
@@ -642,12 +641,18 @@ export const getPagedResourceReviews = async ({
     AND.push(Prisma.sql`rr."userId" != ALL(${excludedUserIds}::int[])`);
   }
 
-  const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
-    SELECT COUNT(rr.id)::int as count
-    FROM "ResourceReview" rr
-    WHERE ${Prisma.join(AND, ' AND ')}
-  `;
-  const itemsRaw = await dbRead.$queryRaw<ResourceReviewRow[]>`
+  // writtenOnly's regex would run on every review of the version in an exact COUNT, so that
+  // path pages by hasMore (one extra row) instead.
+  const count = writtenOnly
+    ? undefined
+    : (
+        await dbRead.$queryRaw<{ count: number }[]>`
+          SELECT COUNT(rr.id)::int as count
+          FROM "ResourceReview" rr
+          WHERE ${Prisma.join(AND, ' AND ')}
+        `
+      )[0].count;
+  const rows = await dbRead.$queryRaw<ResourceReviewRow[]>`
     SELECT
       rr.id,
       rr."modelVersionId",
@@ -674,9 +679,11 @@ export const getPagedResourceReviews = async ({
     FROM "ResourceReview" rr
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY rr."createdAt" DESC
-    LIMIT ${limit}
+    LIMIT ${writtenOnly ? limit + 1 : limit}
     OFFSET ${skip}
   `;
+  const hasMore = writtenOnly ? rows.length > limit : undefined;
+  const itemsRaw = rows.slice(0, limit);
 
   const userIds = itemsRaw.map((item) => item.userId);
   const users = await getBasicDataForUsers(userIds);
@@ -704,7 +711,7 @@ export const getPagedResourceReviews = async ({
     })
     .sort((a, b) => b.quality - a.quality);
 
-  return getPagingData({ items, count }, limit, page);
+  return getPagingData({ items, count, hasMore }, limit, page);
 };
 
 export const toggleExcludeResourceReview = async ({ id }: GetByIdInput) => {

@@ -434,7 +434,7 @@ describe('getNavSummary — the collaborator-aware flags', () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const result = await caller.getNavSummary();
     expect(result.hasPendingInvites).toBe(true);
-    // …and an offer confers no capability, so "My apps" stays dark.
+    // …and an offer confers no capability, so "My builds" stays dark.
     expect(result.hasEditableApps).toBe(false);
   });
 
@@ -452,7 +452,7 @@ describe('getNavSummary — the collaborator-aware flags', () => {
     expect(where.fromUserId).toBeUndefined();
   });
 
-  it('a PENDING seat does NOT light "My apps" — only "Invites"', async () => {
+  it('a PENDING seat does NOT light "My builds" — only "Invites"', async () => {
     // An unaccepted invite confers ZERO capability; offering an editor route for it
     // would be offering a page every child query refuses.
     mockDbRead.appCollaborator.findFirst.mockImplementation(
@@ -482,7 +482,7 @@ describe('getNavSummary — the collaborator-aware flags', () => {
     // attached `AppBlock` decide ownership on an OFF-SITE listing, where
     // `AppListing.userId` is canonical — so after `claimListing` or an off-site
     // `acceptTransfer` (both of which move only the column) the sub-nav offered the
-    // "My apps" route to the PREVIOUS owner and hid it from the rightful one. The third
+    // "My builds" route to the PREVIOUS owner and hid it from the rightful one. The third
     // branch is that fix, and this assertion is enumerated equality on purpose: it is the
     // structural half of "the tab and the page it opens cannot disagree", the other half
     // being `app-access.kind-aware-owner.test.ts`, which asserts both reads pass the

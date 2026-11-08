@@ -3,16 +3,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // The handler pulls these in at module scope; install canonical mocks first.
 import '~/__tests__/mocks/logging.mock';
 import '~/__tests__/mocks/db.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as CreatorProgramService from '~/server/services/creator-program.service';
 import type * as UserPaymentConfigurationService from '~/server/services/user-payment-configuration.service';
 
-const { bust, updateByTipaltiAccount, validateWebhookEvent } = vi.hoisted(() => ({
-  bust: vi.fn(async () => undefined),
-  updateByTipaltiAccount: vi.fn(async () => ({ userId: 42 })),
-  // Signature validation is not what this suite tests; hold it valid and vary the body.
-  validateWebhookEvent: vi.fn(() => ({ isValid: true })),
-}));
+const { bust, updateByTipaltiAccount, updateCashWithdrawal, validateWebhookEvent } = vi.hoisted(
+  () => ({
+    bust: vi.fn(async () => undefined),
+    updateCashWithdrawal: vi.fn(async () => undefined),
+    updateByTipaltiAccount: vi.fn(async () => ({ userId: 42 })),
+    // Signature validation is not what this suite tests; hold it valid and vary the body.
+    validateWebhookEvent: vi.fn(() => ({ isValid: true })),
+  })
+);
 
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({
@@ -24,6 +29,7 @@ vi.mock('~/server/http/tipalti/tipalti.caller', () => ({
 vi.mock('~/server/services/creator-program.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorProgramService>()),
   userCashCache: { bust },
+  updateCashWithdrawal,
 }));
 vi.mock('~/server/services/user-payment-configuration.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPaymentConfigurationService>()),
@@ -32,8 +38,8 @@ vi.mock('~/server/services/user-payment-configuration.service', async (importOri
 
 const handler = (await import('~/pages/api/webhooks/tipalti')).default;
 
-const run = async (eventData: Record<string, unknown>) => {
-  const body = JSON.stringify({ id: 'evt-1', type: 'payeeDetailsChanged', eventData });
+const run = async (eventData: Record<string, unknown>, type = 'payeeDetailsChanged') => {
+  const body = JSON.stringify({ id: 'evt-1', type, eventData });
   const req = {
     method: 'POST',
     headers: { 'tipalti-signature': 'sig' },
@@ -108,5 +114,63 @@ describe('tipalti webhook endpoint: a request that fails validation', () => {
     expect(res._status()).toBe(400);
     expect(Object.keys(res._sent() as object)).toEqual(['error']);
     expect(JSON.stringify(res._sent())).not.toMatch(/[0-9a-f]{64}/);
+  });
+});
+
+describe('tipalti webhook endpoint: paymentGroupApproved for a cash withdrawal', () => {
+  const refCode = 'CW7_abc123';
+  const approve = () =>
+    run(
+      { approvalDate: '2026-11-01', payments: [{ refCode, paymentStatus: 'Approved' }] },
+      'paymentGroupApproved'
+    );
+
+  beforeEach(() => {
+    // findCashWithdrawalByRefCode matches the refCode stored on the row.
+    dbMock.dbWrite.cashWithdrawal.findMany.mockResolvedValue([
+      {
+        id: 'abc123-full',
+        userId: 7,
+        status: 'InternalValue',
+        metadata: { paymentRefCode: refCode },
+      },
+    ]);
+  });
+
+  // Tipalti has already approved; a failed hold read must be visible but not drop the approval.
+  it('records the approval and logs when the hold cannot be read', async () => {
+    dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockRejectedValue(
+      new Error('connection reset')
+    );
+
+    const res = await approve();
+
+    expect(res._status()).toBe(200);
+    expect(updateCashWithdrawal).toHaveBeenCalledWith(
+      expect.objectContaining({ withdrawalId: 'abc123-full', status: 'Cleared' })
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'creator-program-payout-hold-unchecked',
+        userId: 7,
+        withdrawalId: 'abc123-full',
+        refCode,
+        message: 'connection reset',
+      })
+    );
+  });
+
+  it('still records the approval when the log itself fails', async () => {
+    dbMock.dbWrite.creatorProgramPayoutReview.findMany.mockRejectedValue(
+      new Error('connection reset')
+    );
+    loggingMock.logToAxiom.mockRejectedValue(new Error('axiom down'));
+
+    const res = await approve();
+
+    expect(res._status()).toBe(200);
+    expect(updateCashWithdrawal).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'Cleared' })
+    );
   });
 });

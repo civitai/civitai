@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as PlacementService from '~/server/services/placement.service';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
@@ -27,6 +28,12 @@ const placementReads = vi.hoisted(() => ({
   getChapterPlacementTarget: vi.fn(),
   listPlacementSpacesFor: vi.fn(),
   countPlacements: vi.fn(),
+}));
+// `getPlacementConfig`'s KeyValue read, through Kysely: no stored row, so the compiled defaults
+// apply.
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: vi.fn(async () => undefined),
 }));
 vi.mock('@civitai/db-queries/placement', () => placementReads);
 vi.mock('~/server/services/buzz.service', () => ({

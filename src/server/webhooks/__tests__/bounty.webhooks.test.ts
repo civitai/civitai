@@ -15,3 +15,25 @@ describe('new-bounty webhook', () => {
     );
   });
 });
+
+describe('new-bounty webhook payload', () => {
+  it('leaves the profanity fields out of the details', async () => {
+    const findMany = vi.fn(async () => [
+      {
+        id: 1,
+        details: {
+          baseModel: 'SD 1.5',
+          profanityMatches: ['term'],
+          profanityEvaluation: { reason: 'test reason' },
+        },
+        tags: [],
+        user: { username: 'u', image: null },
+      },
+    ]);
+    const [payload] = await bountyWebhooks['new-bounty'].getData({
+      lastSent: new Date(0),
+      prisma: { bounty: { findMany }, imageConnection: { findMany: vi.fn(async () => []) } },
+    } as never);
+    expect(payload.details).toEqual({ baseModel: 'SD 1.5' });
+  });
+});

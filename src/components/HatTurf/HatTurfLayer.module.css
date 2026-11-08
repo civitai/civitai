@@ -2,12 +2,25 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  z-index: 3;
   pointer-events: none;
+  /* No z-index here or inside: it would lift resting hats over the card chips (see .raised). */
+}
+
+/*
+ * A feed card paints its chips (reactions, tip, hat button) over the picture as later siblings, so
+ * a resting hat stays under them. A hat being placed, and image detail's layer, sit on top.
+ */
+.raised {
+  z-index: 3;
 }
 
 .box {
   position: absolute;
+}
+
+/* With Show hats off, the hats a placement revealed leave again. `.placed` carries the transition. */
+.fading .placed {
+  opacity: 0 !important; /* beats .dim and .muted */
 }
 
 /* Above the hats, so they never take its taps. */
@@ -17,19 +30,6 @@
   left: 8px;
   z-index: 2;
   pointer-events: auto;
-}
-
-.draft {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  line-height: 0;
-  border-radius: var(--mantine-radius-sm);
-  outline: 2px dashed var(--mantine-color-white);
-  outline-offset: 4px;
-  cursor: move;
-  touch-action: none;
-  pointer-events: auto;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
 }
 
 .placed {
@@ -43,6 +43,24 @@
   animation: land 0.3s ease;
 }
 
+/* Under the viewer's own hat: how long it keeps counting. */
+.timeLeft {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 2px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: var(--mantine-color-white);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .dim {
   opacity: 0.55;
   filter: saturate(0.25) drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
@@ -54,20 +72,7 @@
 
 .muted {
   opacity: 0.45;
-  filter: grayscale(1) drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
-}
-
-.own {
-  position: absolute;
-  /* On the cone's bottom-right corner: TeamHat's 24-unit box pads the cone (x 6-18, base y 17). */
-  right: 25%;
-  bottom: 29%;
-  transform: translate(50%, 50%);
-  width: 12px;
-  height: 12px;
-  border: 1.5px solid var(--mantine-color-white);
-  border-radius: 50%;
-  background-color: var(--mantine-color-violet-6);
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
 }
 
 .more {
@@ -97,39 +102,6 @@
   cursor: progress;
 }
 
-
-.actions {
-  position: absolute;
-  display: flex;
-  gap: 6px;
-  transform: translateX(-50%);
-  pointer-events: auto;
-}
-
-.save,
-.discard {
-  display: grid;
-  place-items: center;
-  border: 2px solid var(--mantine-color-white);
-  border-radius: 50%;
-  color: var(--mantine-color-white);
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
-}
-
-.save {
-  width: 34px;
-  height: 34px;
-  background-color: var(--mantine-color-green-6);
-}
-
-.discard {
-  align-self: center;
-  width: 28px;
-  height: 28px;
-  background-color: var(--mantine-color-gray-7);
-}
-
 @keyframes land {
   from {
     opacity: 0;
@@ -143,5 +115,9 @@
 @media (prefers-reduced-motion: reduce) {
   .landed {
     animation: none;
+  }
+
+  .placed {
+    transition: none;
   }
 }

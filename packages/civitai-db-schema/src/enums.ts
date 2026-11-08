@@ -1318,6 +1318,14 @@ export const StorylineWhoCanContinue = {
 export type StorylineWhoCanContinue =
   (typeof StorylineWhoCanContinue)[keyof typeof StorylineWhoCanContinue];
 
+export const StorylineFollowScope = {
+  Canon: 'Canon',
+  Endorsed: 'Endorsed',
+  Everything: 'Everything',
+} as const;
+
+export type StorylineFollowScope = (typeof StorylineFollowScope)[keyof typeof StorylineFollowScope];
+
 export const ServiceOfferingStatus = {
   Draft: 'Draft',
   Active: 'Active',
@@ -1385,6 +1393,7 @@ export type ServiceDealEventType = (typeof ServiceDealEventType)[keyof typeof Se
 export const ServiceDealFileKind = {
   Preview: 'Preview',
   Final: 'Final',
+  Attachment: 'Attachment',
 } as const;
 
 export type ServiceDealFileKind = (typeof ServiceDealFileKind)[keyof typeof ServiceDealFileKind];

@@ -9,7 +9,8 @@ import { createJob } from './job';
  * one the store refused while unreachable. A run whose heartbeat went stale is re-claimed; the ops
  * are idempotent, so re-running pages a lost run already did is safe. Every 10 minutes: a run
  * left behind waits at most that long, and with nothing to do the job is one indexed read.
- * FAIL-OPEN like the sibling reapers: an error is logged and the next run retries.
+ * Runs of an app the operator holds (`app-blocks-storage-migration-hold`) are skipped and counted
+ * as `held`. FAIL-OPEN like the sibling reapers: an error is logged and the next run retries.
  */
 export const runStorageMigrationsJob = createJob(
   'run-storage-migrations',
@@ -19,7 +20,7 @@ export const runStorageMigrationsJob = createJob(
       const result = await resumeStorageMigrationRuns({
         checkIfCanceled: () => jobContext.checkIfCanceled(),
       });
-      if (result.advanced > 0) {
+      if (result.advanced > 0 || result.held > 0) {
         logToAxiom({ name: 'run-storage-migrations', type: 'info', ...result }, 'app-blocks').catch(
           () => undefined
         );

@@ -2396,16 +2396,20 @@ export const submitEntry = async ({
   }
 };
 
-/** Pairs this judge is not served again: those they voted on, and those their votes decide. */
-async function getDecidedPairKeys(crucibleId: number, userId: number) {
+/**
+ * `voted`: pairs this judge voted on. `decided`: voted plus pairs their votes settle, which are not
+ * served again. Progress counts `voted` as judged; only serving and "pairs left" use `decided`.
+ */
+async function getJudgePairKeys(crucibleId: number, userId: number) {
   const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
-  const [votedPairKeys = [], outcomeCount = 0] = await Promise.all([
+  const [voted = [], outcomeCount = 0] = await Promise.all([
     sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
     sysRedis.sCard(outcomesKey),
   ]);
   // Past the cap the closure is skipped anyway, so the outcomes are not loaded.
-  if (!outcomeCount || outcomeCount > MAX_CLOSURE_VOTES) return votedPairKeys;
-  return decidedPairKeys(votedPairKeys, (await sysRedis.sMembers(outcomesKey)) ?? []);
+  if (!outcomeCount || outcomeCount > MAX_CLOSURE_VOTES) return { voted, decided: voted };
+  const outcomes = (await sysRedis.sMembers(outcomesKey)) ?? [];
+  return { voted, decided: decidedPairKeys(voted, outcomes) };
 }
 
 function getServedPairKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
@@ -2824,20 +2828,38 @@ export function countUnjudgedRemainingPairs(entryCount: number, maxVotesPerEntry
 }
 
 /**
- * The most pairs this judge can reach in a crucible, for a progress total. Depends only on how many
- * entries they can see, never on how they voted, so a vote can't shrink it the way it shrinks
- * `countRemainingPairs`. Clamped to the pairs already judged so "judged of total" never overflows.
+ * A judge's progress in one crucible. Judged is the pairs they voted on, one per vote: pairs their
+ * votes settle by transitivity are never served, so they are not judged and come off the total.
+ *
+ * The total is the most pairs they can reach by voting (fixed by the entries they see, so a vote
+ * that caps an entry doesn't move it), less the pairs their votes settled, and never less than
+ * judged plus `remainingPairs`: settled pairs ignore the per-entry vote cap, so judged plus settled
+ * can pass the reachable count while pairs are still served.
  */
-export function countTotalPairs({
-  entryCount,
-  judgedPairs,
+export function countJudgingProgress({
+  entryIds,
+  judgeEntryVotes,
+  votedPairKeys,
+  decidedPairKeys,
   maxVotesPerEntry,
 }: {
-  entryCount: number;
-  judgedPairs: number;
+  entryIds: number[];
+  judgeEntryVotes: Record<string, string>;
+  votedPairKeys: string[];
+  decidedPairKeys: string[];
   maxVotesPerEntry: number;
 }) {
-  return Math.max(judgedPairs, countUnjudgedRemainingPairs(entryCount, maxVotesPerEntry));
+  const judgedPairs = countJudgedPairs({ entryIds, votedPairKeys });
+  const remainingPairs = countRemainingPairs({
+    entryIds,
+    judgeEntryVotes,
+    votedPairKeys: decidedPairKeys,
+    maxVotesPerEntry,
+  });
+  const settledPairs = countJudgedPairs({ entryIds, votedPairKeys: decidedPairKeys }) - judgedPairs;
+  const reachable = countUnjudgedRemainingPairs(entryIds.length, maxVotesPerEntry);
+  const toGo = Math.max(remainingPairs, reachable - settledPairs - judgedPairs);
+  return { judgedPairs, remainingPairs, totalPairs: judgedPairs + toGo };
 }
 
 /** Pairs this judge voted on where both entries are still visible to them. */
@@ -2888,16 +2910,14 @@ export async function countJudgingPairs({
 
   const judgeState = await Promise.all(
     uniqueIds.map(async (id) => {
-      const [judgeEntryVotes, votedPairKeys] = await Promise.all([
+      const [judgeEntryVotes, { voted, decided }] = await Promise.all([
         sysRedis.hGetAll(getJudgeEntryVotesKey(id, userId)),
-        getDecidedPairKeys(id, userId),
+        getJudgePairKeys(id, userId),
       ]);
-      return { id, judgeEntryVotes, votedPairKeys };
+      return { id, judgeEntryVotes, voted, decided };
     })
   );
-  const counted = judgedOnly
-    ? judgeState.filter(({ votedPairKeys }) => votedPairKeys.length > 0)
-    : judgeState;
+  const counted = judgedOnly ? judgeState.filter(({ voted }) => voted.length > 0) : judgeState;
   if (!counted.length) return counts;
 
   const entries = await dbRead.$queryRaw<{ crucibleId: number; id: number }[]>`
@@ -2913,24 +2933,18 @@ export async function countJudgingPairs({
   const entryIds = new Map<number, number[]>(counted.map(({ id }) => [id, []]));
   for (const { crucibleId, id } of entries) entryIds.get(crucibleId)?.push(id);
 
-  for (const { id: crucibleId, judgeEntryVotes, votedPairKeys } of counted) {
+  for (const { id: crucibleId, judgeEntryVotes, voted, decided } of counted) {
     const visible = entryIds.get(crucibleId) ?? [];
-    const judgedPairs = countJudgedPairs({ entryIds: visible, votedPairKeys });
     counts.set(crucibleId, {
-      remainingPairs: countRemainingPairs({
+      ...countJudgingProgress({
         entryIds: visible,
         judgeEntryVotes: (judgeEntryVotes ?? {}) as Record<string, string>,
-        votedPairKeys,
-        maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
-      }),
-      judgedPairs,
-      totalPairs: countTotalPairs({
-        entryCount: visible.length,
-        judgedPairs,
+        votedPairKeys: voted,
+        decidedPairKeys: decided,
         maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
       }),
       visibleEntries: visible.length,
-      judged: votedPairKeys.length > 0,
+      judged: voted.length > 0,
     });
   }
   return counts;
@@ -3155,13 +3169,13 @@ export const getJudgingPair = async ({
     return null;
   }
 
-  const [redisElos, voteCounts, judgeEntryVotes, votedPairKeys] = await Promise.all([
+  const [redisElos, voteCounts, judgeEntryVotes, { decided }] = await Promise.all([
     getAllEntryElos(crucibleId),
     crucibleEloRedis.getAllVoteCounts(crucibleId),
     sysRedis.hGetAll(getJudgeEntryVotesKey(crucibleId, userId)),
-    getDecidedPairKeys(crucibleId, userId),
+    getJudgePairKeys(crucibleId, userId),
   ]);
-  const votedPairs = new Set(votedPairKeys);
+  const votedPairs = new Set(decided);
   const judgeVotesOn = (entry: EntryForJudging) => Number(judgeEntryVotes?.[entry.id] ?? 0);
   const underJudgeCap = (entry: EntryForJudging) =>
     judgeVotesOn(entry) < CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY;

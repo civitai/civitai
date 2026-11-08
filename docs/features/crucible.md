@@ -103,6 +103,17 @@ Staff can turn on an AI theme review for a crucible. It is internal for now: the
 
 An entry that passes is accepted. When the judge can't score an entry, it is tried again a few times; after that it is reported to moderators and accepted. Code: `src/server/services/crucible-theme-review.ts`.
 
+## Team points for entrants
+
+During an event, a crucible carrying the event's rally tag gives the entrant's team points for each accepted entrant, once per person per crucible. The entrant must hold the event's joined team cosmetic and be able to earn event points. The team total moves as soon as the entry is accepted. An accept writes an add to the event points ledger, and a revoke writes a remove. Each hourly settle recounts the points from the ledger. An award counts while its entry's latest row is an add, the entry is still in the crucible and judgeable, and its entrant is not banned, deleted or excluded. A person counts once per crucible, so a second entry keeps the award when the first leaves. The points come off at the next settle when:
+
+- a moderator or the owner removes the entry, or the entrant withdraws it;
+- the entry's image is deleted, or the entrant's account is deleted (which removes the entry);
+- the image is later hidden (a ToS flag, a review hold, an unpublished post, a re-rating out of the crucible's levels);
+- the entrant is banned.
+
+An entry hidden this way counts again once it is shown. The points never count toward a hat's or a person's points: the ledger type is one no scoring config lists. Code: `src/server/events/crucible-team-award.ts`.
+
 ## Notifications
 
 - **Creator:** new entries, and the end (with any seed refund).

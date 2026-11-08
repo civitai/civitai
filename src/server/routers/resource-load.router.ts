@@ -58,9 +58,6 @@ export function assertCanRequestLoad(user: SessionUser) {
  * 🔴 The unconditional daily row is required, not stylistic: a tier matching NO row gets no limit at
  * all — `validLimits` comes out empty and the check loop never runs. `userTiers` is
  * `[free, founder, bronze, silver, gold]`, so `founder` needs its own row too.
- *
- * The comparison is `attempts > limit`, so every nonzero number permits one more than it says —
- * 3/hour is really 4 (`limit: 0` short-circuits and is exact).
  */
 export const RESOURCE_LOAD_HOURLY_LIMIT = 3;
 

@@ -143,6 +143,13 @@ export const PLATFORM_INTERNAL_STEP_TYPES: readonly string[] = Object.freeze([
   // an API verb meaning "generate an image", resolved through the generation
   // graph, and it stays.
   'textToImage',
+
+  // A RAW comfy graph: the pass-through and `kind: 'workflow'` arms run no prompt
+  // audit, and `workflow.service` delivers a comfy step's `output.blobs` as
+  // media. Platform-built comfy steps (`kind: 'textToImage'` → the generation
+  // graph → `createComfyInput`) never reach this guard. Arbitrary graphs go
+  // through `kind: 'customComfy'`.
+  'comfy',
 ]);
 
 /**

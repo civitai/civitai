@@ -11,7 +11,7 @@ import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { bustUserDownloadsCache } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { countsTowardDownloadLimit } from '~/server/utils/download-repeats';
 import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
@@ -25,6 +25,7 @@ import {
 import { getLoginLink } from '~/utils/login-helpers';
 import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
+import { logUrlExpiry } from '~/server/utils/url-expiry-log';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -57,37 +58,6 @@ function logSplitQueryRepair(req: NextApiRequest) {
     type: 'info',
     message: 'split-query-repaired',
     keys: Object.keys(req.query),
-  }).catch(() => {
-    // swallow logging failure
-  });
-}
-
-/** A file this large can still be downloading when a short-lived link expires. */
-const LARGE_FILE_KB = 1024 * 1024;
-const SMALL_FILE_EXPIRY_SAMPLE_RATE = 0.01;
-
-/** How long the link a download was sent to has left. Never the link itself: it carries a signature. */
-function logUrlExpiry({
-  fileId,
-  sizeKB,
-  urlExpiresAt,
-}: {
-  fileId: number;
-  sizeKB: number;
-  urlExpiresAt: Date;
-}) {
-  const large = sizeKB >= LARGE_FILE_KB;
-  if (!large && Math.random() >= SMALL_FILE_EXPIRY_SAMPLE_RATE) return;
-  const expiresAt = Number.isNaN(urlExpiresAt.getTime()) ? null : urlExpiresAt;
-  logToAxiom({
-    name: 'download-model-endpoint',
-    type: 'info',
-    message: 'url-expiry',
-    fileId,
-    sizeKB,
-    expiresAt: expiresAt?.toISOString() ?? null,
-    remainingSeconds: expiresAt ? Math.round((expiresAt.getTime() - Date.now()) / 1000) : null,
-    sampleRate: large ? 1 : SMALL_FILE_EXPIRY_SAMPLE_RATE,
   }).catch(() => {
     // swallow logging failure
   });
@@ -149,7 +119,7 @@ export default PublicEndpoint(
       if (ip && ipBlacklist.includes(ip)) return errorResponse(403, 'Forbidden');
 
       // Check if user is blacklisted
-      const session = await getServerAuthSession({ req, res });
+      const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
       if (!!session?.user) {
         const userBlacklist = parseUserBlocklist(await getDownloadBlocklistValue('user-blacklist'));
         if (userBlacklist.includes(session.user.id.toString()))
@@ -233,6 +203,14 @@ export default PublicEndpoint(
         res.setHeader('Cache-Control', 'private, no-store');
         return errorResponse(404, 'File not found');
       }
+      if (fileResult.status === 'failed-scan') {
+        // Moderators are served this file, so the refusal must not be edge-cached for them.
+        res.setHeader('Cache-Control', 'private, no-store');
+        return errorResponse(
+          403,
+          'This file did not pass a security scan and is not available for download'
+        );
+      }
       if (fileResult.status === 'archived')
         return errorResponse(410, 'Model archived, not available for download');
       if (fileResult.status === 'early-access') {
@@ -304,7 +282,7 @@ export default PublicEndpoint(
         // An unpublished version is only reachable by its owner and by internal services — the scanner
         // fetches the file minutes after upload, which was landing a Download event and leaving every
         // draft showing 1 download before it went live.
-        const tracker = new Tracker(req, res);
+        const tracker = new Tracker(req, res, session);
         if (fileResult.published && countsAsPublicDownload(session?.user))
           await tracker.modelVersionEvent({
             type: 'Download',
