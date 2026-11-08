@@ -55,7 +55,8 @@ describe('describeUsageLimit', () => {
       percent: 71,
       tone: 'warn',
       usedText: '212 of 300 used · 88 left',
-      when: 'all free by 11:05 AM tomorrow',
+      when: null,
+      whenDetail: 'all free by 11:05 AM tomorrow',
     });
     expect(describeUsageLimit(row({ used: 30, remaining: 270 }), { now: NOW }).tone).toBe('ok');
   });

@@ -22,16 +22,48 @@ function useNow(intervalMs = STALE_MS) {
 
 export function UsageLimitsPane() {
   const now = useNow();
+  const currentUser = useCurrentUser();
   const limits = trpc.user.getUsageLimits.useQuery(undefined, { staleTime: STALE_MS });
   const active = trpc.user.getActiveLimits.useQuery(undefined, { staleTime: STALE_MS });
 
+  return (
+    <UsageLimitsView
+      now={now}
+      plan={
+        currentUser
+          ? { tier: currentUser.tier, creatorScore: currentUser.meta?.scores?.total }
+          : undefined
+      }
+      limits={limits.data?.limits}
+      status={limits.isLoading ? 'loading' : limits.isError ? 'error' : 'ready'}
+      active={active.data ?? []}
+    />
+  );
+}
+
+export type UsageLimitsViewProps = {
+  now: number;
+  timeZone?: string;
+  plan?: { tier?: string; creatorScore?: number };
+  limits?: UsageLimitRow[];
+  status: 'loading' | 'error' | 'ready';
+  active: { area: string; retryAt: string }[];
+};
+
+/** The pane without its data calls. */
+export function UsageLimitsView({
+  now,
+  timeZone,
+  plan,
+  limits,
+  status,
+  active,
+}: UsageLimitsViewProps) {
   const areas = useMemo(() => {
     const byArea = new Map<string, UsageLimitRow[]>();
-    for (const row of limits.data?.limits ?? []) {
-      byArea.set(row.area, [...(byArea.get(row.area) ?? []), row]);
-    }
+    for (const row of limits ?? []) byArea.set(row.area, [...(byArea.get(row.area) ?? []), row]);
     return [...byArea];
-  }, [limits.data]);
+  }, [limits]);
 
   return (
     <Stack gap="md">
@@ -39,18 +71,18 @@ export function UsageLimitsPane() {
         What you can do per day or hour on your plan, how much you&apos;ve used, and when it frees
         up. Times are in your time zone.
       </Text>
-      <UsagePlanBanner />
-      {active.data?.map(({ area, retryAt }) => (
+      {plan && <UsagePlanBanner {...plan} />}
+      {active.map(({ area, retryAt }) => (
         <Alert key={area} color="orange" icon={<IconAlertTriangle size={18} />} p="sm">
           <Text size="sm">
             <b>You&apos;ve hit a temporary limit on {area}.</b> You can try again at{' '}
-            {formatWhen(Date.parse(retryAt), now)}.
+            {formatWhen(Date.parse(retryAt), now, timeZone)}.
           </Text>
         </Alert>
       ))}
-      {limits.isLoading ? (
+      {status === 'loading' ? (
         <Loader size="sm" className="mx-auto" />
-      ) : limits.isError ? (
+      ) : status === 'error' ? (
         <Text size="sm" c="red">
           Couldn&apos;t load your usage limits. Try again in a moment.
         </Text>
@@ -59,7 +91,9 @@ export function UsageLimitsPane() {
           No limits apply to you right now.
         </Text>
       ) : (
-        areas.map(([area, rows]) => <UsageLimitCard key={area} area={area} rows={rows} now={now} />)
+        areas.map(([area, rows]) => (
+          <UsageLimitCard key={area} area={area} rows={rows} now={now} timeZone={timeZone} />
+        ))
       )}
       <Paper withBorder radius="md" p="sm" className="bg-gray-0 dark:bg-dark-7">
         <Text size="xs" c="dimmed">
@@ -71,11 +105,8 @@ export function UsageLimitsPane() {
   );
 }
 
-function UsagePlanBanner() {
-  const currentUser = useCurrentUser();
-  if (!currentUser) return null;
-  const tier = currentUser.tier && currentUser.tier !== 'free' ? currentUser.tier : undefined;
-  const score = currentUser.meta?.scores?.total;
+function UsagePlanBanner({ tier, creatorScore }: { tier?: string; creatorScore?: number }) {
+  const paid = tier && tier !== 'free' ? tier : undefined;
   return (
     <Paper
       radius="md"
@@ -86,9 +117,11 @@ function UsagePlanBanner() {
         <Text size="sm">
           Your plan:{' '}
           <Text span fw={700} c="blue">
-            {tier ? `${capitalize(tier)} member` : 'Free'}
+            {paid ? `${capitalize(paid)} member` : 'Free'}
           </Text>
-          {score !== undefined && <> · Creator Score {Math.round(score).toLocaleString('en-US')}</>}
+          {creatorScore !== undefined && (
+            <> · Creator Score {Math.round(creatorScore).toLocaleString('en-US')}</>
+          )}
         </Text>
         <Text size="xs" c="dimmed">
           Posting and generation limits rise with membership and Creator Score.

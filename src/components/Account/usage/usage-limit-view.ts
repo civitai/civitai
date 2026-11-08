@@ -115,8 +115,8 @@ export function describeUsageLimit(
     percent,
     tone,
     usedText,
-    when: used > 0 && row.resetAt ? `all free by ${at(row.resetAt)}` : null,
-    whenDetail: null,
+    when: null,
+    whenDetail: used > 0 && row.resetAt ? `all free by ${at(row.resetAt)}` : null,
   };
 }
 
