@@ -1,10 +1,10 @@
 /**
  * A sticker's pose over time on a video, in one of two stored versions. Readers handle both.
  *
- * - **v2, keys** (`StickerTrackV2`): what the keyframe editor writes. Each key is a time, a whole
+ * - **v2, keys** (`StickerTrackV2`): the format for keys set by hand. Each key is a time, a whole
  *   pose and an opacity, and an ease that says how the sticker travels to the next key.
- * - **v1, channels** (`StickerTrackV1`): a recorded path or a moment sticker. No longer written by
- *   the editor; kept so the placements that hold one keep playing.
+ * - **v1, channels** (`StickerTrackV1`): a recorded path or a moment sticker, as the placer writes
+ *   them today (`encodeStickerTrack`, `momentStickerTrack`).
  *
  * `Placement.data` keeps the position, scale and rotation at time zero, so every
  * reader that ignores the track still draws the sticker where it starts. `data`
@@ -111,7 +111,7 @@ export type StickerTrackSample = Omit<StickerTrackPose, 'show' | 'opacity'> & { 
 
 export const STICKER_TRACK_VERSION = 1;
 export const STICKER_TRACK_KEYS_VERSION = 2;
-/** Far more keys than anyone sets by hand; about 75 bytes each, so well inside the byte limit. */
+/** Far more keys than anyone sets by hand, and inside the byte limit at full precision. */
 export const STICKER_TRACK_MAX_KEYS = 500;
 export const STICKER_TRACK_DEFAULT_MS = 100;
 export const STICKER_TRACK_MIN_MS = 10;
@@ -202,14 +202,14 @@ export function momentStickerTrack(
   return encodeStickerTrack(samples);
 }
 
-/** Index of the last pair at or before `tick`; -1 when `tick` is before the first. */
-function pairAtOrBefore(pairs: StickerTrackPair[], tick: number) {
+/** Index of the last item whose time is at or before `time`; -1 when `time` is before the first. */
+function lastAtOrBefore<T>(items: T[], time: number, timeOf: (item: T) => number) {
   let low = 0;
-  let high = pairs.length - 1;
+  let high = items.length - 1;
   let found = -1;
   while (low <= high) {
     const mid = (low + high) >> 1;
-    if (pairs[mid][0] <= tick) {
+    if (timeOf(items[mid]) <= time) {
       found = mid;
       low = mid + 1;
     } else high = mid - 1;
@@ -217,8 +217,10 @@ function pairAtOrBefore(pairs: StickerTrackPair[], tick: number) {
   return found;
 }
 
+const pairTick = ([tick]: StickerTrackPair) => tick;
+
 function sampleContinuous(pairs: StickerTrackPair[], tick: number, angular: boolean) {
-  const index = pairAtOrBefore(pairs, tick);
+  const index = lastAtOrBefore(pairs, tick, pairTick);
   if (index < 0) return pairs[0][1];
   if (index === pairs.length - 1) return pairs[index][1];
   const [fromTick, from] = pairs[index];
@@ -233,7 +235,7 @@ function sampleContinuous(pairs: StickerTrackPair[], tick: number, angular: bool
 /** A v1 pose; v1 has no partial opacity, so a shown sticker is drawn as placed. */
 function sampleChannels(track: StickerTrackV1, timeMs: number): StickerTrackPose {
   const tick = timeMs / track.ms;
-  const showIndex = track.show ? pairAtOrBefore(track.show, tick) : 0;
+  const showIndex = track.show ? lastAtOrBefore(track.show, tick, pairTick) : 0;
   const show = track.show ? track.show[Math.max(showIndex, 0)][1] === 1 : true;
   return {
     x: sampleContinuous(track.x, tick, false),
@@ -270,21 +272,6 @@ export function easeStickerTrack(ease: StickerTrackEase, fraction: number) {
   return cubicBezier(EASE_BEZIER[ease], fraction);
 }
 
-/** Index of the last key at or before `timeMs`; -1 when `timeMs` is before the first. */
-function keyAtOrBefore(keys: StickerTrackKey[], timeMs: number) {
-  let low = 0;
-  let high = keys.length - 1;
-  let found = -1;
-  while (low <= high) {
-    const mid = (low + high) >> 1;
-    if (keys[mid].t <= timeMs) {
-      found = mid;
-      low = mid + 1;
-    } else high = mid - 1;
-  }
-  return found;
-}
-
 const keyPose = ({ x, y, s, r, o }: StickerTrackKey): StickerTrackPose => ({
   x,
   y,
@@ -295,7 +282,7 @@ const keyPose = ({ x, y, s, r, o }: StickerTrackKey): StickerTrackPose => ({
 });
 
 function sampleKeys({ keys }: StickerTrackV2, timeMs: number): StickerTrackPose {
-  const index = keyAtOrBefore(keys, timeMs);
+  const index = lastAtOrBefore(keys, timeMs, (key) => key.t);
   if (index < 0) return keyPose(keys[0]);
   if (index === keys.length - 1) return keyPose(keys[index]);
   const from = keys[index];

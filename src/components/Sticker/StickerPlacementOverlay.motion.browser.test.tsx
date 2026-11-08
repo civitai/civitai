@@ -235,18 +235,20 @@ describe('a keyed sticker plays its keys', () => {
     expect(left()).toBeCloseTo(80);
   });
 
-  test('fades, and is hidden outright once it reaches zero', async () => {
+  test('fades, and is hidden outright only at zero', async () => {
     const { box, opacity, seek } = await render({
       v: 2,
       keys: [key(0), key(1000, { o: 0 })],
     });
-
-    seek(0.5);
-    expect(opacity()).toBe('opacity(0.5)');
-    expect(box()).not.toHaveClass('!invisible');
+    // Hiding is a render, so it lands after the seek: wait for each state rather than read it.
+    const hidden = () => box().classList.contains('!invisible');
 
     seek(1);
-    // Hiding is a render, so it lands after the seek.
-    await expect.poll(() => box().classList.contains('!invisible')).toBe(true);
+    await expect.poll(hidden).toBe(true);
+
+    // Back from hidden, so a player that hid at any opacity would stay hidden here.
+    seek(0.5);
+    await expect.poll(hidden).toBe(false);
+    expect(opacity()).toBe('opacity(0.5)');
   });
 });
