@@ -274,6 +274,40 @@ describe('Hat Turf sticker lifetime', () => {
     expect(Object.keys(redis.hash(keys.counts) ?? {})).toEqual([`Image:${live}`]);
   });
 
+  // Deliberate: a reconcile batch reads expiry at the time of its own ticket, not when the run
+  // began. A sync that dropped a sticker as it expired writes under an earlier ticket, so a batch
+  // reading with the run's start time would win and put the sticker back.
+  it('a reconcile batch reads expiry at its own ticket time, not the time the run began', async () => {
+    override = ttl();
+    const now = later();
+    const image = await newImage();
+    // Expires 30s into the run.
+    await sticker(image, 4, new Date(now.getTime() - 48 * HOUR + 30_000));
+    let fakeNow = Date.now();
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => fakeNow);
+    // The batch's ticket is taken a minute into the run.
+    redisMock.sysRedis.incr.mockImplementation((async () => {
+      fakeNow += 60_000;
+      return (clock += 1);
+    }) as never);
+    try {
+      await reconcileTurf((await getTurfEvent('e', now))!, now);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(redis.hash(keys.map)?.[`Image:${image}`]).toBeUndefined();
+  });
+
+  it('a sticker stops counting exactly at its lifetime, and counts until then', async () => {
+    override = ttl();
+    const now = later();
+    const [ends, lasts] = [await newImage(), await newImage()];
+    await sticker(ends, 4, hoursBefore(now, 48));
+    await sticker(lasts, 4, new Date(now.getTime() - 48 * HOUR + 1));
+    expect((await sync(ends, now)).entry).toBeUndefined();
+    expect((await sync(lasts, now)).entry).toMatchObject({ players: [4] });
+  });
+
   it('an expired sticker is not drawn, on image detail or feed cards', async () => {
     override = ttl();
     const now = later();

@@ -67,7 +67,8 @@ const overrideSchema = z
     catchUp: z.array(catchUpStep),
     creditedCatchUp: z.array(catchUpStep),
     ttlHours: z.number().positive(),
-    rolloutAt: stepDate,
+    // A date string only: coercing null or 0 would read as 1970 and expire every old sticker at once.
+    rolloutAt: z.string().min(1).pipe(z.coerce.date()),
     creditedPlayers: z
       .array(z.object({ from: stepDate, players: z.number().int().positive() }))
       .min(1),

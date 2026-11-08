@@ -786,13 +786,18 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
   const batches: { upTo: number; ticket: number }[] = [];
   let lastTicket = 0;
   let after = 0;
+  // Each batch reads expiry at its own time, right after its ticket: with `now` fixed, a later
+  // ticket could read an older cutoff than a sync written before it, and put back a sticker that
+  // sync had dropped as expired.
+  const startedAt = Date.now();
   for (;;) {
     lastTicket = await takeTicket(event);
+    const readAt = new Date(now.getTime() + Date.now() - startedAt);
     // Keyset over image ids through the live-sticker index, never a scan of Image. An image left
     // with only expired stickers is not read: it is cleared below, with every other gone field.
     const ids = await dbRead.$queryRaw<{ imageId: number }[]>`
       SELECT DISTINCT s."imageId" FROM "EventTurfSticker" s
-      WHERE s.event = ${event.name} AND s."removedAt" IS NULL ${unexpired(event, now)}
+      WHERE s.event = ${event.name} AND s."removedAt" IS NULL ${unexpired(event, readAt)}
         AND s."imageId" > ${after}
       ORDER BY s."imageId" LIMIT ${RECONCILE_IMAGE_BATCH}
     `;
@@ -803,7 +808,7 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
       event,
       Prisma.sql`s."imageId" = ANY(${ids.map((r) => r.imageId)}::int[])`,
       dbRead,
-      now
+      readAt
     );
     for (const row of rows) if (row.contest) contest.add(row.imageId);
     const part = computeImages(rows, cosmetics, creditedByTeam, changed);
@@ -861,13 +866,16 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
 /** Every event whose turf may still change: running, or in the finalize window after it. */
 export async function reconcileAllTurf(now = new Date()) {
   const results = [];
+  // Each event reconciles from when its turn comes, not when the run began (see reconcileTurf).
+  const startedAt = Date.now();
   for (const def of await loadEvents()) {
     if (!def.turf || !def.scoring) continue;
     if (now < def.startDate || now > new Date(def.endDate.getTime() + def.scoring.finalizeAfterMs))
       continue;
     const event = await getTurfEvent(def.name, now);
     if (!event || event.turf.mode === 'off') continue;
-    results.push({ event: def.name, ...(await reconcileTurf(event, now)) });
+    const at = new Date(now.getTime() + Date.now() - startedAt);
+    results.push({ event: def.name, ...(await reconcileTurf(event, at)) });
   }
   return results;
 }

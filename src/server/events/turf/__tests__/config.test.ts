@@ -80,6 +80,9 @@ describe('applyTurfOverride: sticker lifetime and team-relative credit', () => {
     ['a zero lifetime', { ttlHours: 0 }],
     ['a lifetime as a string', { ttlHours: '48' }],
     ['a rollout that is not a date', { rolloutAt: 'soon' }],
+    // Coerced, null and 0 would be 1970: no fresh lifetime for anyone.
+    ['a null rollout', { rolloutAt: null }],
+    ['a rollout of 0', { rolloutAt: 0 }],
     [
       'a credit catch-up min above 1',
       { creditedCatchUp: [{ from: '2026-11-08T12:00:00Z', max: 2, min: 1.5, gap: 0.25 }] },
