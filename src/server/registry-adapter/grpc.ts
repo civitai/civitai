@@ -7,7 +7,7 @@
  *   - The spec's proto block declares no `package`, so the method is `/Source/Subscribe`, the
  *     path a stub generated from that block calls.
  *   - An error is its gRPC status (spec "Errors") with a `google.rpc.ErrorInfo` whose `reason` is
- *     the error's name, in `grpc-status-details-bin`.
+ *     the error's name, and no `domain` (the spec defines none), in `grpc-status-details-bin`.
  *   - An idle stream is kept open by HTTP/2 pings ({@link GRPC_KEEPALIVE_MS}).
  *   - Auth (`auth.ts`): the token is the `authorization` metadata (`Bearer {token}`); without one
  *     the call is anonymous. `invalid_token` is UNAUTHENTICATED with an `ErrorInfo` reason
@@ -110,8 +110,6 @@ message ErrorInfo {
 `;
 
 export const SUBSCRIBE_PATH = '/Source/Subscribe';
-/** `ErrorInfo.domain`: the names are the registry protocol's, not this source's. */
-export const ERROR_DOMAIN = 'registry';
 const ERROR_INFO_TYPE_URL = 'type.googleapis.com/google.rpc.ErrorInfo';
 export const GRPC_KEEPALIVE_MS = 15_000;
 const GRPC_KEEPALIVE_TIMEOUT_MS = 10_000;
@@ -293,7 +291,10 @@ export function errorStatus(
   resourceMetadata?: string
 ): Partial<grpc.StatusObject> {
   const info = types.errorInfo
-    .encode(types.errorInfo.fromObject({ reason: code, domain: ERROR_DOMAIN }))
+    // No `domain`: the spec names an error by the `ErrorInfo`'s `reason` alone ("Errors") and
+    // defines no domain for the protocol's names, so none is invented for a consumer to match on.
+    // Left out, not set to '', which protobufjs would still put on the wire.
+    .encode(types.errorInfo.fromObject({ reason: code }))
     .finish();
   const status = types.status
     .encode(
@@ -323,10 +324,12 @@ export function errorInfoOf(
   };
   const detail = status.details.find((d) => d.type_url === ERROR_INFO_TYPE_URL);
   if (!detail) return null;
-  return types.errorInfo.toObject(types.errorInfo.decode(detail.value)) as {
-    reason: string;
-    domain: string;
+  const info = types.errorInfo.toObject(types.errorInfo.decode(detail.value)) as {
+    reason?: string;
+    domain?: string;
   };
+  // An empty field is absent on the wire: this source's `domain` always is.
+  return { reason: info.reason ?? '', domain: info.domain ?? '' };
 }
 
 type Call = grpc.ServerWritableStream<WireRequest, StreamEvent>;
