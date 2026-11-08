@@ -13,7 +13,10 @@ import { usersSearchIndex } from '~/server/search-index/users.search-index';
 import { keysIn } from '~/server/services/image-url-ownership';
 import { ownerHeldSql } from '~/server/services/legal-hold.service';
 import { IMAGE_SAFETY_CONDITION } from '~/server/services/personal-data-export/sources/postgres';
-import { avatarRemovalUndisclosedSql } from '~/server/services/profile-picture-hold.sql';
+import {
+  avatarRemovalUndisclosedSql,
+  unservableImageSql,
+} from '~/server/services/profile-picture-hold.sql';
 import { refreshProfilePicturesForUsers } from '~/server/services/user.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
@@ -108,7 +111,7 @@ export async function syncProfilePictureForImage(
           WHEN u.image = ${image.url} OR EXISTS (
             SELECT 1 FROM "Image" bi
             WHERE bi."userId" = u.id AND bi.url = u.image
-              AND (bi.ingestion = 'Blocked' OR bi."needsReview" IS NOT NULL)
+              AND ${unservableImageSql(Prisma.raw('bi'))}
           ) THEN NULL
           ELSE u.image
         END
@@ -147,7 +150,6 @@ export async function syncProfilePictureForImage(
     WHERE id = ${owner} AND "profilePictureId" IS NULL AND "deletedAt" IS NULL
   `;
   if (!restored) return declined();
-  // A held owner keeps the records, avatar restored or not.
   await tx.$executeRaw`
     DELETE FROM "ProfilePictureHold"
     WHERE "imageId" = ${imageId} AND "userId" = ${owner}
@@ -156,7 +158,7 @@ export async function syncProfilePictureForImage(
   return { action: 'restored', userId: owner };
 }
 
-/** Busts the event-engine copy of these users' avatars, read from the same redis the main app uses. */
+/** The event-engine reads the main app's redis, so the bust goes through it. */
 async function bustEventEngineProfilePictures(userIds: number[]) {
   const ctx = { redis: redis as unknown as IRedisClient } as CacheContext;
   await eventEngineProfilePictures.bust(ctx, userIds);
@@ -250,9 +252,9 @@ export async function isUnservableOwnImageUrl(userId: number, url: string): Prom
   const urls = [...new Set([url, ...keysIn(url)])];
   const rows = await dbWrite.$queryRaw<{ found: boolean }[]>`
     SELECT EXISTS (
-      SELECT 1 FROM "Image"
-      WHERE "userId" = ${userId} AND url = ANY(${urls}::text[])
-        AND (ingestion = 'Blocked' OR "needsReview" IS NOT NULL)
+      SELECT 1 FROM "Image" i
+      WHERE i."userId" = ${userId} AND i.url = ANY(${urls}::text[])
+        AND ${unservableImageSql(Prisma.raw('i'))}
     ) AS found
   `;
   return rows?.[0]?.found === true;

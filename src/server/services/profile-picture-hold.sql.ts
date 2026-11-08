@@ -11,3 +11,8 @@ export function avatarRemovalUndisclosedSql(owner: Prisma.Sql): Prisma.Sql {
     WHERE c."userId" = ${owner} OR c.details ->> 'secondaryUserId' = (${owner})::text
   ))`;
 }
+
+/** Whether the image (an SQL table alias) is Blocked or under any review. */
+export function unservableImageSql(image: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`(${image}.ingestion = 'Blocked' OR ${image}."needsReview" IS NOT NULL)`;
+}

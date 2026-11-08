@@ -736,6 +736,28 @@ describe('the profile-picture-blocked notice', () => {
     expect(await noticed()).toEqual([]);
   });
 
+  it.each(['csam', 'minor', 'poi', 'other'])(
+    'is not sent for a block of an avatar under %s review',
+    async (kind) => {
+      await db.query(`UPDATE "Image" SET ingestion = 'Blocked', "needsReview" = $2 WHERE id = $1`, [
+        avatar(OWNER),
+        kind,
+      ]);
+      expect(await noticed()).toEqual([]);
+      await queue(avatar(OWNER));
+      await runProfilePictureSync();
+      expect(await noticed()).toEqual([]);
+    }
+  );
+
+  it('is sent exactly once for a block with no review, and not to a held owner', async () => {
+    await block(avatar(OWNER));
+    await block(avatar(HELD_OWNER));
+    expect(await noticed()).toEqual([OWNER]);
+    await runProfilePictureSync();
+    expect(await noticed()).toEqual([OWNER]);
+  });
+
   it('is not sent for a restore', async () => {
     await block(avatar(OWNER));
     await runProfilePictureSync();

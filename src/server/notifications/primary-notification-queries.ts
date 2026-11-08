@@ -5,8 +5,8 @@ import { avatarRemovalUndisclosedSql } from '~/server/services/profile-picture-h
 
 /**
  * Avatars blocked since `lastSent`, whether the sync job has already moved the pointer to a
- * ProfilePictureHold record or not. No notice for a CSAM block or flag, nor for an owner the export
- * also leaves out (`avatarRemovalUndisclosedSql`).
+ * ProfilePictureHold record or not. No notice for a CSAM block, an image under any review, nor for
+ * an owner the export also leaves out (`avatarRemovalUndisclosedSql`).
  * Read from the primary: the record table is not readable from the replica.
  */
 export async function getBlockedProfilePictureNotices(lastSent: Date) {
@@ -24,7 +24,7 @@ export async function getBlockedProfilePictureNotices(lastSent: Date) {
     SELECT b."imageId", b."userId"
     FROM blocked b
     JOIN "Image" i ON i.id = b."imageId"
-    WHERE i."needsReview" IS DISTINCT FROM 'csam'
+    WHERE i."needsReview" IS NULL
       AND i."blockedFor" IS DISTINCT FROM 'CSAM'
       AND NOT ${avatarRemovalUndisclosedSql(Prisma.raw('b."userId"'))}
   `;
