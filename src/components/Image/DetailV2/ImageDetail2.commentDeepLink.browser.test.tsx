@@ -174,7 +174,7 @@ describe('image detail opened from a comment notification', () => {
     // A link that carries both, as a reload after expanding the sheet does.
     const router = getBrowserRouter();
     router.push({ query: { ...router.query, active: true } }, router.asPath);
-    await vi.waitFor(() => expect(getBrowserRouter().query.active).toBe(true));
+    await vi.waitFor(() => expect(getBrowserRouter().query?.active).toBe(true));
 
     await page.getByTestId('toggle').click();
 

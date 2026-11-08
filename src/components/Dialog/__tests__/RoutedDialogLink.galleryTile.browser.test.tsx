@@ -122,7 +122,7 @@ describe('gallery tile on an open image detail', () => {
       { query: { ...router.query, highlight: 777 } },
       `${router.asPath}?highlight=777`
     );
-    await vi.waitFor(() => expect(getBrowserRouter().query.highlight).toBe(777));
+    await vi.waitFor(() => expect(getBrowserRouter().query?.highlight).toBe(777));
 
     await page.getByText('gallery tile').click();
 
