@@ -1,7 +1,9 @@
 import type { NextApiRequest } from 'next';
 import { POST_CREATE_RATE_LIMIT_KEY, postRateLimits } from '~/server/schema/post.schema';
+import { resolveUsageLimitRules } from '~/server/services/usage-limit-config.service';
 import { peekRateLimit } from '~/server/utils/rate-limit-bucket';
-import { selectRateLimitRules, type RateLimit } from '~/server/utils/rate-limit-window';
+import type { RateLimit } from '~/server/utils/rate-limit-window';
+import { getUsageLimitDef, type UsageLimitRef } from '~/shared/constants/usage-limits';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
@@ -13,14 +15,11 @@ export const USAGE_LIMITS_SCOPES = [TokenScope.UserRead, TokenScope.MediaWrite] 
  * The product limits a caller can read their standing against. `sharedKey` must be the one the
  * limited procedures pass to `rateLimit()`, so the read sees the bucket they write.
  */
-const USAGE_LIMIT_AREAS: { area: string; sharedKey: string; rules: RateLimit[] }[] = [
-  { area: 'posts', sharedKey: POST_CREATE_RATE_LIMIT_KEY, rules: postRateLimits },
+const USAGE_LIMIT_AREAS: { area: string; sharedKey: string; limits: UsageLimitRef }[] = [
+  { area: 'posts', sharedKey: POST_CREATE_RATE_LIMIT_KEY, limits: postRateLimits },
 ];
 
-const LABELS: Record<string, string> = {
-  'posts.hourly': 'Posts per hour',
-  'posts.daily': 'Posts per day',
-};
+const labelOf = (id: string) => getUsageLimitDef(id).label;
 
 export type UsageLimit = {
   id: string;
@@ -63,9 +62,10 @@ export async function getUsageLimits({
     (tokenScope === TokenScope.Full || Flags.hasFlag(tokenScope, TokenScope.UserRead));
   const wanted = ids && ids.length > 0 ? new Set(ids) : undefined;
   const limits: UsageLimit[] = [];
-  for (const { area, sharedKey, rules } of USAGE_LIMIT_AREAS) {
-    // Select first, as `rateLimit()` does, so `ids` can only drop rows, never change a winner.
-    const productRules = selectRateLimitRules(rules, user).filter(
+  for (const { area, sharedKey, limits: ref } of USAGE_LIMIT_AREAS) {
+    // Resolve first, as `rateLimit()` does, so `ids` can only drop rows, never change a number.
+    const rules: RateLimit[] = await resolveUsageLimitRules(ref.usageLimitIds, user);
+    const productRules = rules.filter(
       (rule) => rule.kind === 'product' && rule.id && (!wanted || wanted.has(rule.id))
     );
     if (productRules.length === 0) continue;
@@ -80,7 +80,7 @@ export async function getUsageLimits({
       limits.push({
         id,
         area,
-        label: LABELS[id] ?? id,
+        label: labelOf(id),
         limit: rule.limit,
         used,
         remaining,
@@ -97,7 +97,7 @@ function unlimited(id: string, area: string): UsageLimit {
   return {
     id,
     area,
-    label: LABELS[id] ?? id,
+    label: labelOf(id),
     limit: null,
     used: null,
     remaining: null,

@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { SessionUser } from '~/types/session';
-import { selectRateLimitRules, type RateLimit } from '~/server/utils/rate-limit-window';
-import { getDailyPostLimit, postRateLimits } from '~/server/schema/post.schema';
+import type { RateLimit } from '~/server/utils/rate-limit-window';
+import { postRateLimits } from '~/server/schema/post.schema';
 import { articleRateLimits } from '~/server/schema/article.schema';
 import { commentRateLimits } from '~/server/schema/comment.schema';
 import { reactionRateLimits } from '~/server/schema/reaction.schema';
@@ -10,10 +10,17 @@ import {
   buildCreatorScoreUnlocks,
   compiledCreatorScoreUnlockInputs,
 } from '~/server/services/creator-score-unlocks.service';
+import {
+  getDailyPostLimit,
+  resetUsageLimitConfigCache,
+  resolveUsageLimitRules,
+} from '~/server/services/usage-limit-config.service';
+import type { UsageLimitRef } from '~/shared/constants/usage-limits';
 
 /**
  * The limits, 429 messages and unlock labels served before the usage-limit registry, pinned as
- * literals. With no KeyValue override the registry must serve exactly these. Each cell is
+ * literals. With no KeyValue override (the db mock finds no row) the registry must serve exactly
+ * these. Each cell is
  * `period:limit` per applied rule, `#n` naming the rule's message in MESSAGES.
  */
 
@@ -165,16 +172,16 @@ const UNLOCKS = [
   },
 ];
 
-const sources: Record<Group, RateLimit[]> = {
+const sources: Record<Group, UsageLimitRef> = {
   posts: postRateLimits,
   articles: articleRateLimits,
   comments: commentRateLimits,
   reactions: reactionRateLimits,
-  resourceLoads: resourceLoadRateLimits as RateLimit[],
+  resourceLoads: resourceLoadRateLimits,
 };
 
 async function servedRules(group: Group, user: SessionUser): Promise<RateLimit[]> {
-  return selectRateLimitRules(sources[group], user);
+  return resolveUsageLimitRules(sources[group].usageLimitIds, user);
 }
 
 function encode(rules: RateLimit[]) {
@@ -197,6 +204,8 @@ function userFor(age: Row[0], score: number, tier: string) {
     meta: { scores: { total: score } },
   } as SessionUser;
 }
+
+beforeEach(() => resetUsageLimitConfigCache());
 
 describe('usage limits served today', () => {
   it.each(ROWS)(

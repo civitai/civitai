@@ -12,6 +12,8 @@ import type { Context } from '~/server/createContext';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { ITEM_HOLDER_BUSY_MESSAGE } from '~/server/services/item-holder-lock';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
+import { resolveUsageLimitRules } from '~/server/services/usage-limit-config.service';
+import { isUsageLimitRef, type UsageLimitRef } from '~/shared/constants/usage-limits';
 import { middleware } from '~/server/trpc';
 import { rateLimitBucket, readRateLimitAttempts } from '~/server/utils/rate-limit-bucket';
 import { acquireConcurrencySlot, type ConcurrencySlot } from '~/server/utils/concurrency-slots';
@@ -154,13 +156,23 @@ export type RateLimitOptions = {
   // post.createWithImages both posting against a single per-user post ceiling.
   sharedKey?: string;
 };
+/**
+ * `rateLimits` is a fixed rule list, or `usageLimits(...ids)`: registry entries whose numbers are
+ * resolved per request from the KeyValue-backed usage-limit config.
+ */
 export function rateLimit<TInput = any>(
-  rateLimits?: RateLimit | RateLimit[],
+  rateLimits?: RateLimit | RateLimit[] | UsageLimitRef,
   condition?: (input: TInput) => boolean,
   options?: RateLimitOptions
 ) {
-  if (!rateLimits) rateLimits = { limit: 10, period: CacheTTL.md };
-  if (!Array.isArray(rateLimits)) rateLimits = [rateLimits];
+  const registry = isUsageLimitRef(rateLimits) ? rateLimits.usageLimitIds : undefined;
+  const fixedRules: RateLimit[] = isUsageLimitRef(rateLimits)
+    ? []
+    : !rateLimits
+    ? [{ limit: 10, period: CacheTTL.md }]
+    : Array.isArray(rateLimits)
+    ? rateLimits
+    : [rateLimits];
 
   return middleware(async ({ ctx, input, next, path }) => {
     // Skip if user is a moderator, or in a non-prod env (dev/test/preview).
@@ -174,7 +186,9 @@ export function rateLimit<TInput = any>(
       return await next();
     }
 
-    const validLimits = selectRateLimitRules(rateLimits, ctx.user);
+    const validLimits = registry
+      ? await resolveUsageLimitRules(registry, ctx.user)
+      : selectRateLimitRules(fixedRules, ctx.user);
 
     // Get user's attempts. options.sharedKey lets multiple procedures share one
     // quota; otherwise key on the tRPC path.

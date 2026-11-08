@@ -49,11 +49,14 @@ vi.mock('~/env/client', () => ({
 
 import { CacheTTL } from '~/server/common/constants';
 import { rateLimit } from '~/server/middleware.trpc';
+import { postRateLimits } from '~/server/schema/post.schema';
 import {
   getDailyPostLimit,
-  isDailyPostLimitMessage,
-  postRateLimits,
-} from '~/server/schema/post.schema';
+  resetUsageLimitConfigCache,
+  USAGE_LIMIT_CONFIG_TTL_MS,
+} from '~/server/services/usage-limit-config.service';
+import { USAGE_LIMITS_KEY } from '~/shared/constants/usage-limits';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 
@@ -111,9 +114,13 @@ async function expectCap(
   else await refused.toThrow(message);
 }
 
+const findKeyValue = dbMock.dbRead.keyValue.findUnique;
+
 beforeEach(() => {
   vi.clearAllMocks();
   capturedHandler.handler = null;
+  resetUsageLimitConfigCache();
+  findKeyValue.mockResolvedValue(null as never);
 });
 
 describe('postRateLimits daily cap', () => {
@@ -164,11 +171,6 @@ describe('postRateLimits daily cap', () => {
       it(`caps a member at ${member}`, async () => {
         await expectCap(user({ score, tier: 'bronze' }), member, 2 * HOUR, memberMessage);
       });
-
-      it('recognises both of its refusals as the daily post limit', () => {
-        expect(isDailyPostLimitMessage(nonMemberMessage)).toBe(true);
-        expect(isDailyPostLimitMessage(memberMessage)).toBe(true);
-      });
     }
   );
 
@@ -178,12 +180,6 @@ describe('postRateLimits daily cap', () => {
       await expectCap(user({ tier }), 40, 2 * HOUR, reputationTiers[0].memberMessage);
     }
   );
-
-  it('does not take the new-account clamp for the daily limit', () => {
-    const clamp = postRateLimits.find((rule) => rule.period !== 24 * 60 * 60);
-    expect(clamp?.errorMessage).toMatch(NEW_ACCOUNT_MESSAGE);
-    expect(isDailyPostLimitMessage(clamp?.errorMessage ?? '')).toBe(false);
-  });
 });
 
 describe('postRateLimits new-account clamp', () => {
@@ -221,7 +217,7 @@ describe('getDailyPostLimit', () => {
 
   it.each(cases)('score $score, tier $tier → $limit', async ({ score, tier, limit }) => {
     const sessionUser = user({ score, tier });
-    expect(getDailyPostLimit(sessionUser)).toBe(limit);
+    expect(await getDailyPostLimit(sessionUser)).toBe(limit);
     // The `limit`th call is admitted and the one after it refused.
     const admitted = await attemptWith(sessionUser, limit - 1, 2 * HOUR);
     expect(admitted).toHaveBeenCalledTimes(1);
@@ -230,8 +226,10 @@ describe('getDailyPostLimit', () => {
     );
   });
 
-  it('treats a missing score as the base tier', () => {
-    expect(getDailyPostLimit(user({ meta: {} as SessionUser['meta'], tier: 'free' }))).toBe(20);
+  it('treats a missing score as the base tier', async () => {
+    expect(await getDailyPostLimit(user({ meta: {} as SessionUser['meta'], tier: 'free' }))).toBe(
+      20
+    );
   });
 });
 
@@ -296,5 +294,70 @@ describe('rateLimit() with a limit-0 rule', () => {
     );
     expect(error).toMatchObject({ code: 'TOO_MANY_REQUESTS', message: 'Members only.' });
     expect(rateLimitMetaOf(error)).toBeUndefined();
+  });
+});
+
+/**
+ * The `usage-limits` KeyValue row changes the served limit, the refusal and its meta, and the
+ * scheduler's copy, within the cache TTL; deleting the row serves the code defaults again.
+ */
+describe('posts.daily from the usage-limits KeyValue row', () => {
+  const row = (limits: Record<string, unknown>) =>
+    ({ key: USAGE_LIMITS_KEY, value: { version: 1, limits } } as never);
+  const free = () => user({ tier: 'free' });
+
+  async function refusal(sessionUser: SessionUser, count: number) {
+    return attemptWith(sessionUser, count, 2 * HOUR).then(
+      () => undefined,
+      (e: unknown) => e as Error
+    );
+  }
+
+  it('serves an override: the 25th post is admitted, the 26th refused with limit 25', async () => {
+    findKeyValue.mockResolvedValue(row({ 'posts.daily': { base: 25 } }));
+
+    expect(await attemptWith(free(), 24, 2 * HOUR)).toHaveBeenCalledTimes(1);
+    const error = await refusal(free(), 25);
+    expect(error?.message).toMatch(/^You've reached today's limit of 25 posts\./);
+    expect(rateLimitMetaOf(error)).toMatchObject({ id: 'posts.daily', limit: 25, used: 25 });
+    expect(await getDailyPostLimit(free())).toBe(25);
+    // The member multiplier still applies on top of an overridden base.
+    expect(await getDailyPostLimit(user({ tier: 'gold' }))).toBe(50);
+  });
+
+  it('picks up a change within the TTL and the defaults once the row is deleted', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      findKeyValue.mockResolvedValue(row({ 'posts.daily': { base: 25 } }));
+      expect(await getDailyPostLimit(free())).toBe(25);
+
+      findKeyValue.mockResolvedValue(null as never);
+      vi.advanceTimersByTime(USAGE_LIMIT_CONFIG_TTL_MS - 1000);
+      expect(await getDailyPostLimit(free()), 'cached within the TTL').toBe(25);
+
+      vi.advanceTimersByTime(2000);
+      // Past the TTL the stale value is served once while the refresh runs in the background.
+      await getDailyPostLimit(free());
+      await vi.waitFor(async () => expect(await getDailyPostLimit(free())).toBe(20));
+      await expect(attemptWith(free(), 20, 2 * HOUR)).rejects.toThrow(
+        /reached today's limit of 20/
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('serves the code default for an out-of-bounds override and keeps the others', async () => {
+    findKeyValue.mockResolvedValue(
+      row({ 'posts.daily': { base: 15_001 }, 'posts.hourly': { base: 5 } })
+    );
+    expect(await getDailyPostLimit(free())).toBe(20);
+    const sameDay = user({ tier: 'free', createdAt: new Date() });
+    expect(await attemptWith(sameDay, 4, 10 * 60 * 1000)).toHaveBeenCalledTimes(1);
+  });
+
+  it('serves the code defaults while the store is down', async () => {
+    findKeyValue.mockRejectedValue(new Error('db down'));
+    expect(await getDailyPostLimit(free())).toBe(20);
   });
 });
