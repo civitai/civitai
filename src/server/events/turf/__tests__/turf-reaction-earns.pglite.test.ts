@@ -82,7 +82,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (
       id int PRIMARY KEY, settings jsonb, "bannedAt" timestamptz, "deletedAt" timestamptz,
       "createdAt" timestamptz DEFAULT '2020-01-01', meta jsonb,
-      "excludeFromLeaderboards" boolean DEFAULT false
+      "excludeFromLeaderboards" boolean DEFAULT false, flags int NOT NULL DEFAULT 0
     );
     CREATE TABLE "CreatorMilestone" (key text PRIMARY KEY, threshold numeric);
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz, availability text);
@@ -179,7 +179,7 @@ const place = async (imageId: number, reactionEarnsMs = 30_000) =>
       data: { x: 0.5, y: 0.5, scale: 1, rotation: 0, flip: false },
     },
     NOW,
-    // Real time on a loaded runner: the sync's first Lua eval alone can take over a second.
+    // These cases test the answer, not the deadline: only the hung-read case runs on the real one.
     { reactionEarnsMs }
   );
 
