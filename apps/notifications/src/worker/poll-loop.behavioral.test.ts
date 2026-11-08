@@ -88,6 +88,7 @@ type Responses = Partial<
     | 'notifUpdate'
     | 'notifInsert'
     | 'userInsert'
+    | 'userUnread'
     | 'pendingDelete'
     | 'pendingUpdate',
     Resp | Resp[]
@@ -99,6 +100,7 @@ function keyFor(sql: string): keyof Responses | 'txn' | null {
   if (sql.includes('SELECT id FROM "Notification"')) return 'notifSelect';
   if (sql.includes('UPDATE "Notification" SET')) return 'notifUpdate';
   if (sql.includes('INSERT INTO "Notification"')) return 'notifInsert';
+  if (sql.includes('SELECT "userId" FROM "UserNotification"')) return 'userUnread';
   if (sql.includes('INSERT INTO "UserNotification"')) return 'userInsert';
   if (sql.includes('DELETE FROM "PendingNotification"')) return 'pendingDelete';
   if (sql.includes('UPDATE "PendingNotification"')) return 'pendingUpdate';
@@ -289,14 +291,14 @@ describe('handleDebounce', () => {
     const ret = await handleDebounce(fanoutRow as any, client);
 
     // UPDATE-first (no INSERT since UPDATE returned an id), fan-out, then reschedule (NOT delete).
-    expect(client.keys()).toEqual(['notifUpdate', 'userInsert', 'pendingUpdate']);
+    expect(client.keys()).toEqual(['notifUpdate', 'userUnread', 'userInsert', 'pendingUpdate']);
     expect(client.calls.some((s: string) => keyFor(s) === 'notifInsert')).toBe(false);
     expect(client.calls.some((s: string) => keyFor(s) === 'pendingDelete')).toBe(false);
     // Reschedule clears the claim and pushes nextSendAt out by debounceSeconds.
     const rescheduleSql = client.calls.find((s: string) => keyFor(s) === 'pendingUpdate')!;
     expect(rescheduleSql).toContain('"claimedAt" = null');
     expect(rescheduleSql).toContain(`"debounceSeconds", ' seconds'`);
-    expect(ret).toEqual([{ id: 1, userId: 11, createdAt: 'c' }]);
+    expect(ret).toEqual([{ id: 1, userId: 11, createdAt: 'c', wasUnread: false }]);
   });
 
   it('FAN-OUT path: INSERT ON CONFLICT DO UPDATE when the notification key is new (UPDATE hits 0 rows)', async () => {
@@ -307,7 +309,13 @@ describe('handleDebounce', () => {
     });
     await handleDebounce(fanoutRow as any, client);
 
-    expect(client.keys()).toEqual(['notifUpdate', 'notifInsert', 'userInsert', 'pendingUpdate']);
+    expect(client.keys()).toEqual([
+      'notifUpdate',
+      'notifInsert',
+      'userUnread',
+      'userInsert',
+      'pendingUpdate',
+    ]);
     const insertSql = client.calls.find((s: string) => keyFor(s) === 'notifInsert')!;
     expect(insertSql).toContain('ON CONFLICT ("key") DO UPDATE');
   });
@@ -462,10 +470,11 @@ describe('run (poll pass)', () => {
   it('does not bump the unread counter for a recipient who already had it unread, but signals them', async () => {
     const client = makeClient({
       notifUpdate: { rows: [{ id: 42 }] },
+      userUnread: { rows: [{ userId: 11 }] },
       userInsert: {
         rows: [
-          { id: 9, userId: 11, createdAt: 'q', wasUnread: true },
-          { id: 10, userId: 22, createdAt: 'q', wasUnread: false },
+          { id: 9, userId: 11, createdAt: 'q' },
+          { id: 10, userId: 22, createdAt: 'q' },
         ],
       },
     });

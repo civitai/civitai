@@ -234,25 +234,29 @@ export const handleDebounce = async (
   if (respId) {
     const userMappedData = users.map((u) => [respId, u]);
     for (const batch of chunk(userMappedData, insertBatchSize)) {
-      // `prev` reads the statement's snapshot, so it sees each row as it was before the upsert: a
-      // recipient who still has this notification unread is already counted in the unread badge.
+      // A recipient who still has this notification unread is already counted in the unread badge.
+      // FOR UPDATE, as its own statement: it reads the latest committed row and holds it, so a
+      // mark-read cannot land between this read and the upsert below.
+      const unreadRes = await client.query<{ userId: number }>(
+        format(
+          `SELECT "userId" FROM "UserNotification"
+           WHERE "notificationId" = %L AND "userId" IN (%L) AND viewed IS FALSE
+           FOR UPDATE`,
+          respId,
+          batch.map(([, userId]) => userId)
+        )
+      );
+      const unread = new Set(unreadRes.rows.map((r) => Number(r.userId)));
       const insertUsersQuery = format(
-        `WITH prev AS (
-           SELECT "userId", viewed FROM "UserNotification"
-           WHERE "notificationId" = %L AND "userId" IN (%L)
-         ), up AS (
-           INSERT INTO "UserNotification" ("notificationId", "userId")
-           VALUES %L ON CONFLICT ("notificationId", "userId") DO UPDATE
-           SET "createdAt" = now(), viewed = FALSE RETURNING id, "userId", "createdAt"
-         )
-         SELECT up.id, up."userId", up."createdAt", COALESCE(prev.viewed = FALSE, FALSE) AS "wasUnread"
-         FROM up LEFT JOIN prev ON prev."userId" = up."userId"`,
-        respId,
-        batch.map(([, userId]) => userId),
+        `INSERT INTO "UserNotification" ("notificationId", "userId")
+         VALUES %L ON CONFLICT ("notificationId", "userId") DO UPDATE
+         SET "createdAt" = now(), viewed = FALSE RETURNING id, "userId", "createdAt"`,
         batch
       );
       const resUsers = await client.query<RetData>(insertUsersQuery);
-      retData = retData.concat(resUsers.rows);
+      retData = retData.concat(
+        resUsers.rows.map((r) => ({ ...r, wasUnread: unread.has(Number(r.userId)) }))
+      );
     }
   }
 

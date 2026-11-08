@@ -81,6 +81,18 @@ describe('handleDebounce re-surface', () => {
     expect(byUser).toEqual({ [UNREAD]: true, [READ]: false, [NEW]: false });
   });
 
+  it('reads only this notification’s row for each recipient, not their other notifications', async () => {
+    await db.exec(`
+      INSERT INTO "Notification" (id, type, key, category) VALUES (43, 'comment', 'comment:1', 'Comment');
+      INSERT INTO "UserNotification" ("notificationId", "userId", viewed) VALUES (43, ${READ}, false);
+    `);
+
+    const ret = await handleDebounce(row as never, db as never);
+
+    expect(ret).toHaveLength(3);
+    expect(ret.find((r) => r.userId === READ)?.wasUnread).toBe(false);
+  });
+
   it('still re-surfaces every recipient as unread', async () => {
     await handleDebounce(row as never, db as never);
 
