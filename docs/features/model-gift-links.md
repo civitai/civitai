@@ -14,7 +14,9 @@ surfaces.
 
 ## What it does
 
-- **Gift link:** one code, with an optional expiry and an optional cap on claims.
+- **Gift link:** one code, with an optional expiry and a cap on claims of 1 to
+  `GIFT_LINK_MAX_REDEMPTIONS` (100). A request that names no cap gets `GIFT_LINK_DEFAULT_REDEMPTIONS`
+  (10); an explicit `null` (uncapped) is refused with 400. Links made before the cap keep their own.
 - **Single-use codes:** up to `GIFT_MINT_MAX_PER_CALL` (500) per call, minted from Creator Studio or the
   API. A version can hold at most `GIFT_LIVE_CODES_MAX_PER_VERSION` (5000) live, unclaimed codes
   (`src/server/services/model-version-gift.constants.ts`). The count and the insert run under one
@@ -22,6 +24,14 @@ surfaces.
 - **Who mints:** the creator only. Moderators can list and revoke a version's gifts but not mint them.
 - **Claim:** done on the site (`/gift/<code>`, or a code pasted on `/gift`; an explicit click) or over the API with the recipient's
   token.
+- **Monthly allowance:** each claimer can make a set number of new claims per UTC calendar month, by
+  membership tier: free 3, Founder 15, Bronze 15, Silver 30, Gold 60. It is the usage-limit registry
+  entry `gifts.monthly` (`src/shared/constants/usage-limits.ts`), so the `usage-limits` KeyValue row can
+  override or disable it. Every claim recorded that month counts, including one later removed. A claim
+  that records nothing (the claimer already had the access, or claimed the same link before) costs
+  nothing. Past the allowance the claim gets a 429 that tells the claimer to reach out to the person
+  who gave them the link, with product rate-limit metadata (`id`, `limit`, `used`, `remaining`, and
+  `resetAt` at the start of the next UTC month).
 - **Revoke:** done by the creator or a moderator, for a link or a whole batch. Revoking stops new claims
   immediately, including a claim already in flight. **People who already claimed keep their access.**
   Who claimed which link is `ModelVersionGiftRedemption`; a grant's `meta.giftLinkId` holds only the most
@@ -83,7 +93,7 @@ The migrations are `packages/civitai-db-schema/prisma/migrations/20261229120000_
 and `20261231000100_model_version_gift_redemption_revoked/`.
 
 - `ModelVersionGiftLink`: `codeHash` (unique), `codeHint` (last 4 characters), `label`, `batchId` (bulk
-  codes), `maxRedemptions` (null = uncapped, 1 for bulk codes), `redemptionCount`, `expiresAt`,
+  codes), `maxRedemptions` (1 for bulk codes; null = uncapped, only on links made before the cap), `redemptionCount`, `expiresAt`,
   `revokedAt`/`revokedById`. It cascades from the version and from the creator.
 - `ModelVersionGiftRedemption`: primary key `(giftLinkId, userId)`, so a user takes at most one slot of a
   link. `revokedAt`/`revokedById` mark a removed claim.
@@ -125,6 +135,10 @@ path segment, which a client-side navigation still puts in the Next data fetch.
    conditional `UPDATE … SET "redemptionCount" + 1 WHERE` not revoked, not expired and under the cap,
    then the grant. If the update takes no row, the transaction rolls back. Postgres re-checks the
    `WHERE` on the row it locks, so racing claims for the last slot serialise.
+   A new redemption first counts against the monthly allowance: under a per-claimer advisory lock, the
+   claimer's redemptions in the current UTC month are counted, and past the limit the transaction
+   rolls back (no slot, no grant). The lock makes two new claims at the last allowance serialise, and
+   the second counts the first.
    A repeat claim by the same user takes no slot: while the link is live and the claim not removed it
    grants again, since the first grant can be gone (the early-access refund deletes the whole
    `EntityAccess` row).
@@ -147,6 +161,7 @@ path segment, which a client-side navigation still puts in the Next data fetch.
     claimed, still live). Live ones sort first and are all listed; never codes.
   - `POST [id]/gifts` with `{ count, expiresAt?, label? }` mints single-use codes.
   - `POST [id]/gifts/link` with `{ maxRedemptions?, expiresAt?, label? }` creates a gift link.
+    `maxRedemptions` is 1 to 100, 10 when omitted; `null` gets 400.
   - `DELETE [id]/gifts/[giftId]` and `DELETE [id]/gifts/batch/[batchId]` revoke.
   - `GET [id]/gifts/[giftId]/claims` and `GET [id]/gifts/batch/[batchId]/claims` return `{ claims,
     nextCursor, hiddenCount }`: `{ giftLinkId, userId, username, claimedAt, revokedAt }`, newest first,
@@ -161,6 +176,7 @@ path segment, which a client-side navigation still puts in the Next data fetch.
   result, with copy and CSV download. A mature model's link points at civitai.red. A claimed link or
   batch row on the version page expands to its claimers, through `/models/gifts/[versionId]/claims`;
   each standing claim has Remove (with "frees no slot"), behind a confirm.
+  The link form's Max claims is required, 1 to 100, and starts at 10.
 
 ## Tests
 
@@ -174,7 +190,12 @@ path segment, which a client-side navigation still puts in the Next data fetch.
     the removed claim cannot be re-claimed, and the two races above (a repeat claim, a claim on another
     link) end correctly. The races hold a second connection's transaction open, so they are
     deterministic.
+  - Monthly allowance: a claim past it takes no slot or grant; only claims in the month count,
+    removed ones included; a repeat claim is free; one user's 10 racing claims grant exactly the
+    limit; a new claim waits for one in flight and counts it.
 - `src/server/__tests__/api-v1-model-version-gifts.test.ts` checks every REST route: a token without
-  `ModelsWrite` gets 403 before the service runs, and the flag gates every route.
+  `ModelsWrite` gets 403 before the service runs, and the flag gates every route. It also covers the
+  link cap and default, and the claim's 429 with `Retry-After` and `rateLimit`.
 - `src/server/services/__tests__/model-version-gift.service.test.ts` covers codes, ownership, mint caps,
-  no-spend claims, uniform refusals and the rate limit.
+  no-spend claims, uniform refusals, the rate limit, and the monthly allowance per tier with its
+  refusal metadata.

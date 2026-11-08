@@ -22,13 +22,18 @@ import {
 import {
   GIFT_CLAIM_NOTICE,
   GIFT_CLAIMER_NAMES_VISIBLE_SINCE,
+  GIFT_CLAIM_LOCK_CLASS,
   GIFT_CLAIMS_PAGE_MAX,
   GIFT_INDEX_PAGE_MAX,
   GIFT_LIVE_CODES_MAX_PER_VERSION,
   GIFT_LIST_HISTORY,
+  GIFT_MINT_LOCK_CLASS,
   GIFT_MINT_MAX_PER_CALL,
 } from '~/server/services/model-version-gift.constants';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
+import { throwRateLimited } from '~/server/utils/rate-limit-error';
+import { resolveUsageLimit } from '~/server/services/usage-limit-config.service';
+import { type UsageLimitSubject, usageLimitMessage } from '~/shared/constants/usage-limits';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
@@ -120,9 +125,6 @@ async function assertCanManageGifts({
 const assertOwnsVersion = (userId: number, modelVersionId: number) =>
   assertCanManageGifts({ userId, isModerator: false, modelVersionId });
 
-// Namespaces the advisory lock so it never collides with another single-key lock on the same id.
-const GIFT_MINT_LOCK_CLASS = 0x47490001;
-
 /**
  * Runs `insert` only if it keeps the version within its live-code cap. The per-version lock makes
  * the count and the insert atomic: without it two mints each count under the cap and together pass it.
@@ -165,7 +167,7 @@ export async function createGiftLink({
 }: {
   userId: number;
   modelVersionId: number;
-  maxRedemptions?: number | null;
+  maxRedemptions: number;
   expiresAt?: Date | null;
   label?: string | null;
 }) {
@@ -179,7 +181,7 @@ export async function createGiftLink({
         modelVersionId,
         createdById: userId,
         ...newCodeRow(code),
-        maxRedemptions: maxRedemptions ?? null,
+        maxRedemptions,
         expiresAt: expiresAt ?? null,
         label: label ?? null,
       },
@@ -738,12 +740,15 @@ export async function redeemGiftLink(
     modelVersionId,
     permissions,
     addedById,
+    allowance,
   }: {
     giftLinkId: number;
     userId: number;
     modelVersionId: number;
     permissions: number;
     addedById: number;
+    /** The claimer's monthly allowance; a new redemption past `limit` in [start, end) is refused. */
+    allowance?: { limit: number; start: Date; end: Date };
   }
 ): Promise<GiftRedemptionOutcome> {
   try {
@@ -753,6 +758,13 @@ export async function redeemGiftLink(
         VALUES (${giftLinkId}, ${userId})
         ON CONFLICT DO NOTHING
       `;
+      if (inserted === 1 && allowance) {
+        // Serialises the claimer's new redemptions, so two claims at limit - 1 cannot both count
+        // under it: the second count runs after the first commits and sees its row.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${GIFT_CLAIM_LOCK_CLASS}::int, ${userId}::int)`;
+        const used = await countGiftClaims(tx, userId, allowance.start, allowance.end);
+        if (used > allowance.limit) throw new GiftAllowanceUsed(used - 1);
+      }
       // A repeat claim takes no new slot. It re-grants while the link is live and the claim not
       // removed, because the first grant can be gone (the early-access refund deletes the whole
       // EntityAccess row). FOR SHARE waits out a removal in flight, then sees its revokedAt.
@@ -798,7 +810,49 @@ export async function redeemGiftLink(
 
 class GiftUnavailable extends Error {}
 
-export async function claimGift({ userId, code }: { userId: number; code: string }) {
+// @ai: replace with calendarWindow('utc-month', now) from usage-limit-counters once ST4 merges.
+function calendarMonth(now: number) {
+  const d = new Date(now);
+  const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
+  return { start, end };
+}
+
+/** A new claim past the claimer's monthly allowance; rolls the claim back. */
+class GiftAllowanceUsed extends Error {
+  constructor(readonly used: number) {
+    super('Gift allowance used');
+  }
+}
+
+/**
+ * The claimer's recorded claims in [start, end): what the monthly allowance counts. A removed claim
+ * still counts, so removal cannot free allowance.
+ */
+export async function countGiftClaims(
+  client: Pick<Prisma.TransactionClient, '$queryRaw'>,
+  userId: number,
+  start: Date,
+  end: Date
+) {
+  const [{ used }] = await client.$queryRaw<{ used: number }[]>`
+    SELECT count(*)::int AS used
+      FROM "ModelVersionGiftRedemption"
+     WHERE "userId" = ${userId}
+       AND "claimedAt" >= ${start}::timestamp(3)
+       AND "claimedAt" < ${end}::timestamp(3)
+  `;
+  return used;
+}
+
+export async function claimGift({
+  user,
+  code,
+}: {
+  user: UsageLimitSubject & { id: number };
+  code: string;
+}) {
+  const userId = user.id;
   // Before the lookup, so failed guesses count against the limit too.
   await assertRateLimit('claim', userId, GIFT_CLAIM_RATE_LIMIT);
 
@@ -825,15 +879,41 @@ export async function claimGift({ userId, code }: { userId: number; code: string
   const held = await getModelVersionAccessPermissions(userId, version.id);
   if ((held & permissions) === permissions) return { ...result, alreadyHadAccess: true };
 
-  const outcome = await redeemGiftLink(dbWrite, {
-    giftLinkId: link.id,
-    userId,
-    modelVersionId: version.id,
-    permissions,
-    // The claimer, as purchases record the buyer: the personal-data export keys EntityAccess on
-    // addedById, so the creator here would put every recipient in the creator's export.
-    addedById: userId,
-  });
+  const resolved = await resolveUsageLimit('gifts.monthly', user);
+  const now = Date.now();
+  const window = calendarMonth(now);
+  let outcome: GiftRedemptionOutcome;
+  try {
+    outcome = await redeemGiftLink(dbWrite, {
+      giftLinkId: link.id,
+      userId,
+      modelVersionId: version.id,
+      permissions,
+      // The claimer, as purchases record the buyer: the personal-data export keys EntityAccess on
+      // addedById, so the creator here would put every recipient in the creator's export.
+      addedById: userId,
+      allowance: resolved.applies ? { limit: resolved.limit, ...window } : undefined,
+    });
+  } catch (error) {
+    if (!(error instanceof GiftAllowanceUsed)) throw error;
+    const message = usageLimitMessage(resolved.def, resolved) ?? 'Monthly gift limit reached.';
+    const retryAfterSeconds = Math.max(1, Math.ceil((window.end.getTime() - now) / 1000));
+    const resetAt = window.end.toISOString();
+    throwRateLimited(
+      {
+        retryAfterSeconds,
+        retryAt: resetAt,
+        id: 'gifts.monthly',
+        kind: 'product',
+        limit: resolved.limit,
+        used: error.used,
+        remaining: 0,
+        windowSeconds: (window.end.getTime() - window.start.getTime()) / 1000,
+        resetAt,
+      },
+      message
+    );
+  }
   if (outcome === 'unavailable') throw throwBadRequestError(INVALID_GIFT_MESSAGE);
 
   // Not bustMvCache: its caches are per version, and an uncapped link would refresh them per claim.

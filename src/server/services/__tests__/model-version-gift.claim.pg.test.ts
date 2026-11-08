@@ -20,7 +20,7 @@ vi.mock('~/server/services/paid-access.service', () => ({ getPaidAccess: vi.fn()
 const { insertWithinLiveCap, queryGiftList, redeemGiftLink, revokeGiftRedemption } = await import(
   '~/server/services/model-version-gift.service'
 );
-const { GIFT_LIVE_CODES_MAX_PER_VERSION: CAP } = await import(
+const { GIFT_CLAIM_LOCK_CLASS, GIFT_LIVE_CODES_MAX_PER_VERSION: CAP } = await import(
   '~/server/services/model-version-gift.constants'
 );
 const { grantModelVersionAccess } = await import('~/server/services/model-version-access.service');
@@ -287,6 +287,45 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
     expect(String(refused.reason)).toContain(`at most ${CAP} live gift codes`);
     expect(await count(`SELECT count(*) AS n FROM "ModelVersionGiftLink"`)).toBe(CAP);
   });
+
+  // Connections opened by a test, closed even when it fails.
+  const extra: Client[] = [];
+  afterEach(async () => {
+    // Ending them first rolls back their open transactions, which the DROP would wait on.
+    for (const client of extra.splice(0)) await client.end().catch(() => undefined);
+    await sql.query(`DROP TRIGGER IF EXISTS gate ON "EntityAccess"`);
+  });
+
+  async function connect() {
+    const url = new URL(URL_BASE!);
+    url.pathname = `/${DB_NAME}`;
+    const client = new Client({ connectionString: url.toString() });
+    extra.push(client);
+    await client.connect();
+    return client;
+  }
+
+  /** A second connection holding a transaction open, so the code under test meets it mid-flight. */
+  async function openTransaction(statements: string[]) {
+    const other = await connect();
+    await other.query('BEGIN');
+    for (const statement of statements) await other.query(statement);
+    return { commit: () => other.query('COMMIT') };
+  }
+
+  /** Resolves once `n` sessions on the test database wait on a lock, or `done()` says to stop. */
+  async function lockWaiters(n: number, done = () => false) {
+    for (let i = 0; i < 500 && !done(); i++) {
+      const waiting = await count(
+        `SELECT count(*) AS n FROM pg_stat_activity
+          WHERE datname = '${DB_NAME}' AND wait_event_type = 'Lock'`
+      );
+      if (waiting >= n) return;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    if (!done()) throw new Error(`fewer than ${n} sessions ever waited on a lock`);
+  }
+
   describe('removing one claim', () => {
     const CLAIMER = 2;
     const remove = (giftLinkId: number, modelVersionId = VERSION) =>
@@ -432,44 +471,6 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
       expect(await access()).toBeNull();
     });
 
-    // Connections opened by a test, closed even when it fails.
-    const extra: Client[] = [];
-    afterEach(async () => {
-      // Ending them first rolls back their open transactions, which the DROP would wait on.
-      for (const client of extra.splice(0)) await client.end().catch(() => undefined);
-      await sql.query(`DROP TRIGGER IF EXISTS gate ON "EntityAccess"`);
-    });
-
-    async function connect() {
-      const url = new URL(URL_BASE!);
-      url.pathname = `/${DB_NAME}`;
-      const client = new Client({ connectionString: url.toString() });
-      extra.push(client);
-      await client.connect();
-      return client;
-    }
-
-    /** A second connection holding a transaction open, so the code under test meets it mid-flight. */
-    async function openTransaction(statements: string[]) {
-      const other = await connect();
-      await other.query('BEGIN');
-      for (const statement of statements) await other.query(statement);
-      return { commit: () => other.query('COMMIT') };
-    }
-
-    /** Resolves once `n` sessions on the test database wait on a lock, or `done()` says to stop. */
-    async function lockWaiters(n: number, done = () => false) {
-      for (let i = 0; i < 500 && !done(); i++) {
-        const waiting = await count(
-          `SELECT count(*) AS n FROM pg_stat_activity
-            WHERE datname = '${DB_NAME}' AND wait_event_type = 'Lock'`
-        );
-        if (waiting >= n) return;
-        await new Promise((r) => setTimeout(r, 10));
-      }
-      if (!done()) throw new Error(`fewer than ${n} sessions ever waited on a lock`);
-    }
-
     it('refuses a repeat claim that meets a removal in flight', async () => {
       const id = await newLink(null);
       expect(await claim(id, CLAIMER)).toBe('granted');
@@ -529,6 +530,96 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
 
       expect(await removal).toEqual({ accessKept: true });
       expect((await access())?.permissions).toBe(3);
+    });
+  });
+
+  describe('monthly claim allowance', () => {
+    const CLAIMER = 2;
+    // This UTC month: claims made by the test itself are recorded at now().
+    const today = new Date();
+    const START = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+    const END = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1));
+    /** `ms` after the start of this month, as a timestamp(3) literal. */
+    const at = (ms: number) =>
+      new Date(START.getTime() + ms).toISOString().replace('T', ' ').replace('Z', '');
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const claimWithin = (giftLinkId: number, limit: number, userId = CLAIMER) =>
+      redeemGiftLink(prisma, {
+        giftLinkId,
+        userId,
+        modelVersionId: VERSION,
+        permissions: 3,
+        addedById: userId,
+        allowance: { limit, start: START, end: END },
+      });
+    /** A claim recorded at `claimedAt`, as if made then. */
+    async function pastClaim(claimedAt: string, revoked = false) {
+      const id = await newLink(null);
+      await sql.query(
+        `INSERT INTO "ModelVersionGiftRedemption" ("giftLinkId", "userId", "claimedAt", "revokedAt")
+         VALUES ($1, $2, $3, $4)`,
+        [id, CLAIMER, claimedAt, revoked ? claimedAt : null]
+      );
+      return id;
+    }
+    const redemptions = () =>
+      count(`SELECT count(*) AS n FROM "ModelVersionGiftRedemption" WHERE "userId" = ${CLAIMER}`);
+
+    it('refuses the claim past the limit and takes no slot or grant for it', async () => {
+      await pastClaim(at(DAY_MS));
+      await pastClaim(at(2 * DAY_MS));
+      const id = await newLink(5);
+
+      await expect(claimWithin(id, 2)).rejects.toMatchObject({ used: 2 });
+      expect(
+        await count(`SELECT "redemptionCount" AS n FROM "ModelVersionGiftLink" WHERE id = ${id}`)
+      ).toBe(0);
+      expect(await redemptions()).toBe(2);
+      expect(await count(`SELECT count(*) AS n FROM "EntityAccess"`)).toBe(0);
+    });
+
+    it('counts only claims in [start, end), removed ones included', async () => {
+      await pastClaim(at(-1));
+      await pastClaim(at(END.getTime() - START.getTime()));
+      await pastClaim(at(0), true);
+
+      expect(await claimWithin(await newLink(null), 2)).toBe('granted');
+      await expect(claimWithin(await newLink(null), 2)).rejects.toMatchObject({ used: 2 });
+    });
+
+    it('lets a repeat claim of the same link through, even past a since-lowered limit', async () => {
+      await pastClaim(at(DAY_MS));
+      const id = await newLink(null);
+      expect(await claimWithin(id, 2)).toBe('granted');
+      await sql.query(`DELETE FROM "EntityAccess"`);
+
+      expect(await claimWithin(id, 1)).toBe('granted');
+      expect(await redemptions()).toBe(2);
+    });
+
+    it(`grants exactly the limit when ${USERS} claims by one user on different links race`, async () => {
+      const ids = await Promise.all(Array.from({ length: USERS }, () => newLink(null)));
+      const outcomes = await Promise.allSettled(ids.map((id) => claimWithin(id, 3)));
+
+      expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(3);
+      expect(await redemptions()).toBe(3);
+    });
+
+    it('makes a new claim wait for one in flight, then count it', async () => {
+      await pastClaim(at(DAY_MS));
+      const other = await newLink(null);
+      // Another new claim by the same user: holding the allowance lock, recorded, not committed.
+      const inFlight = await openTransaction([
+        `INSERT INTO "ModelVersionGiftRedemption" ("giftLinkId", "userId") VALUES (${other}, ${CLAIMER})`,
+        `SELECT pg_advisory_xact_lock(${GIFT_CLAIM_LOCK_CLASS}, ${CLAIMER})`,
+      ]);
+
+      let settled = false;
+      const attempt = claimWithin(await newLink(null), 2).finally(() => (settled = true));
+      await lockWaiters(1, () => settled);
+      await inFlight.commit();
+
+      await expect(attempt).rejects.toMatchObject({ used: 2 });
     });
   });
 });

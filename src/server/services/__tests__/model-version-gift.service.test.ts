@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
@@ -6,6 +6,7 @@ import {
   GIFT_LIVE_CODES_MAX_PER_VERSION,
   GIFT_MINT_MAX_PER_CALL,
 } from '~/server/services/model-version-gift.constants';
+import { resetUsageLimitConfigCache } from '~/server/services/usage-limit-config.service';
 
 const { mockGetPaidAccess, mockBustOrchestrator } = vi.hoisted(() => ({
   mockGetPaidAccess: vi.fn(),
@@ -162,7 +163,7 @@ describe('claimGift', () => {
 
   it('grants, then busts the claimer’s caches', async () => {
     seed();
-    await expect(claimGift({ userId: CLAIMER, code })).resolves.toMatchObject({
+    await expect(claimGift({ user: { id: CLAIMER }, code })).resolves.toMatchObject({
       modelVersionId: VERSION_ID,
       alreadyHadAccess: false,
       notice: 'The creator can see that you claimed this, and can remove gifted access.',
@@ -182,7 +183,7 @@ describe('claimGift', () => {
 
   it('grants download to a generation-only holder when the version sells download', async () => {
     seed({ held: 1 });
-    await expect(claimGift({ userId: CLAIMER, code })).resolves.toMatchObject({
+    await expect(claimGift({ user: { id: CLAIMER }, code })).resolves.toMatchObject({
       alreadyHadAccess: false,
     });
     expect(grantValues()[2]).toBe(3);
@@ -190,13 +191,13 @@ describe('claimGift', () => {
 
   it('grants generation only on a generation-only gate', async () => {
     seed({ gate: { endsAt: null, terms: { generation: { price: 100 } } } });
-    await claimGift({ userId: CLAIMER, code });
+    await claimGift({ user: { id: CLAIMER }, code });
     expect(grantValues()[2]).toBe(1);
   });
 
   it('spends no slot on someone who already holds what the gift grants', async () => {
     seed({ held: 3 });
-    const result = await claimGift({ userId: CLAIMER, code });
+    const result = await claimGift({ user: { id: CLAIMER }, code });
     expect(result).toMatchObject({ alreadyHadAccess: true });
     expect(result).not.toHaveProperty('notice');
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
@@ -204,7 +205,7 @@ describe('claimGift', () => {
 
   it('spends no slot once the gate has ended and the version is free', async () => {
     seed({ gate: { endsAt: new Date(Date.now() - 1000), terms: {} } });
-    await expect(claimGift({ userId: CLAIMER, code })).resolves.toMatchObject({
+    await expect(claimGift({ user: { id: CLAIMER }, code })).resolves.toMatchObject({
       alreadyHadAccess: true,
     });
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
@@ -214,7 +215,7 @@ describe('claimGift', () => {
     seed();
     dbMock.dbWrite.modelVersionGiftLink.findUnique.mockResolvedValue(null);
     for (const attempt of [code, 'not-a-code'])
-      await expect(claimGift({ userId: CLAIMER, code: attempt })).rejects.toThrow(
+      await expect(claimGift({ user: { id: CLAIMER }, code: attempt })).rejects.toThrow(
         'This gift is invalid, expired or no longer available.'
       );
   });
@@ -233,7 +234,7 @@ describe('claimGift', () => {
         ...change,
       },
     });
-    await expect(claimGift({ userId: CLAIMER, code })).rejects.toThrow(
+    await expect(claimGift({ user: { id: CLAIMER }, code })).rejects.toThrow(
       'This gift is invalid, expired or no longer available.'
     );
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
@@ -241,8 +242,12 @@ describe('claimGift', () => {
 
   it('refuses when the cap update takes no row (cap reached or revoked mid-claim)', async () => {
     seed();
-    dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
-    await expect(claimGift({ userId: CLAIMER, code })).rejects.toThrow(
+    // The redemption insert, the allowance lock, then the cap update.
+    dbMock.dbWrite.$executeRaw
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(0);
+    await expect(claimGift({ user: { id: CLAIMER }, code })).rejects.toThrow(
       'This gift is invalid, expired or no longer available.'
     );
     expect(mockBustOrchestrator).not.toHaveBeenCalled();
@@ -251,7 +256,7 @@ describe('claimGift', () => {
   it('counts the attempt against the rate limit before looking the code up', async () => {
     seed();
     redisMock.redis.incrBy.mockResolvedValue(11);
-    await expect(claimGift({ userId: CLAIMER, code })).rejects.toThrow('Too many attempts');
+    await expect(claimGift({ user: { id: CLAIMER }, code })).rejects.toThrow('Too many attempts');
     expect(dbMock.dbWrite.modelVersionGiftLink.findUnique).not.toHaveBeenCalled();
   });
 
@@ -265,7 +270,7 @@ describe('claimGift', () => {
         expiresAt: null,
       },
     });
-    await expect(claimGift({ userId: CLAIMER, code })).rejects.toThrow(
+    await expect(claimGift({ user: { id: CLAIMER }, code })).rejects.toThrow(
       'This gift is invalid, expired or no longer available.'
     );
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
@@ -273,12 +278,96 @@ describe('claimGift', () => {
 
   it('refuses the model’s owner and an unpublished version', async () => {
     seed();
-    await expect(claimGift({ userId: OWNER, code })).rejects.toThrow('your own model');
+    await expect(claimGift({ user: { id: OWNER }, code })).rejects.toThrow('your own model');
     seed({ versionStatus: 'Scheduled' });
-    await expect(claimGift({ userId: CLAIMER, code })).rejects.toThrow('published models');
+    await expect(claimGift({ user: { id: CLAIMER }, code })).rejects.toThrow('published models');
     seed({ modelStatus: 'Unpublished' });
-    await expect(claimGift({ userId: CLAIMER, code })).rejects.toThrow('published models');
+    await expect(claimGift({ user: { id: CLAIMER }, code })).rejects.toThrow('published models');
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  describe('monthly allowance', () => {
+    const allowanceLocks = () =>
+      dbMock.dbWrite.$executeRaw.mock.calls.filter((c: unknown[]) =>
+        (c[0] as string[]).join('?').includes('pg_advisory_xact_lock')
+      );
+    /** The claimer has `used` claims this month, counting the one being made. */
+    const seedUsed = (used: number) => {
+      seed();
+      dbMock.dbWrite.$queryRaw.mockResolvedValue([{ used }]);
+    };
+
+    beforeEach(() => {
+      resetUsageLimitConfigCache();
+      dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null);
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-20T12:00:00.000Z'));
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it('refuses the claim past the limit with the product rate-limit metadata', async () => {
+      seedUsed(4);
+      const refusal = claimGift({ user: { id: CLAIMER }, code });
+      await expect(refusal).rejects.toMatchObject({
+        code: 'TOO_MANY_REQUESTS',
+        message:
+          "You've claimed your 3 gifts for this month. To get this one, reach out to the person who gave you the link.",
+        cause: {
+          rateLimit: {
+            id: 'gifts.monthly',
+            kind: 'product',
+            limit: 3,
+            used: 3,
+            remaining: 0,
+            windowSeconds: 30 * 24 * 60 * 60,
+            retryAfterSeconds: 10.5 * 24 * 60 * 60,
+            retryAt: '2026-12-01T00:00:00.000Z',
+            resetAt: '2026-12-01T00:00:00.000Z',
+          },
+        },
+      });
+      expect(grantValues()).toEqual([]);
+      expect(mockBustOrchestrator).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [undefined, 3],
+      ['founder', 15],
+      ['bronze', 15],
+      ['silver', 30],
+      ['gold', 60],
+    ])('gives tier %s %i claims a month', async (tier, limit) => {
+      const user = { id: CLAIMER, tier };
+      seedUsed(limit);
+      await expect(claimGift({ user, code })).resolves.toMatchObject({ alreadyHadAccess: false });
+      seedUsed(limit + 1);
+      await expect(claimGift({ user, code })).rejects.toMatchObject({
+        cause: { rateLimit: { limit } },
+      });
+    });
+
+    it('counts nothing while an override disables the limit', async () => {
+      dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+        key: 'usage-limits',
+        value: { version: 1, limits: { 'gifts.monthly': { disabled: true } } },
+      });
+      seedUsed(100);
+      await expect(claimGift({ user: { id: CLAIMER }, code })).resolves.toMatchObject({
+        alreadyHadAccess: false,
+      });
+      expect(allowanceLocks()).toEqual([]);
+    });
+
+    it('takes no allowance for a repeat claim of the same link', async () => {
+      seedUsed(100);
+      // The redemption insert finds the claim already recorded.
+      dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(0);
+      dbMock.dbWrite.$queryRaw.mockResolvedValue([{ used: 100 }, { '?column?': 1 }]);
+      await expect(claimGift({ user: { id: CLAIMER }, code })).resolves.toMatchObject({
+        alreadyHadAccess: false,
+      });
+      expect(allowanceLocks()).toEqual([]);
+    });
   });
 });
 

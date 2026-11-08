@@ -37,5 +37,5 @@ export const modelVersionGiftRouter = router({
   claim: giftWrite
     .meta({ requiredScope: TokenScope.ModelsWrite, blockApiKeys: true })
     .input(claimGiftSchema)
-    .mutation(({ input, ctx }) => claimGift({ userId: ctx.user.id, code: input.code })),
+    .mutation(({ input, ctx }) => claimGift({ user: ctx.user, code: input.code })),
 });

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { MODEL_GIFT_LINKS_FLAG } from '$lib/gift-links';
+import { GIFT_LINK_MAX_REDEMPTIONS, MODEL_GIFT_LINKS_FLAG } from '$lib/gift-links';
 import { dbRead } from '$lib/server/db';
 import { callMainApp } from '$lib/server/main-app';
 import { firstError } from '$lib/server/form-errors';
@@ -25,11 +25,7 @@ const optionalLabel = z
   .transform((v) => v || null);
 
 const createSchema = z.object({
-  maxRedemptions: z
-    .string()
-    .optional()
-    .transform((v) => (v ? Number(v) : null))
-    .pipe(z.number().int().min(1).nullable()),
+  maxRedemptions: z.coerce.number().int().min(1).max(GIFT_LINK_MAX_REDEMPTIONS),
   expiresAt: optionalDate,
   label: optionalLabel,
 });
