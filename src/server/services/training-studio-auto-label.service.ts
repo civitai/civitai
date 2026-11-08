@@ -29,8 +29,8 @@ import {
 /**
  * The Training Studio's auto-label, run on the system token: it is free to the user, and a workflow
  * submitted with the user's own token is charged to them (empty `currencies` = any account). The
- * step shapes and the poll result mirror apps/training-studio/src/lib/autolabel-core.ts, which the
- * element hands these to through its host. Polls are scoped to the submitting user via metadata,
+ * poll result is the Studio's `AutoLabelResult` (apps/training-studio/src/lib/autolabel-core.ts),
+ * which both of its surfaces receive. Polls are scoped to the submitting user via metadata,
  * since the system token can read every workflow.
  */
 
