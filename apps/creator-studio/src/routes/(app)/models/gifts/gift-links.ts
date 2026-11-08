@@ -23,6 +23,22 @@ export type GiftBatchRow = {
   expiresAt: string | null;
 };
 
+type GiftIndexVersion = {
+  modelVersionId: number;
+  versionName: string;
+  modelId: number;
+  modelName: string;
+};
+
+/** GET /api/v1/model-versions/gifts: the creator's links and batches across their versions. */
+export type GiftIndexPage = {
+  items: (
+    | ({ kind: 'link' } & GiftLinkRow & GiftIndexVersion)
+    | ({ kind: 'batch' } & GiftBatchRow & GiftIndexVersion)
+  )[];
+  nextCursor: string | null;
+};
+
 export type GiftStatus = 'Active' | 'Claimed' | 'Expired' | 'Revoked';
 
 const isPast = (d: string | null, now: Date) => !!d && new Date(d) <= now;

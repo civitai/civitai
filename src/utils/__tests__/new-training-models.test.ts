@@ -6,7 +6,7 @@ import {
   isModelSupported,
 } from '@civitai/shared/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
+import { getFeatureFliptKey, type FeatureFlagKey } from '~/server/services/feature-flags.service';
 import {
   audioSampleOverrideSchema,
   trainingDetailsObj,
@@ -118,4 +118,42 @@ describe('trainer base models', () => {
       expect(baseModels).toContain(version.baseModel);
     }
   );
+});
+
+describe('Training Studio follows the classic trainer model flags', () => {
+  // The main-app trainer's `features.<x>Training` tile/version gates (TrainingSubmitModelSelect)
+  // that ask Flipt, by `trainingModelInfo` key. Studio must gate the same model with the same key.
+  const CLASSIC_GATES: Record<string, FeatureFlagKey> = {
+    krea2: 'krea2Training',
+    boogu: 'booguTraining',
+    mageflow: 'mageflowTraining',
+    flux2klein_9b: 'fluxTwoKleinTraining',
+    flux2klein_4b: 'fluxTwoKleinTraining',
+    ernie: 'ernieTraining',
+    hidream_o1: 'hidreamO1Training',
+    anima: 'animaTraining',
+    minimaxh3: 'minimaxh3Training',
+    zimageturbo: 'zimageturboTraining',
+    ltx25: 'ltx25Training',
+    ltx23: 'ltx23Training',
+    ming: 'mingTraining',
+    qwen21: 'qwen21Training',
+    yue2: 'yue2Training',
+  };
+
+  it.each(Object.entries(CLASSIC_GATES))('%s is gated in Studio by %s', (key, feature) => {
+    const card = MODEL_CARDS.find((c) => c.versions.some((v) => v.key === key));
+    const version = card?.versions.find((v) => v.key === key);
+    const gates = [card?.flagKey, version?.flagKey].filter(Boolean);
+    expect(gates).toContain(getFeatureFliptKey(feature));
+  });
+
+  // Open to everyone in Studio by product decision, though the classic trainer still gates them.
+  it.each(['flux2_dev', 'zimagebase', 'ltx2'])('%s is open to everyone in Studio', (key) => {
+    const card = MODEL_CARDS.find((c) => c.versions.some((v) => v.key === key))!;
+    expect([card.flagKey, card.versions.find((v) => v.key === key)!.flagKey]).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
 });

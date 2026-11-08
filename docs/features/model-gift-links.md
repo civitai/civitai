@@ -111,14 +111,18 @@ path segment, which a client-side navigation still puts in the Next data fetch.
   full-access key also passes), answers 404 while the flag is off, sends `private, no-store`, and gives
   every write the same onboarded, not-muted and email-verified gates as the tRPC writes.
   - `POST gifts/claim` with `{ code }`.
+  - `GET gifts?limit=&cursor=` returns `{ items, nextCursor }`: the caller's own links and batches across
+    every version of every model they own, newest first, at most `GIFT_INDEX_PAGE_MAX` (100) per page.
+    Owner only; a moderator manages another creator's gifts per version.
   - `GET [id]/gifts` returns `{ links, batches }`: links, and one summary row per bulk batch (total,
     claimed, still live). Live ones sort first and are all listed; never codes.
   - `POST [id]/gifts` with `{ count, expiresAt?, label? }` mints single-use codes.
   - `POST [id]/gifts/link` with `{ maxRedemptions?, expiresAt?, label? }` creates a gift link.
   - `DELETE [id]/gifts/[giftId]` and `DELETE [id]/gifts/batch/[batchId]` revoke.
-- **Creator Studio:** `/models/gifts/[versionId]`, linked from a gated version's row on `/models`. It
-  calls the REST routes with the creator's session. Codes appear once, in the action result, with copy
-  and CSV download. A mature model's link points at civitai.red.
+- **Creator Studio:** `/models/gifts` lists every link and batch across the creator's versions, with
+  revoke, and links to `/models/gifts/[versionId]`. The version page is linked from a gated version's row
+  on `/models`. Both call the REST routes with the creator's session. Codes appear once, in the action
+  result, with copy and CSV download. A mature model's link points at civitai.red.
 
 ## Tests
 
