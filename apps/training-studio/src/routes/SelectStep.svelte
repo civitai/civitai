@@ -72,7 +72,7 @@
   // The "from" price for a card — the single source of truth lives in trainingFlow so Select/Data/Review
   // can't drift. Null when the orchestrator hasn't quoted it (the caller shows a muted em-dash).
   function price(cardType: string): number | null {
-    return cardFromPrice(prices, cardType);
+    return cardFromPrice(prices, cardType, enabledFlags);
   }
 
   // Seed from a restored selection (Back from Data) when present, else the defaults. untrack marks the

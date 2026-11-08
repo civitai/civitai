@@ -514,3 +514,9 @@ describe('per-model flag gates', () => {
     expect(newRun(ltx, new Set(['ltx23-training'])).versionKey).toBe('ltx23');
   });
 });
+
+describe('newRun on a card with no version open to the viewer', () => {
+  it('refuses rather than seed a gated version', () => {
+    expect(() => newRun(cardByType('zimage')!, new Set())).toThrow();
+  });
+});

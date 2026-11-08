@@ -75,8 +75,7 @@ export interface ModelVersionInfo {
    * `latest` both resolve to the currently-unresolvable `2512` resource, so we pin `2509` (verified). */
   version?: string;
   isNew?: boolean;
-  /** Flipt gate for this version alone, where the main-app trainer gates a version rather than the
-   *  whole family (Z-Image Turbo/Base, the LTX versions). Same semantics as `ModelCard.flagKey`. */
+  /** Flipt gate for this version alone. Same semantics as `ModelCard.flagKey`. */
   flagKey?: string;
 }
 
@@ -1655,6 +1654,11 @@ export function paramBounds(card: ModelCard): Record<string, ParamBound> {
  * `$lib/server/pricing`). PARTIAL: a model the orchestrator can't price is simply absent — there is no
  * static fallback, so callers must handle a missing entry (show "—", not a guessed number). */
 export type FromPrices = Record<string, number>;
+
+/** The `FromPrices` key for one version of a card. Only versions with their own `flagKey` are quoted
+ *  under it, so a viewer who can't see a card's first version is priced by one they can pick. */
+export const versionPriceKey = (cardType: string, versionKey: string): string =>
+  `${cardType}/${versionKey}`;
 
 /** The AI-Toolkit parameters beyond the core set, gated per model + dataset by
  *  `extraParamCapabilities`: a field that does nothing for a model (tag shuffling on a caption

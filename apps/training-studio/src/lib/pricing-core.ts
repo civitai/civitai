@@ -1,7 +1,7 @@
 // Client-safe "from"-price sweep: one whatif per catalog card against a provided client. The shell
 // wraps it in a global redis cache (lib/server/pricing.ts); the web-component backend runs it
 // browser-side, uncached.
-import { MODEL_CARDS, type FromPrices } from '$lib/data/trainingModels';
+import { MODEL_CARDS, versionPriceKey, type FromPrices } from '$lib/data/trainingModels';
 import { pool } from '$lib/pool';
 import { trainingWhatIf, type OrchestratorClient } from './orchestrator-core';
 
@@ -14,9 +14,17 @@ const WHATIF_CONCURRENCY = 4;
 export async function computeFromPrices(client: OrchestratorClient): Promise<FromPrices> {
   const prices: FromPrices = {};
   const unpriced: string[] = [];
-  await pool(MODEL_CARDS, WHATIF_CONCURRENCY, async (card) => {
-    const version = card.versions[0];
-    if (!version) return;
+  // Each card's first version, plus every later version with its own flag gate: a viewer who can't
+  // see the first version is priced by the first one they can (`cardFromPrice`).
+  const quotes = MODEL_CARDS.flatMap((card) =>
+    card.versions
+      .filter((v, i) => i === 0 || v.flagKey)
+      .map((version, i) => ({
+        key: i === 0 ? card.type : versionPriceKey(card.type, version.key),
+        version,
+      }))
+  );
+  await pool(quotes, WHATIF_CONCURRENCY, async ({ key, version }) => {
     try {
       const cost = await trainingWhatIf(client, {
         ecosystem: version.ecosystem,
@@ -25,10 +33,10 @@ export async function computeFromPrices(client: OrchestratorClient): Promise<Fro
         model: version.air,
         engine: version.engine,
       });
-      if (typeof cost === 'number' && cost > 0) prices[card.type] = Math.round(cost);
-      else unpriced.push(card.type);
+      if (typeof cost === 'number' && cost > 0) prices[key] = Math.round(cost);
+      else unpriced.push(key);
     } catch {
-      unpriced.push(card.type);
+      unpriced.push(key);
     }
   });
 
@@ -37,7 +45,7 @@ export async function computeFromPrices(client: OrchestratorClient): Promise<Fro
   if (unpriced.length) {
     console.warn(
       `[training-studio] from-price whatif: ${unpriced.length}/${
-        MODEL_CARDS.length
+        quotes.length
       } models unpriced (${unpriced.join(', ')})`
     );
   }
