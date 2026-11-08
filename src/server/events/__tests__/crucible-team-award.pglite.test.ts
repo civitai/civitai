@@ -53,6 +53,7 @@ const UNTAGGED = 8;
 const BLUE = 101;
 const TEAMLESS = 102;
 const BANNED = 103;
+const EXCLUDED = 104;
 
 let db: PGlite;
 const hashes = new Map<string, Map<string, string>>();
@@ -108,7 +109,9 @@ beforeAll(async () => {
       "userId" int, "cosmeticId" int, "claimKey" text, "createdAt" timestamptz DEFAULT now()
     );
 
-    INSERT INTO "User" (id, "bannedAt") VALUES (${BLUE}, NULL), (${TEAMLESS}, NULL), (${BANNED}, now());
+    INSERT INTO "User" (id, "bannedAt", flags) VALUES
+      (${BLUE}, NULL, 0), (${TEAMLESS}, NULL, 0), (${BANNED}, now(), 0),
+      (${EXCLUDED}, NULL, ${UserFlag.ExcludeFromEventPoints});
     INSERT INTO "Post" VALUES (1, '2026-10-01');
     INSERT INTO "Crucible" VALUES
       (${RALLY}, 'Active', '2099-01-01', 3, '{birthday2026-rally}'),
@@ -116,7 +119,7 @@ beforeAll(async () => {
     INSERT INTO "Cosmetic" VALUES
       (11, 'ContentDecoration', '{"event": "birthday2026", "team": "Blue", "design": "basic"}');
     INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey") VALUES
-      (${BLUE}, 11, 'claimed'), (${BANNED}, 11, 'claimed');
+      (${BLUE}, 11, 'claimed'), (${BANNED}, 11, 'claimed'), (${EXCLUDED}, 11, 'claimed');
   `);
 });
 afterAll(async () => db.close());
@@ -268,6 +271,7 @@ describe('team points for accepted crucible entrants', () => {
   it('gives nothing to an entrant with no team, or one who may not earn', async () => {
     await acceptCrucibleEntry(await enter(1, TEAMLESS));
     await acceptCrucibleEntry(await enter(2, BANNED));
+    await acceptCrucibleEntry(await enter(3, EXCLUDED));
 
     expect(ledger).toEqual([]);
     expect(redisMock.sysRedis.hIncrBy).not.toHaveBeenCalled();
