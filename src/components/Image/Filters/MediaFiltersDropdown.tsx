@@ -62,8 +62,6 @@ export function MediaFiltersDropdown({
   const showJumpTo = jumpToSort !== undefined;
   const turfPlayer = useHatTurfFeedPlayer();
   const teamColor = useTeamColor();
-  // Hat Turf's filters, on the main image feed for players only (as the server serves them).
-  const showTurf = filterType === 'images' && !!isFeed && !!turfPlayer;
   // The legacy hide* booleans fold into `excluded` so there is one gate, not two.
   const excluded = useMemo<MediaFilterKey[]>(
     () => [
@@ -75,6 +73,8 @@ export function MediaFiltersDropdown({
     [exclude, hideMediaTypes, hideBaseModels, hideTools]
   );
   const shows = useCallback((key: MediaFilterKey) => !excluded.includes(key), [excluded]);
+  // Hat Turf's filters, on the main image feed for players only (as the server serves them).
+  const showTurf = filterType === 'images' && !!isFeed && !!turfPlayer && shows('hideTurfHats');
   // A section whose every chip is excluded would otherwise render as a lone divider.
   const showResources = shows('hideManualResources') || shows('hideAutoResources');
   const showModerator = (

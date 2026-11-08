@@ -3,6 +3,7 @@ import { PROM_PREFIX } from '@civitai/telemetry/client';
 import { dbRead } from '~/server/db/client';
 import { flagAudienceAmong } from '~/server/events/event-access';
 import { loadEvents } from '~/server/events/load-events';
+import { logToAxiom } from '~/server/logging/client';
 import { eventPointKeys } from '~/server/events/points/keys';
 import { TURF_RANK_MIN, turfKeys } from '~/server/events/turf/turf-map';
 import { getTurfEvent, inTurf, isRunning, type TurfEvent } from '~/server/events/turf/turf.service';
@@ -11,16 +12,43 @@ import type { HatSort } from '~/shared/constants/hat-turf-feed.constants';
 
 // The image feed's Hat Turf sorts and Show filters, read from the indexes WRITE_TURF_SCRIPT keeps.
 
+// Who plays, per server, for a minute: a viewer who stopped playing still sends the fields saved
+// in their filters on every feed page, and each would otherwise cost a lookup.
+const PLAYER_TTL_MS = 60_000;
+const PLAYER_CACHE_MAX = 50_000;
+const players = new Map<number, { at: number; event: TurfEvent | null }>();
+
 /**
  * The running turf event `userId` plays in the feed, or null: event cosmetics not turned off, and
  * opted in to Hat Turf (inTurf). In shadow mode, only its testers. The feed shows nothing of the
- * sorts or filters to anyone else and ignores them on the wire.
+ * sorts or filters to anyone else and ignores them on the wire. A failed lookup is null, never an
+ * error: the feed must not fail for a field it would ignore.
  */
 export async function getHatTurfFeedEvent(
   userId: number | undefined,
   now = new Date()
 ): Promise<TurfEvent | null> {
   if (!userId) return null;
+  const cached = players.get(userId);
+  if (cached && now.getTime() - cached.at < PLAYER_TTL_MS) return cached.event;
+  let event: TurfEvent | null;
+  try {
+    event = await findPlayerEvent(userId, now);
+  } catch (error) {
+    void logToAxiom({
+      type: 'warning',
+      name: 'event-turf',
+      message: 'feed player lookup failed',
+      error: (error as Error).message,
+    });
+    return null;
+  }
+  if (players.size >= PLAYER_CACHE_MAX) players.clear();
+  players.set(userId, { at: now.getTime(), event });
+  return event;
+}
+
+async function findPlayerEvent(userId: number, now: Date) {
   for (const def of await loadEvents()) {
     if (!def.turf) continue;
     const event = await getTurfEvent(def.name, now);

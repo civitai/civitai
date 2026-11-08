@@ -113,6 +113,11 @@ beforeEach(async () => {
     const set = new Set(redis.set(key) ?? []);
     return members.map((m) => set.has(m));
   }) as never);
+  redisMock.sysRedis.sMembers.mockImplementation(
+    (async (key: string) => redis.set(key) ?? []) as never
+  );
+  redisMock.sysRedis.zRange.mockImplementation((async (key: string) =>
+    Object.keys(redis.zset(key) ?? {})) as never);
   redisMock.sysRedis.eval.mockImplementation(redis.eval as never);
   redisMock.sysRedis.incr.mockImplementation((async () => (clock += 1)) as never);
   redisMock.sysRedis.hGetAll.mockImplementation(
@@ -208,6 +213,20 @@ describe('the turf write keeps the feed indexes', () => {
     await reconcileTurf(await event(now), now);
     expect(total()).toEqual({ [live]: turfRankScore(3, live) });
     expect(team('Pink')).toEqual({ [live]: turfRankScore(2, live) });
+    expect(hatted()).toEqual([live]);
+  });
+
+  it('a reconcile clears index entries left with no counts, as an older write script leaves them', async () => {
+    const live = await imageWith(1, 0);
+    const orphan = await newImage();
+    redis.setSet(keys.hatted, [String(orphan)]);
+    await redis.eval("redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])", {
+      keys: [keys.rankTotal],
+      arguments: [String(turfRankScore(4, orphan)), String(orphan)],
+    });
+    const now = later();
+    await reconcileTurf(await event(now), now);
+    expect(total()).toEqual({ [live]: turfRankScore(1, live) });
     expect(hatted()).toEqual([live]);
   });
 
@@ -352,6 +371,22 @@ describe('who gets the Hat Turf feed', () => {
     expect(await getHatTurfFeedEvent(1, later())).toBeNull();
     expect(await getHatTurfFeedEvent(undefined, later())).toBeNull();
     await setUser(1, joined);
+  });
+
+  it('a failed lookup is no player, not an error, and is not remembered', async () => {
+    await setUser(1, joined);
+    dbMock.dbRead.$queryRaw.mockRejectedValueOnce(new Error('replica down') as never);
+    expect(await getHatTurfFeedEvent(1, later())).toBeNull();
+    expect((await getHatTurfFeedEvent(1, later()))?.name).toBe('e');
+  });
+
+  it('a player is remembered for a minute', async () => {
+    await setUser(1, joined);
+    const now = later();
+    expect((await getHatTurfFeedEvent(1, now))?.name).toBe('e');
+    await setUser(1, {});
+    expect((await getHatTurfFeedEvent(1, new Date(now.getTime() + 59_000)))?.name).toBe('e');
+    expect(await getHatTurfFeedEvent(1, new Date(now.getTime() + 60_000))).toBeNull();
   });
 
   it('nobody, when turf is off', async () => {

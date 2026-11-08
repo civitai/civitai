@@ -7,7 +7,7 @@ import {
 import { mapToViolationType, tosReasonUserMessage } from '~/server/common/tos-reasons';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
-import { imageTagsCache } from '~/server/redis/caches';
+import { getUserFollows, imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -467,6 +467,9 @@ export const getInfiniteImagesHandler = async ({
 
     if (turfEvent && hatFeedSort) {
       const input = scopedInput;
+      // The hydrate reads an empty follow list as no filter; the feed serves it as nothing.
+      if (input.followed && user && !(await getUserFollows(user.id)).length)
+        return { items: [], nextCursor: undefined, source: 'turf' as const };
       const cursor = typeof input.cursor === 'string' ? input.cursor : undefined;
       const result = await fillTurfPage(
         'sort',

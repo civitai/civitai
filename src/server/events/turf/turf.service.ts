@@ -635,7 +635,7 @@ function computeImages(
 // a newer one. Returns a code per image: 1 map changed, 2 counts changed, 4 stale (nothing written).
 // The feed indexes (KEYS 4 on: hatted, rank total, then each team's rank in event.teams order) are
 // rewritten on every write that lands, changed or not, so they hold what the counts hold and a
-// reconcile repairs them. The rank value is encodeTurfRank's; it carries the scores as strings, so the
+// reconcile, which writes every image in either, repairs them. The rank value is encodeTurfRank's; it carries the scores as strings, so the
 // script does no arithmetic.
 const WRITE_TURF_SCRIPT = `
 local ticket = tonumber(ARGV[1])
@@ -902,9 +902,16 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
   const desiredCounts = new Map([...counts].map(([k, c]) => [k, JSON.stringify(c)]));
   const ranks = turfRanks(event, counts, contest);
   // Read now, not at the start: an image a sync added during the reads is cleared if it has gone.
+  // The feed indexes too, so an entry with no counts (written by an older script during a deploy)
+  // is cleared as well.
+  const indexed = [
+    ...((await sysRedis.sMembers(keys.hatted)) ?? []),
+    ...((await sysRedis.zRange(keys.rankTotal, 0, -1)) ?? []),
+  ].map((id) => `Image:${String(id)}`);
   const fields = new Set([
     ...Object.keys((await sysRedis.hGetAll(keys.counts)) ?? {}),
     ...Object.keys((await sysRedis.hGetAll(keys.map)) ?? {}),
+    ...indexed,
     ...desired.keys(),
     ...desiredCounts.keys(),
   ]);

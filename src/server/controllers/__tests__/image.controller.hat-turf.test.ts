@@ -14,9 +14,19 @@ const mocks = vi.hoisted(() => ({
   getHatTurfFeedEvent: vi.fn(),
   readTurfRankPage: vi.fn(),
   turfHiddenIds: vi.fn(),
+  getUserFollows: vi.fn(),
 }));
 
-vi.mock('~/server/services/model.service', () => ({ getHeldGalleryLevel: async () => undefined }));
+// Post 9's model is held at PG (1).
+vi.mock('~/server/services/model.service', () => ({
+  getHeldGalleryLevel: async () => undefined,
+  getHeldLevelsByPost: async (postIds: number[]) =>
+    new Map(postIds.filter((id) => id === 9).map((id) => [id, { level: 1, ownerId: 99 }])),
+}));
+vi.mock('~/server/redis/caches', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getUserFollows: mocks.getUserFollows,
+}));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getAllImages: mocks.getAllImages,
@@ -61,16 +71,52 @@ describe('Hat Turf sorts on the image feed', () => {
     // The hydrate answers in its own order.
     mocks.getAllImages.mockResolvedValue({ items: rows(10, 30) });
     const result = await getInfiniteImagesHandler({
-      input: feed({ hatSort: 'most', hatTeams: ['Blue'] }),
+      input: feed({ hatSort: 'most', hatTeams: ['Blue'], excludedUserIds: [5] }),
       ctx: ctx(),
     });
     expect(mocks.readTurfRankPage).toHaveBeenCalledWith(
       expect.objectContaining({ event: EVENT, sort: 'most', teams: ['Blue'], limit: 2 })
     );
-    expect(mocks.getAllImages.mock.calls[0][0]).toMatchObject({ ids: [30, 10], period: 'AllTime' });
+    // The viewer's own filters and identity reach the hydrate: it is the only filter on this path.
+    expect(mocks.getAllImages.mock.calls[0][0]).toMatchObject({
+      ids: [30, 10],
+      period: 'AllTime',
+      browsingLevel: 1,
+      excludedUserIds: [5],
+      user: { id: 7 },
+    });
     expect(result.items.map((i) => i.id)).toEqual([30, 10]);
     expect(result.nextCursor).toBe('5|10');
     expect(result.source).toBe('turf');
+  });
+
+  it("drops an image held at its model's level, as the feed does for images picked by id", async () => {
+    mocks.readTurfRankPage.mockResolvedValue({ ids: [10, 11], nextCursor: undefined });
+    mocks.getAllImages.mockResolvedValue({
+      items: [
+        { id: 10, postId: 9, nsfwLevel: 4 },
+        { id: 11, postId: 9, nsfwLevel: 1 },
+      ],
+    });
+    const result = await getInfiniteImagesHandler({ input: feed({ hatSort: 'most' }), ctx: ctx() });
+    expect(result.items.map((i) => i.id)).toEqual([11]);
+  });
+
+  it('Following with nobody followed is an empty page, as on the normal feed', async () => {
+    mocks.getUserFollows.mockResolvedValue([]);
+    mocks.readTurfRankPage.mockResolvedValue({ ids: [10], nextCursor: undefined });
+    mocks.getAllImages.mockResolvedValue({ items: rows(10) });
+    const result = await getInfiniteImagesHandler({
+      input: feed({ hatSort: 'most', followed: true }),
+      ctx: ctx(),
+    });
+    expect(result.items).toEqual([]);
+    mocks.getUserFollows.mockResolvedValue([3]);
+    const followed = await getInfiniteImagesHandler({
+      input: feed({ hatSort: 'most', followed: true }),
+      ctx: ctx(),
+    });
+    expect(followed.items.map((i) => i.id)).toEqual([10]);
   });
 
   it('anyone not playing gets the feed as if no Hat Turf field was sent', async () => {
