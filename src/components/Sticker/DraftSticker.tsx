@@ -596,8 +596,7 @@ export function DraftSticker({
   // One payload for both buttons, so the two offers cannot drift into placing
   // different stickers. `free` is the only thing that differs, and it selects a
   // path rather than asserting anything — the server re-decides all of it.
-  // What the press under this draft does, for the floating Place above the reaction bar, which
-  // presses that same button rather than opening a second way to pay.
+  // Label of this draft's pay button; the editor's floating Place presses that button.
   const primaryLabel = commit
     ? null
     : purchase && effectiveMode === 'pack' && purchase.pack

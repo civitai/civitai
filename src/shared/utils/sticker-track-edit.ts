@@ -14,15 +14,14 @@ export type KeyPose = { x: number; y: number; scale: number; rotation: number };
 export const STICKER_KEY_STEP_MS = 100;
 
 /**
- * How near the playhead a key must be to be "the key you are on". Half a step, so stepping
- * frame by frame lands on each key and never on two.
+ * How near the playhead a key must be to be "the key you are on". Half a step, so a step
+ * never lands on two keys, and lands on every key at least a step from its neighbours.
  */
 export const STICKER_KEY_SNAP_MS = STICKER_KEY_STEP_MS / 2;
 
 const clampTime = (t: number) =>
   Math.min(Math.max(Math.round(t), 0), STICKER_TRACK_MAX_DURATION_MS);
 
-/** The index of the key at the playhead, or -1. */
 export function keyIndexAt(keys: StickerTrackKey[], t: number) {
   let best = -1;
   for (let i = 0; i < keys.length; i++) {
@@ -41,9 +40,8 @@ export const snapKeyOpacity = (o: number, minShown: number) =>
   o >= minShown ? o : o < minShown / 2 ? 0 : minShown;
 
 /**
- * Sets a key at `t` to `pose`: updates the key you are on, or adds one there. A new key takes
- * the ease the sticker has at that moment and the opacity on screen, snapped to one the server
- * accepts, so adding a key mid-fade lands the fade there rather than refusing the Place.
+ * Updates the key at `t`, or adds one. A new key takes the ease and on-screen opacity at that
+ * moment, snapped to one the server accepts, so adding a key mid-fade does not refuse the Place.
  */
 export function upsertKey(
   keys: StickerTrackKey[],
@@ -117,7 +115,6 @@ export function capFades(keys: StickerTrackKey[]): StickerTrackKey[] {
   return out;
 }
 
-/** The track a draft's keys are stored as. */
 export const stickerKeysTrack = (keys: StickerTrackKey[]): StickerTrackV2 =>
   trackOf(capFades(keys));
 

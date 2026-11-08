@@ -183,8 +183,8 @@ describe('stickerTrackRefusal on keys', () => {
     expect(stickerTrackRefusal({ v: 2, keys })).toMatch(message);
   });
 
-  // A fade spends most of its time below the floor, so how long it lasts is how long the sticker
-  // stays faint; jump and two hidden keys never draw it faint at all.
+  // A fade can spend all of its time below the floor, so how long it lasts bounds how long the
+  // sticker stays faint; jump and two hidden keys never draw it faint at all.
   it.each<[string, StickerTrackKey[]]>([
     ['the longest fade', [key(0, { o: 0, ease: 'smooth' }), key(STICKER_TRACK_MAX_FADE_MS)]],
     ['a long jump out of hiding', [key(0, { o: 0, ease: 'jump' }), key(10_000)]],

@@ -377,7 +377,6 @@ function ImageContent({
                   ? (image.metadata as VideoMetadata)?.vimeoVideoId
                   : undefined
               }
-              // The sticker timeline replaces the player's controls while it is open.
               controls={active && !timelineOpen}
               videoProps={{
                 autoPlay: active,

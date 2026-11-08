@@ -336,7 +336,7 @@ describe('what a draft sends when it is placed', () => {
       .toBeNull();
   });
 
-  test('a draft that is not pinned sends no track', async () => {
+  test('a Static draft sends no track', async () => {
     await renderDraft({ instant: true });
 
     await page.getByRole('button', { name: 'Place free' }).click();

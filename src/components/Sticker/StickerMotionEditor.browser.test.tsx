@@ -136,6 +136,17 @@ describe('the sticker timeline', () => {
     await expect.element(page.getByRole('button', { name: 'Place free' })).not.toBeInTheDocument();
   });
 
+  test('lowering the sticker’s opacity under a faint key says why it cannot be placed', async () => {
+    await page.getByText('Movement').click();
+    const [first] = selected().motion!.keys;
+    store.getState().setKeys(selected().id, [{ ...first, o: 0.3 }]);
+    await expect.element(page.getByRole('alert')).not.toBeInTheDocument();
+
+    // Opacity sets no key, so the 30% key now draws at 15%, which the server refuses.
+    store.getState().move(selected().id, { opacity: 0.5 });
+    await expect.element(page.getByRole('alert')).toHaveTextContent(/too faint/i);
+  });
+
   test('the floating Place is gone while previewing', async () => {
     store.getState().setPrimaryLabel(selected().id, 'Place free');
     await expect.element(page.getByRole('button', { name: 'Place free' })).toBeInTheDocument();

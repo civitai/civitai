@@ -12,7 +12,12 @@ import clsx from 'clsx';
 import { Menu } from '~/components/MantineOverlays';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { StickerTrackEase, StickerTrackKey } from '~/shared/utils/sticker-track';
-import { STICKER_TRACK_EASES, stickerTrackRefusal } from '~/shared/utils/sticker-track';
+import { STICKER_PLACEMENT_MIN_OPACITY } from '~/shared/utils/sticker-placement';
+import {
+  STICKER_TRACK_EASES,
+  stickerTrackFaintestShown,
+  stickerTrackRefusal,
+} from '~/shared/utils/sticker-track';
 import {
   editKey,
   keyIndexAt,
@@ -37,7 +42,6 @@ const EASE_NAMES: Record<StickerTrackEase, string> = {
   jump: 'Jump',
 };
 
-/** The curve each ease draws, from bottom-left to top-right of a 16 px box. */
 const EASE_PATHS: Record<StickerTrackEase, string> = {
   smooth: 'M2 14 C7 14 9 2 14 2',
   linear: 'M2 14 L14 2',
@@ -103,7 +107,6 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
   const [playing, setPlaying] = useState(!video.paused);
   const [durationMs, setDurationMs] = useState(() => videoDurationMs(video));
 
-  // The video drives the playhead: while it plays, every frame; otherwise on each seek.
   useEffect(() => {
     if (!open) return;
     let frame = 0;
@@ -153,7 +156,7 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
     else video.pause();
   }, [video]);
 
-  // Tapping the video anywhere off a sticker plays or pauses. Stickers stop their own presses.
+  // Stickers stop their own presses, so a click reaching the video is off-sticker.
   useEffect(() => {
     if (!moving) return;
     video.addEventListener('click', toggle);
@@ -162,8 +165,10 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
 
   const keys = selected?.motion?.keys ?? [];
   const at = keyIndexAt(keys, playheadMs);
-  // The server's verdict on what Place would send, so the editor says why before a press fails.
-  const refusal = moving && keys.length ? stickerTrackRefusal(stickerKeysTrack(keys)) : null;
+  // What the server would refuse in the track Place sends, so the editor says why before a press
+  // fails: the track rules, and a shown key times the sticker's own opacity under the floor (a
+  // change to the sticker's opacity sets no key). The creator's size limit is not checked here.
+  const refusal = moving && keys.length ? motionRefusal(keys, selected.opacity) : null;
   const setKeys = (next: StickerTrackKey[]) =>
     selected && useStore.getState().setKeys(selected.id, next);
 
@@ -213,7 +218,8 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
       event.preventDefault();
       run();
     };
-    // Capture phase: the detail carousel binds the arrows on window too, and runs first otherwise.
+    // Window capture runs before the detail carousel's document-capture arrow handler; bind here
+    // or the arrows step the carousel.
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [moving, seek, toggle]);
@@ -282,6 +288,8 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
             <Text size="xs" c="red.4" mt={4} role="alert">
               {refusal === 'keys: too much fading'
                 ? 'Too much fading to place: shorten or remove a fade.'
+                : refusal === TOO_FAINT
+                ? 'A key is too faint for this sticker’s opacity: raise the key or the sticker.'
                 : `This movement can't be placed (${refusal}).`}
             </Text>
           )}
@@ -348,7 +356,6 @@ function ScrubBar({
     onSeek(timeAt(event.clientX));
   };
 
-  // A diamond drags to retime and taps to jump, told apart by whether it moved.
   const grabKey = (index: number) => (event: React.PointerEvent) => {
     event.stopPropagation();
     const target = event.currentTarget as HTMLElement;
@@ -416,7 +423,6 @@ function ScrubBar({
             'absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border border-solid border-white',
             index === selectedKey && 'ring-2 ring-yellow-4'
           )}
-          // The fill shows the key's opacity.
           style={{ left: left(key.t), background: `rgba(255,255,255,${key.o})` }}
           onPointerDown={grabKey(index)}
         />
@@ -527,6 +533,16 @@ function KeyInspector({
       </ActionIcon>
     </div>
   );
+}
+
+const TOO_FAINT = 'too faint for the sticker opacity';
+
+function motionRefusal(keys: StickerTrackKey[], stickerOpacity: number) {
+  const track = stickerKeysTrack(keys);
+  const faintest = stickerTrackFaintestShown(track);
+  if (faintest != null && faintest * stickerOpacity < STICKER_PLACEMENT_MIN_OPACITY - 1e-9)
+    return TOO_FAINT;
+  return stickerTrackRefusal(track);
 }
 
 function pressPrimary(draftId: string) {
