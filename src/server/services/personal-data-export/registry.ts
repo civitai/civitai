@@ -248,6 +248,8 @@ export const EXCLUDED: Record<string, string> = {
   Cosmetic:
     'catalog item; names the user only as its staff author (owned cosmetics are UserCosmetic)',
   CosmeticShopSection: 'shop configuration; names the user only as its staff author',
+  KnightsShopItemChange:
+    'audit log of Knights shop catalog edits; the user id there is the staff member who made the edit',
   CosmeticShopItem:
     'shop configuration; names the user only as its staff author (purchases are exported)',
   CsamReport: 'safety record; never exported',
