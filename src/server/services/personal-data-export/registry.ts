@@ -157,6 +157,8 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   EntityAccess: { subject: ['addedById'] },
   PaidAccess: { subject: ['ownerId'] },
   ModelVersionSale: { subject: ['userId'] },
+  ModelVersionGiftLink: { subject: ['createdById'] },
+  ModelVersionGiftRedemption: { subject: ['userId'] },
   EntityCollaborator: { subject: ['userId'], others: ['createdBy'] },
   Club: { subject: ['userId'] },
   ClubAdmin: { subject: ['userId'] },

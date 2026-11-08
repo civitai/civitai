@@ -51,7 +51,9 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   useFeatureFlags: () => ({ stickerVideoTracks: false }),
 }));
 
-vi.mock('~/components/Sticker/useTrackHiddenIds', () => ({ useTrackHiddenIds: () => new Set() }));
+vi.mock('~/components/Sticker/useTrackPlayback', () => ({
+  useTrackPlayback: () => ({ hiddenIds: new Set(), bindPose: undefined }),
+}));
 
 vi.mock('~/components/Sticker/treatments/useStickerTreatment', () => ({
   useStickerTreatment: () => 'none',
