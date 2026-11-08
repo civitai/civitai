@@ -133,7 +133,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             {currentUser && (
               <>
                 <UploadTracker />
-                <CivitaiLinkPopover />
+                {features.civitaiLinkNav && <CivitaiLinkPopover />}
               </>
             )}
             {currentUser && features.resourceLoad && <ResourceLoadDrain />}
@@ -196,7 +196,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 <IconSearch />
               </LegacyActionIcon>
             )}
-            {currentUser && !features.buzzSpendPop && <CivitaiLinkPopover />}
+            {currentUser && features.civitaiLinkNav && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
             {currentUser && showChat && <ChatButton />}
             {/*{currentUser?.isModerator && <ModerationNav />}*/}

@@ -17,6 +17,7 @@ import {
   IconGavel,
   IconHistory,
   IconLink,
+  IconScreenShare,
   IconMoneybag,
   IconPhotoUp,
   IconPlayerPlayFilled,
@@ -42,6 +43,7 @@ import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisib
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useEventMenuItems } from '~/components/AppLayout/AppHeader/useEventMenuItems';
 import { enabledInventoryTypes } from '~/components/Inventory/inventory-types';
+import { openCivitaiLinkDialog } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
@@ -344,6 +346,12 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Knights of New',
           newUntil: new Date('2025-06-15'),
+        },
+        {
+          id: 'civitai-link',
+          icon: IconScreenShare,
+          label: 'Civitai Link',
+          onClick: () => openCivitaiLinkDialog(),
         },
         {
           id: 'link-app',
