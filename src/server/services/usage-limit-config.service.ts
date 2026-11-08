@@ -69,7 +69,15 @@ export async function getUsageLimitConfig(): Promise<UsageLimitConfig> {
     refreshing = null;
   }));
   if (current) return current.config;
-  return withTimeoutFallback(refresh, USAGE_LIMIT_FIRST_READ_TIMEOUT_MS, defaultUsageLimitConfig);
+  return withTimeoutFallback(
+    refresh,
+    USAGE_LIMIT_FIRST_READ_TIMEOUT_MS,
+    defaultUsageLimitConfig,
+    () => {
+      // Serve the defaults as already stale, so later callers do not each wait out the timeout.
+      current ??= { config: defaultUsageLimitConfig, loadedAt: 0 };
+    }
+  );
 }
 
 /** Tests only: forget the cached config. */

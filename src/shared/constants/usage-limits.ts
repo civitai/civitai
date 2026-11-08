@@ -229,6 +229,7 @@ export const usageLimitDefs = [
     message: 'You can only queue a few model loads an hour. Try again shortly.',
   },
   {
+    // ~1000 images/min is the soft ceiling for legitimate use; each image needs one presign.
     id: 'auto-label.upload',
     area: 'auto-label',
     kind: 'abuse',
@@ -237,6 +238,7 @@ export const usageLimitDefs = [
     base: 1000,
   },
   {
+    // Batches of up to 16: 100/min covers ~1600 images/min, headroom above the upload ceiling.
     id: 'auto-label.submit',
     area: 'auto-label',
     kind: 'abuse',
@@ -245,6 +247,7 @@ export const usageLimitDefs = [
     base: 100,
   },
   {
+    // A 1000-image run is ~63 workflows; a third in flight at 12 polls/min each is ~250/min.
     id: 'auto-label.poll',
     area: 'auto-label',
     kind: 'abuse',
@@ -343,7 +346,7 @@ export function isBucketCountable(window: UsageLimitWindow) {
   return window.type === 'rolling' && window.seconds <= 24 * 60 * 60;
 }
 
-/** Registry entries for `rateLimit()`. Only rolling windows: a bucket keeps one day of attempts. */
+/** Registry entries for `rateLimit()`; throws for a window the bucket cannot count. */
 export function usageLimits(...ids: UsageLimitId[]): UsageLimitRef {
   for (const id of ids) {
     if (!isBucketCountable(getUsageLimitDef(id).window))
@@ -356,16 +359,15 @@ export function isUsageLimitRef(value: unknown): value is UsageLimitRef {
   return !!value && typeof value === 'object' && 'usageLimitIds' in value;
 }
 
-// --- KeyValue overrides -------------------------------------------------------------------------
-
 export const USAGE_LIMITS_KEY = 'usage-limits';
 
 /**
  * The KeyValue row `usage-limits`:
- *   { "version": 1, "limits": { "posts.daily": { "base": 25, "byTier": { "member": { "multiplier": 2 } } } } }
- * Every field of an entry is optional; a present field replaces the code field whole (`byScore`
- * and `byTier` are not merged). The window and who an entry applies to are code-only: a rolling
- * window longer than the bucket's one-day retention would silently stop counting.
+ *   { "version": 1, "limits": { "posts.daily": { "base": 25 } } }
+ * Every field of an entry is optional; a present field replaces the code field whole: `byScore`
+ * and `byTier` are not merged, so a `byTier` override repeats every tier it keeps, founder
+ * included. The window and who an entry applies to are code-only: a rolling window longer than
+ * the bucket's one-day retention would silently stop counting.
  */
 const tierRuleSchema = z.union([
   z.strictObject({ limit: z.number() }),

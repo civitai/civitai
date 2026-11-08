@@ -25,9 +25,6 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray, numericStringArray } from '~/utils/zod-helpers';
 
-// Post creation was historically unthrottled. The MCP/API "prompt-to-post" flow makes unlimited
-// automated posting trivial, so every post-creating procedure counts against one bucket. The
-// numbers live in the usage-limit registry.
 /** The one bucket every post-creating procedure counts against, and the usage-limits read reads. */
 export const POST_CREATE_RATE_LIMIT_KEY = 'post:create';
 export const postRateLimits = usageLimits('posts.hourly', 'posts.daily');

@@ -356,6 +356,12 @@ describe('posts.daily from the usage-limits KeyValue row', () => {
     expect(await attemptWith(sameDay, 4, 10 * 60 * 1000)).toHaveBeenCalledTimes(1);
   });
 
+  it('applies no daily limit while posts.daily is disabled', async () => {
+    findKeyValue.mockResolvedValue(row({ 'posts.daily': { disabled: true } }));
+    expect(await getDailyPostLimit(free())).toBe(Number.POSITIVE_INFINITY);
+    expect(await attemptWith(free(), 500, 2 * HOUR)).toHaveBeenCalledTimes(1);
+  });
+
   it('serves the code defaults while the store is down', async () => {
     findKeyValue.mockRejectedValue(new Error('db down'));
     expect(await getDailyPostLimit(free())).toBe(20);

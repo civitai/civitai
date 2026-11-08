@@ -32,6 +32,9 @@ describe('getUsageLimitConfig', () => {
     const config = getUsageLimitConfig();
     await vi.advanceTimersByTimeAsync(USAGE_LIMIT_FIRST_READ_TIMEOUT_MS);
     expect(await config).toBe(defaultUsageLimitConfig);
+    // Later callers get the defaults at once, with the one read still in flight.
+    expect(await getUsageLimitConfig()).toBe(defaultUsageLimitConfig);
+    expect(findKeyValue).toHaveBeenCalledTimes(1);
   });
 
   it('reads the row once per TTL and refreshes in the background after it', async () => {
@@ -55,33 +58,41 @@ describe('getUsageLimitConfig', () => {
     );
   });
 
-  it('keeps the last good config when a refresh fails', async () => {
+  it('keeps the last good config when a refresh fails, and retries only after a TTL', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     findKeyValue.mockResolvedValue(row({ 'posts.daily': { base: 25 } }));
     await getUsageLimitConfig();
     findKeyValue.mockRejectedValue(new Error('db down'));
     vi.advanceTimersByTime(USAGE_LIMIT_CONFIG_TTL_MS + 1);
     await getUsageLimitConfig();
-    await vi.waitFor(() => expect(findKeyValue).toHaveBeenCalledTimes(2));
+    await settle();
+    expect(firingLogs()).toHaveLength(1);
     expect((await resolveUsageLimit('posts.daily', free)).limit).toBe(25);
+    expect(findKeyValue).toHaveBeenCalledTimes(2);
   });
 
   it('logs a refused override once per distinct failure, not once per refresh', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
-    const readFresh = async (reads: number) => {
+    const readFresh = async () => {
       vi.advanceTimersByTime(USAGE_LIMIT_CONFIG_TTL_MS + 1);
       await getUsageLimitConfig();
-      await vi.waitFor(() => expect(findKeyValue).toHaveBeenCalledTimes(reads));
+      await settle();
     };
     findKeyValue.mockResolvedValue(row({ 'posts.daily': { base: -1 } }));
-    for (let reads = 1; reads <= 3; reads++) await readFresh(reads);
+    for (let i = 0; i < 3; i++) await readFresh();
+    expect(findKeyValue).toHaveBeenCalledTimes(3);
     expect(firingLogs()).toHaveLength(1);
     expect(firingLogs()[0][0]).toMatchObject({
       fallbacks: [{ id: 'posts.daily', reason: expect.any(String) }],
     });
 
     findKeyValue.mockResolvedValue(row({ 'comments.daily': { base: 0 } }));
-    await readFresh(4);
-    await vi.waitFor(() => expect(firingLogs()).toHaveLength(2));
+    await readFresh();
+    expect(firingLogs()).toHaveLength(2);
   });
 });
+
+/** Lets every settled promise chain run; only Date is faked, so setImmediate is real. */
+function settle() {
+  return new Promise((resolve) => setImmediate(resolve));
+}

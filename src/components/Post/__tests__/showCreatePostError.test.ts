@@ -69,6 +69,14 @@ describe('showCreatePostError', () => {
     act(() => root.unmount());
   });
 
+  it('links any posts.daily refusal, and no other limit worded like one', () => {
+    showCreatePostError(refusal('Posting paused for today.', 'posts.daily'), { journey: true });
+    expect(showErrorNotification.mock.calls[0][0].autoClose).toBe(false);
+
+    showCreatePostError(refusal(dailyRefusal, 'posts.hourly'), { journey: true });
+    expect(showErrorNotification.mock.calls[1][0].reason).toBeUndefined();
+  });
+
   it('leaves every other error as it was', () => {
     showCreatePostError(clamp, {
       journey: true,
