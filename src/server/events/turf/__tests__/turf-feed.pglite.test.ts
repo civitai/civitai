@@ -345,7 +345,8 @@ describe('filling a filtered page', () => {
   });
 
   it('stops after three reads, short, with the cursor to go on from', async () => {
-    const page = await fillTurfPage('show', 2, undefined, read, async () => []);
+    const none = async (): Promise<{ id: number }[]> => [];
+    const page = await fillTurfPage('show', 2, undefined, read, none);
     expect(read).toHaveBeenCalledTimes(3);
     expect(page.items).toEqual([]);
     expect(page.nextCursor).toBe('d');
