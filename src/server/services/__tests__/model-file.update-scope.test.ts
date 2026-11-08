@@ -709,9 +709,17 @@ describe('a new url from a client', () => {
 
 describe('an owner editing another Training Data file on a Training Studio version', () => {
   const studioVersion = (has: boolean) =>
-    dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
       Promise.resolve(
-        has && strings.join('?').includes('selectedEpochUrl') ? [{ id: 2 }] : []
+        // Only for the file's own version.
+        has &&
+          strings.join('?').includes('selectedEpochUrl') &&
+          values.includes(FILE.modelVersionId)
+          ? [{ id: 2 }]
+          : []
       )) as never);
 
   beforeEach(() => {

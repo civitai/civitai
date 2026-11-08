@@ -476,9 +476,15 @@ describe('createFile / updateFile — renaming a download (overrideName)', () =>
 describe('createFile — a second Training Data file on a Training Studio version', () => {
   /** The Studio-row lookup: the version has a Studio dataset row, or not. */
   const studioVersion = (has: boolean) =>
-    mockDbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+    mockDbWrite.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
       Promise.resolve(
-        has && strings.join('?').includes('selectedEpochUrl') ? [{ id: 1 }] : []
+        // Only for the file's own version.
+        has && strings.join('?').includes('selectedEpochUrl') && values.includes(5)
+          ? [{ id: 1 }]
+          : []
       )) as never);
   const create = (who: { userId: number; isModerator?: boolean }) =>
     modelFileService.createFile({

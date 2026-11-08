@@ -14,11 +14,9 @@ export function trainingDataVisibility({
 }
 
 /**
- * Whether a host may serve a `Training Data` file, from its metadata: `nsfwLevel` (the bitwise
- * rating of the zip's rated items) and `fullyRated` (recorded by the Studio archive: whether every
- * item was rated). Only a red-capable host serves a dataset rated above PG-13, or a Studio zip
- * with an unrated item. A dataset with neither key (a classic zip, or a Studio zip archived before
- * they were recorded) is served on any host.
+ * Whether a host may serve a `Training Data` file, from the rating its metadata records:
+ * `nsfwLevel` (the bitwise rating of the zip's rated items) and `fullyRated` (whether every item
+ * was rated).
  */
 export function trainingDataServableOnHost(
   metadata: { nsfwLevel?: unknown; fullyRated?: unknown } | null | undefined,

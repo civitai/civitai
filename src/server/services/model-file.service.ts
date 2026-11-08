@@ -53,6 +53,7 @@ import {
   cappedStudioDatasetVisibility,
   isStudioDataset,
   versionHasStudioDataset,
+  withoutServerOnlyKeys,
 } from '~/server/services/training-data-restricted.service';
 import {
   liveRunDatasetTrainingStatuses,
@@ -840,7 +841,7 @@ export const getRecentTrainingData = async ({
     }
 
     return {
-      items: data,
+      items: data.map((file) => ({ ...file, metadata: withoutServerOnlyKeys(file.metadata) })),
       nextCursor,
     };
   } catch (error) {

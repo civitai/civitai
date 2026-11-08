@@ -115,13 +115,19 @@ const SERVER_ONLY_KEYS = ['datasetArchive', 'nsfwLevel', 'fullyRated'];
  * with no reason attached.
  */
 export function trainingDataOwnerView<T extends ViewedFile[] | null | undefined>(files: T): T {
-  return files?.map((file) => {
-    if (file.type !== 'Training Data' || !file.metadata || typeof file.metadata !== 'object')
-      return file;
-    const metadata = { ...(file.metadata as Record<string, unknown>) };
-    for (const key of SERVER_ONLY_KEYS) delete metadata[key];
-    return { ...file, metadata };
-  }) as T;
+  return files?.map((file) =>
+    file.type === 'Training Data'
+      ? { ...file, metadata: withoutServerOnlyKeys(file.metadata) }
+      : file
+  ) as T;
+}
+
+/** A `Training Data` file's metadata as its owner sees it (`trainingDataOwnerView`). */
+export function withoutServerOnlyKeys<M>(metadata: M): M {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return metadata;
+  const copy = { ...(metadata as Record<string, unknown>) };
+  for (const key of SERVER_ONLY_KEYS) delete copy[key];
+  return copy as M;
 }
 
 /**

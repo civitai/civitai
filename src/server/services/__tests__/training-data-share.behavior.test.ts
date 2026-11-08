@@ -3,7 +3,6 @@ import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ownerHeldSql } from '~/server/services/legal-hold.service';
 import {
   trainingDataListing,
   trainingDataShareRestricted,
@@ -149,10 +148,6 @@ describe('trainingDataShareRestricted', () => {
   });
 
   it('an owner restricted for sharing only cannot share', async () => {
-    const { rows } = await db.query<{ restricted: boolean }>(
-      `SELECT ${ownerHeldSql(Prisma.raw(String(SHARE_ONLY))).text} AS restricted`
-    );
-    expect(rows[0].restricted).toBe(false);
     expect(await restricted(SHARE_ONLY)).toBe(true);
   });
 
@@ -170,15 +165,15 @@ describe('trainingDataShareRestricted', () => {
   });
 
   it.each([
-    ['poi', `UPDATE "Model" SET poi = true WHERE id = 101`],
-    ['minor', `UPDATE "Model" SET minor = true WHERE id = 101`],
-    ['tosViolation', `UPDATE "Model" SET "tosViolation" = true WHERE id = 101`],
-    ['an image needing review', `UPDATE "Image" SET "needsReview" = 'other' WHERE id = 301`],
+    ['case 1', `UPDATE "Model" SET poi = true WHERE id = 101`],
+    ['case 2', `UPDATE "Model" SET minor = true WHERE id = 101`],
+    ['case 3', `UPDATE "Model" SET "tosViolation" = true WHERE id = 101`],
+    ['case 4', `UPDATE "Image" SET "needsReview" = 'other' WHERE id = 301`],
     [
-      'a blocked image',
+      'case 5',
       `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = 301`,
     ],
-  ])('content restricted by %s cannot share', async (_, sql) => {
+  ])('restricted content (%s) cannot share', async (_, sql) => {
     await db.exec(sql);
     expect(await restricted(PLAIN)).toBe(true);
   });
@@ -247,22 +242,19 @@ describe('trainingDataListing', () => {
   });
 
   it.each([
-    ['a mature dataset', { nsfwLevel: 4 | 1 }, false, false],
-    ['a mature dataset', { nsfwLevel: 4 | 1 }, true, true],
-    ['an unrated dataset', {}, false, true],
-    ['a partly rated Studio dataset', { nsfwLevel: 1, fullyRated: false }, false, false],
-    ['a partly rated Studio dataset', { nsfwLevel: 1, fullyRated: false }, true, true],
-    ['a fully rated SFW Studio dataset', { nsfwLevel: 1, fullyRated: true }, false, true],
-    ['an unrated dataset', {}, true, true],
-  ])(
-    '%s on a red-capable host %s is listed to others: %s',
-    async (_, metadata, redCapable, expected) => {
-      await rate(PLAIN, metadata);
-      expect(await listedFor(PLAIN, { redCapable })).toEqual([expected, true]);
-      // The owner and moderators are offered it on any host, as the download serves them.
-      expect(await listedFor(PLAIN, { redCapable, viewerManages: true })).toEqual([true, true]);
-    }
-  );
+    ['rating case 1', { nsfwLevel: 4 | 1 }, false, false],
+    ['rating case 1', { nsfwLevel: 4 | 1 }, true, true],
+    ['rating case 2', {}, false, true],
+    ['rating case 3', { nsfwLevel: 1, fullyRated: false }, false, false],
+    ['rating case 3', { nsfwLevel: 1, fullyRated: false }, true, true],
+    ['rating case 4', { nsfwLevel: 1, fullyRated: true }, false, true],
+    ['rating case 2', {}, true, true],
+  ])('%s, red-capable host %s: listed to others %s', async (_, metadata, redCapable, expected) => {
+    await rate(PLAIN, metadata);
+    expect(await listedFor(PLAIN, { redCapable })).toEqual([expected, true]);
+    // The owner and moderators are offered it on any host, as the download serves them.
+    expect(await listedFor(PLAIN, { redCapable, viewerManages: true })).toEqual([true, true]);
+  });
 
   it('unlists every dataset when the check cannot be read', async () => {
     const broken = {

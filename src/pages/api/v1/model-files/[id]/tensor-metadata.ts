@@ -77,7 +77,6 @@ export default MixedAuthEndpoint(async function handler(
     fileId: id,
     user,
     attribution: { caller: 'other', actor: resolveActorFor(user) },
-    // No request host: false keeps the dataset host gate.
     redCapable: false,
   });
 

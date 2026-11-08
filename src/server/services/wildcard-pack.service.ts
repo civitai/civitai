@@ -125,7 +125,6 @@ export async function resolveWildcardPackForUser({
     modelVersionId,
     user,
     attribution: { caller: 'wildcard', actor: resolveActorFor(user) },
-    // No request host: false keeps the dataset host gate.
     redCapable: false,
   });
   if (resolved.status !== 'success') {
