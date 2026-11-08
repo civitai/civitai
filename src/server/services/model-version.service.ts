@@ -2918,7 +2918,12 @@ export const earlyAccessPurchase = async ({
       userId,
       modelVersionId,
       permissions: requestedPermissions,
-      meta: { [buzzTransactionKey]: buzzTransactionId },
+      // Dated per purchase: a later download lands on the same row as an earlier generation
+      // purchase, and the unpublish refund window runs from each one's own date.
+      meta: {
+        [buzzTransactionKey]: buzzTransactionId,
+        [`${type}-purchasedAt`]: new Date().toISOString(),
+      },
       addedById: userId,
     });
 
