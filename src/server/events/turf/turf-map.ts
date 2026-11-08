@@ -22,8 +22,24 @@ export function turfKeys(event: string) {
     stamp: `${root}:stamp` as const,
     // Image ids on someone's screen -> when that lapses (ms): which counts to push (turf-watch.ts).
     watch: `${root}:watch` as const,
+    // Image ids showing any live sticker, contest entries left out: the feed's "Turf hats" filter.
+    hatted: `${root}:hatted` as const,
+    // Image id -> turfRankScore of its counted stickers, all teams: the "Most / Fewest hats" sorts.
+    rankTotal: `${root}:rank:total` as const,
+    // The same for one team's counted stickers.
+    rankTeam: (team: string) => `${root}:rank:team:${team}` as const,
+    // Several teams' ranks summed, rebuilt when it lapses (turf-feed.ts).
+    rankUnion: (teams: string[]) => `${root}:rank:union:${teams.join('+')}` as const,
   };
 }
+
+// Hats times 2^34 plus the image id: one image per score, ties on hats broken by id, and a union
+// of up to four team ranks adds at most 4 ids (under 2^33), never reaching the hats part.
+// Exact while hats < 2^19 and ids < 2^31.
+const RANK_HATS_UNIT = 2 ** 34;
+export const turfRankScore = (hats: number, imageId: number) => hats * RANK_HATS_UNIT + imageId;
+/** The lowest score an image with at least one counted sticker has. */
+export const TURF_RANK_MIN = RANK_HATS_UNIT;
 
 // One image's live counts. Image ids are public and so is what this carries, so no keyed id.
 export const eventTurfTopic = (event: string, imageId: number) =>
