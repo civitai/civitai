@@ -160,6 +160,50 @@ export function useDragClickGuard() {
   };
 }
 
+/**
+ * Mantine closes the menu on the outside mousedown, but the click that completes that press still
+ * lands on whatever is under the pointer, often a link. Call `onClose` when the menu closes: if a
+ * press is in progress, that press's click is cancelled. Any later click goes through.
+ */
+export function useDismissClickGuard() {
+  const pressing = useRef(false);
+  const armed = useRef(false);
+  useEffect(() => {
+    const press = (event: PointerEvent) => {
+      if (!event.isPrimary) return;
+      pressing.current = true;
+      armed.current = false;
+    };
+    // A press that ends without a click (a drag off the target) must not leave the guard armed.
+    // The click a release produces is dispatched before any timer runs.
+    const release = () => {
+      pressing.current = false;
+      window.setTimeout(() => (armed.current = false));
+    };
+    const click = (event: MouseEvent) => {
+      if (!armed.current) return;
+      armed.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    window.addEventListener('pointerdown', press, true);
+    window.addEventListener('pointerup', release, true);
+    window.addEventListener('pointercancel', release, true);
+    window.addEventListener('click', click, true);
+    return () => {
+      window.removeEventListener('pointerdown', press, true);
+      window.removeEventListener('pointerup', release, true);
+      window.removeEventListener('pointercancel', release, true);
+      window.removeEventListener('click', click, true);
+    };
+  }, []);
+  return {
+    onClose: () => {
+      if (pressing.current) armed.current = true;
+    },
+  };
+}
+
 export type UserMenuSurface = 'desktop' | 'mobile';
 
 export function userMenuClickAction({
