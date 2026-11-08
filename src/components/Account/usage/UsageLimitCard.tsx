@@ -15,7 +15,7 @@ const BAR_COLOR: Record<UsageLimitTone, string> = {
   exempt: 'gray',
 };
 
-/** One area's limits: a header with the window, then a row per limit. Presentational only. */
+/** One area's limits: a header with the window, then a row per limit. */
 export function UsageLimitCard({
   area,
   rows,

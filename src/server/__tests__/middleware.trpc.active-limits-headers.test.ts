@@ -6,7 +6,7 @@ import type { NextApiRequest } from 'next';
  *  - an abuse refusal marks the user's "temporarily limited" hash, read back as a coarse area;
  *  - a product limit (admit or refusal) yields X-RateLimit-* headers on a single-call response.
  * Harness as in `middleware.trpc.rate-limit-key.test.ts`: `~/env/other` mocked to production, or
- * the middleware skips itself and every assertion here is vacuous.
+ * `claimRateLimitAttempt` exempts the call and every assertion here is vacuous.
  */
 
 const { mockHSetWithTTL, capturedHandler } = vi.hoisted(() => ({

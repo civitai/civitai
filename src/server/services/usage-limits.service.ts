@@ -81,7 +81,6 @@ export async function getUsageLimits({
     user.isModerator &&
     (tokenScope === TokenScope.Full || Flags.hasFlag(tokenScope, TokenScope.UserRead));
   const wanted = ids && ids.length > 0 ? new Set(ids) : undefined;
-  // One bucket read per area, in parallel; rows keep registry order.
   const byArea = await Promise.all(
     USAGE_LIMIT_AREAS.map(async ({ area, sharedKey, ids: areaIds }): Promise<UsageLimit[]> => {
       // Resolve first, as `rateLimit()` does, so `ids` can only drop rows, never change a number.

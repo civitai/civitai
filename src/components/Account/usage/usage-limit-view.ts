@@ -27,7 +27,7 @@ export type UsageLimitView = {
   percent: number | null;
   tone: UsageLimitTone;
   usedText: string;
-  /** The bold line on the right: "+1 at 3:40 PM", "resets 5:00 PM", "all free by …". */
+  /** The bold line on the right: "+1 at 3:40 PM", "resets 5:00 PM", "available now". */
   when: string | null;
   /** The muted line under it: "all free by 11:05 AM tomorrow", "midnight UTC". */
   whenDetail: string | null;

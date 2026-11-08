@@ -1,10 +1,11 @@
 import type { RuleUsage } from '~/server/utils/rate-limit-window';
 
 /**
- * `X-RateLimit-Limit/Remaining/Reset` for product limits, GitHub/OpenAI-style. `rateLimit()` notes
- * the binding product usage per request; `responseMeta` turns it into headers. A batch shares one
- * set of headers across calls, so only a response carrying exactly one call, with exactly one
- * product usage noted, gets them. Abuse limits never do: they publish no counts.
+ * `X-RateLimit-Limit/Remaining/Reset` for product limits. `claimRateLimitAttempt` notes the binding
+ * product usage per request; tRPC's `responseMeta` turns it into headers (REST routes call
+ * `setRateLimitHeaders` themselves). A batch shares one set of headers, so only a response with
+ * exactly one call and one product usage noted gets them. Abuse limits never do: they publish no
+ * counts.
  */
 export type RateLimitHeaderUsage = { limit: number; remaining: number; resetAt: number };
 

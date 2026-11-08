@@ -170,7 +170,7 @@ export const userRouter = router({
         ids: input?.ids,
       })
     ),
-  /** Abuse limits the caller is refused by now: a coarse area and a retry time, no counts. */
+  /** Coarse area and retry time only; abuse limits publish no counts. */
   getActiveLimits: protectedProcedure
     .meta({ anyOfScopes: USAGE_LIMITS_SCOPES })
     .query(({ ctx }) => getActiveLimits(ctx.user.id)),

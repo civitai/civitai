@@ -4,8 +4,8 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 
 /**
  * Abuse limits a user is refused by right now, for the account page's "temporarily limited"
- * banner. Written only when `rateLimit()` refuses an abuse rule, so admitted requests pay nothing;
- * each field expires at its retry time, so the hash empties itself.
+ * banner. Written only when `claimRateLimitAttempt` refuses an abuse rule for a signed-in user, so
+ * admitted requests pay nothing; each field expires at its retry time, so the hash empties itself.
  *
  * The page sees a coarse area and a retry time, never the limiter key: which rule tripped, and
  * its numbers, are not something an abuse limit tells the caller.
