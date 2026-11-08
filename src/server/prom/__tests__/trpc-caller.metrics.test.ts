@@ -1,5 +1,5 @@
 import { instrumentationRegistry } from '@civitai/telemetry/client';
-import type client from 'prom-client';
+import client from 'prom-client';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -9,7 +9,6 @@ import {
   TOOL_USER_AGENT_PREFIXES,
   TRPC_CALLER_CLASSES,
   TRPC_CALLER_SECONDS_METRIC,
-  TRPC_CALLER_TOTAL_METRIC,
 } from '~/server/prom/trpc-caller.metrics';
 
 type Row = { value: number; labels: Record<string, string> };
@@ -26,8 +25,7 @@ const CHROME_UA =
 const USER = { id: 7 };
 
 describe('classifyTrpcCaller', () => {
-  it('pins the exported names and the five caller classes', () => {
-    expect(TRPC_CALLER_TOTAL_METRIC).toBe('civitai_app_trpc_caller_total');
+  it('pins the exported name and the five caller classes', () => {
     expect(TRPC_CALLER_SECONDS_METRIC).toBe('civitai_app_trpc_caller_seconds_sum');
     expect([...TRPC_CALLER_CLASSES]).toEqual([
       'session',
@@ -163,76 +161,59 @@ describe('classifyTrpcCaller', () => {
 
 describe('recordTrpcCaller', () => {
   beforeEach(async () => {
-    for (const name of [TRPC_CALLER_TOTAL_METRIC, TRPC_CALLER_SECONDS_METRIC]) {
+    for (const name of [TRPC_CALLER_SECONDS_METRIC]) {
       const metric = instrumentationRegistry.getSingleMetric(name) as client.Counter | undefined;
       await metric?.get(); // fold any pending calls in, then clear them
       metric?.reset();
     }
   });
 
-  it('counts one call per record, labelled by path and caller', async () => {
+  it('adds each call duration to the seconds sum, per path and caller', async () => {
     recordTrpcCaller('image.getInfinite', 'anon_browser', 0.25);
     recordTrpcCaller('image.getInfinite', 'anon_browser', 0.5);
     recordTrpcCaller('image.getInfinite', 'session', 0.125);
-    recordTrpcCaller('model.getById', 'api_key', 2);
-    const total = await rows(TRPC_CALLER_TOTAL_METRIC);
-    expect(total).toHaveLength(3);
-    expect(total).toEqual(
-      expect.arrayContaining([
-        { value: 2, labels: { path: 'image.getInfinite', caller: 'anon_browser' } },
-        { value: 1, labels: { path: 'image.getInfinite', caller: 'session' } },
-        { value: 1, labels: { path: 'model.getById', caller: 'api_key' } },
-      ])
-    );
-  });
-
-  it('adds each call duration to the seconds sum', async () => {
-    recordTrpcCaller('image.getInfinite', 'anon_browser', 0.25);
-    recordTrpcCaller('image.getInfinite', 'anon_browser', 0.5);
     recordTrpcCaller('model.getById', 'internal', 3.375);
     const seconds = await rows(TRPC_CALLER_SECONDS_METRIC);
-    expect(seconds).toHaveLength(2);
+    expect(seconds).toHaveLength(3);
     expect(seconds).toEqual(
       expect.arrayContaining([
         { value: 0.75, labels: { path: 'image.getInfinite', caller: 'anon_browser' } },
+        { value: 0.125, labels: { path: 'image.getInfinite', caller: 'session' } },
         { value: 3.375, labels: { path: 'model.getById', caller: 'internal' } },
       ])
     );
   });
 
-  it('a negative or non-finite duration still counts the call and never throws', async () => {
+  it('a negative or non-finite duration adds nothing and never throws', async () => {
     expect(() => recordTrpcCaller('a.b', 'session', -1)).not.toThrow();
     expect(() => recordTrpcCaller('a.b', 'session', Number.NaN)).not.toThrow();
     expect(() => recordTrpcCaller('a.b', 'session', Number.POSITIVE_INFINITY)).not.toThrow();
-    expect(await rows(TRPC_CALLER_TOTAL_METRIC)).toEqual([
-      { value: 3, labels: { path: 'a.b', caller: 'session' } },
-    ]);
     expect(await rows(TRPC_CALLER_SECONDS_METRIC)).toEqual([]);
   });
 
-  it('a second scrape adds only the calls recorded since the first', async () => {
+  it('a second scrape adds only the seconds recorded since the first', async () => {
     recordTrpcCaller('a.b', 'anon_tool_ua', 0.5);
-    expect(await rows(TRPC_CALLER_TOTAL_METRIC)).toEqual([
-      { value: 1, labels: { path: 'a.b', caller: 'anon_tool_ua' } },
+    expect(await rows(TRPC_CALLER_SECONDS_METRIC)).toEqual([
+      { value: 0.5, labels: { path: 'a.b', caller: 'anon_tool_ua' } },
     ]);
-    expect(await rows(TRPC_CALLER_TOTAL_METRIC)).toEqual([
-      { value: 1, labels: { path: 'a.b', caller: 'anon_tool_ua' } },
+    expect(await rows(TRPC_CALLER_SECONDS_METRIC)).toEqual([
+      { value: 0.5, labels: { path: 'a.b', caller: 'anon_tool_ua' } },
     ]);
     recordTrpcCaller('a.b', 'anon_tool_ua', 0.25);
-    expect(await rows(TRPC_CALLER_TOTAL_METRIC)).toEqual([
-      { value: 2, labels: { path: 'a.b', caller: 'anon_tool_ua' } },
-    ]);
     expect(await rows(TRPC_CALLER_SECONDS_METRIC)).toEqual([
       { value: 0.75, labels: { path: 'a.b', caller: 'anon_tool_ua' } },
     ]);
   });
 
-  it('exports both metrics as counters with exactly the path and caller labels', async () => {
+  it('exports only the seconds counter: no per-call total is registered or exported', async () => {
     recordTrpcCaller('a.b', 'session', 1);
     const text = await instrumentationRegistry.metrics();
-    expect(text).toContain('# TYPE civitai_app_trpc_caller_total counter');
     expect(text).toContain('# TYPE civitai_app_trpc_caller_seconds_sum counter');
-    expect(text).toContain('civitai_app_trpc_caller_total{path="a.b",caller="session"} 1');
     expect(text).toContain('civitai_app_trpc_caller_seconds_sum{path="a.b",caller="session"} 1');
+    expect(text).not.toContain('civitai_app_trpc_caller_total');
+    expect(
+      instrumentationRegistry.getSingleMetric('civitai_app_trpc_caller_total')
+    ).toBeUndefined();
+    expect(client.register.getSingleMetric('civitai_app_trpc_caller_total')).toBeUndefined();
   });
 });
