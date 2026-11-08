@@ -85,8 +85,10 @@ const RAW_ROW = {
 async function captureQuery() {
   const queryRaw = dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>;
   let strings: TemplateStringsArray | undefined;
-  queryRaw.mockImplementation((s: TemplateStringsArray) => {
+  let values: unknown[] = [];
+  queryRaw.mockImplementation((s: TemplateStringsArray, ...v: unknown[]) => {
     strings = s;
+    values = v;
     return Promise.resolve([RAW_ROW]);
   });
 
@@ -97,7 +99,20 @@ async function captureQuery() {
   expect(strings, 'getEntityCoverImage never issued its query').toBeDefined();
   expect(result).toHaveLength(1);
 
-  return (strings as TemplateStringsArray).join('?');
+  return render(strings as TemplateStringsArray, values);
+}
+
+const isSql = (v: unknown): v is { strings: string[]; values: unknown[] } =>
+  typeof v === 'object' && v !== null && 'strings' in v && 'values' in v;
+
+/** The statement's text with each bound value as `?`, and nested `Prisma.sql` fragments inlined. */
+function render(strings: readonly string[], values: unknown[]): string {
+  return strings.reduce((sql, part, i) => {
+    if (i === 0) return part;
+    const value = values[i - 1];
+    const nested = isSql(value) ? render(value.strings, value.values) : '?';
+    return sql + nested + part;
+  });
 }
 
 /**
@@ -233,9 +248,8 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         `WHEN 'Bounty' THEN e."entityId" WHEN 'BountyEntry' THEN be."bountyId" END ` +
         `LEFT JOIN "Article" a ON e."entityType" = 'Article' AND a.id = e."entityId" ` +
         `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL ` +
-        // A nested Prisma.sql (`imageNotFlagged`); its rows are in
-        // entity-cover-image-visibility.behavior.test.ts.
-        'AND ? ' +
+        // `imageNotFlagged`; its rows are in entity-cover-image-visibility.behavior.test.ts.
+        'AND ( i."acceptableMinor" = FALSE OR (?::boolean AND i."userId" = ?) OR ?::boolean ) ' +
         // Only types with a visibility rule here, then canViewBounty or the article rule.
         `AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article') ` +
         'AND ( ?::boolean ' +

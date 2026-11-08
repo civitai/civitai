@@ -2838,8 +2838,8 @@ const getAllImagesUncaptured = async (
     if (!collectionId) AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
     // In a collection the image's owner and moderators still see it; a collection manager does not.
     else if (!isModerator) {
+      // Not isPersonalized: the bound userId already keys the cached query per viewer.
       if (userId) {
-        isPersonalized = true;
         AND.push(Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`);
       } else AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
     }
