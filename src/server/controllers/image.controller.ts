@@ -416,6 +416,7 @@ export const getInfiniteImagesHandler = async ({
   const turfEvent =
     (hatSort || hideTurfHats || hideWornHats) &&
     features.hatTurfFeedCard &&
+    features.hatTurfFeedSorts &&
     !isScopedImageFeed(scopedInput)
       ? await getHatTurfFeedEvent(user?.id)
       : null;

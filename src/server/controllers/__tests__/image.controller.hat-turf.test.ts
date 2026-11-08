@@ -44,7 +44,7 @@ import { getInfiniteImagesHandler } from '../image.controller';
 const ctx = (features: Record<string, boolean> = {}) =>
   ({
     user: { id: 7, isModerator: false },
-    features: { imageIndexFeed: true, hatTurfFeedCard: true, ...features },
+    features: { imageIndexFeed: true, hatTurfFeedCard: true, hatTurfFeedSorts: true, ...features },
     req: { headers: {} },
     ip: '127.0.0.1',
   } as unknown as Context);
@@ -140,6 +140,19 @@ describe('Hat Turf sorts on the image feed', () => {
     });
     expect(mocks.getHatTurfFeedEvent).not.toHaveBeenCalled();
     expect(mocks.readTurfRankPage).not.toHaveBeenCalled();
+  });
+
+  // Deliberate: hat-turf-feed-card is at 100%, so this flag is what holds the sorts and Show filters
+  // to testers. Do not fold it into hatTurfFeedCard until the sorts roll out to everyone.
+  it('with the feed-sorts flag off, a player gets the normal feed, whatever Hat Turf fields they send', async () => {
+    const result = await getInfiniteImagesHandler({
+      input: feed({ hatSort: 'most', hatTeams: ['Blue'], hideTurfHats: true, hideWornHats: true }),
+      ctx: ctx({ hatTurfFeedSorts: false }),
+    });
+    expect(mocks.getHatTurfFeedEvent).not.toHaveBeenCalled();
+    expect(mocks.readTurfRankPage).not.toHaveBeenCalled();
+    expect(mocks.turfHiddenIds).not.toHaveBeenCalled();
+    expect(result.items.map((i) => i.id)).toEqual([1, 2]);
   });
 
   it('a feed with no Hat Turf field never looks the player up', async () => {
