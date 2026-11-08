@@ -18,6 +18,11 @@ export function showPointPop({ points, team, color }: PointPop, at: { x: number;
   // A backstop for a tab hidden mid-animation, where animationend may never fire.
   setTimeout(() => el.remove(), 2000);
   document.body.appendChild(el);
+  // Centred on the button, but kept on screen: a button by the edge of a phone would cut it off.
+  const half = el.offsetWidth / 2;
+  const margin = 8;
+  const max = window.innerWidth - half - margin;
+  el.style.left = `${Math.max(half + margin, Math.min(at.x, max))}px`;
 }
 
 /** The top centre of an element: where a pop off it starts. */
