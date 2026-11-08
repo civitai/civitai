@@ -85,8 +85,8 @@ export type ThemeAction = 'accepted' | 'reported' | 'removed' | 'retry';
 
 /**
  * shadow accepts whatever the verdict. flag and enforce accept a pass; enforce removes a fail and
- * flag reports it. An unscored entry is retried, then reported and accepted, so a model outage never
- * costs an entrant.
+ * flag reports and accepts it, so a moderator who keeps it has nothing to undo (a removal revokes).
+ * An unscored entry is retried, then reported and accepted, so a model outage never costs an entrant.
  */
 export function themeActions(
   mode: ThemeReviewMode,
@@ -94,12 +94,20 @@ export function themeActions(
   attempt: number
 ): ThemeAction[] {
   if (mode === 'shadow' || verdict === 'pass') return ['accepted'];
-  if (verdict === 'fail') return [mode === 'enforce' ? 'removed' : 'reported'];
+  if (verdict === 'fail') return mode === 'enforce' ? ['removed'] : ['reported', 'accepted'];
   return attempt < MAX_UNSCORED_ATTEMPTS ? ['retry'] : ['reported', 'accepted'];
 }
 
-type StoredVerdict = { verdict: ThemeVerdict['verdict']; attempts: number; done: boolean };
+type StoredVerdict = ThemeVerdict & {
+  attempts: number;
+  done: boolean;
+  actions?: ThemeAction[];
+  // Actions of `actions` already carried out, so a run that failed partway resumes without repeating them.
+  applied?: ThemeAction[];
+  summary?: string;
+};
 
+/** Fewest attempts first, so entries that keep failing never crowd out the rest of a run. */
 async function pendingEntries(entries: ThemeReviewEntry[]) {
   const byCrucible = new Map<number, ThemeReviewEntry[]>();
   for (const entry of entries) {
@@ -107,17 +115,20 @@ async function pendingEntries(entries: ThemeReviewEntry[]) {
     list.push(entry);
     byCrucible.set(entry.crucibleId, list);
   }
-  const pending: { entry: ThemeReviewEntry; attempts: number }[] = [];
+  const pending: { entry: ThemeReviewEntry; previous?: StoredVerdict }[] = [];
   for (const [crucibleId, list] of byCrucible) {
     const stored = await sysRedis.hGetAll(verdictKey(crucibleId));
     for (const entry of list) {
       const raw = stored[String(entry.entryId)];
       const previous = raw ? (JSON.parse(raw) as StoredVerdict) : undefined;
       if (previous?.done) continue;
-      pending.push({ entry, attempts: previous?.attempts ?? 0 });
+      pending.push({ entry, previous });
     }
   }
-  return pending;
+  return pending.sort(
+    (a, b) =>
+      (a.previous?.attempts ?? 0) - (b.previous?.attempts ?? 0) || a.entry.entryId - b.entry.entryId
+  );
 }
 
 async function review(
@@ -171,7 +182,7 @@ async function apply(
         reason: `Crucible theme review: ${
           verdict.verdict === 'fail' ? 'off-theme' : 'could not score'
         }`,
-        comment: `Entry ${entry.entryId} in crucible ${entry.crucibleId} ("${entry.crucibleName}"), theme "${config.theme}". Remove it from /crucibles/${entry.crucibleId} if it does not belong. Review: ${summary}`,
+        comment: `Entry ${entry.entryId} in crucible ${entry.crucibleId} ("${entry.crucibleName}"), theme "${config.theme}". It stays in and counts; remove it from /crucibles/${entry.crucibleId} if it does not belong, which also takes back what it earned. Review: ${summary}`,
       },
     });
   } else if (action === 'accepted') {
@@ -187,7 +198,9 @@ export type ThemeReviewRunResult = Record<ThemeVerdict['verdict'] | ThemeAction 
 
 /**
  * Reviews each judgeable entry of the crucibles with a theme review once, and accepts, reports or
- * removes it by the crucible's mode. A failed review or action leaves the entry for the next run.
+ * removes it by the crucible's mode. A review that throws counts as an unscored attempt. An action
+ * that throws leaves the entry for the next run, which carries out the remaining actions without
+ * reviewing it again.
  */
 export async function runCrucibleThemeReview(): Promise<ThemeReviewRunResult> {
   const result: ThemeReviewRunResult = {
@@ -214,45 +227,81 @@ export async function runCrucibleThemeReview(): Promise<ThemeReviewRunResult> {
     return judges.get(key)!;
   };
 
-  const tasks = pending.map(({ entry, attempts }) => async () => {
+  const save = async (entry: ThemeReviewEntry, record: StoredVerdict & Record<string, unknown>) => {
+    await sysRedis.hSet(
+      verdictKey(entry.crucibleId),
+      String(entry.entryId),
+      JSON.stringify(record)
+    );
+    await sysRedis.expire(verdictKey(entry.crucibleId), VERDICT_TTL_SECONDS);
+  };
+
+  const tasks = pending.map(({ entry, previous }) => async () => {
     const config = configFor.get(entry.crucibleId);
     if (!config) return;
+    const attempt = (previous?.attempts ?? 0) + 1;
+    let record: (StoredVerdict & Record<string, unknown>) | undefined;
     try {
-      const reviewed = await review(config, await judgeFor(config), entry);
-      const verdict = themeVerdict(reviewed.score);
-      const attempt = attempts + 1;
-      const actions = themeActions(config.mode, verdict.verdict, attempt);
-      for (const action of actions) await apply(action, config, entry, verdict, reviewed.summary);
+      const resuming = !!previous?.actions?.length && !previous.actions.includes('retry');
+      if (resuming) {
+        record = { ...previous, attempts: attempt, applied: previous.applied ?? [] };
+      } else {
+        const reviewed = await review(config, await judgeFor(config), entry).catch(
+          (error: unknown) => {
+            logToAxiom({
+              type: 'error',
+              name: 'crucible-theme-review-failed',
+              crucibleId: entry.crucibleId,
+              entryId: entry.entryId,
+              attempt,
+              message: error instanceof Error ? error.message : String(error),
+            });
+            return undefined;
+          }
+        );
+        const verdict: ThemeVerdict = reviewed
+          ? themeVerdict(reviewed.score)
+          : { verdict: 'unscored' };
+        record = {
+          mode: config.mode,
+          ...verdict,
+          attempts: attempt,
+          done: false,
+          actions: themeActions(config.mode, verdict.verdict, attempt),
+          applied: [],
+          summary: reviewed?.summary ?? 'The review failed to return a score.',
+          model: reviewed?.model,
+          buzzCost: reviewed
+            ? Math.ceil(estimateBuzzCost(reviewed.model, reviewed.usage))
+            : undefined,
+          at: new Date().toISOString(),
+        };
+        result[verdict.verdict]++;
+        await save(entry, record);
+      }
 
-      const record = {
-        mode: config.mode,
-        ...verdict,
-        attempts: attempt,
-        done: !actions.includes('retry'),
-        actions,
-        model: reviewed.model,
-        buzzCost: Math.ceil(estimateBuzzCost(reviewed.model, reviewed.usage)),
-        at: new Date().toISOString(),
-      };
-      await sysRedis.hSet(
-        verdictKey(entry.crucibleId),
-        String(entry.entryId),
-        JSON.stringify(record)
-      );
-      await sysRedis.expire(verdictKey(entry.crucibleId), VERDICT_TTL_SECONDS);
+      const actions = record.actions ?? [];
+      for (const action of actions) {
+        if (record.applied?.includes(action)) continue;
+        await apply(action, config, entry, record, record.summary ?? '');
+        record.applied = [...(record.applied ?? []), action];
+        result[action]++;
+        await save(entry, record);
+      }
+      record.done = !actions.includes('retry');
+      await save(entry, record);
       logToAxiom({
         type: 'info',
         name: 'crucible-theme-review-verdict',
         crucibleId: entry.crucibleId,
         entryId: entry.entryId,
         imageId: entry.imageId,
-        summary: reviewed.summary,
         ...record,
       });
-      result[verdict.verdict]++;
-      for (const action of actions) result[action]++;
     } catch (error) {
       result.errors++;
+      // Keep the attempt, so an entry whose action keeps failing sorts behind the rest.
+      if (record) await save(entry, { ...record, done: false }).catch(() => undefined);
       logToAxiom({
         type: 'error',
         name: 'crucible-theme-review-entry-failed',

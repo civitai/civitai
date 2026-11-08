@@ -98,10 +98,10 @@ Other features can act on an entry once it is accepted, for example an event tha
 Staff can turn on an AI theme review for a crucible. It is internal for now: there is no setting in the UI, and the review's prompt is kept with the operator config, outside the repo. Every few minutes the review checks each new judgeable image entry against the crucible's theme, using the daily challenge's judge. It runs in one of three modes:
 
 - **Shadow:** verdicts are only recorded, and every entry is accepted.
-- **Flag:** an off-theme entry is reported to moderators and is not accepted.
+- **Flag:** an off-theme entry is reported to moderators and accepted. A moderator who agrees removes it, which takes back what it earned; one who keeps it has nothing to do.
 - **Enforce:** an off-theme entry is removed with the reason "Off-topic for this crucible", its fee is refunded, and the entrant is told the theme review removed it.
 
-An entry that passes is accepted. When the judge can't score an entry, it is tried again a few times; after that it is reported to moderators and accepted. Code: `src/server/services/crucible-theme-review.ts`.
+An entry that passes is accepted. When the judge can't score an entry, or the review fails outright, it is tried again a few times; after that it is reported to moderators and accepted. Entries tried least go first, so ones that keep failing never hold up new entries. If a step fails partway (say the report is filed but the accept fails), the next run finishes the remaining steps without reviewing or reporting the entry again. Code: `src/server/services/crucible-theme-review.ts`.
 
 ## Team points for entrants
 

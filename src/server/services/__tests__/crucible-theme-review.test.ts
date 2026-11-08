@@ -108,7 +108,7 @@ describe('themeActions', () => {
   it.each([
     ['shadow', 'fail', 1, ['accepted']],
     ['flag', 'pass', 1, ['accepted']],
-    ['flag', 'fail', 1, ['reported']],
+    ['flag', 'fail', 1, ['reported', 'accepted']],
     ['enforce', 'fail', 1, ['removed']],
     ['enforce', 'unscored', 1, ['retry']],
     ['enforce', 'unscored', MAX_UNSCORED_ATTEMPTS, ['reported', 'accepted']],
@@ -139,15 +139,15 @@ describe('runCrucibleThemeReview', () => {
     expect(acceptCrucibleEntry).toHaveBeenCalledWith({ entryId: 1, crucibleId: 7, userId: 101 });
   });
 
-  it('only reports an off-theme entry under flag', async () => {
+  it('reports and accepts an off-theme entry under flag, so a moderator keeping it costs nothing', async () => {
     setMode('flag');
     scoreTheme(FAIL);
 
     await runCrucibleThemeReview();
 
     expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ id: 1001 }));
+    expect(acceptCrucibleEntry).toHaveBeenCalledWith({ entryId: 1, crucibleId: 7, userId: 101 });
     expect(removeCrucibleEntryForThemeReview).not.toHaveBeenCalled();
-    expect(acceptCrucibleEntry).not.toHaveBeenCalled();
   });
 
   it('retries an unscored entry, then reports and accepts it', async () => {
@@ -169,6 +169,40 @@ describe('runCrucibleThemeReview', () => {
     await runCrucibleThemeReview();
 
     expect(acceptCrucibleEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts a review that throws as an attempt, then reports and accepts the entry', async () => {
+    generateReview.mockRejectedValue(new Error('json_parse'));
+
+    for (let run = 0; run < MAX_UNSCORED_ATTEMPTS + 1; run++) await runCrucibleThemeReview();
+
+    expect(createReport).toHaveBeenCalledTimes(1);
+    expect(acceptCrucibleEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it('reviews a new entry ahead of entries whose reviews keep throwing', async () => {
+    const entries = Array.from({ length: 41 }, (_, i) => entry(i + 1));
+    dbMock.dbRead.$queryRaw.mockResolvedValue(entries);
+    generateReview.mockImplementation(async ({ creator }: { creator: string }) => {
+      if (creator !== 'user41') throw new Error('refused');
+      return { score: { theme: PASS }, summary: 'a hat', model: 'm', usage: {} };
+    });
+
+    await runCrucibleThemeReview();
+    await runCrucibleThemeReview();
+
+    expect(acceptCrucibleEntry).toHaveBeenCalledWith({ entryId: 41, crucibleId: 7, userId: 141 });
+  });
+
+  it('finishes a half-done entry without a second report or review', async () => {
+    scoreTheme(undefined);
+    acceptCrucibleEntry.mockRejectedValueOnce(new Error('db down'));
+
+    for (let run = 0; run < MAX_UNSCORED_ATTEMPTS + 2; run++) await runCrucibleThemeReview();
+
+    expect(generateReview).toHaveBeenCalledTimes(MAX_UNSCORED_ATTEMPTS);
+    expect(createReport).toHaveBeenCalledTimes(1);
+    expect(acceptCrucibleEntry).toHaveBeenCalledTimes(2);
   });
 
   it("judges with the crucible's own prompt", async () => {
