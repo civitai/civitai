@@ -2098,12 +2098,13 @@ export async function generateFromGraph({
   // download. If that check fails the generation still goes out, unboosted and unbilled for it.
   const boostWhatIf = downloadPriority ? await priceDownloads() : undefined;
   const boostDownloads = !!boostWhatIf?.steps?.some((step) => readPreparation(step));
-  // Boost-to-load fails CLOSED: a non-member's cold checkpoint goes out only boosted, so a failed
-  // price or a reply the orchestrator left out of the high lane is refused rather than sent free.
-  // No preparation means it is resident by now, and it goes out as any resident submit does.
+  // Boost-to-load fails CLOSED: a non-member's cold checkpoint goes out only boosted. A failed price,
+  // a reply outside the high lane, or one showing no download is refused rather than sent free: with
+  // no download shown the submit would carry no boost, and a model evicted in between would then
+  // load free for a non-member, which the members gate exists to prevent.
   if (
     boostRequired &&
-    (!boostWhatIf || (boostDownloads && readDownloadPriority(boostWhatIf) !== 'high'))
+    (!boostWhatIf || !boostDownloads || readDownloadPriority(boostWhatIf) !== 'high')
   )
     throw throwBadRequestError(BOOST_UNAVAILABLE);
   // The submit reply predates the orchestrator queueing any download, so the queue card's first
@@ -2154,7 +2155,7 @@ export async function generateFromGraph({
       externalId,
       ...(boostDownloads ? { downloadPriority } : {}),
       // Only here: every other submit stays byte-identical and the orchestrator derives the tier.
-      ...(boostRequired && boostDownloads ? { tier: BOOST_TO_LOAD_BODY.tier } : {}),
+      ...(boostRequired ? { tier: BOOST_TO_LOAD_BODY.tier } : {}),
     },
   })) as TextToImageResponse;
 

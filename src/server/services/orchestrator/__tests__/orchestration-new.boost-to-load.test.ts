@@ -149,7 +149,10 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
 }));
 
 import type * as FliptClientMod from '~/server/flipt/client';
-import { generateFromGraph } from '~/server/services/orchestrator/orchestration-new.service';
+import {
+  generateFromGraph,
+  whatIfFromGraph,
+} from '~/server/services/orchestrator/orchestration-new.service';
 import { getWorkflowCapability } from '~/shared/generation/workflow-capability';
 
 const CHECKPOINT_ID = getWorkflowCapability('Qwen', 'txt2img')?.defaultModelId as number;
@@ -249,13 +252,11 @@ describe('generateFromGraph — boost-to-load for a free account', () => {
     expect(realSubmits()).toHaveLength(0);
   });
 
-  // Resident by the time it is priced: nothing to download, so no fee and no tier.
-  it('sends it unboosted when the whatIf shows nothing left to download', async () => {
+  // Sent unboosted, a model evicted after this whatIf would load free for a non-member.
+  it('refuses, unsent, when the whatIf shows nothing to download', async () => {
     state.whatIfPreparation = false;
-    await submit();
-    expect(realSubmits()).toHaveLength(1);
-    expect(submittedBody()).not.toHaveProperty('tier');
-    expect(submittedBody()).not.toHaveProperty('downloadPriority');
+    await expect(submit()).rejects.toThrow("download boost couldn't be confirmed");
+    expect(realSubmits()).toHaveLength(0);
   });
 });
 
@@ -279,5 +280,58 @@ describe('the tier pin is for boost-to-load submits only', () => {
     expect(submittedBody()).toMatchObject({ downloadPriority: 'high' });
     expect(submittedBody()).not.toHaveProperty('tier');
     expect(whatIfs()[0][0].body).not.toHaveProperty('tier');
+  });
+});
+
+function price({ tier = 'free', boost = false }: { tier?: string; boost?: boolean } = {}) {
+  return whatIfFromGraph({
+    input: {
+      workflow: 'txt2img',
+      ecosystem: 'Qwen',
+      model: { id: CHECKPOINT_ID },
+      resources: [],
+      sampler: 'Euler',
+      steps: 25,
+      quantity: 1,
+      priority: 'low',
+    },
+    externalCtx: {
+      limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
+      user: { isMember: tier !== 'free', tier },
+      flags: {},
+      selfHostedDisabledEcosystems: [],
+      selfHostedMode: 'enabled',
+      gateRules: [],
+    },
+    userId: 1,
+    isModerator: false,
+    token: 't',
+    experimental: false,
+    acceptBoostRequired: true,
+    downloadPriority: boost ? 'high' : undefined,
+  } as never);
+}
+
+describe('whatIfFromGraph — the price the generator shows', () => {
+  it('tells the generator a free account must boost, instead of refusing', async () => {
+    await expect(price()).resolves.toMatchObject({ boostRequired: true });
+  });
+
+  // The fee on screen comes from this reply; without the tier it would be the free lane's.
+  it('prices the boost on the paid tier, as the submit will send it', async () => {
+    await price({ boost: true });
+    expect(whatIfs()[0][0].body).toMatchObject({ tier: 'paid', downloadPriority: 'high' });
+  });
+
+  it('leaves the unboosted price and every member price without a tier', async () => {
+    await price();
+    await price({ tier: 'bronze', boost: true });
+    expect(whatIfs().map(([{ body }]) => body)).not.toContainEqual(
+      expect.objectContaining({ tier: expect.anything() })
+    );
+  });
+
+  it('says nothing for a member', async () => {
+    await expect(price({ tier: 'bronze' })).resolves.not.toHaveProperty('boostRequired');
   });
 });

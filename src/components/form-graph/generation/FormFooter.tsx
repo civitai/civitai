@@ -490,6 +490,7 @@ export function SubmitButton({
     canEstimateCost,
     gateBlocked,
     download,
+    boostRequired,
   } = useWhatIfContext();
   const totalCost = useTotalGenerationCost(store);
 
@@ -511,8 +512,8 @@ export function SubmitButton({
     isError ||
     !canEstimateCost ||
     insufficientBuzz ||
-    // A required boost with no price yet: the submit would be refused, or sent at an unseen fee.
-    (!!download?.required && download.boostFee == null);
+    // A required boost not yet priced, or with nothing shown to download: the server refuses both.
+    (boostRequired && download?.boostFee == null);
 
   useEffect(() => {
     setBlockedTarget(running && submitBlocked ? GEN_SUBMIT_TARGET : null);

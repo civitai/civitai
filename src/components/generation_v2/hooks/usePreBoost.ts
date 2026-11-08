@@ -76,7 +76,9 @@ export function usePreBoostWhatIf<T extends Record<string, unknown> | null>({
     enabled: enabled && !!boostedPayload && boostable,
   });
 
-  const preBoost = required || (boostable && preBoostRevision === revision);
+  // Only with a preparation: without one the boosted query never runs, and its empty result would
+  // price the form at zero. The footer holds Generate in that state instead (`boostRequired`).
+  const preBoost = boostable && (required || preBoostRevision === revision);
   const boostFee =
     (boosted.data?.cost as { fixed?: Record<string, number> | null } | undefined)?.fixed
       ?.downloadPriority ?? null;
@@ -84,6 +86,7 @@ export function usePreBoostWhatIf<T extends Record<string, unknown> | null>({
   return {
     queryResult: preBoost ? boosted : base,
     preBoost,
+    boostRequired: required,
     setPreBoost: (on: boolean) => setPreBoostRevision(on ? revision : null),
     download: preparation
       ? { preparation, boostable, boostFee, pricing: boosted.isFetching, required }
