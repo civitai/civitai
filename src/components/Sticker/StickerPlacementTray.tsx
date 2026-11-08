@@ -16,7 +16,7 @@ import {
   IconSticker,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PAGE_MODAL_Z_INDEX } from '~/components/Dialog/Templates/PageModal';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { FilterChip } from '~/components/Filters/FilterChip';
@@ -93,7 +93,6 @@ export function StickerPlacementTray({
   const [search, setSearch] = useState('');
   const [mineOnlyRequested, setMineOnlyRequested] = useState(false);
   const [sortBy, setSortBy] = useState<StickerTraySort>('used');
-  const trayRef = useRef<HTMLDivElement>(null);
 
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const trayOpen = useStickerPlacementDraftStore((state) => state.trayOpen);
@@ -110,23 +109,21 @@ export function StickerPlacementTray({
   // image nobody is looking at.
   const showing = targetImageId === imageId && trayOpen;
 
-  // Registered after the early return below has been passed, so the element in
-  // the store is always one that is actually on screen. `showing` rather than
-  // the target alone: a panel that has been put away is not an obstacle the buy
-  // button should still be avoiding.
+  // A callback ref, not an effect reading a ref: the Portal mounts its children after
+  // the first commit, so an effect would register null. It runs only while the tray
+  // is on screen, so the element in the store is always one that is actually there —
+  // a panel that has been put away is not an obstacle the buy button should avoid.
+  const registerTray = useCallback((node: HTMLDivElement | null) => setTray(node), [setTray]);
+
   useEffect(() => {
-    if (!showing) {
-      // The panel is state, not markup: without this it survives the tray being
-      // put away and is still open on the next image opened. The typed filter is
-      // worse — it comes back showing 2 of 83 with nothing on screen saying why.
-      setShopping(false);
-      setSearch('');
-      setMineOnlyRequested(false);
-      return;
-    }
-    setTray(trayRef.current);
-    return () => setTray(null);
-  }, [showing, setTray]);
+    if (showing) return;
+    // The panel is state, not markup: without this it survives the tray being
+    // put away and is still open on the next image opened. The typed filter is
+    // worse — it comes back showing 2 of 83 with nothing on screen saying why.
+    setShopping(false);
+    setSearch('');
+    setMineOnlyRequested(false);
+  }, [showing]);
 
   const { space } = useImagePlacementSpace(targetImageId ?? undefined);
   // Same query key as the layer's, so this shares its cache rather than making a
@@ -267,7 +264,7 @@ export function StickerPlacementTray({
     // so growing the measured obstacle is the correct half of the change, not a
     // side effect of it.
     <div
-      ref={trayRef}
+      ref={registerTray}
       {...{ [STICKER_EDITOR_ATTR]: '' }}
       className="fixed inset-x-0 bottom-0 flex justify-center p-3 pb-[max(0.75rem,var(--safe-area-inset-bottom))]"
       style={{

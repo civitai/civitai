@@ -112,4 +112,13 @@ describe('StickerPlacementBar — in the phone bottom sheet', () => {
     expect(rect.top).toBeGreaterThanOrEqual(0);
     expect(rect.bottom).toBeLessThanOrEqual(PHONE.height);
   });
+
+  // The portaled tray mounts after the first commit, so a registration that reads the
+  // ref in an effect captures null and the buy button stops avoiding the tray.
+  test('registers the tray element as the buy button obstacle', async () => {
+    await openTrayFrom(undefined);
+    const tray = document.querySelector(`[${STICKER_EDITOR_ATTR}]`);
+    expect(tray).not.toBeNull();
+    expect(useStickerPlacementDraftStore.getState().tray).toBe(tray);
+  });
 });
