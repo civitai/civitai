@@ -140,16 +140,43 @@ describe('Escape on the image detail', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
-  test('a menu opened from the keyboard blocks Escape', async () => {
-    renderWithProviders(<Detail />);
-    await expect.element(page.getByRole('button', { name: 'more' })).toBeVisible();
-    (page.getByRole('button', { name: 'more' }).element() as HTMLElement).focus();
-    await userEvent.keyboard('{Enter}');
-    await expect.element(page.getByRole('menuitem', { name: 'share' })).toBeVisible();
-    (page.getByRole('button', { name: 'more' }).element() as HTMLElement).focus();
+  test('closes the page after clicking the anchor of an already-open passive popover', async () => {
+    renderWithProviders(<Detail nudge />);
+    await expect.element(page.getByRole('button', { name: 'in nudge' })).toBeVisible();
+    await page.getByRole('button', { name: 'nudge', exact: true }).click();
+    await userEvent.keyboard('{Escape}');
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  test('an overlay holding focus blocks Escape without any pointer or key interaction', async () => {
+    renderWithProviders(<Detail nudge />);
+    await expect.element(page.getByRole('button', { name: 'in nudge' })).toBeVisible();
+    (page.getByRole('button', { name: 'in nudge' }).element() as HTMLElement).focus();
     await userEvent.keyboard('{Escape}');
     expect(close).not.toHaveBeenCalled();
   });
+
+  test('an overlay the user clicked inside blocks Escape after focus moves away', async () => {
+    renderWithProviders(<Detail nudge />);
+    await page.getByRole('button', { name: 'in nudge' }).click();
+    (document.activeElement as HTMLElement).blur();
+    await userEvent.keyboard('{Escape}');
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  test.each(['{Enter}', ' '])(
+    'a menu opened from the keyboard with "%s" blocks Escape',
+    async (key) => {
+      renderWithProviders(<Detail />);
+      await expect.element(page.getByRole('button', { name: 'more' })).toBeVisible();
+      (page.getByRole('button', { name: 'more' }).element() as HTMLElement).focus();
+      await userEvent.keyboard(key);
+      await expect.element(page.getByRole('menuitem', { name: 'share' })).toBeVisible();
+      (page.getByRole('button', { name: 'more' }).element() as HTMLElement).focus();
+      await userEvent.keyboard('{Escape}');
+      expect(close).not.toHaveBeenCalled();
+    }
+  );
 
   test('a menu the user opened still blocks Escape beside a passive popover', async () => {
     renderWithProviders(<Detail nudge />);
