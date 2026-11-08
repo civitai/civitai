@@ -55,16 +55,20 @@ export function useImageTurfStickers(imageId: number) {
   };
 
   let stickers: HatSticker[] | undefined;
+  // The viewer's own hat, kept out of the pages: it is drawn whatever the limit.
+  const own = data?.mine ?? undefined;
   if (data) {
     const seen = new Set(data.stickers.map((sticker) => String(sticker.id)));
+    if (own) seen.add(String(own.id));
     stickers = [
-      ...data.stickers,
+      ...data.stickers.filter((s) => !own || String(s.id) !== String(own.id)),
       ...(older?.stickers ?? []).filter((s) => !seen.has(String(s.id))),
     ];
-    if (data.mine && !seen.has(String(data.mine.id))) stickers.push(data.mine);
   }
   return {
     stickers,
+    own,
+    drawCeiling: data?.drawCeiling,
     loadedExtra: older?.stickers.length ?? 0,
     loadMore: nextCursor ? loadMore : undefined,
     loading,

@@ -22,6 +22,7 @@ const h = vi.hoisted(() => ({
   },
   stickers: [] as unknown[],
   nextCursor: null as { createdAt: string; id: string } | null,
+  drawCeiling: undefined as number | undefined,
   fetchPage: vi.fn(),
   place: vi.fn(),
   info: vi.fn(),
@@ -45,7 +46,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'hatTurf.getStock': { useQuery: () => ({ data: h.stock }) },
         'hatTurf.getImageStickers': {
           useQuery: () => ({
-            data: { stickers: h.stickers, mine: h.mine, nextCursor: h.nextCursor },
+            data: {
+              stickers: h.stickers,
+              mine: h.mine,
+              nextCursor: h.nextCursor,
+              drawCeiling: h.drawCeiling,
+            },
             refetch: async () => undefined,
           }),
         },
@@ -182,6 +188,7 @@ beforeEach(() => {
   h.place.mockReset();
   h.info.mockReset();
   h.nextCursor = null;
+  h.drawCeiling = undefined;
   h.fetchPage.mockReset();
   h.optIn.mockReset();
   localStorage.clear();
@@ -609,6 +616,57 @@ describe('Hat Turf on image detail', () => {
       expect.objectContaining({ imageId: 9, before: h.nextCursor })
     );
     expect(q('hat-turf-more')).toBeNull();
+  });
+
+  describe('the draw ceiling (Justin: "Ceiling at 24 now", changeable by the turf override)', () => {
+    const page = (from: number, team: string) =>
+      Array.from({ length: 12 }, (_, i) => sticker(from + i, team, 0.05 + (i % 6) * 0.15, 0.2));
+    const forty = {
+      images: {
+        9: {
+          shown: { blue: 20, pink: 20 },
+          counted: { blue: 20, pink: 20 },
+          leader: 'blue',
+          leaderCosmeticId: 11,
+          hatted: false,
+          hattedTeam: null,
+        },
+      },
+    };
+    const loadOnePage = async (firstChip: string) => {
+      h.stickers = page(1, 'blue');
+      h.nextCursor = { createdAt: '2026-11-03T00:00:00.000Z', id: '12' };
+      h.fetchPage.mockResolvedValue({
+        stickers: page(100, 'pink'),
+        mine: null,
+        nextCursor: { createdAt: '2026-11-02T00:00:00.000Z', id: '112' },
+      });
+      h.drawCeiling = 24;
+      render(forty);
+      await vi.waitFor(() => expect(q('hat-turf-more')!.textContent).toContain(firstChip));
+      expect(q('hat-turf-more')!.tagName).toBe('BUTTON');
+      click(q('hat-turf-more'));
+      await vi.waitFor(() => expect(h.fetchPage).toHaveBeenCalledTimes(1));
+    };
+
+    test('stops drawing and offering more at 24; the rest is a plain count', async () => {
+      await loadOnePage('+28 more');
+      await vi.waitFor(() => expect(hats().length).toBe(24));
+      // Another page exists (nextCursor), yet nothing offers it: the chip is a count, not a button.
+      expect(q('hat-turf-more')!.tagName).toBe('DIV');
+      expect(q('hat-turf-more')!.textContent).toBe('+16');
+    });
+
+    // Keep: the viewer's own hat is drawn on top of the ceiling, never cut by it (24 + yours).
+    test("the viewer's own hat is drawn on top of the ceiling", async () => {
+      h.mine = { ...sticker(999, 'yellow', 0.5, 0.5), userId: 1 };
+      await loadOnePage('+27 more');
+      await vi.waitFor(() => expect(hats().length).toBe(25));
+      expect(q('hat-turf-more')!.textContent).toBe('+15');
+      expect(
+        document.querySelectorAll('[data-testid="hat-turf-hat"][data-team="yellow"]')
+      ).toHaveLength(1);
+    });
   });
 
   // Controls render on the first commit (context and mocks are synchronous), so the not-hidden

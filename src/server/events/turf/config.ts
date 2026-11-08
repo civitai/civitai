@@ -26,9 +26,13 @@ export type EventTurfConfig = {
   creditedPlayers: CreditStep[];
   // Most stickers drawn on an image; the rest are counted, not drawn.
   renderLimit: number;
+  // Most stickers image detail draws however many pages are loaded (DEFAULT_DRAW_CEILING if unset).
+  drawCeiling?: number;
   // Most turf images an app server holds in memory. Past it, the least recently stickered drop out.
   mapMaxEntries: number;
 };
+
+export const DEFAULT_DRAW_CEILING = 24;
 
 // Every live override for one event, on sysRedis: a JSON object of the fields to replace.
 export const turfConfigKey = (event: string) =>
@@ -60,6 +64,7 @@ const overrideSchema = z
       .array(z.object({ from: stepDate, players: z.number().int().positive() }))
       .min(1),
     renderLimit: z.number().int().positive(),
+    drawCeiling: z.number().int().positive(),
     mapMaxEntries: z.number().int().positive(),
   })
   // Not strict: a key this build no longer knows (one an older build read) is dropped, rather than
