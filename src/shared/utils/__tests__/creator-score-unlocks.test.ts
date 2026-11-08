@@ -81,7 +81,7 @@ describe('buildCreatorScoreLadder', () => {
 
     expect([...placed].sort()).toEqual(unlocks.map((u) => u.key).sort());
     expect(placed.filter((key) => key.startsWith('daily-articles:'))).toHaveLength(
-      getUsageLimitDef('articles.daily').byScore?.length
+      getUsageLimitDef('articles.daily').byScore?.length ?? 0
     );
   });
 
