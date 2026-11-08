@@ -55,38 +55,51 @@ afterEach(() => {
 
 const nudgeOn = (imageId: number, reactions: { userId: number; reaction: string }[] = []) =>
   renderHook(() => useReactionNudgeClass({ imageId, ownerId: OWNER, reactions }));
-/** Arms the image and waits out the delay before the glow starts. */
-const arm = (imageId: number, team = 'Blue') => {
-  armReactionNudge(imageId, team);
-  act(() => vi.advanceTimersByTime(REACTION_NUDGE_DELAY_MS));
+const yes = async () => true;
+/** Arms the image and waits out the delay and the earns answer before the glow starts. */
+const arm = async (imageId: number, team = 'Blue', earns = yes) => {
+  armReactionNudge(imageId, team, earns);
+  await act(() => vi.advanceTimersByTimeAsync(REACTION_NUDGE_DELAY_MS));
 };
 
 describe('reaction nudge', () => {
   test("glows an armed image's bar in the team's colour, and only that image's", async () => {
     const armed = nextImage++;
     const other = nextImage++;
-    arm(armed, 'Pink');
+    await arm(armed, 'Pink');
     const { result } = await nudgeOn(armed);
     expect(result.current).toMatch(/nudge/);
     expect(result.current).toMatch(/pink/);
     expect((await nudgeOn(other)).result.current).toBeUndefined();
   });
 
-  test('waits for the servers to have the new turf map, then stops after two pulses', async () => {
+  test('asks whether a reaction earns only once servers have the new map, then stops after two pulses', async () => {
     const id = nextImage++;
-    armReactionNudge(id, 'Blue');
+    const earns = vi.fn(yes);
+    armReactionNudge(id, 'Blue', earns);
     const { result } = await nudgeOn(id);
-    act(() => vi.advanceTimersByTime(REACTION_NUDGE_DELAY_MS - 1));
+    await act(() => vi.advanceTimersByTimeAsync(REACTION_NUDGE_DELAY_MS - 1));
+    expect(earns).not.toHaveBeenCalled();
     expect(result.current).toBeUndefined();
-    act(() => vi.advanceTimersByTime(1));
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(earns).toHaveBeenCalledTimes(1);
     expect(result.current).toMatch(/nudge/);
-    act(() => vi.advanceTimersByTime(REACTION_NUDGE_MS));
+    await act(() => vi.advanceTimersByTimeAsync(REACTION_NUDGE_MS));
     expect(result.current).toBeUndefined();
+  });
+
+  test('no glow where a reaction would not earn, or the ask fails', async () => {
+    const no = nextImage++;
+    await arm(no, 'Blue', async () => false);
+    expect((await nudgeOn(no)).result.current).toBeUndefined();
+    const failed = nextImage++;
+    await arm(failed, 'Blue', () => Promise.reject(new Error('offline')));
+    expect((await nudgeOn(failed)).result.current).toBeUndefined();
   });
 
   test('never on your own image, signed out, or with event cosmetics off', async () => {
     const id = nextImage++;
-    arm(id);
+    await arm(id);
     viewer.user = { id: OWNER };
     expect((await nudgeOn(id)).result.current).toBeUndefined();
     viewer.user = null;
@@ -112,13 +125,13 @@ describe('reaction nudge', () => {
 
   test('not once you have reacted: before this visit, or now', async () => {
     const before = nextImage++;
-    arm(before);
+    await arm(before);
     expect(
       (await nudgeOn(before, [{ userId: 1, reaction: 'Like' }])).result.current
     ).toBeUndefined();
 
     const now = nextImage++;
-    arm(now);
+    await arm(now);
     const { result } = await nudgeOn(now);
     expect(result.current).toMatch(/nudge/);
     // A real reaction click: the bar puts it in the store before the server answers.
@@ -131,20 +144,21 @@ describe('reaction nudge', () => {
   // Un-reacting takes the earlier reaction's points back, so a new one would earn again.
   test('glows again once you take back a reaction from before this visit', async () => {
     const id = nextImage++;
-    arm(id);
+    await arm(id);
     const reactions = [{ userId: 1, reaction: 'Like' as const }];
     const { result } = await nudgeOn(id, reactions);
     expect(result.current).toBeUndefined();
     await bar(id, reactions);
     await page.getByRole('button', { name: /^Like reaction/ }).click();
-    expect(result.current).toMatch(/nudge/);
+    // The un-toggle reaches the hook on a later render; on a loaded runner, not by the next line.
+    await vi.waitFor(() => expect(result.current).toMatch(/nudge/));
   });
 
   test('an image is nudged once per session, however often it is stickered', async () => {
     const id = nextImage++;
-    arm(id);
-    act(() => vi.advanceTimersByTime(REACTION_NUDGE_MS));
-    arm(id);
+    await arm(id);
+    await act(() => vi.advanceTimersByTimeAsync(REACTION_NUDGE_MS));
+    await arm(id);
     expect((await nudgeOn(id)).result.current).toBeUndefined();
   });
 });
