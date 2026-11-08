@@ -40,3 +40,28 @@ export const GET: RequestHandler = async ({ params, url, locals, request }) => {
   if (!result.ok) error(result.status, result.error);
   return json(result.data);
 };
+
+const removeSchema = z.object({
+  versionId: z.coerce.number().int().positive(),
+  giftId: z.coerce.number().int().positive(),
+  userId: z.coerce.number().int().positive(),
+});
+
+// Removes one claimer's gifted access. The main app checks that the caller may manage the version.
+export const DELETE: RequestHandler = async ({ params, url, locals, request }) => {
+  if (!(await darkFlagEnabled(MODEL_GIFT_LINKS_FLAG, locals.user))) error(404, 'Not found');
+  const parsed = removeSchema.safeParse({
+    versionId: params.versionId,
+    giftId: url.searchParams.get('giftId'),
+    userId: url.searchParams.get('userId'),
+  });
+  if (!parsed.success) error(400, 'Invalid request');
+  const { versionId, giftId, userId } = parsed.data;
+  const result = await callMainApp<{ removed: boolean; accessKept: boolean }>(
+    `/api/v1/model-versions/${versionId}/gifts/${giftId}/claims/${userId}`,
+    sessionCookies(request),
+    { method: 'DELETE' }
+  );
+  if (!result.ok) error(result.status, result.error);
+  return json(result.data);
+};

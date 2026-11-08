@@ -1,5 +1,4 @@
 import pLimit from 'p-limit';
-import { EntityAccessPermission } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -11,7 +10,7 @@ import {
 } from '~/server/services/buzz.service';
 import {
   EARLY_ACCESS_PURCHASES,
-  GIFT_PERMISSIONS_KEY,
+  giftedPermissions,
   revokeModelVersionAccess,
 } from '~/server/services/model-version-access.service';
 import { paidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
@@ -127,13 +126,8 @@ const getEarlyAccessRefundRequirementForVersions = async (
     const kept = held.filter((purchase) => !purchase.refundable);
     if (kept.length > 0) exemptBuyers.add(row.accessorId);
     if (refunded.length === 0) continue;
-    // A gift is not refunded, so its bits stay. A gift row without its recorded bits keeps all.
-    const giftBits =
-      rowMeta.giftLinkId == null
-        ? 0
-        : typeof rowMeta[GIFT_PERMISSIONS_KEY] === 'number'
-        ? (rowMeta[GIFT_PERMISSIONS_KEY] as number)
-        : EntityAccessPermission.EarlyAccessGeneration | EntityAccessPermission.EarlyAccessDownload;
+    // A gift is not refunded, so its bits stay.
+    const giftBits = giftedPermissions(rowMeta);
     const keptBits = kept.reduce((bits, purchase) => bits | purchase.kind.permissions, giftBits);
     purchases.push({
       modelVersionId: row.accessToId,

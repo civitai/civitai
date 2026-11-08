@@ -4403,6 +4403,8 @@ export interface ModelVersionGiftRedemption {
   userId: number;
   user?: User;
   claimedAt: Date;
+  revokedAt: Date | null;
+  revokedById: number | null;
 }
 
 export interface PaidAccess {

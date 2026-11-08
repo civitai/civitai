@@ -8,7 +8,9 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   getModelVersionAccessPermissions,
   GIFT_PERMISSIONS_KEY,
+  giftedPermissions,
   grantModelVersionAccess,
+  purchasedPermissions,
 } from '~/server/services/model-version-access.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { getPaidAccess } from '~/server/services/paid-access.service';
@@ -28,6 +30,7 @@ import {
 } from '~/server/services/model-version-gift.constants';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 const GIFT_CLAIM_RATE_LIMIT = { max: 10, windowSeconds: 60 };
 const GIFT_MINT_RATE_LIMIT = { max: 20, windowSeconds: 3600 };
@@ -397,6 +400,8 @@ export type GiftClaim = {
   userId: number;
   username: string | null;
   claimedAt: Date;
+  /** When the claimer's gifted access was removed; null while it stands. */
+  revokedAt: Date | null;
 };
 
 /** Opaque keyset cursor over (claimedAt, giftLinkId, userId), newest first. */
@@ -442,7 +447,7 @@ export function giftClaimsSql({
   visibleSince: Date;
 }) {
   return Prisma.sql`
-    SELECT r."giftLinkId", r."userId", u.username, r."claimedAt"
+    SELECT r."giftLinkId", r."userId", u.username, r."claimedAt", r."revokedAt"
       FROM "ModelVersionGiftRedemption" r
       JOIN "ModelVersionGiftLink" l ON l.id = r."giftLinkId"
       JOIN "User" u ON u.id = r."userId"
@@ -612,6 +617,107 @@ export async function revokeGiftLinks({
   return { revoked: count };
 }
 
+/**
+ * Takes back what one claim granted, in one transaction. The claim's slot stays spent, and the
+ * claimer can't claim that link again. Access stays while another of the claimer's claims on the
+ * version stands; otherwise the gift's bits go, except those a purchase on the row pays for.
+ * Claims from before `visibleSince` are refused like missing ones: their claimers are not named.
+ */
+export async function revokeGiftRedemption(
+  client: Pick<typeof dbWrite, '$transaction'>,
+  {
+    giftLinkId,
+    claimerId,
+    modelVersionId,
+    revokedById,
+    visibleSince,
+  }: {
+    giftLinkId: number;
+    claimerId: number;
+    modelVersionId: number;
+    revokedById: number;
+    visibleSince: Date;
+  }
+) {
+  return client.$transaction(async (tx) => {
+    const marked = await tx.$executeRaw`
+      UPDATE "ModelVersionGiftRedemption" r
+         SET "revokedAt" = now(), "revokedById" = ${revokedById}
+        FROM "ModelVersionGiftLink" l
+       WHERE r."giftLinkId" = ${giftLinkId} AND r."userId" = ${claimerId}
+         AND l.id = r."giftLinkId" AND l."modelVersionId" = ${modelVersionId}
+         AND r."revokedAt" IS NULL
+         AND r."claimedAt" >= ${visibleSince.toISOString()}::timestamp(3)
+    `;
+    if (marked === 0) throw throwNotFoundError('No claim to remove.');
+
+    // Locked before the check below: a concurrent claim's grant then lands after this commits and
+    // restores its bits, or commits first and shows up in the check.
+    const [access] = await tx.$queryRaw<{ permissions: number; meta: unknown }[]>`
+      SELECT permissions, meta FROM "EntityAccess"
+       WHERE "accessToId" = ${modelVersionId} AND "accessToType" = 'ModelVersion'
+         AND "accessorId" = ${claimerId} AND "accessorType" = 'User'
+       FOR UPDATE
+    `;
+    const otherClaims = await tx.$queryRaw<unknown[]>`
+      SELECT 1 FROM "ModelVersionGiftRedemption" r
+        JOIN "ModelVersionGiftLink" l ON l.id = r."giftLinkId"
+       WHERE l."modelVersionId" = ${modelVersionId} AND r."userId" = ${claimerId}
+         AND r."revokedAt" IS NULL
+       LIMIT 1
+    `;
+    if (otherClaims.length > 0) return { accessKept: true };
+    if (!access) return { accessKept: false };
+
+    const meta =
+      access.meta && typeof access.meta === 'object' && !Array.isArray(access.meta)
+        ? (access.meta as Record<string, unknown>)
+        : {};
+    const purchased = purchasedPermissions(meta);
+    const permissions = access.permissions & ~(giftedPermissions(meta) & ~purchased);
+    const where = Prisma.sql`
+      "accessToId" = ${modelVersionId} AND "accessToType" = 'ModelVersion'
+      AND "accessorId" = ${claimerId} AND "accessorType" = 'User'
+    `;
+    if (permissions === 0 && purchased === 0)
+      await tx.$executeRaw`DELETE FROM "EntityAccess" WHERE ${where}`;
+    else
+      await tx.$executeRaw`
+        UPDATE "EntityAccess"
+           SET permissions = ${permissions},
+               meta = ${asJsonbObjectSql('meta')} - ${['giftLinkId', GIFT_PERMISSIONS_KEY]}::text[]
+         WHERE ${where}
+      `;
+    return { accessKept: false };
+  });
+}
+
+/** Removes one claimer's gifted access, for the version's owner or a moderator. */
+export async function removeGiftClaim({
+  userId,
+  isModerator,
+  modelVersionId,
+  giftLinkId,
+  claimerId,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  modelVersionId: number;
+  giftLinkId: number;
+  claimerId: number;
+}) {
+  await assertCanManageGifts({ userId, isModerator, modelVersionId });
+  const { accessKept } = await revokeGiftRedemption(dbWrite, {
+    giftLinkId,
+    claimerId,
+    modelVersionId,
+    revokedById: userId,
+    visibleSince: GIFT_CLAIMER_NAMES_VISIBLE_SINCE,
+  });
+  await bustOrchestratorModelCache(modelVersionId, claimerId);
+  return { removed: true, accessKept };
+}
+
 export type GiftRedemptionOutcome = 'granted' | 'unavailable';
 
 /**
@@ -642,16 +748,20 @@ export async function redeemGiftLink(
         VALUES (${giftLinkId}, ${userId})
         ON CONFLICT DO NOTHING
       `;
-      // A repeat claim takes no new slot. It re-grants while the link is live, because the first grant
-      // can be gone (the early-access refund deletes the whole EntityAccess row).
+      // A repeat claim takes no new slot. It re-grants while the link is live and the claim not
+      // removed, because the first grant can be gone (the early-access refund deletes the whole
+      // EntityAccess row). FOR SHARE waits out a removal in flight, then sees its revokedAt.
       const taken =
         inserted === 0
           ? (
               await tx.$queryRaw<unknown[]>`
-                SELECT 1 FROM "ModelVersionGiftLink"
-                 WHERE id = ${giftLinkId}
-                   AND "revokedAt" IS NULL
-                   AND ("expiresAt" IS NULL OR "expiresAt" > now())
+                SELECT 1 FROM "ModelVersionGiftLink" l
+                  JOIN "ModelVersionGiftRedemption" r
+                    ON r."giftLinkId" = l.id AND r."userId" = ${userId}
+                 WHERE l.id = ${giftLinkId}
+                   AND l."revokedAt" IS NULL
+                   AND (l."expiresAt" IS NULL OR l."expiresAt" > now())
+                   AND r."revokedAt" IS NULL
                  FOR SHARE
               `
             ).length

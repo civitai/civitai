@@ -17,7 +17,7 @@ const DB_NAME = 'model_gift_claim_test';
 
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/paid-access.service', () => ({ getPaidAccess: vi.fn() }));
-const { insertWithinLiveCap, queryGiftList, redeemGiftLink } = await import(
+const { insertWithinLiveCap, queryGiftList, redeemGiftLink, revokeGiftRedemption } = await import(
   '~/server/services/model-version-gift.service'
 );
 const { GIFT_LIVE_CODES_MAX_PER_VERSION: CAP } = await import(
@@ -31,9 +31,14 @@ describe.runIf(!!process.env.CI)('CI provides a real Postgres', () => {
   });
 });
 
-const MIGRATION = path.resolve(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261229120000_model_version_gift_link/migration.sql'
+const MIGRATIONS = [
+  '20261229120000_model_version_gift_link',
+  '20261231000100_model_version_gift_redemption_revoked',
+].map((dir) =>
+  path.resolve(
+    __dirname,
+    `../../../../packages/civitai-db-schema/prisma/migrations/${dir}/migration.sql`
+  )
 );
 // The parts of the real schema the migration and the grant touch.
 const PREREQUISITES = `
@@ -68,7 +73,7 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
     sql = new Client({ connectionString: url.toString() });
     await sql.connect();
     await sql.query(PREREQUISITES);
-    await sql.query(readFileSync(MIGRATION, 'utf8'));
+    for (const file of MIGRATIONS) await sql.query(readFileSync(file, 'utf8'));
     await sql.query(`INSERT INTO "User" (id) SELECT generate_series(1, ${USERS + 1})`);
     await sql.query(`INSERT INTO "ModelVersion" (id) VALUES (${VERSION})`);
 
@@ -281,5 +286,163 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
     const refused = outcomes.find((o) => o.status === 'rejected') as PromiseRejectedResult;
     expect(String(refused.reason)).toContain(`at most ${CAP} live gift codes`);
     expect(await count(`SELECT count(*) AS n FROM "ModelVersionGiftLink"`)).toBe(CAP);
+  });
+  describe('removing one claim', () => {
+    const CLAIMER = 2;
+    const remove = (giftLinkId: number, modelVersionId = VERSION) =>
+      revokeGiftRedemption(prisma, {
+        giftLinkId,
+        claimerId: CLAIMER,
+        modelVersionId,
+        revokedById: OWNER,
+        visibleSince: new Date('2020-01-01T00:00:00.000Z'),
+      });
+    const access = async () =>
+      (
+        await sql.query(
+          `SELECT permissions, meta FROM "EntityAccess" WHERE "accessorId" = ${CLAIMER}`
+        )
+      ).rows[0] ?? null;
+    const buy = (meta: object, permissions: number) =>
+      sql.query(
+        `INSERT INTO "EntityAccess" ("accessToId", "accessToType", "accessorId", "accessorType", "addedById", "permissions", "meta")
+         VALUES ($1, 'ModelVersion', $2, 'User', $2, $3, $4)`,
+        [VERSION, CLAIMER, permissions, JSON.stringify(meta)]
+      );
+
+    it('takes back a gift-only grant, marks the claim, and keeps its slot spent', async () => {
+      const id = await newLink(1);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+
+      expect(await remove(id)).toEqual({ accessKept: false });
+      expect(await access()).toBeNull();
+      const { rows } = await sql.query(
+        `SELECT "revokedAt" IS NOT NULL AS revoked, "revokedById" FROM "ModelVersionGiftRedemption"`
+      );
+      expect(rows).toEqual([{ revoked: true, revokedById: OWNER }]);
+      expect(
+        await count(`SELECT "redemptionCount" AS n FROM "ModelVersionGiftLink" WHERE id = ${id}`)
+      ).toBe(1);
+    });
+
+    it('leaves what a purchase pays for, and drops only the gift keys', async () => {
+      await buy({ 'generation-buzzTransactionId': 'tx-1' }, 1);
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+
+      await remove(id);
+      expect(await access()).toEqual({
+        permissions: 1,
+        meta: { 'generation-buzzTransactionId': 'tx-1' },
+      });
+    });
+
+    it('keeps bits a purchase also pays for', async () => {
+      await buy({ 'download-buzzTransactionId': 'tx-1' }, 3);
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+
+      await remove(id);
+      expect(await access()).toEqual({
+        permissions: 3,
+        meta: { 'download-buzzTransactionId': 'tx-1' },
+      });
+    });
+
+    it('keeps access while another claim on the version stands', async () => {
+      const a = await newLink(null);
+      const b = await newLink(null);
+      expect(await claim(a, CLAIMER)).toBe('granted');
+      // The second claim records itself even though the access is already held.
+      expect(await claim(b, CLAIMER)).toBe('granted');
+
+      expect(await remove(a)).toEqual({ accessKept: true });
+      expect((await access())?.permissions).toBe(3);
+      expect(await remove(b)).toEqual({ accessKept: false });
+      expect(await access()).toBeNull();
+    });
+
+    it('refuses a re-claim of the removed claim, but not a claim on another link', async () => {
+      const a = await newLink(null);
+      const b = await newLink(null);
+      expect(await claim(a, CLAIMER)).toBe('granted');
+      await remove(a);
+
+      expect(await claim(a, CLAIMER)).toBe('unavailable');
+      expect(await access()).toBeNull();
+      expect(await claim(b, CLAIMER)).toBe('granted');
+      expect((await access())?.permissions).toBe(3);
+    });
+
+    it('refuses a claim already removed, one on another version, and one before visibleSince', async () => {
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+
+      await expect(remove(id, VERSION + 1)).rejects.toThrow('No claim to remove.');
+      await expect(
+        revokeGiftRedemption(prisma, {
+          giftLinkId: id,
+          claimerId: CLAIMER,
+          modelVersionId: VERSION,
+          revokedById: OWNER,
+          visibleSince: new Date(Date.now() + 60_000),
+        })
+      ).rejects.toThrow('No claim to remove.');
+      expect((await access())?.permissions).toBe(3);
+
+      await remove(id);
+      await expect(remove(id)).rejects.toThrow('No claim to remove.');
+    });
+
+    /** A second connection holding a transaction open, so the code under test meets it mid-flight. */
+    async function openTransaction(statements: string[]) {
+      const url = new URL(URL_BASE!);
+      url.pathname = `/${DB_NAME}`;
+      const other = new Client({ connectionString: url.toString() });
+      await other.connect();
+      await other.query('BEGIN');
+      for (const statement of statements) await other.query(statement);
+      return {
+        commit: async () => {
+          await other.query('COMMIT');
+          await other.end();
+        },
+      };
+    }
+    const settle = () => new Promise((r) => setTimeout(r, 300));
+
+    it('refuses a repeat claim that meets a removal in flight', async () => {
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+      const removal = await openTransaction([
+        `UPDATE "ModelVersionGiftRedemption" SET "revokedAt" = now() WHERE "giftLinkId" = ${id}`,
+        `DELETE FROM "EntityAccess"`,
+      ]);
+
+      const repeat = claim(id, CLAIMER);
+      await settle();
+      await removal.commit();
+
+      expect(await repeat).toBe('unavailable');
+      expect(await access()).toBeNull();
+    });
+
+    it('keeps the access a claim on another link grants while the removal runs', async () => {
+      const a = await newLink(null);
+      const b = await newLink(null);
+      expect(await claim(a, CLAIMER)).toBe('granted');
+      // Link b's claim, recorded and holding the grant row, not yet committed.
+      const otherClaim = await openTransaction([
+        `INSERT INTO "ModelVersionGiftRedemption" ("giftLinkId", "userId") VALUES (${b}, ${CLAIMER})`,
+        `UPDATE "EntityAccess" SET meta = meta || '{"giftLinkId": ${b}}'`,
+      ]);
+
+      const removal = remove(a);
+      await settle();
+      await otherClaim.commit();
+
+      expect(await removal).toEqual({ accessKept: true });
+      expect((await access())?.permissions).toBe(3);
+    });
   });
 });

@@ -24,6 +24,7 @@ const {
   listGiftLinks,
   mintGiftCodes,
   normalizeGiftCode,
+  removeGiftClaim,
   revokeGiftLinks,
 } = await import('~/server/services/model-version-gift.service');
 
@@ -163,7 +164,7 @@ describe('claimGift', () => {
     await expect(claimGift({ userId: CLAIMER, code })).resolves.toMatchObject({
       modelVersionId: VERSION_ID,
       alreadyHadAccess: false,
-      notice: 'The creator can see that you claimed this.',
+      notice: 'The creator can see that you claimed this, and can remove gifted access.',
     });
     expect(grantValues()).toEqual([
       VERSION_ID,
@@ -296,6 +297,14 @@ describe('who may manage gifts', () => {
       createGiftLink({ userId, isModerator, modelVersionId: VERSION_ID } as CreateArgs),
     claims: (userId: number, isModerator = false) =>
       listGiftClaims({ userId, isModerator, modelVersionId: VERSION_ID, id: 1 }),
+    removeClaim: (userId: number, isModerator = false) =>
+      removeGiftClaim({
+        userId,
+        isModerator,
+        modelVersionId: VERSION_ID,
+        giftLinkId: 1,
+        claimerId: CLAIMER,
+      }),
   };
 
   it.each(Object.entries(manage))(
@@ -304,6 +313,7 @@ describe('who may manage gifts', () => {
       seed();
       await expect(fn(CLAIMER)).rejects.toThrow('You do not own this model version.');
       expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
       expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.modelVersionGiftLink.updateMany).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.modelVersionGiftLink.createMany).not.toHaveBeenCalled();
@@ -311,8 +321,8 @@ describe('who may manage gifts', () => {
     }
   );
 
-  const { list, revoke, claims } = manage;
-  it.each(Object.entries({ list, revoke, claims }))(
+  const { list, revoke, claims, removeClaim } = manage;
+  it.each(Object.entries({ list, revoke, claims, removeClaim }))(
     '%s lets a moderator through',
     async (_n, fn) => {
       seed();
