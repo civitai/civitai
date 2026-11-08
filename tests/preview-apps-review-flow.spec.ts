@@ -139,6 +139,33 @@ async function attachShot(page: Page, testInfo: TestInfo, name: string) {
 test.describe('App review page: overview, sticky actions, approve & next (mod, nothing approved)', () => {
   test.use({ storageState: storageStatePath(ROLE) });
 
+  /*
+    ON-FAILURE DIAGNOSTICS. The pipeline log is the only artifact this tier hands back
+    (screenshots and error-context are not retrievable), so a failure prints where the page
+    actually was and what it rendered: URL, title, the start of the visible text, and the
+    testids present. Text only — no request headers, cookies or storage.
+  */
+  test.afterEach(async ({ page }, testInfo) => {
+    if (testInfo.status === testInfo.expectedStatus) return;
+    try {
+      const diag = await page.evaluate(() => ({
+        title: document.title,
+        text: (document.body?.innerText ?? '').slice(0, 1500),
+        testIds: Array.from(document.querySelectorAll('[data-testid]'))
+          .map((el) => el.getAttribute('data-testid'))
+          .filter((v, i, a) => !!v && a.indexOf(v) === i)
+          .slice(0, 50),
+      }));
+      console.log(`[review-flow diag] test: ${testInfo.title}`);
+      console.log(`[review-flow diag] url: ${page.url()}`);
+      console.log(`[review-flow diag] title: ${diag.title}`);
+      console.log(`[review-flow diag] testids: ${diag.testIds.join(', ')}`);
+      console.log(`[review-flow diag] body text:\n${diag.text}`);
+    } catch (err) {
+      console.log(`[review-flow diag] could not read the page: ${String(err)}`);
+    }
+  });
+
   test('desktop 1124×1305', async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1124, height: 1305 });
     await page.goto('/', { waitUntil: 'domcontentloaded' });
