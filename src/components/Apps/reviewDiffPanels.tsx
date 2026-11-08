@@ -232,6 +232,17 @@ export function FileDiffEntry({
     [open, elided, layout, file.hunks]
   );
 
+  const fileLabel = (
+    <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+      <Badge size="xs" color={file.changeKind === 'added' ? 'green' : 'yellow'} variant="light">
+        {file.changeKind === 'added' ? 'added' : 'changed'}
+      </Badge>
+      <Code style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {file.path}
+      </Code>
+    </Group>
+  );
+
   return (
     <Card withBorder p={0} data-testid="apps-review-file-diff" data-path={file.path}>
       {/*
@@ -267,31 +278,25 @@ export function FileDiffEntry({
             stops propagation so one click is one toggle, not two. The layout control stays
             OUTSIDE it — a button cannot contain another interactive control.
           */}
-          <UnstyledButton
-            type="button"
-            disabled={elided}
-            aria-expanded={elided ? undefined : open}
-            aria-label={`${open ? 'Collapse' : 'Expand'} ${file.path}`}
-            data-testid="apps-review-diff-file-toggle"
-            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-              e.stopPropagation();
-              if (!elided) setOpen((v) => !v);
-            }}
-            style={{ minWidth: 0, flex: '1 1 auto', cursor: elided ? 'default' : 'pointer' }}
-          >
-            <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-              <Badge
-                size="xs"
-                color={file.changeKind === 'added' ? 'green' : 'yellow'}
-                variant="light"
-              >
-                {file.changeKind === 'added' ? 'added' : 'changed'}
-              </Badge>
-              <Code style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {file.path}
-              </Code>
-            </Group>
-          </UnstyledButton>
+          {elided ? (
+            // An elided file has nothing to expand, so it is not a control at all — plain
+            // content, not a disabled button (a disabled button swallows clicks on its text).
+            <div style={{ minWidth: 0, flex: '1 1 auto' }}>{fileLabel}</div>
+          ) : (
+            <UnstyledButton
+              type="button"
+              aria-expanded={open}
+              aria-label={`${open ? 'Collapse' : 'Expand'} ${file.path}`}
+              data-testid="apps-review-diff-file-toggle"
+              onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+                e.stopPropagation();
+                setOpen((v) => !v);
+              }}
+              style={{ minWidth: 0, flex: '1 1 auto', cursor: 'pointer' }}
+            >
+              {fileLabel}
+            </UnstyledButton>
+          )}
           <Group gap={6} wrap="nowrap">
             {!elided && file.added > 0 && (
               <Text size="xs" c="green" fw={700}>

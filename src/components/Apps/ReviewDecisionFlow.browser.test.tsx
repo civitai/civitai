@@ -398,7 +398,9 @@ describe('what opens next', () => {
     onReady: (v: ReturnType<typeof useNextPendingReview>) => void;
   }) {
     const v = useNextPendingReview(id);
-    useEffect(() => onReady(v));
+    useEffect(() => {
+      onReady(v);
+    });
     return v.caughtUp ? <AllCaughtUp /> : <div data-testid="next-harness" />;
   }
 
