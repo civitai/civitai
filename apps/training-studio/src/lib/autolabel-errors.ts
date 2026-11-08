@@ -1,0 +1,10 @@
+// Kept apart from autolabel-core (which pulls in the orchestrator SDK) so the shell backend and the
+// submit-accounting in autolabel.ts can share it without that weight.
+
+/** The `code` on the stub route's 503: it marks our own deliberate refusal, so a client can tell it
+ *  from an upstream 503 that may have come after work was done. */
+export const AUTO_LABEL_UNAVAILABLE_CODE = 'auto_label_unavailable';
+
+/** A submit that was refused before any orchestrator workflow could exist, so nothing was charged and
+ *  its per-image cap slot is returned. Anything else that fails a submit stays counted. */
+export class AutoLabelRefusedError extends Error {}
