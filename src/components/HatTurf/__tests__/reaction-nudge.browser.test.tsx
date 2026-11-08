@@ -27,7 +27,7 @@ const toggle = vi.hoisted(() => vi.fn());
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcUtils>()),
   trpc: makeTrpcProxy({
-    'reaction.toggle': { useMutation: () => ({ mutate: toggle, isPending: false }) },
+    'reaction.toggleWithPoints': { useMutation: () => ({ mutate: toggle, isPending: false }) },
   }),
 }));
 vi.mock('~/components/Buzz/InteractiveTipBuzzButton', async (importOriginal) => ({
