@@ -409,6 +409,8 @@ export async function claimGift({ userId, code }: { userId: number; code: string
 
   const { version, gateActive, permissions } = await getGiftableVersion(link.modelVersionId);
   const result = { modelVersionId: version.id, modelId: version.model.id };
+  // A transfer moves the sales to the new owner; the old owner's live codes must not keep giving it away.
+  if (link.createdById !== version.model.userId) throw throwBadRequestError(INVALID_GIFT_MESSAGE);
   if (version.model.userId === userId)
     throw throwBadRequestError('You cannot claim a gift for your own model.');
   if (version.status !== ModelStatus.Published || version.model.status !== ModelStatus.Published)

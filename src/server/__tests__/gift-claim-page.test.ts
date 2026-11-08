@@ -31,7 +31,7 @@ describe('the gift claim page', () => {
     const cookies = headers['Set-Cookie'] as string[];
     const gift = cookies.find((h) => h.startsWith(`${GIFT_CODE_COOKIE}=`));
     expect(gift).toBe(
-      `${GIFT_CODE_COOKIE}=${CODE}; Path=/gift; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`
+      `${GIFT_CODE_COOKIE}=${CODE}; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`
     );
     // A session cookie written earlier in the request survives.
     expect(cookies).toContain('civ-token=rolled; Path=/');
@@ -59,7 +59,7 @@ describe('the gift claim page', () => {
       props: { initialCode: CODE },
     });
     expect(headers['Set-Cookie']).toContain(
-      `${GIFT_CODE_COOKIE}=; Path=/gift; Max-Age=0; HttpOnly; Secure; SameSite=Lax`
+      `${GIFT_CODE_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`
     );
   });
 

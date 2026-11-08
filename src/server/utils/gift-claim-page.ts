@@ -23,11 +23,13 @@ export function resolveGiftClaimPage({
   const segment = ctx.params?.code;
   const fromPath = Array.isArray(segment) ? segment[0] : undefined;
   if (fromPath) {
+    // Path=/, not /gift: a client-side visit runs this from /_next/data/<build>/gift.json, which a
+    // /gift cookie never reaches, so the prefill and the clear below would both miss.
     appendSetCookie(
       ctx.res,
       `${GIFT_CODE_COOKIE}=${encodeURIComponent(
         fromPath.slice(0, 64)
-      )}; Path=/gift; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`
+      )}; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`
     );
     return { redirect: { destination: '/gift', permanent: false } };
   }
@@ -38,7 +40,7 @@ export function resolveGiftClaimPage({
   if (initialCode)
     appendSetCookie(
       ctx.res,
-      `${GIFT_CODE_COOKIE}=; Path=/gift; Max-Age=0; HttpOnly; Secure; SameSite=Lax`
+      `${GIFT_CODE_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`
     );
   return { props: { initialCode } };
 }

@@ -205,3 +205,13 @@ it.each(ROUTES.filter((r) => r.service === 'mintGiftCodes' || r.service === 'cre
     expect(args).not.toHaveProperty('isModerator');
   }
 );
+
+it.each(ROUTES.filter((r) => r.service === 'listGiftLinks' || r.service === 'revokeGiftLinks'))(
+  '$name hands the service the caller’s moderator flag, so a moderator can list and revoke',
+  async (route) => {
+    await call(route, {}, { ...USER, isModerator: true } as SessionUser);
+    expect(svc[route.service]).toHaveBeenCalledWith(
+      expect.objectContaining({ ...route.args, isModerator: true })
+    );
+  }
+);

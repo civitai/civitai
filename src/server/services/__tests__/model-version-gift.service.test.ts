@@ -168,18 +168,12 @@ describe('claimGift', () => {
       CLAIMER,
       3,
       JSON.stringify({ giftLinkId: 1 }),
+      // addedById stays the claimer, not the creator: the personal-data export reads EntityAccess
+      // by addedById, so the creator would carry every recipient's id.
       CLAIMER,
     ]);
     expect(mockBustOrchestrator).toHaveBeenCalledTimes(1);
     expect(mockBustOrchestrator).toHaveBeenCalledWith(VERSION_ID, CLAIMER);
-  });
-
-  // Keep addedById the claimer, not the creator: the personal-data export reads EntityAccess by
-  // addedById, so the creator would carry every recipient's id and recipients would lose their grant.
-  it('records the claimer, not the creator, as who added the grant', async () => {
-    seed();
-    await claimGift({ userId: CLAIMER, code });
-    expect(grantValues()[4]).toBe(CLAIMER);
   });
 
   it('grants download to a generation-only holder when the version sells download', async () => {
@@ -255,6 +249,22 @@ describe('claimGift', () => {
     redisMock.redis.incrBy.mockResolvedValue(11);
     await expect(claimGift({ userId: CLAIMER, code })).rejects.toThrow('Too many attempts');
     expect(dbMock.dbWrite.modelVersionGiftLink.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('refuses a code minted by a previous owner after the model was transferred', async () => {
+    seed({
+      link: {
+        id: 1,
+        modelVersionId: VERSION_ID,
+        createdById: 99,
+        revokedAt: null,
+        expiresAt: null,
+      },
+    });
+    await expect(claimGift({ userId: CLAIMER, code })).rejects.toThrow(
+      'This gift is invalid, expired or no longer available.'
+    );
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('refuses the model’s owner and an unpublished version', async () => {
