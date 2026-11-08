@@ -49,7 +49,7 @@ beforeAll(async () => {
       "needsReview" text, "blockedFor" text, "userId" int DEFAULT ${OWNER}, index int DEFAULT 0, "postId" int,
       poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "modelRestricted" boolean DEFAULT false, "nsfwLevelLocked" boolean DEFAULT false,
-      "scanJobs" jsonb
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int DEFAULT ${OWNER}, "modelVersionId" int,
@@ -72,6 +72,11 @@ beforeAll(async () => {
     );
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "CollectionItem" (
+      id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "addedById" int,
+      status text NOT NULL
+    );
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
     );
@@ -218,6 +223,31 @@ beforeAll(async () => {
     -- A connection under an entity type no rule covers.
     INSERT INTO "Image" (id) VALUES (801);
     INSERT INTO "ImageConnection" VALUES (801, 9, 'Collection');
+
+    -- Flagged images: post 1201's only image; post 1202's first, ahead of a clean one; the first
+    -- image of public model 1301; article 1401's cover.
+    INSERT INTO "Post" (id, "publishedAt") VALUES
+      (1201, now() - interval '1 day'), (1202, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", index, "acceptableMinor") VALUES
+      (1211, 1201, 0, true), (1212, 1202, 0, true), (1213, 1202, 1, false);
+    INSERT INTO "Model" (id, status) VALUES (1301, 'Published');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES (1311, 1301, 'Published');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
+      (1321, 1311, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", index, "acceptableMinor") VALUES
+      (1331, 1321, 0, true), (1332, 1321, 1, false);
+    INSERT INTO "Image" (id, "acceptableMinor") VALUES (1411, true);
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (1401, 1411, 'Published', now());
+    -- Flagged images connected to public bounties, an entry and a published article: 1531 is the
+    -- only image of bounty 1521; entry 1523 and article 1541 have a flagged image ahead of a clean one.
+    INSERT INTO "Bounty" VALUES (1521, ${OWNER}, 'Public'), (1522, ${OWNER}, 'Public');
+    INSERT INTO "BountyEntry" VALUES (1523, 1522, ${OWNER});
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (1541, null, 'Published', now());
+    INSERT INTO "Image" (id, "acceptableMinor") VALUES
+      (1531, true), (1533, true), (1534, false), (1551, true), (1552, false);
+    INSERT INTO "ImageConnection" VALUES
+      (1531, 1521, 'Bounty'), (1533, 1523, 'BountyEntry'), (1534, 1523, 'BountyEntry'),
+      (1551, 1541, 'Article'), (1552, 1541, 'Article');
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -231,6 +261,10 @@ const coverOf = async (entityType: string, entityId: number, viewer: Viewer) => 
 
 const hidden: [string, string, number, number][] = [
   ['a Private bounty', 'Bounty', 1, 101],
+  ['a flagged image', 'Image', 1211, 1211],
+  ['a post whose only image is flagged', 'Post', 1201, 1211],
+  ['an article whose cover is flagged', 'Article', 1401, 1411],
+  ['a public bounty whose only image is flagged', 'Bounty', 1521, 1531],
   ['an entry on a Private bounty', 'BountyEntry', 3, 103],
   ['an image on a scheduled post', 'Image', 212, 212],
   ['an image on a draft post', 'Image', 213, 213],
@@ -265,6 +299,11 @@ const fallback: [string, string, number, number, number][] = [
   ['a public model whose first post is a draft', 'Model', 604, 648, 647],
   ['a public model whose first post is Private', 'Model', 605, 650, 649],
   ['a public model whose first post is scheduled', 'Model', 606, 652, 651],
+  ['a post whose first image is flagged', 'Post', 1202, 1213, 1212],
+  ['a public model whose first image is flagged', 'Model', 1301, 1332, 1331],
+  ['a version whose first image is flagged', 'ModelVersion', 1311, 1332, 1331],
+  ['an entry on a public bounty whose first image is flagged', 'BountyEntry', 1523, 1534, 1533],
+  ['a published article whose first content image is flagged', 'Article', 1541, 1552, 1551],
 ];
 
 const visible: [string, string, number, number][] = [

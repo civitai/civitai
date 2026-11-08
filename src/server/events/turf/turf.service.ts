@@ -8,6 +8,7 @@ import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { getTeamPoints } from '~/server/events/points/read';
 import {
   applyTurfOverride,
+  DEFAULT_DRAW_CEILING,
   turfConfigKey,
   TURF_SCORE_TIER_KEY,
   type EventTurfConfig,
@@ -886,7 +887,8 @@ export async function getTurfStickers(
   before?: { createdAt: string; id: bigint }
 ) {
   const event = await getTurfEvent(eventName);
-  if (!event || event.turf.mode === 'off') return { stickers: [], mine: null, nextCursor: null };
+  if (!event || event.turf.mode === 'off')
+    return { stickers: [], mine: null, nextCursor: null, drawCeiling: DEFAULT_DRAW_CEILING };
   const rows = (only: Prisma.Sql, limit: number) => dbRead.$queryRaw<DrawnSticker[]>`
     SELECT s.id, s."userId", s.team, s."cosmeticId", s.data,
       ${hatArt(Prisma.sql`s."cosmeticId"`)} AS art, s."createdAt"
@@ -916,7 +918,8 @@ export async function getTurfStickers(
     page.length > limit && last
       ? { createdAt: last.createdAt.toISOString(), id: last.id.toString() }
       : null;
-  return { stickers, mine: mine[0] ?? null, nextCursor };
+  const drawCeiling = event.turf.drawCeiling ?? DEFAULT_DRAW_CEILING;
+  return { stickers, mine: mine[0] ?? null, nextCursor, drawCeiling };
 }
 
 export type FeedSticker = {
