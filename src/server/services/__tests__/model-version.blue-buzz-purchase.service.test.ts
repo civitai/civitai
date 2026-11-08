@@ -346,7 +346,7 @@ describe('earlyAccessPurchase — a user who already holds access is not charged
         userId: BUYER,
         modelVersionId: VERSION_ID,
         permissions: 3,
-        // The early-access refund finds the purchase by this key and dates it by the second.
+        // The early-access refund finds the purchase by its transaction id and dates it by purchasedAt.
         meta: {
           'download-buzzTransactionId': `early-access-${VERSION_ID}-download-${BUYER}`,
           'download-purchasedAt': expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),

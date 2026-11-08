@@ -43,9 +43,9 @@ export type ModelEarlyAccessRefundRequirement = {
     buzzTransactionIds: string[];
     /**
      * Set when the buyer also holds an older purchase on this version that is not refunded: the
-     * grant is narrowed to it instead of deleted. Absent, the whole grant goes.
+     * grant is narrowed instead of deleted. Absent, the whole grant goes.
      */
-    retain?: { permissions: number; removeKeys: string[] };
+    narrow?: { revokePermissions: number; removeKeys: string[] };
   }[];
   buyerCount: number;
   totalBuzz: number;
@@ -57,6 +57,21 @@ export type ModelEarlyAccessRefundRequirement = {
    */
   exemptBuyerCount: number;
 };
+
+/** The purchases one grant row can hold, and what each one grants (see `earlyAccessPurchase`). */
+const EARLY_ACCESS_PURCHASES = [
+  {
+    transactionKey: 'download-buzzTransactionId',
+    purchasedAtKey: 'download-purchasedAt',
+    permissions:
+      EntityAccessPermission.EarlyAccessGeneration | EntityAccessPermission.EarlyAccessDownload,
+  },
+  {
+    transactionKey: 'generation-buzzTransactionId',
+    purchasedAtKey: 'generation-purchasedAt',
+    permissions: EntityAccessPermission.EarlyAccessGeneration,
+  },
+] as const;
 
 // Early access is sold per model VERSION, so the refund set is computed version-by-version and each
 // purchase keeps its modelVersionId. Unpublishing a whole model aggregates every version's set;
@@ -80,20 +95,6 @@ export type ModelEarlyAccessRefundRequirement = {
 // (generation, then download later), so each is dated by its own `<type>-purchasedAt`; rows written
 // before that key existed fall back to the row's addedAt. Grant rows are read fresh from the
 // primary (dbWrite), not the cache/replica — this guard protects buyers' money.
-/** The purchases one grant row can hold, and what each one grants (see `earlyAccessPurchase`). */
-const EARLY_ACCESS_PURCHASES = [
-  {
-    transactionKey: 'download-buzzTransactionId',
-    purchasedAtKey: 'download-purchasedAt',
-    permissions:
-      EntityAccessPermission.EarlyAccessGeneration | EntityAccessPermission.EarlyAccessDownload,
-  },
-  {
-    transactionKey: 'generation-buzzTransactionId',
-    purchasedAtKey: 'generation-purchasedAt',
-    permissions: EntityAccessPermission.EarlyAccessGeneration,
-  },
-] as const;
 
 const getEarlyAccessRefundRequirementForVersions = async (
   versions: { id: number; meta: Prisma.JsonValue }[]
@@ -142,8 +143,11 @@ const getEarlyAccessRefundRequirementForVersions = async (
       buyerId: row.accessorId,
       buzzTransactionIds: refunded.map((purchase) => purchase.transactionId),
       ...(kept.length > 0 && {
-        retain: {
-          permissions: kept.reduce((bits, purchase) => bits | purchase.kind.permissions, 0),
+        narrow: {
+          // Only bits no kept purchase also grants, so the kept purchase and any gift keep theirs.
+          revokePermissions:
+            refunded.reduce((bits, purchase) => bits | purchase.kind.permissions, 0) &
+            ~kept.reduce((bits, purchase) => bits | purchase.kind.permissions, 0),
           removeKeys: refunded.flatMap(({ kind }) => [kind.transactionKey, kind.purchasedAtKey]),
         },
       }),
@@ -246,11 +250,11 @@ export const refundModelEarlyAccessPurchases = async ({
       // Revoke the now-refunded purchase so a retry after a mid-loop failure skips it instead of
       // refunding it twice. Neither write throws on a row that is already gone: the money already
       // moved, so that must not abort the loop.
-      if (purchase.retain) {
+      if (purchase.narrow) {
         await dbWrite.$executeRaw`
           UPDATE "EntityAccess"
-             SET "permissions" = ${purchase.retain.permissions},
-                 "meta" = "meta" - ${purchase.retain.removeKeys}::text[]
+             SET "permissions" = "permissions" & ~${purchase.narrow.revokePermissions}::int,
+                 "meta" = "meta" - ${purchase.narrow.removeKeys}::text[]
            WHERE "accessToId" = ${purchase.modelVersionId} AND "accessToType" = 'ModelVersion'
              AND "accessorId" = ${purchase.buyerId} AND "accessorType" = 'User'`;
       } else {

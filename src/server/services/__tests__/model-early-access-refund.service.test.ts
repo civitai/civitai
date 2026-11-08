@@ -479,13 +479,65 @@ describe('getModelEarlyAccessRefundRequirement', () => {
         modelVersionId: VERSION_ID,
         buyerId: BUYER_ID,
         buzzTransactionIds: ['tx-dl'],
-        retain: {
-          permissions: 1,
+        narrow: {
+          revokePermissions: 2,
           removeKeys: ['download-buzzTransactionId', 'download-purchasedAt'],
         },
       },
     ]);
     expect(result.totalBuzz).toBe(500);
+    expect(result.exemptBuyerCount).toBe(1);
+  });
+
+  it('refunds a recent generation purchase on a row whose download purchase is past the window', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: {
+            'download-buzzTransactionId': 'tx-dl',
+            'generation-buzzTransactionId': 'tx-gen',
+            'generation-purchasedAt': boughtRecently().toISOString(),
+          },
+          addedAt: boughtLongAgo(),
+        },
+      ],
+      amounts: { 'tx-gen': 200, 'tx-dl': 500 },
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    // The kept download also grants generation, so refunding generation revokes no permission.
+    expect(result.purchases).toEqual([
+      {
+        modelVersionId: VERSION_ID,
+        buyerId: BUYER_ID,
+        buzzTransactionIds: ['tx-gen'],
+        narrow: {
+          revokePermissions: 0,
+          removeKeys: ['generation-buzzTransactionId', 'generation-purchasedAt'],
+        },
+      },
+    ]);
+    expect(result.totalBuzz).toBe(200);
+  });
+
+  it('dates a purchase with an unreadable purchasedAt by the row', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { 'download-buzzTransactionId': 'tx-1', 'download-purchasedAt': 'not a date' },
+          addedAt: boughtLongAgo(),
+        },
+      ],
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.purchases).toEqual([]);
     expect(result.exemptBuyerCount).toBe(1);
   });
 
@@ -513,7 +565,6 @@ describe('getModelEarlyAccessRefundRequirement', () => {
   });
 });
 
-// Generation bought long ago, download bought recently: one grant row holding both purchases.
 const generationThenDownload = (): AccessRow => ({
   accessToId: VERSION_ID,
   accessorId: BUYER_ID,
@@ -599,18 +650,14 @@ describe('unpublishModelById — early access refund gate', () => {
     expect(mockRefundMultiAccountTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ externalTransactionIdPrefix: 'tx-dl' })
     );
-    // The grant is narrowed to generation, not deleted: the buyer paid for it and was not refunded.
+    // Narrowed, not deleted: the generation purchase was paid for and not refunded. What the
+    // narrowing writes is pinned on Postgres in model-early-access-refund.pglite.test.ts.
     expect(mockDbWrite.entityAccess.deleteMany).not.toHaveBeenCalled();
-    const narrow = mockDbWrite.$executeRaw.mock.calls.find((c: unknown[]) =>
-      (c[0] as string[]).join('?').includes('UPDATE "EntityAccess"')
-    );
-    expect(narrow, 'the grant was not narrowed').toBeDefined();
-    expect(narrow!.slice(1)).toEqual([
-      1,
-      ['download-buzzTransactionId', 'download-purchasedAt'],
-      VERSION_ID,
-      BUYER_ID,
-    ]);
+    expect(
+      mockDbWrite.$executeRaw.mock.calls.some((c: unknown[]) =>
+        (c[0] as string[]).join('?').includes('UPDATE "EntityAccess"')
+      )
+    ).toBe(true);
   });
 
   it('refuses to refund from an owner account that cannot cover the total', async () => {
