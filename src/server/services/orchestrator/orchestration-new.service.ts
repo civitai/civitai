@@ -35,6 +35,7 @@ import type {
 import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
 import {
   attachEstimatedPreparation,
+  BOOST_REQUIRED_MESSAGE,
   normalizePreparation,
 } from '~/shared/orchestrator/download-preparation';
 import { createVideoPreprocessStep } from './handlers/video-preprocess.handler';
@@ -1866,8 +1867,6 @@ async function hasQueuedDownloads(data: unknown) {
  * which a boost cannot leave, so a non-member's boosted load is pinned to the paid tier it pays for.
  */
 const BOOST_TO_LOAD_BODY = { tier: 'paid', downloadPriority: 'high' } as const;
-const BOOST_REQUIRED =
-  'Free accounts need to boost to load this model for now. Members continue to load for free.';
 const BOOST_UNAVAILABLE =
   "The download boost couldn't be confirmed, so nothing was charged. Try again.";
 
@@ -2030,7 +2029,8 @@ export async function generateFromGraph({
     orchestratorToken: token,
     acceptBoostRequired,
   });
-  if (boostRequired && downloadPriority !== 'high') throw throwBadRequestError(BOOST_REQUIRED);
+  if (boostRequired && downloadPriority !== 'high')
+    throw throwBadRequestError(BOOST_REQUIRED_MESSAGE);
 
   // Determine workflow tags
   const ecosystem = 'ecosystem' in data ? data.ecosystem : undefined;
@@ -2098,11 +2098,15 @@ export async function generateFromGraph({
   // download. If that check fails the generation still goes out, unboosted and unbilled for it.
   const boostWhatIf = downloadPriority ? await priceDownloads() : undefined;
   const boostDownloads = !!boostWhatIf?.steps?.some((step) => readPreparation(step));
+  const boostFee = boostWhatIf?.cost?.fixed?.downloadPriority;
   // Fails CLOSED: with no download shown the submit carries no boost, and a model evicted in
   // between would load free for a non-member.
   if (
     boostRequired &&
-    (!boostWhatIf || !boostDownloads || readDownloadPriority(boostWhatIf) !== 'high')
+    (!boostWhatIf ||
+      !boostDownloads ||
+      readDownloadPriority(boostWhatIf) !== 'high' ||
+      !(typeof boostFee === 'number' && boostFee > 0))
   )
     throw throwBadRequestError(BOOST_UNAVAILABLE);
   // The submit reply predates the orchestrator queueing any download, so the queue card's first

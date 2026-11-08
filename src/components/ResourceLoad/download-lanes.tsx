@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { formatDownloadEtaShort } from '~/components/ResourceLoad/download-eta';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
+import { BOOST_REQUIRED_MESSAGE } from '~/shared/orchestrator/download-preparation';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 
 /** Keyed by the orchestrator's `Priority`, which is not wording to put in front of a buyer. */
@@ -19,13 +20,13 @@ export const BOOST_LANE_LABEL = 'Express';
  * When the fee comes back and when it does not. One string, rendered at every purchase point, so no
  * surface can be the one that leaves it unsaid.
  */
-export const BOOST_NON_REFUNDABLE =
+export const BOOST_REFUND_POLICY =
   'The boost is refunded if the download never starts, but not once it has.';
 
 export function BoostFeeNote({ className }: { className?: string }) {
   return (
     <Text size="xs" c="yellow.6" className={className}>
-      {BOOST_NON_REFUNDABLE}
+      {BOOST_REFUND_POLICY}
     </Text>
   );
 }
@@ -40,9 +41,7 @@ export function BoostRequiredNote({ size = 'sm' }: { size?: 'xs' | 'sm' }) {
           Temporary capacity limitation
         </Text>
       </div>
-      <Text size={size}>
-        Free accounts need to boost to load this model for now. Members continue to load for free.
-      </Text>
+      <Text size={size}>{BOOST_REQUIRED_MESSAGE}</Text>
     </div>
   );
 }

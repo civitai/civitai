@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
   whatIfLane: 'high' as string | undefined,
   whatIfPreparation: true,
   whatIfFails: false,
+  whatIfFee: 100 as number | undefined,
 }));
 
 const { submitWorkflow } = vi.hoisted(() => ({
@@ -27,7 +28,7 @@ const { submitWorkflow } = vi.hoisted(() => ({
         if (state.whatIfFails) throw new Error('orchestrator down');
         return {
           downloadPriority: state.whatIfLane,
-          cost: { total: 160, fixed: { downloadPriority: 100 } },
+          cost: { total: 160, fixed: { downloadPriority: state.whatIfFee } },
           steps: [
             {
               name: '0',
@@ -208,6 +209,7 @@ beforeEach(() => {
     whatIfLane: 'high',
     whatIfPreparation: true,
     whatIfFails: false,
+    whatIfFee: 100,
   });
   flags.boostForFree = true;
 });
@@ -248,6 +250,12 @@ describe('generateFromGraph — boost-to-load for a free account', () => {
 
   it('refuses, unsent, when the price check fails', async () => {
     state.whatIfFails = true;
+    await expect(submit()).rejects.toThrow("download boost couldn't be confirmed");
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('refuses, unsent, when the high-lane whatIf carries no boost fee', async () => {
+    state.whatIfFee = undefined;
     await expect(submit()).rejects.toThrow("download boost couldn't be confirmed");
     expect(realSubmits()).toHaveLength(0);
   });
