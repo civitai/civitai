@@ -477,7 +477,7 @@ describe('a moderator unpublishing an article', () => {
       publishedAt: new Date(),
       status: ArticleStatus.Published,
     };
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([published] as never);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([published] as never);
   });
 
   it('revokes every share link on it', async () => {

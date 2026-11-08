@@ -180,6 +180,7 @@ async function restoreArticle(id: number): Promise<void> {
         'moderatorNsfwLevel',
       ])
       .where('id', '=', id)
+      .forUpdate()
       .executeTakeFirst();
     if (!article) throw new Error(`No article with id ${id}`);
     if (!UNPUBLISHED.includes(article.status as ArticleStatus))

@@ -9,8 +9,9 @@ import { ArticleStatus } from '~/shared/utils/prisma/enums';
 /**
  * `unpublishArticleById` against a real Postgres `Article` row, when a block moved the row to
  * UnpublishedViolation after the author's request first looked at it. Any read outside the
- * transaction (the replica, or a read before the block committed) still says Published. Ids are
- * invented.
+ * transaction (the replica, or a read before the block committed) still says Published. PGlite
+ * has one connection, so this pins that the check reads inside the transaction, not the row lock
+ * itself. Ids are invented.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -102,6 +103,13 @@ describe('an author unpublishing an article', () => {
       status: 'Unpublished',
       metadata: { unpublishedBy: AUTHOR },
     });
+  });
+
+  // A moderator's restore of an Unpublished article requires a non-author `unpublishedBy`.
+  it('records the moderator as the unpublisher when a moderator unpublishes it', async () => {
+    await seed(ArticleStatus.Published);
+    await unpublishArticleById({ id: ARTICLE, userId: 99, isModerator: true });
+    expect(await row()).toMatchObject({ status: 'Unpublished', metadata: { unpublishedBy: 99 } });
   });
 
   it('leaves the block standing when one landed after the request first read the article', async () => {

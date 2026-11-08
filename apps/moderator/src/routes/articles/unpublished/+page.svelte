@@ -153,6 +153,8 @@
                   <input type="hidden" name="id" value={article.id} />
                   <Button type="submit" size="sm" variant="outline">Restore</Button>
                 </form>
+              {:else}
+                <span class="text-dark-2 text-xs">Author unpublished; only they can republish</span>
               {/if}
               <form method="POST" action="?/delete" use:enhance={confirmDelete}>
                 <input type="hidden" name="id" value={article.id} />
