@@ -33,7 +33,7 @@ import {
   type OwedBoxRefund,
   type OwedPackBoxRefund,
 } from '~/server/services/mystery-box-takedown.service';
-import { boxPackTermsOf } from '@civitai/shared/mystery-box';
+import { boxPackTermsOf, parsePackBoxSourceKey } from '@civitai/shared/mystery-box';
 import { getPrefixRefundState, refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { detectEmptyLoopSeam } from '~/server/utils/animation-loop-seam';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
@@ -2479,10 +2479,21 @@ const takedownMoneyMove = <T>(fn: () => Promise<T>) =>
 
 type PrefixRefund = Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
 
-/** One pack box's share of the pack charge, or null when the purchase records no pack terms. */
+/**
+ * One pack box's share of the pack charge, or null when the purchase records no usable pack terms.
+ * The last box also takes the rounding remainder, so a whole pack taken down returns exactly its price.
+ */
 function packBoxShareOf(owed: OwedPackBoxRefund) {
-  const pack = boxPackTermsOf(owed.purchaseMeta);
-  return pack ? Math.floor(owed.unitAmount / pack.size) : null;
+  let pack: ReturnType<typeof boxPackTermsOf>;
+  try {
+    pack = boxPackTermsOf(owed.purchaseMeta);
+  } catch {
+    return null;
+  }
+  if (!pack) return null;
+  const share = Math.floor(owed.unitAmount / pack.size);
+  const isLastBox = parsePackBoxSourceKey(owed.boxSourceKey)?.n === pack.size;
+  return isLastBox ? owed.unitAmount - share * (pack.size - 1) : share;
 }
 
 /**
