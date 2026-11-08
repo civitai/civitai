@@ -1,5 +1,4 @@
 import pLimit from 'p-limit';
-import { EntityAccessPermission } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -11,7 +10,7 @@ import {
 } from '~/server/services/buzz.service';
 import {
   EARLY_ACCESS_PURCHASES,
-  GIFT_PERMISSIONS_KEY,
+  giftedPermissions,
   revokeModelVersionAccess,
 } from '~/server/services/model-version-access.service';
 import { paidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
@@ -127,19 +126,14 @@ const getEarlyAccessRefundRequirementForVersions = async (
     const kept = held.filter((purchase) => !purchase.refundable);
     if (kept.length > 0) exemptBuyers.add(row.accessorId);
     if (refunded.length === 0) continue;
-    // A gift is not refunded, so its bits stay. A gift row without its recorded bits keeps all.
-    const giftBits =
-      rowMeta.giftLinkId == null
-        ? 0
-        : typeof rowMeta[GIFT_PERMISSIONS_KEY] === 'number'
-        ? (rowMeta[GIFT_PERMISSIONS_KEY] as number)
-        : EntityAccessPermission.EarlyAccessGeneration | EntityAccessPermission.EarlyAccessDownload;
-    const keptBits = kept.reduce((bits, purchase) => bits | purchase.kind.permissions, giftBits);
+    // A gift is not refunded, so its bits stay. The narrowing write reads them from the row as it is
+    // then, since a claim can be removed between this read and that write.
+    const keptBits = kept.reduce((bits, purchase) => bits | purchase.kind.permissions, 0);
     purchases.push({
       modelVersionId: row.accessToId,
       buyerId: row.accessorId,
       buzzTransactionIds: refunded.map((purchase) => purchase.transactionId),
-      ...((kept.length > 0 || giftBits > 0) && {
+      ...((kept.length > 0 || giftedPermissions(rowMeta) > 0) && {
         narrow: {
           revokePermissions:
             refunded.reduce((bits, purchase) => bits | purchase.kind.permissions, 0) & ~keptBits,

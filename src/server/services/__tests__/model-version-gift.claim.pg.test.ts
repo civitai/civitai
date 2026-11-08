@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { PrismaClient } from '@prisma/client';
 import { Client } from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The gift cap under real concurrency. A mock cannot race, so this runs the claim's own SQL
@@ -17,7 +17,7 @@ const DB_NAME = 'model_gift_claim_test';
 
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/paid-access.service', () => ({ getPaidAccess: vi.fn() }));
-const { insertWithinLiveCap, queryGiftList, redeemGiftLink } = await import(
+const { insertWithinLiveCap, queryGiftList, redeemGiftLink, revokeGiftRedemption } = await import(
   '~/server/services/model-version-gift.service'
 );
 const { GIFT_LIVE_CODES_MAX_PER_VERSION: CAP } = await import(
@@ -31,9 +31,14 @@ describe.runIf(!!process.env.CI)('CI provides a real Postgres', () => {
   });
 });
 
-const MIGRATION = path.resolve(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261229120000_model_version_gift_link/migration.sql'
+const MIGRATIONS = [
+  '20261229120000_model_version_gift_link',
+  '20261231000100_model_version_gift_redemption_revoked',
+].map((dir) =>
+  path.resolve(
+    __dirname,
+    `../../../../packages/civitai-db-schema/prisma/migrations/${dir}/migration.sql`
+  )
 );
 // The parts of the real schema the migration and the grant touch.
 const PREREQUISITES = `
@@ -68,7 +73,7 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
     sql = new Client({ connectionString: url.toString() });
     await sql.connect();
     await sql.query(PREREQUISITES);
-    await sql.query(readFileSync(MIGRATION, 'utf8'));
+    for (const file of MIGRATIONS) await sql.query(readFileSync(file, 'utf8'));
     await sql.query(`INSERT INTO "User" (id) SELECT generate_series(1, ${USERS + 1})`);
     await sql.query(`INSERT INTO "ModelVersion" (id) VALUES (${VERSION})`);
 
@@ -281,5 +286,249 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
     const refused = outcomes.find((o) => o.status === 'rejected') as PromiseRejectedResult;
     expect(String(refused.reason)).toContain(`at most ${CAP} live gift codes`);
     expect(await count(`SELECT count(*) AS n FROM "ModelVersionGiftLink"`)).toBe(CAP);
+  });
+  describe('removing one claim', () => {
+    const CLAIMER = 2;
+    const remove = (giftLinkId: number, modelVersionId = VERSION) =>
+      revokeGiftRedemption(prisma, {
+        giftLinkId,
+        claimerId: CLAIMER,
+        modelVersionId,
+        revokedById: OWNER,
+        visibleSince: new Date('2020-01-01T00:00:00.000Z'),
+      });
+    const access = async () =>
+      (
+        await sql.query(
+          `SELECT permissions, meta FROM "EntityAccess" WHERE "accessorId" = ${CLAIMER}`
+        )
+      ).rows[0] ?? null;
+    const buy = (meta: object, permissions: number) =>
+      sql.query(
+        `INSERT INTO "EntityAccess" ("accessToId", "accessToType", "accessorId", "accessorType", "addedById", "permissions", "meta")
+         VALUES ($1, 'ModelVersion', $2, 'User', $2, $3, $4)`,
+        [VERSION, CLAIMER, permissions, JSON.stringify(meta)]
+      );
+
+    it('takes back a gift-only grant, marks the claim, and keeps its slot spent', async () => {
+      const id = await newLink(1);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+
+      expect(await remove(id)).toEqual({ accessKept: false });
+      expect(await access()).toBeNull();
+      const { rows } = await sql.query(
+        `SELECT "revokedAt" IS NOT NULL AS revoked, "revokedById" FROM "ModelVersionGiftRedemption"`
+      );
+      expect(rows).toEqual([{ revoked: true, revokedById: OWNER }]);
+      expect(
+        await count(`SELECT "redemptionCount" AS n FROM "ModelVersionGiftLink" WHERE id = ${id}`)
+      ).toBe(1);
+    });
+
+    it('leaves what a purchase pays for, and drops only the gift keys', async () => {
+      await buy({ 'generation-buzzTransactionId': 'tx-1' }, 1);
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+
+      await remove(id);
+      expect(await access()).toEqual({
+        permissions: 1,
+        meta: { 'generation-buzzTransactionId': 'tx-1' },
+      });
+    });
+
+    it('keeps bits a purchase also pays for', async () => {
+      await buy({ 'download-buzzTransactionId': 'tx-1' }, 3);
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+
+      await remove(id);
+      expect(await access()).toEqual({
+        permissions: 3,
+        meta: { 'download-buzzTransactionId': 'tx-1' },
+      });
+    });
+
+    it('keeps access while another claim on the version stands', async () => {
+      const a = await newLink(null);
+      const b = await newLink(null);
+      expect(await claim(a, CLAIMER)).toBe('granted');
+      // The second claim records itself even though the access is already held.
+      expect(await claim(b, CLAIMER)).toBe('granted');
+
+      expect(await remove(a)).toEqual({ accessKept: true });
+      expect((await access())?.permissions).toBe(3);
+      expect(await remove(b)).toEqual({ accessKept: false });
+      expect(await access()).toBeNull();
+    });
+
+    it('refuses a re-claim of the removed claim, but not a claim on another link', async () => {
+      const a = await newLink(null);
+      const b = await newLink(null);
+      expect(await claim(a, CLAIMER)).toBe('granted');
+      await remove(a);
+
+      expect(await claim(a, CLAIMER)).toBe('unavailable');
+      expect(await access()).toBeNull();
+      expect(await claim(b, CLAIMER)).toBe('granted');
+      expect((await access())?.permissions).toBe(3);
+    });
+
+    it('refuses a claim already removed, one on another version, and one before visibleSince', async () => {
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+
+      await expect(remove(id, VERSION + 1)).rejects.toThrow('No claim to remove.');
+      await expect(
+        revokeGiftRedemption(prisma, {
+          giftLinkId: id,
+          claimerId: CLAIMER,
+          modelVersionId: VERSION,
+          revokedById: OWNER,
+          visibleSince: new Date(Date.now() + 60_000),
+        })
+      ).rejects.toThrow('No claim to remove.');
+      expect((await access())?.permissions).toBe(3);
+
+      await remove(id);
+      await expect(remove(id)).rejects.toThrow('No claim to remove.');
+    });
+
+    it('marks the claim when the grant row is already gone', async () => {
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+      // What the early-access refund does on unpublish.
+      await sql.query(`DELETE FROM "EntityAccess"`);
+
+      expect(await remove(id)).toEqual({ accessKept: false });
+      expect(
+        await count(
+          `SELECT count(*) AS n FROM "ModelVersionGiftRedemption" WHERE "revokedAt" IS NOT NULL`
+        )
+      ).toBe(1);
+    });
+
+    it('clears every bit of a gift row that never recorded its bits', async () => {
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+      await sql.query(`UPDATE "EntityAccess" SET meta = meta - 'gift-permissions'`);
+
+      await remove(id);
+      expect(await access()).toBeNull();
+    });
+
+    it('removes a claim made at the visibleSince moment', async () => {
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+      const { rows } = await sql.query(`SELECT "claimedAt" FROM "ModelVersionGiftRedemption"`);
+
+      await revokeGiftRedemption(prisma, {
+        giftLinkId: id,
+        claimerId: CLAIMER,
+        modelVersionId: VERSION,
+        revokedById: OWNER,
+        visibleSince: rows[0].claimedAt,
+      });
+      expect(await access()).toBeNull();
+    });
+
+    // Connections opened by a test, closed even when it fails.
+    const extra: Client[] = [];
+    afterEach(async () => {
+      // Ending them first rolls back their open transactions, which the DROP would wait on.
+      for (const client of extra.splice(0)) await client.end().catch(() => undefined);
+      await sql.query(`DROP TRIGGER IF EXISTS gate ON "EntityAccess"`);
+    });
+
+    async function connect() {
+      const url = new URL(URL_BASE!);
+      url.pathname = `/${DB_NAME}`;
+      const client = new Client({ connectionString: url.toString() });
+      extra.push(client);
+      await client.connect();
+      return client;
+    }
+
+    /** A second connection holding a transaction open, so the code under test meets it mid-flight. */
+    async function openTransaction(statements: string[]) {
+      const other = await connect();
+      await other.query('BEGIN');
+      for (const statement of statements) await other.query(statement);
+      return { commit: () => other.query('COMMIT') };
+    }
+
+    /** Resolves once `n` sessions on the test database wait on a lock, or `done()` says to stop. */
+    async function lockWaiters(n: number, done = () => false) {
+      for (let i = 0; i < 500 && !done(); i++) {
+        const waiting = await count(
+          `SELECT count(*) AS n FROM pg_stat_activity
+            WHERE datname = '${DB_NAME}' AND wait_event_type = 'Lock'`
+        );
+        if (waiting >= n) return;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      if (!done()) throw new Error(`fewer than ${n} sessions ever waited on a lock`);
+    }
+
+    it('refuses a repeat claim that meets a removal in flight', async () => {
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+      const removal = await openTransaction([
+        `UPDATE "ModelVersionGiftRedemption" SET "revokedAt" = now() WHERE "giftLinkId" = ${id}`,
+        `DELETE FROM "EntityAccess"`,
+      ]);
+
+      const repeat = claim(id, CLAIMER);
+      await lockWaiters(1);
+      await removal.commit();
+
+      expect(await repeat).toBe('unavailable');
+      expect(await access()).toBeNull();
+    });
+
+    it('makes a removal wait for a repeat claim already granting', async () => {
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+      await sql.query(`DELETE FROM "EntityAccess"`);
+      // Holds every grant write at a gate this test opens, so the claim stops after its checks.
+      await sql.query(`
+        CREATE OR REPLACE FUNCTION gate() RETURNS trigger AS $$
+        BEGIN PERFORM pg_advisory_xact_lock(42); RETURN NEW; END $$ LANGUAGE plpgsql;
+        CREATE TRIGGER gate BEFORE INSERT OR UPDATE ON "EntityAccess"
+          FOR EACH ROW EXECUTE FUNCTION gate();
+      `);
+      const gate = await connect();
+      await gate.query('SELECT pg_advisory_lock(42)');
+
+      const repeat = claim(id, CLAIMER);
+      await lockWaiters(1);
+      let removed = false;
+      const removal = remove(id).finally(() => (removed = true));
+      // The removal either waits behind the claim, or (wrongly) finishes before the claim grants.
+      await lockWaiters(2, () => removed);
+      await gate.query('SELECT pg_advisory_unlock(42)');
+
+      expect(await repeat).toBe('granted');
+      expect(await removal).toEqual({ accessKept: false });
+      expect(await access()).toBeNull();
+    });
+
+    it('keeps the access a claim on another link grants while the removal runs', async () => {
+      const a = await newLink(null);
+      const b = await newLink(null);
+      expect(await claim(a, CLAIMER)).toBe('granted');
+      // Link b's claim, recorded and holding the grant row, not yet committed.
+      const otherClaim = await openTransaction([
+        `INSERT INTO "ModelVersionGiftRedemption" ("giftLinkId", "userId") VALUES (${b}, ${CLAIMER})`,
+        `UPDATE "EntityAccess" SET meta = meta || '{"giftLinkId": ${b}}'`,
+      ]);
+
+      const removal = remove(a);
+      await lockWaiters(1);
+      await otherClaim.commit();
+
+      expect(await removal).toEqual({ accessKept: true });
+      expect((await access())?.permissions).toBe(3);
+    });
   });
 });
