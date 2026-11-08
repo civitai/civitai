@@ -232,8 +232,8 @@ export const getFileForModelVersion = async ({
   attribution: ResolveAttribution;
   /**
    * Whether the request came to a host that may serve mature content (`isRedCapableHost`). A
-   * `Training Data` file rated mature is served to anyone but its owner and moderators only when
-   * true. Required so every caller decides it; a server-side caller that serves no host
+   * `Training Data` file `trainingDataServableOnHost` refuses is served to anyone but its owner
+   * and moderators only when true. Required so every caller decides it; a server-side caller that serves no host
    * passes true.
    */
   redCapable: boolean;
@@ -366,7 +366,7 @@ export const getFileForModelVersion = async ({
     !isOwner &&
     !isMod &&
     !trainingDataServableOnHost(
-      (file.metadata as { nsfwLevel?: unknown } | null)?.nsfwLevel,
+      file.metadata as { nsfwLevel?: unknown; fullyRated?: unknown } | null,
       redCapable
     )
   )

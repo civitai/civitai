@@ -67,10 +67,13 @@ export async function trainingDataListing(
     .filter((v) => v.files.some((f) => f.type === 'Training Data'))
     .map((v) => v.id);
   if (!candidates.length) return () => true;
-  const rows = await db.$queryRaw<{ id: number; nsfwLevel: unknown; held: boolean | null }[]>`
-    SELECT mf.id, mf.metadata -> 'nsfwLevel' AS "nsfwLevel", (${trainingDataOwnerHeldSql(
-      Prisma.raw('m."userId"')
-    )}
+  const rows = await db.$queryRaw<
+    { id: number; nsfwLevel: unknown; fullyRated: unknown; held: boolean | null }[]
+  >`
+    SELECT mf.id, mf.metadata -> 'nsfwLevel' AS "nsfwLevel",
+      mf.metadata -> 'fullyRated' AS "fullyRated", (${trainingDataOwnerHeldSql(
+        Prisma.raw('m."userId"')
+      )}
       OR ${trainingDataContentHeldSql(Prisma.raw('mv.id'))}) AS held
     FROM "ModelFile" mf
     JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
@@ -88,7 +91,7 @@ export async function trainingDataListing(
   if (!rows) return (file) => file.type !== 'Training Data';
   const refused = new Set(
     rows
-      .filter((r) => r.held !== false || !trainingDataServableOnHost(r.nsfwLevel, redCapable))
+      .filter((r) => r.held !== false || !trainingDataServableOnHost(r, redCapable))
       .map((r) => r.id)
   );
   return (file) => !(file.type === 'Training Data' && refused.has(file.id));

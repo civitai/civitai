@@ -102,8 +102,12 @@ const lockedRow = (metadata: Record<string, unknown> = {}) =>
   ]);
 
 const fetchMock = vi.fn();
-const blobResponse = (bytes: string, contentType: string) =>
-  new Response(bytes, { status: 200, headers: { 'content-type': contentType } });
+/** A blob the orchestrator rated `nsfwLevel` (PG unless a test says otherwise; null = unrated). */
+const blobResponse = (bytes: string, contentType: string, nsfwLevel: string | null = 'pg') =>
+  new Response(bytes, {
+    status: 200,
+    headers: { 'content-type': contentType, ...(nsfwLevel && { 'x-nsfw-level': nsfwLevel }) },
+  });
 
 beforeEach(() => {
   uploads.stored = [];
@@ -417,24 +421,28 @@ describe('archiveStudioDataset applies the owner’s sharing choice only to the 
     expect(swaps()[0].data.metadata).toMatchObject({ nsfwLevel: 4 | 1 });
   });
 
-  it('an unrated item does not hide a mature one', async () => {
+  it('a fully rated SFW zip is Public and recorded as fully rated', async () => {
     lockedRow(shared);
-    fetchMock.mockImplementation(async (url: string) =>
-      url.includes('/BBB')
-        ? blobResponse('png-bytes', 'image/png')
-        : new Response('png-bytes', {
-            status: 200,
-            headers: { 'content-type': 'image/png', 'x-nsfw-level': 'x' },
-          })
-    );
-    await archive();
-    expect(swaps()[0].data.metadata).toMatchObject({ nsfwLevel: 8 });
+    expect(await archive()).toBe('Public');
+    expect(swaps()[0].data.metadata).toMatchObject({ nsfwLevel: 1, fullyRated: true });
   });
 
-  it('a zip with no rated item records no rating', async () => {
+  it('a partly rated zip stays Private, and an unrated item does not hide a mature one', async () => {
     lockedRow(shared);
-    await archive();
+    fetchMock.mockImplementation(async (url: string) =>
+      blobResponse('png-bytes', 'image/png', url.includes('/BBB') ? null : 'x')
+    );
+    expect(await archive()).toBe('Private');
+    expect(swaps()[0].data.metadata).toMatchObject({ nsfwLevel: 8, fullyRated: false });
+    expect(swaps()[0].data.metadata).toMatchObject({ datasetArchive: { complete: false } });
+  });
+
+  it('a zip with no rated item stays Private and records no rating', async () => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(async () => blobResponse('png-bytes', 'image/png', null));
+    expect(await archive()).toBe('Private');
     expect(swaps()[0].data.metadata).not.toHaveProperty('nsfwLevel');
+    expect(swaps()[0].data.metadata).toMatchObject({ fullyRated: false });
   });
 
   it('a file swapped in while the zip was built is left alone', async () => {

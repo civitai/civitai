@@ -14,11 +14,18 @@ export function trainingDataVisibility({
 }
 
 /**
- * Whether a host may serve a `Training Data` file rated `nsfwLevel` (its metadata key, the
- * bitwise rating of the zip's rated items). Only a red-capable host serves a dataset rated above
- * PG-13; one with no rating is served on any host.
+ * Whether a host may serve a `Training Data` file, from its metadata: `nsfwLevel` (the bitwise
+ * rating of the zip's rated items) and `fullyRated` (recorded by the Studio archive: whether every
+ * item was rated). Only a red-capable host serves a dataset rated above PG-13, or a Studio zip
+ * with an unrated item. A dataset with neither key (a classic zip, or a Studio zip archived before
+ * they were recorded) is served on any host.
  */
-export function trainingDataServableOnHost(nsfwLevel: unknown, redCapable: boolean): boolean {
-  if (redCapable || typeof nsfwLevel !== 'number') return true;
-  return (nsfwLevel & ~sfwBrowsingLevelsFlag) === 0;
+export function trainingDataServableOnHost(
+  metadata: { nsfwLevel?: unknown; fullyRated?: unknown } | null | undefined,
+  redCapable: boolean
+): boolean {
+  if (redCapable) return true;
+  if (metadata?.fullyRated === false) return false;
+  const level = metadata?.nsfwLevel;
+  return typeof level !== 'number' || (level & ~sfwBrowsingLevelsFlag) === 0;
 }

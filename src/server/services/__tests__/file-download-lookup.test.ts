@@ -1025,8 +1025,12 @@ describe('getFileForModelVersion — a training dataset on each host', () => {
     ['a mature zip', { nsfwLevel: MATURE }, false, 'not-found'],
     ['a mature zip', { nsfwLevel: MATURE }, true, 'success'],
     ['a PG-13 zip', { nsfwLevel: 2 | 1 }, false, 'success'],
-    ['an unrated zip', {}, false, 'success'],
-    ['an unrated zip', {}, true, 'success'],
+    ['a classic unrated zip', {}, false, 'success'],
+    ['a classic unrated zip', {}, true, 'success'],
+    ['a fully rated SFW Studio zip', { nsfwLevel: 1, fullyRated: true }, false, 'success'],
+    ['a partly rated Studio zip', { nsfwLevel: 1, fullyRated: false }, false, 'not-found'],
+    ['a partly rated Studio zip', { nsfwLevel: 1, fullyRated: false }, true, 'success'],
+    ['an unrated Studio zip', { fullyRated: false }, false, 'not-found'],
   ])('%s on a red-capable host %s is %s', async (_, metadata, redCapable, status) => {
     listDownloadFilesMock.mockReset().mockResolvedValue([datasetRated(metadata)]);
     const result = await download(redCapable);
@@ -1036,6 +1040,14 @@ describe('getFileForModelVersion — a training dataset on each host', () => {
 
   it('serves its owner their own mature zip off a red-capable host, and no one else', async () => {
     listDownloadFilesMock.mockReset().mockResolvedValue([datasetRated({ nsfwLevel: MATURE })]);
+    expect((await download(false, { id: 999 })).status).toBe('success');
+    expect(await download(false, { id: 1 })).toEqual({ status: 'not-found' });
+  });
+
+  it('serves its owner a partly rated Studio zip made Public off a red-capable host, and no one else', async () => {
+    listDownloadFilesMock
+      .mockReset()
+      .mockResolvedValue([datasetRated({ nsfwLevel: 1, fullyRated: false })]);
     expect((await download(false, { id: 999 })).status).toBe('success');
     expect(await download(false, { id: 1 })).toEqual({ status: 'not-found' });
   });

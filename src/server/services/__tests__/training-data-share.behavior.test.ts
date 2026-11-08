@@ -251,6 +251,9 @@ describe('trainingDataListing', () => {
     ['a mature dataset', { nsfwLevel: 4 | 1 }, false, false],
     ['a mature dataset', { nsfwLevel: 4 | 1 }, true, true],
     ['an unrated dataset', {}, false, true],
+    ['a partly rated Studio dataset', { nsfwLevel: 1, fullyRated: false }, false, false],
+    ['a partly rated Studio dataset', { nsfwLevel: 1, fullyRated: false }, true, true],
+    ['a fully rated SFW Studio dataset', { nsfwLevel: 1, fullyRated: true }, false, true],
     ['an unrated dataset', {}, true, true],
   ])(
     '%s on a red-capable host %s is listed to others: %s',

@@ -48,7 +48,8 @@ export type StudioDatasetArchive =
       status: 'archived';
       items: number;
       skipped: number;
-      /** Every item of an approved run is in the zip: the only zip that can be shared. */
+      /** Every item of an approved run is in the zip, each rated: the only zip that can be
+       *  shared. */
       complete?: boolean;
       at: string;
     }
@@ -232,12 +233,14 @@ async function uploadDatasetZip({
   let captions = 0;
   // The rating of every included item the orchestrator rated; 0 when it rated none.
   let nsfwLevel = 0;
+  let unrated = 0;
   try {
     for (const [index, item] of items.entries()) {
       const blob = await fetchBlob({ baseUrl, token, air: item.air, workflowId });
       if (!blob) continue;
       const level = blob.nsfwLevel ? orchestratorNsfwLevelMap[blob.nsfwLevel] : undefined;
       if (level) nsfwLevel |= level;
+      else unrated += 1;
       const base = String(index + 1).padStart(pad, '0');
       await bounded.append(blob.bytes, {
         name: `${base}.${extensionFor(blob.key, blob.contentType)}`,
@@ -267,6 +270,7 @@ async function uploadDatasetZip({
     included,
     captions,
     nsfwLevel: nsfwLevel || undefined,
+    fullyRated: unrated === 0,
     skipped: items.length - included,
     backend: useB2 ? ('backblaze' as const) : ('cloudflare' as const),
   };
@@ -359,14 +363,17 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
       items: stored.included,
       skipped: stored.skipped,
       complete:
-        stored.skipped === 0 && stored.included === total && isTrainingModerationApproved(workflow),
+        stored.skipped === 0 &&
+        stored.included === total &&
+        stored.fullyRated &&
+        isTrainingModerationApproved(workflow),
       at: new Date().toISOString(),
     };
 
     const swapped = await dbWrite.$transaction(async (tx) => {
       // Locked and re-read: the owner's sharing choice can be written while this ran. Conditional on
       // the row still being the placeholder, so a file the owner swapped in meanwhile is not
-      // overwritten (the zip it built is then orphaned, which is the cheaper failure).
+      // overwritten; the zip it built is orphaned.
       const [row] = await tx.$queryRaw<{ metadata: FileMetadata | null }[]>`
         SELECT metadata FROM "ModelFile" WHERE id = ${file.id} AND "sizeKB" = 0 FOR UPDATE`;
       if (!row) return false;
@@ -389,6 +396,7 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
             numCaptions: stored.captions,
             // The zip's rating, which decides the hosts that serve it (trainingDataServableOnHost).
             ...(stored.nsfwLevel !== undefined && { nsfwLevel: stored.nsfwLevel }),
+            fullyRated: stored.fullyRated,
             datasetArchive: archived,
           },
         },
