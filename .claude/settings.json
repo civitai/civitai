@@ -22,6 +22,15 @@
         ]
       },
       {
+        "matcher": "mcp__.*[Gg]it[Hh]ub.*__(create|update)_pull_request",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/pr-review-nudge.mjs\""
+          }
+        ]
+      },
+      {
         "matcher": "Write|Edit",
         "hooks": [
           {

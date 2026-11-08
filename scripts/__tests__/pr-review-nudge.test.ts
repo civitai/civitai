@@ -6,16 +6,17 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import {
   ghPrMatch,
-  hqSignedIn,
+  hookEvent,
+  mcpPrEvent,
   nudge,
-  nudgeEvent,
   prEvent,
 } from '../../.claude/hooks/pr-review-nudge.logic.mjs';
 
 /**
- * The PostToolUse nudge that points a session at the `pr-review` skill once a Bash call has
- * opened or readied a civitai/civitai PR. The PR number must come from what gh printed, and only
- * for this repo: a nudge naming the wrong PR sends an agent to record intent on someone else's.
+ * The PostToolUse nudge that points a session at the `pr-review` skill once a Bash or GitHub MCP
+ * call has opened or readied a civitai/civitai PR. The PR number must come from what the tool
+ * returned, and only for this repo: a nudge naming the wrong PR sends an agent to record intent on
+ * someone else's.
  */
 const event = prEvent as (
   command: string,
@@ -150,97 +151,230 @@ describe('ghPrMatch reads the gh segment', () => {
   });
 });
 
-describe('hqSignedIn reads PATH and the hq config, with no network', () => {
-  type Io = { isExecutable: (p: string) => boolean; readText: (p: string) => string };
-  const signedIn = hqSignedIn as (env: Record<string, string>, io: Io) => boolean;
-  const io = (hqAt: string | null, files: Record<string, string> = {}): Io => ({
-    isExecutable: (p) => hqAt !== null && p === `${hqAt}/hq`,
-    readText: (p) => files[p] ?? '',
+// What the GitHub MCP server answers for a created or updated PR: one text part holding
+// `{"id":…,"url":<html url>}` (github-mcp-server pkg/github/pullrequests.go, MinimalResponse).
+const mcpAnswer = (n: number, repo = 'civitai/civitai') => [
+  {
+    type: 'text',
+    text: JSON.stringify({ id: '9001', url: `https://github.com/${repo}/pull/${n}` }),
+  },
+];
+const MCP_CREATE = 'mcp__github__create_pull_request';
+const MCP_UPDATE = 'mcp__github__update_pull_request';
+const createArgs = (extra: Record<string, unknown> = {}) => ({
+  owner: 'civitai',
+  repo: 'civitai',
+  title: 'x',
+  head: 'feat/x',
+  base: 'main',
+  ...extra,
+});
+
+describe('mcpPrEvent finds a PR a GitHub MCP call opened or readied', () => {
+  const mcp = mcpPrEvent as (
+    toolName: string,
+    toolInput: unknown,
+    toolResponse: unknown
+  ) => { action: string; pr: number; draft: boolean; headRepo?: string } | null;
+
+  it('takes the PR number from the response, and a same-repo head from the input', () => {
+    expect(mcp(MCP_CREATE, createArgs(), mcpAnswer(7841))).toEqual({
+      action: 'create',
+      pr: 7841,
+      draft: false,
+      headRepo: 'civitai/civitai',
+    });
+    expect(mcp(MCP_CREATE, createArgs({ head: 'Civitai:feat/x' }), mcpAnswer(7842))?.headRepo).toBe(
+      'civitai/civitai'
+    );
   });
 
-  it('needs hq on PATH', () => {
-    expect(signedIn({ PATH: '/a:/b', HQ_TOKEN: 't' }, io('/b'))).toBe(true);
-    expect(signedIn({ PATH: '/a', HQ_TOKEN: 't' }, io('/b'))).toBe(false);
+  it('leaves the head to GitHub when the input names another owner', () => {
+    expect(mcp(MCP_CREATE, createArgs({ head: 'someone:feat/x' }), mcpAnswer(7843))).toEqual({
+      action: 'create',
+      pr: 7843,
+      draft: false,
+    });
   });
 
-  it('reads the token from XDG_CONFIG_HOME before HOME, as the CLI does', () => {
-    const files = {
-      '/xdg/hq/config.toml': "token = 'from-xdg'\n",
-      '/home/u/.config/hq/config.toml': 'token = ""\n',
-    };
+  it('marks a draft create as a draft', () => {
+    expect(mcp(MCP_CREATE, createArgs({ draft: true }), mcpAnswer(7844))?.draft).toBe(true);
+  });
+
+  it('reads the response in the shapes a runtime may pass it', () => {
+    const text = mcpAnswer(7845)[0].text;
+    expect(mcp(MCP_CREATE, createArgs(), text)?.pr).toBe(7845);
+    expect(mcp(MCP_CREATE, createArgs(), { content: mcpAnswer(7846) })?.pr).toBe(7846);
     expect(
-      signedIn({ PATH: '/b', XDG_CONFIG_HOME: '/xdg', HOME: '/home/u' }, io('/b', files))
-    ).toBe(true);
-    expect(signedIn({ PATH: '/b', HOME: '/home/u' }, io('/b', files))).toBe(false);
+      mcp(MCP_CREATE, createArgs(), {
+        id: '9001',
+        html_url: 'https://github.com/civitai/civitai/pull/7847',
+      })?.pr
+    ).toBe(7847);
   });
 
-  it('is false with no token anywhere', () => {
-    expect(signedIn({ PATH: '/b', HOME: '/home/u' }, io('/b'))).toBe(false);
-    expect(signedIn({ PATH: '/b', HQ_TOKEN: '  ' }, io('/b'))).toBe(false);
+  it.each([
+    'mcp__github__create_pull_request',
+    'mcp__plugin_github_github__create_pull_request',
+    'mcp__claude_ai_GitHub__create_pull_request',
+  ])('answers to the server name in %s', (toolName) => {
+    expect(mcp(toolName, createArgs(), mcpAnswer(7848))?.pr).toBe(7848);
+  });
+
+  it('reads an update with draft: false as marking the PR ready', () => {
+    const args = { owner: 'civitai', repo: 'civitai', pullNumber: 7851, draft: false };
+    expect(mcp(MCP_UPDATE, args, mcpAnswer(7851))).toEqual({
+      action: 'ready',
+      pr: 7851,
+      draft: false,
+    });
+  });
+
+  it.each<[string, string, unknown, unknown]>([
+    [
+      'a create on another repo',
+      MCP_CREATE,
+      createArgs({ repo: 'civitai-app-starters' }),
+      mcpAnswer(61, 'civitai/civitai-app-starters'),
+    ],
+    [
+      'a create on a same-named fork',
+      MCP_CREATE,
+      createArgs({ owner: 'someone' }),
+      mcpAnswer(62, 'someone/civitai'),
+    ],
+    ['a response naming another repo', MCP_CREATE, createArgs(), mcpAnswer(63, 'someone/civitai')],
+    [
+      'an error text that is not JSON',
+      MCP_CREATE,
+      createArgs(),
+      [{ type: 'text', text: 'failed to create pull request: 422 Validation Failed' }],
+    ],
+    ['an error result', MCP_CREATE, createArgs(), { isError: true, content: mcpAnswer(64) }],
+    [
+      'a URL that is not a PR',
+      MCP_CREATE,
+      createArgs(),
+      [{ type: 'text', text: '{"url":"x/65"}' }],
+    ],
+    ['a response naming two PRs', MCP_CREATE, createArgs(), [...mcpAnswer(66), ...mcpAnswer(67)]],
+    ['no response', MCP_CREATE, createArgs(), undefined],
+    ['no input', MCP_CREATE, undefined, mcpAnswer(68)],
+    [
+      'an update that does not touch draft',
+      MCP_UPDATE,
+      { owner: 'civitai', repo: 'civitai', pullNumber: 69, title: 'y' },
+      mcpAnswer(69),
+    ],
+    [
+      'an update that converts to draft',
+      MCP_UPDATE,
+      { owner: 'civitai', repo: 'civitai', pullNumber: 70, draft: true },
+      mcpAnswer(70),
+    ],
+    [
+      'an update whose response names another PR',
+      MCP_UPDATE,
+      { owner: 'civitai', repo: 'civitai', pullNumber: 71, draft: false },
+      mcpAnswer(72),
+    ],
+    ['another GitHub tool', 'mcp__github__create_pull_request_review', createArgs(), mcpAnswer(73)],
+    ['another server', 'mcp__gitlab__create_pull_request', createArgs(), mcpAnswer(74)],
+  ])('fires nothing for %s', (_label, toolName, input, response) => {
+    expect(mcp(toolName, input, response)).toBeNull();
   });
 });
 
-describe('nudgeEvent checks cheapest first', () => {
-  type Deps = { hqSignedIn: () => boolean; prHeadRepo: (pr: number) => string | null };
-  const decide = nudgeEvent as (
-    command: string,
-    toolResponse: unknown,
+describe('hookEvent', () => {
+  type Deps = { prHeadRepo: (pr: number) => string | null };
+  const decide = hookEvent as (
+    input: unknown,
     env: Record<string, string>,
     deps: Deps
-  ) => { action: string; pr: number } | null;
-
-  it('nudges a same-repo PR when hq is signed in', () => {
+  ) => { action: string; pr: number; draft: boolean } | null;
+  const bash = (command: string, response: unknown) => ({
+    tool_name: 'Bash',
+    tool_input: { command },
+    tool_response: response,
+  });
+  const mcpCall = (tool: string, input: unknown, response: unknown) => ({
+    tool_name: tool,
+    tool_input: input,
+    tool_response: response,
+  });
+  const recording = (answer: string | null) => {
     const heads: number[] = [];
-    const deps = {
-      hqSignedIn: () => true,
-      prHeadRepo: (pr: number) => {
-        heads.push(pr);
-        return 'Civitai/Civitai';
+    return {
+      heads,
+      deps: {
+        prHeadRepo: (pr: number) => {
+          heads.push(pr);
+          return answer;
+        },
       },
     };
-    expect(decide('gh pr create --fill', created(7801), {}, deps)?.pr).toBe(7801);
-    expect(heads).toEqual([7801]);
+  };
+
+  it('nudges a same-repo Bash PR in an environment with no hq at all', () => {
+    const r = recording('Civitai/Civitai');
+    expect(
+      decide(bash('gh pr create --fill', created(7861)), { PATH: '/nowhere' }, r.deps)
+    ).toEqual({ action: 'create', pr: 7861, draft: false });
+    expect(r.heads).toEqual([7861]);
   });
 
   it('says nothing for a fork or an unreadable head', () => {
     expect(
-      decide(
-        'gh pr create',
-        created(7802),
-        {},
-        { hqSignedIn: () => true, prHeadRepo: () => 'someone/civitai' }
-      )
+      decide(bash('gh pr create', created(7862)), {}, recording('someone/civitai').deps)
     ).toBeNull();
-    expect(
-      decide('gh pr create', created(7803), {}, { hqSignedIn: () => true, prHeadRepo: () => null })
-    ).toBeNull();
+    expect(decide(bash('gh pr create', created(7863)), {}, recording(null).deps)).toBeNull();
   });
 
-  it('never reads the head (the one network call) without hq, or without a PR event', () => {
-    const heads: number[] = [];
-    const prHeadRepo = (pr: number) => {
-      heads.push(pr);
-      return 'civitai/civitai';
-    };
-    expect(
-      decide('gh pr create', created(7804), {}, { hqSignedIn: () => false, prHeadRepo })
-    ).toBeNull();
-    expect(decide('ls', { stdout: '' }, {}, { hqSignedIn: () => true, prHeadRepo })).toBeNull();
-    expect(heads).toEqual([]);
+  it('takes an MCP create head of this repo from the input, without reading it', () => {
+    const r = recording(null);
+    expect(decide(mcpCall(MCP_CREATE, createArgs(), mcpAnswer(7864)), {}, r.deps)).toEqual({
+      action: 'create',
+      pr: 7864,
+      draft: false,
+    });
+    expect(r.heads).toEqual([]);
+  });
+
+  it('reads the head of an MCP create from another owner, and of an MCP ready', () => {
+    const fork = recording('someone/civitai');
+    const forkCall = mcpCall(MCP_CREATE, createArgs({ head: 'someone:feat/x' }), mcpAnswer(7865));
+    expect(decide(forkCall, {}, fork.deps)).toBeNull();
+    expect(fork.heads).toEqual([7865]);
+
+    const ready = recording('civitai/civitai');
+    const readyArgs = { owner: 'civitai', repo: 'civitai', pullNumber: 7866, draft: false };
+    expect(decide(mcpCall(MCP_UPDATE, readyArgs, mcpAnswer(7866)), {}, ready.deps)?.action).toBe(
+      'ready'
+    );
+    expect(ready.heads).toEqual([7866]);
+  });
+
+  it('never reads the head (the one network call) without a PR event', () => {
+    const r = recording('civitai/civitai');
+    expect(decide(bash('ls', { stdout: '' }), {}, r.deps)).toBeNull();
+    expect(decide(mcpCall(MCP_CREATE, createArgs(), 'not json'), {}, r.deps)).toBeNull();
+    expect(r.heads).toEqual([]);
   });
 });
 
 describe('the nudge text', () => {
   // Pinned whole: the text is the instruction an agent executes. It carries commands with the PR
   // reference spliced in and the rules the agent follows, so any change to it is a behaviour change.
-  it('names the PR, the skill, the intent command and the watch', () => {
+  it('names the PR, the skill, and both the CLI and the MCP way to record intent and wait', () => {
     expect(text({ action: 'create', pr: 7801, draft: false })).toBe(
       'civitai/civitai#7801 was opened. The hosted review (the `pr-review` check) reviews every new ' +
         'head of it. Follow the `pr-review` skill. Record its intent in HQ now, before the first round ' +
-        'finishes: `hq pr-review why set civitai/civitai#7801 --intent "<what was asked, and why>"` ' +
-        '(or the HQ MCP tool `pr_review_why_set`). The intent is internal: never put it in the PR ' +
-        'body or a GitHub comment. Then run `hq pr-review watch civitai/civitai#7801` in the ' +
-        'background and, when it returns, work the round as the skill says.'
+        'finishes: with the hq CLI, `hq pr-review why set civitai/civitai#7801 --intent "<what was ' +
+        'asked, and why>"`; with the HQ MCP tools, `pr_review_why_set`. The intent is internal: never ' +
+        'put it in the PR body or a GitHub comment. Then wait for the round in the background with ' +
+        '`hq pr-review watch civitai/civitai#7801` or the HQ MCP tool `pr_review_watch` (without ' +
+        '`pr_review_watch`, read the round with `pr_review_get` once the `pr-review` check ' +
+        'completes), then work the round as the skill says.'
     );
   });
 
@@ -248,10 +382,13 @@ describe('the nudge text', () => {
     expect(text({ action: 'create', pr: 7811, draft: true })).toBe(
       'civitai/civitai#7811 was opened as a draft. The hosted review (the `pr-review` check) skips ' +
         'drafts, so it starts when the PR is marked ready. Follow the `pr-review` skill. Record its ' +
-        'intent in HQ now, before the first round finishes: `hq pr-review why set ' +
-        'civitai/civitai#7811 --intent "<what was asked, and why>"` (or the HQ MCP tool ' +
-        '`pr_review_why_set`). The intent is internal: never put it in the PR body or a GitHub ' +
-        'comment. Run the watch after `gh pr ready`.'
+        'intent in HQ now, before the first round finishes: with the hq CLI, `hq pr-review why set ' +
+        'civitai/civitai#7811 --intent "<what was asked, and why>"`; with the HQ MCP tools, ' +
+        '`pr_review_why_set`. The intent is internal: never put it in the PR body or a GitHub ' +
+        'comment. After the PR is marked ready, wait for the round in the background with `hq ' +
+        'pr-review watch civitai/civitai#7811` or the HQ MCP tool `pr_review_watch` (without ' +
+        '`pr_review_watch`, read the round with `pr_review_get` once the `pr-review` check ' +
+        'completes), then work the round as the skill says.'
     );
   });
 
@@ -268,8 +405,8 @@ describe('the nudge text', () => {
  * repo the case names, so no case reaches the network, and only when it is asked for the head repo
  * of the PR the case created.
  *
- * The nudge is for authors who use HQ, on PRs whose head is in this repo: a fork's PR and a session
- * without a signed-in `hq` get nothing.
+ * The nudge is for every PR whose head is in this repo, whether or not the session has the `hq` CLI
+ * (a session may reach HQ through its MCP tools only); a fork's PR gets nothing.
  */
 // The fakes are `#!/bin/sh` scripts, which Windows cannot execute; the logic tests above cover it there.
 describe.skipIf(process.platform === 'win32')(
@@ -278,23 +415,11 @@ describe.skipIf(process.platform === 'win32')(
     const hook = resolve(__dirname, '../../.claude/hooks/pr-review-nudge.mjs');
     const dirs: string[] = [];
     afterAll(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
-    // The PR every create case's gh output names.
+    // The PR every create case's output names.
     const PR = 7801;
 
-    type Sandbox = {
-      hq?: boolean;
-      config?: string;
-      hqToken?: string;
-      head?: string;
-      ghFails?: boolean;
-    };
-    const sandbox = ({
-      hq = true,
-      config,
-      hqToken,
-      head = 'civitai/civitai',
-      ghFails,
-    }: Sandbox) => {
+    type Sandbox = { hq?: boolean; head?: string; ghFails?: boolean };
+    const sandbox = ({ hq = false, head = 'civitai/civitai', ghFails }: Sandbox = {}) => {
       const root = mkdtempSync(join(tmpdir(), 'pr-review-nudge-'));
       dirs.push(root);
       const bin = join(root, 'bin');
@@ -316,18 +441,16 @@ describe.skipIf(process.platform === 'win32')(
         answer,
       ].join('\n');
       writeFileSync(join(bin, 'gh'), `${gh}\n`, { mode: 0o755 });
-      if (hq) writeFileSync(join(bin, 'hq'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-      if (config !== undefined) {
+      if (hq) {
+        writeFileSync(join(bin, 'hq'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
         mkdirSync(join(home, '.config', 'hq'), { recursive: true });
-        writeFileSync(join(home, '.config', 'hq', 'config.toml'), config);
+        writeFileSync(join(home, '.config', 'hq', 'config.toml'), 'token = "hq_test_token"\n');
       }
       const env: Record<string, string> = { PATH: bin, HOME: home };
-      if (hqToken !== undefined) env.HQ_TOKEN = hqToken;
       // Everything the fake gh was called with, '' when it never ran.
       const ghArgv = () => (existsSync(ghLog) ? readFileSync(ghLog, 'utf8') : '');
       return { env, ghArgv };
     };
-    const SIGNED_IN = 'url = "https://hq.civitai.com"\ntoken = "hq_test_token"\n';
     // The one gh call the hook makes: the head-repo read for `PR`, as `prHeadRepo` builds it.
     const HEAD_READ = ['api', `repos/civitai/civitai/pulls/${PR}`, '--jq', '.head.repo.full_name']
       .map((arg) => `${arg}\n`)
@@ -337,38 +460,86 @@ describe.skipIf(process.platform === 'win32')(
       spawnSync(process.execPath, [hook], { input, encoding: 'utf8', timeout, env });
     const createInput = (command = 'gh pr create --fill') =>
       JSON.stringify({ tool_name: 'Bash', tool_input: { command }, tool_response: created(PR) });
+    const mcpCreateInput = (
+      args: Record<string, unknown> = {},
+      response: unknown = mcpAnswer(PR)
+    ) =>
+      JSON.stringify({
+        tool_name: MCP_CREATE,
+        tool_input: createArgs(args),
+        tool_response: response,
+      });
+    const context = (stdout: string) => {
+      const out = JSON.parse(stdout).hookSpecificOutput;
+      expect(out.hookEventName).toBe('PostToolUse');
+      return out.additionalContext;
+    };
     const NUDGE = text({ action: 'create', pr: PR, draft: false });
+    const DRAFT_NUDGE = text({ action: 'create', pr: PR, draft: true });
 
-    it('adds the nudge after a create when hq is signed in and the head is in this repo', () => {
-      const box = sandbox({ config: SIGNED_IN });
+    // A session that reaches HQ only through its MCP tools has no `hq` binary and no hq config.
+    it('adds the nudge after a create in a session without the hq CLI', () => {
+      const box = sandbox();
       const r = run(createInput(), box.env);
       expect(box.ghArgv(), 'the hook asked gh something other than the head repo of PR ' + PR).toBe(
         HEAD_READ
       );
       expect(r.status).toBe(0);
-      const out = JSON.parse(r.stdout).hookSpecificOutput;
-      expect(out.hookEventName).toBe('PostToolUse');
-      expect(out.additionalContext).toBe(NUDGE);
+      expect(context(r.stdout)).toBe(NUDGE);
     });
 
-    it('counts an HQ_TOKEN in the environment as signed in', () => {
-      const box = sandbox({ hqToken: 'hq_test_token' });
+    it('adds the same nudge when hq is installed and signed in', () => {
+      const box = sandbox({ hq: true });
       const r = run(createInput(), box.env);
       expect(box.ghArgv()).toBe(HEAD_READ);
-      expect(r.status).toBe(0);
-      expect(JSON.parse(r.stdout).hookSpecificOutput.additionalContext).toBe(NUDGE);
+      expect(context(r.stdout)).toBe(NUDGE);
     });
 
-    // The first two read the head and get a no; the rest stop before the head read.
-    it.each<[string, Sandbox, string]>([
-      ['the PR comes from a fork', { config: SIGNED_IN, head: 'someone/civitai' }, HEAD_READ],
-      ['the head repo cannot be read', { config: SIGNED_IN, ghFails: true }, HEAD_READ],
-      ['hq is not installed', { hq: false, config: SIGNED_IN }, ''],
-      ['hq is installed but not signed in', { config: 'url = "https://hq.civitai.com"\n' }, ''],
-      ['hq has an empty token', { config: 'token = ""\n', hqToken: '' }, ''],
-    ])('says nothing and exits 0 when %s', (_label, opts, ghArgv) => {
+    it('adds the draft nudge after gh pr create --draft', () => {
+      const r = run(createInput('gh pr create --draft --fill'), sandbox().env);
+      expect(context(r.stdout)).toBe(DRAFT_NUDGE);
+    });
+
+    it('adds the nudge after a GitHub MCP create, with no gh call for a same-repo head', () => {
+      const box = sandbox({ ghFails: true });
+      const r = run(mcpCreateInput(), box.env);
+      expect(box.ghArgv()).toBe('');
+      expect(r.status).toBe(0);
+      expect(context(r.stdout)).toBe(NUDGE);
+    });
+
+    it('adds the draft nudge after a GitHub MCP draft create', () => {
+      const r = run(mcpCreateInput({ draft: true }), sandbox().env);
+      expect(context(r.stdout)).toBe(DRAFT_NUDGE);
+    });
+
+    it.each<[string, Sandbox, string, string]>([
+      ['a Bash PR comes from a fork', { head: 'someone/civitai' }, createInput(), HEAD_READ],
+      ['the head repo cannot be read', { ghFails: true }, createInput(), HEAD_READ],
+      [
+        'a GitHub MCP PR comes from a fork',
+        { head: 'someone/civitai' },
+        mcpCreateInput({ head: 'someone:feat/x' }),
+        HEAD_READ,
+      ],
+      [
+        'a GitHub MCP create is on another repo',
+        {},
+        mcpCreateInput(
+          { repo: 'civitai-app-starters' },
+          mcpAnswer(PR, 'civitai/civitai-app-starters')
+        ),
+        '',
+      ],
+      [
+        'a GitHub MCP response cannot be parsed',
+        {},
+        mcpCreateInput({}, [{ type: 'text', text: 'failed to create pull request' }]),
+        '',
+      ],
+    ])('says nothing and exits 0 when %s', (_label, opts, input, ghArgv) => {
       const box = sandbox(opts);
-      const r = run(createInput(), box.env);
+      const r = run(input, box.env);
       expect(box.ghArgv()).toBe(ghArgv);
       expect(r.status).toBe(0);
       expect(r.stdout).toBe('');
@@ -382,7 +553,7 @@ describe.skipIf(process.platform === 'win32')(
       ['input that is not JSON', '{not json'],
       ['no input', ''],
     ])('says nothing and exits 0 for %s', (_label, input) => {
-      const box = sandbox({ config: SIGNED_IN });
+      const box = sandbox();
       const r = run(input, box.env);
       expect(box.ghArgv()).toBe('');
       expect(r.status).toBe(0);
@@ -403,7 +574,7 @@ describe.skipIf(process.platform === 'win32')(
         })}\n`,
       ],
     ])('answers within the time limit for %s', (_label, command, stdout) => {
-      const r = run(createInput(command), sandbox({ config: SIGNED_IN }).env, HOOK_LIMIT_MS);
+      const r = run(createInput(command), sandbox().env, HOOK_LIMIT_MS);
       expect(r.signal, `the hook did not exit within ${HOOK_LIMIT_MS} ms`).toBeNull();
       expect(r.status).toBe(0);
       expect(r.stdout).toBe(stdout);

@@ -2,32 +2,32 @@
  * Every decision the PostToolUse pr-review nudge makes. The hook itself is pr-review-nudge.mjs,
  * stdin wiring around this file, split out so a test can import it (as check-writable.logic.mjs).
  *
- * It fires when a Bash call has just opened a civitai/civitai PR (`gh pr create`) or marked one
- * ready (`gh pr ready`), and tells the session to follow the `pr-review` skill: record the PR's
- * intent in HQ before the hosted review's first round finishes, then wait for that round and work
- * its findings. It only adds context; it never blocks a command.
+ * It fires when a tool call has just opened a civitai/civitai PR or marked one ready, and tells the
+ * session to follow the `pr-review` skill: record the PR's intent in HQ before the hosted review's
+ * first round finishes, then wait for that round and work its findings. It only adds context; it
+ * never blocks a call. The text names both the `hq` CLI and the HQ MCP tools, so it does not need to
+ * know which of them the session has.
  *
- * The hosted review covers enrolled team members, who use HQ, so the nudge needs all three, checked
- * cheapest first (`nudgeEvent`):
- *   1. the call opened or readied exactly one civitai/civitai PR (`prEvent`: the command and what
- *      gh printed, no I/O). This is the only check every Bash call pays for;
- *   2. `hq` is installed and signed in (`hqSignedIn`: PATH and the config file, no network);
- *   3. the PR's head is in civitai/civitai, not a fork (`prHeadRepo`: ONE `gh api` read, made only
- *      once 1 and 2 hold). gh prints the base repo's URL for a fork's PR too, so the URL cannot say.
- * Any check that fails or cannot run means no nudge, silently.
+ * Two kinds of call count (`hookEvent`):
+ *   - a Bash `gh pr create` / `gh pr ready` (`prEvent`: the command and what gh printed, no I/O);
+ *   - a GitHub MCP `create_pull_request`, or `update_pull_request` with `draft: false`
+ *     (`mcpPrEvent`: the tool's input and response, no I/O).
+ * Then the PR's head must be in civitai/civitai, not a fork (`prHeadRepo`: ONE `gh api` read, made
+ * only once the call qualified, and skipped when an MCP create's `head` is a branch of this repo). gh prints
+ * the base repo's URL for a fork's PR too, so the URL cannot say. Any check that fails or cannot run
+ * means no nudge, silently.
  *
- * The PR number comes from what gh PRINTED, never from the command: `gh pr create` prints the new
- * PR's URL, and `gh pr ready` prints `Pull request civitai/civitai#<n> is marked as "ready for
- * review"` (on stderr). Two of gh's other answers name a PR too, and are excluded by their own
- * words because nothing just happened: a create refused with `a pull request for branch "…" into
- * branch "…" already exists:` and the existing PR's URL, and a ready that says the PR `is already
- * "ready for review"`. A gh command quoted in an echo or a commit message is not a gh segment
- * (`ghPrMatch`), so it fires nothing whatever was printed.
+ * The PR number comes from what the tool RETURNED, never from what it was asked: `gh pr create`
+ * prints the new PR's URL, `gh pr ready` prints `Pull request civitai/civitai#<n> is marked as
+ * "ready for review"` (on stderr), and the GitHub MCP server answers `{"id":…,"url":"<PR URL>"}`.
+ * Two of gh's other answers name a PR too, and are excluded by their own words because nothing just
+ * happened: a create refused with `a pull request for branch "…" into branch "…" already exists:`
+ * and the existing PR's URL, and a ready that says the PR `is already "ready for review"`. A gh
+ * command quoted in an echo or a commit message is not a gh segment (`ghPrMatch`), so it fires
+ * nothing whatever was printed.
  */
 
 import { spawnSync } from 'child_process';
-import { accessSync, constants, readFileSync } from 'fs';
-import { delimiter, join } from 'path';
 
 const REPO = 'civitai/civitai';
 const GH_TIMEOUT_MS = 10_000;
@@ -177,42 +177,6 @@ export function prEvent(command, toolResponse) {
   return { action, pr, draft };
 }
 
-function isExecutable(path) {
-  try {
-    accessSync(path, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function readText(path) {
-  try {
-    return readFileSync(path, 'utf8');
-  } catch {
-    return '';
-  }
-}
-
-/**
- * True when `hq` is on PATH and has a token: `HQ_TOKEN`, else the `token` in hq's config file
- * (`$XDG_CONFIG_HOME/hq/config.toml`, else `$HOME/.config/hq/config.toml`, the paths and the order
- * the CLI itself reads). It makes no network call, so it cannot tell whether HQ still accepts the
- * token; a rejected one shows as an auth error on the skill's first command.
- */
-export function hqSignedIn(env = process.env, io = { isExecutable, readText }) {
-  const names = process.platform === 'win32' ? ['hq.exe', 'hq'] : ['hq'];
-  const dirs = (env.PATH || '').split(delimiter).filter(Boolean);
-  if (!dirs.some((dir) => names.some((name) => io.isExecutable(join(dir, name))))) return false;
-  if ((env.HQ_TOKEN || '').trim()) return true;
-  const base = env.XDG_CONFIG_HOME || (env.HOME ? join(env.HOME, '.config') : '');
-  if (!base) return false;
-  const m = /^\s*token\s*=\s*(?:"([^"\n]*)"|'([^'\n]*)')/m.exec(
-    io.readText(join(base, 'hq', 'config.toml'))
-  );
-  return Boolean(m && (m[1] ?? m[2]).trim());
-}
-
 /** The PR's head repo (`owner/name`) as GitHub reports it, or null when it cannot be read. */
 export function prHeadRepo(pr, env = process.env, run = spawnSync) {
   const r = run('gh', ['api', `repos/${REPO}/pulls/${pr}`, '--jq', '.head.repo.full_name'], {
@@ -224,36 +188,106 @@ export function prHeadRepo(pr, env = process.env, run = spawnSync) {
   return (r.stdout || '').trim() || null;
 }
 
-/** `prEvent`'s event when all three checks in the header hold, else null. */
-export function nudgeEvent(command, toolResponse, env = process.env, deps = {}) {
-  const event = prEvent(command, toolResponse);
-  if (!event) return null;
-  if (!(deps.hqSignedIn ?? hqSignedIn)(env)) return null;
-  const head = (deps.prHeadRepo ?? prHeadRepo)(event.pr, env);
-  return head && head.toLowerCase() === REPO ? event : null;
+// The GitHub MCP server's PR tools, under whatever name the session gave the server.
+const GITHUB_MCP_PR_TOOL = /^mcp__.*github.*__(create_pull_request|update_pull_request)$/i;
+const PR_URL = /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/pull\/([1-9][0-9]*)$/;
+
+/**
+ * The one PR an MCP response names in a `url` or `html_url` field, at any depth and inside any
+ * string that is itself JSON (an MCP text part), when it is a civitai/civitai PR; else null. Text
+ * that is not JSON, an error result, another repo's URL, or two PRs all give null.
+ */
+function mcpResponsePr(toolResponse) {
+  const prs = new Set();
+  let isError = false;
+  const visit = (value, depth) => {
+    if (depth > 8 || value == null) return;
+    if (typeof value === 'string') {
+      let parsed;
+      try {
+        parsed = JSON.parse(value);
+      } catch {
+        return;
+      }
+      visit(parsed, depth + 1);
+      return;
+    }
+    if (typeof value !== 'object') return;
+    if (value.isError === true || value.is_error === true) isError = true;
+    for (const key of ['url', 'html_url']) {
+      const m = typeof value[key] === 'string' ? PR_URL.exec(value[key]) : null;
+      if (m) prs.add(`${m[1]}/${m[2]}#${m[3]}`.toLowerCase());
+    }
+    for (const child of Object.values(value)) visit(child, depth + 1);
+  };
+  visit(toolResponse, 0);
+  if (isError || prs.size !== 1) return null;
+  const [repo, pr] = [...prs][0].split('#');
+  return repo === REPO ? Number(pr) : null;
 }
 
-/** The context the hook adds for an event from `prEvent`. */
+/**
+ * `{ action, pr, draft, headRepo? }` when a GitHub MCP call opened a civitai/civitai PR
+ * (`create_pull_request`) or marked one ready (`update_pull_request` with `draft: false`), else
+ * null. `headRepo` is set only when a create's `head` names a branch of civitai/civitai: GitHub reads
+ * an unqualified `head` as a branch of the base repo, and `owner:branch` as a branch of owner's.
+ *
+ * An update sending `draft: false` for a PR that was already ready counts too: the server answers
+ * both the same way.
+ */
+export function mcpPrEvent(toolName, toolInput, toolResponse) {
+  const tool = GITHUB_MCP_PR_TOOL.exec(toolName || '');
+  if (!tool || toolInput == null || typeof toolInput !== 'object') return null;
+  if (`${toolInput.owner}/${toolInput.repo}`.toLowerCase() !== REPO) return null;
+  const pr = mcpResponsePr(toolResponse);
+  if (pr === null) return null;
+  if (tool[1].toLowerCase() === 'update_pull_request') {
+    if (toolInput.draft !== false || Number(toolInput.pullNumber) !== pr) return null;
+    return { action: 'ready', pr, draft: false };
+  }
+  const event = { action: 'create', pr, draft: toolInput.draft === true };
+  const head = typeof toolInput.head === 'string' ? toolInput.head : '';
+  const owner = head.includes(':') ? head.slice(0, head.indexOf(':')) : 'civitai';
+  if (head && owner.toLowerCase() === 'civitai') event.headRepo = REPO;
+  return event;
+}
+
+/**
+ * `{ action, pr, draft }` when the hook's input is a call that opened or readied a civitai/civitai
+ * PR whose head is in civitai/civitai, else null.
+ */
+export function hookEvent(input, env = process.env, deps = {}) {
+  const toolName = input?.tool_name || '';
+  const event = toolName.startsWith('mcp__')
+    ? mcpPrEvent(toolName, input?.tool_input, input?.tool_response)
+    : prEvent(input?.tool_input?.command || '', input?.tool_response);
+  if (!event) return null;
+  const head = event.headRepo ?? (deps.prHeadRepo ?? prHeadRepo)(event.pr, env);
+  if (!head || head.toLowerCase() !== REPO) return null;
+  return { action: event.action, pr: event.pr, draft: event.draft };
+}
+
+/** The context the hook adds for an event from `hookEvent`. */
 export function nudge({ action, pr, draft }) {
   const ref = `${REPO}#${pr}`;
   const intent =
-    `Record its intent in HQ now, before the first round finishes: ` +
-    `\`hq pr-review why set ${ref} --intent "<what was asked, and why>"\` ` +
-    `(or the HQ MCP tool \`pr_review_why_set\`). The intent is internal: never put it in the PR ` +
-    `body or a GitHub comment.`;
+    `Record its intent in HQ now, before the first round finishes: with the hq CLI, ` +
+    `\`hq pr-review why set ${ref} --intent "<what was asked, and why>"\`; with the HQ MCP tools, ` +
+    `\`pr_review_why_set\`. The intent is internal: never put it in the PR body or a GitHub comment.`;
   const wait =
-    `Then run \`hq pr-review watch ${ref}\` in the background and, when it returns, work the round ` +
-    `as the skill says.`;
+    `wait for the round in the background with \`hq pr-review watch ${ref}\` or the HQ MCP tool ` +
+    `\`pr_review_watch\` (without \`pr_review_watch\`, read the round with \`pr_review_get\` once ` +
+    `the \`pr-review\` check completes), then work the round as the skill says.`;
   if (action === 'create' && draft) {
     return (
       `${ref} was opened as a draft. The hosted review (the \`pr-review\` check) skips drafts, so it ` +
-      `starts when the PR is marked ready. Follow the \`pr-review\` skill. ${intent} Run the watch ` +
-      `after \`gh pr ready\`.`
+      `starts when the PR is marked ready. Follow the \`pr-review\` skill. ${intent} After the PR ` +
+      `is marked ready, ${wait}`
     );
   }
   const what = action === 'create' ? 'was opened' : 'was marked ready for review';
   return (
     `${ref} ${what}. The hosted review (the \`pr-review\` check) reviews every new head of it. ` +
-    `Follow the \`pr-review\` skill. ${intent} ${wait}`
+    `Follow the \`pr-review\` skill. ${intent} Then ${wait}`
   );
 }
