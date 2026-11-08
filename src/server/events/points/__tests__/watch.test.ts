@@ -166,7 +166,7 @@ describe('markWatched', () => {
     expect(await mark([hatId(1), TEAMS_WATCH], deps({ logCapReached }))).toBe(1);
     expect(fake.set(KEY).get(TEAMS_WATCH)).toBe(NOW + WATCH_TTL_MS);
     expect(fake.set(KEY).has(hatId(1))).toBe(false);
-    expect(logCapReached).toHaveBeenCalledWith(EVENT.name, 1);
+    expect(logCapReached).toHaveBeenCalledWith(EVENT.name, 1, 'watch');
   });
 
   it('marks exactly at the start and at the end of finalization', async () => {

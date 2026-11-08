@@ -41,6 +41,9 @@ export type WatchRedis = Pick<
 
 // A player's own total, watched by that player only: the member is named from the session, never
 // from input, and its push goes to that user alone (push.ts).
+// The interest set of shared topics (hats, roster cards, teams), and the one of players' own totals.
+type WatchSet = 'watch' | 'watchSelf';
+
 export const selfWatchMember = (userId: number) => `self:${userId}`;
 
 export type WatchEvent = {
@@ -65,7 +68,7 @@ export type MarkWatchDeps = {
   // The signed-in caller, whose own total `self` marks.
   selfUserId?: number;
   // Called when the cap refuses topics, with how many.
-  logCapReached?: (event: string, refused: number) => void;
+  logCapReached?: (event: string, refused: number, set: WatchSet) => void;
 };
 
 // Marks topics as on screen for the next WATCH_TTL_MS. Writes nothing with the engine switched off,
@@ -101,13 +104,12 @@ export async function markWatched(
       valid.push(topic);
     else if (listedOwners.has(topic)) valid.push(topic);
   }
-  const keys = eventPointKeys(name);
-  const mark = (key: string, members: string[], cap: number) =>
-    markIn(deps, name, key, members, cap, { now, endsAt, alwaysRoom: teams });
+  const mark = (set: WatchSet, members: string[], cap: number) =>
+    markIn(deps, name, set, members, cap, { now, endsAt, alwaysRoom: teams });
   const [topicsMarked, selfMarked] = await Promise.all([
-    mark(keys.watch, valid, MAX_WATCHED_PER_EVENT),
+    mark('watch', valid, MAX_WATCHED_PER_EVENT),
     self && deps.selfUserId
-      ? mark(keys.watchSelf, [selfWatchMember(deps.selfUserId)], MAX_SELF_WATCHED_PER_EVENT)
+      ? mark('watchSelf', [selfWatchMember(deps.selfUserId)], MAX_SELF_WATCHED_PER_EVENT)
       : 0,
   ]);
   return topicsMarked + selfMarked;
@@ -120,12 +122,13 @@ export async function markWatched(
 async function markIn(
   deps: MarkWatchDeps,
   event: string,
-  key: string,
+  set: WatchSet,
   members: string[],
   cap: number,
   { now, endsAt, alwaysRoom }: { now: number; endsAt: number; alwaysRoom: string }
 ) {
   if (!members.length) return 0;
+  const key = eventPointKeys(event)[set];
   await deps.redis.zRemRangeByScore(key, '-inf', now);
   const [size, scores] = await Promise.all([
     deps.redis.zCard(key),
@@ -133,7 +136,8 @@ async function markIn(
   ]);
   let room = Math.max(0, cap - Number(size));
   const marked = members.filter((m, i) => scores[i] != null || m === alwaysRoom || room-- > 0);
-  if (marked.length < members.length) deps.logCapReached?.(event, members.length - marked.length);
+  if (marked.length < members.length)
+    deps.logCapReached?.(event, members.length - marked.length, set);
   if (!marked.length) return 0;
   const lapse = now + WATCH_TTL_MS;
   await Promise.all([
@@ -153,7 +157,7 @@ export async function readWatched(
   topics: string[],
   now: number,
   redis: Pick<typeof sysRedis, 'zmScore'> = sysRedis,
-  set: 'watch' | 'watchSelf' = 'watch'
+  set: WatchSet = 'watch'
 ) {
   if (!topics.length) return new Set<string>();
   const scores = await redis.zmScore(eventPointKeys(event)[set], topics);
@@ -169,13 +173,14 @@ export const defaultMarkWatchDeps = (
   redis: sysRedis,
   now: Date.now,
   isEnabled: isEventPointsEnabled,
-  logCapReached: (event, refused) =>
+  logCapReached: (event, refused, set) =>
     void logToAxiom({
       type: 'warning',
       name: 'event-points-watch',
       event,
       message: 'interest set at its cap, topics refused',
       refused,
+      set,
     }).catch(() => undefined),
   ...deps,
 });
