@@ -1,4 +1,4 @@
-import { ecosystemDefaultVersion, findByAir, MODEL_CARDS } from '$lib/data/trainingModels';
+import { ecosystemDefaultVersion, findByAir, MODEL_CARDS } from './data/trainingModels';
 
 // The training service status the main app's moderators set (`training.setStatus`, stored in the sys
 // redis `training:status` hash field). `blockedModels` holds the main app's `trainingDetails.baseModel`
