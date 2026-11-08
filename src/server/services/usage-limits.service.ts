@@ -1,7 +1,11 @@
 import type { NextApiRequest } from 'next';
 import { COMMENT_V3_RATE_LIMIT_KEY } from '~/server/schema/comment.schema';
 import { POST_CREATE_RATE_LIMIT_KEY } from '~/server/schema/post.schema';
-import { resolveUsageLimitRules } from '~/server/services/usage-limit-config.service';
+import { calendarWindow, usageLimitCounters } from '~/server/services/usage-limit-counters';
+import {
+  resolveUsageLimit,
+  resolveUsageLimitRules,
+} from '~/server/services/usage-limit-config.service';
 import { peekRateLimit } from '~/server/utils/rate-limit-bucket';
 import type { RateLimit } from '~/server/utils/rate-limit-window';
 import {
@@ -49,12 +53,13 @@ export type UsageLimit = {
   limit: number | null;
   used: number | null;
   remaining: number | null;
+  /** A rolling window's length; `null` for a calendar window. */
   windowSeconds: number | null;
   /** `rateLimit()` windows are rolling; calendar windows (UTC day/month) reset at a boundary. */
   window: UsageLimitWindow | null;
   /** When the caller can next use it, at the limit; `null` while `remaining > 0`. */
   nextAt: string | null;
-  /** When every attempt in the window has aged out. */
+  /** When every attempt in the window has aged out; a calendar window's next boundary. */
   resetAt: string | null;
 };
 
@@ -111,8 +116,47 @@ export async function getUsageLimits({
       });
     })
   );
-  const limits = byArea.flat();
+  const counted = await countedLimits(user, wanted);
+  const order = (row: UsageLimit) => usageLimitDefs.findIndex((def) => def.id === row.id);
+  const limits = [...byArea.flat(), ...counted].sort((a, b) => order(a) - order(b));
   return { limits };
+}
+
+/**
+ * Calendar-window product limits counted by their own service (`usageLimitCounters`). Moderators
+ * get real counts here: the enforcing service, not `rateLimit()`, decides who is exempt.
+ */
+async function countedLimits(
+  user: SessionUser,
+  wanted: Set<string> | undefined
+): Promise<UsageLimit[]> {
+  const now = Date.now();
+  const rows = await Promise.all(
+    usageLimitDefs.map(async (def): Promise<UsageLimit | null> => {
+      const counter = usageLimitCounters[def.id];
+      const window = def.window;
+      if (!counter || def.kind !== 'product' || window.type === 'rolling') return null;
+      if (wanted && !wanted.has(def.id)) return null;
+      const { limit, applies } = await resolveUsageLimit(def.id, user);
+      if (!applies) return null;
+      const { start, end } = calendarWindow(window.type, now);
+      const used = await counter({ userId: user.id, start, end });
+      const remaining = Math.max(0, limit - used);
+      return {
+        id: def.id,
+        area: def.area,
+        label: def.label,
+        limit,
+        used,
+        remaining,
+        windowSeconds: null,
+        window: window.type,
+        nextAt: remaining > 0 ? null : end.toISOString(),
+        resetAt: end.toISOString(),
+      };
+    })
+  );
+  return rows.filter((row): row is UsageLimit => row !== null);
 }
 
 function unlimited(id: string, area: string): UsageLimit {
