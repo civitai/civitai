@@ -195,7 +195,7 @@ describe('X-RateLimit headers', () => {
     expect(headersFor(req, 2)).toBeUndefined();
   });
 
-  it('a GET batch is sized from its paths before tRPC parses it', async () => {
+  it('a response is sized from paths when info is not given', async () => {
     const { req } = await run({ rules: [product], recorded: attempts(2), path: 'post.create' });
     expect(rateLimitHeaders({ ctx: { req }, paths: ['post.create'] })).toBeDefined();
     expect(

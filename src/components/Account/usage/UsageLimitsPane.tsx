@@ -89,8 +89,9 @@ export function UsageLimitsView({
       )}
       <Paper withBorder radius="md" p="sm" className="bg-gray-0 dark:bg-dark-7">
         <Text size="xs" c="dimmed">
-          For scripts: <Code>GET /api/v1/me/limits</Code> returns this as JSON. Every limit error is
-          HTTP 429 with a <Code>Retry-After</Code> header.
+          For scripts: <Code>GET /api/v1/me/limits</Code> returns this as JSON. A limit error is
+          HTTP 429; a single call refused by a limit that frees up also gets a{' '}
+          <Code>Retry-After</Code> header.
         </Text>
       </Paper>
     </Stack>
@@ -116,7 +117,7 @@ function UsagePlanBanner({ tier, creatorScore }: { tier?: string; creatorScore?:
           )}
         </Text>
         <Text size="xs" c="dimmed">
-          Posting and generation limits rise with membership and Creator Score.
+          Posting and comment limits rise with Creator Score, and posting also with membership.
         </Text>
       </div>
       <Button component={Link} href="/pricing" size="xs">

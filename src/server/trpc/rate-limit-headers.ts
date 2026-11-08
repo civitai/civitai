@@ -37,7 +37,7 @@ export function noteRateLimitUsage(req: object | undefined, usages: RuleUsage[])
 
 /**
  * `responseMeta`'s headers for a single-call response, or none. `Reset` is seconds until a slot
- * frees. A GET batch has no `info` before parsing, so its size comes from `paths`.
+ * frees. `paths` is tRPC's copy of `info.calls`' paths; either sizes the response.
  */
 export function rateLimitHeaders({
   ctx,
