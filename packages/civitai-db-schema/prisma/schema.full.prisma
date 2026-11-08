@@ -2205,7 +2205,7 @@ model Image {
   blockedFor        String?
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
-  profilePictureHold ProfilePictureHold?
+  profilePictureHold ProfilePictureHold[]
   sortAt            DateTime                @default(dbgenerated()) // authored by image_post_triggers (set_image_sort_at BEFORE INSERT/UPDATE); no client/DB literal default — keeps the field client-optional while the trigger owns the value
   minor             Boolean                 @default(false)
   poi               Boolean                 @default(false)
@@ -7734,12 +7734,13 @@ model ImageCdnAccessClaim {
 model ProfilePictureHold {
   id         Int      @id @default(autoincrement())
   userId     Int
-  imageId    Int      @unique
+  imageId    Int
   image      Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
   reason     String
   exportable Boolean  @default(false)
   createdAt  DateTime @default(now())
 
+  @@unique([imageId, reason])
   @@index([userId, createdAt(sort: Desc)])
 }
 

@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS "ProfilePictureHold" (
   CONSTRAINT "ProfilePictureHold_reason_check" CHECK ("reason" IN ('blocked', 'flagged'))
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS "ProfilePictureHold_imageId_key" ON "ProfilePictureHold"("imageId");
+CREATE UNIQUE INDEX IF NOT EXISTS "ProfilePictureHold_imageId_reason_key"
+  ON "ProfilePictureHold"("imageId", "reason");
 CREATE INDEX IF NOT EXISTS "ProfilePictureHold_userId_createdAt_idx"
   ON "ProfilePictureHold"("userId", "createdAt" DESC);
 

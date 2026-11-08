@@ -1724,7 +1724,7 @@ export interface Image {
   blockedFor: string | null;
   scanJobs: JsonValue | null;
   assignedUser?: User | null;
-  profilePictureHold?: ProfilePictureHold | null;
+  profilePictureHold?: ProfilePictureHold[];
   sortAt: Date;
   minor: boolean;
   poi: boolean;

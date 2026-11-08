@@ -68,12 +68,25 @@ export async function syncProfilePictureForImage(
     const [user] = await tx.$queryRaw<{ id: number }[]>`
       SELECT id FROM "User" WHERE "profilePictureId" = ${imageId} FOR UPDATE
     `;
-    if (!user) return { action: 'none' };
     const reason = flagged ? 'flagged' : 'blocked';
+    let ownerId = user?.id ?? 0;
+    if (!user) {
+      // Flagged, then blocked: the flag already took the pointer, so the block's record goes to the
+      // owner of the flagged record, while the image is still theirs.
+      if (reason !== 'blocked') return { action: 'none' };
+      const [prior] = await tx.$queryRaw<{ id: number }[]>`
+        SELECT u.id FROM "ProfilePictureHold" h
+        JOIN "User" u ON u.id = h."userId"
+        WHERE h."imageId" = ${imageId} AND h.reason = 'flagged' AND h."userId" = ${image.userId}
+        FOR UPDATE OF u
+      `;
+      if (!prior) return { action: 'none' };
+      ownerId = prior.id;
+    }
     // `exportable` is decided here and never recomputed, so a later hold or report cannot take a
     // row out of a later export. DO NOTHING, not an upsert: the write role has no UPDATE.
-    const owner = Prisma.sql`${user.id}::int`;
-    await tx.$executeRaw`
+    const owner = Prisma.sql`${ownerId}::int`;
+    const inserted = await tx.$executeRaw`
       INSERT INTO "ProfilePictureHold" ("userId", "imageId", reason, exportable)
       VALUES (${owner}, ${imageId}, ${reason}, (
         ${reason} = 'blocked'
@@ -84,8 +97,9 @@ export async function syncProfilePictureForImage(
         )
         AND NOT ${avatarRemovalUndisclosedSql(owner)}
       ))
-      ON CONFLICT ("imageId") DO NOTHING
+      ON CONFLICT ("imageId", reason) DO NOTHING
     `;
+    if (!user) return inserted ? { action: 'held', userId: ownerId } : { action: 'none' };
     // The legacy `image` url is the avatar fallback once the pointer is NULL. Exact match only.
     await tx.$executeRaw`
       UPDATE "User" u SET
@@ -106,28 +120,31 @@ export async function syncProfilePictureForImage(
   const clear = image.needsReview === null && image.blockedFor !== 'CSAM';
   if (!clear) return { action: 'none' };
 
-  const [hold] = await tx.$queryRaw<{ id: number; userId: number; newest: boolean }[]>`
-    SELECT h.id, h."userId", h.id = (
+  // Their own image only: an image that changed owner since is not their avatar to put back. An
+  // image can have two records, flagged and blocked; either being their newest counts.
+  const owner = image.userId;
+  const [hold] = await tx.$queryRaw<{ newest: boolean | null }[]>`
+    SELECT bool_or(h.id = (
       SELECT n.id FROM "ProfilePictureHold" n
       WHERE n."userId" = h."userId"
       ORDER BY n."createdAt" DESC, n.id DESC
       LIMIT 1
-    ) AS newest
-    FROM "ProfilePictureHold" h WHERE h."imageId" = ${imageId}
+    )) AS newest
+    FROM "ProfilePictureHold" h WHERE h."imageId" = ${imageId} AND h."userId" = ${owner}
   `;
-  // Their own image only: an image that changed owner since is not their avatar to put back.
-  if (!hold?.newest || hold.userId !== image.userId) return { action: 'none' };
+  if (!hold?.newest) return { action: 'none' };
   const restored = await tx.$executeRaw`
     UPDATE "User" SET "profilePictureId" = ${imageId}
-    WHERE id = ${hold.userId} AND "profilePictureId" IS NULL AND "deletedAt" IS NULL
+    WHERE id = ${owner} AND "profilePictureId" IS NULL AND "deletedAt" IS NULL
   `;
   if (!restored) return { action: 'none' };
-  // A held owner keeps the record, avatar restored or not.
+  // A held owner keeps the records, avatar restored or not.
   await tx.$executeRaw`
     DELETE FROM "ProfilePictureHold"
-    WHERE id = ${hold.id} AND NOT ${ownerHeldSql(Prisma.sql`${hold.userId}::int`)}
+    WHERE "imageId" = ${imageId} AND "userId" = ${owner}
+      AND NOT ${ownerHeldSql(Prisma.sql`${owner}::int`)}
   `;
-  return { action: 'restored', userId: hold.userId };
+  return { action: 'restored', userId: owner };
 }
 
 /** Busts the event-engine copy of these users' avatars, read from the same redis the main app uses. */

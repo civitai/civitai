@@ -13,7 +13,7 @@ const PATTERN = /ProfilePictureHold|profilePictureHold/;
 
 // Files that exist for the table: none may import a read client at all.
 const DEDICATED: Record<string, number> = {
-  'src/server/services/profile-picture-hold.service.ts': 5,
+  'src/server/services/profile-picture-hold.service.ts': 6,
   'src/server/notifications/primary-notification-queries.ts': 2,
   'src/server/services/personal-data-export/sources/profile-pictures.ts': 1,
   'apps/moderator/src/lib/server/profile-picture-hold.ts': 4,

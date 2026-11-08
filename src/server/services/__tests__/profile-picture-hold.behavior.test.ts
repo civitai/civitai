@@ -454,6 +454,89 @@ describe('syncProfilePictureForImage', () => {
   });
 });
 
+describe('flagged, then blocked', () => {
+  // A moderator block clears the review flag (clearReviewFlagsOnBlock).
+  const modBlock = (id: number) => setImage(id, `ingestion = 'Blocked', "needsReview" = NULL`);
+  const records = async (user: number) =>
+    (
+      await db.query<{ reason: string; exportable: boolean }>(
+        `SELECT reason, exportable FROM "ProfilePictureHold" WHERE "userId" = $1 ORDER BY id`,
+        [user]
+      )
+    ).rows;
+  const exported = async (user: number) =>
+    (await readRemovedProfilePictures(user)).map((r) => r.imageId);
+  const flagThenBlock = async (user: number) => {
+    await review(avatar(user), 'minor');
+    await runProfilePictureSync();
+    await modBlock(avatar(user));
+    await runProfilePictureSync();
+  };
+
+  it('adds a blocked record beside the flagged one, exported, for an owner not held', async () => {
+    await flagThenBlock(OWNER);
+    expect(await records(OWNER)).toEqual([
+      { reason: 'flagged', exportable: false },
+      { reason: 'blocked', exportable: true },
+    ]);
+    expect(await exported(OWNER)).toEqual([avatar(OWNER)]);
+  });
+
+  it('adds a blocked record that is not exported for a held owner', async () => {
+    await flagThenBlock(HELD_OWNER);
+    expect(await records(HELD_OWNER)).toEqual([
+      { reason: 'flagged', exportable: false },
+      { reason: 'blocked', exportable: false },
+    ]);
+    expect(await exported(HELD_OWNER)).toEqual([]);
+  });
+
+  it('keeps the blocked record as written when a CsamReport arrives after it', async () => {
+    await flagThenBlock(OWNER);
+    await db.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [OWNER]);
+    await queue(avatar(OWNER));
+    await runProfilePictureSync();
+    expect(await records(OWNER)).toEqual([
+      { reason: 'flagged', exportable: false },
+      { reason: 'blocked', exportable: true },
+    ]);
+    expect(await exported(OWNER)).toEqual([avatar(OWNER)]);
+  });
+
+  it('writes the blocked record once when the sync runs again', async () => {
+    await flagThenBlock(OWNER);
+    await queue(avatar(OWNER));
+    await runProfilePictureSync();
+    expect((await records(OWNER)).filter((r) => r.reason === 'blocked')).toHaveLength(1);
+  });
+
+  it('sends the block notice, and none to a held or reported owner', async () => {
+    const since = new Date(Date.now() - 60_000);
+    await flagThenBlock(OWNER);
+    await flagThenBlock(HELD_OWNER);
+    await flagThenBlock(REPORTED_OWNER);
+    const noticed = (await getBlockedProfilePictureNotices(since)).map((n) => n.userId);
+    expect(noticed).toEqual([OWNER]);
+  });
+
+  it('writes no blocked record once the image is no longer the owner’s', async () => {
+    await review(avatar(OWNER), 'minor');
+    await runProfilePictureSync();
+    await db.query(`UPDATE "Image" SET "userId" = $1 WHERE id = $2`, [OTHER, avatar(OWNER)]);
+    await modBlock(avatar(OWNER));
+    await runProfilePictureSync();
+    expect(await records(OWNER)).toEqual([{ reason: 'flagged', exportable: false }]);
+  });
+
+  it('restores on unblock and removes both records', async () => {
+    await flagThenBlock(OWNER);
+    await unblock(avatar(OWNER));
+    await runProfilePictureSync();
+    expect(await pointer(OWNER)).toBe(avatar(OWNER));
+    expect(await records(OWNER)).toEqual([]);
+  });
+});
+
 describe('runProfilePictureSync', () => {
   it("refreshes the owner's caches and queues the search docs that show their avatar", async () => {
     await db.exec(`
