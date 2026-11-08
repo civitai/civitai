@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import type { act as actType } from 'react-dom/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type * as TrpcModule from '~/utils/trpc';
 
@@ -10,7 +9,7 @@ import type * as TrpcModule from '~/utils/trpc';
  * tab's rows under its own heading (Updates rows under Comments).
  */
 
-const act = (React as unknown as { act: typeof actType }).act;
+const act = (React as unknown as { act: (callback: () => void) => void }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let lastOptions: { placeholderData?: unknown } | undefined;
