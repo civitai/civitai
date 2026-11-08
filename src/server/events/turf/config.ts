@@ -24,6 +24,12 @@ export type EventTurfConfig = {
   catchUp?: CatchUpStep[];
   // How many of the leading team's earliest eligible stickerers one action on the image credits.
   creditedPlayers: CreditStep[];
+  // Scales `creditedPlayers` per leading team on the catch-up curve (scaleCredited). None: unscaled.
+  creditedCatchUp?: CatchUpStep[];
+  // Hours a sticker counts for, and the date its clock starts no earlier than (StickerExpiry).
+  // No ttlHours: stickers never expire.
+  ttlHours?: number;
+  rolloutAt?: Date;
   // Most stickers drawn on an image; the rest are counted, not drawn.
   renderLimit: number;
   // Most stickers image detail draws however many pages are loaded (DEFAULT_DRAW_CEILING if unset).
@@ -39,6 +45,12 @@ export const turfConfigKey = (event: string) =>
   `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.POINTS}:turf:config` as const;
 
 const stepDate = z.coerce.date();
+const catchUpStep = z.object({
+  from: stepDate,
+  max: z.number().min(1),
+  min: z.number().min(0).max(1),
+  gap: z.number().positive(),
+});
 const overrideSchema = z
   .object({
     mode: z.enum(TURF_MODES),
@@ -52,14 +64,10 @@ const overrideSchema = z
         })
       )
       .min(1),
-    catchUp: z.array(
-      z.object({
-        from: stepDate,
-        max: z.number().min(1),
-        min: z.number().min(0).max(1),
-        gap: z.number().positive(),
-      })
-    ),
+    catchUp: z.array(catchUpStep),
+    creditedCatchUp: z.array(catchUpStep),
+    ttlHours: z.number().positive(),
+    rolloutAt: stepDate,
     creditedPlayers: z
       .array(z.object({ from: stepDate, players: z.number().int().positive() }))
       .min(1),
