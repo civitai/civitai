@@ -166,6 +166,18 @@ vi.mock('~/utils/file-utils', async (importOriginal) => ({
   fetchBlob: (...args: unknown[]) => mockFetchBlob(...args),
 }));
 
+// Holds a large original's spool-dir mkdir, as a busy fs threadpool does.
+const spoolMkdir = vi.hoisted(() => ({ delayMs: 0 }));
+vi.mock('fs/promises', async (importOriginal) => {
+  const real = await importOriginal<typeof fsAsync>();
+  const mkdir = (async (dir: string, options?: unknown) => {
+    if (spoolMkdir.delayMs > 0 && String(dir).endsWith('/spool'))
+      await new Promise((resolve) => setTimeout(resolve, spoolMkdir.delayMs));
+    return real.mkdir(dir, options as never);
+  }) as typeof real.mkdir;
+  return { ...real, mkdir, default: { ...real, mkdir } };
+});
+
 const getObjectKeys: string[] = [];
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -173,9 +185,9 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
     bucket: 'test-images',
     backend: 'backblaze',
     s3: {
-      send: (command: { input: GetObjectInput }) => {
+      send: (command: { input: GetObjectInput }, options?: { abortSignal?: AbortSignal }) => {
         getObjectKeys.push(command.input.Key);
-        return mockGetObject(command.input.Key, command.input);
+        return mockGetObject(command.input.Key, command.input, options?.abortSignal);
       },
     },
   }),
@@ -242,7 +254,11 @@ vi.mock('~/server/services/file.service', async (importOriginal) => ({
 
 let mockFetchBlob: (...args: unknown[]) => unknown = () => null;
 type GetObjectInput = { Key: string; Range?: string; IfMatch?: string };
-let mockGetObject: (key: string, input: GetObjectInput) => Promise<unknown>;
+let mockGetObject: (
+  key: string,
+  input: GetObjectInput,
+  abortSignal?: AbortSignal
+) => Promise<unknown>;
 const mockGetFileForModelVersion: (...args: unknown[]) => unknown = async () => ({
   status: 'not-found',
 });
@@ -299,6 +315,7 @@ beforeEach(() => {
   uploads.clear();
   uploadFailure = undefined;
   getObjectKeys.length = 0;
+  spoolMkdir.delayMs = 0;
   // A regression to the edge copy must fail here, not reach the network.
   vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
   mockFetchBlob = async () => fakeBlob(IMAGE_BYTES);
@@ -1412,10 +1429,63 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
     ]);
 
     expect(outcome).toBe('synthetic storage outage');
-    // The readers parked on the budget are refused rather than granted once the archive fails.
+    // The reader holding the budget is stopped and those parked on it are refused, so no body is read.
+    expect(bodiesRead).toBe(0);
     const readAtFailure = bodiesRead;
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(bodiesRead).toBe(readAtFailure);
+  });
+
+  it('starts no read after a failed archive, and leaves its scratch dir removed', async () => {
+    // The original that holds the budget is still creating its spool dir when the archive fails.
+    spoolMkdir.delayMs = 30;
+    const base = mockGetObject;
+    const sends: { key: string; ranged: boolean }[] = [];
+    mockGetObject = async (key, input) => {
+      sends.push({ key, ranged: !!input.Range });
+      if (key === 'big-2')
+        throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+      return base(key, input);
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+      'synthetic storage outage'
+    );
+    // Past the held mkdir, so a read that outlived the archive would have started by now.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(sends.filter((send) => send.ranged)).toEqual([]);
+    expect(fs.existsSync(path.join(csamBaseDir, 'images', String(report.id)))).toBe(false);
+  });
+
+  it('rejects promptly when a read in flight is stopped by the failure', async () => {
+    let holderReading!: () => void;
+    const holderStarted = new Promise<void>((resolve) => (holderReading = resolve));
+    const base = mockGetObject;
+    mockGetObject = async (key, input, abortSignal) => {
+      if (key === 'big-2') {
+        // Fails only once another original is mid-read.
+        await holderStarted;
+        throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+      }
+      if (!input.Range) return base(key, input);
+      holderReading();
+      // A part that never arrives: only an abort ends it.
+      return new Promise((_, reject) => {
+        if (abortSignal?.aborted) reject(abortSignal.reason);
+        abortSignal?.addEventListener('abort', () => reject(abortSignal.reason));
+      });
+    };
+
+    const outcome = await Promise.race([
+      archiveCsamDataForReport(report as never).then(
+        () => 'resolved',
+        (e: Error) => e.message
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 2_000)),
+    ]);
+
+    expect(outcome).toBe('synthetic storage outage');
   });
 });
 
@@ -1456,8 +1526,9 @@ describe('archiveCsamDataForReport (Image report, failed read)', () => {
     // Let any read still queued behind the concurrency limit start, if it is going to.
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    expect(getObjectKeys.length).toBeGreaterThan(1);
-    expect(getObjectKeys.length).toBeLessThanOrEqual(10);
+    const reads = getObjectKeys.filter((key) => key.startsWith('key-'));
+    expect(reads.length).toBeGreaterThan(1);
+    expect(reads.length).toBeLessThanOrEqual(10);
   });
 });
 
