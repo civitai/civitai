@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import type { GenerationCtx } from '~/shared/generation/context';
+import type { GateRuleView } from '~/shared/generation/gates';
 
 /** A changed config reaches the store as a new `ext`; the user's picks and entries must survive it. */
 const sdxlGate = {
@@ -9,9 +10,9 @@ const sdxlGate = {
   ecosystems: ['SDXL'],
   workflows: [],
   modelVersionIds: [],
-} satisfies GenerationCtx['gateRules'][number];
+} satisfies GateRuleView;
 
-const ctx = (gateRules: GenerationCtx['gateRules']): GenerationCtx => ({
+const ctx = (gateRules: GateRuleView[]): GenerationCtx => ({
   limits: { maxQuantity: 8, maxResources: 9, vidQuantity: 4 },
   user: { isMember: true, tier: 'gold' },
   flags: {},

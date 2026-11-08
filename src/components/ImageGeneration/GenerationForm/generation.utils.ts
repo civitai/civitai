@@ -87,8 +87,7 @@ const DEFAULT_GENERATION_CONFIG = {
  * fields should call this hook so React Query dedupes the request.
  */
 export const useGenerationConfig = () => {
-  // Polled so gate lifts and outage hides reach an open generator; each poll is
-  // a per-user request, so keep the interval long.
+  // Each poll is a per-user request; keep the interval long.
   const { data } = trpc.generation.getGenerationConfig.useQuery(undefined, {
     gcTime: Infinity,
     staleTime: GENERATION_CONFIG_STALE_MS,
