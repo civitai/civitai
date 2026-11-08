@@ -32,6 +32,11 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
 }));
 
+vi.mock('~/server/services/collection.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getUserCollectionPermissionsById: vi.fn().mockResolvedValue({ read: true }),
+}));
+
 import { getAllImages } from '../image.service';
 
 const REVIEWER = 10;
@@ -113,8 +118,8 @@ describe("a collection review's image read", () => {
   });
 
   // A choice, not an accident: a judge sees a submission that is acceptable only in a collection,
-  // so they can reject it. Once ACCEPTED, a collection items read loads it by id with no collection,
-  // and that read leaves it out; a read of the collection's own image feed keeps it.
+  // so they can reject it. Once ACCEPTED, it is the owner's and moderators' only, in a read by id
+  // and in the collection's own image feed alike.
   it('keeps collection-only acceptable images in the review read, and out of a read by id with no collection', async () => {
     const review = await statementFor(
       { id: REVIEWER },
@@ -164,5 +169,44 @@ describe("a collection review's image read", () => {
     };
     expect(await ownerIds(REVIEWER)).toEqual([REVIEWER, REVIEWER]);
     expect(await ownerIds(REVIEWER + 1)).toEqual([REVIEWER + 1, REVIEWER + 1]);
+  });
+});
+
+describe("a collection's image feed", () => {
+  const FLAGGED = /i\."acceptableMinor" = FALSE(?: OR i\."userId" = \$(\d+))?/g;
+
+  async function flaggedClauses(viewer?: { id: number; isModerator?: boolean }) {
+    vi.clearAllMocks();
+    queryWithTimeoutMock.mockRejectedValue(new Error('stop here'));
+    await getAllImages({
+      limit: 20,
+      period: 'AllTime',
+      periodMode: 'stats',
+      sort: 'Newest',
+      browsingLevel: 31,
+      include: [],
+      collectionId: COLLECTION,
+      user: viewer ? { isModerator: false, ...viewer } : undefined,
+    } as unknown as Parameters<typeof getAllImages>[0]).catch(() => undefined);
+    expect(queryWithTimeoutMock, 'the build no longer reaches queryWithTimeout').toHaveBeenCalled();
+    const { text, values } = queryWithTimeoutMock.mock.calls[0][2] as {
+      text: string;
+      values: unknown[];
+    };
+    return [...text.matchAll(FLAGGED)].map((m) => (m[1] ? values[Number(m[1]) - 1] : null));
+  }
+
+  // Any signed-in non-moderator, a manager of the collection included: the clause ignores
+  // collection permissions, so only the image's owner passes it.
+  it("shows another user's flagged image only to its owner", async () => {
+    expect(await flaggedClauses({ id: REVIEWER })).toEqual([REVIEWER]);
+  });
+
+  it('shows it to no signed-out viewer', async () => {
+    expect(await flaggedClauses()).toEqual([null]);
+  });
+
+  it('leaves it to moderators', async () => {
+    expect(await flaggedClauses({ id: REVIEWER, isModerator: true })).toEqual([]);
   });
 });
