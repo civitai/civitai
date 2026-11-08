@@ -48,6 +48,7 @@ import {
   router,
 } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { trainingModelInfo } from '~/utils/training';
 
 const TRAINING_ANNOUNCEMENT_KEY = 'training-announcement';
 // Written by the moderator app's Training Models page; read here for the training form's alert box.
@@ -199,6 +200,12 @@ export const trainingRouter = router({
       z.object({
         available: z.boolean(),
         message: z.string().max(2000).nullish(),
+        blockedModels: z
+          .array(
+            z.string().refine((key) => Object.hasOwn(trainingModelInfo, key), 'Unknown base model')
+          )
+          .optional(),
+        blockedModelReasons: z.record(z.string(), z.string().max(300)).nullish(),
       })
     )
     .use(purgeOnSuccess(['training-status']))
