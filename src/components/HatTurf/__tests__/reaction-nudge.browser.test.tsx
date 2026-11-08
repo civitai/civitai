@@ -150,7 +150,8 @@ describe('reaction nudge', () => {
     expect(result.current).toBeUndefined();
     await bar(id, reactions);
     await page.getByRole('button', { name: /^Like reaction/ }).click();
-    expect(result.current).toMatch(/nudge/);
+    // The un-toggle reaches the hook on a later render; on a loaded runner, not by the next line.
+    await vi.waitFor(() => expect(result.current).toMatch(/nudge/));
   });
 
   test('an image is nudged once per session, however often it is stickered', async () => {
