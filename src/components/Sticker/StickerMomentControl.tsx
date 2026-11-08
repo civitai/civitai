@@ -1,5 +1,10 @@
-import { SegmentedControl, Slider, Text } from '@mantine/core';
+import { Button, SegmentedControl, Slider, Switch, Text } from '@mantine/core';
+import clsx from 'clsx';
 import { useEffect, useState } from 'react';
+import type { StickerRecording } from '~/components/Sticker/sticker-recording';
+import { RECORDING_TICK_MS } from '~/components/Sticker/sticker-recording';
+import { useStickerTrackCapture } from '~/components/Sticker/useStickerTrackCapture';
+import type { StickerTrackSample } from '~/shared/utils/sticker-track';
 import {
   STICKER_MOMENT_DEFAULT_DURATION_MS,
   STICKER_MOMENT_DURATIONS_MS,
@@ -21,18 +26,31 @@ const playheadMs = (video: HTMLVideoElement) => Math.round(video.currentTime * 1
 export const clampMomentStart = (startMs: number, windowMs: number, videoMs: number) =>
   videoMs > 0 ? Math.min(startMs, Math.max(0, videoMs - windowMs)) : startMs;
 
-/** Static, or pinned to a moment set from the playhead. */
+type Recorder = {
+  recording: StickerRecording | undefined;
+  onRecordingChange: (recording: StickerRecording | undefined) => void;
+  /** The draft's pose right now. */
+  pose: () => StickerTrackSample;
+  /** Moves the draft to a recorded pose. */
+  onPose: (pose: StickerTrackSample) => void;
+  onCapturing?: (capturing: boolean) => void;
+};
+
+/** Static, pinned to a moment set from the playhead, or moving along a recorded path. */
 export function StickerMomentControl({
   video,
   moment,
   following,
   onChange,
+  recorder,
 }: {
   video: HTMLVideoElement;
   moment: Moment | undefined;
   /** Whether scrubbing moves this one. Only the selected draft follows the playhead. */
   following: boolean;
   onChange: (moment: Moment | undefined) => void;
+  /** Offers recording movement. */
+  recorder?: Recorder;
 }) {
   const [durationMs, setDurationMs] = useState(0);
 
@@ -72,10 +90,15 @@ export function StickerMomentControl({
         size="xs"
         radius="xl"
         fullWidth
-        value={moment ? 'moment' : 'static'}
+        value={moment ? 'moment' : recorder?.recording ? 'record' : 'static'}
         onChange={(value) => {
+          if (value !== 'record') recorder?.onRecordingChange(undefined);
           if (value === 'static') return onChange(undefined);
           video.pause();
+          if (value === 'record') {
+            onChange(undefined);
+            return recorder?.onRecordingChange([]);
+          }
           onChange({
             startMs: clampMomentStart(
               playheadMs(video),
@@ -87,9 +110,14 @@ export function StickerMomentControl({
         }}
         data={[
           { label: 'Static', value: 'static' },
-          { label: 'Pin to a moment', value: 'moment' },
+          { label: 'Moment', value: 'moment' },
+          ...(recorder ? [{ label: 'Movement', value: 'record' }] : []),
         ]}
       />
+
+      {recorder?.recording && (
+        <StickerRecordPanel video={video} {...recorder} recording={recorder.recording} />
+      )}
 
       {moment && (
         <>
@@ -144,6 +172,85 @@ export function StickerMomentControl({
           />
         </>
       )}
+    </div>
+  );
+}
+
+/** Record, pause and re-record a draft's movement while the video plays. */
+function StickerRecordPanel({
+  video,
+  recording,
+  onRecordingChange,
+  pose,
+  onPose,
+  onCapturing,
+}: Recorder & { video: HTMLVideoElement; recording: StickerRecording }) {
+  const capture = useStickerTrackCapture({
+    video,
+    recording,
+    pose,
+    onRecording: onRecordingChange,
+    onPose,
+    onCapturing,
+  });
+
+  const [flash, setFlash] = useState(false);
+  useEffect(() => {
+    if (!capture.beat) return;
+    setFlash(true);
+    const timer = setTimeout(() => setFlash(false), 150);
+    return () => clearTimeout(timer);
+  }, [capture.beat]);
+
+  if (capture.phase === 'countdown')
+    return (
+      <Text size="xl" fw={700} c="white" aria-live="assertive">
+        {capture.count || 'Go'}
+      </Text>
+    );
+
+  if (capture.phase === 'recording')
+    return (
+      <div className="flex w-full items-center gap-1.5 px-1">
+        <span
+          data-testid="recording-beat"
+          className={clsx(
+            'size-2.5 shrink-0 rounded-full bg-red-6 transition',
+            // Reduced motion keeps the beat as a change of brightness, without the pulse.
+            flash ? 'opacity-100 motion-safe:scale-150' : 'opacity-50'
+          )}
+        />
+        <Text size="xs" c="white" className="grow">
+          Recording {clock(video.currentTime * 1000)}
+        </Text>
+        <Button size="compact-xs" variant="default" onClick={capture.pause}>
+          Pause
+        </Button>
+        <Button size="compact-xs" color="red" onClick={capture.stop}>
+          Stop
+        </Button>
+      </div>
+    );
+
+  return (
+    <div className="flex w-full flex-col items-center gap-1 px-1">
+      <Text size="xs" c="white">
+        {recording.length
+          ? `Recorded ${clock(
+              recording.length * RECORDING_TICK_MS
+            )}. Re-record from any point to change it.`
+          : 'Hold the sticker and move it while the video plays.'}
+      </Text>
+      <Button size="compact-xs" color="red" fullWidth onClick={capture.record}>
+        {recording.length ? 'Re-record from here' : 'Record'}
+      </Button>
+      <Switch
+        size="xs"
+        label="Tick while recording"
+        checked={capture.tickSound}
+        onChange={(event) => capture.setTickSound(event.currentTarget.checked)}
+        styles={{ label: { color: 'white' } }}
+      />
     </div>
   );
 }

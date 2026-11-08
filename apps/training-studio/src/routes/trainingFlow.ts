@@ -22,6 +22,7 @@ import {
 } from '$lib/data/trainingModels';
 import type { TrainingRunPayload } from '$lib/backend';
 import type { TrainingItem } from '$lib/train-core';
+import type { TagExcluder } from '$lib/autolabel-exclude';
 
 export const CUSTOM_VERSION_KEY = 'custom';
 export const MAX_RUNS = 5;
@@ -687,16 +688,16 @@ export type LabelPosition = 'after' | 'before' | 'replace';
 
 /** An image's label after an auto-label result lands. Only the dataset format's field reaches
  *  training (labelString), so a tagger result on a caption dataset — or a caption on a tag dataset —
- *  is written into that field, which is how one .txt ends up holding both. `exclude` (lower-cased)
- *  filters tagger output only. An empty result keeps the label. */
+ *  is written into that field, which is how one .txt ends up holding both. `exclude` filters tagger
+ *  output only. An empty result keeps the label. */
 export function mergeAutoLabel(
   img: Pick<Img, 'tags' | 'caption'>,
   result: { tags?: string[]; caption?: string },
   format: LabelType,
   position: LabelPosition,
-  exclude: ReadonlySet<string>
+  exclude: TagExcluder
 ): { tags: string[]; caption: string } {
-  const newTags = [...new Set(result.tags ?? [])].filter((t) => !exclude.has(t.toLowerCase()));
+  const newTags = [...new Set(result.tags ?? [])].filter((t) => !exclude(t));
   const newCaption = result.caption?.trim() ?? '';
 
   if (format === 'tag') {

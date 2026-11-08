@@ -104,6 +104,7 @@ const seed = ({
   acceptsBlueBuzz = false,
   goal = null as { id: number; active: boolean } | null,
   baseModel = 'SDXL 1.0',
+  model = {} as Record<string, unknown>,
 } = {}) => {
   const versionRow = {
     id: VERSION_ID,
@@ -113,6 +114,13 @@ const seed = ({
     baseModel,
     model: { id: 1, name: 'Model', userId: OWNER, nsfw: false },
   };
+  dbMock.dbWrite.model.findUniqueOrThrow.mockResolvedValue({
+    nsfw: false,
+    nsfwLevel: 1,
+    sfwName: null,
+    sfwCoverImageId: null,
+    ...model,
+  });
   // getDbWithoutLag('modelVersion', id) returns dbRead when REPLICATION_LAG_DELAY=0;
   // earlyAccessPurchase calls getVersionById which uses it. Set up both sides so
   // the test is correct regardless of which client the service routes through.
@@ -445,6 +453,70 @@ describe('earlyAccessPurchase — a sale on a PERMANENT gate, where the price ce
 
     // A zero-Buzz purchase writes no ledger row, and the 30-day refund path reads amounts back from it.
     expect(charged()).toBe(1);
+  });
+});
+
+describe('earlyAccessPurchase — Green Buzz needs the model on civitai.com', () => {
+  // A mature model with a complete .com face: a .com title, a .com cover, and a PG level to show it at.
+  const withComFace = { nsfw: true, nsfwLevel: 1 | 16, sfwName: 'Safe title', sfwCoverImageId: 9 };
+  const buy = (buzzType: 'green' | 'yellow') =>
+    earlyAccessPurchase({ userId: BUYER, modelVersionId: VERSION_ID, type: 'download', buzzType });
+
+  it.each([
+    ['no .com face at all', { nsfw: true, nsfwLevel: 16, sfwName: null, sfwCoverImageId: null }],
+    ['a .com title but its cover removed', { ...withComFace, sfwCoverImageId: null }],
+    ['a .com title and cover but no PG level to show them at', { ...withComFace, nsfwLevel: 16 }],
+  ])('refuses Green on a mature model with %s, before any Buzz moves', async (_n, model) => {
+    seed({ model });
+
+    await expect(buy('green')).rejects.toThrow('not available with this currency');
+    expect(mockCreateMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(mockGrantModelVersionAccess).not.toHaveBeenCalled();
+  });
+
+  it('reads the face from the primary, not the replica', async () => {
+    seed({ model: withComFace });
+
+    await buy('green');
+
+    expect(dbMock.dbWrite.model.findUniqueOrThrow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 1 },
+        select: expect.objectContaining({
+          nsfw: true,
+          nsfwLevel: true,
+          sfwName: true,
+          sfwCoverImageId: true,
+        }),
+      })
+    );
+    expect(dbMock.dbRead.model.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('sells in Green when the mature model has a .com face (control)', async () => {
+    seed({ model: withComFace });
+
+    await buy('green');
+
+    expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ fromAccountTypes: ['green'] })
+    );
+  });
+
+  it('still sells a face-less mature model in yellow', async () => {
+    seed({ model: { ...withComFace, sfwName: null, sfwCoverImageId: null } });
+
+    await buy('yellow');
+
+    expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('still sells a non-mature model without a .com face in Green', async () => {
+    seed({ model: { nsfw: false, sfwName: null, sfwCoverImageId: null } });
+
+    await buy('green');
+
+    expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
   });
 });
 

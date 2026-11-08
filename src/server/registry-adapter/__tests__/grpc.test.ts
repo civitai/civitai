@@ -9,6 +9,7 @@ import {
   decodeEvent,
   encodeEvent,
   errorInfoOf,
+  errorStatus,
   listenGrpc,
 } from '~/server/registry-adapter/grpc';
 import type { Adapter, Change, Entity, StreamEvent } from '~/server/registry-adapter/protocol';
@@ -20,11 +21,12 @@ import { createMemorySnapshotStore } from '../../../../scripts/registry-adapter-
 const APPS = 'urn:schema:apps.civitai.com:app@v1';
 // A body with every JSON kind, nested: what `Entity.body`'s JSON bytes must carry unchanged.
 const BODY = { slug: 'alpha', stars: 4.5, listed: true, retired: null, tags: ['a', 1, { q: [] }] };
-const ent = (slug: string, rev: string, body: unknown = { slug }): Entity => ({
+// Each app body has a known rating, so an anonymous subscription is sent it (`audience.ts`).
+const ent = (slug: string, rev: string, body: object = { slug }): Entity => ({
   urn: `urn:apps.civitai.com:app/${slug}`,
   schemas: [APPS],
   rev,
-  body,
+  body: { ...body, contentRating: 'g' },
 });
 
 const grpcServers: grpc.Server[] = [];
@@ -396,5 +398,24 @@ describe('🔴 HTTP and gRPC serve one core', () => {
     const overGrpc = await viaGrpc(adapter(), { urns: URNS, filter: FILTER });
     expect(kinds(http)).toEqual(['upsert', 'live', 'delete', 'progress', 'end']);
     expect(overGrpc).toEqual({ events: http });
+  });
+});
+
+describe('🔴 an error is named by its ErrorInfo reason alone, as the spec names it', () => {
+  it('the status details carry the reason and no domain', () => {
+    const { metadata } = errorStatus('cursor_expired', 'gone');
+    const raw = metadata!.get('grpc-status-details-bin')[0] as Buffer;
+    // Hand-encoded: google.rpc.Status { code = 1: 11 (OUT_OF_RANGE), message = 2: "gone",
+    // details = 3: Any { type_url = 1: "type.googleapis.com/google.rpc.ErrorInfo",
+    // value = 2: ErrorInfo { reason = 1: "cursor_expired" } } }. No ErrorInfo.domain (field 2).
+    expect(raw.toString('hex')).toBe(
+      '080b' +
+        '1204676f6e65' +
+        '1a3c' +
+        '0a28747970652e676f6f676c65617069732e636f6d2f676f6f676c652e7270632e4572726f72496e666f' +
+        '1210' +
+        '0a0e637572736f725f65787069726564'
+    );
+    expect(errorInfoOf(metadata)).toEqual({ reason: 'cursor_expired', domain: '' });
   });
 });
