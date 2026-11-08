@@ -7,9 +7,8 @@ import type * as TrpcModule from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 
 /**
- * Regression: the generator config was cached forever, so a gate lifted (or a model hidden for an
- * outage) never reached a generator that was already open. The procedure is answered by REAL React
- * Query with the hook's own options, so what is measured is when a refetch actually happens.
+ * The procedure is answered by real React Query with the hook's own options, so the test measures
+ * when a refetch actually happens.
  */
 const server = vi.hoisted(() => ({
   calls: 0,
@@ -97,7 +96,7 @@ describe('useGenerationConfig refresh', () => {
     server.respond = () => ({ gateRules: [] });
     await advance(5 * 60_000 + 1_000);
 
-    expect(server.calls).toBeGreaterThanOrEqual(2);
+    expect(server.calls).toBe(2);
     expect(view.result.current.gateRules).toEqual([]);
   });
 
@@ -125,7 +124,7 @@ describe('useGenerationConfig refresh', () => {
 
     await advance(5 * 60_000 + 1_000);
 
-    expect(server.calls).toBeGreaterThanOrEqual(2);
+    expect(server.calls).toBe(2);
     expect(view.result.current).toBe(before);
   });
 });

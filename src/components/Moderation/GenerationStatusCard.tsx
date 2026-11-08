@@ -271,8 +271,6 @@ export function SelfHostedGenerationStatusCard() {
     onSettled: () =>
       Promise.all([
         utils.generation.getStatusModerator.invalidate(),
-        // The toggle changes what `getGenerationConfig` returns; other clients
-        // poll for it, so invalidate to show it here at once.
         utils.generation.getGenerationConfig.invalidate(),
       ]),
   });

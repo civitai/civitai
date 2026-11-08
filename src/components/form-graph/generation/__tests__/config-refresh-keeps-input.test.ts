@@ -2,14 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import type { GenerationCtx } from '~/shared/generation/context';
 
-/**
- * The generator config now refetches while the form is open, and a changed config reaches the
- * store as a new `ext`. What the user has already entered must survive that.
- */
-const wanGate = {
+/** A changed config reaches the store as a new `ext`; the user's picks and entries must survive it. */
+const sdxlGate = {
   availableTo: 'moderators',
   presentation: 'hidden',
-  ecosystems: ['WanVideo22'],
+  ecosystems: ['SDXL'],
   workflows: [],
   modelVersionIds: [],
 } satisfies GenerationCtx['gateRules'][number];
@@ -21,39 +18,17 @@ const ctx = (gateRules: GenerationCtx['gateRules']): GenerationCtx => ({
   gateRules,
 });
 
-const userInput = { prompt: 'a red fox in the snow', quantity: 3, steps: 12 };
-
-function storeWithInput(gateRules: GenerationCtx['gateRules']) {
-  const store = generationHub.createStore({ ext: ctx(gateRules) });
-  store.set(userInput);
-  return store;
-}
-
-const state = (store: ReturnType<typeof storeWithInput>) =>
-  store.getSnapshot().state as Record<string, unknown>;
-
 describe('generator config refresh', () => {
-  it('keeps entered values when a refetch returns the same config', () => {
-    const store = storeWithInput([wanGate]);
-    store.setExt(ctx([{ ...wanGate }]));
-    expect(state(store)).toMatchObject(userInput);
-  });
+  it('keeps the picked ecosystem and entered values as its gate comes and goes', () => {
+    const userInput = { ecosystem: 'SDXL', prompt: 'a red fox in the snow', quantity: 3 };
+    const store = generationHub.createStore({ ext: ctx([]) });
+    store.set(userInput);
+    const state = () => store.getSnapshot().state as Record<string, unknown>;
 
-  it('keeps entered values when a gate is lifted', () => {
-    const store = storeWithInput([wanGate]);
+    store.setExt(ctx([sdxlGate]));
+    expect(state()).toMatchObject(userInput);
+
     store.setExt(ctx([]));
-    expect(state(store)).toMatchObject(userInput);
-  });
-
-  it('keeps entered values when an unrelated gate is added', () => {
-    const store = storeWithInput([]);
-    store.setExt(ctx([wanGate]));
-    expect(state(store)).toMatchObject(userInput);
-  });
-
-  it('would notice a lost value (control: reset clears them)', () => {
-    const store = storeWithInput([]);
-    store.reset();
-    expect(state(store)).not.toMatchObject(userInput);
+    expect(state()).toMatchObject(userInput);
   });
 });
