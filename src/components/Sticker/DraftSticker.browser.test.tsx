@@ -117,6 +117,7 @@ const draft: StickerDraft = {
 const art = { id: COSMETIC_ID, name: 'Star', slug: 'star', url: 'star.png' };
 
 const { DraftSticker } = await import('~/components/Sticker/DraftSticker');
+const { StickerMotionEditor } = await import('~/components/Sticker/StickerMotionEditor');
 
 /**
  * `ownerShare` is opt-in, and that is not tidiness.
@@ -280,6 +281,51 @@ describe('what a draft sends when it is placed', () => {
     await page.getByRole('button', { name: 'Place free' }).click();
 
     expect(placed[0]).not.toHaveProperty('track');
+  });
+
+  test('the floating Place presses the selected draft’s own button', async () => {
+    const video = document.createElement('video');
+    useStickerPlacementDraftStore.setState({
+      drafts: [draft],
+      selectedDraftId: draft.id,
+      trayOpen: false,
+    });
+    const Live = () => {
+      const current = useStickerPlacementDraftStore((state) =>
+        state.drafts.find((d) => d.id === draft.id)
+      );
+      return current ? (
+        <DraftSticker
+          draft={current}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          creatorMaxScale={0.25}
+          freeOffer={{ instant: true }}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+        />
+      ) : null;
+    };
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 380, height: 600 }}>
+        <Live />
+        <StickerMotionEditor video={video} />
+      </div>
+    );
+
+    const floating = () =>
+      page
+        .getByRole('button', { name: 'Place free' })
+        .elements()
+        .find((button) => !button.hasAttribute('data-draft-primary'));
+    await expect.poll(floating).toBeDefined();
+    (floating() as HTMLButtonElement).click();
+
+    await expect.poll(() => placed.length).toBe(1);
+    expect(placed[0]).toMatchObject({ free: true });
   });
 
   test('a draft that is not pinned sends no track', async () => {

@@ -61,6 +61,7 @@ describe('the sticker timeline', () => {
 
     await expect.element(page.getByRole('group', { name: 'Sticker timeline' })).toBeVisible();
     await expect.element(page.getByRole('button', { name: 'Key 1 at 0:00.0' })).toBeInTheDocument();
+    expect(video.pause).toHaveBeenCalled();
 
     await page.getByText('Static').click();
     await expect

@@ -1,4 +1,4 @@
-import { ActionIcon, SegmentedControl, Slider, Text, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Button, SegmentedControl, Slider, Text, UnstyledButton } from '@mantine/core';
 import {
   IconChevronDown,
   IconChevronLeft,
@@ -89,6 +89,7 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
   const trayOpen = useStore((state) => state.trayOpen);
   const playheadMs = useStore((state) => state.playheadMs);
   const selected = drafts.find((draft) => draft.id === selectedId);
+  const primaryLabel = useStore((state) => (selectedId ? state.primaryLabels[selectedId] : null));
   const open = !!selected && !trayOpen;
   const moving = open && !!selected.motion?.on;
 
@@ -265,17 +266,30 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
           />
         </div>
       )}
-      <SegmentedControl
-        size="xs"
-        radius="xl"
-        aria-label="Sticker mode"
-        value={moving ? 'movement' : 'static'}
-        onChange={(value) => useStore.getState().setMotion(selected.id, value === 'movement')}
-        data={[
-          { label: 'Static', value: 'static' },
-          { label: 'Movement', value: 'movement' },
-        ]}
-      />
+      <div className="flex items-center gap-2">
+        <SegmentedControl
+          size="xs"
+          radius="xl"
+          aria-label="Sticker mode"
+          value={moving ? 'movement' : 'static'}
+          onChange={(value) => {
+            // Paused on a frame, so the first move sets a key where the placer is looking.
+            if (value === 'movement') video.pause();
+            useStore.getState().setMotion(selected.id, value === 'movement');
+          }}
+          data={[
+            { label: 'Static', value: 'static' },
+            { label: 'Movement', value: 'movement' },
+          ]}
+        />
+        {primaryLabel && (
+          // Presses the selected draft's own pay button: one way to pay, and any choice it
+          // offers (free or Buzz, a use or a pack) is still made under the sticker.
+          <Button size="xs" radius="xl" color="yellow" onClick={() => pressPrimary(selected.id)}>
+            {primaryLabel}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -496,6 +510,11 @@ function KeyInspector({
     </div>
   );
 }
+
+const pressPrimary = (draftId: string) =>
+  document
+    .querySelector<HTMLButtonElement>(`[data-draft-primary="${CSS.escape(draftId)}"]`)
+    ?.click();
 
 const videoDurationMs = (video: HTMLVideoElement) =>
   Number.isFinite(video.duration) && video.duration > 0 ? Math.round(video.duration * 1000) : 1;

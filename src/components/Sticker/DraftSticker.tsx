@@ -18,7 +18,7 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
@@ -596,6 +596,25 @@ export function DraftSticker({
   // One payload for both buttons, so the two offers cannot drift into placing
   // different stickers. `free` is the only thing that differs, and it selects a
   // path rather than asserting anything — the server re-decides all of it.
+  // What the press under this draft does, for the floating Place above the reaction bar, which
+  // presses that same button rather than opening a second way to pay.
+  const primaryLabel = commit
+    ? null
+    : purchase && effectiveMode === 'pack' && purchase.pack
+    ? purchase.refill
+      ? 'Buy another pack'
+      : 'Purchase sticker'
+    : purchase
+    ? 'Buy a use'
+    : placingFree
+    ? 'Place free'
+    : `Place · ${numberWithCommas(price)} Buzz`;
+  const setPrimaryLabel = useStore((state) => state.setPrimaryLabel);
+  useEffect(() => {
+    setPrimaryLabel(draft.id, primaryLabel);
+    return () => setPrimaryLabel(draft.id, null);
+  }, [draft.id, primaryLabel, setPrimaryLabel]);
+
   const placementInput = () => {
     const scale = snapScaleOvershoot(draft.scale, creatorMaxScale);
     // Only what the sticker is in when placed is sent: Static sends its pose and no track.
@@ -1002,6 +1021,7 @@ export function DraftSticker({
                 buzzAmount={purchase.pack.unitAmount}
                 accountTypes={purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
                 label={purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
+                data-draft-primary={draft.id}
                 loading={purchasingShopItem}
                 onPerformTransaction={buySticker}
               />
@@ -1014,6 +1034,7 @@ export function DraftSticker({
                 buzzAmount={purchase.perUse ?? 0}
                 accountTypes={spendTypes}
                 label="Buy a use"
+                data-draft-primary={draft.id}
                 loading={buyUses.isPending}
                 // A sticker sold before per-use pricing existed has no price to
                 // charge, and the listing price is not a stand-in for one. Says so
@@ -1039,6 +1060,7 @@ export function DraftSticker({
                 style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
                 loading={place.isPending}
                 onClick={() => place.mutate(placementInput())}
+                data-draft-primary={draft.id}
               >
                 Place free
               </Button>
@@ -1049,6 +1071,7 @@ export function DraftSticker({
                 buzzAmount={price}
                 accountTypes={spendTypes}
                 label="Place"
+                data-draft-primary={draft.id}
                 loading={place.isPending}
                 onPerformTransaction={() => place.mutate(placementInput())}
               />

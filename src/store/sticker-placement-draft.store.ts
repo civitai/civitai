@@ -243,6 +243,9 @@ interface StickerPlacementDraftStore {
   setMotion: (id: string, on: boolean) => void;
   /** Replaces a draft's keys (the timeline's edits) and redraws it at the playhead. */
   setKeys: (id: string, keys: StickerTrackKey[]) => void;
+  /** Each draft's own pay button, by its label, for the floating Place that presses it. */
+  primaryLabels: Record<string, string>;
+  setPrimaryLabel: (id: string, label: string | null) => void;
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
@@ -315,6 +318,7 @@ const createDraftStore = () =>
     interaction: null,
     interactionPointerId: null,
     playheadMs: 0,
+    primaryLabels: {},
 
     // Reopening on the image you are already placing on keeps the drafts — that is
     // the way back to the panel after putting it away, so taking them would punish
@@ -545,6 +549,15 @@ const createDraftStore = () =>
           return on ? drawnAt(next, state.playheadMs) : { ...next, shown: undefined };
         }),
       })),
+
+    setPrimaryLabel: (id, label) =>
+      set((state) => {
+        if ((state.primaryLabels[id] ?? null) === label) return state;
+        const primaryLabels = { ...state.primaryLabels };
+        if (label == null) delete primaryLabels[id];
+        else primaryLabels[id] = label;
+        return { primaryLabels };
+      }),
 
     setKeys: (id, keys) =>
       set((state) => ({
