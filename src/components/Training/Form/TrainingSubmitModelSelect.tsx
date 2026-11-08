@@ -21,7 +21,11 @@ import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/Reso
 import { blockedCustomModels } from '~/shared/constants/training.constants';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import type { TrainingServiceStatus } from '~/server/schema/training.schema';
-import { modelUnavailability, UNAVAILABLE_LABEL } from '~/utils/training-blocked-models';
+import {
+  modelUnavailability,
+  UNAVAILABLE_LABEL,
+  unavailableModelMessage,
+} from '~/utils/training-blocked-models';
 import { trpc } from '~/utils/trpc';
 import type {
   TrainingDetailsBaseModelList,
@@ -98,7 +102,6 @@ export const ModelSelector = ({
   allowedKeys,
   customBaseModels,
 }: {
-  /** The training service status; a blocked version shows as unavailable. */
   status: Pick<TrainingServiceStatus, 'blockedModels' | 'blockedModelReasons'>;
   selectedRun: TrainingRun;
   color: MantineColor;
@@ -118,8 +121,6 @@ export const ModelSelector = ({
       baseTypes.includes(v.type) && v.disabled !== true && (!allowedKeys || allowedKeys.includes(k))
   );
   if (!versions.length) return null;
-  // A version that is down stays listed but can't be picked; a family with every version down shows
-  // the note in place of its version picker.
   const downs = versions.map(([k]) => modelUnavailability(status, k));
   const allDown = !isCustom && downs.every((d) => d !== null);
 
@@ -439,7 +440,7 @@ export const ModelSelect = ({
   };
 
   const formBaseModel = selectedRun.base;
-  const selectedDownReason = modelUnavailability(status, formBaseModel)?.reason;
+  const selectedDown = modelUnavailability(status, formBaseModel);
   const isCustomModel = !!selectedRun.customModel;
 
   const baseModelInfo = !isCustomModel
@@ -982,14 +983,10 @@ export const ModelSelect = ({
                     color="red"
                   >
                     <Text>
-                      This model is not currently available for LoRA training - please select a
-                      different model.
+                      {selectedDown && baseModelInfo
+                        ? unavailableModelMessage(baseModelInfo.pretty, selectedDown.reason)
+                        : 'This model is not currently available for LoRA training - please select a different model.'}
                     </Text>
-                    {selectedDownReason && (
-                      <Text size="sm" c="dimmed">
-                        {selectedDownReason}
-                      </Text>
-                    )}
                   </AlertWithIcon>
                 ) : isCustomModel ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">

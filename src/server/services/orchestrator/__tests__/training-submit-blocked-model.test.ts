@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-/** A base model listed in the training status' blockedModels is refused at submit, with its note. */
-
 const status = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
 vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.fn() }));
 vi.mock('~/server/services/training.service', () => ({
@@ -56,5 +54,12 @@ describe('createTrainingWorkflow on a blocked base model', () => {
     await expect(submit()).rejects.toMatchObject({
       message: 'Krea 2 is temporarily unavailable for training.',
     });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('passes the gate when nothing is blocked', async () => {
+    status.value = { available: true, blockedModels: [] };
+    // The next check after the blocked-model gate is the AI Toolkit flag (off in `features`).
+    await expect(submit()).rejects.toThrow('AI Toolkit training is not currently enabled');
   });
 });
