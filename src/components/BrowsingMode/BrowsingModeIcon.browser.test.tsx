@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -12,6 +12,10 @@ import { BrowsingModeIcon } from '~/components/BrowsingMode/BrowsingMode';
 const button = () => page.getByLabelText('Browsing mode', { exact: true });
 
 describe('BrowsingModeIcon', () => {
+  afterEach(() => {
+    restricted.value = false;
+  });
+
   test('draws a plain eye, never the exclamation glyph', async () => {
     renderWithProviders(<BrowsingModeIcon />);
     await expect.element(button()).toBeVisible();
@@ -26,6 +30,5 @@ describe('BrowsingModeIcon', () => {
     await expect.element(button()).toBeVisible();
     const indicator = button().element().closest('.mantine-Indicator-root');
     expect(indicator?.querySelector('.mantine-Indicator-indicator')).not.toBeNull();
-    restricted.value = false;
   });
 });

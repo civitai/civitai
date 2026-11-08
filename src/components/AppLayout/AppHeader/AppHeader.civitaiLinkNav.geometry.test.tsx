@@ -66,7 +66,8 @@ describe.each([
   test('shows once the user turned it on', async () => {
     state.civitaiLinkNav = true;
     await renderAtViewport(<AppHeader renderSearchComponent={renderSearch} />, viewport);
-    await expect.poll(() => link().elements().length).toBeGreaterThan(0);
+    // One per render site (desktop bar and phone bar); a site that dropped the flag shows 1 or 0.
+    await expect.poll(() => link().elements().length).toBe(2);
   });
 
   test('stays hidden when signed out, even with the flag on', async () => {

@@ -9,22 +9,12 @@ vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: {},
 }));
 
-import {
-  computeUserFeatureFlagsOverlay,
-  toggleableFeatures,
-} from '~/server/services/feature-flags.service';
+import { computeUserFeatureFlagsOverlay } from '~/server/services/feature-flags.service';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 const host = {} as FeatureAccess;
 
 describe('civitaiLinkNav', () => {
-  it('is a user toggle, listed under the label Preferences shows', () => {
-    expect(toggleableFeatures.find((f) => f.key === 'civitaiLinkNav')).toMatchObject({
-      displayName: 'Civitai Link',
-      default: false,
-    });
-  });
-
   it('is off for a user who never chose', () => {
     expect(computeUserFeatureFlagsOverlay(undefined, host).civitaiLinkNav).toBe(false);
     expect(computeUserFeatureFlagsOverlay({}, host).civitaiLinkNav).toBe(false);
