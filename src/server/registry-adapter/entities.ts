@@ -3,7 +3,7 @@
  * `catalog-source.ts`, so this is the whole mapping from platform rows to registry entities.
  */
 import type { Audience } from '~/server/registry-adapter/audience';
-import { audienceAdmits } from '~/server/registry-adapter/audience';
+import { audienceAdmits, isKnownRating } from '~/server/registry-adapter/audience';
 import type { Entity } from '~/server/registry-adapter/protocol';
 import {
   HEAD_STEP,
@@ -66,11 +66,21 @@ export type CatalogApp = {
 };
 
 /**
- * The content rating an app entity publishes: the listing's, else its block's. A shared document
- * has none of its own; its app's is its rating (`doc-streams.ts`).
+ * The content rating an app entity publishes: the listing's when it is a known rating
+ * ({@link isKnownRating}), else its block's when that is. A listing rating that is empty,
+ * whitespace or unknown therefore never hides a valid block rating. Only when neither is known is
+ * the result unknown: the first one that is set (not empty or whitespace), else null, which the
+ * audience check fails closed on (`audienceAdmits`). A shared document has none of its own; its
+ * app's is its rating (`doc-streams.ts`).
  */
-export const appContentRating = (app: Pick<CatalogApp, 'listing' | 'block'>): string | null =>
-  app.listing.contentRating ?? app.block?.contentRating ?? null;
+export const appContentRating = (app: Pick<CatalogApp, 'listing' | 'block'>): string | null => {
+  const listing = app.listing.contentRating;
+  const block = app.block?.contentRating ?? null;
+  if (isKnownRating(listing)) return listing;
+  if (isKnownRating(block)) return block;
+  const set = (r: string | null) => (r !== null && r.trim() !== '' ? r : null);
+  return set(listing) ?? set(block);
+};
 
 export type EntitySets = Map<string, Entity[]>;
 

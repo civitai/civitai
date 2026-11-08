@@ -240,7 +240,10 @@ describe('states kept per stream', () => {
     expect(await harness(store, [s3]).drain(APPS, changes[1].cursor)).toEqual([]);
   });
 
-  it('🔴 retention is per audience: one audience rolling past the bound never evicts another’s cursor', async () => {
+  // An INVARIANT GUARD, not regression coverage: retention was already per audience before this
+  // test existed, and it passes there too. It pins that invariant, so a change that keys states by
+  // schema alone goes red.
+  it('retention is per audience: one audience rolling past the bound never evicts another’s cursor', async () => {
     const X = audienceForUser({
       showNsfw: true,
       browsingLevel: NsfwLevel.PG | NsfwLevel.R | NsfwLevel.X,
@@ -307,8 +310,13 @@ describe('the narrowing is shared by every poll of one read', () => {
   });
 });
 
-describe('🔴 a consumer that falls behind is sent the latest state, not every superseded one (rule 8)', () => {
-  it('an entity changed three times while the consumer is stalled arrives once, at its latest rev', async () => {
+// What this proves, and no more: while the consumer holds the stream at `live`, the source makes
+// no read (so it queues nothing), and once the consumer reads again the next poll sends only the
+// state at that moment. It does not stall the consumer in the middle of a poll's batch: no poll is
+// in flight during the stall, so `tick` below wakes nothing here. It is there so a source that
+// polled ahead while stalled would read, and queue, every intermediate rev.
+describe('a consumer that falls behind: no reads while stalled, and the latest state wins (rule 8)', () => {
+  it('an entity changed three times while the consumer is stalled at live arrives once, at its latest rev', async () => {
     let rev = 'r-0';
     let reads = 0;
     // The poll loop's sleep is the test's: a pending one is ended only by `tick`, never by a clock.

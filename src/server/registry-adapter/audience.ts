@@ -82,9 +82,16 @@ export function audienceForUser(user: {
  * the store's SQL twin, so the two need not agree on a rating nothing should carry.
  */
 export const audienceAdmits = (audience: Audience, rating: string | null | undefined): boolean =>
-  typeof rating === 'string' && isOffsiteContentRating(rating.toLowerCase())
+  isKnownRating(rating)
     ? matureRatingAllowed(rating, audience.allowed)
     : audience.allowed.r && audience.allowed.x;
+
+/**
+ * A content rating this source knows: `g`, `pg`, `pg13`, `r` or `x`, in any case. The one test
+ * of it, shared by {@link audienceAdmits} and `appContentRating` (`entities.ts`).
+ */
+export const isKnownRating = (rating: string | null | undefined): rating is string =>
+  typeof rating === 'string' && isOffsiteContentRating(rating.toLowerCase());
 
 /** A subscription's audience, from its adapter context: absent is anonymous, the narrowest. */
 export const contextAudience = (ctx?: { audience?: Audience }): Audience =>

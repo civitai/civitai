@@ -14,7 +14,12 @@ import { abortableSleep, createPollingAdapter } from '~/server/registry-adapter/
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
-import { SERVED_SCHEMAS, buildEntities, readableBy } from '~/server/registry-adapter/entities';
+import {
+  SERVED_SCHEMAS,
+  appContentRating,
+  buildEntities,
+  readableBy,
+} from '~/server/registry-adapter/entities';
 import {
   SOURCE_SERVICE,
   createGrpcServer,
@@ -49,8 +54,12 @@ const notes = {
 };
 const manifest = { blockId: 'orbit-notes', storage: { collections: { notes } } };
 
-/** The one listed app, rated `rating`, whose `notes` collection is exported at @v1. */
-function app(rating: string): CatalogApp {
+/**
+ * The one listed app, whose `notes` collection is exported at @v1. Its listing is rated `rating`
+ * and its block `blockRating`, the same by default. The block's column is never null, so a block
+ * with no rating is `''`.
+ */
+function app(rating: string | null, blockRating: string = rating ?? ''): CatalogApp {
   return {
     listing: {
       slug: 'orbit-notes',
@@ -70,7 +79,7 @@ function app(rating: string): CatalogApp {
       blockId: 'orbit-notes',
       version: '1.0.0',
       status: 'approved',
-      contentRating: rating,
+      contentRating: blockRating,
       manifest,
     },
     approved: [
@@ -88,7 +97,7 @@ function app(rating: string): CatalogApp {
 }
 
 /** The adapter as `main.ts` composes it, over an app whose rating the test may change. */
-function source(world: { rating: string }) {
+function source(world: { rating: string | null; blockRating?: string }) {
   const store = createMemorySnapshotStore();
   const cat: FixtureCatalog = {
     listings: [],
@@ -106,7 +115,7 @@ function source(world: { rating: string }) {
     ],
     lastSeq: { ab_orbit_31: 2 },
   };
-  const readApps = async () => [app(world.rating)];
+  const readApps = async () => [app(world.rating, world.blockRating)];
   const entities = createPollingAdapter({
     namespace: 'apps.civitai.com',
     serves: SERVED_SCHEMAS,
@@ -310,10 +319,34 @@ describe('🔴 a document stream carries an app’s documents only to a token th
     ['x-token', 'unrated', true],
     [null, '', false],
     ['x-token', '', true],
+    // No rating at all: the listing's is null and the block's column is empty.
+    [null, null, false],
+    ['r-token', null, false],
+    ['x-token', null, true],
   ])(
     'token %s, app rated %j (not a known rating): documents sent = %s',
     async (token, rating, sent) => {
       const port = await httpServer(source({ rating }).adapter);
+      const res = await get(port, q(NOTES), token ? bearer(token) : {});
+      expect(res.status).toBe(200);
+      expect(events(res.text)).toEqual(sent ? ['upsert', 'live'] : ['live']);
+      expect(res.text.includes(DOC)).toBe(sent);
+    }
+  );
+
+  // A listing rating that is empty, whitespace or unknown falls through to the block's, so it
+  // never hides a valid one; only when neither is known does the app fail closed.
+  it.each<[string, string, string | null, boolean]>([
+    ['', 'g', null, true],
+    ['  ', 'pg', null, true],
+    ['unrated', 'g', null, true],
+    ['', 'r', null, false],
+    ['', 'r', 'r-token', true],
+    ['', '', 'r-token', false],
+  ])(
+    'listing rated %j, block rated %j, token %s: documents sent = %s',
+    async (rating, blockRating, token, sent) => {
+      const port = await httpServer(source({ rating, blockRating }).adapter);
       const res = await get(port, q(NOTES), token ? bearer(token) : {});
       expect(res.status).toBe(200);
       expect(events(res.text)).toEqual(sent ? ['upsert', 'live'] : ['live']);
@@ -1055,6 +1088,31 @@ describe('🔴 audienceAdmits fails closed on a rating this source does not know
       audienceAdmits(audiences.r, rating),
       audienceAdmits(audiences.x, rating),
     ]).toEqual([anon, r, x]);
+  });
+});
+
+describe('appContentRating: the listing’s rating when known, else the block’s', () => {
+  const rated = (listing: string | null, block: string | null) =>
+    appContentRating({
+      listing: { ...app('pg').listing, contentRating: listing },
+      block: block === null ? null : { ...app('pg').block!, contentRating: block },
+    });
+  it.each<[string | null, string | null, string | null]>([
+    // [listing, block, published]
+    ['x', 'pg13', 'x'],
+    [null, 'pg13', 'pg13'],
+    ['', 'g', 'g'],
+    ['   ', 'g', 'g'],
+    ['unrated', 'g', 'g'],
+    ['R', 'g', 'R'],
+    ['pg', null, 'pg'],
+    // Neither known: the first one set, else null; both fail closed (`audienceAdmits`).
+    ['unrated', '', 'unrated'],
+    ['', 'pg-13', 'pg-13'],
+    ['', '', null],
+    [null, null, null],
+  ])('listing %j, block %j: %j', (listing, block, published) => {
+    expect(rated(listing, block)).toBe(published);
   });
 });
 
