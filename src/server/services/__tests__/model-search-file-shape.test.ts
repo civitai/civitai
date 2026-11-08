@@ -157,12 +157,7 @@ describe('runModelSearch (GET /api/v1/models) — a Public training dataset', ()
         type: 'Training Data',
         sizeKB: 6666,
         hashes: [],
-        metadata: {
-          format: 'Other',
-          ownRights: true,
-          shareDataset: true,
-          trainingResults: { version: 2, epochs: [{ epochNumber: 1 }] },
-        },
+        metadata: { format: 'Other' },
       },
     ].map(toApiModelFile) as any;
     mockGetModelsWithVersions.mockResolvedValue({ items: [item], nextCursor: undefined });
