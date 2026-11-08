@@ -141,6 +141,7 @@ import {
 import { hasEntityAccess } from '~/server/services/common.service';
 import {
   getModelVersionAccessPermissions,
+  EARLY_ACCESS_PURCHASES,
   grantModelVersionAccess,
 } from '~/server/services/model-version-access.service';
 import {
@@ -2770,7 +2771,10 @@ export async function assertSellableInDomainCurrency({
     where: { id: modelId },
     select: { nsfw: true, nsfwLevel: true, sfwName: true, sfwCoverImageId: true },
   });
-  if (face.nsfw && !hasCompleteSfwFace(face))
+  // A rated model with no PG/PG-13 bit is off .com whatever its nsfw flag says. Level 0 is unrated
+  // (a new model's launch) and stays sellable.
+  const noSfwLevel = face.nsfwLevel > 0 && (face.nsfwLevel & sfwBrowsingLevelsFlag) === 0;
+  if (noSfwLevel || (face.nsfw && !hasCompleteSfwFace(face)))
     throw throwBadRequestError('This model version is not available with this currency.');
 }
 
@@ -2789,7 +2793,9 @@ export const earlyAccessPurchase = async ({
     type === 'generation'
       ? EntityAccessPermission.EarlyAccessGeneration
       : EntityAccessPermission.EarlyAccessDownload;
-  const buzzTransactionKey = `${type}-buzzTransactionId`;
+  const purchase = EARLY_ACCESS_PURCHASES.find((kind) => kind.type === type);
+  if (!purchase) throw throwBadRequestError('Unknown early access type.');
+  const buzzTransactionKey = purchase.transactionKey;
 
   const modelVersion = await getVersionById({
     id: modelVersionId,
@@ -2891,10 +2897,7 @@ export const earlyAccessPurchase = async ({
   const amount = discountedPrice(storedPrice, sales);
 
   const heldPermissions = await getModelVersionAccessPermissions(userId, modelVersionId);
-  const requestedPermissions =
-    type === 'generation'
-      ? EntityAccessPermission.EarlyAccessGeneration
-      : EntityAccessPermission.EarlyAccessGeneration + EntityAccessPermission.EarlyAccessDownload;
+  const requestedPermissions = purchase.permissions;
   if ((heldPermissions & requestedPermissions) === requestedPermissions)
     throw throwBadRequestError('You already have access to this model version.');
 
@@ -2937,7 +2940,12 @@ export const earlyAccessPurchase = async ({
       userId,
       modelVersionId,
       permissions: requestedPermissions,
-      meta: { [buzzTransactionKey]: buzzTransactionId },
+      // Dated per purchase: a later download lands on the same row as an earlier generation
+      // purchase, and the unpublish refund window runs from each one's own date.
+      meta: {
+        [buzzTransactionKey]: buzzTransactionId,
+        [purchase.purchasedAtKey]: new Date().toISOString(),
+      },
       addedById: userId,
     });
 

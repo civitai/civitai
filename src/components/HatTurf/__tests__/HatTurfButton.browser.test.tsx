@@ -343,7 +343,7 @@ describe('Hat Turf button on a feed ImageCard', () => {
     expect(input.data.y).toBeCloseTo(0.3, 1);
     expect(actions()).not.toContain('feed_place_save');
     // The server accepted it: the hat stays, the button says placed, stock is refetched.
-    options.onSuccess();
+    options.onSuccess({ reactionEarns: false });
     expect(actions()).toEqual(['feed_place_start', 'feed_place_save']);
     await vi.waitFor(() => expect(q('hat-turf-placed')).not.toBeNull());
     expect(q('hat-turf-draft')).toBeNull();

@@ -354,8 +354,11 @@ describe('earlyAccessPurchase — a user who already holds access is not charged
         userId: BUYER,
         modelVersionId: VERSION_ID,
         permissions: 3,
-        // The early-access refund finds the purchase by this key.
-        meta: { 'download-buzzTransactionId': `early-access-${VERSION_ID}-download-${BUYER}` },
+        // The refund reads both keys.
+        meta: {
+          'download-buzzTransactionId': `early-access-${VERSION_ID}-download-${BUYER}`,
+          'download-purchasedAt': expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        },
       })
     );
   });
@@ -511,8 +514,18 @@ describe('earlyAccessPurchase — Green Buzz needs the model on civitai.com', ()
     expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
   });
 
-  it('still sells a non-mature model without a .com face in Green', async () => {
-    seed({ model: { nsfw: false, sfwName: null, sfwCoverImageId: null } });
+  it('refuses Green on a non-mature model rated with no PG or PG-13 level', async () => {
+    seed({ model: { nsfw: false, nsfwLevel: 4 } });
+
+    await expect(buy('green')).rejects.toThrow('not available with this currency');
+    expect(mockCreateMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a PG level (control)', 1 | 4],
+    ['no rating yet', 0],
+  ])('still sells a non-mature model with %s in Green', async (_n, nsfwLevel) => {
+    seed({ model: { nsfw: false, nsfwLevel, sfwName: null, sfwCoverImageId: null } });
 
     await buy('green');
 
