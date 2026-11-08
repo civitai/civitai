@@ -14,41 +14,15 @@ import {
 import type { Session, SessionUser } from '~/types/session';
 
 /**
- * OFF-SITE VISIT — the `/apps/go/<listingId>` redirect behind every store "Visit" link.
+ * OFF-SITE VISIT — the `/apps/go/<listingId>` redirect behind every store "Visit" link: resolve
+ * the listing under the detail page's own visibility gate, record one `App_Visit`, 302.
  *
- * An off-site listing's CTA used to be a plain `target="_blank"` anchor straight to the third
- * party, so no on-platform request followed the click and the store had no way to know an
- * off-site app was ever used (`App_Open` and `open_count` are on-site only, by design). This
- * route is the on-platform request: it resolves the listing, records one `App_Visit` row and
- * 302s to the listing's STORED external URL. It writes NOTHING to Postgres.
+ * 🔴 NOT AN OPEN REDIRECT. The destination comes only from the stored row
+ * (`getStoreVisibleOffsiteDestination` → its https `externalUrl`); no code path reads a URL from
+ * the request — the only inputs are the listing id (generated-id pattern) and `?src=` (closed set).
  *
- * 🔴 NOT AN OPEN REDIRECT, AND THE SHAPE IS WHAT GUARANTEES IT. The destination is read from
- * the database (`getStoreVisibleOffsiteDestination` → the row's `externalUrl`, https-only)
- * and nothing else: this module never reads a URL from the request. The only request inputs
- * are the listing id (validated against a generated-id pattern) and `?src=` (parsed to a
- * closed set). A `?url=` / `?to=` / `?next=` on the request is ignored because no code path
- * looks at it.
- *
- * 🔴 SAME GATE AS THE DETAIL PAGE. The listing must pass `loadStoreVisibleListingRow` under
- * this viewer's store scope, audience floor, host and browsing level — the predicate
- * `appListings.getAppDetail` applies — so the redirect cannot be used to reach (or to confirm
- * the existence of) a listing the viewer's store would 404. An on-site listing, a hidden one,
- * a missing one and one with no https destination all return null alike.
- *
- * 🔴 THE EVENT IS RAW; THE COUNT IS DERIVED. Every hit writes an `App_Visit` row WITH actor
- * metadata (userId / ip, like `App_Open`). `app_listing_metrics.visit_count` is recomputed from
- * those rows by the listing metrics job (`buildAppVisitCountSql` in
- * `appListing.metrics.sql.ts`) under the SAME rule as plays — one distinct actor per listing per
- * UTC day — so a refresh loop costs rows, not visits, and the number can always be recomputed.
- * There is deliberately no `+1` path here.
- *
- * 🔴 CRAWLERS AND LINK UNFURLERS ARE REDIRECTED BUT NOT RECORDED. A chat-client preview or a
- * crawler following a Visit link is not a person using the app; `isAutomatedUserAgent` (a UA
- * pattern test — attribution only, spoofable, so it gates nothing else) skips the event. The
- * links also carry `rel="nofollow"`. The read-time de-dupe remains the backstop.
- *
- * 🔴 FIRE-AND-FORGET AFTER THE DECISION. Recording never sits in front of the redirect and
- * never fails it: the event is started without being awaited and swallows its own errors.
+ * 🔴 `recorded` IS NEVER AWAITED BY THE ROUTE, and every recording error is swallowed, so the
+ * redirect never waits on or fails because of ClickHouse.
  */
 
 /** The `details` of one `App_Visit` row: an id, a closed value and a bare hostname. */
@@ -168,6 +142,8 @@ export async function resolveAppListingVisit(
   return { destination: destination.url, recorded };
 }
 
+// One raw row per hit and no Postgres write: `visit_count` is derived from these rows by the
+// listing metrics job under the play de-dupe (one actor per listing per UTC day).
 async function recordVisit({
   listingId,
   surface,
@@ -181,6 +157,8 @@ async function recordVisit({
   ctx: VisitRequestContext;
   deps: AppVisitDeps;
 }): Promise<void> {
+  // Crawlers and link unfurlers are redirected but not recorded. A UA pattern test — attribution
+  // only (spoofable), so it gates nothing else.
   if (isAutomatedUserAgent(ctx.req.headers['user-agent'])) return;
   try {
     await deps.recordEvent(

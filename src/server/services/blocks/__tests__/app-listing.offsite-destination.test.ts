@@ -94,8 +94,10 @@ describe('getStoreVisibleOffsiteDestination', () => {
         appBlock: { currentVersionDeployedAt: new Date('2026-01-02') },
       })
     );
-    // POSITIVE CONTROL: the gate itself admits this row, so the null below can only come
-    // from the off-site check — deleting `kind !== 'offsite'` would let it through.
+    // POSITIVE CONTROL: the gate itself admits this row, so the null below comes from the
+    // off-site checks. With no URL, the https check ALSO refuses it — measured: removing the
+    // `kind !== 'offsite'` check leaves this case green. The next case is the one that
+    // isolates the kind check (it went red under that mutation).
     await expect(
       getStoreVisibleListingSummary({ id: 'apl_go' }, { ...OPEN, floor: 'public' })
     ).resolves.not.toBeNull();

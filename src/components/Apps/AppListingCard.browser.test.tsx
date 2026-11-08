@@ -1874,6 +1874,26 @@ describe('AppListingCard — acquisition telemetry', () => {
     await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=store_card');
   });
 
+  test('clicking the card TITLE (the stretched card link) queues ONE card_click', async () => {
+    renderWithProviders(<AppListingCard card={base(OFFSITE)} telemetry={GRID} />);
+    const title = page.getByRole('link', { name: 'External App' });
+    await expect.element(title).toHaveAttribute('href', '/apps/store-preview/my-app');
+    title.element().addEventListener('click', (e) => e.preventDefault());
+    await title.click();
+    expect(storeActions()).toEqual([
+      {
+        action: 'card_click',
+        listingId: 'l1',
+        surface: 'store_card',
+        position: 3,
+        sort: 'newest',
+        category: 'games',
+        hasQuery: true,
+        queryLength: '4-10',
+      },
+    ]);
+  });
+
   test('an untracked card records no click', async () => {
     renderWithProviders(<AppListingCard card={base(OFFSITE)} />);
     const visit = page.getByRole('link', { name: 'Visit' });

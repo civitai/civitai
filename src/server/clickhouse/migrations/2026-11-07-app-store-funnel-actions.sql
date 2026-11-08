@@ -21,8 +21,9 @@
 -- Re-check before applying: `system.tables` `dependencies_table` for `actions` must still be empty.
 -- A materialized view added since would need a `MODIFY QUERY` alongside this.
 --
--- Both types keep actor metadata (userId / ip / userAgent) like `App_Open`: `App_Visit` rows are
--- de-duplicated per user (or IP) per day at read time the same way plays are. Their fields live in
+-- `App_Visit` keeps actor metadata (userId / ip / userAgent) like `App_Open`, so plays and visits
+-- de-dupe per actor at read time. `AppStore_Action` is written with the user id only
+-- (`ACTOR_META_FREE_ACTION_TYPES` in src/server/clickhouse/tracker.ts). Their fields live in
 -- `details` (src/server/schema/track.schema.ts and app-listing-visit.service.ts), so a new funnel
 -- step needs no DDL.
 --

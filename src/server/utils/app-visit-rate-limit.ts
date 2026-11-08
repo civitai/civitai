@@ -7,11 +7,9 @@ import {
 } from '~/server/utils/public-api-rate-limit';
 
 /**
- * Per-actor rate limit for the off-site visit redirect (`/apps/go/<listingId>`): 60 requests per
- * 60 s, the window the store's tRPC reads (`appListings.getAppDetail` & co.) carry. Keyed on the
- * signed-in user id, else the client IP (shared predicate), on the same fixed-window primitive as
- * the public REST limiter — and, like it, FAILS OPEN on a Redis error: this is abuse control, not
- * the authorization boundary (the listing visibility gate is).
+ * Per-actor rate limit for the off-site visit redirect (`/apps/go/<listingId>`), keyed on the
+ * signed-in user id, else the client IP, on the public REST limiter's fixed-window primitive.
+ * FAILS OPEN on a Redis error: abuse control, not the authorization boundary.
  */
 export const APP_VISIT_RATE_LIMIT_MAX = 60;
 export const APP_VISIT_RATE_LIMIT_WINDOW_SECONDS = 60;

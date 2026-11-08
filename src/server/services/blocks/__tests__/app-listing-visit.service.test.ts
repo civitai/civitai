@@ -25,6 +25,21 @@ import {
  *   4. recording failures never fail the redirect.
  */
 
+// The real `recordEvent` dep is exercised against a mocked Tracker (as the App_Open service
+// test does); every other case injects fakes.
+const trackerMocks = vi.hoisted(() => ({
+  action: vi.fn<(...a: any[]) => Promise<boolean>>(),
+  ctor: vi.fn<(...a: any[]) => void>(),
+}));
+vi.mock('~/server/clickhouse/client', () => ({
+  Tracker: class {
+    constructor(...args: any[]) {
+      trackerMocks.ctor(...args);
+    }
+    action = trackerMocks.action;
+  },
+}));
+
 // Which hosts are red-capable is deployment config; pinned here so the host → `redCapable`
 // hand-off is observable with a host the real config may not list.
 vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
@@ -281,23 +296,33 @@ describe('App_Visit is server-only', () => {
   });
 });
 
-describe('/apps/go writes NO Postgres counter (visit_count is derived by the metrics job)', () => {
-  it("the redirect's I/O edges are exactly: two gate reads, one lookup, one ClickHouse event", () => {
-    // A LEDGER of every side effect the route can have. A counter writer, a Redis claim or any
-    // other edge added back makes this set grow and the test red.
-    expect(Object.keys(defaultAppVisitDeps).sort()).toEqual([
-      'findDestination',
-      'recordEvent',
-      'resolveFloor',
-      'resolveScope',
-    ]);
+describe('defaultAppVisitDeps.recordEvent — the real ClickHouse write', () => {
+  beforeEach(() => {
+    trackerMocks.action.mockReset();
+    trackerMocks.action.mockResolvedValue(true);
+    trackerMocks.ctor.mockReset();
   });
 
-  it('the service source reaches no Postgres writer and no Redis', () => {
+  it('writes exactly one App_Visit with the details, WITH actor metadata (no skipActorMeta)', async () => {
+    const details = { listingId: LISTING_ID, surface: 'store_card' as const };
+    const ctx = { req: { headers: {} }, res: {} };
+    const session = { user: { id: 7 } } as any;
+    await defaultAppVisitDeps.recordEvent(details, ctx, session);
+
+    expect(trackerMocks.ctor).toHaveBeenCalledWith(ctx.req, ctx.res, session);
+    expect(trackerMocks.action).toHaveBeenCalledTimes(1);
+    expect(trackerMocks.action).toHaveBeenCalledWith({ type: 'App_Visit', details });
+    // 🔴 The read-time de-dupe (one actor per listing per UTC day) falls back to `ip` for
+    // anonymous visitors, so the row MUST carry actor metadata: no options argument at all.
+    expect(trackerMocks.action.mock.calls[0]).toHaveLength(1);
+  });
+});
+
+describe('convention: /apps/go writes no Postgres counter', () => {
+  it('the service source names no Postgres writer and no Redis client', () => {
+    // visit_count is derived by the metrics job; a `+1` here would double-count beside it.
     const src = readFileSync(path.resolve(__dirname, '../app-listing-visit.service.ts'), 'utf8');
-    // Positive control: this is the module that records the visit.
-    expect(src).toContain("type: 'App_Visit'");
-    // Code identifiers, not prose: the docstring legitimately names the column it does not write.
+    expect(src).toContain("type: 'App_Visit'"); // positive control: the right file
     expect(src).not.toMatch(/\bdbWrite\b|\$executeRaw|appListingMetric\./);
     expect(src).not.toMatch(/redis\/client|sysRedis/);
   });

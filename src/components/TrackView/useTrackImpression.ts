@@ -159,8 +159,7 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
   // render, and re-observing on that would be constant churn. This is the effect's
   // real dependency; `targets` is read inside it and deliberately not a dep.
   const key = targets?.map((t) => `${t.entityType}:${t.entityId}`).join(',') ?? '';
-  // Read from THIS render's closure when the effect runs (exactly as before this hook was
-  // split out), never from a ref written during render.
+  // Read from this render's closure, never from a ref written during render.
   return useImpressionObserver<T>(!!targets?.length, key, () => ({ targets: targets ?? [] }));
 }
 

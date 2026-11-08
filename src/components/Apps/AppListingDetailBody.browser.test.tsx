@@ -6,6 +6,7 @@ import type * as TrpcMod from '~/utils/trpc';
 import type * as RecentsMod from '~/components/Apps/recentlyOpenedAppsStore';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import type * as NotificationsMod from '~/utils/notifications';
+import type * as TrackBufferMod from '~/components/TrackView/trackEventBuffer';
 import type { ListingCard, ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -122,6 +123,13 @@ vi.mock('~/components/Apps/recentlyOpenedAppsStore', async (importOriginal) => {
 // `useFeatureFlags` left the optional one resolving to the REAL null-outside-provider
 // value, i.e. store scope `none`, which silently hid the review affordance and failed two
 // tests here for a reason that had nothing to do with what they assert.
+// Acquisition telemetry rides the shared beacon; spied so a test can read the exact
+// `AppStore_Action` rows the detail page queues. Spread, not replaced.
+const trackMocks = vi.hoisted(() => ({ enqueue: vi.fn() }));
+vi.mock('~/components/TrackView/trackEventBuffer', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrackBufferMod>()),
+  enqueueTrackEvent: trackMocks.enqueue,
+}));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => mocks.features,
@@ -2686,5 +2694,61 @@ describe('AppListingDetailBody — page order and the related-rail link', () => 
     expect(
       prev.container.querySelectorAll('[data-testid="apps-listing-details-related-link"]')
     ).toHaveLength(0);
+  });
+});
+
+describe('AppListingDetailBody — store funnel events', () => {
+  const storeActions = () =>
+    trackMocks.enqueue.mock.calls
+      .map(([event]) => event)
+      .filter((e: any) => e?.kind === 'action' && e.data?.type === 'AppStore_Action')
+      .map((e: any) => e.data.details);
+  const offsiteDetail = () =>
+    base({
+      kind: 'offsite',
+      kindData: { kind: 'offsite', externalUrl: 'https://ext.app', connectClientId: null },
+    });
+
+  beforeEach(() => {
+    trackMocks.enqueue.mockReset();
+    // The funnel's one gate (the `feedImpressions` dial), ON unless a case turns it off.
+    mocks.features = { ...mocks.features, feedImpressions: true };
+  });
+
+  test('mounting the detail page queues exactly ONE detail_view for the listing', async () => {
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByTestId('apps-listing-open-live')).toBeInTheDocument();
+    await vi.waitUntil(() => storeActions().length > 0, { timeout: 5000, interval: 25 });
+    expect(storeActions()).toEqual([{ action: 'detail_view', listingId: 'l1', surface: 'detail' }]);
+  });
+
+  test('a moderator PREVIEW queues no detail_view', async () => {
+    const { container } = await renderScoped(<AppListingDetailBody detail={base({})} preview />);
+    // Positive control that the body rendered (and its effects ran) before reading the absence.
+    await vi.waitUntil(() => container.textContent?.includes('My App'), {
+      timeout: 5000,
+      interval: 25,
+    });
+    expect(storeActions()).toEqual([]);
+  });
+
+  test('with the funnel gate OFF the page queues no detail_view', async () => {
+    mocks.features = { ...mocks.features, feedImpressions: false };
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByTestId('apps-listing-open-live')).toBeInTheDocument();
+    expect(storeActions()).toEqual([]);
+  });
+
+  test('following the off-site Visit CTA queues a cta_click (after the detail_view)', async () => {
+    const { within } = await renderScoped(<AppListingDetailBody detail={offsiteDetail()} />);
+    const visit = within.getByTestId('apps-listing-open-live');
+    await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=detail');
+    await vi.waitUntil(() => storeActions().length > 0, { timeout: 5000, interval: 25 });
+    visit.element().addEventListener('click', (e) => e.preventDefault());
+    await visit.click();
+    expect(storeActions()).toEqual([
+      { action: 'detail_view', listingId: 'l1', surface: 'detail' },
+      { action: 'cta_click', listingId: 'l1', surface: 'detail' },
+    ]);
   });
 });

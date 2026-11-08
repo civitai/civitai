@@ -73,12 +73,7 @@ export function appStoreActionDetails(
   return details;
 }
 
-/**
- * 🔴 ONE GATE FOR THE WHOLE FUNNEL. Impressions ride the feed impression hook, which is behind
- * the `feedImpressions` dial; clicks, detail views and CTA follows must be behind the SAME dial,
- * or a partial rollout records clicks for viewers whose impressions were never recorded and
- * every click-through ratio is silently inflated. Every component records through this hook.
- */
+// Gated by the same dial as impressions, or click-through ratios inflate.
 export function useAppStoreTelemetryOn(): boolean {
   return impressionTelemetryOn(useOptionalFeatureFlags());
 }

@@ -10,7 +10,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
  *
  * In order, each refusal before the redirect:
  *   1. `resolveAppsPageAccess` — the same store page gate the listing detail page applies (404);
- *   2. a per-actor rate limit, 60/min like the store's tRPC reads (429, rendered below);
+ *   2. a per-actor rate limit (429, rendered below);
  *   3. the listing must pass the detail read's own visibility gate for this viewer (store scope,
  *      audience floor, host, browsing level), be OFF-SITE and carry an https destination (404).
  *

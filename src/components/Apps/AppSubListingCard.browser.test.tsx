@@ -11,6 +11,16 @@ vi.mock('~/components/UserAvatar/UserAvatar', () => ({
   ),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+// The store funnel: its gate (the `feedImpressions` dial) and the shared beacon, spied.
+const funnel = vi.hoisted(() => ({ on: true, enqueue: vi.fn() }));
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/providers/FeatureFlagsProvider')>()),
+  useOptionalFeatureFlags: () => ({ feedImpressions: funnel.on }),
+}));
+vi.mock('~/components/TrackView/trackEventBuffer', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/components/TrackView/trackEventBuffer')>()),
+  enqueueTrackEvent: funnel.enqueue,
+}));
 
 const { AppSubListingCard, getSubListingHref } = await import('./AppSubListingCard');
 
@@ -168,5 +178,29 @@ describe('AppSubListingCard — acquisition telemetry', () => {
     const cta = page.getByTestId('apps-sub-listing-cta');
     await expect.element(cta).toBeInTheDocument();
     expect(hrefOf(cta.element())).toBe('/apps/store-preview/custom-generators');
+  });
+
+  test('clicking a tracked sub-listing card queues ONE card_click keyed on the sub-listing id', async () => {
+    funnel.enqueue.mockReset();
+    funnel.on = true;
+    renderWithProviders(
+      <AppSubListingCard
+        card={CARD}
+        canOpenPage
+        telemetry={{ surface: 'sub_listing', position: 2 }}
+      />
+    );
+    const title = page.getByText('Neon Portraits');
+    await expect.element(title).toBeVisible();
+    const link = title.element().closest('a') as HTMLAnchorElement;
+    link.addEventListener('click', (e) => e.preventDefault());
+    link.click();
+    const rows = funnel.enqueue.mock.calls
+      .map(([e]) => e)
+      .filter((e: any) => e?.data?.type === 'AppStore_Action')
+      .map((e: any) => e.data.details);
+    expect(rows).toEqual([
+      { action: 'card_click', listingId: CARD.id, surface: 'sub_listing', position: 2 },
+    ]);
   });
 });
