@@ -3,7 +3,7 @@ import type { SessionUser } from '~/types/session';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead } from '~/server/db/client';
-import { trainingDataListing } from '~/server/services/training-data-held.service';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import {

@@ -349,7 +349,7 @@ describe('archiveStudioDataset applies the owner’s sharing choice only to the 
     fetchMock.mockImplementation(async () => blobResponse('png-bytes', 'image/png'));
   });
 
-  it('a shared, complete, approved dataset with nothing held is Public', async () => {
+  it('a shared, complete, approved dataset with nothing restricted is Public', async () => {
     lockedRow(shared);
     expect(await archive()).toBe('Public');
     expect(swaps()[0].data.metadata).toMatchObject({ datasetArchive: { complete: true } });
@@ -371,7 +371,7 @@ describe('archiveStudioDataset applies the owner’s sharing choice only to the 
     expect(await archive()).toBe(expected);
   });
 
-  it('a held owner or held content keeps a shared dataset Private', async () => {
+  it('a restricted owner or content keeps a shared dataset Private', async () => {
     lockedRow(shared);
     ownerHeld.mockResolvedValue(true);
     expect(await archive()).toBe('Private');

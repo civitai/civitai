@@ -110,10 +110,10 @@ vi.mock('~/utils/delivery-worker', () => ({
   resolveDownloadUrl: resolveDownloadUrlMock,
 }));
 
-// Held owner / held content, for a shared training dataset. Not held unless a test says so.
-const { shareHeldMock } = vi.hoisted(() => ({ shareHeldMock: vi.fn() }));
-vi.mock('~/server/services/training-data-held.service', () => ({
-  trainingDataShareHeld: shareHeldMock,
+// Restricted owner or content, for a shared training dataset. Unrestricted unless a test says so.
+const { shareRestrictedMock } = vi.hoisted(() => ({ shareRestrictedMock: vi.fn() }));
+vi.mock('~/server/services/training-data-restricted.service', () => ({
+  trainingDataShareRestricted: shareRestrictedMock,
 }));
 
 function publishedModelVersion(overrides: Record<string, unknown> = {}) {
@@ -709,6 +709,7 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
       user: A_USER,
       direct,
       attribution: ATTRIBUTION,
+      redCapable: false,
     });
 
     expect(resolveDownloadUrlMock).toHaveBeenCalledTimes(1);
@@ -721,7 +722,13 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
     [{ caller: 'download-route', actor: 'anon' }],
     [{ caller: 'wildcard', actor: 'user' }],
   ] as const)('forwards attribution %o unchanged', async (attribution) => {
-    await getFileForModelVersion({ modelVersionId: 1, noAuth: true, user: A_USER, attribution });
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      noAuth: true,
+      user: A_USER,
+      attribution,
+      redCapable: false,
+    });
 
     expect(optionsArg()).toStrictEqual({ direct: undefined, ...attribution });
   });
@@ -734,6 +741,7 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
       noAuth: true,
       user: A_USER,
       attribution: ATTRIBUTION,
+      redCapable: false,
     });
 
     // toStrictEqual, not toEqual: toEqual treats an undefined-valued key as equal
@@ -809,6 +817,7 @@ describe('getFileForModelVersion — names against every file on the version', (
         type,
         user: { id: 1 },
         attribution: ATTRIBUTION,
+        redCapable: false,
       });
     }
 
@@ -830,6 +839,7 @@ describe('getFileForModelVersion — names against every file on the version', (
       ...pick,
       user: { id: 1 },
       attribution: ATTRIBUTION,
+      redCapable: false,
     });
 
     expect(resolveDownloadUrlMock.mock.calls[0][0]).toBe(1);
@@ -840,7 +850,12 @@ describe('getFileForModelVersion — names against every file on the version', (
   it('hands the delivery path a stored override name without an encoded line break', async () => {
     versionFiles = [{ ...file(1, 'Model', 'Public'), overrideName: 'old%0D%0Aname.safetensors' }];
 
-    await getFileForModelVersion({ modelVersionId: 1, user: { id: 1 }, attribution: ATTRIBUTION });
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1 },
+      attribution: ATTRIBUTION,
+      redCapable: false,
+    });
 
     expect(servedName()).toBe('old_0D_0Aname.safetensors');
     expect(advertisedName(1)).toBe('old_0D_0Aname.safetensors');
@@ -893,6 +908,7 @@ describe('getFileForModelVersion — a file that failed its scan', () => {
       modelVersionId: 1,
       user,
       attribution: { caller: 'download-route', actor: 'user' },
+      redCapable: false,
     });
     return result.status;
   };
@@ -952,15 +968,15 @@ describe('getFileForModelVersion — a shared training dataset', () => {
     resolveDownloadUrlMock
       .mockReset()
       .mockResolvedValue({ url: 'https://cdn/data.zip', urlExpiryDate: new Date() });
-    shareHeldMock.mockReset().mockResolvedValue(false);
+    shareRestrictedMock.mockReset().mockResolvedValue(false);
   });
 
-  it('is served to others while nothing is held', async () => {
+  it('is served to others while nothing is restricted', async () => {
     expect((await download({ id: 1 })).status).toBe('success');
   });
 
-  it('is the same not-found as a missing file for others once its owner or content is held', async () => {
-    shareHeldMock.mockResolvedValue(true);
+  it('is the same not-found as a missing file for others once its owner or content is restricted', async () => {
+    shareRestrictedMock.mockResolvedValue(true);
     const result = await download({ id: 1 });
     expect(result).toEqual({ status: 'not-found' });
     expect(resolveDownloadUrlMock).not.toHaveBeenCalled();
@@ -969,13 +985,13 @@ describe('getFileForModelVersion — a shared training dataset', () => {
   it.each([
     ['its owner', { id: 999 }],
     ['a moderator', { id: 1, isModerator: true }],
-  ])('is still served to %s while held', async (_, user) => {
-    shareHeldMock.mockResolvedValue(true);
+  ])('is still served to %s while restricted', async (_, user) => {
+    shareRestrictedMock.mockResolvedValue(true);
     expect((await download(user)).status).toBe('success');
   });
 
   it('does not gate a model file', async () => {
-    shareHeldMock.mockResolvedValue(true);
+    shareRestrictedMock.mockResolvedValue(true);
     listDownloadFilesMock.mockResolvedValue([aFile]);
     const result = await getFileForModelVersion({
       modelVersionId: 1,
@@ -984,7 +1000,7 @@ describe('getFileForModelVersion — a shared training dataset', () => {
       redCapable: true,
     });
     expect(result.status).toBe('success');
-    expect(shareHeldMock).not.toHaveBeenCalled();
+    expect(shareRestrictedMock).not.toHaveBeenCalled();
   });
 });
 
@@ -1018,7 +1034,7 @@ describe('getFileForModelVersion — a training dataset on each host', () => {
     resolveDownloadUrlMock
       .mockReset()
       .mockResolvedValue({ url: 'https://cdn/data.zip', urlExpiryDate: new Date() });
-    shareHeldMock.mockReset().mockResolvedValue(false);
+    shareRestrictedMock.mockReset().mockResolvedValue(false);
   });
 
   it.each([

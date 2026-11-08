@@ -26,7 +26,6 @@ import {
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { trainingDataListing } from '~/server/services/training-data-held.service';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
@@ -183,7 +182,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
-import { getRequestBoardDomainColor, isRedCapableHost } from '~/server/utils/server-domain';
+import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import {
   getRequestBrowsingLevel,
   resolveRequestBrowsingLevels,
@@ -332,10 +331,6 @@ export const getModelHandler = async ({
 
     const metrics = model.metrics[0];
     const canManage = ctx.user?.id === model.user.id || ctx.user?.isModerator;
-    const listed = await trainingDataListing(dbRead, filteredVersions, {
-      redCapable: isRedCapableHost(ctx.req?.headers?.host),
-      viewerManages: !!canManage,
-    });
     const entityAccess = await hasEntityAccess({
       entityIds: filteredVersions.map((x) => x.id),
       entityType: 'ModelVersion',
@@ -460,7 +455,7 @@ export const getModelHandler = async ({
       // The list endpoint and public API still push them for backward compat.
       const files = isDownloadable
         ? version.files
-            .filter((x) => (canManage || x.visibility === 'Public') && listed(x))
+            .filter((x) => x.visibility === 'Public' || canManage)
             .sort((a, b) => {
               const aType = a.type as ModelFileType;
               const bType = b.type as ModelFileType;

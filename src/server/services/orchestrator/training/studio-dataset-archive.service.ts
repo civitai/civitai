@@ -20,7 +20,7 @@ import {
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
 } from '~/server/utils/archive-helpers';
 import { isTrainingModerationApproved } from '~/server/services/orchestrator/training/publish-from-workflow';
-import { studioDatasetVisibility } from '~/server/services/training-data-share.service';
+import { studioDatasetVisibility } from '~/server/services/training-data-restricted.service';
 import { bytesToKB } from '~/utils/number-helpers';
 import { getGetUrlByKey, getUploadBucket, getUploadS3Client } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';

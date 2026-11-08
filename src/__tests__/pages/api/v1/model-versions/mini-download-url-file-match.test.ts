@@ -1046,7 +1046,7 @@ describe('GET /api/v1/model-versions/mini/[id] — a mature training dataset', (
     mockQueryRaw.mockReset();
     const pending = run([SAFETENSOR, DATASET], { modelFileId: String(DATASET.id) }, {}, host);
     mockQueryRaw.mockResolvedValueOnce([
-      { id: DATASET.id, nsfwLevel: 4, fullyRated: true, held: false },
+      { id: DATASET.id, nsfwLevel: 4, fullyRated: true, restricted: false },
     ]);
     return pending;
   };
@@ -1059,6 +1059,16 @@ describe('GET /api/v1/model-versions/mini/[id] — a mature training dataset', (
 
   it('is offered on a red-capable host', async () => {
     const { status, body } = await fetchDataset('civitai.red');
+    expect(status).toBe(200);
+    expect(body.fileName).toBe(DATASET.name);
+  });
+
+  it.each([
+    ['its owner', { id: OWNER_ID }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('is still offered to %s on a host that is not red-capable', async (_, user) => {
+    currentUser.value = user;
+    const { status, body } = await fetchDataset('civitai.com');
     expect(status).toBe(200);
     expect(body.fileName).toBe(DATASET.name);
   });

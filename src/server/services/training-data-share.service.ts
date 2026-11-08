@@ -1,18 +1,13 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
-import { trainingDataShareHeld } from '~/server/services/training-data-held.service';
+import {
+  normalizeTrainingDataShare,
+  studioDatasetVisibility,
+  type TrainingDataShare,
+} from '~/server/services/training-data-restricted.service';
 import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
-import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
-import { trainingDataVisibility } from '~/shared/utils/training-data-visibility';
 
-/** The owner's dataset-sharing choice, stored on the `Training Data` file's metadata. */
-export type TrainingDataShare = { ownRights: boolean; shareDataset: boolean };
-
-/** Sharing needs the rights: a share without them is stored as not shared. */
-export function normalizeTrainingDataShare(share: Partial<TrainingDataShare>): TrainingDataShare {
-  const ownRights = share.ownRights === true;
-  return { ownRights, shareDataset: ownRights && share.shareDataset === true };
-}
+export { normalizeTrainingDataShare, type TrainingDataShare };
 
 /** The choice a publish entry carries as `ownRights=1&shareDataset=1`; undefined when it carries
  *  none, so an entry that never asked leaves a stored choice alone. */
@@ -25,26 +20,6 @@ export function trainingDataShareFromQuery(
     ownRights: ownRights === '1',
     shareDataset: shareDataset === '1',
   });
-}
-
-/**
- * The visibility of a Training Studio dataset row. Only an archived zip that holds the whole run
- * (`complete`) can be shared; a placeholder never can.
- */
-export async function studioDatasetVisibility(
-  db: Pick<Prisma.TransactionClient, '$queryRaw'>,
-  {
-    modelVersionId,
-    metadata,
-    complete,
-  }: { modelVersionId: number; metadata: Record<string, unknown>; complete: boolean }
-) {
-  const choice = normalizeTrainingDataShare(metadata);
-  if (!choice.shareDataset) return trainingDataVisibility(choice);
-  // A share that can't be honoured fails closed to Private, not to the owner-only Sensitive.
-  if (!complete || (await trainingDataShareHeld(db, modelVersionId)))
-    return ModelFileVisibility.Private;
-  return ModelFileVisibility.Public;
 }
 
 type DatasetRow = { id: number; sizeKB: number; metadata: Record<string, unknown> | null };

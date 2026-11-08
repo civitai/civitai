@@ -706,3 +706,61 @@ describe('a new url from a client', () => {
     ).resolves.toMatchObject({ id: NEW_ID });
   });
 });
+
+describe('an owner editing a Training Studio dataset directly', () => {
+  const studio = (archive: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...FILE,
+      type: 'Training Data',
+      visibility: 'Private',
+      sizeKB: 2048,
+      metadata: {
+        selectedEpochUrl: 'https://orch.test/epoch-1',
+        ownRights: true,
+        shareDataset: true,
+        datasetArchive: { status: 'archived', ...archive },
+        fullyRated: true,
+        ...extra,
+      },
+    });
+
+  beforeEach(() => {
+    // The share's restriction check: nothing restricted.
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ held: false }]);
+  });
+
+  it('can share a complete, fully rated zip', async () => {
+    studio({ complete: true });
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Public');
+  });
+
+  it.each([
+    ['an incomplete zip', { complete: false }, {}],
+    ['a zip with an unrated item', { complete: true }, { fullyRated: false }],
+    ['a placeholder', { status: 'pending', complete: true }, {}],
+  ])('cannot share %s', async (_, archive, extra) => {
+    studio(archive, extra);
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Private');
+  });
+
+  it('cannot share a zip whose owner or content is restricted', async () => {
+    studio({ complete: true });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ held: true }]);
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Private');
+  });
+
+  it('can always make it less visible', async () => {
+    studio({ complete: true });
+    await updateFile({ id: 1, visibility: 'Private', userId: 7 });
+    expect(writtenData().visibility).toBe('Private');
+  });
+
+  it("leaves a moderator's edit as sent", async () => {
+    studio({ complete: false });
+    await updateFile({ id: 1, visibility: 'Public', userId: 1, isModerator: true });
+    expect(writtenData().visibility).toBe('Public');
+  });
+});

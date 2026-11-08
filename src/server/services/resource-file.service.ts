@@ -130,7 +130,7 @@ export async function resolveResourceFileForUser({
     fileId: chosen.id,
     user: { ...user, isModerator: false },
     attribution: { caller: 'other', actor: resolveActorFor(user) },
-    // Serves no host's download; a dataset is not a resource file.
+    // No request host: false keeps the dataset host gate.
     redCapable: false,
   });
   if (resolved.status === 'resolve-failed') {

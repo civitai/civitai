@@ -13,7 +13,7 @@ import {
   createSerializedFileDownloadUrl,
 } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
-import { trainingDataListing } from '~/server/services/training-data-held.service';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import {
   readModelVersionPrivacyViaKysely,

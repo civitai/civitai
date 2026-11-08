@@ -79,7 +79,7 @@ describe('setStudioDatasetShare', () => {
     expect(written().data.visibility).toBe('Private');
   });
 
-  it('a held owner or held content keeps a shared zip Private', async () => {
+  it('a restricted owner or content keeps a shared zip Private', async () => {
     row(1024, archived(true));
     ownerHeld.mockResolvedValue(true);
     await setStudioDatasetShare(70, shared, owner);

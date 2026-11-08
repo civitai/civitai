@@ -35,7 +35,7 @@ vi.mock('~/server/services/file.service', () => ({
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
 // The listing rule is tested on PGlite (training-data-share.behavior.test.ts); here only that this
 // surface asks it with the request's host and applies the answer.
-vi.mock('~/server/services/training-data-held.service', () => ({
+vi.mock('~/server/services/training-data-restricted.service', () => ({
   trainingDataListing:
     async (
       _db: unknown,

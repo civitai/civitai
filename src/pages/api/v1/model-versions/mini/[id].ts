@@ -9,7 +9,7 @@ import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { isNonCommercialBaseModel, stopsCreatorEarnings } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { trainingDataListing } from '~/server/services/training-data-held.service';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import {
   getShouldChargeForResources,
   resolveCanGenerateForVersions,

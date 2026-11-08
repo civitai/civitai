@@ -6,7 +6,7 @@ import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums'
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead } from '~/server/db/client';
-import { trainingDataListing } from '~/server/services/training-data-held.service';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import { ModelSort } from '~/server/common/enums';
 import {
   createModelFileDownloadUrl,
@@ -243,7 +243,7 @@ const baseHandler = PublicEndpoint(async function handler(
 
 type BodyFile = { id: number; type: string; visibility: string };
 
-/** Applied after the origin cache, which keys on neither the host nor a hold placed since. */
+/** Applied after the origin cache, which keys on neither the host nor a restriction placed since. */
 async function withListableTrainingData(body: Record<string, unknown>, redCapable: boolean) {
   const versions = (body.modelVersions ?? []) as { id: number; files?: BodyFile[] }[];
   const listed = await trainingDataListing(

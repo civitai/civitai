@@ -6,11 +6,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { ownerHeldSql } from '~/server/services/legal-hold.service';
 import {
   trainingDataListing,
-  trainingDataShareHeld,
-} from '~/server/services/training-data-held.service';
+  trainingDataShareRestricted,
+} from '~/server/services/training-data-restricted.service';
 
-/** A training dataset is shared only while neither its owner nor its content is held. Runs the
- *  real hold migrations on PGlite; each case runs in a transaction that is rolled back. */
+/** A training dataset is shared only while neither its owner nor its content is restricted. Runs
+ *  the real restriction migrations on PGlite; each case runs in a transaction that is rolled back. */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -20,9 +20,9 @@ const MIGRATIONS = path.resolve(
 );
 const migration = (name: string) => readFileSync(`${MIGRATIONS}/${name}/migration.sql`, 'utf8');
 
-const PLAIN = 1; // no hold of any kind
-const MARKER = 2; // an active hold marker
-const OLD_REPORT = 3; // named on a report sent two years ago and archived
+const PLAIN = 1; // no restriction of any kind
+const MARKER = 2; // an active restriction marker
+const OLD_REPORT = 3; // named on a record sent two years ago and archived
 
 // One model + version per owner, ids offset from the owner's.
 const versionOf = (uid: number) => 100 + uid;
@@ -106,8 +106,8 @@ const FIXTURE = `
 `;
 
 let db: PGlite;
-// `$queryRaw` is a tagged template; a query that throws would read as held (fail closed), so the
-// adapter rethrows loudly instead of letting every "held" case pass on an error.
+// `$queryRaw` is a tagged template; a query that throws would read as restricted (fail closed), so the
+// adapter rethrows loudly instead of letting every "restricted" case pass on an error.
 let queryError: unknown;
 const client = {
   $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -120,7 +120,7 @@ const client = {
     }
   },
 } as unknown as Pick<Prisma.TransactionClient, '$queryRaw'>;
-const held = (uid: number) => trainingDataShareHeld(client, versionOf(uid));
+const restricted = (uid: number) => trainingDataShareRestricted(client, versionOf(uid));
 
 beforeAll(async () => {
   db = new PGlite();
@@ -139,35 +139,35 @@ afterEach(async () => {
   expect(queryError).toBeUndefined();
 });
 
-describe('trainingDataShareHeld', () => {
+describe('trainingDataShareRestricted', () => {
   it('a clean owner and clean content can share', async () => {
-    expect(await held(PLAIN)).toBe(false);
+    expect(await restricted(PLAIN)).toBe(false);
   });
 
-  it('an owner the content hold keeps cannot share', async () => {
-    expect(await held(MARKER)).toBe(true);
+  it('an owner the content restriction keeps cannot share', async () => {
+    expect(await restricted(MARKER)).toBe(true);
   });
 
-  it('an owner named on any report cannot share, however old the report', async () => {
-    // The content hold has let this owner go; sharing does not.
-    const { rows } = await db.query<{ held: boolean }>(
-      `SELECT ${ownerHeldSql(Prisma.raw(String(OLD_REPORT))).text} AS held`
+  it('an owner named on any record cannot share, however old the record', async () => {
+    // The content restriction has let this owner go; sharing does not.
+    const { rows } = await db.query<{ restricted: boolean }>(
+      `SELECT ${ownerHeldSql(Prisma.raw(String(OLD_REPORT))).text} AS restricted`
     );
-    expect(rows[0].held).toBe(false);
-    expect(await held(OLD_REPORT)).toBe(true);
+    expect(rows[0].restricted).toBe(false);
+    expect(await restricted(OLD_REPORT)).toBe(true);
   });
 
-  it('reads a hold placed after the dataset went public', async () => {
-    expect(await held(PLAIN)).toBe(false);
+  it('reads a restriction placed after the dataset went public', async () => {
+    expect(await restricted(PLAIN)).toBe(false);
     await db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${PLAIN})`);
-    expect(await held(PLAIN)).toBe(true);
+    expect(await restricted(PLAIN)).toBe(true);
   });
 
-  it('an owner named only as the second user on a report cannot share', async () => {
+  it('an owner named only as the second user on a record cannot share', async () => {
     await db.exec(
       `INSERT INTO "CsamReport" ("userId", details) VALUES (NULL, '{"secondaryUserId": ${PLAIN}}')`
     );
-    expect(await held(PLAIN)).toBe(true);
+    expect(await restricted(PLAIN)).toBe(true);
   });
 
   it.each([
@@ -179,9 +179,9 @@ describe('trainingDataShareHeld', () => {
       'a blocked image',
       `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = 301`,
     ],
-  ])('content held by %s cannot share', async (_, sql) => {
+  ])('content restricted by %s cannot share', async (_, sql) => {
     await db.exec(sql);
-    expect(await held(PLAIN)).toBe(true);
+    expect(await restricted(PLAIN)).toBe(true);
   });
 
   it('fails closed when the check cannot be read', async () => {
@@ -190,7 +190,7 @@ describe('trainingDataShareHeld', () => {
         throw new Error('down');
       },
     } as unknown as Pick<Prisma.TransactionClient, '$queryRaw'>;
-    expect(await trainingDataShareHeld(broken, versionOf(PLAIN))).toBe(true);
+    expect(await trainingDataShareRestricted(broken, versionOf(PLAIN))).toBe(true);
   });
 });
 
@@ -220,12 +220,12 @@ describe('trainingDataListing', () => {
     return [listed(datasetOf(uid)), listed(modelOf(uid))];
   };
 
-  it('lists a shared PG dataset while nothing is held', async () => {
+  it('lists a shared PG dataset while nothing is restricted', async () => {
     await rate(PLAIN, { nsfwLevel: 1 });
     expect(await listedFor(PLAIN)).toEqual([true, true]);
   });
 
-  it('a report on the owner after sharing unlists the dataset, and only the dataset', async () => {
+  it('a record naming the owner after sharing unlists the dataset, and only the dataset', async () => {
     await rate(PLAIN, { nsfwLevel: 1 });
     await db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${PLAIN})`);
     expect(await listedFor(PLAIN)).toEqual([false, true]);

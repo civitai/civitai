@@ -28,7 +28,7 @@ import {
 } from '~/server/services/hot-reads-6.reads';
 import type { DownloadFilesWhere } from '@civitai/db-queries/hot-reads-6';
 import { hasEntityAccess } from './common.service';
-import { trainingDataShareHeld } from './training-data-held.service';
+import { trainingDataShareRestricted } from './training-data-restricted.service';
 import { trainingDataServableOnHost } from '~/shared/utils/training-data-visibility';
 import {
   getVersionEarlyAccess,
@@ -230,8 +230,10 @@ export const getFileForModelVersion = async ({
    * resolver for attribution only. Required so every caller names itself.
    */
   attribution: ResolveAttribution;
-  /** `isRedCapableHost` of the request. Required; a server-side caller that serves no host
-   *  passes true. */
+  /** Whether the request's host serves mature content (`isRedCapableHost`). When false, a
+   *  Training Data file rated above PG13 or not fully rated is not-found for anyone but its owner
+   *  or a moderator. A caller with no request host passes false; only an internal fetch that must
+   *  read any file passes true. */
   redCapable: boolean;
 }): Promise<ModelVersionFileResult> => {
   // The version and its model. The read's inner join drops a version whose model row was
@@ -366,12 +368,12 @@ export const getFileForModelVersion = async ({
     )
   )
     return { status: 'not-found' };
-  // A shared dataset is served to others only while neither its owner nor its content is held.
+  // A shared dataset is served to others only while neither its owner nor its content is restricted.
   if (
     file.type === 'Training Data' &&
     !isOwner &&
     !isMod &&
-    (await trainingDataShareHeld(dbRead, modelVersionId))
+    (await trainingDataShareRestricted(dbRead, modelVersionId))
   )
     return { status: 'not-found' };
   if (!isMod && hasFailedScan(file)) return { status: 'failed-scan' };

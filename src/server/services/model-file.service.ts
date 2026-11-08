@@ -50,6 +50,10 @@ import {
 } from '~/server/utils/model-file-replace';
 import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound';
 import {
+  cappedStudioDatasetVisibility,
+  isStudioDataset,
+} from '~/server/services/training-data-restricted.service';
+import {
   liveRunDatasetTrainingStatuses,
   reviewedDatasetTrainingStatuses,
 } from '~/shared/constants/training.constants';
@@ -261,6 +265,19 @@ export async function updateFile({
       uploadDomain: uploadDomain ?? null,
     });
   }
+
+  // An owner's direct edit cannot share a Studio dataset the share rules would keep unshared.
+  if (
+    !isModerator &&
+    isStudioDataset(modelFile) &&
+    (inputData.visibility !== undefined || metadata !== undefined)
+  )
+    inputData.visibility = await cappedStudioDatasetVisibility(dbWrite, {
+      modelVersionId: modelFile.modelVersionId,
+      sizeKB: modelFile.sizeKB,
+      metadata: (metadata ?? modelFile.metadata ?? {}) as Record<string, unknown>,
+      requested: inputData.visibility ?? modelFile.visibility,
+    });
 
   const typeChanged = inputData.type !== undefined && inputData.type !== modelFile.type;
   // The file kind can change the version's AIR (a diffusion model or UNet), and the bust after the
