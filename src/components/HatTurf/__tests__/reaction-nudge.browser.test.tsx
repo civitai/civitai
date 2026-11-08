@@ -39,12 +39,15 @@ const { armReactionNudge, useReactionNudgeClass, REACTION_NUDGE_MS, REACTION_NUD
   await import('~/components/HatTurf/reaction-nudge');
 const { Reactions } = await import('~/components/Reaction/Reactions');
 
-// Each case arms its own image: the session record and the stores are module-wide.
+// Each case arms its own image: the stores are module-wide.
 let nextImage = 1;
 const OWNER = 2;
 
 // Only timeouts are faked: the arm's delay and expiry are what the cases step through.
 beforeEach(() => {
+  // Every test file in a worker's tab shares sessionStorage: HatTurfDetail's tests place on image 9
+  // and arm its nudge, which made this file's image 9 a repeat whenever they ran first.
+  sessionStorage.clear();
   viewer.user = { id: 1 };
   viewer.cosmetics = true;
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -150,8 +153,7 @@ describe('reaction nudge', () => {
     expect(result.current).toBeUndefined();
     await bar(id, reactions);
     await page.getByRole('button', { name: /^Like reaction/ }).click();
-    // The un-toggle reaches the hook on a later render; on a loaded runner, not by the next line.
-    await vi.waitFor(() => expect(result.current).toMatch(/nudge/));
+    expect(result.current).toMatch(/nudge/);
   });
 
   test('an image is nudged once per session, however often it is stickered', async () => {
