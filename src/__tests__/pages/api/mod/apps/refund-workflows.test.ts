@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { BuzzApiError } from '@civitai/buzz';
@@ -1315,6 +1315,133 @@ describe('partial failure', () => {
     expect(body.workflows[0].outcome).toBe('refunded');
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.blockAuthorFeeAccrual.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Overlapping executes ───────────────────────────────────────────────────
+
+describe('two overlapping executes of one workflow (Buzz answers the repeat refund 200)', () => {
+  const FB = 4519;
+  /** The execute lock runs for real, on an in-memory Redis: `SET NX` refuses a held key. */
+  let locks: Map<string, string>;
+  beforeEach(() => {
+    world.repeat200 = true;
+    world.feedback.set(FB, { id: FB, area: 'app-block', userId: VIEWER, appBlockId: APP });
+    locks = new Map();
+    redisMock.redis.set.mockImplementation(
+      async (key: string, value: string, opts?: { NX?: boolean }) => {
+        if (opts?.NX && locks.has(key)) return null;
+        locks.set(key, value);
+        return 'OK';
+      }
+    );
+    redisMock.redis.eval.mockImplementation(
+      async (
+        script: string,
+        { keys, arguments: args }: { keys: string[]; arguments: string[] }
+      ) => {
+        if (/pexpire/i.test(script)) return 1;
+        if (locks.get(keys[0]) !== args[0]) return 0;
+        locks.delete(keys[0]);
+        return 1;
+      }
+    );
+  });
+  afterEach(() => {
+    // Every other test in this file runs on the canonical defaults: any SET answers OK.
+    redisMock.redis.set.mockImplementation(async () => 'OK');
+    redisMock.redis.eval.mockReset();
+  });
+
+  /** Each Buzz refund takes `ms`, so a second call starts while the first is still mid-refund. */
+  const slowBuzz = (ms: number) => {
+    const real = h.refundTransaction.getMockImplementation()!;
+    h.refundTransaction.mockImplementation(async (...a) => {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      return real(...a);
+    });
+  };
+
+  it('only one call counts, notes and notifies the legs; the other reports them already-refunded', async () => {
+    addWorkflow({
+      id: 'wf-overlap',
+      legs: [
+        { n: 181, amount: 241, colour: 'yellow' },
+        { n: 182, amount: 251, colour: 'blue' },
+      ],
+    });
+    slowBuzz(300);
+    const calls = await Promise.all([
+      refund(['wf-overlap'], { feedbackId: FB }),
+      refund(['wf-overlap'], { feedbackId: FB }),
+    ]);
+    const rows = calls.map((c) => c.body.workflows[0]);
+    expect(rows.map((r) => r.outcome).sort()).toEqual(['already-refunded', 'refunded']);
+    const winner = rows.find((r) => r.outcome === 'refunded');
+    const loser = rows.find((r) => r.outcome === 'already-refunded');
+    expect(winner).toMatchObject({
+      refundBuzz: 492,
+      byColour: { yellow: 241, blue: 251 },
+      legs: [{ status: 'refunded' }, { status: 'refunded' }],
+    });
+    expect(loser).toMatchObject({
+      refundBuzz: 0,
+      byColour: {},
+      legs: [
+        { status: 'already-refunded', refundTransactionId: `refund-${txId(181)}` },
+        { status: 'already-refunded', refundTransactionId: `refund-${txId(182)}` },
+      ],
+    });
+    expect(calls.map((c) => c.body.totals.refundBuzz).sort((x, y) => x - y)).toEqual([0, 492]);
+    // Each leg reached Buzz once: the second call read the first one's refunds inside the lock.
+    expect(h.refundTransaction).toHaveBeenCalledTimes(2);
+    expect(h.createNotification).toHaveBeenCalledTimes(1);
+    expect(h.createNotification.mock.calls[0][0].details).toMatchObject({ amount: 492 });
+    const notes = h.modResolveAppFeedbackWithRefund.mock.calls.map((c) => c[0].note as string);
+    expect(notes.filter((n) => n.startsWith('[App Buzz refund] 492 Buzz'))).toHaveLength(1);
+    expect(notes.filter((n) => n.startsWith('[App Buzz refund] 0 Buzz'))).toHaveLength(1);
+    expect(locks.size).toBe(0);
+  });
+
+  it('a lock still held when the wait runs out: failed, nothing refunded, counted or notified', async () => {
+    addWorkflow({ id: 'wf-held', legs: [{ n: 183, amount: 263, colour: 'yellow' }] });
+    // Another execute of this workflow holds the lock for longer than a caller waits (~5s).
+    redisMock.redis.set.mockImplementation(async (key: string) =>
+      key.endsWith(':app-workflow-refund:wf-held') ? null : 'OK'
+    );
+    const { body } = await refund(['wf-held'], { feedbackId: FB });
+    expect(body.workflows[0]).toMatchObject({
+      outcome: 'failed',
+      refundBuzz: 0,
+      byColour: {},
+      legs: [{ transactionId: txId(183), status: 'failed', refundTransactionId: null }],
+      errors: [expect.stringContaining('in progress')],
+    });
+    expect(body.totals).toMatchObject({ refundBuzz: 0, refunded: 0, failed: 1 });
+    expectNoMoneyMoved();
+    expect(h.createNotification).not.toHaveBeenCalled();
+    expect(body.feedback).toMatchObject({ feedbackId: FB, resolved: false });
+    expect(redisMock.redis.set.mock.calls.map((c) => c[0])).toEqual(
+      expect.arrayContaining([expect.stringMatching(/:app-workflow-refund:wf-held$/)])
+    );
+  });
+
+  it('Redis failing on acquire: failed and nothing refunded — never refunded without the lock', async () => {
+    addWorkflow({
+      id: 'wf-no-redis',
+      legs: [{ n: 184, amount: 271, colour: 'yellow' }],
+      fee: { state: 'settled', amount: 17, colour: 'yellow' },
+    });
+    redisMock.redis.set.mockRejectedValue(new Error('redis unavailable'));
+    const { body } = await refund(['wf-no-redis']);
+    expect(body.workflows[0]).toMatchObject({
+      outcome: 'failed',
+      refundBuzz: 0,
+      legs: [{ status: 'failed' }],
+      authorFee: { status: 'failed' },
+    });
+    expectNoMoneyMoved();
+    expect(h.createNotification).not.toHaveBeenCalled();
   });
 });
 

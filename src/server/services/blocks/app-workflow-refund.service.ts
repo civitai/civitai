@@ -27,6 +27,7 @@ import {
   listAppWorkflowIdsForUser,
   type AppWorkflowRecords,
 } from '~/server/services/blocks/app-workflow-refund.data';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { APP_BLOCK_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
 
@@ -658,8 +659,9 @@ async function executeWorkflow(plan: RefundablePlan, actorDetails: Record<string
   for (const leg of legs) {
     if (leg.status !== 'would-refund') continue;
     try {
-      // The ledger is read first: Buzz may answer a repeat 200, and this call must count only the
-      // refunds it made.
+      // Buzz may answer a repeat 200, so `created` alone would count a refund another call made.
+      // The ledger read first stops that only because this runs under the workflow's execute
+      // lock: no other execute of this workflow can land a refund between the read and the call.
       const { created } = await refundTransactionOnce(
         leg.transactionId,
         APP_REFUND_DESCRIPTION,
@@ -714,6 +716,44 @@ async function executeWorkflow(plan: RefundablePlan, actorDetails: Record<string
       buzzType: plan.authorFee.buzzType,
       status: feeStatus,
       ...(feeError ? { error: feeError } : {}),
+    },
+  };
+}
+
+/**
+ * One execute of a workflow at a time, across processes. Without it two overlapping calls both read
+ * "not refunded" before either refund lands, Buzz answers the repeat 200, and both count, note and
+ * notify the same leg (the fee's read-then-act has the same shape). A caller that waits out the
+ * holder re-reads the ledger inside the lock and reports what the holder did as `already-refunded`.
+ *
+ * TTL 30s, renewed while the holder lives, as the other Buzz-moving locks are: a workflow is a few
+ * Buzz calls, and a dead holder's lock still expires. A waiter gives up after ~5s.
+ */
+const EXECUTE_LOCK = { ttl: 30, autoRenew: true, retryDelay: 250, maxRetries: 20 } as const;
+export const appWorkflowRefundLockKey = (workflowId: string) => `app-workflow-refund:${workflowId}`;
+export const APP_REFUND_LOCK_UNAVAILABLE =
+  'another refund of this workflow is in progress, or its lock could not be taken; nothing was refunded, re-run';
+
+/** The lock was not taken, so nothing was attempted: every item still owed is reported failed. */
+function notAttempted(
+  plan: RefundablePlan,
+  error: string
+): Awaited<ReturnType<typeof executeWorkflow>> {
+  const feeDue = plan.authorFee.refundBuzz > 0;
+  return {
+    legs: legResults(plan).map<LegResult>((leg) =>
+      leg.status === 'would-refund' ? { ...leg, status: 'failed', error } : leg
+    ),
+    errors: [error],
+    refundBuzz: 0,
+    byColour: {},
+    authorFee: {
+      state: plan.authorFee.state,
+      treatment: plan.authorFee.treatment,
+      feeBuzz: plan.authorFee.feeBuzz,
+      buzzType: plan.authorFee.buzzType,
+      status: feeDue ? 'failed' : 'not-applicable',
+      ...(feeDue ? { error } : {}),
     },
   };
 }
@@ -891,10 +931,11 @@ export async function refundAppWorkflows(input: {
       });
       continue;
     }
-    const done = await executeWorkflow(p, {
-      moderatorRefund: true,
-      moderatorId: input.moderatorId,
-    });
+    const done =
+      (await withDistributedLock(
+        { key: appWorkflowRefundLockKey(p.workflowId), ...EXECUTE_LOCK },
+        () => executeWorkflow(p, { moderatorRefund: true, moderatorId: input.moderatorId })
+      )) ?? notAttempted(p, APP_REFUND_LOCK_UNAVAILABLE);
     results.push({
       ...common,
       // Nothing created and nothing failed: another call returned it all since the plan.
