@@ -9,8 +9,8 @@ import type * as Trpc from '~/utils/trpc';
 import { renderWithProviders } from '../../../test/component-setup';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
-import type { StickerTrackV1 } from '~/shared/utils/sticker-track';
-import { sampleStickerTrack } from '~/shared/utils/sticker-track';
+import type { StickerTrackKey, StickerTrackV2 } from '~/shared/utils/sticker-track';
+import { sampleStickerTrack, stickerTrackRefusal } from '~/shared/utils/sticker-track';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 
@@ -137,15 +137,13 @@ const renderDraft = async (
     maxScale,
     scale,
     commit,
-    moment,
-    recording,
+    motion,
   }: {
     ownerShare?: number;
     maxScale?: number;
     scale?: number;
     commit?: ReactNode;
-    moment?: StickerDraft['moment'];
-    recording?: StickerDraft['recording'];
+    motion?: StickerDraft['motion'];
   } = {}
 ) => {
   renderWithProviders(
@@ -155,7 +153,7 @@ const renderDraft = async (
     // box: the cluster has to be reachable, and none of this asserts geometry.
     <div style={{ position: 'relative', width: 380, height: 600 }}>
       <DraftSticker
-        draft={{ ...draft, ...(scale == null ? null : { scale }), moment, recording }}
+        draft={{ ...draft, ...(scale == null ? null : { scale }), motion }}
         art={art}
         selected
         dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
@@ -230,123 +228,58 @@ beforeEach(() => {
 });
 
 describe('what a draft sends when it is placed', () => {
-  test('a draft pinned to a moment sends its window, at the pose it will be drawn', async () => {
-    await renderDraft({ instant: true }, { moment: { startMs: 12000, durationMs: 1000 } });
-
-    await page.getByRole('button', { name: 'Place free' }).click();
-
-    const { track, data } = placed[0] as (typeof placed)[number] & { track: StickerTrackV1 };
-    expect(sampleStickerTrack(track, 12500).show).toBe(true);
-    expect(sampleStickerTrack(track, 13500).show).toBe(false);
-    expect(track.x).toEqual([[0, data.x]]);
-    expect(track.s).toEqual([[0, data.scale]]);
+  const key = (t: number, overrides: Partial<StickerTrackKey> = {}): StickerTrackKey => ({
+    t,
+    x: 0.2,
+    y: 0.5,
+    s: 0.2,
+    r: 15,
+    o: 1,
+    ease: 'smooth',
+    ...overrides,
   });
 
-  test('pinning through the control is what the press sends', async () => {
-    const video = document.createElement('video');
-    let time = 12;
-    Object.defineProperty(video, 'currentTime', { get: () => time });
-    video.pause = vi.fn();
-    useStickerPlacementDraftStore.setState({ drafts: [draft], selectedDraftId: draft.id });
-    const Live = () => {
-      const current = useStickerPlacementDraftStore((state) =>
-        state.drafts.find((d) => d.id === draft.id)
-      );
-      return current ? (
-        <DraftSticker
-          draft={current}
-          art={art}
-          selected
-          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
-          price={PRICE}
-          creatorMaxScale={0.25}
-          freeOffer={{ instant: true }}
-          ownerShare={undefined}
-          ownerUsername="creator"
-          onGesture={() => true}
-          video={video}
-        />
-      ) : null;
-    };
-    renderWithProviders(
-      <div style={{ position: 'relative', width: 380, height: 600 }}>
-        <Live />
-      </div>
+  test('a draft in Movement sends its keys, with its own pose at the first key', async () => {
+    await renderDraft(
+      { instant: true },
+      { motion: { on: true, keys: [key(1000), key(3000, { x: 0.6, s: 0.25 + 1e-12 })] } }
     );
 
-    await page.getByText('Moment', { exact: true }).click();
     await page.getByRole('button', { name: 'Place free' }).click();
 
-    let { track } = placed[0] as unknown as { track: StickerTrackV1 };
-    expect(video.pause).toHaveBeenCalled();
-    expect(sampleStickerTrack(track, 12500).show).toBe(true);
-    expect(sampleStickerTrack(track, 11500).show).toBe(false);
-
-    time = 2;
-    video.dispatchEvent(new Event('seeked'));
-    await page.getByRole('button', { name: 'Place free' }).click();
-    ({ track } = placed[1] as unknown as { track: StickerTrackV1 });
-    expect(sampleStickerTrack(track, 2500).show).toBe(true);
+    const { track, data } = placed[0] as unknown as { track: StickerTrackV2; data: typeof draft };
+    expect(track.v).toBe(2);
+    expect(track.keys.map((k) => [k.t, k.x])).toEqual([
+      [1000, 0.2],
+      [3000, 0.6],
+    ]);
+    // A resize's float noise past the creator's limit is snapped, as on a still sticker.
+    expect(track.keys[1].s).toBe(0.25);
+    expect(data).toMatchObject({ x: 0.2, y: 0.5, rotation: 15 });
   });
 
-  test('a recorded draft sends its path, starting where the recording starts', async () => {
-    const pose = (x: number) => ({ x, y: 0.5, scale: 0.2, rotation: 15 });
-    await renderDraft({ instant: true }, { recording: [pose(0.2), pose(0.2), pose(0.6)] });
-
-    await page.getByRole('button', { name: 'Place free' }).click();
-
-    const { track } = placed[0] as unknown as { track: StickerTrackV1 };
-    expect(sampleStickerTrack(track, 0)).toMatchObject({ x: 0.2, rotation: 15, show: true });
-    expect(sampleStickerTrack(track, 200).x).toBeCloseTo(0.6);
-  });
-
-  test('a draft in Movement with nothing recorded offers no Place', async () => {
-    await renderDraft({ instant: true }, { recording: [] });
-
-    await expect.element(page.getByText('Record the movement to place')).toBeVisible();
-    expect(page.getByRole('button', { name: 'Place free' }).query()).toBeNull();
-  });
-
-  test('a re-record in progress holds back Place, so it cannot send the take before it', async () => {
-    const video = document.createElement('video');
-    Object.defineProperty(video, 'currentTime', { get: () => 0.1 });
-    video.pause = vi.fn();
-    const pose = { x: 0.3, y: 0.5, scale: 0.2, rotation: 0 };
-    useStickerPlacementDraftStore.setState({
-      drafts: [{ ...draft, recording: [pose, pose] }],
-      selectedDraftId: draft.id,
-    });
-    const Live = () => {
-      const current = useStickerPlacementDraftStore((state) =>
-        state.drafts.find((d) => d.id === draft.id)
-      );
-      return current ? (
-        <DraftSticker
-          draft={current}
-          art={art}
-          selected
-          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
-          price={PRICE}
-          creatorMaxScale={0.25}
-          freeOffer={{ instant: true }}
-          ownerShare={undefined}
-          ownerUsername="creator"
-          onGesture={() => true}
-          video={video}
-        />
-      ) : null;
-    };
-    renderWithProviders(
-      <div style={{ position: 'relative', width: 380, height: 600 }}>
-        <Live />
-      </div>
+  test('a fade longer than the server allows is sent as one it accepts', async () => {
+    await renderDraft(
+      { instant: true },
+      { motion: { on: true, keys: [key(0, { o: 0 }), key(10_000)] } }
     );
-    await expect.element(page.getByRole('button', { name: 'Place free' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Re-record from here' }).click();
+    await page.getByRole('button', { name: 'Place free' }).click();
 
-    await expect.element(page.getByText('Finish recording to place')).toBeVisible();
-    expect(page.getByRole('button', { name: 'Place free' }).query()).toBeNull();
+    const { track } = placed[0] as unknown as { track: StickerTrackV2 };
+    expect(stickerTrackRefusal(track)).toBeNull();
+    expect(sampleStickerTrack(track, 10_000).opacity).toBe(1);
+  });
+
+  test('a draft switched back to Static sends no track, though it keeps its keys', async () => {
+    await renderDraft(
+      { instant: true },
+      { motion: { on: false, keys: [key(1000), key(3000, { x: 0.6 })] } }
+    );
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    expect(placed[0]).not.toHaveProperty('track');
   });
 
   test('a draft that is not pinned sends no track', async () => {

@@ -1,7 +1,8 @@
 import { createContext, useContext } from 'react';
 import { create } from 'zustand';
 import { mintPurchaseKey } from '~/utils/purchase-key';
-import type { StickerRecording } from '~/components/Sticker/sticker-recording';
+import type { StickerTrackKey } from '~/shared/utils/sticker-track';
+import { poseAt, upsertKey } from '~/shared/utils/sticker-track-edit';
 import {
   STICKER_PLACEMENT_DEFAULT_OPACITY,
   STICKER_PLACEMENT_DEFAULT_SCALE,
@@ -68,10 +69,14 @@ export type StickerDraft = {
   opacity: number;
   /** Set while this sticker is still unbought. Cleared by `markPurchased`. */
   purchase?: DraftPurchase;
-  /** Pinned to a moment of the video: when it shows, and for how long. */
-  moment?: { startMs: number; durationMs: number };
-  /** Set while recording movement: one pose per tick of the video, empty before the first take. */
-  recording?: StickerRecording;
+  /**
+   * Movement on a video: the keys, and whether the sticker is in Movement (`on`) or Static.
+   * Switching to Static parks the keys rather than dropping them; only what the sticker is in
+   * when it is placed is sent.
+   */
+  motion?: { on: boolean; keys: StickerTrackKey[] };
+  /** In Movement: the key opacity at the playhead, which the draft is drawn at. */
+  shown?: number;
 };
 
 /**
@@ -227,6 +232,17 @@ interface StickerPlacementDraftStore {
    * every pointer move would let a selection change mid-drag redirect it.
    */
   move: (id: string, next: Partial<Omit<StickerDraft, 'id' | 'imageId' | 'cosmeticId'>>) => void;
+  /**
+   * Where the video is, in ms. Moving, sizing or turning a sticker in Movement sets a key here,
+   * and every sticker in Movement is drawn at its pose for this time.
+   */
+  playheadMs: number;
+  /** Moves the playhead and draws every sticker in Movement there. Sets no key. */
+  setPlayhead: (ms: number) => void;
+  /** Static or Movement. Movement with no keys starts one at the playhead, at the current pose. */
+  setMotion: (id: string, on: boolean) => void;
+  /** Replaces a draft's keys (the timeline's edits) and redraws it at the playhead. */
+  setKeys: (id: string, keys: StickerTrackKey[]) => void;
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
@@ -282,6 +298,7 @@ const ENDED = {
   // Cleared with the session for the same reason the keys are: it describes
   // purchases made against THESE drafts.
   paidDraftIds: [] as string[],
+  playheadMs: 0,
 };
 
 const createDraftStore = () =>
@@ -297,6 +314,7 @@ const createDraftStore = () =>
     tray: null,
     interaction: null,
     interactionPointerId: null,
+    playheadMs: 0,
 
     // Reopening on the image you are already placing on keeps the drafts — that is
     // the way back to the panel after putting it away, so taking them would punish
@@ -456,6 +474,8 @@ const createDraftStore = () =>
           // on the image, which is also what the server requires of the position.
           x: nudge(source.x),
           y: nudge(source.y),
+          // Keys hold positions, so a copy that kept them would play on top of the original.
+          motion: undefined,
         };
 
         // Appended and selected, the same as a fresh pickup: the copy is the one
@@ -502,10 +522,58 @@ const createDraftStore = () =>
         // are drawn in, and reordering on move would make a sticker jump over its
         // neighbours mid-drag.
         const drafts = [...state.drafts];
-        drafts[index] = moved;
+        const posed = 'x' in next || 'y' in next || 'scale' in next || 'rotation' in next;
+        drafts[index] = posed && moving(current) ? withKeyAt(moved, state.playheadMs) : moved;
         return { drafts };
       }),
+
+    setPlayhead: (ms) =>
+      set((state) => ({
+        playheadMs: ms,
+        drafts: state.drafts.map((draft) => (moving(draft) ? drawnAt(draft, ms) : draft)),
+      })),
+
+    setMotion: (id, on) =>
+      set((state) => ({
+        drafts: state.drafts.map((draft) => {
+          if (draft.id !== id) return draft;
+          const keys = draft.motion?.keys.length
+            ? draft.motion.keys
+            : upsertKey([], state.playheadMs, draft);
+          const next = { ...draft, motion: { on, keys } };
+          // Static keeps the sticker where it is at the playhead; Movement draws it there.
+          return on ? drawnAt(next, state.playheadMs) : { ...next, shown: undefined };
+        }),
+      })),
+
+    setKeys: (id, keys) =>
+      set((state) => ({
+        drafts: state.drafts.map((draft) =>
+          draft.id === id && draft.motion
+            ? drawnAt({ ...draft, motion: { ...draft.motion, keys } }, state.playheadMs)
+            : draft
+        ),
+      })),
   }));
+
+const moving = (draft: StickerDraft) => !!draft.motion?.on && draft.motion.keys.length > 0;
+
+/** The draft at its keys' pose for `ms`. */
+function drawnAt(draft: StickerDraft, ms: number): StickerDraft {
+  if (!draft.motion?.keys.length) return draft;
+  const { pose, opacity } = poseAt(draft.motion.keys, ms);
+  return { ...draft, ...pose, shown: opacity };
+}
+
+/** A sticker in Movement that was moved, sized or turned: its key at the playhead follows. */
+function withKeyAt(draft: StickerDraft, ms: number): StickerDraft {
+  if (!draft.motion) return draft;
+  const { x, y, scale, rotation } = draft;
+  return {
+    ...draft,
+    motion: { ...draft.motion, keys: upsertKey(draft.motion.keys, ms, { x, y, scale, rotation }) },
+  };
+}
 
 export const useStickerPlacementDraftStore = createDraftStore();
 export type DraftStoreHook = typeof useStickerPlacementDraftStore;

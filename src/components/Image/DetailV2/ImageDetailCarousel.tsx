@@ -6,6 +6,10 @@ import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import { HatTurfDetailLayer } from '~/components/HatTurf/detail/HatTurfDetailLayer';
 import { takesHats } from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import { ImageStickerOverlay } from '~/components/Sticker/ImageStickerOverlay';
+import {
+  STICKER_TIMELINE_SPACE,
+  useStickerTimelineOpen,
+} from '~/components/Sticker/StickerMotionEditor';
 import { DrawnMediaHat } from '~/components/Cosmetics/EventDecoration/DrawnMediaHat';
 import type { WornDecoration } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
@@ -299,6 +303,7 @@ function ImageContent({
   // dragstart carries no pointerType, and android chrome fires it for a long-press
   // drag — leaving that one to embla keeps the touch swipe as `watchTouchDrag` has it
   const pointerType = useRef('mouse');
+  const timelineOpen = useStickerTimelineOpen(image.id);
 
   const handleDragStart = (event: React.DragEvent) => {
     if (pointerType.current !== 'mouse') return;
@@ -320,6 +325,8 @@ function ImageContent({
           onPointerDownCapture={(event) => (pointerType.current = event.pointerType)}
           onDragStartCapture={handleDragStart}
           className="relative flex size-full items-center justify-center"
+          // The sticker timeline floats in the room this leaves, so it never covers the video.
+          style={timelineOpen ? { paddingBottom: STICKER_TIMELINE_SPACE } : undefined}
         >
           {!safe ? (
             <div
@@ -351,7 +358,9 @@ function ImageContent({
               // and the aspect-ratio wrapper then clips the image's height. A `width` would also
               // change the URL, which `imageDetailMediaProps` owns.
               html5Controls={
-                active && (features.nativeVideoControls || shouldDisplayHtmlControls(image))
+                active &&
+                !timelineOpen &&
+                (features.nativeVideoControls || shouldDisplayHtmlControls(image))
               }
               muted={defaultMuted}
               onMutedChange={(isMuted) => {
@@ -368,7 +377,8 @@ function ImageContent({
                   ? (image.metadata as VideoMetadata)?.vimeoVideoId
                   : undefined
               }
-              controls={active}
+              // The sticker timeline replaces the player's controls while it is open.
+              controls={active && !timelineOpen}
               videoProps={{
                 autoPlay: active,
                 // A slide mid-transition is still in view, which the player's own in-view check
