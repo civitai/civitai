@@ -6,18 +6,8 @@
 // the executable spec live here so they can be unit-tested WITHOUT booting any
 // of that. See appListing.metrics.ts for the full ownership/sourcing rationale.
 //
-// SCOPE: this job populates `install_count` (from Postgres), `open_count` (from the
-// ClickHouse `App_Open` event stream) and `visit_count` (from the `App_Visit` stream the
-// off-site `/apps/go/<listingId>` redirect writes). `connect_count`, `tipped_count` and
-// `tipped_amount_count` are left at their schema default 0: each maps to a feature
-// that isn't live yet (OAuth-connect submission is a locked-deferred product decision;
-// tips have no server-side source). Populate each with the PR that ships its consumer,
-// not speculatively.
-//
-// `visit_count` follows `open_count` exactly — same trusted server-side source shape, same
-// derived-not-incremented recompute, same one-actor-per-UTC-day de-dupe (the SQL is ONE
-// builder, `buildDailyActorCountSql`, called with each stream's type and key). It is keyed
-// on `details.listingId` because an off-site listing has no AppBlock.
+// SCOPE: connect_count, tipped_count and tipped_amount_count have no source and stay at their
+// schema default 0; do not populate them speculatively.
 //
 // 🔴 `open_count` IS A DELIBERATE EXCEPTION TO THAT LAST SENTENCE, AND IT IS NOT A
 // PRECEDENT FOR THE OTHER FOUR. AT THIS REF NOTHING READS IT. The only non-metrics

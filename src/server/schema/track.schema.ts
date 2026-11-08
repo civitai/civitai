@@ -955,17 +955,8 @@ const hatTurfActionSchema = z.object({
 // were opened and which primary CTAs were followed. One type with the step in `details.action`, like
 // `AppsBuild_Action`, so a new step is a zod change and not an Enum16 migration.
 //
-// 🔴 CLIENT-POSTABLE, LIKE `AppsBuild_Action`, AND FOR THE SAME REASON. It feeds internal funnel
-// ratios (impression → click → open) that nobody is paid by and that no public number reads. The
-// public counters stay server-written: `App_Open` (on-site plays, from the run route) and `App_Visit`
-// (off-site visits, from the `/apps/go/<listingId>` redirect) are both deliberately absent here.
-//
-// 🔴 EVERY FIELD IS CLOSED OR BOUNDED — NO FREE TEXT. The store search box is represented by
-// `hasQuery` and a closed length bucket only; its text is never accepted here. The store's search is
-// a client-side filter over loaded cards and calls no search endpoint, so no other event records
-// that text either. A `query` key from a stale or tampered client is STRIPPED (zod's default for an
-// unknown key), never stored. `listingId` is a generated id (listing or sub-listing), never a name
-// or a slug.
+// Client-postable, so no public count may read it.
+// Every field is closed or bounded, with no free text (unknown keys are stripped).
 const appStoreActionSchema = z.object({
   type: z.literal('AppStore_Action'),
   details: z.object({
