@@ -6322,12 +6322,20 @@ export const getImage = async ({
   return image;
 };
 
-/** The resources on an image the viewer may open by id (`assertImageVisibleToViewer`), else NOT_FOUND. */
+/**
+ * The resources on an image the viewer may open by id (`assertImageVisibleToViewer`), else
+ * NOT_FOUND, and whether a signed-out viewer may open it too.
+ */
 export const getImageResources = async ({
   id,
   viewer,
 }: GetByIdInput & { viewer?: { id: number; isModerator?: boolean } }) => {
-  await assertImageVisibleToViewer({ id, userId: viewer?.id, isModerator: viewer?.isModerator });
+  const { visibleSignedOut } = await assertImageVisibleToViewer({
+    id,
+    userId: viewer?.id,
+    isModerator: viewer?.isModerator,
+    withSignedOutVerdict: true,
+  });
   const resources = await dbRead.$queryRaw<
     (ImageResourceHelperModel & { sfwName: string | null })[]
   >`
@@ -6359,7 +6367,7 @@ export const getImageResources = async ({
     AND irh."modelVersionId" IS NOT NULL
   `;
 
-  return resources;
+  return { resources, visibleSignedOut: !!visibleSignedOut };
 };
 
 export type ImagesForModelVersions = {

@@ -10,5 +10,9 @@ import { toJson } from '~/utils/json-helpers';
  * Its own module so tests that mock `cache-helpers` derive keys with the real function.
  */
 export function queryCacheKeyHash(query: Prisma.Sql) {
-  return createHash('sha256').update(toJson(query)).digest('base64url');
+  // Each value carries its type: JSON alone writes 1n and '1n', or a Date and its ISO string, alike.
+  const values = query.values.map((v) => [v instanceof Date ? 'date' : typeof v, v]);
+  return createHash('sha256')
+    .update(toJson({ strings: query.strings, values }))
+    .digest('base64url');
 }

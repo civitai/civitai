@@ -35,7 +35,6 @@ import {
   writeModeratorBlock,
   logNoticeUnderReview,
 } from '~/server/services/image.service';
-import { isImageVisibleSignedOut } from '~/server/services/image-visibility.service';
 import {
   clearReviewFlagsOnBlock,
   keepPendingAppealFlags,
@@ -1024,15 +1023,11 @@ export const getImageResourcesHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const resources = await getImageResources({ ...input, viewer: ctx.user });
+    const { resources, visibleSignedOut } = await getImageResources({ ...input, viewer: ctx.user });
     // The edge cache replays this body to every caller of the URL, signed in or not, so an image
     // only its owner or a moderator may open stays out of it. So does a .com face, which makes the
     // name depend on the viewer.
-    if (
-      ctx.cache &&
-      (resources.some((resource) => resource.sfwName != null) ||
-        !(await isImageVisibleSignedOut(input.id)))
-    )
+    if (ctx.cache && (!visibleSignedOut || resources.some((resource) => resource.sfwName != null)))
       ctx.cache.skip = true;
     const showSfwFace = showsSfwFace(getRequestBrowsingLevel(ctx));
     return resources.map(({ sfwName, modelName, ...resource }) => ({
