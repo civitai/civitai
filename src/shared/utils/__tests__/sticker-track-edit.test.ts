@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { StickerTrackKey } from '~/shared/utils/sticker-track';
-import { sampleStickerTrack, stickerTrackRefusal } from '~/shared/utils/sticker-track';
+import {
+  sampleStickerTrack,
+  STICKER_TRACK_MAX_FADE_MS,
+  stickerTrackRefusal,
+} from '~/shared/utils/sticker-track';
 import {
   capFades,
   editKey,
@@ -82,5 +86,29 @@ describe('capFades', () => {
   it('leaves short fades and jumps alone', () => {
     const keys = [key(0, { o: 0, ease: 'jump' }), key(10_000), key(11_000, { o: 0 })];
     expect(capFades(keys)).toEqual(keys);
+    const longest = [key(0, { o: 0, ease: 'smooth' }), key(STICKER_TRACK_MAX_FADE_MS)];
+    expect(capFades(longest)).toEqual(longest);
+  });
+});
+
+describe('upsertKey inside a fade', () => {
+  // A linear fade in over 2 s: opacity is t / 2000 on screen.
+  const fadeIn = [key(0, { o: 0 }), key(2000)];
+  const added = (keys: StickerTrackKey[], t: number) =>
+    upsertKey(keys, t, { x: 0.4 }).find((k) => k.t === t);
+
+  it('gives a new key an opacity the server accepts, nearest to what is on screen', () => {
+    expect(added(fadeIn, 200)?.o).toBe(0);
+    expect(added(fadeIn, 400)?.o).toBe(0.3);
+    expect(added(fadeIn, 1000)?.o).toBeCloseTo(0.5);
+    for (const t of [200, 400, 1000])
+      expect(stickerTrackRefusal(stickerKeysTrack(upsertKey(fadeIn, t, { x: 0.4 })))).toBeNull();
+  });
+
+  it('samples the fade the preview draws, not the uncapped one', () => {
+    // Capped, this 10 s fade waits hidden until 8 s, so at 7 s the sticker is not on screen.
+    const longFade = [key(0, { o: 0 }), key(10_000)];
+    expect(poseAt(longFade, 7000).opacity).toBe(0);
+    expect(added(longFade, 7000)?.o).toBe(0);
   });
 });

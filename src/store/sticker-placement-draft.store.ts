@@ -2,7 +2,7 @@ import { createContext, useContext } from 'react';
 import { create } from 'zustand';
 import { mintPurchaseKey } from '~/utils/purchase-key';
 import type { StickerTrackKey } from '~/shared/utils/sticker-track';
-import { poseAt, upsertKey } from '~/shared/utils/sticker-track-edit';
+import { keyMinShown, poseAt, upsertKey } from '~/shared/utils/sticker-track-edit';
 import {
   STICKER_PLACEMENT_DEFAULT_OPACITY,
   STICKER_PLACEMENT_DEFAULT_SCALE,
@@ -584,7 +584,10 @@ function withKeyAt(draft: StickerDraft, ms: number): StickerDraft {
   const { x, y, scale, rotation } = draft;
   return {
     ...draft,
-    motion: { ...draft.motion, keys: upsertKey(draft.motion.keys, ms, { x, y, scale, rotation }) },
+    motion: {
+      ...draft.motion,
+      keys: upsertKey(draft.motion.keys, ms, { x, y, scale, rotation }, keyMinShown(draft.opacity)),
+    },
   };
 }
 

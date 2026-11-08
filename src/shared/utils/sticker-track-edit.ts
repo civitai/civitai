@@ -1,3 +1,4 @@
+import { STICKER_PLACEMENT_MIN_OPACITY } from '~/shared/utils/sticker-placement';
 import type { StickerTrackKey, StickerTrackV2 } from '~/shared/utils/sticker-track';
 import {
   sampleStickerTrack,
@@ -31,12 +32,25 @@ export function keyIndexAt(keys: StickerTrackKey[], t: number) {
   return best;
 }
 
+/** The faintest a shown key may be on a sticker drawn at `stickerOpacity`: the two multiply. */
+export const keyMinShown = (stickerOpacity: number) =>
+  Math.min(STICKER_PLACEMENT_MIN_OPACITY / stickerOpacity, 1);
+
+/** A key opacity the server accepts: hidden, or at least `minShown`, whichever is nearer. */
+export const snapKeyOpacity = (o: number, minShown: number) =>
+  o >= minShown ? o : o < minShown / 2 ? 0 : minShown;
+
 /**
  * Sets a key at `t` to `pose`: updates the key you are on, or adds one there. A new key takes
- * the opacity and ease the sticker has at that moment, so adding a key never changes the motion
- * around it.
+ * the ease the sticker has at that moment and the opacity on screen, snapped to one the server
+ * accepts, so adding a key mid-fade lands the fade there rather than refusing the Place.
  */
-export function upsertKey(keys: StickerTrackKey[], t: number, pose: Partial<KeyPose>) {
+export function upsertKey(
+  keys: StickerTrackKey[],
+  t: number,
+  pose: Partial<KeyPose>,
+  minShown = STICKER_PLACEMENT_MIN_OPACITY
+) {
   const at = keyIndexAt(keys, t);
   if (at >= 0) {
     const next = [...keys];
@@ -44,7 +58,7 @@ export function upsertKey(keys: StickerTrackKey[], t: number, pose: Partial<KeyP
     return next;
   }
   const time = clampTime(t);
-  const here = keys.length ? sampleStickerTrack(trackOf(keys), time) : null;
+  const here = keys.length ? sampleStickerTrack(trackOf(capFades(keys)), time) : null;
   const before = keys.filter((key) => key.t < time).at(-1);
   const added: StickerTrackKey = {
     t: time,
@@ -52,7 +66,7 @@ export function upsertKey(keys: StickerTrackKey[], t: number, pose: Partial<KeyP
     y: pose.y ?? here?.y ?? 0.5,
     s: pose.scale ?? here?.scale ?? 1,
     r: pose.rotation ?? here?.rotation ?? 0,
-    o: here?.opacity ?? 1,
+    o: here ? snapKeyOpacity(here.opacity, minShown) : 1,
     ease: before?.ease ?? 'smooth',
   };
   return [...keys, added].sort((a, b) => a.t - b.t);

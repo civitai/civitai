@@ -326,6 +326,14 @@ describe('what a draft sends when it is placed', () => {
 
     await expect.poll(() => placed.length).toBe(1);
     expect(placed[0]).toMatchObject({ free: true });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(placed).toHaveLength(1);
+
+    // A draft that goes takes its floating Place with it.
+    useStickerPlacementDraftStore.setState({ drafts: [] });
+    await expect
+      .poll(() => useStickerPlacementDraftStore.getState().primaryLabels[draft.id] ?? null)
+      .toBeNull();
   });
 
   test('a draft that is not pinned sends no track', async () => {

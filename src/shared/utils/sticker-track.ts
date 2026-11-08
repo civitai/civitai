@@ -120,9 +120,12 @@ export const STICKER_TRACK_MAX_TICK_MS = 1000;
 export const STICKER_TRACK_MAX_DURATION_MS = 300_000;
 /**
  * Longest a segment may fade between a hidden key and a shown one. A fade is drawn below the
- * opacity floor for most of its length, so this bounds how long a sticker can sit faint.
+ * opacity floor for most of its length, so this and `STICKER_TRACK_MAX_FAINT_MS` bound how long
+ * a sticker can sit faint.
  */
 export const STICKER_TRACK_MAX_FADE_MS = 2000;
+/** Longest the fades of one track may last in all, so chained fades cannot keep a sticker faint either. */
+export const STICKER_TRACK_MAX_FAINT_MS = 8000;
 /** Of the JSON text: several times a 30 s track that never holds still. */
 export const STICKER_TRACK_MAX_BYTES = 128 * 1024;
 /**
@@ -439,6 +442,7 @@ const fadesFaint = (from: StickerTrackKey, to: StickerTrackKey) =>
 function keysRefusal(keys: StickerTrackKey[]): string | null {
   if (keys.length === 0) return 'keys: empty';
   if (keys.length > STICKER_TRACK_MAX_KEYS) return 'too many keys';
+  let faintMs = 0;
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     if (!Number.isInteger(key.t) || key.t < 0 || key.t > STICKER_TRACK_MAX_DURATION_MS)
@@ -454,8 +458,12 @@ function keysRefusal(keys: StickerTrackKey[]): string | null {
     // through fainter values on its way to 0, which is the point of a fade.
     if (key.o !== 0 && key.o < STICKER_PLACEMENT_MIN_OPACITY) return 'keys: o too faint';
     if (!STICKER_TRACK_EASES.includes(key.ease)) return 'keys: unknown ease';
-    if (i > 0 && fadesFaint(keys[i - 1], key) && key.t - keys[i - 1].t > STICKER_TRACK_MAX_FADE_MS)
-      return 'keys: fade too long';
+    if (i > 0 && fadesFaint(keys[i - 1], key)) {
+      const fadeMs = key.t - keys[i - 1].t;
+      if (fadeMs > STICKER_TRACK_MAX_FADE_MS) return 'keys: fade too long';
+      faintMs += fadeMs;
+      if (faintMs > STICKER_TRACK_MAX_FAINT_MS) return 'keys: too much fading';
+    }
   }
   return null;
 }

@@ -11,14 +11,16 @@ import {
 import clsx from 'clsx';
 import { Menu } from '~/components/MantineOverlays';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { STICKER_PLACEMENT_MIN_OPACITY } from '~/shared/utils/sticker-placement';
 import type { StickerTrackEase, StickerTrackKey } from '~/shared/utils/sticker-track';
-import { STICKER_TRACK_EASES } from '~/shared/utils/sticker-track';
+import { STICKER_TRACK_EASES, stickerTrackRefusal } from '~/shared/utils/sticker-track';
 import {
   editKey,
   keyIndexAt,
+  keyMinShown,
   removeKey,
+  snapKeyOpacity,
   STICKER_KEY_STEP_MS,
+  stickerKeysTrack,
   upsertKey,
 } from '~/shared/utils/sticker-track-edit';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
@@ -67,6 +69,10 @@ const typing = (target: EventTarget | null) =>
       : ['TEXTAREA', 'SELECT'].includes(target.tagName)) ||
     target.getAttribute('role') === 'slider');
 
+/** A key press inside a dialog (the Buzz purchase modal, say) is the dialog's, not the editor's. */
+const inDialog = (target: EventTarget | null) =>
+  target instanceof Element && !!target.closest('[role="dialog"], [aria-modal="true"]');
+
 /**
  * Whether the selected draft on `imageId` has its timeline open, for the media to make room
  * and put its own controls away.
@@ -87,6 +93,7 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
   const drafts = useStore((state) => state.drafts);
   const selectedId = useStore((state) => state.selectedDraftId);
   const trayOpen = useStore((state) => state.trayOpen);
+  const previewing = useStore((state) => state.previewing);
   const playheadMs = useStore((state) => state.playheadMs);
   const selected = drafts.find((draft) => draft.id === selectedId);
   const primaryLabel = useStore((state) => (selectedId ? state.primaryLabels[selectedId] : null));
@@ -155,6 +162,8 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
 
   const keys = selected?.motion?.keys ?? [];
   const at = keyIndexAt(keys, playheadMs);
+  // The server's verdict on what Place would send, so the editor says why before a press fails.
+  const refusal = moving && keys.length ? stickerTrackRefusal(stickerKeysTrack(keys)) : null;
   const setKeys = (next: StickerTrackKey[]) =>
     selected && useStore.getState().setKeys(selected.id, next);
 
@@ -165,7 +174,8 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
   useEffect(() => {
     if (!moving) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || typing(event.target) || event.metaKey || event.ctrlKey) return;
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey) return;
+      if (typing(event.target) || inDialog(event.target)) return;
       const { selected, keys, at, playheadMs, drafts } = live.current;
       if (!selected) return;
       const step = event.shiftKey ? 1000 : STICKER_KEY_STEP_MS;
@@ -182,7 +192,11 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
           const next = keys.find((key) => key.t > playheadMs + 1);
           if (next) seek(next.t);
         },
-        k: () => store.setKeys(selected.id, upsertKey(keys, playheadMs, selected)),
+        k: () =>
+          store.setKeys(
+            selected.id,
+            upsertKey(keys, playheadMs, selected, keyMinShown(selected.opacity))
+          ),
         Delete: () => {
           if (at >= 0 && keys.length > 1) store.setKeys(selected.id, removeKey(keys, at));
         },
@@ -264,6 +278,13 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
             playheadMs={playheadMs}
             onChange={setKeys}
           />
+          {refusal && (
+            <Text size="xs" c="red.4" mt={4} role="alert">
+              {refusal === 'keys: too much fading'
+                ? 'Too much fading to place: shorten or remove a fade.'
+                : `This movement can't be placed (${refusal}).`}
+            </Text>
+          )}
         </div>
       )}
       <div className="flex items-center gap-2">
@@ -282,9 +303,10 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
             { label: 'Movement', value: 'movement' },
           ]}
         />
-        {primaryLabel && (
+        {primaryLabel && !previewing && !refusal && (
           // Presses the selected draft's own pay button: one way to pay, and any choice it
-          // offers (free or Buzz, a use or a pack) is still made under the sticker.
+          // offers (free or Buzz, a use or a pack) is still made under the sticker. Gone while
+          // previewing, which hides that button and the price and payee beside it.
           <Button size="xs" radius="xl" color="yellow" onClick={() => pressPrimary(selected.id)}>
             {primaryLabel}
           </Button>
@@ -429,7 +451,7 @@ function KeyInspector({
         </Text>
         <UnstyledButton
           className="ml-auto flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-xs"
-          onClick={() => onChange(upsertKey(keys, playheadMs, draft))}
+          onClick={() => onChange(upsertKey(keys, playheadMs, draft, keyMinShown(draft.opacity)))}
         >
           <IconDiamond size={12} />
           Key here
@@ -438,12 +460,8 @@ function KeyInspector({
     );
 
   // A shown key times the sticker's own opacity must clear the floor, as the server checks.
-  const minShown = Math.min(STICKER_PLACEMENT_MIN_OPACITY / draft.opacity, 1);
-  const snapOpacity = (percent: number) => {
-    const o = percent / 100;
-    if (o >= minShown) return o;
-    return o < minShown / 2 ? 0 : minShown;
-  };
+  const minShown = keyMinShown(draft.opacity);
+  const snapOpacity = (percent: number) => snapKeyOpacity(percent / 100, minShown);
   const last = index === keys.length - 1;
 
   return (
@@ -511,10 +529,12 @@ function KeyInspector({
   );
 }
 
-const pressPrimary = (draftId: string) =>
-  document
-    .querySelector<HTMLButtonElement>(`[data-draft-primary="${CSS.escape(draftId)}"]`)
-    ?.click();
+function pressPrimary(draftId: string) {
+  const button = document.querySelector<HTMLButtonElement>(
+    `[data-draft-primary="${CSS.escape(draftId)}"]`
+  );
+  if (button && !button.disabled) button.click();
+}
 
 const videoDurationMs = (video: HTMLVideoElement) =>
   Number.isFinite(video.duration) && video.duration > 0 ? Math.round(video.duration * 1000) : 1;
