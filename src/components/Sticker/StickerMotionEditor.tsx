@@ -165,9 +165,8 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
 
   const keys = selected?.motion?.keys ?? [];
   const at = keyIndexAt(keys, playheadMs);
-  // What the server would refuse in the track Place sends, so the editor says why before a press
-  // fails: the track rules, and a shown key times the sticker's own opacity under the floor (a
-  // change to the sticker's opacity sets no key). The creator's size limit is not checked here.
+  // Changing the sticker's own opacity sets no key, so the floor on key times sticker opacity is
+  // rechecked here rather than when the key was set.
   const refusal = moving && keys.length ? motionRefusal(keys, selected.opacity) : null;
   const setKeys = (next: StickerTrackKey[]) =>
     selected && useStore.getState().setKeys(selected.id, next);

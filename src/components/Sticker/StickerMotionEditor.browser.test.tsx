@@ -88,6 +88,7 @@ describe('the sticker timeline', () => {
   test('the keyboard plays, steps a second with Shift, sets a key with K and leaves with Esc', async () => {
     await page.getByText('Movement').click();
 
+    vi.mocked(video.pause).mockClear();
     await userEvent.keyboard(' ');
     expect(video.play).toHaveBeenCalled();
     await userEvent.keyboard(' ');

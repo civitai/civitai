@@ -478,8 +478,10 @@ const createDraftStore = () =>
           // on the image, which is also what the server requires of the position.
           x: nudge(source.x),
           y: nudge(source.y),
-          // Keys hold positions, so a copy that kept them would play on top of the original.
+          // Keys hold positions, so a copy that kept them would play on top of the original. A
+          // Static copy draws at its own opacity, not the key opacity the source was paused on.
           motion: undefined,
+          shown: undefined,
         };
 
         // Appended and selected, the same as a fresh pickup: the copy is the one

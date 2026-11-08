@@ -10,6 +10,20 @@ describe('a draft in Movement', () => {
     store.getState().begin(9, { x: 0.2, y: 0.5 });
   });
 
+  it('a copy of a draft in Movement is Static and drawn at its own opacity', () => {
+    const { setMotion, setKeys, setPlayhead, duplicateDraft } = store.getState();
+    setMotion(draft().id, true);
+    const [first] = draft().motion!.keys;
+    setKeys(draft().id, [{ ...first, o: 0 }]);
+    setPlayhead(0);
+    expect(draft().shown).toBe(0);
+
+    const copyId = duplicateDraft(draft().id)!;
+    const copy = store.getState().drafts.find((d) => d.id === copyId)!;
+    expect(copy.motion).toBeUndefined();
+    expect(copy.shown).toBeUndefined();
+  });
+
   it('sets a key where the playhead is when it is moved, and plays between its keys', () => {
     const { setMotion, setPlayhead, move } = store.getState();
     setMotion(draft().id, true);

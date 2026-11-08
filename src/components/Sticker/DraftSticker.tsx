@@ -616,7 +616,6 @@ export function DraftSticker({
 
   const placementInput = () => {
     const scale = snapScaleOvershoot(draft.scale, creatorMaxScale);
-    // Only what the sticker is in when placed is sent: Static sends its pose and no track.
     const track =
       draft.motion?.on && draft.motion.keys.length
         ? (() => {
