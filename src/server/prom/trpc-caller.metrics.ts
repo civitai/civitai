@@ -13,13 +13,22 @@ import {
 // One counter, recorded once per procedure call beside the duration histogram
 // (`civitai_app_trpc_procedure_duration_seconds`) and with the same `path` value, so the two join
 // on `path`:
-//   - `civitai_app_trpc_caller_seconds_sum{path,caller}`: wall-clock seconds those calls took.
+//   - `civitai_app_trpc_caller_seconds_total{path,caller}`: wall-clock seconds those calls took.
 // No buckets and no per-call count: the histogram already carries the latency shape and the call
 // count by path; this only splits the time by caller class, at one series per (path, caller).
 
 // CARDINALITY: `caller` takes exactly the five values in TRPC_CALLER_CLASSES, never anything
 // derived from the request. A user agent is matched against a fixed token list and only the
 // resulting class is a label. `path` is the procedure name, the same bounded set as the histogram.
+//
+// SPOOFABLE: `anon_browser` vs `anon_tool_ua` comes from the user agent, which the caller chooses.
+// A tool that sends a browser user agent counts as `anon_browser`, so `anon_tool_ua` is a lower
+// bound on scripted anonymous traffic, never an identification of bots. `session`, `api_key` and
+// `internal` come from the resolved credential and the server-side context, not from a header.
+//
+// OPT-IN: the counter is registered only if TRPC_CALLER_METRICS=true when this module loads
+// (TRPC_CALLER_METRICS_ENABLED), and the tRPC middleware classifies and records only then. Off,
+// the family exports no HELP/TYPE lines and no series.
 //
 // HOT PATH: one anchored regex test on the user agent (anonymous callers only) and one number
 // addition per call. A prom-client `inc` costs a label hash and validation (~0.4 us each, measured),
@@ -28,7 +37,10 @@ import {
 // the first one for its pair. `caller` must be one of TRPC_CALLER_CLASSES: the type enforces it
 // and `safeClassifyTrpcCaller` is the only producer.
 
-export const TRPC_CALLER_SECONDS_METRIC = PROM_PREFIX + 'trpc_caller_seconds_sum';
+export const TRPC_CALLER_SECONDS_METRIC = PROM_PREFIX + 'trpc_caller_seconds_total';
+
+/** The one switch for this metric, read once at load. The tRPC middleware reads it from here. */
+export const TRPC_CALLER_METRICS_ENABLED = process.env.TRPC_CALLER_METRICS === 'true';
 
 export const TRPC_CALLER_CLASSES = [
   'session',
@@ -150,7 +162,7 @@ function drainSeconds(this: Counter<'path' | 'caller'>) {
   }
 }
 
-function ensureCounters() {
+function registerCounter() {
   registerInstrumentationMetric(
     TRPC_CALLER_SECONDS_METRIC,
     () =>
@@ -164,14 +176,20 @@ function ensureCounters() {
   );
 }
 
-// Registered at import so the series family exists on the first scrape.
-try {
-  ensureCounters();
-} catch {
-  // A registration failure must not break the module that imports this one.
+// Registered at import, and only when switched on, so the family exists on the first scrape.
+if (TRPC_CALLER_METRICS_ENABLED) {
+  try {
+    registerCounter();
+  } catch {
+    // A registration failure must not break the module that imports this one.
+  }
 }
 
-/** One call: +`seconds` for (path, caller), exported on the next scrape. Never throws. */
+/**
+ * One call: +`seconds` for (path, caller), exported on the next scrape. Never throws. The tRPC
+ * middleware calls it only when TRPC_CALLER_METRICS_ENABLED; while off the counter is not registered,
+ * so nothing would be exported.
+ */
 export function recordTrpcCaller(path: string, caller: TrpcCallerClass, seconds: number) {
   try {
     let byCaller = pending.get(path);

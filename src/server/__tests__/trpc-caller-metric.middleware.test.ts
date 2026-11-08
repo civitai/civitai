@@ -1,6 +1,6 @@
 import { instrumentationRegistry } from '@civitai/telemetry/client';
 import type client from 'prom-client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { usePagesManifestFixture } from '~/server/utils/__tests__/pages-manifest.fixture';
 
@@ -28,7 +28,6 @@ function ctxFor(user: Record<string, unknown> | null, headers: Record<string, st
 async function loadCaller(flag: 'true' | 'false') {
   vi.stubEnv('TRPC_CALLER_METRICS', flag);
   vi.resetModules();
-  usePagesManifestFixture();
   const { createCallerFactory, publicProcedure, router } = await import('~/server/trpc');
   const appRouter = router({
     probe: router({
@@ -49,6 +48,9 @@ async function rows() {
   return metric ? ((await metric.get()).values as { value: number; labels: object }[]) : [];
 }
 
+beforeEach(() => {
+  usePagesManifestFixture();
+});
 afterEach(() => {
   vi.unstubAllEnvs();
 });

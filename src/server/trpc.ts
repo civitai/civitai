@@ -21,6 +21,7 @@ import { recordTrpcCall } from '~/server/prom/route-traffic.metrics';
 import {
   recordTrpcCaller,
   safeClassifyTrpcCaller,
+  TRPC_CALLER_METRICS_ENABLED,
   type TrpcCallerClass,
 } from '~/server/prom/trpc-caller.metrics';
 import { canDecodeDevalueResponse, isWebClient } from '~/server/utils/client-version-saturation';
@@ -235,9 +236,9 @@ const enforceTokenScope = t.middleware(({ ctx, meta, path, next }) =>
 const TRPC_PROCEDURE_METRICS = process.env.TRPC_PROCEDURE_METRICS === 'true';
 
 // OPT-IN via TRPC_CALLER_METRICS=true, separately from the histogram above: the caller-class
-// seconds counter (`~/server/prom/trpc-caller.metrics`) emits up to (procedures x 5 caller
-// classes) series per process, so it gets its own switch and can be enabled without the histogram.
-const TRPC_CALLER_METRICS = process.env.TRPC_CALLER_METRICS === 'true';
+// seconds counter (`~/server/prom/trpc-caller.metrics`, which owns the switch) emits up to
+// (procedures x 5 caller classes) series per process, so it can be enabled without the histogram.
+const TRPC_CALLER_METRICS = TRPC_CALLER_METRICS_ENABLED;
 
 // The actual procedure-timing logic. Generic over `next`'s return type so it
 // stays transparent to tRPC's MiddlewareResult typing. Kept standalone so the
