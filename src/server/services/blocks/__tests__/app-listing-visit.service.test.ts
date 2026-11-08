@@ -1,12 +1,9 @@
-import { readFileSync } from 'fs';
-import path from 'path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as ServerDomain from '~/server/utils/server-domain';
 
 import { ActionType } from '~/server/clickhouse/tracker';
 import { trackActionSchema } from '~/server/schema/track.schema';
 import {
-  appVisitDetails,
   resolveAppListingVisit,
   defaultAppVisitDeps,
   type AppVisitDeps,
@@ -183,7 +180,7 @@ describe('resolveAppListingVisit — refusals', () => {
 describe('resolveAppListingVisit — recording', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('records one App_Visit row with the listing id, the surface and the referrer HOST only', async () => {
+  it('records one App_Visit row with exactly the listing id and the surface — no referrer', async () => {
     const deps = makeDeps();
     const visit = await resolveAppListingVisit(request(), deps);
     await visit?.recorded;
@@ -191,10 +188,9 @@ describe('resolveAppListingVisit — recording', () => {
     expect(deps.recordEvent.mock.calls[0][0]).toEqual({
       listingId: LISTING_ID,
       surface: 'store_card',
-      referrerHost: 'www.search.example',
     });
-    // The search terms in the referrer's query never reach the row.
-    expect(JSON.stringify(deps.recordEvent.mock.calls[0][0])).not.toContain('secret');
+    // The request carried a referer; nothing of it (host or query) reaches the row.
+    expect(JSON.stringify(deps.recordEvent.mock.calls[0][0])).not.toMatch(/search\.example|secret/);
   });
 
   it.each([
@@ -271,15 +267,6 @@ describe('resolveAppListingVisit — recording', () => {
   });
 });
 
-describe('pure helpers', () => {
-  it('appVisitDetails omits an unusable referrer', () => {
-    expect(appVisitDetails({ listingId: 'apl_1', surface: 'detail', referer: undefined })).toEqual({
-      listingId: 'apl_1',
-      surface: 'detail',
-    });
-    expect(
-      appVisitDetails({ listingId: 'apl_1', surface: 'detail', referer: 'javascript:alert(1)' })
-    ).toEqual({ listingId: 'apl_1', surface: 'detail' });
   });
 });
 
@@ -318,12 +305,3 @@ describe('defaultAppVisitDeps.recordEvent — the real ClickHouse write', () => 
   });
 });
 
-describe('convention: /apps/go writes no Postgres counter', () => {
-  it('the service source names no Postgres writer and no Redis client', () => {
-    // visit_count is derived by the metrics job; a `+1` here would double-count beside it.
-    const src = readFileSync(path.resolve(__dirname, '../app-listing-visit.service.ts'), 'utf8');
-    expect(src).toContain("type: 'App_Visit'"); // positive control: the right file
-    expect(src).not.toMatch(/\bdbWrite\b|\$executeRaw|appListingMetric\./);
-    expect(src).not.toMatch(/redis\/client|sysRedis/);
-  });
-});

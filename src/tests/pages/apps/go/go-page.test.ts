@@ -63,6 +63,23 @@ describe('/apps/go/<listingId> page', () => {
     });
   });
 
+  it('🔴 does NOT await the recording: a `recorded` that never settles still yields the 302', async () => {
+    mockResolveVisit.mockResolvedValue({
+      destination: 'https://ext.example/app',
+      recorded: new Promise<void>(() => {}),
+    });
+    const SENTINEL = Symbol('resolver awaited the recording');
+    const result = await Promise.race([
+      capturedResolver.fn!(args()),
+      new Promise((resolve) => setTimeout(() => resolve(SENTINEL), 2000)),
+    ]);
+    // Fails by ASSERTION at the sentinel if an `await visit.recorded` is ever added — never a hang.
+    expect(result).not.toBe(SENTINEL);
+    expect(result).toEqual({
+      redirect: { destination: 'https://ext.example/app', statusCode: 302 },
+    });
+  });
+
   it('hands the route param and the raw query to the service, and never builds a URL from it', async () => {
     mockResolveVisit.mockResolvedValue({
       destination: 'https://ext.example/app',

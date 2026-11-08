@@ -133,20 +133,12 @@ type AffectedListing = { id: string; appBlockId: string | null; kind: string };
 // block in appListing.metrics.sql.ts. Read it before citing this file to populate
 // anything else; the exception is now spent, not widened.
 //
-// NOT POPULATED BY THIS JOB (left at their schema default 0 here): `connect_count`
-// (off-site OAuth-connect grants — OAuth-connect submission is a locked-deferred product
-// decision, so there are no connect listings yet and nothing reads the count),
-// `tipped_count`, `tipped_amount_count` (AppListing is not a BuzzTip entity —
-// BuzzTip.entityId is Int, AppListing.id is a string ULID). Populate each with the PR
-// that ships its consumer, not speculatively.
+// NOT WRITTEN BY THIS JOB: `connect_count` (no connect listings exist yet) and
+// `tipped_count` / `tipped_amount_count` (AppListing is not a BuzzTip entity — BuzzTip.entityId
+// is Int, AppListing.id is a string ULID).
 //
-//   • visitCount    — OFF-SITE listings: VISITS, derived from the ClickHouse `App_Visit`
-//     stream the `/apps/go/<listingId>` redirect emits per followed Visit
-//     (`app-listing-visit.service.ts`, which writes NO Postgres counter). Same contract as
-//     openCount in every respect: derived by a full recompute, never incremented; the
-//     same one-distinct-actor-per-UTC-day de-dupe (one shared SQL builder); discovery
-//     soft-fails, counting fails hard. Keyed on `details.listingId`, since an off-site
-//     listing has no app_block_id. This job is the column's ONLY writer.
+//   • visitCount    — OFF-SITE listings: derived from `App_Visit` (keyed on `details.listingId`)
+//     exactly as openCount is from `App_Open`. This job is the column's only writer.
 //
 // 🔴 MERGE NOTE (#4652 -> #4653, resolved deliberately, NOT by keeping both sides).
 // #4652 landed a block here headed "`open_count` IS THE NEXT ONE, AND ITS SOURCE ROWS
@@ -168,9 +160,10 @@ export const appListingMetrics = createMetricProcessor({
     //    only change is new plays would never be recomputed. (ClickHouse-first
     //    affected discovery — same shape as model3d.metrics.ts getDownloadTasks.)
     //    FAILS SOFT — see the asymmetry note on getRecentlyOpenedBlockIds.
-    const recentlyOpened = await getRecentlyOpenedBlockIds(ctx);
-    // …and which OFF-SITE listings were VISITED since the watermark (same soft-fail).
-    const recentlyVisited = await getRecentlyVisitedListingIds(ctx);
+    const [recentlyOpened, recentlyVisited] = await Promise.all([
+      getRecentlyOpenedBlockIds(ctx),
+      getRecentlyVisitedListingIds(ctx),
+    ]);
 
     // 2. Collect affected approved listing ids (string ULIDs — the shared
     //    number-typed getAffected helper can't be reused, so this is inline).

@@ -150,8 +150,10 @@ describe('AppListingCard — impression', () => {
     vi.useRealTimers();
 
     // Same page view: a fresh mount of the same card is observed again, but does not count again.
+    // Wait for the observed count to INCREASE, so the intersection below reaches the NEW mount.
+    const before = observedCount();
     renderWithProviders(<AppListingCard card={CARD} telemetry={TELEMETRY} />);
-    await vi.waitUntil(() => observedCount() > 0, { timeout: 5000, interval: 25 });
+    await vi.waitUntil(() => observedCount() > before, { timeout: 5000, interval: 25 });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     intersectAll(0.6);
     vi.advanceTimersByTime(2000);

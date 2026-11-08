@@ -8,7 +8,6 @@ import type { ListingAudienceFloor } from '~/shared/utils/app-listing-visibility
 import {
   APP_STORE_LISTING_ID_RE,
   parseAppSurface,
-  referrerHostOf,
   type AppSurface,
 } from '~/shared/utils/app-store-telemetry';
 import type { Session, SessionUser } from '~/types/session';
@@ -25,18 +24,19 @@ import type { Session, SessionUser } from '~/types/session';
  * redirect never waits on or fails because of ClickHouse.
  */
 
-/** The `details` of one `App_Visit` row: an id, a closed value and a bare hostname. */
+/**
+ * The `details` of one `App_Visit` row: an id and a closed value. No referrer: every Visit link
+ * is `rel="noreferrer"`, so the header is empty for store-originated visits and `surface` already
+ * carries the on-site origin.
+ */
 export function appVisitDetails({
   listingId,
   surface,
-  referer,
 }: {
   listingId: string;
   surface: AppSurface;
-  referer: unknown;
-}): { listingId: string; surface: AppSurface; referrerHost?: string } {
-  const referrerHost = referrerHostOf(referer);
-  return { listingId, surface, ...(referrerHost ? { referrerHost } : {}) };
+}): { listingId: string; surface: AppSurface } {
+  return { listingId, surface };
 }
 
 type VisitRequestContext = {
@@ -161,11 +161,7 @@ async function recordVisit({
   // only (spoofable), so it gates nothing else.
   if (isAutomatedUserAgent(ctx.req.headers['user-agent'])) return;
   try {
-    await deps.recordEvent(
-      appVisitDetails({ listingId, surface, referer: ctx.req.headers.referer }),
-      ctx,
-      session
-    );
+    await deps.recordEvent(appVisitDetails({ listingId, surface }), ctx, session);
   } catch {
     // A lost row is a slightly low number; a throw here would be a failed redirect.
   }
