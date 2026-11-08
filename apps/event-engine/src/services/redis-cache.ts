@@ -9,6 +9,12 @@ import { excludedUsersMetrics, redisCacheMetrics } from '@/metrics'
 import { config } from '@/config'
 import type { ExcludedUserLookup } from '@/services/metric-excluded-users'
 
+// Metrics whose events set the recent-event marker, so a populate that read ClickHouse
+// before the event arrived refreshes ~15 min later instead of at REFRESH_AFTER (1h).
+// Each marked entity costs extra ClickHouse refreshes while it keeps getting events, so
+// this is limited to Buzz tips: rare, and money a tipper expects to see counted.
+const RECENT_EVENT_METRIC_TYPES = new Set(['tippedAmount', 'tippedCount'])
+
 /**
  * Manages Redis cache updates for real-time metrics
  */
@@ -141,7 +147,7 @@ export class RedisCache {
         event.metricType,
         event.metricValue ?? 0,
         ttlSeconds,
-        METRIC_RECENT_EVENT_TTL,
+        RECENT_EVENT_METRIC_TYPES.has(event.metricType) ? METRIC_RECENT_EVENT_TTL : 0,
       )
       redisCacheMetrics.cacheUpdates.inc({ operation: 'increment_once' })
     } catch (err) {

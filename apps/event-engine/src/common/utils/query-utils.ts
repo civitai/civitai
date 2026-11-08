@@ -58,15 +58,18 @@ const redisHelpers = (redis: IRedisClient) => {
     // ClickHouse ReplacingMergeTree dedup. The marker is set BEFORE the
     // existence check on KEYS[1], so an event that arrives while the metric key
     // is cold still records "seen" and a redelivery can't double-count it.
-    // A first-seen event also sets KEYS[3], the entity's recent-event marker
-    // (TTL ARGV[4]): a populate that reads ClickHouse before this event reaches
-    // it would skip or wipe the increment, and the marker tells that populate to
-    // refresh again soon (see MetricService.populate in event-engine-common).
+    // When ARGV[4] > 0, a first-seen event also sets KEYS[3], the entity's
+    // recent-event marker, with that TTL: a populate that reads ClickHouse before
+    // this event reaches it would skip or wipe the increment, and the marker tells
+    // that populate to refresh again soon (see MetricService.populate in
+    // event-engine-common). ARGV[4] = 0 sets no marker (SET EX 0 is an error).
     // KEYS[2] and KEYS[3] MUST be hash-tagged to KEYS[1]'s slot (e.g.
     // {<KEYS[1]>}:...) so all three keys co-locate on one cluster node.
     hIncrIfExistsOnce: `
       if redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[3]) then
-        redis.call('SET', KEYS[3], '1', 'EX', ARGV[4])
+        if tonumber(ARGV[4]) > 0 then
+          redis.call('SET', KEYS[3], '1', 'EX', ARGV[4])
+        end
         if redis.call('EXISTS', KEYS[1]) == 1 then
           return redis.call('HINCRBY', KEYS[1], ARGV[1], ARGV[2])
         end

@@ -80,22 +80,27 @@ function setup() {
 
   const engineRedis = withEngineRedisHelpers(redis);
   let eventSeq = 0;
-  const tip = (amount: number) =>
+  // The event-engine passes the marker TTL for tips and 0 for every other metric
+  // (RedisCache.incrementOnce, tested in apps/event-engine).
+  const increment = (metricType: string, amount: number, recentEventTtl: number) =>
     engineRedis.hIncrIfExistsOnce(
       metricKey,
-      `{${metricKey}}:dd:tippedAmount:42:${++eventSeq}`,
+      `{${metricKey}}:dd:${metricType}:42:${++eventSeq}`,
       engineCacheKeys.metricRecentEvent('Image', IMAGE_ID),
-      'tippedAmount',
+      metricType,
       amount,
       3600,
-      ENGINE_METRIC_RECENT_EVENT_TTL
+      recentEventTtl
     );
+  const tip = (amount: number) => increment('tippedAmount', amount, ENGINE_METRIC_RECENT_EVENT_TTL);
+  const react = () => increment('Like', 1, 0);
 
   return {
     lua,
     chTotals,
     chQueries: () => chQueries,
     tip,
+    react,
     service: new MetricService(ch, redis),
     // The event-engine's own (vendored) MetricService writes the same hashes.
     engineService: new EngineMetricService(ch, redis),
@@ -172,6 +177,27 @@ describe('image metric cache: an event the ClickHouse snapshot has not caught up
     expect((await engineService.fetch('Image', [IMAGE_ID]))[IMAGE_ID]).not.toHaveProperty(
       '_populatedAt'
     );
+    expect(lua.errors).toEqual([]);
+  });
+
+  it('a reaction sets no marker, so its populate keeps the hour', async () => {
+    const { lua, react, service, advance, chQueries } = setup();
+
+    expect(await react()).toBe(false);
+    // Real Redis rejects SET ... EX 0, which would abort the script before its HINCRBY.
+    const markerKey = engineCacheKeys.metricRecentEvent('Image', IMAGE_ID);
+    expect(lua.calls.filter(([command, key]) => command === 'SET' && key === markerKey)).toEqual(
+      []
+    );
+
+    advance(19_000);
+    await service.fetch('Image', [IMAGE_ID]);
+    const populatedAt = Math.floor(lua.nowMs / 1000);
+    advance(METRIC_RECENT_EVENT_TTL * 1000 + 1000);
+    await service.fetch('Image', [IMAGE_ID]);
+
+    expect(lua.hash(metricKey)?._populatedAt).toBe(String(populatedAt));
+    expect(chQueries()).toBe(1);
     expect(lua.errors).toEqual([]);
   });
 

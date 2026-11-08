@@ -5,8 +5,8 @@ const metric = (entityType: EntityType, id: number) => `metrics:${entityType}:${
 export const cacheKeys = {
     metric,
     metricLock: (entityType: EntityType, id: number) => `metrics:lock:${entityType}:${id}`,
-    // Set by each first-seen per-user metric event (the event-engine's incrementOnce;
-    // its batched increment() path doesn't). Hash-tagged to the metric hash's cluster slot,
+    // Set by the event-engine for a first-seen event of the metrics it marks (see
+    // RECENT_EVENT_METRIC_TYPES in its redis-cache.ts). Hash-tagged to the metric hash's cluster slot,
     // because the scripts that write either key also touch the other.
     metricRecentEvent: (entityType: EntityType, id: number) => `{${metric(entityType, id)}}:recent`,
 }
