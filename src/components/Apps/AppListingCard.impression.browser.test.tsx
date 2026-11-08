@@ -53,10 +53,12 @@ class StubObserver {
   }
 }
 
-/** Fire an intersection for every element any stub is observing. */
+const isCardRoot = (el: Element) => el.classList.contains('mantine-Card-root');
+
+/** Fire an intersection for every observed card root (other observers are left alone). */
 function intersectAll(ratio: number) {
   for (const obs of StubObserver.instances) {
-    const entries = [...obs.observed].map(
+    const entries = [...obs.observed].filter(isCardRoot).map(
       (target) =>
         ({
           target,
@@ -68,7 +70,13 @@ function intersectAll(ratio: number) {
   }
 }
 
-const observedCount = () => StubObserver.instances.reduce((n, o) => n + o.observed.size, 0);
+/**
+ * How many CARD ROOTS are being observed. Other components on the card may create their own
+ * observers through the same (stubbed) global, so counting every observed element measures them
+ * too — only the Mantine Card root is the impression target.
+ */
+const observedCount = () =>
+  StubObserver.instances.reduce((n, o) => n + [...o.observed].filter(isCardRoot).length, 0);
 
 const impressions = () =>
   funnel.enqueue.mock.calls
