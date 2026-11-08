@@ -81,6 +81,31 @@ describe('getEventSeeds', () => {
     expect(getCosmetic).not.toHaveBeenCalled();
   });
 
+  // The bootstrap is on every server render's critical path, and the nav banners already give
+  // the same read 300ms (JOINED_READ_DEADLINE_MS). A slow read must not hold the render for the
+  // bootstrap's longer per-member deadline: the seed goes out without its cosmetic, which the
+  // client then fetches as before (`app-provider-event-seeds.render.test.ts` pins that fetch).
+  it('leaves the cosmetic out, within 300ms, when its read is slow', async () => {
+    vi.useFakeTimers();
+    try {
+      getCosmetic.mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve(COSMETIC as never), 1500))
+      );
+      let settled: unknown;
+      void seeds({}).then((value) => (settled = value));
+
+      await vi.advanceTimersByTimeAsync(301);
+      // Absent, not `cosmetic: undefined` or `null`: a key would seed the query as answered.
+      expect(settled).toEqual([{ event: BIRTHDAY_2026_EVENT, access: 'open' }]);
+      expect((settled as object[])[0]).not.toHaveProperty('cosmetic');
+      // Control: the read itself really was still pending at the cap.
+      expect(getCosmetic).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1500);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps the access when only the cosmetic read fails', async () => {
     getCosmetic.mockRejectedValue(new Error('redis down'));
     expect(await seeds({})).toEqual([{ event: BIRTHDAY_2026_EVENT, access: 'open' }]);
