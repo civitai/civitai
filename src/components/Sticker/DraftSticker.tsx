@@ -366,9 +366,9 @@ export function DraftSticker({
 
   // Both the tray and the carousel's clipped viewport can swallow the cluster,
   // so it moves above the sticker when that is the better of the two positions.
-  // The two standoffs ride along because they come from the same measurement,
-  // and because the side they apply to is decided in the same breath — see the
-  // note above `setPosition` in `measure`.
+  // The two standoffs and the lift ride along because they come from the same
+  // measurement, and because the side they apply to is decided in the same
+  // breath — see the note above `setPosition` in `measure`.
   const [{ flipped, below, above, lift }, setPosition] = useState({
     flipped: false,
     lift: 0,
@@ -379,7 +379,7 @@ export function DraftSticker({
 
   // `measure` is what the ResizeObserver and the window listener are bound to,
   // so it has to keep its identity across a drag — otherwise re-binding them is
-  // back on the pointermove path, which is the whole problem. It reads the two
+  // back on the pointermove path, which is the whole problem. It reads the
   // values it needs through a ref instead of closing over them.
   const frame = useRef({ flipped, lift, rotation: draft.rotation });
   frame.current = { flipped, lift, rotation: draft.rotation };

@@ -532,10 +532,14 @@ describe('a cluster with no side that fits', () => {
     });
 
   it('is pulled up over the sticker until its bottom is inside the clip', () => {
+    const unlifted = 220 + STICKER.height + below + 200;
     const first = position(220, 200);
 
     expect(first?.flipped).toBe(false);
-    expect(first?.lift).toBe(Math.ceil(220 + STICKER.height + below + 200 - SHORT_CLIP.bottom));
+    expect(unlifted).toBeGreaterThan(SHORT_CLIP.bottom);
+    // Inside, and by no more than the pixel the lift rounds up to.
+    expect(unlifted - first!.lift).toBeLessThanOrEqual(SHORT_CLIP.bottom);
+    expect(unlifted - first!.lift).toBeGreaterThan(SHORT_CLIP.bottom - 1);
   });
 
   it('keeps the same lift once it is applied, so it cannot oscillate', () => {
