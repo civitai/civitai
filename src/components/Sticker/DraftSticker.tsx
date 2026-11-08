@@ -165,6 +165,7 @@ export function DraftSticker({
   commit,
   artwork,
   opaque,
+  liftOverTray,
 }: {
   draft: StickerDraft;
   /** The sticker's artwork; or pass `artwork` to draw something else in its place. */
@@ -212,6 +213,8 @@ export function DraftSticker({
   artwork?: ReactNode;
   /** No opacity control: the draft stays fully opaque (a Hat Turf hat). */
   opaque?: boolean;
+  /** Pull the cluster over the draft when the tray covers it, not only past the clip (a Hat Turf hat). */
+  liftOverTray?: boolean;
 }) {
   const useStore = useDraftStoreHook();
   const markPurchased = useStore((state) => state.markPurchased);
@@ -381,8 +384,8 @@ export function DraftSticker({
   // so it has to keep its identity across a drag — otherwise re-binding them is
   // back on the pointermove path, which is the whole problem. It reads the
   // values it needs through a ref instead of closing over them.
-  const frame = useRef({ flipped, lift, rotation: draft.rotation });
-  frame.current = { flipped, lift, rotation: draft.rotation };
+  const frame = useRef({ flipped, lift, liftOverTray, rotation: draft.rotation });
+  frame.current = { flipped, lift, liftOverTray, rotation: draft.rotation };
 
   const clip = useRef<HTMLElement | null>(null);
 
@@ -391,7 +394,7 @@ export function DraftSticker({
     const button = buttonRef.current;
     if (!element || !button) return;
 
-    const { flipped, lift, rotation } = frame.current;
+    const { flipped, lift, liftOverTray, rotation } = frame.current;
     const tray = useStore.getState().tray;
     // 🔴 THE SIDE AND THE TWO STANDOFFS MOVE IN ONE UPDATE. Writing the margin
     // to the node while the class comes from state splits them across a render:
@@ -406,6 +409,7 @@ export function DraftSticker({
       clip: clip.current?.getBoundingClientRect() ?? null,
       flipped,
       lift,
+      liftOverTray,
       rotation,
       knobOffset: KNOB_OFFSET,
       outset: HANDLE_OUTSET,

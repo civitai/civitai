@@ -42,6 +42,7 @@ import client, { type Counter, type Gauge, type Histogram, type Registry } from 
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 // Type-only: the document store's closed error-code set, so the `code` label is typed by it.
 import type { StorageApiCode } from '~/server/services/apps/doc-store-api';
+import type { AppSubmitFailureReason } from '~/shared/constants/app-telemetry.constants';
 
 /**
  * Low-cardinality LOGICAL endpoint names for the block REST surface. Passed by
@@ -281,7 +282,20 @@ export type AppBlockEndpoint =
 // tRPC metrics). The former 'buzz_transactions' / 'buzz_daily_compensation' /
 // 'buzz_accounts' entries were dropped with those endpoints and stay dropped.
 
-export type AppBlockRequestResult = 'success' | 'client_error' | 'server_error' | 'forbidden';
+/**
+ * `not_found` is a READ MISS, not an error: a document-store GET for a key that does not exist
+ * yet. An app's first read of a key it has never written is a 404 by contract, so counting it as
+ * `client_error` inflated every storage-using app's error ratio with its own normal first run.
+ * It is its own value rather than folded into `success` so the miss rate stays readable. Only a
+ * response the handler explicitly marked (`markBlockRequestReadMiss`) gets it; every other 404
+ * (an unknown route, an undeclared collection) is still `client_error`.
+ */
+export type AppBlockRequestResult =
+  | 'success'
+  | 'client_error'
+  | 'server_error'
+  | 'forbidden'
+  | 'not_found';
 
 export type AppBlockRenderResult = 'ok' | 'error';
 
@@ -663,6 +677,31 @@ export function statusToRequestResult(status: number): AppBlockRequestResult {
   return 'success';
 }
 
+/**
+ * Responses a handler marked as an expected READ MISS. A WeakSet keyed on the response object, so
+ * the mark lives exactly as long as the request and needs no header or field on the wire.
+ */
+const READ_MISS_RESPONSES = new WeakSet<object>();
+
+/** Mark a response as a read miss (a 404 for a key that does not exist yet). Total. */
+export function markBlockRequestReadMiss(res: object): void {
+  try {
+    READ_MISS_RESPONSES.add(res);
+  } catch {
+    /* instrument-only */
+  }
+}
+
+/**
+ * The `result` label for a finished block REST response. A 404 the handler marked as a read miss
+ * is `not_found`; everything else follows `statusToRequestResult`. A marked response that ended
+ * with any other status (a later write failed, say) keeps its status's label.
+ */
+export function blockRequestResult(res: { statusCode: number }): AppBlockRequestResult {
+  if (res.statusCode === 404 && READ_MISS_RESPONSES.has(res)) return 'not_found';
+  return statusToRequestResult(res.statusCode);
+}
+
 function getOrCreateCounter(
   reg: Registry,
   name: string,
@@ -730,6 +769,7 @@ type Bundle = {
   bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
+  submitFailuresTotal: Counter<string>;
   launchTotalSeconds: Histogram<string>;
   launchPhaseSeconds: Histogram<string>;
   launchInitPostsTotal: Histogram<string>;
@@ -867,7 +907,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const requestsTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_requests_total',
-    'App Block REST requests by app, logical endpoint, and outcome (success|client_error|server_error|forbidden)',
+    'App Block REST requests by app, logical endpoint, and outcome (success|client_error|server_error|forbidden|not_found). not_found is a document-store read of a key that does not exist yet (a normal first read), NOT an error: exclude it from error ratios. Other 404s stay client_error',
     ['app_block_id', 'endpoint', 'result']
   );
 
@@ -1495,7 +1535,25 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['outcome']
   );
 
+  // ── workflow SUBMIT failures ────────────────────────────────────────────────
+  // One increment per `blocks.submitWorkflow` call that failed, thrown OR returned as a failed
+  // snapshot (the per-call budget and workflow-ceiling refusals are returned, not thrown). Emitted
+  // by the procedure's own middleware, so every `kind` arm is covered without a call per branch.
+  //
+  // Cardinality: (A+2) x 6, where A = apps with a verified token (the same `claims.appBlockId`
+  // bound the REST RED counter above uses), +1 for `dev` (every dev token) and +1 for `unknown`
+  // (the call failed before the token was verified). `reason` is a code-owned enum derived from
+  // the error's tRPC code and a fixed set of message patterns; the message itself is never a
+  // label.
+  const submitFailuresTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_submit_failures_total',
+    'App Block blocks.submitWorkflow calls that FAILED, thrown or returned as a failed snapshot, by app and reason (validation = input refused; ecosystem_unavailable = the chosen ecosystem is hidden or disabled; insufficient_buzz = the per-call budget, a workflow ceiling or the viewer funds refused it; rate_limited = a submit limiter refused it; server_error = the server or orchestrator could not answer; other = anything else, e.g. a scope or consent refusal). app_block_id is dev for every dev token and unknown when the call failed before its token was verified',
+    ['app_block_id', 'reason']
+  );
+
   return {
+    submitFailuresTotal,
     requestsTotal,
     requestDurationSeconds,
     rendersTotal,
@@ -2157,5 +2215,35 @@ export function recordBlockCustomEvents(outcome: AppBlockCustomEventOutcome, cou
     customEventsTotal.inc({ outcome }, count);
   } catch {
     /* instrument-only */
+  }
+}
+
+/**
+ * The `app_block_id` label for a submit failure: `dev` for every dev token (the same bucketing the
+ * REST RED counter applies, because a dev token's id can be synthetic), the verified app id
+ * otherwise.
+ */
+export function submitFailureAppBlockLabel(claims: {
+  dev?: unknown;
+  appBlockId?: unknown;
+}): string {
+  if (claims.dev === true) return 'dev';
+  return typeof claims.appBlockId === 'string' && claims.appBlockId.length > 0
+    ? claims.appBlockId
+    : 'unknown';
+}
+
+/** Fail-soft emit of one failed workflow submit. Never throws. */
+export function recordAppBlockSubmitFailure(
+  appBlockIdLabel: string,
+  reason: AppSubmitFailureReason
+): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().submitFailuresTotal.inc({
+      app_block_id: appBlockIdLabel,
+      reason,
+    });
+  } catch {
+    /* instrument-only — never let a metrics error change a submit's outcome */
   }
 }

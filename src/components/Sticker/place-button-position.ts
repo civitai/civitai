@@ -220,6 +220,7 @@ export function placeButtonPosition({
   clip,
   flipped,
   lift = 0,
+  liftOverTray = false,
   rotation,
   knobOffset,
   outset,
@@ -232,6 +233,8 @@ export function placeButtonPosition({
   flipped: boolean;
   /** How far the cluster is pulled in toward the sticker now, from the last result. */
   lift?: number;
+  /** Also lift a cluster the tray covers. A Hat Turf hat opts in: its player has to reach Place. */
+  liftOverTray?: boolean;
   rotation: number;
   knobOffset: number;
   outset: number;
@@ -275,7 +278,12 @@ export function placeButtonPosition({
     flipped: nextFlipped,
     below: clearance.below,
     above: clearance.above,
-    lift: placeButtonLift(nextFlipped ? boxes.above : boxes.below, nextFlipped, tray, clip),
+    lift: placeButtonLift(
+      nextFlipped ? boxes.above : boxes.below,
+      nextFlipped,
+      liftOverTray ? tray : null,
+      clip
+    ),
   };
 }
 
@@ -283,6 +291,10 @@ export function placeButtonPosition({
  * How far to pull the cluster in over the sticker when neither side fits, so its buttons stay
  * reachable. A tall cluster (a pinned moment, a recorder) on a sticker low in a short viewport
  * otherwise hangs past the clipping edge, where nothing can press Place.
+ *
+ * `tray` is passed only by a host that opts in. A sticker draft leaves it out: scrolling brings
+ * its cluster out from under the tray, and lifting for it covered the sticker while the tray
+ * stayed open.
  */
 export function placeButtonLift(box: Box, flipped: boolean, tray: Box | null, clip: Box | null) {
   if (flipped) return Math.max(0, Math.ceil((clip?.top ?? 0) - box.top));

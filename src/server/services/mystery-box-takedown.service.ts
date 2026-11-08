@@ -5,6 +5,7 @@ import {
   ITEM_DEFINITION_STATUS,
   ITEM_TYPE,
   MOD_GRANT_SOURCE_PREFIX,
+  parsePackBoxSourceKey,
 } from '@civitai/shared/mystery-box';
 import { dbWrite } from '~/server/db/client';
 import { lockBox } from '~/server/services/box-version-lock';
@@ -148,6 +149,24 @@ function claimOpening(opening: GrantedOpening, shopItemId: number) {
       WHERE "boxItemId" = ${opening.boxItemId}
         AND "rewardStatus" = ${BOX_OPENING_REWARD_STATUS.granted}`;
     if (!flipped || opening.boxSourceKey.startsWith(MOD_GRANT_SOURCE_PREFIX)) return;
+    // One box of a pack is owed its share, not the pack's charge: stamped per box, the purchase stays
+    // unrefunded for the rest of the pack.
+    const packBox = parsePackBoxSourceKey(opening.boxSourceKey);
+    if (packBox) {
+      const boxKey = opening.boxItemId.toString();
+      await tx.$executeRaw`
+        UPDATE "UserCosmeticShopPurchases" p
+        SET meta = ${asJsonbObjectSql('p.meta')} || jsonb_build_object(
+          'packTakedownRefunds',
+          COALESCE(${asJsonbObjectSql('p.meta')} -> 'packTakedownRefunds', '{}'::jsonb)
+            || jsonb_build_object(${boxKey}::text, jsonb_build_object('shopItemId', ${shopItemId}::int, 'at', now()))
+        )
+        FROM "CosmeticShopItem" s
+        WHERE p."buzzTransactionId" = ${packBox.transactionId} AND p."userId" = ${opening.userId}
+          AND NOT p.refunded
+          AND s.id = p."shopItemId" AND s."itemDefinitionId" = ${opening.boxDefinitionId}`;
+      return;
+    }
     // Through the listing's box, as the moderator refund finds it: the source key alone is a string
     // anything could have written.
     await tx.$executeRaw`
@@ -239,6 +258,54 @@ export function listOwedBoxRefunds({
       AND (p.meta->'takedownRefund'->>'shopItemId')::int = ${shopItemId}
       AND p.meta->'takedownRefund'->>'paidAt' IS NULL
     ORDER BY p."buzzTransactionId"`;
+}
+
+export type OwedPackBoxRefund = {
+  boxItemId: bigint;
+  boxSourceKey: string;
+  userId: number;
+  /** The pack purchase's charge prefix. */
+  buzzTransactionId: string;
+  unitAmount: number;
+  /** The purchase's meta, which holds the pack terms it was sold under. */
+  purchaseMeta: Prisma.JsonValue;
+};
+
+/**
+ * Pack boxes this takedown claimed and has not paid back yet, as `listOwedBoxRefunds` finds whole
+ * purchases: from the per-box stamp, so running the takedown again finishes them.
+ */
+export function listOwedPackBoxRefunds({
+  cosmeticId,
+  shopItemId,
+}: {
+  cosmeticId: number;
+  shopItemId: number;
+}) {
+  return dbWrite.$queryRaw<OwedPackBoxRefund[]>`
+    SELECT o."boxItemId", o."boxSourceKey", o."userId", p."buzzTransactionId", p."unitAmount",
+      p.meta AS "purchaseMeta"
+    FROM "BoxOpening" o
+    JOIN "ItemDefinition" d ON d.id = o."rewardDefinitionId"
+    JOIN "UserCosmeticShopPurchases" p
+      ON p."buzzTransactionId" = substring(o."boxSourceKey" from '^(.*)#pack-[0-9]{2}$')
+      AND p."userId" = o."userId"
+    JOIN "CosmeticShopItem" s ON s.id = p."shopItemId" AND s."itemDefinitionId" = o."boxDefinitionId"
+    WHERE d."cosmeticId" = ${cosmeticId} AND d.type = ${ITEM_TYPE.cosmetic}
+      AND o."rewardStatus" = ${BOX_OPENING_REWARD_STATUS.refunded}
+      AND (p.meta -> 'packTakedownRefunds' -> (o."boxItemId"::text) ->> 'shopItemId')::int = ${shopItemId}
+      AND p.meta -> 'packTakedownRefunds' -> (o."boxItemId"::text) ->> 'paidAt' IS NULL
+    ORDER BY o."boxItemId"`;
+}
+
+/** Ends what `claimOpening` owed one pack box. */
+export function markPackBoxRefundPaid(buzzTransactionId: string, boxItemId: bigint) {
+  return dbWrite.$executeRaw`
+    UPDATE "UserCosmeticShopPurchases"
+    SET meta = jsonb_set(
+      meta, ARRAY['packTakedownRefunds', ${boxItemId.toString()}::text, 'paidAt'], to_jsonb(now())
+    )
+    WHERE "buzzTransactionId" = ${buzzTransactionId}`;
 }
 
 /** Ends what `claimOpening` owed: the Buzz for this purchase is back with its buyer. */

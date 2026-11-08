@@ -75,6 +75,8 @@ export interface ModelVersionInfo {
    * `latest` both resolve to the currently-unresolvable `2512` resource, so we pin `2509` (verified). */
   version?: string;
   isNew?: boolean;
+  /** Flipt gate for this version alone. Same semantics as `ModelCard.flagKey`. */
+  flagKey?: string;
 }
 
 /** One base-model card (a family group). */
@@ -161,6 +163,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'flux2klein',
+    flagKey: 'flux2-klein-training',
     name: 'Flux.2 Klein',
     code: 'FK',
     media: 'image',
@@ -325,6 +328,7 @@ export const MODEL_CARDS: ModelCard[] = [
     versions: [
       {
         key: 'zimageturbo',
+        flagKey: 'zimage-turbo-training',
         label: 'Turbo',
         note: 'fast',
         air: 'urn:air:zimageturbo:checkpoint:civitai:2168935@2442439',
@@ -342,6 +346,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'hidream-o1',
+    flagKey: 'hidream-o1-training',
     name: 'HiDream O1',
     code: 'HD',
     media: 'image',
@@ -361,6 +366,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'ernie',
+    flagKey: 'ernie-training',
     name: 'Ernie',
     code: 'ER',
     media: 'image',
@@ -379,6 +385,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'anima',
+    flagKey: 'anima-training',
     name: 'Anima',
     code: 'AN',
     media: 'image',
@@ -400,6 +407,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'boogu',
+    flagKey: 'boogu-training',
     name: 'Boogu',
     code: 'BO',
     media: 'image',
@@ -419,6 +427,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'krea2',
+    flagKey: 'krea2-training',
     name: 'Krea 2',
     code: 'K2',
     media: 'image',
@@ -439,6 +448,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'mageflow',
+    flagKey: 'mageflow-training',
     name: 'Mage-Flow',
     code: 'MF',
     media: 'image',
@@ -638,6 +648,7 @@ export const MODEL_CARDS: ModelCard[] = [
     versions: [
       {
         key: 'ltx25',
+        flagKey: 'ltx25-training',
         label: '2.5',
         note: 'latest',
         air: 'urn:air:ltxv25:repository:huggingface:Lightricks/LTX-Video@main.tar',
@@ -647,6 +658,7 @@ export const MODEL_CARDS: ModelCard[] = [
       },
       {
         key: 'ltx23',
+        flagKey: 'ltx23-training',
         label: '2.3',
         air: 'urn:air:ltxv23:checkpoint:civitai:2445735@2749908',
         baseModel: 'LTXV 2.3',
@@ -663,6 +675,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'minimaxh3',
+    flagKey: 'minimaxh3-training',
     name: 'MiniMax H3',
     code: 'H3',
     media: 'video',
@@ -876,14 +889,33 @@ export const seenFor = (loraTypeId: string, media: Media): number => {
 export const cardByType = (type: string): ModelCard | undefined =>
   MODEL_CARDS.find((c) => c.type === type);
 
-/** A gated card is visible only when its `flagKey` is in the viewer's enabled set; an ungated card always
- *  is. */
-export const isCardVisible = (card: ModelCard, enabledFlags: ReadonlySet<string>): boolean =>
-  !card.flagKey || enabledFlags.has(card.flagKey);
+const isGateOpen = (flagKey: string | undefined, enabledFlags: ReadonlySet<string>): boolean =>
+  !flagKey || enabledFlags.has(flagKey);
 
-/** The distinct gate keys used across the catalog. Empty when no card is gated. */
+/** The card's versions the viewer can see, in catalog order. `enabledFlags` omitted → all of them. */
+export const visibleVersions = (
+  card: ModelCard,
+  enabledFlags?: ReadonlySet<string>
+): ModelVersionInfo[] =>
+  enabledFlags ? card.versions.filter((v) => isGateOpen(v.flagKey, enabledFlags)) : card.versions;
+
+/** The card's versions that are some viewer's first visible pick: the first, and each later one whose
+ *  predecessors are all gated. Exactly the versions `visibleVersions(...)[0]` can return. */
+export const firstPickVersions = (card: ModelCard): ModelVersionInfo[] =>
+  card.versions.filter((_, i) => card.versions.slice(0, i).every((v) => !!v.flagKey));
+
+/** A card is visible when its own `flagKey` (if any) is enabled for the viewer and at least one of its
+ *  versions is. */
+export const isCardVisible = (card: ModelCard, enabledFlags: ReadonlySet<string>): boolean =>
+  isGateOpen(card.flagKey, enabledFlags) && visibleVersions(card, enabledFlags).length > 0;
+
+/** The distinct gate keys used across the catalog, card and version level. */
 export const catalogFlagKeys = (): string[] => [
-  ...new Set(MODEL_CARDS.map((c) => c.flagKey).filter((k): k is string => !!k)),
+  ...new Set(
+    MODEL_CARDS.flatMap((c) => [c.flagKey, ...c.versions.map((v) => v.flagKey)]).filter(
+      (k): k is string => !!k
+    )
+  ),
 ];
 
 /** The gates of the cards that train pairs — the edit helpers are offered only to a viewer who can see
@@ -910,6 +942,26 @@ export const editCards = (enabledFlags?: ReadonlySet<string>): ModelCard[] =>
   MODEL_CARDS.filter(
     (c) => c.pairs && !c.retired && (!enabledFlags || isCardVisible(c, enabledFlags))
   );
+
+/** The catalog version an AI-Toolkit run names no base for trains on: the ecosystem's default base,
+ *  taken as the first catalog version on its ecosystem, variant and version selector (the catalog lists
+ *  each shared ecosystem's default card first: SDXL 1.0 before Illustrious and Pony). */
+export const ecosystemDefaultVersion = (run: {
+  ecosystem: string;
+  modelVariant?: string;
+  version?: string;
+}): { card: ModelCard; version: ModelVersionInfo } | undefined => {
+  for (const card of MODEL_CARDS) {
+    const version = card.versions.find(
+      (v) =>
+        v.ecosystem === run.ecosystem &&
+        (v.modelVariant || undefined) === (run.modelVariant || undefined) &&
+        (!run.version || !v.version || v.version === run.version)
+    );
+    if (version) return { card, version };
+  }
+  return undefined;
+};
 
 /** True when this AIR is the base of a retired card. */
 export const isRetiredBaseAir = (air: string): boolean => !!findByAir(air)?.card.retired;
@@ -1624,6 +1676,11 @@ export function paramBounds(card: ModelCard): Record<string, ParamBound> {
  * `$lib/server/pricing`). PARTIAL: a model the orchestrator can't price is simply absent — there is no
  * static fallback, so callers must handle a missing entry (show "—", not a guessed number). */
 export type FromPrices = Record<string, number>;
+
+/** The `FromPrices` key for a later version of a card in `firstPickVersions`, so a viewer who can't see a
+ *  card's first version is priced by the first one they can pick. */
+export const versionPriceKey = (cardType: string, versionKey: string): string =>
+  `${cardType}/${versionKey}`;
 
 /** The AI-Toolkit parameters beyond the core set, gated per model + dataset by
  *  `extraParamCapabilities`: a field that does nothing for a model (tag shuffling on a caption

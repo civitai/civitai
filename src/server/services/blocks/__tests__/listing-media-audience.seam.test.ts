@@ -23,7 +23,7 @@ vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, sm: 180 } }));
 
 /**
- * An in-memory `queryCache`: entries keyed by `[key, version, hashifyObject(sql)]`, the same
+ * An in-memory `queryCache`: entries keyed by `[key, version, queryCacheKeyHash(sql)]`, the same
  * join `queryCache` uses, so a `.red` page and a `.com` page land in different entries only if
  * the SERVICE gives them different keys. A miss runs the page producer; a hit does not.
  */
@@ -33,10 +33,10 @@ const { cacheStore, cacheStats, pageRows } = vi.hoisted(() => ({
   pageRows: { current: [] as { id: string; sort_key: string }[] },
 }));
 vi.mock('~/server/utils/cache-helpers', async () => {
-  const { hashifyObject } = await import('~/utils/string-helpers');
+  const { queryCacheKeyHash } = await import('~/server/utils/query-cache-key');
   return {
     queryCache: (_db: unknown, key: string, version?: string) => async (sql: unknown) => {
-      const cacheKey = [key, version, hashifyObject(sql as object).toString()]
+      const cacheKey = [key, version, queryCacheKeyHash(sql as never)]
         .filter((p) => p != null && p !== '')
         .join(':');
       const hit = cacheStore.get(cacheKey);

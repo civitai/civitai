@@ -124,7 +124,11 @@ export const useEquipContentDecoration = () => {
           await queryUtils.post.getInfinite.invalidate();
           break;
         case 'Article':
-          await queryUtils.article.getInfinite.invalidate();
+          await Promise.all([
+            queryUtils.article.getInfinite.invalidate(),
+            // The article page's cover wears the hat too.
+            queryUtils.article.getById.invalidate({ id: payload.equippedToId }),
+          ]);
           break;
         case 'Image':
           await queryUtils.image.getInfinite.invalidate();

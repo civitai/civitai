@@ -1948,6 +1948,10 @@ export type BoxOpening = {
    * granted | refunded (text + CHECK)
    */
   rewardStatus: string;
+  /**
+   * Drawn from a pack's guaranteed tiers only.
+   */
+  guaranteed: Generated<boolean>;
   createdAt: Generated<Timestamp>;
 };
 export type BoxRevision = {
@@ -4919,14 +4923,6 @@ export type Product = {
   defaultPriceId: string | null;
   provider: Generated<PaymentProvider>;
 };
-export type ProfilePictureHold = {
-  id: Generated<number>;
-  userId: number;
-  imageId: number;
-  reason: string;
-  exportable: Generated<boolean>;
-  createdAt: Generated<Timestamp>;
-};
 export type PurchasableReward = {
   id: Generated<number>;
   createdAt: Generated<Timestamp>;
@@ -6856,7 +6852,6 @@ export type DB = {
   PricingSlot: PricingSlot;
   Prize: Prize;
   Product: Product;
-  ProfilePictureHold: ProfilePictureHold;
   PurchasableReward: PurchasableReward;
   Purchase: Purchase;
   PushSubscription: PushSubscription;

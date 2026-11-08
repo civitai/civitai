@@ -94,13 +94,9 @@ export function unbindCursor(cursor: string, binding: string): string {
  * `slow_consumer` (rule 8).
  *
  * Before that, a consumer that falls behind is sent the latest state, not every superseded event
- * (rule 8: "skips superseded events (rule 3) rather than queueing them"). A source here never
- * queues: it waits on the binding's flow control, and the poll loop behind it waits with it, since
- * an adapter's change feed is pulled one change at a time. Its next poll then diffs what the
- * consumer was last sent against the state at that moment, so however often an entity changed
- * meanwhile, at most one event per entity is pending: the rest of the batch already diffed, which
- * holds one per entity. `slow_consumer` is for a consumer that takes nothing for this long: it
- * frees the connection it holds, and the consumer resumes from its cursor.
+ * (rule 8): the next poll diffs against what it was last sent. `slow_consumer` is for a consumer
+ * that takes nothing for this long; it frees the connection, and the consumer resumes from its
+ * cursor.
  */
 export const SLOW_CONSUMER_MS = 30_000;
 

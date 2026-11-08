@@ -12,8 +12,8 @@ import { eventPointKeys } from '~/server/events/points/keys';
 import { turfKeys } from '~/server/events/turf/turf-map';
 
 /**
- * A placement answers whether the placer reacting there would pay their team, which is what the
- * reaction nudge shows on. The reactor never earns (points/award.ts awardTurf), so a nudge on an
+ * After a placement, reactionEarns answers whether the placer reacting there would pay their team,
+ * which is what the reaction nudge shows on. The reactor never earns (points/award.ts awardTurf), so a nudge on an
  * image where they are the only credited teammate, or another team leads, would ask for a reaction
  * that pays them nothing or pays the other side. Ids are invented.
  */
@@ -51,8 +51,10 @@ vi.mock('~/server/services/placement-moderation.service', async (importOriginal)
   ...(await importOriginal<typeof PlacementModeration>()),
   assertCanPlace: async () => undefined,
 }));
+// Everyone is a shadow tester unless a case says otherwise.
+const testers = vi.hoisted(() => ({ only: null as number[] | null }));
 vi.mock('~/server/events/event-access', () => ({
-  flagAudienceAmong: async (_flag: string, ids: number[]) => new Set(ids),
+  flagAudienceAmong: async (_flag: string, ids: number[]) => new Set(testers.only ?? ids),
 }));
 const pointsOn = vi.hoisted(() => ({ value: true }));
 vi.mock('~/server/events/points/enabled', async (importOriginal) => ({
@@ -60,7 +62,9 @@ vi.mock('~/server/events/points/enabled', async (importOriginal) => ({
   isEventPointsEnabled: async () => pointsOn.value,
 }));
 
-const { placeTurfSticker, REACTION_EARNS_MS } = await import('~/server/events/turf/turf.service');
+const { placeTurfSticker, getReactionEarns, REACTION_EARNS_MS } = await import(
+  '~/server/events/turf/turf.service'
+);
 
 const OWNER = 7;
 const PLACER = 5;
@@ -118,6 +122,7 @@ let lua: LuaRedis;
 beforeEach(() => {
   EVENT.turf.mode = 'live';
   pointsOn.value = true;
+  testers.only = null;
   hats = {};
   const raw = pgliteRaw(db);
   for (const client of [dbMock.dbRead, dbMock.dbWrite]) {
@@ -164,7 +169,7 @@ async function image(earlier: [userId: number, team: string][] = []) {
   return id;
 }
 
-const place = async (imageId: number, reactionEarnsMs = 30_000) =>
+const place = (imageId: number) =>
   placeTurfSticker(
     {
       event: 'e',
@@ -173,23 +178,29 @@ const place = async (imageId: number, reactionEarnsMs = 30_000) =>
       cosmeticId: 11,
       data: { x: 0.5, y: 0.5, scale: 1, rotation: 0, flip: false },
     },
-    NOW,
-    // These cases test the answer, not the deadline: only the hung-read case runs on the real one.
-    { reactionEarnsMs }
+    NOW
   );
+const ask = (imageId: number, deadlineMs = 30_000) =>
+  // These cases test the answer, not the deadline: only the hung-read case runs on the real one.
+  getReactionEarns({ event: 'e', userId: PLACER, imageId }, NOW, { deadlineMs });
+/** Places, then asks, as the client does: the ask waits for the placement's own sync. */
+const placeAndAsk = async (imageId: number) => {
+  await place(imageId);
+  return ask(imageId);
+};
 
-describe('placing answers whether a reaction there would pay your team', () => {
+describe('reactionEarns answers whether a reaction there would pay your team', () => {
   it('yes: your team leads and a teammate besides you is credited', async () => {
     loggingMock.logToAxiom.mockClear();
-    const placed = await place(await image([[TEAMMATE, 'Blue']]));
+    const earns = await placeAndAsk(await image([[TEAMMATE, 'Blue']]));
     // A swallowed error reads as itself rather than as a bare `false`.
     expect(loggingMock.logToAxiom.mock.calls).toEqual([]);
     expect(lua.errors).toEqual([]);
-    expect(placed).toEqual({ reactionEarns: true });
+    expect(earns).toBe(true);
   });
 
   it('no: you are the only credited player, and the award never pays the reactor', async () => {
-    expect(await place(await image())).toEqual({ reactionEarns: false });
+    expect(await placeAndAsk(await image())).toBe(false);
   });
 
   it('no: the other team still leads, so a reaction would pay them', async () => {
@@ -198,13 +209,11 @@ describe('placing answers whether a reaction there would pay your team', () => {
       [OWNER, 'Pink'],
       [TEAMMATE, 'Blue'],
     ]);
-    expect(await place(id)).toEqual({ reactionEarns: false });
+    expect(await placeAndAsk(id)).toBe(false);
   });
 
   it('no: the only teammate besides you is a new account, which is never credited', async () => {
-    expect(await place(await image([[NEW_ACCOUNT_TEAMMATE, 'Blue']]))).toEqual({
-      reactionEarns: false,
-    });
+    expect(await placeAndAsk(await image([[NEW_ACCOUNT_TEAMMATE, 'Blue']]))).toBe(false);
   });
 
   it("a worn hat decides instead: your team's hat on someone else pays, yours or Pink's does not", async () => {
@@ -212,48 +221,66 @@ describe('placing answers whether a reaction there would pay your team', () => {
       JSON.stringify({ ownerId, cosmeticId: 11, claimKey: 'k', team });
     const teammateHat = await image();
     hats[`Image:${teammateHat}`] = hat(TEAMMATE, 'Blue');
-    expect(await place(teammateHat)).toEqual({ reactionEarns: true });
+    expect(await placeAndAsk(teammateHat)).toBe(true);
     const ownHat = await image([[TEAMMATE, 'Blue']]);
     hats[`Image:${ownHat}`] = hat(PLACER, 'Blue');
-    expect(await place(ownHat)).toEqual({ reactionEarns: false });
+    expect(await placeAndAsk(ownHat)).toBe(false);
     const pinkHat = await image([[TEAMMATE, 'Blue']]);
     hats[`Image:${pinkHat}`] = hat(PINK, 'Pink');
-    expect(await place(pinkHat)).toEqual({ reactionEarns: false });
+    expect(await placeAndAsk(pinkHat)).toBe(false);
   });
 
   it('no: shadow turf moves no live points, and nothing earns with event points switched off', async () => {
     EVENT.turf.mode = 'shadow';
-    expect(await place(await image([[TEAMMATE, 'Blue']]))).toEqual({ reactionEarns: false });
+    expect(await placeAndAsk(await image([[TEAMMATE, 'Blue']]))).toBe(false);
     EVENT.turf.mode = 'live';
     pointsOn.value = false;
-    expect(await place(await image([[TEAMMATE, 'Blue']]))).toEqual({ reactionEarns: false });
+    expect(await placeAndAsk(await image([[TEAMMATE, 'Blue']]))).toBe(false);
+  });
+
+  it('shadow turf answers only its testers, even where a hat would pay', async () => {
+    const id = await image();
+    await place(id);
+    hats[`Image:${id}`] = JSON.stringify({
+      ownerId: TEAMMATE,
+      cosmeticId: 11,
+      claimKey: 'k',
+      team: 'Blue',
+    });
+    EVENT.turf.mode = 'shadow';
+    expect(await ask(id)).toBe(true);
+    testers.only = [];
+    expect(await ask(id)).toBe(false);
   });
 
   // Until a sync writes the map, a reaction scores on the old one: the answer must read the map.
   it('no: the stickers say your team leads, but the map does not (its sync failed)', async () => {
     redisMock.sysRedis.eval.mockRejectedValue(new Error('sysRedis down') as never);
-    expect(await place(await image([[TEAMMATE, 'Blue']]))).toEqual({ reactionEarns: false });
+    expect(await placeAndAsk(await image([[TEAMMATE, 'Blue']]))).toBe(false);
+  });
+
+  // The placement never waits on the answer: it is the nudge's own ask, made later.
+  it('placing returns without reading the answer, even with every read hung', async () => {
+    redisMock.sysRedis.hGet.mockImplementation((() => new Promise(() => undefined)) as never);
+    const waited = new Promise((resolve) => setTimeout(() => resolve('placement waited'), 1_000));
+    expect(await Promise.race([place(await image([[TEAMMATE, 'Blue']])), waited])).toBeUndefined();
   });
 
   // The sys client has no socket timeout, so a read on a half-open connection can hang for minutes.
-  it('a hung read holds the placement up only to the deadline, then answers no', async () => {
-    redisMock.sysRedis.hGet.mockImplementationOnce((() => new Promise(() => undefined)) as never);
+  it('a hung read answers no at the deadline', async () => {
     const id = await image([[TEAMMATE, 'Blue']]);
+    await place(id);
+    redisMock.sysRedis.hGet.mockImplementationOnce((() => new Promise(() => undefined)) as never);
     const waited = new Promise((resolve) =>
-      setTimeout(() => resolve('placement still waiting'), REACTION_EARNS_MS + 8_000)
+      setTimeout(() => resolve('ask still waiting'), REACTION_EARNS_MS + 8_000)
     );
-    const placed = place(id, REACTION_EARNS_MS);
-    expect(await Promise.race([placed, waited])).toEqual({ reactionEarns: false });
+    expect(await Promise.race([ask(id, REACTION_EARNS_MS), waited])).toBe(false);
   });
 
-  it('a failed read costs only the nudge: the sticker is still placed', async () => {
-    redisMock.sysRedis.hGet.mockRejectedValueOnce(new Error('sysRedis down') as never);
+  it('a failed read answers no', async () => {
     const id = await image([[TEAMMATE, 'Blue']]);
-    expect(await place(id)).toEqual({ reactionEarns: false });
-    const { rows } = await db.query(
-      `SELECT 1 FROM "EventTurfSticker" WHERE "imageId" = $1 AND "userId" = $2`,
-      [id, PLACER]
-    );
-    expect(rows).toHaveLength(1);
+    await place(id);
+    redisMock.sysRedis.hGet.mockRejectedValueOnce(new Error('sysRedis down') as never);
+    expect(await ask(id)).toBe(false);
   });
 });

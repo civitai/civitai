@@ -8,6 +8,7 @@ import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { getTeamPoints } from '~/server/events/points/read';
 import {
   applyTurfOverride,
+  DEFAULT_DRAW_CEILING,
   turfConfigKey,
   TURF_SCORE_TIER_KEY,
   type EventTurfConfig,
@@ -16,8 +17,11 @@ import {
   catchUpMultiplier,
   nextStickerAt,
   refillStock,
+  scaleCredited,
   scaleSupply,
   stepAt,
+  stickerLiveAfter,
+  type CatchUpStep,
 } from '~/server/events/turf/schedule';
 import {
   capTurfMap,
@@ -110,6 +114,15 @@ async function contestImageIds(imageIds: number[], db: typeof dbRead | typeof db
   return new Set((rows ?? []).map((r) => r.imageId));
 }
 
+/**
+ * Only stickers still counting at `now` (schedule.ts stickerLiveAfter): an expired sticker is neither
+ * counted, credited nor drawn. Empty while none has expired.
+ */
+function unexpired(event: TurfEvent, now: Date) {
+  const after = stickerLiveAfter(event.turf, now);
+  return after ? Prisma.sql`AND s."createdAt" > ${after}` : Prisma.empty;
+}
+
 const configCache = new Map<string, { at: number; config: EventTurfConfig }>();
 
 /** The event with its turf config, live override applied. Undefined when it has no turf. */
@@ -154,18 +167,35 @@ function cachedTeamPoints(event: TurfEvent, now: Date) {
 }
 
 /**
- * The supply multiplier for `team` now. 1 when no catch-up step is in force (no team read, no points
- * read), when the team is not one of the event's, or when the points cannot be read.
+ * Each team's multiplier on the catch-up curve `steps` now. 1 for every team when no step is in
+ * force (no points read) or the points cannot be read, and for a name that is not one of the event's.
  */
+async function teamCatchUp(event: TurfEvent, steps: CatchUpStep[] | undefined, now: Date) {
+  const step = stepAt(steps ?? [], now);
+  const points = step ? await cachedTeamPoints(event, now) : null;
+  return (team: string) => {
+    const own = event.teams.find((t) => t.toLowerCase() === team.toLowerCase());
+    if (!step || !points || !own) return 1;
+    const total = event.teams.reduce((sum, t) => sum + (points[t] ?? 0), 0);
+    return catchUpMultiplier(step, points[own] ?? 0, total / event.teams.length);
+  };
+}
+
+/** The supply multiplier for `team` now (see teamCatchUp). */
 export async function turfCatchUpAt(event: TurfEvent, team: string | null | undefined, now: Date) {
-  const step = stepAt(event.turf.catchUp ?? [], now);
-  if (!step || !team) return 1;
-  const own = event.teams.find((t) => t.toLowerCase() === team.toLowerCase());
-  if (!own) return 1;
-  const points = await cachedTeamPoints(event, now);
-  if (!points) return 1;
-  const total = event.teams.reduce((sum, t) => sum + (points[t] ?? 0), 0);
-  return catchUpMultiplier(step, points[own] ?? 0, total / event.teams.length);
+  if (!team) return 1;
+  return (await teamCatchUp(event, event.turf.catchUp, now))(team);
+}
+
+/**
+ * Per event team, how many of its stickerers an action on an image it leads credits now: the
+ * creditedPlayers step scaled by the team's creditedCatchUp, so a team far ahead credits fewer.
+ * Forward-only: each ledger row keeps the players credited when the action happened.
+ */
+export async function turfCreditedByTeam(event: TurfEvent, now: Date) {
+  const base = stepAt(event.turf.creditedPlayers, now)?.players ?? 0;
+  const multiplier = await teamCatchUp(event, event.turf.creditedCatchUp, now);
+  return Object.fromEntries(event.teams.map((t) => [t, scaleCredited(base, multiplier(t))]));
 }
 
 /**
@@ -194,13 +224,16 @@ export function turfSupplyAt(
 export async function getTurfStock(eventName: string, userId: number, now = new Date()) {
   const event = await getTurfEvent(eventName, now);
   if (!event) throw throwNotFoundError('This event has no turf');
-  const catchUp = stepAt(event.turf.catchUp ?? [], now)
-    ? event
-        .getUserTeam(userId)
-        .catch(() => null)
-        .then((team) => turfCatchUpAt(event, team, now))
-    : 1;
-  const [row, [user], multiplier] = await Promise.all([
+  // Read only when a team's numbers can differ from another's.
+  const scaled = [event.turf.catchUp, event.turf.creditedCatchUp].some((steps) =>
+    stepAt(steps ?? [], now)
+  );
+  const userTeam = scaled ? event.getUserTeam(userId).catch(() => null) : null;
+  const catchUp =
+    userTeam && stepAt(event.turf.catchUp ?? [], now)
+      ? userTeam.then((team) => turfCatchUpAt(event, team, now))
+      : 1;
+  const [row, [user], multiplier, creditedByTeam, team] = await Promise.all([
     dbRead.eventTurfStock.findUnique({
       where: { event_userId: { event: event.name, userId } },
       select: { stock: true, refilledAt: true },
@@ -212,10 +245,21 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
       FROM "User" u WHERE u.id = ${userId}
     `,
     catchUp,
+    turfCreditedByTeam(event, now),
+    userTeam,
   ]);
   const { stock: _, ...supply } = turfSupplyAt(event, row, now, multiplier);
+  const ownTeam = team && event.teams.find((t) => t.toLowerCase() === team.toLowerCase());
   return {
     ...supply,
+    /** Per team, the stickerers an action on an image it leads credits; the badge reads the leader's. */
+    creditedByTeam,
+    /** The viewer's team's entry in creditedByTeam; the unscaled step for a viewer on no team. */
+    creditedPlayers: ownTeam ? creditedByTeam[ownTeam] : supply.creditedPlayers,
+    /** How long a sticker counts, so the viewer's own can show its time left (stickerExpiresAt). */
+    expiry: event.turf.ttlHours
+      ? { ttlHours: event.turf.ttlHours, rolloutAt: event.turf.rolloutAt ?? null }
+      : null,
     /** The team's catch-up now: above 1 a trailing team refills faster and holds more, below 1 a leading one slower. */
     multiplier,
     mode: event.turf.mode,
@@ -237,11 +281,7 @@ export type PlaceTurfStickerInput = {
   source?: 'feed' | 'image-detail';
 };
 
-export async function placeTurfSticker(
-  input: PlaceTurfStickerInput,
-  now = new Date(),
-  { reactionEarnsMs = REACTION_EARNS_MS } = {}
-) {
+export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new Date()) {
   const event = await getTurfEvent(input.event, now);
   if (!event || !isRunning(event, now)) throw throwBadRequestError("Turf isn't open right now");
   const { userId, imageId } = input;
@@ -317,17 +357,31 @@ export async function placeTurfSticker(
       `;
       const { stock } = turfSupplyAt(event, row ?? null, now, multiplier);
       if (stock < 1) throw throwBadRequestError('Out of hat stickers. They refill over time');
-      await tx.eventTurfSticker.create({
-        data: {
-          event: event.name,
-          imageId,
-          userId,
-          team,
-          cosmeticId: input.cosmeticId,
-          data: input.source ? { ...input.data, source: input.source } : input.data,
-          createdAt: now,
-        },
-      });
+      const data = input.source ? { ...input.data, source: input.source } : input.data;
+      // One sticker per player per image: an expired one is placed again in its row. A live or
+      // removed one is left, and the create below refuses on the unique key.
+      const liveAfter = stickerLiveAfter(event.turf, now);
+      const renewed = liveAfter
+        ? await tx.$executeRaw`
+            UPDATE "EventTurfSticker"
+            SET team = ${team}, "cosmeticId" = ${input.cosmeticId},
+              data = ${JSON.stringify(data)}::jsonb, "createdAt" = ${now}
+            WHERE event = ${event.name} AND "imageId" = ${imageId} AND "userId" = ${userId}
+              AND "removedAt" IS NULL AND "createdAt" <= ${liveAfter}
+          `
+        : 0;
+      if (!renewed)
+        await tx.eventTurfSticker.create({
+          data: {
+            event: event.name,
+            imageId,
+            userId,
+            team,
+            cosmeticId: input.cosmeticId,
+            data,
+            createdAt: now,
+          },
+        });
       await tx.$executeRaw`
         UPDATE "EventTurfStock" SET stock = ${stock - 1}, "refilledAt" = ${now}
         WHERE event = ${event.name} AND "userId" = ${userId}
@@ -338,24 +392,42 @@ export async function placeTurfSticker(
       throw throwBadRequestError("You've already put a hat sticker on this image");
     throw error;
   }
-  const synced = requestTurfSync(event, imageId);
-  void synced.catch(logSyncError);
-  // Only drives the reaction nudge: a failed or slow read must not fail or hold up a placement
-  // already made, so the whole answer is raced against one deadline.
-  const reactionEarns = await withSysReadDeadline(
-    reactionPaysTeam(event, imageId, userId, team, synced),
-    reactionEarnsMs
+  void requestTurfSync(event, imageId).catch(logSyncError);
+}
+
+// Longest the reactionEarns answer (a running sync and two Redis reads) takes before answering false.
+export const REACTION_EARNS_MS = 1_500;
+
+/**
+ * Whether the viewer reacting to this image now would pay their team: what the reaction nudge shows
+ * on, asked after a placement. Only drives the nudge, so a failed or slow read answers false.
+ */
+export async function getReactionEarns(
+  { event: name, imageId, userId }: { event: string; imageId: number; userId: number },
+  now = new Date(),
+  { deadlineMs = REACTION_EARNS_MS } = {}
+) {
+  return withSysReadDeadline(
+    (async () => {
+      const event = await getTurfEvent(name, now);
+      if (!event || !isRunning(event, now)) return false;
+      // Shadow turf answers only its testers, as only they can place.
+      if (event.turf.mode === 'shadow') {
+        const testers = await flagAudienceAmong(event.turf.testerFlag, [userId]);
+        if (!testers.has(userId)) return false;
+      }
+      // strict: a failed read of a hand-set team throws rather than answering for a guessed one.
+      const team = await event.getUserTeam(userId, { strict: true });
+      return reactionPaysTeam(event, imageId, userId, team);
+    })(),
+    deadlineMs
   ).catch((error) => {
-    void logToAxiom({ type: 'error', name: 'event-turf', fn: 'reactionPaysTeam', error }).catch(
+    void logToAxiom({ type: 'error', name: 'event-turf', fn: 'getReactionEarns', error }).catch(
       () => undefined
     );
     return false;
   });
-  return { reactionEarns };
 }
-
-// Longest a placement waits on `reactionEarns` (its own sync and two Redis reads) before answering false.
-export const REACTION_EARNS_MS = 1_500;
 
 /**
  * Whether the placer reacting to this image would pay their own team, decided from what the award
@@ -364,13 +436,7 @@ export const REACTION_EARNS_MS = 1_500;
  * from the map, not the stickers: until a sync writes it, a reaction scores on the old map, which
  * may name another team. Ignores the daily per-owner cap.
  */
-async function reactionPaysTeam(
-  event: TurfEvent,
-  imageId: number,
-  userId: number,
-  team: string,
-  synced: Promise<void>
-) {
+async function reactionPaysTeam(event: TurfEvent, imageId: number, userId: number, team: string) {
   const rule = event.scoring?.types?.reaction;
   if (!rule?.entities.includes('Image') || !(await isEventPointsEnabled())) return false;
   const key = `Image:${imageId}`;
@@ -379,9 +445,9 @@ async function reactionPaysTeam(
   const hat = rawHat ? decodeHat(rawHat) : undefined;
   if (hat) return sameTeam(hat.team) && hat.ownerId !== userId;
   if (event.turf.mode !== 'live') return false;
-  // This placement's sync first, so a lead it just took is in the map. A failed sync leaves the old
-  // map, which is still what a reaction scores on.
-  await synced.catch(() => undefined);
+  // A sync still running on this server first, so a lead the placement just took is in the map. A
+  // failed sync leaves the old map, which is still what a reaction scores on.
+  await syncing.get(`${event.name}:${imageId}`)?.done.catch(() => undefined);
   const rawEntry = await sysRedis.hGet(turfKeys(event.name).map, key);
   const entry = rawEntry ? decodeTurfEntry(rawEntry) : undefined;
   return !!entry && sameTeam(entry.team) && entry.players.some((p) => p !== userId);
@@ -491,16 +557,20 @@ type StickerRow = TurfStickerRow & {
   contest?: boolean;
 };
 
-// The live stickers on images anyone may see (imageVisible) whose owner allows turf (ownerAllowsTurf),
-// oldest first per image. The placer's opt-in is not read here: a placer who opts out leaves what
-// they placed counting. A placer earns with an account from
-// before the event start, or one that has since reached the Spark tier's threshold, read from its
-// CreatorMilestone row so the tier stays the one source (compared as
-// creatorScoreFromMeta: `meta.scores.total`, absent or non-numeric as 0), and is not banned, deleted
-// or excluded. Read when the map is written, so credit is forward-only: a newly eligible placer
+// The live stickers (not removed, not expired) on images anyone may see (imageVisible) whose owner
+// allows turf (ownerAllowsTurf), oldest first per image. The placer's opt-in is not read here: a
+// placer who opts out leaves what they placed counting. A placer earns with an account from before
+// the event start, or one that has since reached the Spark tier's threshold, read from its
+// CreatorMilestone row so the tier stays the one source (compared as creatorScoreFromMeta:
+// `meta.scores.total`, absent or non-numeric as 0), and is not banned, deleted or excluded. Read when the map is written, so credit is forward-only: a newly eligible placer
 // counts from the next map write, and never for an action already recorded, since each ledger row
 // names the players credited when the action happened.
-function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | typeof dbWrite) {
+function liveStickers(
+  event: TurfEvent,
+  where: Prisma.Sql,
+  db: typeof dbRead | typeof dbWrite,
+  now: Date
+) {
   return db.$queryRaw<StickerRow[]>`
     SELECT s."imageId", s.id, s."userId", s.team, s."cosmeticId", s.data, s."createdAt",
       ${hatArt(Prisma.sql`s."cosmeticId"`)} AS art,
@@ -517,8 +587,8 @@ function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | t
     JOIN "User" u ON u.id = s."userId"
     JOIN "Image" i ON i.id = s."imageId"
     JOIN "Post" p ON p.id = i."postId"
-    WHERE s.event = ${event.name} AND s."removedAt" IS NULL AND ${where} AND ${imageVisible}
-      AND ${ownerAllowsTurf(event.name)}
+    WHERE s.event = ${event.name} AND s."removedAt" IS NULL ${unexpired(event, now)}
+      AND ${where} AND ${imageVisible} AND ${ownerAllowsTurf(event.name)}
     ORDER BY s."imageId", s."createdAt", s.id
   `;
 }
@@ -533,14 +603,13 @@ async function teamCosmetics(event: TurfEvent) {
 }
 
 function computeImages(
-  event: TurfEvent,
   rows: StickerRow[],
   cosmetics: Map<string, number>,
-  now: Date,
+  creditedByTeam: Record<string, number>,
   // Which images' feed stickers to pick: only a changed image is pushed.
   pickFor: (key: string, counts: TurfCounts) => boolean = () => true
 ) {
-  const credited = stepAt(event.turf.creditedPlayers, now)?.players ?? 0;
+  const credited = (team: string) => creditedByTeam[team] ?? 0;
   const byImage = new Map<number, StickerRow[]>();
   for (const r of rows) {
     const list = byImage.get(r.imageId) ?? [];
@@ -632,9 +701,14 @@ export async function syncTurfImages(event: TurfEvent, imageIds: number[], now =
   const rows = await liveStickers(
     event,
     Prisma.sql`s."imageId" = ANY(${imageIds}::int[])`,
-    dbWrite
+    dbWrite,
+    now
   );
-  const { entries, counts, stickers } = computeImages(event, rows, await teamCosmetics(event), now);
+  const { entries, counts, stickers } = computeImages(
+    rows,
+    await teamCosmetics(event),
+    await turfCreditedByTeam(event, now)
+  );
   // Scoring keeps a contest entry's stickers; its viewers are told nothing.
   const contest = new Set(rows.filter((row) => row.contest).map((row) => row.imageId));
   const { countsChanged } = await writeTurf(
@@ -702,9 +776,12 @@ export function requestTurfSync(event: TurfEvent, imageId: number): Promise<void
   return state.done;
 }
 
-/** Rebuilds the whole turf map and counts for an event: hides, bans and cap changes. */
+/** Rebuilds the whole turf map and counts for an event: hides, bans, expiry and cap changes. */
 export async function reconcileTurf(event: TurfEvent, now = new Date()) {
+  // First, so it pairs with `now`: each batch reads expiry at now + the time since (see below).
+  const startedAt = Date.now();
   const cosmetics = await teamCosmetics(event);
+  const creditedByTeam = await turfCreditedByTeam(event, now);
   const entries = new Map<string, TurfEntry>();
   const counts = new Map<string, TurfCounts>();
   const stickers = new Map<string, FeedSticker[]>();
@@ -719,13 +796,19 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
   const batches: { upTo: number; ticket: number }[] = [];
   let lastTicket = 0;
   let after = 0;
+  // Each batch reads expiry at its own time, right after its ticket: with `now` fixed, a later
+  // ticket could read an older cutoff than a sync written before it, and put back a sticker that
+  // sync had dropped as expired.
   for (;;) {
     lastTicket = await takeTicket(event);
-    // Keyset over image ids through the live-sticker index, never a scan of Image.
+    const readAt = new Date(now.getTime() + Date.now() - startedAt);
+    // Keyset over image ids through the live-sticker index, never a scan of Image. An image left
+    // with only expired stickers is not read: it is cleared below, with every other gone field.
     const ids = await dbRead.$queryRaw<{ imageId: number }[]>`
-      SELECT DISTINCT "imageId" FROM "EventTurfSticker"
-      WHERE event = ${event.name} AND "removedAt" IS NULL AND "imageId" > ${after}
-      ORDER BY "imageId" LIMIT ${RECONCILE_IMAGE_BATCH}
+      SELECT DISTINCT s."imageId" FROM "EventTurfSticker" s
+      WHERE s.event = ${event.name} AND s."removedAt" IS NULL ${unexpired(event, readAt)}
+        AND s."imageId" > ${after}
+      ORDER BY s."imageId" LIMIT ${RECONCILE_IMAGE_BATCH}
     `;
     if (!ids.length) break;
     after = ids[ids.length - 1].imageId;
@@ -733,10 +816,11 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
     const rows = await liveStickers(
       event,
       Prisma.sql`s."imageId" = ANY(${ids.map((r) => r.imageId)}::int[])`,
-      dbRead
+      dbRead,
+      readAt
     );
     for (const row of rows) if (row.contest) contest.add(row.imageId);
-    const part = computeImages(event, rows, cosmetics, now, changed);
+    const part = computeImages(rows, cosmetics, creditedByTeam, changed);
     part.entries.forEach((v, k) => entries.set(k, v));
     part.counts.forEach((v, k) => counts.set(k, v));
     part.stickers.forEach((v, k) => stickers.set(k, v));
@@ -791,13 +875,16 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
 /** Every event whose turf may still change: running, or in the finalize window after it. */
 export async function reconcileAllTurf(now = new Date()) {
   const results = [];
+  // Each event reconciles from when its turn comes, not when the run began (see reconcileTurf).
+  const startedAt = Date.now();
   for (const def of await loadEvents()) {
     if (!def.turf || !def.scoring) continue;
     if (now < def.startDate || now > new Date(def.endDate.getTime() + def.scoring.finalizeAfterMs))
       continue;
     const event = await getTurfEvent(def.name, now);
     if (!event || event.turf.mode === 'off') continue;
-    results.push({ event: def.name, ...(await reconcileTurf(event, now)) });
+    const at = new Date(now.getTime() + Date.now() - startedAt);
+    results.push({ event: def.name, ...(await reconcileTurf(event, at)) });
   }
   return results;
 }
@@ -808,15 +895,24 @@ export async function reconcileAllTurf(now = new Date()) {
  * Per-image counts and leader for a batch of images, plus the viewer's team. `hatted`: an event hat
  * protects the image, so its stickers earn nothing until the hat comes off; `hattedTeam` is that hat's
  * team. `open`: for every image asked about, whether it can take a new sticker now (visible; the
- * owner need not be in Hat Turf); owners may sticker their own. `mine`: whether the viewer has
- * already stickered it, so cannot again. `hidden`: contest
+ * owner need not be in Hat Turf); owners may sticker their own. `mine`: whether the viewer has a
+ * live or removed sticker on it, so cannot place again (an expired one is placed again). `hidden`: contest
  * entries, which show no Hat Turf at all (no counts, closed).
  */
-export async function getTurfSummaries(eventName: string, imageIds: number[], viewerId?: number) {
-  const event = await getTurfEvent(eventName);
+export async function getTurfSummaries(
+  eventName: string,
+  imageIds: number[],
+  viewerId?: number,
+  now = new Date()
+) {
+  const event = await getTurfEvent(eventName, now);
   if (!event || event.turf.mode === 'off' || !imageIds.length)
     return { team: null, images: {}, open: {}, mine: {}, hidden: {} };
   const keys = imageIds.map((id) => `Image:${id}`);
+  const liveAfter = stickerLiveAfter(event.turf, now);
+  const mineStillBlocks = liveAfter
+    ? Prisma.sql`AND (s."removedAt" IS NOT NULL OR s."createdAt" > ${liveAfter})`
+    : Prisma.empty;
   const [counts, hats, openRows, mineRows, contestRows] = await Promise.all([
     sysRedis.hmGet(turfKeys(event.name).counts, keys),
     sysRedis.hmGet(eventPointKeys(event.name).hats, keys),
@@ -825,12 +921,12 @@ export async function getTurfSummaries(eventName: string, imageIds: number[], vi
       JOIN "Post" p ON p.id = i."postId"
       WHERE i.id = ANY(${imageIds}::int[]) AND ${imageVisible} AND ${ownerAllowsTurf(event.name)}
     `,
-    // Removed ones too: the unique key refuses a second sticker either way.
+    // Removed ones too: placing again refuses them. Not expired ones, which placing renews.
     viewerId
       ? dbRead.$queryRaw<{ imageId: number }[]>`
-          SELECT "imageId" FROM "EventTurfSticker"
-          WHERE event = ${event.name} AND "userId" = ${viewerId}
-            AND "imageId" = ANY(${imageIds}::int[])
+          SELECT s."imageId" FROM "EventTurfSticker" s
+          WHERE s.event = ${event.name} AND s."userId" = ${viewerId}
+            AND s."imageId" = ANY(${imageIds}::int[]) ${mineStillBlocks}
         `
       : [],
     contestImageIds(imageIds, dbRead),
@@ -875,10 +971,12 @@ export async function getTurfStickers(
   eventName: string,
   imageId: number,
   viewerId?: number,
-  before?: { createdAt: string; id: bigint }
+  before?: { createdAt: string; id: bigint },
+  now = new Date()
 ) {
-  const event = await getTurfEvent(eventName);
-  if (!event || event.turf.mode === 'off') return { stickers: [], mine: null, nextCursor: null };
+  const event = await getTurfEvent(eventName, now);
+  if (!event || event.turf.mode === 'off')
+    return { stickers: [], mine: null, nextCursor: null, drawCeiling: DEFAULT_DRAW_CEILING };
   const rows = (only: Prisma.Sql, limit: number) => dbRead.$queryRaw<DrawnSticker[]>`
     SELECT s.id, s."userId", s.team, s."cosmeticId", s.data,
       ${hatArt(Prisma.sql`s."cosmeticId"`)} AS art, s."createdAt"
@@ -887,6 +985,7 @@ export async function getTurfStickers(
     JOIN "Image" i ON i.id = s."imageId"
     JOIN "Post" p ON p.id = i."postId"
     WHERE s.event = ${event.name} AND s."imageId" = ${imageId} AND s."removedAt" IS NULL
+      ${unexpired(event, now)}
       AND ${imageVisible} AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL ${only}
       AND NOT ${contestEntry(Prisma.sql`s."imageId"`)} AND ${ownerAllowsTurf(event.name)}
     ORDER BY s."createdAt" DESC, s.id DESC
@@ -908,7 +1007,8 @@ export async function getTurfStickers(
     page.length > limit && last
       ? { createdAt: last.createdAt.toISOString(), id: last.id.toString() }
       : null;
-  return { stickers, mine: mine[0] ?? null, nextCursor };
+  const drawCeiling = event.turf.drawCeiling ?? DEFAULT_DRAW_CEILING;
+  return { stickers, mine: mine[0] ?? null, nextCursor, drawCeiling };
 }
 
 export type FeedSticker = {
@@ -968,9 +1068,10 @@ export function pickFeedStickers(
 export async function getTurfStickersForImages(
   eventName: string,
   imageIds: number[],
-  perImage: number
+  perImage: number,
+  now = new Date()
 ) {
-  const event = await getTurfEvent(eventName);
+  const event = await getTurfEvent(eventName, now);
   if (!event || event.turf.mode === 'off' || !imageIds.length) return {};
   const rows = await dbRead.$queryRaw<(DrawnSticker & { imageId: number })[]>`
     WITH ranked AS (
@@ -982,7 +1083,7 @@ export async function getTurfStickersForImages(
       JOIN "Image" i ON i.id = s."imageId"
       JOIN "Post" p ON p.id = i."postId"
       WHERE s.event = ${event.name} AND s."imageId" = ANY(${imageIds}::int[])
-        AND s."removedAt" IS NULL AND ${imageVisible}
+        AND s."removedAt" IS NULL ${unexpired(event, now)} AND ${imageVisible}
         AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
         AND NOT ${contestEntry(Prisma.sql`s."imageId"`)} AND ${ownerAllowsTurf(event.name)}
     ), picked AS (

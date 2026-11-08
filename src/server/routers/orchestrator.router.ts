@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { generatorAcceptsBoostRequired } from '~/server/services/generation/coverage-source';
 import { assertSourceMetadataWithinCap } from '~/server/services/orchestrator/source-metadata-cap';
 import { assertGenerationInputsUsable } from '~/server/services/generation-input-urls';
 import * as z from 'zod';
@@ -411,6 +412,7 @@ export const orchestratorRouter = router({
         acknowledgedSoftBlock,
         sourceProvenance,
         downloadPriority,
+        acceptBoostRequired,
       } = input;
       // Before anything serializes them into the steps (`.input(z.any())` leaves them unchecked).
       assertSourceMetadataWithinCap(sourceMetadata, sourceMetadataMap);
@@ -521,6 +523,7 @@ export const orchestratorRouter = router({
         // from a hand-rolled client can't stand in for the acknowledgement.
         acknowledgedSoftBlock: acknowledgedSoftBlock === true,
         downloadPriority: downloadPriority === 'high' ? 'high' : undefined,
+        acceptBoostRequired: generatorAcceptsBoostRequired(acceptBoostRequired, ctx),
       });
 
       // Bust the short-TTL queryGeneratedImages cache so a concurrent tab or an
@@ -590,7 +593,10 @@ export const orchestratorRouter = router({
       }
 
       // Rides alongside the graph input rather than inside it — it is not a graph node.
-      const { downloadPriority, ...graphInput } = (input ?? {}) as Record<string, unknown>;
+      const { downloadPriority, acceptBoostRequired, ...graphInput } = (input ?? {}) as Record<
+        string,
+        unknown
+      >;
 
       try {
         return await whatIfFromGraph({
@@ -602,6 +608,7 @@ export const orchestratorRouter = router({
           experimental: ctx.experimental,
           currencies: getAllowedAccountTypes(ctx.features, ['blue']),
           downloadPriority: downloadPriority === 'high' ? 'high' : undefined,
+          acceptBoostRequired: generatorAcceptsBoostRequired(acceptBoostRequired, ctx),
           inputGate: { entry: 'whatIfFromGraph', isApiCaller: ctx.apiKeyId != null },
         });
       } catch (e) {

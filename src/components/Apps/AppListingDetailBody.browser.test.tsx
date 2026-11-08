@@ -6,6 +6,7 @@ import type * as TrpcMod from '~/utils/trpc';
 import type * as RecentsMod from '~/components/Apps/recentlyOpenedAppsStore';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import type * as NotificationsMod from '~/utils/notifications';
+import type * as TrackBufferMod from '~/components/TrackView/trackEventBuffer';
 import type { ListingCard, ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -122,6 +123,13 @@ vi.mock('~/components/Apps/recentlyOpenedAppsStore', async (importOriginal) => {
 // `useFeatureFlags` left the optional one resolving to the REAL null-outside-provider
 // value, i.e. store scope `none`, which silently hid the review affordance and failed two
 // tests here for a reason that had nothing to do with what they assert.
+// Acquisition telemetry rides the shared beacon; spied so a test can read the exact
+// `AppStore_Action` rows the detail page queues. Spread, not replaced.
+const trackMocks = vi.hoisted(() => ({ enqueue: vi.fn() }));
+vi.mock('~/components/TrackView/trackEventBuffer', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrackBufferMod>()),
+  enqueueTrackEvent: trackMocks.enqueue,
+}));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => mocks.features,
@@ -1421,13 +1429,13 @@ describe('AppListingDetailBody', () => {
   test('🔴 the in-site Open CTA and the off-site Visit CTA render DIFFERENT glyphs', async () => {
     const { cta: openBtn } = await renderAndSettle(
       <AppListingDetailBody detail={base({})} canOpenPage />,
-      '/apps/run/my-app'
+      '/apps/run/my-app?src=detail'
     );
     const openGlyph = glyphOf(openBtn);
 
     const { cta: visitBtn } = await renderAndSettle(
       <AppListingDetailBody detail={offsite()} />,
-      'https://ext.app'
+      '/apps/go/l1?src=detail'
     );
     const visitGlyph = glyphOf(visitBtn);
 
@@ -1441,17 +1449,17 @@ describe('AppListingDetailBody', () => {
   test('the glyph change does NOT touch link semantics', async () => {
     const { cta: openBtn } = await renderAndSettle(
       <AppListingDetailBody detail={base({})} canOpenPage />,
-      '/apps/run/my-app'
+      '/apps/run/my-app?src=detail'
     );
     expect(openBtn.getAttribute('target')).toBeNull();
     expect(openBtn.getAttribute('rel')).toBeNull();
 
     const { cta: visitBtn } = await renderAndSettle(
       <AppListingDetailBody detail={offsite()} />,
-      'https://ext.app'
+      '/apps/go/l1?src=detail'
     );
     expect(visitBtn.getAttribute('target')).toBe('_blank');
-    expect(visitBtn.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(visitBtn.getAttribute('rel')).toBe('nofollow noopener noreferrer');
   });
 
   /**
@@ -1484,11 +1492,12 @@ describe('AppListingDetailBody', () => {
           },
         })}
       />,
-      'https://connect.app'
+      // Through the visit redirect, which 302s to the stored `https://connect.app`.
+      '/apps/go/l1?src=detail'
     );
     expect(visitBtn.textContent?.trim()).toBe('Visit');
     expect(visitBtn.getAttribute('target')).toBe('_blank');
-    expect(visitBtn.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(visitBtn.getAttribute('rel')).toBe('nofollow noopener noreferrer');
     expect(glyphOf(visitBtn)).toBe('external-link');
     // The stub copy must be GONE from this state — it is the exact string a user
     // reported as a dead end.
@@ -1621,7 +1630,7 @@ describe('AppListingDetailBody', () => {
     const el = hero.element() as HTMLElement;
     // Semantics, not a click handler on a box: a real anchor, same-tab.
     expect(el.tagName).toBe('A');
-    expect(el.getAttribute('href')).toBe('/apps/run/my-app');
+    expect(el.getAttribute('href')).toBe('/apps/run/my-app?src=detail');
     expect(el.getAttribute('target')).toBeNull();
     // Accessible NAME — neither the cover `alt` ("… cover image") nor the
     // aria-hidden placeholder can supply one, so it is explicit.
@@ -1632,7 +1641,7 @@ describe('AppListingDetailBody', () => {
     // "Same destination as the CTA" asserted as a fact about the DOM, not by
     // restating the string: exactly two anchors point at the run route — the
     // banner and the button. If the banner ever aims somewhere else this is 1.
-    expect(container.querySelectorAll('a[href="/apps/run/my-app"]')).toHaveLength(2);
+    expect(container.querySelectorAll('a[href="/apps/run/my-app?src=detail"]')).toHaveLength(2);
   });
 
   test('🔴 a listing with NO cover art still gets the launch affordance', async () => {
@@ -1641,7 +1650,7 @@ describe('AppListingDetailBody', () => {
     );
     const hero = within.getByTestId(HERO);
     await expect.element(hero).toBeInTheDocument();
-    expect(hero.element().getAttribute('href')).toBe('/apps/run/my-app');
+    expect(hero.element().getAttribute('href')).toBe('/apps/run/my-app?src=detail');
     // …and it really is the seeded-gradient placeholder inside, not a cover
     // image — otherwise this test would pass on the wrong branch.
     expect(hero.element().querySelector('[data-listing-cover-placeholder]')).not.toBeNull();
@@ -1668,15 +1677,17 @@ describe('AppListingDetailBody', () => {
     });
     // The browser synthesised an activation click from the keypress, and it came
     // from the banner anchor.
-    expect(activated).toEqual(['/apps/run/my-app']);
+    expect(activated).toEqual(['/apps/run/my-app?src=detail']);
   });
 
   test('off-site (Visit) → the banner is NOT interactive (invariant guard)', async () => {
     const { container, within } = await renderScoped(<AppListingDetailBody detail={offsite()} />);
     await expect.element(within.getByTestId('apps-listing-open-live')).toBeInTheDocument();
     expect(container.querySelectorAll(`[data-testid="${HERO}"]`)).toHaveLength(0);
-    // Exactly one route off-platform: the labelled button.
-    expect(container.querySelectorAll('a[href="https://ext.app"]')).toHaveLength(1);
+    // Exactly one route off-platform: the labelled button, through the visit redirect (which
+    // records the visit and 302s to the listing's stored URL). The raw URL is not on the page.
+    expect(container.querySelectorAll('a[href="/apps/go/l1?src=detail"]')).toHaveLength(1);
+    expect(container.querySelectorAll('a[href="https://ext.app"]')).toHaveLength(0);
   });
 
   test('the on-site raw-origin escape hatch does NOT make the banner interactive (invariant guard)', async () => {
@@ -1760,7 +1771,7 @@ describe('AppListingDetailBody', () => {
     await expect.element(within.getByTestId(HERO)).toBeInTheDocument();
 
     const links = Array.from(
-      container.querySelectorAll<HTMLAnchorElement>('a[href="/apps/run/my-app"]')
+      container.querySelectorAll<HTMLAnchorElement>('a[href="/apps/run/my-app?src=detail"]')
     );
     expect(links).toHaveLength(2);
     const [heroEl, ctaEl] = links;
@@ -2683,5 +2694,61 @@ describe('AppListingDetailBody — page order and the related-rail link', () => 
     expect(
       prev.container.querySelectorAll('[data-testid="apps-listing-details-related-link"]')
     ).toHaveLength(0);
+  });
+});
+
+describe('AppListingDetailBody — store funnel events', () => {
+  const storeActions = () =>
+    trackMocks.enqueue.mock.calls
+      .map(([event]) => event)
+      .filter((e: any) => e?.kind === 'action' && e.data?.type === 'AppStore_Action')
+      .map((e: any) => e.data.details);
+  const offsiteDetail = () =>
+    base({
+      kind: 'offsite',
+      kindData: { kind: 'offsite', externalUrl: 'https://ext.app', connectClientId: null },
+    });
+
+  beforeEach(() => {
+    trackMocks.enqueue.mockReset();
+    // The funnel's one gate (the `feedImpressions` dial), ON unless a case turns it off.
+    mocks.features = { ...mocks.features, feedImpressions: true };
+  });
+
+  test('mounting the detail page queues exactly ONE detail_view for the listing', async () => {
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByTestId('apps-listing-open-live')).toBeInTheDocument();
+    await vi.waitUntil(() => storeActions().length > 0, { timeout: 5000, interval: 25 });
+    expect(storeActions()).toEqual([{ action: 'detail_view', listingId: 'l1', surface: 'detail' }]);
+  });
+
+  test('a moderator PREVIEW queues no detail_view', async () => {
+    const { container } = await renderScoped(<AppListingDetailBody detail={base({})} preview />);
+    // Positive control that the body rendered (and its effects ran) before reading the absence.
+    await vi.waitUntil(() => container.textContent?.includes('My App'), {
+      timeout: 5000,
+      interval: 25,
+    });
+    expect(storeActions()).toEqual([]);
+  });
+
+  test('with the funnel gate OFF the page queues no detail_view', async () => {
+    mocks.features = { ...mocks.features, feedImpressions: false };
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByTestId('apps-listing-open-live')).toBeInTheDocument();
+    expect(storeActions()).toEqual([]);
+  });
+
+  test('following the off-site Visit CTA queues a cta_click (after the detail_view)', async () => {
+    const { within } = await renderScoped(<AppListingDetailBody detail={offsiteDetail()} />);
+    const visit = within.getByTestId('apps-listing-open-live');
+    await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=detail');
+    await vi.waitUntil(() => storeActions().length > 0, { timeout: 5000, interval: 25 });
+    visit.element().addEventListener('click', (e) => e.preventDefault());
+    await visit.click();
+    expect(storeActions()).toEqual([
+      { action: 'detail_view', listingId: 'l1', surface: 'detail' },
+      { action: 'cta_click', listingId: 'l1', surface: 'detail' },
+    ]);
   });
 });

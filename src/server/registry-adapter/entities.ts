@@ -66,12 +66,9 @@ export type CatalogApp = {
 };
 
 /**
- * The content rating an app entity publishes: the listing's when it is a known rating
- * ({@link isKnownRating}), else its block's when that is. A listing rating that is empty,
- * whitespace or unknown therefore never hides a valid block rating. Only when neither is known is
- * the result unknown: the first one that is set (not empty or whitespace), else null, which the
- * audience check fails closed on (`audienceAdmits`). A shared document has none of its own; its
- * app's is its rating (`doc-streams.ts`).
+ * The content rating an app entity publishes: the listing's if known ({@link isKnownRating}),
+ * else the block's if known, else whichever is set (null if neither), which `audienceAdmits`
+ * fails closed on. A shared document has none of its own (`doc-streams.ts`).
  */
 export const appContentRating = (app: Pick<CatalogApp, 'listing' | 'block'>): string | null => {
   const listing = app.listing.contentRating;
