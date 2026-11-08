@@ -68,6 +68,22 @@ vi.mock('~/server/services/file.service', () => ({
   getDownloadFilename: ({ file }: any) => `${file.id}.safetensors`,
 }));
 vi.mock('~/server/utils/url-helpers', () => ({ getBaseUrl: () => 'https://civitai.com' }));
+// The listing rule is tested on PGlite (training-data-share.behavior.test.ts); here only that this
+// surface asks it with the request's host and applies the answer.
+vi.mock('~/server/services/training-data-held.service', () => ({
+  trainingDataListing:
+    async (
+      _db: unknown,
+      _versions: unknown,
+      { redCapable, viewerManages }: { redCapable: boolean; viewerManages?: boolean }
+    ) =>
+    (file: { type: string }) =>
+      file.type !== 'Training Data' || redCapable || !!viewerManages,
+}));
+vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  isRedCapableHost: (host?: string | null) => host === 'civitai.red',
+}));
 
 /**
  * Four files on ONE version, values PAIRWISE DISTINCT on every axis the
@@ -186,13 +202,13 @@ function fakeRes() {
   return res as NextApiResponse & { statusCode?: number; body?: any };
 }
 
-async function invoke(id: string) {
+async function invoke(id: string, host = 'civitai.com') {
   const mod = await import('~/pages/api/v1/models/[id]');
   const handler = mod.default as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
   const req = {
     method: 'GET',
     query: { id },
-    headers: { host: 'civitai.com' },
+    headers: { host },
     url: `/api/v1/models/${id}`,
   } as unknown as NextApiRequest;
   const res = fakeRes();
@@ -408,5 +424,34 @@ describe('createModelFileDownloadUrl — `fileId` is exclusive', () => {
       'size',
       'type',
     ]);
+  });
+});
+
+describe('GET /api/v1/models/[id] — a mature training dataset', () => {
+  const DATASET = {
+    id: 15,
+    modelVersionId: 4242,
+    type: 'Training Data',
+    visibility: 'Public',
+    sizeKB: 6666,
+    hashes: [],
+    metadata: { nsfwLevel: 4, fullyRated: true },
+  };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetModelsWithVersions.mockImplementation(async ({ input }: any) => {
+      const item = modelItem(input.ids[0]);
+      item.modelVersions[0].files = [...FILES, DATASET] as any;
+      return { items: [item] };
+    });
+  });
+  const ids = (res: any) => res.body.modelVersions[0].files.map((f: any) => f.id);
+
+  it('is left out on a host that is not red-capable', async () => {
+    expect(ids(await invoke('7', 'civitai.com'))).not.toContain(15);
+  });
+
+  it('is listed on a red-capable host', async () => {
+    expect(ids(await invoke('7', 'civitai.red'))).toContain(15);
   });
 });

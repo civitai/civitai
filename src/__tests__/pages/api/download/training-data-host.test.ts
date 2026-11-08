@@ -131,6 +131,6 @@ describe('the download route and a mature training dataset', () => {
     const { promise, res } = run('civitai.red');
     await promise;
     expect(mockGetFileForModelVersion.mock.calls[0][0].redCapable).toBe(true);
-    expect(res.status).not.toHaveBeenCalledWith(404);
+    expect(res.redirect).toHaveBeenCalledWith(REDIRECT_URL);
   });
 });

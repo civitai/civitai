@@ -33,6 +33,18 @@ vi.mock('~/server/services/file.service', () => ({
   getDownloadFilename: ({ file }: any) => `${file.id}.safetensors`,
 }));
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
+// The listing rule is tested on PGlite (training-data-share.behavior.test.ts); here only that this
+// surface asks it with the request's host and applies the answer.
+vi.mock('~/server/services/training-data-held.service', () => ({
+  trainingDataListing:
+    async (
+      _db: unknown,
+      _versions: unknown,
+      { redCapable, viewerManages }: { redCapable: boolean; viewerManages?: boolean }
+    ) =>
+    (file: { type: string }) =>
+      file.type !== 'Training Data' || redCapable || !!viewerManages,
+}));
 
 import { runModelSearch } from '~/server/services/model-search.service';
 
@@ -91,13 +103,14 @@ function shapedItem() {
   };
 }
 
-async function run() {
+async function run(redCapable?: boolean) {
   const result = await runModelSearch(
     { limit: 10 },
     {
       browsingLevel: allBrowsingLevelsFlag,
       nsfwImagePassthrough: true,
       baseUrlOrigin: 'https://civitai.com',
+      redCapable,
     }
   );
   return (result.items[0] as any).modelVersions[0].files as any[];
@@ -140,5 +153,34 @@ describe('runModelSearch (GET /api/v1/models) — per-file wire shape', () => {
       expect(url.pathname).toBe(`/api/download/models/${HOST_VERSION_ID}`);
       expect(url.searchParams.get('fileId'), `file ${entry.id}`).toBeNull();
     }
+  });
+});
+
+describe('runModelSearch (GET /api/v1/models) — a mature training dataset', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const item = shapedItem();
+    item.modelVersions[0].files = [
+      ...FILES,
+      {
+        id: 15,
+        modelVersionId: HOST_VERSION_ID,
+        type: 'Training Data',
+        visibility: 'Public',
+        sizeKB: 6666,
+        hashes: [],
+        metadata: { nsfwLevel: 4, fullyRated: true } as any,
+      },
+    ];
+    mockGetModelsWithVersions.mockResolvedValue({ items: [item], nextCursor: undefined });
+  });
+
+  it('is left out for a host that is not red-capable, and by default', async () => {
+    expect((await run(false)).map((f) => f.id)).not.toContain(15);
+    expect((await run()).map((f) => f.id)).not.toContain(15);
+  });
+
+  it('is listed for a red-capable host', async () => {
+    expect((await run(true)).map((f) => f.id)).toContain(15);
   });
 });

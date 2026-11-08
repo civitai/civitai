@@ -230,12 +230,8 @@ export const getFileForModelVersion = async ({
    * resolver for attribution only. Required so every caller names itself.
    */
   attribution: ResolveAttribution;
-  /**
-   * Whether the request came to a host that may serve mature content (`isRedCapableHost`). A
-   * `Training Data` file `trainingDataServableOnHost` refuses is served to anyone but its owner
-   * and moderators only when true. Required so every caller decides it; a server-side caller that serves no host
-   * passes true.
-   */
+  /** `isRedCapableHost` of the request. Required; a server-side caller that serves no host
+   *  passes true. */
   redCapable: boolean;
 }): Promise<ModelVersionFileResult> => {
   // The version and its model. The read's inner join drops a version whose model row was
@@ -360,7 +356,6 @@ export const getFileForModelVersion = async ({
     }
   }
   if (!file) return { status: 'not-found' };
-  // The owner and moderators are served on any host.
   if (
     file.type === 'Training Data' &&
     !isOwner &&
