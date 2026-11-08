@@ -260,6 +260,12 @@ describe('generateFromGraph — boost-to-load for a free account', () => {
     expect(realSubmits()).toHaveLength(0);
   });
 
+  it('refuses, unsent, when the high-lane whatIf prices the boost at zero', async () => {
+    state.whatIfFee = 0;
+    await expect(submit()).rejects.toThrow("download boost couldn't be confirmed");
+    expect(realSubmits()).toHaveLength(0);
+  });
+
   // Sent unboosted, a model evicted after this whatIf would load free for a non-member.
   it('refuses, unsent, when the whatIf shows nothing to download', async () => {
     state.whatIfPreparation = false;

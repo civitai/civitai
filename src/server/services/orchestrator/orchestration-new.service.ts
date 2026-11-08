@@ -2156,7 +2156,6 @@ export async function generateFromGraph({
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       externalId,
       ...(boostDownloads ? { downloadPriority } : {}),
-      // Only here: every other submit stays byte-identical and the orchestrator derives the tier.
       ...(boostRequired ? { tier: BOOST_TO_LOAD_BODY.tier } : {}),
     },
   })) as TextToImageResponse;

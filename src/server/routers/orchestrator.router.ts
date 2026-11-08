@@ -199,6 +199,10 @@ const experimentalProcedure = protectedProcedure.use(experimentalMiddleware);
 
 // The iterative editor's default preset model. The model registry itself lives
 // in `preset-image-gen.service.ts` (shared with comics + the enqueued-panels job).
+/** Boost-to-load is the generator's opt-in only: API callers keep the members gate. */
+const generatorAcceptsBoostRequired = (value: unknown, ctx: { apiKeyId?: unknown }) =>
+  value === true && ctx.apiKeyId == null;
+
 const DEFAULT_ITERATE_MODEL = 'NanoBanana';
 
 export const orchestratorRouter = router({
@@ -522,8 +526,7 @@ export const orchestratorRouter = router({
         // from a hand-rolled client can't stand in for the acknowledgement.
         acknowledgedSoftBlock: acknowledgedSoftBlock === true,
         downloadPriority: downloadPriority === 'high' ? 'high' : undefined,
-        // The generator only: API callers keep the members gate.
-        acceptBoostRequired: acceptBoostRequired === true && ctx.apiKeyId == null,
+        acceptBoostRequired: generatorAcceptsBoostRequired(acceptBoostRequired, ctx),
       });
 
       // Bust the short-TTL queryGeneratedImages cache so a concurrent tab or an
@@ -608,7 +611,7 @@ export const orchestratorRouter = router({
           experimental: ctx.experimental,
           currencies: getAllowedAccountTypes(ctx.features, ['blue']),
           downloadPriority: downloadPriority === 'high' ? 'high' : undefined,
-          acceptBoostRequired: acceptBoostRequired === true && ctx.apiKeyId == null,
+          acceptBoostRequired: generatorAcceptsBoostRequired(acceptBoostRequired, ctx),
           inputGate: { entry: 'whatIfFromGraph', isApiCaller: ctx.apiKeyId != null },
         });
       } catch (e) {

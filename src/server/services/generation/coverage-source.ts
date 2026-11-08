@@ -29,8 +29,9 @@ export async function coverageAudience(
   },
   /**
    * The generator's opt-in to boost-to-load: a non-member may then start a cold expansion
-   * checkpoint's download by paying for a Download Boost. Only `validateAndEnrichResources` passes
-   * it, so no other surface can read a cold checkpoint as covered for a non-member.
+   * checkpoint's download by paying for a Download Boost. Only `getResourceData` passes it, and only
+   * `validateAndEnrichResources` sets it there, so no other surface can read a cold checkpoint as
+   * covered for a non-member.
    */
   { acceptBoostRequired = false }: { acceptBoostRequired?: boolean } = {}
 ): Promise<CoverageAudience> {
