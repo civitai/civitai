@@ -31,6 +31,7 @@
   import type { FromPrices, LabelType } from '$lib/data/trainingModels';
   import { isPairDataset, type ReuseItem } from '$lib/reuse';
   import { isPairReady, pairImgs, pairItems, seedEditPrompts, type EditPair } from './editPairs';
+  import { JUNK_TAGS } from '$lib/autolabel-exclude';
 
   let {
     prices,
@@ -57,9 +58,12 @@
   let labelMode = $state<LabelType>('tag');
   // Auto-label behavior, owned here like labelMode/trigger so it survives Back/Continue:
   // 'auto' labels each upload batch as it settles (the historical behavior); 'manual' waits for the
-  // explicit Auto-label button. `excludeTags` are never applied by auto-label results (tag mode).
+  // explicit Auto-label button. `excludeTags` are never applied by auto-label results (tag mode);
+  // they start as the junk list, and the two switches drop the tagger's character / source-material tags.
   let autoLabel = $state<'auto' | 'manual'>('auto');
-  let excludeTags = $state<string[]>([]);
+  let excludeTags = $state<string[]>([...JUNK_TAGS]);
+  let excludeCharacter = $state(true);
+  let excludeSource = $state(true);
   // Review-step fields, owned here for the same reason. Name and prompts remember what they were seeded
   // from: while unedited they follow a changed trigger / dataset, once edited they're kept. Empty
   // `samplePrompts` means unseeded — Review never lets the list reach zero.
@@ -300,6 +304,8 @@
       bind:autoLabel
       bind:filter={dataFilter}
       bind:excludeTags
+      bind:excludeCharacter
+      bind:excludeSource
       onContinue={enterReview}
       onBack={() => {
         leaveData();
