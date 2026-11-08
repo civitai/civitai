@@ -45,7 +45,7 @@ import {
   STICKER_PLACEMENT_MIN_OPACITY,
   snapScaleOvershoot,
 } from '~/shared/utils/sticker-placement';
-import { momentStickerTrack } from '~/shared/utils/sticker-track';
+import { encodeStickerTrack, momentStickerTrack } from '~/shared/utils/sticker-track';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -580,6 +580,9 @@ export function DraftSticker({
     if (!useStore.getState().interaction) select(draft.id);
   };
 
+  // A take in progress, which nothing may place until it is finished.
+  const [capturing, setCapturing] = useState(false);
+
   // One payload for both buttons, so the two offers cannot drift into placing
   // different stickers. `free` is the only thing that differs, and it selects a
   // path rather than asserting anything — the server re-decides all of it.
@@ -588,7 +591,16 @@ export function DraftSticker({
     return {
       imageId: draft.imageId,
       free: placingFree,
-      ...(draft.moment
+      ...(draft.recording?.length
+        ? {
+            track: encodeStickerTrack(
+              draft.recording.map((pose) => ({
+                ...pose,
+                scale: snapScaleOvershoot(pose.scale, creatorMaxScale),
+              }))
+            ),
+          }
+        : draft.moment
         ? {
             track: momentStickerTrack(
               { x: draft.x, y: draft.y, scale, rotation: draft.rotation },
@@ -891,6 +903,16 @@ export function DraftSticker({
             moment={draft.moment}
             following={selected}
             onChange={(moment) => useStore.getState().move(draft.id, { moment })}
+            recorder={{
+              recording: draft.recording,
+              onRecordingChange: (recording) => useStore.getState().move(draft.id, { recording }),
+              pose: () => {
+                const now = useStore.getState().drafts.find(({ id }) => id === draft.id) ?? draft;
+                return { x: now.x, y: now.y, scale: now.scale, rotation: now.rotation };
+              },
+              onPose: (pose) => useStore.getState().move(draft.id, pose),
+              onCapturing: setCapturing,
+            }}
           />
         )}
 
@@ -1010,6 +1032,11 @@ export function DraftSticker({
                 }
                 onPerformTransaction={buyOneUse}
               />
+            ) : capturing || draft.recording?.length === 0 ? (
+              // Placing now would send the last finished take, or a still sticker before the first.
+              <Text size="xs" c="white" className="rounded-full bg-black/80 px-2 py-0.5">
+                {capturing ? 'Finish recording to place' : 'Record the movement to place'}
+              </Text>
             ) : placingFree ? (
               // Not a `BuzzTransactionButton`. That control exists to show a price
               // and check a balance against it, and a free placement has neither —
