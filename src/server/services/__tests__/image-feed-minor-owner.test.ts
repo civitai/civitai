@@ -244,8 +244,10 @@ describe.each([
     expect(stmt.values[Number(m![1]) - 1]).toBe(STRANGER);
   });
 
-  it("leaves a moderator's pending read without them", async () => {
+  it("gives a moderator's pending read the level check but not the per-image conditions", async () => {
     const stmt = await pendingStatement(true);
     expect(stmt.text).not.toContain('pending_others_marker');
+    // A moderator's pending read still checks the level.
+    expect(stmt.text).toMatch(/\(\(i\."nsfwLevel" & \$\d+\) != 0 OR i\."nsfwLevel" = 0\)/);
   });
 });

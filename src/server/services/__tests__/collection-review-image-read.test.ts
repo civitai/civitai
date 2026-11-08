@@ -168,11 +168,13 @@ describe("a collection review's image read", () => {
     });
   });
 
-  it("leaves a moderator's pending read without the pending filter", async () => {
+  it("gives a moderator's pending read the level check but not the per-image conditions", async () => {
     withMarker();
     const stmt = await statementFor({ id: REVIEWER, isModerator: true }, { pending: true });
     expect(markerViewer(stmt)).toBeUndefined();
     expect(pendingViewerMock).not.toHaveBeenCalled();
+    // A moderator's pending read still checks the level.
+    expect(stmt.text).toMatch(/\(\(i\."nsfwLevel" & \$\d+\) != 0 OR i\."nsfwLevel" = 0\)/);
   });
 
   it("checks the collection's ownership and MANAGE against the viewer, not a profile being browsed", async () => {
