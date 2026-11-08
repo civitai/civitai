@@ -78,7 +78,10 @@ function Harness() {
       <button onClick={() => setMounted(!mounted)}>Toggle</button>
       {video && (
         <StickerPlacementOverlay
-          placements={mounted ? [placed] : []}
+          placements={
+            // Each render moves the stored pose, so React rewrites the style playback wrote.
+            mounted ? [{ ...placed, data: { ...placed.data, x: start.x + renders * 0.05 } }] : []
+          }
           viewerId={99}
           sticker={sticker as never}
           hiddenIds={hiddenIds}
@@ -154,7 +157,7 @@ describe('a recorded sticker moves with the video', () => {
     expect(left()).toBeCloseTo(80);
   });
 
-  test('keeps its pose through a re-render', async () => {
+  test('keeps its pose when a re-render rewrites the stored one', async () => {
     const { left, seek } = await render(path);
     seek(0.5);
 

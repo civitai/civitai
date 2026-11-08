@@ -504,7 +504,6 @@ export function StickerPlacementOverlay({
           const body = (
             <div
               key={placement.id}
-              // Tracks are read for approved placements only, so a pending one never needs `bindPose`.
               ref={placement.isPending ? measureSticker(placement) : bindPose?.(placement.id)}
               className={clsx(
                 'absolute',
