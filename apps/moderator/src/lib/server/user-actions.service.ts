@@ -257,6 +257,7 @@ export type ModEndpoint =
   | 'messages/release'
   | 'creator-services/resolve-dispute'
   | 'csam/training-data-report'
+  | 'image/report-csam'
   | 'image/tag-vote'
   | 'model/resolve-restricted-nsfw-verdict'
   | 'minor-flag/confirm'
