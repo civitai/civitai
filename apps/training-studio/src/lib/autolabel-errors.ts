@@ -1,7 +1,4 @@
-// Kept apart from autolabel-core (which pulls in the orchestrator SDK) so the shell backend and the
-// submit-accounting in autolabel.ts can share it without that weight.
-
-/** The `code` on the stub route's 503: it marks our own deliberate refusal, so a client can tell it
+/** The `code` on the auto-label route's 503 when auto-label is unavailable: it marks our own refusal, so a client can tell it
  *  from an upstream 503 that may have come after work was done. */
 export const AUTO_LABEL_UNAVAILABLE_CODE = 'auto_label_unavailable';
 

@@ -22,9 +22,9 @@
     config: {
       imageLocation: env.PUBLIC_IMAGE_LOCATION || null,
       signalsEndpoint: env.PUBLIC_SIGNALS_ENDPOINT || null,
-      // The route behind auto-label always refuses here (it can only charge the user's own Buzz), so
-      // the shell offers none and points at the trainer on civitai.com, where the host provides it.
-      canAutoLabel: false,
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
+      // svelte-ignore state_referenced_locally — fixed for the session (false only in the dev-login preview)
+      canAutoLabel: data.canAutoLabel,
       // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
       // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
       autoLabelUrl: `${data.civitaiUrl}/models/train`,

@@ -1,14 +1,17 @@
-import { error } from '@sveltejs/kit';
-import { AUTO_LABEL_UNAVAILABLE_CODE } from '$lib/autolabel-errors';
+import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { mainAppAutoLabelSubmit } from '$lib/server/main-app-autolabel';
+import { textCheckCookie } from '$lib/server/text-check';
 
-// Auto-label is free to the user, and this server only holds the user's orchestrator token: a
-// workflow submitted with it is charged to the user. Until there is a system-paid path here, refuse
-// rather than charge. (The embedded element gets auto-label from its host instead.) The code lets
-// the client tell this refusal from an upstream 503, so it can return the image's cap slot.
-export const POST: RequestHandler = async () => {
-  error(503, {
-    message: 'Auto-labeling is unavailable right now.',
-    code: AUTO_LABEL_UNAVAILABLE_CODE,
-  });
+export const POST: RequestHandler = async ({ locals, request }) => {
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!body || !Array.isArray(body.items)) error(400, 'Invalid auto-label request.');
+  const { items, mode, media } = body as unknown as Parameters<typeof mainAppAutoLabelSubmit>[2];
+  return json(
+    await mainAppAutoLabelSubmit(textCheckCookie(locals, request), locals.user.id, {
+      items,
+      mode,
+      media,
+    })
+  );
 };
