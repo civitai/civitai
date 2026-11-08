@@ -250,14 +250,17 @@ describe('trainingDataListing', () => {
   it.each([
     ['a mature dataset', { nsfwLevel: 4 | 1 }, false, false],
     ['a mature dataset', { nsfwLevel: 4 | 1 }, true, true],
-    ['an unrated dataset', {}, false, false],
+    ['an unrated dataset', {}, false, true],
     ['an unrated dataset', {}, true, true],
-  ])('%s on a red-capable host %s is listed: %s', async (_, metadata, redCapable, expected) => {
-    await rate(PLAIN, metadata);
-    expect(await listedFor(PLAIN, { redCapable })).toEqual([expected, true]);
-    // Off .red the owner is not offered it either: the download would refuse them too.
-    expect(await listedFor(PLAIN, { redCapable, viewerManages: true })).toEqual([expected, true]);
-  });
+  ])(
+    '%s on a red-capable host %s is listed to others: %s',
+    async (_, metadata, redCapable, expected) => {
+      await rate(PLAIN, metadata);
+      expect(await listedFor(PLAIN, { redCapable })).toEqual([expected, true]);
+      // The owner and moderators are offered it on any host, as the download serves them.
+      expect(await listedFor(PLAIN, { redCapable, viewerManages: true })).toEqual([true, true]);
+    }
+  );
 
   it('unlists every dataset when the check cannot be read', async () => {
     const broken = {

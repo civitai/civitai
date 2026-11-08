@@ -230,16 +230,14 @@ async function uploadDatasetZip({
   const pad = Math.max(2, String(items.length).length);
   let included = 0;
   let captions = 0;
-  // Every included item's rating; one the orchestrator didn't rate leaves the zip unrated.
+  // The rating of every included item the orchestrator rated; 0 when it rated none.
   let nsfwLevel = 0;
-  let unrated = false;
   try {
     for (const [index, item] of items.entries()) {
       const blob = await fetchBlob({ baseUrl, token, air: item.air, workflowId });
       if (!blob) continue;
       const level = blob.nsfwLevel ? orchestratorNsfwLevelMap[blob.nsfwLevel] : undefined;
       if (level) nsfwLevel |= level;
-      else unrated = true;
       const base = String(index + 1).padStart(pad, '0');
       await bounded.append(blob.bytes, {
         name: `${base}.${extensionFor(blob.key, blob.contentType)}`,
@@ -268,7 +266,7 @@ async function uploadDatasetZip({
     bytes: archive.pointer(),
     included,
     captions,
-    nsfwLevel: unrated ? undefined : nsfwLevel,
+    nsfwLevel: nsfwLevel || undefined,
     skipped: items.length - included,
     backend: useB2 ? ('backblaze' as const) : ('cloudflare' as const),
   };
@@ -379,8 +377,7 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
           url: stored.url,
           sizeKB,
           exists: true,
-          // Shared only when the owner opted in; a row without that choice (every placeholder made
-          // before it existed, including those created Public before 2026-10-13) stays Private.
+          // Shared only when the owner opted in; a row without that choice stays Private.
           visibility: await studioDatasetVisibility(tx, {
             modelVersionId: file.modelVersionId,
             metadata: current,

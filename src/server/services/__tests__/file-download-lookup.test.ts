@@ -957,7 +957,6 @@ describe('getFileForModelVersion — a shared training dataset', () => {
 
   it('is served to others while nothing is held', async () => {
     expect((await download({ id: 1 })).status).toBe('success');
-    expect(shareHeldMock).toHaveBeenCalledWith(expect.anything(), 1);
   });
 
   it('is the same not-found as a missing file for others once its owner or content is held', async () => {
@@ -1026,7 +1025,7 @@ describe('getFileForModelVersion — a training dataset on each host', () => {
     ['a mature zip', { nsfwLevel: MATURE }, false, 'not-found'],
     ['a mature zip', { nsfwLevel: MATURE }, true, 'success'],
     ['a PG-13 zip', { nsfwLevel: 2 | 1 }, false, 'success'],
-    ['an unrated zip', {}, false, 'not-found'],
+    ['an unrated zip', {}, false, 'success'],
     ['an unrated zip', {}, true, 'success'],
   ])('%s on a red-capable host %s is %s', async (_, metadata, redCapable, status) => {
     listDownloadFilesMock.mockReset().mockResolvedValue([datasetRated(metadata)]);
@@ -1035,12 +1034,16 @@ describe('getFileForModelVersion — a training dataset on each host', () => {
     if (status === 'not-found') expect(result).toEqual({ status: 'not-found' });
   });
 
-  it.each([
-    ['its owner', { id: 999 }],
-    ['a moderator', { id: 1, isModerator: true }],
-  ])('refuses a mature zip off a red-capable host to %s too', async (_, user) => {
+  it('serves its owner their own mature zip off a red-capable host, and no one else', async () => {
     listDownloadFilesMock.mockReset().mockResolvedValue([datasetRated({ nsfwLevel: MATURE })]);
-    expect(await download(false, user)).toEqual({ status: 'not-found' });
+    expect((await download(false, { id: 999 })).status).toBe('success');
+    expect(await download(false, { id: 1 })).toEqual({ status: 'not-found' });
+  });
+
+  it('serves a moderator a mature zip off a red-capable host, and no one else', async () => {
+    listDownloadFilesMock.mockReset().mockResolvedValue([datasetRated({ nsfwLevel: MATURE })]);
+    expect((await download(false, { id: 1, isModerator: true })).status).toBe('success');
+    expect(await download(false, { id: 1 })).toEqual({ status: 'not-found' });
   });
 
   it("serves a mature model's weights on any host", async () => {

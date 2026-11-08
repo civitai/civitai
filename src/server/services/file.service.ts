@@ -232,8 +232,9 @@ export const getFileForModelVersion = async ({
   attribution: ResolveAttribution;
   /**
    * Whether the request came to a host that may serve mature content (`isRedCapableHost`). A
-   * mature or unrated `Training Data` file is served only when true, to everyone. Required so
-   * every caller decides it; a server-side caller that serves no host passes true.
+   * `Training Data` file rated mature is served to anyone but its owner and moderators only when
+   * true. Required so every caller decides it; a server-side caller that serves no host
+   * passes true.
    */
   redCapable: boolean;
 }): Promise<ModelVersionFileResult> => {
@@ -359,8 +360,11 @@ export const getFileForModelVersion = async ({
     }
   }
   if (!file) return { status: 'not-found' };
+  // The owner and moderators are served on any host.
   if (
     file.type === 'Training Data' &&
+    !isOwner &&
+    !isMod &&
     !trainingDataServableOnHost(
       (file.metadata as { nsfwLevel?: unknown } | null)?.nsfwLevel,
       redCapable

@@ -154,9 +154,9 @@ describe('archiveStudioDataset', () => {
     const [{ where, data }] = swaps();
     expect(where).toEqual({ id: 7 });
     // The row is locked only while it is still the placeholder.
-    expect(dbMock.dbWrite.$queryRaw.mock.calls[0][0].join('?')).toMatch(
-      /WHERE id = \? AND "sizeKB" = 0 FOR UPDATE/
-    );
+    const [lockSql, ...lockValues] = dbMock.dbWrite.$queryRaw.mock.calls[0];
+    expect(lockSql.join('?')).toMatch(/WHERE id = \? AND "sizeKB" = 0 FOR UPDATE/);
+    expect(lockValues).toEqual([7]);
     expect(data).toMatchObject({
       url: expect.stringMatching(
         /^https:\/\/storage\.example\/bucket\/training-images\/5\/.+\.zip$/
@@ -417,16 +417,22 @@ describe('archiveStudioDataset applies the owner’s sharing choice only to the 
     expect(swaps()[0].data.metadata).toMatchObject({ nsfwLevel: 4 | 1 });
   });
 
-  it('a zip with any unrated item records no rating', async () => {
+  it('an unrated item does not hide a mature one', async () => {
     lockedRow(shared);
     fetchMock.mockImplementation(async (url: string) =>
       url.includes('/BBB')
         ? blobResponse('png-bytes', 'image/png')
         : new Response('png-bytes', {
             status: 200,
-            headers: { 'content-type': 'image/png', 'x-nsfw-level': 'pg' },
+            headers: { 'content-type': 'image/png', 'x-nsfw-level': 'x' },
           })
     );
+    await archive();
+    expect(swaps()[0].data.metadata).toMatchObject({ nsfwLevel: 8 });
+  });
+
+  it('a zip with no rated item records no rating', async () => {
+    lockedRow(shared);
     await archive();
     expect(swaps()[0].data.metadata).not.toHaveProperty('nsfwLevel');
   });

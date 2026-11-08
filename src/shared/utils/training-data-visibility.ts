@@ -15,12 +15,10 @@ export function trainingDataVisibility({
 
 /**
  * Whether a host may serve a `Training Data` file rated `nsfwLevel` (its metadata key, the
- * bitwise rating of every item in the zip). Only a red-capable host serves a mature dataset; a
- * dataset with no rating counts as mature.
+ * bitwise rating of the zip's rated items). Only a red-capable host serves a dataset rated above
+ * PG-13; one with no rating is served on any host.
  */
 export function trainingDataServableOnHost(nsfwLevel: unknown, redCapable: boolean): boolean {
-  if (redCapable) return true;
-  return (
-    typeof nsfwLevel === 'number' && nsfwLevel > 0 && (nsfwLevel & ~sfwBrowsingLevelsFlag) === 0
-  );
+  if (redCapable || typeof nsfwLevel !== 'number') return true;
+  return (nsfwLevel & ~sfwBrowsingLevelsFlag) === 0;
 }

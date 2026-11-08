@@ -8,7 +8,9 @@ import { trainingDataServableOnHost } from '~/shared/utils/training-data-visibil
 
 /**
  * Whether `owner` (an int SQL expression) is a held owner for sharing a training dataset: every
- * owner `ownerHeldSql` holds, plus any owner a report names at all.
+ * owner `ownerHeldSql` holds, plus any owner a report names at all. A report names a user as its
+ * subject or its secondary user, the pairing `legalHoldUserIdsSql` reads, here without its age
+ * limit.
  */
 export function trainingDataOwnerHeldSql(owner: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`(${ownerHeldSql(owner)} OR EXISTS (
@@ -51,27 +53,25 @@ type ListedFile = { id: number; type: string; visibility: string };
 /**
  * Whether a file may be listed: a `Training Data` file is left out where its download would be
  * refused, so the listing never offers one. That is a shared dataset `trainingDataShareHeld`
- * refuses (checked only when `viewerManages` is false, as the owner and moderators see a held
- * dataset), and a dataset `trainingDataServableOnHost` refuses on this host. Versions with no
- * dataset cost no query, nor do any when neither check applies; when the check can't be read,
- * every dataset among them is left out.
+ * refuses, or one `trainingDataServableOnHost` refuses on this host. Neither applies to the
+ * owner and moderators (`viewerManages`). Versions with no dataset cost no query; when the check
+ * can't be read, every dataset among them is left out.
  */
 export async function trainingDataListing(
   db: Pick<Prisma.TransactionClient, '$queryRaw'>,
   versions: { id: number; files: ListedFile[] }[],
   { redCapable, viewerManages = false }: { redCapable: boolean; viewerManages?: boolean }
 ): Promise<(file: ListedFile) => boolean> {
-  if (redCapable && viewerManages) return () => true;
+  if (viewerManages) return () => true;
   const candidates = versions
     .filter((v) => v.files.some((f) => f.type === 'Training Data'))
     .map((v) => v.id);
   if (!candidates.length) return () => true;
-  const held = viewerManages
-    ? Prisma.sql`false`
-    : Prisma.sql`(${trainingDataOwnerHeldSql(Prisma.raw('m."userId"'))}
-        OR ${trainingDataContentHeldSql(Prisma.raw('mv.id'))})`;
   const rows = await db.$queryRaw<{ id: number; nsfwLevel: unknown; held: boolean | null }[]>`
-    SELECT mf.id, mf.metadata -> 'nsfwLevel' AS "nsfwLevel", ${held} AS held
+    SELECT mf.id, mf.metadata -> 'nsfwLevel' AS "nsfwLevel", (${trainingDataOwnerHeldSql(
+      Prisma.raw('m."userId"')
+    )}
+      OR ${trainingDataContentHeldSql(Prisma.raw('mv.id'))}) AS held
     FROM "ModelFile" mf
     JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
     JOIN "Model" m ON m.id = mv."modelId"
