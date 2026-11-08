@@ -200,7 +200,6 @@ export function useStickerTrackCapture({
         // A blocked storage only loses the preference.
       }
     },
-    /** Counts down, then records from the playhead on. */
     record: () => {
       if (phase !== 'idle') return;
       // Created inside the press: browsers only let a gesture start audio.
@@ -215,7 +214,6 @@ export function useStickerTrackCapture({
       if (phase === 'countdown') setPhase('idle');
       finish.current?.();
     },
-    /** Ends the take and plays the result from the start. */
     stop: () => {
       if (phase === 'countdown') setPhase('idle');
       finish.current?.();

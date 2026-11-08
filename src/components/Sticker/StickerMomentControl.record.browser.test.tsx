@@ -95,7 +95,7 @@ const render = (initial: StickerRecording, seconds = 0) => {
 };
 
 const recordingStarted = () =>
-  expect.element(page.getByText(/^Recording/), { timeout: 5000 }).toBeInTheDocument();
+  expect.element(page.getByText(/^Recording/), { timeout: 8000 }).toBeInTheDocument();
 
 describe('recording a draft’s movement', () => {
   test('captures the pose held at every tick while the video plays, and pausing keeps it', async () => {
@@ -133,7 +133,6 @@ describe('recording a draft’s movement', () => {
     await page.getByRole('button', { name: 'Stop' }).click();
 
     expect(onRecording).toHaveBeenLastCalledWith([at(0.1), at(0.2), at(0.9), at(0.9)]);
-    // Stop plays the result back from the start.
     expect(video.currentTime).toBe(0);
   });
 

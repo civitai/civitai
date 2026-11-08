@@ -307,6 +307,48 @@ describe('what a draft sends when it is placed', () => {
     expect(page.getByRole('button', { name: 'Place free' }).query()).toBeNull();
   });
 
+  test('a re-record in progress holds back Place, so it cannot send the take before it', async () => {
+    const video = document.createElement('video');
+    Object.defineProperty(video, 'currentTime', { get: () => 0.1 });
+    video.pause = vi.fn();
+    const pose = { x: 0.3, y: 0.5, scale: 0.2, rotation: 0 };
+    useStickerPlacementDraftStore.setState({
+      drafts: [{ ...draft, recording: [pose, pose] }],
+      selectedDraftId: draft.id,
+    });
+    const Live = () => {
+      const current = useStickerPlacementDraftStore((state) =>
+        state.drafts.find((d) => d.id === draft.id)
+      );
+      return current ? (
+        <DraftSticker
+          draft={current}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          creatorMaxScale={0.25}
+          freeOffer={{ instant: true }}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+          video={video}
+        />
+      ) : null;
+    };
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 380, height: 600 }}>
+        <Live />
+      </div>
+    );
+    await expect.element(page.getByRole('button', { name: 'Place free' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Re-record from here' }).click();
+
+    await expect.element(page.getByText('Finish recording to place')).toBeVisible();
+    expect(page.getByRole('button', { name: 'Place free' }).query()).toBeNull();
+  });
+
   test('a draft that is not pinned sends no track', async () => {
     await renderDraft({ instant: true });
 
