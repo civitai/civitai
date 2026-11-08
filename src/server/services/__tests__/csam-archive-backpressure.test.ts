@@ -168,17 +168,19 @@ vi.mock('~/utils/file-utils', async (importOriginal) => ({
 
 vi.mock('~/server/utils/archive-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  // Short, so the stuck-read test is quick; longer than the abort test's 1s, so that test sees the abort.
-  FAILED_ARCHIVE_SETTLE_MS: 1_500,
+  // Short, so the stuck-read test is quick; a second past the abort test's limit, so that test sees the abort.
+  FAILED_ARCHIVE_SETTLE_MS: 2_500,
 }));
 
 // Holds a large original's spool-dir mkdir, as a busy fs threadpool does.
-const spoolMkdir = vi.hoisted(() => ({ delayMs: 0 }));
+const spoolMkdir = vi.hoisted(() => ({ delayMs: 0, held: 0 }));
 vi.mock('fs/promises', async (importOriginal) => {
   const real = await importOriginal<typeof fsAsync>();
   const mkdir = (async (dir: string, options?: unknown) => {
-    if (spoolMkdir.delayMs > 0 && String(dir).endsWith('/spool'))
+    if (spoolMkdir.delayMs > 0 && String(dir).endsWith('/spool')) {
+      spoolMkdir.held++;
       await new Promise((resolve) => setTimeout(resolve, spoolMkdir.delayMs));
+    }
     return real.mkdir(dir, options as never);
   }) as typeof real.mkdir;
   return { ...real, mkdir, default: { ...real, mkdir } };
@@ -322,6 +324,7 @@ beforeEach(() => {
   uploadFailure = undefined;
   getObjectKeys.length = 0;
   spoolMkdir.delayMs = 0;
+  spoolMkdir.held = 0;
   // A regression to the edge copy must fail here, not reach the network.
   vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
   mockFetchBlob = async () => fakeBlob(IMAGE_BYTES);
@@ -1437,9 +1440,8 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
     expect(outcome).toBe('synthetic storage outage');
     // The reader holding the budget is stopped and those parked on it are refused, so no body is read.
     expect(bodiesRead).toBe(0);
-    const readAtFailure = bodiesRead;
     await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(bodiesRead).toBe(readAtFailure);
+    expect(bodiesRead).toBe(0);
   });
 
   it('starts no read after a failed archive, and leaves its scratch dir removed', async () => {
@@ -1460,8 +1462,10 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
     // Past the held mkdir, so a read that outlived the archive would have started by now.
     await new Promise((resolve) => setTimeout(resolve, 300));
 
-    expect(sends.filter((send) => send.ranged)).toEqual([]);
+    // The hold applied: without it this test proves nothing.
+    expect(spoolMkdir.held).toBeGreaterThan(0);
     expect(fs.existsSync(path.join(csamBaseDir, 'images', String(report.id)))).toBe(false);
+    expect(sends.filter((send) => send.ranged)).toEqual([]);
   });
 
   it('rejects promptly when a read in flight is stopped by the failure', async () => {
@@ -1488,7 +1492,7 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
         () => 'resolved',
         (e: Error) => e.message
       ),
-      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 1_000)),
+      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 1_500)),
     ]);
 
     expect(outcome).toBe('synthetic storage outage');
