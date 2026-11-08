@@ -636,6 +636,18 @@ describe('the upload domain on a new dataset', () => {
   });
 });
 
+// The rating decides which hosts serve a dataset; it describes the zip it was taken from.
+describe('the rating on a new dataset', () => {
+  it('a dataset replaced with new content is unrated', async () => {
+    withFile({ type: 'Training Data', metadata: { nsfwLevel: 1, numImages: 3 } });
+
+    await updateFile({ id: 1, url: NEW_URL, userId: 7, uploadDomain: 'green' });
+
+    expect(createdData().metadata).toMatchObject({ numImages: 3 });
+    expect(createdData().metadata).not.toHaveProperty('nsfwLevel');
+  });
+});
+
 // Other versions can link a file as a component by its id; they follow it to the new record.
 describe('linked components', () => {
   it('repoints links to the old record at the new one, and only those', async () => {

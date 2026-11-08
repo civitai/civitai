@@ -390,6 +390,47 @@ describe('archiveStudioDataset applies the owner’s sharing choice only to the 
     expect(swaps()[0].data.metadata).toMatchObject({ datasetArchive: { complete: false } });
   });
 
+  it('a run listing an item with no readable blob keeps a shared dataset Private', async () => {
+    lockedRow(shared);
+    getWorkflow.mockResolvedValue(
+      workflowWith([...items, { air: 42 } as unknown as { air: string }])
+    );
+    expect(await archive()).toBe('Private');
+    expect(swaps()[0].data.metadata).toMatchObject({
+      datasetArchive: { items: 2, complete: false },
+    });
+  });
+
+  it('records the zip’s rating from every item’s orchestrator rating', async () => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(
+      async (url: string) =>
+        new Response('png-bytes', {
+          status: 200,
+          headers: {
+            'content-type': 'image/png',
+            'x-nsfw-level': url.includes('/BBB') ? 'R' : 'pg',
+          },
+        })
+    );
+    await archive();
+    expect(swaps()[0].data.metadata).toMatchObject({ nsfwLevel: 4 | 1 });
+  });
+
+  it('a zip with any unrated item records no rating', async () => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes('/BBB')
+        ? blobResponse('png-bytes', 'image/png')
+        : new Response('png-bytes', {
+            status: 200,
+            headers: { 'content-type': 'image/png', 'x-nsfw-level': 'pg' },
+          })
+    );
+    await archive();
+    expect(swaps()[0].data.metadata).not.toHaveProperty('nsfwLevel');
+  });
+
   it('a file swapped in while the zip was built is left alone', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
     await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'skipped' });

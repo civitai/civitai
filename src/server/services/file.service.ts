@@ -28,7 +28,8 @@ import {
 } from '~/server/services/hot-reads-6.reads';
 import type { DownloadFilesWhere } from '@civitai/db-queries/hot-reads-6';
 import { hasEntityAccess } from './common.service';
-import { trainingDataShareHeld } from './training-data-share.service';
+import { trainingDataShareHeld } from './training-data-held.service';
+import { trainingDataServableOnHost } from '~/shared/utils/training-data-visibility';
 import {
   getVersionEarlyAccess,
   isModelArchived,
@@ -202,6 +203,7 @@ export const getFileForModelVersion = async ({
   fileId,
   direct,
   attribution,
+  redCapable,
 }: {
   modelVersionId: number;
   type?: ModelFileType;
@@ -228,6 +230,12 @@ export const getFileForModelVersion = async ({
    * resolver for attribution only. Required so every caller names itself.
    */
   attribution: ResolveAttribution;
+  /**
+   * Whether the request came to a host that may serve mature content (`isRedCapableHost`). A
+   * mature or unrated `Training Data` file is served only when true, to everyone. Required so
+   * every caller decides it; a server-side caller that serves no host passes true.
+   */
+  redCapable: boolean;
 }): Promise<ModelVersionFileResult> => {
   // The version and its model. The read's inner join drops a version whose model row was
   // hard-deleted (an orphaned foreign key), so that version is `not-found` (404), not a 500.
@@ -351,6 +359,14 @@ export const getFileForModelVersion = async ({
     }
   }
   if (!file) return { status: 'not-found' };
+  if (
+    file.type === 'Training Data' &&
+    !trainingDataServableOnHost(
+      (file.metadata as { nsfwLevel?: unknown } | null)?.nsfwLevel,
+      redCapable
+    )
+  )
+    return { status: 'not-found' };
   // A shared dataset is served to others only while neither its owner nor its content is held.
   if (
     file.type === 'Training Data' &&

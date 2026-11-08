@@ -77,6 +77,8 @@ export default MixedAuthEndpoint(async function handler(
     fileId: id,
     user,
     attribution: { caller: 'other', actor: resolveActorFor(user) },
+    // Reads a weight file's header; a dataset has none to read.
+    redCapable: false,
   });
 
   if (fileResult.status !== 'success') {

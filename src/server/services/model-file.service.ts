@@ -356,6 +356,8 @@ async function replaceFileContent({
   // uploaded it, whatever the request said its type was.
   delete metadata.uploadDomain;
   if (type === 'Training Data' && uploadDomain) metadata.uploadDomain = uploadDomain;
+  // A dataset's rating describes the zip it was taken from; new content is unrated until rated.
+  delete (metadata as Record<string, unknown>).nsfwLevel;
   const prepared = prepareFile({
     name: fields.name ?? file.name,
     url: fields.url,

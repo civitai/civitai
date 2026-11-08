@@ -4,7 +4,10 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ownerHeldSql } from '~/server/services/legal-hold.service';
-import { trainingDataShareHeld } from '~/server/services/training-data-share.service';
+import {
+  trainingDataListing,
+  trainingDataShareHeld,
+} from '~/server/services/training-data-held.service';
 
 /** A training dataset is shared only while neither its owner nor its content is held. Runs the
  *  real hold migrations on PGlite; each case runs in a transaction that is rolled back. */
@@ -47,6 +50,12 @@ const SCHEMA = `
     "tosViolation" boolean NOT NULL DEFAULT false
   );
   CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+  CREATE TABLE "ModelFile" (
+    id int PRIMARY KEY,
+    "modelVersionId" int NOT NULL,
+    type text NOT NULL,
+    metadata jsonb
+  );
   CREATE TABLE "Post" (
     id int PRIMARY KEY,
     "userId" int NOT NULL,
@@ -154,6 +163,13 @@ describe('trainingDataShareHeld', () => {
     expect(await held(PLAIN)).toBe(true);
   });
 
+  it('an owner named only as the second user on a report cannot share', async () => {
+    await db.exec(
+      `INSERT INTO "CsamReport" ("userId", details) VALUES (NULL, '{"secondaryUserId": ${PLAIN}}')`
+    );
+    expect(await held(PLAIN)).toBe(true);
+  });
+
   it.each([
     ['poi', `UPDATE "Model" SET poi = true WHERE id = 101`],
     ['minor', `UPDATE "Model" SET minor = true WHERE id = 101`],
@@ -175,5 +191,78 @@ describe('trainingDataShareHeld', () => {
       },
     } as unknown as Pick<Prisma.TransactionClient, '$queryRaw'>;
     expect(await trainingDataShareHeld(broken, versionOf(PLAIN))).toBe(true);
+  });
+});
+
+describe('trainingDataListing', () => {
+  // Each owner's version has a shared dataset rated PG (file 400 + uid) and a model file.
+  const datasetOf = (uid: number) => ({
+    id: 400 + uid,
+    type: 'Training Data',
+    visibility: 'Public',
+  });
+  const modelOf = (uid: number) => ({ id: 500 + uid, type: 'Model', visibility: 'Public' });
+  const rate = (uid: number, metadata: object) =>
+    db.exec(
+      `INSERT INTO "ModelFile" VALUES (${400 + uid}, ${versionOf(
+        uid
+      )}, 'Training Data', '${JSON.stringify(metadata)}')`
+    );
+  const listedFor = async (
+    uid: number,
+    { redCapable = false, viewerManages = false, c = client } = {}
+  ) => {
+    const listed = await trainingDataListing(
+      c,
+      [{ id: versionOf(uid), files: [datasetOf(uid), modelOf(uid)] }],
+      { redCapable, viewerManages }
+    );
+    return [listed(datasetOf(uid)), listed(modelOf(uid))];
+  };
+
+  it('lists a shared PG dataset while nothing is held', async () => {
+    await rate(PLAIN, { nsfwLevel: 1 });
+    expect(await listedFor(PLAIN)).toEqual([true, true]);
+  });
+
+  it('a report on the owner after sharing unlists the dataset, and only the dataset', async () => {
+    await rate(PLAIN, { nsfwLevel: 1 });
+    await db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${PLAIN})`);
+    expect(await listedFor(PLAIN)).toEqual([false, true]);
+    // The owner and moderators still see it.
+    expect(await listedFor(PLAIN, { viewerManages: true })).toEqual([true, true]);
+  });
+
+  it('checks each version on its own', async () => {
+    await rate(PLAIN, { nsfwLevel: 1 });
+    await rate(MARKER, { nsfwLevel: 1 });
+    const listed = await trainingDataListing(
+      client,
+      [
+        { id: versionOf(PLAIN), files: [datasetOf(PLAIN)] },
+        { id: versionOf(MARKER), files: [datasetOf(MARKER)] },
+      ],
+      { redCapable: false }
+    );
+    expect([listed(datasetOf(PLAIN)), listed(datasetOf(MARKER))]).toEqual([true, false]);
+  });
+
+  it.each([
+    ['a mature dataset', { nsfwLevel: 4 | 1 }, false, false],
+    ['a mature dataset', { nsfwLevel: 4 | 1 }, true, true],
+    ['an unrated dataset', {}, false, false],
+    ['an unrated dataset', {}, true, true],
+  ])('%s on a red-capable host %s is listed: %s', async (_, metadata, redCapable, expected) => {
+    await rate(PLAIN, metadata);
+    expect(await listedFor(PLAIN, { redCapable })).toEqual([expected, true]);
+    // Off .red the owner is not offered it either: the download would refuse them too.
+    expect(await listedFor(PLAIN, { redCapable, viewerManages: true })).toEqual([expected, true]);
+  });
+
+  it('unlists every dataset when the check cannot be read', async () => {
+    const broken = {
+      $queryRaw: () => Promise.reject(new Error('down')),
+    } as unknown as Pick<Prisma.TransactionClient, '$queryRaw'>;
+    expect(await listedFor(PLAIN, { redCapable: true, c: broken })).toEqual([false, true]);
   });
 });

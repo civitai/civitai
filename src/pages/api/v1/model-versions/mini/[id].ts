@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import { DEFAULT_GENERATION_TRIAL_LIMIT } from '@civitai/buzz';
 import { lowerFirst } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -7,7 +8,8 @@ import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { isNonCommercialBaseModel, stopsCreatorEarnings } from '~/server/common/constants';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { trainingDataListing } from '~/server/services/training-data-held.service';
 import {
   getShouldChargeForResources,
   resolveCanGenerateForVersions,
@@ -253,8 +255,13 @@ export default MixedAuthEndpoint(async function handler(
   // url shape applies, and only then apply the gate to the download-route path.
   const isOwner = !!user?.id && user.id === modelVersion.modelUserId;
   const isMod = !!user?.isModerator;
-  const visibleFiles =
-    isOwner || isMod ? files : files.filter((f) => f.visibility === ModelFileVisibility.Public);
+  const listed = await trainingDataListing(dbRead, [{ id, files }], {
+    redCapable: isRedCapableHost(req.headers.host),
+    viewerManages: isOwner || isMod,
+  });
+  const visibleFiles = files.filter(
+    (f) => (isOwner || isMod || f.visibility === ModelFileVisibility.Public) && listed(f)
+  );
 
   // The download route merges the requesting user's `filePreferences` into
   // `getPrimaryFile` (see `getFileForModelVersion` in file.service.ts). Pinning

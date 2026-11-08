@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -23,6 +24,8 @@ const archived = (complete?: boolean) => ({
   datasetArchive: { status: 'archived', items: 2, skipped: 0, complete, at: 'now' },
 });
 const shared = { ownRights: true, shareDataset: true };
+/** The owner's own click. */
+const owner = { raise: true, ownerId: 5 };
 
 beforeEach(() => {
   dbMock.dbWrite.$queryRaw.mockReset();
@@ -48,7 +51,7 @@ describe('trainingDataShareFromQuery', () => {
 describe('setStudioDatasetShare', () => {
   it('records the choice on a placeholder without touching its visibility', async () => {
     row(0);
-    await setStudioDatasetShare(70, shared);
+    await setStudioDatasetShare(70, shared, owner);
     expect(written().data).not.toHaveProperty('visibility');
     expect(written().data.metadata).toMatchObject(shared);
     expect(deleteFilesForModelVersionCache).not.toHaveBeenCalled();
@@ -56,14 +59,14 @@ describe('setStudioDatasetShare', () => {
 
   it('applies the choice to a complete archived zip at once', async () => {
     row(1024, archived(true));
-    await setStudioDatasetShare(70, shared);
+    await setStudioDatasetShare(70, shared, owner);
     expect(written().data.visibility).toBe('Public');
     expect(deleteFilesForModelVersionCache).toHaveBeenCalledWith(70);
   });
 
   it('un-sharing an archived zip takes it back from Public', async () => {
     row(1024, { ...archived(true), ...shared });
-    await setStudioDatasetShare(70, { ownRights: true, shareDataset: false });
+    await setStudioDatasetShare(70, { ownRights: true, shareDataset: false }, owner);
     expect(written().data.visibility).toBe('Sensitive');
   });
 
@@ -72,20 +75,46 @@ describe('setStudioDatasetShare', () => {
     ['missing items', archived(false)],
   ])('a zip %s stays Private when shared', async (_, metadata) => {
     row(1024, metadata);
-    await setStudioDatasetShare(70, shared);
+    await setStudioDatasetShare(70, shared, owner);
     expect(written().data.visibility).toBe('Private');
   });
 
   it('a held owner or held content keeps a shared zip Private', async () => {
     row(1024, archived(true));
     ownerHeld.mockResolvedValue(true);
-    await setStudioDatasetShare(70, shared);
+    await setStudioDatasetShare(70, shared, owner);
     expect(written().data.visibility).toBe('Private');
+  });
+
+  it('a link alone never shares: it can only lower the stored choice', async () => {
+    row(1024, archived(true));
+    await expect(setStudioDatasetShare(70, shared)).resolves.toBe(true);
+    expect(written().data.metadata).toMatchObject({ ownRights: false, shareDataset: false });
+    expect(written().data.visibility).toBe('Private');
+  });
+
+  it('a link un-sharing an archived zip takes it back from Public', async () => {
+    row(1024, { ...archived(true), ...shared });
+    await setStudioDatasetShare(70, { ownRights: true, shareDataset: false });
+    expect(written().data.metadata).toMatchObject({ ownRights: true, shareDataset: false });
+    expect(written().data.visibility).toBe('Sensitive');
+  });
+
+  it('the click writes only for the version’s owner', async () => {
+    row(1024, archived(true));
+    await setStudioDatasetShare(70, shared, owner);
+    const [strings, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const query = Prisma.sql(strings, ...values);
+    expect(query.sql).toMatch(/m\."userId" = \?/);
+    expect(query.values).toContain(5);
   });
 
   it('does nothing for a version with no Studio dataset row', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
-    await setStudioDatasetShare(70, shared);
+    await expect(setStudioDatasetShare(70, shared, owner)).resolves.toBe(false);
     expect(dbMock.dbWrite.modelFile.update).not.toHaveBeenCalled();
   });
 });

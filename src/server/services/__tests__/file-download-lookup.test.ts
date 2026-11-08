@@ -112,7 +112,7 @@ vi.mock('~/utils/delivery-worker', () => ({
 
 // Held owner / held content, for a shared training dataset. Not held unless a test says so.
 const { shareHeldMock } = vi.hoisted(() => ({ shareHeldMock: vi.fn() }));
-vi.mock('~/server/services/training-data-share.service', () => ({
+vi.mock('~/server/services/training-data-held.service', () => ({
   trainingDataShareHeld: shareHeldMock,
 }));
 
@@ -928,13 +928,20 @@ describe('getFileForModelVersion — a shared training dataset', () => {
     ({ getFileForModelVersion } = await import('../file.service'));
   }, 60000);
 
-  const dataset = { ...aFile, id: 56, name: 'data.zip', type: 'Training Data', metadata: {} };
+  const dataset = {
+    ...aFile,
+    id: 56,
+    name: 'data.zip',
+    type: 'Training Data',
+    metadata: { nsfwLevel: 1 },
+  };
   const download = (user: { id: number; isModerator?: boolean }) =>
     getFileForModelVersion({
       modelVersionId: 1,
       type: 'Training Data',
       user,
       attribution: { path: 'test', actor: 'test' } as never,
+      redCapable: true,
     });
 
   beforeEach(() => {
@@ -975,8 +982,76 @@ describe('getFileForModelVersion — a shared training dataset', () => {
       modelVersionId: 1,
       user: { id: 1 },
       attribution: { path: 'test', actor: 'test' } as never,
+      redCapable: true,
     });
     expect(result.status).toBe('success');
     expect(shareHeldMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('getFileForModelVersion — a training dataset on each host', () => {
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
+  beforeAll(async () => {
+    ({ getFileForModelVersion } = await import('../file.service'));
+  }, 60000);
+
+  const MATURE = 4 | 1; // R and PG items
+  const datasetRated = (metadata: Record<string, unknown>) => ({
+    ...aFile,
+    id: 56,
+    name: 'data.zip',
+    type: 'Training Data',
+    metadata,
+  });
+  const download = (redCapable: boolean, user: { id: number; isModerator?: boolean } = { id: 1 }) =>
+    getFileForModelVersion({
+      modelVersionId: 1,
+      type: 'Training Data',
+      user,
+      attribution: { path: 'test', actor: 'test' } as never,
+      redCapable,
+    });
+
+  beforeEach(() => {
+    versionRead.mockReset().mockResolvedValue(publishedModelVersion());
+    hasEntityAccessMock.mockReset().mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
+    getPaidAccessMock.mockReset().mockResolvedValue({});
+    resolveDownloadUrlMock
+      .mockReset()
+      .mockResolvedValue({ url: 'https://cdn/data.zip', urlExpiryDate: new Date() });
+    shareHeldMock.mockReset().mockResolvedValue(false);
+  });
+
+  it.each([
+    ['a mature zip', { nsfwLevel: MATURE }, false, 'not-found'],
+    ['a mature zip', { nsfwLevel: MATURE }, true, 'success'],
+    ['a PG-13 zip', { nsfwLevel: 2 | 1 }, false, 'success'],
+    ['an unrated zip', {}, false, 'not-found'],
+    ['an unrated zip', {}, true, 'success'],
+  ])('%s on a red-capable host %s is %s', async (_, metadata, redCapable, status) => {
+    listDownloadFilesMock.mockReset().mockResolvedValue([datasetRated(metadata)]);
+    const result = await download(redCapable);
+    expect(result.status).toBe(status);
+    if (status === 'not-found') expect(result).toEqual({ status: 'not-found' });
+  });
+
+  it.each([
+    ['its owner', { id: 999 }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('refuses a mature zip off a red-capable host to %s too', async (_, user) => {
+    listDownloadFilesMock.mockReset().mockResolvedValue([datasetRated({ nsfwLevel: MATURE })]);
+    expect(await download(false, user)).toEqual({ status: 'not-found' });
+  });
+
+  it("serves a mature model's weights on any host", async () => {
+    listDownloadFilesMock.mockReset().mockResolvedValue([aFile]);
+    versionRead.mockResolvedValue(publishedModelVersion({ nsfwLevel: 28 }));
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1 },
+      attribution: { path: 'test', actor: 'test' } as never,
+      redCapable: false,
+    });
+    expect(result.status).toBe('success');
   });
 });

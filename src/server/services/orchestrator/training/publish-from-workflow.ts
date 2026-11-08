@@ -43,11 +43,6 @@ import {
   ModelUploadType,
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
-import {
-  normalizeTrainingDataShare,
-  setStudioDatasetShare,
-  type TrainingDataShare,
-} from '~/server/services/training-data-share.service';
 
 type TrainingStudioMeta = {
   name?: string;
@@ -353,14 +348,11 @@ export async function createDraftModelFromWorkflow({
   workflow,
   selectedEpochNumber,
   name,
-  share,
 }: {
   user: SessionUser;
   workflow: Workflow;
   selectedEpochNumber: number;
   name?: string;
-  /** The owner's dataset-sharing choice, when the publish entry carried one. */
-  share?: TrainingDataShare;
 }): Promise<{
   modelId: number;
   modelVersionId: number;
@@ -397,7 +389,6 @@ export async function createDraftModelFromWorkflow({
     // failed write leaves the draft unstamped, which only matters once its workflow is gone.
     if ((existing.meta as ModelMeta | null)?.trainingStudioModerationApproved !== true)
       await stampTrainingModerationApproved(existing.id);
-    if (share) await setStudioDatasetShare(existing.modelVersions[0].id, share);
     return {
       modelId: existing.id,
       modelVersionId: existing.modelVersions[0].id,
@@ -508,7 +499,6 @@ export async function createDraftModelFromWorkflow({
     metadata: {
       trainingResults,
       selectedEpochUrl: selectedEpoch.modelUrl,
-      ...(share && normalizeTrainingDataShare(share)),
     },
     userId: user.id,
     select: { id: true },

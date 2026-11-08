@@ -48,6 +48,8 @@ import {
   router,
 } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { setStudioDatasetShare } from '~/server/services/training-data-share.service';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 
 const TRAINING_ANNOUNCEMENT_KEY = 'training-announcement';
 // Written by the moderator app's Training Models page; read here for the training form's alert box.
@@ -57,6 +59,23 @@ type TrainingAnnouncement = {
 };
 
 export const trainingRouter = router({
+  // The owner's own click: the publish link alone can only lower a share (setStudioDatasetShare).
+  setStudioDatasetShare: guardedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(
+      z.object({
+        modelVersionId: z.number().int().positive(),
+        ownRights: z.boolean(),
+        shareDataset: z.boolean(),
+      })
+    )
+    .mutation(async ({ input: { modelVersionId, ...choice }, ctx }) => {
+      const found = await setStudioDatasetShare(modelVersionId, choice, {
+        raise: true,
+        ownerId: ctx.user.id,
+      });
+      if (!found) throw throwNotFoundError();
+    }),
   /**
    * @deprecated for orchestrator v2
    */

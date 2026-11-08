@@ -130,6 +130,8 @@ export async function resolveResourceFileForUser({
     fileId: chosen.id,
     user: { ...user, isModerator: false },
     attribution: { caller: 'other', actor: resolveActorFor(user) },
+    // Serves no host's download; a dataset is not a resource file.
+    redCapable: false,
   });
   if (resolved.status === 'resolve-failed') {
     // Transient storage failure: report it as retryable, not as missing.

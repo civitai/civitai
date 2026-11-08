@@ -4,6 +4,7 @@
   import { goto, invalidate } from '$app/navigation';
   import { env } from '$env/dynamic/public';
   import { setHostContext, type StudioLocation } from '$lib/host';
+  import { PUBLISH_PATH, publishSearchParams } from '$lib/publish-url-core';
   import { shellBackend } from '$lib/shell-backend';
   import { connectSignals, onSignal } from '$lib/signals';
   import { BUZZ_UPDATE_SIGNAL } from '$lib/signal-events';
@@ -45,13 +46,7 @@
     // the link goes live per-user as the flag widens.
     generateUrl: ({ air, workflowId, name }) =>
       `${data.civitaiUrl}/generate?${new URLSearchParams({ air, workflowId, name })}`,
-    publishUrl: ({ workflowId, epoch, ownRights, shareDataset }) =>
-      `${data.civitaiUrl}/models/train/from-orchestrator?${new URLSearchParams({
-        workflowId,
-        epoch: String(epoch),
-        ownRights: ownRights ? '1' : '0',
-        shareDataset: ownRights && shareDataset ? '1' : '0',
-      })}`,
+    publishUrl: (req) => `${data.civitaiUrl}${PUBLISH_PATH}?${publishSearchParams(req)}`,
     modelPageUrl: ({ modelId }) => `${data.civitaiUrl}/models/${modelId}`,
   });
 

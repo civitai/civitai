@@ -1,4 +1,5 @@
 import { Upload } from '@aws-sdk/lib-storage';
+import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import type { Prisma } from '@prisma/client';
 import type { Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
@@ -86,19 +87,23 @@ export async function getPendingStudioDatasetFileIds(limit: number): Promise<num
 
 type DatasetItem = { air: string; caption: string };
 
-/** The blob list the run trained on, or null for a run whose data isn't blob-backed. */
-export function getStudioDatasetItems(workflow: Workflow): DatasetItem[] | null {
+/** The blob list the run trained on, or null for a run whose data isn't blob-backed. `total` counts
+ *  every listed entry, including any without a readable `air`. */
+export function getStudioDatasetItems(
+  workflow: Workflow
+): { items: DatasetItem[]; total: number } | null {
   const steps = (workflow.steps ?? []) as { input?: { trainingData?: unknown } }[];
   const trainingData = steps.find((step) => step.input?.trainingData)?.input?.trainingData as
     | { type?: string; items?: { air?: unknown; caption?: unknown }[] }
     | undefined;
   if (trainingData?.type !== 'blobs' || !Array.isArray(trainingData.items)) return null;
-  return trainingData.items
+  const items = trainingData.items
     .filter((item): item is { air: string; caption?: unknown } => typeof item?.air === 'string')
     .map((item) => ({
       air: item.air,
       caption: typeof item.caption === 'string' ? item.caption : '',
     }));
+  return { items, total: trainingData.items.length };
 }
 
 /** The orchestrator's blob key in each stored form of a dataset `air` (mirrors the Studio's
@@ -142,7 +147,12 @@ async function fetchBlob({
   token: string;
   air: string;
   workflowId: string;
-}): Promise<{ bytes: Buffer; key: string; contentType: string | null } | null> {
+}): Promise<{
+  bytes: Buffer;
+  key: string;
+  contentType: string | null;
+  nsfwLevel: string | null;
+} | null> {
   const key = blobKeyFromAir(air);
   try {
     const response = await fetch(
@@ -159,6 +169,7 @@ async function fetchBlob({
       bytes: Buffer.from(await response.arrayBuffer()),
       key,
       contentType: response.headers.get('content-type'),
+      nsfwLevel: response.headers.get('x-nsfw-level')?.toLowerCase() ?? null,
     };
   } catch {
     return null;
@@ -219,10 +230,16 @@ async function uploadDatasetZip({
   const pad = Math.max(2, String(items.length).length);
   let included = 0;
   let captions = 0;
+  // Every included item's rating; one the orchestrator didn't rate leaves the zip unrated.
+  let nsfwLevel = 0;
+  let unrated = false;
   try {
     for (const [index, item] of items.entries()) {
       const blob = await fetchBlob({ baseUrl, token, air: item.air, workflowId });
       if (!blob) continue;
+      const level = blob.nsfwLevel ? orchestratorNsfwLevelMap[blob.nsfwLevel] : undefined;
+      if (level) nsfwLevel |= level;
+      else unrated = true;
       const base = String(index + 1).padStart(pad, '0');
       await bounded.append(blob.bytes, {
         name: `${base}.${extensionFor(blob.key, blob.contentType)}`,
@@ -251,6 +268,7 @@ async function uploadDatasetZip({
     bytes: archive.pointer(),
     included,
     captions,
+    nsfwLevel: unrated ? undefined : nsfwLevel,
     skipped: items.length - included,
     backend: useB2 ? ('backblaze' as const) : ('cloudflare' as const),
   };
@@ -321,8 +339,8 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
         return markUnavailable('workflow no longer exists');
       throw error;
     }
-    const items = getStudioDatasetItems(workflow);
-    if (!items?.length) {
+    const dataset = getStudioDatasetItems(workflow);
+    if (!dataset?.items.length) {
       if (ownerClosed) throw new Error('run read with the service token has no blob dataset');
       return markUnavailable('run has no blob dataset');
     }
@@ -335,6 +353,7 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
       model.userId,
       `${file.modelVersionId}_training_data.zip`
     );
+    const { items, total } = dataset;
     const stored = await uploadDatasetZip({ items, baseUrl, token, workflowId, key });
     const sizeKB = bytesToKB(stored.bytes);
     const archived: StudioDatasetArchive = {
@@ -342,9 +361,7 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
       items: stored.included,
       skipped: stored.skipped,
       complete:
-        stored.skipped === 0 &&
-        stored.included === items.length &&
-        isTrainingModerationApproved(workflow),
+        stored.skipped === 0 && stored.included === total && isTrainingModerationApproved(workflow),
       at: new Date().toISOString(),
     };
 
@@ -373,6 +390,8 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
             ...current,
             numImages: stored.included,
             numCaptions: stored.captions,
+            // The zip's rating, which decides the hosts that serve it (trainingDataServableOnHost).
+            ...(stored.nsfwLevel !== undefined && { nsfwLevel: stored.nsfwLevel }),
             datasetArchive: archived,
           },
         },
