@@ -17,7 +17,7 @@ import type {
   TrainingRow,
 } from '$lib/data/trainingRows';
 import type { EpochArchive } from '$lib/orchestrator-core';
-import type { TrainingServiceStatus } from '$lib/service-status-core';
+import { parseServiceStatus } from '$lib/service-status-core';
 import { MatureAckRequiredError } from '$lib/mature-charge';
 import { UploadError, uploadProblem } from '$lib/upload';
 
@@ -249,6 +249,6 @@ export const shellBackend: StudioBackend = {
   getServiceStatus: async () => {
     const res = await fetch('/api/training-status');
     if (!res.ok) return null;
-    return (await res.json()) as TrainingServiceStatus;
+    return parseServiceStatus(await res.json());
   },
 };

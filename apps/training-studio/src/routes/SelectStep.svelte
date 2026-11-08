@@ -11,7 +11,9 @@
     IconArrowRight,
     IconSearch,
   } from '@tabler/icons-svelte';
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
+  import { serviceStatus } from '$lib/service-status.svelte';
+  import { modelUnavailability, UNAVAILABLE_LABEL } from '$lib/service-status-core';
   import { pickModel } from '$lib/host';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -37,6 +39,9 @@
     newRun,
     nextRunId,
     recommendedCardFor,
+    blockedSelectionMessage,
+    cardUnavailability,
+    versionStatusKey,
     runCard,
     runVersion,
     runVersionLabel,
@@ -202,9 +207,42 @@
     }
   }
 
+  // The banner refreshes it too; Select reads it on its own so a down model greys out on first paint.
+  onMount(() => void serviceStatus.refresh());
+  const blockedMessage = $derived(blockedSelectionMessage(runs, serviceStatus.value));
+
+  /** Whether a version chip's model is down (Custom has no catalog version: never). */
+  function versionDown(card: ModelCard, key: string) {
+    const v = card.versions.find((x) => x.key === key);
+    return v ? modelUnavailability(serviceStatus.value, versionStatusKey(v)) : null;
+  }
+
+  function cardLabel(
+    card: ModelCard,
+    cardPrice: number | null,
+    versionCount: number,
+    down: { reason: string | null } | null,
+    locked: boolean
+  ): string {
+    return [
+      `${card.name}. ${card.description}`,
+      cardPrice != null ? `From ${cardPrice.toLocaleString()} Buzz.` : 'Price not available.',
+      card.flag ? `${card.flag}.` : '',
+      versionCount > 1 ? `${versionCount} versions.` : '',
+      down ? `${UNAVAILABLE_LABEL}.` : '',
+      down?.reason ?? '',
+      locked ? `Unavailable. ${sweepLockReason(card)}` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+
   function pickBase(card: ModelCard) {
     if (multi && !sweepCompatible(card, runCard(primary))) return; // dataset-shape lock
-    runs = runs.map((r, i) => (i === focus ? { ...newRun(card, enabledFlags), id: r.id } : r));
+    if (cardUnavailability(card, enabledFlags, serviceStatus.value)) return;
+    runs = runs.map((r, i) =>
+      i === focus ? { ...newRun(card, enabledFlags, serviceStatus.value), id: r.id } : r
+    );
     userPickedModel = true;
   }
 
@@ -302,7 +340,9 @@
 </script>
 
 {#snippet customIncompleteNote()}
-  {#if customIncomplete}
+  {#if blockedMessage}
+    <p class="mb-0 mt-1.5 text-center font-mono text-xs text-buzz">{blockedMessage}</p>
+  {:else if customIncomplete}
     <p class="mb-0 mt-1.5 text-center font-mono text-xs text-buzz">
       Paste a Civitai model AIR for the custom base to continue.
     </p>
@@ -332,7 +372,11 @@
 {/snippet}
 
 {#snippet continueButton(placement: string)}
-  <Button class="h-11 {placement}" disabled={customIncomplete} onclick={continueToData}>
+  <Button
+    class="h-11 {placement}"
+    disabled={customIncomplete || !!blockedMessage}
+    onclick={continueToData}
+  >
     Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
   </Button>
 {/snippet}
@@ -518,7 +562,10 @@
       >
         {#each visibleCards as card (card.type)}
           {@const selected = card.type === focused.cardType}
-          {@const disabled = multi && !selected && !sweepCompatible(card, runCard(primary))}
+          {@const down = cardUnavailability(card, enabledFlags, serviceStatus.value)}
+          {@const locked = multi && !selected && !sweepCompatible(card, runCard(primary))}
+          {@const disabled = locked || (!!down && !selected)}
+          {@const dim = down && !selected && !locked ? 'opacity-40 grayscale' : ''}
           {@const cardPrice = price(card.type)}
           {@const versionCount = visibleVersions(card, enabledFlags).length}
           <button
@@ -528,19 +575,17 @@
             tabindex={selected ? 0 : -1}
             {disabled}
             onclick={() => pickBase(card)}
-            aria-label={`${card.name}. ${card.description} ${
-              cardPrice != null ? `From ${cardPrice.toLocaleString()} Buzz.` : 'Price not available.'
-            } ${card.flag ? `${card.flag}. ` : ''}${
-              versionCount > 1 ? `${versionCount} versions. ` : ''
-            }${disabled ? `Unavailable. ${sweepLockReason(card)}` : ''}`}
-            title={disabled ? sweepLockReason(card) : undefined}
+            aria-label={cardLabel(card, cardPrice, versionCount, down, locked)}
+            title={locked ? sweepLockReason(card) : down ? (down.reason ?? UNAVAILABLE_LABEL) : undefined}
             class="group relative flex flex-col rounded-md border p-3 text-left transition
               {selected
               ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40'
               : 'border-dark-4 bg-dark-6 hover:border-dark-3 hover:bg-dark-5'}
-              {disabled ? 'cursor-not-allowed opacity-40 grayscale' : ''}"
+              {locked ? 'cursor-not-allowed opacity-40 grayscale' : ''}
+              {down && !selected && !locked ? 'cursor-not-allowed' : ''}"
           >
-            <div class="flex items-center gap-2">
+            <!-- A down card dims everything but its status, which stays readable. -->
+            <div class="flex items-center gap-2 {dim}">
               <div class="min-w-0 flex-1 truncate text-sm font-semibold text-dark-0">
                 {card.name}
               </div>
@@ -553,18 +598,24 @@
             <!-- Own row, never sharing the title's: on the recommended tile the badge was truncating
                  the model name to "MiniMax …". -->
             {#if card.flag}
-              <div class="mt-1">
+              <div class="mt-1 {dim}">
                 <span class="inline-flex items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
                   {#if card.flag === 'recommended'}<IconStarFilled size={8} />{:else if card.flag === 'new'}<IconSparkles size={10} stroke={2.5} />{/if}{card.flag}
                 </span>
               </div>
             {/if}
+            {#if down}
+              <div class="mt-1 text-xs leading-snug">
+                <div class="font-semibold text-buzz">{UNAVAILABLE_LABEL}</div>
+                {#if down.reason}<div class="line-clamp-2 text-dark-2">{down.reason}</div>{/if}
+              </div>
+            {/if}
             <!-- Two lines, and always two lines tall: at one line most taglines were clipped mid-sentence,
                  and letting the height follow the text made the price rows sit at different heights. -->
-            <div class="mt-1 line-clamp-2 min-h-[2lh] text-xs leading-snug text-dark-2">
+            <div class="mt-1 line-clamp-2 min-h-[2lh] text-xs leading-snug text-dark-2 {dim}">
               {card.description}
             </div>
-            <div class="mt-auto flex items-center gap-2 pt-2">
+            <div class="mt-auto flex items-center gap-2 pt-2 {dim}">
               {#if cardPrice != null}
                 <span
                   class="inline-flex items-center whitespace-nowrap rounded border border-buzz/25 bg-buzz/[0.08] px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
@@ -646,8 +697,10 @@
                   type="button"
                   role="radio"
                   aria-checked={primary.versionKey === v.key}
+                  disabled={!!versionDown(card, v.key) && primary.versionKey !== v.key}
+                  title={versionDown(card, v.key) ? UNAVAILABLE_LABEL : undefined}
                   onclick={() => pickVersion(0, v.key)}
-                  class="rounded border px-3 py-1.5 text-left transition
+                  class="rounded border px-3 py-1.5 text-left transition disabled:cursor-not-allowed disabled:opacity-40
                     {primary.versionKey === v.key
                     ? 'border-primary bg-primary/10'
                     : 'border-dark-4 bg-dark-7 hover:border-dark-3'}
@@ -741,8 +794,10 @@
                     type="button"
                     role="radio"
                     aria-checked={r.versionKey === v.key}
+                    disabled={!!versionDown(card, v.key) && r.versionKey !== v.key}
+                    title={versionDown(card, v.key) ? UNAVAILABLE_LABEL : undefined}
                     onclick={() => pickVersion(ri, v.key)}
-                    class="rounded border px-3 py-1.5 text-left transition
+                    class="rounded border px-3 py-1.5 text-left transition disabled:cursor-not-allowed disabled:opacity-40
                       {r.versionKey === v.key
                       ? 'border-primary bg-primary/10'
                       : 'border-dark-4 bg-dark-7 hover:border-dark-3'}

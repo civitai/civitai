@@ -157,3 +157,28 @@ describe('Training Studio follows the classic trainer model flags', () => {
     ]);
   });
 });
+
+// `training:status.blockedModels` holds the classic trainer's `trainingDetails.baseModel` keys, and
+// Training Studio matches them against its catalog's version keys. A Studio key that drifts from the
+// classic key for the same checkpoint would make a block a silent no-op in Studio.
+describe('blocked-model keys are shared by both trainers', () => {
+  const classicByAir = new Map(
+    Object.entries(trainingModelInfo).map(([key, info]) => [info.air, key] as const)
+  );
+  // Edit (pair) cards reuse a base's checkpoint under their own key; a submit resolves them by AIR.
+  const shared = MODEL_CARDS.filter((c) => !c.retired && !c.pairs).flatMap((c) =>
+    c.versions.filter((v) => classicByAir.has(v.air))
+  );
+
+  it('pins Krea 2 to the same key in both catalogs', () => {
+    const studio = MODEL_CARDS.find((c) => c.type === 'krea2')!.versions[0]!;
+    expect(classicByAir.get(studio.air)).toBe(studio.key);
+  });
+
+  it.each(shared.map((v) => [v.key, v.air] as const))(
+    'Studio version %s uses the classic key for its checkpoint',
+    (key, air) => {
+      expect(classicByAir.get(air)).toBe(key);
+    }
+  );
+});

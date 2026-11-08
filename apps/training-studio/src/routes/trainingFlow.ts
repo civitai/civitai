@@ -11,6 +11,8 @@ import {
   MAX_NON_PRODIGY_LR,
   paramsForVersion,
   cardsForMedia,
+  findByAir,
+  isCardVisible,
   visibleVersions,
   versionPriceKey,
   ecosystemTakesSampleImages,
@@ -24,6 +26,11 @@ import {
 } from '$lib/data/trainingModels';
 import type { TrainingRunPayload } from '$lib/backend';
 import type { TrainingItem } from '$lib/train-core';
+import {
+  blockedRunMessage,
+  modelUnavailability,
+  type TrainingServiceStatus,
+} from '$lib/service-status-core';
 import type { TagExcluder } from '$lib/autolabel-exclude';
 
 export const CUSTOM_VERSION_KEY = 'custom';
@@ -130,6 +137,48 @@ export function runVersion(run: Run): ModelVersionInfo {
   return card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!;
 }
 
+/** The key a version is blocked under: its checkpoint's, as a submit resolves it (an edit card reuses
+ *  a base's checkpoint under its own key). */
+export const versionStatusKey = (v: ModelVersionInfo): string =>
+  findByAir(v.air)?.version.key ?? v.key;
+
+/** A card is unavailable when every version this viewer can see is blocked; the note is the first one's. */
+export function cardUnavailability(
+  card: ModelCard,
+  enabledFlags: ReadonlySet<string>,
+  status: TrainingServiceStatus | null | undefined
+): { reason: string | null } | null {
+  if (!isCardVisible(card, enabledFlags)) return null;
+  const downs = visibleVersions(card, enabledFlags).map((v) =>
+    modelUnavailability(status, versionStatusKey(v))
+  );
+  return downs.length > 0 && downs.every((d) => d !== null) ? downs[0]! : null;
+}
+
+/** Why the selection can't start: the first run whose model is blocked (a stale tab or restored draft
+ *  can still hold one), or null. */
+export function blockedSelectionMessage(
+  runs: Run[],
+  status: TrainingServiceStatus | null | undefined
+): string | null {
+  for (const run of runs) {
+    const v = runVersion(run);
+    // The same model fields the submit sends: a custom run still names the base it was picked under.
+    const message = blockedRunMessage(
+      {
+        ecosystem: v.ecosystem,
+        modelVariant: v.modelVariant,
+        version: v.version,
+        model: v.air,
+        customModel: isCustom(run) ? run.customAir?.trim() || undefined : undefined,
+      },
+      status
+    );
+    if (message) return message;
+  }
+  return null;
+}
+
 export function runVersionLabel(run: Run): string {
   if (isCustom(run)) return 'Custom';
   const card = runCard(run);
@@ -148,9 +197,16 @@ export function versionOptions(
   ];
 }
 
-/** A run on the card's first version the viewer can see (`enabledFlags` omitted → `versions[0]`). */
-export function newRun(card: ModelCard, enabledFlags?: ReadonlySet<string>): Run {
-  const first = visibleVersions(card, enabledFlags)[0];
+/** A run on the card's first version the viewer can see (`enabledFlags` omitted → `versions[0]`),
+ *  skipping a version that is down when `status` is given and another one is up. */
+export function newRun(
+  card: ModelCard,
+  enabledFlags?: ReadonlySet<string>,
+  status?: TrainingServiceStatus | null
+): Run {
+  const visible = visibleVersions(card, enabledFlags);
+  const first =
+    visible.find((v) => !modelUnavailability(status, versionStatusKey(v))) ?? visible[0];
   if (!first) throw new Error(`Base-model card ${card.type} has no version this viewer can pick`);
   return { id: nextRunId(), cardType: card.type, versionKey: first.key };
 }
