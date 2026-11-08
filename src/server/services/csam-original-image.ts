@@ -339,7 +339,6 @@ async function spoolStoredObject(
   const releaseReservation = reserve ? await reserve(large.size) : noReservation;
   let path: string | undefined;
   try {
-    cancel?.throwIfAborted();
     await mkdir(large.spoolDir, { recursive: true });
     path = join(large.spoolDir, `${randomUUID()}.part`);
     const hash = createHash('sha256');

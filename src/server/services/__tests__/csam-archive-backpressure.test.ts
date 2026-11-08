@@ -166,6 +166,12 @@ vi.mock('~/utils/file-utils', async (importOriginal) => ({
   fetchBlob: (...args: unknown[]) => mockFetchBlob(...args),
 }));
 
+vi.mock('~/server/utils/archive-helpers', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  // Short, so the stuck-read test is quick; longer than the abort test's 1s, so that test sees the abort.
+  FAILED_ARCHIVE_SETTLE_MS: 1_500,
+}));
+
 // Holds a large original's spool-dir mkdir, as a busy fs threadpool does.
 const spoolMkdir = vi.hoisted(() => ({ delayMs: 0 }));
 vi.mock('fs/promises', async (importOriginal) => {
@@ -1438,7 +1444,7 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
 
   it('starts no read after a failed archive, and leaves its scratch dir removed', async () => {
     // The original that holds the budget is still creating its spool dir when the archive fails.
-    spoolMkdir.delayMs = 30;
+    spoolMkdir.delayMs = 200;
     const base = mockGetObject;
     const sends: { key: string; ranged: boolean }[] = [];
     mockGetObject = async (key, input) => {
@@ -1452,7 +1458,7 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
       'synthetic storage outage'
     );
     // Past the held mkdir, so a read that outlived the archive would have started by now.
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 300));
 
     expect(sends.filter((send) => send.ranged)).toEqual([]);
     expect(fs.existsSync(path.join(csamBaseDir, 'images', String(report.id)))).toBe(false);
@@ -1482,7 +1488,33 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
         () => 'resolved',
         (e: Error) => e.message
       ),
-      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 2_000)),
+      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 1_000)),
+    ]);
+
+    expect(outcome).toBe('synthetic storage outage');
+  });
+
+  it('still rejects when a read in flight ignores the stop', async () => {
+    let holderReading!: () => void;
+    const holderStarted = new Promise<void>((resolve) => (holderReading = resolve));
+    const base = mockGetObject;
+    mockGetObject = async (key, input) => {
+      if (key === 'big-2') {
+        await holderStarted;
+        throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+      }
+      if (!input.Range) return base(key, input);
+      holderReading();
+      // A part that never arrives, abort or not.
+      return new Promise(() => undefined);
+    };
+
+    const outcome = await Promise.race([
+      archiveCsamDataForReport(report as never).then(
+        () => 'resolved',
+        (e: Error) => e.message
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 4_000)),
     ]);
 
     expect(outcome).toBe('synthetic storage outage');

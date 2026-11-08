@@ -51,6 +51,7 @@ import type { BoundedArchive } from '~/server/utils/archive-helpers';
 import {
   createBoundedArchive,
   createByteBudget,
+  FAILED_ARCHIVE_SETTLE_MS,
   deriveUploadPartGeometry,
   ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
@@ -3096,7 +3097,12 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           readers.abort(e);
           budget.abort(e);
           // Only reads that started: `clearQueue` leaves a queued task's promise unsettled.
-          await Promise.allSettled(running);
+          let settleTimer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([
+            Promise.allSettled(running),
+            new Promise((resolve) => (settleTimer = setTimeout(resolve, FAILED_ARCHIVE_SETTLE_MS))),
+          ]);
+          clearTimeout(settleTimer);
           throw e;
         }
 
