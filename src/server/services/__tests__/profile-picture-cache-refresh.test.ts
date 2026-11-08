@@ -86,23 +86,34 @@ const OTHER_IMAGE = 7302;
 const AVATAR_OWNER = 4242;
 const MOD = 9001;
 
+/** The avatar lookup: users whose profile picture, or ProfilePictureHold record, is one of the ids. */
+const isPictureLookup = (strings: unknown) =>
+  Array.isArray(strings) &&
+  strings.join('?').includes('FROM "ProfilePictureHold" WHERE "imageId" IN');
+const lookedUpIds = (values: unknown[]) =>
+  [...((values[0] as { values: number[] }).values ?? [])].sort();
+
 /** The users whose profile picture is in the looked-up id set. */
 function avatarsOf(owners: Record<number, number>) {
-  dbMock.dbWrite.user.findMany.mockImplementation((async ({
-    where,
-  }: {
-    where: { profilePictureId?: { in: number[] } };
-  }) =>
-    (where.profilePictureId?.in ?? [])
-      .filter((id) => owners[id] !== undefined)
-      .map((id) => ({ id: owners[id] }))) as never);
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: unknown, ...values: unknown[]) =>
+    isPictureLookup(strings)
+      ? lookedUpIds(values)
+          .filter((id) => owners[id] !== undefined)
+          .map((id) => ({ id: owners[id] }))
+      : []) as never);
+}
+
+function failPictureLookups() {
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: unknown) => {
+    if (isPictureLookup(strings)) throw new Error('db down');
+    return [];
+  }) as never);
 }
 
 const pictureLookups = () =>
-  dbMock.dbWrite.user.findMany.mock.calls
-    .map(([args]) => (args as { where: { profilePictureId?: { in: number[] } } }).where)
-    .filter((where) => where.profilePictureId)
-    .map((where) => [...(where.profilePictureId?.in ?? [])].sort());
+  dbMock.dbWrite.$queryRaw.mock.calls
+    .filter(([strings]) => isPictureLookup(strings))
+    .map(([, ...values]) => lookedUpIds(values));
 
 const reRate = (id: number) =>
   updateImageNsfwLevel({ id, nsfwLevel: NsfwLevel.X, userId: MOD, isModerator: true } as never);
@@ -142,7 +153,7 @@ describe('a moderator re-rate', () => {
     refreshPicture.mockRejectedValue(new Error('cache down'));
     await expect(reRate(AVATAR)).resolves.toBe(NsfwLevel.X);
 
-    dbMock.dbWrite.user.findMany.mockRejectedValue(new Error('db down'));
+    failPictureLookups();
     await expect(reRate(AVATAR)).resolves.toBe(NsfwLevel.X);
   });
 });
@@ -179,7 +190,7 @@ describe('a recompute of the rating from tags', () => {
     refreshPicture.mockRejectedValue(new Error('cache down'));
     await expect(updateNsfwLevel(AVATAR)).resolves.toBeUndefined();
 
-    dbMock.dbWrite.user.findMany.mockRejectedValue(new Error('db down'));
+    failPictureLookups();
     await expect(updateNsfwLevel(AVATAR)).resolves.toBeUndefined();
   });
 });

@@ -82,6 +82,15 @@ vi.mock('../sources/mongo', () => ({
   }),
 }));
 vi.mock('../sources/stripe', () => ({ exportStripe: async () => [] }));
+vi.mock('../sources/profile-pictures', () => ({
+  exportRemovedProfilePictures: async () => ({
+    file: 'data/postgres/ProfilePictureRemoved.csv',
+    source: 'postgres',
+    rows: 0,
+    description: '',
+    status: 'complete',
+  }),
+}));
 
 import { logToAxiom } from '~/server/logging/client';
 import { MAX_ATTEMPTS, buildExport, type ExportRow } from '../personal-data-export.service';
