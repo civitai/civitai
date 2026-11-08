@@ -5,6 +5,7 @@ import type * as TurfWatch from '~/server/events/turf/turf-watch';
 import type * as PointsEnabled from '~/server/events/points/enabled';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import { eventPointKeys } from '~/server/events/points/keys';
@@ -52,12 +53,6 @@ vi.mock('~/server/services/placement-moderation.service', async (importOriginal)
 }));
 vi.mock('~/server/events/event-access', () => ({
   flagAudienceAmong: async (_flag: string, ids: number[]) => new Set(ids),
-}));
-// What the service logs: a case expecting `true` also expects nothing logged, so a swallowed error
-// reads as itself rather than as a bare `false`.
-const logged = vi.hoisted(() => [] as unknown[]);
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: async (entry: unknown) => void logged.push(entry),
 }));
 const pointsOn = vi.hoisted(() => ({ value: true }));
 vi.mock('~/server/events/points/enabled', async (importOriginal) => ({
@@ -185,9 +180,10 @@ const place = async (imageId: number, reactionEarnsMs = 30_000) =>
 
 describe('placing answers whether a reaction there would pay your team', () => {
   it('yes: your team leads and a teammate besides you is credited', async () => {
-    logged.length = 0;
+    loggingMock.logToAxiom.mockClear();
     const placed = await place(await image([[TEAMMATE, 'Blue']]));
-    expect(logged).toEqual([]);
+    // A swallowed error reads as itself rather than as a bare `false`.
+    expect(loggingMock.logToAxiom.mock.calls).toEqual([]);
     expect(lua.errors).toEqual([]);
     expect(placed).toEqual({ reactionEarns: true });
   });
