@@ -10,15 +10,7 @@ export const stickerPoseStyle = ({ x, y, scale, rotation }: Pose) => ({
   transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
 });
 
-/** Marks inside a sticker that turn against its rotation so they read upright. */
-export const COUNTER_ROTATE_ATTR = 'data-counter-rotate';
-
-export const counterRotation = (rotation: number) => `rotate(${-rotation}deg)`;
-
 /** Writes a pose straight to a placed sticker, for playback that must not render React every frame. */
 export function writeStickerPose(node: HTMLElement, pose: Pose) {
   Object.assign(node.style, stickerPoseStyle(pose));
-  node.querySelectorAll<HTMLElement>(`[${COUNTER_ROTATE_ATTR}]`).forEach((mark) => {
-    mark.style.transform = counterRotation(pose.rotation);
-  });
 }

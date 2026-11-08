@@ -17,15 +17,9 @@ const sameIds = (a: ReadonlySet<number>, b: ReadonlySet<number>) =>
   a.size === b.size && [...a].every((id) => b.has(id));
 
 /**
- * Plays the stickers' tracks against this video's time: `hiddenIds` for those outside their
- * window, and `bindPose(id)` as a ref on each placed sticker so a recorded path moves it.
- *
- * Moving poses are written to the elements directly, once per video frame, so playback never
- * renders React. React leaves them alone afterwards because the props it last wrote do not
- * change between renders.
- *
- * Pending placements are not in the read, which keeps them on screen, still, for the owner who
- * has to answer them.
+ * Plays sticker tracks against this video's time; `bindPose(id)` is the ref that lets a recorded
+ * path move a placed sticker. Moving poses are written straight to the elements once per video
+ * frame, so playback never renders React.
  */
 export function useTrackPlayback(imageId: number, video: HTMLVideoElement | null) {
   const { data: tracks } = trpc.placement.getStickerTracks.useQuery(

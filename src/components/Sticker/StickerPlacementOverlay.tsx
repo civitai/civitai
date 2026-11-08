@@ -1,8 +1,4 @@
-import {
-  COUNTER_ROTATE_ATTR,
-  counterRotation,
-  stickerPoseStyle,
-} from '~/components/Sticker/sticker-pose-style';
+import { stickerPoseStyle } from '~/components/Sticker/sticker-pose-style';
 import { Button } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -508,7 +504,7 @@ export function StickerPlacementOverlay({
           const body = (
             <div
               key={placement.id}
-              // Pending placements carry no track (see `useTrackPlayback`), so the two never meet.
+              // Tracks are read for approved placements only, so a pending one never needs `bindPose`.
               ref={placement.isPending ? measureSticker(placement) : bindPose?.(placement.id)}
               className={clsx(
                 'absolute',
@@ -594,9 +590,8 @@ export function StickerPlacementOverlay({
                     )}
                     // Counter-rotated: rotation runs to ±180 and a mark riding
                     // the sticker's own transform reads upside down.
-                    {...{ [COUNTER_ROTATE_ATTR]: '' }}
                     style={{
-                      transform: counterRotation(placement.data.rotation),
+                      transform: `rotate(${-placement.data.rotation}deg)`,
                       ...peekStyle,
                     }}
                   >

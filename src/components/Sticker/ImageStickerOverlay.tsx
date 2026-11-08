@@ -165,8 +165,7 @@ export function ImageStickerOverlay({
               // pressing the plus is often what mounts this in the first place.
               paced={!isPlacing}
               step={historyStep}
-              // A replay shows every sticker it steps through, whatever the video's time, and
-              // still moves a recorded one along its path.
+              // A replay shows every sticker it steps through, whatever the video's time.
               hiddenIds={historyStep == null ? hiddenIds : undefined}
               bindPose={bindPose}
             />

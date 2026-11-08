@@ -37,9 +37,6 @@ vi.mock('~/components/Sticker/StickerPlacementHoverCard', () => ({
 
 const { StickerPlacementOverlay } = await import('~/components/Sticker/StickerPlacementOverlay');
 const { useTrackPlayback } = await import('~/components/Sticker/useTrackPlayback');
-const { COUNTER_ROTATE_ATTR, writeStickerPose } = await import(
-  '~/components/Sticker/sticker-pose-style'
-);
 
 const IMAGE_ID = 74;
 const sticker = new Map([[9, { id: 9, name: 'Test', slug: 'test', url: PNG }]]);
@@ -189,18 +186,5 @@ describe('a recorded sticker moves with the video', () => {
     seek(1);
 
     expect(left()).toBeCloseTo(20);
-  });
-});
-
-describe('writing a pose', () => {
-  test('turns the marks inside the sticker against its rotation', () => {
-    const node = document.createElement('div');
-    const mark = document.createElement('div');
-    mark.setAttribute(COUNTER_ROTATE_ATTR, '');
-    node.append(mark);
-
-    writeStickerPose(node, { x: 0.5, y: 0.5, scale: 0.2, rotation: 45 });
-
-    expect(mark.style.transform).toBe('rotate(-45deg)');
   });
 });
