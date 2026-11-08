@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mergeAutoLabel } from '../routes/trainingFlow';
 import {
   buildTagExcluder,
@@ -56,5 +56,24 @@ describe('auto-label exclusion', () => {
     expect(real.character.has('hatsune miku')).toBe(true);
     expect(real.source.has('vocaloid')).toBe(true);
     expect(real.character.has('1girl') || real.source.has('1girl')).toBe(false);
+  });
+});
+
+describe('loadTagCategories', () => {
+  afterEach(() => {
+    vi.doUnmock('./data/tag-categories.json');
+    vi.resetModules();
+  });
+
+  it('retries after a failed chunk load instead of caching the failure', async () => {
+    vi.resetModules();
+    vi.doMock('./data/tag-categories.json', () => {
+      throw new Error('chunk load failed');
+    });
+    const { loadTagCategories: load } = await import('./autolabel-exclude');
+    await expect(load()).rejects.toThrow();
+    vi.doUnmock('./data/tag-categories.json');
+    const cats = await load();
+    expect(cats.character.has('hatsune miku')).toBe(true);
   });
 });

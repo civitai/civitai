@@ -1,12 +1,9 @@
-// Which tagger tags auto-label never applies. Three sources, matched differently:
-// - JUNK_TAGS and the Character / Source-material category lists match exactly (case and `_`/space
-//   folded). They are long lists nobody reads, so a fuzzy match there would drop tags no one chose.
-// - Entries the creator types into "Never apply" also drop longer tags that start with their words,
-//   with a trailing-s fold, so "boyshorts" catches "boyshort panties".
+// JUNK_TAGS and the category lists match exactly (case and _/space folded); entries typed into
+// "Never apply" also drop longer tags starting with their words (trailing-s folded), so "boyshorts"
+// catches "boyshort panties".
 
-/** Pre-filled into "Never apply" as removable chips. Quality tags are applied at random and mean
- *  nothing at dataset size (lowres misfires on crops); provenance tags are the creator's to apply.
- *  third-party edit/source aren't in the tagger's vocabulary today; listed in case a mapping adds them. */
+/** Pre-filled into "Never apply" as removable chips: quality and provenance tags the creator should
+ *  choose for themselves. */
 export const JUNK_TAGS: readonly string[] = [
   'lowres',
   'worst quality',
@@ -33,7 +30,7 @@ export interface TagCategories {
 export interface ExcludeOptions {
   /** The "Never apply" list: JUNK_TAGS entries left in it plus whatever the creator typed. */
   never: readonly string[];
-  /** Null until loadTagCategories resolves; the switches then have nothing to match. */
+  /** Null until loadTagCategories resolves, or if it failed; the switches then have nothing to match. */
   categories: TagCategories | null;
   excludeCharacter: boolean;
   excludeSource: boolean;

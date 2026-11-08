@@ -613,10 +613,13 @@
     labelController = controller;
     try {
       while (unlabeled.length > 0) {
+        // Load before claiming: an await between startLabelPass and runAutoLabel lets a mode switch
+        // abort a pass that still submits, while the replacement drain submits the same images.
+        await ensureTagCategories();
+        if (controller.signal.aborted) return;
         const targets = unlabeled;
         const { byKey, items } = startLabelPass(targets);
         labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
-        await ensureTagCategories();
         // A result that resolves between abort and delivery must be dropped — post-switch it
         // would write an OLD-mode label into a freshly reset tile and mark it done.
         const sent = await runAutoLabel(
@@ -681,14 +684,16 @@
     const controller = new AbortController();
     labelController = controller;
     labelAllNotice = null;
-    const targets = labelAllTargets;
     const position: LabelPosition = labelAllPolicy === 'skip' ? 'after' : labelAllPolicy;
-    const { byKey, items } = startLabelPass(targets);
-    labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
+    let targets: Img[] = [];
     let failed = 0;
     let reason: string | undefined;
     try {
-      await ensureTagCategories();
+      await ensureTagCategories(); // before claiming, as in ensureLabeling
+      if (controller.signal.aborted) return;
+      targets = labelAllTargets;
+      const { byKey, items } = startLabelPass(targets);
+      labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
       await runAutoLabel(
         labelAllEngine,
         media,

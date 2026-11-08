@@ -58,8 +58,7 @@
   let labelMode = $state<LabelType>('tag');
   // Auto-label behavior, owned here like labelMode/trigger so it survives Back/Continue:
   // 'auto' labels each upload batch as it settles (the historical behavior); 'manual' waits for the
-  // explicit Auto-label button. `excludeTags` are never applied by auto-label results (tag mode);
-  // they start as the junk list, and the two switches drop the tagger's character / source-material tags.
+  // explicit Auto-label button. `excludeTags` are never applied by auto-label results (tag mode).
   let autoLabel = $state<'auto' | 'manual'>('auto');
   let excludeTags = $state<string[]>([...JUNK_TAGS]);
   let excludeCharacter = $state(true);
