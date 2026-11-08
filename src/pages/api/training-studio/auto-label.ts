@@ -36,7 +36,9 @@ export default AuthedEndpoint(
   async (req, res, user) => {
     if (!(await allowTrainingStudio(req, res, user, { pageFlag: false }))) return;
     if (!(await isStandaloneStudioAllowed(user)))
-      return res.status(403).json({ error: 'Training Studio is not available on this account' });
+      return res
+        .status(403)
+        .json({ error: "Auto-labeling isn't available on this account right now." });
     res.setHeader('Cache-Control', 'no-store');
 
     try {

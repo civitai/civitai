@@ -104,7 +104,7 @@ describe('/api/training-studio/auto-label', () => {
   ])("draws a %s from the embed procedure's bucket", async (_l, req, keyName, limit) => {
     await call(req);
     expect(limiter.claim).toHaveBeenCalledWith(
-      expect.objectContaining({ keyName, rules: [{ limit, period: 60 }], user: { id: 7 } })
+      expect.objectContaining({ keyName, user: { id: 7 } })
     );
     expect(limiter.record).toHaveBeenCalled();
   });

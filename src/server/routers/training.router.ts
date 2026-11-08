@@ -170,13 +170,21 @@ export const trainingRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(studioAutoLabelSubmitSchema)
     .use(isFlagProtected('trainingStudioUi'))
-    .use(rateLimit(STUDIO_AUTO_LABEL_RATE_LIMITS.submit.rules))
+    .use(
+      rateLimit(STUDIO_AUTO_LABEL_RATE_LIMITS.submit.rules, undefined, {
+        sharedKey: STUDIO_AUTO_LABEL_RATE_LIMITS.submit.key,
+      })
+    )
     .mutation(({ input, ctx }) => submitStudioAutoLabel({ ...input, userId: ctx.user.id })),
   studioAutoLabelPoll: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(studioAutoLabelPollSchema)
     .use(isFlagProtected('trainingStudioUi'))
-    .use(rateLimit(STUDIO_AUTO_LABEL_RATE_LIMITS.poll.rules))
+    .use(
+      rateLimit(STUDIO_AUTO_LABEL_RATE_LIMITS.poll.rules, undefined, {
+        sharedKey: STUDIO_AUTO_LABEL_RATE_LIMITS.poll.key,
+      })
+    )
     .query(({ input, ctx }) => pollStudioAutoLabel({ ...input, userId: ctx.user.id })),
   getStatus: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })

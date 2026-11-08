@@ -16,10 +16,11 @@ vi.mock('~/server/services/feature-flags.service', () => ({
   computeUserFeatureFlagsOverlay: h.overlay,
   getFliptGatedEligibility: vi.fn(() => ({})),
 }));
-const flipt = vi.hoisted(() => ({ isFlipt: vi.fn(async () => false) }));
+const flipt = vi.hoisted(() => ({ isFliptSync: vi.fn((): boolean | null => false) }));
 vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: { TRAINING_STUDIO: 'trainingStudio' },
-  isFlipt: flipt.isFlipt,
+  ensureFliptInitialized: vi.fn(async () => undefined),
+  isFliptSync: flipt.isFliptSync,
 }));
 vi.mock('~/server/services/user.service', () => ({
   getUserSettings: vi.fn(async () => ({ features: {} })),
@@ -103,20 +104,26 @@ describe('allowTrainingStudio', () => {
 });
 
 describe('isStandaloneStudioAllowed', () => {
-  beforeEach(() => flipt.isFlipt.mockReset().mockResolvedValue(false));
+  beforeEach(() => flipt.isFliptSync.mockReset().mockReturnValue(false));
 
   it("follows the standalone Studio's beta flag, evaluated with the user's context", async () => {
     expect(await isStandaloneStudioAllowed(user({ id: 5, tier: 'gold' }))).toBe(false);
-    flipt.isFlipt.mockResolvedValue(true);
+    flipt.isFliptSync.mockReturnValue(true);
     expect(await isStandaloneStudioAllowed(user({ id: 5, tier: 'gold' }))).toBe(true);
-    expect(flipt.isFlipt).toHaveBeenCalledWith(
+    expect(flipt.isFliptSync).toHaveBeenCalledWith(
       'trainingStudio',
       '5',
       expect.objectContaining({ userId: '5', tier: 'gold' })
     );
   });
 
-  it('lets moderators in without the flag, as the standalone Studio does', async () => {
+  it('lets the segment refuse a moderator when the flag exists', async () => {
+    expect(await isStandaloneStudioAllowed(user({ isModerator: true }))).toBe(false);
+  });
+
+  it('falls back to moderators only when the flag cannot be evaluated', async () => {
+    flipt.isFliptSync.mockReturnValue(null);
     expect(await isStandaloneStudioAllowed(user({ isModerator: true }))).toBe(true);
+    expect(await isStandaloneStudioAllowed(user())).toBe(false);
   });
 });

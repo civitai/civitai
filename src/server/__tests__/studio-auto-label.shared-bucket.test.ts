@@ -48,15 +48,17 @@ import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
 const user = { id: 7, isModerator: false } as never;
 const req = { headers: {}, socket: { remoteAddress: '10.0.0.1' } } as unknown as NextApiRequest;
 
-// The procedures in training.router.ts, which rate-limit with STUDIO_AUTO_LABEL_RATE_LIMITS' rules
-// under their default key (the tRPC path).
+// The procedures in training.router.ts rate-limit with STUDIO_AUTO_LABEL_RATE_LIMITS (rules and
+// sharedKey); that wiring is not tested here. Their paths: the bucket key they had before.
 const PROCEDURE_PATHS = {
   submit: 'training.studioAutoLabelSubmit',
   poll: 'training.studioAutoLabelPoll',
 } as const;
 
 async function procedureAttempt(which: keyof typeof PROCEDURE_PATHS) {
-  rateLimit(STUDIO_AUTO_LABEL_RATE_LIMITS[which].rules);
+  rateLimit(STUDIO_AUTO_LABEL_RATE_LIMITS[which].rules, undefined, {
+    sharedKey: STUDIO_AUTO_LABEL_RATE_LIMITS[which].key,
+  });
   await captured.handler!({
     ctx: { user, req },
     input: {},
@@ -86,6 +88,7 @@ describe("the standalone auto-label endpoint shares the embed procedures' bucket
     const embed = await procedureAttempt(which);
     const standalone = await endpointAttempt(which);
     expect(standalone).toEqual(embed);
+    expect(embed.cacheKey).toContain(PROCEDURE_PATHS[which].replace('.', ':'));
     // Positive control: the harness can tell two buckets apart.
     expect(await endpointAttempt(which === 'submit' ? 'poll' : 'submit')).not.toEqual(embed);
   });

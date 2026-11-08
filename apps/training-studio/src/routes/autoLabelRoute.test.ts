@@ -119,7 +119,29 @@ describe('standalone auto-label routes', () => {
 
   it('refuses a poll from the dev-login preview without calling out', async () => {
     const fetch = answer(200, { done: true, results: [] });
-    expect(await poll('wf-1', { devPreview: true })).toMatchObject({ status: 503 });
+    const err = await poll('wf-1', { devPreview: true });
+    expect(err.status).toBe(503);
+    expect(err.body.code).toBeUndefined();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a main-app 5xx', () => answer(500, { message: 'boom' })],
+    ['a 2xx without results', () => answer(200, { done: true })],
+  ])('answers a poll that gets %s as a 502', async (_l, arrange) => {
+    arrange();
+    expect(await poll()).toMatchObject({ status: 502 });
+  });
+
+  it('refuses a submit body without items, without calling out', async () => {
+    const fetch = answer(200, { workflowId: 'wf-1' });
+    const request = new Request('https://training.civitai.com/api/auto-label', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'tag', media: 'image' }),
+    });
+    const err = await Promise.resolve(POST({ locals: locals(), request } as never)).catch((e) => e);
+    expect(err.status).toBe(400);
     expect(fetch).not.toHaveBeenCalled();
   });
 });

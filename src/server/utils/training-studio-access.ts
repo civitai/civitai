@@ -1,7 +1,7 @@
 import { buildFliptContext } from '@civitai/flipt/context';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { OnboardingSteps } from '~/server/common/enums';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { ensureFliptInitialized, FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import {
   computeUserFeatureFlagsOverlay,
@@ -58,13 +58,23 @@ export async function allowTrainingStudio(
 }
 
 /**
- * Whether this user is in the standalone Training Studio's closed beta, as that app decides it: the
- * Flipt segment when the flag exists, moderators otherwise. For main-app endpoints only the standalone
+ * Whether this user is in the standalone Training Studio's closed beta, decided as that app decides it
+ * (apps/training-studio/src/lib/server/flipt.ts): the Flipt segment when the flag can be evaluated,
+ * moderators otherwise. For main-app endpoints only the standalone
  * Studio calls, which a session could otherwise reach directly.
  */
 export async function isStandaloneStudioAllowed(user: SessionUser): Promise<boolean> {
-  if (user.isModerator) return true;
-  return isFlipt(FLIPT_FEATURE_FLAGS.TRAINING_STUDIO, String(user.id), buildFliptContext(user));
+  try {
+    await ensureFliptInitialized();
+    const evaluated = isFliptSync(
+      FLIPT_FEATURE_FLAGS.TRAINING_STUDIO,
+      String(user.id),
+      buildFliptContext(user)
+    );
+    return evaluated ?? user.isModerator === true;
+  } catch {
+    return user.isModerator === true;
+  }
 }
 
 function refuse(res: NextApiResponse, status: number, body: { error: string }): false {
