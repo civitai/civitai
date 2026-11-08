@@ -236,7 +236,11 @@ export type PlaceTurfStickerInput = {
   source?: 'feed' | 'image-detail';
 };
 
-export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new Date()) {
+export async function placeTurfSticker(
+  input: PlaceTurfStickerInput,
+  now = new Date(),
+  { reactionEarnsMs = REACTION_EARNS_MS } = {}
+) {
   const event = await getTurfEvent(input.event, now);
   if (!event || !isRunning(event, now)) throw throwBadRequestError("Turf isn't open right now");
   const { userId, imageId } = input;
@@ -339,7 +343,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   // already made, so the whole answer is raced against one deadline.
   const reactionEarns = await withSysReadDeadline(
     reactionPaysTeam(event, imageId, userId, team, synced),
-    REACTION_EARNS_MS
+    reactionEarnsMs
   ).catch((error) => {
     void logToAxiom({ type: 'error', name: 'event-turf', fn: 'reactionPaysTeam', error }).catch(
       () => undefined

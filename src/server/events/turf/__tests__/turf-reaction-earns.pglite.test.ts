@@ -163,7 +163,7 @@ async function image(earlier: [userId: number, team: string][] = []) {
   return id;
 }
 
-const place = async (imageId: number) =>
+const place = async (imageId: number, reactionEarnsMs = 30_000) =>
   placeTurfSticker(
     {
       event: 'e',
@@ -172,7 +172,9 @@ const place = async (imageId: number) =>
       cosmeticId: 11,
       data: { x: 0.5, y: 0.5, scale: 1, rotation: 0, flip: false },
     },
-    NOW
+    NOW,
+    // Real time on a loaded runner: the sync's first Lua eval alone can take over a second.
+    { reactionEarnsMs }
   );
 
 describe('placing answers whether a reaction there would pay your team', () => {
@@ -232,9 +234,10 @@ describe('placing answers whether a reaction there would pay your team', () => {
     redisMock.sysRedis.hGet.mockImplementationOnce((() => new Promise(() => undefined)) as never);
     const id = await image([[TEAMMATE, 'Blue']]);
     const waited = new Promise((resolve) =>
-      setTimeout(() => resolve('placement still waiting'), REACTION_EARNS_MS + 1_000)
+      setTimeout(() => resolve('placement still waiting'), REACTION_EARNS_MS + 8_000)
     );
-    expect(await Promise.race([place(id), waited])).toEqual({ reactionEarns: false });
+    const placed = place(id, REACTION_EARNS_MS);
+    expect(await Promise.race([placed, waited])).toEqual({ reactionEarns: false });
   });
 
   it('a failed read costs only the nudge: the sticker is still placed', async () => {
