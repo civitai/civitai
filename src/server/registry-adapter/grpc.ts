@@ -1,11 +1,15 @@
 /**
- * The gRPC binding of the source protocol (spec/registry.md @ 4166f34, "Bindings" → "gRPC"):
+ * The gRPC binding of the source protocol (spec/registry.md @ 2709083, "Bindings" → "gRPC"):
  * `service Source { rpc Subscribe(SubscribeRequest) returns (stream Event); }`, with the spec's
  * messages verbatim ({@link SOURCE_PROTO}). The subscription itself is the shared core
  * (`subscription.ts`), as for HTTP; this file maps the request in and events and errors out.
  *
  *   - The spec's proto block declares no `package`, so the method is `/Source/Subscribe`, the
  *     path a stub generated from that block calls.
+ *   - `Entity.body` is the body's JSON text as UTF-8 bytes, the text the HTTP binding sends for
+ *     it ({@link jsonBytes}), so a relay can pass it on byte for byte. `Entity.meta` and
+ *     `Event.meta` are bytes too (a JSON object; empty is none): this source sets no `meta`, so it
+ *     sends them empty, which is absent on the wire.
  *   - An error is its gRPC status (spec "Errors") with a `google.rpc.ErrorInfo` whose `reason` is
  *     the error's name, and no `domain` (the spec defines none), in `grpc-status-details-bin`.
  *   - An idle stream is kept open by HTTP/2 pings ({@link GRPC_KEEPALIVE_MS}).
@@ -48,10 +52,9 @@ import {
   drained,
 } from '~/server/registry-adapter/subscription';
 
-/** The spec's proto block, unchanged but for the `syntax` and `import` lines it needs to parse. */
+/** The spec's proto block, unchanged but for the `syntax` line it needs to parse. */
 export const SOURCE_PROTO = `
 syntax = "proto3";
-import "google/protobuf/struct.proto";
 
 service Source {
   rpc Subscribe(SubscribeRequest) returns (stream Event);
@@ -68,8 +71,8 @@ message Entity {
   string urn = 1;
   repeated string schemas = 2;
   string rev = 3;
-  google.protobuf.Value body = 4;
-  google.protobuf.Struct meta = 5;
+  bytes body = 4;             // the JSON value, as UTF-8
+  bytes meta = 5;             // a JSON object, as UTF-8; empty: none
 }
 
 message Event {
@@ -80,7 +83,7 @@ message Event {
     End end = 4;
     Progress progress = 6;
   }
-  google.protobuf.Struct meta = 5;
+  bytes meta = 5;             // a JSON object, as UTF-8; empty: none
 }
 
 message Upsert   { Entity entity = 1; string cursor = 2; }
@@ -127,7 +130,7 @@ export const GRPC_STATUS: Record<ErrorCode, grpc.status> = {
 
 function loadTypes() {
   const root = new protobuf.Root();
-  for (const file of ['google/protobuf/struct.proto', 'google/protobuf/any.proto']) {
+  for (const file of ['google/protobuf/any.proto']) {
     const json = protobuf.common.get(file);
     if (!json?.nested) throw new Error(`registry-adapter: protobufjs has no ${file}`);
     root.addJSON(json.nested);
@@ -145,44 +148,19 @@ function loadTypes() {
 const types = loadTypes();
 
 /**
- * A `google.protobuf.Value` as protobufjs takes and gives it. Its built-in well-known types name
- * their fields in camelCase whatever `keepCase` says (only the field numbers reach the wire).
+ * A body as `Entity.body` carries it: its JSON text, UTF-8. `JSON.stringify`'s, the same text the
+ * HTTP binding sends for it (`serve.ts`), so what JSON cannot hold (a non-finite number, an
+ * `undefined` property) is dropped or `null` alike on both bindings. A body with no JSON at all
+ * (`undefined`) is `null`.
  */
-type PbValue = {
-  nullValue?: number;
-  numberValue?: number;
-  stringValue?: string;
-  boolValue?: boolean;
-  structValue?: { fields?: Record<string, PbValue> };
-  listValue?: { values?: PbValue[] };
-};
-
-/** JSON as a `google.protobuf.Value`, with `JSON.stringify`'s rules for what JSON cannot hold. */
-export function toValue(v: unknown): PbValue {
-  if (typeof v === 'string') return { stringValue: v };
-  if (typeof v === 'boolean') return { boolValue: v };
-  if (typeof v === 'number') return Number.isFinite(v) ? { numberValue: v } : { nullValue: 0 };
-  if (Array.isArray(v)) return { listValue: { values: v.map(toValue) } };
-  if (v !== null && typeof v === 'object') {
-    const fields: Record<string, PbValue> = {};
-    for (const [k, x] of Object.entries(v)) if (x !== undefined) fields[k] = toValue(x);
-    return { structValue: { fields } };
-  }
-  return { nullValue: 0 };
+export function jsonBytes(body: unknown): Buffer {
+  return Buffer.from(JSON.stringify(body) ?? 'null', 'utf8');
 }
 
-export function fromValue(v: PbValue | undefined): unknown {
-  if (!v) return null;
-  if (v.stringValue !== undefined) return v.stringValue;
-  if (v.boolValue !== undefined) return v.boolValue;
-  if (v.numberValue !== undefined) return v.numberValue;
-  if (v.listValue !== undefined) return (v.listValue.values ?? []).map(fromValue);
-  if (v.structValue !== undefined) {
-    return Object.fromEntries(
-      Object.entries(v.structValue.fields ?? {}).map(([k, x]) => [k, fromValue(x)])
-    );
-  }
-  return null;
+/** `Entity.body` as a consumer reads it: the JSON value its bytes hold; `null` when empty. */
+export function fromJsonBytes(bytes: Uint8Array | undefined): unknown {
+  if (!bytes || bytes.length === 0) return null;
+  return JSON.parse(Buffer.from(bytes).toString('utf8'));
 }
 
 /** The wire form of one event. */
@@ -196,7 +174,7 @@ export function encodeEvent(e: StreamEvent): Buffer {
             urn: e.entity.urn,
             schemas: e.entity.schemas,
             rev: e.entity.rev,
-            body: toValue(e.entity.body),
+            body: jsonBytes(e.entity.body),
           },
           cursor: e.cursor,
         },
@@ -221,7 +199,7 @@ export function encodeEvent(e: StreamEvent): Buffer {
 type WireEvent = {
   kind?: 'upsert' | 'delete' | 'live' | 'end' | 'progress';
   upsert?: {
-    entity?: { urn?: string; schemas?: string[]; rev?: string; body?: PbValue };
+    entity?: { urn?: string; schemas?: string[]; rev?: string; body?: Uint8Array };
     cursor?: string;
   };
   delete?: { urn?: string; cursor?: string };
@@ -244,7 +222,7 @@ export function decodeEvent(buf: Uint8Array): StreamEvent | null {
           urn: entity.urn ?? '',
           schemas: entity.schemas ?? [],
           rev: entity.rev ?? '',
-          body: fromValue(entity.body),
+          body: fromJsonBytes(entity.body),
         },
         cursor: w.upsert?.cursor ?? '',
       };
