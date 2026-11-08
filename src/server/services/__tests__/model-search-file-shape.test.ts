@@ -142,3 +142,37 @@ describe('runModelSearch (GET /api/v1/models) — per-file wire shape', () => {
     }
   });
 });
+
+describe('runModelSearch (GET /api/v1/models) — a Public training dataset', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const item = shapedItem();
+    item.modelVersions[0].files = [
+      ...FILES,
+      {
+        ...FILES[0],
+        id: 15,
+        type: 'Training Data',
+        sizeKB: 6666,
+        hashes: [],
+        metadata: {
+          ownRights: true,
+          shareDataset: true,
+          trainingResults: { version: 2, epochs: [{ epochNumber: 1 }] },
+        },
+      } as any,
+    ];
+    mockGetModelsWithVersions.mockResolvedValue({ items: [item], nextCursor: undefined });
+  });
+
+  it('is listed without its metadata', async () => {
+    const file = (await run()).find((f) => f.id === 15);
+    expect(file).toBeDefined();
+    expect(file.metadata ?? {}).toEqual({});
+  });
+
+  it('a model file beside it keeps its metadata', async () => {
+    const file = (await run()).find((f) => f.id === 11);
+    expect(file.metadata).toEqual({ format: 'SafeTensor', size: 'pruned', fp: 'fp16' });
+  });
+});
