@@ -44,6 +44,7 @@ import {
   ecosystemAllowsCustomBase,
   ecosystemTakesSampleImages,
   ecosystemTrainsPairs,
+  findByAir,
   isRetiredBaseAir,
   isRetiredEcosystem,
 } from '$lib/data/trainingModels';
@@ -702,11 +703,16 @@ async function buildContinuation(
     throw new Error('keep training: source run has no ecosystem to reference the checkpoint by');
   if (isRetiredEcosystem(ecosystem))
     throw new Error('keep training: this model is no longer offered for training');
+  // The source's `model` is its custom base when it trained one (`customModel || model` at submit).
+  const sourceModel = typeof input.model === 'string' ? input.model : undefined;
+  const sourceIsCatalog = !!sourceModel && !!findByAir(sourceModel);
   const unavailable = unavailableRunMessage(
     {
       ecosystem,
       modelVariant: typeof input.modelVariant === 'string' ? input.modelVariant : undefined,
-      model: typeof input.model === 'string' ? input.model : undefined,
+      version: typeof input.version === 'string' ? input.version : undefined,
+      model: sourceIsCatalog ? sourceModel : undefined,
+      customModel: sourceIsCatalog ? undefined : sourceModel,
     },
     status
   );

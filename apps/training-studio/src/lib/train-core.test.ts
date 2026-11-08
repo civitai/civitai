@@ -926,3 +926,40 @@ describe('a model that is down', () => {
     expect(submitWorkflow).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('keep-training a custom-base run while a sibling model is down', () => {
+  const customAir = 'urn:air:sdxl:checkpoint:civitai:12345@67890';
+  const source = {
+    data: {
+      steps: [
+        {
+          $type: 'training',
+          input: {
+            engine: 'ai-toolkit',
+            ecosystem: 'sdxl',
+            epochs: 10,
+            steps: 2000,
+            model: customAir,
+          },
+          output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+        },
+      ],
+    },
+  };
+  const opts = { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 };
+
+  it('is not refused for one blocked sibling in the ecosystem', async () => {
+    getWorkflow.mockResolvedValue(source);
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+    const status = parseServiceStatus({ blockedModels: ['pony'] });
+    await expect(continueTraining(client, opts, { checkText, status })).resolves.toBe('wf-next');
+  });
+
+  it('is refused when its custom base itself is blocked', async () => {
+    getWorkflow.mockResolvedValue(source);
+    const status = parseServiceStatus({ blockedModels: [customAir] });
+    await expect(continueTraining(client, opts, { checkText, status })).rejects.toThrow(
+      'This custom model is blocked from training. Pick another.'
+    );
+  });
+});

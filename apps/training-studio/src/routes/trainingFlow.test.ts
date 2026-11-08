@@ -587,3 +587,26 @@ describe('a model that is down', () => {
     expect(blockedSelectionMessage([newRun(krea2, on)], parseServiceStatus(null))).toBeNull();
   });
 });
+
+describe('a model that is down, in a shared ecosystem or a multi-version card', () => {
+  const illustrious = cardByType('illustrious')!;
+  const klein = cardByType('flux2klein')!;
+  const on = new Set([klein.flagKey!]);
+
+  it('does not block a custom base picked under a sibling that is up', () => {
+    const status = parseServiceStatus({ blockedModels: ['pony'] });
+    const custom = { ...newRun(illustrious, on), versionKey: CUSTOM_VERSION_KEY };
+    const run = { ...custom, customAir: 'urn:air:sdxl:checkpoint:civitai:1@2' };
+    expect(blockedSelectionMessage([run], status)).toBeNull();
+    expect(
+      blockedSelectionMessage([run], parseServiceStatus({ blockedModels: ['illustrious'] }))
+    ).toMatch(/^Illustrious is temporarily unavailable/);
+  });
+
+  it('starts a partly-down card on a version that is up', () => {
+    const status = parseServiceStatus({ blockedModels: ['flux2klein_9b'] });
+    expect(cardUnavailability(klein, on, status)).toBeNull();
+    expect(newRun(klein, on, status).versionKey).toBe('flux2klein_4b');
+    expect(newRun(klein, on).versionKey).toBe('flux2klein_9b');
+  });
+});

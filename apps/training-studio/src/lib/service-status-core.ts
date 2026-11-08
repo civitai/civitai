@@ -64,15 +64,17 @@ export function blockedRunMessage(
 ): string | null {
   if (!status) return null;
   if (run.customModel && status.blockedModels.includes(run.customModel))
-    return 'This custom model has been blocked from training. Please pick another one.';
-  for (const { card, version } of versionsForRun(run)) {
-    const down = modelUnavailability(status, version.key);
-    if (down)
-      return `${card.name} is ${UNAVAILABLE_LABEL.toLowerCase()} for training.${
-        down.reason ? ` ${down.reason}` : ''
-      }`;
-  }
-  return null;
+    return 'This custom model is blocked from training. Pick another.';
+  // A run with no catalog AIR matches every version on its ecosystem (a keep-training source that
+  // trained a custom base, say); it is refused only when all of them are down, so one blocked sibling
+  // in a shared ecosystem (sdxl: SDXL, Illustrious, Pony) does not block the rest.
+  const matches = versionsForRun(run);
+  const downs = matches.map(({ version }) => modelUnavailability(status, version.key));
+  if (matches.length === 0 || downs.some((d) => d === null)) return null;
+  const reason = downs[0]!.reason;
+  return `${matches[0]!.card.name} is ${UNAVAILABLE_LABEL.toLowerCase()} for training.${
+    reason ? ` ${reason}` : ''
+  }`;
 }
 
 export type MessageSegment =
