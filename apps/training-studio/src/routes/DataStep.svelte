@@ -25,6 +25,7 @@
     IconBoltFilled,
     IconLayoutGrid,
     IconLayoutList,
+    IconLayoutRows,
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
@@ -685,16 +686,20 @@
     );
   }
 
+  // 'large' is one uncropped image per row with its editor beside it, for hand-labeling image by image.
+  type LabelView = 'grid' | 'inline' | 'large';
   const LABEL_VIEW_KEY = 'ts-label-view';
-  function storedLabelView(): 'grid' | 'inline' {
+  function storedLabelView(): LabelView {
     try {
-      return browser && localStorage.getItem(LABEL_VIEW_KEY) === 'inline' ? 'inline' : 'grid';
+      const v = browser ? localStorage.getItem(LABEL_VIEW_KEY) : null;
+      return v === 'inline' || v === 'large' ? v : 'grid';
     } catch {
       return 'grid';
     }
   }
   let labelView = $state(storedLabelView());
-  function setLabelView(next: 'grid' | 'inline') {
+  const editsOnCard = $derived(labelView !== 'grid');
+  function setLabelView(next: LabelView) {
     labelView = next;
     try {
       localStorage.setItem(LABEL_VIEW_KEY, next);
@@ -1177,7 +1182,7 @@
               type="single"
               value={labelView}
               onValueChange={(v) => {
-                if (v === 'grid' || v === 'inline') setLabelView(v);
+                if (v === 'grid' || v === 'inline' || v === 'large') setLabelView(v);
               }}
               variant="outline"
               size="sm"
@@ -1187,6 +1192,9 @@
               </ToggleGroupItem>
               <ToggleGroupItem value="inline" aria-label="Edit labels on the cards" title="Edit labels right on each card">
                 <IconLayoutList size={14} stroke={2} class="mr-1 inline" />Edit inline
+              </ToggleGroupItem>
+              <ToggleGroupItem value="large" aria-label="One large image per row" title="One large, uncropped image per row, with its label beside it">
+                <IconLayoutRows size={14} stroke={2} class="mr-1 inline" />Large
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
@@ -1227,13 +1235,23 @@
         {/if}
 
         <div
-          class="grid gap-3 {labelView === 'inline'
-            ? 'grid-cols-[repeat(auto-fill,minmax(220px,1fr))]'
-            : 'grid-cols-[repeat(auto-fill,minmax(140px,1fr))]'}"
+          class="grid gap-3 {labelView === 'large'
+            ? 'grid-cols-1'
+            : labelView === 'inline'
+              ? 'grid-cols-[repeat(auto-fill,minmax(220px,1fr))]'
+              : 'grid-cols-[repeat(auto-fill,minmax(140px,1fr))]'}"
         >
           {#each shownImages as img (img.id)}
-            <div class="overflow-hidden rounded-md border border-dark-4 bg-dark-6">
-              <div class="relative aspect-square bg-dark-7">
+            <div
+              class="overflow-hidden rounded-md border border-dark-4 bg-dark-6 {labelView === 'large'
+                ? 'md:grid md:grid-cols-[3fr_2fr]'
+                : ''}"
+            >
+              <div
+                class="relative bg-dark-7 {labelView === 'large'
+                  ? 'grid min-h-48 place-items-center'
+                  : 'aspect-square'}"
+              >
                 {#if !img.previewUrl}
                   <!-- Reused-blob preview still hydrating (or unavailable) — the air still trains. -->
                   <div class="flex h-full flex-col items-center justify-center gap-2 p-2.5 text-center">
@@ -1247,7 +1265,16 @@
                     </span>
                   </div>
                 {:else if img.mediaType === 'image'}
-                  <img src={img.previewUrl} alt={img.name} class="h-full w-full object-cover" />
+                  <!-- Lazy: a few hundred full-width images must not all decode at once in the large view. -->
+                  <img
+                    src={img.previewUrl}
+                    alt={img.name}
+                    loading="lazy"
+                    decoding="async"
+                    class={labelView === 'large'
+                      ? 'max-h-[75dvh] w-full object-contain'
+                      : 'h-full w-full object-cover'}
+                  />
                 {:else if img.mediaType === 'video'}
                   <video
                     src={img.previewUrl}
@@ -1257,7 +1284,9 @@
                     preload="metadata"
                     onmouseenter={playOnHover}
                     onmouseleave={resetOnLeave}
-                    class="h-full w-full object-cover"
+                    class={labelView === 'large'
+                      ? 'max-h-[75dvh] w-full object-contain'
+                      : 'h-full w-full object-cover'}
                   ></video>
                 {:else}
                   <div class="flex h-full flex-col items-center justify-center gap-2 p-2.5 text-center">
@@ -1321,7 +1350,7 @@
 
               <div
                 class="min-h-[44px] p-2.5"
-                onfocusin={labelView === 'inline'
+                onfocusin={editsOnCard
                   ? () => {
                       keepInView(img.id);
                       inlineFocusId = img.id;
@@ -1344,7 +1373,7 @@
                   <div class="flex items-center justify-center gap-1 font-mono text-xs text-primary">
                     <IconSparkles size={12} stroke={2} /> labeling…
                   </div>
-                {:else if labelView === 'inline'}
+                {:else if editsOnCard}
                   {#if img.labelError}
                     <div class="mb-1 font-mono text-xs leading-tight text-red-300">{img.labelError}</div>
                   {/if}
@@ -1354,12 +1383,12 @@
                       onchange={(tags) => patch(img.id, { tags })}
                       name={img.name}
                       {trigger}
-                      compact
+                      compact={labelView === 'inline'}
                     />
                   {:else}
                     <Textarea
                       bind:value={img.caption}
-                      rows={4}
+                      rows={labelView === 'large' ? 8 : 4}
                       placeholder="Describe the image…"
                       aria-label={`Caption for ${img.name}`}
                       class="min-h-24 resize-y text-sm leading-snug"
