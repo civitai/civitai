@@ -54,6 +54,10 @@ keeps it internal. It never goes into the PR body.
 hq pr-review watch civitai/civitai#<n>          # in the background; --head <sha> for one push; MCP: pr_review_watch
 ```
 
+With the HQ MCP, call `pr_review_watch`. It does not run in the background: it waits a bounded
+time and answers with an `outcome`. If the outcome is `intent_needed`, record the intent (step 1)
+and call it again. Whenever its `next` says to call again, do so.
+
 It waits for the newest round to finish and prints it with its blocking findings. Exit `10` means
 the round has blocking findings. Exit `11` means watch again: you usually pushed while the round
 ran, and the new head gets its own round. A mail about the round from HQ (sender `hq/pr-review`)

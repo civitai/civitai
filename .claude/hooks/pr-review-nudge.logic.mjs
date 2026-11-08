@@ -275,8 +275,9 @@ export function nudge({ action, pr, draft }) {
     `\`hq pr-review why set ${ref} --intent "<what was asked, and why>"\`; with the HQ MCP tools, ` +
     `\`pr_review_why_set\`. The intent is internal: never put it in the PR body or a GitHub comment.`;
   const wait =
-    `wait for the round in the background with \`hq pr-review watch ${ref}\` or the HQ MCP tool ` +
-    `\`pr_review_watch\`, then work the round as the skill says.`;
+    `wait for the round: run \`hq pr-review watch ${ref}\` in the background, or call the HQ MCP ` +
+    `tool \`pr_review_watch\` and do what its \`next\` says until it returns the round. Then work ` +
+    `the round as the skill says.`;
   if (action === 'create' && draft) {
     return (
       `${ref} was opened as a draft. The hosted review (the \`pr-review\` check) skips drafts, so it ` +
