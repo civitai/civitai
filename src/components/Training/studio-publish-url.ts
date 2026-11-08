@@ -1,6 +1,5 @@
 /** The publish entry the embedded Training Studio links to: the same query the studio's own shell
- *  builds (apps/training-studio/src/lib/publish-url-core.ts). Sharing is sent only with the
- *  rights. */
+ *  builds (apps/training-studio/src/lib/publish-url-core.ts). */
 export function studioPublishUrl({
   workflowId,
   epoch,

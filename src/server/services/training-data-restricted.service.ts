@@ -174,18 +174,22 @@ const VISIBILITY_RANK: Record<ModelFileVisibility, number> = {
 };
 
 /**
- * Whether `modelVersionId` has a Training Studio dataset row. Any other `Training Data` file on that
- * version stays Private for everyone but moderators, so a second upload can't share what the Studio
- * rules keep unshared.
+ * Whether `modelVersionId` is a Training Studio version: it has a Studio dataset row, or its model
+ * was published from Studio (a server-owned meta key, so deleting the row does not change the
+ * answer). Any other `Training Data` file on that version stays Private for everyone but
+ * moderators, so a second upload can't share what the Studio rules keep unshared.
  */
 export async function versionHasStudioDataset(
   db: Pick<Prisma.TransactionClient, '$queryRaw'>,
   modelVersionId: number
 ): Promise<boolean> {
   const rows = await db.$queryRaw<{ id: number }[]>`
-    SELECT id FROM "ModelFile"
-    WHERE "modelVersionId" = ${modelVersionId} AND type = 'Training Data'
-      AND metadata ? 'selectedEpochUrl'
+    SELECT mf.id FROM "ModelFile" mf
+    WHERE mf."modelVersionId" = ${modelVersionId} AND mf.type = 'Training Data'
+      AND mf.metadata ? 'selectedEpochUrl'
+    UNION ALL
+    SELECT mv.id FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mv.id = ${modelVersionId} AND m.meta ? 'trainingStudioWorkflowId'
     LIMIT 1
   `;
   return rows.length > 0;

@@ -10,7 +10,6 @@ export type PublishQueryInput = {
   shareDataset?: boolean;
 };
 
-/** Sharing is sent only with the rights. */
 export function publishSearchParams({
   workflowId,
   epoch,

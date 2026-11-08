@@ -6,6 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import {
   trainingDataListing,
   trainingDataShareRestricted,
+  versionHasStudioDataset,
 } from '~/server/services/training-data-restricted.service';
 
 /** A training dataset is shared only while neither its owner nor its content is restricted. Runs
@@ -46,7 +47,8 @@ const SCHEMA = `
     "userId" int NOT NULL,
     poi boolean NOT NULL DEFAULT false,
     minor boolean NOT NULL DEFAULT false,
-    "tosViolation" boolean NOT NULL DEFAULT false
+    "tosViolation" boolean NOT NULL DEFAULT false,
+    meta jsonb
   );
   CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
   CREATE TABLE "ModelFile" (
@@ -165,12 +167,12 @@ describe('trainingDataShareRestricted', () => {
   });
 
   it.each([
-    ['case 1', `UPDATE "Model" SET poi = true WHERE id = 101`],
-    ['case 2', `UPDATE "Model" SET minor = true WHERE id = 101`],
-    ['case 3', `UPDATE "Model" SET "tosViolation" = true WHERE id = 101`],
-    ['case 4', `UPDATE "Image" SET "needsReview" = 'other' WHERE id = 301`],
+    ['poi model', `UPDATE "Model" SET poi = true WHERE id = 101`],
+    ['minor model', `UPDATE "Model" SET minor = true WHERE id = 101`],
+    ['ToS violation', `UPDATE "Model" SET "tosViolation" = true WHERE id = 101`],
+    ['image needs review', `UPDATE "Image" SET "needsReview" = 'other' WHERE id = 301`],
     [
-      'case 5',
+      'blocked image',
       `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = 301`,
     ],
   ])('restricted content (%s) cannot share', async (_, sql) => {
@@ -242,13 +244,13 @@ describe('trainingDataListing', () => {
   });
 
   it.each([
-    ['rating case 1', { nsfwLevel: 4 | 1 }, false, false],
-    ['rating case 1', { nsfwLevel: 4 | 1 }, true, true],
-    ['rating case 2', {}, false, true],
-    ['rating case 3', { nsfwLevel: 1, fullyRated: false }, false, false],
-    ['rating case 3', { nsfwLevel: 1, fullyRated: false }, true, true],
-    ['rating case 4', { nsfwLevel: 1, fullyRated: true }, false, true],
-    ['rating case 2', {}, true, true],
+    ['mature dataset', { nsfwLevel: 4 | 1 }, false, false],
+    ['mature dataset', { nsfwLevel: 4 | 1 }, true, true],
+    ['unrated dataset', {}, false, true],
+    ['partly rated SFW dataset', { nsfwLevel: 1, fullyRated: false }, false, false],
+    ['partly rated SFW dataset', { nsfwLevel: 1, fullyRated: false }, true, true],
+    ['fully rated SFW dataset', { nsfwLevel: 1, fullyRated: true }, false, true],
+    ['unrated dataset', {}, true, true],
   ])('%s, red-capable host %s: listed to others %s', async (_, metadata, redCapable, expected) => {
     await rate(PLAIN, metadata);
     expect(await listedFor(PLAIN, { redCapable })).toEqual([expected, true]);
@@ -261,5 +263,28 @@ describe('trainingDataListing', () => {
       $queryRaw: () => Promise.reject(new Error('down')),
     } as unknown as Pick<Prisma.TransactionClient, '$queryRaw'>;
     expect(await listedFor(PLAIN, { redCapable: true, c: broken })).toEqual([false, true]);
+  });
+});
+
+describe('versionHasStudioDataset', () => {
+  const VERSION = versionOf(PLAIN);
+  const studio = () => versionHasStudioDataset(client, VERSION);
+
+  it('is false for a version with no Studio dataset and no Studio model', async () => {
+    expect(await studio()).toBe(false);
+  });
+
+  it('is true while the Studio dataset row exists', async () => {
+    await db.exec(
+      `INSERT INTO "ModelFile" (id, "modelVersionId", type, metadata) VALUES (9001, ${VERSION}, 'Training Data', '{"selectedEpochUrl": "x"}')`
+    );
+    expect(await studio()).toBe(true);
+  });
+
+  it('stays true for a Studio model after its dataset row is deleted', async () => {
+    await db.exec(
+      `UPDATE "Model" SET meta = '{"trainingStudioWorkflowId": "wf"}' WHERE id = 100 + ${PLAIN}`
+    );
+    expect(await studio()).toBe(true);
   });
 });

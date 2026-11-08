@@ -231,7 +231,6 @@ async function uploadDatasetZip({
   const pad = Math.max(2, String(items.length).length);
   let included = 0;
   let captions = 0;
-  // The rating of every included item the orchestrator rated; 0 when it rated none.
   let nsfwLevel = 0;
   let unrated = 0;
   try {
@@ -384,7 +383,6 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
           url: stored.url,
           sizeKB,
           exists: true,
-          // Shared only when the owner opted in; a row without that choice stays Private.
           visibility: await studioDatasetVisibility(tx, {
             modelVersionId: file.modelVersionId,
             metadata: current,
