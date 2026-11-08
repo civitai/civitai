@@ -5,6 +5,10 @@ import { storageStatePath } from './preview-fixtures';
 import { trpcMutation, trpcQuery } from './preview-trpc';
 
 /**
+ * 🔴 NO `getByTestId` HERE: production builds strip `data-testid` (`next.config.mjs`,
+ * `reactRemoveProperties`) and the preview is a production build. Everything is located by
+ * role, accessible name or visible text.
+ *
  * Preview-e2e: the moderator REVIEW PAGE flow (`/apps/review/<id>`), run as `mod`.
  *
  *  1. A bare review URL opens on the OVERVIEW tab.
@@ -183,16 +187,24 @@ test.describe('App review page: overview, sticky actions, approve & next (mod, n
         'aria-selected',
         'true'
       );
-      await expect(page.getByTestId('apps-review-overview')).toBeVisible();
-      await expect(page.getByTestId('apps-review-detail-header')).toContainText(SLUG_A);
+      await expect(page.getByRole('region', { name: 'Submission overview' })).toBeVisible();
+      // The page's main region is named for the submission under review.
+      await expect(
+        page.getByRole('region', { name: new RegExp(`^Review of ${SLUG_A} v`) })
+      ).toBeVisible();
       await attachShot(page, testInfo, 'review-overview-1124x1305');
 
       // 2. Code tab, diff expanded, scrolled to the bottom: the bar is still uncovered.
       await page.getByRole('tab', { name: 'Code' }).click();
-      const toggle = page.getByTestId('apps-review-diff-file-toggle').first();
-      await expect(toggle).toBeVisible();
-      await toggle.click();
-      await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      // The diff file header is a real button named "Expand <path>" / "Collapse <path>".
+      const codePanel = page.getByRole('tabpanel', { name: 'Code' });
+      const expand = codePanel.getByRole('button', { name: /^Expand / }).first();
+      await expect(expand).toBeVisible();
+      await expand.click();
+      await expect(codePanel.getByRole('button', { name: /^Collapse / }).first()).toHaveAttribute(
+        'aria-expanded',
+        'true'
+      );
       await page.keyboard.press('End');
       await page.mouse.wheel(0, 20_000);
       await expectUncovered(page, 'Approve & next');
@@ -200,10 +212,10 @@ test.describe('App review page: overview, sticky actions, approve & next (mod, n
       await attachShot(page, testInfo, 'review-code-expanded-1124x1305');
 
       // 3. Approve & next → another pending submission, at once. Undo → back, nothing sent.
-      await page.getByTestId('apps-review-approve-next').click();
+      await page.getByRole('button', { name: 'Approve & next', exact: true }).click();
       await expect(page).not.toHaveURL(new RegExp(`/apps/review/${idA}(\\?|$)`));
       await expect(page).toHaveURL(/\/apps\/review\/[^/?]+/);
-      await page.getByTestId('apps-review-approve-undo').click();
+      await page.getByRole('button', { name: 'Undo', exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`/apps/review/${idA}`));
       expect(approvals.count(), 'Undo inside the window must send nothing').toBe(0);
       const still = await trpcQuery<{ pending: { id: string } | null }>(
@@ -223,7 +235,7 @@ test.describe('App review page: overview, sticky actions, approve & next (mod, n
   }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/apps/review', { waitUntil: 'domcontentloaded' });
-    const tabs = page.getByTestId('review-queue-tabs').getByRole('tab');
+    const tabs = page.getByRole('tablist', { name: 'Review queues' }).getByRole('tab');
     await expect(tabs.first()).toBeVisible();
     const tops = new Set<number>();
     for (const t of await tabs.all()) {
@@ -233,7 +245,8 @@ test.describe('App review page: overview, sticky actions, approve & next (mod, n
     expect([...tops], 'the tab bar wrapped onto more than one row').toHaveLength(1);
     const width = await page.evaluate(() => document.documentElement.scrollWidth);
     expect(width).toBeLessThanOrEqual(391);
-    const buttons = page.locator('[data-testid^="apps-unified-review-action-"]');
+    // Each queue row's action is a button named exactly "Review".
+    const buttons = page.getByRole('button', { name: 'Review', exact: true });
     const n = await buttons.count();
     for (let i = 0; i < n; i++) {
       const b = await buttons.nth(i).boundingBox();

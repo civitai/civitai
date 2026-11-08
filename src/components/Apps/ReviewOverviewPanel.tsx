@@ -38,7 +38,14 @@ export function ReviewOverviewPanel({
   const manifest = (request.manifest ?? {}) as Record<string, unknown>;
 
   return (
-    <Grid gutter="md" data-testid="apps-review-overview">
+    // A labelled region, not only a testid: production builds strip `data-testid`, and the
+    // preview e2e (which runs against a production build) finds the Overview by this name.
+    <Grid
+      gutter="md"
+      data-testid="apps-review-overview"
+      role="region"
+      aria-label="Submission overview"
+    >
       <Grid.Col span={{ base: 12, md: 5 }}>
         <Stack gap="md">
           <ReviewAgentSection

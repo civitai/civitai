@@ -421,6 +421,8 @@ export default function ReviewQueuePage() {
           */}
           <Tabs.List
             data-testid="review-queue-tabs"
+            // Survives the production build (testids do not) — the preview e2e finds the bar by it.
+            aria-label="Review queues"
             style={{ flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'hidden' }}
           >
             <Text
