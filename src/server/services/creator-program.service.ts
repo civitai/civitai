@@ -1225,23 +1225,19 @@ export const updateCashWithdrawal = async ({
 
   const userId = withdrawal.userId;
 
-  // Refund state comes from the stored row only: a caller's metadata could otherwise carry a
-  // refundTransactionId that skips the refund, or a refundClaimedAt that blocks one.
+  // Refund state comes from the stored row only: a caller's refundTransactionId would otherwise
+  // skip the refund.
   const storedMetadata = (withdrawal.metadata ?? {}) as CashWithdrawalMetadataSchema;
-  const {
-    refundTransactionId: _callerRefund,
-    refundClaimedAt: _callerClaim,
-    ...callerMetadata
-  } = (updatedMetadata ?? {}) as CashWithdrawalMetadataSchema;
-  // The stored claim is not carried forward either: writing back a claim its holder has since
-  // released would block every later refund until the claim expires.
+  const { refundTransactionId: _callerRefund, ...callerMetadata } = (updatedMetadata ??
+    {}) as CashWithdrawalMetadataSchema;
+  // No claim is carried forward, the caller's or the stored one: writing back a claim its holder
+  // has since released would block every later refund until the claim expires.
   const { refundClaimedAt: _storedClaim, ...metadata }: CashWithdrawalMetadataSchema = {
     ...storedMetadata,
     ...callerMetadata,
   };
 
-  // Moving to Rejected or Canceled refunds the burn, once. A burn already refunded (by an earlier
-  // event, or by withdrawCash when the send failed) still gets its status recorded, never a refund.
+  // An already-refunded burn still gets its status recorded, never a second refund.
   if (REFUNDED_WITHDRAWAL_STATUSES.includes(status) && withdrawal.transactionId) {
     const transactionId = withdrawal.transactionId;
     if (!(await isWithdrawalBurnRefunded(transactionId, storedMetadata))) {

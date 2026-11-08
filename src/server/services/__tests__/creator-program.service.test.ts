@@ -1299,14 +1299,12 @@ describe('withdrawCash', () => {
 });
 
 // ─── updateCashWithdrawal refunds ─────────────────────────────────────────────────
-// A burn is refunded at most once, whichever path gets there first: withdrawCash when the send
-// fails, or a later Rejected/Canceled from a Tipalti event or a moderator. These tests fake the
-// Buzz ledger (by external id) and the CashWithdrawal row, applying each raw UPDATE to it.
+// Fakes the Buzz ledger (by external id) and the CashWithdrawal row, applying each raw UPDATE to it.
 describe('updateCashWithdrawal refunds', () => {
   type FakeRow = { status: string; metadata: Record<string, unknown> };
   let ledger: Set<string>;
   let table: Map<string, FakeRow>;
-  let writes: { id: string; status: string; metadata: Record<string, unknown> }[];
+  let writes: { id: string; status: string; metadata: Record<string, unknown>; text: string }[];
   let claims: { text: string; ttl: string }[];
   const sql = (strings: unknown) => (strings as string[]).join('?');
   const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
@@ -1369,8 +1367,9 @@ describe('updateCashWithdrawal refunds', () => {
         const [status, , json, id] = values as [string, string | null, string, string];
         const row = table.get(id)!;
         row.status = status;
-        row.metadata = { ...row.metadata, ...JSON.parse(json) };
-        writes.push({ id, status, metadata: row.metadata });
+        const merges = /metadata = metadata \|\| \?::jsonb/.test(text);
+        row.metadata = merges ? { ...row.metadata, ...JSON.parse(json) } : JSON.parse(json);
+        writes.push({ id, status, metadata: row.metadata, text: text.replace(/\s+/g, ' ') });
         return 1;
       }
       return 1;
@@ -1393,7 +1392,6 @@ describe('updateCashWithdrawal refunds', () => {
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
 
     expect(claims).toHaveLength(1);
-    expect(claims[0].text).toContain("(metadata->>'refundClaimedAt') IS NULL OR");
     expect(claims[0].text).toContain(
       "(metadata->>'refundClaimedAt')::timestamptz < now() - ?::interval"
     );
@@ -1515,13 +1513,35 @@ describe('updateCashWithdrawal refunds', () => {
     expect(table.get('withdrawal-1')!.metadata).not.toHaveProperty('refundClaimedAt');
   });
 
-  it('refunds even when the caller passes a refund id or claim in metadata', async () => {
+  // An overwrite here would wipe a refund claim another caller stored after this one read the row.
+  it('keeps a claim stored between the read and the status write', async () => {
+    seed('Scheduled');
+    const claimedAt = minutesAgo(0);
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockImplementationOnce(async () => {
+      table.get('withdrawal-1')!.metadata.refundClaimedAt = claimedAt;
+      return {
+        id: 'withdrawal-1',
+        userId,
+        status: 'Scheduled',
+        transactionId: 'tx-burn',
+        amount: 9500,
+        metadata: {},
+      };
+    });
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Submitted' });
+
+    expect(writes[0].text).toContain('metadata = metadata || ?::jsonb');
+    expect(table.get('withdrawal-1')!.metadata.refundClaimedAt).toBe(claimedAt);
+  });
+
+  it('refunds even when the caller passes a refund id in metadata', async () => {
     seed('Scheduled');
 
     await updateCashWithdrawal({
       withdrawalId: 'withdrawal-1',
       status: 'Rejected',
-      metadata: { refundTransactionId: 'forged', refundClaimedAt: new Date().toISOString() },
+      metadata: { refundTransactionId: 'forged' },
     });
 
     expect(refunds()).toHaveLength(1);
