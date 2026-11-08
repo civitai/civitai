@@ -79,6 +79,7 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import type { NavBanner } from '~/shared/constants/nav-banner.constants';
+import type { EventSeed } from '~/server/services/event-seeds.service';
 import type { SiteAlertsPayload } from '~/shared/constants/site-alert.constants';
 import {
   NAV_BANNERS_DISMISSED_COOKIE,
@@ -152,6 +153,7 @@ type CustomAppProps = {
   navBanners?: NavBanner[];
   navBannersDismissed?: string[];
   siteAlerts?: SiteAlertsPayload;
+  eventSeeds?: EventSeed[];
   following?: number[];
   seed: number;
   settings: UserContentSettings;
@@ -194,6 +196,7 @@ function MyApp(props: CustomAppProps) {
       navBanners,
       navBannersDismissed,
       siteAlerts,
+      eventSeeds,
       following,
       seed = Date.now(),
       canIndex,
@@ -285,6 +288,7 @@ function MyApp(props: CustomAppProps) {
       navBanners={navBanners}
       navBannersDismissed={navBannersDismissed}
       siteAlerts={siteAlerts}
+      eventSeeds={eventSeeds}
       following={following}
       liveNow={liveNow}
       chatSettings={chatSettings}
@@ -632,6 +636,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     liveNow?: boolean;
     navBanners?: NavBanner[];
     siteAlerts?: SiteAlertsPayload;
+    eventSeeds?: EventSeed[];
     session: Session | null;
   };
   let settingsBootstrap: SettingsBootstrap;
@@ -690,6 +695,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       liveNow: undefined,
       navBanners: undefined,
       siteAlerts: undefined,
+      eventSeeds: undefined,
       session: null,
     };
   }
@@ -707,6 +713,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     liveNow = false,
     navBanners,
     siteAlerts,
+    eventSeeds,
   } = settingsBootstrap;
 
   // Bot HTML cache (`~/server/bot-cache/bot-cache`): a verified crawler's render that the cache
@@ -856,6 +863,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       navBanners,
       navBannersDismissed,
       siteAlerts,
+      eventSeeds,
       following,
       seed: botCache ? botCache.seed : Date.now(),
       hasAuthCookie,

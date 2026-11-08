@@ -33,6 +33,7 @@ const h = vi.hoisted(() => ({
   follows: vi.fn(),
   addons: vi.fn(),
   navBanners: vi.fn(),
+  eventSeeds: vi.fn(),
   siteAlerts: vi.fn(),
   session: vi.fn(),
   tos: vi.fn(async (_: { domainColor: string }) => undefined as unknown),
@@ -79,6 +80,8 @@ vi.mock('~/server/services/announcement.service', async (importOriginal) => ({
 }));
 // Its only export. Loading the real module pulls the whole event engine into this graph.
 vi.mock('~/server/services/nav-banner.service', () => ({ getNavBanners: h.navBanners }));
+// The same, for the event seeds.
+vi.mock('~/server/services/event-seeds.service', () => ({ getEventSeeds: h.eventSeeds }));
 vi.mock('~/server/services/site-alert.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SiteAlertService>()),
   getActiveSiteAlerts: h.siteAlerts,
@@ -125,6 +128,7 @@ describe('/api/user/settings read deadlines', () => {
     h.follows.mockResolvedValue([7]);
     h.addons.mockResolvedValue([{ id: 'a' }]);
     h.navBanners.mockResolvedValue([{ id: 'event:e1' }]);
+    h.eventSeeds.mockResolvedValue([{ event: 'e1', access: 'open' }]);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -141,6 +145,7 @@ describe('/api/user/settings read deadlines', () => {
     expect(body.announcements).toEqual([{ id: 1 }]);
     expect(body.liveNow).toBe(true);
     expect(body.navBanners).toEqual([{ id: 'event:e1' }]);
+    expect(body.eventSeeds).toEqual([{ event: 'e1', access: 'open' }]);
   });
 
   it('still answers when a dependency never replies, and seeds the SAFE settings default', async () => {
@@ -187,6 +192,7 @@ describe('/api/user/settings read deadlines', () => {
   it('degrades each hanging member independently', async () => {
     h.announcements.mockReturnValue(new Promise(() => undefined));
     h.liveNow.mockReturnValue(new Promise(() => undefined));
+    h.eventSeeds.mockReturnValue(new Promise(() => undefined));
     const { json } = invoke();
     await vi.runAllTimersAsync();
 
@@ -194,6 +200,8 @@ describe('/api/user/settings read deadlines', () => {
     const body = json.mock.calls[0][0];
     expect(body.announcements).toBeUndefined();
     expect(body.liveNow).toBe(false);
+    // No seeds: the client fetches the event queries for itself, as before.
+    expect(body.eventSeeds).toBeUndefined();
     // The member that did reply is unaffected.
     expect(body.settings).toEqual({ showNsfw: true });
   });
