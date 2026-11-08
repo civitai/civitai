@@ -1149,6 +1149,8 @@
       </div>
       {/if}
       {#if labelMode === 'tag'}
+        <!-- These only filter auto-label results, so they're not offered where there is none. -->
+        {#if canAutoLabel}
         <div class="flex min-w-0 flex-wrap items-center gap-1.5">
           <label for="exclude-tags" class="font-mono text-xs text-dark-2">Never apply</label>
           <Input
@@ -1188,6 +1190,7 @@
             Exclude source material tags
           </label>
         </div>
+        {/if}
         {#if tagFreq.length}
           <Button
             variant="outline"

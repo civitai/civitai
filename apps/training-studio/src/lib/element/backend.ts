@@ -204,7 +204,9 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
       host.autoLabelSubmit ? host.autoLabelSubmit(items, mode, media) : autoLabelUnavailable(),
 
     autoLabelPoll: (workflowId, signal) =>
-      host.autoLabelPoll ? host.autoLabelPoll(workflowId, signal) : autoLabelUnavailable(),
+      host.autoLabelPoll
+        ? host.autoLabelPoll(workflowId, signal)
+        : Promise.reject(new Error(AUTO_LABEL_UNAVAILABLE)),
 
     submitTraining: async (runs) => {
       const opts = await submitOpts();
