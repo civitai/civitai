@@ -54,7 +54,7 @@ function Detail({ nudge = false }: { nudge?: boolean }) {
       {nudge && (
         <Popover opened withinPortal transitionProps={{ duration: 0 }}>
           <Popover.Target>
-            <span>nudge</span>
+            <button type="button">nudge</button>
           </Popover.Target>
           <Popover.Dropdown>
             <button type="button">in nudge</button>
@@ -129,6 +129,26 @@ describe('Escape on the image detail', () => {
     await page.getByRole('button', { name: 'page' }).click();
     await userEvent.keyboard('{Escape}');
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  test('closes the page after tabbing past a passive popover trigger', async () => {
+    renderWithProviders(<Detail nudge />);
+    await expect.element(page.getByRole('button', { name: 'in nudge' })).toBeVisible();
+    (page.getByRole('button', { name: 'nudge', exact: true }).element() as HTMLElement).focus();
+    await userEvent.keyboard('{Tab}');
+    await userEvent.keyboard('{Escape}');
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  test('a menu opened from the keyboard blocks Escape', async () => {
+    renderWithProviders(<Detail />);
+    await expect.element(page.getByRole('button', { name: 'more' })).toBeVisible();
+    (page.getByRole('button', { name: 'more' }).element() as HTMLElement).focus();
+    await userEvent.keyboard('{Enter}');
+    await expect.element(page.getByRole('menuitem', { name: 'share' })).toBeVisible();
+    (page.getByRole('button', { name: 'more' }).element() as HTMLElement).focus();
+    await userEvent.keyboard('{Escape}');
+    expect(close).not.toHaveBeenCalled();
   });
 
   test('a menu the user opened still blocks Escape beside a passive popover', async () => {

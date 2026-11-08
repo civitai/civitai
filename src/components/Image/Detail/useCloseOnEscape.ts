@@ -11,7 +11,7 @@ const OPEN_OVERLAY = '[role="dialog"], [role="menu"], [data-mantine-stop-propaga
 // or key interaction was inside it or on its trigger (Mantine sets the trigger's aria-controls).
 const isEngaged = (overlay: Element, lastInteracted: Element | null) => {
   if (overlay.contains(document.activeElement)) return true;
-  if (!lastInteracted?.isConnected) return false;
+  if (!lastInteracted) return false;
   if (overlay.contains(lastInteracted)) return true;
   const controls = lastInteracted.closest('[aria-controls]')?.getAttribute('aria-controls');
   return !!overlay.id && controls === overlay.id;
@@ -30,16 +30,15 @@ export function useCloseOnEscape(close: () => void) {
   const overlayWasOpen = useRef(false);
   const lastInteracted = useRef<Element | null>(null);
   const snapshot = useCallback((event: KeyboardEvent) => {
-    if (event.key !== 'Escape') {
+    // Only Enter and Space activate a trigger; the target of Tab is the element focus is leaving.
+    if (event.key === 'Enter' || event.key === ' ') {
       if (event.target instanceof Element) lastInteracted.current = event.target;
       return;
     }
-    const engaged = Array.from(document.querySelectorAll(OPEN_OVERLAY)).filter(
+    if (event.key !== 'Escape') return;
+    overlayWasOpen.current = Array.from(document.querySelectorAll(OPEN_OVERLAY)).some(
       (el) => el.getClientRects().length > 0 && isEngaged(el, lastInteracted.current)
     );
-    // An interaction whose overlay is gone must not keep swallowing a later Escape.
-    if (!engaged.length) lastInteracted.current = null;
-    overlayWasOpen.current = engaged.length > 0;
   }, []);
   const trackPointer = useCallback((event: PointerEvent) => {
     if (event.target instanceof Element) lastInteracted.current = event.target;
