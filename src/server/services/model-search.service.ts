@@ -3,7 +3,10 @@ import type { SessionUser } from '~/types/session';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead } from '~/server/db/client';
-import { trainingDataListing } from '~/server/services/training-data-restricted.service';
+import {
+  trainingDataListing,
+  withoutServerOnlyKeys,
+} from '~/server/services/training-data-restricted.service';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import {
@@ -372,6 +375,7 @@ export async function runModelSearch(
                 // it out of the response.
                 .map(({ hashes, modelVersionId: _ownerVersionId, ...file }) => ({
                   ...file,
+                  metadata: withoutServerOnlyKeys(file.metadata),
                   name: safeDecodeURIComponent(
                     getDownloadFilename({
                       model,

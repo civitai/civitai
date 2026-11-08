@@ -751,11 +751,15 @@ describe('an owner editing another Training Data file on a Training Studio versi
 });
 
 describe('an owner editing a Training Studio dataset directly', () => {
-  const studio = (archive: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+  const studio = (
+    archive: Record<string, unknown>,
+    extra: Record<string, unknown> = {},
+    visibility = 'Private'
+  ) =>
     dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
       ...FILE,
       type: 'Training Data',
-      visibility: 'Private',
+      visibility,
       sizeKB: 2048,
       metadata: {
         selectedEpochUrl: 'https://orch.test/epoch-1',
@@ -796,7 +800,7 @@ describe('an owner editing a Training Studio dataset directly', () => {
   });
 
   it('can always make it less visible', async () => {
-    studio({ complete: true });
+    studio({ complete: true }, {}, 'Public');
     await updateFile({ id: 1, visibility: 'Private', userId: 7 });
     expect(writtenData().visibility).toBe('Private');
   });

@@ -232,8 +232,7 @@ export const getFileForModelVersion = async ({
   attribution: ResolveAttribution;
   /** Whether the request's host serves mature content (`isRedCapableHost`). When false, a
    *  Training Data file rated above PG13 or not fully rated is not-found for anyone but its owner
-   *  or a moderator. A caller with no request host passes false; only an internal fetch that must
-   *  read any file passes true. */
+   *  or a moderator. */
   redCapable: boolean;
 }): Promise<ModelVersionFileResult> => {
   // The version and its model. The read's inner join drops a version whose model row was

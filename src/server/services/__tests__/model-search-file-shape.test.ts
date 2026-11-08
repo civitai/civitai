@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as TrainingDataRestricted from '~/server/services/training-data-restricted.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 /**
@@ -35,7 +36,9 @@ vi.mock('~/server/services/file.service', () => ({
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
 // The listing rule is tested on PGlite (training-data-share.behavior.test.ts); here only that this
 // surface asks it with the request's host and applies the answer.
-vi.mock('~/server/services/training-data-restricted.service', () => ({
+vi.mock('~/server/services/training-data-restricted.service', async (importOriginal) => ({
+  withoutServerOnlyKeys: (await importOriginal<typeof TrainingDataRestricted>())
+    .withoutServerOnlyKeys,
   trainingDataListing:
     async (
       _db: unknown,
@@ -169,7 +172,13 @@ describe('runModelSearch (GET /api/v1/models) — a mature training dataset', ()
         visibility: 'Public',
         sizeKB: 6666,
         hashes: [],
-        metadata: { nsfwLevel: 4, fullyRated: true } as any,
+        metadata: {
+          ownRights: true,
+          shareDataset: true,
+          nsfwLevel: 4,
+          fullyRated: true,
+          datasetArchive: { items: 3, skipped: 0, complete: true },
+        } as any,
       },
     ];
     mockGetModelsWithVersions.mockResolvedValue({ items: [item], nextCursor: undefined });
@@ -182,5 +191,10 @@ describe('runModelSearch (GET /api/v1/models) — a mature training dataset', ()
 
   it('is listed for a red-capable host', async () => {
     expect((await run(true)).map((f) => f.id)).toContain(15);
+  });
+
+  it('is listed with the sharing choice but without the server-only metadata', async () => {
+    const file = (await run(true)).find((f) => f.id === 15);
+    expect(file.metadata).toEqual({ ownRights: true, shareDataset: true });
   });
 });

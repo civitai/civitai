@@ -6,7 +6,10 @@ import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums'
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead } from '~/server/db/client';
-import { trainingDataListing } from '~/server/services/training-data-restricted.service';
+import {
+  trainingDataListing,
+  withoutServerOnlyKeys,
+} from '~/server/services/training-data-restricted.service';
 import { ModelSort } from '~/server/common/enums';
 import {
   createModelFileDownloadUrl,
@@ -119,7 +122,7 @@ async function buildPublicModelResponse(
                 .filter((file) => file.visibility === ModelFileVisibility.Public)
                 .map(({ hashes, metadata, modelVersionId, ...file }) => ({
                   ...file,
-                  metadata: removeEmpty(metadata),
+                  metadata: removeEmpty(withoutServerOnlyKeys(metadata)),
                   name: safeDecodeURIComponent(
                     getDownloadFilename({
                       model,

@@ -152,7 +152,7 @@ export async function checkGenerationFetch({
   const file = fileId
     ? files.find((candidate) => candidate.id === fileId)
     : getPrimaryFile(files as Array<(typeof files)[number] & { metadata: FileMetadata }>);
-  // A generation job never needs a training dataset, and this path has none of the dataset gates.
+  // A generation job never needs a training dataset.
   if (!file || file.type === 'Training Data') return refuse('not-found');
   if (hasFailedScan(file)) return refuse('failed-scan');
 

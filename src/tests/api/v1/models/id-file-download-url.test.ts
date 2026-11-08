@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as TrainingDataRestricted from '~/server/services/training-data-restricted.service';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { assertDownloadUrlsResolve } from '~/tests/api/v1/download-url-seam.helper';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -70,7 +71,9 @@ vi.mock('~/server/services/file.service', () => ({
 vi.mock('~/server/utils/url-helpers', () => ({ getBaseUrl: () => 'https://civitai.com' }));
 // The listing rule is tested on PGlite (training-data-share.behavior.test.ts); here only that this
 // surface asks it with the request's host and applies the answer.
-vi.mock('~/server/services/training-data-restricted.service', () => ({
+vi.mock('~/server/services/training-data-restricted.service', async (importOriginal) => ({
+  withoutServerOnlyKeys: (await importOriginal<typeof TrainingDataRestricted>())
+    .withoutServerOnlyKeys,
   trainingDataListing:
     async (
       _db: unknown,
@@ -435,7 +438,13 @@ describe('GET /api/v1/models/[id] — a mature training dataset', () => {
     visibility: 'Public',
     sizeKB: 6666,
     hashes: [],
-    metadata: { nsfwLevel: 4, fullyRated: true },
+    metadata: {
+      ownRights: true,
+      shareDataset: true,
+      nsfwLevel: 4,
+      fullyRated: true,
+      datasetArchive: { items: 3, skipped: 0, complete: true },
+    },
   };
   beforeEach(() => {
     vi.clearAllMocks();
@@ -453,5 +462,11 @@ describe('GET /api/v1/models/[id] — a mature training dataset', () => {
 
   it('is listed on a red-capable host', async () => {
     expect(ids(await invoke('7', 'civitai.red'))).toContain(15);
+  });
+
+  it('is listed with the sharing choice but without the server-only metadata', async () => {
+    const res: any = await invoke('7', 'civitai.red');
+    const file = res.body.modelVersions[0].files.find((f: any) => f.id === 15);
+    expect(file.metadata).toEqual({ ownRights: true, shareDataset: true });
   });
 });
