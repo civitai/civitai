@@ -126,10 +126,15 @@ async function counted(): Promise<number> {
   if (!m) return 0;
   return (await m.get()).values.reduce((n, v) => n + v.value, 0);
 }
-async function countedFor(stepType: string): Promise<number> {
+/** comfy with an empty `blobs` list: `reason="absent"`. */
+async function countedFor(stepType: string, reason = 'absent'): Promise<number> {
   const m = client.register.getSingleMetric(METRIC) as unknown as Readable | undefined;
   if (!m) return 0;
-  return (await m.get()).values.find((v) => v.labels.step_type === stepType)?.value ?? 0;
+  return (
+    (await m.get()).values.find(
+      (v) => v.labels.step_type === stepType && v.labels.reason === reason
+    )?.value ?? 0
+  );
 }
 
 function finished(id: string, status: string, steps: unknown[]) {

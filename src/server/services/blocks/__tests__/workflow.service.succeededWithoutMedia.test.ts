@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BLOCK_STEP_NAME,
   snapshotFromWorkflow,
-  succeededWithoutMediaStepType,
+  classifySucceededWithoutMedia,
   SUCCEEDED_WITHOUT_MEDIA_MIXED_LABEL,
   SUCCEEDED_WITHOUT_MEDIA_PASSTHROUGH_LABEL,
   WORKFLOW_METADATA_BLOCK_STEPS_KEY,
@@ -36,11 +36,19 @@ function wf(steps: unknown[], over: Record<string, unknown> = {}) {
 const step = (s: Record<string, unknown>) => ({ status: 'succeeded', metadata: {}, ...s });
 const blob = (url: string, available = true) => ({ id: url, type: 'image', url, available });
 
+function result(workflow: never, extra: Partial<BlockWorkflowSnapshot> = {}) {
+  return classifySucceededWithoutMedia(workflow, { ...snapshotFromWorkflow(workflow), ...extra });
+}
+/** The `step_type` label, or null when not counted. */
 function classify(workflow: never, extra: Partial<BlockWorkflowSnapshot> = {}): string | null {
-  return succeededWithoutMediaStepType(workflow, { ...snapshotFromWorkflow(workflow), ...extra });
+  return result(workflow, extra)?.stepType ?? null;
+}
+/** The `reason` label, or null when not counted. */
+function reasonOf(workflow: never): string | null {
+  return result(workflow)?.reason ?? null;
 }
 
-describe('succeededWithoutMediaStepType', () => {
+describe('classifySucceededWithoutMedia', () => {
   it('🔴 #8132 shape: a succeeded comfy step whose blobs never reached the snapshot', () => {
     // No blobs at all, as the pre-#8132 extractor saw it (it read output.images).
     expect(classify(wf([step({ $type: 'comfy', name: 's1', output: { images: [] } })]))).toBe(
@@ -91,6 +99,9 @@ describe('succeededWithoutMediaStepType', () => {
       expect(classify(w, { textOutputs: ['hello'] })).toBeNull();
     });
 
+    // INVARIANT GUARDS: the classifier never reads `textOutputs` / `toolCalls` /
+    // `textOutputWithheld`, so these pin that no future change starts letting a
+    // sibling's text cancel an empty media step. They do not exercise a branch.
     it('🔴 PER MEDIA STEP: text delivered beside an image step that delivered nothing IS counted', () => {
       const w = wf([
         step({ $type: 'chatCompletion', name: 'a', output: {} }),
@@ -186,6 +197,72 @@ describe('succeededWithoutMediaStepType', () => {
         meta([{ name: 'gen', suppressOutput: true }])
       );
       expect(classify(w)).toBeNull();
+    });
+  });
+  describe('reason', () => {
+    it('absent: the expected output key holds no blobs at all', () => {
+      const w = wf([step({ $type: 'textToImage', name: 's1', output: { images: [] } })]);
+      expect(result(w)).toEqual({ stepType: 'textToImage', reason: 'absent' });
+    });
+
+    it('🔴 absent: blobs present but under a key the extractor does not read (#8132 shape)', () => {
+      // comfy reads output.blobs; these sit under output.images, as the pre-#8132
+      // extractor had it the other way round.
+      const w = wf([
+        step({ $type: 'comfy', name: 's1', output: { images: [blob('https://cdn/x')] } }),
+      ]);
+      expect(reasonOf(w)).toBe('absent');
+    });
+
+    it('unavailable: blobs at the expected key, all not available', () => {
+      const w = wf([
+        step({ $type: 'comfy', name: 's1', output: { blobs: [blob('https://cdn/p', false)] } }),
+      ]);
+      expect(result(w)).toEqual({ stepType: 'comfy', reason: 'unavailable' });
+    });
+
+    it('unavailable: a blob blocked by the orchestrator, with no url', () => {
+      const blocked = { id: 'b1', type: 'image', url: null, available: false, blockedReason: 'x' };
+      const w = wf([step({ $type: 'imageGen', name: 's1', output: { images: [blocked] } })]);
+      expect(reasonOf(w)).toBe('unavailable');
+    });
+
+    it('unavailable: a registered media step whose blob was withheld (its own key)', () => {
+      const w = wf([
+        step({
+          $type: 'convertImage',
+          name: BLOCK_STEP_NAME,
+          output: { blob: { id: 'c', url: null, available: false } },
+        }),
+      ]);
+      expect(result(w)).toEqual({ stepType: 'convertImage', reason: 'unavailable' });
+    });
+
+    it('several empty steps: absent wins over unavailable', () => {
+      const w = wf([
+        step({ $type: 'comfy', name: 'a', output: { blobs: [blob('https://cdn/a', false)] } }),
+        step({ $type: 'imageGen', name: 'b', output: { images: [] } }),
+      ]);
+      expect(result(w)).toEqual({
+        stepType: SUCCEEDED_WITHOUT_MEDIA_MIXED_LABEL,
+        reason: 'absent',
+      });
+    });
+
+    it('several empty steps, all unavailable: unavailable', () => {
+      const w = wf([
+        step({ $type: 'comfy', name: 'a', output: { blobs: [blob('https://cdn/a', false)] } }),
+        step({ $type: 'imageGen', name: 'b', output: { images: [blob('https://cdn/b', false)] } }),
+      ]);
+      expect(reasonOf(w)).toBe('unavailable');
+    });
+
+    it('a delivered step does not influence the reason of the empty one', () => {
+      const w = wf([
+        step({ $type: 'comfy', name: 'a', output: { blobs: [blob('https://cdn/a')] } }),
+        step({ $type: 'imageGen', name: 'b', output: { images: [blob('https://cdn/b', false)] } }),
+      ]);
+      expect(result(w)).toEqual({ stepType: 'imageGen', reason: 'unavailable' });
     });
   });
 });

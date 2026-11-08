@@ -244,7 +244,7 @@ import {
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
-  succeededWithoutMediaStepType,
+  classifySucceededWithoutMedia,
   buildBlockWorkflowStepsMetadata,
   WORKFLOW_METADATA_BLOCK_STEPS_KEY,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
@@ -5033,8 +5033,8 @@ export const blocksRouter = router({
             status: snapshot.status,
           });
           if (transitioned === 1) {
-            const stepType = succeededWithoutMediaStepType(workflow, snapshot);
-            if (stepType !== null) recordSucceededWithoutMedia(stepType);
+            const noMedia = classifySucceededWithoutMedia(workflow, snapshot);
+            if (noMedia) recordSucceededWithoutMedia(noMedia.stepType, noMedia.reason);
           }
         } catch {
           /* best-effort: a read-model write failure never breaks the poll */
