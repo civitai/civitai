@@ -89,6 +89,8 @@ export function imageVisibilityConditions({
     // mod review) — never serve it by direct id to anyone but the owner. Feeds already
     // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
     Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`,
+    // Owner-only, as in the image feeds (`pendingOthersImageConditions`).
+    Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`,
     ...imageBlockedForConditions({ userId }),
   ];
 }

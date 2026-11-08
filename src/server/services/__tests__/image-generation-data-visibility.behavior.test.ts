@@ -58,7 +58,7 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
       "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}',
-      "scanJobs" jsonb
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
@@ -833,5 +833,34 @@ describe('blockedFor on a single-image read', () => {
     await seed({});
     expect(await visibleTo(ANON)).toBe(true);
     expect(await assertAdmits(OTHER)).toBe(true);
+  });
+});
+
+describe('a flagged image on a single-image read', () => {
+  async function visibleTo(viewer: Viewer) {
+    const raw = pgliteRaw(db);
+    const where = Prisma.join(
+      [Prisma.sql`i.id = 1`, ...imageVisibilityConditions(viewer)],
+      ' AND '
+    );
+    const rows =
+      await raw.queryRaw`SELECT i.id FROM "Image" i LEFT JOIN "Post" p ON p.id = i."postId" WHERE ${where}`;
+    return rows.length === 1;
+  }
+
+  it('shows it only to its owner and moderators', async () => {
+    await seed({ image: { '"acceptableMinor"': 'true' } });
+    expect(await visibleTo(ANON)).toBe(false);
+    expect(await visibleTo(OTHER)).toBe(false);
+    expect(await visibleTo(SELF)).toBe(true);
+    expect(await visibleTo(MOD)).toBe(true);
+  });
+
+  it("hides it from a manager of the collection the owner's post went to", async () => {
+    await seed({ image: { '"acceptableMinor"': 'true' }, post: { '"collectionId"': '7' } });
+    await db.exec(`INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, '{MANAGE}')`);
+    expect(await visibleTo({ userId: MANAGER })).toBe(false);
+    await db.exec(`UPDATE "Image" SET "acceptableMinor" = false`);
+    expect(await visibleTo({ userId: MANAGER })).toBe(true);
   });
 });
