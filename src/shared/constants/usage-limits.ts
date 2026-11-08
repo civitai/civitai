@@ -368,18 +368,25 @@ export const usageLimitOverridesSchema = z.object({
 export const MAX_USAGE_LIMIT_MULTIPLIER = 10;
 export const MAX_USAGE_LIMIT_SCALE = 100;
 
+/** The most any caller can get from these values, tier multipliers included. */
 function largestLimit(values: UsageLimitValues) {
-  const tierLimits = Object.values(values.byTier ?? {}).map((rule) =>
-    rule && 'limit' in rule ? rule.limit : 0
+  const rules = Object.values(values.byTier ?? {});
+  const tierLimits = rules.map((rule) => (rule && 'limit' in rule ? rule.limit : 0));
+  const multiplier = Math.max(
+    1,
+    ...rules.map((rule) => (rule && 'multiplier' in rule ? rule.multiplier : 1))
   );
-  return Math.max(values.base, ...(values.byScore ?? []).map((tier) => tier.limit), ...tierLimits);
+  const scoreLimits = [values.base, ...(values.byScore ?? []).map((tier) => tier.limit)];
+  return Math.max(...scoreLimits.map((limit) => Math.floor(limit * multiplier)), ...tierLimits);
 }
 
 /**
- * Why `merged` may not be served for `def`, or undefined when it may. Every limit is an integer in
- * [1, 100 x the entry's largest code limit]; 0 only in an entry whose code base is 0.
+ * Why `merged` may not be served for `def`, or undefined when it may. Every limit is an integer, at
+ * least 1 (0 only in an entry whose code base is 0); none, scaled by a tier multiplier, exceeds 100x
+ * the most the code gives any caller. Only a product limit can be disabled: an abuse cap holds.
  */
 function boundsProblem(def: UsageLimitDef, merged: UsageLimitValues): string | undefined {
+  if (merged.disabled && def.kind !== 'product') return 'only a product limit can be disabled';
   const max = MAX_USAGE_LIMIT_SCALE * largestLimit(def);
   const min = def.base === 0 ? 0 : 1;
   const limits = [
@@ -393,6 +400,7 @@ function boundsProblem(def: UsageLimitDef, merged: UsageLimitValues): string | u
     if (!Number.isInteger(limit) || limit < min || limit > max)
       return `limit ${limit} outside [${min}, ${max}]`;
   }
+  if (largestLimit(merged) > max) return `a tier multiplier takes a limit above ${max}`;
   for (const tier of merged.byScore ?? []) {
     if (!Number.isInteger(tier.minScore) || tier.minScore < 0)
       return `minScore ${tier.minScore} is not a whole number >= 0`;

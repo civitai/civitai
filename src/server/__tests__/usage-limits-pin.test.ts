@@ -220,6 +220,42 @@ describe('usage limits served today', () => {
     }
   );
 
+  // What a refusal carries: product limits send counts, abuse limits only an id and a retry time.
+  it('serves each entry under its id and kind', async () => {
+    const user = userFor('new', 0, 'bronze');
+    const served = [];
+    for (const group of Object.keys(sources) as Group[])
+      for (const rule of await servedRules(group, user)) served.push(`${rule.id}:${rule.kind}`);
+    expect(served).toEqual([
+      'posts.hourly:product',
+      'posts.daily:product',
+      'articles.first-day:abuse',
+      'articles.daily:abuse',
+      'comments.hourly:product',
+      'comments.daily:product',
+      'reactions.minute:abuse',
+      'reactions.ten-minutes:abuse',
+      'reactions.hourly:abuse',
+      'reactions.daily:abuse',
+      'resource-loads.daily:abuse',
+      'resource-loads.hourly:abuse',
+    ]);
+  });
+
+  it('caps auto-label per minute, the same for everyone', async () => {
+    for (const user of [userFor('new', 0, 'none'), userFor('old', 10_000, 'gold')]) {
+      const rules = await resolveUsageLimitRules(
+        ['auto-label.upload', 'auto-label.submit', 'auto-label.poll'],
+        user
+      );
+      expect(rules.map((rule) => `${rule.id} ${rule.period}:${rule.limit}`)).toEqual([
+        'auto-label.upload 60:1000',
+        'auto-label.submit 60:100',
+        'auto-label.poll 60:1500',
+      ]);
+    }
+  });
+
   it('lists the same posting, comment, reaction and article unlocks', () => {
     const unlocks = buildCreatorScoreUnlocks(compiledCreatorScoreUnlockInputs)
       .filter((unlock) => /^(daily-|comment-rate|reaction-rate)/.test(unlock.key))

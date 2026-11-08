@@ -28,12 +28,19 @@ afterEach(() => vi.useRealTimers());
 describe('getUsageLimitConfig', () => {
   it('serves the code defaults to a cold pod whose store hangs, after the first-read timeout', async () => {
     vi.useFakeTimers();
-    findKeyValue.mockReturnValue(new Promise(() => undefined) as never);
+    let release: (value: unknown) => void = () => undefined;
+    findKeyValue.mockReturnValue(new Promise((resolve) => (release = resolve)) as never);
     const config = getUsageLimitConfig();
     await vi.advanceTimersByTimeAsync(USAGE_LIMIT_FIRST_READ_TIMEOUT_MS);
     expect(await config).toBe(defaultUsageLimitConfig);
     // Later callers get the defaults at once, with the one read still in flight.
     expect(await getUsageLimitConfig()).toBe(defaultUsageLimitConfig);
+    expect(findKeyValue).toHaveBeenCalledTimes(1);
+
+    // The late read replaces the defaults when it lands.
+    release(row({ 'posts.daily': { base: 25 } }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await resolveUsageLimit('posts.daily', free)).limit).toBe(25);
     expect(findKeyValue).toHaveBeenCalledTimes(1);
   });
 

@@ -24,7 +24,8 @@ describe('buildUsageLimitConfig', () => {
     expect(fallbacks).toEqual([{ id: '*', reason: expect.any(String) }]);
   });
 
-  it('applies an override up to 100x the largest code limit, inclusive', () => {
+  it('applies an override up to 100x the most the code gives anyone, inclusive', () => {
+    // posts.daily gives at most 300 (150 x the member 2x): the cap is 30,000, and 15,000 doubles to it.
     const { config, fallbacks } = buildUsageLimitConfig(
       row({ 'posts.daily': { base: 15_000 }, 'posts.hourly': { base: 1 } })
     );
@@ -45,6 +46,10 @@ describe('buildUsageLimitConfig', () => {
     ['a negative minScore', { byScore: [{ minScore: -1, limit: 60 }] }],
     ['a multiplier above 10', { byTier: { member: { multiplier: 11 } } }],
     ['a multiplier below 1', { byTier: { member: { multiplier: 0.5 } } }],
+    [
+      'a multiplier that scales a limit past 100x',
+      { base: 4000, byTier: { member: { multiplier: 10 } } },
+    ],
     ['an unknown tier', { byTier: { platinum: { limit: 5 } } }],
     ['an unknown field', { base: 25, window: { type: 'utc-day' } }],
     ['a wrong type', { base: '25' }],
@@ -65,6 +70,15 @@ describe('buildUsageLimitConfig', () => {
     expect(
       resolveUsageLimitValues(config.get('resource-loads.daily')!, subject('bronze')).limit
     ).toBe(0);
+  });
+
+  it('disables a product limit, never an abuse cap', () => {
+    const { config, fallbacks } = buildUsageLimitConfig(
+      row({ 'comments.daily': { disabled: true }, 'reactions.daily': { disabled: true } })
+    );
+    expect(config.get('comments.daily')?.disabled).toBe(true);
+    expect(config.get('reactions.daily')).toEqual(defaultUsageLimitConfig.get('reactions.daily'));
+    expect(fallbacks).toEqual([{ id: 'reactions.daily', reason: expect.any(String) }]);
   });
 
   it('ignores overrides of a gate and of unknown ids', () => {

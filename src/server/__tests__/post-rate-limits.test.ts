@@ -359,7 +359,9 @@ describe('posts.daily from the usage-limits KeyValue row', () => {
   it('applies no daily limit while posts.daily is disabled', async () => {
     findKeyValue.mockResolvedValue(row({ 'posts.daily': { disabled: true } }));
     expect(await getDailyPostLimit(free())).toBe(Number.POSITIVE_INFINITY);
-    expect(await attemptWith(free(), 500, 2 * HOUR)).toHaveBeenCalledTimes(1);
+    // A first-day account, so the hourly rule still reads the bucket.
+    const sameDay = user({ tier: 'free', createdAt: new Date() });
+    expect(await attemptWith(sameDay, 500, 2 * HOUR)).toHaveBeenCalledTimes(1);
   });
 
   it('serves the code defaults while the store is down', async () => {

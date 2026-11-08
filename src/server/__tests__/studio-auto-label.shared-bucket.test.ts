@@ -5,6 +5,9 @@ import type { NextApiRequest } from 'next';
  * The standalone Studio's auto-label endpoint and the embed's tRPC procedures must draw from ONE
  * per-minute bucket per user, or a user gets each limit twice. Asserted on the writes themselves:
  * an attempt the middleware records lands where the endpoint's helper reads, and the reverse.
+ * This proves `rateLimit()` and `claimRateLimitAttempt` count alike; that the router and the REST
+ * handler pass the shared keys is tested in `training.router.studio-auto-label-limit.test.ts` and
+ * `src/__tests__/pages/training-studio-auto-label.test.ts`.
  * Harness as in `middleware.trpc.rate-limit-key.test.ts`; `~/env/other` is mocked to production, or
  * both sides short-circuit on `isTest` and nothing here runs.
  */
@@ -116,6 +119,13 @@ describe("the standalone auto-label endpoint shares the embed procedures' bucket
     await expect(
       claimRateLimitAttempt({ rules, keyName: key, user: moderator, req })
     ).resolves.toBeTypeOf('function');
+  });
+
+  it('writes nothing when no rule applies, so the history survives', async () => {
+    redisMock.redis.packed.hGet.mockResolvedValue([Date.now()]);
+    const record = await claimRateLimitAttempt({ rules: [], keyName: 'training:x', user, req });
+    await record();
+    expect(mockHSetWithTTL).not.toHaveBeenCalled();
   });
 
   it('fails open when the attempt cannot be written', async () => {

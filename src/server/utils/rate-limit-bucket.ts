@@ -99,6 +99,8 @@ export async function claimRateLimitAttempt({
   const validLimits = isUsageLimitRef(rules)
     ? await resolveUsageLimitRules(rules.usageLimitIds, user)
     : selectRateLimitRules(rules, user);
+  // Nothing applies (every entry disabled or out of scope): count nothing, and keep the history.
+  if (validLimits.length === 0) return async () => undefined;
   const bucket = rateLimitBucket(keyName, user, req);
   const { cacheKey, hashKey } = bucket;
   const attempts = await readRateLimitAttempts(bucket);
