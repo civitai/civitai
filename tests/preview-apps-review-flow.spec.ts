@@ -140,6 +140,87 @@ async function attachShot(page: Page, testInfo: TestInfo, name: string) {
   await testInfo.attach(name, { path, contentType: 'image/png' });
 }
 
+/**
+ * Every open dialog / Mantine modal on the page: its accessible name, the start of its text,
+ * its classes and whether it is visible. Read for the diagnostics, and to name whatever is
+ * covering the page before the spec clicks through it.
+ */
+async function describeDialogs(page: Page) {
+  return page.evaluate(() => {
+    const roots = new Set<Element>();
+    document
+      .querySelectorAll(
+        '[role="dialog"], [role="alertdialog"], .mantine-Modal-root, .mantine-Modal-overlay, .mantine-Drawer-root, .mantine-Overlay-root'
+      )
+      .forEach((el) => roots.add(el));
+    return Array.from(roots).map((el) => {
+      const h = el as HTMLElement;
+      const labelledBy = h.getAttribute('aria-labelledby');
+      const labelText = labelledBy
+        ? labelledBy
+            .split(/\s+/)
+            .map((id) => document.getElementById(id)?.textContent ?? '')
+            .join(' ')
+            .trim()
+        : '';
+      const r = h.getBoundingClientRect();
+      const style = getComputedStyle(h);
+      return {
+        tag: h.tagName.toLowerCase(),
+        role: h.getAttribute('role'),
+        cls: (h.className && typeof h.className === 'string' ? h.className : '').slice(0, 160),
+        ariaLabel: h.getAttribute('aria-label'),
+        labelledByText: labelText.slice(0, 120),
+        text: (h.innerText ?? h.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 200),
+        visible:
+          style.display !== 'none' &&
+          style.visibility !== 'hidden' &&
+          Number(style.opacity) > 0 &&
+          r.width > 0 &&
+          r.height > 0,
+        // The portal's whole subtree, to name a modal whose content box carries no text.
+        portalHtml: (h.closest('[data-portal]')?.outerHTML ?? '').slice(0, 600),
+      };
+    });
+  });
+}
+
+/**
+ * Log, then close, anything modal covering the page — via its own close button, else Escape.
+ * 🔴 DIAGNOSTIC FIRST: the log line names the dialog, so a run that needed this says WHICH
+ * modal was in the way (an environment-wide one for the smoke account, or one the review page
+ * opened itself — the latter is a UI bug to fix, not to dismiss).
+ */
+async function logAndDismissModals(page: Page, where: string) {
+  const dialogs = await describeDialogs(page);
+  for (const d of dialogs) console.log(`[review-flow diag] ${where}: dialog ${JSON.stringify(d)}`);
+  if (!dialogs.some((d) => d.visible)) return;
+  for (let i = 0; i < 3; i++) {
+    const close = page.locator(
+      '[data-portal] .mantine-Modal-close, [data-portal] button[aria-label="Close"]'
+    );
+    if (
+      await close
+        .first()
+        .isVisible()
+        .catch(() => false)
+    ) {
+      await close
+        .first()
+        .click({ force: true })
+        .catch(() => undefined);
+    } else {
+      await page.keyboard.press('Escape');
+    }
+    await page.waitForTimeout(400);
+    const still = (await describeDialogs(page)).filter((d) => d.visible);
+    console.log(
+      `[review-flow diag] ${where}: after dismiss attempt ${i + 1}, visible: ${still.length}`
+    );
+    if (still.length === 0) return;
+  }
+}
+
 test.describe('App review page: overview, sticky actions, approve & next (mod, nothing approved)', () => {
   test.use({ storageState: storageStatePath(ROLE) });
 
@@ -165,6 +246,9 @@ test.describe('App review page: overview, sticky actions, approve & next (mod, n
       console.log(`[review-flow diag] title: ${diag.title}`);
       console.log(`[review-flow diag] testids: ${diag.testIds.join(', ')}`);
       console.log(`[review-flow diag] body text:\n${diag.text}`);
+      for (const d of await describeDialogs(page)) {
+        console.log(`[review-flow diag] dialog at failure: ${JSON.stringify(d)}`);
+      }
     } catch (err) {
       console.log(`[review-flow diag] could not read the page: ${String(err)}`);
     }
@@ -193,6 +277,8 @@ test.describe('App review page: overview, sticky actions, approve & next (mod, n
         page.getByRole('region', { name: new RegExp(`^Review of ${SLUG_A} v`) })
       ).toBeVisible();
       await attachShot(page, testInfo, 'review-overview-1124x1305');
+
+      await logAndDismissModals(page, 'before clicking tabs');
 
       // 2. Code tab, diff expanded, scrolled to the bottom: the bar is still uncovered.
       await page.getByRole('tab', { name: 'Code' }).click();
