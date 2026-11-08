@@ -35,6 +35,7 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { withSysReadDeadline } from '~/server/redis/sys-read-deadline';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { sysRedis } from '~/server/redis/client';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 import type { TurfHatArt, TurfStickerData, TurfStickersCursor } from '~/server/schema/turf.schema';
 import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import {
@@ -511,7 +512,7 @@ function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | t
               SELECT threshold FROM "CreatorMilestone" WHERE key = ${TURF_SCORE_TIER_KEY}
             ))
         AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
-        AND NOT u."excludeFromLeaderboards"), false) AS eligible
+        AND (u.flags & ${UserFlag.ExcludeFromEventPoints}::int) = 0), false) AS eligible
     FROM "EventTurfSticker" s
     JOIN "User" u ON u.id = s."userId"
     JOIN "Image" i ON i.id = s."imageId"

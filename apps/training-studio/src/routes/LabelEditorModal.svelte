@@ -100,7 +100,7 @@
   <!-- Only the body scrolls, so the header, Previous/Next and the close ✕ stay on screen. dvh, not vh: mobile
        browser chrome makes vh taller than the visible area. -->
   <Dialog.Content
-    class="flex max-h-[calc(100dvh-2rem)] flex-col sm:max-w-2xl"
+    class="flex max-h-[calc(100dvh-2rem)] flex-col sm:max-w-4xl"
     portalProps={portalProps()}
     onkeydown={stepKeydown}
   >
@@ -126,8 +126,8 @@
       <div class="-m-1 min-h-0 overflow-y-auto p-1">
         {#key editing.id}
           {#if labelMode === 'tag'}
-            <div class="grid gap-4 sm:grid-cols-[200px_1fr]" use:autofocusInput>
-              {@render mediaPreview(editing, 'max-h-48 w-full object-cover sm:max-h-none')}
+            <div class="grid gap-4 sm:grid-cols-2" use:autofocusInput>
+              {@render mediaPreview(editing, 'max-h-[60dvh] w-full object-contain')}
               <div>
                 <div class="mb-2 flex items-center justify-between gap-2">
                   <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Tags</span>
@@ -174,7 +174,7 @@
             </div>
           {:else}
             <div class="flex flex-col gap-3" use:autofocusInput>
-              {@render mediaPreview(editing, 'max-h-72 w-full object-contain')}
+              {@render mediaPreview(editing, 'max-h-[50dvh] w-full object-contain')}
               <div>
                 <div class="mb-2 flex items-center justify-between gap-2">
                   <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Caption</span>

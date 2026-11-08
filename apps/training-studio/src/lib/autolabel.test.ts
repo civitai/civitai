@@ -17,7 +17,7 @@ vi.mock('$lib/host', () => ({
   }),
 }));
 
-const { runAutoLabel, MAX_SUBMITS_PER_MEDIA } = await import('./autolabel');
+const { runAutoLabel, MAX_SUBMITS_PER_MEDIA, CAP_REFUSAL } = await import('./autolabel');
 
 describe('auto-label per-image submit cap', () => {
   it('stops sending an image that keeps being re-requested, and fails it instead', async () => {
@@ -45,8 +45,8 @@ describe('auto-label per-image submit cap', () => {
     for (const url of ['https://x/a.png', 'https://x/b.png'])
       expect(submitted.filter((i) => i.mediaUrl === url)).toHaveLength(MAX_SUBMITS_PER_MEDIA);
     expect(lastResults).toEqual([
-      { key: '0', status: 'failed' },
-      { key: '1', status: 'failed' },
+      { key: '0', status: 'failed', error: CAP_REFUSAL },
+      { key: '1', status: 'failed', error: CAP_REFUSAL },
     ]);
   });
 

@@ -121,6 +121,7 @@ vi.mock('~/server/utils/errorHandling', async (importOriginal) => ({
 // ── Import the service under test ──────────────────────────────────────────────
 import {
   bankBuzz,
+  ensureWithdrawalRefCode,
   extractBuzz,
   getBankCap,
   getBanked,
@@ -1135,6 +1136,8 @@ describe('withdrawCash', () => {
       tipaltiWithdrawalMethod: 'Wire',
     });
     mockDbWrite.cashWithdrawal.create.mockResolvedValue({ id: 'withdrawal-1' });
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue({ metadata: {} });
+    mockDbWrite.$executeRaw.mockResolvedValue(1);
   });
 
   it('rejects banned users', async () => {
@@ -1290,6 +1293,109 @@ describe('withdrawCash', () => {
 
       expect(canceled()).toBe(false);
     });
+  });
+});
+
+// ─── ensureWithdrawalRefCode ───────────────────────────────────────────────────
+// Tipalti refuses a second payment under a refCode it has seen; that guard only holds if a
+// withdrawal is always sent under the code it was first given. Do not make this regenerate.
+describe('ensureWithdrawalRefCode', () => {
+  let storedCode: string | undefined;
+  const isRefCodeWrite = (strings: unknown) =>
+    (strings as string[]).join('?').includes("'paymentRefCode'");
+
+  beforeEach(() => {
+    storedCode = undefined;
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockImplementation(async () => ({
+      metadata: storedCode ? { paymentRefCode: storedCode } : {},
+    }));
+    mockDbWrite.cashWithdrawal.count.mockResolvedValue(0);
+    mockDbWrite.$executeRaw.mockImplementation(async (strings: unknown, ...values: unknown[]) => {
+      if (!isRefCodeWrite(strings) || storedCode) return 0;
+      storedCode = values[0] as string;
+      return 1;
+    });
+  });
+
+  it('gives a second send for one withdrawal the identical code', async () => {
+    const first = await ensureWithdrawalRefCode('withdrawal-1', 1234567);
+    const second = await ensureWithdrawalRefCode('withdrawal-1', 1234567);
+
+    expect(second).toBe(first);
+    expect(mockDbWrite.$executeRaw.mock.calls.filter(([s]) => isRefCodeWrite(s))).toHaveLength(1);
+  });
+
+  it('stores a code only on a row that has none, so a code already sent is never replaced', async () => {
+    await ensureWithdrawalRefCode('withdrawal-1', 1234567);
+
+    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls.find(([s]) =>
+      isRefCodeWrite(s)
+    )!;
+    const text = (strings as unknown as string[]).join('?');
+    expect(text).toMatch(/WHERE id = \? AND \(metadata->>'paymentRefCode'\) IS NULL/);
+    expect(values).toContain('withdrawal-1');
+  });
+
+  it('uses the code a concurrent caller stored first when its own write loses', async () => {
+    const winner = 'CW1234567_win00';
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow
+      .mockResolvedValueOnce({ metadata: {} })
+      .mockResolvedValueOnce({ metadata: { paymentRefCode: winner } });
+    mockDbWrite.$executeRaw.mockResolvedValueOnce(0);
+
+    await expect(ensureWithdrawalRefCode('withdrawal-1', 1234567)).resolves.toBe(winner);
+  });
+
+  it('reuses a code already stored on the row without generating one', async () => {
+    storedCode = 'CW1234567_cm7o3q';
+
+    await expect(ensureWithdrawalRefCode('withdrawal-1', 1234567)).resolves.toBe(storedCode);
+    expect(mockDbWrite.cashWithdrawal.count).not.toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it("draws again when the candidate is already one of the user's codes", async () => {
+    mockDbWrite.cashWithdrawal.count.mockResolvedValueOnce(1).mockResolvedValue(0);
+
+    const code = await ensureWithdrawalRefCode('withdrawal-1', 1234567);
+
+    const checked = mockDbWrite.cashWithdrawal.count.mock.calls.map(
+      ([arg]) => (arg as { where: { userId: number; metadata: { equals: string } } }).where
+    );
+    expect(checked.map((where) => where.userId)).toEqual([1234567, 1234567]);
+    expect(code).toBe(checked[1].metadata.equals);
+  });
+
+  it('withdrawCash stores the code before sending it to Tipalti', async () => {
+    mockCachedObject.fetch.mockResolvedValue({
+      [userId]: {
+        id: userId,
+        status: 'ready',
+        ready: 100000,
+        pending: 0,
+        withdrawn: 0,
+        paymentMethod: 'ACH',
+      },
+    });
+    mockDbWrite.user.findFirstOrThrow.mockResolvedValue(mockUser());
+    mockDbWrite.userPaymentConfiguration.findUnique.mockResolvedValue({
+      userId,
+      tipaltiPaymentsEnabled: true,
+      tipaltiWithdrawalMethod: 'ACH',
+    });
+    mockDbWrite.cashWithdrawal.create.mockResolvedValue({ id: 'withdrawal-1' });
+    let sentCode: string | undefined;
+    let storedWhenSent: string | undefined;
+    mockPayToTipaltiAccount.mockImplementationOnce(async ({ requestId }: { requestId: string }) => {
+      sentCode = requestId;
+      storedWhenSent = storedCode;
+      return { paymentBatchId: 'batch-1', paymentRefCode: requestId };
+    });
+
+    await withdrawCash(userId, 10000);
+
+    expect(sentCode).toBeDefined();
+    expect(storedWhenSent).toBe(sentCode);
   });
 });
 

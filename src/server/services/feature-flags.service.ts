@@ -373,7 +373,6 @@ const featureFlags = createFeatureFlags({
     toggleable: true,
     default: true,
     displayName: 'Training Studio',
-    badge: 'Beta',
     description: `Use the new Training Studio for LoRA training. Turn this off to go back to the classic trainer, which stops starting new runs on ${formatDate(
       CLASSIC_TRAINER_RETIRES_AT,
       'MMMM D, YYYY',
@@ -688,6 +687,8 @@ const featureFlags = createFeatureFlags({
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
   giftMemberships: { availability: ['public'], fliptKey: 'gift-memberships' },
+  // Dark until Flipt turns it on: docs/features/model-gift-links.md.
+  modelGiftLinks: { availability: [], fliptKey: 'model-gift-links' },
   buzzMemberships: { availability: ['mod'], fliptKey: 'buzz-memberships' },
   coinbasePayments: [],
   emerchantpayPayments: [],
