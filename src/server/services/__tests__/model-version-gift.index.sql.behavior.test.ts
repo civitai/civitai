@@ -135,6 +135,7 @@ describe('the gift index', () => {
     // Date.parse accepts these; the timestamp cast would not.
     expect(() => decodeGiftIndexCursor(b64('1|42'))).toThrow();
     expect(() => decodeGiftIndexCursor(b64('Nov 2026|42'))).toThrow();
+    expect(() => decodeGiftIndexCursor(b64('2026-13-02T00:00:00.000Z|42'))).toThrow();
     expect(decodeGiftIndexCursor(b64('2026-11-02T00:00:00.000Z|42'))).toEqual({
       createdAt: '2026-11-02T00:00:00.000Z',
       key: '42',

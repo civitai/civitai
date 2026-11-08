@@ -333,8 +333,8 @@ export function encodeGiftIndexCursor(row: { createdAt: Date; key: string }) {
 
 export function decodeGiftIndexCursor(cursor: string) {
   const [at, key] = Buffer.from(cursor, 'base64url').toString().split('|');
-  // Exactly what encodeGiftIndexCursor writes: Date.parse takes forms the timestamp cast refuses.
-  if (!at || !key || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(at))
+  // Exactly what encodeGiftIndexCursor writes, and a real date: the timestamp cast refuses month 13.
+  if (!at || !key || Number.isNaN(Date.parse(at)) || new Date(at).toISOString() !== at)
     throw throwBadRequestError('Invalid cursor.');
   return { createdAt: at, key };
 }
