@@ -159,6 +159,7 @@ function HatDraftSticker({
       ownerUsername={null}
       onGesture={onGesture}
       opaque
+      liftOverTray
       commit={
         <Button
           size="sm"
