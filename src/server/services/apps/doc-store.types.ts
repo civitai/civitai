@@ -167,6 +167,18 @@ export type DocStoreErrorCode =
   | 'quota_exceeded'
   | 'content_rejected'
   | 'rate_limited'
+  /**
+   * The collection's permission hook refused the write (`doc-store-hook.ts`). `details.cause` is
+   * `denied` when the hook itself said no (the message is its reason), or the author-fault cause
+   * (`error`, `timeout`, `oom`, `stack_overflow`, `invalid_result`) with a generic message.
+   */
+  | 'hook_rejected'
+  /**
+   * Retryable: the permission hook could not be evaluated (the runner is unreachable, timed out,
+   * answered a non-2xx status or an unverifiable response, or is switched offline for the app).
+   * The write is refused: a hooked collection never fails open.
+   */
+  | 'hook_unavailable'
   | 'storage_disabled'
   | 'moderation_unavailable'
   /** The viewer's consent state could not be read; retryable (raised by the route layer). */

@@ -1225,6 +1225,19 @@ export const serverSchema = z
         message: 'ASSISTANT_RUNNER_SECRET must be at least 32 characters',
       })
       .optional(),
+    // App Storage permission hooks: the storage-hook-runner service (apps/storage-hook-runner)
+    // that evaluates a collection's hook on every write to it. Its base URL (the client posts to
+    // `<url>/v1/check`) and the shared HMAC secret that signs each request and each response, at
+    // least 32 characters, the same value the runner is given. Unset or blank, every write to a
+    // collection with a hook is refused as `hook_unavailable` (fail closed); a collection without
+    // a hook is unaffected. Blank is accepted so a bare ConfigMap key cannot stop the app booting.
+    STORAGE_HOOK_RUNNER_URL: z.union([z.url(), z.literal('')]).optional(),
+    STORAGE_HOOK_RUNNER_SECRET: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'STORAGE_HOOK_RUNNER_SECRET must be at least 32 characters',
+      })
+      .optional(),
     // How long a run grant lasts: the runner's wall clock per run (2 h) plus a margin.
     ASSISTANT_RUNNER_GRANT_TTL_SECONDS: z.coerce
       .number()

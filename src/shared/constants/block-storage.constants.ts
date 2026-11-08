@@ -441,11 +441,14 @@ export type AppStorageFeature =
  *   - `perAuthorWriteBudget` — `dailyWritesPerAuthor` (a per-collection daily write budget
  *                      in place of the platform default; the storage routes do not read it
  *                      yet, so a declared limit must not read as working).
- *   - `hooks`          — `hook` (a permission hook on a collection's writes). Off: a declared
- *                      hook is refused, so none reads as enforcing anything. On: the per-author
- *                      Flipt gate `app-blocks-storage-hooks` decides who may add or change one
- *                      (`storage-hooks.ts`). Switch it on only with the write path that calls
- *                      hooks.
+ *   - `hooks`          — `hook` (a permission hook on a collection's writes). ON: the write
+ *                      path calls the hook on every write to the collection
+ *                      (`doc-store-hook.ts`, through the storage-hook-runner service), failing
+ *                      closed when it cannot. Who may ADD or CHANGE a hook is still gated per
+ *                      author by the Flipt cohort `app-blocks-storage-hooks` (`storage-hooks.ts`),
+ *                      default-off: that cohort is the rollout lever. Needs the hand-applied
+ *                      migration `20261224120000_app_storage_hook_sources` (submit refuses a hook
+ *                      with a message naming it while the table is missing).
  *   - `registryExport` — `registry: "public"` (the collection's shared documents published to
  *                      registries by the registry adapter).
  *
@@ -460,7 +463,7 @@ export const APP_STORAGE_ENABLED_FEATURES: Readonly<Record<AppStorageFeature, bo
     logCollections: false,
     ttl: false,
     perAuthorWriteBudget: false,
-    hooks: false,
+    hooks: true,
     registryExport: false,
   });
 

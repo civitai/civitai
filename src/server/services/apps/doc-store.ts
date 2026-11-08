@@ -44,6 +44,9 @@
 //   - rate limits;
 //   - content moderation of shared writes;
 //   - a collection's `ownedModelVersions` rule on create and put (`doc-store-ownership.ts`);
+//   - call a collection's permission hook (`doc-store-hook.ts`). The store's part is to REFUSE a
+//     viewer write to a hooked collection that does not carry a HookPass for exactly that write,
+//     and to write only at the document version the pass carries (`requireHookPass`);
 //   - map `DocStoreError` codes to HTTP statuses and envelopes;
 //   - resolve `author.uid` to a username (and never forward the uid).
 //
@@ -101,6 +104,11 @@ import type { AugmentedPool } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { newUlid } from '~/server/utils/app-block-ids';
 import { validateDocAgainstCollectionSchema } from '~/server/services/apps/doc-store-schema';
+import {
+  spendHookPass,
+  type HookOp,
+  type HookPass,
+} from '~/server/services/apps/doc-store-hook-pass';
 import type { StorageHoldings } from '~/shared/utils/app-storage-usage';
 import type {
   AccountWipeNamespaceResult,
@@ -307,6 +315,75 @@ function scopeUid(ctx: DocStoreContext, coll: DocCollection): number {
 function requireShared(coll: DocCollection, what: string): void {
   if (coll.config.visibility !== 'shared') {
     throw invalid(`${what} exist on shared collections only`);
+  }
+}
+
+/**
+ * The request checks of an increment: a shared collection, a declared counter, `by` from 1 to
+ * {@link B.incrementMax}. Exported so the route runs them before the permission hook (an invalid
+ * request never reaches a hook); the store runs them on every increment itself.
+ */
+export function assertIncrementRequest(coll: DocCollection, counter: string, by: number): void {
+  requireShared(coll, 'counters');
+  if (!TALLY_NAME_SHAPE.test(counter) || !(coll.config.counters ?? []).includes(counter)) {
+    throw invalid(`counter ${counter} is not declared`, { counter });
+  }
+  if (!Number.isSafeInteger(by) || by < 1 || by > B.incrementMax) {
+    throw invalid(`by must be an integer from 1 to ${B.incrementMax}`);
+  }
+}
+
+/** The request checks of a mark or unmark: a shared collection, a declared mark or `report`. */
+export function assertMarkRequest(coll: DocCollection, name: string): void {
+  requireShared(coll, 'marks');
+  if (name === REPORT_MARK) return;
+  if (!TALLY_NAME_SHAPE.test(name) || !(coll.config.marks ?? []).includes(name)) {
+    throw invalid(`mark ${name} is not declared`, { mark: name });
+  }
+}
+
+/**
+ * PERMISSION HOOKS. A viewer write to a collection whose declaration has a `hook` runs only with
+ * a HookPass for exactly this write (`doc-store-hook-pass.ts`), which only the hook gate mints
+ * once the hook allowed it. Returns the document version the write is pinned to (the version the
+ * hook was shown), or `undefined` for a collection with no hook. The `report` mark is exempt: a
+ * hook must never be able to silence moderation reports. The maintenance, moderation and
+ * migration writers do not come through here: they are platform operations, not viewer writes
+ * (`doc-store-hook.ledger.test.ts` lists every write entry point).
+ */
+function requireHookPass(
+  ctx: DocStoreContext,
+  coll: DocCollection,
+  op: HookOp,
+  key: string,
+  pass: HookPass | undefined,
+  markName?: string
+): number | undefined {
+  if (!coll.config.hook) return undefined;
+  if (op === 'mark' && markName === REPORT_MARK) return undefined;
+  return spendHookPass(pass, { appId: ctx.appId, ns: ctx.ns, collection: coll.name, key, op });
+}
+
+/**
+ * The version a write is checked against: the hook's pinned one when there is a hook, else the
+ * caller's own `ifVersion`. Both given and different is a conflict (the gate refuses that before
+ * calling the hook, so this is a backstop).
+ */
+function effectiveIfVersion(
+  callerIfVersion: number | undefined,
+  pinned: number | undefined
+): number | undefined {
+  if (pinned === undefined) return callerIfVersion;
+  if (callerIfVersion !== undefined && callerIfVersion !== pinned) {
+    throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: null });
+  }
+  return pinned;
+}
+
+/** A tally op pinned to a version: the locked document's version must still be it. */
+function assertTallyVersion(ifVersion: number | undefined, current: number): void {
+  if (ifVersion !== undefined && ifVersion !== current) {
+    throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: current });
   }
 }
 
@@ -607,8 +684,9 @@ const SQL_TOMBSTONE = `INSERT INTO appdata.doc_tomb AS tb (app_id, ns, coll, sco
 
 // Counters and marks: shared documents only. KEY SHARE blocks a concurrent
 // delete of the document until this transaction ends, without blocking other
-// counter/mark writers. $1 app, $2 ns, $3 coll, $4 key
-const SQL_SHARE_LOCK_DOC = `SELECT 1 AS ok FROM appdata.doc d
+// counter/mark writers. Returns the document's version, which a tally pinned by a
+// permission hook (`ifVersion`) is checked against. $1 app, $2 ns, $3 coll, $4 key
+const SQL_SHARE_LOCK_DOC = `SELECT d.version FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
     AND ${VISIBLE}
   FOR KEY SHARE`;
@@ -1588,7 +1666,7 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: DocCollection,
     key: string,
     data: unknown,
-    opts: { ifVersion?: number }
+    opts: { ifVersion?: number; op: 'create' | 'put'; hookPass?: HookPass }
   ): Promise<DocRecord> {
     const policy = assertCollection(coll);
     assertKey(key);
@@ -1604,6 +1682,11 @@ function buildDocStore(deps: DocStoreDeps) {
     // Here, not only in the REST layer, so that every write of a document body is checked
     // whoever calls the store. `data` is the whole body the row will hold.
     validateDocAgainstCollectionSchema(ctx, coll, data);
+    // After every check of the body, so a malformed write never spends a pass.
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, opts.op, key, opts.hookPass)
+    );
     const indexRows = indexRowsFor(coll, data as Record<string, unknown>);
     const scope = scopeUid(ctx, coll);
     const base = [ctx.appId, ctx.ns, coll.name, scope, key];
@@ -1618,7 +1701,7 @@ function buildDocStore(deps: DocStoreDeps) {
           // See VISIBLE: refusing a write to a hidden key reveals that it exists.
           if (existing.hidden) throw new DocStoreError('not_found', 'document not found');
           const current = Number(existing.version);
-          if (opts.ifVersion !== undefined && opts.ifVersion !== current) {
+          if (ifVersion !== undefined && ifVersion !== current) {
             throw new DocStoreError('version_conflict', 'version conflict', {
               currentVersion: current,
             });
@@ -1632,7 +1715,7 @@ function buildDocStore(deps: DocStoreDeps) {
           });
         }
 
-        if (opts.ifVersion !== undefined && opts.ifVersion !== 0) {
+        if (ifVersion !== undefined && ifVersion !== 0) {
           throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: 0 });
         }
         const ins = await c.query(SQL_INSERT_DOC, [...base, json, viewer]);
@@ -1720,41 +1803,55 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: DocCollection,
     key: string,
     data: Record<string, unknown>,
-    opts: { ifVersion?: number } = {}
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<DocRecord> {
-    return writeDoc(ctx, coll, key, data, opts);
+    return writeDoc(ctx, coll, key, data, { ...opts, op: 'put' });
   }
 
+  /**
+   * Create a document under a new key: `opts.key` when the caller generated it (the permission
+   * hook is shown the key before the write), else a fresh ULID. Never overwrites: the write is
+   * pinned to "no document" (`ifVersion: 0`) either way.
+   */
   async function create(
     ctx: DocStoreContext,
     coll: DocCollection,
-    data: Record<string, unknown>
+    data: Record<string, unknown>,
+    opts: { key?: string; hookPass?: HookPass } = {}
   ): Promise<DocRecord> {
-    return writeDoc(ctx, coll, newUlid(), data, { ifVersion: 0 });
+    return writeDoc(ctx, coll, opts.key ?? newUlid(), data, {
+      ifVersion: 0,
+      op: 'create',
+      hookPass: opts.hookPass,
+    });
   }
 
   async function remove(
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
-    opts: { ifVersion?: number } = {}
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<{ deleted: boolean }> {
     const policy = assertCollection(coll);
     assertKey(key);
     const viewer = requireViewer(ctx);
     assertShareWritable(coll, policy);
     const scope = scopeUid(ctx, coll);
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, 'delete', key, opts.hookPass)
+    );
     return withTx(ctx, async (c) => {
       const row = (await c.query(SQL_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, scope, key])).rows[0];
       // Missing and hidden are indistinguishable to the caller here.
       if (!row || row.hidden) {
-        if (opts.ifVersion !== undefined && opts.ifVersion !== 0) {
+        if (ifVersion !== undefined && ifVersion !== 0) {
           throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: 0 });
         }
         return { deleted: false };
       }
       const current = Number(row.version);
-      if (opts.ifVersion !== undefined && opts.ifVersion !== current) {
+      if (ifVersion !== undefined && ifVersion !== current) {
         throw new DocStoreError('version_conflict', 'version conflict', {
           currentVersion: current,
         });
@@ -1782,24 +1879,27 @@ function buildDocStore(deps: DocStoreDeps) {
    * `write: 'none'` collection the first increment of an absent key CREATES the
    * document (empty, unowned, charged to the incrementer); under any other
    * policy an absent key is `not_found`, so nobody can squat keys by counting.
+   *
+   * `opts.ifVersion` (a permission hook's pin, or a caller's own) refuses the increment with
+   * `version_conflict` unless the document is still at that version (0: still absent). A tally
+   * never changes the version, so concurrent increments never conflict with each other.
    */
   async function increment(
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
     counter: string,
-    by = 1
+    by = 1,
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<{ value: number }> {
     const policy = assertCollection(coll);
     assertKey(key);
-    requireShared(coll, 'counters');
-    if (!TALLY_NAME_SHAPE.test(counter) || !(coll.config.counters ?? []).includes(counter)) {
-      throw invalid(`counter ${counter} is not declared`, { counter });
-    }
-    if (!Number.isSafeInteger(by) || by < 1 || by > B.incrementMax) {
-      throw invalid(`by must be an integer from 1 to ${B.incrementMax}`);
-    }
+    assertIncrementRequest(coll, counter, by);
     const viewer = requireViewer(ctx);
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, 'increment', key, opts.hookPass)
+    );
     return withTx(ctx, async (c) => {
       const bump = async () =>
         Number(
@@ -1812,8 +1912,12 @@ function buildDocStore(deps: DocStoreDeps) {
       for (let attempt = 0; attempt < 2; attempt++) {
         // Existing visible doc: KEY SHARE only, so increments never serialise on it.
         const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
-        if (doc.rows.length > 0) return { value: await bump() };
+        if (doc.rows.length > 0) {
+          assertTallyVersion(ifVersion, Number(doc.rows[0].version));
+          return { value: await bump() };
+        }
         if (policy !== 'none') throw new DocStoreError('not_found', 'document not found');
+        assertTallyVersion(ifVersion, 0);
 
         const existing = (await c.query(SQL_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, 0, key]))
           .rows[0];
@@ -1848,28 +1952,28 @@ function buildDocStore(deps: DocStoreDeps) {
     });
   }
 
-  function assertMarkName(coll: DocCollection, name: string) {
-    requireShared(coll, 'marks');
-    if (name === REPORT_MARK) return;
-    if (!TALLY_NAME_SHAPE.test(name) || !(coll.config.marks ?? []).includes(name)) {
-      throw invalid(`mark ${name} is not declared`, { mark: name });
-    }
-  }
+  const assertMarkName = assertMarkRequest;
 
   /** `count` is null for `report`, whose count is never exposed. */
   async function mark(
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
-    name: string
+    name: string,
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<{ marked: true; count: number | null }> {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
     const viewer = requireViewer(ctx);
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, 'mark', key, opts.hookPass, name)
+    );
     return withTx(ctx, async (c) => {
       const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
       if (doc.rows.length === 0) throw new DocStoreError('not_found', 'document not found');
+      assertTallyVersion(ifVersion, Number(doc.rows[0].version));
       const args = [ctx.appId, ctx.ns, coll.name, key, name];
       const ins = await c.query(SQL_INSERT_MARK, [...args, viewer]);
       const res =
@@ -1885,16 +1989,22 @@ function buildDocStore(deps: DocStoreDeps) {
     ctx: DocStoreContext,
     coll: DocCollection,
     key: string,
-    name: string
+    name: string,
+    opts: { ifVersion?: number; hookPass?: HookPass } = {}
   ): Promise<{ marked: false; count: number | null }> {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
     refuseReportWithdrawal(name);
     const viewer = requireViewer(ctx);
+    const ifVersion = effectiveIfVersion(
+      opts.ifVersion,
+      requireHookPass(ctx, coll, 'unmark', key, opts.hookPass, name)
+    );
     return withTx(ctx, async (c) => {
       const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
       if (doc.rows.length === 0) throw new DocStoreError('not_found', 'document not found');
+      assertTallyVersion(ifVersion, Number(doc.rows[0].version));
       const args = [ctx.appId, ctx.ns, coll.name, key, name];
       const del = await c.query(SQL_DELETE_MARK, [...args, viewer]);
       const res =

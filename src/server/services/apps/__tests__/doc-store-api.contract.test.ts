@@ -731,6 +731,10 @@ describe('the contract file', () => {
         'needs two apps with different manifests, which the request table cannot express; the cross-app imports block below',
       not_exportable:
         'needs two apps with different manifests, which the request table cannot express; the cross-app imports block below',
+      hook_rejected:
+        'needs a hook source and a runner, which the request table cannot express yet; doc-store-api.hooks.test.ts',
+      hook_unavailable:
+        'needs a hook source and a runner, which the request table cannot express yet; doc-store-api.hooks.test.ts',
     };
     const reachable = Object.keys(STORAGE_ERROR_STATUS).filter(
       (code) => !(code in UNREACHABLE_IN_PHASE_1)
