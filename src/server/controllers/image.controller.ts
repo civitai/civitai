@@ -410,13 +410,16 @@ export const getInfiniteImagesHandler = async ({
     unhatted.publishedOnly && unhatted.userId && unhatted.userId !== user?.id
       ? { ...unhatted, publishedOnly: undefined }
       : unhatted;
-  // Hat Turf sorts and Show filters, for players only; anyone else gets the feed as if unasked.
+  // Hat Turf sorts and Show filters, for players on the main feed only; anyone else gets the feed as if
+  // unasked. Not on a scoped feed (profile, model, post...): the hydrate drops a model or hub scope, and
+  // the Show filters live in the shared images filter store, so a gallery would silently lose images.
   const turfEvent =
-    (hatSort || hideTurfHats || hideWornHats) && features.hatTurfFeedCard
+    (hatSort || hideTurfHats || hideWornHats) &&
+    features.hatTurfFeedCard &&
+    !isScopedImageFeed(scopedInput)
       ? await getHatTurfFeedEvent(user?.id)
       : null;
-  // Sorts on the main feed only: the hydrate drops a model or hub scope, so it would serve every image.
-  const hatFeedSort = turfEvent && !isScopedImageFeed(scopedInput) ? hatSort : undefined;
+  const hatFeedSort = turfEvent ? hatSort : undefined;
   // Under a Hat Turf sort every image has Turf hats, so hiding them would empty the feed: only the
   // worn-hat filter applies there.
   const hide = { turf: hatFeedSort ? undefined : hideTurfHats, worn: hideWornHats };

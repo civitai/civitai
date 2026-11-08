@@ -157,6 +157,25 @@ describe('Hat Turf sorts on the image feed', () => {
 });
 
 describe('Show filters on the image feed', () => {
+  // Deliberate: the Show filters live in the shared images filter store, so a player who hid hats on
+  // /images would otherwise see images silently missing from a profile or a model's gallery.
+  it.each([{ modelId: 5 }, { username: 'creator' }, { postId: 9 }])(
+    'a scoped feed (%o) ignores them, and serves every image',
+    async (scope) => {
+      // Both images wear hats, whichever path serves the gallery.
+      mocks.getAllImages.mockResolvedValue({ nextCursor: undefined, items: rows(1, 2) });
+      mocks.turfHiddenIds.mockResolvedValue(new Set([1, 2]));
+      const result = await getInfiniteImagesHandler({
+        input: feed({ hideTurfHats: true, hideWornHats: true, ...scope }),
+        ctx: ctx(),
+      });
+      expect(result.items.map((i) => i.id)).toEqual([1, 2]);
+      expect(mocks.turfHiddenIds).not.toHaveBeenCalled();
+      const [served] = [...mocks.getAllImagesIndex.mock.calls, ...mocks.getAllImages.mock.calls];
+      expect(served[0]).toMatchObject(scope);
+    }
+  );
+
   // Deliberate: every image under a Hat Turf sort has Turf hats, so "Turf hats" off there would
   // empty the feed for a player who turned it off earlier. Only the worn-hat filter applies.
   it('under a Hat Turf sort, only the worn-hat filter applies', async () => {
