@@ -880,14 +880,14 @@ describe('a flagged image on a single-image read', () => {
       `);
     });
 
-    it('shows it to a manager and the collection owner while it is under review', async () => {
-      expect(await visibleTo({ userId: MANAGER })).toBe(true);
-      expect(await visibleTo({ userId: VIEWER + 1 })).toBe(true);
+    it('hides it from a manager and the collection owner while it is under review', async () => {
+      expect(await visibleTo({ userId: MANAGER })).toBe(false);
+      expect(await visibleTo({ userId: VIEWER + 1 })).toBe(false);
     });
 
-    it('hides it from a manager once it is accepted', async () => {
-      await db.exec(`UPDATE "CollectionItem" SET status = 'ACCEPTED'`);
-      expect(await visibleTo({ userId: MANAGER })).toBe(false);
+    it('shows it to its owner and a moderator while it is under review', async () => {
+      expect(await visibleTo(SELF)).toBe(true);
+      expect(await visibleTo(MOD)).toBe(true);
     });
 
     it('hides it from a stranger and a signed-out viewer while it is under review', async () => {
@@ -895,14 +895,10 @@ describe('a flagged image on a single-image read', () => {
       expect(await visibleTo(ANON)).toBe(false);
     });
 
-    it('hides it from a manager when someone other than its owner submitted it', async () => {
-      await db.exec(`UPDATE "CollectionItem" SET "addedById" = ${VIEWER}`);
-      expect(await visibleTo({ userId: MANAGER })).toBe(false);
-    });
-
-    it('hides it from a manager of a different collection', async () => {
-      await db.exec(`UPDATE "CollectionContributor" SET "collectionId" = 8`);
-      expect(await visibleTo({ userId: MANAGER })).toBe(false);
+    it('shows a manager the same submission when it is not acceptableMinor', async () => {
+      await db.exec(`UPDATE "Image" SET "acceptableMinor" = false`);
+      expect(await visibleTo({ userId: MANAGER })).toBe(true);
+      expect(await visibleTo({ userId: VIEWER + 1 })).toBe(true);
     });
   });
 });
