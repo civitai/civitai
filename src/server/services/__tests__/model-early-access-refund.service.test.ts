@@ -571,23 +571,29 @@ describe('getModelEarlyAccessRefundRequirement', () => {
     expect(result.purchases[0].narrow?.revokePermissions).toBe(0);
   });
 
-  it('dates a purchase with an unreadable purchasedAt by the row', async () => {
-    setupRefundData({
-      accessRows: [
-        {
-          accessToId: VERSION_ID,
-          accessorId: BUYER_ID,
-          meta: { 'download-buzzTransactionId': 'tx-1', 'download-purchasedAt': 'not a date' },
-          addedAt: boughtLongAgo(),
-        },
-      ],
-    });
+  it.each([
+    ['refunds it when the row is recent', boughtRecently(), 1, 0],
+    ['exempts it when the row is old', boughtLongAgo(), 0, 1],
+  ])(
+    'dates a purchase with an unreadable purchasedAt by the row: %s',
+    async (_n, addedAt, refunded, exempt) => {
+      setupRefundData({
+        accessRows: [
+          {
+            accessToId: VERSION_ID,
+            accessorId: BUYER_ID,
+            meta: { 'download-buzzTransactionId': 'tx-1', 'download-purchasedAt': 'not a date' },
+            addedAt,
+          },
+        ],
+      });
 
-    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+      const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
 
-    expect(result.purchases).toEqual([]);
-    expect(result.exemptBuyerCount).toBe(1);
-  });
+      expect(result.purchases).toHaveLength(refunded);
+      expect(result.exemptBuyerCount).toBe(exempt);
+    }
+  );
 
   it('dates each purchase by its own key, not the row, when both are recorded', async () => {
     setupRefundData({

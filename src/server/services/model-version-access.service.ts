@@ -6,12 +6,14 @@ import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 /** The purchases one grant row can hold, and what each one grants (see `earlyAccessPurchase`). */
 export const EARLY_ACCESS_PURCHASES = [
   {
+    type: 'download',
     transactionKey: 'download-buzzTransactionId',
     purchasedAtKey: 'download-purchasedAt',
     permissions:
       EntityAccessPermission.EarlyAccessGeneration | EntityAccessPermission.EarlyAccessDownload,
   },
   {
+    type: 'generation',
     transactionKey: 'generation-buzzTransactionId',
     purchasedAtKey: 'generation-purchasedAt',
     permissions: EntityAccessPermission.EarlyAccessGeneration,
