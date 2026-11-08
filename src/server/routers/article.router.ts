@@ -123,7 +123,8 @@ export const articleRouter = router({
           userId: ctx.user?.id,
           isModerator: ctx.user?.isModerator,
         }),
-        // The hat the cover wears. Safe per viewer only while getById caches nothing per URL.
+        // The hat the cover wears. A signed-out response is edge-cached for every signed-out
+        // viewer (createContext), so the hat gate must read nothing but the user.
         // A hat is decoration: its lookup failing must not fail the article.
         getEventDecorationsForEntity({
           ids: [input.id],
