@@ -243,6 +243,12 @@ describe('mcpPrEvent finds a PR a GitHub MCP call opened or readied', () => {
       createArgs({ owner: 'someone' }),
       mcpAnswer(62, 'someone/civitai'),
     ],
+    [
+      'a call on another repo whose response names a PR of this one',
+      MCP_CREATE,
+      createArgs({ owner: 'someone' }),
+      mcpAnswer(75),
+    ],
     ['a response naming another repo', MCP_CREATE, createArgs(), mcpAnswer(63, 'someone/civitai')],
     [
       'an error text that is not JSON',
