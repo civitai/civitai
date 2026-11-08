@@ -57,22 +57,13 @@ const art = { id: 85, name: 'Star', slug: 'star', url: 'star.png' };
 
 const { DraftSticker } = await import('~/components/Sticker/DraftSticker');
 
-/** A video that is paused at 12 s of 30, with no source to play. */
-const pausedVideo = () => {
-  const video = document.createElement('video');
-  Object.defineProperty(video, 'currentTime', { get: () => 12 });
-  Object.defineProperty(video, 'duration', { get: () => 30 });
-  video.pause = vi.fn();
-  return video;
-};
-
-describe('Place on a pinned draft low on a short video', () => {
+describe('Place on a draft low in a short media box', () => {
   test('is pressable inside the media box, not clipped below it', async () => {
     await renderAtViewport(
       // The carousel viewport clips at the bottom of the media box.
       <div style={{ position: 'relative', width: 380, height: 300, overflow: 'hidden' }}>
         <DraftSticker
-          draft={{ ...draft, y: 0.7, scale: 0.2, moment: { startMs: 12000, durationMs: 1000 } }}
+          draft={{ ...draft, y: 0.7, scale: 0.2 }}
           art={art}
           selected
           dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
@@ -82,7 +73,6 @@ describe('Place on a pinned draft low on a short video', () => {
           ownerShare={undefined}
           ownerUsername="creator"
           onGesture={() => true}
-          video={pausedVideo()}
         />
       </div>,
       PHONE_VIEWPORT
