@@ -43,6 +43,8 @@
   import { loraTypeById, mediaCount, type LabelType, type Media } from '$lib/data/trainingModels';
   import { pool } from '$lib/pool';
   import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
+  import { buildTagExcluder, loadTagCategories, type TagCategories } from '$lib/autolabel-exclude';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { isAbort } from '$lib/upload';
   import { trainingBlobKey } from '$lib/train-core';
   import { buildDatasetZip, saveBlob, uniqueBaseNames } from '$lib/dataset-zip';
@@ -89,6 +91,8 @@
     labelMode = $bindable('tag'),
     autoLabel = $bindable('auto'),
     excludeTags = $bindable([]),
+    excludeCharacter = $bindable(true),
+    excludeSource = $bindable(true),
     filter = $bindable('all'),
     reuseItems = [],
     onContinue,
@@ -106,6 +110,9 @@
      *  settle, and tags auto-label results must never apply (tag mode; a caption no-op). */
     autoLabel: 'auto' | 'manual';
     excludeTags: string[];
+    /** Drop the tagger's character / source-material (Danbooru "copyright") tags. */
+    excludeCharacter: boolean;
+    excludeSource: boolean;
     /** Owned by the flow so Review's "see which" can land on the Mature view. */
     filter: DatasetFilter;
     /** A "Train again" hand-off: existing blobs (air + caption) to seed the dataset with, no re-upload. */
@@ -606,6 +613,10 @@
     labelController = controller;
     try {
       while (unlabeled.length > 0) {
+        // Load before claiming: an await between startLabelPass and runAutoLabel lets a mode switch
+        // abort a pass that still submits, while the replacement drain submits the same images.
+        await ensureTagCategories();
+        if (controller.signal.aborted) return;
         const targets = unlabeled;
         const { byKey, items } = startLabelPass(targets);
         labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
@@ -647,7 +658,7 @@
     if (labelRun?.keys.has(r.key)) labelRun.done += 1; // count only this pass's own targets
     img.labelError = r.status === 'failed' ? r.error : undefined;
     if (r.status === 'failed') return;
-    Object.assign(img, mergeAutoLabel(img, r, labelMode, position, excludedSet));
+    Object.assign(img, mergeAutoLabel(img, r, labelMode, position, excludeTag));
   }
 
   // Shares labelController with the drain, so neither starts while the other runs; the drain resumes after.
@@ -673,13 +684,16 @@
     const controller = new AbortController();
     labelController = controller;
     labelAllNotice = null;
-    const targets = labelAllTargets;
     const position: LabelPosition = labelAllPolicy === 'skip' ? 'after' : labelAllPolicy;
-    const { byKey, items } = startLabelPass(targets);
-    labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
+    let targets: Img[] = [];
     let failed = 0;
     let reason: string | undefined;
     try {
+      await ensureTagCategories(); // before claiming, as in ensureLabeling
+      if (controller.signal.aborted) return;
+      targets = labelAllTargets;
+      const { byKey, items } = startLabelPass(targets);
+      labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
       await runAutoLabel(
         labelAllEngine,
         media,
@@ -799,8 +813,28 @@
 
   let manageOpen = $state(false);
 
-  // The exclude list's matcher — one definition so entry dedupe and result filtering can't drift.
+  // Entry dedupe for the exclude list; result filtering is excludeTag.
   const excludedSet = $derived(new Set(excludeTags.map((t) => t.toLowerCase())));
+  let tagCategories = $state.raw<TagCategories | null>(null);
+  const excludeTag = $derived(
+    buildTagExcluder({ never: excludeTags, categories: tagCategories, excludeCharacter, excludeSource })
+  );
+  // Awaited before each auto-label submit so the first result already sees the category lists. A failed
+  // chunk load labels without them rather than blocking labeling; the next run retries.
+  let warnedTagCategories = false;
+  async function ensureTagCategories() {
+    if (tagCategories) return;
+    tagCategories = await loadTagCategories().catch((err) => {
+      if (!warnedTagCategories) {
+        warnedTagCategories = true;
+        console.warn(
+          '[training-studio] tag categories failed to load; character/source exclusion is off for this run',
+          err
+        );
+      }
+      return null;
+    });
+  }
 
   // ---- Exclude list editing: comma/Enter-separated entry, deduped case-insensitively.
   let excludeDraft = $state('');
@@ -822,6 +856,7 @@
     try {
       // Not a drain-pass index, so the drain's progress counter never counts it.
       const item = [{ key: 'relabel', mediaUrl: img.blobUrl }];
+      await ensureTagCategories();
       await runAutoLabel(labelMode, media, item, (r) => applyLabel(img, r), new AbortController().signal);
     } catch (err) {
       if (!isAbort(err)) patch(id, { labeling: false });
@@ -1091,6 +1126,14 @@
               </button>
             </span>
           {/each}
+          <label class="inline-flex items-center gap-1.5 font-mono text-xs text-dark-2">
+            <Checkbox bind:checked={excludeCharacter} />
+            Exclude character tags
+          </label>
+          <label class="inline-flex items-center gap-1.5 font-mono text-xs text-dark-2">
+            <Checkbox bind:checked={excludeSource} />
+            Exclude source material tags
+          </label>
         </div>
         {#if tagFreq.length}
           <Button

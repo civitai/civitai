@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { buildTagExcluder } from '$lib/autolabel-exclude';
 import { labelString, mergeAutoLabel } from './trainingFlow';
 
-const none = new Set<string>();
+const none = () => false;
+const never = (...tags: string[]) =>
+  buildTagExcluder({
+    never: tags,
+    categories: null,
+    excludeCharacter: false,
+    excludeSource: false,
+  });
 const tagged = { tags: ['1girl', 'solo'], caption: '' };
 const captioned = { tags: [], caption: 'A woman stands in a field.' };
 
@@ -25,7 +33,7 @@ describe('mergeAutoLabel — caption format (the label is free text)', () => {
       { tags: ['1girl', 'watermark', 'solo'] },
       'caption',
       'after',
-      new Set(['watermark'])
+      never('watermark')
     );
     expect(out.caption).toBe('A woman stands in a field.\n1girl, solo');
   });
@@ -94,7 +102,7 @@ describe('mergeAutoLabel — tag format (the label is tag chips)', () => {
       { tags: ['smile', 'Watermark'] },
       'tag',
       'replace',
-      new Set(['watermark'])
+      never('watermark')
     );
     expect(out.tags).toEqual(['smile']);
   });
