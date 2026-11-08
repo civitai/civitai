@@ -42,6 +42,19 @@ export function MysteryBoxOddsPage({
   const shownTeam = team && page.teams.includes(team) ? team : page.teams[0];
   const view = useMemo(() => baseOddsView(page, shownTeam), [page, shownTeam]);
   const tiers = useMemo(() => tierSummaries(view), [view]);
+  const pack = page.pack;
+  const packTiers = useMemo(
+    () =>
+      pack
+        ? tierSummaries({
+            ...view,
+            tiers: view.tiers.filter((t) => pack.guaranteedTierIds.includes(t.id)),
+            contents: view.contents.filter((c) => pack.guaranteedTierIds.includes(c.tierId)),
+          })
+        : [],
+    [view, pack]
+  );
+  const packTierNames = packTiers.map((t) => t.tier.name).join(' or ');
   const color = shownTeam ? teamColor(shownTeam) : undefined;
   const noun = page.noun;
   const published = page.history[page.history.length - 1];
@@ -118,6 +131,38 @@ export function MysteryBoxOddsPage({
           </Table.Tbody>
         </Table>
       </Stack>
+
+      {pack && (
+        <Stack gap="sm" data-testid="box-odds-pack">
+          <Title order={2} size="h4">
+            {pack.size}-pack
+          </Title>
+          <Text size="sm">
+            {numberWithCommas(pack.price)} Buzz for {pack.size} boxes. The first box is guaranteed{' '}
+            {packTierNames}: it draws only from those rarities, at the chances below. The other{' '}
+            {pack.size - 1} boxes use the odds above. If you own every {packTierNames} {noun} by the
+            time you open the guaranteed box, it uses the odds above instead.
+          </Text>
+          <Table>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Guaranteed box</Table.Th>
+                <Table.Th>Chance (nothing owned)</Table.Th>
+                <Table.Th>Each {noun}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {packTiers.map((t) => (
+                <Table.Tr key={t.tier.id}>
+                  <Table.Td>{t.tier.name}</Table.Td>
+                  <Table.Td>{formatChance(t.probability, 1)}</Table.Td>
+                  <Table.Td>{t.contents.length ? formatChance(t.itemProbability) : '-'}</Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Stack>
+      )}
 
       <Stack gap="xs">
         <Title order={2} size="h4">

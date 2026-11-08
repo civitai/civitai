@@ -68,8 +68,8 @@ export default function MysteryBoxModal({
   source: MysteryBoxSource;
   boxDefinitionId: number;
   color: string;
-  /** Start buying or opening as soon as it shows. */
-  start?: 'buy' | 'open';
+  /** Start buying (one box or the pack) or opening as soon as it shows. */
+  start?: 'buy' | 'buyPack' | 'open';
   boxItemId?: string;
 }) {
   const dialog = useDialogContext();
@@ -92,6 +92,7 @@ export default function MysteryBoxModal({
     if (started.current || !view || !start) return;
     started.current = true;
     if (start === 'buy') void opener.buyAndOpen(view);
+    else if (start === 'buyPack') void opener.buyAndOpen(view, { pack: true });
     else void opener.openHeld(view, boxItemId);
   }, [view, start, opener, boxItemId]);
 
@@ -102,6 +103,7 @@ export default function MysteryBoxModal({
       buzzType={buzzType}
       busy={opener.busy}
       onBuy={() => opener.buyAndOpen(view)}
+      onBuyPack={() => opener.buyAndOpen(view, { pack: true })}
       onOpen={() => opener.openHeld(view)}
     />
   );
@@ -164,6 +166,7 @@ export default function MysteryBoxModal({
               busy={opener.busy}
               onPlace={event ? placeReward : undefined}
               onAgain={() => opener.buyAndOpen(view)}
+              onOpenNext={() => opener.openHeld(view)}
               onDone={opener.reset}
             />
           )}
@@ -208,6 +211,7 @@ function BoxSummary({
         don&apos;t own in that rarity is equally likely.
       </Text>
       <MysteryBoxOddsBar tiers={tiers} legend={false} />
+      {view.packListing && <PackOdds view={view} pack={view.packListing} />}
       <Stack gap={4} data-testid="box-tier-odds">
         {tiers.map((t) => (
           <Group key={t.tier.id} justify="space-between" wrap="nowrap">
@@ -239,17 +243,64 @@ function BoxSummary({
   );
 }
 
+/** The odds of a pack's guaranteed box, which draws only from the pack's guaranteed tiers. */
+function PackOdds({
+  view,
+  pack,
+}: {
+  view: MysteryBoxView;
+  pack: NonNullable<MysteryBoxView['packListing']>;
+}) {
+  const guaranteed = tierSummaries({
+    ...view,
+    tiers: view.tiers.filter((t) => pack.guaranteedTierIds.includes(t.id)),
+    contents: view.contents.filter((c) => pack.guaranteedTierIds.includes(c.tierId)),
+  });
+  const names = guaranteed.map((t) => t.tier.name).join(' or ');
+  const anyLeft = guaranteed.some((t) => t.left > 0);
+  return (
+    <Stack gap={4} data-testid="box-pack-odds">
+      <Text size="sm">
+        <b>{pack.size}-pack</b> · {numberWithCommas(pack.unitAmount)} Buzz. You get {pack.size}{' '}
+        boxes. The first is guaranteed {names}; the other {pack.size - 1} use the odds above.
+      </Text>
+      {anyLeft ? (
+        guaranteed.map((t) => (
+          <Group key={t.tier.id} justify="space-between" wrap="nowrap">
+            <Text size="xs" c="dimmed">
+              Guaranteed box: {t.tier.name}
+            </Text>
+            <Text size="xs">
+              <b>{formatChance(t.probability, 1)}</b>
+            </Text>
+          </Group>
+        ))
+      ) : (
+        <Text size="xs" c="dimmed">
+          You own every {names} hat, so the pack isn&apos;t offered.
+        </Text>
+      )}
+      <Text size="xs" c="dimmed">
+        If you own every {names} hat by the time you open the guaranteed box, it uses the odds
+        above.
+      </Text>
+    </Stack>
+  );
+}
+
 function BoxActions({
   view,
   buzzType,
   busy,
   onBuy,
+  onBuyPack,
   onOpen,
 }: {
   view: MysteryBoxView;
   buzzType: ReturnType<typeof useAvailableBuzz>[number];
   busy: boolean;
   onBuy: () => void;
+  onBuyPack: () => void;
   onOpen: () => void;
 }) {
   const { left, total } = collectedCount(view);
@@ -278,6 +329,18 @@ function BoxActions({
               loading={busy}
               onPerformTransaction={onBuy}
               data-testid="box-buy-open"
+            />
+          )}
+          {actions.canBuyPack && view.packListing && (
+            <BuzzTransactionButton
+              radius="xl"
+              color="yellow"
+              buzzAmount={view.packListing.unitAmount}
+              accountTypes={[buzzType]}
+              label={`Buy ${view.packListing.size} and open`}
+              loading={busy}
+              onPerformTransaction={onBuyPack}
+              data-testid="box-buy-pack"
             />
           )}
           {actions.covered && (
@@ -365,6 +428,7 @@ function OpenStage({
   busy,
   onPlace,
   onAgain,
+  onOpenNext,
   onDone,
 }: {
   view: MysteryBoxView;
@@ -376,6 +440,7 @@ function OpenStage({
   /** Absent for a reward with no event: only event hats are placed on posts. */
   onPlace?: () => void;
   onAgain: () => void;
+  onOpenNext: () => void;
   onDone: () => void;
 }) {
   const tier = result ? view.tiers.find((t) => t.id === result.tierId) : undefined;
@@ -429,6 +494,11 @@ function OpenStage({
                 {tier.name} · {formatChance(revealChance(result.odds))} chance
               </Badge>
             )}
+            {result.guaranteed && (
+              <Text size="xs" c="yellow" fw={700} data-testid="box-guaranteed">
+                Guaranteed pull
+              </Text>
+            )}
             <div className="w-44">
               {reward?.url && (
                 <HatArt
@@ -454,7 +524,12 @@ function OpenStage({
                   Put it on a post
                 </Button>
               )}
-              {actions.canBuy && view.listing && (
+              {actions.canOpen && (
+                <Button color="yellow" onClick={onOpenNext} loading={busy} data-testid="box-next">
+                  Open next ({view.heldBoxItemIds.length} left)
+                </Button>
+              )}
+              {!actions.canOpen && actions.canBuy && view.listing && (
                 <Button color="yellow" onClick={onAgain} loading={busy} data-testid="box-again">
                   Open another · {numberWithCommas(view.listing.unitAmount)}
                 </Button>

@@ -26,10 +26,14 @@ import { removePlacementsByCosmetic } from '~/server/services/placement-moderati
 import {
   claimBoxRefundsForCosmetic,
   listOwedBoxRefunds,
+  listOwedPackBoxRefunds,
   markBoxRefundPaid,
+  markPackBoxRefundPaid,
   pullCosmeticFromBoxes,
   type OwedBoxRefund,
+  type OwedPackBoxRefund,
 } from '~/server/services/mystery-box-takedown.service';
+import { boxPackTermsOf } from '@civitai/shared/mystery-box';
 import { getPrefixRefundState, refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { detectEmptyLoopSeam } from '~/server/utils/animation-loop-seam';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
@@ -66,6 +70,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   createBuzzTransaction,
+  getMultiAccountTransactionsByPrefix,
   refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
@@ -2475,6 +2480,45 @@ const takedownMoneyMove = <T>(fn: () => Promise<T>) =>
 type PrefixRefund = Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
 
 /**
+ * Pays one pack box its share of the pack's charge, into the account the charge came from. Its
+ * external id is the box's own, so a retry after a landed attempt is refused as a duplicate (409),
+ * which is read as paid. Returns the Buzz paid.
+ */
+async function refundPackBoxShare(owed: OwedPackBoxRefund, title: string) {
+  const pack = boxPackTermsOf(owed.listingMeta);
+  if (!pack) throw new Error(`Purchase ${owed.buzzTransactionId} is not on a pack listing`);
+  const amount = Math.floor(owed.unitAmount / pack.size);
+  if (amount <= 0) return 0;
+  const accountTypes = new Set(
+    (await getMultiAccountTransactionsByPrefix(owed.buzzTransactionId)).map(
+      (leg) => leg.accountType
+    )
+  );
+  // A pack is paid from one account; a split charge has no single place to return a share to.
+  if (accountTypes.size !== 1)
+    throw new Error(
+      `Pack charge ${owed.buzzTransactionId} has ${accountTypes.size} account types; refund it by hand`
+    );
+  const [toAccountType] = [...accountTypes];
+  try {
+    await takedownMoneyMove(() =>
+      createBuzzTransaction({
+        fromAccountId: 0,
+        toAccountId: owed.userId,
+        toAccountType,
+        amount,
+        type: TransactionType.Refund,
+        description: `Cosmetic removed - ${title}`,
+        externalTransactionId: `${owed.boxSourceKey}:takedown-refund`,
+      })
+    );
+  } catch (error) {
+    if (getBuzzApiStatus(error) !== 409) throw error;
+  }
+  return amount;
+}
+
+/**
  * A purchase's refund, finished when an earlier attempt reversed part of it: a lost response, or a
  * run that died before recording it, makes the prefix refund answer 409 and reverse nothing, so
  * every retry would read a refunded buyer as owed. Reports every leg now reversed, as the plain
@@ -2921,6 +2965,49 @@ export const takedownCosmeticShopItem = async ({
           boxId: purchase.boxDefinitionId,
           error: `Box purchase ${purchase.buzzTransactionId} has no recorded payouts; the creator's share cannot be re-derived`,
         });
+    }
+
+    let owedPackBoxes: OwedPackBoxRefund[] = [];
+    try {
+      owedPackBoxes = await listOwedPackBoxRefunds({ cosmeticId, shopItemId: id });
+    } catch (error) {
+      failures.push({
+        stage: 'box',
+        userId: 0,
+        error: `Pack box refunds not read: ${errorMessage(error)}`,
+      });
+    }
+    for (const owed of owedPackBoxes) {
+      let amount = 0;
+      try {
+        amount = await refundPackBoxShare(owed, item.title);
+      } catch (error) {
+        // Still owed: "Retry takedown" pays it, on the same external id.
+        failures.push({
+          stage: 'refund',
+          userId: owed.userId,
+          amount: owed.unitAmount,
+          error: `Pack box ${owed.boxItemId}: ${errorMessage(error)}`,
+        });
+        await logTakedown('error', 'Pack box buyer refund failed', {
+          shopItemId: id,
+          userId: owed.userId,
+          buzzTransactionId: owed.buzzTransactionId,
+          boxItemId: owed.boxItemId.toString(),
+          error: errorMessage(error),
+        });
+        continue;
+      }
+      await markPackBoxRefundPaid(owed.buzzTransactionId, owed.boxItemId).catch((error) =>
+        logTakedown('error', 'Pack box refund paid but not marked', {
+          shopItemId: id,
+          buzzTransactionId: owed.buzzTransactionId,
+          boxItemId: owed.boxItemId.toString(),
+          error: errorMessage(error),
+        })
+      );
+      boxRefundedUserIds.push(owed.userId);
+      boxRefundedValue += amount;
     }
   }
 

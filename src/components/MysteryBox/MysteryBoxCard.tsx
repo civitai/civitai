@@ -27,7 +27,7 @@ export function MysteryBoxCard({
   const { collected, total } = collectedCount(view);
   const actions = boxActions(view);
   const held = view.heldBoxItemIds.length;
-  const show = (start?: 'buy' | 'open') =>
+  const show = (start?: 'buy' | 'buyPack' | 'open') =>
     dialogStore.trigger({
       component: MysteryBoxModal,
       props: { source: { event }, boxDefinitionId: view.boxDefinitionId, color, start },
@@ -87,16 +87,27 @@ export function MysteryBoxCard({
             Open your box
           </Button>
         ) : (
-          actions.canBuy &&
-          view.listing && (
-            <BuzzTransactionButton
-              buzzAmount={view.listing.unitAmount}
-              accountTypes={[buzzType]}
-              label="Buy and open"
-              onPerformTransaction={() => show('buy')}
-              data-testid="box-card-buy"
-            />
-          )
+          <>
+            {actions.canBuy && view.listing && (
+              <BuzzTransactionButton
+                buzzAmount={view.listing.unitAmount}
+                accountTypes={[buzzType]}
+                label="Buy and open"
+                onPerformTransaction={() => show('buy')}
+                data-testid="box-card-buy"
+              />
+            )}
+            {actions.canBuyPack && view.packListing && (
+              <BuzzTransactionButton
+                color="yellow"
+                buzzAmount={view.packListing.unitAmount}
+                accountTypes={[buzzType]}
+                label={`Buy ${view.packListing.size}`}
+                onPerformTransaction={() => show('buyPack')}
+                data-testid="box-card-buy-pack"
+              />
+            )}
+          </>
         )}
       </Stack>
     </div>

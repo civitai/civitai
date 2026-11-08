@@ -64,7 +64,8 @@ CREATE TABLE "CosmeticShopItem" (
   "id" INTEGER PRIMARY KEY,
   "cosmeticId" INTEGER,
   "title" TEXT NOT NULL DEFAULT 'listing',
-  "listed" BOOLEAN NOT NULL DEFAULT true
+  "listed" BOOLEAN NOT NULL DEFAULT true,
+  "meta" JSONB NOT NULL DEFAULT '{}'
 );
 CREATE TABLE "UserCosmeticShopPurchases" (
   "buzzTransactionId" TEXT PRIMARY KEY,
@@ -96,6 +97,7 @@ const MOD = 1;
 const HAT = 500; // a box reward
 const OTHER_HAT = 501;
 const BOX_LISTING = 10;
+const BOX_PACK_LISTING = 13;
 const PACK_LISTING = 11;
 const SHELF_LISTING = 12;
 
@@ -131,6 +133,8 @@ beforeEach(async () => {
       (2, 'cosmetic', 'Hat', ${HAT}), (3, 'cosmetic', 'Other hat', ${OTHER_HAT});
     INSERT INTO "CosmeticShopItem" ("id", "cosmeticId", "itemDefinitionId", "listed") VALUES
       (${BOX_LISTING}, NULL, 1, false), (${PACK_LISTING}, NULL, NULL, true), (${SHELF_LISTING}, 700, NULL, true);
+    INSERT INTO "CosmeticShopItem" ("id", "cosmeticId", "itemDefinitionId", "listed", "meta") VALUES
+      (${BOX_PACK_LISTING}, NULL, 1, false, '{"pack":{"size":3,"guaranteedTierIds":[1]}}');
   `);
 
   statements = [];
@@ -374,6 +378,48 @@ describe('refundShopPurchase: a mystery box', () => {
     await expect(refund('box-a')).resolves.toEqual({ ok: false, error: ITEM_HOLDER_BUSY_MESSAGE });
     expect(await isRefunded('box-a')).toBe(false);
     expect(await heldBoxes()).toEqual(['box-a']);
+  });
+});
+
+describe('refundShopPurchase: a pack of boxes', () => {
+  const packKey = (n: number) => `pack-a#pack-0${n}`;
+
+  it('takes back every box of the pack, held or opened, and flags the purchase once', async () => {
+    await purchase('pack-a', BOX_PACK_LISTING, null);
+    await openedBox(packKey(1), 77, 2, HAT);
+    await holdBox(packKey(2));
+    await holdBox(packKey(3));
+    await purchase('box-b', BOX_LISTING, null);
+    await holdBox('box-b');
+
+    await expect(refund('pack-a')).resolves.toEqual({ ok: true });
+
+    expect(await heldBoxes()).toEqual(['box-b']);
+    expect(await holdings()).toEqual([]);
+    expect(await openingStatus(77)).toBe('refunded');
+    expect(await isRefunded('pack-a')).toBe(true);
+  });
+
+  it('refuses, and takes back nothing, when one box of the pack is on neither list', async () => {
+    await purchase('pack-a', BOX_PACK_LISTING, null);
+    await holdBox(packKey(1));
+    await holdBox(packKey(2));
+
+    await expect(refund('pack-a')).resolves.toEqual({
+      ok: false,
+      error: 'Neither the box nor what it gave is on this account.',
+    });
+    expect(await heldBoxes()).toEqual([packKey(1), packKey(2)]);
+    expect(await isRefunded('pack-a')).toBe(false);
+  });
+
+  it("a single box's refund never reaches a pack's boxes under a key it prefixes", async () => {
+    await purchase('pack-a', BOX_LISTING, null);
+    await holdBox('pack-a');
+    await holdBox(packKey(1));
+
+    await expect(refund('pack-a')).resolves.toEqual({ ok: true });
+    expect(await heldBoxes()).toEqual([packKey(1)]);
   });
 });
 

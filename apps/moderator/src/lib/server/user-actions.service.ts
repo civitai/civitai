@@ -26,7 +26,9 @@ import type { DB } from '@civitai/db-schema/kysely';
 import {
   BOX_OPENING_REWARD_STATUS,
   boxOpenClaimKey,
+  boxPackTermsOf,
   MOD_GRANT_SOURCE_PREFIX,
+  packBoxSourceKey,
 } from '@civitai/shared/mystery-box';
 import { dbRead, dbWrite } from './db';
 import { ACCOUNT_STANDING_REBUST_MS, REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
@@ -1115,7 +1117,7 @@ export async function refundShopPurchase(input: {
   const purchase = await dbWrite
     .selectFrom('UserCosmeticShopPurchases as p')
     .innerJoin('CosmeticShopItem as csi', 'csi.id', 'p.shopItemId')
-    .select(['p.refunded', 'csi.itemDefinitionId'])
+    .select(['p.refunded', 'csi.itemDefinitionId', 'csi.meta'])
     .where('p.buzzTransactionId', '=', input.buzzTransactionId)
     .where('p.userId', '=', input.userId)
     .executeTakeFirst();
@@ -1141,13 +1143,26 @@ export async function refundShopPurchase(input: {
         throw new RefundRefused('That purchase is already refunded.');
 
       // Routed by the listing, not by a NULL `cosmeticId`: a box purchase has none either.
-      return purchase.itemDefinitionId != null
-        ? takeBackBox(trx, {
+      const boxDefinitionId = purchase.itemDefinitionId;
+      if (boxDefinitionId == null) return takeBackCosmetics(trx, input);
+      const pack = boxPackTermsOf(purchase.meta);
+      if (!pack)
+        return takeBackBox(trx, {
+          userId: input.userId,
+          sourceKey: input.buzzTransactionId,
+          boxDefinitionId,
+        });
+      // One charge paid for every box of a pack, so the whole pack comes back together.
+      const removedFromPack: RemovedHolding[] = [];
+      for (let n = 1; n <= pack.size; n++)
+        removedFromPack.push(
+          ...(await takeBackBox(trx, {
             userId: input.userId,
-            sourceKey: input.buzzTransactionId,
-            boxDefinitionId: purchase.itemDefinitionId,
-          })
-        : takeBackCosmetics(trx, input);
+            sourceKey: packBoxSourceKey(input.buzzTransactionId, n),
+            boxDefinitionId,
+          }))
+        );
+      return removedFromPack;
     });
   } catch (error) {
     if (error instanceof RefundRefused) return { ok: false, error: error.message };
