@@ -21,7 +21,7 @@ const DEDICATED: Record<string, number> = {
 // Shared files: each use was read and runs on dbWrite (or a dbWrite transaction).
 const SHARED: Record<string, number> = {
   // getProfilePictureUserIds and deleteProfilePictureHoldsSql (in deleteUser's transaction).
-  'src/server/services/user.service.ts': 6,
+  'src/server/services/user.service.ts': 5,
   // isExemptFromAiVerification.
   'src/server/services/image-scan-result.service.ts': 1,
   // unusedAuthorImage (every caller passes dbWrite or a dbWrite transaction), and the cover check.

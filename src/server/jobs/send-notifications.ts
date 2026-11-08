@@ -48,7 +48,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
             lastRun
           );
 
-          // A processor whose selection reads the primary keeps its query out of the browser bundle.
+          // Overrides the processor's query where it reads the primary; see primary-notification-queries.ts.
           const prepareQuery: NotificationProcessor['prepareQuery'] =
             primaryPrepareQueries[key] ?? processorQuery;
           let query: Promise<string | undefined> | string | undefined = prepareQuery?.({

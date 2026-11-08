@@ -61,8 +61,7 @@ export async function syncProfilePictureForImage(
   if (!claimed) return { action: 'unclaimed' };
   if (!image) return { action: 'none' };
 
-  // Any review, not only csam: no one else sees an image under review, so no one sees it as an
-  // avatar either, and which kind it is stays unreadable from the outside.
+  // Any review kind, not only csam: the owner must not be able to tell which it is.
   const flagged = image.needsReview !== null;
   if (image.ingestion === 'Blocked' || flagged) {
     // No deletedAt test: a deleted account's blocked avatar is recorded too.

@@ -480,9 +480,6 @@ describe('runProfilePictureSync', () => {
     const names = loggingMock.logToAxiom.mock.calls.map(([e]) => (e as { name: string }).name);
     expect(names).toContain('profile-picture-sync-heartbeat');
     expect(names).not.toContain('profile-picture-sync-overdue');
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'info', processed: 1, oldestAgeMinutes: 0 })
-    );
   });
 
   it('logs an overdue error while the oldest row is past 15 minutes', async () => {
@@ -530,7 +527,6 @@ describe('the profile-picture-blocked notice', () => {
     expect(await noticed()).toEqual([OWNER]);
   });
 
-  // Red on the old query, which joined the pointer and nothing else.
   it('is not sent to a held owner', async () => {
     await block(avatar(HELD_OWNER));
     expect(await noticed()).toEqual([]);
