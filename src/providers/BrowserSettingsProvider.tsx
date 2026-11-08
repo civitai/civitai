@@ -12,6 +12,7 @@ import type { NsfwLevel } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import type { UserContentSettings } from '~/server/schema/user.schema';
+import type { EventPointPops } from '~/shared/constants/event-point-pops.constants';
 
 /**
  * Whether this viewer sees event cosmetics (worn hats) and Hat Turf. Reads true outside the
@@ -69,6 +70,8 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
         changedSettings.autoplayGifs = variables.autoplayGifs;
       if (variables.showEventCosmetics !== undefined)
         changedSettings.showEventCosmetics = variables.showEventCosmetics;
+      if (variables.eventPointPops !== undefined)
+        changedSettings.eventPointPops = variables.eventPointPops;
 
       if (Object.keys(changedSettings).length === 0) return;
 
@@ -129,6 +132,8 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
     return store.subscribe((curr, prev) => {
       if (curr.showEventCosmetics !== prev.showEventCosmetics)
         setCookie('showEventCosmetics', curr.showEventCosmetics);
+      if (curr.eventPointPops !== prev.eventPointPops)
+        setCookie('eventPointPops', curr.eventPointPops);
     });
   }, []);
 
@@ -189,6 +194,7 @@ type StoreState = {
   allowAds: boolean;
   autoplayGifs: boolean;
   showEventCosmetics: boolean;
+  eventPointPops: EventPointPops;
   domain: ColorDomain;
 };
 

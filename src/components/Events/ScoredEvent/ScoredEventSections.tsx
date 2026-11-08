@@ -19,6 +19,7 @@ import {
   TopTurfPlayers,
 } from '~/components/Events/ScoredEvent/TeamStandings';
 import { RosterOptIn, useSetRosterOptIn } from '~/components/Events/ScoredEvent/roster/RosterOptIn';
+import { EventPointPopsSetting } from '~/components/HatTurf/EventPointPopsSetting';
 import { ShowEventHomeBlock } from '~/components/HomeBlocks/ShowEventHomeBlock';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
@@ -177,8 +178,11 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
           }
           rosterSwitch={data.joinable ? <RosterOptIn event={event} compact /> : undefined}
         />
-        <div className="mt-2 flex justify-end empty:hidden">
-          <ShowEventHomeBlock event={event} title={data.title} />
+        <div className="mt-2 flex flex-wrap items-end justify-between gap-3 empty:hidden">
+          {joined && !ended && <EventPointPopsSetting size="sm" />}
+          <div className="ml-auto">
+            <ShowEventHomeBlock event={event} title={data.title} />
+          </div>
         </div>
       </div>
       {scoredSectionOrder({ joined, ended }).map((key) => (

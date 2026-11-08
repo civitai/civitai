@@ -87,6 +87,9 @@ vi.mock('~/components/Events/ScoredEvent/ScoredEventHero', () => ({
   },
 }));
 vi.mock('~/components/Events/ScoredEvent/TeamHatShelf', () => ({ TeamHatShelf: () => null }));
+vi.mock('~/components/HatTurf/EventPointPopsSetting', () => ({
+  EventPointPopsSetting: () => null,
+}));
 vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: () => null }));
 // Its own browser test covers it.
 vi.mock('~/components/Events/ScoredEvent/HatTurfEventSection', () => ({

@@ -541,6 +541,58 @@ describe('what awardEventPoints returns', () => {
   });
 });
 
+describe('the grants awardEventPoints hands onGrants', () => {
+  it("is each first's live grant, with its event and team, before the ledger insert", async () => {
+    const order: string[] = [];
+    let heard: unknown;
+    build({ insertLedger: async (rows) => void (order.push('ledger'), ledger.push(...rows)) });
+    await engine.awardEventPoints([reaction(1)], (grants) => {
+      order.push('grants');
+      heard = grants;
+    });
+    expect(heard).toEqual([{ event: EVENT.name, team: 'Yellow', points: 5 }]);
+    expect(order).toEqual(['grants', 'ledger']);
+  });
+
+  it('is the capped grant, and nothing for a first the cap cut to 0', async () => {
+    const keys = eventSeasonKeys(EVENT.name, 'live');
+    await fake.redis.hIncrBy(keys.cap('2026-11-05', OWNER), '1', 48);
+    const heard: unknown[] = [];
+    await engine.awardEventPoints([reaction(1)], (g) => heard.push(g));
+    await engine.awardEventPoints([reaction(1, 101)], (g) => heard.push(g));
+    expect(heard[0]).toEqual([{ event: EVENT.name, team: 'Yellow', points: 2 }]);
+    // Image 101 has no hat: no first, so onGrants is not called at all.
+    expect(heard).toHaveLength(1);
+  });
+
+  it('is not called for a repeat', async () => {
+    await engine.awardEventPoints([reaction(1)]);
+    const onGrants = vi.fn();
+    await engine.awardEventPoints([reaction(1)], onGrants);
+    expect(onGrants).not.toHaveBeenCalled();
+  });
+
+  it("is the turf team's sum across credited players", async () => {
+    fake.setTurf(
+      EVENT.name,
+      'Image:200',
+      encodeTurfEntry({ team: 'Yellow', cosmeticId: 7, players: [21, 22, 23], lastAt: 0 })
+    );
+    build({ loadScoredEvents: async () => [{ ...EVENT, turfMode: 'live' as const }] });
+    let heard: unknown;
+    await engine.awardEventPoints([{ ...reaction(22, 200) }], (g) => (heard = g));
+    // 21 and 23 earn 5 each; the reactor (22) never earns.
+    expect(heard).toEqual([{ event: EVENT.name, team: 'Yellow', points: 10 }]);
+  });
+
+  it('a throwing onGrants still lets the ledger row through', async () => {
+    await engine.awardEventPoints([reaction(1)], () => {
+      throw new Error('listener broke');
+    });
+    expect(ledger).toHaveLength(1);
+  });
+});
+
 describe('when the ledger write fails', () => {
   it('takes the dedupe marks back, so the same action earns when it comes again', async () => {
     let fail = true;
