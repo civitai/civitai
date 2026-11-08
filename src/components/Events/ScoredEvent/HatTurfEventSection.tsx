@@ -84,7 +84,9 @@ export function HatTurfEventSection({
           <Text size="sm" c="gray.4" maw={440}>
             {joined ? "You're in. " : ''}
             Put your team&apos;s hat on any picture to claim it. The more of your team on one
-            picture, the bigger your share.
+            picture, the bigger your share. Hats last 48 hours. Place your team&apos;s hat again
+            once yours expires to keep the picture; points you&apos;ve earned are never taken back.
+            Teams that are behind earn a bigger share on the pictures they lead.
           </Text>
           <div className="mt-0.5">
             <Button

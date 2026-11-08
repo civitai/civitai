@@ -69,6 +69,7 @@ describe('Hat Turf on the event page', () => {
     await render('blue');
     await vi.waitFor(() => expect(section()).not.toBeNull());
     expect(section()!.textContent).toMatch(/any picture/);
+    expect(section()!.textContent).toMatch(/Hats last 48 hours/);
     button(/^Join Hat Turf$/)!.click();
     expect(h.mutate).toHaveBeenCalledWith({ event: 'birthday2026', optedIn: true });
   });
