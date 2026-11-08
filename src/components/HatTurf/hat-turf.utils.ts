@@ -113,6 +113,20 @@ export function badgeFigure(
   };
 }
 
+/**
+ * How far the badge's disc fills: the image's points against the most it can earn per action (the
+ * players the event credits now). Full on a hatted image, whose 1 point is not counted against the
+ * cap, and while the cap is unknown.
+ */
+export function badgeFill(
+  figure: Pick<BadgeFigure, 'points'>,
+  hatted: boolean,
+  creditedPlayers: number | null | undefined
+) {
+  if (hatted || !creditedPlayers || creditedPlayers <= 0) return 1;
+  return Math.min(1, Math.max(0, figure.points / creditedPlayers));
+}
+
 /** "+3", "\u22123", "0". */
 export const formatMargin = (margin: number) =>
   margin > 0 ? `+${margin}` : margin < 0 ? `\u2212${-margin}` : '0';
@@ -300,3 +314,26 @@ export function formatRefillCadence(perHour: number) {
 
 /** "1.5", "0.75": at most two decimals, none trailing. */
 export const formatMultiplier = (multiplier: number) => String(Number(multiplier.toFixed(2)));
+
+/**
+ * How full the viewer's hat stock is, 0 to 1, for the hat button's background. Null while the cap
+ * is unknown. A stock kept above a lowered cap reads full.
+ */
+export function stockFill(stock: { available: number; cap: number } | null | undefined) {
+  if (!stock || !(stock.cap > 0)) return null;
+  return Math.min(1, Math.max(0, stock.available / stock.cap));
+}
+
+/**
+ * Where the wait for the next hat stands: one hat's refill time and how much of it has passed.
+ * Null at the cap (no hat is coming) or with no refill rate.
+ */
+export function refillTimer(
+  stock: { nextAt: Date | null; perHour: number } | null | undefined,
+  now: number
+) {
+  if (!stock?.nextAt || !(stock.perHour > 0)) return null;
+  const period = 3_600_000 / stock.perHour;
+  const left = Math.min(period, Math.max(0, stock.nextAt.getTime() - now));
+  return { period, elapsed: period - left };
+}

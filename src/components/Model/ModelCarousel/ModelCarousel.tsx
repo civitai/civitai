@@ -1,3 +1,4 @@
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useCallback } from 'react';
 import { Card, Center, Indicator, Loader, Stack } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
@@ -60,6 +61,7 @@ export function ModelCarousel(props: Props) {
 
 function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10 }: Props) {
   const features = useFeatureFlags();
+  const showEventCosmetics = useShowEventCosmetics();
   const { running, helpers } = useTourContext();
   // Both model-page tours spend two steps here — one on the button, one on the
   // options it opens — so the open and the choice each move on by one.
@@ -121,13 +123,14 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                     style={
                       {
                         aspectRatio: `${image.width ?? 1} / ${image.height ?? 1}`,
-                        ...(image.eventDecoration && {
-                          '--event-decoration-clear-left': getEventDecorationClearLeftCss(
-                            image.eventDecoration.data,
-                            'corner',
-                            HAT_PLAIN_CARD_NUDGE
-                          ),
-                        }),
+                        ...(showEventCosmetics &&
+                          image.eventDecoration && {
+                            '--event-decoration-clear-left': getEventDecorationClearLeftCss(
+                              image.eventDecoration.data,
+                              'corner',
+                              HAT_PLAIN_CARD_NUDGE
+                            ),
+                          }),
                       } as React.CSSProperties
                     }
                   >

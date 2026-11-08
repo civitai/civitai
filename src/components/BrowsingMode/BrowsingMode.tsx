@@ -13,6 +13,7 @@ import { useIsRegionRestricted } from '~/hooks/useIsRegionRestricted';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import { EventPointPopsSetting } from '~/components/HatTurf/EventPointPopsSetting';
 
 const HiddenTagsModal = dynamic(() => import('~/components/Tags/HiddenTagsModal'), { ssr: false });
 
@@ -50,6 +51,7 @@ export function BrowsingModeMenu({
   const showNsfw = useBrowsingSettings((x) => x.showNsfw);
   const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
   const disableHidden = useBrowsingSettings((x) => x.disableHidden);
+  const showEventCosmetics = useBrowsingSettings((x) => x.showEventCosmetics);
   const setState = useBrowsingSettings((x) => x.setState);
   const userBrowsingLevel = useBrowsingSettings((x) => x.browsingLevel);
   const features = useFeatureFlags();
@@ -58,6 +60,8 @@ export function BrowsingModeMenu({
 
   const toggleBlurNsfw = () => setState((state) => ({ blurNsfw: !state.blurNsfw }));
   const toggleDisableHidden = () => setState((state) => ({ disableHidden: !state.disableHidden }));
+  const toggleEventCosmetics = () =>
+    setState((state) => ({ showEventCosmetics: !state.showEventCosmetics }));
 
   return (
     <div id="browsing-mode">
@@ -149,6 +153,16 @@ export function BrowsingModeMenu({
             size={compact ? 'sm' : 'md'}
           />
         </Group>
+
+        <Checkbox
+          checked={showEventCosmetics}
+          onChange={toggleEventCosmetics}
+          label="Show event cosmetics"
+          description="Event hats on content and avatars, and Hat Turf"
+          size={compact ? 'sm' : 'md'}
+          data-testid="browsing-show-event-cosmetics"
+        />
+        <EventPointPopsSetting size={compact ? 'sm' : 'md'} />
       </Stack>
     </div>
   );

@@ -35,6 +35,7 @@ import { payoutCopy, stickerPurchaseCopy } from '~/components/Sticker/payout-cop
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { DRAFT_STICKER_Z } from '~/components/Sticker/placement-layers';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
+import { StickerMomentControl } from '~/components/Sticker/StickerMomentControl';
 import { purchaseCanBeRetriedFresh, useBuyStickerUses } from '~/components/Sticker/sticker.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import type { StickerTreatment } from '~/components/Sticker/treatments/sticker-treatments';
@@ -44,6 +45,7 @@ import {
   STICKER_PLACEMENT_MIN_OPACITY,
   snapScaleOvershoot,
 } from '~/shared/utils/sticker-placement';
+import { encodeStickerTrack, momentStickerTrack } from '~/shared/utils/sticker-track';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -158,6 +160,7 @@ export function DraftSticker({
   ownerUsername,
   onGesture,
   onDuplicate,
+  video,
   purchase,
   commit,
   artwork,
@@ -187,6 +190,8 @@ export function DraftSticker({
    * component cannot.
    */
   onDuplicate?: (id: string) => string | null;
+  /** The video being placed on, which offers pinning to a moment. Absent elsewhere. */
+  video?: HTMLVideoElement | null;
   /**
    * What this draft still has to buy, decided ACROSS the drafts on the image
    * rather than frozen onto this one when it was created.
@@ -361,11 +366,12 @@ export function DraftSticker({
 
   // Both the tray and the carousel's clipped viewport can swallow the cluster,
   // so it moves above the sticker when that is the better of the two positions.
-  // The two standoffs ride along because they come from the same measurement,
-  // and because the side they apply to is decided in the same breath — see the
-  // note above `setPosition` in `measure`.
-  const [{ flipped, below, above }, setPosition] = useState({
+  // The two standoffs and the lift ride along because they come from the same
+  // measurement, and because the side they apply to is decided in the same
+  // breath — see the note above `setPosition` in `measure`.
+  const [{ flipped, below, above, lift }, setPosition] = useState({
     flipped: false,
+    lift: 0,
     below: 0,
     above: 0,
   });
@@ -373,10 +379,10 @@ export function DraftSticker({
 
   // `measure` is what the ResizeObserver and the window listener are bound to,
   // so it has to keep its identity across a drag — otherwise re-binding them is
-  // back on the pointermove path, which is the whole problem. It reads the two
+  // back on the pointermove path, which is the whole problem. It reads the
   // values it needs through a ref instead of closing over them.
-  const frame = useRef({ flipped, rotation: draft.rotation });
-  frame.current = { flipped, rotation: draft.rotation };
+  const frame = useRef({ flipped, lift, rotation: draft.rotation });
+  frame.current = { flipped, lift, rotation: draft.rotation };
 
   const clip = useRef<HTMLElement | null>(null);
 
@@ -385,7 +391,7 @@ export function DraftSticker({
     const button = buttonRef.current;
     if (!element || !button) return;
 
-    const { flipped, rotation } = frame.current;
+    const { flipped, lift, rotation } = frame.current;
     const tray = useStore.getState().tray;
     // 🔴 THE SIDE AND THE TWO STANDOFFS MOVE IN ONE UPDATE. Writing the margin
     // to the node while the class comes from state splits them across a render:
@@ -399,6 +405,7 @@ export function DraftSticker({
       tray: tray?.getBoundingClientRect() ?? null,
       clip: clip.current?.getBoundingClientRect() ?? null,
       flipped,
+      lift,
       rotation,
       knobOffset: KNOB_OFFSET,
       outset: HANDLE_OUTSET,
@@ -411,7 +418,8 @@ export function DraftSticker({
     setPosition((current) =>
       current.flipped === next.flipped &&
       current.below === next.below &&
-      current.above === next.above
+      current.above === next.above &&
+      current.lift === next.lift
         ? current
         : next
     );
@@ -575,25 +583,49 @@ export function DraftSticker({
     if (!useStore.getState().interaction) select(draft.id);
   };
 
+  // A take in progress, which nothing may place until it is finished.
+  const [capturing, setCapturing] = useState(false);
+
   // One payload for both buttons, so the two offers cannot drift into placing
   // different stickers. `free` is the only thing that differs, and it selects a
   // path rather than asserting anything — the server re-decides all of it.
-  const placementInput = () => ({
-    imageId: draft.imageId,
-    free: placingFree,
-    data: {
-      cosmeticId: draft.cosmeticId,
-      x: draft.x,
-      y: draft.y,
-      scale: snapScaleOvershoot(draft.scale, creatorMaxScale),
-      rotation: draft.rotation,
-      flip: draft.flip,
-      opacity: draft.opacity,
-      // Sent only when there is something to send, so an opened-then-abandoned
-      // field is the same as never opening it.
-      ...(note.trim() ? { comment: note } : {}),
-    },
-  });
+  const placementInput = () => {
+    const scale = snapScaleOvershoot(draft.scale, creatorMaxScale);
+    return {
+      imageId: draft.imageId,
+      free: placingFree,
+      ...(draft.recording?.length
+        ? {
+            track: encodeStickerTrack(
+              draft.recording.map((pose) => ({
+                ...pose,
+                scale: snapScaleOvershoot(pose.scale, creatorMaxScale),
+              }))
+            ),
+          }
+        : draft.moment
+        ? {
+            track: momentStickerTrack(
+              { x: draft.x, y: draft.y, scale, rotation: draft.rotation },
+              draft.moment.startMs,
+              draft.moment.durationMs
+            ),
+          }
+        : {}),
+      data: {
+        cosmeticId: draft.cosmeticId,
+        x: draft.x,
+        y: draft.y,
+        scale,
+        rotation: draft.rotation,
+        flip: draft.flip,
+        opacity: draft.opacity,
+        // Sent only when there is something to send, so an opened-then-abandoned
+        // field is the same as never opening it.
+        ...(note.trim() ? { comment: note } : {}),
+      },
+    };
+  };
 
   /**
    * A second copy of this sticker, already arranged.
@@ -837,7 +869,7 @@ export function DraftSticker({
           // no constant is right at both ends of the scale range or at both ends
           // of the rotation range. Set from the same state as the class above,
           // never written to the node separately.
-          ...(flipped ? { marginBottom: above } : { marginTop: below }),
+          ...(flipped ? { marginBottom: above - lift } : { marginTop: below - lift }),
         }}
         // Outside the rotated body but still inside the draft, and the layer
         // starts a move from a press anywhere on it, so without this every press
@@ -867,6 +899,25 @@ export function DraftSticker({
           {!opaque && opacityControl}
           {removeControl}
         </div>
+
+        {video && (
+          <StickerMomentControl
+            video={video}
+            moment={draft.moment}
+            following={selected}
+            onChange={(moment) => useStore.getState().move(draft.id, { moment })}
+            recorder={{
+              recording: draft.recording,
+              onRecordingChange: (recording) => useStore.getState().move(draft.id, { recording }),
+              pose: () => {
+                const now = useStore.getState().drafts.find(({ id }) => id === draft.id) ?? draft;
+                return { x: now.x, y: now.y, scale: now.scale, rotation: now.rotation };
+              },
+              onPose: (pose) => useStore.getState().move(draft.id, pose),
+              onCapturing: setCapturing,
+            }}
+          />
+        )}
 
         {commit ?? (
           <>
@@ -984,6 +1035,11 @@ export function DraftSticker({
                 }
                 onPerformTransaction={buyOneUse}
               />
+            ) : capturing || draft.recording?.length === 0 ? (
+              // Placing now would send the last finished take, or a still sticker before the first.
+              <Text size="xs" c="white" className="rounded-full bg-black/80 px-2 py-0.5">
+                {capturing ? 'Finish recording to place' : 'Record the movement to place'}
+              </Text>
             ) : placingFree ? (
               // Not a `BuzzTransactionButton`. That control exists to show a price
               // and check a balance against it, and a free placement has neither —

@@ -3,6 +3,11 @@ import type {
   Workflow,
   WorkflowStatus,
 } from '@civitai/orchestration-client';
+import {
+  TRAINING_REVIEW_COPY,
+  trainingHeldSince,
+  trainingReviewState,
+} from '@civitai/shared/training-review';
 import { slugify } from '$lib/slug';
 import {
   cardByAirEcosystem,
@@ -44,8 +49,16 @@ export interface GenerationItem {
 }
 
 /** A run's coarse lifecycle as shown on the My-trainings list. `published` is an app-level
- * fact we store in the workflow metadata, not an orchestrator status. */
-export type RunState = 'ready' | 'training' | 'published' | 'failed';
+ * fact we store in the workflow metadata, not an orchestrator status. `review`, `rejected` and
+ * `unreviewed` come from the training step's review state, which the workflow status doesn't show. */
+export type RunState =
+  | 'ready'
+  | 'training'
+  | 'review'
+  | 'published'
+  | 'rejected'
+  | 'unreviewed'
+  | 'failed';
 
 /** Badge presentation per run state, shared by the My-trainings list and the run detail page so the
  * two can't drift when a state is added or recolored. */
@@ -56,13 +69,31 @@ export const RUN_STATE_BADGE: Record<RunState, { label: string; cls: string; dot
     cls: 'text-primary bg-primary/15',
     dot: 'bg-primary animate-pulse',
   },
+  review: {
+    label: TRAINING_REVIEW_COPY.pendingLabel,
+    cls: 'text-buzz bg-buzz/15',
+    dot: 'bg-buzz',
+  },
   published: {
     label: 'Published',
     cls: 'text-emerald-400 bg-emerald-500/15',
     dot: 'bg-emerald-400',
   },
+  rejected: {
+    label: TRAINING_REVIEW_COPY.notApprovedLabel,
+    cls: 'text-red-400 bg-red-500/15',
+    dot: 'bg-red-400',
+  },
+  unreviewed: {
+    label: TRAINING_REVIEW_COPY.unreviewedLabel,
+    cls: 'text-dark-1 bg-dark-4',
+    dot: 'bg-dark-2',
+  },
   failed: { label: 'Failed', cls: 'text-red-400 bg-red-500/15', dot: 'bg-red-400' },
 };
+
+/** Runs that ended without training: no weights, nothing to cancel. */
+const ENDED_UNTRAINED: ReadonlySet<RunState> = new Set(['failed', 'rejected', 'unreviewed']);
 
 export interface TrainingRow {
   /** Orchestrator workflow id — the handle for reconnect/open. Absent only for sample rows. */
@@ -94,7 +125,7 @@ export interface TrainingRow {
 /** Whether the list offers Delete. A training run is excluded because deleting it is a cancel, and
  *  the orchestrator only refunds work that hasn't started. */
 export function canDeleteRun(row: Pick<TrainingRow, 'state' | 'hasModel'>): boolean {
-  return (row.state === 'ready' || row.state === 'failed') && !row.hasModel;
+  return (row.state === 'ready' || ENDED_UNTRAINED.has(row.state)) && !row.hasModel;
 }
 
 function workflowHasModel(w: Workflow, meta: TrainingStudioMeta): boolean {
@@ -224,8 +255,25 @@ const epochSamples = (
 
 interface TrainingStepOutput {
   epochs?: TrainingEpochOutput[];
+  /** The review gate's state; the workflow stays `processing` while it holds the run. */
+  moderationStatus?: string;
   /** Legacy `imageResourceTraining` runs carry the sample prompts here, not on the input. */
   sampleImagesPrompts?: string[];
+}
+
+/** Overlay the review gate on the status-derived state: a held run reads as pending review rather
+ *  than training, and a run that ended at the gate reads as such rather than as a crash. Mirrors the
+ *  main app's mapping (workflow-state.ts): a rejection on an expired workflow means it timed out. */
+function reviewedState(
+  byStatus: RunState | undefined,
+  status: WorkflowStatus,
+  moderationStatus: unknown
+): RunState | undefined {
+  const review = trainingReviewState(moderationStatus);
+  if (!byStatus || !review) return byStatus;
+  if (status === 'expired') return 'unreviewed';
+  if (review === 'rejected') return 'rejected';
+  return byStatus === 'training' ? 'review' : byStatus;
 }
 
 /**
@@ -238,8 +286,6 @@ function resolveWorkflow(w: Workflow) {
   const meta = (w.metadata ?? {}) as TrainingStudioMeta;
   // `status` is typed non-null but the orchestrator can omit it on a run mid-transition (the main app's
   // read paths guard `!workflow.status`), so an unmapped status yields no state and the caller drops it.
-  const state: RunState | undefined = meta.published ? 'published' : STATE_BY_STATUS[w.status];
-
   const step =
     w.steps?.find((s) => (s as { $type?: string }).$type === 'training') ??
     w.steps?.find((s) => (s as { $type?: string }).$type === 'imageResourceTraining') ??
@@ -248,6 +294,9 @@ function resolveWorkflow(w: Workflow) {
     {}) as TrainingStepInput;
   const output = ((step as { output?: TrainingStepOutput } | undefined)?.output ??
     {}) as TrainingStepOutput;
+  const state: RunState | undefined = meta.published
+    ? 'published'
+    : reviewedState(STATE_BY_STATUS[w.status], w.status, output.moderationStatus);
   // The orchestrator's 0–1 estimate of overall step progress (refreshed on each job event); the general
   // "how far along" the run is, independent of the per-epoch checkpoints.
   const rate = (step as { estimatedProgressRate?: number | null } | undefined)
@@ -488,6 +537,8 @@ export interface TrainingDetail {
   code: string;
   state: RunState;
   createdAt: string;
+  /** While held for review: when the hold began, the clock for offering a support ticket. */
+  heldSince?: string;
   /** When the training step started running — with `completedAt` it gives the run's wall-clock
    *  duration. Absent on runs whose step carries no start date. */
   startedAt?: string;
@@ -621,6 +672,9 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     code,
     state,
     createdAt: w.createdAt,
+    ...(state === 'review' && {
+      heldSince: trainingHeldSince(startedAt, w.createdAt) ?? undefined,
+    }),
     startedAt,
     completedAt,
     ecosystem: typeof input.ecosystem === 'string' && input.ecosystem ? input.ecosystem : undefined,

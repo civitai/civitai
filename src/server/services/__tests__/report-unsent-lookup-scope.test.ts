@@ -279,6 +279,27 @@ describe('a second report folded into an unsent one', () => {
     });
   });
 
+  it('keeps text captured by the first filing and adds what the second captured', async () => {
+    const captured = (id: number, text: string) => ({ source: 'comment', id, text });
+    const first = seed({
+      userId: 101,
+      images: [{ id: 1 }],
+      details: { contextText: [captured(11, 'as first captured')] },
+    });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'Image',
+      imageIds: [2],
+      details: { contextText: [captured(11, 'edited since'), captured(12, 'new')] } as never,
+    });
+
+    expect(rows.find((r) => r.id === first.id)!.details).toEqual({
+      contextText: [captured(11, 'as first captured'), captured(12, 'new')],
+    });
+  });
+
   it('keeps the stored details when the second filing sends none, or leaves an answer unset', async () => {
     const first = seed({
       userId: 101,

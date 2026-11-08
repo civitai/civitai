@@ -1,4 +1,13 @@
-import { Button, CloseButton, Group, Select, Text, TextInput, ThemeIcon } from '@mantine/core';
+import {
+  Button,
+  CloseButton,
+  Group,
+  Portal,
+  Select,
+  Text,
+  TextInput,
+  ThemeIcon,
+} from '@mantine/core';
 import {
   IconAlertTriangle,
   IconInfoCircle,
@@ -7,7 +16,8 @@ import {
   IconSticker,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PAGE_MODAL_Z_INDEX } from '~/components/Dialog/Templates/PageModal';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { Countdown } from '~/components/Countdown/Countdown';
@@ -83,7 +93,6 @@ export function StickerPlacementTray({
   const [search, setSearch] = useState('');
   const [mineOnlyRequested, setMineOnlyRequested] = useState(false);
   const [sortBy, setSortBy] = useState<StickerTraySort>('used');
-  const trayRef = useRef<HTMLDivElement>(null);
 
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const trayOpen = useStickerPlacementDraftStore((state) => state.trayOpen);
@@ -100,23 +109,21 @@ export function StickerPlacementTray({
   // image nobody is looking at.
   const showing = targetImageId === imageId && trayOpen;
 
-  // Registered after the early return below has been passed, so the element in
-  // the store is always one that is actually on screen. `showing` rather than
-  // the target alone: a panel that has been put away is not an obstacle the buy
-  // button should still be avoiding.
+  // A callback ref, not an effect reading a ref: the Portal mounts its children after
+  // the first commit, so an effect would register null. It runs only while the tray
+  // is on screen, so the element in the store is always one that is actually there —
+  // a panel that has been put away is not an obstacle the buy button should avoid.
+  const registerTray = useCallback((node: HTMLDivElement | null) => setTray(node), [setTray]);
+
   useEffect(() => {
-    if (!showing) {
-      // The panel is state, not markup: without this it survives the tray being
-      // put away and is still open on the next image opened. The typed filter is
-      // worse — it comes back showing 2 of 83 with nothing on screen saying why.
-      setShopping(false);
-      setSearch('');
-      setMineOnlyRequested(false);
-      return;
-    }
-    setTray(trayRef.current);
-    return () => setTray(null);
-  }, [showing, setTray]);
+    if (showing) return;
+    // The panel is state, not markup: without this it survives the tray being
+    // put away and is still open on the next image opened. The typed filter is
+    // worse — it comes back showing 2 of 83 with nothing on screen saying why.
+    setShopping(false);
+    setSearch('');
+    setMineOnlyRequested(false);
+  }, [showing]);
 
   const { space } = useImagePlacementSpace(targetImageId ?? undefined);
   // Same query key as the layer's, so this shares its cache rather than making a
@@ -248,7 +255,7 @@ export function StickerPlacementTray({
     ? 'Drag out as many as you like, then pay to place the ones you want.'
     : 'Tap or drag a sticker onto the image.';
 
-  return (
+  const tray = (
     // Measured as the obstacle the buy button avoids, and deliberately measured
     // at full width rather than at the visible panel's `max-w-xl`: this root
     // spans the viewport and takes the clicks across all of it.
@@ -257,12 +264,16 @@ export function StickerPlacementTray({
     // so growing the measured obstacle is the correct half of the change, not a
     // side effect of it.
     <div
-      ref={trayRef}
+      ref={registerTray}
       {...{ [STICKER_EDITOR_ATTR]: '' }}
-      className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3 pb-[max(0.75rem,var(--safe-area-inset-bottom))]"
-      // Hidden, not unmounted: the buy button keeps measuring this box, so its
-      // side does not flip while the controls are hidden.
-      style={previewing ? { visibility: 'hidden' } : undefined}
+      className="fixed inset-x-0 bottom-0 flex justify-center p-3 pb-[max(0.75rem,var(--safe-area-inset-bottom))]"
+      style={{
+        // Portaled to <body>, so it has to clear the image modal itself.
+        zIndex: PAGE_MODAL_Z_INDEX + 1,
+        // Hidden, not unmounted: the buy button keeps measuring this box, so its
+        // side does not flip while the controls are hidden.
+        ...(previewing ? { visibility: 'hidden' } : null),
+      }}
     >
       <div className="flex w-full max-w-xl flex-col">
         {/* Above the tray, not in place of it: the row of what you own is the
@@ -505,4 +516,10 @@ export function StickerPlacementTray({
       </div>
     </div>
   );
+
+  // On a phone the bar sits in the image page's bottom sheet, which is slid down
+  // with a transform while collapsed. A transform makes an element the containing
+  // block for `position: fixed`, so rendered in place the tray pinned to the
+  // bottom of the sheet, below the screen.
+  return <Portal>{tray}</Portal>;
 }

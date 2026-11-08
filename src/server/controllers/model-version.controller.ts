@@ -1308,7 +1308,7 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
 }) => {
   const { payWithBlue, ...rest } = input;
   try {
-    return earlyAccessPurchase({
+    return await earlyAccessPurchase({
       ...rest,
       userId: ctx.user.id,
       buzzType: payWithBlue ? 'blue' : getAllowedAccountTypes(ctx.features)[0],

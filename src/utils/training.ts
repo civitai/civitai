@@ -14,6 +14,7 @@ import type {
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import { getFileExtension } from '~/utils/string-helpers';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
 /** Training Studio catalog gate (`ModelCard.flagKey`) -> the feature flag that answers it in this
@@ -1162,3 +1163,13 @@ export const formatTrainingValidationError = (
     .filter((line, i, arr) => arr.findIndex((l) => l.message === line.message) === i);
   return lines.length > 0 ? lines : null;
 };
+
+export function isHeldForTrainingReview(
+  status: TrainingStatus | null | undefined,
+  trainingResults: unknown
+): boolean {
+  return (
+    status === TrainingStatus.Paused &&
+    (trainingResults as { heldForReview?: unknown } | null | undefined)?.heldForReview === true
+  );
+}

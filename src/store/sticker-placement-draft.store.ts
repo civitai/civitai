@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react';
 import { create } from 'zustand';
 import { mintPurchaseKey } from '~/utils/purchase-key';
+import type { StickerRecording } from '~/components/Sticker/sticker-recording';
 import {
   STICKER_PLACEMENT_DEFAULT_OPACITY,
   STICKER_PLACEMENT_DEFAULT_SCALE,
@@ -67,6 +68,10 @@ export type StickerDraft = {
   opacity: number;
   /** Set while this sticker is still unbought. Cleared by `markPurchased`. */
   purchase?: DraftPurchase;
+  /** Pinned to a moment of the video: when it shows, and for how long. */
+  moment?: { startMs: number; durationMs: number };
+  /** Set while recording movement: one pose per tick of the video, empty before the first take. */
+  recording?: StickerRecording;
 };
 
 /**
