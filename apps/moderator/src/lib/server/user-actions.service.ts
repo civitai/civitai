@@ -1117,7 +1117,7 @@ export async function refundShopPurchase(input: {
   const purchase = await dbWrite
     .selectFrom('UserCosmeticShopPurchases as p')
     .innerJoin('CosmeticShopItem as csi', 'csi.id', 'p.shopItemId')
-    .select(['p.refunded', 'p.meta', 'p.unitAmount', 'csi.itemDefinitionId'])
+    .select(['p.refunded', 'p.meta', 'csi.itemDefinitionId'])
     .where('p.buzzTransactionId', '=', input.buzzTransactionId)
     .where('p.userId', '=', input.userId)
     .executeTakeFirst();
@@ -1127,21 +1127,25 @@ export async function refundShopPurchase(input: {
   const pack = purchase.itemDefinitionId != null ? boxPackTermsOf(purchase.meta) : undefined;
 
   let removed: RemovedHolding[];
+  let takedownWarning: string | undefined;
   try {
     removed = await dbWrite.transaction().execute(async (trx) => {
       // A box open reads the held box and writes its opening under this lock; without it the refund
       // could find neither while the open commits.
       await lockItemHolder(trx, input.userId);
 
+      // Its meta read here, under the lock a takedown's claim also takes, so the warning below sees
+      // every box a takedown claimed before this refund.
       const flagged = await trx
         .updateTable('UserCosmeticShopPurchases')
         .set({ refunded: true })
         .where('buzzTransactionId', '=', input.buzzTransactionId)
         .where('userId', '=', input.userId)
         .where('refunded', '=', false)
+        .returning(['meta', 'unitAmount'])
         .executeTakeFirst();
-      if (Number(flagged.numUpdatedRows) === 0)
-        throw new RefundRefused('That purchase is already refunded.');
+      if (!flagged) throw new RefundRefused('That purchase is already refunded.');
+      if (pack) takedownWarning = packTakedownWarning(flagged.meta, flagged.unitAmount, pack.size);
 
       // Routed by the listing, not by a NULL `cosmeticId`: a box purchase has none either.
       const boxDefinitionId = purchase.itemDefinitionId;
@@ -1162,10 +1166,7 @@ export async function refundShopPurchase(input: {
   // up to 24 hours after the panel says it is gone.
   await bustUserCosmeticCaches(input.userId);
   const refreshWarning = await refreshRemovedHoldings(removed, 'Refunded');
-  const warning =
-    [pack && packTakedownWarning(purchase.meta, purchase.unitAmount, pack.size), refreshWarning]
-      .filter(Boolean)
-      .join(' ') || undefined;
+  const warning = [takedownWarning, refreshWarning].filter(Boolean).join(' ') || undefined;
 
   await logAction('shopRefund', input.userId, input.moderatorId);
   return { ok: true, warning };
@@ -1173,17 +1174,18 @@ export async function refundShopPurchase(input: {
 
 /**
  * A takedown pays a pack box its share as it pulls the box's hat, and leaves the purchase unrefunded
- * for the rest of the pack. The moderator returns the Buzz by hand, so they are told what was paid.
+ * for the rest of the pack. It pays every box it claimed, paid yet or not, even after this refund;
+ * the moderator returns the Buzz by hand, so they are told what is the takedown's to pay.
  */
 function packTakedownWarning(meta: unknown, unitAmount: number, size: number) {
-  const refunds = (meta as { packTakedownRefunds?: Record<string, { paidAt?: unknown }> } | null)
-    ?.packTakedownRefunds;
-  const paid = Object.values(refunds ?? {}).filter((refund) => refund?.paidAt).length;
-  if (!paid) return undefined;
+  const claimed = Object.keys(
+    (meta as { packTakedownRefunds?: Record<string, unknown> } | null)?.packTakedownRefunds ?? {}
+  ).length;
+  if (!claimed) return undefined;
   const share = Math.floor(unitAmount / size);
-  return `A takedown already paid back ${paid} of this pack's boxes (${
-    paid * share
-  } Buzz); return only the rest.`;
+  return `A takedown pays back ${claimed} of this pack's boxes (${
+    claimed * share
+  } Buzz) itself; return only the rest.`;
 }
 
 /**

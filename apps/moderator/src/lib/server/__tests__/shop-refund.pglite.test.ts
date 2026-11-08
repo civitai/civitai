@@ -437,10 +437,23 @@ describe('refundShopPurchase: a pack of boxes', () => {
     expect(result).toEqual({
       ok: true,
       warning:
-        "A takedown already paid back 1 of this pack's boxes (450 Buzz); return only the rest.",
+        "A takedown pays back 1 of this pack's boxes (450 Buzz) itself; return only the rest.",
     });
     expect(await heldBoxes()).toEqual([]);
     expect(await isRefunded('pack-a')).toBe(true);
+  });
+
+  // The takedown pays a box it claimed even after this refund, so the warning counts it unpaid too.
+  it('counts a box a takedown claimed but has not paid yet', async () => {
+    await packPurchase({ ...PACK_TERMS, packTakedownRefunds: { 77: { shopItemId: 5 } } });
+    await openedBox(packKey(1), 77, 2, HAT);
+    await db.query(`UPDATE "BoxOpening" SET "rewardStatus" = 'refunded' WHERE "boxItemId" = 77`);
+    await holdBox(packKey(2));
+
+    await expect(refund('pack-a')).resolves.toMatchObject({
+      ok: true,
+      warning: expect.stringContaining('pays back 1 of'),
+    });
   });
 
   it("a single box's refund never reaches a pack's boxes under a key it prefixes", async () => {
