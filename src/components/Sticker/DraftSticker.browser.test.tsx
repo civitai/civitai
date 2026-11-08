@@ -138,12 +138,14 @@ const renderDraft = async (
     scale,
     commit,
     moment,
+    recording,
   }: {
     ownerShare?: number;
     maxScale?: number;
     scale?: number;
     commit?: ReactNode;
     moment?: StickerDraft['moment'];
+    recording?: StickerDraft['recording'];
   } = {}
 ) => {
   renderWithProviders(
@@ -153,7 +155,7 @@ const renderDraft = async (
     // box: the cluster has to be reachable, and none of this asserts geometry.
     <div style={{ position: 'relative', width: 380, height: 600 }}>
       <DraftSticker
-        draft={{ ...draft, ...(scale == null ? null : { scale }), moment }}
+        draft={{ ...draft, ...(scale == null ? null : { scale }), moment, recording }}
         art={art}
         selected
         dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
@@ -272,7 +274,7 @@ describe('what a draft sends when it is placed', () => {
       </div>
     );
 
-    await page.getByText('Pin to a moment').click();
+    await page.getByText('Moment', { exact: true }).click();
     await page.getByRole('button', { name: 'Place free' }).click();
 
     let { track } = placed[0] as unknown as { track: StickerTrack };
@@ -285,6 +287,24 @@ describe('what a draft sends when it is placed', () => {
     await page.getByRole('button', { name: 'Place free' }).click();
     ({ track } = placed[1] as unknown as { track: StickerTrack });
     expect(sampleStickerTrack(track, 2500).show).toBe(true);
+  });
+
+  test('a recorded draft sends its path, starting where the recording starts', async () => {
+    const pose = (x: number) => ({ x, y: 0.5, scale: 0.2, rotation: 15 });
+    await renderDraft({ instant: true }, { recording: [pose(0.2), pose(0.2), pose(0.6)] });
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    const { track } = placed[0] as unknown as { track: StickerTrack };
+    expect(sampleStickerTrack(track, 0)).toMatchObject({ x: 0.2, rotation: 15, show: true });
+    expect(sampleStickerTrack(track, 200).x).toBeCloseTo(0.6);
+  });
+
+  test('a draft in Movement with nothing recorded offers no Place', async () => {
+    await renderDraft({ instant: true }, { recording: [] });
+
+    await expect.element(page.getByText('Record the movement to place')).toBeVisible();
+    expect(page.getByRole('button', { name: 'Place free' }).query()).toBeNull();
   });
 
   test('a draft that is not pinned sends no track', async () => {
