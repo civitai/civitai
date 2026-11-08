@@ -62,8 +62,9 @@ async function getStillPresentImageIds(ids: number[]) {
 
 /**
  * The holds the reap re-checks on the DELETE itself: every hold on the owner's account, the
- * placeholder owner, and a profile-picture hold on the image. Only valid on a statement over an unaliased "Image". `markerView` is what
- * `holdMarkerViewExists` returned.
+ * placeholder owner, and a profile-picture hold on the image.
+ * Only valid on a statement over an unaliased "Image". `markerView` is what `holdMarkerViewExists`
+ * returned.
  */
 export function replacedImageHoldGuard(markerView: boolean) {
   const owner = Prisma.raw('"Image"."userId"');

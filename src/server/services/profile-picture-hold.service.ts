@@ -119,6 +119,15 @@ export async function syncProfilePictureForImage(
 
   const clear = image.needsReview === null && image.blockedFor !== 'CSAM';
   if (!clear) return { action: 'none' };
+  // When the avatar is not put back, a cleared flag's record goes anyway; a held owner keeps it.
+  const declined = async () => {
+    await tx.$executeRaw`
+      DELETE FROM "ProfilePictureHold" h
+      WHERE h."imageId" = ${imageId} AND h.reason = 'flagged'
+        AND NOT ${ownerHeldSql(Prisma.raw('h."userId"'))}
+    `;
+    return { action: 'none' } as const;
+  };
 
   // Their own image only: an image that changed owner since is not their avatar to put back. An
   // image can have two records, flagged and blocked; either being their newest counts.
@@ -132,12 +141,12 @@ export async function syncProfilePictureForImage(
     )) AS newest
     FROM "ProfilePictureHold" h WHERE h."imageId" = ${imageId} AND h."userId" = ${owner}
   `;
-  if (!hold?.newest) return { action: 'none' };
+  if (!hold?.newest) return declined();
   const restored = await tx.$executeRaw`
     UPDATE "User" SET "profilePictureId" = ${imageId}
     WHERE id = ${owner} AND "profilePictureId" IS NULL AND "deletedAt" IS NULL
   `;
-  if (!restored) return { action: 'none' };
+  if (!restored) return declined();
   // A held owner keeps the records, avatar restored or not.
   await tx.$executeRaw`
     DELETE FROM "ProfilePictureHold"

@@ -14,6 +14,7 @@ const {
   mockIngestImageById,
   mockDeleteImageById,
   mockDeleteImages,
+  mockIsUnservableOwnImageUrl,
 } = vi.hoisted(() => ({
   mockUpdateUserById: vi.fn(),
   mockGetUserById: vi.fn(),
@@ -21,6 +22,7 @@ const {
   mockIngestImageById: vi.fn(),
   mockDeleteImageById: vi.fn(),
   mockDeleteImages: vi.fn(),
+  mockIsUnservableOwnImageUrl: vi.fn(async (..._args: unknown[]) => false),
 }));
 
 vi.mock('~/server/services/orchestrator/civitai', () => ({
@@ -46,6 +48,11 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ingestImageById: mockIngestImageById,
   deleteImageById: mockDeleteImageById,
   deleteImages: mockDeleteImages,
+}));
+// The probe's own SQL is covered on PGlite (profile-picture-hold.behavior.test.ts).
+vi.mock('~/server/services/profile-picture-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  isUnservableOwnImageUrl: mockIsUnservableOwnImageUrl,
 }));
 vi.mock('~/server/search-index', () => ({ usersSearchIndex: { queueUpdate: vi.fn() } }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn(() => ({ catch: vi.fn() })) }));
@@ -187,17 +194,17 @@ describe('profile picture updates are scoped to the caller', () => {
   });
 
   describe("the url of one of the caller's own Blocked or csam-flagged images", () => {
-    afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
-    // Answers the unservable-url probe true, and every other read as `imageUrlOwnersFake` would.
-    const ownersFake = imageUrlOwnersFake([{ url: AVATAR_KEY, userId: CALLER_ID }]);
     beforeEach(() => {
-      dbMock.dbWrite.$queryRaw.mockImplementation(((
-        strings: TemplateStringsArray,
-        ...v: unknown[]
-      ) =>
-        strings.join('?').includes("ingestion = 'Blocked'")
-          ? Promise.resolve([{ found: true }])
-          : (ownersFake as (...a: unknown[]) => unknown)(strings, ...v)) as never);
+      mockIsUnservableOwnImageUrl.mockImplementation(
+        async (userId: unknown, url: unknown) => userId === CALLER_ID && url === AVATAR_KEY
+      );
+      dbMock.dbWrite.$queryRaw.mockImplementation(
+        imageUrlOwnersFake([{ url: AVATAR_KEY, userId: CALLER_ID }]) as never
+      );
+    });
+    afterEach(() => {
+      mockIsUnservableOwnImageUrl.mockReset().mockResolvedValue(false);
+      dbMock.dbWrite.$queryRaw.mockReset();
     });
 
     it('is refused as `image`, with the generic message', async () => {

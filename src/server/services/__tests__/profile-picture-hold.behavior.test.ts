@@ -244,6 +244,64 @@ describe('the queue type, on a schema built from the migrations', () => {
   });
 });
 
+describe('the migration, re-run over its original version', () => {
+  const ORIGINAL = readFileSync(
+    path.join(__dirname, 'fixtures/profile-picture-hold-original-migration.sql'),
+    'utf8'
+  );
+  const fresh = async () => {
+    const pg = new PGlite();
+    await pg.exec(`
+      CREATE TYPE "JobQueueType" AS ENUM ('ReplacedImageDelete');
+      CREATE TABLE "Image" (id int PRIMARY KEY);
+      INSERT INTO "Image" VALUES (1);
+    `);
+    return pg;
+  };
+  const flagThenBlock = (pg: PGlite) =>
+    pg.exec(`
+      INSERT INTO "ProfilePictureHold" ("userId", "imageId", reason) VALUES (7, 1, 'flagged')
+        ON CONFLICT ("imageId", reason) DO NOTHING;
+      INSERT INTO "ProfilePictureHold" ("userId", "imageId", reason) VALUES (7, 1, 'blocked')
+        ON CONFLICT ("imageId", reason) DO NOTHING;
+    `);
+  const shape = async (pg: PGlite) => ({
+    indexes: (
+      await pg.query<{ def: string }>(
+        `SELECT indexdef AS def FROM pg_indexes WHERE tablename = 'ProfilePictureHold' ORDER BY 1`
+      )
+    ).rows.map((r) => r.def.replace(/^.* USING btree /, '')),
+    foreignKeys: (
+      await pg.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM pg_constraint
+         WHERE conrelid = '"ProfilePictureHold"'::regclass AND contype = 'f'`
+      )
+    ).rows[0].n,
+  });
+
+  it('ends in the same shape as a fresh apply, and takes a flagged then a blocked record', async () => {
+    const upgraded = await fresh();
+    await upgraded.exec(ORIGINAL);
+    await upgraded.exec(migration('20261229120000_profile_picture_hold'));
+    const clean = await fresh();
+    await clean.exec(migration('20261229120000_profile_picture_hold'));
+    try {
+      await flagThenBlock(upgraded);
+      const rows = await upgraded.query<{ reason: string }>(
+        `SELECT reason FROM "ProfilePictureHold" ORDER BY reason`
+      );
+      expect(rows.rows.map((r) => r.reason)).toEqual(['blocked', 'flagged']);
+      const after = await shape(upgraded);
+      expect(after.indexes).not.toContain('("imageId")');
+      expect(after.foreignKeys).toBe(0);
+      expect(after).toEqual(await shape(clean));
+    } finally {
+      await upgraded.close();
+      await clean.close();
+    }
+  });
+});
+
 describe('syncProfilePictureForImage', () => {
   it('records a blocked avatar and takes it off the user, in one go', async () => {
     await block(avatar(OWNER));
@@ -540,6 +598,31 @@ describe('flagged, then blocked', () => {
     expect(await pointer(OWNER)).toBeNull();
     expect((await records(OWNER)).map((r) => r.reason).sort()).toEqual(['blocked', 'flagged']);
     expect(await queued()).toEqual([]);
+  });
+
+  it("drops a cleared flag's record when the avatar is not put back", async () => {
+    await review(avatar(OWNER), 'minor');
+    await runProfilePictureSync();
+    await db.query(`UPDATE "User" SET "profilePictureId" = $1 WHERE id = $2`, [
+      OWNER * 100 + 2,
+      OWNER,
+    ]);
+    await review(avatar(OWNER), null);
+    await runProfilePictureSync();
+    expect(await pointer(OWNER)).toBe(OWNER * 100 + 2);
+    expect(await holds(OWNER)).toEqual([]);
+  });
+
+  it("keeps a held owner's record when a cleared flag is not put back", async () => {
+    await review(avatar(HELD_OWNER), 'minor');
+    await runProfilePictureSync();
+    await db.query(`UPDATE "User" SET "profilePictureId" = $1 WHERE id = $2`, [
+      HELD_OWNER * 100 + 2,
+      HELD_OWNER,
+    ]);
+    await review(avatar(HELD_OWNER), null);
+    await runProfilePictureSync();
+    expect(await holds(HELD_OWNER)).toEqual([{ imageId: avatar(HELD_OWNER), reason: 'flagged' }]);
   });
 
   it('restores on unblock and removes both records', async () => {

@@ -9,7 +9,8 @@
 --
 -- "imageId" has no foreign key to "Image": a record outlives its image, so the data export still
 -- lists a removed profile picture after the image is purged. Creating the table locks no existing
--- table.
+-- table. Re-run over an earlier version of this file, dropping that version's foreign key locks
+-- "Image" briefly; the lock timeout below makes that fail fast rather than queue.
 --
 -- Dry run: the transaction below, with COMMIT replaced by ROLLBACK. (ADD VALUE IF NOT EXISTS is
 -- safe to run before it and to re-run.)
@@ -52,6 +53,11 @@ CREATE TABLE IF NOT EXISTS "ProfilePictureHold" (
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "ProfilePictureHold_reason_check" CHECK ("reason" IN ('blocked', 'flagged'))
 );
+
+-- An environment that applied an earlier version of this file has these two; drop them so the file
+-- converges from either state.
+DROP INDEX IF EXISTS "ProfilePictureHold_imageId_key";
+ALTER TABLE "ProfilePictureHold" DROP CONSTRAINT IF EXISTS "ProfilePictureHold_imageId_fkey";
 
 CREATE UNIQUE INDEX IF NOT EXISTS "ProfilePictureHold_imageId_reason_key"
   ON "ProfilePictureHold"("imageId", "reason");
