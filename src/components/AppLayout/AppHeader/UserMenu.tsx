@@ -22,7 +22,6 @@ import {
   IconLogout,
   IconLogout2,
   IconMoonStars,
-  IconScreenShare,
   IconSettings,
   IconSun,
   IconX,
@@ -56,7 +55,6 @@ import {
   type CivitaiAccount,
   useAccountContext,
 } from '~/components/CivitaiWrapped/AccountProvider';
-import { openCivitaiLinkDialog } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
@@ -321,20 +319,11 @@ function PhoneHeaderShortcuts() {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const support = useSupportOption();
-  const { handleClose } = useUserMenuContext();
 
   if (!currentUser || !features.buzzSpendPop) return null;
 
   const items: UserMenuItem[] = [
     { href: support.href, icon: support.icon, label: support.text, visible: features.canWrite },
-    {
-      icon: IconScreenShare,
-      label: 'Civitai Link',
-      onClick: () => {
-        handleClose();
-        openCivitaiLinkDialog();
-      },
-    },
   ];
 
   return <UserMenuItems items={items} />;

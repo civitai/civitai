@@ -1,8 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import type * as PromClient from '~/server/prom/client';
 import type * as DbHelpers from '~/server/db/db-helpers';
 import type * as MeilisearchClient from '~/server/meilisearch/client';
+import type * as ImageVisibility from '~/server/common/image-visibility';
 
 // The minor exclusion exempts the VIEWER's own images, matched by user id. Every image-feed
 // builder has two ids in scope — the viewer and the profile being browsed — and exempting the
@@ -12,10 +13,24 @@ import type * as MeilisearchClient from '~/server/meilisearch/client';
 // Mock recipe follows image-db-unpublished-authorization.test.ts and
 // image-search-scheduled-owner.test.ts.
 
-const { queryWithTimeoutMock, fetchDocumentsAbortableMock } = vi.hoisted(() => ({
-  queryWithTimeoutMock: vi.fn(),
-  fetchDocumentsAbortableMock: vi.fn(),
-}));
+const { queryWithTimeoutMock, fetchDocumentsAbortableMock, pendingOthersMock, pendingLevelMock } =
+  vi.hoisted(() => ({
+    queryWithTimeoutMock: vi.fn(),
+    fetchDocumentsAbortableMock: vi.fn(),
+    pendingOthersMock: vi.fn(),
+    pendingLevelMock: vi.fn(),
+  }));
+
+vi.mock('~/server/common/image-visibility', async (importOriginal) => {
+  const actual = await importOriginal<typeof ImageVisibility>();
+  pendingOthersMock.mockImplementation(actual.pendingOthersImageConditions);
+  pendingLevelMock.mockImplementation(actual.pendingLevelImageSql);
+  return {
+    ...actual,
+    pendingOthersImageConditions: pendingOthersMock,
+    pendingLevelImageSql: pendingLevelMock,
+  };
+});
 
 vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
   (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
@@ -181,6 +196,8 @@ describe('getImagesForPosts minor exclusion', () => {
   });
 });
 
+// What the conditions keep and drop is run against rows in pending-viewer-image.sql.behavior.test.ts;
+// here, only that each read applies them for the viewer.
 describe.each([
   [
     'getImagesForPosts',
@@ -202,7 +219,26 @@ describe.each([
         user: { id: STRANGER, isModerator } as never,
       }),
   ],
-] as const)('%s pending read by a signed-in non-moderator', (name, read) => {
+] as const)('%s pending read', (name, read) => {
+  let restoreOthers: ReturnType<typeof pendingOthersMock.getMockImplementation>;
+  let restoreLevel: ReturnType<typeof pendingLevelMock.getMockImplementation>;
+  beforeEach(() => {
+    restoreOthers = pendingOthersMock.getMockImplementation();
+    restoreLevel = pendingLevelMock.getMockImplementation();
+    pendingOthersMock.mockClear();
+    pendingLevelMock.mockClear();
+    pendingOthersMock.mockImplementation((userId: number) => [
+      Prisma.sql`pending_others_marker(${userId})`,
+    ]);
+    pendingLevelMock.mockImplementation(
+      (userId: number, level: number) => Prisma.sql`pending_level_marker(${userId}, ${level})`
+    );
+  });
+  afterEach(() => {
+    pendingOthersMock.mockImplementation(restoreOthers!);
+    pendingLevelMock.mockImplementation(restoreLevel!);
+  });
+
   async function pendingStatement(isModerator = false) {
     dbMock.dbRead.$queryRaw.mockClear();
     await read(isModerator);
@@ -214,37 +250,25 @@ describe.each([
       ? Prisma.sql(first as TemplateStringsArray, ...(values as Prisma.Sql[]))
       : (first as Prisma.Sql);
   }
-  const boundTo = (stmt: Prisma.Sql, re: RegExp) => {
-    const m = stmt.text.match(re);
-    expect(m, `no ${re} in the read`).not.toBeNull();
-    return stmt.values[Number(m![1]) - 1];
-  };
 
-  it("hides other users' acceptableMinor images", async () => {
+  it('applies the per-image conditions and the level check for a signed-in non-moderator, bound to the viewer', async () => {
     const stmt = await pendingStatement();
-    expect(boundTo(stmt, /\(i\."acceptableMinor" = FALSE OR i\."userId" = \$(\d+)\)/)).toBe(
-      STRANGER
-    );
+    const others = stmt.text.match(/pending_others_marker\(\$(\d+)\)/);
+    expect(others, 'the conditions are not in the read').not.toBeNull();
+    expect(stmt.values[Number(others![1]) - 1]).toBe(STRANGER);
+    const level = stmt.text.match(/pending_level_marker\(\$(\d+), \$(\d+)\)/);
+    expect(level, 'the level check is not in the read').not.toBeNull();
+    expect(stmt.values[Number(level![1]) - 1]).toBe(STRANGER);
+    expect(stmt.values[Number(level![2]) - 1]).toBe(1);
+    expect(pendingOthersMock).toHaveBeenCalledTimes(1);
+    expect(pendingLevelMock).toHaveBeenCalledTimes(1);
   });
 
-  it("hides other users' images awaiting moderator review", async () => {
-    const stmt = await pendingStatement();
-    expect(boundTo(stmt, /\(i\."needsReview" IS NULL OR i\."userId" = \$(\d+)\)/)).toBe(STRANGER);
-  });
-
-  it("leaves a moderator's pending read without these checks", async () => {
-    const { text } = await pendingStatement(true);
-    expect(text).toMatch(/\(\(i\."nsfwLevel" & \$\d+\) != 0 OR i\."nsfwLevel" = 0\)/);
-    expect(text).not.toMatch(/"needsReview"|"acceptableMinor"|"i"\."ingestion"/);
-  });
-
-  it("requires other users' rated images to be reviewed", async () => {
-    const stmt = await pendingStatement();
-    expect(
-      boundTo(
-        stmt,
-        /\(i\."userId" = \$(\d+) OR i\."nsfwLevel" = 0 OR \(\s*"i"\."ingestion" = \$\d+/
-      )
-    ).toBe(STRANGER);
+  it("gives a moderator's pending read the level check but not the per-image conditions", async () => {
+    const stmt = await pendingStatement(true);
+    expect(stmt.text).not.toContain('pending_others_marker');
+    expect(stmt.text).not.toContain('pending_level_marker');
+    // A moderator's pending read still checks the level.
+    expect(stmt.text).toMatch(/\(\(i\."nsfwLevel" & \$\d+\) != 0 OR i\."nsfwLevel" = 0\)/);
   });
 });

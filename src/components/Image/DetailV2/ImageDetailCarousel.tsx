@@ -321,7 +321,7 @@ function ImageContent({
           onDragStartCapture={handleDragStart}
           className="relative flex size-full items-center justify-center"
         >
-          {!safe && width && height ? (
+          {!safe ? (
             <div
               className="relative flex max-h-full max-w-full flex-1"
               style={{
@@ -340,11 +340,9 @@ function ImageContent({
               {...imageDetailMediaProps(image)}
               alt={image.name ?? undefined}
               imageId={image.id}
-              className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
+              className="max-h-full w-auto max-w-full"
               wrapperProps={{
-                className: `flex items-center justify-center max-h-full w-auto max-w-full ${
-                  !safe ? 'invisible' : ''
-                }`,
+                className: 'flex items-center justify-center max-h-full w-auto max-w-full',
                 style: {
                   aspectRatio: (image?.width ?? 0) / (image?.height ?? 0),
                 },
