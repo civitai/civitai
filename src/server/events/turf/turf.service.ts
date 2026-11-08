@@ -770,6 +770,8 @@ export function requestTurfSync(event: TurfEvent, imageId: number): Promise<void
 
 /** Rebuilds the whole turf map and counts for an event: hides, bans, expiry and cap changes. */
 export async function reconcileTurf(event: TurfEvent, now = new Date()) {
+  // First, so it pairs with `now`: each batch reads expiry at now + the time since (see below).
+  const startedAt = Date.now();
   const cosmetics = await teamCosmetics(event);
   const creditedByTeam = await turfCreditedByTeam(event, now);
   const entries = new Map<string, TurfEntry>();
@@ -789,7 +791,6 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
   // Each batch reads expiry at its own time, right after its ticket: with `now` fixed, a later
   // ticket could read an older cutoff than a sync written before it, and put back a sticker that
   // sync had dropped as expired.
-  const startedAt = Date.now();
   for (;;) {
     lastTicket = await takeTicket(event);
     const readAt = new Date(now.getTime() + Date.now() - startedAt);

@@ -281,11 +281,15 @@ describe('Hat Turf sticker lifetime', () => {
     override = ttl();
     const now = later();
     const image = await newImage();
-    // Expires 30s into the run.
-    await sticker(image, 4, new Date(now.getTime() - 48 * HOUR + 30_000));
+    // Expires 90s into the run.
+    await sticker(image, 4, new Date(now.getTime() - 48 * HOUR + 90_000));
     let fakeNow = Date.now();
     const spy = vi.spyOn(Date, 'now').mockImplementation(() => fakeNow);
-    // The batch's ticket is taken a minute into the run.
+    // A minute reading the counts snapshot before the first batch, a minute more to its ticket.
+    redisMock.sysRedis.hGetAll.mockImplementation((async (key: string) => {
+      fakeNow += 60_000;
+      return redis.hash(key) ?? {};
+    }) as never);
     redisMock.sysRedis.incr.mockImplementation((async () => {
       fakeNow += 60_000;
       return (clock += 1);
