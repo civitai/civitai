@@ -6,18 +6,19 @@ import { abortableSleep, createPollingAdapter } from '~/server/registry-adapter/
 import {
   SOURCE_SERVICE,
   createGrpcServer,
+  decodeEvent,
   encodeEvent,
   errorInfoOf,
   listenGrpc,
 } from '~/server/registry-adapter/grpc';
 import type { Adapter, Change, Entity, StreamEvent } from '~/server/registry-adapter/protocol';
-import { createRegistryServer } from '~/server/registry-adapter/serve';
+import { createRegistryServer, sseFrame } from '~/server/registry-adapter/serve';
 import { createMemorySnapshotStore } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 
 /** The gRPC binding, through a real `@grpc/grpc-js` client. */
 
 const APPS = 'urn:schema:apps.civitai.com:app@v1';
-// A body with every JSON kind, nested: what `google.protobuf.Value` must carry unchanged.
+// A body with every JSON kind, nested: what `Entity.body`'s JSON bytes must carry unchanged.
 const BODY = { slug: 'alpha', stars: 4.5, listed: true, retired: null, tags: ['a', 1, { q: [] }] };
 const ent = (slug: string, rev: string, body: unknown = { slug }): Entity => ({
   urn: `urn:apps.civitai.com:app/${slug}`,
@@ -232,7 +233,8 @@ describe('🔴 a gRPC consumer that stops reading (rule 8)', () => {
 describe('🔴 the wire: the spec proto’s field numbers', () => {
   // Hand-encoded from the spec's proto block, not from the code's schema: Event.live = 3,
   // Event.end = 4, Event.progress = 6, Event.upsert = 1; Upsert.entity = 1, .cursor = 2;
-  // Entity.urn = 1, .schemas = 2, .rev = 3, .body = 4; Value.string_value = 3.
+  // Entity.urn = 1, .schemas = 2, .rev = 3, .body = 4 (bytes: the body's JSON text, UTF-8).
+  // No event this source sends sets Entity.meta (5) or Event.meta (5): empty is absent.
   it.each<[string, StreamEvent, string]>([
     ['live', { type: 'live', cursor: 'ab' }, '1a040a026162'],
     ['progress', { type: 'progress', cursor: 'ab' }, '32040a026162'],
@@ -245,10 +247,97 @@ describe('🔴 the wire: the spec proto’s field numbers', () => {
         entity: { urn: 'u', schemas: ['s'], rev: 'r', body: 'b' },
         cursor: 'c',
       },
-      '0a13' + '0a0e' + '0a0175' + '120173' + '1a0172' + '22031a0162' + '120163',
+      // body = 4: 3 bytes, `"b"`
+      '0a13' + '0a0e' + '0a0175' + '120173' + '1a0172' + '2203226222' + '120163',
     ],
   ])('%s', (_name, event, hex) => {
     expect(encodeEvent(event).toString('hex')).toBe(hex);
+  });
+
+  const upsert = (body: unknown): StreamEvent => ({
+    type: 'upsert',
+    entity: { urn: 'u', schemas: ['s'], rev: 'r', body },
+    cursor: 'c',
+  });
+  it.each<[string, unknown, string]>([
+    // `4.5`
+    ['a number', 4.5, '0a130a0e0a01751201731a01722203342e35120163'],
+    // `null`
+    ['null', null, '0a140a0f0a01751201731a017222046e756c6c120163'],
+    // `{"a":[1,true,null],"b":"é"}`: key order kept, no spaces, `é` as UTF-8 (c3 a9)
+    [
+      'an object',
+      { a: [1, true, null], b: 'é' },
+      '0a2c0a270a01751201731a0172221c' +
+        '7b2261223a5b312c747275652c6e756c6c5d2c2262223a22c3a9227d' +
+        '120163',
+    ],
+    // `[{"q":[]},"x"]`
+    [
+      'an array',
+      [{ q: [] }, 'x'],
+      '0a1e0a190a01751201731a0172220e5b7b2271223a5b5d7d2c2278225d120163',
+    ],
+  ])('upsert with %s as its body: the body is its JSON text', (_name, body, hex) => {
+    expect(encodeEvent(upsert(body)).toString('hex')).toBe(hex);
+    // And back: a consumer reads the same value from those bytes.
+    expect(decodeEvent(Buffer.from(hex, 'hex'))).toEqual(upsert(body));
+  });
+
+  it('a body JSON cannot hold is sent as JSON.stringify sends it, as over HTTP', () => {
+    // `{"n":null}`: a non-finite number is null, an undefined property is dropped.
+    expect(encodeEvent(upsert({ n: Number.NaN, gone: undefined })).toString('hex')).toBe(
+      '0a1a0a150a01751201731a017222' + '0a' + '7b226e223a6e756c6c7d' + '120163'
+    );
+  });
+});
+
+describe('🔴 the HTTP binding is unchanged: its events carry JSON objects', () => {
+  it('an upsert frame carries the entity, its body a JSON value, not text or bytes', () => {
+    expect(
+      sseFrame({
+        type: 'upsert',
+        entity: { urn: 'u', schemas: ['s'], rev: 'r', body: { a: [1, true, null], b: 'é' } },
+        cursor: 'c',
+      })
+    ).toBe(
+      'event: upsert\n' +
+        'id: c\n' +
+        'data: {"entity":{"urn":"u","schemas":["s"],"rev":"r","body":{"a":[1,true,null],"b":"é"}},"cursor":"c"}\n\n'
+    );
+  });
+
+  it('over a live server, the same entity is a JSON object over HTTP and its JSON text over gRPC', async () => {
+    // Built here rather than by `ent`, so the body is exactly BODY whatever `ent` adds to one.
+    const entity: Entity = {
+      urn: 'urn:apps.civitai.com:app/alpha',
+      schemas: [APPS],
+      rev: 'r1',
+      body: BODY,
+    };
+    const one = (): Adapter => ({
+      namespace: 'apps.civitai.com',
+      serves: (s) => s === APPS,
+      // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
+      snapshot: async () => ({ cursor: 'c1.snap', entities: [entity] }),
+      changes: async () =>
+        (async function* (): AsyncGenerator<Change> {
+          // no changes
+        })(),
+    });
+    const http = await viaHttp(one(), `/subscribe?schema=${encodeURIComponent(APPS)}`);
+    const [upserted] = http;
+    expect(upserted.type).toBe('upsert');
+    const body = (upserted as { entity: Entity }).entity.body;
+    expect(typeof body).toBe('object');
+    expect(body).toEqual(BODY);
+    // The gRPC bytes are exactly the JSON text of the body the HTTP frame carries.
+    const wire = encodeEvent(upserted);
+    const text = JSON.stringify(BODY);
+    expect(wire.includes(Buffer.from(text, 'utf8'))).toBe(true);
+    expect(text).toBe(
+      '{"slug":"alpha","stars":4.5,"listed":true,"retired":null,"tags":["a",1,{"q":[]}]}'
+    );
   });
 });
 

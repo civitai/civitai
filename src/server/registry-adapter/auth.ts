@@ -1,5 +1,5 @@
 /**
- * The auth extension (civitai-registry `spec/extensions/auth.md` @ 4166f34), as an ORIGIN serves
+ * The auth extension (civitai-registry `spec/extensions/auth.md` @ 2709083), as an ORIGIN serves
  * it, for both bindings:
  *
  *   - The token arrives in request metadata only: `Authorization: Bearer {token}` over HTTP, the

@@ -1,5 +1,5 @@
 /**
- * The one implementation of `Subscribe` (spec/registry.md @ 4166f34, "Subscribe"), shared by
+ * The one implementation of `Subscribe` (spec/registry.md @ 2709083, "Subscribe"), shared by
  * both bindings: `serve.ts` (HTTP/SSE) and `grpc.ts` (gRPC) only translate a request in and
  * events and errors out, so the two cannot drift.
  *
