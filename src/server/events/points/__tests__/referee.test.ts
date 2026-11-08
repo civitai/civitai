@@ -3,8 +3,9 @@ import type { EventScoring } from '~/server/events/base.event';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 
-const { changedHats, chartTeamHours, refereeQueryParams, refereeTotals, refereeWindow } =
-  await import('~/server/events/points/referee');
+const { changedHats, refereeQueryParams, refereeTotals, refereeWindow } = await import(
+  '~/server/events/points/referee'
+);
 const { eventPointsRefereeSql, eventPointsRefereeUsersSql } = await import(
   '~/server/events/points/referee.sql'
 );
@@ -349,36 +350,5 @@ describe('hat ids', () => {
     expect(id).toMatch(/^[0-9a-f]{16}$/);
     expect(id).not.toContain('abc');
     expect(hatTopicId({ ...hat, claimKey: 'claimed' })).not.toBe(id);
-  });
-});
-
-describe('chartTeamHours', () => {
-  it('charts points earned by play and leaves out a Crucible lump-sum award', () => {
-    const event = {
-      name: 'chart-test',
-      startDate: new Date('2026-11-01T00:00:00Z'),
-      endDate: new Date('2026-12-01T00:00:00Z'),
-      teams: ['Green', 'Blue'] as const,
-      scoring: {
-        teamAwards: [
-          {
-            team: 'Green',
-            points: 500_000,
-            at: new Date('2026-11-06T11:15:00Z'),
-            reason: 'Crucible',
-          },
-        ],
-      } as unknown as EventScoring,
-    };
-    const window = {
-      recomputeFrom: new Date('2026-11-06T00:00:00Z'),
-      cut: new Date('2026-11-06T23:59:00Z'),
-    };
-    const rows = [{ day: '2026-11-06', team: 'Green', hours: { 11: 40, 12: 7 } }];
-
-    const days = chartTeamHours(event, window, rows);
-
-    expect(days.get('2026-11-06')?.Green?.[11]).toBe(40);
-    expect(days.get('2026-11-06')?.Green?.[12]).toBe(7);
   });
 });

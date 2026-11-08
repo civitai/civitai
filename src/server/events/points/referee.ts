@@ -353,19 +353,10 @@ export function teamHoursByDay(
   return days;
 }
 
-// The points-per-hour chart shows points earned by play only. Team awards (a Crucible's lump sum)
-// still count in totals and standings, but a one-hour spike of hundreds of thousands flattens
-// every other hour on the chart.
-export function chartTeamHours(
-  _event: RefereeEvent,
-  window: Pick<Window, 'recomputeFrom' | 'cut'>,
-  rows: Pick<RefereeRow, 'day' | 'team' | 'hours'>[]
-) {
-  return teamHoursByDay(window, rows);
-}
-
 async function writeTeamHours(event: RefereeEvent, window: Window, rows: RefereeRow[]) {
-  const days = chartTeamHours(event, window, rows);
+  // Points earned by play only. Team awards (a Crucible's lump sum) count in totals and standings,
+  // but one hour of hundreds of thousands would flatten every other hour of the chart.
+  const days = teamHoursByDay(window, rows);
   await sysRedis.hSet(eventSeasonKeys(event.name, 'live').teamHours, {
     ...Object.fromEntries([...days].map(([day, teams]) => [day, JSON.stringify(teams)])),
     [TEAM_HOURS_CUT_FIELD]: window.cut.toISOString(),
