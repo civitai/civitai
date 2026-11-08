@@ -41,8 +41,9 @@ describe('pack box keys', () => {
     expect(parsePackBoxSourceKey('mod-grant-abc-1-1')).toBeUndefined();
   });
 
-  it('box 1 of one pack is not box 10 of it', () => {
-    expect(packBoxSourceKey('t', 1)).not.toBe(packBoxSourceKey('t', 10).slice(0, -1));
-    expect(packBoxSourceKey('t', 10).endsWith(packBoxSourceKey('', 1))).toBe(false);
+  // The guaranteed boxes a buyer holds are counted by this suffix.
+  it("only a pack's first box ends with the first box's suffix", () => {
+    const boxes = Array.from({ length: 20 }, (_, i) => packBoxSourceKey('t', i + 1));
+    expect(boxes.filter((key) => key.endsWith(packBoxSourceKey('', 1)))).toEqual([boxes[0]]);
   });
 });

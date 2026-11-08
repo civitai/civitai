@@ -628,7 +628,6 @@ describe('opening a mystery box', () => {
   });
 });
 
-// A grant reaches a holder no purchase placed on a team: the open places them, before the lock.
 describe("a pack's boxes", () => {
   const PACK_TX = 'item-purchase-v1-1-77-packkey';
   const packBox = (id: bigint, n: number): ItemRow => ({
@@ -696,6 +695,7 @@ describe("a pack's boxes", () => {
   });
 });
 
+// A grant reaches a holder no purchase placed on a team: the open places them, before the lock.
 describe('a holder who never joined the event', () => {
   const GRANTED = modGrantSourceKey('g1', HOLDER, 1);
 

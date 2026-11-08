@@ -1134,8 +1134,8 @@ export async function refundShopPurchase(input: {
       // could find neither while the open commits.
       await lockItemHolder(trx, input.userId);
 
-      // Its meta read here, under the lock a takedown's claim also takes, so the warning below sees
-      // every box a takedown claimed before this refund.
+      // The purchase's meta is read under the lock a takedown's claim also takes, or a box claimed
+      // in between is missed.
       const flagged = await trx
         .updateTable('UserCosmeticShopPurchases')
         .set({ refunded: true })
