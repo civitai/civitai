@@ -2035,7 +2035,7 @@ export async function getStoreVisibleOffsiteDestination(
       browsingLevel: opts.viewerBrowsingLevel,
     }
   );
-  if (!gated || gated.row.kind !== 'offsite') return null;
+  if (!gated) return null; // MUTATION (temporary): off-site check removed
   const url = safeExternalUrl(gated.row.externalUrl);
   return url ? { id: gated.row.id, url } : null;
 }
