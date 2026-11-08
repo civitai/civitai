@@ -8,6 +8,13 @@
  */
 export type EventCosmeticReads = Map<string, Promise<unknown>>;
 
+/**
+ * How long a bootstrap member waits on the viewer's event cosmetic before going on without it. The
+ * bootstrap is on every server render's critical path, so a slow read (a cache miss) must not hold
+ * the page; each member's fallback leaves the answer to the client, as before the seed existed.
+ */
+export const EVENT_COSMETIC_READ_DEADLINE_MS = 300;
+
 /** `read()` once per (user, event) within `reads`; with no `reads`, just `read()`. */
 export function readEventCosmeticOnce<T>(
   reads: EventCosmeticReads | undefined,

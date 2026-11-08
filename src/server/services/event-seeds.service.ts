@@ -3,7 +3,11 @@ import { trpcViewer } from '~/server/auth/api-auth-session';
 import { logToAxiom } from '~/server/logging/client';
 import { getEventCosmetic, getViewerEventAccess } from '~/server/services/event.service';
 import type { EventCosmeticReads } from '~/server/services/event-cosmetic-reads';
-import { readEventCosmeticOnce } from '~/server/services/event-cosmetic-reads';
+import {
+  EVENT_COSMETIC_READ_DEADLINE_MS,
+  readEventCosmeticOnce,
+} from '~/server/services/event-cosmetic-reads';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import type { EventAccess } from '~/shared/constants/event-access.constants';
 import { canWearEventDecorations } from '~/shared/constants/event-access.constants';
 import {
@@ -67,9 +71,17 @@ export async function getEventSeeds({
       if (!viewer?.id || !canWearEventDecorations(access)) return { event, access };
       try {
         const user = { id: viewer.id, isModerator: viewer.isModerator };
-        const cosmetic = await readEventCosmeticOnce(reads, { event, userId: user.id }, () =>
-          getCosmetic({ event, user })
+        // The shared read underneath (one per request), capped as the nav banners cap it. On the
+        // cap the seed goes without its cosmetic, never with an empty one: an absent key leaves
+        // the query to the client, where a `null` would answer it as "no cosmetic".
+        const cosmetic = await withTimeoutFallback<EventSeed['cosmetic'] | typeof TIMED_OUT>(
+          readEventCosmeticOnce(reads, { event, userId: user.id }, () =>
+            getCosmetic({ event, user })
+          ),
+          EVENT_COSMETIC_READ_DEADLINE_MS,
+          TIMED_OUT
         );
+        if (cosmetic === TIMED_OUT || cosmetic === undefined) return { event, access };
         return { event, access, cosmetic };
       } catch (e) {
         logSeedError(event, e);
@@ -79,6 +91,8 @@ export async function getEventSeeds({
   );
   return seeds.filter((x): x is EventSeed => !!x);
 }
+
+const TIMED_OUT = Symbol('event cosmetic read timed out');
 
 function logSeedError(event: string, e: unknown) {
   logToAxiom({

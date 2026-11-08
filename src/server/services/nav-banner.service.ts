@@ -5,7 +5,10 @@ import { canPlayEvent, getEventAccess } from '~/server/events/event-access';
 import { logToAxiom } from '~/server/logging/client';
 import { getEventCosmetic } from '~/server/services/event.service';
 import type { EventCosmeticReads } from '~/server/services/event-cosmetic-reads';
-import { readEventCosmeticOnce } from '~/server/services/event-cosmetic-reads';
+import {
+  EVENT_COSMETIC_READ_DEADLINE_MS,
+  readEventCosmeticOnce,
+} from '~/server/services/event-cosmetic-reads';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import type { EventPromo, NavBanner } from '~/shared/constants/nav-banner.constants';
 
@@ -84,7 +87,7 @@ async function viewerHasJoined(
 
 // A failed or slow read keeps the default cta rather than dropping the strip: this runs in the
 // settings bootstrap, whose deadline would drop the whole strip from the first paint.
-export const JOINED_READ_DEADLINE_MS = 300;
+export const JOINED_READ_DEADLINE_MS = EVENT_COSMETIC_READ_DEADLINE_MS;
 
 async function joinedOrNot(
   hasJoined: (event: string, user: { id: number; isModerator?: boolean }) => Promise<boolean>,
