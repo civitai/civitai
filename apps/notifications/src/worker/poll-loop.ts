@@ -232,7 +232,9 @@ export const handleDebounce = async (
   // contract rejects the combination outright (see createNotificationPendingRow), so this is
   // unreachable — belt and braces. Teaching debounced types to dedup means reworking this INSERT.
   if (respId) {
-    const userMappedData = users.map((u) => [respId, u]);
+    // Ascending userId, here and in the lock below: two transactions on the same recipients (a
+    // claim re-taken after `tooOld` while the first still runs) then lock rows in the same order.
+    const userMappedData = [...users].sort((a, b) => a - b).map((u) => [respId, u]);
     for (const batch of chunk(userMappedData, insertBatchSize)) {
       // A recipient who still has this notification unread is already counted in the unread badge.
       // FOR UPDATE, as its own statement: it reads the latest committed row and holds it, so a
@@ -241,6 +243,7 @@ export const handleDebounce = async (
         format(
           `SELECT "userId" FROM "UserNotification"
            WHERE "notificationId" = %L AND "userId" IN (%L) AND viewed IS FALSE
+           ORDER BY "userId"
            FOR UPDATE`,
           respId,
           batch.map(([, userId]) => userId)
