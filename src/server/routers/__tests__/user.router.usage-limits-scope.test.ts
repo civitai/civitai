@@ -63,12 +63,15 @@ describe('user.getUsageLimits token scope', () => {
 
   it("shows a moderator's exemption to a session but regular rows to a MediaWrite-only token", async () => {
     const session = await caller(TokenScope.Full, MODERATOR).getUsageLimits();
-    expect(session.limits).toEqual([expect.objectContaining({ id: 'posts.daily', limit: null })]);
+    expect(session.limits.map((l) => [l.id, l.limit])).toEqual([
+      ['posts.daily', null],
+      ['comments.hourly', null],
+      ['comments.daily', null],
+    ]);
 
     const media = await caller(TokenScope.MediaWrite, MODERATOR).getUsageLimits();
-    expect(media.limits).toEqual([
-      expect.objectContaining({ id: 'posts.daily', limit: 20, used: 0, remaining: 20 }),
-    ]);
+    expect(media.limits[0]).toMatchObject({ id: 'posts.daily', limit: 20, used: 0, remaining: 20 });
+    expect(media.limits.every((l) => l.limit !== null)).toBe(true);
   });
 });
 

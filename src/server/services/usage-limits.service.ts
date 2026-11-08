@@ -1,9 +1,15 @@
 import type { NextApiRequest } from 'next';
-import { POST_CREATE_RATE_LIMIT_KEY, postRateLimits } from '~/server/schema/post.schema';
+import { COMMENT_V3_RATE_LIMIT_KEY } from '~/server/schema/comment.schema';
+import { POST_CREATE_RATE_LIMIT_KEY } from '~/server/schema/post.schema';
 import { resolveUsageLimitRules } from '~/server/services/usage-limit-config.service';
 import { peekRateLimit } from '~/server/utils/rate-limit-bucket';
 import type { RateLimit } from '~/server/utils/rate-limit-window';
-import { getUsageLimitDef, type UsageLimitRef } from '~/shared/constants/usage-limits';
+import {
+  getUsageLimitDef,
+  isBucketCountable,
+  usageLimitDefs,
+  type UsageLimitDef,
+} from '~/shared/constants/usage-limits';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
@@ -12,16 +18,26 @@ import type { SessionUser } from '~/types/session';
 export const USAGE_LIMITS_SCOPES = [TokenScope.UserRead, TokenScope.MediaWrite] as const;
 
 /**
- * The product limits a caller can read their standing against. `sharedKey` must be the one the
- * limited procedures pass to `rateLimit()`, so the read sees the bucket they write.
+ * The bucket each product area's procedures share: it must be the `sharedKey` they pass to
+ * `rateLimit()`, so the read sees the bucket they write. A product area missing here has no rows.
  */
-const USAGE_LIMIT_AREAS: { area: string; sharedKey: string; limits: UsageLimitRef }[] = [
-  { area: 'posts', sharedKey: POST_CREATE_RATE_LIMIT_KEY, limits: postRateLimits },
-];
+const SHARED_KEY_BY_AREA: Record<string, string> = {
+  posts: POST_CREATE_RATE_LIMIT_KEY,
+  comments: COMMENT_V3_RATE_LIMIT_KEY,
+};
+
+/** Every bucket-counted product limit, grouped by area in registry display order. */
+const USAGE_LIMIT_AREAS = Object.entries(SHARED_KEY_BY_AREA).map(([area, sharedKey]) => ({
+  area,
+  sharedKey,
+  ids: usageLimitDefs
+    .filter((def) => def.area === area && def.kind === 'product' && isBucketCountable(def.window))
+    .map((def) => def.id),
+}));
 
 const labelOf = (id: string) => getUsageLimitDef(id).label;
 
-export type UsageLimitWindow = 'rolling' | 'utc-day' | 'utc-month';
+export type UsageLimitWindow = UsageLimitDef['window']['type'];
 
 export type UsageLimit = {
   id: string;
@@ -66,9 +82,9 @@ export async function getUsageLimits({
     (tokenScope === TokenScope.Full || Flags.hasFlag(tokenScope, TokenScope.UserRead));
   const wanted = ids && ids.length > 0 ? new Set(ids) : undefined;
   const limits: UsageLimit[] = [];
-  for (const { area, sharedKey, limits: ref } of USAGE_LIMIT_AREAS) {
+  for (const { area, sharedKey, ids: areaIds } of USAGE_LIMIT_AREAS) {
     // Resolve first, as `rateLimit()` does, so `ids` can only drop rows, never change a number.
-    const rules: RateLimit[] = await resolveUsageLimitRules(ref.usageLimitIds, user);
+    const rules: RateLimit[] = await resolveUsageLimitRules(areaIds, user);
     const productRules = rules.filter(
       (rule) => rule.kind === 'product' && rule.id && (!wanted || wanted.has(rule.id))
     );
@@ -89,7 +105,7 @@ export async function getUsageLimits({
         used,
         remaining,
         windowSeconds: rule.period,
-        window: 'rolling',
+        window: getUsageLimitDef(id).window.type,
         nextAt: remaining > 0 ? null : iso(nextAt),
         resetAt: iso(resetAt),
       });
