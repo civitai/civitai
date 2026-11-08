@@ -4,6 +4,8 @@ import type { EventViewer, GatedEvent } from '~/server/events/event-access';
 import { canPlayEvent, getEventAccess } from '~/server/events/event-access';
 import { logToAxiom } from '~/server/logging/client';
 import { getEventCosmetic } from '~/server/services/event.service';
+import type { EventCosmeticReads } from '~/server/services/event-cosmetic-reads';
+import { readEventCosmeticOnce } from '~/server/services/event-cosmetic-reads';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import type { EventPromo, NavBanner } from '~/shared/constants/nav-banner.constants';
 
@@ -31,13 +33,16 @@ export async function getNavBanners({
   now = new Date(),
   eventDefs = events,
   getAccess = getEventAccess,
-  hasJoined = viewerHasJoined,
+  reads,
+  hasJoined = (event, user) => viewerHasJoined(event, user, reads),
 }: {
   viewer: EventViewer;
   now?: Date;
   eventDefs?: readonly BannerEvent[];
   getAccess?: typeof getEventAccess;
-  hasJoined?: typeof viewerHasJoined;
+  /** The request's shared cosmetic reads (the settings bootstrap passes its own). */
+  reads?: EventCosmeticReads;
+  hasJoined?: (event: string, user: { id: number; isModerator?: boolean }) => Promise<boolean>;
 }): Promise<NavBanner[]> {
   const entries = await Promise.all(
     eventDefs.map(async (event): Promise<NavBanner | null> => {
@@ -66,8 +71,15 @@ export async function getNavBanners({
 
 // The home block's own test of joining: the event's team cosmetic is obtained. Cached per user for
 // an hour and cleared on join (event.service.ts); a miss reads the database.
-async function viewerHasJoined(event: string, user: { id: number; isModerator?: boolean }) {
-  return !!(await getEventCosmetic({ event, user })).obtained;
+async function viewerHasJoined(
+  event: string,
+  user: { id: number; isModerator?: boolean },
+  reads?: EventCosmeticReads
+) {
+  const cosmetic = await readEventCosmeticOnce(reads, { event, userId: user.id }, () =>
+    getEventCosmetic({ event, user })
+  );
+  return !!cosmetic.obtained;
 }
 
 // A failed or slow read keeps the default cta rather than dropping the strip: this runs in the
@@ -75,7 +87,7 @@ async function viewerHasJoined(event: string, user: { id: number; isModerator?: 
 export const JOINED_READ_DEADLINE_MS = 300;
 
 async function joinedOrNot(
-  hasJoined: typeof viewerHasJoined,
+  hasJoined: (event: string, user: { id: number; isModerator?: boolean }) => Promise<boolean>,
   event: BannerEvent,
   user: { id: number; isModerator?: boolean }
 ) {

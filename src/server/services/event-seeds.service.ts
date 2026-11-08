@@ -2,6 +2,8 @@ import type { Session } from '~/types/session';
 import { trpcViewer } from '~/server/auth/api-auth-session';
 import { logToAxiom } from '~/server/logging/client';
 import { getEventCosmetic, getViewerEventAccess } from '~/server/services/event.service';
+import type { EventCosmeticReads } from '~/server/services/event-cosmetic-reads';
+import { readEventCosmeticOnce } from '~/server/services/event-cosmetic-reads';
 import type { EventAccess } from '~/shared/constants/event-access.constants';
 import { canWearEventDecorations } from '~/shared/constants/event-access.constants';
 import {
@@ -36,9 +38,12 @@ export async function getEventSeeds({
   now = new Date(),
   getAccess = getViewerEventAccess,
   getCosmetic = getEventCosmetic,
+  reads,
 }: {
   user: NonNullable<Session['user']> | undefined;
   now?: Date;
+  /** The request's shared cosmetic reads (the settings bootstrap passes its own). */
+  reads?: EventCosmeticReads;
   getAccess?: typeof getViewerEventAccess;
   getCosmetic?: typeof getEventCosmetic;
 }): Promise<EventSeed[]> {
@@ -61,10 +66,10 @@ export async function getEventSeeds({
       }
       if (!viewer?.id || !canWearEventDecorations(access)) return { event, access };
       try {
-        const cosmetic = await getCosmetic({
-          event,
-          user: { id: viewer.id, isModerator: viewer.isModerator },
-        });
+        const user = { id: viewer.id, isModerator: viewer.isModerator };
+        const cosmetic = await readEventCosmeticOnce(reads, { event, userId: user.id }, () =>
+          getCosmetic({ event, user })
+        );
         return { event, access, cosmetic };
       } catch (e) {
         logSeedError(event, e);

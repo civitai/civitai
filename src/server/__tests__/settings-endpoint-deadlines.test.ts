@@ -250,14 +250,17 @@ describe('/api/user/settings nav banners', () => {
     await vi.runAllTimersAsync();
     await done;
     expect(h.navBanners).toHaveBeenCalledTimes(1);
-    expect(h.navBanners.mock.calls[0]).toEqual([{ viewer: { id: 42, isModerator: true } }]);
+    // Plus the request's own cosmetic-read memo, which carries nothing from the request.
+    expect(h.navBanners.mock.calls[0]).toEqual([
+      { viewer: { id: 42, isModerator: true }, reads: expect.any(Map) },
+    ]);
   });
 
   it('resolves them as signed out when there is no session', async () => {
     const { done } = invoke();
     await vi.runAllTimersAsync();
     await done;
-    expect(h.navBanners.mock.calls[0]).toEqual([{ viewer: undefined }]);
+    expect(h.navBanners.mock.calls[0]).toEqual([{ viewer: undefined, reads: expect.any(Map) }]);
   });
 });
 
