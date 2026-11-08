@@ -200,7 +200,8 @@ export function ImageDetailProvider({
   // #region [info toggle]
   const toggleInfo = () => {
     if (deepLinkOpen) setDeepLinkOpen(false);
-    else if (!active)
+    if (deepLinkOpen && !queryActive) return;
+    if (!active)
       browserRouter.push({ query: { ...browserRouter.query, active: true } }, browserRouter.asPath);
     else if (active) browserRouter.back();
   };

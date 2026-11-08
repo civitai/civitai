@@ -169,6 +169,18 @@ describe('image detail opened from a comment notification', () => {
     expect(location.pathname).toBe(`/images/${FEED[0]}`);
   });
 
+  test('with the sheet also expanded in the URL, one toggle still closes it', async () => {
+    await openFromCommentLink();
+    // A link that carries both, as a reload after expanding the sheet does.
+    const router = getBrowserRouter();
+    router.push({ query: { ...router.query, active: true } }, router.asPath);
+    await vi.waitFor(() => expect(getBrowserRouter().query.active).toBe(true));
+
+    await page.getByTestId('toggle').click();
+
+    await expect.element(page.getByTestId('active')).toHaveTextContent('false');
+  });
+
   test('moving to another image drops the deep-link open', async () => {
     await openFromCommentLink();
     await expect.element(page.getByTestId('active')).toHaveTextContent('true');
