@@ -16,7 +16,7 @@ const { svc, flags, standing } = vi.hoisted(() => ({
     mintGiftCodes: vi.fn(async () => ({ batchId: 'b', codes: [] })),
     listGiftLinks: vi.fn(async () => ({ links: [], batches: [] })),
     revokeGiftLinks: vi.fn(async () => ({ revoked: 1 })),
-    removeGiftClaim: vi.fn(async () => ({ removed: true, accessKept: false })),
+    removeGiftClaim: vi.fn(async () => ({ removed: true })),
   },
   flags: { modelGiftLinks: true },
   standing: { muted: false },

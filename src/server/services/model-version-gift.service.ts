@@ -34,6 +34,7 @@ import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 const GIFT_CLAIM_RATE_LIMIT = { max: 10, windowSeconds: 60 };
 const GIFT_MINT_RATE_LIMIT = { max: 20, windowSeconds: 3600 };
+const GIFT_REMOVE_RATE_LIMIT = { max: 100, windowSeconds: 3600 };
 
 export const GIFT_CODE_PREFIX = 'cvg_';
 // Crockford base32: no I, L, O or U. 26 characters of 5 bits each is 130 bits of entropy.
@@ -692,7 +693,10 @@ export async function revokeGiftRedemption(
   });
 }
 
-/** Removes one claimer's gifted access, for the version's owner or a moderator. */
+/**
+ * Removes one claimer's gifted access, for the version's owner or a moderator. Whether access was
+ * kept is not returned: the claim that kept it can be one from before the claimer names were shown.
+ */
 export async function removeGiftClaim({
   userId,
   isModerator,
@@ -706,8 +710,9 @@ export async function removeGiftClaim({
   giftLinkId: number;
   claimerId: number;
 }) {
+  await assertRateLimit('remove', userId, GIFT_REMOVE_RATE_LIMIT);
   await assertCanManageGifts({ userId, isModerator, modelVersionId });
-  const { accessKept } = await revokeGiftRedemption(dbWrite, {
+  await revokeGiftRedemption(dbWrite, {
     giftLinkId,
     claimerId,
     modelVersionId,
@@ -715,7 +720,7 @@ export async function removeGiftClaim({
     visibleSince: GIFT_CLAIMER_NAMES_VISIBLE_SINCE,
   });
   await bustOrchestratorModelCache(modelVersionId, claimerId);
-  return { removed: true, accessKept };
+  return { removed: true };
 }
 
 export type GiftRedemptionOutcome = 'granted' | 'unavailable';

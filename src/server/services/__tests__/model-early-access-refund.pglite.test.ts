@@ -138,4 +138,48 @@ describe('refundModelEarlyAccessPurchases — narrowing a grant on Postgres', ()
 
     expect((await grantOf(BUYER_ID)).permissions).toBe(1 | 4);
   });
+  const refundNarrow = (revokePermissions: number, removeKeys: string[]) =>
+    refundModelEarlyAccessPurchases({
+      modelId: MODEL_ID,
+      requirement: {
+        purchases: [
+          {
+            modelVersionId: VERSION_ID,
+            buyerId: BUYER_ID,
+            buzzTransactionIds: ['tx-dl'],
+            narrow: { revokePermissions, removeKeys },
+          },
+        ],
+        buyerCount: 1,
+        totalBuzz: 500,
+        totalsByAccount: { yellow: 500 },
+        exemptBuyerCount: 0,
+      },
+    });
+
+  it("keeps the gift's bits it reads from the row at the write", async () => {
+    await seed(BUYER_ID, 3, {
+      giftLinkId: 4,
+      'gift-permissions': 1,
+      'download-buzzTransactionId': 'tx-dl',
+    });
+    await refundNarrow(3, ['download-buzzTransactionId']);
+    expect(await grantOf(BUYER_ID)).toEqual({
+      permissions: 1,
+      meta: { giftLinkId: 4, 'gift-permissions': 1 },
+    });
+  });
+
+  it('keeps every bit of a gift row that did not record its bits', async () => {
+    await seed(BUYER_ID, 3, { giftLinkId: 4, 'download-buzzTransactionId': 'tx-dl' });
+    await refundNarrow(3, ['download-buzzTransactionId']);
+    expect((await grantOf(BUYER_ID)).permissions).toBe(3);
+  });
+
+  it('takes the refunded bits when the gift was removed after the refund was worked out', async () => {
+    // Worked out while the gift stood; by the write, its claim was removed and its keys dropped.
+    await seed(BUYER_ID, 3, { 'download-buzzTransactionId': 'tx-dl' });
+    await refundNarrow(3, ['download-buzzTransactionId']);
+    expect((await grantOf(BUYER_ID)).permissions).toBe(0);
+  });
 });

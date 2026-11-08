@@ -57,7 +57,7 @@ export const DELETE: RequestHandler = async ({ params, url, locals, request }) =
   });
   if (!parsed.success) error(400, 'Invalid request');
   const { versionId, giftId, userId } = parsed.data;
-  const result = await callMainApp<{ removed: boolean; accessKept: boolean }>(
+  const result = await callMainApp<{ removed: boolean }>(
     `/api/v1/model-versions/${versionId}/gifts/${giftId}/claims/${userId}`,
     sessionCookies(request),
     { method: 'DELETE' }

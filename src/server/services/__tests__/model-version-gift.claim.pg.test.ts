@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { PrismaClient } from '@prisma/client';
 import { Client } from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The gift cap under real concurrency. A mock cannot race, so this runs the claim's own SQL
@@ -394,22 +394,80 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
       await expect(remove(id)).rejects.toThrow('No claim to remove.');
     });
 
-    /** A second connection holding a transaction open, so the code under test meets it mid-flight. */
-    async function openTransaction(statements: string[]) {
+    it('marks the claim when the grant row is already gone', async () => {
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+      // What the early-access refund does on unpublish.
+      await sql.query(`DELETE FROM "EntityAccess"`);
+
+      expect(await remove(id)).toEqual({ accessKept: false });
+      expect(
+        await count(
+          `SELECT count(*) AS n FROM "ModelVersionGiftRedemption" WHERE "revokedAt" IS NOT NULL`
+        )
+      ).toBe(1);
+    });
+
+    it('clears every bit of a gift row that never recorded its bits', async () => {
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+      await sql.query(`UPDATE "EntityAccess" SET meta = meta - 'gift-permissions'`);
+
+      await remove(id);
+      expect(await access()).toBeNull();
+    });
+
+    it('removes a claim made at the visibleSince moment', async () => {
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+      const { rows } = await sql.query(`SELECT "claimedAt" FROM "ModelVersionGiftRedemption"`);
+
+      await revokeGiftRedemption(prisma, {
+        giftLinkId: id,
+        claimerId: CLAIMER,
+        modelVersionId: VERSION,
+        revokedById: OWNER,
+        visibleSince: rows[0].claimedAt,
+      });
+      expect(await access()).toBeNull();
+    });
+
+    // Connections opened by a test, closed even when it fails.
+    const extra: Client[] = [];
+    afterEach(async () => {
+      await sql.query(`DROP TRIGGER IF EXISTS gate ON "EntityAccess"`);
+      for (const client of extra.splice(0)) await client.end().catch(() => undefined);
+    });
+
+    async function connect() {
       const url = new URL(URL_BASE!);
       url.pathname = `/${DB_NAME}`;
-      const other = new Client({ connectionString: url.toString() });
-      await other.connect();
+      const client = new Client({ connectionString: url.toString() });
+      extra.push(client);
+      await client.connect();
+      return client;
+    }
+
+    /** A second connection holding a transaction open, so the code under test meets it mid-flight. */
+    async function openTransaction(statements: string[]) {
+      const other = await connect();
       await other.query('BEGIN');
       for (const statement of statements) await other.query(statement);
-      return {
-        commit: async () => {
-          await other.query('COMMIT');
-          await other.end();
-        },
-      };
+      return { commit: () => other.query('COMMIT') };
     }
-    const settle = () => new Promise((r) => setTimeout(r, 300));
+
+    /** Resolves once `n` sessions on the test database wait on a lock, or `done()` says to stop. */
+    async function lockWaiters(n: number, done = () => false) {
+      for (let i = 0; i < 500 && !done(); i++) {
+        const waiting = await count(
+          `SELECT count(*) AS n FROM pg_stat_activity
+            WHERE datname = '${DB_NAME}' AND wait_event_type = 'Lock'`
+        );
+        if (waiting >= n) return;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      if (!done()) throw new Error(`fewer than ${n} sessions ever waited on a lock`);
+    }
 
     it('refuses a repeat claim that meets a removal in flight', async () => {
       const id = await newLink(null);
@@ -420,10 +478,37 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
       ]);
 
       const repeat = claim(id, CLAIMER);
-      await settle();
+      await lockWaiters(1);
       await removal.commit();
 
       expect(await repeat).toBe('unavailable');
+      expect(await access()).toBeNull();
+    });
+
+    it('makes a removal wait for a repeat claim already granting', async () => {
+      const id = await newLink(null);
+      expect(await claim(id, CLAIMER)).toBe('granted');
+      await sql.query(`DELETE FROM "EntityAccess"`);
+      // Holds every grant write at a gate this test opens, so the claim stops after its checks.
+      await sql.query(`
+        CREATE OR REPLACE FUNCTION gate() RETURNS trigger AS $$
+        BEGIN PERFORM pg_advisory_xact_lock(42); RETURN NEW; END $$ LANGUAGE plpgsql;
+        CREATE TRIGGER gate BEFORE INSERT OR UPDATE ON "EntityAccess"
+          FOR EACH ROW EXECUTE FUNCTION gate();
+      `);
+      const gate = await connect();
+      await gate.query('SELECT pg_advisory_lock(42)');
+
+      const repeat = claim(id, CLAIMER);
+      await lockWaiters(1);
+      let removed = false;
+      const removal = remove(id).finally(() => (removed = true));
+      // The removal either waits behind the claim, or (wrongly) finishes before the claim grants.
+      await lockWaiters(2, () => removed);
+      await gate.query('SELECT pg_advisory_unlock(42)');
+
+      expect(await repeat).toBe('granted');
+      expect(await removal).toEqual({ accessKept: false });
       expect(await access()).toBeNull();
     });
 
@@ -438,7 +523,7 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
       ]);
 
       const removal = remove(a);
-      await settle();
+      await lockWaiters(1);
       await otherClaim.commit();
 
       expect(await removal).toEqual({ accessKept: true });

@@ -106,10 +106,24 @@ export async function getModelVersionAccessPermissions(
   return row?.permissions ?? 0;
 }
 
+/** {@link giftedPermissions} of a row's `meta` column, for a write that must read the row as it is. */
+function giftedPermissionsSql(column: string) {
+  const meta = asJsonbObjectSql(column);
+  return Prisma.sql`(CASE
+    WHEN COALESCE(jsonb_typeof(${meta} -> 'giftLinkId'), 'null') = 'null' THEN 0
+    WHEN jsonb_typeof(${meta} -> ${GIFT_PERMISSIONS_KEY}::text) = 'number'
+      THEN (${meta} ->> ${GIFT_PERMISSIONS_KEY}::text)::numeric::int
+    ELSE ${
+      EntityAccessPermission.EarlyAccessGeneration | EntityAccessPermission.EarlyAccessDownload
+    }::int
+  END)`;
+}
+
 /**
  * Takes back refunded purchases. With `narrow`, only those bits and meta keys go and the row stays
- * for what is kept (an older purchase or a gift); without it, the whole grant goes. Neither throws
- * on a row that is already gone.
+ * for what is kept (an older purchase or a gift); without it, the whole grant goes. A gift's bits
+ * are never taken: they are read from the row when it is written. Neither throws on a row that is
+ * already gone.
  */
 export async function revokeModelVersionAccess({
   userId,
@@ -123,7 +137,8 @@ export async function revokeModelVersionAccess({
   if (narrow) {
     await dbWrite.$executeRaw`
       UPDATE "EntityAccess"
-         SET "permissions" = "permissions" & ~${narrow.revokePermissions}::int,
+         SET "permissions" = "permissions"
+               & ~(${narrow.revokePermissions}::int & ~${giftedPermissionsSql('"meta"')}),
              "meta" = ${asJsonbObjectSql('"meta"')} - ${narrow.removeKeys}::text[]
        WHERE "accessToId" = ${modelVersionId} AND "accessToType" = 'ModelVersion'
          AND "accessorId" = ${userId} AND "accessorType" = 'User'`;

@@ -74,9 +74,9 @@ describe('DELETE /models/gifts/[versionId]/claims', () => {
   };
 
   it("asks the main app to remove that claimer's gifted access on this version", async () => {
-    callMainApp.mockResolvedValueOnce({ ok: true, data: { removed: true, accessKept: false } });
+    callMainApp.mockResolvedValueOnce({ ok: true, data: { removed: true } });
     const res = await del('5', 'giftId=9&userId=20');
-    expect(await res.json()).toEqual({ removed: true, accessKept: false });
+    expect(await res.json()).toEqual({ removed: true });
     expect(callMainApp).toHaveBeenCalledWith(
       '/api/v1/model-versions/5/gifts/9/claims/20',
       'cookie',
@@ -95,6 +95,8 @@ describe('DELETE /models/gifts/[versionId]/claims', () => {
       ['5', 'giftId=9'],
       ['5', 'userId=20'],
       ['5', 'giftId=9&userId=x'],
+      ['5', 'giftId=0&userId=20'],
+      ['5', 'giftId=9&userId=0'],
       ['../x', 'giftId=9&userId=20'],
     ])
       await expect(del(v, qs)).rejects.toMatchObject({ status: 400 });

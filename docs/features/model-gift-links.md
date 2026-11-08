@@ -36,7 +36,7 @@ surfaces.
   (`removeGiftClaim`). The claim's slot stays used, so a capped link cannot be recycled, and the
   claimer cannot claim that link again (another link still works). The claimer is not notified. A claim
   made before `GIFT_CLAIMER_NAMES_VISIBLE_SINCE` cannot be removed: it is answered like a missing one,
-  so a removal cannot confirm who claimed.
+  so a removal cannot confirm who claimed. Removals are rate limited per caller.
 
 Out of scope:
 
@@ -74,8 +74,8 @@ The row is locked before the check for other claims, so a claim on another link 
 removal either shows up in the check or re-grants after it. A repeat claim of the removed redemption
 waits for the removal and is refused.
 
-**Limit:** the grant row does not record bits the owner granted by hand. A gift bit the owner also
-granted that way is cleared too; only purchases are told apart.
+**Limit:** only purchases are told apart. A gift bit that was also written to the row some other way
+than a purchase or a gift claim (a legacy row, or one edited by hand) is cleared too.
 
 ## Schema
 
@@ -152,8 +152,9 @@ path segment, which a client-side navigation still puts in the Next data fetch.
     nextCursor, hiddenCount }`: `{ giftLinkId, userId, username, claimedAt, revokedAt }`, newest first,
     at most `GIFT_CLAIMS_PAGE_MAX` (100) per page. Owner or moderator, read from the replica.
   - `DELETE [id]/gifts/[giftId]/claims/[userId]` removes that claim (for a batch code, `giftId` is the
-    claim's `giftLinkId`). Returns `{ removed: true, accessKept }`; `accessKept` is true when another
-    claim on the version keeps the access. A missing, already removed or pre-cutoff claim gets 404.
+    claim's `giftLinkId`). Returns `{ removed: true }`; whether another claim kept the access is not
+    said, since that claim can be one whose claimer is not named. A missing, already removed or
+    pre-cutoff claim gets 404.
 - **Creator Studio:** `/models/gifts` lists every link and batch across the creator's versions, with
   revoke, and links to `/models/gifts/[versionId]`. The version page is linked from a gated version's row
   on `/models`. Both call the REST routes with the creator's session. Codes appear once, in the action
