@@ -89,6 +89,20 @@ describe('UserMenuDesktop dismiss click', () => {
     expect(followed).toBe(1);
   });
 
+  it('lets a keyboard click through after a dismissing press that ended without a click', async () => {
+    await openMenu();
+    const opts = { bubbles: true, isPrimary: true };
+    document.body.dispatchEvent(new PointerEvent('pointerdown', opts));
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await expect.element(page.getByRole('menu')).not.toBeInTheDocument();
+    document.body.dispatchEvent(new PointerEvent('pointerup', opts));
+    (page.getByTestId('banner').element() as HTMLElement).focus();
+
+    await userEvent.keyboard('{Enter}');
+
+    expect(followed).toBe(1);
+  });
+
   it('lets the first click through after an Escape close', async () => {
     await openMenu();
     await userEvent.keyboard('{Escape}');
