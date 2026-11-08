@@ -66,7 +66,7 @@ describe('/apps/go/<listingId> page', () => {
   it('🔴 does NOT await the recording: a `recorded` that never settles still yields the 302', async () => {
     mockResolveVisit.mockResolvedValue({
       destination: 'https://ext.example/app',
-      recorded: new Promise<void>(() => {}),
+      recorded: new Promise<void>(() => undefined),
     });
     const SENTINEL = Symbol('resolver awaited the recording');
     const result = await Promise.race([

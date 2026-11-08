@@ -267,9 +267,6 @@ describe('resolveAppListingVisit — recording', () => {
   });
 });
 
-  });
-});
-
 describe('App_Visit is server-only', () => {
   it('is a real ActionType but has NO trackActionSchema arm', () => {
     // Like `App_Open`: `/api/track/batch` accepts `trackActionSchema` from any browser, so an
@@ -304,4 +301,3 @@ describe('defaultAppVisitDeps.recordEvent — the real ClickHouse write', () => 
     expect(trackerMocks.action.mock.calls[0]).toHaveLength(1);
   });
 });
-
