@@ -459,6 +459,36 @@ describe('run (poll pass)', () => {
     expect(body).toMatchObject({ type: 'comment', category: 'Comment', id: 9, read: false });
   });
 
+  it('does not bump the unread counter for a recipient who already had it unread, but signals them', async () => {
+    const client = makeClient({
+      notifUpdate: { rows: [{ id: 42 }] },
+      userInsert: {
+        rows: [
+          { id: 9, userId: 11, createdAt: 'q', wasUnread: true },
+          { id: 10, userId: 22, createdAt: 'q', wasUnread: false },
+        ],
+      },
+    });
+    h.state.connectClient = client;
+    h.state.pendingRows = [
+      {
+        ...baseRow,
+        debounceSeconds: 60,
+        lastTriggered: '2026-01-01T00:05:00.000Z',
+        nextSendAt: '2026-01-01T00:05:30.000Z',
+      },
+    ];
+
+    await run();
+
+    expect(vi.mocked(notificationCache.incrementUser).mock.calls).toEqual([[22, 'Comment']]);
+    const signalled = (globalThis.fetch as any).mock.calls.map(([url]: [string]) => url);
+    expect(signalled).toEqual([
+      expect.stringContaining('/users/11/signals/'),
+      expect.stringContaining('/users/22/signals/'),
+    ]);
+  });
+
   it('hands email only the recipients this pass newly delivered to', async () => {
     const client = makeClient({
       notifSelect: { rows: [{ id: 1 }] },

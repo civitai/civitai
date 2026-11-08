@@ -41,6 +41,8 @@ type RetData = {
   id: number;
   userId: number;
   createdAt: string;
+  /** Set by a debounce re-surface: the recipient already held this notification unread. */
+  wasUnread?: boolean;
 };
 
 const appRunDelay = 5000;
@@ -232,10 +234,21 @@ export const handleDebounce = async (
   if (respId) {
     const userMappedData = users.map((u) => [respId, u]);
     for (const batch of chunk(userMappedData, insertBatchSize)) {
+      // `prev` reads the statement's snapshot, so it sees each row as it was before the upsert: a
+      // recipient who still has this notification unread is already counted in the unread badge.
       const insertUsersQuery = format(
-        `INSERT INTO "UserNotification" ("notificationId", "userId")
-         VALUES %L ON CONFLICT ("notificationId", "userId") DO UPDATE
-         SET "createdAt" = now(), viewed = FALSE RETURNING id, "userId", "createdAt"`,
+        `WITH prev AS (
+           SELECT "userId", viewed FROM "UserNotification"
+           WHERE "notificationId" = %L AND "userId" IN (%L)
+         ), up AS (
+           INSERT INTO "UserNotification" ("notificationId", "userId")
+           VALUES %L ON CONFLICT ("notificationId", "userId") DO UPDATE
+           SET "createdAt" = now(), viewed = FALSE RETURNING id, "userId", "createdAt"
+         )
+         SELECT up.id, up."userId", up."createdAt", COALESCE(prev.viewed = FALSE, FALSE) AS "wasUnread"
+         FROM up LEFT JOIN prev ON prev."userId" = up."userId"`,
+        respId,
+        batch.map(([, userId]) => userId),
         batch
       );
       const resUsers = await client.query<RetData>(insertUsersQuery);
@@ -316,9 +329,9 @@ export const run = async (lane: Lane = 'normal'): Promise<number> => {
     const signalData = { type: row.type, category: row.category, details: row.details };
     const affectBatches = chunk(affectedUsers, signalBatchSize);
     for (let i = 0; i < affectBatches.length; i++) {
-      for (const { userId, id, createdAt } of affectBatches[i]!) {
+      for (const { userId, id, createdAt, wasUnread } of affectBatches[i]!) {
         // A failed or stuck counter bump must not cost the remaining recipients their signals.
-        if (counterFailures < counterFailuresBeforeSkip) {
+        if (!wasUnread && counterFailures < counterFailuresBeforeSkip) {
           counterFailures = (await bumpCounter(userId, row.category)) ? 0 : counterFailures + 1;
         }
         // Fire-and-forget (resilience unchanged): a signals failure must NOT break fan-out. We only add
