@@ -158,6 +158,7 @@ vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => 
   return {
     recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
     recordBlockPostSubjectRefusal: () => undefined,
+    recordSucceededWithoutMedia: () => undefined,
     recordAppBlockSubmitFailure: (label: string, reason: string) =>
       mockRecordSubmitFailure(label, reason),
     submitFailureAppBlockLabel: actual.submitFailureAppBlockLabel,

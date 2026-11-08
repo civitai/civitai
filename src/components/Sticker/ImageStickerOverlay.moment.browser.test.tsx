@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as PlacementUtil from '~/components/Sticker/placement.util';
 import type * as RevealStore from '~/store/sticker-reveal.store';
-import { momentStickerTrack } from '~/shared/utils/sticker-track';
+import { encodeStickerTrack, momentStickerTrack } from '~/shared/utils/sticker-track';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -47,8 +47,16 @@ vi.mock('~/components/Sticker/treatments/useStickerTreatment', () => ({
 }));
 vi.mock('~/components/Sticker/DraftStickerLayer', () => ({ DraftStickerLayer: () => null }));
 vi.mock('~/components/Sticker/StickerPlacementOverlay', () => ({
-  StickerPlacementOverlay: ({ hiddenIds }: { hiddenIds?: ReadonlySet<number> }) => (
-    <div data-testid="hidden">{[...(hiddenIds ?? [])].join(',') || 'none'}</div>
+  StickerPlacementOverlay: ({
+    hiddenIds,
+    bindPose,
+  }: {
+    hiddenIds?: ReadonlySet<number>;
+    bindPose?: (id: number) => (node: HTMLElement | null) => void;
+  }) => (
+    <div data-testid="hidden" ref={bindPose?.(1)}>
+      {[...(hiddenIds ?? [])].join(',') || 'none'}
+    </div>
   ),
 }));
 
@@ -133,6 +141,23 @@ describe('a moment sticker follows the video', () => {
 
     await unmount();
     expect(cancel).toHaveBeenCalledWith(7);
+  });
+
+  test('a recorded path moves the sticker it draws', async () => {
+    tracksQuery.mockReturnValue({
+      data: [
+        {
+          id: 1,
+          track: encodeStickerTrack([pose, { ...pose, x: 0.9 }]),
+        },
+      ],
+    });
+    const { seek } = await renderOnVideo(0);
+    await expect.element(hidden()).toBeInTheDocument();
+
+    seek(0.1);
+
+    expect((hidden().element() as HTMLElement).style.left).toBe('90%');
   });
 
   test('only the sticker outside its window is hidden', async () => {

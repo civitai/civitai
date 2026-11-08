@@ -39,6 +39,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/homeblock/delete': () => import('~/pages/api/mod/homeblock/delete'),
   '/api/mod/homeblock/reorder': () => import('~/pages/api/mod/homeblock/reorder'),
   '/api/mod/homeblock/update': () => import('~/pages/api/mod/homeblock/update'),
+  '/api/mod/image/report-csam': () => import('~/pages/api/mod/image/report-csam'),
   '/api/mod/image/set-nsfw-level': () => import('~/pages/api/mod/image/set-nsfw-level'),
   '/api/mod/image/tag-vote': () => import('~/pages/api/mod/image/tag-vote'),
   '/api/mod/label-store/predictions': () => import('~/pages/api/mod/label-store/predictions'),
@@ -89,6 +90,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
     import('~/pages/api/mod/text-scan/model-rules-hold/resolve'),
   '/api/mod/training-data/resolve': () => import('~/pages/api/mod/training-data/resolve'),
   '/api/mod/user/buzz-membership-end': () => import('~/pages/api/mod/user/buzz-membership-end'),
+  '/api/mod/user/cancel-pending-workflows': () =>
+    import('~/pages/api/mod/user/cancel-pending-workflows'),
   '/api/mod/user/clear-profile': () => import('~/pages/api/mod/user/clear-profile'),
   '/api/mod/user/creator-program-ban': () => import('~/pages/api/mod/user/creator-program-ban'),
   '/api/mod/user/creator-score-grant': () => import('~/pages/api/mod/user/creator-score-grant'),

@@ -6,6 +6,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as SignalClient from '~/utils/signal-client';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -88,6 +89,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (
       "id" integer PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3),
       "excludeFromLeaderboards" boolean NOT NULL DEFAULT false,
+      "flags" integer NOT NULL DEFAULT 0,
       "createdAt" timestamp(3) NOT NULL DEFAULT '2020-01-01'
     );
     -- Ids in registration order. The new-account window opens 2026-10-25 00:00: user 2 registered a
@@ -97,6 +99,7 @@ beforeAll(async () => {
       (${BANNED}, now(), NULL, false, '2026-10-24'), (${DELETED}, NULL, now(), false, '2026-10-24'),
       (${EXCLUDED}, NULL, NULL, true, '2026-10-24'), (${DELETED_NEWBIE}, NULL, now(), false, '2026-10-25'),
       (${NEWBIE}, NULL, NULL, false, '2026-10-25 00:00:01'), (8, NULL, NULL, false, '2026-10-30');
+    UPDATE "User" SET flags = ${UserFlag.ExcludeFromEventPoints} WHERE id = ${EXCLUDED};
   `);
   // A multi-statement string runs as one implicit transaction, which CREATE INDEX CONCURRENTLY
   // refuses; it is applied on its own, as the migration says.
@@ -280,7 +283,7 @@ describe('standings', () => {
       day('2026-11-02', 1, 21, 'claimed', 'Yellow', 20),
       day('2026-11-02', 1, 21, 'txn-1', 'Yellow', 4),
       day('2026-11-02', 2, 22, 'claimed', 'Blue', 15),
-      // Hidden from every standing: banned, deleted, leaderboard-excluded.
+      // Hidden from every standing: banned, deleted, excluded from event points.
       day('2026-11-02', BANNED, 23, 'claimed', 'Pink', 100),
       day('2026-11-02', DELETED, 24, 'claimed', 'Green', 200),
       day('2026-11-02', EXCLUDED, 24, 'claimed', 'Green', 300),
@@ -297,6 +300,20 @@ describe('standings', () => {
       { team: 'Pink', score: 0, rank: 3 },
       { team: 'Green', score: 0, rank: 4 },
     ]);
+  });
+
+  // Leaderboard exclusion alone must not hide someone from event standings; see sync.behavior.test.ts.
+  it('counts someone excluded from leaderboards but not from event points', async () => {
+    await db.pg.exec(`UPDATE "User" SET flags = 0 WHERE id = ${EXCLUDED}`);
+    try {
+      await settle();
+      const { teams } = await getEventStandings(event);
+      expect(teams.find((t) => t.team === 'Green')?.score).toBe(300);
+    } finally {
+      await db.pg.exec(
+        `UPDATE "User" SET flags = ${UserFlag.ExcludeFromEventPoints} WHERE id = ${EXCLUDED}`
+      );
+    }
   });
 
   it('ranks cosmetic instances, so two copies of one design score separately', async () => {
@@ -857,7 +874,7 @@ describe('referee snapshot', () => {
       expect(standings.teams[0]).toEqual({ team: 'Blue', score: 7, rank: 1 });
     });
 
-    it('adds a team award settled by the cut to the live team base and its hour, and to nothing else', async () => {
+    it('adds a team award settled by the cut to the live team base only, never to the hourly chart', async () => {
       answer([hourlyRow('2026-11-05', 8, 'Blue', { 6: 7 })]);
       const award = (team: string, points: number, at: string) => ({
         team,
@@ -882,7 +899,9 @@ describe('referee snapshot', () => {
       expect(hashes.get(keys.base('team'))).toEqual({ Blue: '7', Pink: '100' });
       expect(hashes.get(keys.base('hat'))).toEqual({ '8:28:claimed': '7' });
       expect(hashes.get(keys.base('owner'))).toEqual({ '8': '7' });
-      expect((await chartedHours()).earned).toMatchObject({ Blue: [[30, 7]], Pink: [[33, 100]] });
+      // A Crucible's lump sum would flatten every other hour of the points-per-hour chart.
+      expect((await chartedHours()).earned).toMatchObject({ Blue: [[30, 7]] });
+      expect((await chartedHours()).earned.Pink ?? []).toEqual([]);
 
       // The same awards never reach the preview: testers' totals are their own.
       const preview = { ...awarded, previewFrom: new Date('2026-10-20T00:00:00.000Z') };
@@ -1014,6 +1033,19 @@ describe('referee snapshot', () => {
     const { restrictedUsers, newAccountMinId } = refereeParams();
     expect([...restrictedUsers].sort()).toEqual([BANNED, DELETED, EXCLUDED]);
     expect(newAccountMinId).toBe(NEWBIE);
+  });
+
+  // Leaderboard exclusion alone must not stop event points; see sync.behavior.test.ts.
+  it('does not restrict someone excluded from leaderboards but not from event points', async () => {
+    await db.pg.exec(`UPDATE "User" SET flags = 0 WHERE id = ${EXCLUDED}`);
+    try {
+      await runEventPointsReferee(scored, 'live', HOURLY);
+      expect([...refereeParams().restrictedUsers].sort()).toEqual([BANNED, DELETED]);
+    } finally {
+      await db.pg.exec(
+        `UPDATE "User" SET flags = ${UserFlag.ExcludeFromEventPoints} WHERE id = ${EXCLUDED}`
+      );
+    }
   });
 
   it('restricts no one as new when nobody registered inside the window', async () => {

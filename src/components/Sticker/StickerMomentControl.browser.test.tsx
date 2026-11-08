@@ -28,7 +28,7 @@ describe('pinning a draft to a moment of the video', () => {
       <StickerMomentControl video={video} moment={undefined} following onChange={onChange} />
     );
 
-    await page.getByText('Pin to a moment').click();
+    await page.getByText('Moment', { exact: true }).click();
 
     expect(video.pause).toHaveBeenCalled();
     expect(onChange).toHaveBeenCalledWith({ startMs: 12340, durationMs: 1000 });
@@ -85,7 +85,7 @@ describe('pinning a draft to a moment of the video', () => {
       />
     );
 
-    await page.getByText('Pin to a moment').click();
+    await page.getByText('Moment', { exact: true }).click();
 
     expect(onChange).toHaveBeenCalledWith({ startMs: 29000, durationMs: 1000 });
   });

@@ -11,7 +11,8 @@
 --   of a production document's body (create, put, the first increment that creates a counter
 --   document, and a schema migration's rewrite). NULL means "not known": a document written
 --   before this column existed, one in a development or review namespace, or one whose major
---   could not be derived when it was written. Nothing reads the column yet.
+--   could not be derived when it was written. It is read only by a read path that migrates a body
+--   on serve (a caller of `applyMajorChain`); any other read ignores it.
 --
 -- No default and no backfill, so the ALTER is a catalog change only (no table rewrite). It still
 --   needs a brief ACCESS EXCLUSIVE lock on `appdata.doc`. While it WAITS for that lock (behind a

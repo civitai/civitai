@@ -29,6 +29,15 @@ import {
   USER_MENU_GROUP_IDS,
   USER_MENU_HEADER_GROUP,
 } from '~/shared/constants/user-menu-groups.constants';
+import { listingSortSchema } from '~/server/schema/blocks/app-listing-read.schema';
+import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
+import {
+  APP_STORE_ACTIONS,
+  APP_STORE_LISTING_ID_RE,
+  APP_STORE_POSITION_MAX,
+  APP_STORE_QUERY_LENGTH_BUCKETS,
+  APP_SURFACES,
+} from '~/shared/utils/app-store-telemetry';
 
 /*
  * Size caps on free-form tracking input, in JSON characters. Each is measured before anything
@@ -950,6 +959,30 @@ const hatTurfActionSchema = z.object({
   }),
 });
 
+// App store acquisition funnel: which store cards were SEEN, which were clicked, which detail pages
+// were opened and which primary CTAs were followed. One type with the step in `details.action`, like
+// `AppsBuild_Action`, so a new step is a zod change and not an Enum16 migration.
+//
+// Client-postable, so no public count may read it.
+// Every field is closed or bounded, with no free text (unknown keys are stripped).
+const appStoreActionSchema = z.object({
+  type: z.literal('AppStore_Action'),
+  details: z.object({
+    action: z.enum(APP_STORE_ACTIONS),
+    listingId: z.string().regex(APP_STORE_LISTING_ID_RE),
+    surface: z.enum(APP_SURFACES),
+    /** Zero-based index of the card in the grid / rail it was rendered in. */
+    position: z.number().int().min(0).max(APP_STORE_POSITION_MAX).optional(),
+    /** The store grid's sort and category FILTER at the time (not the card's own category). */
+    sort: listingSortSchema.optional(),
+    category: z.enum(MARKETPLACE_CATEGORIES).optional(),
+    /** Whether the store search box held any (trimmed) text. Never the text itself. */
+    hasQuery: z.boolean().optional(),
+    /** The trimmed search text's length, as a closed bucket. */
+    queryLength: z.enum(APP_STORE_QUERY_LENGTH_BUCKETS).optional(),
+  }),
+});
+
 // App Blocks in-app telemetry, from the two block hosts. Client-postable through the public
 // `/api/track/batch` beacon, which checks Origin only.
 //
@@ -1016,6 +1049,7 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   pushPromptSchema,
   experimentExposureSchema,
   hatTurfActionSchema,
+  appStoreActionSchema,
   appErrorSchema,
   appSessionSchema,
 ]);

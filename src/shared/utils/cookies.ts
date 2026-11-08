@@ -1,6 +1,7 @@
 import type { TmpCookiesObj } from 'cookies-next/lib/types';
 import * as z from 'zod';
 import { booleanString } from '~/utils/zod-helpers';
+import { EVENT_POINT_POPS } from '~/shared/constants/event-point-pops.constants';
 
 /**
  * The `/apps/*` rail's cookie name.
@@ -20,6 +21,7 @@ const cookiesSchema = z.object({
   // browsingLevel: z.coerce.number().optional(),
   disableHidden: booleanString().optional(),
   showEventCosmetics: booleanString().optional(),
+  eventPointPops: z.enum(EVENT_POINT_POPS).optional().catch(undefined),
   mode: z.enum(['SFW', 'NSFW', 'All']).optional(),
   referrals: z
     .object({
@@ -72,6 +74,7 @@ function parseCookiesObj(cookies: TmpCookiesObj) {
     // browsingLevel: cookies?.['level'],
     disableHidden: cookies?.['disableHidden'],
     showEventCosmetics: cookies?.['showEventCosmetics'],
+    eventPointPops: cookies?.['eventPointPops'],
     mode: cookies?.['mode'],
     referrals: {
       code: cookies?.['ref_code'],

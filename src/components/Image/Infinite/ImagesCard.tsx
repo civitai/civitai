@@ -23,6 +23,7 @@ import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
 import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
 import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
 import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
+import { useReactionNudgeClass } from '~/components/HatTurf/reaction-nudge';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { TwCard } from '~/components/TwCard/TwCard';
@@ -417,6 +418,11 @@ function ImageReactions({
   const turf = !!useTurfFeed() && safe;
   const inView = useElementInView();
   const oneRow = isImagesCardFooterOneRow(width);
+  const nudge = useReactionNudgeClass({
+    imageId: image.id,
+    ownerId: image.user.id,
+    reactions: image.reactions,
+  });
   return (
     <Metrics
       entityType="Image"
@@ -463,7 +469,8 @@ function ImageReactions({
                   className={clsx(
                     cardClasses.reactions,
                     classes.bar,
-                    oneRow && classes.fitReactions
+                    oneRow && classes.fitReactions,
+                    nudge
                   )}
                   entityId={image.id}
                   entityType="image"

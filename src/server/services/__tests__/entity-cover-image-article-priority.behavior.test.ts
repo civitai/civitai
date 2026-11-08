@@ -41,7 +41,7 @@ beforeAll(async () => {
       "needsReview" text, "blockedFor" text, "userId" int DEFAULT 1, index int DEFAULT 0, "postId" int,
       poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "modelRestricted" boolean DEFAULT false, "nsfwLevelLocked" boolean DEFAULT false,
-      "scanJobs" jsonb
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "publishedAt" timestamp, "userId" int DEFAULT 1,

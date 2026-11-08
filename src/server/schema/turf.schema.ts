@@ -32,6 +32,11 @@ export const placeTurfStickerSchema = z.object({
 
 export const turfEventSchema = z.object({ event: eventName });
 
+export const turfReactionEarnsSchema = z.object({
+  event: eventName,
+  imageId: z.number().int().positive(),
+});
+
 export const turfSummariesSchema = z.object({
   event: eventName,
   imageIds: z.array(z.number().int().positive()).max(100),

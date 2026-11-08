@@ -6,6 +6,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type { Prisma } from '@prisma/client';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 /**
  * An owner's "keep Hat Turf off my images", against real rows: their images take no new stickers,
@@ -78,7 +79,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (
       id int PRIMARY KEY, settings jsonb, "bannedAt" timestamptz, "deletedAt" timestamptz,
       "createdAt" timestamptz DEFAULT '2020-01-01', meta jsonb,
-      "excludeFromLeaderboards" boolean DEFAULT false
+      "excludeFromLeaderboards" boolean DEFAULT false, flags int NOT NULL DEFAULT 0
     );
     CREATE TABLE "CreatorMilestone" (key text PRIMARY KEY, threshold numeric);
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz, availability text);
@@ -209,6 +210,33 @@ describe("a banned or deleted owner's images", () => {
     expect(await countedImages()).toEqual([]);
     // Not blamed on the owner's switch, which they never touched.
     await expect(place(IMAGES[0])).rejects.toThrow("You can't put hat stickers on this image");
+  });
+});
+
+describe("a placer's event-points exclusion", () => {
+  // Decision: leaderboard exclusion and event-points exclusion are separate switches. Before you
+  // put "excludeFromLeaderboards" back into the turf eligibility, note that it would stop every
+  // leaderboard-only placer's stickers from counting.
+  const countedOn = async (imageId: number) => {
+    await syncTurfImages((await getTurfEvent('e'))!, [imageId]);
+    const entry = lua.hash(turfKeys('e').counts)?.[`Image:${imageId}`];
+    return entry ? JSON.parse(entry).counted : undefined;
+  };
+
+  it('a placer with the bit still shows, but counts for nothing', async () => {
+    await db.exec(
+      `UPDATE "User" SET flags = ${UserFlag.ExcludeFromEventPoints} WHERE id = ${PLACER}`
+    );
+    expect(await drawnOn(IMAGES[0])).toBe(1);
+    expect(await countedOn(IMAGES[0])).toEqual({});
+  });
+
+  it('a placer excluded only from leaderboards counts', async () => {
+    // DisablePayout rides along so a predicate testing the wrong bit is caught too.
+    await db.exec(
+      `UPDATE "User" SET "excludeFromLeaderboards" = true, flags = ${UserFlag.DisablePayout} WHERE id = ${PLACER}`
+    );
+    expect(await countedOn(IMAGES[0])).toEqual({ Blue: 1 });
   });
 });
 

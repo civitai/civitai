@@ -19,7 +19,7 @@ export const BLOCK_REASONS = [
   {
     id: 'minor-sexual',
     label: 'Minor / sexual or suggestive',
-    help: 'A character depicted as under 18 in nudity, sexual activity, or sexualized clothing/poses, in any rendering style.',
+    help: 'A clearly drawn or cartoon character depicted as under 18 in nudity, sexual activity, or sexualized clothing/poses. Anything not clearly drawn goes under CSAM: realistic minor.',
   },
   {
     id: 'minor-photoreal',
@@ -56,10 +56,20 @@ export const BLOCK_REASONS = [
     label: 'Other ToS violation',
     help: 'Another specific violation (e.g. prohibited bodily waste, incest, hate/extremism, self-harm). Requires a short comment.',
   },
+  // Last, so the number keys of the reasons above stay where moderators expect them.
+  {
+    id: 'csam-realistic',
+    label: 'CSAM: realistic minor (hold for report)',
+    help: 'A minor in nudity, sexual activity, or sexualized clothing/poses, shown photographically or so it could pass as a real child. If in doubt (semi-real, 3D render, photo-like anime, can’t tell), choose this. One vote holds the image for CSAM review instead of blocking it.',
+  },
 ] as const;
 
 export type BlockReason = (typeof BLOCK_REASONS)[number]['id'];
 export const BLOCK_REASON_IDS = BLOCK_REASONS.map((r) => r.id) as [BlockReason, ...BlockReason[]];
+/** One vote with this reason holds the image for CSAM review; the item never becomes a plain block. */
+export const CSAM_HOLD_REASON: BlockReason = 'csam-realistic';
+/** `voidReason` of an item a `CSAM_HOLD_REASON` vote took out of labelling. */
+export const CSAM_HOLD_VOID_REASON = 'csam-hold';
 /** The one reason that needs a comment. */
 export const REASON_NEEDING_COMMENT: BlockReason = 'other';
 export const REASON_COMMENT_MAX = 500;

@@ -28,7 +28,8 @@ const app = (slug: string, rev: string): Entity => ({
   urn: `urn:apps.civitai.com:app/${slug}`,
   schemas: [APPS],
   rev,
-  body: { slug },
+  // A known rating, so anonymous is sent it (`audience.ts`).
+  body: { slug, contentRating: 'g' },
 });
 
 let server: Server | undefined;

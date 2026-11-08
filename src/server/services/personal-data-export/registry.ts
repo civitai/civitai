@@ -157,6 +157,8 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   EntityAccess: { subject: ['addedById'] },
   PaidAccess: { subject: ['ownerId'] },
   ModelVersionSale: { subject: ['userId'] },
+  ModelVersionGiftLink: { subject: ['createdById'] },
+  ModelVersionGiftRedemption: { subject: ['userId'] },
   EntityCollaborator: { subject: ['userId'], others: ['createdBy'] },
   Club: { subject: ['userId'] },
   ClubAdmin: { subject: ['userId'] },
@@ -262,7 +264,6 @@ export const EXCLUDED: Record<string, string> = {
   PurchasableReward:
     'catalog item; names the user only as its staff author (purchases are exported)',
   ImageCdnModeratorDelete: 'moderation internals',
-  ProfilePictureHold: 'moderation internals',
   ImageCdnShopTakedown: 'moderation internals',
   ScanLabelVote: 'labeling work done as staff, not data about the user',
   ScanLabelClaim: 'labeling work done as staff, not data about the user',

@@ -189,6 +189,9 @@ export function sampleStickerTrack(track: StickerTrack, timeMs: number): Sticker
 export const stickerTrackMaxScale = (track: StickerTrack) =>
   track.s.reduce((max, [, value]) => Math.max(max, value), 0);
 
+export const stickerTrackMoves = (track: StickerTrack) =>
+  CONTINUOUS_CHANNELS.some((channel) => track[channel].length > 1);
+
 const BOUNDS: Record<ContinuousChannel, [number, number]> = {
   x: [0, 1],
   y: [0, 1],

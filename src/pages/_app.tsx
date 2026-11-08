@@ -379,6 +379,7 @@ function MyApp(props: CustomAppProps) {
                       <CivitaiSessionProvider
                         disableHidden={cookies.disableHidden}
                         showEventCosmetics={cookies.showEventCosmetics}
+                        eventPointPops={cookies.eventPointPops}
                       >
                         <ErrorBoundary>
                           <BrowserSettingsProvider>

@@ -30,7 +30,7 @@ import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import { createGrpcServer, listenGrpc } from '~/server/registry-adapter/grpc';
 import { liveSharedDocSource } from '~/server/registry-adapter/doc-source.live';
 import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
-import { SERVED_SCHEMAS, buildEntities } from '~/server/registry-adapter/entities';
+import { SERVED_SCHEMAS, buildEntitiesPerRead } from '~/server/registry-adapter/entities';
 import type { ResourceConfig } from '~/server/registry-adapter/auth';
 import { verifyCivitaiToken } from '~/server/registry-adapter/auth.live';
 import { createRegistryServer } from '~/server/registry-adapter/serve';
@@ -66,11 +66,10 @@ function main() {
   const entities = createPollingAdapter({
     namespace: REGISTRY_NAMESPACE,
     serves: SERVED_SCHEMAS,
-    read: async () =>
-      buildEntities(await readApps(), {
-        baseUrl,
-        onSkip: (reason) => console.warn('registry-adapter:', reason),
-      }),
+    read: buildEntitiesPerRead(readApps, {
+      baseUrl,
+      onSkip: (reason) => console.warn('registry-adapter:', reason),
+    }),
     store,
     pollMs,
     sleep: abortableSleep,

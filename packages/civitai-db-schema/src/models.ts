@@ -186,7 +186,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry" | "ProfilePictureSync";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -776,6 +776,8 @@ export interface User {
   serviceDealsSold?: ServiceDeal[];
   mysteryBoxesSold?: ItemDefinition[];
   gameFrameGames?: GameFrameGame[];
+  giftLinksCreated?: ModelVersionGiftLink[];
+  giftRedemptions?: ModelVersionGiftRedemption[];
 }
 
 export interface CustomerSubscription {
@@ -1181,6 +1183,7 @@ export interface ModelVersion {
   coveredCheckpoints?: CoveredCheckpoint[];
   wildcardSet?: WildcardSet | null;
   licensingRoot?: LicensingRoot | null;
+  giftLinks?: ModelVersionGiftLink[];
 }
 
 export interface LicensingRoot {
@@ -1721,7 +1724,6 @@ export interface Image {
   blockedFor: string | null;
   scanJobs: JsonValue | null;
   assignedUser?: User | null;
-  profilePictureHold?: ProfilePictureHold | null;
   sortAt: Date;
   minor: boolean;
   poi: boolean;
@@ -4375,6 +4377,33 @@ export interface EntityAccess {
   meta: JsonValue | null;
 }
 
+export interface ModelVersionGiftLink {
+  id: number;
+  modelVersionId: number;
+  modelVersion?: ModelVersion;
+  createdById: number;
+  createdBy?: User;
+  codeHash: string;
+  codeHint: string;
+  label: string | null;
+  batchId: string | null;
+  maxRedemptions: number | null;
+  redemptionCount: number;
+  expiresAt: Date | null;
+  revokedAt: Date | null;
+  revokedById: number | null;
+  createdAt: Date;
+  redemptions?: ModelVersionGiftRedemption[];
+}
+
+export interface ModelVersionGiftRedemption {
+  giftLinkId: number;
+  giftLink?: ModelVersionGiftLink;
+  userId: number;
+  user?: User;
+  claimedAt: Date;
+}
+
 export interface PaidAccess {
   entityType: PaidAccessEntityType;
   entityId: number;
@@ -4714,15 +4743,6 @@ export interface ImageCdnAccessClaim {
   url: string;
   token: string;
   claimedUntil: Date;
-}
-
-export interface ProfilePictureHold {
-  id: number;
-  userId: number;
-  imageId: number;
-  image?: Image;
-  reason: string;
-  createdAt: Date;
 }
 
 export interface JobQueue {

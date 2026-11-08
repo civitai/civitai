@@ -65,7 +65,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { isAir, splitUppercase } from '~/utils/string-helpers';
 import { getAirModelLink } from '~/shared/utils/air';
-import { trainingModelInfo } from '~/utils/training';
+import { isHeldForTrainingReview, trainingModelInfo } from '~/utils/training';
 import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -113,10 +113,10 @@ type TrainingModelRow = MyTrainingModelGetAll['items'][number] & {
 };
 
 /** How a training status reads to its owner. */
-const trainingStatusLabel = (status: TrainingStatus) =>
+export const trainingStatusLabel = (status: TrainingStatus, heldForReview = false) =>
   status === TrainingStatus.InReview
     ? 'Ready'
-    : status === TrainingStatus.Paused
+    : status === TrainingStatus.Paused && heldForReview
     ? TRAINING_REVIEW_COPY.pendingLabel
     : splitUppercase(status);
 
@@ -479,7 +479,13 @@ export default function UserTrainingModels() {
                 <HoverCard.Target>
                   <Badge color={trainingStatusFields[mv.trainingStatus]?.color ?? 'gray'}>
                     <Group gap={6} wrap="nowrap">
-                      {trainingStatusLabel(mv.trainingStatus)}
+                      {trainingStatusLabel(
+                        mv.trainingStatus,
+                        isHeldForTrainingReview(
+                          mv.trainingStatus,
+                          thisFileMetadata?.trainingResults
+                        )
+                      )}
                       {isRunning && <Loader size={12} />}
                     </Group>
                   </Badge>

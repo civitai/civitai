@@ -151,13 +151,17 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
       >
         {i === 0 ? headerRow(section.heading) : <Title order={4}>{section.heading}</Title>}
         <Grid gutter="md">
-          {section.items.map((card) => (
+          {section.items.map((card, position) => (
             <Grid.Col
               key={card.id}
               span={{ base: 12, sm: 6, md: 4, lg: 4 }}
               data-testid="apps-related-grid-col"
             >
-              <AppListingCard card={card} canOpenPage={canOpenPage} />
+              <AppListingCard
+                card={card}
+                canOpenPage={canOpenPage}
+                telemetry={{ surface: 'related', position }}
+              />
             </Grid.Col>
           ))}
         </Grid>
