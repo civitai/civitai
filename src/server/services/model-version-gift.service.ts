@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { isPaidAccessActive, type ModelVersionTerms } from '@civitai/buzz';
@@ -18,6 +18,7 @@ import {
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
 import {
+  GIFT_INDEX_PAGE_MAX,
   GIFT_LIVE_CODES_MAX_PER_VERSION,
   GIFT_LIST_HISTORY,
   GIFT_MINT_MAX_PER_CALL,
@@ -294,6 +295,155 @@ export type GiftBatchSummary = {
   createdAt: Date;
   expiresAt: Date | null;
 };
+
+type GiftIndexVersion = {
+  modelVersionId: number;
+  versionName: string;
+  modelId: number;
+  modelName: string;
+};
+export type GiftIndexItem =
+  | ({ kind: 'link' } & Omit<GiftLinkSummary, 'live'> & GiftIndexVersion)
+  | ({ kind: 'batch' } & GiftBatchSummary & GiftIndexVersion);
+
+type GiftIndexRow = GiftIndexVersion & {
+  kind: 'link' | 'batch';
+  key: string;
+  createdAt: Date;
+  expiresAt: Date | null;
+  label: string | null;
+  id: number | null;
+  codeHint: string | null;
+  maxRedemptions: number | null;
+  redemptionCount: number | null;
+  revokedAt: Date | null;
+  total: number | null;
+  claimed: number | null;
+  live: number | null;
+};
+
+/** Opaque keyset cursor over (createdAt, key). */
+export function encodeGiftIndexCursor(row: { createdAt: Date; key: string }) {
+  return Buffer.from(`${row.createdAt.toISOString()}|${row.key}`).toString('base64url');
+}
+
+export function decodeGiftIndexCursor(cursor: string) {
+  const [at, key] = Buffer.from(cursor, 'base64url').toString().split('|');
+  if (!at || !key || Number.isNaN(Date.parse(at))) throw throwBadRequestError('Invalid cursor.');
+  return { createdAt: at, key };
+}
+
+/**
+ * The owner's links and bulk batches across every version of every model they own, newest first.
+ * A link's key is its id and a batch's its batchId, so the two never collide.
+ */
+export function giftIndexSql({
+  userId,
+  cursor,
+  limit,
+}: {
+  userId: number;
+  cursor: { createdAt: string; key: string } | null;
+  limit: number;
+}) {
+  return Prisma.sql`
+    WITH owned AS (
+      SELECT mv.id, mv.name AS "versionName", m.id AS "modelId", m.name AS "modelName"
+        FROM "ModelVersion" mv
+        JOIN "Model" m ON m.id = mv."modelId"
+       WHERE m."userId" = ${userId}
+    ), items AS (
+      SELECT 'link' AS kind, l.id::text AS key, l."modelVersionId", l."createdAt", l."expiresAt",
+             l.label, l.id, l."codeHint", l."maxRedemptions", l."redemptionCount", l."revokedAt",
+             NULL::int AS total, NULL::int AS claimed, NULL::int AS live
+        FROM "ModelVersionGiftLink" l
+       WHERE l."modelVersionId" IN (SELECT id FROM owned) AND l."batchId" IS NULL
+      UNION ALL
+      SELECT 'batch', b."batchId", b."modelVersionId", min(b."createdAt"), max(b."expiresAt"),
+             min(b.label), NULL, NULL, NULL, NULL, NULL,
+             count(*)::int,
+             count(*) FILTER (WHERE b."redemptionCount" > 0)::int,
+             count(*) FILTER (
+               WHERE b."revokedAt" IS NULL AND b."redemptionCount" < b."maxRedemptions"
+                 AND (b."expiresAt" IS NULL OR b."expiresAt" > now())
+             )::int
+        FROM "ModelVersionGiftLink" b
+       WHERE b."modelVersionId" IN (SELECT id FROM owned) AND b."batchId" IS NOT NULL
+       GROUP BY b."batchId", b."modelVersionId"
+    )
+    SELECT i.*, o."versionName", o."modelId", o."modelName"
+      FROM items i
+      JOIN owned o ON o.id = i."modelVersionId"
+     ${
+       cursor
+         ? Prisma.sql`WHERE (i."createdAt", i.key) < (${cursor.createdAt}::timestamp(3), ${cursor.key})`
+         : Prisma.empty
+     }
+     ORDER BY i."createdAt" DESC, i.key DESC
+     LIMIT ${limit + 1}
+  `;
+}
+
+/** Shapes one page of `giftIndexSql` rows: the extra row only says there is a next page. */
+export function toGiftIndexPage(rows: GiftIndexRow[], limit: number) {
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  const items: GiftIndexItem[] = page.map((r) => {
+    const version = {
+      modelVersionId: r.modelVersionId,
+      versionName: r.versionName,
+      modelId: r.modelId,
+      modelName: r.modelName,
+    };
+    return r.kind === 'link'
+      ? {
+          kind: 'link',
+          id: r.id as number,
+          codeHint: r.codeHint as string,
+          label: r.label,
+          maxRedemptions: r.maxRedemptions,
+          redemptionCount: r.redemptionCount as number,
+          expiresAt: r.expiresAt,
+          revokedAt: r.revokedAt,
+          createdAt: r.createdAt,
+          ...version,
+        }
+      : {
+          kind: 'batch',
+          batchId: r.key,
+          label: r.label,
+          total: r.total as number,
+          claimed: r.claimed as number,
+          live: r.live as number,
+          createdAt: r.createdAt,
+          expiresAt: r.expiresAt,
+          ...version,
+        };
+  });
+  return {
+    items,
+    nextCursor: rows.length > limit && last ? encodeGiftIndexCursor(last) : null,
+  };
+}
+
+/** Every gift link and batch on the caller's own models. Owner only: moderators use the per-version list. */
+export async function listMyGiftLinks({
+  userId,
+  cursor,
+  limit = GIFT_INDEX_PAGE_MAX,
+}: {
+  userId: number;
+  cursor?: string | null;
+  limit?: number;
+}) {
+  const take = Math.min(Math.max(1, Math.floor(limit)), GIFT_INDEX_PAGE_MAX);
+  const decoded = cursor ? decodeGiftIndexCursor(cursor) : null;
+  // The primary: Creator Studio re-reads right after a revoke.
+  const rows = await dbWrite.$queryRaw<GiftIndexRow[]>(
+    giftIndexSql({ userId, cursor: decoded, limit: take })
+  );
+  return toGiftIndexPage(rows, take);
+}
 
 /** Revokes one link, or every link of a bulk batch. Already-granted access is kept. */
 export async function revokeGiftLinks({
