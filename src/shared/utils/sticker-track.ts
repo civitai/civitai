@@ -118,6 +118,11 @@ export const STICKER_TRACK_MIN_MS = 10;
 export const STICKER_TRACK_MAX_TICK_MS = 1000;
 /** Above the longest accepted video (`maxVideoDurationSeconds`), so a rounding at the end is not refused. */
 export const STICKER_TRACK_MAX_DURATION_MS = 300_000;
+/**
+ * Longest a segment may fade between a hidden key and a shown one. A fade is drawn below the
+ * opacity floor for most of its length, so this bounds how long a sticker can sit faint.
+ */
+export const STICKER_TRACK_MAX_FADE_MS = 2000;
 /** Of the JSON text: several times a 30 s track that never holds still. */
 export const STICKER_TRACK_MAX_BYTES = 128 * 1024;
 /**
@@ -427,6 +432,10 @@ const KEY_BOUNDS: [Exclude<keyof StickerTrackKey, 't' | 'ease'>, [number, number
   ['o', [0, 1]],
 ];
 
+/** A segment drawn faint: one end hidden, the other shown, eased rather than snapped. */
+const fadesFaint = (from: StickerTrackKey, to: StickerTrackKey) =>
+  from.ease !== 'jump' && (from.o === 0) !== (to.o === 0);
+
 function keysRefusal(keys: StickerTrackKey[]): string | null {
   if (keys.length === 0) return 'keys: empty';
   if (keys.length > STICKER_TRACK_MAX_KEYS) return 'too many keys';
@@ -445,6 +454,8 @@ function keysRefusal(keys: StickerTrackKey[]): string | null {
     // through fainter values on its way to 0, which is the point of a fade.
     if (key.o !== 0 && key.o < STICKER_PLACEMENT_MIN_OPACITY) return 'keys: o too faint';
     if (!STICKER_TRACK_EASES.includes(key.ease)) return 'keys: unknown ease';
+    if (i > 0 && fadesFaint(keys[i - 1], key) && key.t - keys[i - 1].t > STICKER_TRACK_MAX_FADE_MS)
+      return 'keys: fade too long';
   }
   return null;
 }

@@ -8,6 +8,7 @@ import type {
 import {
   momentStickerTrack,
   sampleStickerTrack,
+  STICKER_TRACK_MAX_FADE_MS,
   STICKER_TRACK_MAX_KEYS,
   stickerTrackAnimates,
   stickerTrackFrames,
@@ -154,6 +155,8 @@ describe('stickerTrackRefusal on keys', () => {
     ['a shown key fainter than a still sticker may be', [key(0, { o: 0.1 })], /o too faint/],
     ['a position off the media', [key(0, { x: -0.1 })], /x out of bounds/],
     ['an unknown ease', [key(0, { ease: 'bounce' as StickerTrackEase })], /unknown ease/],
+    ['a long fade in', [key(0, { o: 0, ease: 'smooth' }), key(10_000)], /fade too long/],
+    ['a long fade out', [key(0, { ease: 'smooth' }), key(10_000, { o: 0 })], /fade too long/],
     [
       'too many keys',
       Array.from({ length: STICKER_TRACK_MAX_KEYS + 1 }, (_, i) => key(i)),
@@ -161,6 +164,18 @@ describe('stickerTrackRefusal on keys', () => {
     ],
   ])('refuses %s', (_, keys, message) => {
     expect(stickerTrackRefusal({ v: 2, keys })).toMatch(message);
+  });
+
+  // A fade spends most of its time below the floor, so how long it lasts is how long the sticker
+  // stays faint; jump and two hidden keys never draw it faint at all.
+  it.each<[string, StickerTrackKey[]]>([
+    ['the longest fade', [key(0, { o: 0, ease: 'smooth' }), key(STICKER_TRACK_MAX_FADE_MS)]],
+    ['a long jump out of hiding', [key(0, { o: 0, ease: 'jump' }), key(10_000)]],
+    ['a long jump into hiding', [key(0, { ease: 'jump' }), key(10_000, { o: 0 })]],
+    ['a long gap between hidden keys', [key(0, { o: 0 }), key(10_000, { o: 0 })]],
+    ['a long glide between shown keys', [key(0, { o: 0.4 }), key(10_000, { x: 0.8 })]],
+  ])('accepts %s', (_, keys) => {
+    expect(stickerTrackRefusal({ v: 2, keys })).toBeNull();
   });
 
   it('is enforced by the create schema', () => {
