@@ -39,11 +39,11 @@ export type WatchRedis = Pick<
   'zRemRangeByScore' | 'zCard' | 'zmScore' | 'zAdd' | 'pExpireAt'
 >;
 
-// A player's own total, watched by that player only: the member is named from the session, never
-// from input, and its push goes to that user alone (push.ts).
 // The interest set of shared topics (hats, roster cards, teams), and the one of players' own totals.
 type WatchSet = 'watch' | 'watchSelf';
 
+// A player's own total, watched by that player only: the member is named from the session, never
+// from input, and its push goes to that user alone (push.ts).
 export const selfWatchMember = (userId: number) => `self:${userId}`;
 
 export type WatchEvent = {
