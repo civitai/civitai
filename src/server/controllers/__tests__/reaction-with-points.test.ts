@@ -7,9 +7,10 @@ import type { EventPointGrant } from '~/server/events/points/award';
 // that is known within EVENT_POINTS_WAIT_MS. Past the wait the answer goes without points and the
 // award is left running; another team's grant is never handed to this viewer.
 
-const { mockToggleReaction, viewerTeam } = vi.hoisted(() => ({
+const { mockToggleReaction, viewerTeam, viewerJoined } = vi.hoisted(() => ({
   mockToggleReaction: vi.fn(),
   viewerTeam: { value: 'Yellow' as string | undefined },
+  viewerJoined: { value: true },
 }));
 
 vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
@@ -48,6 +49,9 @@ import {
 } from '~/server/controllers/reaction.controller';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 dbMock.dbRead.imageReaction.count.mockImplementation(async () => 1);
+// The viewer's held team hats, by event: the only raw read on this path.
+dbMock.dbRead.$queryRaw.mockImplementation((async () =>
+  viewerJoined.value ? [{ event: 'birthday2026' }] : []) as never);
 
 const input = { entityType: 'image', entityId: 1, reaction: 'Like' } as const;
 const ctx = {
@@ -75,6 +79,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
   viewerTeam.value = 'Yellow';
+  viewerJoined.value = true;
 });
 
 describe('toggleReactionWithPointsHandler', () => {
@@ -95,6 +100,15 @@ describe('toggleReactionWithPointsHandler', () => {
 
   it('drops every grant for a viewer with no team in the event', async () => {
     viewerTeam.value = undefined;
+    createdWith(Promise.resolve([grant('Yellow', 5)]));
+    await expect(toggleReactionWithPointsHandler({ ctx, input })).resolves.toEqual({
+      result: 'created',
+    });
+  });
+
+  // getUserTeam seeds a team for anyone, so a team alone does not mean they joined.
+  it('drops every grant for a viewer who never joined, though a team is seeded for them', async () => {
+    viewerJoined.value = false;
     createdWith(Promise.resolve([grant('Yellow', 5)]));
     await expect(toggleReactionWithPointsHandler({ ctx, input })).resolves.toEqual({
       result: 'created',
