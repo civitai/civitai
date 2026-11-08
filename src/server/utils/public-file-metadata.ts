@@ -1,5 +1,4 @@
-/** A file's metadata as the public API sends it: a training dataset's is sent empty, as the
- *  site's own file lists do. */
+/** Public API: Training Data files carry no metadata, independent of `toApiModelFile`'s narrowing. */
 export function publicFileMetadata<M>(type: string, metadata: M): M | Record<string, never> {
   return type === 'Training Data' ? {} : metadata;
 }
