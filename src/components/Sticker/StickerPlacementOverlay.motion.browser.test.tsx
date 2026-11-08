@@ -4,8 +4,13 @@ import { page } from 'vitest/browser';
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
 import type * as TrpcModule from '~/utils/trpc';
 import type { PlacedSticker } from '~/components/Sticker/placement.util';
-import type { StickerTrack } from '~/shared/utils/sticker-track';
-import { encodeStickerTrack, momentStickerTrack } from '~/shared/utils/sticker-track';
+import type { StickerTrack, StickerTrackKey, StickerTrackV2 } from '~/shared/utils/sticker-track';
+import {
+  encodeStickerTrack,
+  momentStickerTrack,
+  sampleStickerTrack,
+  STICKER_TRACK_EASES,
+} from '~/shared/utils/sticker-track';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -104,9 +109,23 @@ const render = async (track: StickerTrack, startSeconds = 0) => {
   const video = page.getByTestId('media').element() as HTMLVideoElement;
   const box = () =>
     (page.getByAltText(':test:').element() as HTMLElement).closest<HTMLElement>('.absolute')!;
+  // What is drawn, not the inline style: playback animates over the stored pose. In percent of
+  // the sticker's box; a browser resolves some of these to pixels and leaves others as percent.
+  const drawn = () => getComputedStyle(box());
+  const percent = (value: string, of: 'width' | 'height') =>
+    value.endsWith('%')
+      ? parseFloat(value)
+      : (parseFloat(value) / box().parentElement!.getBoundingClientRect()[of]) * 100;
   return {
     box,
-    left: () => parseFloat(box().style.left),
+    left: () => percent(drawn().left, 'width'),
+    top: () => percent(drawn().top, 'height'),
+    width: () => percent(drawn().width, 'width'),
+    rotation: () => {
+      const [a, b] = new DOMMatrix(drawn().transform).toFloat64Array();
+      return (Math.atan2(b, a) * 180) / Math.PI;
+    },
+    opacity: () => drawn().filter,
     setTime: (seconds: number) => {
       time = seconds;
     },
@@ -124,13 +143,13 @@ afterEach(() => {
 
 describe('a recorded sticker moves with the video', () => {
   test('follows its path as the video seeks, forward and back', async () => {
-    const { box, left, seek } = await render(path);
+    const { left, top, width, rotation, seek } = await render(path);
 
     seek(0.5);
     expect(left()).toBeCloseTo(50);
-    expect(parseFloat(box().style.top)).toBeCloseTo(50);
-    expect(parseFloat(box().style.width)).toBeCloseTo(25);
-    expect(box().style.transform).toBe('translate(-50%, -50%) rotate(45deg)');
+    expect(top()).toBeCloseTo(50);
+    expect(width()).toBeCloseTo(25);
+    expect(rotation()).toBeCloseTo(45);
 
     seek(1);
     expect(left()).toBeCloseTo(80);
@@ -169,7 +188,7 @@ describe('a recorded sticker moves with the video', () => {
   });
 
   test('a sticker that mounts while the video is paused mid-path starts where the path is', async () => {
-    const { seek } = await render(path);
+    const { left, seek } = await render(path);
     (page.getByRole('button', { name: 'Toggle' }).element() as HTMLElement).click();
     await expect.element(page.getByAltText(':test:')).not.toBeInTheDocument();
     // Moved while nothing is mounted, so only the mount itself can pose the sticker that arrives.
@@ -177,17 +196,57 @@ describe('a recorded sticker moves with the video', () => {
 
     (page.getByRole('button', { name: 'Toggle' }).element() as HTMLElement).click();
     await expect.element(page.getByAltText(':test:')).toBeInTheDocument();
-    const box = (page.getByAltText(':test:').element() as HTMLElement).closest<HTMLElement>(
-      '.absolute'
-    )!;
-    expect(parseFloat(box.style.left)).toBeCloseTo(50);
+    expect(left()).toBeCloseTo(50);
   });
 
-  test('a moment sticker is never written to, even where its pose differs from the drawn one', async () => {
-    const { left, seek } = await render(momentStickerTrack({ ...start, x: 0.6 }, 0, 3000));
+  test('a moment sticker is never animated, even where its pose differs from the drawn one', async () => {
+    const { box, left, seek } = await render(momentStickerTrack({ ...start, x: 0.6 }, 0, 3000));
 
     seek(1);
 
     expect(left()).toBeCloseTo(20);
+    expect(box().getAnimations()).toHaveLength(0);
+  });
+});
+
+const key = (t: number, overrides: Partial<StickerTrackKey> = {}): StickerTrackKey => ({
+  t,
+  x: start.x,
+  y: start.y,
+  s: start.scale,
+  r: start.rotation,
+  o: 1,
+  ease: 'linear',
+  ...overrides,
+});
+
+describe('a keyed sticker plays its keys', () => {
+  // The browser draws the CSS curve; the server, the size limit and the editor use the sampler.
+  // Each ease, a quarter of the way through the segment, where the curves differ most.
+  test.each(STICKER_TRACK_EASES)('draws the %s ease where the sampler puts it', async (ease) => {
+    const track: StickerTrackV2 = { v: 2, keys: [key(1000, { ease }), key(2000, { x: 0.8 })] };
+    const { left, seek } = await render(track);
+
+    seek(1.25);
+    expect(left()).toBeCloseTo(sampleStickerTrack(track, 1250).x * 100, 1);
+    seek(0.5);
+    expect(left()).toBeCloseTo(20);
+    seek(5);
+    expect(left()).toBeCloseTo(80);
+  });
+
+  test('fades, and is hidden outright once it reaches zero', async () => {
+    const { box, opacity, seek } = await render({
+      v: 2,
+      keys: [key(0), key(1000, { o: 0 })],
+    });
+
+    seek(0.5);
+    expect(opacity()).toBe('opacity(0.5)');
+    expect(box()).not.toHaveClass('!invisible');
+
+    seek(1);
+    // Hiding is a render, so it lands after the seek.
+    await expect.poll(() => box().classList.contains('!invisible')).toBe(true);
   });
 });

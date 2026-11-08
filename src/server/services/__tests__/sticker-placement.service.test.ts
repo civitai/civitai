@@ -21,6 +21,7 @@ import {
   STICKER_REMOVAL_LOCK_HOURS,
 } from '~/shared/utils/sticker-placement';
 import type { CreateStickerPlacement } from '~/server/services/sticker-placement.service';
+import type { StickerTrack } from '~/shared/utils/sticker-track';
 import { encodeStickerTrack } from '~/shared/utils/sticker-track';
 
 /**
@@ -2697,6 +2698,40 @@ describe('a moving sticker on a video', () => {
       /up to 20%/
     );
     expect(placementCreate).not.toHaveBeenCalled();
+  });
+
+  describe('set with keys', () => {
+    const key = (t: number, x: number, s: number) =>
+      ({ t, x, y: 0.5, s, r: 10, o: 1, ease: 'smooth' } as const);
+    // The first key is a second in, so the start pose is that key held from time zero.
+    const keyed: StickerTrack = {
+      v: 2,
+      keys: [key(1000, 0.2, 0.1), key(2000, 0.4, 0.22), key(3000, 0.5, 0.1)],
+    };
+
+    it('stores the keys, with `data` holding the first key’s pose', async () => {
+      resolvePlacementSpaceFor.mockResolvedValue(VIDEO_SPACE);
+
+      await createStickerPlacement({ ...placeInput, data, track: keyed });
+
+      expect(placementCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            track: keyed,
+            data: expect.objectContaining({ x: 0.2, y: 0.5, scale: 0.1, rotation: 10 }),
+          }),
+        })
+      );
+    });
+
+    it('refuses keys that pass the creator’s limit between a first and last key inside it', async () => {
+      resolvePlacementSpaceFor.mockResolvedValue({ ...VIDEO_SPACE, settings: { maxScale: 0.2 } });
+
+      await expect(createStickerPlacement({ ...placeInput, data, track: keyed })).rejects.toThrow(
+        /up to 20%/
+      );
+      expect(placementCreate).not.toHaveBeenCalled();
+    });
   });
 });
 
