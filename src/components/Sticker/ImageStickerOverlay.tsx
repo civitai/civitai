@@ -5,7 +5,7 @@ import { EVENT_HAT_CORNERS } from '~/components/Sticker/peek-toggle-corner';
 import { StickerPlacementOverlay } from '~/components/Sticker/StickerPlacementOverlay';
 import { useStickerPlacements } from '~/components/Sticker/placement.util';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
-import { useTrackHiddenIds } from '~/components/Sticker/useTrackHiddenIds';
+import { useTrackPlayback } from '~/components/Sticker/useTrackPlayback';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
@@ -126,7 +126,7 @@ export function ImageStickerOverlay({
   // `tagName`, not `instanceof`: this renders on the server, which has no HTMLVideoElement.
   const video =
     features.stickerVideoTracks && media?.tagName === 'VIDEO' ? (media as HTMLVideoElement) : null;
-  const hiddenIds = useTrackHiddenIds(imageId, video);
+  const { hiddenIds, bindPose } = useTrackPlayback(imageId, video);
 
   if (!active) return null;
 
@@ -165,8 +165,10 @@ export function ImageStickerOverlay({
               // pressing the plus is often what mounts this in the first place.
               paced={!isPlacing}
               step={historyStep}
-              // A replay shows every sticker it steps through, whatever the video's time.
+              // A replay shows every sticker it steps through, whatever the video's time, and
+              // still moves a recorded one along its path.
               hiddenIds={historyStep == null ? hiddenIds : undefined}
+              bindPose={bindPose}
             />
           )}
           {isPlacing && <DraftStickerLayer video={video} />}

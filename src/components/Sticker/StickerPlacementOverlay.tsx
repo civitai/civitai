@@ -1,3 +1,8 @@
+import {
+  COUNTER_ROTATE_ATTR,
+  counterRotation,
+  stickerPoseStyle,
+} from '~/components/Sticker/sticker-pose-style';
 import { Button } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -92,10 +97,13 @@ export function StickerPlacementOverlay({
   step = null,
   takenCorners,
   hiddenIds,
+  bindPose,
 }: {
   placements: PlacedSticker[];
   /** Hidden but kept mounted, so showing one again does not replay the reveal. */
   hiddenIds?: ReadonlySet<number>;
+  /** A ref per sticker for playback that moves it along its track (`useTrackPlayback`). */
+  bindPose?: (id: number) => (node: HTMLElement | null) => void;
   /** Corners another decoration draws in, which the peek toggle keeps out of. */
   takenCorners?: PeekToggleCorner[];
   viewerId?: number;
@@ -500,7 +508,8 @@ export function StickerPlacementOverlay({
           const body = (
             <div
               key={placement.id}
-              ref={placement.isPending ? measureSticker(placement) : undefined}
+              // Pending placements carry no track (see `useTrackPlayback`), so the two never meet.
+              ref={placement.isPending ? measureSticker(placement) : bindPose?.(placement.id)}
               className={clsx(
                 'absolute',
                 interactive && 'pointer-events-auto',
@@ -510,10 +519,7 @@ export function StickerPlacementOverlay({
                 hiddenIds?.has(placement.id) && '!invisible'
               )}
               style={{
-                left: `${placement.data.x * 100}%`,
-                top: `${placement.data.y * 100}%`,
-                width: `${placement.data.scale * 100}%`,
-                transform: `translate(-50%, -50%) rotate(${placement.data.rotation}deg)`,
+                ...stickerPoseStyle(placement.data),
                 zIndex: layer,
                 ...delayStyle,
               }}
@@ -588,8 +594,9 @@ export function StickerPlacementOverlay({
                     )}
                     // Counter-rotated: rotation runs to ±180 and a mark riding
                     // the sticker's own transform reads upside down.
+                    {...{ [COUNTER_ROTATE_ATTR]: '' }}
                     style={{
-                      transform: `rotate(${-placement.data.rotation}deg)`,
+                      transform: counterRotation(placement.data.rotation),
                       ...peekStyle,
                     }}
                   >
