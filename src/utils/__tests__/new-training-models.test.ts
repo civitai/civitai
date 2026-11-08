@@ -127,7 +127,6 @@ describe('Training Studio follows the classic trainer model flags', () => {
     krea2: 'krea2Training',
     boogu: 'booguTraining',
     mageflow: 'mageflowTraining',
-    flux2_dev: 'flux2Training',
     flux2klein_9b: 'fluxTwoKleinTraining',
     flux2klein_4b: 'fluxTwoKleinTraining',
     ernie: 'ernieTraining',
@@ -135,10 +134,8 @@ describe('Training Studio follows the classic trainer model flags', () => {
     anima: 'animaTraining',
     minimaxh3: 'minimaxh3Training',
     zimageturbo: 'zimageturboTraining',
-    zimagebase: 'zimagebaseTraining',
     ltx25: 'ltx25Training',
     ltx23: 'ltx23Training',
-    ltx2: 'ltx2Training',
     ming: 'mingTraining',
     qwen21: 'qwen21Training',
     yue2: 'yue2Training',
@@ -149,5 +146,14 @@ describe('Training Studio follows the classic trainer model flags', () => {
     const version = card?.versions.find((v) => v.key === key);
     const gates = [card?.flagKey, version?.flagKey].filter(Boolean);
     expect(gates).toContain(getFeatureFliptKey(feature));
+  });
+
+  // Open to everyone in Studio by product decision, though the classic trainer still gates them.
+  it.each(['flux2_dev', 'zimagebase', 'ltx2'])('%s is open to everyone in Studio', (key) => {
+    const card = MODEL_CARDS.find((c) => c.versions.some((v) => v.key === key))!;
+    expect([card.flagKey, card.versions.find((v) => v.key === key)!.flagKey]).toEqual([
+      undefined,
+      undefined,
+    ]);
   });
 });

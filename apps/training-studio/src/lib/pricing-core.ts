@@ -14,11 +14,11 @@ const WHATIF_CONCURRENCY = 4;
 export async function computeFromPrices(client: OrchestratorClient): Promise<FromPrices> {
   const prices: FromPrices = {};
   const unpriced: string[] = [];
-  // Each card's first version, plus every later version with its own flag gate: a viewer who can't
-  // see the first version is priced by the first one they can (`cardFromPrice`).
+  // Each card's first version, plus every later version that can be a viewer's first pick (all before
+  // it gated): `cardFromPrice` prices a viewer who can't see the first version by that one.
   const quotes = MODEL_CARDS.flatMap((card) =>
     card.versions
-      .filter((v, i) => i === 0 || v.flagKey)
+      .filter((_, i) => card.versions.slice(0, i).every((p) => p.flagKey))
       .map((version, i) => ({
         key: i === 0 ? card.type : versionPriceKey(card.type, version.key),
         version,

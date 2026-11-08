@@ -142,7 +142,6 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     type: 'flux2',
-    flagKey: 'flux2-training',
     name: 'Flux.2',
     code: 'F2',
     media: 'image',
@@ -338,7 +337,6 @@ export const MODEL_CARDS: ModelCard[] = [
       },
       {
         key: 'zimagebase',
-        flagKey: 'zimage-base-training',
         label: 'Base',
         air: 'urn:air:zimagebase:checkpoint:civitai:2342797@2635223',
         baseModel: 'ZImageBase',
@@ -668,7 +666,6 @@ export const MODEL_CARDS: ModelCard[] = [
       },
       {
         key: 'ltx2',
-        flagKey: 'ltx2-training',
         label: '2.0',
         air: 'urn:air:ltx2:checkpoint:civitai:2291192@2578325',
         baseModel: 'LTXV2',
@@ -1655,8 +1652,8 @@ export function paramBounds(card: ModelCard): Record<string, ParamBound> {
  * static fallback, so callers must handle a missing entry (show "—", not a guessed number). */
 export type FromPrices = Record<string, number>;
 
-/** The `FromPrices` key for one version of a card. Only versions with their own `flagKey` are quoted
- *  under it, so a viewer who can't see a card's first version is priced by one they can pick. */
+/** The `FromPrices` key for a later version of a card, quoted when every version before it is gated, so a
+ *  viewer who can't see a card's first version is priced by the first one they can pick. */
 export const versionPriceKey = (cardType: string, versionKey: string): string =>
   `${cardType}/${versionKey}`;
 

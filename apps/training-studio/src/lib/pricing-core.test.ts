@@ -17,9 +17,8 @@ const { computeFromPrices } = await import('./pricing-core');
 describe('from prices for version-gated cards', () => {
   it('prices Z-Image from the first version the viewer can pick', async () => {
     const prices = await computeFromPrices({} as never);
-    expect(
-      cardFromPrice(prices, 'zimage', new Set(['zimage-turbo-training', 'zimage-base-training']))
-    ).toBe(100);
-    expect(cardFromPrice(prices, 'zimage', new Set(['zimage-base-training']))).toBe(300);
+    expect(cardFromPrice(prices, 'zimage', new Set(['zimage-turbo-training']))).toBe(100);
+    // Base is open to everyone, Turbo is gated: a viewer without Turbo is quoted Base.
+    expect(cardFromPrice(prices, 'zimage', new Set())).toBe(300);
   });
 });
