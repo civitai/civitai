@@ -9,7 +9,7 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { civitaiUrl } from '$lib/model-url';
   import CreatedCodes from './CreatedCodes.svelte';
-  import { batchStatus, endOfLocalDay, linkStatus } from './gift-links';
+  import { batchStatus, endOfLocalDay, linkStatus } from '../gift-links';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -17,7 +17,9 @@
   // Not derived from `form`: the next action replaces it, and the codes can't be fetched again. Seeded
   // from it for a post made before hydration.
   // svelte-ignore state_referenced_locally
-  let created = $state<string[] | null>(form && 'created' in form ? (form.created?.codes ?? null) : null);
+  let created = $state<string[] | null>(
+    form && 'created' in form ? (form.created?.codes ?? null) : null
+  );
   let pending = $state<string | null>(null);
   // svelte-ignore state_referenced_locally
   let failure = $state<{ action: string; message: string } | null>(
@@ -55,7 +57,7 @@
 
 <div class="mx-auto flex max-w-3xl flex-col gap-5 p-5">
   <div>
-    <a href="/models" class="text-sm text-dark-2 hover:text-white">← Models</a>
+    <a href="/models/gifts" class="text-sm text-dark-2 hover:text-white">← Gift links</a>
     <h1 class="mt-1 text-xl font-semibold text-white">Gift links</h1>
     <p class="text-sm text-dark-2">
       {data.version.modelName} · {data.version.name}. A claim gives free access to this version.
@@ -75,7 +77,13 @@
       use:enhance={submit('createLink')}
       class="cs-panel flex flex-col gap-3 p-5"
     >
-      <h2 class="font-medium text-white">Shareable link</h2>
+      <div>
+        <h2 class="font-medium text-white">Multi-use link</h2>
+        <p class="text-sm text-dark-2">
+          One link you can post anywhere. Each signed-in person can claim it once, until it reaches
+          its claim limit or expires.
+        </p>
+      </div>
       <div>
         <Label for="maxRedemptions">Max claims (blank = no limit)</Label>
         <Input id="maxRedemptions" name="maxRedemptions" type="number" min="1" />
@@ -100,7 +108,13 @@
       use:enhance={submit('mint')}
       class="cs-panel flex flex-col gap-3 p-5"
     >
-      <h2 class="font-medium text-white">Single-use links</h2>
+      <div>
+        <h2 class="font-medium text-white">Single-use links</h2>
+        <p class="text-sm text-dark-2">
+          A set of links that each work once. Send a different one to each person; copy them or
+          download a CSV right after you mint them.
+        </p>
+      </div>
       <div>
         <Label for="count">How many (up to 500)</Label>
         <Input id="count" name="count" type="number" min="1" max="500" required />
@@ -135,19 +149,15 @@
           {@const st = linkStatus(link)}
           <li class="flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
             <span class="min-w-0 flex-1 text-dark-0">
-              Link ···{link.codeHint}{link.label ? ` · ${link.label}` : ''}
+              Multi-use link ···{link.codeHint}{link.label ? ` · ${link.label}` : ''}
             </span>
             <span class="text-dark-2">
-              {link.redemptionCount}{link.maxRedemptions ? ` / ${link.maxRedemptions}` : ''} claimed
-              · expires {fmt(link.expiresAt)}
+              {link.redemptionCount}{link.maxRedemptions ? ` / ${link.maxRedemptions}` : ''} claimed ·
+              expires {fmt(link.expiresAt)}
             </span>
             <Badge variant="outline">{st}</Badge>
             {#if st === 'Active'}
-              <form
-                method="POST"
-                action="?/revoke"
-                use:enhance={submit('revoke')}
-              >
+              <form method="POST" action="?/revoke" use:enhance={submit('revoke')}>
                 <input type="hidden" name="id" value={link.id} />
                 <ConfirmButton
                   label="Revoke"
@@ -170,11 +180,7 @@
             </span>
             <Badge variant="outline">{st}</Badge>
             {#if st === 'Active'}
-              <form
-                method="POST"
-                action="?/revoke"
-                use:enhance={submit('revoke')}
-              >
+              <form method="POST" action="?/revoke" use:enhance={submit('revoke')}>
                 <input type="hidden" name="batchId" value={batch.batchId} />
                 <ConfirmButton
                   label="Revoke"
