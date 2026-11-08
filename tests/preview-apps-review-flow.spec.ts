@@ -186,39 +186,71 @@ async function describeDialogs(page: Page) {
 }
 
 /**
- * Log, then close, anything modal covering the page — via its own close button, else Escape.
- * 🔴 DIAGNOSTIC FIRST: the log line names the dialog, so a run that needed this says WHICH
- * modal was in the way (an environment-wide one for the smoke account, or one the review page
- * opened itself — the latter is a UI bug to fix, not to dismiss).
+ * 🔴 WHY THIS SPEC MARKS THE TERMS OF SERVICE AS ACCEPTED. The smoke `mod` account is seeded
+ * with onboarding complete but no `tos*AcceptedHash`, so once the ToS body changes from the
+ * rollout baseline the site opens its forced, un-dismissable ToS re-acceptance modal on every
+ * page (`useToSUpdateModal`: re-prompt iff the accepted hash differs from the served one). It
+ * covered the review page and swallowed every click — measured on the PR preview: the
+ * `section[role=dialog][aria-label="Terms of Service"]` overlay intercepted the Code-tab click,
+ * and neither its close affordance nor Escape closes it.
+ *
+ * So the spec records acceptance the way the modal's own Accept does — `user.setSettings`
+ * with the domain's date field and accepted-hash field — using the metadata the page itself
+ * was served (`tosMeta`: which fields this domain reads, and the hash to store). Nothing is
+ * clicked through, and nothing is dismissed: any OTHER dialog on the review page is a failure
+ * (`expectNoOpenDialog`).
  */
-async function logAndDismissModals(page: Page, where: string) {
+async function acceptTermsForThisDomain(page: Page) {
+  const meta = await page.evaluate(() => {
+    const d = (window as unknown as { __NEXT_DATA__?: { props?: Record<string, unknown> } })
+      .__NEXT_DATA__;
+    const props = d?.props ?? {};
+    const m = (props.tosMeta ??
+      (props.pageProps as Record<string, unknown> | undefined)?.tosMeta) as
+      | { hash?: string; fieldKey?: string; hashFieldKey?: string }
+      | undefined;
+    return m ?? null;
+  });
+  if (!meta?.hash || !meta.fieldKey || !meta.hashFieldKey) {
+    throw new Error(`could not read the served ToS metadata: ${JSON.stringify(meta)}`);
+  }
+  // superjson body: the date field is a `z.date()`, so it needs the Date meta.
+  const res = await page.request.post('/api/trpc/user.setSettings?batch=1', {
+    headers: {
+      'content-type': 'application/json',
+      origin: PREVIEW_URL,
+      referer: `${PREVIEW_URL}/`,
+    },
+    data: {
+      '0': {
+        json: { [meta.fieldKey]: new Date().toISOString(), [meta.hashFieldKey]: meta.hash },
+        meta: { values: { [meta.fieldKey]: ['Date'] } },
+      },
+    },
+  });
+  if (!res.ok()) {
+    throw new Error(`user.setSettings (ToS acceptance) -> HTTP ${res.status()}`);
+  }
+  console.log(
+    `[review-flow diag] ToS accepted for this domain via ${meta.fieldKey}/${meta.hashFieldKey}`
+  );
+}
+
+/**
+ * No dialog may be open over the review page. Logged first (so a failure names it), then
+ * asserted — a future change that opens a modal on this page fails here, loudly, instead of
+ * being clicked through.
+ */
+async function expectNoOpenDialog(page: Page, where: string) {
   const dialogs = await describeDialogs(page);
   for (const d of dialogs) console.log(`[review-flow diag] ${where}: dialog ${JSON.stringify(d)}`);
-  if (!dialogs.some((d) => d.visible)) return;
-  for (let i = 0; i < 3; i++) {
-    const close = page.locator(
-      '[data-portal] .mantine-Modal-close, [data-portal] button[aria-label="Close"]'
-    );
-    if (
-      await close
-        .first()
-        .isVisible()
-        .catch(() => false)
-    ) {
-      await close
-        .first()
-        .click({ force: true })
-        .catch(() => undefined);
-    } else {
-      await page.keyboard.press('Escape');
-    }
-    await page.waitForTimeout(400);
-    const still = (await describeDialogs(page)).filter((d) => d.visible);
-    console.log(
-      `[review-flow diag] ${where}: after dismiss attempt ${i + 1}, visible: ${still.length}`
-    );
-    if (still.length === 0) return;
-  }
+  const open = dialogs.filter(
+    (d) => d.visible && (d.role === 'dialog' || d.role === 'alertdialog')
+  );
+  expect(
+    open.map((d) => d.ariaLabel || d.labelledByText || d.text),
+    `${where}: open dialog(s)`
+  ).toEqual([]);
 }
 
 test.describe('App review page: overview, sticky actions, approve & next (mod, nothing approved)', () => {
@@ -257,6 +289,7 @@ test.describe('App review page: overview, sticky actions, approve & next (mod, n
   test('desktop 1124×1305', async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1124, height: 1305 });
     await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await acceptTermsForThisDomain(page);
     const request = page.request;
     await withdrawForSlug(request, SLUG_A);
     await withdrawForSlug(request, SLUG_B);
@@ -278,7 +311,7 @@ test.describe('App review page: overview, sticky actions, approve & next (mod, n
       ).toBeVisible();
       await attachShot(page, testInfo, 'review-overview-1124x1305');
 
-      await logAndDismissModals(page, 'before clicking tabs');
+      await expectNoOpenDialog(page, 'before clicking tabs');
 
       // 2. Code tab, diff expanded, scrolled to the bottom: the bar is still uncovered.
       await page.getByRole('tab', { name: 'Code' }).click();
@@ -320,7 +353,10 @@ test.describe('App review page: overview, sticky actions, approve & next (mod, n
     page,
   }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await acceptTermsForThisDomain(page);
     await page.goto('/apps/review', { waitUntil: 'domcontentloaded' });
+    await expectNoOpenDialog(page, 'queue page');
     const tabs = page.getByRole('tablist', { name: 'Review queues' }).getByRole('tab');
     await expect(tabs.first()).toBeVisible();
     const tops = new Set<number>();
