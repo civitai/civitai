@@ -13,6 +13,7 @@ import type {
   StudioAutoLabelSubmitInput,
 } from '~/server/schema/training-studio-auto-label.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import type { RateLimit } from '~/server/utils/rate-limit-window';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
   assertCivitaiMediaUrls,
@@ -39,6 +40,13 @@ const CAPTION_TEMPERATURE = 0.7;
 /** Items one user may auto-label per UTC day: p99 of per-user-day auto-label items over 14 days
  *  (1,133 on 2026-10-26), rounded up. */
 export const STUDIO_AUTO_LABEL_DAILY_ITEMS = 1200;
+/** The per-minute limits on `training.studioAutoLabelSubmit` / `studioAutoLabelPoll`, for the
+ *  standalone Studio's REST endpoint: `key` is each procedure's bucket, so both surfaces share one
+ *  quota per user. Keep `rules` in step with the procedures' `rateLimit()`. */
+export const STUDIO_AUTO_LABEL_RATE_LIMITS = {
+  submit: { key: 'training:studioAutoLabelSubmit', rules: [{ limit: 100, period: 60 }] },
+  poll: { key: 'training:studioAutoLabelPoll', rules: [{ limit: 1500, period: 60 }] },
+} satisfies Record<string, { key: string; rules: RateLimit[] }>;
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
 type StudioAutoLabelMetadata = { kind: 'studio-auto-label'; userId: number };

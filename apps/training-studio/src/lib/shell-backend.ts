@@ -33,10 +33,10 @@ async function messageOf(res: Response, fallback: string): Promise<string> {
   return fallback;
 }
 
-/** Why an auto-label submit failed. Our route's 4xx and its marked 503 are refusals before any
- *  orchestrator work, so they return the image's cap slot; every other failure (an unmarked 5xx, a
- *  gateway 503) may have come after a charged workflow was created and stays counted. The blanket
- *  4xx rule holds while the route is the stub; revisit it when a route that submits work ships. */
+/** Why an auto-label submit failed. Our route answers 4xx only for a refusal made before any workflow
+ *  existed (its own, or the main app's gates, validation and limits), and its marked 503 when
+ *  auto-label is unavailable: those return the image's cap slot. Every other failure (a 502, a gateway
+ *  503) may have come after a workflow was created and stays counted. */
 async function autoLabelSubmitFailure(res: Response): Promise<Error> {
   const fallback = `auto-label submit failed (${res.status})`;
   const body = (await res.json().catch(() => null)) as { message?: string; code?: string } | null;
