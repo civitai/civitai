@@ -619,53 +619,115 @@ describe('Hat Turf on image detail', () => {
   });
 
   describe('the draw ceiling (Justin: "Ceiling at 24 now", changeable by the turf override)', () => {
-    const page = (from: number, team: string) =>
-      Array.from({ length: 12 }, (_, i) => sticker(from + i, team, 0.05 + (i % 6) * 0.15, 0.2));
-    const forty = {
+    const page = (from: number, team: string, n = 12) =>
+      Array.from({ length: n }, (_, i) => sticker(from + i, team, 0.05 + (i % 6) * 0.15, 0.2));
+    const cursor = (id: number) => ({ createdAt: '2026-11-03T00:00:00.000Z', id: String(id) });
+    const OWN = { ...sticker(999, 'yellow', 0.5, 0.5), userId: 1 };
+    const summary = (shown: Record<string, number>) => ({
       images: {
         9: {
-          shown: { blue: 20, pink: 20 },
-          counted: { blue: 20, pink: 20 },
+          shown,
+          counted: shown,
           leader: 'blue',
           leaderCosmeticId: 11,
           hatted: false,
           hattedTeam: null,
         },
       },
-    };
-    const loadOnePage = async (firstChip: string) => {
-      h.stickers = page(1, 'blue');
-      h.nextCursor = { createdAt: '2026-11-03T00:00:00.000Z', id: '12' };
-      h.fetchPage.mockResolvedValue({
-        stickers: page(100, 'pink'),
-        mine: null,
-        nextCursor: { createdAt: '2026-11-02T00:00:00.000Z', id: '112' },
-      });
-      h.drawCeiling = 24;
-      render(forty);
-      await vi.waitFor(() => expect(q('hat-turf-more')!.textContent).toContain(firstChip));
-      expect(q('hat-turf-more')!.tagName).toBe('BUTTON');
-      click(q('hat-turf-more'));
-      await vi.waitFor(() => expect(h.fetchPage).toHaveBeenCalledTimes(1));
+    });
+    const forty = summary({ blue: 20, pink: 20 });
+    // The summary counts every live hat on the image, the viewer's own included.
+    const fortyAndMine = summary({ blue: 20, pink: 20, yellow: 1 });
+    const chip = () => q('hat-turf-more');
+    const more = async (calls: number) => {
+      click(chip());
+      await vi.waitFor(() => expect(h.fetchPage).toHaveBeenCalledTimes(calls));
     };
 
     test('stops drawing and offering more at 24; the rest is a plain count', async () => {
-      await loadOnePage('+28 more');
+      h.stickers = page(1, 'blue');
+      h.nextCursor = cursor(12);
+      h.fetchPage.mockResolvedValue({
+        stickers: page(100, 'pink'),
+        mine: null,
+        nextCursor: cursor(112),
+      });
+      h.drawCeiling = 24;
+      render(forty);
+      await vi.waitFor(() => expect(chip()!.textContent).toContain('+28 more'));
+      expect(chip()!.tagName).toBe('BUTTON');
+      await more(1);
       await vi.waitFor(() => expect(hats().length).toBe(24));
       // Another page exists (nextCursor), yet nothing offers it: the chip is a count, not a button.
-      expect(q('hat-turf-more')!.tagName).toBe('DIV');
-      expect(q('hat-turf-more')!.textContent).toBe('+16');
+      expect(chip()!.tagName).toBe('DIV');
+      expect(chip()!.textContent).toBe('+16');
+    });
+
+    test('a ceiling that is not a whole number of pages stops part way into a page', async () => {
+      h.stickers = page(1, 'blue');
+      h.nextCursor = cursor(12);
+      h.fetchPage
+        .mockResolvedValueOnce({ stickers: page(100, 'pink'), mine: null, nextCursor: cursor(112) })
+        .mockResolvedValueOnce({
+          stickers: page(200, 'blue'),
+          mine: null,
+          nextCursor: cursor(212),
+        });
+      h.drawCeiling = 30;
+      render(forty);
+      await vi.waitFor(() => expect(chip()!.textContent).toContain('+28 more'));
+      await more(1);
+      await vi.waitFor(() => expect(chip()!.textContent).toContain('+16 more'));
+      await more(2);
+      await vi.waitFor(() => expect(hats().length).toBe(30));
+      expect(chip()!.tagName).toBe('DIV');
+      expect(chip()!.textContent).toBe('+10');
     });
 
     // Keep: the viewer's own hat is drawn on top of the ceiling, never cut by it (24 + yours).
     test("the viewer's own hat is drawn on top of the ceiling", async () => {
-      h.mine = { ...sticker(999, 'yellow', 0.5, 0.5), userId: 1 };
-      await loadOnePage('+27 more');
+      h.mine = OWN;
+      h.stickers = page(1, 'blue');
+      h.nextCursor = cursor(12);
+      h.fetchPage.mockResolvedValue({
+        stickers: page(100, 'pink'),
+        mine: null,
+        nextCursor: cursor(112),
+      });
+      h.drawCeiling = 24;
+      render(fortyAndMine);
+      await vi.waitFor(() => expect(chip()!.textContent).toContain('+28 more'));
+      await more(1);
       await vi.waitFor(() => expect(hats().length).toBe(25));
-      expect(q('hat-turf-more')!.textContent).toBe('+15');
       expect(
         document.querySelectorAll('[data-testid="hat-turf-hat"][data-team="yellow"]')
       ).toHaveLength(1);
+      expect(chip()!.textContent).toBe('+16');
+    });
+
+    test('an own hat among the newest still leaves room for 24 others', async () => {
+      h.mine = OWN;
+      // The first page holds the viewer's own hat, so it brings 11 others, not 12.
+      h.stickers = [...page(1, 'blue', 11), OWN];
+      h.nextCursor = cursor(12);
+      h.fetchPage
+        .mockResolvedValueOnce({ stickers: page(100, 'pink'), mine: null, nextCursor: cursor(112) })
+        .mockResolvedValueOnce({
+          stickers: page(200, 'pink'),
+          mine: null,
+          nextCursor: cursor(212),
+        });
+      h.drawCeiling = 24;
+      render(fortyAndMine);
+      await vi.waitFor(() => expect(hats().length).toBe(12));
+      await more(1);
+      // 23 others loaded: one short of the ceiling, so more is still offered.
+      await vi.waitFor(() => expect(hats().length).toBe(24));
+      expect(chip()!.tagName).toBe('BUTTON');
+      await more(2);
+      await vi.waitFor(() => expect(hats().length).toBe(25));
+      expect(chip()!.tagName).toBe('DIV');
+      expect(chip()!.textContent).toBe('+16');
     });
   });
 

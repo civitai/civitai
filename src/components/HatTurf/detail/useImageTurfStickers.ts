@@ -69,7 +69,6 @@ export function useImageTurfStickers(imageId: number) {
     stickers,
     own,
     drawCeiling: data?.drawCeiling,
-    loadedExtra: older?.stickers.length ?? 0,
     loadMore: nextCursor ? loadMore : undefined,
     loading,
   };
