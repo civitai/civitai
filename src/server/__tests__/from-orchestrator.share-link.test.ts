@@ -81,6 +81,17 @@ describe('the publish link’s dataset share', () => {
     expect(result.redirect).toBeDefined();
   });
 
+  it('a rights answer without a share is saved without a confirm', async () => {
+    share.getStudioDatasetShare.mockResolvedValue(none);
+    const result = await resolve({ ownRights: '1', shareDataset: '0' });
+    expect(share.setStudioDatasetShare).toHaveBeenCalledWith(70, {
+      ownRights: true,
+      shareDataset: false,
+    });
+    expect(result.props?.confirmShare).toBeUndefined();
+    expect(result.redirect).toBeDefined();
+  });
+
   it('an un-tick is applied without a confirm', async () => {
     share.getStudioDatasetShare.mockResolvedValue(none);
     const result = await resolve({ ownRights: '0', shareDataset: '0' });

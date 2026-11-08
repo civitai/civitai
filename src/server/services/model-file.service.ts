@@ -52,6 +52,7 @@ import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound'
 import {
   cappedStudioDatasetVisibility,
   isStudioDataset,
+  versionHasStudioDataset,
 } from '~/server/services/training-data-restricted.service';
 import {
   liveRunDatasetTrainingStatuses,
@@ -185,6 +186,14 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   });
   if (!ownsVersion) throw throwNotFoundError();
 
+  if (
+    !isModerator &&
+    file.type === 'Training Data' &&
+    file.visibility !== ModelFileVisibility.Private &&
+    (await versionHasStudioDataset(dbWrite, data.modelVersionId))
+  )
+    file.visibility = ModelFileVisibility.Private;
+
   const result = await dbWrite.modelFile.create({
     data: {
       ...file,
@@ -278,6 +287,14 @@ export async function updateFile({
       metadata: (metadata ?? modelFile.metadata ?? {}) as Record<string, unknown>,
       requested: inputData.visibility ?? modelFile.visibility,
     });
+  else if (
+    !isModerator &&
+    modelFile.type === 'Training Data' &&
+    inputData.visibility !== undefined &&
+    inputData.visibility !== ModelFileVisibility.Private &&
+    (await versionHasStudioDataset(dbWrite, modelFile.modelVersionId))
+  )
+    inputData.visibility = ModelFileVisibility.Private;
 
   const typeChanged = inputData.type !== undefined && inputData.type !== modelFile.type;
   // The file kind can change the version's AIR (a diffusion model or UNet), and the bust after the

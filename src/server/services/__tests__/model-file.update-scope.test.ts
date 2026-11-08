@@ -707,6 +707,41 @@ describe('a new url from a client', () => {
   });
 });
 
+describe('an owner editing another Training Data file on a Training Studio version', () => {
+  const studioVersion = (has: boolean) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+      Promise.resolve(
+        has && strings.join('?').includes('selectedEpochUrl') ? [{ id: 2 }] : []
+      )) as never);
+
+  beforeEach(() => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...FILE,
+      type: 'Training Data',
+      visibility: 'Private',
+      metadata: {},
+    });
+  });
+
+  it('cannot make it Public', async () => {
+    studioVersion(true);
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Private');
+  });
+
+  it('can make it Public on a version with no Studio dataset', async () => {
+    studioVersion(false);
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Public');
+  });
+
+  it("leaves a moderator's edit unchanged", async () => {
+    studioVersion(true);
+    await updateFile({ id: 1, visibility: 'Public', userId: 99, isModerator: true });
+    expect(writtenData().visibility).toBe('Public');
+  });
+});
+
 describe('an owner editing a Training Studio dataset directly', () => {
   const studio = (archive: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
     dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({

@@ -19,10 +19,7 @@ export function normalizeTrainingDataShare(share: Partial<TrainingDataShare>): T
   return { ownRights, shareDataset: ownRights && share.shareDataset === true };
 }
 
-/**
- * Whether `owner` (an int SQL expression) may not share a training dataset: every owner
- * `ownerHeldSql` covers, plus the users `legalHoldUserIdsSql` pairs, here without its age limit.
- */
+/** Whether `owner` (an int SQL expression) may not share a training dataset. */
 export function trainingDataOwnerRestrictedSql(owner: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`(${ownerHeldSql(owner)} OR EXISTS (
     SELECT 1 FROM "CsamReport" tr
@@ -169,6 +166,24 @@ const VISIBILITY_RANK: Record<ModelFileVisibility, number> = {
   [ModelFileVisibility.Sensitive]: 1,
   [ModelFileVisibility.Public]: 2,
 };
+
+/**
+ * Whether `modelVersionId` has a Training Studio dataset row. Any other `Training Data` file on that
+ * version stays Private for everyone but moderators, so a second upload can't share what the Studio
+ * rules keep unshared.
+ */
+export async function versionHasStudioDataset(
+  db: Pick<Prisma.TransactionClient, '$queryRaw'>,
+  modelVersionId: number
+): Promise<boolean> {
+  const rows = await db.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "ModelFile"
+    WHERE "modelVersionId" = ${modelVersionId} AND type = 'Training Data'
+      AND metadata ? 'selectedEpochUrl'
+    LIMIT 1
+  `;
+  return rows.length > 0;
+}
 
 /** A Training Studio dataset row: its sharing is decided by `studioDatasetVisibility`. */
 export function isStudioDataset(file: { type: string; metadata: unknown }) {

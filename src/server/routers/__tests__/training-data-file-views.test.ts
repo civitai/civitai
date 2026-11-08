@@ -14,9 +14,15 @@ import type * as ServerDomain from '~/server/utils/server-domain';
  * by the db mock.
  */
 
-const { getFilesByVersionIdHandler, getModelVersionHandler, getModelHandler } = vi.hoisted(() => ({
+const {
+  getFilesByVersionIdHandler,
+  getModelVersionHandler,
+  getModelVersionForEditHandler,
+  getModelHandler,
+} = vi.hoisted(() => ({
   getFilesByVersionIdHandler: vi.fn(),
   getModelVersionHandler: vi.fn(),
+  getModelVersionForEditHandler: vi.fn(),
   getModelHandler: vi.fn(),
 }));
 
@@ -32,6 +38,7 @@ vi.mock('~/server/controllers/model-file.controller', () => ({
 vi.mock('~/server/controllers/model-version.controller', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelVersionController>()),
   getModelVersionHandler,
+  getModelVersionForEditHandler,
 }));
 vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
   ...(await importOriginal<typeof ServerDomain>()),
@@ -51,6 +58,8 @@ const OWNER = 7;
 const OTHER = 8;
 const VERSION = 10;
 const WEIGHTS = { id: 1, type: 'Model', visibility: 'Public', metadata: { format: 'SafeTensor' } };
+
+const SERVER_ONLY = ['datasetArchive', 'nsfwLevel', 'fullyRated'];
 
 type File = { id: number; type: string; visibility: string; metadata: Record<string, unknown> };
 
@@ -205,10 +214,46 @@ describe.each(SURFACES)('%s and a shared training dataset', (_, read) => {
       visibility: 'Private',
       metadata: { ownRights: true, shareDataset: true },
     });
+    for (const key of SERVER_ONLY) expect(a[0].metadata).not.toHaveProperty(key);
   });
 
   it('gives a moderator the stored metadata', async () => {
     const files = await read([dataset()], { id: OTHER, isModerator: true });
     expect(files[0].metadata).toEqual(dataset().metadata);
+  });
+});
+
+describe('modelVersion.getByIdForEdit and a shared training dataset', () => {
+  async function readForEdit(files: File[], user: { id: number; isModerator: boolean }) {
+    // The ownership check, from either client.
+    for (const db of [dbMock.dbRead, dbMock.dbWrite]) {
+      db.modelVersion.findUnique.mockResolvedValue({ modelId: 1, model: { userId: OWNER } });
+      db.model.findUnique.mockResolvedValue({ userId: OWNER });
+      db.model.findFirst.mockResolvedValue({ userId: OWNER });
+    }
+    getModelVersionForEditHandler.mockResolvedValue({
+      id: VERSION,
+      model: { user: { id: OWNER } },
+      files,
+    });
+    const res = await modelVersionRouter.createCaller(ctx(user)).getByIdForEdit({ id: VERSION });
+    return res.files as unknown as File[];
+  }
+
+  it('gives the owner the not-shared state, without the server-only keys', async () => {
+    const [file] = await readForEdit([dataset({ visibility: 'Private' })], {
+      id: OWNER,
+      isModerator: false,
+    });
+    expect(file).toMatchObject({
+      visibility: 'Private',
+      metadata: { ownRights: true, shareDataset: true },
+    });
+    for (const key of SERVER_ONLY) expect(file.metadata).not.toHaveProperty(key);
+  });
+
+  it('gives a moderator the stored metadata', async () => {
+    const [file] = await readForEdit([dataset()], { id: OTHER, isModerator: true });
+    expect(file.metadata).toEqual(dataset().metadata);
   });
 });

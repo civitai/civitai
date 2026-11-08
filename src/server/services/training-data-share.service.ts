@@ -24,19 +24,19 @@ export function trainingDataShareFromQuery(
 
 type DatasetRow = { id: number; sizeKB: number; metadata: Record<string, unknown> | null };
 
-/** The stored choice may only drop: a field stays set only while both say so. */
+/** The share may only drop; the rights answer follows `next`, since without a share it shows
+ *  nothing to anyone but the owner and moderators. */
 function lowered(stored: TrainingDataShare, next: TrainingDataShare): TrainingDataShare {
   return normalizeTrainingDataShare({
-    ownRights: stored.ownRights && next.ownRights,
+    ownRights: next.ownRights,
     shareDataset: stored.shareDataset && next.shareDataset,
   });
 }
 
-/** Whether `next` asks for more than `stored` allows, which only `setStudioDatasetShare` with
+/** Whether `next` shares where `stored` does not, which only `setStudioDatasetShare` with
  *  `raise` may grant. */
 export function raisesTrainingDataShare(stored: TrainingDataShare, next: TrainingDataShare) {
-  const want = normalizeTrainingDataShare(next);
-  return (want.ownRights && !stored.ownRights) || (want.shareDataset && !stored.shareDataset);
+  return normalizeTrainingDataShare(next).shareDataset && !stored.shareDataset;
 }
 
 /** The sharing choice stored on a Studio run's `Training Data` row, or null without one. */

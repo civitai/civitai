@@ -22,7 +22,7 @@ const migration = (name: string) => readFileSync(`${MIGRATIONS}/${name}/migratio
 
 const PLAIN = 1; // no restriction of any kind
 const MARKER = 2; // an active restriction marker
-const OLD_REPORT = 3; // named on a record sent two years ago and archived
+const SHARE_ONLY = 3; // restricted for sharing only
 
 // One model + version per owner, ids offset from the owner's.
 const versionOf = (uid: number) => 100 + uid;
@@ -88,7 +88,7 @@ const SCHEMA = `
   );
 `;
 
-const OWNERS = [PLAIN, MARKER, OLD_REPORT];
+const OWNERS = [PLAIN, MARKER, SHARE_ONLY];
 const FIXTURE = `
   INSERT INTO "Model" (id, "userId") SELECT 100 + u, u FROM unnest(ARRAY[${OWNERS.join(',')}]) u;
   INSERT INTO "ModelVersion" (id, "modelId") SELECT 100 + u, 100 + u FROM unnest(ARRAY[${OWNERS.join(
@@ -102,7 +102,7 @@ const FIXTURE = `
   )}]) u;
   INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKER}, 'manual', 'test');
   INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt")
-    VALUES (${OLD_REPORT}, now() - interval '2 years', now() - interval '1 year');
+    VALUES (${SHARE_ONLY}, now() - interval '2 years', now() - interval '1 year');
 `;
 
 let db: PGlite;
@@ -148,13 +148,12 @@ describe('trainingDataShareRestricted', () => {
     expect(await restricted(MARKER)).toBe(true);
   });
 
-  it('an owner named on any record cannot share, however old the record', async () => {
-    // The content restriction has let this owner go; sharing does not.
+  it('an owner restricted for sharing only cannot share', async () => {
     const { rows } = await db.query<{ restricted: boolean }>(
-      `SELECT ${ownerHeldSql(Prisma.raw(String(OLD_REPORT))).text} AS restricted`
+      `SELECT ${ownerHeldSql(Prisma.raw(String(SHARE_ONLY))).text} AS restricted`
     );
     expect(rows[0].restricted).toBe(false);
-    expect(await restricted(OLD_REPORT)).toBe(true);
+    expect(await restricted(SHARE_ONLY)).toBe(true);
   });
 
   it('reads a restriction placed after the dataset went public', async () => {
@@ -163,7 +162,7 @@ describe('trainingDataShareRestricted', () => {
     expect(await restricted(PLAIN)).toBe(true);
   });
 
-  it('an owner named only as the second user on a record cannot share', async () => {
+  it('an owner restricted in another way cannot share', async () => {
     await db.exec(
       `INSERT INTO "CsamReport" ("userId", details) VALUES (NULL, '{"secondaryUserId": ${PLAIN}}')`
     );
@@ -225,7 +224,7 @@ describe('trainingDataListing', () => {
     expect(await listedFor(PLAIN)).toEqual([true, true]);
   });
 
-  it('a record naming the owner after sharing unlists the dataset, and only the dataset', async () => {
+  it('a restriction placed after sharing unlists the dataset, and only the dataset', async () => {
     await rate(PLAIN, { nsfwLevel: 1 });
     await db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${PLAIN})`);
     expect(await listedFor(PLAIN)).toEqual([false, true]);

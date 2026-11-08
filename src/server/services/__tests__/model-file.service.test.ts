@@ -472,3 +472,47 @@ describe('createFile / updateFile — renaming a download (overrideName)', () =>
     });
   });
 });
+
+describe('createFile — a second Training Data file on a Training Studio version', () => {
+  /** The Studio-row lookup: the version has a Studio dataset row, or not. */
+  const studioVersion = (has: boolean) =>
+    mockDbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+      Promise.resolve(
+        has && strings.join('?').includes('selectedEpochUrl') ? [{ id: 1 }] : []
+      )) as never);
+  const create = (who: { userId: number; isModerator?: boolean }) =>
+    modelFileService.createFile({
+      name: 'dataset.zip',
+      url: 'https://bucket/training-images/5/dataset.zip',
+      sizeKB: 1,
+      type: 'Training Data',
+      visibility: 'Public',
+      modelVersionId: 5,
+      select: { id: true },
+      ...who,
+    });
+  const createdVisibility = () => mockDbWrite.modelFile.create.mock.calls[0][0].data.visibility;
+
+  beforeEach(() => {
+    mockDbWrite.modelVersion.findFirst.mockResolvedValue({ id: 5 } as never);
+    mockDbWrite.modelFile.create.mockResolvedValue({ id: 78 } as never);
+  });
+
+  it("saves the owner's Public upload as Private", async () => {
+    studioVersion(true);
+    await create({ userId: 1 });
+    expect(createdVisibility()).toBe('Private');
+  });
+
+  it('keeps Public on a version with no Studio dataset', async () => {
+    studioVersion(false);
+    await create({ userId: 1 });
+    expect(createdVisibility()).toBe('Public');
+  });
+
+  it("keeps a moderator's Public upload Public", async () => {
+    studioVersion(true);
+    await create({ userId: 999, isModerator: true });
+    expect(createdVisibility()).toBe('Public');
+  });
+});
