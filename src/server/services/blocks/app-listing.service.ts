@@ -1367,8 +1367,7 @@ export async function getGlobalRecommendMean(): Promise<number> {
  * had to be: it changes which ROWS the cached statement returns. Folding it into the
  * statement hash would put a security-boundary axis behind a hash of caller-chosen bytes,
  * and leaving it out entirely would serve one cohort's id page to another — a moderator's
- * page, including `draft` listings, to a general viewer. It is a closed 3-value enum, so
- * it triples a keyspace that was bounded at 6 rather than opening it.
+ * page, including `draft` listings, to a general viewer. It is a closed 3-value enum.
  */
 function catalogPageCache(
   scope: StoreVisibilityScope,

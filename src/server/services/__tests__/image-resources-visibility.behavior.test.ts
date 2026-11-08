@@ -81,6 +81,11 @@ beforeAll(async () => {
     INSERT INTO "Image" (id, "postId", "acceptableMinor", "blockedFor") VALUES
       (101, 1, false, null), (102, 1, true, null), (103, 1, false, 'tos'), (104, 2, false, null);
     INSERT INTO "Model" (id, status) VALUES (1, 'Published');
+    -- 105 is clean, on a model with a .com face name.
+    INSERT INTO "Image" (id, "postId") VALUES (105, 1);
+    INSERT INTO "Model" (id, status, "sfwName") VALUES (2, 'Published', 'Safe name');
+    INSERT INTO "ImageResourceHelper" ("imageId", "modelVersionId", "modelId", "modelName") VALUES
+      (105, 12, 2, 'm');
     INSERT INTO "ImageResourceHelper" ("imageId", "modelVersionId", "modelId", "modelName") VALUES
       (101, 11, 1, 'm'), (102, 11, 1, 'm'), (103, 11, 1, 'm'), (104, 11, 1, 'm');
   `);
@@ -120,4 +125,10 @@ describe('image.getResources follows by-id image visibility', () => {
       expect(await call(101, who)).toEqual({ versionIds: [11], skip: false });
     }
   );
+
+  it('keeps a clean image out of the edge cache when a resource name depends on the viewer', async () => {
+    expect(await call(105, 'anonymous')).toEqual({ versionIds: [12], skip: true });
+    // Control: the same clean read without a .com face name stays cacheable.
+    expect(await call(101, 'anonymous')).toEqual({ versionIds: [11], skip: false });
+  });
 });

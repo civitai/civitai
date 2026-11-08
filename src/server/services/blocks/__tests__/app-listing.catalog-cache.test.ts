@@ -37,10 +37,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *     keys" holds only as far as the statement hash resists collisions, and the
  *     caller supplies bytes of the hashed statement: `decodeListingCursor` slices
  *     `cursorSortKey` and `cursorId` out of a lenient base64url decode as free
- *     strings, bound into the statement. So the two SECURITY-BOUNDARY axes
- *     sit OUTSIDE the hashed payload, in the literal `key` string:
- *     `listAvailableAppListings:<scope>:<red|sfw>`. A collision, if one were ever
- *     found, could only mix two pages WITHIN one viewer class.
+ *     strings, bound into the statement. So the SECURITY-BOUNDARY axes sit
+ *     OUTSIDE the hashed payload, in the literal key string from
+ *     `catalogPageCache`. A collision, if one were ever found, could only mix two
+ *     pages WITHIN one viewer class.
  *
  *     So the tests below assert on the key with its hash segment REMOVED: the
  *     half of the key no hash property is needed for.
