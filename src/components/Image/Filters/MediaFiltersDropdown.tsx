@@ -202,8 +202,9 @@ export function MediaFiltersDropdown({
     (showTurf && mergedFilters.hideTurfHats ? 1 : 0) +
     (showTurf && mergedFilters.hideWornHats ? 1 : 0) +
     (shows('baseModels') ? mergedFilters.baseModels?.length ?? 0 : 0) +
+    (!hatSorted &&
     ((shows('remixesOnly') && !!mergedFilters.remixesOnly) ||
-    (shows('nonRemixesOnly') && !!mergedFilters.nonRemixesOnly)
+      (shows('nonRemixesOnly') && !!mergedFilters.nonRemixesOnly))
       ? 1
       : 0) +
     (showChallengeToggle && shows('hideChallenges') && mergedFilters.hideChallenges ? 1 : 0) +
@@ -328,7 +329,8 @@ export function MediaFiltersDropdown({
               </Tooltip>
             </FilterChip>
           )}
-          {shows('nonRemixesOnly') && (
+          {/* A Hat Turf sort hydrates through the database, which has no remix filter. */}
+          {shows('nonRemixesOnly') && !hatSorted && (
             <FilterChip
               checked={mergedFilters.nonRemixesOnly}
               onChange={(checked) => {
@@ -338,7 +340,7 @@ export function MediaFiltersDropdown({
               <span>Originals Only</span>
             </FilterChip>
           )}
-          {shows('remixesOnly') && (
+          {shows('remixesOnly') && !hatSorted && (
             <FilterChip
               checked={mergedFilters.remixesOnly}
               onChange={(checked) =>

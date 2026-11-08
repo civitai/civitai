@@ -956,7 +956,12 @@ export async function reconcileAllTurf(now = new Date()) {
     const event = await getTurfEvent(def.name, now);
     if (!event || event.turf.mode === 'off') continue;
     const at = new Date(now.getTime() + Date.now() - startedAt);
-    results.push({ event: def.name, ...(await reconcileTurf(event, at)) });
+    const began = Date.now();
+    const result = { event: def.name, ...(await reconcileTurf(event, at)), ms: 0 };
+    result.ms = Date.now() - began;
+    // How long a pass takes as the event grows: it writes every image's feed indexes too.
+    void logToAxiom({ type: 'info', name: 'event-turf', message: 'reconciled', ...result });
+    results.push(result);
   }
   return results;
 }

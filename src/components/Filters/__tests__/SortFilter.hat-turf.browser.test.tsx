@@ -81,6 +81,7 @@ describe('Hat Turf in the image feed filters', () => {
     await expect.element(page.getByRole('checkbox', { name: 'Turf hats' })).toBeEnabled();
     expect(page.getByRole('checkbox', { name: 'Blue' }).query()).toBeNull();
     await expect.element(page.getByText('Time period')).toBeInTheDocument();
+    await expect.element(page.getByRole('checkbox', { name: 'Remixes Only' })).toBeInTheDocument();
   });
 
   test('under a Hat Turf sort: team chips, Turf hats held on, and no time period', async () => {
@@ -98,5 +99,8 @@ describe('Hat Turf in the image feed filters', () => {
     await expect.element(page.getByRole('checkbox', { name: 'Turf hats' })).toBeDisabled();
     await expect.element(page.getByRole('checkbox', { name: 'Turf hats' })).toBeChecked();
     expect(page.getByText('Time period').query()).toBeNull();
+    // The hydrate has no remix filter, so neither remix chip is offered.
+    expect(page.getByRole('checkbox', { name: 'Remixes Only' }).query()).toBeNull();
+    expect(page.getByRole('checkbox', { name: 'Originals Only' }).query()).toBeNull();
   });
 });
