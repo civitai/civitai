@@ -730,7 +730,9 @@ describe('takedownCosmeticShopItem on a pack box that drew it', () => {
     buzz.createBuzzTransaction.mockRejectedValue(new Error('buzz is down'));
 
     const failed = await takedown();
-    expect(failed.failures).toEqual([expect.objectContaining({ stage: 'refund', userId: BUYER })]);
+    expect(failed.failures).toEqual([
+      expect.objectContaining({ stage: 'refund', userId: BUYER, amount: 450 }),
+    ]);
 
     buzz.createBuzzTransaction.mockReset().mockResolvedValue({ transactionId: 'credit' });
     const retried = await takedown();

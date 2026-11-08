@@ -2479,6 +2479,12 @@ const takedownMoneyMove = <T>(fn: () => Promise<T>) =>
 
 type PrefixRefund = Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
 
+/** One pack box's share of the pack charge, or null when the purchase records no pack terms. */
+function packBoxShareOf(owed: OwedPackBoxRefund) {
+  const pack = boxPackTermsOf(owed.purchaseMeta);
+  return pack ? Math.floor(owed.unitAmount / pack.size) : null;
+}
+
 /**
  * Pays one pack box its share of the pack's charge, into the account the charge came from. Its
  * external id is the box's own, so a retry after a landed attempt is refused as a duplicate (409),
@@ -2486,9 +2492,8 @@ type PrefixRefund = Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
  * the charge. Returns the Buzz paid.
  */
 async function refundPackBoxShare(owed: OwedPackBoxRefund, title: string) {
-  const pack = boxPackTermsOf(owed.purchaseMeta);
-  if (!pack) throw new Error(`Purchase ${owed.buzzTransactionId} records no pack terms`);
-  const amount = Math.floor(owed.unitAmount / pack.size);
+  const amount = packBoxShareOf(owed);
+  if (amount === null) throw new Error(`Purchase ${owed.buzzTransactionId} records no pack terms`);
   if (amount <= 0) return 0;
   const accountTypes = new Set(
     (await getMultiAccountTransactionsByPrefix(owed.buzzTransactionId)).map(
@@ -2987,7 +2992,7 @@ export const takedownCosmeticShopItem = async ({
         failures.push({
           stage: 'refund',
           userId: owed.userId,
-          amount: owed.unitAmount,
+          amount: packBoxShareOf(owed) ?? owed.unitAmount,
           error: `Pack box ${owed.boxItemId}: ${errorMessage(error)}`,
         });
         await logTakedown('error', 'Pack box buyer refund failed', {
