@@ -3,6 +3,7 @@ import type * as ServerDomain from '~/server/utils/server-domain';
 
 import { ActionType } from '~/server/clickhouse/tracker';
 import { trackActionSchema } from '~/server/schema/track.schema';
+import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import {
   resolveAppListingVisit,
   defaultAppVisitDeps,
@@ -168,12 +169,40 @@ describe('resolveAppListingVisit — refusals', () => {
     expect(opts.scope).toBe('public-external');
     expect(opts.floor).toBe('moderators');
     expect(opts.redCapable).toBe(true);
-    expect(typeof opts.viewerBrowsingLevel).toBe('number');
 
     // …and a green host is not red-capable.
     deps.findDestination.mockClear();
     await resolveAppListingVisit(request(), deps);
     expect((deps.findDestination.mock.calls[0] as any)[1].redCapable).toBe(false);
+  });
+});
+
+describe('resolveAppListingVisit — the browsing level handed to the gate', () => {
+  // An NSFW-opted-in user whose saved level is distinct from both fallback levels, so each
+  // input (the host's `canViewNsfw`, the session) moves the value.
+  const NSFW_USER = { id: 7, showNsfw: true, browsingLevel: 28 };
+  const levelFor = async (features: { canViewNsfw: boolean }, session: unknown) => {
+    const deps = makeDeps();
+    await resolveAppListingVisit(request({ features, session }), deps);
+    return (deps.findDestination.mock.calls[0] as unknown as [string, any])[1].viewerBrowsingLevel;
+  };
+
+  it('follows canViewNsfw: each value equals getServerBrowsingLevel, and the two differ', async () => {
+    const on = await levelFor({ canViewNsfw: true }, { user: NSFW_USER });
+    const off = await levelFor({ canViewNsfw: false }, { user: NSFW_USER });
+    expect(on).toBe(getServerBrowsingLevel({ canViewNsfw: true, user: NSFW_USER as never }));
+    expect(off).toBe(getServerBrowsingLevel({ canViewNsfw: false, user: NSFW_USER as never }));
+    // Hardcoding `canViewNsfw: false` (or `true`) would make these equal.
+    expect(on).not.toBe(off);
+  });
+
+  it("follows the session: the signed-in user's level differs from the anonymous one", async () => {
+    const signedIn = await levelFor({ canViewNsfw: true }, { user: NSFW_USER });
+    const anonymous = await levelFor({ canViewNsfw: true }, null);
+    expect(signedIn).toBe(getServerBrowsingLevel({ canViewNsfw: true, user: NSFW_USER as never }));
+    expect(anonymous).toBe(getServerBrowsingLevel({ canViewNsfw: true, user: undefined }));
+    // Ignoring the session would make these equal.
+    expect(signedIn).not.toBe(anonymous);
   });
 });
 

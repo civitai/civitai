@@ -6,27 +6,9 @@
 // the executable spec live here so they can be unit-tested WITHOUT booting any
 // of that. See appListing.metrics.ts for the full ownership/sourcing rationale.
 //
-// SCOPE: connect_count, tipped_count and tipped_amount_count have no source and stay at their
-// schema default 0; do not populate them speculatively.
-//
-// 🔴 `open_count` IS A DELIBERATE EXCEPTION TO THAT LAST SENTENCE, AND IT IS NOT A
-// PRECEDENT FOR THE OTHER FOUR. AT THIS REF NOTHING READS IT. The only non-metrics
-// occurrences in the tree are generated schema/type declarations
-// (`packages/civitai-db-schema/src/kysely/types.ts`,
-// `packages/civitai-db-schema/src/models.ts`, the Prisma schema + its migration) —
-// declarations, not readers. The consumer lands in STAGE 3.
-//
-// Populating it one stage ahead of its reader is safe because of a property the
-// other four do not have: it has a TRUSTED SERVER-SIDE SOURCE today (the `App_Open`
-// stream) and the written value is DERIVED AND IDEMPOTENT — every run recomputes it
-// in full from that stream, so there is no accumulating state to get wrong while it
-// is unread, and no backfill to get right when the reader lands. Stage 3 can simply
-// start reading a column that has been correct all along.
-//
-// `connect_count` / `tipped_count` / `tipped_amount_count` have NO such source:
-// populating any of them would mean inventing one, and an invented counter written for
-// months before anyone looks at it is exactly the drift this file's ownership contract
-// exists to prevent. Do not cite this exception for them.
+// SCOPE: open_count was populated ahead of its reader because its `App_Open` source is trusted
+// and the value is a derived, idempotent recompute. connect_count, tipped_count and
+// tipped_amount_count have no source, so do not populate them.
 // ---------------------------------------------------------------------------
 
 import { escapeClickhouseString } from '~/server/clickhouse/escape';

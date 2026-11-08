@@ -133,12 +133,12 @@ type AffectedListing = { id: string; appBlockId: string | null; kind: string };
 // block in appListing.metrics.sql.ts. Read it before citing this file to populate
 // anything else; the exception is now spent, not widened.
 //
+// `visit_count` (off-site only) is derived from `App_Visit` keyed on `details.listingId`, like
+// open_count from App_Open. This job is its only writer.
+//
 // NOT WRITTEN BY THIS JOB: `connect_count` (no connect listings exist yet) and
 // `tipped_count` / `tipped_amount_count` (AppListing is not a BuzzTip entity — BuzzTip.entityId
 // is Int, AppListing.id is a string ULID).
-//
-//   • visitCount    — OFF-SITE listings: derived from `App_Visit` (keyed on `details.listingId`)
-//     exactly as openCount is from `App_Open`. This job is the column's only writer.
 //
 // 🔴 MERGE NOTE (#4652 -> #4653, resolved deliberately, NOT by keeping both sides).
 // #4652 landed a block here headed "`open_count` IS THE NEXT ONE, AND ITS SOURCE ROWS
