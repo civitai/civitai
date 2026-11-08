@@ -310,3 +310,20 @@ describe('markWatched, roster owner topics', () => {
     expect(fake.writes).toEqual([]);
   });
 });
+
+describe('markWatched self', () => {
+  it("marks the signed-in caller's own total, named from the session, never from input", async () => {
+    const marked = await markWatched(
+      { event: EVENT.name, topics: ['self:99'], self: true },
+      deps({ selfUserId: 5 })
+    );
+    expect(marked).toBe(1);
+    expect(fake.writes).toEqual(['self:5']);
+  });
+
+  it('marks no self for a signed-out caller, or without asking', async () => {
+    await markWatched({ event: EVENT.name, topics: [], self: true }, deps());
+    await markWatched({ event: EVENT.name, topics: [TEAMS_WATCH] }, deps({ selfUserId: 5 }));
+    expect(fake.writes).toEqual([TEAMS_WATCH]);
+  });
+});

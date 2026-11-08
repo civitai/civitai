@@ -17,7 +17,7 @@ import {
 } from './keys';
 import { getHatTotals, getOwnerPoints, getTeamPoints } from './read';
 import { listedOwnerTopics } from './roster';
-import { readWatched } from './watch';
+import { readWatched, selfWatchMember } from './watch';
 import type { EventHat } from './types';
 
 // Awards inside one window collapse into one push per topic.
@@ -65,7 +65,12 @@ export async function selectWatched(
   const hatId = (hat: Hat) => seasonHatTopicId(event.name, hat, season);
   const ownerId = (owner: number) => seasonOwnerTopicId(event.name, owner, season);
   const teamsId = seasonTeamsTopicId(event.name, season);
-  const topics = [...hats.map(hatId), ...owners.map(ownerId), ...(teams ? [teamsId] : [])];
+  const topics = [
+    ...hats.map(hatId),
+    ...owners.map(ownerId),
+    ...owners.map(selfWatchMember),
+    ...(teams ? [teamsId] : []),
+  ];
   try {
     const watched = await readWatched(event.name, topics, Date.now());
     const watchedOwners = owners.filter((owner) => watched.has(ownerId(owner)));
@@ -74,13 +79,15 @@ export async function selectWatched(
       hats: hats.filter((hat) => watched.has(hatId(hat))),
       teams: teams && watched.has(teamsId),
       owners: watchedOwners.filter((owner) => listed.get(ownerId(owner)) === owner),
+      // Players watching their own total: not gated on the roster, since the push goes to them alone.
+      selves: owners.filter((owner) => watched.has(selfWatchMember(owner))),
     };
   } catch (error) {
     logPush('error', event.name, {
       message: 'interest set read failed',
       error: (error as Error).message,
     });
-    return { hats: [] as Hat[], teams: false, owners: [] as number[] };
+    return { hats: [] as Hat[], teams: false, owners: [] as number[], selves: [] as number[] };
   }
 }
 
@@ -116,13 +123,16 @@ export type PushDeps = {
   getTeamPoints: typeof getTeamPoints;
   getOwnerPoints: typeof getOwnerPoints;
   topicSend: typeof signalClient.topicSend;
+  // A signal to one user, for their own total. Without it no own-total push is sent.
+  userSend?: typeof signalClient.send;
   // The engine's kill switch: off, nothing is marked and nothing dirty is sent.
   isEnabled: () => boolean;
 };
 
 type Send = Parameters<PushDeps['topicSend']>[0];
+type UserSend = Parameters<NonNullable<PushDeps['userSend']>>[0];
 // A send, and how to mark its topic dirty again if it is not started.
-type Queued = { send: Send; putBack: () => void };
+type Queued = ({ send: Send } | { userSend: UserSend }) & { putBack: () => void };
 // `teamsLostAt`: when this server first lost the team push lease since its last mark.
 type Dirty = { event: PushEvent; hats: Map<string, Hat>; teams: boolean; teamsLostAt?: number };
 
@@ -211,7 +221,7 @@ export function createEventPointsPusher(deps: PushDeps) {
         const watched =
           taken.length || teams
             ? await deps.selectWatched(event, taken, teams, season, takenOwners)
-            : { hats: [] as Hat[], teams: false, owners: [] as number[] };
+            : { hats: [] as Hat[], teams: false, owners: [] as number[], selves: [] as number[] };
         const { hats: watchedHats, teams: watchedTeams } = watched;
         // Before the claim: the second-loss test below compares this to the end of the first loss.
         const claimFrom = Date.now();
@@ -235,12 +245,16 @@ export function createEventPointsPusher(deps: PushDeps) {
         // the owner's next grant pushes it again.
         const ownerRoom = budget - queue.length - watchedHats.length - (pushTeams ? 1 : 0);
         const owners = (watched.owners ?? []).slice(0, Math.max(0, ownerRoom));
+        const selves = deps.userSend
+          ? (watched.selves ?? []).slice(0, Math.max(0, ownerRoom - owners.length))
+          : [];
+        const read = [...new Set([...owners, ...selves])];
         const [hatTotals, totals, ownerTotals] = await Promise.all([
           watchedHats.length ? deps.getHatTotals(event, watchedHats, now) : null,
           // Read as of now, after the claim: the losers drop their teams trusting this read is
           // later than their grants.
           pushTeams ? deps.getTeamPoints(event, new Date()) : null,
-          owners.length ? deps.getOwnerPoints(event, owners, now) : null,
+          read.length ? deps.getOwnerPoints(event, read, now) : null,
         ]);
         if (totals)
           queue.push({
@@ -280,6 +294,15 @@ export function createEventPointsPusher(deps: PushDeps) {
             putBack: () => undefined,
           });
         }
+        for (const userId of selves)
+          queue.push({
+            userSend: {
+              userId,
+              target: SignalMessages.EventPointsSelf,
+              data: { event: name, points: ownerTotals?.[String(userId)] ?? 0 },
+            },
+            putBack: () => undefined,
+          });
       } catch (error) {
         // A failed read drops what it took, like a failed send.
         logPush('error', name, { message: (error as Error).message });
@@ -320,9 +343,10 @@ export function createEventPointsPusher(deps: PushDeps) {
     let failed = 0;
     const worker = async () => {
       while (next < queue.length && !isOpen() && Date.now() < sendBy) {
-        const { send } = queue[next++];
+        const queued = queue[next++];
         try {
-          await deps.topicSend(send);
+          if ('send' in queued) await deps.topicSend(queued.send);
+          else await deps.userSend?.(queued.userSend);
           sent++;
           failuresInARow = 0;
         } catch {
@@ -400,6 +424,7 @@ function getPusher() {
     getTeamPoints,
     getOwnerPoints,
     topicSend: (args) => signalClient.topicSend(args),
+    userSend: (args) => signalClient.send(args),
     isEnabled: isEventPointsEnabledSync,
   });
   return pusher;

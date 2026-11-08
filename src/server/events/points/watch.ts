@@ -37,6 +37,10 @@ export type WatchRedis = Pick<
   'zRemRangeByScore' | 'zCard' | 'zmScore' | 'zAdd' | 'pExpireAt'
 >;
 
+// A player's own total, watched by that player only: the member is named from the session, never
+// from input, and its push goes to that user alone (push.ts).
+export const selfWatchMember = (userId: number) => `self:${userId}`;
+
 export type WatchEvent = {
   name: string;
   previewFrom?: Date;
@@ -56,6 +60,8 @@ export type MarkWatchDeps = {
   listedOwnerTopics?: (event: string, topicIds: string[]) => Promise<Set<string>>;
   // Whether this caller may see the event's preview (event-access.ts). Asked only during it.
   canWatchPreview: (event: string) => Promise<boolean>;
+  // The signed-in caller, whose own total `self` marks.
+  selfUserId?: number;
   // Called when the cap refuses topics, with how many.
   logCapReached?: (event: string, refused: number) => void;
 };
@@ -65,7 +71,7 @@ export type MarkWatchDeps = {
 // lets in gets past the window check, so for anyone else a real preview id and a guessed one both
 // get 0 without being looked up. Returns how many topics were marked.
 export async function markWatched(
-  { event: name, topics }: { event: string; topics: string[] },
+  { event: name, topics, self }: { event: string; topics: string[]; self?: boolean },
   deps: MarkWatchDeps
 ) {
   if (!(await deps.isEnabled().catch(() => false))) return 0;
@@ -93,6 +99,7 @@ export async function markWatched(
       valid.push(topic);
     else if (listedOwners.has(topic)) valid.push(topic);
   }
+  if (self && deps.selfUserId) valid.push(selfWatchMember(deps.selfUserId));
   if (!valid.length) return 0;
 
   const key = eventPointKeys(name).watch;
@@ -133,7 +140,7 @@ export async function readWatched(
 export const defaultMarkWatchDeps = (
   deps: Pick<
     MarkWatchDeps,
-    'getEvent' | 'isKnownHatTopic' | 'listedOwnerTopics' | 'canWatchPreview'
+    'getEvent' | 'isKnownHatTopic' | 'listedOwnerTopics' | 'canWatchPreview' | 'selfUserId'
   >
 ): MarkWatchDeps => ({
   redis: sysRedis,

@@ -704,6 +704,77 @@ describe('roster card pushes', () => {
     expect(deps.getOwnerPoints).not.toHaveBeenCalled();
   });
 
+  // A player's own total goes to them alone, as a user signal, whether or not they are listed.
+  const selfDeps = (watchedSelves: (owners: number[]) => number[], listed: number[] = []) => {
+    const userSent: { userId: number; target: string; data: object }[] = [];
+    const deps: Partial<PushDeps> = {
+      selectWatched: vi.fn(async (_e, hats, teams, _s, owners = []) => ({
+        hats,
+        teams,
+        owners: owners.filter((o) => listed.includes(o)),
+        selves: watchedSelves(owners),
+      })),
+      getOwnerPoints: vi.fn(async (_e, ids: number[]) =>
+        Object.fromEntries(ids.map((id) => [String(id), 1000 + id]))
+      ),
+      userSend: vi.fn(async (args) => void userSent.push(args)),
+    };
+    return { deps, userSent };
+  };
+  const selfSend = (userId: number, points: number) => ({
+    userId,
+    target: 'event-points:self',
+    data: { event: 'birthday2026', points },
+  });
+
+  it('sends a watching player their own total, to them only, listed or not', async () => {
+    const self = selfDeps((owners) => owners);
+    const { pusher, sent } = setup(self.deps);
+    pusher.markDirty(event, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(self.userSent).toEqual([selfSend(10, 1010)]);
+    // Not on a topic: nothing anyone else can subscribe to carries it.
+    expect(sent.filter((s) => s.target === 'event-points:owner')).toEqual([]);
+  });
+
+  it('sends no own total to a player who is not watching it', async () => {
+    const self = selfDeps(() => []);
+    const { pusher } = setup(self.deps);
+    pusher.markDirty(event, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(self.userSent).toEqual([]);
+  });
+
+  it('reads a listed, self-watching owner once and sends both', async () => {
+    const self = selfDeps((owners) => owners, [10]);
+    const { pusher, sent, deps } = setup(self.deps);
+    pusher.markDirty(event, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(deps.getOwnerPoints).toHaveBeenCalledWith(event, [10], expect.any(Date));
+    expect(sent).toContainEqual(ownerSend(10, 1010));
+    expect(self.userSent).toEqual([selfSend(10, 1010)]);
+  });
+
+  it('counts failed own-total sends toward the same breaker', async () => {
+    const self = selfDeps((owners) => owners);
+    const userSend = vi.fn(async () => {
+      throw new Error('signals down');
+    });
+    // Only own totals are watched, so every send in these flushes is one.
+    const selectWatched = vi.fn(async (_e, _h, _t, _s, owners: number[] = []) => ({
+      hats: [],
+      teams: false,
+      owners: [],
+      selves: owners,
+    }));
+    const { pusher } = setup({ ...self.deps, selectWatched, userSend });
+    for (let i = 0; i < FAILURES_TO_OPEN; i++) {
+      pusher.markDirty(event, hat(10 + i), NOW);
+      await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    }
+    expect(pusher.isOpen()).toBe(true);
+  });
+
   it('keeps a flush within MAX_SENDS_PER_FLUSH, hats and teams first', async () => {
     const topicSend = vi.fn(async () => undefined);
     const { pusher } = setup({ ...ownerDeps((owners) => owners), topicSend });

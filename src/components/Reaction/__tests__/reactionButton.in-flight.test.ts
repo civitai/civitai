@@ -5,23 +5,29 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as TrpcUtils from '~/utils/trpc';
 
 type Variables = { entityId: number };
+type Points = { event: string; team: string; points: number }[];
+type Answer = { result: string; eventPoints?: Points };
 type CallbackSet = {
-  onSuccess?: (r: string, v: Variables) => void;
+  onSuccess?: (r: Answer, v: Variables) => void;
   onError?: (e: unknown, v: Variables) => void;
   onSettled?: () => void;
 };
-type Call = { variables: Variables; settle: (result: string | Error) => void };
+type Call = { variables: Variables; settle: (result: string | Answer | Error) => void };
 
 // A stand-in for react-query v5 semantics, which the unmount fix relies on: the options given to `useMutation` always run, the callbacks given to
 // `mutate` run only while the component that called it is still mounted.
-const h = vi.hoisted(() => ({ calls: [] as Call[], options: [] as CallbackSet[] }));
+const h = vi.hoisted(() => ({
+  calls: [] as Call[],
+  options: [] as CallbackSet[],
+  showEventCosmetics: true,
+}));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
   return {
     ...(await importOriginal<typeof TrpcUtils>()),
     trpc: makeTrpcProxy({
-      'reaction.toggle': {
+      'reaction.toggleWithPoints': {
         useMutation: (options: CallbackSet = {}) => {
           const mounted = useRef(true);
           useEffect(
@@ -36,12 +42,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           const mutate = (variables: Variables, callOptions: CallbackSet = {}) => {
             h.calls.push({
               variables,
-              settle: (result: string | Error) => {
+              settle: (answer: string | Answer | Error) => {
                 const o = hookOptions.current;
-                if (result instanceof Error) {
-                  o.onError?.(result, variables);
-                  if (mounted.current) callOptions.onError?.(result, variables);
+                if (answer instanceof Error) {
+                  o.onError?.(answer, variables);
+                  if (mounted.current) callOptions.onError?.(answer, variables);
                 } else {
+                  const result = typeof answer === 'string' ? { result: answer } : answer;
                   o.onSuccess?.(result, variables);
                   if (mounted.current) callOptions.onSuccess?.(result, variables);
                 }
@@ -57,10 +64,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
 });
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
+vi.mock('~/providers/BrowserSettingsProvider', () => ({
+  useShowEventCosmetics: () => h.showEventCosmetics,
+}));
+vi.mock('~/components/Events/events.utils', () => ({
+  useTeamColor: () => (team: string) => team === 'Yellow' ? 'rgb(250, 200, 0)' : undefined,
+}));
 
 const { ReactionButton } = await import('~/components/Reaction/ReactionButton');
 
-const settle = (call: Call | undefined, result: string | Error) => call?.settle(result);
+const settle = (call: Call | undefined, result: string | Answer | Error) => call?.settle(result);
 
 // The reaction store is module scope, so every case takes its own entity id.
 function mount(entityId: number) {
@@ -89,6 +102,8 @@ function mount(entityId: number) {
 beforeEach(() => {
   h.calls.length = 0;
   h.options.length = 0;
+  h.showEventCosmetics = true;
+  document.querySelectorAll('[data-testid="event-point-pop"]').forEach((el) => el.remove());
 });
 
 describe('ReactionButton — one toggle in flight at a time', () => {
@@ -184,5 +199,36 @@ describe('ReactionButton — shared state and unmounting', () => {
     unmount();
     act(() => settle(h.calls[0], new Error('boom')));
     expect(mount(203).button().dataset.reacted).toBe('false');
+  });
+});
+
+describe('ReactionButton — the event-points pop', () => {
+  const pops = () =>
+    [...document.querySelectorAll<HTMLElement>('[data-testid="event-point-pop"]')].map((el) => ({
+      text: el.textContent,
+      color: el.style.color,
+    }));
+  const earned = { result: 'created', eventPoints: [{ event: 'e', team: 'Yellow', points: 15 }] };
+
+  it("pops the team's points, in the team's colour, off the pressed button", () => {
+    const { click } = mount(301);
+    act(() => click());
+    act(() => settle(h.calls[0], earned));
+    expect(pops()).toEqual([{ text: '+15 Yellow', color: 'rgb(250, 200, 0)' }]);
+  });
+
+  it('pops nothing when the answer carries no points (none earned, another team, or too slow)', () => {
+    const { click } = mount(302);
+    act(() => click());
+    act(() => settle(h.calls[0], 'created'));
+    expect(pops()).toEqual([]);
+  });
+
+  it('pops nothing with event cosmetics off', () => {
+    h.showEventCosmetics = false;
+    const { click } = mount(303);
+    act(() => click());
+    act(() => settle(h.calls[0], earned));
+    expect(pops()).toEqual([]);
   });
 });

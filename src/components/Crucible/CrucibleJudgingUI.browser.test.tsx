@@ -96,7 +96,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: makeTrpcProxy(
     {
-      'reaction.toggle': {
+      'reaction.toggleWithPoints': {
         useMutation: () => ({ mutate: reactionToggle, isPending: reactionEnv.togglePending }),
       },
       'reaction.getMyImageReactions': {
