@@ -56,6 +56,7 @@ describe('sampleStickerTrack on keys', () => {
 
   it('fades by the same ease, and counts as hidden only at zero', () => {
     const fade: StickerTrackV2 = { v: 2, keys: [key(0), key(1000, { o: 0 })] };
+    expect(stickerTrackRefusal(fade)).toBeNull();
     expect(sampleStickerTrack(fade, 500)).toMatchObject({ opacity: 0.5, show: true });
     expect(sampleStickerTrack(fade, 1000)).toMatchObject({ opacity: 0, show: false });
   });
@@ -150,6 +151,7 @@ describe('stickerTrackRefusal on keys', () => {
     ['a fractional time', [key(0.5)], /time out of range/],
     ['a time past the longest video', [key(300_001)], /time out of range/],
     ['opacity above 1', [key(0, { o: 1.2 })], /o out of bounds/],
+    ['a shown key fainter than a still sticker may be', [key(0, { o: 0.1 })], /o too faint/],
     ['a position off the media', [key(0, { x: -0.1 })], /x out of bounds/],
     ['an unknown ease', [key(0, { ease: 'bounce' as StickerTrackEase })], /unknown ease/],
     [

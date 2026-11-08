@@ -2472,7 +2472,7 @@ describe('the tracks for a video', () => {
     id,
     targetId: IMAGE,
     data: { cosmeticId, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
-    track: { v: 1, id },
+    track: { v: 2, keys: [{ t: id, x: 0.5, y: 0.5, s: 0.2, r: 0, o: 1, ease: 'linear' }] },
   });
 
   beforeEach(() => {
@@ -2499,6 +2499,18 @@ describe('the tracks for a video', () => {
     const tracks = await getStickerPlacementTracks({ imageId: IMAGE, isModerator: true });
 
     expect(tracks.map(({ id }) => id)).toEqual([1, 2]);
+  });
+
+  it('drops a stored track that breaks the rules, so it cannot break the player', async () => {
+    trackRows.mockResolvedValue([
+      row(2, OTHER_COSMETIC),
+      { ...row(3, OTHER_COSMETIC), track: { v: 2, keys: [] } },
+      { ...row(4, OTHER_COSMETIC), track: { v: 2 } },
+    ]);
+
+    const tracks = await getStickerPlacementTracks({ imageId: IMAGE, isModerator: true });
+
+    expect(tracks.map(({ id }) => id)).toEqual([2]);
   });
 });
 
@@ -2722,6 +2734,16 @@ describe('a moving sticker on a video', () => {
           }),
         })
       );
+    });
+
+    it('refuses a shown key that the placer’s own opacity takes under the floor', async () => {
+      resolvePlacementSpaceFor.mockResolvedValue(VIDEO_SPACE);
+      const faint: StickerTrack = { v: 2, keys: [{ ...key(0, 0.2, 0.1), o: 0.5 }] };
+
+      await expect(
+        createStickerPlacement({ ...placeInput, data: { ...data, opacity: 0.4 }, track: faint })
+      ).rejects.toThrow(/at least 30% opaque/);
+      expect(placementCreate).not.toHaveBeenCalled();
     });
 
     it('refuses keys that pass the creator’s limit between a first and last key inside it', async () => {

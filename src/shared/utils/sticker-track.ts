@@ -13,7 +13,9 @@
  *
  * **v2 shape.** Keys in increasing time, `t` in whole milliseconds. Before the first key the
  * sticker holds the first key's pose, after the last the last. A key's `o` multiplies the
- * placement's own opacity (`data.opacity`), so 0 hides it and 1 draws it as placed. The curves in
+ * placement's own opacity (`data.opacity`), so 0 hides it and 1 draws it as placed. A key is
+ * either hidden or at least the still-sticker floor, after that multiplication (the service
+ * checks the product). The curves in
  * `STICKER_TRACK_EASE_CSS` are the CSS the player hands the browser; `sampleStickerTrack`
  * evaluates the same curves, so the server and tests agree with what the browser draws.
  *
@@ -34,6 +36,7 @@
 import {
   STICKER_PLACEMENT_MAX_ROTATION,
   STICKER_PLACEMENT_MAX_SCALE,
+  STICKER_PLACEMENT_MIN_OPACITY,
   STICKER_PLACEMENT_MIN_SCALE,
 } from '~/shared/utils/sticker-placement';
 
@@ -395,6 +398,15 @@ export const stickerTrackMaxScale = (track: StickerTrack) =>
     ? track.keys.reduce((max, key) => Math.max(max, key.s), 0)
     : track.s.reduce((max, [, value]) => Math.max(max, value), 0);
 
+/** The faintest key the sticker is shown at, before the placement's own opacity; null if none. */
+export const stickerTrackFaintestShown = (track: StickerTrack) =>
+  track.v === STICKER_TRACK_KEYS_VERSION
+    ? track.keys.reduce<number | null>(
+        (min, key) => (key.o > 0 && (min === null || key.o < min) ? key.o : min),
+        null
+      )
+    : null;
+
 /** Whether position, size or turn change over the track; opacity alone does not count. */
 export const stickerTrackMoves = (track: StickerTrack) => {
   if (track.v !== STICKER_TRACK_KEYS_VERSION)
@@ -441,6 +453,10 @@ function keysRefusal(keys: StickerTrackKey[]): string | null {
       if (!Number.isFinite(value)) return `keys: ${name} not a number`;
       if (value < min || value > max) return `keys: ${name} out of bounds`;
     }
+    // Hidden, or at least as strong as a placer may make a still sticker: the floor's reasons
+    // (`STICKER_PLACEMENT_MIN_OPACITY`) hold for a key the sticker rests on. A fade passes
+    // through fainter values on its way to 0, which is the point of a fade.
+    if (key.o !== 0 && key.o < STICKER_PLACEMENT_MIN_OPACITY) return 'keys: o too faint';
     if (!STICKER_TRACK_EASES.includes(key.ease)) return 'keys: unknown ease';
   }
   return null;
