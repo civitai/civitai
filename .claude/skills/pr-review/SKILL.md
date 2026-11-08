@@ -54,9 +54,6 @@ keeps it internal. It never goes into the PR body.
 hq pr-review watch civitai/civitai#<n>          # in the background; --head <sha> for one push; MCP: pr_review_watch
 ```
 
-If your HQ MCP tools have no `pr_review_watch`, read the round with `pr_review_get` once the
-`pr-review` check completes.
-
 It waits for the newest round to finish and prints it with its blocking findings. Exit `10` means
 the round has blocking findings. Exit `11` means watch again: you usually pushed while the round
 ran, and the new head gets its own round. A mail about the round from HQ (sender `hq/pr-review`)

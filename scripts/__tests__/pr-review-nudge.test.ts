@@ -378,9 +378,8 @@ describe('the nudge text', () => {
         'finishes: with the hq CLI, `hq pr-review why set civitai/civitai#7801 --intent "<what was ' +
         'asked, and why>"`; with the HQ MCP tools, `pr_review_why_set`. The intent is internal: never ' +
         'put it in the PR body or a GitHub comment. Then wait for the round in the background with ' +
-        '`hq pr-review watch civitai/civitai#7801` or the HQ MCP tool `pr_review_watch` (without ' +
-        '`pr_review_watch`, read the round with `pr_review_get` once the `pr-review` check ' +
-        'completes), then work the round as the skill says.'
+        '`hq pr-review watch civitai/civitai#7801` or the HQ MCP tool `pr_review_watch`, then work ' +
+        'the round as the skill says.'
     );
   });
 
@@ -392,9 +391,8 @@ describe('the nudge text', () => {
         'civitai/civitai#7811 --intent "<what was asked, and why>"`; with the HQ MCP tools, ' +
         '`pr_review_why_set`. The intent is internal: never put it in the PR body or a GitHub ' +
         'comment. After the PR is marked ready, wait for the round in the background with `hq ' +
-        'pr-review watch civitai/civitai#7811` or the HQ MCP tool `pr_review_watch` (without ' +
-        '`pr_review_watch`, read the round with `pr_review_get` once the `pr-review` check ' +
-        'completes), then work the round as the skill says.'
+        'pr-review watch civitai/civitai#7811` or the HQ MCP tool `pr_review_watch`, then work ' +
+        'the round as the skill says.'
     );
   });
 
