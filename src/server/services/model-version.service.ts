@@ -2756,6 +2756,27 @@ You agree to the following with respect to the Model (each a “Permission”):
   return license;
 }
 
+/**
+ * A mature model without a .com face is off civitai.com; a stale page or direct call must not take
+ * .com's currency for it. Read from the primary: the face can have been removed seconds ago.
+ * Neutral message: it must not disclose the model's .com status.
+ */
+export async function assertSellableInDomainCurrency({
+  modelId,
+  buzzType,
+}: {
+  modelId: number;
+  buzzType: BuzzSpendType;
+}) {
+  if (buzzType !== 'green') return;
+  const face = await dbWrite.model.findUniqueOrThrow({
+    where: { id: modelId },
+    select: { nsfw: true, nsfwLevel: true, sfwName: true, sfwCoverImageId: true },
+  });
+  if (face.nsfw && !hasCompleteSfwFace(face))
+    throw throwBadRequestError('This model version is not available with this currency.');
+}
+
 export const earlyAccessPurchase = async ({
   userId,
   modelVersionId,
@@ -2786,7 +2807,6 @@ export const earlyAccessPurchase = async ({
           id: true,
           name: true,
           userId: true,
-          nsfw: true,
         },
       },
     },
@@ -2817,17 +2837,7 @@ export const earlyAccessPurchase = async ({
     throw throwBadRequestError('This model version does not accept Blue Buzz.');
   }
 
-  // A mature model without a .com face is off civitai.com; a stale page or direct call must not sell
-  // it in .com's currency. Read from the primary: the face can have been removed seconds ago.
-  // Neutral message: it must not disclose the model's .com status.
-  if (buzzType === 'green') {
-    const face = await dbWrite.model.findUniqueOrThrow({
-      where: { id: modelVersion.model.id },
-      select: { nsfw: true, nsfwLevel: true, sfwName: true, sfwCoverImageId: true },
-    });
-    if (face.nsfw && !hasCompleteSfwFace(face))
-      throw throwBadRequestError('This model version is not available with this currency.');
-  }
+  await assertSellableInDomainCurrency({ modelId: modelVersion.model.id, buzzType });
 
   // The EA donation goal is the forward relation (DonationGoal entity target), not a config back-link.
   // Only an active goal receives the purchase's donation record. We use the raw owner accessor (not the

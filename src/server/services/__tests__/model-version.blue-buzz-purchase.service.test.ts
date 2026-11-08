@@ -466,6 +466,7 @@ describe('earlyAccessPurchase — Green Buzz needs the model on civitai.com', ()
   it.each([
     ['no .com face at all', { nsfw: true, nsfwLevel: 16, sfwName: null, sfwCoverImageId: null }],
     ['a .com title but its cover removed', { ...withComFace, sfwCoverImageId: null }],
+    ['a .com title and cover but no PG level to show them at', { ...withComFace, nsfwLevel: 16 }],
   ])('refuses Green on a mature model with %s, before any Buzz moves', async (_n, model) => {
     seed({ model });
 
@@ -480,7 +481,15 @@ describe('earlyAccessPurchase — Green Buzz needs the model on civitai.com', ()
     await buy('green');
 
     expect(dbMock.dbWrite.model.findUniqueOrThrow).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 1 } })
+      expect.objectContaining({
+        where: { id: 1 },
+        select: expect.objectContaining({
+          nsfw: true,
+          nsfwLevel: true,
+          sfwName: true,
+          sfwCoverImageId: true,
+        }),
+      })
     );
     expect(dbMock.dbRead.model.findUniqueOrThrow).not.toHaveBeenCalled();
   });
