@@ -2,7 +2,6 @@
 import { MantineProvider } from '@mantine/core';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import type { act as actType } from 'react-dom/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
@@ -10,7 +9,7 @@ import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 // With event cosmetics off, a scored event's home block (Hat Turf's) is gone, wrapper and all, and
 // the event page keeps its counters. Event cosmetics on, the block shows as before.
 
-const act = (React as unknown as { act: typeof actType }).act;
+const { act } = React;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const h = vi.hoisted(() => ({ cosmetics: true }));

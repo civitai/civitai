@@ -682,6 +682,7 @@ describe('roster card pushes', () => {
       hats,
       teams,
       owners: watchedOwners(owners),
+      selves: [],
     })),
     getOwnerPoints: vi.fn(async (_e, ids: number[]) =>
       Object.fromEntries(ids.map((id) => [String(id), 1000 + id]))
@@ -708,7 +709,7 @@ describe('roster card pushes', () => {
   const selfDeps = (watchedSelves: (owners: number[]) => number[], listed: number[] = []) => {
     const userSent: { userId: number; target: string; data: object }[] = [];
     const deps: Partial<PushDeps> = {
-      selectWatched: vi.fn(async (_e, hats, teams, _s, owners = []) => ({
+      selectWatched: vi.fn(async (_e, hats, teams, _s, owners: number[] = []) => ({
         hats,
         teams,
         owners: owners.filter((o) => listed.includes(o)),
