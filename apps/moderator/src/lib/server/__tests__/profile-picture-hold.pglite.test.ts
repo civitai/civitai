@@ -67,6 +67,12 @@ describe('removed profile pictures, read on the write connection', () => {
     expect(pictures.has(12)).toBe(false);
   });
 
+  it('shows none when the newest removed avatar has been purged, not an older one', async () => {
+    await db.exec(`DELETE FROM "Image" WHERE id = 3`);
+    const pictures = await getProfilePictures([11]);
+    expect(pictures.has(11)).toBe(false);
+  });
+
   it('badges a removed avatar as a profile picture in the moderator grids', async () => {
     const rows = await withHeldProfilePictures([
       { id: 1, isProfilePicture: true },

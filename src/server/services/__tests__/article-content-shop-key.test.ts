@@ -134,6 +134,7 @@ describe('linkArticleContentImages orphan cleanup', () => {
           deleteMany: vi.fn(),
         },
         serviceOffering: { findMany: async () => [] },
+        profilePictureHold: { findMany: async () => [] },
       })) as never);
 
     const { orphanedImageIds } = await linkArticleContentImages({

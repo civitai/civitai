@@ -455,6 +455,7 @@ describe('deleteUser under a legal hold', () => {
         TRUNCATE "ProfilePictureHold";
         INSERT INTO "ProfilePictureHold" ("userId", "imageId", reason) VALUES
           (${CLEAN}, ${CLEAN * 100}, 'blocked'),
+          (${CLEAN}, ${CLEAN * 100 + 1}, 'flagged'),
           (${PENDING_REPORT}, ${PENDING_REPORT * 100}, 'blocked');
       `);
     });

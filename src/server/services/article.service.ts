@@ -1452,13 +1452,8 @@ export const upsertArticle = async ({
               OR: [{ coverId: article.coverId }, { bannerId: article.coverId }],
             },
           })) > 0;
-        // A removed avatar: deleting it would cascade its record away.
         const heldAvatar =
-          isImgOwner &&
-          !!(await dbWrite.profilePictureHold.findFirst({
-            where: { imageId: article.coverId },
-            select: { id: true },
-          }));
+          isImgOwner && !(await withoutHeldProfilePictures(dbWrite, [article.coverId])).length;
         if (isImgOwner && !shownElsewhere && !heldAvatar) replacedImageIds.push(article.coverId);
       }
       if (bannerId !== undefined && article.bannerId && article.bannerId !== bannerId) {
@@ -1466,7 +1461,8 @@ export const upsertArticle = async ({
           where: { id: article.bannerId, ...unusedAuthorImage(result.userId) },
           select: { id: true },
         });
-        if (unused) replacedImageIds.push(unused.id);
+        if (unused)
+          replacedImageIds.push(...(await withoutHeldProfilePictures(dbWrite, [unused.id])));
       }
       // The same holds as article delete: a safety report or legal hold on the owner keeps them all.
       if (replacedImageIds.length && !(await ownerUnderSafetyReport(dbWrite, result.userId))) {
@@ -1796,8 +1792,6 @@ export const unusedAuthorImage = (ownerId: number) =>
     article: { is: null },
     articleBanner: { is: null },
     assignedUser: { is: null },
-    // A removed avatar: deleting the image would cascade its record away.
-    profilePictureHold: { none: {} },
     connections: { none: {} },
     collectionItems: { none: {} },
     collections: { none: {} },
@@ -1848,6 +1842,23 @@ async function withoutShopArtwork(
     db
   );
   return images.filter((image) => !shopUrls.has(image.url)).map((image) => image.id);
+}
+
+/**
+ * Drops removed profile pictures: the sync job puts one back once its image is available again.
+ * The record has no Prisma relation to the image, so `unusedAuthorImage` cannot see it.
+ */
+async function withoutHeldProfilePictures(
+  db: Pick<Prisma.TransactionClient, 'profilePictureHold'>,
+  imageIds: number[]
+) {
+  if (!imageIds.length) return imageIds;
+  const held = await db.profilePictureHold.findMany({
+    where: { imageId: { in: imageIds } },
+    select: { imageId: true },
+  });
+  const removed = new Set(held.map((h) => h.imageId));
+  return imageIds.filter((id) => !removed.has(id));
 }
 
 /**
@@ -1953,9 +1964,12 @@ export const deleteArticleById = async ({
           select: { id: true, url: true },
         });
 
-        const deletable = await withoutOfferingCovers(
+        const deletable = await withoutHeldProfilePictures(
           dbWrite,
-          await withoutShopArtwork(dbWrite, trulyOrphanedImages)
+          await withoutOfferingCovers(
+            dbWrite,
+            await withoutShopArtwork(dbWrite, trulyOrphanedImages)
+          )
         );
         // Per image, so one failed delete does not stop the rest.
         for (const imageId of deletable) {
@@ -2436,9 +2450,9 @@ export async function linkArticleContentImages({
           where: { id: { in: orphanedIds }, ...unusedAuthorImage(ownerId) },
           select: { id: true, url: true },
         });
-        trulyOrphanedIds = await withoutOfferingCovers(
+        trulyOrphanedIds = await withoutHeldProfilePictures(
           tx,
-          await withoutShopArtwork(tx, trulyOrphaned)
+          await withoutOfferingCovers(tx, await withoutShopArtwork(tx, trulyOrphaned))
         );
       }
 

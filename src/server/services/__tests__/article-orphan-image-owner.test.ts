@@ -101,6 +101,8 @@ const BLOCKED_LEVEL = row(10, { ingestion: 'Error', nsfwLevel: 32 });
 const BLOCK_REASON = row(11, { ingestion: 'Error', blockedFor: 'tos' });
 // A plain id column with no Prisma relation, so it is checked by its own query.
 const AN_OFFERING_COVER = row(12);
+// A removed profile picture: its record has no Prisma relation to the image.
+const A_REMOVED_AVATAR = row(16);
 const UNLINKED = [
   UNUSED_OWN,
   SOMEONE_ELSES,
@@ -114,6 +116,7 @@ const UNLINKED = [
   BLOCKED_LEVEL,
   BLOCK_REASON,
   AN_OFFERING_COVER,
+  A_REMOVED_AVATAR,
 ];
 
 // Covers of the deleted article. They are not content links, so the article's connections omit them,
@@ -192,6 +195,10 @@ beforeEach(() => {
   dbMock.dbWrite.serviceOffering.findMany.mockImplementation((async ({ where }: any) =>
     where.coverImageId.in.includes(AN_OFFERING_COVER.id)
       ? [{ coverImageId: AN_OFFERING_COVER.id }]
+      : []) as never);
+  dbMock.dbWrite.profilePictureHold.findMany.mockImplementation((async ({ where }: any) =>
+    where.imageId.in.includes(A_REMOVED_AVATAR.id)
+      ? [{ imageId: A_REMOVED_AVATAR.id }]
       : []) as never);
 });
 
@@ -369,7 +376,6 @@ const PART_OF_THE_IMAGE: Record<string, string> = {
   imageResourceNew: 'resources detected in it',
   imageTagsForReview: 'tags queued for review on it',
   caption: 'its storyline caption',
-  profilePictureHold: 'its profile-picture record, which lives only as long as the image',
 };
 
 describe('unusedAuthorImage', () => {
@@ -651,6 +657,19 @@ describe('the article banner', () => {
         : 0) as never);
     await save({ coverImage: NEW_BANNER });
     expect(deletedIds()).not.toContain(COVER.id);
+  });
+
+  it('keeps a replaced banner and cover that are removed profile pictures', async () => {
+    dbMock.dbWrite.article.count.mockResolvedValue(0 as never);
+    dbMock.dbWrite.profilePictureHold.findMany.mockImplementation((async ({ where }: any) =>
+      where.imageId.in
+        .filter((id: number) => id === COVER.id || id === BANNER.id)
+        .map((imageId: number) => ({ imageId }))) as never);
+
+    await save({ coverImage: NEW_BANNER, bannerImage: null });
+
+    expect(deletedIds()).not.toContain(COVER.id);
+    expect(deletedIds()).not.toContain(BANNER.id);
   });
 
   it('keeps a replaced banner and cover while the owner has a safety report on file', async () => {

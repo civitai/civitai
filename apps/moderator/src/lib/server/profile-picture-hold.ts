@@ -55,7 +55,10 @@ export type HeldProfilePicture = {
   acceptableMinor: boolean;
 };
 
-/** Each user's newest removed profile picture: what their avatar was before the sync job took it. */
+/**
+ * Each user's newest removed profile picture: what their avatar was before the sync job took it. A
+ * user whose newest record's image has since been purged has none.
+ */
 export async function latestHeldProfilePictures(
   userIds: number[],
   db: Kysely<DB> = dbWrite
@@ -63,7 +66,7 @@ export async function latestHeldProfilePictures(
   if (!userIds.length) return new Map();
   const rows = await db
     .selectFrom('ProfilePictureHold as h')
-    .innerJoin('Image as i', 'i.id', 'h.imageId')
+    .leftJoin('Image as i', 'i.id', 'h.imageId')
     .distinctOn('h.userId')
     .select([
       'h.userId',
@@ -79,5 +82,10 @@ export async function latestHeldProfilePictures(
     .orderBy('h.createdAt', 'desc')
     .orderBy('h.id', 'desc')
     .execute();
-  return new Map(rows.map(({ userId, ...media }) => [userId, media]));
+  const held = new Map<number, HeldProfilePicture>();
+  for (const { userId, id, url, type, nsfwLevel, minor, acceptableMinor } of rows) {
+    if (id === null || url === null || nsfwLevel === null || minor === null) continue;
+    held.set(userId, { id, url, type, nsfwLevel, minor, acceptableMinor: !!acceptableMinor });
+  }
+  return held;
 }

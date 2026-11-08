@@ -1724,7 +1724,6 @@ export interface Image {
   blockedFor: string | null;
   scanJobs: JsonValue | null;
   assignedUser?: User | null;
-  profilePictureHold?: ProfilePictureHold[];
   sortAt: Date;
   minor: boolean;
   poi: boolean;
@@ -4750,7 +4749,6 @@ export interface ProfilePictureHold {
   id: number;
   userId: number;
   imageId: number;
-  image?: Image;
   reason: string;
   exportable: boolean;
   createdAt: Date;

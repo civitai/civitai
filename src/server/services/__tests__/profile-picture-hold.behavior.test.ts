@@ -530,6 +530,18 @@ describe('flagged, then blocked', () => {
     expect(await records(OWNER)).toEqual([{ reason: 'flagged', exportable: false }]);
   });
 
+  it('leaves the records and does nothing once the image is purged', async () => {
+    await flagThenBlock(OWNER);
+    await db.query(`DELETE FROM "Image" WHERE id = $1`, [avatar(OWNER)]);
+    await queue(avatar(OWNER));
+    expect(await syncProfilePictureForImage(dbMock.dbWrite as never, avatar(OWNER))).toEqual({
+      action: 'none',
+    });
+    expect(await pointer(OWNER)).toBeNull();
+    expect((await records(OWNER)).map((r) => r.reason).sort()).toEqual(['blocked', 'flagged']);
+    expect(await queued()).toEqual([]);
+  });
+
   it('restores on unblock and removes both records', async () => {
     await flagThenBlock(OWNER);
     await unblock(avatar(OWNER));
@@ -647,6 +659,23 @@ describe('the personal-data export of removed profile pictures', () => {
     await runProfilePictureSync();
     const [row] = await readRemovedProfilePictures(OWNER);
     expect(row).toEqual({ imageId: avatar(OWNER), removedAt: expect.any(Date) });
+  });
+
+  it('still lists a blocked avatar after its image is purged', async () => {
+    await block(avatar(OWNER));
+    await runProfilePictureSync();
+    await db.query(`DELETE FROM "Image" WHERE id = $1`, [avatar(OWNER)]);
+    expect(await readRemovedProfilePictures(OWNER)).toEqual([
+      { imageId: avatar(OWNER), removedAt: expect.any(Date) },
+    ]);
+  });
+
+  it("does not list a held owner's purged blocked avatar", async () => {
+    await block(avatar(HELD_OWNER));
+    await runProfilePictureSync();
+    await db.query(`DELETE FROM "Image" WHERE id = $1`, [avatar(HELD_OWNER)]);
+    expect(await holds(HELD_OWNER)).toEqual([{ imageId: avatar(HELD_OWNER), reason: 'blocked' }]);
+    expect(await exported(HELD_OWNER)).toEqual([]);
   });
 
   // A csam flag also holds the owner, so this record leaves only by its reason.

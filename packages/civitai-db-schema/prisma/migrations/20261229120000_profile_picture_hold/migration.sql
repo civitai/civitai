@@ -7,14 +7,15 @@
 --
 -- The enum value is added on its own, outside the transaction below.
 --
--- The foreign key takes a SHARE ROW EXCLUSIVE lock on "Image" while the table is created: better to
--- fail fast than to queue behind a long transaction and block every write to "Image". A lock
--- timeout rolls the transaction back; re-run it only after a failure.
+-- "imageId" has no foreign key to "Image": a record outlives its image, so the data export still
+-- lists a removed profile picture after the image is purged. Creating the table locks no existing
+-- table.
 --
 -- Dry run: the transaction below, with COMMIT replaced by ROLLBACK. (ADD VALUE IF NOT EXISTS is
 -- safe to run before it and to re-run.)
 --
--- Apply as the role that owns "Image", not as an app role: the table's owner keeps every privilege.
+-- Apply as the role that owns the other tables, not as an app role: the table's owner keeps every
+-- privilege.
 --
 -- GRANTS, A REQUIRED STEP. New tables can be granted to roles automatically in this environment.
 -- This one must not be readable by any role beyond the ones below. After this file, with the
@@ -49,8 +50,6 @@ CREATE TABLE IF NOT EXISTS "ProfilePictureHold" (
   "reason" TEXT NOT NULL,
   "exportable" BOOLEAN NOT NULL DEFAULT false,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT "ProfilePictureHold_imageId_fkey"
-    FOREIGN KEY ("imageId") REFERENCES "Image"("id") ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT "ProfilePictureHold_reason_check" CHECK ("reason" IN ('blocked', 'flagged'))
 );
 
