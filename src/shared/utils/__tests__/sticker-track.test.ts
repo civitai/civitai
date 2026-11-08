@@ -176,7 +176,7 @@ describe('stickerTrackRefusal', () => {
     ['a zero capture rate', { ...ok, ms: 0 }, /capture rate/],
     ['a capture rate under the floor', { ...ok, ms: 5 }, /capture rate/],
     ['a capture rate over a second', { ...ok, ms: 2000 }, /capture rate/],
-    ['an unknown version', { ...ok, v: 2 as 1 }, /version/],
+    ['an unknown version', { ...ok, v: 3 as 1 }, /version/],
   ])('refuses %s', (_, track, reason) => {
     expect(stickerTrackRefusal(track)).toMatch(reason);
   });

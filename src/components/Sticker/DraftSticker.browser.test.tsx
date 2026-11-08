@@ -9,7 +9,7 @@ import type * as Trpc from '~/utils/trpc';
 import { renderWithProviders } from '../../../test/component-setup';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
-import type { StickerTrack } from '~/shared/utils/sticker-track';
+import type { StickerTrackV1 } from '~/shared/utils/sticker-track';
 import { sampleStickerTrack } from '~/shared/utils/sticker-track';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
@@ -235,7 +235,7 @@ describe('what a draft sends when it is placed', () => {
 
     await page.getByRole('button', { name: 'Place free' }).click();
 
-    const { track, data } = placed[0] as (typeof placed)[number] & { track: StickerTrack };
+    const { track, data } = placed[0] as (typeof placed)[number] & { track: StickerTrackV1 };
     expect(sampleStickerTrack(track, 12500).show).toBe(true);
     expect(sampleStickerTrack(track, 13500).show).toBe(false);
     expect(track.x).toEqual([[0, data.x]]);
@@ -277,7 +277,7 @@ describe('what a draft sends when it is placed', () => {
     await page.getByText('Moment', { exact: true }).click();
     await page.getByRole('button', { name: 'Place free' }).click();
 
-    let { track } = placed[0] as unknown as { track: StickerTrack };
+    let { track } = placed[0] as unknown as { track: StickerTrackV1 };
     expect(video.pause).toHaveBeenCalled();
     expect(sampleStickerTrack(track, 12500).show).toBe(true);
     expect(sampleStickerTrack(track, 11500).show).toBe(false);
@@ -285,7 +285,7 @@ describe('what a draft sends when it is placed', () => {
     time = 2;
     video.dispatchEvent(new Event('seeked'));
     await page.getByRole('button', { name: 'Place free' }).click();
-    ({ track } = placed[1] as unknown as { track: StickerTrack });
+    ({ track } = placed[1] as unknown as { track: StickerTrackV1 });
     expect(sampleStickerTrack(track, 2500).show).toBe(true);
   });
 
@@ -295,7 +295,7 @@ describe('what a draft sends when it is placed', () => {
 
     await page.getByRole('button', { name: 'Place free' }).click();
 
-    const { track } = placed[0] as unknown as { track: StickerTrack };
+    const { track } = placed[0] as unknown as { track: StickerTrackV1 };
     expect(sampleStickerTrack(track, 0)).toMatchObject({ x: 0.2, rotation: 15, show: true });
     expect(sampleStickerTrack(track, 200).x).toBeCloseTo(0.6);
   });
