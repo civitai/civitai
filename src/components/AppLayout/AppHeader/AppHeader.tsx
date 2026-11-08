@@ -53,7 +53,6 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   const currentUser = useCurrentUser();
   const router = useRouter();
   const features = useFeatureFlags();
-  // `civitaiLink` is who may use Link; `civitaiLinkNav` is the user's own opt-in to the button.
   const showLinkButton = features.civitaiLink && features.civitaiLinkNav;
   const ds = !!features.shellDesignSystemMarkup;
   // Gate on the user's resolved chat setting so the chat icon never flashes in

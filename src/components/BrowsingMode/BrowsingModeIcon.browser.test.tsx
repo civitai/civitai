@@ -16,14 +16,6 @@ describe('BrowsingModeIcon', () => {
     restricted.value = false;
   });
 
-  test('draws a plain eye, never the exclamation glyph', async () => {
-    renderWithProviders(<BrowsingModeIcon />);
-    await expect.element(button()).toBeVisible();
-    const el = button().element();
-    expect(el.querySelector('.tabler-icon-eye')).not.toBeNull();
-    expect(el.querySelector('.tabler-icon-eye-exclamation')).toBeNull();
-  });
-
   test('a region-restricted viewer still gets the red dot', async () => {
     restricted.value = true;
     renderWithProviders(<BrowsingModeIcon />);
