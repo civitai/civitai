@@ -7,6 +7,7 @@ import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   getModelVersionAccessPermissions,
+  GIFT_PERMISSIONS_KEY,
   grantModelVersionAccess,
 } from '~/server/services/model-version-access.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
@@ -381,7 +382,7 @@ export async function redeemGiftLink(
         userId,
         modelVersionId,
         permissions,
-        meta: { giftLinkId },
+        meta: { giftLinkId, [GIFT_PERMISSIONS_KEY]: permissions },
         addedById,
       });
       return 'granted' as const;

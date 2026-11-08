@@ -72,6 +72,12 @@ export const toggleReactionSchema = z.object({
   reaction: z.enum(ReviewReactions),
 });
 
+/** `waitForPoints: false` (a viewer with event cosmetics off): answer without waiting for points. */
+export type ToggleReactionWithPointsInput = z.infer<typeof toggleReactionWithPointsSchema>;
+export const toggleReactionWithPointsSchema = toggleReactionSchema.extend({
+  waitForPoints: z.boolean().optional(),
+});
+
 const contentReactions = ['Like', 'Heart', 'Laugh', 'Cry'] as const satisfies ReviewReactions[];
 
 /**

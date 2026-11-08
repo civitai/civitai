@@ -102,6 +102,7 @@ import { imageDetailGateLevel } from '~/components/Image/DetailV2/image-detail-g
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { useReactionNudgeClass } from '~/components/HatTurf/reaction-nudge';
 import { ImageReactorsPreview } from '~/components/Reaction/ImageReactorsPreview';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -804,6 +805,11 @@ function ImageDetailReactions({
 }: {
   image: ReturnType<typeof useImageDetailContext>['images'][number];
 }) {
+  const nudge = useReactionNudgeClass({
+    imageId: image.id,
+    ownerId: image.user.id,
+    reactions: image.reactions,
+  });
   return (
     <Metrics
       entityType="Image"
@@ -828,7 +834,7 @@ function ImageDetailReactions({
             targetUserId={image.user.id}
             disableBuzzTip={image.poi}
             // Wrap, never shrink: a shrunk pill cuts its count off.
-            className="flex-wrap"
+            className={clsx('flex-wrap', nudge)}
           />
         </ImageReactorsPreview>
       )}

@@ -167,7 +167,7 @@ describe('claimGift', () => {
       VERSION_ID,
       CLAIMER,
       3,
-      JSON.stringify({ giftLinkId: 1 }),
+      JSON.stringify({ giftLinkId: 1, 'gift-permissions': 3 }),
       // addedById stays the claimer, not the creator: the personal-data export reads EntityAccess
       // by addedById, so the creator would carry every recipient's id.
       CLAIMER,

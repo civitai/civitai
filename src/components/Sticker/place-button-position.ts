@@ -219,6 +219,7 @@ export function placeButtonPosition({
   tray,
   clip,
   flipped,
+  lift = 0,
   rotation,
   knobOffset,
   outset,
@@ -229,11 +230,13 @@ export function placeButtonPosition({
   tray: Box | null;
   clip: Box | null;
   flipped: boolean;
+  /** How far the cluster is pulled in toward the sticker now, from the last result. */
+  lift?: number;
   rotation: number;
   knobOffset: number;
   outset: number;
   gap: number;
-}): { flipped: boolean; below: number; above: number } | null {
+}): { flipped: boolean; below: number; above: number; lift: number } | null {
   // The artwork rotates inside the sticker's element, so the element's box is
   // the unrotated one the chrome is laid out against.
 
@@ -253,21 +256,40 @@ export function placeButtonPosition({
   const clearance = chromeClearance({ width, height, rotation, knobOffset, outset, gap });
   // From the cluster's own measured rect, both times: the pair that comes out
   // is the same whichever side it is currently on.
-  const current = cluster.getBoundingClientRect();
+  const measured = cluster.getBoundingClientRect();
+  // Where the cluster would be without its lift, so the lift never feeds its own decision.
+  const current = shiftDown(measured, flipped ? -lift : lift);
   const boxes = placeButtonBoxes({
     current,
     flipped,
     distance: candidateDistance({
       height,
-      clusterHeight: current.height,
+      clusterHeight: measured.height,
       below: clearance.below,
       above: clearance.above,
     }),
   });
 
+  const nextFlipped = shouldFlipPlaceButton({ ...boxes, tray, clip, flipped });
   return {
-    flipped: shouldFlipPlaceButton({ ...boxes, tray, clip, flipped }),
+    flipped: nextFlipped,
     below: clearance.below,
     above: clearance.above,
+    lift: placeButtonLift(nextFlipped ? boxes.above : boxes.below, nextFlipped, tray, clip),
   };
+}
+
+/**
+ * How far to pull the cluster in over the sticker when neither side fits, so its buttons stay
+ * reachable. A tall cluster (a pinned moment, a recorder) on a sticker low in a short viewport
+ * otherwise hangs past the clipping edge, where nothing can press Place.
+ */
+export function placeButtonLift(box: Box, flipped: boolean, tray: Box | null, clip: Box | null) {
+  if (flipped) return Math.max(0, Math.ceil((clip?.top ?? 0) - box.top));
+  const limits = [
+    clip?.bottom,
+    tray && box.right > tray.left && box.left < tray.right ? tray.top : undefined,
+  ].filter((limit): limit is number => limit != null);
+  if (!limits.length) return 0;
+  return Math.max(0, Math.ceil(box.bottom - Math.min(...limits)));
 }

@@ -13,6 +13,7 @@ import { useIsRegionRestricted } from '~/hooks/useIsRegionRestricted';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import { EventPointPopsSetting } from '~/components/HatTurf/EventPointPopsSetting';
 
 const HiddenTagsModal = dynamic(() => import('~/components/Tags/HiddenTagsModal'), { ssr: false });
 
@@ -161,6 +162,7 @@ export function BrowsingModeMenu({
           size={compact ? 'sm' : 'md'}
           data-testid="browsing-show-event-cosmetics"
         />
+        <EventPointPopsSetting size={compact ? 'sm' : 'md'} />
       </Stack>
     </div>
   );

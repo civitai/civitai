@@ -874,7 +874,7 @@ describe('referee snapshot', () => {
       expect(standings.teams[0]).toEqual({ team: 'Blue', score: 7, rank: 1 });
     });
 
-    it('adds a team award settled by the cut to the live team base and its hour, and to nothing else', async () => {
+    it('adds a team award settled by the cut to the live team base only, never to the hourly chart', async () => {
       answer([hourlyRow('2026-11-05', 8, 'Blue', { 6: 7 })]);
       const award = (team: string, points: number, at: string) => ({
         team,
@@ -899,7 +899,9 @@ describe('referee snapshot', () => {
       expect(hashes.get(keys.base('team'))).toEqual({ Blue: '7', Pink: '100' });
       expect(hashes.get(keys.base('hat'))).toEqual({ '8:28:claimed': '7' });
       expect(hashes.get(keys.base('owner'))).toEqual({ '8': '7' });
-      expect((await chartedHours()).earned).toMatchObject({ Blue: [[30, 7]], Pink: [[33, 100]] });
+      // A Crucible's lump sum would flatten every other hour of the points-per-hour chart.
+      expect((await chartedHours()).earned).toMatchObject({ Blue: [[30, 7]] });
+      expect((await chartedHours()).earned.Pink ?? []).toEqual([]);
 
       // The same awards never reach the preview: testers' totals are their own.
       const preview = { ...awarded, previewFrom: new Date('2026-10-20T00:00:00.000Z') };
