@@ -63,6 +63,12 @@ export interface HostContext {
      *  explanation; absent = unknown (a host with no membership knowledge, e.g. the standalone
      *  shell) and the affordance behaves as before. */
     canGenerateUnpublished?: boolean;
+    /** Whether this host can auto-label (free to the user, so it must run on a system-paid path the
+     *  host owns). Explicit `false` hides every auto-label action; absent = available. */
+    canAutoLabel?: boolean;
+    /** Where auto-labeling does work, linked from the line that replaces its actions when
+     *  `canAutoLabel` is false (`hostLink` URL semantics). Absent => the line renders without a link. */
+    autoLabelUrl?: string;
     /** Whether this user holds a paid membership — without one, Blue Buzz can't pay for a mature
      *  dataset and the run is charged in full from the chosen account. Absent = unknown. */
     isPaidMember?: boolean;
@@ -142,6 +148,8 @@ function host(): HostContext {
 
 export const hostConfig = () => host().config;
 export const backend = () => host().backend;
+/** Whether the flow should offer auto-label at all; see `HostContext.config.canAutoLabel`. */
+export const autoLabelAvailable = () => hostConfig().canAutoLabel !== false;
 export const hrefFor = (loc: StudioLocation) => host().hrefFor(loc);
 export const navigate = (loc: StudioLocation, opts?: { refreshAll?: boolean }) =>
   host().navigate(loc, opts);

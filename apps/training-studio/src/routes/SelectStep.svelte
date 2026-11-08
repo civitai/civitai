@@ -14,7 +14,7 @@
   import { onMount, untrack } from 'svelte';
   import { serviceStatus } from '$lib/service-status.svelte';
   import { modelUnavailability, UNAVAILABLE_LABEL } from '$lib/service-status-core';
-  import { pickModel } from '$lib/host';
+  import { autoLabelAvailable, pickModel } from '$lib/host';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -528,8 +528,8 @@
           {primaryPairs
             ? 'before/after pairs + instructions'
             : labelMode === 'tag'
-              ? 'auto-labeled with tags'
-              : 'auto-labeled with captions'}
+              ? `${autoLabelAvailable() ? 'auto-labeled' : 'labeled'} with tags`
+              : `${autoLabelAvailable() ? 'auto-labeled' : 'labeled'} with captions`}
         </div>
       </div>
       {#if recommendedCard}

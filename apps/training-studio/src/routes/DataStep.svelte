@@ -32,7 +32,7 @@
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
-  import { browser, hostConfig, portalProps } from '$lib/host';
+  import { autoLabelAvailable, browser, hostConfig, hostLink, portalProps } from '$lib/host';
   import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
   import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { playOnHover, resetOnLeave } from '$lib/video-preview';
@@ -298,6 +298,11 @@
   });
   // Unknown membership is treated as not a member, as on Review.
   const isMember = hostConfig().isPaidMember === true;
+  // Where the host has no auto-label, none of its actions are offered (the toggle, the Auto-label
+  // and Label-all buttons, the editor's Re-run, the switch dialog's Re-label); the guards below back
+  // that up for the callers that don't go through a button.
+  const canAutoLabel = autoLabelAvailable();
+  const autoLabelLink = hostConfig().autoLabelUrl;
 
   let dragging = $state(false);
   let fileInput: HTMLInputElement;
@@ -645,7 +650,7 @@
   }
 
   async function ensureLabeling() {
-    if (labelController) return; // a drain loop is already running; it will pick up new uploads
+    if (!canAutoLabel || labelController) return; // a drain loop is already running; it will pick up new uploads
     const controller = new AbortController();
     labelController = controller;
     try {
@@ -717,7 +722,7 @@
   );
 
   async function labelAll() {
-    if (labelController || labelAllTargets.length === 0) return;
+    if (!canAutoLabel || labelController || labelAllTargets.length === 0) return;
     const controller = new AbortController();
     labelController = controller;
     labelAllNotice = null;
@@ -888,7 +893,7 @@
   // image (labelTried) gets a fresh pass.
   async function relabelOne(id: number) {
     const img = images.find((x) => x.id === id);
-    if (!img || !img.blobUrl || img.labeling) return;
+    if (!canAutoLabel || !img || !img.blobUrl || img.labeling) return;
     patch(id, { labeling: true, labelTried: false, labelError: undefined, tags: [], caption: '' });
     try {
       // Not a drain-pass index, so the drain's progress counter never counts it.
@@ -980,8 +985,12 @@
     <div class="min-w-0">
       <h2 class="m-0 text-xl font-semibold text-white">Add your data</h2>
       <p class="mt-1 text-sm text-dark-2">
-        Drop your files — they upload and get scanned as you go. We'll auto-label them as
-        <strong class="text-dark-0">{noun}</strong> for free.
+        Drop your files — they upload and get scanned as you go.
+        {#if canAutoLabel}
+          We'll auto-label them as <strong class="text-dark-0">{noun}</strong> for free.
+        {:else}
+          Label them as <strong class="text-dark-0">{noun}</strong> yourself.
+        {/if}
       </p>
     </div>
     {#if estTotal != null}
@@ -1069,7 +1078,7 @@
           />{/if}
       </span>
       <div class="min-w-0">
-        <div class="text-sm font-bold text-dark-0">Auto-labeled as {noun} · free</div>
+        <div class="text-sm font-bold text-dark-0">{canAutoLabel ? `Auto-labeled as ${noun} · free` : `Labeled with ${noun}`}</div>
         <div class="font-mono text-xs text-dark-2">
           {labelMode === 'tag'
             ? `${primaryCard.name} trains on booru-style tags`
@@ -1108,6 +1117,12 @@
       {/if}
     </div>
     <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-dark-4 pt-3">
+      {#if !canAutoLabel}
+        <p class="font-mono text-xs text-dark-2" role="note">
+          Auto-labeling is available in the trainer on
+          {#if autoLabelLink}<a class="text-primary underline" {...hostLink(autoLabelLink)}>civitai.com</a>{:else}civitai.com{/if}.
+        </p>
+      {:else}
       <div class="flex items-center gap-2">
         <span class="font-mono text-xs text-dark-2">Auto-label</span>
         <ToggleGroup
@@ -1132,6 +1147,7 @@
           </ToggleGroupItem>
         </ToggleGroup>
       </div>
+      {/if}
       {#if labelMode === 'tag'}
         <div class="flex min-w-0 flex-wrap items-center gap-1.5">
           <label for="exclude-tags" class="font-mono text-xs text-dark-2">Never apply</label>
@@ -1184,7 +1200,7 @@
         {/if}
       {/if}
     </div>
-    {#if uploadedCount > 0}
+    {#if canAutoLabel && uploadedCount > 0}
       <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-dark-4 pt-3">
         <div class="flex items-center gap-2">
           <span class="font-mono text-xs text-dark-2">Label all with</span>
@@ -1331,7 +1347,7 @@
             {#if errorCount > 0}· <span class="text-buzz">{errorCount} failed</span>{/if}
           </b>
           <div class="flex items-center gap-2">
-            {#if unlabeled.length > 0 || labelRun}
+            {#if canAutoLabel && (unlabeled.length > 0 || labelRun)}
               <Button size="xs" onclick={ensureLabeling} disabled={labelRun != null || unlabeled.length === 0}>
                 <IconSparkles size={13} stroke={2} class="mr-1 inline" />{#if labelRun}Labeling… {labelRun.done}/{labelRun.total}{:else}Auto-label {unlabeled.length}{/if}
               </Button>
@@ -1706,7 +1722,7 @@
   {labelMode}
   {trigger}
   {tagVocab}
-  onRelabel={relabelOne}
+  onRelabel={canAutoLabel ? relabelOne : undefined}
   position={{ index: editorIndex, total: editorSteps.length }}
   onStep={stepEditor}
 />
@@ -1726,8 +1742,10 @@
           ? 'has'
           : 'have'}
         {noun}. <strong>Convert</strong> keeps that text and reformats it — nothing is re-labeled.
-        <strong>Re-label</strong> discards it and auto-labels everything from scratch (labels that came
-        with your files are kept either way).
+        {#if canAutoLabel}
+          <strong>Re-label</strong> discards it and auto-labels everything from scratch (labels that came
+          with your files are kept either way).
+        {/if}
       </Dialog.Description>
     </Dialog.Header>
     <Dialog.Footer>
@@ -1736,13 +1754,15 @@
           <Button {...props} variant="ghost" size="sm">Cancel</Button>
         {/snippet}
       </Dialog.Close>
-      <Button
-        variant="outline"
-        size="sm"
-        onclick={() => applyLabelModeSwitch(pendingLabelMode!, 'relabel')}
-      >
-        Re-label everything
-      </Button>
+      {#if canAutoLabel}
+        <Button
+          variant="outline"
+          size="sm"
+          onclick={() => applyLabelModeSwitch(pendingLabelMode!, 'relabel')}
+        >
+          Re-label everything
+        </Button>
+      {/if}
       <Button size="sm" onclick={() => applyLabelModeSwitch(pendingLabelMode!, 'convert')}>
         Convert existing labels
       </Button>
