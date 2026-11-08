@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { RedisCache } from '@/services/redis-cache';
 import type { MetricExcludedUsers } from '@/services/metric-excluded-users';
 import type { MetricEvent } from '@/types/events';
+import { METRIC_RECENT_EVENT_TTL } from '@/common/utils/cache-keys';
 
 // A tip sets the recent-event marker that makes event-engine-common's populate refresh
 // early; other metrics don't, since every marked entity costs extra ClickHouse refreshes.
@@ -47,11 +48,11 @@ describe('RedisCache.incrementOnce recent-event marker', () => {
       await cache.incrementOnce(event(metricType));
     }
 
-    expect(markers.map(({ field, recentEventTtl }) => [field, recentEventTtl > 0])).toEqual([
-      ['tippedAmount', true],
-      ['tippedCount', true],
-      ['Like', false],
-      ['Collection', false],
+    expect(markers.map(({ field, recentEventTtl }) => [field, recentEventTtl])).toEqual([
+      ['tippedAmount', METRIC_RECENT_EVENT_TTL],
+      ['tippedCount', METRIC_RECENT_EVENT_TTL],
+      ['Like', 0],
+      ['Collection', 0],
     ]);
     expect(markers[0].recentEventKey).toBe('{metrics:Image:1001}:recent');
   });

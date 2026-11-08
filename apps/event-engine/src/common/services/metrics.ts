@@ -100,7 +100,7 @@ export class MetricService {
       if (cacheResult && Object.keys(cacheResult).length > 0) {
         const entries = Object.entries(cacheResult);
         // Check if this is a "not found" entry
-        if (cacheResult.notFound === '1' && entries.length === 1) {
+        if (cacheResult.notFound === '1' && entries.every(([key]) => key === 'notFound' || key === POPULATED_AT_FIELD)) {
           continue; // Skip not found entries
         }
 
@@ -195,7 +195,13 @@ export class MetricService {
           } else {
             // Cache not found with MISS_CACHE_TTL
             cacheAndLockOps.push(
-              this.redis.hSetEx(this.getCacheKey(entityType, id), { notFound: '1' }, MISS_CACHE_TTL)
+              this.redis.hReplaceStampedEx(
+                this.getCacheKey(entityType, id),
+                cacheKeys.metricRecentEvent(entityType, id),
+                stamp,
+                { notFound: '1' },
+                MISS_CACHE_TTL
+              )
             );
           }
 
@@ -246,14 +252,14 @@ export class MetricService {
             found.push(id);
             const entries = Object.entries(cacheResult);
             // Check if this is a "not found" entry
-            if (cacheResult.notFound === '1' && entries.length === 1) {
+            if (cacheResult.notFound === '1' && entries.every(([key]) => key === 'notFound' || key === POPULATED_AT_FIELD)) {
               continue; // Skip not found entries
             }
 
             // Convert string values back to numbers for metric fields
             const metrics: any = {};
             for (const [key, value] of entries) {
-              if (key === 'notFound') continue;
+              if (key === 'notFound' || key === POPULATED_AT_FIELD) continue;
               metrics[key] = parseInt(value, 10);
             }
             results[id] = metrics as EntityMetricMap[T];

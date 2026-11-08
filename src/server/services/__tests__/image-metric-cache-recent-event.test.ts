@@ -180,6 +180,30 @@ describe('image metric cache: an event the ClickHouse snapshot has not caught up
     expect(lua.errors).toEqual([]);
   });
 
+  it("a new image's first tip survives a populate that found no metrics", async () => {
+    const { lua, chTotals, tip, service, advance } = setup();
+    // Every read slides the entry's TTL to 12h, and an unstamped entry never refreshes
+    // by chance (sliding is 10% of reads, the unstamped refresh 5%).
+    vi.spyOn(Math, 'random').mockReturnValue(0.07);
+    delete chTotals.Like;
+
+    expect(await tip(30)).toBe(false);
+    advance(19_000);
+    await service.fetch('Image', [IMAGE_ID]);
+    expect(lua.hash(metricKey)?.notFound).toBe('1');
+
+    // A second tip lands on the not-found entry, and a read keeps it past its 5 min.
+    expect(await tip(20)).toBe(true);
+    expect((await service.fetch('Image', [IMAGE_ID]))[IMAGE_ID]?.tippedAmount).toBe(20);
+
+    chTotals.tippedAmount = 50;
+    advance(METRIC_RECENT_EVENT_TTL * 1000 + 1000);
+    await service.fetch('Image', [IMAGE_ID]);
+
+    await vi.waitFor(() => expect(lua.hash(metricKey)?.tippedAmount).toBe('50'));
+    expect(lua.errors).toEqual([]);
+  });
+
   it('a reaction sets no marker, so its populate keeps the hour', async () => {
     const { lua, react, service, advance, chQueries } = setup();
 

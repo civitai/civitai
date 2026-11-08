@@ -26,7 +26,7 @@ type IncrCall = { key: string; field: string; value: number };
 
 function cacheWithFakeRedis(excluded: MetricExcludedUsers) {
   const incr: IncrCall[] = [];
-  const incrOnce: (IncrCall & { recentEventKey: string; recentEventTtl: number })[] = [];
+  const incrOnce: IncrCall[] = [];
   const client = {
     run: async (commands: unknown[]) => commands,
     hIncrIfExists: (key: string, field: string, value: number) => {
@@ -36,13 +36,11 @@ function cacheWithFakeRedis(excluded: MetricExcludedUsers) {
     hIncrIfExistsOnce: (
       key: string,
       _dedupeKey: string,
-      recentEventKey: string,
+      _recentEventKey: string,
       field: string,
-      value: number,
-      _ttl: number,
-      recentEventTtl: number
+      value: number
     ) => {
-      incrOnce.push({ key, field, value, recentEventKey, recentEventTtl });
+      incrOnce.push({ key, field, value });
       return Promise.resolve(true);
     },
   };
@@ -208,15 +206,7 @@ describe('RedisCache respects the exclusion list', () => {
     await cache.incrementOnce(event(6680940));
     await cache.incrementOnce(event(111, 'Heart'));
 
-    expect(incrOnce).toEqual([
-      {
-        key: 'metrics:Image:141298569',
-        field: 'Heart',
-        value: 1,
-        recentEventKey: '{metrics:Image:141298569}:recent',
-        recentEventTtl: 0,
-      },
-    ]);
+    expect(incrOnce).toEqual([{ key: 'metrics:Image:141298569', field: 'Heart', value: 1 }]);
   });
 });
 
