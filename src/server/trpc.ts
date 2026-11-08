@@ -18,6 +18,11 @@ import {
 } from '~/server/utils/request-bulkhead';
 import { trpcProcedureDuration, trpcClientReadCapabilityRequests } from '~/server/prom/client';
 import { recordTrpcCall } from '~/server/prom/route-traffic.metrics';
+import {
+  recordTrpcCaller,
+  safeClassifyTrpcCaller,
+  type TrpcCallerClass,
+} from '~/server/prom/trpc-caller.metrics';
 import { canDecodeDevalueResponse, isWebClient } from '~/server/utils/client-version-saturation';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
@@ -229,6 +234,11 @@ const enforceTokenScope = t.middleware(({ ctx, meta, path, next }) =>
 // on SSR/jobs/canary to bound the series count and keep an instant off-switch.
 const TRPC_PROCEDURE_METRICS = process.env.TRPC_PROCEDURE_METRICS === 'true';
 
+// OPT-IN via TRPC_CALLER_METRICS=true, separately from the histogram above: the caller-class
+// counters (`~/server/prom/trpc-caller.metrics`) emit up to (procedures x 5 caller classes x 2)
+// series per process, so they get their own switch and can be enabled without the histogram.
+const TRPC_CALLER_METRICS = process.env.TRPC_CALLER_METRICS === 'true';
+
 // The actual procedure-timing logic. Generic over `next`'s return type so it
 // stays transparent to tRPC's MiddlewareResult typing. Kept standalone so the
 // ALS label wrapper can be applied ONLY when the long-task labels tier is armed.
@@ -245,6 +255,7 @@ function runRecordProcedureDuration<T>(
   path: string,
   type: string,
   userId: number | undefined,
+  caller: TrpcCallerClass | undefined,
   next: () => Promise<T>
 ): Promise<T> {
   const startedAt = performance.now();
@@ -260,12 +271,14 @@ function runRecordProcedureDuration<T>(
       // the always-on slow-log — avoids startTimer's separate hrtime capture +
       // Object.assign per procedure. Same histogram semantics (wall-clock seconds).
       if (TRPC_PROCEDURE_METRICS) trpcProcedureDuration.observe({ path }, durationMs / 1000);
+      if (caller) recordTrpcCaller(path, caller, durationMs / 1000);
       maybeLogTrpcSlow({ path, type, durationMs, ok, errorCode, userId });
       return result;
     },
     (err) => {
       const durationMs = performance.now() - startedAt;
       if (TRPC_PROCEDURE_METRICS) trpcProcedureDuration.observe({ path }, durationMs / 1000);
+      if (caller) recordTrpcCaller(path, caller, durationMs / 1000);
       maybeLogTrpcSlow({
         path,
         type,
@@ -282,6 +295,18 @@ function runRecordProcedureDuration<T>(
 const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
   const userId = ctx.user?.id;
   recordTrpcCall(ctx.req?.headers, !!ctx.user);
+  // Classified up front (the context is in scope here), recorded when the procedure settles.
+  // Both halves are non-throwing; see trpc-caller.metrics.ts.
+  const caller = TRPC_CALLER_METRICS
+    ? safeClassifyTrpcCaller({
+        cache: ctx.cache,
+        apiKeyId: ctx.apiKeyId,
+        subject: ctx.subject,
+        user: ctx.user,
+        bannedUser: ctx.bannedUser,
+        userAgent: ctx.req?.headers?.['user-agent'],
+      })
+    : undefined;
   // When the long-task LABELS tier is armed, wrap the procedure in an ALS store
   // tagged with its path so a detected synchronous block can be attributed to the
   // running procedure. This costs one AsyncLocalStorage.run() per request — the
@@ -290,10 +315,10 @@ const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
   // on the existing promise. Independent of TRPC_PROCEDURE_METRICS.
   if (longTaskLabelsArmed) {
     return runWithLongTaskLabel(`trpc:${path}`, () =>
-      runRecordProcedureDuration(path, type, userId, next)
+      runRecordProcedureDuration(path, type, userId, caller, next)
     );
   }
-  return runRecordProcedureDuration(path, type, userId, next);
+  return runRecordProcedureDuration(path, type, userId, caller, next);
 });
 
 export const publicProcedure = t.procedure
