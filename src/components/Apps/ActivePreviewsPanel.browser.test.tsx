@@ -62,7 +62,10 @@ vi.mock('~/utils/notifications', () => ({
 vi.mock('~/utils/trpc', () => {
   const mutation =
     (name: string) =>
-    (opts?: { onSuccess?: (res: unknown, vars: unknown) => void; onError?: (e: { message: string }) => void }) => ({
+    (opts?: {
+      onSuccess?: (res: unknown, vars: unknown) => void;
+      onError?: (e: { message: string }) => void;
+    }) => ({
       mutate: (vars: unknown) => {
         mocks.mutate(name, vars);
         void opts?.onSuccess?.(undefined, vars);
@@ -199,5 +202,25 @@ describe('ActivePreviewsPanel — the age cell uses the SHARED ladder, not a loc
     expect(page.getByText('9mo', { exact: true }).elements()).toHaveLength(1);
     expect(page.getByText('280d', { exact: true }).elements()).toHaveLength(0);
     expect(page.getByText('—', { exact: true }).elements()).toHaveLength(1);
+  });
+});
+
+describe('ActivePreviewsPanel — zero is SAID, not silence', () => {
+  test('🔴 no active previews → "0 active previews (of N slots)", not an empty render', async () => {
+    mocks.data = { cap: 3, active: [] };
+    renderWithProviders(<ActivePreviewsPanel />);
+    await expect
+      .element(page.getByTestId('apps-active-previews-empty'))
+      .toHaveTextContent('0 active previews (of 3 slots)');
+    // …as one quiet line, not the full panel.
+    expect(page.getByRole('table').elements()).toHaveLength(0);
+  });
+
+  test('still nothing before the first load (no data yet is not "zero")', async () => {
+    mocks.data = undefined;
+    renderWithProviders(<ActivePreviewsPanel />);
+    // A tick for the render to commit, then: the panel chose to say nothing.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(page.getByTestId('apps-active-previews-empty').elements()).toHaveLength(0);
   });
 });

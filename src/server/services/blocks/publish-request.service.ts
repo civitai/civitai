@@ -1,4 +1,5 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
+import type { AgentReviewSummary } from '~/shared/utils/agent-review-verdict';
 import { sniffImageFormat } from '~/shared/utils/image-magic-bytes';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -2732,18 +2733,136 @@ async function listingFactsForRequests(
 }
 
 /**
+ * The review preview state a PENDING row's queue chip shows, from its `deploy_state`.
+ *
+ * Only `preview-*` values are previews (`deploy_state` is shared with the production build
+ * lifecycle). An ACTIVE preview whose last transition is older than the janitor's reap TTL is
+ * reported as `preview-expired`: the janitor deletes the deployment but cannot write this row,
+ * so the stored value still reads live while nothing is serving it.
+ */
+export function projectQueuePreviewState(
+  deployState: string | null | undefined,
+  deployUpdatedAt: Date | null | undefined,
+  now: number = Date.now()
+): ReviewPreviewState | null {
+  if (typeof deployState !== 'string' || !deployState.startsWith('preview-')) return null;
+  const state = deployState as ReviewPreviewState;
+  if (
+    (ACTIVE_REVIEW_PREVIEW_STATES as string[]).includes(state) &&
+    deployUpdatedAt != null &&
+    now - deployUpdatedAt.getTime() > REVIEW_PREVIEW_TTL_MS
+  ) {
+    return 'preview-expired';
+  }
+  return state;
+}
+
+/**
+ * The compact agentic-review summary for a PAGE of requests, for the queue's AI chip — the
+ * latest report per request, reduced IN SQL to its finding severities and scope-trace counts.
+ *
+ * 🔴 ONE QUERY FOR THE WHOLE PAGE, AND NONE OF THE REPORT BODIES. The report's JSON columns
+ * hold the agent's full findings (tens of KB per row); the queue polls every 15 s, so selecting
+ * them for 50 rows to count severities would ship megabytes per tick. `jsonb` is reduced to the
+ * handful of fields `agentReviewVerdict` reads, and every path tolerates a malformed body (an
+ * `{ error }` section, a non-array `findings`), since these columns hold untrusted model output.
+ *
+ * FAIL-SOFT: a failed read returns an empty map, and the rows then carry no summary, which the
+ * queue renders as "AI: not run". A broken chip must never take the queue down with it.
+ */
+async function agentReviewSummariesForRequests(
+  ids: string[]
+): Promise<Map<string, AgentReviewSummary>> {
+  const out = new Map<string, AgentReviewSummary>();
+  if (ids.length === 0) return out;
+  try {
+    const { dbRead } = await import('~/server/db/client');
+    const rows = (await dbRead.$queryRaw`
+      SELECT DISTINCT ON (r.publish_request_id)
+        r.publish_request_id AS "publishRequestId",
+        r.status AS "status",
+        ARRAY(
+          SELECT lower(f->>'severity')
+          FROM jsonb_array_elements(
+            (CASE WHEN jsonb_typeof(r.code_review->'findings') = 'array'
+                  THEN r.code_review->'findings' ELSE '[]'::jsonb END)
+            || (CASE WHEN jsonb_typeof(r.security_audit->'findings') = 'array'
+                  THEN r.security_audit->'findings' ELSE '[]'::jsonb END)
+          ) AS f
+          WHERE jsonb_typeof(f) = 'object'
+        ) AS "severities",
+        (CASE WHEN jsonb_typeof(r.scope_verdicts->'overBroad') = 'array'
+              THEN jsonb_array_length(r.scope_verdicts->'overBroad') ELSE 0 END)::int AS "overBroad",
+        (CASE WHEN jsonb_typeof(r.scope_verdicts->'underDeclared') = 'array'
+              THEN jsonb_array_length(r.scope_verdicts->'underDeclared') ELSE 0 END)::int AS "underDeclared",
+        (SELECT count(*)::int
+           FROM jsonb_array_elements(
+             CASE WHEN jsonb_typeof(r.scope_verdicts->'scopes') = 'array'
+                  THEN r.scope_verdicts->'scopes' ELSE '[]'::jsonb END
+           ) AS sv
+          WHERE jsonb_typeof(sv) = 'object'
+            AND lower(sv->>'justificationAccurate') = 'no') AS "inaccurate"
+      FROM app_review_agent_reports r
+      WHERE r.publish_request_id = ANY(${ids}::text[])
+      ORDER BY r.publish_request_id, r.started_at DESC
+    `) as Array<{
+      publishRequestId: string;
+      status: string;
+      severities: (string | null)[] | null;
+      overBroad: number | null;
+      underDeclared: number | null;
+      inaccurate: number | null;
+    }>;
+    for (const r of rows) {
+      out.set(r.publishRequestId, {
+        status: r.status,
+        severities: (r.severities ?? []).filter((x): x is string => typeof x === 'string'),
+        overBroad: r.overBroad ?? 0,
+        underDeclared: r.underDeclared ?? 0,
+        inaccurate: r.inaccurate ?? 0,
+      });
+    }
+  } catch (err) {
+    console.error(
+      `[agentReviewSummariesForRequests] summary read failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+  return out;
+}
+
+/** The `where` for the on-site PENDING queue — shared by the list and its count. */
+const PENDING_REQUEST_WHERE = { status: 'pending' } as const;
+
+/** How many on-site publish requests are waiting for review (the Pending tab's badge). */
+export async function countPendingRequests(): Promise<number> {
+  const { dbRead } = await import('~/server/db/client');
+  return dbRead.appBlockPublishRequest.count({ where: PENDING_REQUEST_WHERE });
+}
+
+/**
  * Mod queue: paginated list of publish requests in status='pending',
  * oldest first (FIFO). Includes the submitter's basic profile so the
  * review UI doesn't round-trip per row.
  */
-export async function listPendingRequests(opts: ListPendingRequestsOptions = {}) {
+export async function listPendingRequests(
+  opts: ListPendingRequestsOptions & {
+    /**
+     * Attach each row's agentic-review summary (`agentReview`). The router passes the
+     * viewer's `app-blocks-agentic-review` flag here, so a reviewer without the agentic
+     * surface never receives the field and the queue shows no AI chip for them.
+     */
+    includeAgentReview?: boolean;
+  } = {}
+) {
   const [{ dbRead }, { reviewRepoUrl, repoCommitUrl }] = await Promise.all([
     import('~/server/db/client'),
     import('./forgejo.service'),
   ]);
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appBlockPublishRequest.findMany({
-    where: { status: 'pending' },
+    where: PENDING_REQUEST_WHERE,
     orderBy: { submittedAt: 'asc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
@@ -2759,16 +2878,30 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       fileSummary: true,
       manifestDiffSummary: true,
       forgejoCommitSha: true,
+      // The review preview lifecycle (`preview-*`) — projected to `previewState` below and
+      // NOT spread as `deployState`, which the queue reads as the APPROVED-row deploy shape.
+      deployState: true,
+      deployUpdatedAt: true,
       submittedBy: { select: reviewUserChipSelect },
     },
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
-  const listingFacts = await listingFactsForRequests(items as ListingJoinSubject[]);
+  const [listingFacts, agentSummaries] = await Promise.all([
+    listingFactsForRequests(items as ListingJoinSubject[]),
+    opts.includeAgentReview
+      ? agentReviewSummariesForRequests(items.map((r) => r.id))
+      : Promise.resolve(null),
+  ]);
+  const now = Date.now();
   return {
-    items: items.map((r: (typeof rows)[number]) => ({
+    items: items.map(({ deployState, deployUpdatedAt, ...r }: (typeof rows)[number]) => ({
       ...r,
       ...listingFacts(r.id),
+      previewState: projectQueuePreviewState(deployState, deployUpdatedAt, now),
+      // Absent (not null) when the viewer has no agentic surface: the chip is hidden, not
+      // "not run". `null` = the surface is on and this request has no report.
+      ...(agentSummaries ? { agentReview: agentSummaries.get(r.id) ?? null } : {}),
       // BigInt isn't JSON-serializable through tRPC's default transformer;
       // surface as a string. UI can format with Intl.NumberFormat.
       bundleSizeBytes: r.bundleSizeBytes.toString(),
@@ -4810,7 +4943,12 @@ export type ReviewPreviewState =
   | 'preview-building'
   | 'preview-deploying'
   | 'preview-live'
-  | 'preview-failed';
+  | 'preview-failed'
+  // Auto-deploy states. NOTHING WRITES THESE YET: they are declared here, the one shared
+  // preview-state type, so the review UI can render them before the auto-deploy build queue
+  // (which owns writing them) lands. Neither is an ACTIVE state for the concurrency cap below.
+  | 'preview-queued'
+  | 'preview-expired';
 
 /**
  * Global cap on concurrently-active review previews across ALL moderators. Each

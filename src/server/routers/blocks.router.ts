@@ -2533,8 +2533,34 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Mod review queue is restricted to civitai team');
       }
-      return listPendingRequests({ limit: input.limit, cursor: input.cursor });
+      // The AI chip's data rides on the same gate as the report itself: a reviewer without
+      // the agentic surface gets no `agentReview` field at all (never a "not run" chip).
+      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
+      const includeAgentReview = await isAppBlocksAgenticReviewEnabled({ user: ctx.user }).catch(
+        () => false
+      );
+      return listPendingRequests({ limit: input.limit, cursor: input.cursor, includeAgentReview });
     }),
+
+  /**
+   * Mod queue: how many submissions are waiting for review across BOTH queues (on-site
+   * publish requests + listing requests) — the `/apps/review` Pending tab's count badge.
+   * Counts only, so the badge's poll fetches two numbers rather than two pages of rows.
+   */
+  countReviewQueue: moderatorProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    if (!ctx.user?.isModerator) {
+      throw throwAuthorizationError('Mod review queue is restricted to civitai team');
+    }
+    const [{ countPendingRequests }, { countPendingOffsiteRequests }] = await Promise.all([
+      import('~/server/services/blocks/publish-request.service'),
+      import('~/server/services/blocks/offsite-listing.service'),
+    ]);
+    const [onsite, offsite] = await Promise.all([
+      countPendingRequests(),
+      countPendingOffsiteRequests(),
+    ]);
+    return { onsite, offsite, total: onsite + offsite };
+  }),
 
   /**
    * Mod history: paginated list of publish requests that were approved,
