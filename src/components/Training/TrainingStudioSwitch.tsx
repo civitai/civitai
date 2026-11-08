@@ -134,7 +134,7 @@ export function StudioOnlyModelsNotice() {
       title={`${names} ${models.length > 1 ? 'are' : 'is'} here — in Training Studio`}
     >
       <Text size="sm">
-        {names} LoRAs train only in our new <b>Training Studio</b> (Beta).{' '}
+        {names} LoRAs train only in our new <b>Training Studio</b>.{' '}
         <Anchor
           component="button"
           type="button"

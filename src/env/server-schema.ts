@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { zc } from '~/utils/schema-helpers';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 import {
+  commaDelimitedNumberArray,
   commaDelimitedStringArray,
   commaDelimitedStringObject,
   stringToArray,
@@ -439,6 +440,13 @@ export const serverSchema = z
     CIVITAI_MODERATION_USER_ID: z
       .union([z.coerce.number().int().positive(), z.literal('')])
       .optional(),
+    // /api/v1/permissions/check answers about a given userId only for that user, a moderator or
+    // these accounts, when PERMISSIONS_CHECK_GATE is on. A malformed list reads as unset.
+    PERMISSIONS_CHECK_SERVICE_USER_IDS: commaDelimitedNumberArray()
+      .default([])
+      .catch([])
+      .transform((ids) => ids.filter((id) => id !== 0)),
+    PERMISSIONS_CHECK_GATE: zc.booleanString.default(false),
     // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
     MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),
     // Download links (`/api/v1/download-links`, `/api/download/l/<id>`). Only these credentials may

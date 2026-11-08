@@ -28,7 +28,8 @@ export type DocIndexType = AppStorageIndexType;
  * write of a document body stamps into the document row's `schema_major` column (once that manual migration is
  * applied). Absent: the write leaves the column alone (development and review namespaces, which
  * are never stamped). `null`: the major is not known, and the write clears any older stamp, since
- * the body it held no longer describes the document. Nothing reads the column yet.
+ * the body it held no longer describes the document. The column is read only by a read path that
+ * migrates a body on serve (a caller of `applyMajorChain`); any other read ignores it.
  */
 export type DocCollection = {
   name: string;

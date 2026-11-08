@@ -4,6 +4,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { flagAudienceAmong } from '~/server/events/event-access';
 import { loadEvents } from '~/server/events/load-events';
 import { decodeHat, eventPointKeys } from '~/server/events/points/keys';
+import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { getTeamPoints } from '~/server/events/points/read';
 import {
   applyTurfOverride,
@@ -21,6 +22,7 @@ import {
 import {
   capTurfMap,
   computeImageTurf,
+  decodeTurfEntry,
   encodeTurfEntry,
   turfKeys,
   type TurfCounts,
@@ -30,8 +32,10 @@ import {
 import { markTurfWatched, pushTurfCounts, type TurfPush } from '~/server/events/turf/turf-watch';
 import { logToAxiom } from '~/server/logging/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { withSysReadDeadline } from '~/server/redis/sys-read-deadline';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { sysRedis } from '~/server/redis/client';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 import type { TurfHatArt, TurfStickerData, TurfStickersCursor } from '~/server/schema/turf.schema';
 import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import {
@@ -233,7 +237,11 @@ export type PlaceTurfStickerInput = {
   source?: 'feed' | 'image-detail';
 };
 
-export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new Date()) {
+export async function placeTurfSticker(
+  input: PlaceTurfStickerInput,
+  now = new Date(),
+  { reactionEarnsMs = REACTION_EARNS_MS } = {}
+) {
   const event = await getTurfEvent(input.event, now);
   if (!event || !isRunning(event, now)) throw throwBadRequestError("Turf isn't open right now");
   const { userId, imageId } = input;
@@ -330,7 +338,53 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
       throw throwBadRequestError("You've already put a hat sticker on this image");
     throw error;
   }
-  void requestTurfSync(event, imageId).catch(logSyncError);
+  const synced = requestTurfSync(event, imageId);
+  void synced.catch(logSyncError);
+  // Only drives the reaction nudge: a failed or slow read must not fail or hold up a placement
+  // already made, so the whole answer is raced against one deadline.
+  const reactionEarns = await withSysReadDeadline(
+    reactionPaysTeam(event, imageId, userId, team, synced),
+    reactionEarnsMs
+  ).catch((error) => {
+    void logToAxiom({ type: 'error', name: 'event-turf', fn: 'reactionPaysTeam', error }).catch(
+      () => undefined
+    );
+    return false;
+  });
+  return { reactionEarns };
+}
+
+// Longest a placement waits on `reactionEarns` (its own sync and two Redis reads) before answering false.
+export const REACTION_EARNS_MS = 1_500;
+
+/**
+ * Whether the placer reacting to this image would pay their own team, decided from what the award
+ * reads (points/award.ts awardOne, awardTurf): a worn hat pays its owner's team unless the reactor
+ * owns it; otherwise live turf pays the turf map entry's credited players, never the reactor. Read
+ * from the map, not the stickers: until a sync writes it, a reaction scores on the old map, which
+ * may name another team. Ignores the daily per-owner cap.
+ */
+async function reactionPaysTeam(
+  event: TurfEvent,
+  imageId: number,
+  userId: number,
+  team: string,
+  synced: Promise<void>
+) {
+  const rule = event.scoring?.types?.reaction;
+  if (!rule?.entities.includes('Image') || !(await isEventPointsEnabled())) return false;
+  const key = `Image:${imageId}`;
+  const sameTeam = (other: string) => other.toLowerCase() === team.toLowerCase();
+  const rawHat = await sysRedis.hGet(eventPointKeys(event.name).hats, key);
+  const hat = rawHat ? decodeHat(rawHat) : undefined;
+  if (hat) return sameTeam(hat.team) && hat.ownerId !== userId;
+  if (event.turf.mode !== 'live') return false;
+  // This placement's sync first, so a lead it just took is in the map. A failed sync leaves the old
+  // map, which is still what a reaction scores on.
+  await synced.catch(() => undefined);
+  const rawEntry = await sysRedis.hGet(turfKeys(event.name).map, key);
+  const entry = rawEntry ? decodeTurfEntry(rawEntry) : undefined;
+  return !!entry && sameTeam(entry.team) && entry.players.some((p) => p !== userId);
 }
 
 /** A moderator takes a sticker off. Final: the player cannot place on that image again. */
@@ -458,7 +512,7 @@ function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | t
               SELECT threshold FROM "CreatorMilestone" WHERE key = ${TURF_SCORE_TIER_KEY}
             ))
         AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
-        AND NOT u."excludeFromLeaderboards"), false) AS eligible
+        AND (u.flags & ${UserFlag.ExcludeFromEventPoints}::int) = 0), false) AS eligible
     FROM "EventTurfSticker" s
     JOIN "User" u ON u.id = s."userId"
     JOIN "Image" i ON i.id = s."imageId"

@@ -621,6 +621,7 @@ describe('the advisory locks have exactly one call site', () => {
     'services/free-placement.service.ts',
     'services/game-frame-report.service.ts',
     'services/item-holder-lock.ts',
+    'services/model-version-gift.service.ts',
     'services/platform-feedback.service.ts',
     'services/scan-label-flag.service.ts',
     'services/storyline-placement.service.ts',

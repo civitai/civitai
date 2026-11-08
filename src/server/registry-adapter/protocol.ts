@@ -1,6 +1,6 @@
 /**
  * The registry source protocol, `Subscribe`, as `civitai/civitai-registry` defines it in
- * `spec/registry.md` @ 4166f34. It has two bindings, served from one core
+ * `spec/registry.md` @ 2709083. It has two bindings, served from one core
  * (`subscription.ts`): HTTP with server-sent events (`serve.ts`) and gRPC (`grpc.ts`).
  *
  * A subscription streams `upsert`* `live`, then `upsert`/`delete` with cursors, and `progress`

@@ -485,6 +485,7 @@
         }
       },
       "excludeFromLeaderboards": true,
+      "excludeFromEventPoints": true,
       "links": [
         {
           "url": "https://example.com/a",
@@ -579,6 +580,7 @@
         }
       },
       "excludeFromLeaderboards": true,
+      "excludeFromEventPoints": true,
       "links": [
         {
           "url": "https://example.com/a",
@@ -673,6 +675,7 @@
         }
       },
       "excludeFromLeaderboards": true,
+      "excludeFromEventPoints": true,
       "links": [
         {
           "url": "https://example.com/a",
@@ -760,6 +763,7 @@
       "publicSettings": null,
       "settings": null,
       "excludeFromLeaderboards": false,
+      "excludeFromEventPoints": false,
       "links": [
         {
           "url": "https://example.com/bare",
@@ -792,6 +796,7 @@
       "publicSettings": null,
       "settings": null,
       "excludeFromLeaderboards": false,
+      "excludeFromEventPoints": false,
       "links": [
         {
           "url": "https://example.com/bare",

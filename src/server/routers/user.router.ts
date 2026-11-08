@@ -37,6 +37,7 @@ import {
   getUserSettingsHandler,
   getUserTagsHandler,
   setLeaderboardEligibilityHandler,
+  setEventPointsExclusionHandler,
   setUserSettingHandler,
   toggleArticleEngagementHandler,
   toggleBanHandler,
@@ -425,6 +426,9 @@ export const userRouter = router({
   setLeaderboardEligibility: moderatorProcedure
     .input(setLeaderboardEligbilitySchema)
     .mutation(setLeaderboardEligibilityHandler),
+  setEventPointsExclusion: moderatorProcedure
+    .input(setLeaderboardEligbilitySchema)
+    .mutation(setEventPointsExclusionHandler),
   requestAdToken: verifiedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .mutation(({ ctx }) => requestAdToken({ userId: ctx.user.id })),

@@ -15,7 +15,7 @@
 // - A sourceId names one (kind, entity, person), e.g. one person's reactions on one image. Its adds
 //   count only while its latest row is an add: removing the last reaction nets it out, reacting
 //   again brings it back.
-// - People in restrictedUsers (banned, deleted, excluded from leaderboards) neither give nor earn.
+// - People in restrictedUsers (banned, deleted, excluded from event points) neither give nor earn.
 //   Actors with an id from newAccountMinId (registered inside the new-account window) give nothing.
 //   Both are read from Postgres "User" by the caller.
 // - Nobody earns from acting on their own hat.

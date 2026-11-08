@@ -18,6 +18,7 @@ const noop: SessionRegistry = {
   async invalidateToken() {},
   async invalidateFamily() {},
   async invalidateUserSessions() {},
+  async invalidateImpersonationsBy() {},
   async invalidateAll() {},
   async markForRefresh() {},
   async isRevoked() {
@@ -46,6 +47,7 @@ export const sessions: SessionRegistry = {
   invalidateToken: (tokenId, userId) => registry().invalidateToken(tokenId, userId),
   invalidateFamily: (familyId) => registry().invalidateFamily(familyId),
   invalidateUserSessions: (userId) => registry().invalidateUserSessions(userId),
+  invalidateImpersonationsBy: (moderatorId) => registry().invalidateImpersonationsBy(moderatorId),
   invalidateAll: () => registry().invalidateAll(),
   markForRefresh: (tokenId) => registry().markForRefresh(tokenId),
   isRevoked: (claims) => registry().isRevoked(claims),

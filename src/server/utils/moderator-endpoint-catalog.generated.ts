@@ -41,6 +41,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/homeblock/delete': () => import('~/pages/api/mod/homeblock/delete'),
   '/api/mod/homeblock/reorder': () => import('~/pages/api/mod/homeblock/reorder'),
   '/api/mod/homeblock/update': () => import('~/pages/api/mod/homeblock/update'),
+  '/api/mod/image/report-csam': () => import('~/pages/api/mod/image/report-csam'),
   '/api/mod/image/set-nsfw-level': () => import('~/pages/api/mod/image/set-nsfw-level'),
   '/api/mod/image/tag-vote': () => import('~/pages/api/mod/image/tag-vote'),
   '/api/mod/label-store/predictions': () => import('~/pages/api/mod/label-store/predictions'),
