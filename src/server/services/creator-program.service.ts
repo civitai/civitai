@@ -1237,7 +1237,6 @@ export const updateCashWithdrawal = async ({
     ...callerMetadata,
   };
 
-  // An already-refunded burn still gets its status recorded, never a second refund.
   if (REFUNDED_WITHDRAWAL_STATUSES.includes(status) && withdrawal.transactionId) {
     const transactionId = withdrawal.transactionId;
     if (!(await isWithdrawalBurnRefunded(transactionId, storedMetadata))) {

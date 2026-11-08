@@ -1,4 +1,5 @@
 import { BuzzApiError } from '@civitai/buzz';
+import { PGlite } from '@electric-sql/pglite';
 import { TRPCError } from '@trpc/server';
 import { describe, it, expect, vi, beforeEach, afterAll, afterEach, beforeAll } from 'vitest';
 import { REDIS_KEYS } from '~/server/redis/client';
@@ -7,6 +8,8 @@ import { CacheTTL } from '~/server/common/constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { BANKABLE_CUTOVER, MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
 import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
+import { CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import {
   PEAK_EARNING_PREDICATE_SQL,
   PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
@@ -1299,29 +1302,65 @@ describe('withdrawCash', () => {
 });
 
 // ─── updateCashWithdrawal refunds ─────────────────────────────────────────────────
-// Fakes the Buzz ledger (by external id) and the CashWithdrawal row, applying each raw UPDATE to it.
+// Fakes the Buzz ledger (by external id). The CashWithdrawal row lives in an in-process Postgres, so
+// the shipped claim, release and status SQL decide who refunds.
 describe('updateCashWithdrawal refunds', () => {
-  type FakeRow = { status: string; metadata: Record<string, unknown> };
+  type Row = { status: string; note: string | null; metadata: Record<string, unknown> };
+  let pg: PGlite;
   let ledger: Set<string>;
-  let table: Map<string, FakeRow>;
-  let writes: { id: string; status: string; metadata: Record<string, unknown>; text: string }[];
-  let claims: { text: string; ttl: string }[];
-  const sql = (strings: unknown) => (strings as string[]).join('?');
+  let writes: { status: string; metadata: Record<string, unknown> }[];
   const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
 
-  const seed = (status: string, metadata: Record<string, unknown> = {}) =>
-    table.set('withdrawal-1', { status, metadata });
+  const stored = async () =>
+    (
+      await pg.query<Row>(
+        `SELECT status, note, metadata FROM "CashWithdrawal" WHERE id = 'withdrawal-1'`
+      )
+    ).rows[0];
+  const seed = async (
+    status: string,
+    metadata: Record<string, unknown> = {},
+    note: string | null = null
+  ) => {
+    await pg.query(`DELETE FROM "CashWithdrawal"`);
+    await pg.query(
+      `INSERT INTO "CashWithdrawal" (id, "userId", "transactionId", amount, status, note, metadata)
+       VALUES ('withdrawal-1', $1, 'tx-burn', 9500, $2, $3, $4)`,
+      [userId, status, note, JSON.stringify(metadata)]
+    );
+  };
+  const setStoredClaim = (at: string | null) =>
+    at
+      ? pg.query(
+          `UPDATE "CashWithdrawal" SET metadata = metadata || jsonb_build_object('refundClaimedAt', $1::text)`,
+          [at]
+        )
+      : pg.query(`UPDATE "CashWithdrawal" SET metadata = metadata - 'refundClaimedAt'`);
   const refunds = () =>
     mockCreateBuzzTransaction.mock.calls.filter(
       ([input]) => (input as { type?: TransactionType }).type === TransactionType.Refund
     );
   const recordedStatus = () => writes.map((w) => w.status);
 
+  beforeAll(async () => {
+    pg = new PGlite();
+    const statuses = Object.values(CashWithdrawalStatus)
+      .map((s) => `'${s}'`)
+      .join(', ');
+    await pg.exec(`
+      CREATE TYPE "CashWithdrawalStatus" AS ENUM (${statuses});
+      CREATE TABLE "CashWithdrawal" (
+        id text PRIMARY KEY, "userId" int NOT NULL, "transactionId" text UNIQUE, amount int NOT NULL,
+        status "CashWithdrawalStatus" NOT NULL, note text, metadata jsonb NOT NULL DEFAULT '{}',
+        "updatedAt" timestamp(3)
+      );
+    `);
+  });
+  afterAll(() => pg.close());
+
   beforeEach(() => {
     ledger = new Set();
-    table = new Map();
     writes = [];
-    claims = [];
     mockGetTransactionByExternalId
       .mockReset()
       .mockImplementation(async (id: string) =>
@@ -1335,45 +1374,26 @@ describe('updateCashWithdrawal refunds', () => {
       }
     );
     mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockImplementation(
-      async ({ where }: { where: { id: string } }) => {
-        const row = table.get(where.id);
-        if (!row) return null;
-        return {
-          id: where.id,
-          userId,
-          status: row.status,
-          transactionId: 'tx-burn',
-          amount: 9500,
-          metadata: { ...row.metadata },
-        };
+      async ({ where }: { where: { id: string } }) =>
+        (
+          await pg.query(
+            `SELECT id, "userId", status, "transactionId", amount, metadata
+             FROM "CashWithdrawal" WHERE id = $1`,
+            [where.id]
+          )
+        ).rows[0] ?? null
+    );
+    const raw = pgliteRaw(pg);
+    mockDbWrite.$executeRaw.mockImplementation(
+      async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const affected = await raw.executeRaw(strings, ...values);
+        if (strings.join('').includes('::"CashWithdrawalStatus"')) {
+          const { status, metadata } = await stored();
+          writes.push({ status, metadata });
+        }
+        return affected;
       }
     );
-    mockDbWrite.$executeRaw.mockImplementation(async (strings: unknown, ...values: unknown[]) => {
-      const text = sql(strings);
-      if (text.includes("'refundClaimedAt', now()")) {
-        const [id, ttl] = values as [string, string];
-        claims.push({ text: text.replace(/\s+/g, ' '), ttl });
-        const row = table.get(id);
-        const at = row?.metadata.refundClaimedAt as string | undefined;
-        if (!row || (at && Date.parse(at) > Date.now() - 15 * 60_000)) return 0;
-        row.metadata.refundClaimedAt = new Date().toISOString();
-        return 1;
-      }
-      if (text.includes("- 'refundClaimedAt'")) {
-        delete table.get(values[0] as string)?.metadata.refundClaimedAt;
-        return 1;
-      }
-      if (text.includes('::"CashWithdrawalStatus"')) {
-        const [status, , json, id] = values as [string, string | null, string, string];
-        const row = table.get(id)!;
-        row.status = status;
-        const merges = /metadata = metadata \|\| \?::jsonb/.test(text);
-        row.metadata = merges ? { ...row.metadata, ...JSON.parse(json) } : JSON.parse(json);
-        writes.push({ id, status, metadata: row.metadata, text: text.replace(/\s+/g, ' ') });
-        return 1;
-      }
-      return 1;
-    });
   });
 
   afterEach(() => {
@@ -1384,18 +1404,13 @@ describe('updateCashWithdrawal refunds', () => {
     mockRefundTransaction.mockReset().mockResolvedValue(undefined);
   });
 
-  // The fake above decides who wins the claim, so pin the real predicate it stands in for:
-  // no claim yet, OR a claim OLDER than the TTL (a flipped comparison would steal live claims).
-  it('claims a refund only when no claim exists or the one there is older than the TTL', async () => {
-    seed('Scheduled');
+  it('claims and refunds a withdrawal no caller has claimed yet', async () => {
+    await seed('Scheduled');
 
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
 
-    expect(claims).toHaveLength(1);
-    expect(claims[0].text).toContain(
-      "(metadata->>'refundClaimedAt')::timestamptz < now() - ?::interval"
-    );
-    expect(claims[0].ttl).toBe('15 minutes');
+    expect(refunds()).toHaveLength(1);
+    expect((await stored()).metadata.refundClaimedAt).toEqual(expect.any(String));
   });
 
   it('refunds once when a send that failed is later errored by Tipalti', async () => {
@@ -1411,7 +1426,7 @@ describe('updateCashWithdrawal refunds', () => {
       tipaltiWithdrawalMethod: 'ACH',
     });
     mockDbWrite.cashWithdrawal.create.mockResolvedValue({ id: 'withdrawal-1' });
-    seed('InternalValue');
+    await seed('InternalValue');
     mockPayToTipaltiAccount.mockRejectedValueOnce(new Error('timeout'));
     mockRefundTransaction.mockImplementation(async (id: string) => {
       ledger.add(`refund-${id}`);
@@ -1421,7 +1436,7 @@ describe('updateCashWithdrawal refunds', () => {
     expect(mockRefundTransaction.mock.calls.map(([id]) => id)).toEqual(['tx-burn']);
 
     // Tipalti had accepted the payment after all, approved and scheduled it, then it failed.
-    seed('Scheduled');
+    await seed('Scheduled');
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
 
     expect(refunds()).toEqual([]);
@@ -1431,7 +1446,7 @@ describe('updateCashWithdrawal refunds', () => {
   it('does not refund again a withdrawal whose row records an earlier refund', async () => {
     // Rows refunded under the old bare-id key always stored refundTransactionId; that stored
     // value alone must stop a second refund.
-    seed('Paid', { refundTransactionId: 'tx-old-refund' });
+    await seed('Paid', { refundTransactionId: 'tx-old-refund' });
 
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' });
 
@@ -1442,7 +1457,7 @@ describe('updateCashWithdrawal refunds', () => {
   // Deliberate: the ledger lookup route may also resolve a transaction by its own id, so asking
   // it for the bare burn id could read every burn as refunded and withhold every refund.
   it('never asks the ledger about the bare burn transaction id', async () => {
-    seed('Scheduled');
+    await seed('Scheduled');
 
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
 
@@ -1451,7 +1466,7 @@ describe('updateCashWithdrawal refunds', () => {
   });
 
   it('records a move from Rejected to Canceled without a second refund', async () => {
-    seed('Scheduled');
+    await seed('Scheduled');
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' });
 
@@ -1461,7 +1476,7 @@ describe('updateCashWithdrawal refunds', () => {
   });
 
   it('refunds once when two cancels arrive together, and refuses the other', async () => {
-    seed('Scheduled');
+    await seed('Scheduled');
 
     const results = await Promise.allSettled([
       updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' }),
@@ -1475,7 +1490,7 @@ describe('updateCashWithdrawal refunds', () => {
   });
 
   it('releases the claim when the refund fails, so a retry can refund', async () => {
-    seed('Scheduled');
+    await seed('Scheduled');
     mockCreateBuzzTransaction.mockRejectedValueOnce(new Error('buzz down'));
 
     await expect(
@@ -1488,37 +1503,37 @@ describe('updateCashWithdrawal refunds', () => {
   });
 
   it('takes over a claim left by a caller that died, and refuses a live one', async () => {
-    seed('Scheduled', { refundClaimedAt: minutesAgo(1) });
+    await seed('Scheduled', { refundClaimedAt: minutesAgo(1) });
     await expect(
       updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' })
     ).rejects.toThrow('already in progress');
     expect(refunds()).toEqual([]);
 
-    seed('Scheduled', { refundClaimedAt: minutesAgo(20) });
+    await seed('Scheduled', { refundClaimedAt: minutesAgo(20) });
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' });
     expect(refunds()).toHaveLength(1);
   });
 
   it('does not write back a claim it read but did not take', async () => {
     // Read while another caller held the claim; that caller then failed and released it.
-    seed('Scheduled', { refundClaimedAt: minutesAgo(1) });
+    await seed('Scheduled', { refundClaimedAt: minutesAgo(1) });
     mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockImplementationOnce(async () => {
       const read = { id: 'withdrawal-1', userId, status: 'Scheduled', transactionId: 'tx-burn' };
-      delete table.get('withdrawal-1')!.metadata.refundClaimedAt;
+      await setStoredClaim(null);
       return { ...read, amount: 9500, metadata: { refundClaimedAt: minutesAgo(1) } };
     });
 
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Submitted' });
 
-    expect(table.get('withdrawal-1')!.metadata).not.toHaveProperty('refundClaimedAt');
+    expect((await stored()).metadata).not.toHaveProperty('refundClaimedAt');
   });
 
   // An overwrite here would wipe a refund claim another caller stored after this one read the row.
   it('keeps a claim stored between the read and the status write', async () => {
-    seed('Scheduled');
+    await seed('Scheduled');
     const claimedAt = minutesAgo(0);
     mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockImplementationOnce(async () => {
-      table.get('withdrawal-1')!.metadata.refundClaimedAt = claimedAt;
+      await setStoredClaim(claimedAt);
       return {
         id: 'withdrawal-1',
         userId,
@@ -1531,12 +1546,19 @@ describe('updateCashWithdrawal refunds', () => {
 
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Submitted' });
 
-    expect(writes[0].text).toContain('metadata = metadata || ?::jsonb');
-    expect(table.get('withdrawal-1')!.metadata.refundClaimedAt).toBe(claimedAt);
+    expect((await stored()).metadata.refundClaimedAt).toBe(claimedAt);
+  });
+
+  it('keeps the stored note when the update omits one', async () => {
+    await seed('Scheduled', {}, 'held for review');
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Submitted' });
+
+    expect(await stored()).toMatchObject({ status: 'Submitted', note: 'held for review' });
   });
 
   it('refunds even when the caller passes a refund id in metadata', async () => {
-    seed('Scheduled');
+    await seed('Scheduled');
 
     await updateCashWithdrawal({
       withdrawalId: 'withdrawal-1',
@@ -1549,7 +1571,7 @@ describe('updateCashWithdrawal refunds', () => {
   });
 
   it('refunds the withdrawal less Tipalti fees and records the fees once', async () => {
-    seed('Scheduled');
+    await seed('Scheduled');
 
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected', fees: 100 });
 
@@ -1568,7 +1590,7 @@ describe('updateCashWithdrawal refunds', () => {
   // as refund-<transactionId>. Both paths must use that one id. Do not change it without
   // changing that path and isWithdrawalBurnRefunded too.
   it('refunds under the same external id as the withdrawCash failure path', async () => {
-    seed('InternalValue');
+    await seed('InternalValue');
 
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
 
@@ -1580,7 +1602,7 @@ describe('updateCashWithdrawal refunds', () => {
   it('logs an error when a refunded withdrawal is later reported paid', async () => {
     // Refunded by withdrawCash, then approved and scheduled before Tipalti reports it paid.
     ledger.add('refund-tx-burn');
-    seed('Scheduled');
+    await seed('Scheduled');
 
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Paid' });
 
@@ -1593,8 +1615,17 @@ describe('updateCashWithdrawal refunds', () => {
     expect(recordedStatus()).toEqual(['Paid']);
   });
 
+  it('still records Paid when the ledger cannot be read for the paid-after-refund check', async () => {
+    await seed('Scheduled');
+    mockGetTransactionByExternalId.mockRejectedValue(new Error('buzz down'));
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Paid' });
+
+    expect((await stored()).status).toBe('Paid');
+  });
+
   it('does not log paid-after-refund when a withdrawal that was never refunded is paid', async () => {
-    seed('Scheduled');
+    await seed('Scheduled');
 
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Paid' });
 
