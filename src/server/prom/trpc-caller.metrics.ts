@@ -10,26 +10,24 @@ import {
 // tRPC caller class: who spends procedure time, by path
 // ---------------------------------------------------------------------------
 //
-// Two counters with the same labels, recorded once per procedure call beside the duration
-// histogram (`civitai_app_trpc_procedure_duration_seconds`) and with the same `path` value, so
-// the three join on `path`:
-//   - `civitai_app_trpc_caller_total{path,caller}`: calls.
+// One counter, recorded once per procedure call beside the duration histogram
+// (`civitai_app_trpc_procedure_duration_seconds`) and with the same `path` value, so the two join
+// on `path`:
 //   - `civitai_app_trpc_caller_seconds_sum{path,caller}`: wall-clock seconds those calls took.
-// No buckets: the histogram already carries the latency shape, this only splits the volume and
-// the time by caller class.
-//
+// No buckets and no per-call count: the histogram already carries the latency shape and the call
+// count by path; this only splits the time by caller class, at one series per (path, caller).
+
 // CARDINALITY: `caller` takes exactly the five values in TRPC_CALLER_CLASSES, never anything
 // derived from the request. A user agent is matched against a fixed token list and only the
 // resulting class is a label. `path` is the procedure name, the same bounded set as the histogram.
 //
-// HOT PATH: one anchored regex test on the user agent (anonymous callers only) and two number
-// additions per call. A prom-client `inc` costs a label hash and validation (~0.4 us each, measured),
-// so calls accumulate in plain per-(path, caller) cells and are folded into the counters by the
-// counters' own `collect`, which prom-client runs on every scrape. A call allocates nothing after
+// HOT PATH: one anchored regex test on the user agent (anonymous callers only) and one number
+// addition per call. A prom-client `inc` costs a label hash and validation (~0.4 us each, measured),
+// so seconds accumulate in plain per-(path, caller) cells and are folded into the counter by its
+// own `collect`, which prom-client runs on every scrape. A call allocates nothing after
 // the first one for its pair. `caller` must be one of TRPC_CALLER_CLASSES: the type enforces it
 // and `safeClassifyTrpcCaller` is the only producer.
 
-export const TRPC_CALLER_TOTAL_METRIC = PROM_PREFIX + 'trpc_caller_total';
 export const TRPC_CALLER_SECONDS_METRIC = PROM_PREFIX + 'trpc_caller_seconds_sum';
 
 export const TRPC_CALLER_CLASSES = [
@@ -123,8 +121,8 @@ export function classifyTrpcCaller(input: TrpcCallerInput): TrpcCallerClass {
 
 type CallerLabels = { path: string; caller: TrpcCallerClass };
 
-/** Calls and seconds recorded since the last scrape, for one (path, caller) pair. */
-type Cell = { labels: CallerLabels; calls: number; seconds: number };
+/** Seconds recorded since the last scrape, for one (path, caller) pair. */
+type Cell = { labels: CallerLabels; seconds: number };
 
 type Pending = Map<string, Partial<Record<TrpcCallerClass, Cell>>>;
 
@@ -139,19 +137,8 @@ declare global {
 // re-evaluation) of this module records into, not only the one that created them.
 const pending: Pending = (globalThis.__civitaiTrpcCallerPending ??= new Map());
 
-// Each counter drains its own field of every cell when it is read (prom-client calls `collect`
-// from `get()`, i.e. on every scrape), so a scrape always exports every call recorded before it.
-function drainCalls(this: Counter<'path' | 'caller'>) {
-  for (const byCaller of pending.values()) {
-    for (const cell of Object.values(byCaller)) {
-      if (cell && cell.calls > 0) {
-        this.inc(cell.labels, cell.calls);
-        cell.calls = 0;
-      }
-    }
-  }
-}
-
+// The counter drains every cell when it is read (prom-client calls `collect` from `get()`, i.e. on
+// every scrape), so a scrape always exports every second recorded before it.
 function drainSeconds(this: Counter<'path' | 'caller'>) {
   for (const byCaller of pending.values()) {
     for (const cell of Object.values(byCaller)) {
@@ -165,22 +152,11 @@ function drainSeconds(this: Counter<'path' | 'caller'>) {
 
 function ensureCounters() {
   registerInstrumentationMetric(
-    TRPC_CALLER_TOTAL_METRIC,
-    () =>
-      new client.Counter({
-        name: TRPC_CALLER_TOTAL_METRIC,
-        help: 'tRPC procedure calls by procedure path and caller class (session, api_key, anon_browser, anon_tool_ua, internal). `path` matches civitai_app_trpc_procedure_duration_seconds.',
-        labelNames: ['path', 'caller'] as const,
-        registers: [instrumentationRegistry],
-        collect: drainCalls,
-      })
-  );
-  registerInstrumentationMetric(
     TRPC_CALLER_SECONDS_METRIC,
     () =>
       new client.Counter({
         name: TRPC_CALLER_SECONDS_METRIC,
-        help: 'Wall-clock seconds spent in tRPC procedures (full chain + resolver) by procedure path and caller class. Divide by civitai_app_trpc_caller_total for the mean.',
+        help: 'Wall-clock seconds spent in tRPC procedures (full chain + resolver) by procedure path and caller class. Divide by civitai_app_trpc_procedure_duration_seconds_count for a path to get its mean per call.',
         labelNames: ['path', 'caller'] as const,
         registers: [instrumentationRegistry],
         collect: drainSeconds,
@@ -188,14 +164,14 @@ function ensureCounters() {
   );
 }
 
-// Registered at import so both series families exist on the first scrape.
+// Registered at import so the series family exists on the first scrape.
 try {
   ensureCounters();
 } catch {
   // A registration failure must not break the module that imports this one.
 }
 
-/** One call: +1 call and +`seconds` for (path, caller), exported on the next scrape. Never throws. */
+/** One call: +`seconds` for (path, caller), exported on the next scrape. Never throws. */
 export function recordTrpcCaller(path: string, caller: TrpcCallerClass, seconds: number) {
   try {
     let byCaller = pending.get(path);
@@ -205,12 +181,10 @@ export function recordTrpcCaller(path: string, caller: TrpcCallerClass, seconds:
     }
     let cell = byCaller[caller];
     if (!cell) {
-      cell = { labels: { path, caller }, calls: 0, seconds: 0 };
+      cell = { labels: { path, caller }, seconds: 0 };
       byCaller[caller] = cell;
     }
-    cell.calls += 1;
-    // A counter rejects a negative or non-finite increment; a clock that went backwards loses
-    // only this call's seconds, not its count.
+    // A counter rejects a negative or non-finite increment; such a duration is dropped.
     if (seconds > 0 && seconds !== Infinity) cell.seconds += seconds;
   } catch {
     // Losing one increment is fine.

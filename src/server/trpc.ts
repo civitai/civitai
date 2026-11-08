@@ -235,8 +235,8 @@ const enforceTokenScope = t.middleware(({ ctx, meta, path, next }) =>
 const TRPC_PROCEDURE_METRICS = process.env.TRPC_PROCEDURE_METRICS === 'true';
 
 // OPT-IN via TRPC_CALLER_METRICS=true, separately from the histogram above: the caller-class
-// counters (`~/server/prom/trpc-caller.metrics`) emit up to (procedures x 5 caller classes x 2)
-// series per process, so they get their own switch and can be enabled without the histogram.
+// seconds counter (`~/server/prom/trpc-caller.metrics`) emits up to (procedures x 5 caller
+// classes) series per process, so it gets its own switch and can be enabled without the histogram.
 const TRPC_CALLER_METRICS = process.env.TRPC_CALLER_METRICS === 'true';
 
 // The actual procedure-timing logic. Generic over `next`'s return type so it
