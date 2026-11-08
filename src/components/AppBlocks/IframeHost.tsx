@@ -43,7 +43,11 @@ import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import {
+  CONSENT_NOTICE_NOT_DISMISSED,
+  consentNoticeHighlightPlayed,
+  dismissConsentNotice,
   resolveAdvertisedScopes,
+  resolveConsentNoticeAfterRefusal,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveSourcePublishConsentRequest,
@@ -88,6 +92,7 @@ import {
 import {
   classifyEntityReactionError,
   createReactionReplyLatch,
+  entityReactionRefusedScopes,
   resolveGetEntityReactionsRequest,
   resolveSetEntityReactionRequest,
 } from './reactionGate';
@@ -1345,8 +1350,9 @@ export function IframeHost({
   // app rather than a bare boolean for the same reason PageBlockHost's is: the slot
   // can swap installs without unmounting, and a dismissal must not carry over to a
   // DIFFERENT app's permissions. Per-mount on purpose — nothing persists it, so a
-  // dismissal is "not now", not "never".
-  const [consentNoticeDismissedFor, setConsentNoticeDismissedFor] = useState<string | null>(null);
+  // dismissal is "not now", not "never" — and a refusal for a permission the viewer can
+  // still grant ends it early (`reviveConsentNoticeOnRefusal` below).
+  const [consentNotice, setConsentNotice] = useState(CONSENT_NOTICE_NOT_DISMISSED);
   const [iframeHeight, setIframeHeight] = useState<number>(
     install.manifest.iframe?.minHeight ?? 200
   );
@@ -2030,6 +2036,29 @@ export function IframeHost({
     return off;
     // `status` deliberately absent — see the RESIZE_IFRAME deps note.
   }, [onMessage, readGateStatus]);
+
+  // A request the app made was refused for `refusedScopes`. Whether that brings a
+  // dismissed missing-permissions notice back is decided ONLY by
+  // `resolveConsentNoticeAfterRefusal`, shared with PageBlockHost; this is the wiring.
+  // A functional update, so it never reads a stale dismissal; `missingScopes` through a
+  // render-body mirror, so it reads the set current when the refusal LANDS (the server
+  // path resolves after an await, possibly across a token refresh) and the reaction
+  // listener does not re-subscribe on every refresh because of it.
+  const missingScopesRef = useRef(missingScopes);
+  missingScopesRef.current = missingScopes;
+  const reviveConsentNoticeOnRefusal = useCallback(
+    (refusedScopes: readonly string[]) => {
+      if (refusedScopes.length === 0) return;
+      setConsentNotice((current) =>
+        resolveConsentNoticeAfterRefusal(current, {
+          appBlockId: install.appBlockId,
+          refusedScopes,
+          missingScopes: missingScopesRef.current,
+        })
+      );
+    },
+    [install.appBlockId]
+  );
 
   /**
    * Open the host's consent UI for a set of withheld scopes.
@@ -3285,6 +3314,10 @@ export function IframeHost({
       });
       if (gate.kind === 'drop') return;
       if (gate.kind === 'refuse') {
+        // A reaction refused for the missing `social:react:self` grant brings a
+        // dismissed notice back. SET only: GET_ENTITY_REACTIONS is a background read an
+        // app can make on every image, and reviving on it would undo every dismissal.
+        reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(gate.error));
         send('ENTITY_REACTION_RESULT', { requestId: gate.requestId, error: gate.error });
         return;
       }
@@ -3306,7 +3339,9 @@ export function IframeHost({
           });
           latch.reply({ result });
         } catch (err) {
-          latch.reply({ error: classifyEntityReactionError(err) });
+          const error = classifyEntityReactionError(err);
+          reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(error));
+          latch.reply({ error });
         }
       })();
     });
@@ -3320,6 +3355,7 @@ export function IframeHost({
     grantedScopes,
     trpcUtils,
     reportNoToken,
+    reviveConsentNoticeOnRefusal,
   ]);
 
   useEffect(() => {
@@ -3387,6 +3423,20 @@ export function IframeHost({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The missing-permissions notice's scopes for this render, or null for no notice.
+  // `status` DIRECTLY, not `readGateStatus()`. The ref exists so a message HANDLER can
+  // see a status React has not yet flushed an effect for; a render has the state
+  // itself, and a ref read cannot schedule the re-render that makes this notice
+  // appear. Reading the ref here would happen to work today (the render body writes it
+  // before `framed()` runs) for a reason that has nothing to do with why it is correct.
+  const consentNoticeScopes = resolveHostConsentNotice({
+    status,
+    needsConsent,
+    missingScopes,
+    dismissedFor: consentNotice.dismissedFor,
+    appBlockId: install.appBlockId,
+  });
+
   // W7 host trust frame: wraps the LOADING + READY states (rendered here,
   // around the iframe, not inside it — so a block can't fake/restyle/hide the
   // "App block" provenance chrome). Terminal-FAILURE states no longer render
@@ -3443,21 +3493,11 @@ export function IframeHost({
           "never grant scopes from the sandbox" gate belongs there, and passing a
           constant `false` here would only invite someone to wire it to the wrong
           thing. */}
-      {resolveHostConsentNotice({
-        // `status` DIRECTLY, not `readGateStatus()`. The ref exists so a message
-        // HANDLER can see a status React has not yet flushed an effect for; a render
-        // has the state itself, and a ref read cannot schedule the re-render that
-        // makes this notice appear. Reading the ref here would happen to work today
-        // (the render body writes it before `framed()` runs) for a reason that has
-        // nothing to do with why it is correct.
-        status,
-        needsConsent,
-        missingScopes,
-        dismissedFor: consentNoticeDismissedFor,
-        appBlockId: install.appBlockId,
-      }) != null && (
+      {consentNoticeScopes != null && (
         <BlockConsentNotice
           appName={install.manifest.name}
+          missingScopes={consentNoticeScopes}
+          highlight={consentNotice.revived}
           onReview={() => {
             // Recomputed at CLICK time, not captured at render: a TOKEN_REFRESH
             // between the two can shrink the missing set, and granting a scope the
@@ -3465,7 +3505,10 @@ export function IframeHost({
             const scopes = resolveRequestConsent(readGateStatus(), missingScopes ?? []);
             if (scopes != null) openConsentModal(scopes);
           }}
-          onDismiss={() => setConsentNoticeDismissedFor(install.appBlockId)}
+          onDismiss={() =>
+            setConsentNotice((current) => dismissConsentNotice(current, install.appBlockId))
+          }
+          onHighlightPlayed={() => setConsentNotice(consentNoticeHighlightPlayed)}
         />
       )}
       {children}

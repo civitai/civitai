@@ -114,10 +114,14 @@ vi.mock('~/server/services/model-cover.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelCoverService>()),
   assertCoverImagesValid: mockAssertCoverImagesValid,
 }));
-const { mockQueueComFaceRecheck } = vi.hoisted(() => ({ mockQueueComFaceRecheck: vi.fn() }));
+const { mockQueueComFaceRecheck, mockQueueComFaceRestore } = vi.hoisted(() => ({
+  mockQueueComFaceRecheck: vi.fn(),
+  mockQueueComFaceRestore: vi.fn(),
+}));
 vi.mock('~/server/services/model-com-face-recheck.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ComFaceRecheck>()),
   queueComFaceRecheck: mockQueueComFaceRecheck,
+  queueComFaceRestore: mockQueueComFaceRestore,
 }));
 const { mockPreviewComFaceIntent, mockPreviewTextScanNsfw } = vi.hoisted(() => ({
   mockPreviewComFaceIntent: vi.fn(),
@@ -1073,6 +1077,20 @@ describe('.com face re-check after a listing edit', () => {
     expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
   });
 
+  it('arms the restore check on a .red listing edit only, not on a .com edit', async () => {
+    mockStored({ sfwName: 'Retro Style', sfwCoverImageId: null });
+    mockPreviewComFaceIntent.mockResolvedValue({
+      status: 'ok',
+      output: { detected: false, reason: 'stub' },
+    });
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'ok', level: 1, reason: 'stub' });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style 2' });
+    expect(mockQueueComFaceRestore).not.toHaveBeenCalled();
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, description: 'New description' });
+    expect(mockQueueComFaceRestore).toHaveBeenCalledWith(MODEL_ID);
+  });
+
   it('does not queue it for a model without a .com face', async () => {
     await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed' });
     expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
@@ -1164,6 +1182,18 @@ describe('.com face re-check after a listing edit', () => {
       },
     });
     await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, sfwCoverImageId: 6 });
+    expect(updateData().meta).not.toHaveProperty('comFaceRemoved');
+  });
+
+  it('drops the removal marker when the owner turns the face off', async () => {
+    mockStored({
+      sfwName: 'Retro Style',
+      sfwCoverImageId: null,
+      meta: {
+        comFaceRemoved: { at: '2026-11-05T00:00:00.000Z', sfwCoverImageId: 5, reason: 'detected' },
+      },
+    });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: null });
     expect(updateData().meta).not.toHaveProperty('comFaceRemoved');
   });
 });
@@ -1415,7 +1445,11 @@ describe("a moderator's untick of a text-scan POI flag", () => {
     poi: true,
     sfwOnly: true,
     lockedProperties: ['poi', 'nsfw', 'sfwOnly'],
-    meta: { textScanFlags: { poi: { textHash: 'h', prev: { lockedProperties: prevLocks } } } },
+    meta: {
+      textScanFlags: {
+        poi: { workflowId: 'wf', textHash: 'h', prev: { lockedProperties: prevLocks } },
+      },
+    },
   });
   // What the model form sends: the loaded locks, less the poi lock if the moderator removed it.
   const formLift = (extra: Partial<ModelUpsertInput> = {}) =>
@@ -1461,6 +1495,17 @@ describe("a moderator's untick of a text-scan POI flag", () => {
 
   it('strips nothing from a flag that recorded no prior locks', async () => {
     mockStored({ ...scanFlagged([]), meta: { textScanFlags: { poi: { textHash: 'h' } } } });
+    await formLift();
+    expect(updateData().lockedProperties).toEqual(['nsfw', 'sfwOnly']);
+  });
+
+  // An appeal grant, or a moderator's lift, stamps `appealGranted`; a POI set by hand after it is
+  // not the scan's, and the old snapshot does not describe its locks.
+  it('strips nothing once the scan flag was ruled on and POI was set again by hand', async () => {
+    const flagged = scanFlagged([]);
+    const appealGranted = { at: '2026-11-01T00:00:00Z', by: MODERATOR_ID, via: 'moderator' };
+    const poi = { ...flagged.meta.textScanFlags.poi, appealGranted };
+    mockStored({ ...flagged, meta: { textScanFlags: { poi } } });
     await formLift();
     expect(updateData().lockedProperties).toEqual(['nsfw', 'sfwOnly']);
   });

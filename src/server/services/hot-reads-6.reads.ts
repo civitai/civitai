@@ -287,6 +287,8 @@ export const downloadFileSelect = {
   type: true,
   metadata: true,
   sizeKB: true,
+  pickleScanResult: true,
+  virusScanResult: true,
   hashes: { select: { hash: true }, where: { type: 'SHA256' as const } },
 };
 
@@ -304,6 +306,8 @@ export async function readDownloadFilesViaKysely(
     type: row.type,
     metadata: row.metadata as Prisma.JsonValue,
     sizeKB: row.sizeKB,
+    pickleScanResult: row.pickleScanResult,
+    virusScanResult: row.virusScanResult,
     hashes: row.hashes.map((hash) => ({ hash: hash.hash })),
   }));
 }

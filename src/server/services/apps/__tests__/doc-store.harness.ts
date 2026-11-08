@@ -34,6 +34,15 @@ export const MIGRATION_APP_PURGE_DOWN = path.resolve(
   __dirname,
   '../migrations/20261102120000_appdata_app_purge.down.sql'
 );
+/** The `doc.schema_major` column. Off by default: a suite opts in, as an environment would. */
+export const MIGRATION_SCHEMA_MAJOR_UP = path.resolve(
+  __dirname,
+  '../migrations/20261106130000_appdata_doc_schema_major.sql'
+);
+export const MIGRATION_SCHEMA_MAJOR_DOWN = path.resolve(
+  __dirname,
+  '../migrations/20261106130000_appdata_doc_schema_major.down.sql'
+);
 
 export type Row = Record<string, unknown>;
 
@@ -169,10 +178,13 @@ export async function createPgliteHarness(opts: {
   rls: boolean;
   /** Apply the app-purge policy migration too (default true). */
   appPurgePolicy?: boolean;
+  /** Apply the `doc.schema_major` migration too (default false). */
+  schemaMajor?: boolean;
 }): Promise<Harness> {
   const pg = new PGlite();
   await pg.exec(readFileSync(MIGRATION_UP, 'utf8'));
   if (opts.appPurgePolicy !== false) await pg.exec(readFileSync(MIGRATION_APP_PURGE_UP, 'utf8'));
+  if (opts.schemaMajor) await pg.exec(readFileSync(MIGRATION_SCHEMA_MAJOR_UP, 'utf8'));
   if (!opts.rls) {
     for (const t of APPDATA_TABLES) {
       await pg.exec(`ALTER TABLE appdata.${t} DISABLE ROW LEVEL SECURITY`);
@@ -256,6 +268,10 @@ export async function createRealPgHarness(): Promise<Harness> {
   await su.query(readFileSync(MIGRATION_UP, 'utf8'));
   await su.query(readFileSync(MIGRATION_APP_PURGE_UP, 'utf8'));
   const open = new Set<Client>();
+  // Ends started by release() and not awaited there. close() waits for them before the FORCE drop:
+  // a client still closing when its backend is killed gets a FATAL 57P01 with no 'error' listener,
+  // which Vitest reports as an unhandled error.
+  const ending = new Set<Promise<void>>();
 
   async function newClient(role: string | null): Promise<Client> {
     const c = new Client({ connectionString: dbUrl });
@@ -278,7 +294,9 @@ export async function createRealPgHarness(): Promise<Harness> {
           },
           release() {
             open.delete(c);
-            void c.end();
+            const done = c.end().catch(() => undefined);
+            ending.add(done);
+            void done.then(() => ending.delete(done));
           },
         };
         return recording(inner, h);
@@ -310,6 +328,7 @@ export async function createRealPgHarness(): Promise<Harness> {
     },
     async close() {
       await Promise.all([...open].map((c) => c.end().catch(() => undefined)));
+      await Promise.all(ending);
       await su.end();
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
       await admin.end();

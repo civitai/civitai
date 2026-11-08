@@ -37,7 +37,13 @@ export type RemixAsk =
       image?: RemixImage;
     }
   | { kind: 'pick'; prompt: string; images: RemixImage[] }
-  | { kind: 'text'; prompt: string; maxLength: number };
+  | {
+      kind: 'text';
+      prompt: string;
+      maxLength: number;
+      /** Answerable with '' (a Skip), which the app gets as ''. */
+      optional?: boolean;
+    };
 
 /**
  * An ask as the viewer receives it: a pick's images the viewer may not see are `null`, so every
@@ -68,8 +74,8 @@ export type RemixApp = {
   engine: { safe: RemixAppEngine; mature?: RemixAppEngine };
   /**
    * Must be deterministic over `ctx`: no clock, randomness or I/O outside `ctx`. The host re-runs
-   * it from the start on every advance and feeds back the recorded results. Its first effect
-   * must be a `workflow`; replay refuses an app that asks first.
+   * it from the start on every advance and feeds back the recorded results. Answers given before
+   * its first `workflow` are recorded on that workflow, so it must reach one.
    */
   run(ctx: RemixCtx): Promise<RemixImage[]>;
 };

@@ -154,9 +154,9 @@ export function legacyListingSlugForViewer(
  *
  *   1. STORE-SCOPE KIND — `scope === 'public-external' && row.kind !== 'offsite'`.
  *   2. DEPLOY — `row.kind === 'onsite' && appBlock.currentVersionDeployedAt == null`.
- *   3. MATURITY — `!redCapable && isMatureContentRating(row.contentRating)`.
+ *   3. MATURITY — applied in the page's injected lookup (`legacyListingSlugForViewer`).
  *
- * ## (1) AND (3) ARE NOW APPLIED. (2) IS STILL OWED.
+ * ## (1) is applied here and (3) in the page's lookup; (2) is still owed.
  *
  * 🔴 THE ALIGNMENT ARGUMENT THIS COMMENT USED TO REST ON IS GONE — DO NOT RESTORE
  * IT. It said gate (1) was unreachable "by an accident of flag alignment": the page
@@ -185,11 +185,6 @@ export function legacyListingSlugForViewer(
  * moderator's `features.appListings` resolves true from its static
  * `availability: ['mod']` fallback while the server resolves scope `none`, so the
  * page gate grants where the data layer would serve nothing.
- *
- (3) MATURITY is now applied too, in the page's injected lookup
- * (`legacyListingSlugForViewer`): an R/X app the request may not see — off a
- * mature-capable site, or outside the viewer's browsing level on one — is not
- * redirected to.
  *
  * STILL OWED (deliberately not done here — it needs another input threaded into
  * this SSR resolver, and it is not reachable today): a `currentVersionDeployedAt`

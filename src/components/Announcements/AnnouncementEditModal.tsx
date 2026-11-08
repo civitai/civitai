@@ -43,6 +43,7 @@ const schema = z.object({
   linkUrl: z.string().optional(),
   targetUserIds: z.string().optional(),
   notifyTargetedUsers: z.boolean().optional(),
+  statusPage: z.boolean().optional(),
 });
 
 export const UPLOAD_IN_FLIGHT_MESSAGE = 'Wait for the banner image to finish uploading.';
@@ -91,6 +92,7 @@ export function AnnouncementEditModal({
       // set streams in via getAnnouncementTargets and form.setValue below.
       targetUserIds: undefined,
       notifyTargetedUsers: false,
+      statusPage: announcement?.metadata?.statusPage ?? false,
       domain: announcement?.domain ?? [DomainColor.all],
       startsAt: announcement?.startsAt
         ? isToday
@@ -210,12 +212,16 @@ export function AnnouncementEditModal({
         : startOfDay(data.startsAt, { utc: true }),
       endsAt: endOfDay(data.endsAt, { utc: true }),
       metadata: {
+        // Spread first: keys this form doesn't edit must survive a save. The keys below
+        // override it, so undefined clears them.
+        ...announcement?.metadata,
         actions:
           data.linkText && data.linkUrl
             ? [{ type: 'button', link: data.linkUrl, linkText: data.linkText }]
             : undefined,
         // Wire format is unchanged: a bare object key string (or undefined).
         image: toAnnouncementImageKey(image),
+        statusPage: data.statusPage === true,
       },
       domain: domain.length ? domain : [DomainColor.all],
     });
@@ -328,6 +334,11 @@ export function AnnouncementEditModal({
           <InputText name="linkUrl" label="CTA Url" />
         </div>
 
+        <InputCheckbox
+          name="statusPage"
+          label="Show on status page"
+          description="Also show this on the public status page."
+        />
         <InputCheckbox name="disabled" label="Disabled" />
         <Button type="submit" loading={isLoading} disabled={imageUploading}>
           {imageUploading ? 'Uploading image…' : 'Save'}

@@ -14,6 +14,7 @@ import { getPostDetailVisibility } from '~/server/services/post-detail-visibilit
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeTags } from '~/utils/string-helpers';
+import { removeSpoilers } from '~/utils/html-sanitize-helpers';
 import { buildOgCoverEdgeUrl, fetchImageAsDataUri } from '~/server/utils/og-image-helpers';
 import { hasValidCreatorMembershipCached } from '~/server/services/creator-program.service';
 import {
@@ -31,6 +32,7 @@ import {
 } from '~/server/services/creator-milestone-share.service';
 import { parseMilestoneShareId } from '~/shared/constants/creator-journey.constants';
 import { decorationFrameBox } from '~/components/UserAvatar/decoration-frame.util';
+import { servableBanner } from '~/shared/utils/article-card-image';
 
 // --- Schema & Types ---
 
@@ -305,6 +307,7 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
         content: true,
         user: { select: { username: true } },
         coverImage: { select: ogImageSelect },
+        bannerImage: { select: { ...ogImageSelect, ingestion: true, needsReview: true } },
       },
     }),
     dbRead.articleMetric
@@ -335,9 +338,9 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
 
   return {
     title: article.title,
-    description: cleanDescription(article.content ?? ''),
+    description: cleanDescription(removeSpoilers(article.content ?? '')),
     creator: article.user.username ?? 'Unknown',
-    ...buildEntityImage(getSafeImage(article.coverImage)),
+    ...buildEntityImage(getSafeImage(article.coverImage ?? servableBanner(article.bannerImage))),
     stats,
   };
 }

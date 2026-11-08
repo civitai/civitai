@@ -16,7 +16,7 @@ export const config = {
   },
 };
 import { isSystemAccountMeta } from '@civitai/auth';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
@@ -116,12 +116,7 @@ function viewerOwnBrowsingLevel(req: NextApiRequest, sessionUser: SessionUser | 
   return getServerBrowsingLevel({ canViewNsfw, user: sessionUser });
 }
 
-/**
- * 🔴 An r/x app is minted a token only for a viewer whose browsing level includes that rating —
- * the store's one rule (`ratingHiddenByBrowsingLevel`), so a direct mint cannot run an app the run
- * page shows as hidden or a model slot omits. Same 403 shape as the host refusal. Call only after
- * the host gate; `isMatureContentRating` first so a non-mature app never reaches the rule.
- */
+/** Call only after the host gate: the site rule takes precedence over the level. */
 function hiddenByViewerBrowsingLevel(
   contentRating: unknown,
   req: NextApiRequest,
@@ -1036,15 +1031,11 @@ async function tryPrivateRunMint(args: {
 
   const app = access.block;
 
-  // The SITE gate first, exactly as the private-run PAGE applies it (`ratingAllowedOnHost`): an r/x
-  // app gets no token off a red-capable host, whatever the viewer's level. Same refusal as the
-  // public path's host check.
   if (!ratingAllowedOnHost(app.contentRating, req.headers.host ?? '')) {
     res.status(403).json({ error: 'This app is only available on civitai.red.' });
     return 'handled';
   }
-  // …then the viewer's browsing level, as the page applies it (owners and moderators are not
-  // exempt): an r/x app outside it gets no token.
+  // Owners and moderators get no exemption from the browsing level.
   if (hiddenByViewerBrowsingLevel(app.contentRating, req, sessionUser)) {
     res.status(403).json({ error: 'This app is hidden by your browsing settings.' });
     return 'handled';
@@ -1180,7 +1171,8 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  const session = await getServerAuthSession({ req, res });
+  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  if (session === false) return;
   if (!requireFullScopeSession(req, res)) return;
   const userId = session?.user?.id ?? null;
 

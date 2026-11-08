@@ -205,7 +205,8 @@ beforeAll(async () => {
     );
     CREATE TABLE app_listing_metrics (
       app_listing_id text PRIMARY KEY, thumbs_up_count integer NOT NULL DEFAULT 0,
-      thumbs_down_count integer NOT NULL DEFAULT 0, install_count integer NOT NULL DEFAULT 0
+      thumbs_down_count integer NOT NULL DEFAULT 0, install_count integer NOT NULL DEFAULT 0,
+      open_count integer NOT NULL DEFAULT 0
     );
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));

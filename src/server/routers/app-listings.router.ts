@@ -66,6 +66,7 @@ import {
   republishOwnListingSchema,
   resetListingToPendingSchema,
   resolveReportSchema,
+  setListingOfficialSchema,
   setListingVisibilityAsModeratorSchema,
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
@@ -2065,10 +2066,10 @@ export const appListingsRouter = router({
    * open it in the store), but a dark scope REJECTS rather than returning an empty list: this
    * is a signed-in surface behind the same flag as the page, not an anon-capable grid.
    *
-   * Returns the derived `apps` AND the viewer's "Remove from My apps" `hidden` map
-   * (slug → ISO time). The server does NOT filter hidden apps out: whether one shows again
-   * depends on this browser's recently-opened time too, so the client merge applies the one
-   * rule (`isHiddenFromHome`) to both sources (`mergeHomeApps`).
+   * Returns the derived `apps`, the viewer's "Remove from My apps" `hidden` map (slug → ISO
+   * time), `removedCount` and `removedSlugsByListingId` (listing id → slug of each row a hide
+   * dropped). Hidden apps are filtered out BEFORE the row cap, so they do not take slots. The
+   * rule and why the dropped-row map exists: `my-apps-hidden.ts`.
    */
   listMyApps: protectedProcedure
     .use(enforceAppListingsReadFlag)
@@ -2084,22 +2085,15 @@ export const appListingsRouter = router({
       if (scope === 'none') {
         throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
       }
-      const [{ listMyApps }, { getMyHiddenApps }] = await Promise.all([
-        import('~/server/services/blocks/my-apps.service'),
-        import('~/server/services/blocks/my-apps-hidden.service'),
-      ]);
-      const [apps, hidden] = await Promise.all([
-        listMyApps({
-          userId: ctx.user.id,
-          scope,
-          floor,
-          redCapable: isRedCapableRequest(ctx),
-          viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
-          canOpenPage: !!ctx.features?.appBlocksPages,
-        }),
-        getMyHiddenApps(ctx.user.id),
-      ]);
-      return { apps, hidden };
+      const { listMyApps } = await import('~/server/services/blocks/my-apps.service');
+      return listMyApps({
+        userId: ctx.user.id,
+        scope,
+        floor,
+        redCapable: isRedCapableRequest(ctx),
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+        canOpenPage: !!ctx.features?.appBlocksPages,
+      });
     }),
 
   /**
@@ -2238,6 +2232,23 @@ export const appListingsRouter = router({
         appListingId: input.appListingId,
         visibility: input.visibility,
         reason: input.reason,
+        moderatorUserId: ctx.user.id,
+      });
+    }),
+
+  /** MOD mark / unmark a listing Official. A listing's owner has no path to this flag. */
+  setListingOfficial: moderatorProcedure
+    .input(setListingOfficialSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Marking apps as Official is restricted to civitai team');
+      }
+      const { setListingOfficialAsModerator } = await import(
+        '~/server/services/blocks/app-listing-official.service'
+      );
+      return setListingOfficialAsModerator({
+        appListingId: input.appListingId,
+        isOfficial: input.isOfficial,
         moderatorUserId: ctx.user.id,
       });
     }),

@@ -1,14 +1,12 @@
 import { TRPCError } from '@trpc/server';
 import {
-  BlockedReason,
   ImageSort,
   NotificationCategory,
-  NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { mapToViolationType, tosReasonUserMessage } from '~/server/common/tos-reasons';
 import type { Context, ProtectedContext } from '~/server/createContext';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -34,6 +32,8 @@ import {
   updateImageNsfwLevel,
   getOpenImageReportIds,
   updateImageReportStatusByReason,
+  writeModeratorBlock,
+  logNoticeUnderReview,
 } from '~/server/services/image.service';
 import {
   clearReviewFlagsOnBlock,
@@ -238,47 +238,44 @@ export const setTosViolationHandler = async ({
       if (held.length) return { ...image, held: heldRemovalSummary(held)[0] };
     }
 
-    // Update all reports with this comment id to actioned
-    const affectedReports = await updateImageReportStatusByReason({
-      id,
-      reason: ReportReason.TOSViolation,
-      status: ReportStatus.Actioned,
-      actorId: user.id,
-    });
-    // Reward users for accepted reports
-    await Promise.allSettled(
-      affectedReports.map((report) =>
-        reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, { ip })
-      )
-    );
-
-    await createNotification({
-      userId: image.userId,
-      type: 'tos-violation',
-      category: NotificationCategory.System,
-      key: `tos-violation:image:${crypto.randomUUID()}`,
-      details: {
-        modelName: image.post?.title ?? `post #${image.postId as number}`,
-        entity: 'image',
-        url: `/images/${id}`,
-        // Only the moderator's own choice — the inferred fallback below is a classification for
-        // analytics, and telling someone their image broke a rule the moderator never picked is worse
-        // than telling them nothing.
-        ...(violationType ? { reason: tosReasonUserMessage(violationType) } : {}),
-      },
-    }).catch();
-
     // Block image
     // This used to be a delete, but the mod team prefers to have the clean up happen later
-    await dbWrite.image.updateMany({
-      where: { id },
-      data: {
-        ingestion: 'Blocked',
-        nsfwLevel: NsfwLevel.Blocked,
-        blockedFor: BlockedReason.Moderated,
-        updatedAt: new Date(),
-      },
-    });
+    const written = await writeModeratorBlock([id]);
+    const held = written.held.has(id);
+
+    if (!held) {
+      if (written.underReview.has(id)) logNoticeUnderReview([{ id, userId: image.userId }]);
+      // Update all reports with this comment id to actioned
+      const affectedReports = await updateImageReportStatusByReason({
+        id,
+        reason: ReportReason.TOSViolation,
+        status: ReportStatus.Actioned,
+        actorId: user.id,
+      });
+      // Reward users for accepted reports
+      await Promise.allSettled(
+        affectedReports.map((report) =>
+          reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, { ip })
+        )
+      );
+
+      await createNotification({
+        userId: image.userId,
+        type: 'tos-violation',
+        category: NotificationCategory.System,
+        key: `tos-violation:image:${crypto.randomUUID()}`,
+        details: {
+          modelName: image.post?.title ?? `post #${image.postId as number}`,
+          entity: 'image',
+          url: `/images/${id}`,
+          // Only the moderator's own choice — the inferred fallback below is a classification for
+          // analytics, and telling someone their image broke a rule the moderator never picked is
+          // worse than telling them nothing.
+          ...(violationType ? { reason: tosReasonUserMessage(violationType) } : {}),
+        },
+      }).catch();
+    }
+
     await clearReviewFlagsOnBlock([id]);
     await keepPendingAppealFlags([id]);
     await invalidateManyImageExistence([id]);
@@ -307,7 +304,11 @@ export const setTosViolationHandler = async ({
     // Remove image from all collections
     await removeEntityFromAllCollections('image', id);
 
-    if (image.pHash) await addBlockedImage({ hash: image.pHash, reason: BlockImageReason.TOS });
+    if (image.pHash)
+      await addBlockedImage({
+        hash: image.pHash,
+        reason: held || written.underReview.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
+      });
     await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
     // Re-queue the parent comic project (if any) so the search index
     // re-evaluates visibility against the new (Blocked) Image state.

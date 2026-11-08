@@ -51,6 +51,8 @@ export const JOB_QUEUE_OVERDUE_MINUTES: Record<JobQueueType, number> = {
   CdnAccessSync: 15,
   // `cdn-access-sync`, every minute; each row gets one attempt and is removed whatever happens.
   ImageCdnPersistRetry: 15,
+  // No producer and no consumer yet.
+  ProfilePictureSync: 0,
 };
 
 /** Types nothing drains: a row of one of these is stranded on arrival, not merely waiting. */

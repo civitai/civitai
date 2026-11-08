@@ -2180,6 +2180,19 @@ export function createRedisClients(options: CreateRedisClientsOptions = {}): Red
 
 // Source of Truth data
 export const REDIS_SYS_KEYS = {
+  DOWNLOAD_LINK: {
+    // `dl:link:<sha256(id)>` — hash of one download link (credential, user, version, file, expiresAt,
+    // fetches). The raw id is never stored.
+    LINK: 'dl:link',
+    // `dl:linkid:<linkId>` → the link's hash key, for revoking one link by its public linkId.
+    LINK_ID: 'dl:linkid',
+    // `dl:reuse:<credential>:<fileId>:<userId|public>` → the hash key of the link a repeat mint returns.
+    REUSE: 'dl:reuse',
+    // `dl:links:cred:<credential>` — set of the hash keys a credential minted, for revoking them all.
+    CRED_LINKS: 'dl:links:cred',
+    // `dl:mint-rate:<cred|user>:<id>:<minute>` — fixed-window mint counters.
+    MINT_RATE: 'dl:mint-rate',
+  },
   APP: {
     // Per-app page-access overrides (`app:page-access:${app}`) — a JSON path→role map mirroring the
     // AppPageAccess table, read on every gated request so the gate doesn't hit Postgres per hit.
@@ -2581,6 +2594,10 @@ export const REDIS_SYS_KEYS = {
     // process per TTL for all of them; `:<version>:lock` elects that process. See
     // src/server/prom/ingestion-gauge-store.ts.
     IMAGE_INGESTION_GAUGES: 'system:image-ingestion-gauges',
+    // Sorted set of imageIds whose upload prompt scan had no verdict, scored by when to scan them
+    // again; `:attempts` is a hash of imageId -> the attempt that entry is. See
+    // src/server/services/upload-prompt-retry.service.ts.
+    UPLOAD_PROMPT_SCAN_RETRY: 'system:upload-prompt-scan-retry',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -2898,6 +2915,8 @@ export const REDIS_SYS_KEYS = {
   REMIX_APP: {
     // A choice ask's per-option prices, per run, segment and step, while that ask is open.
     OPTION_PRICES: 'remix-app:option-prices',
+    // Bumped after every mod write; the registry cache key carries it.
+    REGISTRY_GENERATION: 'remix-app:registry-generation',
   },
   MESSAGE_AS_CIVITAI: {
     IDEMPOTENCY: 'message-as-civitai:idempotency',
@@ -2915,6 +2934,16 @@ export const REDIS_SYS_KEYS = {
     JUDGES: 'crucible:judges',
     USER_VOTES: 'crucible:user-votes',
     JUDGING_SESSION: 'crucible:judging-session',
+  },
+  REGISTRY_ADAPTER: {
+    // The content-addressed served state a registry cursor names —
+    // `system:registry-adapter:snapshot:${digest}`. TTL refreshed on every resume; evicting one
+    // only expires that cursor (the consumer re-snapshots).
+    SNAPSHOT: 'system:registry-adapter:snapshot',
+    // The newest snapshot digests of one stream, newest first — list
+    // `system:registry-adapter:stream-states:${truncated sha256 of the stream schema}`. Digests
+    // that fall off it are deleted, which bounds what one stream keeps; same TTL as the snapshots.
+    STREAM_STATES: 'system:registry-adapter:stream-states',
   },
 } as const;
 
@@ -3055,6 +3084,10 @@ const REDIS_KEYS_UNPREFIXED = {
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     PAID_ACCESS: 'packed:caches:paid-access',
     PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
+    // `<prefix>:row:<surface>:<entityType>:<entityId>` (a cached space row) and
+    // `<prefix>:written:<surface>:<entityType>:<entityId>` (when that row was last written) —
+    // the display read of a placement space. See placement-space.service.ts.
+    PLACEMENT_SPACE: 'packed:caches:placement-space',
     USER_COSMETICS: 'packed:caches:user-cosmetics',
     USER_OWNED_STICKER: 'packed:caches:user-owned-sticker',
     COSMETICS_OLD: 'packed:caches:cosmetics',
@@ -3128,6 +3161,8 @@ const REDIS_KEYS_UNPREFIXED = {
     CREATOR_SHOWCASE_CANDIDATES: 'packed:caches:creator-showcase-candidates',
     // Remix app whatIf price per (app, tier, aspect, user tier, mod, currencies): `quoteRemixApps`.
     REMIX_APP_QUOTE: 'packed:caches:remix-app-quote',
+    // The remix app rows (`app_blocks` with a remix status): `getRemixAppRegistry`, busted on every mod edit.
+    REMIX_APP_REGISTRY: 'packed:caches:remix-app-registry',
     // The user-independent active-auction list backing `auction.getAll` (~21.8
     // calls/s at peak, hitting the PRIMARY DB `dbWrite`). Output is a single global
     // `{ id, auctionBase, lowestBidRequired }[]` with no per-user/ctx variance, so
@@ -3170,6 +3205,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // `getUserMetricPrivacyDefaultsMap` in creator-membership.service.
     USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
     CONTEST_COMMUNITY_SCORE: 'packed:caches:contest-community-score',
+    // Contest entries per image; see src/server/services/contest-collection-items.cache.ts.
+    CONTEST_COLLECTION_ITEMS: 'packed:caches:contest-collection-items',
     // Async contest-scoring runs: per-run state, the per-collection pointer to the
     // most recent run, and the scored result each run produces. Every key carries a
     // TTL, so the whole namespace self-cleans and no table backs it.
@@ -3321,6 +3358,14 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   CRUCIBLE: {
     USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
+  },
+  BOT_CACHE: {
+    /*
+      Use: a verified crawler's page HTML, so a repeat request for the URL is not rendered again.
+      Structure: packed { pattern, headers, body (brotli HTML) }, key =
+      `botcache:v1:${buildId}:${host}:${path}?${sortedQuery}`, TTL 300s.
+     */
+    HTML: 'botcache:v1',
   },
   SEMANTIC_SEARCH: {
     /*

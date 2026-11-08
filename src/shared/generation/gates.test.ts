@@ -155,6 +155,15 @@ describe('gatedSelectionRefusal', () => {
     );
   });
 
+  it("refuses a hidden version without the rule's message", () => {
+    const rules = [
+      rule({ presentation: 'hidden', modelVersionIds: [123], message: 'Launches Friday.' }),
+    ];
+    expect(gatedSelectionRefusal(rules, { versionIds: [123] })).toBe(
+      'This model version is currently unavailable.'
+    );
+  });
+
   it('refuses a members-only target with the members copy', () => {
     const rules = [
       rule({ presentation: 'disabled', availableTo: 'members', modelVersionIds: [123] }),

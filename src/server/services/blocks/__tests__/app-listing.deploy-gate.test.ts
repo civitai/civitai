@@ -467,7 +467,10 @@ describe("getListingHiddenByBrowsingLevel — the detail page's hidden state", (
     }
   });
 
-  it('🔴 the OWNER and a MODERATOR with a PG-only level get the same hidden state', async () => {
+  // `getListingDetail` is the read that takes the viewer, so it is where an owner or moderator
+  // exemption could appear. The level-7 arm shows the same viewer and floor ARE served the app,
+  // so the level-1 null is the level's doing.
+  it('🔴 the OWNER and a MODERATOR are not exempt: served with R in their level, not without', async () => {
     withRow('r');
     const owner = { userId: 7, isModerator: false }; // the row's creator (offsiteRow user id 7)
     const mod = { userId: 9001, isModerator: true };
@@ -475,17 +478,13 @@ describe("getListingHiddenByBrowsingLevel — the detail page's hidden state", (
       [owner, 'public'],
       [mod, 'moderators'],
     ] as const) {
-      expect(
-        await getListingDetail({ slug: 'ext-app' }, {
-          ...red,
-          floor,
-          viewer,
-          viewerBrowsingLevel: 1,
-        } as never)
-      ).toBeNull();
-      expect(
-        await hiddenFn({ slug: 'ext-app' }, { ...red, floor, viewer, viewerBrowsingLevel: 1 })
-      ).toEqual({ contentRating: 'r' });
+      const detailAt = (viewerBrowsingLevel: number) =>
+        getListingDetail(
+          { slug: 'ext-app' },
+          { redCapable: true, scope: 'full', floor, viewer, viewerBrowsingLevel }
+        );
+      expect(await detailAt(1), `${floor} viewer, PG only`).toBeNull();
+      expect((await detailAt(7))?.id, `${floor} viewer, R enabled`).toBe('apl_2');
     }
   });
 

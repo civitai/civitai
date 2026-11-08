@@ -55,8 +55,9 @@ import {
   getCurrentValue,
   getExtractionFee,
   getPhases,
+  generateWithdrawalRefCode,
   getWithdrawalFee,
-  getWithdrawalRefCode,
+  parseRefCodeToWithdrawalId,
 } from '~/server/utils/creator-program.utils';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { handleLogError, throwBadRequestError } from '~/server/utils/errorHandling';
@@ -799,6 +800,98 @@ export async function getWithdrawalHistory(userId: number) {
   return transactions;
 }
 
+const MAX_REF_CODE_ATTEMPTS = 5;
+
+/**
+ * The refCode this withdrawal is (or will be) sent to Tipalti under, stored before any send.
+ * Tipalti relies on the refCode to refuse a duplicate payment, so a withdrawal that already has
+ * one must always reuse it: generating a fresh code on a re-send would defeat that guard.
+ */
+export async function ensureWithdrawalRefCode(withdrawalId: string, userId: number) {
+  const stored = async () => {
+    const { metadata } = await dbWrite.cashWithdrawal.findUniqueOrThrow({
+      where: { id: withdrawalId },
+      select: { metadata: true },
+    });
+    return (metadata as CashWithdrawalMetadataSchema | null)?.paymentRefCode || undefined;
+  };
+
+  const existing = await stored();
+  if (existing) return existing;
+
+  for (let attempt = 0; attempt < MAX_REF_CODE_ATTEMPTS; attempt++) {
+    const candidate = generateWithdrawalRefCode(userId);
+    // FailedFee rows carry a copy of their parent's code, so this covers them too.
+    const taken = await dbWrite.cashWithdrawal.count({
+      where: { userId, metadata: { path: ['paymentRefCode'], equals: candidate } },
+    });
+    if (taken) continue;
+
+    // Conditional on no code yet: a concurrent caller that stored one first wins, and we reuse it.
+    // shortcut: two concurrent withdrawals by one user drawing the same candidate between the
+    // count and this write is not locked against (odds ~1 in 36^random-length).
+    const updated = await dbWrite.$executeRaw`
+      UPDATE "CashWithdrawal"
+      SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('paymentRefCode', ${candidate}::text)
+      WHERE id = ${withdrawalId} AND (metadata->>'paymentRefCode') IS NULL;
+    `;
+    if (updated) return candidate;
+
+    const winner = await stored();
+    if (winner) return winner;
+    throw new Error(`Could not store a refCode for withdrawal ${withdrawalId}`);
+  }
+
+  throw new Error(`Could not generate a unique refCode for withdrawal ${withdrawalId}`);
+}
+
+/**
+ * The cash withdrawal a Tipalti event's refCode belongs to. Matches the exact refCode we stored
+ * when sending; rows from before codes were stored fall back to the cuid prefix the old code
+ * embedded. Refuses (throws) when more than one row matches, rather than guessing.
+ */
+export async function findCashWithdrawalByRefCode(refCode: string) {
+  // Only the userId is needed for the exact match, so legacy codes the strict parser rejects
+  // (e.g. `CW<uid>:<id>`) still match the code stored for them.
+  const userId = Number(/^CW(\d+)/.exec(refCode)?.[1]);
+  if (!userId) throw new Error(`Invalid withdrawal ref code: ${refCode}`);
+  // FailedFee rows copy their parent's metadata, refCode included, and Reclaimed rows are
+  // moderator adjustments; neither was ever sent to Tipalti, and both refund if updated.
+  const scope = {
+    userId,
+    status: { notIn: [CashWithdrawalStatus.FailedFee, CashWithdrawalStatus.Reclaimed] },
+  };
+
+  let candidates = await dbWrite.cashWithdrawal.findMany({
+    where: { ...scope, metadata: { path: ['paymentRefCode'], equals: refCode } },
+  });
+
+  if (!candidates.length) {
+    const { idPart } = parseRefCodeToWithdrawalId(refCode);
+    // A row that stored a different code was sent under that code, so it cannot be this payment.
+    candidates = (
+      await dbWrite.cashWithdrawal.findMany({ where: { ...scope, id: { startsWith: idPart } } })
+    ).filter((row) => !(row.metadata as CashWithdrawalMetadataSchema | null)?.paymentRefCode);
+  }
+
+  if (candidates.length > 1) {
+    await logToAxiom(
+      {
+        type: 'error',
+        name: 'tipalti-refcode-ambiguous',
+        refCode,
+        candidateIds: candidates.map((row) => row.id),
+      },
+      'webhooks'
+    ).catch(() => null);
+    throw new Error(`Ambiguous Tipalti refCode ${refCode}: ${candidates.length} withdrawals match`);
+  }
+
+  if (!candidates.length)
+    throw new Error(`Withdrawal request not found for transferId: ${refCode}`);
+  return candidates[0];
+}
+
 export async function withdrawCash(userId: number, amount: number) {
   // Check setup for withdrawal
   const user = await dbWrite.user.findFirstOrThrow({
@@ -893,7 +986,7 @@ export async function withdrawCash(userId: number, amount: number) {
     `;
 
     // Create tipalti payment
-    const refCode = getWithdrawalRefCode(id, userId);
+    const refCode = await ensureWithdrawalRefCode(id, userId);
 
     const { paymentBatchId, paymentRefCode } = await payToTipaltiAccount({
       requestId: refCode,
@@ -1209,7 +1302,6 @@ export const updateCashWithdrawal = async ({
     }).catch(() => null);
 
   try {
-    // Ensure we update the main request details:
     // Merged in SQL so a refund claim another caller stored meanwhile is not overwritten.
     await dbWrite.$executeRaw`
       UPDATE "CashWithdrawal"

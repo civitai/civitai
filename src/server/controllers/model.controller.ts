@@ -35,6 +35,7 @@ import {
 } from '~/server/services/hot-reads-3.reads';
 import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
 import { readModelMetaViaKysely } from '~/server/services/hot-reads-5.reads';
+import { getComCoverState } from '~/server/services/model-cover.service';
 import { readModelAssociationTargetsViaKysely } from '~/server/services/hot-reads-6.reads';
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
 import {
@@ -194,6 +195,7 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { getMatureLockReason } from '~/server/services/mature-lock-reason.service';
 import { withModelRulesClearance } from '~/server/services/text-scan/actions/model-rules';
 import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
 import {
@@ -221,6 +223,7 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { failedScanFileWhere } from '~/server/utils/failed-scan';
 import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -575,9 +578,17 @@ export const getModelHandler = async ({
         })
       : null;
 
-    const [ownerMetricPrivacyDefaults, ownerCosmetics] = await Promise.all([
+    const matureLockReason = forEditor
+      ? await getMatureLockReason({
+          model: { ...model, userId: model.user.id },
+          viewerId: ctx.user?.id,
+        })
+      : null;
+
+    const [ownerMetricPrivacyDefaults, ownerCosmetics, comCoverState] = await Promise.all([
       getOwnerMetricPrivacyDefaultsForEditor(ctx.user, model.user.id),
       getCosmeticsAndProfilePicturesForUsers([model.user.id]),
+      isOwner ? getComCoverState({ ...model, userId: model.user.id }) : Promise.resolve(null),
     ]);
 
     return {
@@ -585,8 +596,12 @@ export const getModelHandler = async ({
       hasSfwFace: hasCompleteSfwFace(model),
       sfwName: isOwner ? model.sfwName : null,
       sfwDescription: isOwner ? model.sfwDescription : null,
-      // The listing re-check took the model off .com; the editor tells the owner.
-      comFaceRemoved: !!isOwner && !!(model.meta as ModelMeta | null)?.comFaceRemoved,
+      // The listing re-check took the model off .com; the editor tells the owner. Only the kind of
+      // removal: the check's own reason (`detail`) stays with moderators.
+      comFaceRemoved: isOwner
+        ? comFaceRemovedKind((model.meta as ModelMeta | null)?.comFaceRemoved)
+        : null,
+      comCoverState,
       user: { ...model.user, ...ownerCosmetics(model.user.id) },
       metrics: undefined,
       hiddenMetrics: modelHidden,
@@ -622,6 +637,7 @@ export const getModelHandler = async ({
         meta: model.meta as ModelMeta | null,
       }),
       minorAppeal: resolveMinorAppeal({ isOwner, appeal: minorAppeal }),
+      matureLockReason,
       meta: model.meta
         ? filterModelMetaForClient(model.meta as ModelMeta, ctx?.user?.isModerator)
         : null,
@@ -652,11 +668,16 @@ export const getModelsInfiniteHandler = async ({
   input: GetAllModelsOutput;
   ctx: Context;
 }) => {
+  // The input schema leaves `browsingLevel` optional with no default, so a signed-in
+  // caller who omits it where the domain caps nothing would otherwise reach the query
+  // with no level and get no rows.
+  resolveRequestBrowsingLevels(input, ctx);
+  return getModelsFeed(input, ctx);
+};
+
+/** model.getAll's query, at whatever levels `input` already carries. */
+export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
   try {
-    // The input schema leaves `browsingLevel` optional with no default, so a signed-in
-    // caller who omits it where the domain caps nothing would otherwise reach the query
-    // with no level and get no rows.
-    resolveRequestBrowsingLevels(input, ctx);
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
@@ -723,7 +744,7 @@ export const getModelsInfiniteHandler = async ({
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
-};
+}
 
 export const getModelsPagedSimpleHandler = async ({
   input,
@@ -1230,6 +1251,7 @@ export const getDownloadCommandHandler = async ({
     const fileWhere: Prisma.ModelFileWhereInput = {};
     if (type) fileWhere.type = type;
     if (format) fileWhere.metadata = { path: ['format'], equals: format };
+    if (!ctx.user?.isModerator) fileWhere.NOT = failedScanFileWhere;
 
     const modelVersion = await dbRead.modelVersion.findFirst({
       where: { modelId, id: modelVersionId },
@@ -2620,3 +2642,8 @@ export const publishPrivateModelHandler = async ({
     else throw throwDbError(error);
   }
 };
+
+/** A marker written before `reason` existed was a detection. */
+function comFaceRemovedKind(marker: ModelMeta['comFaceRemoved'] | undefined) {
+  return marker ? marker.reason ?? 'detected' : null;
+}

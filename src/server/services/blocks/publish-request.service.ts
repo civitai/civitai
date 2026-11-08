@@ -27,6 +27,8 @@ import {
 } from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
+import type { RegistryExportDiff } from '~/shared/constants/block-storage.constants';
+import { registryExportDiff } from '~/shared/constants/block-storage.constants';
 // Zero-runtime-graph helper (its ONLY static import is a type; it DYNAMICALLY imports
 // the notifications client in its body). approve/reject call it POST-COMMIT to notify
 // the submitting developer of the moderator decision — best-effort, wrapped in a
@@ -136,14 +138,22 @@ export type FileSummary = {
   changed: string[];
 };
 
-export type ManifestDiffSummary =
+export type ManifestDiffSummary = (
   | { kind: 'first-version'; fields: string[] }
   | {
       kind: 'update';
       added: string[];
       removed: string[];
       changed: Array<{ field: string; from: unknown; to: unknown }>;
-    };
+    }
+) & {
+  /**
+   * Collections published to registries (`storage.collections.<c>.registry`), for the reviewer.
+   * Present only when this version or the previous one publishes any; absent on rows written
+   * before it existed.
+   */
+  registryExports?: RegistryExportDiff;
+};
 
 /** `submitVersion`'s refusal of a version of an existing app the submitter may not ship. */
 export const appOwnedByAnotherUser = (slug: string) =>
@@ -966,10 +976,14 @@ export function computeManifestDiff(
   currentManifest: Record<string, unknown>,
   previousManifest: Record<string, unknown> | null
 ): ManifestDiffSummary {
+  const exports = registryExportDiff(currentManifest, previousManifest);
+  const registryExports =
+    exports.exported.length > 0 || exports.removed.length > 0 ? { registryExports: exports } : {};
   if (previousManifest === null) {
     return {
       kind: 'first-version',
       fields: Object.keys(currentManifest).sort(),
+      ...registryExports,
     };
   }
   const allKeys = new Set([...Object.keys(currentManifest), ...Object.keys(previousManifest)]);
@@ -998,7 +1012,7 @@ export function computeManifestDiff(
   added.sort();
   removed.sort();
   changed.sort((a, b) => a.field.localeCompare(b.field));
-  return { kind: 'update', added, removed, changed };
+  return { kind: 'update', added, removed, changed, ...registryExports };
 }
 
 /**
@@ -1323,6 +1337,22 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     : { prev: null, history: [] };
   const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
   assertStorageMigrationsCover(storageMigrations);
+
+  // 🔴 APP STORAGE PERMISSION HOOKS — refused HERE too, before the upload and the review-repo push:
+  // a declared hook needs the hooks feature on, a hook new or changed against the approved manifest
+  // (the baseline above) needs the SUBMITTER in the hooks cohort, and every hook file's bytes in
+  // THIS bundle must hash to the sha256 the manifest pins (the source is then recorded by that
+  // sha). A no-op for a manifest with no hook. Approve and the git-push path run the same pin. See
+  // `storage-hooks.ts`.
+  {
+    const { pinStorageHooks } = await import('~/server/services/apps/storage-hooks');
+    await pinStorageHooks({
+      manifest,
+      actorUserId: submittedByUserId,
+      readApprovedManifest: async () => baseline.prev,
+      readFiles: (paths) => readBundleFiles(bundleBuffer, paths),
+    });
+  }
 
   // Upload bundle to MinIO. PutObject is idempotent on the SHA, so a
   // retry after an upstream error reuses the same key safely.
@@ -2013,6 +2043,53 @@ async function extractBundleFilesFromBuffer(
   return out;
 }
 
+/**
+ * The bytes of the named files of an in-memory bundle ZIP (a path the bundle lacks is absent from
+ * the map), under the same per-file + aggregate caps. For the permission-hook pin
+ * (`storage-hooks.ts`), which reads a handful of files and not the whole bundle.
+ */
+async function readBundleFiles(
+  bundleBuffer: Buffer,
+  paths: readonly string[]
+): Promise<Map<string, Buffer>> {
+  const zip = await JSZip.loadAsync(bundleBuffer);
+  const out = new Map<string, Buffer>();
+  let totalBytes = 0;
+  for (const path of paths) {
+    const entry = Object.hasOwn(zip.files, path) ? zip.files[path] : undefined;
+    if (!entry || entry.dir) continue;
+    const content = await readZipEntryCapped(entry, {
+      maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
+      remainingTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES - totalBytes,
+      maxTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES,
+      path,
+    });
+    totalBytes += content.length;
+    out.set(path, content);
+  }
+  return out;
+}
+
+/**
+ * The bytes of the named files of the pushed commit `ref` in civitai-apps/<slug> (a path the tree
+ * lacks is absent from the map). For the permission-hook pin on the git-push path, which has no
+ * bundle: only the hook files are fetched, not the whole tree.
+ */
+async function readForgejoFilesAtRef(
+  slug: string,
+  ref: string,
+  paths: readonly string[]
+): Promise<Map<string, Buffer>> {
+  const { listRepoTreeAtRef, getBlobContent } = await import('./forgejo.service');
+  const tree = await listRepoTreeAtRef(slug, ref);
+  const out = new Map<string, Buffer>();
+  for (const path of paths) {
+    const blobSha = tree.get(path);
+    if (blobSha) out.set(path, await getBlobContent(slug, blobSha));
+  }
+  return out;
+}
+
 async function fetchAndExtractBundleFiles(
   bundleKey: string
 ): Promise<Array<{ path: string; content: Buffer }>> {
@@ -2214,6 +2291,26 @@ export async function recordPendingFromPush(args: {
     await assertAcceptedAppDeveloperTerms(args.pusherUserId);
   } else {
     await assertAcceptedAppDeveloperTerms(ownerUserId);
+  }
+
+  // APP STORAGE PERMISSION HOOKS — a pushed commit never passes `submitVersion`, so the submit pin
+  // runs here, against the files of the pushed sha. A hook new or changed against the approved
+  // manifest is cohort-gated on the PUSHER, the actor who introduced it (not the owner the row is
+  // attributed to); a pusher that maps to no user fails it closed. Refused before anything is
+  // recorded or superseded; approve pins again. A no-op for a manifest with no hook. See
+  // `storage-hooks.ts`.
+  {
+    const [{ pinStorageHooks }, { loadStorageMigrationBaseline }] = await Promise.all([
+      import('~/server/services/apps/storage-hooks'),
+      import('~/server/services/apps/storage-migration-run.service'),
+    ]);
+    await pinStorageHooks({
+      manifest: args.manifest,
+      actorUserId: args.pusherUserId ?? null,
+      readApprovedManifest: () =>
+        loadStorageMigrationBaseline({ slug: args.slug }).then((baseline) => baseline.prev),
+      readFiles: (paths) => readForgejoFilesAtRef(args.slug, args.sha, paths),
+    });
   }
 
   // Already captured this exact (slug, sha) as pending? Refresh + done.
@@ -2930,6 +3027,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       forgejoCommitSha: true,
       submittedByUserId: true,
       appBlockId: true,
+      // The reviewed file list, which the permission-hook pin below cross-checks with the bytes.
+      fileSummary: true,
       // MOD REVIEW SANDBOX (#2831) — read the current deploy_state so we can tell
       // (synchronously, before this approve flips it to a production value) whether
       // a review preview was ever started for this request. Only then do we fire
@@ -3108,6 +3207,33 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       });
   const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
   assertStorageMigrationsCover(storageMigrations);
+
+  // APP STORAGE PERMISSION HOOKS — the submit pin, again, against the bytes this approve will
+  // ship: the stored bundle, or for a push-originated request the repo at the reviewed sha (which
+  // never passed `submitVersion`). Also refuses a reviewed file list that disagrees with those
+  // bytes, and re-checks the submitter's cohort for a hook new or changed against the approved
+  // manifest (the baseline above), so a hook already approved identically is not re-gated.
+  // Refused before anything is written; a no-op for a manifest with no hook. See
+  // `storage-hooks.ts`.
+  {
+    const { pinStorageHooks } = await import('~/server/services/apps/storage-hooks');
+    const reviewed = request.fileSummary as unknown as FileSummary | null;
+    await pinStorageHooks({
+      manifest,
+      actorUserId: request.submittedByUserId,
+      readApprovedManifest: async () => baseline.prev,
+      readFiles: async (paths) => {
+        if (request.bundleKey) {
+          return readBundleFiles(await fetchBundleBuffer(request.bundleKey), paths);
+        }
+        if (request.forgejoCommitSha) {
+          return readForgejoFilesAtRef(request.slug, request.forgejoCommitSha, paths);
+        }
+        return new Map();
+      },
+      fileSummary: reviewed && Array.isArray(reviewed.files) ? reviewed.files : [],
+    });
+  }
 
   // The listing writes below log and continue on failure, so a split decision they could not
   // write is refused HERE, before anything is written or built — otherwise the app would deploy

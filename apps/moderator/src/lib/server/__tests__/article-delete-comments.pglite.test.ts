@@ -46,7 +46,7 @@ CREATE TABLE "CsamReport" (
   "images" JSONB NOT NULL DEFAULT '[]', "reportSentAt" TIMESTAMP(3), "archivedAt" TIMESTAMP(3)
 );
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
-CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" INTEGER);
+CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" INTEGER, "bannerId" INTEGER);
 CREATE TABLE "File" ("entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "Thread" (

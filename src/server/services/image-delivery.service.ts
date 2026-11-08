@@ -74,7 +74,8 @@ const deliverableSource = Prisma.sql`NOT (
 
 // The origin statement. Several rows can share a url (a copied image keeps its source's url);
 // rows sharing a url resolve to the most restrictive setting, hence the ORDER BY.
-const imageDeliveryStatement = (url: string) => Prisma.sql`
+// Exported for the parity test, which pins it against the `image_delivery_lookup(url)` SQL function.
+export const imageDeliveryStatement = (url: string) => Prisma.sql`
   SELECT
     id,
     url,

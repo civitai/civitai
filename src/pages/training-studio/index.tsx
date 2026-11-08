@@ -9,6 +9,7 @@ import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-s
 import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
 import { checkStudioModelLive } from '~/components/Training/studio-model-live';
 import { checkStudioTriggerWord } from '~/components/Training/studio-trigger-word-check';
+import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import { SwitchToClassicTrainerAlert } from '~/components/Training/TrainingStudioSwitch';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -201,6 +202,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           canGenerateUnpublished,
           isPaidMember,
           pricingUrl: '/pricing',
+          supportUrl: SUPPORT_LINKS.portal,
           enabledModelFlags,
         },
         hrefFor,

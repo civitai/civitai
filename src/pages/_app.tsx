@@ -376,7 +376,10 @@ function MyApp(props: CustomAppProps) {
                     />
                     <GoogleAnalytics />
                     <AccountProvider>
-                      <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
+                      <CivitaiSessionProvider
+                        disableHidden={cookies.disableHidden}
+                        showEventCosmetics={cookies.showEventCosmetics}
+                      >
                         <ErrorBoundary>
                           <BrowserSettingsProvider>
                             <BrowsingLevelProvider>
@@ -705,9 +708,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     siteAlerts,
   } = settingsBootstrap;
 
-  // Bot HTML edge cache (`~/server/bot-cache/bot-cache`): a verified crawler's render that the edge
-  // may store and serve to other crawlers, so nothing below may vary it per request. `_document`
-  // adds the edge headers only once the page rendered.
+  // Bot HTML cache (`~/server/bot-cache/bot-cache`): a verified crawler's render that the cache
+  // may store and serve to other crawlers, so nothing below may vary it per request.
   let botCache: { route: BotCacheRouteName; seed: number } | undefined;
   if (typeof window === 'undefined') {
     const { resolveBotCacheRoute, botCacheSeed } = await import('~/server/bot-cache/bot-cache');
@@ -863,7 +865,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       serverDomains,
       availableOAuthProviders,
       host: appContext.ctx.req?.headers.host ?? '',
-      // Which crawler asked is not part of the edge's cache key.
+      // Which crawler asked is not part of the cache key.
       verifiedBot: botCache ? null : verifiedBot,
     },
     ...appProps,

@@ -350,6 +350,69 @@ export function jsonPointerCovers(a: string, b: string): boolean {
 }
 
 /**
+ * PERMISSION HOOKS (`hook`) — a collection may name one author-written ES module that decides,
+ * per write, whether the write is allowed (v1: write ops only; the schema stays the floor and runs
+ * first). The hook is a file of the SUBMITTED BUNDLE, shipped verbatim — never a build output, so
+ * the sha256 the manifest pins can be checked against the bytes at submit and a fork's copy of the
+ * source carries it. Submit, the git-push path and approve each verify the file's bytes against
+ * `sha256` (`storage-hooks.ts`); the runtime that calls the hook loads it by that sha only.
+ *
+ * `file` is a relative bundle path of `/`-separated segments, each starting with a letter, digit,
+ * `_` or `-` (so no `.`/`..` segment, no hidden file, no leading `/`) and then letters, digits, `_`,
+ * `.` or `-`; it ends `.js` or `.mjs`, is at most {@link APP_STORAGE_HOOK_FILE_MAX_LENGTH}
+ * characters, has no `node_modules` segment, and is not inside the manifest's `outputDir`. The
+ * patterns are strings, not `RegExp`s, so the published schema's `pattern` equals them byte for
+ * byte, and they use no lookaround so an RE2 engine (the CLI) reads them the same way.
+ */
+export const APP_STORAGE_HOOK_FILE_PATTERN =
+  '^([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\\.m?js$';
+const HOOK_FILE_RE = new RegExp(APP_STORAGE_HOOK_FILE_PATTERN, 'u');
+/** A `node_modules` segment anywhere in `file`. The schema refuses it with `not: { pattern }`. */
+export const APP_STORAGE_HOOK_FILE_FORBIDDEN_SEGMENT_PATTERN = '(^|/)node_modules(/|$)';
+const HOOK_FILE_FORBIDDEN_SEGMENT_RE = new RegExp(
+  APP_STORAGE_HOOK_FILE_FORBIDDEN_SEGMENT_PATTERN,
+  'u'
+);
+export const APP_STORAGE_HOOK_FILE_MAX_LENGTH = 200;
+/** A SHA-256 digest as lowercase hex. */
+export const APP_STORAGE_HOOK_SHA256_PATTERN = '^[0-9a-f]{64}$';
+const HOOK_SHA256_RE = new RegExp(APP_STORAGE_HOOK_SHA256_PATTERN, 'u');
+/** `timeoutMs` bounds and the value an absent `timeoutMs` means. */
+export const APP_STORAGE_HOOK_TIMEOUT_MIN_MS = 1;
+export const APP_STORAGE_HOOK_TIMEOUT_MAX_MS = 500;
+export const APP_STORAGE_HOOK_TIMEOUT_DEFAULT_MS = 50;
+/** Most bytes of one hook file. Checked against the bundle, not by the manifest parser. */
+export const APP_STORAGE_HOOK_MAX_BYTES = 64 * 1024;
+const HOOK_KEYS = new Set(['file', 'sha256', 'timeoutMs']);
+
+/** One declared permission hook, as validated by {@link parseManifestStorage}. */
+export type DeclaredStorageHook = {
+  file: string;
+  sha256: string;
+  /** Default-filled: {@link APP_STORAGE_HOOK_TIMEOUT_DEFAULT_MS} when the manifest omits it. */
+  timeoutMs: number;
+};
+
+/**
+ * The manifest's `outputDir` as a bundle-path prefix: `""` when it names the project root (every
+ * file is inside it), `null` when the manifest has none (or one the validator refuses anyway).
+ */
+function outputDirPrefix(outputDir: unknown): string | null {
+  if (typeof outputDir !== 'string') return null;
+  let dir = outputDir.trim();
+  while (dir.startsWith('./')) dir = dir.slice(2);
+  while (dir.endsWith('/')) dir = dir.slice(0, -1);
+  return dir === '.' ? '' : dir;
+}
+
+/** Whether a hook `file` lies inside the manifest's `outputDir` (the build's output). */
+export function isStorageHookFileUnderOutputDir(file: string, outputDir: unknown): boolean {
+  const dir = outputDirPrefix(outputDir);
+  if (dir === null) return false;
+  return dir === '' || file === dir || file.startsWith(`${dir}/`);
+}
+
+/**
  * Most errors one parse reports; the rest are summarised in one final line. The errors are
  * joined into the submit response, so without a cap a crafted manifest can turn into a
  * multi-megabyte error message.
@@ -362,7 +425,9 @@ export type AppStorageFeature =
   | 'ownerWrites'
   | 'logCollections'
   | 'ttl'
-  | 'perAuthorWriteBudget';
+  | 'perAuthorWriteBudget'
+  | 'hooks'
+  | 'registryExport';
 
 /**
  * 🔴 THE ONE SWITCH for which declared storage features the platform accepts. Everything
@@ -376,6 +441,13 @@ export type AppStorageFeature =
  *   - `perAuthorWriteBudget` — `dailyWritesPerAuthor` (a per-collection daily write budget
  *                      in place of the platform default; the storage routes do not read it
  *                      yet, so a declared limit must not read as working).
+ *   - `hooks`          — `hook` (a permission hook on a collection's writes). Off: a declared
+ *                      hook is refused, so none reads as enforcing anything. On: the per-author
+ *                      Flipt gate `app-blocks-storage-hooks` decides who may add or change one
+ *                      (`storage-hooks.ts`). Switch it on only with the write path that calls
+ *                      hooks.
+ *   - `registryExport` — `registry: "public"` (the collection's shared documents published to
+ *                      registries by the registry adapter).
  *
  * Flip one only in the same change that ships the runtime behind it: an accepted
  * declaration with nothing behind it reads as a working feature to the author and the
@@ -388,6 +460,8 @@ export const APP_STORAGE_ENABLED_FEATURES: Readonly<Record<AppStorageFeature, bo
     logCollections: false,
     ttl: false,
     perAuthorWriteBudget: false,
+    hooks: false,
+    registryExport: false,
   });
 
 /**
@@ -423,6 +497,11 @@ export type DeclaredStorageCollection = {
    */
   exportable?: boolean;
   /**
+   * Which registries this collection's shared documents are published to. Absent: none — the
+   * default, so nothing leaves the platform without an approved opt-in. Shared collections only.
+   */
+  registry?: AppStorageRegistryAudience;
+  /**
    * The schema every document's `data` must match, exactly as declared (validated by
    * {@link parseCollectionSchema}). Absent: documents are not checked.
    */
@@ -432,7 +511,48 @@ export type DeclaredStorageCollection = {
    * {@link APP_STORAGE_MIGRATION_OPS}). Absent: none.
    */
   migrations?: readonly StorageMigrationOp[];
+  /** The permission hook that decides this collection's writes. Absent: none. */
+  hook?: DeclaredStorageHook;
 };
+
+/** Who a collection may be published to beyond its app: `public` is every registry. */
+export const APP_STORAGE_REGISTRY_AUDIENCES = ['public'] as const;
+export type AppStorageRegistryAudience = (typeof APP_STORAGE_REGISTRY_AUDIENCES)[number];
+
+/** Whether the registry adapter may publish this collection's shared documents. */
+export function isCollectionRegistryPublic(collection: DeclaredStorageCollection): boolean {
+  return collection.visibility === 'shared' && collection.registry === 'public';
+}
+
+/** The collections a version publishes to registries, against the previous approved version. */
+export type RegistryExportDiff = {
+  /** Published by this version, sorted. */
+  exported: string[];
+  /** Published now and not by the previous version. */
+  added: string[];
+  /** Published by the previous version and not now. */
+  removed: string[];
+};
+
+/**
+ * Which collections `current` publishes to registries, and how that differs from `previous`
+ * (`null` for a first version). Read with every phased feature on, as an approved manifest is,
+ * so a moderator is shown the declaration whether or not the feature is enabled yet.
+ */
+export function registryExportDiff(current: unknown, previous: unknown | null): RegistryExportDiff {
+  const exportedBy = (manifest: unknown) =>
+    [...parseManifestStorage(manifest, APP_STORAGE_ALL_FEATURES_ON).collections]
+      .filter(([, c]) => isCollectionRegistryPublic(c))
+      .map(([name]) => name)
+      .sort();
+  const now = exportedBy(current);
+  const before = previous === null ? [] : exportedBy(previous);
+  return {
+    exported: now,
+    added: now.filter((n) => !before.includes(n)),
+    removed: before.filter((n) => !now.includes(n)),
+  };
+}
 
 /** Whether another app may reach this collection through an import. */
 export function isCollectionExportable(collection: DeclaredStorageCollection): boolean {
@@ -488,8 +608,10 @@ const COLLECTION_KEYS = new Set([
   'dailyWritesPerAuthor',
   'ownedModelVersions',
   'exportable',
+  'registry',
   'schema',
   'migrations',
+  'hook',
 ]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -608,7 +730,8 @@ function parseCollection(
   at: string,
   raw: unknown,
   features: Readonly<Record<AppStorageFeature, boolean>>,
-  errors: string[]
+  errors: string[],
+  outputDir: unknown
 ): DeclaredStorageCollection | null {
   if (!isPlainObject(raw)) {
     errors.push(`${at} must be an object`);
@@ -821,6 +944,25 @@ function parseCollection(
     errors.push(`${at}.exportable must be a boolean`);
   }
 
+  if (raw.registry !== undefined) {
+    if (!features.registryExport) {
+      errors.push(
+        notYet(
+          `${at}.registry`,
+          'collections published to registries',
+          'remove it to keep the collection on Civitai only'
+        )
+      );
+    } else if (
+      typeof raw.registry !== 'string' ||
+      !(APP_STORAGE_REGISTRY_AUDIENCES as readonly string[]).includes(raw.registry)
+    ) {
+      errors.push(`${at}.registry must be one of ${APP_STORAGE_REGISTRY_AUDIENCES.join(', ')}`);
+    } else if (!shared) {
+      errors.push(`${at}.registry applies to shared collections only`);
+    }
+  }
+
   let schema: AppStorageCollectionSchema | null = null;
   if (raw.schema !== undefined) {
     if (write === 'none') {
@@ -843,6 +985,21 @@ function parseCollection(
     }
   }
 
+  let hook: DeclaredStorageHook | null = null;
+  if (raw.hook !== undefined) {
+    hook = parseHook(`${at}.hook`, raw.hook, outputDir, errors);
+    if (hook && !features.hooks) {
+      errors.push(
+        notYet(
+          `${at}.hook`,
+          'permission hooks',
+          'remove hook (the collection schema still applies)'
+        )
+      );
+      hook = null;
+    }
+  }
+
   if (errors.length > before) return null;
   const collection: DeclaredStorageCollection = {
     kind,
@@ -859,9 +1016,79 @@ function parseCollection(
     collection.dailyWritesPerAuthor = raw.dailyWritesPerAuthor as number;
   if (ownedModelVersions) collection.ownedModelVersions = ownedModelVersions;
   if (raw.exportable !== undefined) collection.exportable = raw.exportable as boolean;
+  if (raw.registry !== undefined) collection.registry = raw.registry as AppStorageRegistryAudience;
   if (schema) collection.schema = schema;
   if (migrations) collection.migrations = migrations;
+  if (hook) collection.hook = hook;
   return collection;
+}
+
+/**
+ * Parses one collection's `hook` (see {@link APP_STORAGE_HOOK_FILE_PATTERN}). Shape only: whether
+ * the file exists in the bundle with that sha256, and its size, need the bundle and are checked
+ * server-side (`storage-hooks.ts`).
+ */
+function parseHook(
+  at: string,
+  raw: unknown,
+  outputDir: unknown,
+  errors: string[]
+): DeclaredStorageHook | null {
+  if (!isPlainObject(raw)) {
+    errors.push(`${at} must be an object { file, sha256, timeoutMs? }`);
+    return null;
+  }
+  const before = errors.length;
+  for (const key of Object.keys(raw)) {
+    if (key === 'decide') {
+      errors.push(
+        `${at}.decide is not supported — a v1 permission hook is code only (its file's default export decides each write); remove decide`
+      );
+    } else if (!HOOK_KEYS.has(key)) {
+      errors.push(
+        `${at}.${boundKey(key)} is not allowed (hook takes only file, sha256, timeoutMs)`
+      );
+    }
+  }
+  const { file, sha256, timeoutMs } = raw;
+  if (
+    typeof file !== 'string' ||
+    file.length > APP_STORAGE_HOOK_FILE_MAX_LENGTH ||
+    !HOOK_FILE_RE.test(file)
+  ) {
+    errors.push(
+      `${at}.file is required and must be the relative path of a .js or .mjs file in the bundle: "/"-separated segments, each starting with a letter, digit, _ or - (no "." or ".." segment, no leading "/"), at most ${APP_STORAGE_HOOK_FILE_MAX_LENGTH} characters`
+    );
+  } else if (HOOK_FILE_FORBIDDEN_SEGMENT_RE.test(file)) {
+    errors.push(
+      `${at}.file must not be inside node_modules — a hook is one self-contained module the app ships itself`
+    );
+  } else if (isStorageHookFileUnderOutputDir(file, outputDir)) {
+    errors.push(
+      `${at}.file ${quoteName(
+        file
+      )} is inside the build output (outputDir) — a hook must be a committed source file of the bundle, shipped verbatim, so its sha256 can be checked at submit`
+    );
+  }
+  if (typeof sha256 !== 'string' || !HOOK_SHA256_RE.test(sha256)) {
+    errors.push(
+      `${at}.sha256 is required and must be the SHA-256 of the file as 64 lowercase hex characters`
+    );
+  }
+  if (
+    timeoutMs !== undefined &&
+    !isIntegerIn(timeoutMs, APP_STORAGE_HOOK_TIMEOUT_MIN_MS, APP_STORAGE_HOOK_TIMEOUT_MAX_MS)
+  ) {
+    errors.push(
+      `${at}.timeoutMs must be a whole number of milliseconds from ${APP_STORAGE_HOOK_TIMEOUT_MIN_MS} to ${APP_STORAGE_HOOK_TIMEOUT_MAX_MS} (omitted means ${APP_STORAGE_HOOK_TIMEOUT_DEFAULT_MS})`
+    );
+  }
+  if (errors.length > before) return null;
+  return {
+    file: file as string,
+    sha256: sha256 as string,
+    timeoutMs: (timeoutMs as number | undefined) ?? APP_STORAGE_HOOK_TIMEOUT_DEFAULT_MS,
+  };
 }
 
 /**
@@ -1390,8 +1617,32 @@ function parse(
       );
       continue;
     }
-    const collection = parseCollection(`storage.collections.${name}`, raw[name], features, errors);
+    const collection = parseCollection(
+      `storage.collections.${name}`,
+      raw[name],
+      features,
+      errors,
+      manifest.outputDir
+    );
     if (collection) collections.set(name, collection);
+  }
+  // CROSS-COLLECTION: one hook file may serve several collections, but it has one content, so it
+  // has one sha256. Two different pins of one file mean one of them can never verify.
+  const pinned = new Map<string, { sha256: string; collection: string }>();
+  for (const [name, collection] of collections) {
+    if (!collection.hook) continue;
+    const seen = pinned.get(collection.hook.file);
+    if (!seen)
+      pinned.set(collection.hook.file, { sha256: collection.hook.sha256, collection: name });
+    else if (seen.sha256 !== collection.hook.sha256) {
+      errors.push(
+        `storage.collections.${name}.hook pins ${quoteName(
+          collection.hook.file
+        )} with a different sha256 than storage.collections.${
+          seen.collection
+        }.hook — one file has one sha256`
+      );
+    }
   }
   // Counted over the collections that parsed: one over its own cap is already refused.
   const patterns = schemaPatternSites(collections).length;

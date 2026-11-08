@@ -22,6 +22,7 @@ import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { getRequestCredential } from '~/server/auth/request-credential';
+import { trpcViewer } from '~/server/auth/api-auth-session';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 import type { ShellRouteName } from '~/server/shell/shell-mode';
@@ -102,7 +103,7 @@ export const getServerProxySSGHelpers = async (
   const ssg = createServerSideHelpers({
     router: appRouter,
     ctx: {
-      user: session?.user,
+      ...trpcViewer(session?.user),
       acceptableOrigin: true,
       features,
       track: new Tracker(),
@@ -234,7 +235,7 @@ export function createServerSideProps<P>({
     }
 
     // A bot-cache candidate (`_app` marked it) is evaluated as in `_app`: the host (part of the
-    // edge's cache key) but not the request, so its region cannot reach a render the edge may store.
+    // cache key) but not the request, so its region cannot reach a render the cache may store.
     // 🔴 Never drop `host` too: with no host the domain restrictions are skipped.
     const botCacheCandidate = !!(context.req as { [BOT_CACHE_REQ_KEY]?: string })[
       BOT_CACHE_REQ_KEY
@@ -276,7 +277,7 @@ export function createServerSideProps<P>({
         ? await result.props
         : result.props;
 
-    // A fail-soft prefetch renders the page without that data; an edge-cached copy would keep it so.
+    // A fail-soft prefetch renders the page without that data; a cached copy would keep it so.
     const botCacheReq = context.req as {
       [BOT_CACHE_REQ_KEY]?: string;
       [BOT_CACHE_PREFETCH_FAILED_REQ_KEY]?: boolean;

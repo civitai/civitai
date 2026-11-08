@@ -670,6 +670,12 @@ export function splitTags(text: string): string[] {
   ];
 }
 
+/** `tags` plus the tags typed or pasted in `text`, in order, skipping any already present. */
+export function withTags(tags: string[], text: string): string[] {
+  const additions = splitTags(text).filter((t) => !tags.includes(t));
+  return additions.length ? [...tags, ...additions] : tags;
+}
+
 /** labelString's inverse — one definition so a mode round-trip can't corrupt labels. */
 export function parseLabel(text: string, mode: LabelType): { tags: string[]; caption: string } {
   const t = text.trim();

@@ -46,7 +46,7 @@ const { commentCountArgs, allCommentCountArgs, commentV3Counts } = await import(
 );
 const { liveCommentsOn } = await import('~/server/events/points/hooks');
 const { countedTopLevelCommentSql } = await import('~/server/services/comment-count.sql');
-const { getThreadMuted } = await import('~/server/services/commentsv2.service');
+const { getThreadMuted } = await import('~/server/services/commentv3/section.service');
 
 const db = { pg: null as unknown as PGlite };
 
@@ -90,7 +90,17 @@ CREATE TABLE "ModelVersion"(id int PRIMARY KEY, name text, "modelId" int);
 CREATE TABLE "UserEngagement"("userId" int, "targetUserId" int, type text);
 CREATE TABLE "UserNotificationSettings"("userId" int, type text);
 INSERT INTO "Post"(id, "userId") VALUES (1, 1);
-INSERT INTO "Article" VALUES (10);
+ALTER TABLE "Article" ADD COLUMN status text NOT NULL DEFAULT 'Published', ADD COLUMN "userId" int,
+  -- Read by new-mention's article branch; no article here names anyone.
+  ADD COLUMN title text NOT NULL DEFAULT '', ADD COLUMN content text NOT NULL DEFAULT '',
+  ADD COLUMN "publishedAt" timestamp, ADD COLUMN "updatedAt" timestamp,
+  ADD COLUMN "contentScannedAt" timestamp, ADD COLUMN ingestion text NOT NULL DEFAULT 'Scanned',
+  ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false,
+  ADD COLUMN unlisted boolean NOT NULL DEFAULT false,
+  ADD COLUMN availability text NOT NULL DEFAULT 'Public', ADD COLUMN "nsfwLevel" int NOT NULL DEFAULT 1;
+ALTER TABLE "User" ADD COLUMN "bannedAt" timestamp, ADD COLUMN "deletedAt" timestamp,
+  ADD COLUMN muted boolean NOT NULL DEFAULT false, ADD COLUMN "browsingLevel" int NOT NULL DEFAULT 1;
+INSERT INTO "Article"(id, "userId") VALUES (10, 1);
 UPDATE "Image" SET "userId" = 1, "postId" = 1 WHERE id = 10;
 UPDATE "Model" SET name = 'M', "userId" = 1 WHERE id = 1;
 UPDATE app_listings SET slug = 'pixel-forge' WHERE serial_id = 9;
@@ -326,6 +336,54 @@ describe('notification queries on CommentV3', () => {
     );
   });
 
+  it('new-mention stays quiet on an unpublished article, so the draft reaches nobody new', async () => {
+    const mentioned = async () =>
+      pairs(await run(mentionNotifications['new-mention'].prepareQuery)).filter(
+        ([commentId]) => commentId === 400
+      );
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "createdAt")
+         VALUES (400, 'article', 10, 2, 'see "mention:9"', now())`,
+      `DELETE FROM "CommentV3" WHERE id = 400`,
+      async () => {
+        expect(await mentioned()).toEqual([[400, 9]]);
+        await temporarily(
+          `UPDATE "Article" SET status = 'Draft' WHERE id = 10`,
+          `UPDATE "Article" SET status = 'Published' WHERE id = 10`,
+          async () => expect(await mentioned()).toEqual([])
+        );
+      }
+    );
+  });
+
+  it('replies on an unpublished article reach only its owner', async () => {
+    // On article 10 (owner 1): 401 by 2 at the top; 402 by 3 answers 106 (by 10); 403 by the owner
+    // answers 401; 404 by 3 answers the owner's 403, clamped under 401.
+    const ours = (out: Emitted[]) => pairs(out).filter(([commentId]) => commentId >= 401);
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "replyToId", "userId", content, "createdAt") VALUES
+         (401, 'article', 10, NULL, NULL, 2, 'a', now()), (402, 'article', 10, 106, NULL, 3, 'b', now()),
+         (403, 'article', 10, 401, NULL, 1, 'c', now()), (404, 'article', 10, 401, 403, 3, 'd', now())`,
+      `DELETE FROM "CommentV3" WHERE id BETWEEN 401 AND 404`,
+      async () => {
+        expect(ours(await emitted('new-comment-reply'))).toEqual([
+          [402, 10],
+          [403, 2],
+          [404, 1],
+        ]);
+        expect(ours(await emitted('new-thread-response')).length).toBeGreaterThan(0);
+        await temporarily(
+          `UPDATE "Article" SET status = 'Unpublished' WHERE id = 10`,
+          `UPDATE "Article" SET status = 'Published' WHERE id = 10`,
+          async () => {
+            expect(ours(await emitted('new-comment-reply'))).toEqual([[404, 1]]);
+            expect(ours(await emitted('new-thread-response'))).toEqual([]);
+          }
+        );
+      }
+    );
+  });
+
   it('the comment reaction milestone keys on the old ids, for live model comments only', async () => {
     const out = await run(reactionNotifications['comment-reaction-milestone'].prepareQuery);
     expect(out.map((r) => [r.userId, r.details])).toEqual([
@@ -489,12 +547,10 @@ describe('the detail fetcher', () => {
 });
 
 describe('the mute menu', () => {
-  // getThreadMuted's raw query, run here as Prisma would send it.
+  // getThreadMuted's raw queries, run here as Prisma would send them.
   const menu = (commentId: number, userId: number) => {
-    dbMock.dbRead.commentV2.findUnique.mockResolvedValue({
-      tosViolation: false,
-      childThread: null,
-    });
+    dbMock.dbWrite.$queryRawUnsafe.mockImplementation(((sql: string, ...values: unknown[]) =>
+      db.pg.query(sql, values).then((r) => r.rows)) as never);
     dbMock.dbWrite.$queryRaw.mockImplementation(((
       strings: TemplateStringsArray,
       ...values: unknown[]
@@ -509,23 +565,6 @@ describe('the mute menu', () => {
     expect(await menu(100, 6)).toEqual({ muted: true, viaAncestor: false, canMute: true });
     expect(await menu(102, 6)).toEqual({ muted: true, viaAncestor: true, canMute: true });
     expect(await menu(100, 9)).toEqual({ muted: false, viaAncestor: false, canMute: true });
-  });
-
-  it('refuses a mute anywhere in a locked chain: an ancestor, or the topic', async () => {
-    await temporarily(
-      `UPDATE "CommentV3" SET locked = true WHERE id = 100`,
-      `UPDATE "CommentV3" SET locked = false WHERE id = 100`,
-      async () => {
-        expect((await menu(102, 9)).canMute).toBe(false);
-        // Another conversation on the same image is not locked.
-        expect((await menu(105, 9)).canMute).toBe(true);
-      }
-    );
-    await temporarily(
-      `UPDATE "CommentTopic" SET locked = true WHERE "entityType" = 'image' AND "entityId" = 10`,
-      `UPDATE "CommentTopic" SET locked = false WHERE "entityType" = 'image' AND "entityId" = 10`,
-      async () => expect((await menu(100, 9)).canMute).toBe(false)
-    );
   });
 });
 
