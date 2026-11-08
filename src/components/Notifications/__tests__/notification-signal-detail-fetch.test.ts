@@ -241,6 +241,16 @@ describe('a re-signalled notification', () => {
     };
     expect(data.pages.map((p) => p.items.map((item) => item.id))).toEqual([[88123, 4], []]);
   });
+
+  it('matches a string id from the signal against a numeric id in the list', async () => {
+    const queryClient = new QueryClient();
+    loaded(queryClient, 'Update', listOf([{ id: 88123, read: true }]));
+    const signal = { ...COLLECTION_UPDATE, id: '88123' } as unknown as NotificationGetAllItem;
+
+    await insertSignalledNotification(queryClient, LIST_KEY, signal, detailFetch());
+
+    expect(firstItems(queryClient, 'Update')).toHaveLength(1);
+  });
 });
 
 describe('badge counts on a signal', () => {
@@ -259,6 +269,13 @@ describe('badge counts on a signal', () => {
   it('are unchanged when a loaded list already holds that id unread', async () => {
     const queryClient = new QueryClient();
     loaded(queryClient, 'Update', listOf([{ id: 88123, read: false }]));
+
+    expect(await run(queryClient)).toEqual({ all: 3, update: 2, comment: 1 });
+  });
+
+  it('are unchanged when only the All list holds that id unread', async () => {
+    const queryClient = new QueryClient();
+    loaded(queryClient, undefined, listOf([{ id: 88123, read: false }]));
 
     expect(await run(queryClient)).toEqual({ all: 3, update: 2, comment: 1 });
   });
