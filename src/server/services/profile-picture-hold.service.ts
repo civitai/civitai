@@ -211,7 +211,6 @@ export async function runProfilePictureSync({ limit = 1000 }: { limit?: number }
         await afterProfilePictureSync([outcome.userId]);
       }
     } catch (error) {
-      // The queue row stays, so the next run retries it.
       failed++;
       await logToAxiom({
         type: 'error',

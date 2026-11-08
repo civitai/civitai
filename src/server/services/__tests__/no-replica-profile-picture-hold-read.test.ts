@@ -28,6 +28,8 @@ const SHARED: Record<string, number> = {
   'src/server/services/article.service.ts': 2,
   // The EXCLUDED reason, a string.
   'src/server/services/personal-data-export/registry.ts': 1,
+  // replacedImageHoldGuard, in deleteImages' DELETE on dbWrite.
+  'src/server/jobs/remove-replaced-images.ts': 1,
 };
 
 function sourceFiles(dir: string): string[] {

@@ -506,7 +506,9 @@ describe('flagged, then blocked', () => {
   it('writes the blocked record once when the sync runs again', async () => {
     await flagThenBlock(OWNER);
     await queue(avatar(OWNER));
-    await runProfilePictureSync();
+    const summary = await runProfilePictureSync();
+    expect(summary.failed).toBe(0);
+    expect(await queued()).toEqual([]);
     expect((await records(OWNER)).filter((r) => r.reason === 'blocked')).toHaveLength(1);
   });
 

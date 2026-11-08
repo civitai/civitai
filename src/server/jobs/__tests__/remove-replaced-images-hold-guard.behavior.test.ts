@@ -62,6 +62,10 @@ const HOLD_MIGRATION = path.resolve(
   __dirname,
   '../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
 );
+const PROFILE_PICTURE_HOLD_MIGRATION = path.resolve(
+  __dirname,
+  '../../../../packages/civitai-db-schema/prisma/migrations/20261229120000_profile_picture_hold/migration.sql'
+);
 
 // Owners, each with one replaced image in the queue, named for the case it pins.
 const PLAIN_USER = 1; // no hold -> deleted
@@ -79,6 +83,7 @@ const OTHER_FLAG_USER = 10; // another image has a review flag that is not CSAM 
 const RELEASED_USER = 11; // their hold marker was released -> deleted
 const LAPSED_LISTED_USER = 12; // a CSAM-blocked image listed on their own lapsed sent report -> deleted
 const READOPTED_USER = 13; // made the replaced image their profile picture again -> kept
+const AVATAR_USER = 14; // re-selected the replaced image as their avatar, which was then flagged and blocked
 const REPORT_SUBJECT = 9; // owns nothing; the subject of the report listing LISTED_USER's image
 
 const PLAIN = 10;
@@ -95,6 +100,7 @@ const RELEASED = 20;
 const LAPSED_LISTED = 21;
 const READOPTED = 22;
 const GONE = 23; // queued, but the image was already deleted some other way
+const AVATAR = 24; // queued only in the profile-picture case
 const QUEUED = [
   PLAIN,
   REPORT,
@@ -122,6 +128,7 @@ const OTHER_FLAG_OTHER = 33;
 const LAPSED_LISTED_OTHER = 34;
 
 const SCHEMA = `
+    CREATE TYPE "JobQueueType" AS ENUM ('ReplacedImageDelete');
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
@@ -171,6 +178,7 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(SCHEMA);
   await holder.db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
+  await holder.db.exec(readFileSync(PROFILE_PICTURE_HOLD_MIGRATION, 'utf8'));
   // Off, so the guard is what keeps a held image rather than the marker's delete trigger, and so
   // the report fixtures write no markers of their own.
   await holder.db.exec(`
@@ -220,7 +228,7 @@ beforeEach(async () => {
   }) as never);
 
   await reset(
-    '"Image", "User", "CsamReport", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost", "Model"'
+    '"Image", "User", "CsamReport", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost", "Model", "ProfilePictureHold"'
   );
   await holder.db.exec(`
     INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor", ingestion) VALUES
@@ -303,5 +311,48 @@ describe('remove-replaced-images under an account hold', () => {
     } finally {
       await holder.db.exec(`ALTER VIEW "EvidenceHeldUserMoved" RENAME TO "EvidenceHeldUser"`);
     }
+  });
+});
+
+describe('remove-replaced-images and a profile-picture hold', () => {
+  const holdRows = async () =>
+    (
+      await holder.db.query<{ reason: string }>(
+        `SELECT reason FROM "ProfilePictureHold" WHERE "imageId" = ${AVATAR} ORDER BY reason`
+      )
+    ).rows.map((r) => r.reason);
+
+  beforeEach(async () => {
+    dbMock.dbRead.jobQueue.findMany.mockResolvedValue(
+      [...QUEUED, AVATAR].map((entityId) => ({ entityId }))
+    );
+    // Replaced, re-selected, flagged, then blocked: the sync took it off the user and recorded both.
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor", ingestion) VALUES
+        (${AVATAR}, ${AVATAR_USER}, NULL, 'moderated', 'Blocked');
+      INSERT INTO "User" (id, "profilePictureId") VALUES (${AVATAR_USER}, NULL);
+      INSERT INTO "ProfilePictureHold" ("userId", "imageId", reason) VALUES
+        (${AVATAR_USER}, ${AVATAR}, 'flagged'),
+        (${AVATAR_USER}, ${AVATAR}, 'blocked');
+    `);
+  });
+
+  it('keeps the image and both of its records', async () => {
+    const result = await run();
+
+    expect(await remaining()).toContain(AVATAR);
+    expect(await holdRows()).toEqual(['blocked', 'flagged']);
+    expect(result.heldAtDelete).toBe(HELD.length + 1);
+    expect(holder.restamped).toContain(AVATAR);
+    expect(holder.dequeued).not.toContain(AVATAR);
+  });
+
+  it('reaps the image once its records are gone', async () => {
+    await holder.db.exec(`DELETE FROM "ProfilePictureHold"`);
+
+    await run();
+
+    expect(await remaining()).not.toContain(AVATAR);
+    expect(holder.dequeued).toContain(AVATAR);
   });
 });

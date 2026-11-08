@@ -48,7 +48,6 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
             lastRun
           );
 
-          // Overrides the processor's query where it reads the primary; see primary-notification-queries.ts.
           const prepareQuery: NotificationProcessor['prepareQuery'] =
             primaryPrepareQueries[key] ?? processorQuery;
           let query: Promise<string | undefined> | string | undefined = prepareQuery?.({

@@ -61,8 +61,8 @@ async function getStillPresentImageIds(ids: number[]) {
 }
 
 /**
- * The holds the reap re-checks on the DELETE itself: every hold on the owner's account, and the
- * placeholder owner. Only valid on a statement over an unaliased "Image". `markerView` is what
+ * The holds the reap re-checks on the DELETE itself: every hold on the owner's account, the
+ * placeholder owner, and a profile-picture hold on the image. Only valid on a statement over an unaliased "Image". `markerView` is what
  * `holdMarkerViewExists` returned.
  */
 export function replacedImageHoldGuard(markerView: boolean) {
@@ -71,6 +71,7 @@ export function replacedImageHoldGuard(markerView: boolean) {
     -- Read off the row itself, so a flag committed while this DELETE runs still holds the image.
     "Image"."needsReview" IS DISTINCT FROM 'csam'
     AND NOT (${owner} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(owner, markerView)})
+    AND NOT EXISTS (SELECT 1 FROM "ProfilePictureHold" pph WHERE pph."imageId" = "Image".id)
   `;
 }
 
