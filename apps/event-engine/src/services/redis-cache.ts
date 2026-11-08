@@ -1,7 +1,7 @@
 import { createEngineCluster, type EngineRedisCluster } from '@/services/redis-cluster-client'
 import { CacheUpdate, MetricEvent } from '@/types/events'
 import { logger } from '@/utils/logger'
-import { cacheKeys } from '@/common/utils/cache-keys'
+import { cacheKeys, METRIC_RECENT_EVENT_TTL } from '@/common/utils/cache-keys'
 import { EntityType } from '@/common/types/metric-types'
 import { RedisWithHelpers, withRedisHelpers } from '@/common/utils/query-utils'
 import { chunk } from '@/common/utils/basic'
@@ -137,9 +137,11 @@ export class RedisCache {
       await this.client!.hIncrIfExistsOnce(
         metricKey,
         dedupeKey,
+        cacheKeys.metricRecentEvent(event.entityType as EntityType, event.entityId),
         event.metricType,
         event.metricValue ?? 0,
         ttlSeconds,
+        METRIC_RECENT_EVENT_TTL,
       )
       redisCacheMetrics.cacheUpdates.inc({ operation: 'increment_once' })
     } catch (err) {
