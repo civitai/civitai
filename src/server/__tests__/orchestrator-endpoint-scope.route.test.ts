@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as GetOrchestratorToken from '~/server/orchestrator/get-orchestrator-token';
 import type * as ServerAuthSession from '~/server/auth/get-server-auth-session';
@@ -160,11 +161,11 @@ describe.each(routes)('/api/$name', (route) => {
     expect((await call(route, otherAIServicesScope(route))).status).toBe(403);
   });
 
-  it('refuses an OAuth client without the route scope', async () => {
-    const { status } = await call(route, otherAIServicesScope(route), {
-      type: 'oauth',
-      id: 'oauth-client-123',
-    });
-    expect(status).toBe(403);
+  it('answers 403 when the orchestrator token is refused for the caller', async () => {
+    getOrchestratorToken.mockRejectedValue(
+      new TRPCError({ code: 'FORBIDDEN', message: 'refused' })
+    );
+    expect((await call(route, route.scope)).status).toBe(403);
+    expect(serviceCalls()).toBe(0);
   });
 });
