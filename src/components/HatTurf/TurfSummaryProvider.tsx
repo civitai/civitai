@@ -421,7 +421,7 @@ function TurfWatcher({
         added.forEach((id) => everMarked.current.add(id));
         if (again.length) onAdded(again);
       }
-    }, wait);
+    }, WATCH_COALESCE_MS);
   }, [version, watching, send, onAdded]);
   useEffect(() => () => clearTimeout(flush.current), []);
 
