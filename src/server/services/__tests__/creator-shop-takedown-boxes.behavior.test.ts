@@ -763,6 +763,19 @@ describe('takedownCosmeticShopItem on a pack box that drew it', () => {
     expect(result.boxRefundedValue).toBe(334);
   });
 
+  it('records malformed pack terms as a failure and finishes the takedown', async () => {
+    await seedPack();
+    await q(`UPDATE "UserCosmeticShopPurchases" SET meta = $1 WHERE "buzzTransactionId" = $2`, [
+      JSON.stringify({ pack: { size: 1, guaranteedTierIds: [1] } }),
+      PACK_TX,
+    ]);
+    const result = await takedown();
+    expect(credits()).toEqual([]);
+    expect(result.failures).toEqual([
+      expect.objectContaining({ stage: 'refund', userId: BUYER, amount: 4500 }),
+    ]);
+  });
+
   it('counts a share refused as a duplicate as paid', async () => {
     await seedPack();
     buzz.createBuzzTransaction.mockRejectedValue(
