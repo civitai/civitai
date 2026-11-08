@@ -63,9 +63,9 @@ export function agentReviewName(publishRequestId: string): string {
 
 export type StartAgentReviewArgs = {
   publishRequestId: string;
-  /** Calling moderator's id — recorded for audit; the agent produces mod
-   *  decision-support, so the trigger is always moderator-bound. */
-  modUserId: number;
+  /** Calling moderator's id, or `null` for the automatic start when a review preview goes live
+   *  (review-autodeploy.service, under the platform's daily agent-review budget). */
+  modUserId: number | null;
   /**
    * Re-run only these analyses. Omitted (or all three) ⇒ a full run.
    *
@@ -281,11 +281,9 @@ export async function startAgentReview(
   // (f) Provision the apply Job. On failure, flip the row to failed so it never
   // lingers `running`, then rethrow.
   try {
-    // COST CEILING (audit #5): enforcement is POD-SIDE only — the runner self-aborts
-    // (status 'cost-capped') once its LLM spend crosses COST_CAP_USD. There is NO
-    // civitai-side spend ceiling in P1 (no per-mod/day budget, no global cap): an
-    // accepted risk while the feature is DARK (mod-only, flag-gated), to revisit
-    // before widening.
+    // COST CEILING (audit #5): per review, POD-SIDE — the runner self-aborts (status
+    // 'cost-capped') once its LLM spend crosses COST_CAP_USD. AUTOMATIC starts are also bounded
+    // by a platform-wide daily budget (review-autodeploy.service); a moderator's start is not.
     await provisionAgentReviewJob({
       agentName,
       publishRequestId,

@@ -34,7 +34,11 @@ const {
   mockCommitFiles,
 } = vi.hoisted(() => ({
   mockDbRead: {
-    appBlockPublishRequest: { findUnique: vi.fn(), findMany: vi.fn(async () => []) },
+    appBlockPublishRequest: {
+      findUnique: vi.fn(),
+      findMany: vi.fn(async () => []),
+      count: vi.fn(async () => 0),
+    },
     // Fix #1 (onsite): withdrawRequest now probes for a reset listing to close. No reset
     // listing in these sandbox tests → findFirst returns null → the close early-returns.
     appListing: { findFirst: vi.fn(async () => null) },
@@ -47,7 +51,9 @@ const {
     },
     // previewRequest records the review run it started (the stale-run guard's key).
     appBlockBuildAttempt: { create: vi.fn(async () => ({ id: 1 })) },
-    $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
+    // The build-slot claim (review-autodeploy.service) runs in a transaction; its tx reads the
+    // row through the same findUnique mock the test primes and writes through updateMany.
+    $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockTx)),
     appListing: { updateMany: vi.fn(async () => ({ count: 0 })) },
     appListingModerationEvent: { create: vi.fn(async () => ({})) },
     // AGENTIC REVIEW (P1) — teardownAgentReviewForRequest first probes findFirst
@@ -86,6 +92,21 @@ const {
   // disposable run-for-real preview storage schema.
   mockDeprovisionReviewPreview: vi.fn(async () => undefined),
 }));
+
+const mockTx = {
+  $executeRawUnsafe: vi.fn(async () => 0),
+  $executeRaw: vi.fn(async () => 0),
+  appBlockPublishRequest: {
+    // Build slots held: none by default.
+    count: vi.fn(async () => 0),
+    findFirst: vi.fn(async (...args: unknown[]) =>
+      (mockDbRead.appBlockPublishRequest.findUnique as (...a: unknown[]) => unknown)(...args)
+    ),
+    updateMany: vi.fn(async (...args: unknown[]) =>
+      (mockDbWrite.appBlockPublishRequest.updateMany as (...a: unknown[]) => unknown)(...args)
+    ),
+  },
+};
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
@@ -128,9 +149,9 @@ import {
   markReviewPreviewState,
   withdrawRequest,
   parseReviewDetail,
-  MAX_CONCURRENT_REVIEW_PREVIEWS,
   REVIEW_PREVIEW_TTL_MS,
 } from '~/server/services/blocks/publish-request.service';
+import { MAX_CONCURRENT_REVIEW_BUILDS } from '~/server/services/blocks/review-autodeploy.service';
 
 const PUBREQ = 'pubreq_0123456789ABCDEFGHJKMNPQRS';
 const SHA = 'a'.repeat(40);
@@ -183,7 +204,10 @@ describe('previewRequest', () => {
       bundleKey: ZIP_BUNDLE_KEY,
       forgejoCommitSha: null,
     });
-    const result = await previewRequest({ publishRequestId: PUBREQ, modUserId: 99 });
+    const result = await previewRequest({
+      publishRequestId: PUBREQ,
+      actor: { kind: 'moderator', userId: 99 },
+    });
 
     expect(mockGetReviewHead).toHaveBeenCalledWith('my-app');
     expect(result.sha).toBe(SHA);
@@ -215,7 +239,7 @@ describe('previewRequest', () => {
       forgejoCommitSha: null,
     });
     mockTriggerReviewBuild.mockResolvedValue({ name: 'app-blocks-review-my-app-aaaaaaaa-111111' });
-    await previewRequest({ publishRequestId: PUBREQ, modUserId: 99 });
+    await previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 99 } });
     expect(mockDbWrite.appBlockBuildAttempt.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         publishRequestId: PUBREQ,
@@ -235,9 +259,9 @@ describe('previewRequest', () => {
       status: 'approved',
       slug: 'my-app',
     });
-    await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 1 })).rejects.toThrow(
-      /pending/
-    );
+    await expect(
+      previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 1 } })
+    ).rejects.toThrow(/pending/);
     expect(mockTriggerReviewBuild).not.toHaveBeenCalled();
   });
 
@@ -250,9 +274,9 @@ describe('previewRequest', () => {
       forgejoCommitSha: null,
     });
     mockTriggerReviewBuild.mockRejectedValue(new Error('receiver 500'));
-    await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 1 })).rejects.toThrow(
-      /could not start review build/
-    );
+    await expect(
+      previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 1 } })
+    ).rejects.toThrow(/could not start review build/);
     const failedCall = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls.find(
       ([arg]: any[]) => arg.data.deployState === 'preview-failed'
     );
@@ -299,7 +323,10 @@ describe('previewRequest source tree by origin', () => {
       forgejoCommitSha: PUSH_SHA,
     });
 
-    const result = await previewRequest({ publishRequestId: PUBREQ, modUserId: 7 });
+    const result = await previewRequest({
+      publishRequestId: PUBREQ,
+      actor: { kind: 'moderator', userId: 7 },
+    });
 
     // The reviewed commit — not a branch HEAD — is what gets reconstructed.
     expect(mockListRepoTreeAtRef).toHaveBeenCalledWith('my-app', PUSH_SHA);
@@ -347,7 +374,10 @@ describe('previewRequest source tree by origin', () => {
       forgejoCommitSha: null,
     });
 
-    const result = await previewRequest({ publishRequestId: PUBREQ, modUserId: 7 });
+    const result = await previewRequest({
+      publishRequestId: PUBREQ,
+      actor: { kind: 'moderator', userId: 7 },
+    });
 
     expect(mockGetReviewHead).toHaveBeenCalledWith('my-app');
     expect(result.sha).toBe(SHA);
@@ -370,7 +400,10 @@ describe('previewRequest source tree by origin', () => {
       forgejoCommitSha: PUSH_SHA,
     });
 
-    const result = await previewRequest({ publishRequestId: PUBREQ, modUserId: 7 });
+    const result = await previewRequest({
+      publishRequestId: PUBREQ,
+      actor: { kind: 'moderator', userId: 7 },
+    });
     expect(result.sha).toBe(SHA);
     expect(mockCommitFiles).not.toHaveBeenCalled();
   });
@@ -384,9 +417,9 @@ describe('previewRequest source tree by origin', () => {
       forgejoCommitSha: null,
     });
 
-    await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 7 })).rejects.toThrow(
-      /neither a bundle nor a commit/
-    );
+    await expect(
+      previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 7 } })
+    ).rejects.toThrow(/neither a bundle nor a commit/);
     expect(mockGetReviewHead).not.toHaveBeenCalled();
     expect(mockTriggerReviewBuild).not.toHaveBeenCalled();
   });
@@ -431,7 +464,10 @@ describe('previewRequest repeat preview (push origin, unchanged tree)', () => {
   it('in-review tree already identical: does NOT commit, reuses the existing HEAD sha', async () => {
     mockListRepoTree.mockResolvedValue(matchingReviewTree());
 
-    const result = await previewRequest({ publishRequestId: PUBREQ, modUserId: 7 });
+    const result = await previewRequest({
+      publishRequestId: PUBREQ,
+      actor: { kind: 'moderator', userId: 7 },
+    });
 
     // The comparison is against the IN-REVIEW repo's main, not the source repo.
     expect(mockListRepoTree).toHaveBeenCalledWith('my-app', 'main', 'civitai-apps-review');
@@ -451,7 +487,10 @@ describe('previewRequest repeat preview (push origin, unchanged tree)', () => {
     tree.set('index.html', '0'.repeat(40)); // some other blob
     mockListRepoTree.mockResolvedValue(tree);
 
-    const result = await previewRequest({ publishRequestId: PUBREQ, modUserId: 7 });
+    const result = await previewRequest({
+      publishRequestId: PUBREQ,
+      actor: { kind: 'moderator', userId: 7 },
+    });
 
     expect(mockCommitFiles).toHaveBeenCalledTimes(1);
     expect(result.sha).toBe(MIRRORED_SHA);
@@ -462,7 +501,10 @@ describe('previewRequest repeat preview (push origin, unchanged tree)', () => {
     tree.delete('index.html');
     mockListRepoTree.mockResolvedValue(tree);
 
-    const result = await previewRequest({ publishRequestId: PUBREQ, modUserId: 7 });
+    const result = await previewRequest({
+      publishRequestId: PUBREQ,
+      actor: { kind: 'moderator', userId: 7 },
+    });
 
     expect(mockCommitFiles).toHaveBeenCalledTimes(1);
     expect(result.sha).toBe(MIRRORED_SHA);
@@ -477,7 +519,10 @@ describe('previewRequest repeat preview (push origin, unchanged tree)', () => {
     tree.set('stale.js', '1'.repeat(40));
     mockListRepoTree.mockResolvedValue(tree);
 
-    const result = await previewRequest({ publishRequestId: PUBREQ, modUserId: 7 });
+    const result = await previewRequest({
+      publishRequestId: PUBREQ,
+      actor: { kind: 'moderator', userId: 7 },
+    });
 
     expect(mockCommitFiles).toHaveBeenCalledTimes(1);
     const commitArg = mockCommitFiles.mock.calls[0][0] as { replaceAllFiles?: boolean };
@@ -488,7 +533,10 @@ describe('previewRequest repeat preview (push origin, unchanged tree)', () => {
   it('tree listing fails (repo not created yet / transport error): mirrors rather than assuming unchanged', async () => {
     mockListRepoTree.mockRejectedValue(new Error('404 repo not found'));
 
-    const result = await previewRequest({ publishRequestId: PUBREQ, modUserId: 7 });
+    const result = await previewRequest({
+      publishRequestId: PUBREQ,
+      actor: { kind: 'moderator', userId: 7 },
+    });
 
     expect(mockCommitFiles).toHaveBeenCalledTimes(1);
     expect(result.sha).toBe(MIRRORED_SHA);
@@ -502,7 +550,10 @@ describe('previewRequest repeat preview (push origin, unchanged tree)', () => {
     });
     mockListRepoTree.mockResolvedValue(matchingReviewTree());
 
-    const result = await previewRequest({ publishRequestId: PUBREQ, modUserId: 7 });
+    const result = await previewRequest({
+      publishRequestId: PUBREQ,
+      actor: { kind: 'moderator', userId: 7 },
+    });
 
     // ZIP path is byte-identical to before: straight to the in-review HEAD, no
     // tree comparison, no repo write.
@@ -539,6 +590,34 @@ describe('getReviewStatus', () => {
     });
     const r = await getReviewStatus({ publishRequestId: PUBREQ });
     expect(r.state).toBeNull();
+  });
+
+  // 14-day max age. Boundaries measured on both sides (13d23h live, 14d1h expired) and with a
+  // queued row (which holds no resources) at 30d.
+  const HOUR = 60 * 60 * 1000;
+  const DAY = 24 * HOUR;
+  it.each([
+    ['preview-live', 14 * DAY - HOUR, 'preview-live'],
+    ['preview-live', 14 * DAY + HOUR, 'preview-expired'],
+    ['preview-failed', 20 * DAY, 'preview-expired'],
+    ['preview-queued', 30 * DAY, 'preview-queued'],
+  ])('a %s row last updated %d ms ago reports %s', async (stored, ageMs, expected) => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: stored,
+      deployDetail: JSON.stringify({
+        url: 'https://review-x.civit.ai/my-app',
+        host: 'review-x.civit.ai',
+      }),
+      deployUpdatedAt: new Date(Date.now() - ageMs),
+    });
+    // A mod id only where no mint can happen: the live case would need a signing secret.
+    const modUserId = expected === 'preview-expired' ? 4242 : undefined;
+    const r = await getReviewStatus({ publishRequestId: PUBREQ, modUserId });
+    expect(r.state).toBe(expected);
+    // An expired preview mints no access URL: there is nothing left to open.
+    if (expected === 'preview-expired') expect(r.previewUrl).toBeUndefined();
   });
 });
 
@@ -851,10 +930,11 @@ describe('countActiveReviewPreviews', () => {
 
     const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
     expect(arg.where.status).toBe('pending');
+    // `preview-queued` is active: a queued automatic preview is listed (and can be torn down).
     expect(arg.where.deployState).toEqual({
-      in: ['preview-building', 'preview-deploying', 'preview-live'],
+      in: ['preview-queued', 'preview-building', 'preview-deploying', 'preview-live'],
     });
-    // TTL cutoff ≈ now - REVIEW_PREVIEW_TTL_MS (excludes rows older than 6h).
+    // TTL cutoff ≈ now - REVIEW_PREVIEW_TTL_MS (the 14-day preview max age).
     const cutoff: Date = arg.where.deployUpdatedAt.gt;
     expect(cutoff).toBeInstanceOf(Date);
     expect(cutoff.getTime()).toBeLessThanOrEqual(before - REVIEW_PREVIEW_TTL_MS + 5000);
@@ -873,10 +953,11 @@ describe('countActiveReviewPreviews', () => {
 });
 
 // ---------------------------------------------------------------------------
-// previewRequest cap enforcement — blocks a fresh request when MAX others are
-// active; allows a rebuild of an already-active request (self excluded).
+// A moderator's start and the platform BUILD cap. The cap bounds automatic
+// starts (they queue); a moderator's explicit start jumps the queue and is
+// admitted even with every slot held. The old cap on LIVE previews is gone.
 // ---------------------------------------------------------------------------
-describe('previewRequest concurrency cap', () => {
+describe('previewRequest and the build cap', () => {
   beforeEach(() => {
     process.env.NEXTAUTH_URL = 'https://civitai.com';
     mockDbRead.appBlockPublishRequest.findUnique.mockReset();
@@ -887,68 +968,39 @@ describe('previewRequest concurrency cap', () => {
       bundleKey: ZIP_BUNDLE_KEY,
       forgejoCommitSha: null,
     });
-    mockDbRead.appBlockPublishRequest.findMany.mockReset();
     mockDbWrite.appBlockPublishRequest.updateMany.mockClear();
     mockGetReviewHead.mockClear();
     mockTriggerReviewBuild.mockReset();
     mockTriggerReviewBuild.mockResolvedValue({ name: 'review-pr-1' });
   });
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    mockTx.appBlockPublishRequest.count.mockResolvedValue(0);
+    vi.clearAllMocks();
+  });
 
-  it('throws (naming the cap + active slugs) when MAX others are active', async () => {
-    const others = Array.from({ length: MAX_CONCURRENT_REVIEW_PREVIEWS }, (_, i) => ({
-      id: `other-${i}`,
-      slug: `other-app-${i}`,
-      version: '1.0.0',
-      deployState: 'preview-live',
-      deployDetail: null,
-      deployUpdatedAt: new Date(),
-    }));
-    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue(others);
+  it('a moderator start is admitted with every build slot held', async () => {
+    mockTx.appBlockPublishRequest.count.mockResolvedValue(MAX_CONCURRENT_REVIEW_BUILDS);
+    await expect(
+      previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 1 } })
+    ).resolves.toBeDefined();
+    expect(mockTriggerReviewBuild).toHaveBeenCalledWith(expect.objectContaining({ modUserId: 1 }));
+  });
 
-    await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 1 })).rejects.toThrow(
-      new RegExp(
-        `cap reached \\(${MAX_CONCURRENT_REVIEW_PREVIEWS}/${MAX_CONCURRENT_REVIEW_PREVIEWS} active\\)`
-      )
+  it('the claim takes the advisory lock and records the moderator on the building row', async () => {
+    await previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 5 } });
+    expect(mockTx.$executeRaw).toHaveBeenCalled();
+    const claim = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls.find(
+      ([arg]: any[]) => arg.data.deployState === 'preview-building'
     );
-    await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 1 })).rejects.toThrow(
-      /other-app-0/
-    );
-    // The cap query excluded THIS request.
-    const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
-    expect(arg.where.id).toEqual({ not: PUBREQ });
+    expect(JSON.parse(claim![0].data.deployDetail)).toEqual({ actor: 'moderator', modUserId: 5 });
+  });
+
+  it('a request that stopped being pending before the claim is refused, nothing triggered', async () => {
+    mockTx.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null);
+    await expect(
+      previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 1 } })
+    ).rejects.toThrow(/pending/);
     expect(mockTriggerReviewBuild).not.toHaveBeenCalled();
-  });
-
-  it('allows a rebuild of an already-active request when MAX total active (self excluded → 4 others)', async () => {
-    // Self is one of the 5 active, so the exclude-self query returns 4 others.
-    const others = Array.from({ length: MAX_CONCURRENT_REVIEW_PREVIEWS - 1 }, (_, i) => ({
-      id: `other-${i}`,
-      slug: `other-app-${i}`,
-      version: '1.0.0',
-      deployState: 'preview-live',
-      deployDetail: null,
-      deployUpdatedAt: new Date(),
-    }));
-    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue(others);
-
-    await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 1 })).resolves.toBeDefined();
-    expect(mockTriggerReviewBuild).toHaveBeenCalled();
-  });
-
-  it('proceeds under the cap', async () => {
-    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
-      {
-        id: 'x',
-        slug: 'x',
-        version: '1.0.0',
-        deployState: 'preview-live',
-        deployDetail: null,
-        deployUpdatedAt: new Date(),
-      },
-    ]);
-    await expect(previewRequest({ publishRequestId: PUBREQ, modUserId: 1 })).resolves.toBeDefined();
-    expect(mockTriggerReviewBuild).toHaveBeenCalled();
   });
 });
 
@@ -1169,8 +1221,10 @@ describe('listActiveReviewPreviews', () => {
       },
     ]);
 
+    mockDbRead.appBlockPublishRequest.count.mockResolvedValueOnce(1);
     const res = await listActiveReviewPreviews();
-    expect(res.cap).toBe(MAX_CONCURRENT_REVIEW_PREVIEWS);
+    expect(res.cap).toBe(MAX_CONCURRENT_REVIEW_BUILDS);
+    expect(res.building).toBe(1);
     expect(res.active).toEqual([
       {
         publishRequestId: 'a',
@@ -1193,7 +1247,7 @@ describe('listActiveReviewPreviews', () => {
     const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
     expect(arg.where.status).toBe('pending');
     expect(arg.where.deployState).toEqual({
-      in: ['preview-building', 'preview-deploying', 'preview-live'],
+      in: ['preview-queued', 'preview-building', 'preview-deploying', 'preview-live'],
     });
     expect(arg.orderBy).toEqual({ deployUpdatedAt: 'asc' });
   });
@@ -1201,7 +1255,7 @@ describe('listActiveReviewPreviews', () => {
   it('returns an empty active list + the cap when nothing is active', async () => {
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
     const res = await listActiveReviewPreviews();
-    expect(res).toEqual({ cap: MAX_CONCURRENT_REVIEW_PREVIEWS, active: [] });
+    expect(res).toEqual({ cap: MAX_CONCURRENT_REVIEW_BUILDS, building: 0, active: [] });
   });
 });
 

@@ -340,6 +340,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       failedStep: signals.failedStep ?? 'unreported',
       failureClass: failureClass ?? 'unknown',
     });
+    reviewBuildSettled(body.publishRequestId, false);
     res.status(200).json({ ok: true, applied: false, reason: 'review build failed' });
     return;
   }
@@ -394,6 +395,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       { ...baseDetail, error: `review apply trigger failed: ${String(e).slice(0, 80)}` },
       { requireActivePreview: true }
     );
+    reviewBuildSettled(body.publishRequestId, false);
     res.status(500).json({ error: 'Review apply trigger failed', detail: String(e).slice(0, 240) });
     return;
   }
@@ -439,6 +441,7 @@ export async function watchReviewApplyJob(args: {
       const reachable = host ? await waitForReviewHostReachable(host) : true;
       if (reachable) {
         await markReviewPreviewState(args.publishRequestId, 'preview-live', args.baseDetail, guard);
+        reviewBuildSettled(args.publishRequestId, true);
       } else {
         // Deploy is healthy but its host never became publicly reachable within
         // the budget (DNS propagation stall, or a genuinely-broken route). Do
@@ -457,6 +460,7 @@ export async function watchReviewApplyJob(args: {
           },
           guard
         );
+        reviewBuildSettled(args.publishRequestId, false);
       }
     } else {
       // On a DEFINITIVE failure free the replay-dedup slot so a same-sha retry
@@ -476,6 +480,7 @@ export async function watchReviewApplyJob(args: {
         },
         guard
       );
+      reviewBuildSettled(args.publishRequestId, false);
     }
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -503,6 +508,16 @@ export function reviewBuildFailureError(
     return `review build failed at ${BUILD_STEP_LABELS[failedStep]} (${failureClass})`;
   }
   return `review build ${String(status ?? 'failed').slice(0, 60)}`;
+}
+
+/**
+ * A review build stopped holding a build slot: start the next queued one and, when it went live,
+ * possibly the agent review (review-autodeploy.service). Fire-and-forget, never rejects.
+ */
+function reviewBuildSettled(publishRequestId: string, live: boolean): void {
+  void import('~/server/services/blocks/review-autodeploy.service')
+    .then((m) => m.onReviewBuildSettled({ publishRequestId, live }))
+    .catch(() => undefined);
 }
 
 /** The review image built but its deploy did not go live: a platform-class failure. */

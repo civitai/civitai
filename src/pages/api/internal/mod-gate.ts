@@ -250,7 +250,7 @@ import { verifyReviewAccessToken } from '~/server/services/blocks/review-session
  * resolve host → publish request → a file list and answer "does this path name a
  * real file" exactly. The host→request lookup already exists
  * (`findActiveReviewPreviewRows` in that same service reads the host out of the
- * deploy detail, over a population capped by `MAX_CONCURRENT_REVIEW_PREVIEWS`), and
+ * deploy detail, over the pending requests' active previews), and
  * any such list is immutable per review sha, so the steady-state cost would be a
  * cache lookup rather than a per-subrequest database round trip.
  *
