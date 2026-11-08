@@ -113,7 +113,8 @@ describe('store grid with sub-listings', () => {
         .querySelector('[data-testid="apps-sub-listing-cta"]')
         ?.closest('a')
         ?.getAttribute('href')
-    ).toBe(CHILD.runHref);
+      // The grid tags the launch with its acquisition surface (`App_Open.surface`).
+    ).toBe(`${CHILD.runHref}&src=sub_listing`);
   });
 
   test('client-side search matches a sub-listing by its own title', async () => {
