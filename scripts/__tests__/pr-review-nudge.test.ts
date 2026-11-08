@@ -203,8 +203,8 @@ describe('mcpPrEvent finds a PR a GitHub MCP call opened or readied', () => {
   });
 
   it('reads the response in the shapes a runtime may pass it', () => {
-    const text = mcpAnswer(7845)[0].text;
-    expect(mcp(MCP_CREATE, createArgs(), text)?.pr).toBe(7845);
+    const answerText = mcpAnswer(7845)[0].text;
+    expect(mcp(MCP_CREATE, createArgs(), answerText)?.pr).toBe(7845);
     expect(mcp(MCP_CREATE, createArgs(), { content: mcpAnswer(7846) })?.pr).toBe(7846);
     expect(
       mcp(MCP_CREATE, createArgs(), {

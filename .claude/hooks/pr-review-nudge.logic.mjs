@@ -5,8 +5,7 @@
  * It fires when a tool call has just opened a civitai/civitai PR or marked one ready, and tells the
  * session to follow the `pr-review` skill: record the PR's intent in HQ before the hosted review's
  * first round finishes, then wait for that round and work its findings. It only adds context; it
- * never blocks a call. The text names both the `hq` CLI and the HQ MCP tools, so it does not need to
- * know which of them the session has.
+ * never blocks a call.
  *
  * Two kinds of call count (`hookEvent`):
  *   - a Bash `gh pr create` / `gh pr ready` (`prEvent`: the command and what gh printed, no I/O);
@@ -17,14 +16,9 @@
  * the base repo's URL for a fork's PR too, so the URL cannot say. Any check that fails or cannot run
  * means no nudge, silently.
  *
- * The PR number comes from what the tool RETURNED, never from what it was asked: `gh pr create`
- * prints the new PR's URL, `gh pr ready` prints `Pull request civitai/civitai#<n> is marked as
- * "ready for review"` (on stderr), and the GitHub MCP server answers `{"id":…,"url":"<PR URL>"}`.
- * Two of gh's other answers name a PR too, and are excluded by their own words because nothing just
- * happened: a create refused with `a pull request for branch "…" into branch "…" already exists:`
- * and the existing PR's URL, and a ready that says the PR `is already "ready for review"`. A gh
- * command quoted in an echo or a commit message is not a gh segment (`ghPrMatch`), so it fires
- * nothing whatever was printed.
+ * The PR number comes from what the tool returned, never from what it was asked (the Bash and MCP
+ * response shapes are documented beside CREATED_URL, READY_REF and mcpResponsePr). A gh command
+ * quoted in an echo or a commit message is not a gh segment (`ghPrMatch`), so it fires nothing.
  */
 
 import { spawnSync } from 'child_process';
@@ -127,8 +121,8 @@ function asksForDraft(args) {
 
 // The PR as gh prints it. The owner/name must be EXACTLY civitai/civitai: a fork, or another repo
 // whose name starts with "civitai", is a different repo.
-const CREATED_URL =
-  /https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/pull\/([1-9][0-9]*)(?![0-9])/g;
+const PR_URL_SOURCE = String.raw`https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/pull\/([1-9][0-9]*)`;
+const CREATED_URL = new RegExp(`${PR_URL_SOURCE}(?![0-9])`, 'g');
 // Only gh's success line. Its other lines name the PR too: "is already \"ready for review\"" (nothing
 // changed), "is closed. Only draft pull requests can be marked …" (it failed) and "is converted to
 // \"draft\"" (`--undo`).
@@ -190,7 +184,7 @@ export function prHeadRepo(pr, env = process.env, run = spawnSync) {
 
 // The GitHub MCP server's PR tools, under whatever name the session gave the server.
 export const GITHUB_MCP_PR_TOOL = /^mcp__.*github.*__(create_pull_request|update_pull_request)$/i;
-const PR_URL = /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/pull\/([1-9][0-9]*)$/;
+const PR_URL = new RegExp(`^${PR_URL_SOURCE}$`);
 
 /**
  * The one PR an MCP response names in a `url` or `html_url` field, at any depth and inside any
