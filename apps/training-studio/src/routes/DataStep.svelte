@@ -26,6 +26,7 @@
     IconLayoutGrid,
     IconLayoutList,
     IconLayoutRows,
+    IconTrash,
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
@@ -78,6 +79,7 @@
   import GenerationPickerModal from './GenerationPickerModal.svelte';
   import { fileDrop, isZip, pickedFiles } from './fileDrop';
   import { inFlight, uploadedFields, uploadTile } from './tileUpload';
+  import { datasetEpoch, planRemoval } from './datasetRemoval';
   import ReuseDatasetModal from './ReuseDatasetModal.svelte';
   import ManageTagsModal from './ManageTagsModal.svelte';
   import type { GenerationItem } from '$lib/data/trainingRows';
@@ -473,6 +475,7 @@
   async function importZip(file: File) {
     if (importing) return;
     importing = true;
+    const current = epoch.capture();
     try {
       const zip = await JSZip.loadAsync(file);
       const captions = new Map<string, string>();
@@ -500,7 +503,8 @@
           path: m.entry.name,
         }))
       );
-      await addImported(entries);
+      // A Remove all while the zip was extracting: the user emptied the dataset this would refill.
+      if (current()) await addImported(entries);
     } finally {
       importing = false;
     }
@@ -589,6 +593,39 @@
     const tile = images.find((x) => x.id === id);
     if (tile) URL.revokeObjectURL(tile.previewUrl);
     images = images.filter((x) => x.id !== id);
+  }
+
+  const epoch = datasetEpoch();
+  // Remove all, or only the tiles the current filter shows.
+  let removeDialogOpen = $state(false);
+  const filtered = $derived(filter !== 'all' || tagFilter != null);
+  const removeTargets = $derived(filtered ? shownImages : images);
+  function removeMany(ids: number[]) {
+    removeDialogOpen = false;
+    const { kept, removed, abortLabelPass } = planRemoval(images, ids, labelController != null);
+    if (removed.length === 0) return;
+    for (const tile of removed) {
+      uploads.abort(tile.id);
+      URL.revokeObjectURL(tile.previewUrl);
+    }
+    if (abortLabelPass) {
+      // Null the slot synchronously, as the label-mode switch does: the aborted drain's finally
+      // runs later and must not be what frees it.
+      labelController?.abort();
+      labelController = null;
+      labelRun = null;
+    }
+    images = kept;
+    if (kept.length === 0) {
+      epoch.bump();
+      dupOwnerIds = [];
+      labelAllNotice = null;
+    }
+    // A filter left over an emptied view would show a blank grid with the rest of the dataset hidden.
+    if (filtered && shownImages.length === 0) {
+      tagFilter = null;
+      showFilter('all');
+    }
   }
 
   // Free auto-labeling, automatic: it kicks off as soon as an upload batch settles (and after a retry),
@@ -1307,6 +1344,18 @@
             >
               <IconPlus size={13} stroke={2} class="mr-1 inline" />Add more
             </Button>
+            {#if removeTargets.length > 0}
+              <Button
+                variant="ghost"
+                size="xs"
+                class="text-red-400 hover:text-red-300"
+                onclick={() => (removeDialogOpen = true)}
+              >
+                <IconTrash size={13} stroke={2} class="mr-1 inline" />{filtered
+                  ? `Remove ${removeTargets.length} shown`
+                  : 'Remove all'}
+              </Button>
+            {/if}
           </div>
         </div>
 
@@ -1696,6 +1745,37 @@
       </Button>
       <Button size="sm" onclick={() => applyLabelModeSwitch(pendingLabelMode!, 'convert')}>
         Convert existing labels
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={removeDialogOpen}>
+  <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>
+    <Dialog.Header>
+      <Dialog.Title>
+        {filtered
+          ? `Remove ${plural(removeTargets.length, 'shown file')}?`
+          : `Remove all ${plural(removeTargets.length, 'file')}?`}
+      </Dialog.Title>
+      <Dialog.Description>
+        {#if filtered}
+          Only the files this filter shows are removed; the rest of the dataset stays.
+        {:else}
+          The dataset is emptied.
+        {/if}
+        Their labels go with them and any upload still running is cancelled. <strong>Download .zip</strong>
+        first to keep a copy with the labels.
+      </Dialog.Description>
+    </Dialog.Header>
+    <Dialog.Footer>
+      <Dialog.Close>
+        {#snippet child({ props })}
+          <Button {...props} variant="ghost" size="sm">Cancel</Button>
+        {/snippet}
+      </Dialog.Close>
+      <Button variant="destructive" size="sm" onclick={() => removeMany(removeTargets.map((i) => i.id))}>
+        {filtered ? 'Remove shown' : 'Remove all'}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

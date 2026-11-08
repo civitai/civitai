@@ -9,13 +9,13 @@ import {
   Text,
 } from '@mantine/core';
 import { IconClock, IconShoppingBag } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import { EventHatTile } from '~/components/Events/ScoredEvent/EventHatTile';
-import { MysteryBoxCard } from '~/components/MysteryBox/MysteryBoxCard';
+import { MysteryBoxCard, MysteryBoxPackCard } from '~/components/MysteryBox/MysteryBoxCard';
 import { useEventMysteryBoxes } from '~/components/MysteryBox/useEventMysteryBoxes';
 import type { CosmeticShopItemGetById } from '~/types/router';
 import { daysFromNow } from '~/utils/date-helpers';
@@ -92,12 +92,18 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
         </Group>
       </EventSectionHeading>
       {boxes.map((box) => (
-        <MysteryBoxCard
-          key={box.boxDefinitionId}
-          event={event}
-          view={box}
-          color={teamColor(team) ?? 'var(--mantine-color-blue-5)'}
-        />
+        <Fragment key={box.boxDefinitionId}>
+          <MysteryBoxCard
+            event={event}
+            view={box}
+            color={teamColor(team) ?? 'var(--mantine-color-blue-5)'}
+          />
+          <MysteryBoxPackCard
+            event={event}
+            view={box}
+            color={teamColor(team) ?? 'var(--mantine-color-blue-5)'}
+          />
+        </Fragment>
       ))}
       {isLoading ? (
         <Center py="xl">

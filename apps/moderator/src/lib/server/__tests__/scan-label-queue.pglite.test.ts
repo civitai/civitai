@@ -5,7 +5,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 import { LEASE_MS } from '$lib/scan-labels';
 
@@ -79,6 +79,9 @@ beforeEach(async () => {
   for (const sql of MIGRATIONS) await pg.exec(sql);
   dbHandle.current = new Kysely<DB>({ dialect: pgliteDialect(pg) });
 });
+
+// A cluster holds its memory until closed; a file of them left open runs a worker out of RAM.
+afterEach(() => pg.close());
 
 async function seedItem(
   imageId: number,

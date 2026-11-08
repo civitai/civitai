@@ -132,6 +132,35 @@ describe('run-page SSR — play recording', () => {
     expect(mockRecordOpen.mock.calls[0][0]).toMatchObject({ appBlockId: 'ab_1', subListingId: sl });
   });
 
+  it('attributes the play to the surface that built the link (`?src=`) and the launch origin', async () => {
+    mockResolvePageBlockBySlug.mockResolvedValue({ ...PAGE, contentRating: 'g' });
+    const resolver = await loadResolver();
+    await resolver(makeCtx('civitai.com', { query: { src: 'store_card', from: 'home' } }));
+    expect(mockRecordOpen.mock.calls[0][0]).toMatchObject({
+      surface: 'store_card',
+      launchOrigin: 'home',
+    });
+  });
+
+  it.each([
+    ['nothing', {}, 'direct'],
+    ['an unknown surface', { src: '<script>' }, 'direct'],
+    ['a repeated surface', { src: ['detail', 'store_card'] }, 'direct'],
+    ['a sub-listing id and no surface', { sl: 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A' }, 'sub_listing'],
+    ['an invalid sub-listing id', { sl: '<script>' }, 'direct'],
+    [
+      'an explicit surface beside a sub-listing id',
+      { sl: 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A', src: 'made_with' },
+      'made_with',
+    ],
+  ])('records surface for %s', async (_label, query, surface) => {
+    mockResolvePageBlockBySlug.mockResolvedValue({ ...PAGE, contentRating: 'g' });
+    const resolver = await loadResolver();
+    await resolver(makeCtx('civitai.com', { query }));
+    expect(mockRecordOpen.mock.calls[0][0].surface).toBe(surface);
+    expect(mockRecordOpen.mock.calls[0][0].launchOrigin).toBe('store');
+  });
+
   it.each([
     ['a listing id', 'apl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A'],
     ['free text', '<script>'],

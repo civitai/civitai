@@ -424,6 +424,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // through `coverageAudience`, which is where it meets the tier.
   // docs/features/paid-model-loading-members-gate.md
   GENERATION_LOADING_OPEN_TO_ALL = 'generation-loading-open-to-all',
+  // On: a non-member may load a cold checkpoint by paying for a Download Boost, if the generator
+  // opts in (`acceptBoostRequired`). Off, unknown or unreachable: the members gate holds. Entity is
+  // the user id; read through `coverageAudience`.
+  GENERATION_LOADING_BOOST_FOR_FREE = 'generation-loading-boost-for-free',
   // On: generateFromGraph / whatIfFromGraph refuse input urls on external hosts. Off (and unknown
   // or unreachable): they are allowed and counted in generation_input_url_refusals_total{mode="log"}.
   GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS = 'generation-input-refuse-external-hosts',

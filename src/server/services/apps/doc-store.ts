@@ -50,7 +50,9 @@
 // A collection's declared `schema` it DOES check, on every document write (put and create;
 // counters and marks are not document bodies): `doc-store-schema.ts`. Every write of a body also
 // stamps the schema major the caller passes (`DocCollection.schemaMajor`) into
-// `doc.schema_major`, once that manual-apply column exists (`stampWrittenDoc`); nothing reads it.
+// `doc.schema_major`, once that manual-apply column exists (`stampWrittenDoc`). It is read only by
+// a read path that migrates a body on serve (a caller of `applyMajorChain` in
+// `storage-schema-majors.ts`, which takes the stamped major as `from`); any other read ignores it.
 //
 // Deliberately not supported yet, refused with `invalid_request` so a
 // declaration that uses them fails loudly: `write: 'anyone'`, `ttlSeconds`,

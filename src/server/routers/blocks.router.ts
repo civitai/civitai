@@ -71,9 +71,16 @@ import {
 } from '~/server/services/buzz.service';
 import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz-read.projection';
 import {
+  recordAppBlockSubmitFailure,
   recordBlockBridgeRateLimitRefusal,
   recordConfirmedQuoteOvercharge,
+  recordSucceededWithoutMedia,
+  submitFailureAppBlockLabel,
 } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  appSubmitFailureFromError,
+  appSubmitFailureFromResult,
+} from '~/shared/constants/app-telemetry.constants';
 import {
   checkBlockCatalogRateLimit,
   checkBlockEstimateCellsRateLimit,
@@ -243,6 +250,7 @@ import {
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
+  classifySucceededWithoutMedia,
   buildBlockWorkflowStepsMetadata,
   WORKFLOW_METADATA_BLOCK_STEPS_KEY,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
@@ -429,6 +437,31 @@ const TERMINAL_BLOCK_WORKFLOW_STATUSES = new Set<BlockWorkflowStatus>([
   'expired',
   'canceled',
 ]);
+
+/**
+ * `civitai_app_block_submit_failures_total` for `submitWorkflow`. A middleware rather than a call
+ * per branch: the procedure has seven `kind` arms and two dozen refusal sites, and failures are
+ * both THROWN (limiters, scope, validation, orchestrator) and RETURNED as a failed snapshot (the
+ * per-call budget and workflow-ceiling refusals). Placed before `.input()`, so a body the schema
+ * refuses counts as `validation` too.
+ *
+ * The app id is known only once the token is verified inside the procedure, which writes it into
+ * the holder this middleware hands down; a failure before that is labelled `unknown`.
+ */
+export type BlockSubmitTelemetry = { appBlockIdLabel: string };
+const recordSubmitFailures = middleware(async ({ next }) => {
+  const blockSubmitTelemetry: BlockSubmitTelemetry = { appBlockIdLabel: 'unknown' };
+  const result = await next({ ctx: { blockSubmitTelemetry } });
+  try {
+    const reason = result.ok
+      ? appSubmitFailureFromResult(result.data)
+      : appSubmitFailureFromError(result.error);
+    if (reason) recordAppBlockSubmitFailure(blockSubmitTelemetry.appBlockIdLabel, reason);
+  } catch {
+    // instrument-only — never let classification change the submit's outcome
+  }
+  return result;
+});
 
 /**
  * H-2: every blocks router procedure gates on the Flipt flag. When the
@@ -5017,15 +5050,23 @@ export const blocksRouter = router({
       // read-model write failure must NEVER fail the poll (its contract is to
       // return the snapshot). `updateBlockWorkflowStatus` is an indexed UPDATE
       // that no-ops (0 rows) when the row was never recorded (dev:live tokens).
+      //
+      // The write is TRANSITION-ONLY (1 only when the row's status changed), and
+      // that 1 is what makes the succeeded-without-media counter once-per-
+      // workflow: this branch runs on EVERY poll of a finished workflow.
       if (TERMINAL_BLOCK_WORKFLOW_STATUSES.has(snapshot.status)) {
         try {
           const { updateBlockWorkflowStatus } = await import(
             '~/server/services/blocks/block-workflows.service'
           );
-          await updateBlockWorkflowStatus({
+          const transitioned = await updateBlockWorkflowStatus({
             workflowId: input.workflowId,
             status: snapshot.status,
           });
+          if (transitioned === 1) {
+            const noMedia = classifySucceededWithoutMedia(workflow, snapshot);
+            if (noMedia) recordSucceededWithoutMedia(noMedia.stepType, noMedia.reason);
+          }
         } catch {
           /* best-effort: a read-model write failure never breaks the poll */
         }
@@ -6806,6 +6847,7 @@ export const blocksRouter = router({
    * reservation.**
    */
   submitWorkflow: publicProcedure
+    .use(recordSubmitFailures)
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
     // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(
@@ -6832,6 +6874,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
+      ctx.blockSubmitTelemetry.appBlockIdLabel = submitFailureAppBlockLabel(claims);
       // Above every `kind` branch: each returns early, and nothing is resolved or reserved yet.
       const rate = await checkBlockSubmitRateLimit(claims.blockInstanceId, claims.sub);
       if (!rate.allowed) {

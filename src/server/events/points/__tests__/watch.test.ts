@@ -166,7 +166,7 @@ describe('markWatched', () => {
     expect(await mark([hatId(1), TEAMS_WATCH], deps({ logCapReached }))).toBe(1);
     expect(fake.set(KEY).get(TEAMS_WATCH)).toBe(NOW + WATCH_TTL_MS);
     expect(fake.set(KEY).has(hatId(1))).toBe(false);
-    expect(logCapReached).toHaveBeenCalledWith(EVENT.name, 1);
+    expect(logCapReached).toHaveBeenCalledWith(EVENT.name, 1, 'watch');
   });
 
   it('marks exactly at the start and at the end of finalization', async () => {
@@ -308,5 +308,33 @@ describe('markWatched, roster owner topics', () => {
       )
     ).toBe(0);
     expect(fake.writes).toEqual([]);
+  });
+});
+
+describe('markWatched self', () => {
+  it("marks the signed-in caller's own total, named from the session, never from input", async () => {
+    const marked = await markWatched(
+      { event: EVENT.name, topics: ['self:99'], self: true },
+      deps({ selfUserId: 5 })
+    );
+    expect(marked).toBe(1);
+    expect(fake.writes).toEqual(['self:5']);
+  });
+
+  it('keeps own totals in their own set, so a set full of hats does not refuse one', async () => {
+    for (let i = 0; i < MAX_WATCHED_PER_EVENT; i++) fake.set(KEY).set(`x${i}`, NOW + 60_000);
+    const marked = await markWatched(
+      { event: EVENT.name, topics: [], self: true },
+      deps({ selfUserId: 5 })
+    );
+    expect(marked).toBe(1);
+    expect(fake.set(eventPointKeys(EVENT.name).watchSelf).has('self:5')).toBe(true);
+    expect(fake.set(KEY).has('self:5')).toBe(false);
+  });
+
+  it('marks no self for a signed-out caller, or without asking', async () => {
+    await markWatched({ event: EVENT.name, topics: [], self: true }, deps());
+    await markWatched({ event: EVENT.name, topics: [TEAMS_WATCH] }, deps({ selfUserId: 5 }));
+    expect(fake.writes).toEqual([TEAMS_WATCH]);
   });
 });

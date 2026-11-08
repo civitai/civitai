@@ -15,6 +15,7 @@ import {
   NATIVELY_EXTRACTED_STEP_TYPES,
   postureProducesMedia,
   splitPassThroughStep,
+  withEveryBlobSurfaceable,
 } from './steps';
 import type { OrchestratorBlobLike, StepOutputMedia, TrainedEpoch } from './steps';
 import { isRepeatStepType } from './workflow-graph';
@@ -33,6 +34,7 @@ import {
 import { getImagesLimit } from '~/shared/generation/images-limit';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { isSingletonSlotResource } from '~/shared/utils/resource.utils';
+import type { AppBlockSucceededWithoutMediaReason } from '~/server/metrics/app-block-runtime.metrics';
 import type {
   BlockModel3dOutput,
   BlockPublishedModel,
@@ -443,9 +445,7 @@ function extractSnapshotStep(
  * produced — the ONE read both `extractSnapshotStep` and `projectAppWorkflow`
  * use for those `$type`s.
  *
- * 🔴 THE OUTPUT KEY IS PER-`$type` (`NATIVE_STEP_OUTPUT_KEY`): `textToImage` /
- * `imageGen` carry `output.images`, `comfy` / `customComfy` carry
- * `output.blobs`.
+ * Output key per `$type` comes from `NATIVE_STEP_OUTPUT_KEY`.
  *
  * The availability + non-empty-url filter is `mediaFromBlobs`, the same one the
  * registry entries use, so a blob the orchestrator has not made available
@@ -461,6 +461,103 @@ function nativeStepOutputMedia(step: { $type: string; output?: unknown }): StepO
     | null
     | undefined;
   return mediaFromBlobs(output?.[key]);
+}
+
+/** `step_type` label for a pass-through step: its `$type` is app-supplied, an open set. */
+export const SUCCEEDED_WITHOUT_MEDIA_PASSTHROUGH_LABEL = 'passthrough';
+/** `step_type` label when the empty media steps span more than one label. */
+export const SUCCEEDED_WITHOUT_MEDIA_MIXED_LABEL = 'mixed';
+
+/**
+ * The `step_type` label for `civitai_app_block_succeeded_without_media_total`
+ * when a SUCCEEDED workflow has at least one bridge-submitted MEDIA step that
+ * itself succeeded and produced no media of its own; `null` otherwise. This is
+ * the #8132 defect shape: a `comfy` step succeeded, the viewer was charged, and
+ * no media reached the block because the extractor read the wrong output key.
+ *
+ * 🔴 PER MEDIA STEP, NOT PER WORKFLOW. What sibling steps delivered does not
+ * matter: a `chatCompletion` step that released text next to a `textToImage`
+ * step that produced no images IS counted, because the images the viewer paid
+ * for are still missing. Each step's own media is read with
+ * `extractSnapshotStep`, the extractor `snapshotFromWorkflow` uses, so "no
+ * media" here means exactly "nothing this step put on the snapshot".
+ *
+ * MEDIA STEPS. Only a step this bridge submitted and the snapshot extracts:
+ * a `kind:'workflow'` member, a native `$type`, a registered `$type`, or a
+ * pass-through step stamped `BLOCK_STEP_NAME`. Then:
+ *   - a registered step counts only when its moderation posture produces MEDIA
+ *     (`postureProducesMedia`); a text-posture step (`chatCompletion`) never
+ *     does, so a text-only workflow is never counted;
+ *   - a native `$type` (`NATIVELY_EXTRACTED_STEP_TYPES`) is always a media step;
+ *   - a PASS-THROUGH step has no posture, so whether it should produce media is
+ *     unknown. It is counted only when it produced NOTHING: no media and no
+ *     non-blob output (which would reach `stepOutputs`);
+ *   - skipped: training `$type`s (they deliver epochs, and only after
+ *     moderation approves them), `suppressOutput` members, `repeat` parents
+ *     (their children are members in their own right), steps the bridge did not
+ *     submit, and steps whose own status is not `succeeded`.
+ *
+ * 🔴 BOUNDED LABELS. `stepType`: a native or registered `$type` is code-owned
+ * and is used as-is; every pass-through `$type` (app-chosen, an open set)
+ * collapses to `passthrough`; more than one distinct label is `mixed`.
+ * `reason`, per empty media step, re-running the same extractor over
+ * `withEveryBlobSurfaceable(output)`:
+ *   - `absent`: the location the extractor reads held no blobs at all. This is
+ *     the #8132 defect shape (blobs under a key nobody reads) and the one to
+ *     alert on;
+ *   - `unavailable`: blobs were there but `mediaFromBlobs` dropped every one
+ *     (pending, withheld or blocked by the orchestrator). The viewer still saw
+ *     nothing, but this is not necessarily a bridge bug.
+ * Several empty steps with different reasons report `absent`.
+ */
+export function classifySucceededWithoutMedia(
+  workflow: Workflow,
+  snapshot: Pick<BlockWorkflowSnapshot, 'status'>
+): { stepType: string; reason: AppBlockSucceededWithoutMediaReason } | null {
+  if (snapshot.status !== 'succeeded') return null;
+  const submittedSteps = readBlockWorkflowSteps(workflow.metadata);
+  const labels = new Set<string>();
+  let anyAbsent = false;
+  for (const step of workflow.steps ?? []) {
+    if (step.status !== 'succeeded') continue;
+    const member = submittedSteps ? resolveBlockWorkflowStep(submittedSteps, step.name) : null;
+    if (member && (member.suppressOutput || isRepeatStepType(step.$type))) continue;
+    if (isTrainingStepType(step.$type)) continue;
+    const registered = getStepByOrchestratorType(step.$type);
+    let label: string;
+    if (registered) {
+      if (!postureProducesMedia(registered.moderationPosture)) continue;
+      label = step.$type;
+    } else if (NATIVELY_EXTRACTED_STEP_TYPES.includes(step.$type)) {
+      label = step.$type;
+    } else if (member || step.name === BLOCK_STEP_NAME) {
+      label = SUCCEEDED_WITHOUT_MEDIA_PASSTHROUGH_LABEL;
+    } else {
+      continue;
+    }
+    const own = extractSnapshotStep(step, true);
+    const delivered =
+      own.media.length > 0 ||
+      (label === SUCCEEDED_WITHOUT_MEDIA_PASSTHROUGH_LABEL && own.rest !== undefined);
+    if (delivered) continue;
+    labels.add(label);
+    // Same extractor, over a copy with every blob made surfaceable: media now
+    // means blobs WERE at the expected location but all withheld.
+    const probed = extractSnapshotStep(
+      {
+        ...step,
+        output: withEveryBlobSurfaceable((step as unknown as { output?: unknown }).output),
+      } as typeof step,
+      true
+    );
+    if (probed.media.length === 0) anyAbsent = true;
+  }
+  if (labels.size === 0) return null;
+  return {
+    stepType: labels.size === 1 ? [...labels][0] : SUCCEEDED_WITHOUT_MEDIA_MIXED_LABEL,
+    // The defect signal wins: one absent step makes the workflow `absent`.
+    reason: anyAbsent ? 'absent' : 'unavailable',
+  };
 }
 
 /** True when the workflow carries a training step THIS bridge submitted. */

@@ -38,9 +38,14 @@ export interface StudioElementHost {
   modelLive?(modelId: number): Promise<boolean>;
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;
-  /** The main app's `training.getStatus` (available + moderator message). Omit (or resolve null)
-   *  and the element shows no status banner and leaves Start enabled. */
-  getTrainingStatus?(): Promise<{ available: boolean; message?: string | null } | null>;
+  /** The main app's `training.getStatus` (available, moderator message, blocked models). Omit (or
+   *  resolve null) and the element shows no status banner, no unavailable cards, and leaves Start enabled. */
+  getTrainingStatus?(): Promise<{
+    available: boolean;
+    message?: string | null;
+    blockedModels?: string[];
+    blockedModelReasons?: Record<string, string>;
+  } | null>;
   /** Auto-label is free to the user, so it must run on the host's system-paid path: a workflow
    *  submitted with the user's token is charged to the user. A host without these makes
    *  auto-label unavailable rather than charge for it. */
@@ -139,9 +144,16 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     if (!result.ok) throw new train.TrainingTextRefusedError(result.error);
   };
 
-  const submitOpts = (): train.SubmitOptions => ({
+  // Read fresh before each submit so a model blocked after the page loaded is refused. This is the
+  // browser's own check: the element submits straight to the orchestrator, so no server of ours sees it.
+  const hostStatus = async () => {
+    const raw = host.getTrainingStatus ? await host.getTrainingStatus() : null;
+    return raw ? parseServiceStatus(raw) : null;
+  };
+  const submitOpts = async (): Promise<train.SubmitOptions> => ({
     // No signal callbacks: the element runs on polling alone (signalsEndpoint is null there).
     traceMode: host.config.traceMode ?? 'events',
+    status: await hostStatus().catch(() => null),
   });
 
   return {
@@ -194,10 +206,12 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
         ? host.autoLabelPoll(workflowId, signal)
         : Promise.reject(new Error(AUTO_LABEL_UNAVAILABLE)),
 
-    submitTraining: (runs) =>
-      call((client) =>
-        train.submitTrainingBatch(client, runs, { ...submitOpts(), checkText: hostTextCheck })
-      ),
+    submitTraining: async (runs) => {
+      const opts = await submitOpts();
+      return call((client) =>
+        train.submitTrainingBatch(client, runs, { ...opts, checkText: hostTextCheck })
+      );
+    },
 
     listEditGenerations: () => call((client) => edit.listEditGenerations(client)),
 
@@ -224,23 +238,23 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
       call((client) => orch.createEpochArchive(client, workflowId, kind)),
     deleteTraining: (workflowId) => call((client) => train.deleteTraining(client, workflowId)),
 
-    continueQuote: (workflowId, fromEpoch, addEpochs, currencies) =>
-      call((client) =>
-        train.continueTrainingWhatIf(
-          client,
-          { workflowId, fromEpoch, addEpochs, currencies },
-          submitOpts()
-        )
-      ),
+    continueQuote: async (workflowId, fromEpoch, addEpochs, currencies) => {
+      const opts = await submitOpts();
+      return call((client) =>
+        train.continueTrainingWhatIf(client, { workflowId, fromEpoch, addEpochs, currencies }, opts)
+      );
+    },
 
-    continueRun: (workflowId, fromEpoch, addEpochs, currencies, matureAck) =>
-      call((client) =>
+    continueRun: async (workflowId, fromEpoch, addEpochs, currencies, matureAck) => {
+      const opts = await submitOpts();
+      return call((client) =>
         train.continueTraining(
           client,
           { workflowId, fromEpoch, addEpochs, currencies, matureAck },
-          { ...submitOpts(), checkText: hostTextCheck }
+          { ...opts, checkText: hostTextCheck }
         )
-      ),
+      );
+    },
 
     getFromPrices: () => call((client) => computeFromPrices(client)),
 
@@ -248,9 +262,6 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
 
     getBuzz: async () => (host.getBuzzBalances ? host.getBuzzBalances() : null),
 
-    getServiceStatus: async () => {
-      const raw = host.getTrainingStatus ? await host.getTrainingStatus() : null;
-      return raw ? parseServiceStatus(raw) : null;
-    },
+    getServiceStatus: hostStatus,
   };
 }

@@ -71,8 +71,7 @@ export function mediaFromBlobs(
     blobs == null ? [] : Array.isArray(blobs) ? blobs : [blobs as OrchestratorBlobLike];
   const media: StepOutputMedia[] = [];
   for (const blob of list) {
-    if (!blob) continue;
-    if (!blob.available || typeof blob.url !== 'string' || blob.url.length === 0) continue;
+    if (!isSurfaceableBlob(blob)) continue;
     media.push({
       url: blob.url,
       width: typeof blob.width === 'number' ? blob.width : null,
@@ -81,6 +80,54 @@ export function mediaFromBlobs(
     });
   }
   return media;
+}
+
+/**
+ * THE availability + non-empty-url predicate `mediaFromBlobs` applies — the one
+ * place it is spelled. A blob failing it is pending, withheld or blocked by the
+ * orchestrator (`available: false`, often with no url), never surfaced.
+ */
+function isSurfaceableBlob(
+  blob: OrchestratorBlobLike | null | undefined
+): blob is OrchestratorBlobLike & { url: string } {
+  return !!blob && !!blob.available && typeof blob.url === 'string' && blob.url.length > 0;
+}
+
+/** Deep enough for every native, registered and pass-through output shape. */
+const SURFACEABLE_PROBE_DEPTH = 8;
+
+/**
+ * A copy of a step `output` in which every blob-SHAPED object
+ * (`isOrchestratorBlobLike`) is made to pass `isSurfaceableBlob` — `available`,
+ * with a url (a placeholder when it had none). Nothing else changes.
+ *
+ * It exists to ask ONE question with the step's own extractor and no second
+ * copy of its key logic: "did this step's EXPECTED output location hold blobs
+ * that were all withheld, or no blobs at all?" Run the extractor on this copy:
+ * media found means the blobs were there but not surfaceable; none found means
+ * the location the extractor reads was empty — the #8132 shape, where a `comfy`
+ * step's blobs sat under a key the extractor did not read.
+ *
+ * 🔴 PROBE ONLY. The placeholder url is not a real url; nothing derived from
+ * this copy may ever reach a snapshot, a projection or a log.
+ */
+export function withEveryBlobSurfaceable(output: unknown, depth = 0): unknown {
+  if (output === null || typeof output !== 'object') return output;
+  if (isOrchestratorBlobLike(output)) {
+    const blob = output as OrchestratorBlobLike;
+    return {
+      ...blob,
+      available: true,
+      url: typeof blob.url === 'string' && blob.url.length > 0 ? blob.url : 'probe:withheld',
+    };
+  }
+  if (depth >= SURFACEABLE_PROBE_DEPTH) return output;
+  if (Array.isArray(output)) return output.map((v) => withEveryBlobSurfaceable(v, depth + 1));
+  const copy: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(output as Record<string, unknown>)) {
+    copy[key] = withEveryBlobSurfaceable(value, depth + 1);
+  }
+  return copy;
 }
 
 /**

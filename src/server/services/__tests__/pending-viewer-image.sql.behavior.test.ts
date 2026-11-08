@@ -1,9 +1,13 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  pendingLevelImageSql,
+  pendingOthersImageConditions,
+} from '~/server/common/image-visibility';
 import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 
-// The `pending` filter a signed-in non-moderator's image read applies, run as SQL over seeded rows.
+// The `pending` filters a signed-in non-moderator's image reads apply, run as SQL over seeded rows.
 
 const UPLOADER = 1;
 const STRANGER = 2;
@@ -118,5 +122,49 @@ describe('a pending image read by a signed-in non-moderator', () => {
 
   it('gives a contributor without MANAGE nothing extra, in or out of the review queue', async () => {
     expect(await visibleTo(STRANGER, COLLECTION)).toEqual([2]);
+  });
+});
+
+// getImagesForPosts and getImagesForModelVersion apply these conditions plus their own level check.
+const passOthersConditions = async (userId: number) => {
+  const sql = Prisma.sql`SELECT i.id FROM "Image" i
+    WHERE ${Prisma.join(pendingOthersImageConditions(userId), ' AND ')} ORDER BY i.id`;
+  return (await db.query<{ id: number }>(sql.text, sql.values)).rows.map((r) => r.id);
+};
+
+describe("the per-image conditions on another user's pending images", () => {
+  it('drop images awaiting moderator review, acceptableMinor ones, and rated ones never reviewed', async () => {
+    expect(await passOthersConditions(STRANGER)).toEqual([2, 10, 11, 12, 21, 24, 27]);
+  });
+
+  it("exempt the viewer's own images", async () => {
+    expect(await passOthersConditions(UPLOADER)).toEqual([
+      1, 2, 3, 4, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 25, 26, 27, 30,
+    ]);
+  });
+});
+
+const passLevel = async (userId: number, ids: number[]) => {
+  const sql = Prisma.sql`SELECT i.id FROM "Image" i
+    WHERE i.id IN (${Prisma.join(ids)}) AND ${pendingLevelImageSql(userId, PG)} ORDER BY i.id`;
+  return (await db.query<{ id: number }>(sql.text, sql.values)).rows.map((r) => r.id);
+};
+
+describe('the level check on a pending image read', () => {
+  it('keeps an image rated within the level, for anyone', async () => {
+    expect(await passLevel(STRANGER, [2])).toEqual([2]);
+  });
+
+  it("keeps the viewer's own unrated image", async () => {
+    expect(await passLevel(UPLOADER, [11])).toEqual([11]);
+  });
+
+  it("drops another user's unrated image", async () => {
+    expect(await passLevel(STRANGER, [11])).toEqual([]);
+  });
+
+  it("drops an image rated outside the level, even the owner's", async () => {
+    expect(await passLevel(STRANGER, [10])).toEqual([]);
+    expect(await passLevel(UPLOADER, [10])).toEqual([]);
   });
 });

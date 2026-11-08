@@ -12,6 +12,10 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { md5 } from '~/shared/utils/md5';
 import { trpc } from '~/utils/trpc';
+import {
+  DEFAULT_EVENT_POINT_POPS,
+  type EventPointPops,
+} from '~/shared/constants/event-point-pops.constants';
 // const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 // const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
 //   ssr: false,
@@ -21,11 +25,14 @@ export function CivitaiSessionProvider({
   children,
   disableHidden,
   showEventCosmetics,
+  eventPointPops,
 }: {
   children: React.ReactNode;
   disableHidden?: boolean;
   /** This device's choice, from its cookie: what a signed-out viewer gets, and a fallback. */
   showEventCosmetics?: boolean;
+  /** This device's choice, from its cookie, until the account's settings are read. */
+  eventPointPops?: EventPointPops;
 }) {
   const { data, update } = useSession();
   const user = data?.user;
@@ -53,6 +60,7 @@ export function CivitaiSessionProvider({
   const settingsBlurNsfw = settings?.blurNsfw;
   const settingsAutoplayGifs = settings?.autoplayGifs;
   const settingsShowEventCosmetics = settings?.showEventCosmetics;
+  const settingsEventPointPops = settings?.eventPointPops;
 
   const sessionUser = useMemo(() => {
     if (!user) {
@@ -71,7 +79,11 @@ export function CivitaiSessionProvider({
           : publicContentSettings;
       return {
         type: 'unauthed',
-        settings: { ...settings, showEventCosmetics: showEventCosmetics ?? true },
+        settings: {
+          ...settings,
+          showEventCosmetics: showEventCosmetics ?? true,
+          eventPointPops: eventPointPops ?? DEFAULT_EVENT_POINT_POPS,
+        },
       } as UnauthedUser;
     }
 
@@ -100,6 +112,8 @@ export function CivitaiSessionProvider({
         showEventCosmetics: settings
           ? settingsShowEventCosmetics ?? true
           : showEventCosmetics ?? true,
+        eventPointPops:
+          (settings ? settingsEventPointPops : eventPointPops) ?? DEFAULT_EVENT_POINT_POPS,
       },
     };
     if (!allowMatureContent)
@@ -113,6 +127,7 @@ export function CivitaiSessionProvider({
     allowMatureContent,
     disableHidden,
     showEventCosmetics,
+    eventPointPops,
     isRestricted,
     settingsAllowAds,
     settingsDisableHidden,
@@ -120,6 +135,7 @@ export function CivitaiSessionProvider({
     settingsBlurNsfw,
     settingsAutoplayGifs,
     settingsShowEventCosmetics,
+    settingsEventPointPops,
     settings,
     verifiedBot,
   ]);
@@ -169,6 +185,7 @@ type BrowsingSettings = {
   allowAds: boolean;
   autoplayGifs: boolean;
   showEventCosmetics: boolean;
+  eventPointPops: EventPointPops;
 };
 
 const CivitaiSessionContext = createContext<AuthedUser | UnauthedUser | null>(null);
@@ -188,4 +205,5 @@ const publicContentSettings: BrowsingSettings = {
   allowAds: true,
   autoplayGifs: true,
   showEventCosmetics: true,
+  eventPointPops: DEFAULT_EVENT_POINT_POPS,
 };

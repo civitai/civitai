@@ -188,7 +188,7 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
     );
     expect(rows[0]).toEqual({
       permissions: 3,
-      meta: { 'generation-buzzTransactionId': 'tx-1', giftLinkId: id },
+      meta: { 'generation-buzzTransactionId': 'tx-1', giftLinkId: id, 'gift-permissions': 3 },
     });
   });
 

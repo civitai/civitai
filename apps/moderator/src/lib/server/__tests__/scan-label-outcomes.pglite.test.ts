@@ -5,7 +5,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 import { quotaStatus } from '$lib/scan-labels';
 import type { BlockDeps, BlockImageArgs } from '../scan-label.service';
@@ -82,6 +82,9 @@ beforeEach(async () => {
   await pg.exec(`INSERT INTO "Role" ("id") VALUES ('moderator:scan-labels')`);
   dbHandle.current = new Kysely<DB>({ dialect: pgliteDialect(pg) });
 });
+
+// A cluster holds its memory until closed; a file of them left open runs a worker out of RAM.
+afterEach(() => pg.close());
 
 async function seedItem(imageId: number): Promise<number> {
   await pg.query(`INSERT INTO "Image" ("id", "url", "pHash") VALUES ($1, $2, 42)`, [

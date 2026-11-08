@@ -41,6 +41,8 @@ type RetData = {
   id: number;
   userId: number;
   createdAt: string;
+  /** Set by a debounce re-surface: the recipient already held this notification unread. */
+  wasUnread?: boolean;
 };
 
 const appRunDelay = 5000;
@@ -230,8 +232,24 @@ export const handleDebounce = async (
   // contract rejects the combination outright (see createNotificationPendingRow), so this is
   // unreachable — belt and braces. Teaching debounced types to dedup means reworking this INSERT.
   if (respId) {
-    const userMappedData = users.map((u) => [respId, u]);
+    // Ascending userId, here and in the lock below: two transactions on the same recipients (a
+    // claim re-taken after `tooOld` while the first still runs) then lock rows in the same order.
+    const userMappedData = [...users].sort((a, b) => a - b).map((u) => [respId, u]);
     for (const batch of chunk(userMappedData, insertBatchSize)) {
+      // A recipient who still has this notification unread is already counted in the unread badge.
+      // FOR UPDATE, as its own statement: it reads the latest committed row and holds it, so a
+      // mark-read cannot land between this read and the upsert below.
+      const unreadRes = await client.query<{ userId: number }>(
+        format(
+          `SELECT "userId" FROM "UserNotification"
+           WHERE "notificationId" = %L AND "userId" IN (%L) AND viewed IS FALSE
+           ORDER BY "userId"
+           FOR UPDATE`,
+          respId,
+          batch.map(([, userId]) => userId)
+        )
+      );
+      const unread = new Set(unreadRes.rows.map((r) => Number(r.userId)));
       const insertUsersQuery = format(
         `INSERT INTO "UserNotification" ("notificationId", "userId")
          VALUES %L ON CONFLICT ("notificationId", "userId") DO UPDATE
@@ -239,7 +257,9 @@ export const handleDebounce = async (
         batch
       );
       const resUsers = await client.query<RetData>(insertUsersQuery);
-      retData = retData.concat(resUsers.rows);
+      retData = retData.concat(
+        resUsers.rows.map((r) => ({ ...r, wasUnread: unread.has(Number(r.userId)) }))
+      );
     }
   }
 
@@ -316,9 +336,9 @@ export const run = async (lane: Lane = 'normal'): Promise<number> => {
     const signalData = { type: row.type, category: row.category, details: row.details };
     const affectBatches = chunk(affectedUsers, signalBatchSize);
     for (let i = 0; i < affectBatches.length; i++) {
-      for (const { userId, id, createdAt } of affectBatches[i]!) {
+      for (const { userId, id, createdAt, wasUnread } of affectBatches[i]!) {
         // A failed or stuck counter bump must not cost the remaining recipients their signals.
-        if (counterFailures < counterFailuresBeforeSkip) {
+        if (!wasUnread && counterFailures < counterFailuresBeforeSkip) {
           counterFailures = (await bumpCounter(userId, row.category)) ? 0 : counterFailures + 1;
         }
         // Fire-and-forget (resilience unchanged): a signals failure must NOT break fan-out. We only add

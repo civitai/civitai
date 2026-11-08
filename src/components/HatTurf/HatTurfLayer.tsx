@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@mantine/core';
 import clsx from 'clsx';
 import { useTeamColor } from '~/components/Events/events.utils';
+import { armReactionNudge } from '~/components/HatTurf/reaction-nudge';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
+import { HatTimeLeft } from '~/components/HatTurf/HatTimeLeft';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import type { HatSpot } from '~/components/HatTurf/HatTurfCardProvider';
 import revealClasses from '~/components/Sticker/placement-reveal.module.scss';
@@ -158,6 +160,7 @@ function HatDraftSticker({
       ownerUsername={null}
       onGesture={onGesture}
       opaque
+      liftOverTray
       commit={
         <Button
           size="sm"
@@ -231,6 +234,8 @@ function HatTurfLayerContent({
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Box | null>(null);
   const [surface, setSurface] = useState<HTMLElement | null>(null);
+  // When this visit's placement landed, for its time left.
+  const [placedAt, setPlacedAt] = useState<Date | null>(null);
   const stickers = stickersProp ?? feed?.stickers[imageId];
   const active = !!card && (!!card.draft || !!card.placed || !!stickers?.length || !!corner);
 
@@ -350,8 +355,13 @@ function HatTurfLayerContent({
       { event: feed.event, imageId, cosmeticId, source, data: { ...pose, opacity: 1 } },
       {
         onSuccess: () => {
+          if (feed.team)
+            armReactionNudge(imageId, feed.team, () =>
+              utils.hatTurf.reactionEarns.fetch({ event: feed.event, imageId }, { staleTime: 0 })
+            );
           setDraft(null);
           setPlaced(pose);
+          setPlacedAt(new Date());
           if (source === 'feed') track('feed_place_save', feed.event);
           void utils.hatTurf.getStock.invalidate();
           void utils.hatTurf.getSummaries.invalidate();
@@ -417,6 +427,7 @@ function HatTurfLayerContent({
                 style={{ ...poseStyle(pose), ['--hat-glow' as string]: colorOf(sticker.team) }}
               >
                 {revealed(String(sticker.id), hatArt(sticker.art, sticker.team, pose))}
+                {own && <HatTimeLeft placedAt={sticker.createdAt} />}
               </div>
             );
           })}
@@ -427,6 +438,7 @@ function HatTurfLayerContent({
               data-testid="hat-turf-placed"
             >
               {hatArt(chosenArt, feed.team, placed)}
+              <HatTimeLeft placedAt={placedAt} />
             </div>
           )}
           {/* Shown with Show hats off too: placing a hat is still the game. */}

@@ -1,5 +1,5 @@
 /**
- * The auth extension (civitai-registry `spec/extensions/auth.md` @ 4166f34), as an ORIGIN serves
+ * The auth extension (civitai-registry `spec/extensions/auth.md` @ 2709083), as an ORIGIN serves
  * it, for both bindings:
  *
  *   - The token arrives in request metadata only: `Authorization: Bearer {token}` over HTTP, the
@@ -98,6 +98,11 @@ export async function authenticate(
 /**
  * How often an open stream's token is re-verified, on average: each wait is drawn from ±20% of
  * it, so streams opened in a burst do not re-check the database in a burst.
+ *
+ * Each open stream re-checks its own token, uncached on purpose: the re-check is what notices a
+ * revocation, a ban or a changed browsing setting, and a per-token cache would have to stay
+ * shorter than this interval to keep that bound, so it saves little and adds a second place for
+ * staleness to hide.
  */
 export const TOKEN_RECHECK_MS = 5 * 60 * 1000;
 const RECHECK_JITTER = 0.2;
