@@ -65,6 +65,8 @@ export type BatchComposerState = {
     patch: Partial<Pick<ReviewPost, 'title' | 'publishedAt'>>
   ) => void;
   removeReviewPost: (key: string) => void;
+  /** Moves one image within a review post. The post's `key` is left alone. */
+  reorderReviewMedia: (key: string, fromUrl: string, toUrl: string) => void;
   reset: () => void;
 };
 
@@ -194,6 +196,16 @@ export function createBatchComposerStore(input: {
         removeReviewPost: (key) =>
           set((state) => {
             if (state.reviewPlan) state.reviewPlan = state.reviewPlan.filter((x) => x.key !== key);
+          }),
+        reorderReviewMedia: (key, fromUrl, toUrl) =>
+          set((state) => {
+            const post = state.reviewPlan?.find((x) => x.key === key);
+            if (!post) return;
+            const from = post.media.findIndex((x) => x.url === fromUrl);
+            const to = post.media.findIndex((x) => x.url === toUrl);
+            if (from === -1 || to === -1 || from === to) return;
+            const [moved] = post.media.splice(from, 1);
+            post.media.splice(to, 0, moved);
           }),
         reset: () => set({ ...initial(), hydrated: true }),
       })),
