@@ -24,19 +24,19 @@ export function trainingDataShareFromQuery(
 
 type DatasetRow = { id: number; sizeKB: number; metadata: Record<string, unknown> | null };
 
-/** The share may only drop; the rights answer follows `next`, since without a share it shows
- *  nothing to anyone but the owner and moderators. */
+/** Both answers may only drop. */
 function lowered(stored: TrainingDataShare, next: TrainingDataShare): TrainingDataShare {
   return normalizeTrainingDataShare({
-    ownRights: next.ownRights,
+    ownRights: stored.ownRights && next.ownRights,
     shareDataset: stored.shareDataset && next.shareDataset,
   });
 }
 
-/** Whether `next` shares where `stored` does not, which only `setStudioDatasetShare` with
- *  `raise` may grant. */
+/** Whether `next` claims the rights or shares where `stored` does not, which only
+ *  `setStudioDatasetShare` with `raise` may grant. */
 export function raisesTrainingDataShare(stored: TrainingDataShare, next: TrainingDataShare) {
-  return normalizeTrainingDataShare(next).shareDataset && !stored.shareDataset;
+  const n = normalizeTrainingDataShare(next);
+  return (n.ownRights && !stored.ownRights) || (n.shareDataset && !stored.shareDataset);
 }
 
 /** The sharing choice stored on a Studio run's `Training Data` row, or null without one. */

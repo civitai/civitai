@@ -86,11 +86,18 @@ describe('setStudioDatasetShare', () => {
     expect(written().data.visibility).toBe('Private');
   });
 
-  it('a link alone never shares: the share stays off, and only the rights answer is kept', async () => {
+  it('a link alone records neither answer: rights and share wait for the owner’s click', async () => {
     row(1024, archived(true));
     await expect(setStudioDatasetShare(70, shared)).resolves.toBe(true);
-    expect(written().data.metadata).toMatchObject({ ownRights: true, shareDataset: false });
-    expect(written().data.visibility).toBe('Sensitive');
+    expect(written().data.metadata).toMatchObject({ ownRights: false, shareDataset: false });
+    expect(written().data.visibility).toBe('Private');
+  });
+
+  it('a link alone cannot claim the rights', async () => {
+    row(1024, archived(true));
+    await setStudioDatasetShare(70, { ownRights: true, shareDataset: false });
+    expect(written().data.metadata).toMatchObject({ ownRights: false });
+    expect(written().data.visibility).toBe('Private');
   });
 
   it('a link un-sharing an archived zip takes it back from Public', async () => {
