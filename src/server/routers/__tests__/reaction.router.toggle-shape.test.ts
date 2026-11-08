@@ -3,6 +3,8 @@ import type * as MiddlewareTrpc from '~/server/middleware.trpc';
 import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 dbMock.dbRead.imageReaction.count.mockImplementation(async () => 1);
+// The viewer holds a birthday2026 team hat: only a joiner is handed their team's points.
+dbMock.dbRead.$queryRaw.mockImplementation((async () => [{ event: 'birthday2026' }]) as never);
 
 // To whoever is about to fold toggleWithPoints into toggle: `reaction.toggle` is a public API
 // procedure whose answer API-key callers, comment reactions and app blocks read as a plain string.
