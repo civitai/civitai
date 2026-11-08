@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@mantine/core';
 import clsx from 'clsx';
 import { useTeamColor } from '~/components/Events/events.utils';
+import { armReactionNudge } from '~/components/HatTurf/reaction-nudge';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import type { HatSpot } from '~/components/HatTurf/HatTurfCardProvider';
@@ -349,7 +350,8 @@ function HatTurfLayerContent({
     place.mutate(
       { event: feed.event, imageId, cosmeticId, source, data: { ...pose, opacity: 1 } },
       {
-        onSuccess: () => {
+        onSuccess: (result) => {
+          if (result.reactionEarns && feed.team) armReactionNudge(imageId, feed.team);
           setDraft(null);
           setPlaced(pose);
           if (source === 'feed') track('feed_place_save', feed.event);
