@@ -50,10 +50,18 @@ describe('gift claimer lists', () => {
   });
 
   it("asks for one batch's claimers, with the cursor", async () => {
-    expect(await call(batchClaims, { id: '5', batchId: BATCH, cursor: 'c' })).toBe(200);
-    expect(listGiftClaims).toHaveBeenCalledWith(
-      expect.objectContaining({ modelVersionId: 5, batchId: BATCH, cursor: 'c' })
+    expect(await call(batchClaims, { id: '5', batchId: BATCH, cursor: 'c', userId: '99' })).toBe(
+      200
     );
+    expect(listGiftClaims).toHaveBeenCalledTimes(1);
+    expect(listGiftClaims).toHaveBeenCalledWith({
+      userId: 7,
+      isModerator: false,
+      modelVersionId: 5,
+      batchId: BATCH,
+      cursor: 'c',
+      limit: 100,
+    });
   });
 
   it('refuses a bad id, a bad batch or an oversized page, without a lookup', async () => {

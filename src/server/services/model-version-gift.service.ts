@@ -579,7 +579,6 @@ export async function listGiftClaims({
   return {
     claims,
     nextCursor: rows.length > take && last ? encodeGiftClaimsCursor(last) : null,
-    /** null on every page after the first. */
     hiddenCount: hidden,
   };
 }

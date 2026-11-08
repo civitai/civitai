@@ -10,5 +10,5 @@ export const GIFT_CLAIMS_PAGE_MAX = 100;
  * see them.
  */
 export const GIFT_CLAIMER_NAMES_VISIBLE_SINCE = new Date('2026-11-09T12:00:00.000Z');
-/** Told to everyone whose claim is recorded, on every claim path, since the creator can list them. */
+/** Returned with every recorded claim: the creator can list claimers. */
 export const GIFT_CLAIM_NOTICE = 'The creator can see that you claimed this.';

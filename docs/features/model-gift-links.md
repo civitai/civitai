@@ -27,10 +27,11 @@ surfaces.
   Who claimed which link is `ModelVersionGiftRedemption`; a grant's `meta.giftLinkId` holds only the most
   recent link that user claimed.
 - **Claimers:** the creator or a moderator can list who claimed a link or a batch (username and claim
-  time, newest first). The claim page tells the recipient the creator can see that they claimed, and every claim that is
-  recorded returns the same sentence as `notice` (`GIFT_CLAIM_NOTICE`), so an API claimer is told too. Claims
-  made before `GIFT_CLAIMER_NAMES_VISIBLE_SINCE`, when that notice did not exist, are only counted
-  (`hiddenCount`, on the first page only), never named.
+  time, newest first). The claim page tells the recipient the creator can see that they claimed. The
+  same sentence (`GIFT_CLAIM_NOTICE`) is returned with every recorded claim as `notice`, since the creator
+  can list claimers. Claims made before `GIFT_CLAIMER_NAMES_VISIBLE_SINCE`, when that notice did not
+  exist, are only counted (`hiddenCount`, on the first page only), never named. That moment must be
+  later than the production deploy of the notice.
 
 Out of scope:
 
