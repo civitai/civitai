@@ -112,8 +112,16 @@ const seed = ({
     name: 'v1',
     meta: { hadEarlyAccessPurchase: true },
     baseModel,
-    model: { id: 1, name: 'Model', userId: OWNER, nsfw: false, nsfwLevel: 1, ...model },
+    model: { id: 1, name: 'Model', userId: OWNER, nsfw: false },
   };
+  // The Green check reads the face from the primary, never the version row above.
+  dbMock.dbWrite.model.findUniqueOrThrow.mockResolvedValue({
+    nsfw: false,
+    nsfwLevel: 1,
+    sfwName: null,
+    sfwCoverImageId: null,
+    ...model,
+  });
   // getDbWithoutLag('modelVersion', id) returns dbRead when REPLICATION_LAG_DELAY=0;
   // earlyAccessPurchase calls getVersionById which uses it. Set up both sides so
   // the test is correct regardless of which client the service routes through.
@@ -464,6 +472,17 @@ describe('earlyAccessPurchase — Green Buzz needs the model on civitai.com', ()
     await expect(buy('green')).rejects.toThrow('not available with this currency');
     expect(mockCreateMultiAccountBuzzTransaction).not.toHaveBeenCalled();
     expect(mockGrantModelVersionAccess).not.toHaveBeenCalled();
+  });
+
+  it('reads the face from the primary, not the replica', async () => {
+    seed({ model: withComFace });
+
+    await buy('green');
+
+    expect(dbMock.dbWrite.model.findUniqueOrThrow).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 1 } })
+    );
+    expect(dbMock.dbRead.model.findUniqueOrThrow).not.toHaveBeenCalled();
   });
 
   it('sells in Green when the mature model has a .com face (control)', async () => {

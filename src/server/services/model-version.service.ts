@@ -2787,9 +2787,6 @@ export const earlyAccessPurchase = async ({
           name: true,
           userId: true,
           nsfw: true,
-          nsfwLevel: true,
-          sfwName: true,
-          sfwCoverImageId: true,
         },
       },
     },
@@ -2821,9 +2818,15 @@ export const earlyAccessPurchase = async ({
   }
 
   // A mature model without a .com face is off civitai.com; a stale page or direct call must not sell
-  // it in .com's currency. Neutral message: it must not disclose the model's .com status.
-  if (buzzType === 'green' && modelVersion.model.nsfw && !hasCompleteSfwFace(modelVersion.model)) {
-    throw throwBadRequestError('This model version is not available with this currency.');
+  // it in .com's currency. Read from the primary: the face can have been removed seconds ago.
+  // Neutral message: it must not disclose the model's .com status.
+  if (buzzType === 'green') {
+    const face = await dbWrite.model.findUniqueOrThrow({
+      where: { id: modelVersion.model.id },
+      select: { nsfw: true, nsfwLevel: true, sfwName: true, sfwCoverImageId: true },
+    });
+    if (face.nsfw && !hasCompleteSfwFace(face))
+      throw throwBadRequestError('This model version is not available with this currency.');
   }
 
   // The EA donation goal is the forward relation (DonationGoal entity target), not a config back-link.
