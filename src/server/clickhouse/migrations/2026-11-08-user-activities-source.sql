@@ -20,7 +20,13 @@
 -- no data and schedules no mutation; existing parts read the column as ''. Placed AFTER `landingPage`
 -- to sit with the other referral field; position is cosmetic.
 --
--- 🔴 BEFORE APPLYING, re-read prod:
+-- 🔴 BEFORE APPLYING, the production build must already include this PR's personal-data-export
+-- change (`drop: ['source']` for `default.userActivities` in
+-- src/server/services/personal-data-export/sources/clickhouse.ts). That export reads the table with
+-- `SELECT *`, and no name rule withholds `source`: applied before that deploy, exports built in the
+-- gap carry the mute-reason text this PR withholds.
+--
+-- 🔴 Then re-read prod:
 --
 --   SELECT name, type FROM system.columns
 --   WHERE database = 'default' AND table = 'userActivities' ORDER BY position;
