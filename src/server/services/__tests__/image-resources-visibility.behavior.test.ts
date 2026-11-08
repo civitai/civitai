@@ -22,12 +22,15 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
-  amIBlockedByUser: vi.fn().mockResolvedValue(false),
+  // Only BLOCKED has been blocked by the image owner.
+  amIBlockedByUser: vi.fn(async ({ userId }: { userId: number }) => userId === BLOCKED),
 }));
 
 import { getImageResourcesHandler } from '~/server/controllers/image.controller';
+import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
 
 const OWNER = 10;
+const BLOCKED = 40;
 const viewers = {
   anonymous: undefined,
   stranger: { id: 20 },
@@ -130,5 +133,21 @@ describe('image.getResources follows by-id image visibility', () => {
     expect(await call(105, 'anonymous')).toEqual({ versionIds: [12], skip: true });
     // Control: the same clean read without a .com face name stays cacheable.
     expect(await call(101, 'anonymous')).toEqual({ versionIds: [11], skip: false });
+  });
+
+  it('refuses a clean image to a viewer its owner blocked, and never edge-caches the refusal', async () => {
+    const cache = { canCache: true, skip: false, edgeTTL: 180, browserTTL: 60 };
+    const ctx = { user: { id: BLOCKED }, features: { canViewNsfw: true }, cache };
+    const refusal = getImageResourcesHandler({ input: { id: 101 }, ctx: ctx as never });
+    await expect(refusal).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    const { edgeCached } = buildTrpcCacheHeaders({
+      cache,
+      type: 'query',
+      errorCount: 1,
+      paths: ['image.getResources'],
+    });
+    expect(edgeCached).toBe(false);
+    // Control: a viewer the owner did not block reads it.
+    expect(await call(101, 'stranger')).toEqual({ versionIds: [11], skip: false });
   });
 });
