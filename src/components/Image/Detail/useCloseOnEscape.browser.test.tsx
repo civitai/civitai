@@ -19,6 +19,7 @@ function Detail({ nudge = false }: { nudge?: boolean }) {
   useCloseOnEscape(close);
   const [modal, setModal] = useState(false);
   const [popover, setPopover] = useState(false);
+  const [late, setLate] = useState(false);
   return (
     <>
       <button type="button">page</button>
@@ -44,12 +45,27 @@ function Detail({ nudge = false }: { nudge?: boolean }) {
         <Popover.Target>
           <button type="button" onClick={() => setPopover((o) => !o)}>
             hat
+            <span data-testid="hat-face">face</span>
           </button>
         </Popover.Target>
         <Popover.Dropdown>
           <button type="button">in popover</button>
         </Popover.Dropdown>
       </Popover>
+      {/* An unrelated control that carries aria-controls and brings a passive popover up afterwards. */}
+      <button type="button" aria-controls="somewhere-else" onClick={() => setLate(true)}>
+        other
+      </button>
+      {late && (
+        <Popover opened withinPortal transitionProps={{ duration: 0 }}>
+          <Popover.Target>
+            <span>late</span>
+          </Popover.Target>
+          <Popover.Dropdown>
+            <span>late nudge</span>
+          </Popover.Dropdown>
+        </Popover>
+      )}
       {/* A passive nudge: opened by the app, never by the user. */}
       {nudge && (
         <Popover opened withinPortal transitionProps={{ duration: 0 }}>
@@ -160,6 +176,23 @@ describe('Escape on the image detail', () => {
     renderWithProviders(<Detail nudge />);
     await page.getByRole('button', { name: 'in nudge' }).click();
     (document.activeElement as HTMLElement).blur();
+    await userEvent.keyboard('{Escape}');
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  test('a control with another id in aria-controls does not engage a popover that appears after it', async () => {
+    renderWithProviders(<Detail />);
+    await page.getByRole('button', { name: 'other' }).click();
+    await expect.element(page.getByText('late nudge')).toBeVisible();
+    await userEvent.keyboard('{Escape}');
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  test('a click on a child of the trigger still counts as opening its popover', async () => {
+    renderWithProviders(<Detail />);
+    await page.getByTestId('hat-face').click();
+    await expect.element(page.getByRole('button', { name: 'in popover' })).toBeVisible();
+    (page.getByRole('button', { name: 'hat' }).element() as HTMLElement).focus();
     await userEvent.keyboard('{Escape}');
     expect(close).not.toHaveBeenCalled();
   });
