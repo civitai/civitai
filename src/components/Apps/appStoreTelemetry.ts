@@ -100,14 +100,8 @@ export function trackAppStoreAction(
   enqueueTrackEvent({ kind: 'action', data: { type: 'AppStore_Action', details } });
 }
 
-// ── Impressions ────────────────────────────────────────────────────────────────────────────
-//
-// The visibility rule, dwell, hidden-tab re-arm and kill switch are the FEED impression hook's
-// (`useDwellImpression` in TrackView/useTrackImpression.ts): at least HALF the card visible for a
-// continuous SECOND, gated on the `feedImpressions` flag. What this module adds is the de-dupe:
-// once per listing per surface per PAGE VIEW — the seen-set is keyed on the pathname, so a sort or
-// filter change on the same page (a shallow query change) does not re-count cards already seen,
-// while navigating away and back does.
+// Once per listing per surface per page view: keyed on the pathname, so a sort/filter change on
+// the same page does not re-count.
 
 const seen = new Set<string>();
 let seenPath: string | null = null;

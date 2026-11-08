@@ -286,17 +286,11 @@ export function AppListingCard({
   // IconExternalLink, detail → IconEye) — it is a consolidation, not a restyle.
   const CtaGlyph = ACTION_GLYPH_ICONS[cardActionGlyph(cta.action)];
   const detailHref = getListingDetailHref(card.slug);
-  // ACQUISITION TELEMETRY. A moderator `preview` records nothing and keeps the raw links: the
-  // listing it shows is not live, so the visit redirect would 404 for it.
+  // A moderator `preview` records nothing and keeps raw links (its listing is not live).
   const tracked = preview ? undefined : telemetry;
   const surface = tracked?.surface ?? 'direct';
   const impressionRef = useAppStoreImpression(card.id, tracked);
   const trackStoreAction = useTrackAppStoreAction();
-  // An OFF-SITE Visit goes through `/apps/go/<id>`, which records the visit server-side and
-  // 302s to the listing's stored URL; an on-site Open carries its surface into the run route's
-  // `App_Open`. `cta.href` stays the source of truth for WHICH action this is.
-  // An UNTRACKED placement keeps its on-site href untagged (an untagged launch reads as
-  // `direct`, which is what it is).
   const ctaHref =
     preview || cta.action === 'detail'
       ? cta.href

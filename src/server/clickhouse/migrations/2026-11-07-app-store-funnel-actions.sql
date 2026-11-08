@@ -6,17 +6,10 @@
 -- nothing, the off-site redirect still redirects (its insert is fire-and-forget), and every funnel
 -- query reads zero. See ./README.md.
 --
--- ORDER: apply AFTER 2026-11-04-experiment-exposure-hat-turf-actions.sql, which takes 30
--- ('Experiment_Exposure') and 31 ('HatTurf_Action'). This file restates every value 1..31 and
--- appends 32 and 33. MODIFY COLUMN replaces the whole definition, so this file must restate every
--- live value; applied first, the 2026-11-04 ALTER would drop 32 and 33.
---
--- 🔴 BEFORE APPLYING, re-read prod: `SELECT type FROM system.columns WHERE database = 'default' AND
--- table = 'actions' AND name = 'type'`. It must list exactly 1..31 as below. Any other value (a
--- type another PR applied since) must be added here at its live index first, and 32/33 moved past
--- it, or this ALTER drops it. Appending at unused indices is a metadata-only ALTER: no data is
--- rewritten and no mutation is scheduled. Do NOT renumber or rename an existing value; that WOULD
--- rewrite the whole table.
+-- 🔴 MODIFY COLUMN replaces the whole definition, so it must restate every LIVE value at its live
+-- index. Re-read `SELECT type FROM system.columns WHERE database = 'default' AND table = 'actions'
+-- AND name = 'type'` first: it must list exactly 1..31 below; new values go past the highest live
+-- index (here 32 and 33). Never renumber or rename an existing value.
 --
 -- Re-check before applying: `system.tables` `dependencies_table` for `actions` must still be empty.
 -- A materialized view added since would need a `MODIFY QUERY` alongside this.

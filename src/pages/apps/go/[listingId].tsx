@@ -8,12 +8,6 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
  * or 404s. The decision, the recording and the open-redirect argument all live in
  * `~/server/services/blocks/app-listing-visit.service` — read its header before changing this.
  *
- * In order, each refusal before the redirect:
- *   1. `resolveAppsPageAccess` — the same store page gate the listing detail page applies (404);
- *   2. a per-actor rate limit (429, rendered below);
- *   3. the listing must pass the detail read's own visibility gate for this viewer (store scope,
- *      audience floor, host, browsing level), be OFF-SITE and carry an https destination (404).
- *
  * 302 (not 301/308): the destination can change when the listing is edited, and a cached
  * permanent redirect would keep sending visitors to the old address without counting them.
  */
