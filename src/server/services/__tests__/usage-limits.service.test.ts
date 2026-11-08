@@ -55,6 +55,7 @@ describe('getUsageLimits', () => {
         used: 2,
         remaining: 18,
         windowSeconds: 86400,
+        window: 'rolling',
         nextAt: null,
         resetAt: new Date(NOW - 2 * HOUR + 24 * HOUR).toISOString(),
       },

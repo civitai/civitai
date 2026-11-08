@@ -39,6 +39,7 @@ import { redactBlockTokens } from '~/server/logging/redact-block-token';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.metrics';
 import { setTrpcProcedureRegistry } from '~/server/prom/trpc-fast-superjson.metrics';
+import { rateLimitHeaders } from '~/server/trpc/rate-limit-headers';
 import { retryAfterHeader } from '~/server/trpc/retry-after-header';
 
 /**
@@ -129,6 +130,10 @@ const trpcHandler = createNextApiHandler({
 
     const retryAfter = retryAfterHeader({ errors, info, paths });
     if (retryAfter) headers['Retry-After'] = retryAfter;
+    Object.assign(
+      headers,
+      rateLimitHeaders({ req: ctx?.req, callCount: info?.calls.length ?? paths?.length ?? 0 })
+    );
 
     return Object.keys(headers).length > 0 ? { headers } : {};
   },

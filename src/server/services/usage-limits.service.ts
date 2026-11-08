@@ -21,6 +21,8 @@ const USAGE_LIMIT_AREAS: { area: string; sharedKey: string; limits: UsageLimitRe
 
 const labelOf = (id: string) => getUsageLimitDef(id).label;
 
+export type UsageLimitWindow = 'rolling' | 'utc-day' | 'utc-month';
+
 export type UsageLimit = {
   id: string;
   area: string;
@@ -30,6 +32,8 @@ export type UsageLimit = {
   used: number | null;
   remaining: number | null;
   windowSeconds: number | null;
+  /** `rateLimit()` windows are rolling; calendar windows (UTC day/month) reset at a boundary. */
+  window: UsageLimitWindow | null;
   /** When the caller can next use it, at the limit; `null` while `remaining > 0`. */
   nextAt: string | null;
   /** When every attempt in the window has aged out. */
@@ -85,6 +89,7 @@ export async function getUsageLimits({
         used,
         remaining,
         windowSeconds: rule.period,
+        window: 'rolling',
         nextAt: remaining > 0 ? null : iso(nextAt),
         resetAt: iso(resetAt),
       });
@@ -102,6 +107,7 @@ function unlimited(id: string, area: string): UsageLimit {
     used: null,
     remaining: null,
     windowSeconds: null,
+    window: null,
     nextAt: null,
     resetAt: null,
   };

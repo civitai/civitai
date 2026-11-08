@@ -6,6 +6,8 @@ import { CacheTTL } from '~/server/common/constants';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { noteRateLimitUsage } from '~/server/trpc/rate-limit-headers';
+import { markActiveLimit } from '~/server/utils/active-rate-limits';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import { throwRateLimited } from '~/server/utils/rate-limit-error';
 import {
@@ -110,6 +112,9 @@ export async function claimRateLimitAttempt({
   const refusal = bindingRefusal(usages);
   if (refusal) {
     const message = refusal.rule.errorMessage ?? `You're doing that too much...`;
+    if (refusal.rule.kind === 'product') noteRateLimitUsage(req, usages);
+    else if (user && refusal.nextAt !== null)
+      await markActiveLimit({ userId: user.id, keyName, retryAt: refusal.nextAt, now });
     const meta = rateLimitMetaForRefusal(usages, now);
     if (meta) throwRateLimited(meta, message);
     throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message });
@@ -117,6 +122,7 @@ export async function claimRateLimitAttempt({
 
   return async () => {
     attempts.push(Date.now());
+    noteRateLimitUsage(req, evaluateRateLimitWindow(validLimits, attempts, Date.now()));
     const longestPeriod = Math.max(...validLimits.map((x) => x.period!));
     const updatedAttempts = attempts.filter((x) => x > Date.now() - longestPeriod * 1000);
     // Fail-open: a sysRedis failover would otherwise 500 every rate-limited call; the window

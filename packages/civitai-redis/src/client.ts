@@ -3259,6 +3259,9 @@ const REDIS_KEYS_UNPREFIXED = {
     LIMIT: {
       BASE: 'packed:trpc:limit',
       KEYS: 'packed:trpc:limit:keys',
+      // `<userId>` hashes of abuse limits the user is refused by now: field = limiter key,
+      // value = retry time (epoch ms), each field expiring at that time.
+      ACTIVE: 'trpc:limit:active',
     },
     // `<bucket>:<userId>` sorted sets of in-flight request slots (`inFlightLimit`).
     IN_FLIGHT: 'trpc:in-flight',

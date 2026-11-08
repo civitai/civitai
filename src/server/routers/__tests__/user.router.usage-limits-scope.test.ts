@@ -71,3 +71,22 @@ describe('user.getUsageLimits token scope', () => {
     ]);
   });
 });
+
+describe('user.getActiveLimits', () => {
+  it("reads only the caller's own hash, whatever id the input names", async () => {
+    const { redisMock } = await import('~/__tests__/mocks/redis.mock');
+    redisMock.redis.hGetAll.mockClear();
+    redisMock.redis.hGetAll.mockResolvedValueOnce({
+      'reaction:toggle': String(Date.now() + 60_000),
+    });
+    const active = await caller(TokenScope.Full).getActiveLimits({ userId: 7 } as never);
+    expect(active).toEqual([expect.objectContaining({ area: 'reactions' })]);
+    expect(redisMock.redis.hGetAll.mock.calls).toEqual([['trpc:limit:active:42']]);
+  });
+
+  it('refuses a token with neither usage-limits scope', async () => {
+    await expect(caller(TokenScope.ModelsRead).getActiveLimits()).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+});

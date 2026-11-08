@@ -129,6 +129,7 @@ import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils'
 import { dbRead } from '~/server/db/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getUsageLimits, USAGE_LIMITS_SCOPES } from '~/server/services/usage-limits.service';
+import { getActiveLimits } from '~/server/utils/active-rate-limits';
 import { userCreatorEdgeTag } from '~/server/services/user-creator.service';
 
 export const userRouter = router({
@@ -169,6 +170,10 @@ export const userRouter = router({
         ids: input?.ids,
       })
     ),
+  /** Abuse limits the caller is refused by now: a coarse area and a retry time, no counts. */
+  getActiveLimits: protectedProcedure
+    .meta({ anyOfScopes: USAGE_LIMITS_SCOPES })
+    .query(({ ctx }) => getActiveLimits(ctx.user.id)),
   getSearchHydration: publicProcedure
     .input(getUserSearchHydrationSchema)
     .query(getUserSearchHydrationHandler),
