@@ -10,6 +10,10 @@ import { trpc } from '~/utils/trpc';
 
 // Matches the server's interest-set refresh (watch.ts WATCH_REFRESH_MS).
 const SELF_WATCH_REFRESH_MS = 30_000;
+// A tab shown again within this long of its last mark sends none: that mark still has over a minute
+// to live (watch.ts WATCH_TTL_MS), and the interval renews it. Below the refresh, so the interval's
+// own marks always go out.
+const SELF_WATCH_MIN_GAP_MS = 20_000;
 
 /**
  * "All" point pops: whenever the viewer's own event total rises, from anyone's action, pops the rise.
@@ -43,7 +47,12 @@ function SelfPops({ event }: { event: string }) {
   // The last total seen and the viewer's team, from the watch's answer. No pop until both are known:
   // a first push with no base would pop the whole total.
   const base = useRef<{ points: number; team: string } | undefined>(undefined);
+  // When the last mark went out; cleared when it fails, so the next chance marks again.
+  const lastMark = useRef(-Infinity);
   const { mutate } = trpc.event.watchPoints.useMutation({
+    onError() {
+      lastMark.current = -Infinity;
+    },
     onSuccess({ self }) {
       if (!self) return;
       base.current = {
@@ -54,9 +63,14 @@ function SelfPops({ event }: { event: string }) {
   });
   useEffect(() => {
     base.current = undefined;
+    lastMark.current = -Infinity;
     // A hidden tab lets its mark lapse: its pushes would pop for nobody.
     const mark = () => {
-      if (document.visibilityState === 'visible') mutate({ event, topics: [], self: true });
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastMark.current < SELF_WATCH_MIN_GAP_MS) return;
+      lastMark.current = now;
+      mutate({ event, topics: [], self: true });
     };
     mark();
     const id = setInterval(mark, SELF_WATCH_REFRESH_MS);
