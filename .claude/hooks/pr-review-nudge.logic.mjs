@@ -119,8 +119,9 @@ function asksForDraft(args) {
   return args.some((w) => w === '-d' || w === '--draft' || w === '--draft=true');
 }
 
-// The PR as gh prints it. The owner/name must be EXACTLY civitai/civitai: a fork, or another repo
-// whose name starts with "civitai", is a different repo.
+// A GitHub PR URL, shared by the gh matcher (CREATED_URL) and the MCP one (PR_URL). It captures any
+// owner/name; both callers then require EXACTLY civitai/civitai, since a fork, or another repo whose
+// name starts with "civitai", is a different repo.
 const PR_URL_SOURCE = String.raw`https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/pull\/([1-9][0-9]*)`;
 const CREATED_URL = new RegExp(`${PR_URL_SOURCE}(?![0-9])`, 'g');
 // Only gh's success line. Its other lines name the PR too: "is already \"ready for review\"" (nothing
