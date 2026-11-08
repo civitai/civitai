@@ -67,7 +67,7 @@ describe('query cache keys never mix two viewers', () => {
 
   it('keys a bound value apart from its string spelling', () => {
     const key = (v: unknown) => queryCacheKeyHash(Prisma.sql`SELECT ${v}`);
-    expect(key(1n)).not.toBe(key('1n'));
+    expect(key(BigInt(1))).not.toBe(key('1n'));
     expect(key(new Date('2026-01-01T00:00:00Z'))).not.toBe(key('2026-01-01T00:00:00.000Z'));
     expect(key(undefined)).not.toBe(key(null));
   });

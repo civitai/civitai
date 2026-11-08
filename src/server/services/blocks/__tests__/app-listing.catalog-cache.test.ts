@@ -114,7 +114,7 @@ function lastCall() {
 function deriveKey(sql: unknown): string {
   const binding = cacheBinding.at(-1);
   if (!binding) throw new Error('queryCache was never bound');
-  return [binding.key, binding.version, queryCacheKeyHash(sql)]
+  return [binding.key, binding.version, queryCacheKeyHash(sql as never)]
     .filter((p) => p != null && p !== '')
     .join(':');
 }
