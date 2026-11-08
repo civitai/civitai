@@ -11,6 +11,7 @@ import {
   RING_LENGTH,
   RING_RADIUS,
   badgeFigure,
+  creditedForTeam,
   badgeFill,
   formatMargin,
   badgeLeader,
@@ -70,7 +71,9 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const holder = guard ?? leader;
   const blocked = guard && leader && leader !== guard ? leader : null;
   const stock = useHatStock();
-  const figure = summary ? badgeFigure(summary, feed?.team, stock?.creditedPlayers) : null;
+  // The cap of the team leading this image: what an action here credits.
+  const credited = creditedForTeam(stock, leader);
+  const figure = summary ? badgeFigure(summary, feed?.team, credited) : null;
   const shownCount = figure ? figure.points : null;
   // Pops only when a count the viewer already saw changes, not when the first one arrives. Held in
   // state, not derived per render, so an unrelated re-render mid-animation does not cancel it.
@@ -88,8 +91,7 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const discTeam = figure?.pointsTeam ?? null;
   const discColor = discTeam ? colorOf(discTeam) : summary.hatted ? FALLBACK_COLOR : undefined;
   // Fills from the bottom toward the scoring cap, over a dimmed disc of the same colour.
-  const fill =
-    figure && discColor ? badgeFill(figure, !!summary.hatted, stock?.creditedPlayers) : 1;
+  const fill = figure && discColor ? badgeFill(figure, !!summary.hatted, credited) : 1;
   const fillTop = 24 + DISC_RADIUS - 2 * DISC_RADIUS * fill;
 
   const label = `${figure?.pointsTeam ? 'Hat Turf:' : standingsLabel(summary, feed.team)}${

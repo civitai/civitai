@@ -85,6 +85,27 @@ export type BadgeFigure = {
   margin: number | null;
 };
 
+/**
+ * How many stickerers an action credits on an image `team` leads: that team's own cap (team-relative,
+ * see turfCreditedByTeam), else the viewer's (a payload from before per-team caps).
+ */
+export function creditedForTeam(
+  stock:
+    | { creditedPlayers?: number | null; creditedByTeam?: Record<string, number> | null }
+    | null
+    | undefined,
+  team: string | null | undefined
+) {
+  const own = team ? stock?.creditedByTeam?.[team] : undefined;
+  return own ?? stock?.creditedPlayers;
+}
+
+/** "47h left", or minutes in the last hour ("12m left"). */
+export function formatTimeLeft(ms: number) {
+  const minutes = Math.max(1, Math.ceil(ms / 60_000));
+  return minutes >= 60 ? `${Math.floor(minutes / 60)}h left` : `${minutes}m left`;
+}
+
 /** The numbers in the badge: points in the dial, the viewer's margin beside it. */
 export function badgeFigure(
   summary: Pick<TurfSummary, 'counted' | 'leader' | 'hatted' | 'hattedTeam'>,
