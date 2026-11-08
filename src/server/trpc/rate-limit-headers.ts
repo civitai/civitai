@@ -26,24 +26,31 @@ export function headerUsageOf(usages: RuleUsage[]): RateLimitHeaderUsage | undef
   return { limit: binding.rule.limit, remaining: binding.remaining, resetAt: binding.nextAt };
 }
 
-export function noteRateLimitUsage(req: object, usages: RuleUsage[]) {
-  const usage = headerUsageOf(usages);
+export function noteRateLimitUsage(req: object | undefined, usages: RuleUsage[]) {
+  const usage = req && headerUsageOf(usages);
   if (!usage) return;
   const list = noted.get(req) ?? [];
   list.push(usage);
   noted.set(req, list);
 }
 
-/** Headers for a single-call response, or none. `Reset` is seconds until a slot frees. */
+/**
+ * `responseMeta`'s headers for a single-call response, or none. `Reset` is seconds until a slot
+ * frees. A GET batch has no `info` before parsing, so its size comes from `paths`.
+ */
 export function rateLimitHeaders({
-  req,
-  callCount,
+  ctx,
+  info,
+  paths,
   now = Date.now(),
 }: {
-  req: object | undefined;
-  callCount: number;
+  ctx?: { req?: object };
+  info?: { calls: readonly unknown[] };
+  paths?: readonly string[];
   now?: number;
 }): Record<string, string> | undefined {
+  const req = ctx?.req;
+  const callCount = info?.calls.length ?? paths?.length ?? 0;
   if (!req || callCount !== 1) return undefined;
   const list = noted.get(req);
   if (!list || list.length !== 1) return undefined;

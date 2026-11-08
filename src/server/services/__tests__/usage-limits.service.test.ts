@@ -4,7 +4,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { COMMENT_V3_RATE_LIMIT_KEY } from '~/server/schema/comment.schema';
 import { POST_CREATE_RATE_LIMIT_KEY } from '~/server/schema/post.schema';
-import { usageLimitDefs } from '~/shared/constants/usage-limits';
+import { isBucketCountable, usageLimitDefs } from '~/shared/constants/usage-limits';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
 
@@ -169,7 +169,9 @@ describe('getUsageLimits', () => {
   it('has a row for every product limit in the registry, comments read from the v3 bucket', async () => {
     commentAttemptsBy['user:8'] = [NOW - 1000, NOW - 2 * HOUR];
     const { limits } = await getUsageLimits({ tokenScope: TokenScope.Full, user: newcomer, req });
-    const productIds = usageLimitDefs.filter((d) => d.kind === 'product').map((d) => d.id);
+    const productIds = usageLimitDefs
+      .filter((d) => d.kind === 'product' && isBucketCountable(d.window))
+      .map((d) => d.id);
     expect(limits.map((l) => l.id)).toEqual(productIds);
     expect(limits.find((l) => l.id === 'comments.hourly')).toMatchObject({
       area: 'comments',

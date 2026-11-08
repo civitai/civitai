@@ -81,36 +81,36 @@ export async function getUsageLimits({
     user.isModerator &&
     (tokenScope === TokenScope.Full || Flags.hasFlag(tokenScope, TokenScope.UserRead));
   const wanted = ids && ids.length > 0 ? new Set(ids) : undefined;
-  const limits: UsageLimit[] = [];
-  for (const { area, sharedKey, ids: areaIds } of USAGE_LIMIT_AREAS) {
-    // Resolve first, as `rateLimit()` does, so `ids` can only drop rows, never change a number.
-    const rules: RateLimit[] = await resolveUsageLimitRules(areaIds, user);
-    const productRules = rules.filter(
-      (rule) => rule.kind === 'product' && rule.id && (!wanted || wanted.has(rule.id))
-    );
-    if (productRules.length === 0) continue;
-    // `rateLimit()` skips moderators, so nothing they do is recorded: report no limit.
-    if (showExemption) {
-      for (const rule of productRules) limits.push(unlimited(rule.id as string, area));
-      continue;
-    }
-    const usages = await peekRateLimit({ rules: productRules, sharedKey, user, req });
-    for (const { rule, used, remaining, nextAt, resetAt } of usages) {
-      const id = rule.id as string;
-      limits.push({
-        id,
-        area,
-        label: labelOf(id),
-        limit: rule.limit,
-        used,
-        remaining,
-        windowSeconds: rule.period,
-        window: getUsageLimitDef(id).window.type,
-        nextAt: remaining > 0 ? null : iso(nextAt),
-        resetAt: iso(resetAt),
+  // One bucket read per area, in parallel; rows keep registry order.
+  const byArea = await Promise.all(
+    USAGE_LIMIT_AREAS.map(async ({ area, sharedKey, ids: areaIds }): Promise<UsageLimit[]> => {
+      // Resolve first, as `rateLimit()` does, so `ids` can only drop rows, never change a number.
+      const rules: RateLimit[] = await resolveUsageLimitRules(areaIds, user);
+      const productRules = rules.filter(
+        (rule) => rule.kind === 'product' && rule.id && (!wanted || wanted.has(rule.id))
+      );
+      if (productRules.length === 0) return [];
+      // `rateLimit()` skips moderators, so nothing they do is recorded: report no limit.
+      if (showExemption) return productRules.map((rule) => unlimited(rule.id as string, area));
+      const usages = await peekRateLimit({ rules: productRules, sharedKey, user, req });
+      return usages.map(({ rule, used, remaining, nextAt, resetAt }) => {
+        const id = rule.id as string;
+        return {
+          id,
+          area,
+          label: labelOf(id),
+          limit: rule.limit,
+          used,
+          remaining,
+          windowSeconds: rule.period,
+          window: getUsageLimitDef(id).window.type,
+          nextAt: remaining > 0 ? null : iso(nextAt),
+          resetAt: iso(resetAt),
+        };
       });
-    }
-  }
+    })
+  );
+  const limits = byArea.flat();
   return { limits };
 }
 

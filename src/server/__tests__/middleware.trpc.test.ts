@@ -239,10 +239,8 @@ describe('rateLimit recordAttempt — round-4 fail-open wrapper', () => {
     const next = vi.fn(async () => ({ ok: true }));
     await expect(handler({ ...baseArg, next })).rejects.toBeInstanceOf(TRPCError);
     expect(next).not.toHaveBeenCalled();
-    // The refusal marks the user's active limit; it must not record an attempt.
-    const writtenKeys = mockHSetWithTTL.mock.calls.map((call) => call[1]);
-    expect(writtenKeys.some((key) => String(key).endsWith('trpc:limit:test:procedure'))).toBe(
-      false
-    );
+    // The refusal marks the user's active limit; that is the only write it may make.
+    const writtenKeys = mockHSetWithTTL.mock.calls.map((call) => String(call[1]));
+    expect(writtenKeys.filter((key) => !key.includes('trpc:limit:active:'))).toEqual([]);
   });
 });

@@ -130,10 +130,7 @@ const trpcHandler = createNextApiHandler({
 
     const retryAfter = retryAfterHeader({ errors, info, paths });
     if (retryAfter) headers['Retry-After'] = retryAfter;
-    Object.assign(
-      headers,
-      rateLimitHeaders({ req: ctx?.req, callCount: info?.calls.length ?? paths?.length ?? 0 })
-    );
+    Object.assign(headers, rateLimitHeaders({ ctx, info, paths }));
 
     return Object.keys(headers).length > 0 ? { headers } : {};
   },

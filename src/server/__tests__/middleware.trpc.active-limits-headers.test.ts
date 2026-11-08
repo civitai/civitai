@@ -80,10 +80,16 @@ async function run({
   return { req, next, error };
 }
 
+/** What `responseMeta` adds for a response of `calls` calls carrying `req`. */
+const headersFor = (req: object, calls = 1) =>
+  rateLimitHeaders({ ctx: { req }, info: { calls: Array.from({ length: calls }) } });
+
 const activeWrites = () => mockHSetWithTTL.mock.calls.filter(([, key]) => key === ACTIVE_KEY);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  redisMock.redis.packed.hGet.mockReset();
+  redisMock.redis.hGetAll.mockReset();
   vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
   mockHSetWithTTL.mockResolvedValue(undefined);
 });
@@ -127,10 +133,22 @@ describe('active abuse limits', () => {
     ]);
   });
 
-  it('nothing is marked on an admit, a product refusal, or an anonymous refusal', async () => {
-    await run({ rules: [abuse], recorded: attempts(1) });
-    await run({ rules: [product], recorded: attempts(5) });
-    await run({ rules: [abuse], recorded: attempts(3), user: null });
+  it('nothing is marked on an admit', async () => {
+    const { error, next } = await run({ rules: [abuse], recorded: attempts(1) });
+    expect(error).toBeUndefined();
+    expect(next).toHaveBeenCalled();
+    expect(activeWrites()).toHaveLength(0);
+  });
+
+  it('nothing is marked on a product refusal', async () => {
+    const { error } = await run({ rules: [product], recorded: attempts(5) });
+    expect(error).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(activeWrites()).toHaveLength(0);
+  });
+
+  it('an anonymous abuse refusal is still a 429, with nothing marked', async () => {
+    const { error } = await run({ rules: [abuse], recorded: attempts(3), user: null });
+    expect(error).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
     expect(activeWrites()).toHaveLength(0);
   });
 
@@ -150,7 +168,7 @@ describe('X-RateLimit headers', () => {
     });
     expect(error).toBeUndefined();
     // 2 recorded + this one = 3 of 5; the oldest (2 s ago) frees in 86398 s.
-    expect(rateLimitHeaders({ req, callCount: 1 })).toEqual({
+    expect(headersFor(req)).toEqual({
       'X-RateLimit-Limit': '5',
       'X-RateLimit-Remaining': '2',
       'X-RateLimit-Reset': '86398',
@@ -164,7 +182,7 @@ describe('X-RateLimit headers', () => {
       path: 'post.create',
     });
     expect(error).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
-    expect(rateLimitHeaders({ req, callCount: 1 })).toEqual({
+    expect(headersFor(req)).toEqual({
       'X-RateLimit-Limit': '5',
       'X-RateLimit-Remaining': '0',
       'X-RateLimit-Reset': '86395',
@@ -173,8 +191,16 @@ describe('X-RateLimit headers', () => {
 
   it('a batch gets none, even with one product call in it', async () => {
     const { req } = await run({ rules: [product], recorded: attempts(2), path: 'post.create' });
-    expect(rateLimitHeaders({ req, callCount: 1 })).toBeDefined(); // positive control
-    expect(rateLimitHeaders({ req, callCount: 2 })).toBeUndefined();
+    expect(headersFor(req)).toBeDefined(); // positive control
+    expect(headersFor(req, 2)).toBeUndefined();
+  });
+
+  it('a GET batch is sized from its paths before tRPC parses it', async () => {
+    const { req } = await run({ rules: [product], recorded: attempts(2), path: 'post.create' });
+    expect(rateLimitHeaders({ ctx: { req }, paths: ['post.create'] })).toBeDefined();
+    expect(
+      rateLimitHeaders({ ctx: { req }, paths: ['post.create', 'user.getUsageLimits'] })
+    ).toBeUndefined();
   });
 
   it('two product buckets noted on one request get none', async () => {
@@ -187,13 +213,13 @@ describe('X-RateLimit headers', () => {
       path: 'comment.create',
       next: vi.fn(async () => ({ ok: true })),
     });
-    expect(rateLimitHeaders({ req, callCount: 1 })).toBeUndefined();
+    expect(headersFor(req)).toBeUndefined();
   });
 
   it('abuse limits never emit them, admitted or refused', async () => {
     const admitted = await run({ rules: [abuse], recorded: attempts(1) });
     const refused = await run({ rules: [abuse], recorded: attempts(3) });
-    expect(rateLimitHeaders({ req: admitted.req, callCount: 1 })).toBeUndefined();
-    expect(rateLimitHeaders({ req: refused.req, callCount: 1 })).toBeUndefined();
+    expect(headersFor(admitted.req)).toBeUndefined();
+    expect(headersFor(refused.req)).toBeUndefined();
   });
 });

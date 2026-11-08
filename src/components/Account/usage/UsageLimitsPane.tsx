@@ -1,9 +1,10 @@
 import { Alert, Button, Code, Loader, Paper, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { UsageLimitCard } from '~/components/Account/usage/UsageLimitCard';
 import { formatWhen, type UsageLimitRow } from '~/components/Account/usage/usage-limit-view';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useNowTick } from '~/components/Apps/reviewRelativeTime';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { capitalize } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -11,17 +12,8 @@ import { trpc } from '~/utils/trpc';
 const STALE_MS = 30_000;
 
 /** Re-renders every 30 s so "+1 at …" turns into "available now" without a refetch. */
-function useNow(intervalMs = STALE_MS) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(timer);
-  }, [intervalMs]);
-  return now;
-}
-
 export function UsageLimitsPane() {
-  const now = useNow();
+  const now = useNowTick(STALE_MS).getTime();
   const currentUser = useCurrentUser();
   const limits = trpc.user.getUsageLimits.useQuery(undefined, { staleTime: STALE_MS });
   const active = trpc.user.getActiveLimits.useQuery(undefined, { staleTime: STALE_MS });
