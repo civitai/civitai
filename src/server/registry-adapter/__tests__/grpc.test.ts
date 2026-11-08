@@ -259,6 +259,8 @@ describe('🔴 the wire: the spec proto’s field numbers', () => {
   const upsert = (body: unknown): StreamEvent => ({
     type: 'upsert',
     entity: { urn: 'u', schemas: ['s'], rev: 'r', body },
+    // builds one event to encode, not a paging fake
+    // eslint-disable-next-line local-rules/no-unbounded-paging-fake
     cursor: 'c',
   });
   it.each<[string, unknown, string]>([
