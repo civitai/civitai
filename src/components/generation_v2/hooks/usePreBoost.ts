@@ -42,8 +42,8 @@ export function usePreBoostWhatIf<T extends Record<string, unknown> | null>({
   const [preBoostRevision, setPreBoostRevision] = useState<number | null>(null);
   const { getResourceData } = useResourceDataContext();
 
-  // The generator opts in to boost-to-load: a free account's cold checkpoint is then priced with
-  // `boostRequired` instead of refused. Every whatIf below and the submit carry the same opt-in.
+  // Opts in to boost-to-load: a free account's cold checkpoint is priced with `boostRequired`
+  // instead of refused.
   const basePayload = useMemo(
     () => (queryPayload ? { ...queryPayload, acceptBoostRequired: true } : null),
     [queryPayload]

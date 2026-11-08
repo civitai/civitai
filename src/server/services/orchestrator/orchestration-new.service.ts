@@ -2163,7 +2163,7 @@ export async function generateFromGraph({
   await assertWorkflowOwner(workflow, userId, token);
 
   // Format and return response
-  const [formatted] = await formatGenerationResponse2([workflow], user);
+  const [formatted] = await formatGenerationResponse2([workflow], user, { acceptBoostRequired });
   const priced = await downloadWhatIf;
   attachEstimatedPreparation(
     formatted.steps,
@@ -3291,7 +3291,8 @@ export async function updateWorkflow({
 
 export async function formatGenerationResponse2(
   workflows: Workflow[],
-  user?: { id?: number; isModerator?: boolean; tier?: string }
+  user?: { id?: number; isModerator?: boolean; tier?: string },
+  { acceptBoostRequired = false }: { acceptBoostRequired?: boolean } = {}
 ): Promise<NormalizedWorkflow[]> {
   // Collect all resource IDs from all steps AND workflow metadata
   // getResourceRefsFromStep handles both regular format and video format (AIR strings)
@@ -3320,7 +3321,7 @@ export async function formatGenerationResponse2(
     new Map(allResourceRefs.map((r) => [`${r.id}_${r.epoch ?? ''}`, r])).values()
   );
   const enrichedResources =
-    uniqueRefs.length > 0 ? await getResourceData(uniqueRefs, { user }) : [];
+    uniqueRefs.length > 0 ? await getResourceData(uniqueRefs, { user, acceptBoostRequired }) : [];
 
   // Format each workflow
   return workflows.map((workflow) => {

@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { generatorAcceptsBoostRequired } from '~/server/services/generation/coverage-source';
 import { assertSourceMetadataWithinCap } from '~/server/services/orchestrator/source-metadata-cap';
 import { assertGenerationInputsUsable } from '~/server/services/generation-input-urls';
 import * as z from 'zod';
@@ -199,10 +200,6 @@ const experimentalProcedure = protectedProcedure.use(experimentalMiddleware);
 
 // The iterative editor's default preset model. The model registry itself lives
 // in `preset-image-gen.service.ts` (shared with comics + the enqueued-panels job).
-/** Boost-to-load is the generator's opt-in only: API callers keep the members gate. */
-const generatorAcceptsBoostRequired = (value: unknown, ctx: { apiKeyId?: unknown }) =>
-  value === true && ctx.apiKeyId == null;
-
 const DEFAULT_ITERATE_MODEL = 'NanoBanana';
 
 export const orchestratorRouter = router({

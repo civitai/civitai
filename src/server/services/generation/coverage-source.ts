@@ -9,6 +9,10 @@ import { isGeneratorReady } from '~/shared/generation/generator-readiness';
  * Read it ONCE per request and pass the answer down: a value that changed mid-request would have one
  * reader covering a version another refused.
  */
+/** Boost-to-load is the generator's opt-in only: API callers keep the members gate. */
+export const generatorAcceptsBoostRequired = (value: unknown, ctx: { apiKeyId?: unknown }) =>
+  value === true && ctx.apiKeyId == null;
+
 export async function nextCoverageEnabled() {
   return isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_COVERAGE_NEXT);
 }
@@ -29,9 +33,7 @@ export async function coverageAudience(
   },
   /**
    * The generator's opt-in to boost-to-load: a non-member may then start a cold expansion
-   * checkpoint's download by paying for a Download Boost. Only `getResourceData` passes it, and only
-   * `validateAndEnrichResources` sets it there, so no other surface can read a cold checkpoint as
-   * covered for a non-member.
+   * checkpoint's download by paying for a Download Boost. Leave unset on every non-generator surface.
    */
   { acceptBoostRequired = false }: { acceptBoostRequired?: boolean } = {}
 ): Promise<CoverageAudience> {

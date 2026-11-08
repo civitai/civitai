@@ -233,6 +233,17 @@ describe('coverageAudience — the boost-for-free flag', () => {
     expect(mockIsFlipt).not.toHaveBeenCalledWith('generation-loading-boost-for-free', '7');
   });
 
+  // A signed-out caller has no id to key the flag on, and entity "0" would be one shared bucket.
+  it('admits no caller without a user id, and never reads the flag for one', async () => {
+    flags(ON);
+    await expect(
+      coverageAudience({ tier: 'free' }, { acceptBoostRequired: true })
+    ).resolves.toEqual({ next: true, member: false });
+    expect(mockIsFlipt.mock.calls.map(([flag]) => flag)).not.toContain(
+      'generation-loading-boost-for-free'
+    );
+  });
+
   it('admits nobody while the flag is off', async () => {
     flags({ 'generation-coverage-next': true });
     await expect(

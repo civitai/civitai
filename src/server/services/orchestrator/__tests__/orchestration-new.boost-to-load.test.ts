@@ -223,6 +223,15 @@ describe('generateFromGraph — boost-to-load for a free account', () => {
     expect(whatIfs()[0][0].body).toMatchObject({ tier: 'paid', downloadPriority: 'high' });
   });
 
+  // The reply re-reads the resources: without the opt-in it would mark the admitted checkpoint
+  // `canGenerate: false` in the queue the user just paid to join.
+  it('formats the reply with the same opt-in, so the admitted checkpoint stays generatable', async () => {
+    const { getResourceData } = await import('~/server/services/generation/generation.service');
+    await submit();
+    const replyRead = vi.mocked(getResourceData).mock.calls.at(-1)?.[1];
+    expect(replyRead).toMatchObject({ acceptBoostRequired: true });
+  });
+
   // Control: without the opt-in the members gate is untouched, which is every non-generator caller.
   it('still refuses a free account that did not opt in', async () => {
     await expect(submit({ acceptBoostRequired: false })).rejects.toThrow(
