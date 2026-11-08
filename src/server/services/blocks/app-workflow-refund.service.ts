@@ -1,12 +1,13 @@
 import { createHash } from 'crypto';
+import pLimit from 'p-limit';
 import { TRPCError } from '@trpc/server';
 import {
   APP_BUZZ_REFUND_TYPE,
   appBuzzRefundNotifications,
   type AppBuzzRefundDetails,
 } from '~/server/notifications/app-buzz-refund.notifications';
-import { getTransactionByExternalId, refundTransaction } from '~/server/services/buzz.service';
-import { getBuzzApiStatus } from '~/server/utils/buzz-error';
+import { refundTransactionOnce } from '~/server/services/buzz-prefix-refund';
+import { getTransactionByExternalId } from '~/server/services/buzz.service';
 import { STATUS_ACCRUED } from '~/server/services/blocks/author-fee-accrual.service';
 import {
   blockAuthorFeeChargeKey,
@@ -132,11 +133,10 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function mapInBatches<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>) {
-  const out: R[] = [];
-  for (let i = 0; i < items.length; i += size)
-    out.push(...(await Promise.all(items.slice(i, i + size).map(fn))));
-  return out;
+/** Each workflow is a few ledger reads and one orchestrator read; a few at a time, in input order. */
+function inspectAll(workflowIds: string[], records: AppWorkflowRecords, now: Date) {
+  const limit = pLimit(INSPECT_CONCURRENCY);
+  return Promise.all(workflowIds.map((id) => limit(() => inspectWorkflow(id, records, now))));
 }
 
 function recordFacts(workflowId: string, records: AppWorkflowRecords) {
@@ -336,9 +336,7 @@ export async function lookupAppWorkflowCharges(input: {
   const now = input.now ?? new Date();
   const workflowIds = await listAppWorkflowIdsForUser(input);
   const records = await getAppWorkflowRecords(workflowIds);
-  const inspections = await mapInBatches(workflowIds, INSPECT_CONCURRENCY, (id) =>
-    inspectWorkflow(id, records, now)
-  );
+  const inspections = await inspectAll(workflowIds, records, now);
   const names = await getAppNames([
     ...new Set(inspections.map((i) => i.appBlockId).filter((id): id is string => !!id)),
   ]);
@@ -451,7 +449,6 @@ function planWorkflow(inspection: Inspection): WorkflowPlan {
     userId: inspection.userIds.length === 1 ? inspection.userIds[0] : null,
     appBlockId: inspection.appBlockId,
   });
-  // Order matters only for which reason is reported; every one of these refuses.
   if (inspection.userIds.length !== 1) return skip('mixed-users');
   if (!TERMINAL_STATUSES.has(inspection.orchestratorStatus)) return skip('not-terminal');
   if (inspection.orchestratorStatus !== REFUNDABLE_STATUS) return skip('not-succeeded');
@@ -484,9 +481,7 @@ function planWorkflow(inspection: Inspection): WorkflowPlan {
 
 export async function planAppWorkflowRefunds(workflowIds: string[], now = new Date()) {
   const records = await getAppWorkflowRecords(workflowIds);
-  const inspections = await mapInBatches(workflowIds, INSPECT_CONCURRENCY, (id) =>
-    inspectWorkflow(id, records, now)
-  );
+  const inspections = await inspectAll(workflowIds, records, now);
   const plans = inspections.map(planWorkflow);
   const byColour: Record<string, number> = {};
   for (const plan of plans) {
@@ -650,28 +645,6 @@ async function applyFee(
   };
 }
 
-/**
- * Refunds one leg. `created` when THIS call made the refund; `existed` when it was already on the
- * ledger. Buzz may answer a repeat refund 200 or 409, so the response cannot tell created from
- * existed; the ledger is read right before the call, and a 409 counts as existed only with
- * `refund-<id>` on the ledger.
- */
-async function refundLeg(
-  transactionId: string,
-  details: Record<string, unknown>
-): Promise<'created' | 'existed'> {
-  const refundId = `refund-${transactionId}`;
-  if (await getTransactionByExternalId(refundId)) return 'existed';
-  try {
-    await refundTransaction(transactionId, APP_REFUND_DESCRIPTION, details);
-    return 'created';
-  } catch (error) {
-    if (getBuzzApiStatus(error) === 409 && (await getTransactionByExternalId(refundId)))
-      return 'existed';
-    throw error;
-  }
-}
-
 async function executeWorkflow(plan: RefundablePlan, actorDetails: Record<string, unknown>) {
   const legs = legResults(plan);
   const errors: string[] = [];
@@ -684,12 +657,16 @@ async function executeWorkflow(plan: RefundablePlan, actorDetails: Record<string
   for (const leg of legs) {
     if (leg.status !== 'would-refund') continue;
     try {
-      const outcome = await refundLeg(leg.transactionId, {
-        workflowId: plan.workflowId,
-        ...actorDetails,
-      });
+      // The ledger is read first: Buzz may answer a repeat 200, and this call must count only the
+      // refunds it made.
+      const { created } = await refundTransactionOnce(
+        leg.transactionId,
+        APP_REFUND_DESCRIPTION,
+        { workflowId: plan.workflowId, ...actorDetails },
+        { readLedgerFirst: true }
+      );
       leg.refundTransactionId = `refund-${leg.transactionId}`;
-      if (outcome === 'created') {
+      if (created) {
         leg.status = 'refunded';
         add(leg.buzzType, leg.amount);
       } else leg.status = 'already-refunded';

@@ -77,8 +77,8 @@ export async function getAppWorkflowRecords(workflowIds: string[]): Promise<AppW
 
 /**
  * The workflow ids one account ran through App Blocks in `[from, to)`, newest first. A union of the
- * three tables because none of them alone is complete: `block_workflows` skips nothing a viewer ran
- * but is best-effort, and the other two are only written for a spend that went through.
+ * three tables: none alone is complete (block_workflows is best-effort; the other two exist only for
+ * a spend that went through).
  *
  * No index on the spender (theirs lead with the app, owner or author), so this scans them; acceptable
  * only for a bounded moderator read.

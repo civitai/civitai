@@ -237,6 +237,7 @@ describe('refundTransactionOnce', () => {
 
     await expect(refundTransactionOnce('tx-a', 'why', { k: 1 })).resolves.toEqual({
       transactionId: 'tx-a',
+      created: true,
     });
     expect(refundTransaction).toHaveBeenCalledWith('tx-a', 'why', { k: 1 });
     expect(getTransactionByExternalId).not.toHaveBeenCalled();
@@ -249,8 +250,43 @@ describe('refundTransactionOnce', () => {
     refundTransaction.mockRejectedValue(error());
     refundsExistFor('tx-a');
 
-    await expect(refundTransactionOnce('tx-a')).resolves.toEqual({ transactionId: 'tx-a' });
+    await expect(refundTransactionOnce('tx-a')).resolves.toEqual({
+      transactionId: 'tx-a',
+      created: false,
+    });
     expect(getTransactionByExternalId).toHaveBeenCalledWith('refund-tx-a');
+  });
+
+  describe('readLedgerFirst — for a caller that must not count a refund it did not make', () => {
+    it('a refund already on the ledger is created:false, and Buzz is not called', async () => {
+      // Buzz would answer this repeat 200, which on its own reads as a refund made now.
+      refundTransaction.mockResolvedValue({ transactionId: 'tx-a' });
+      refundsExistFor('tx-a');
+
+      await expect(
+        refundTransactionOnce('tx-a', 'why', undefined, { readLedgerFirst: true })
+      ).resolves.toEqual({ transactionId: 'tx-a', created: false });
+      expect(refundTransaction).not.toHaveBeenCalled();
+    });
+
+    it('control: with nothing on the ledger it refunds, created:true', async () => {
+      refundTransaction.mockResolvedValue({ transactionId: 'tx-a' });
+
+      await expect(
+        refundTransactionOnce('tx-a', 'why', undefined, { readLedgerFirst: true })
+      ).resolves.toEqual({ transactionId: 'tx-a', created: true });
+      expect(refundTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('without it, a 200 repeat is reported created:true — the reason the option exists', async () => {
+      refundTransaction.mockResolvedValue({ transactionId: 'tx-a' });
+      refundsExistFor('tx-a');
+
+      await expect(refundTransactionOnce('tx-a')).resolves.toEqual({
+        transactionId: 'tx-a',
+        created: true,
+      });
+    });
   });
 
   it('rethrows a 409 when no refund of this transaction is on the ledger', async () => {

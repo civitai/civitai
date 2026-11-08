@@ -140,9 +140,28 @@ async function seed() {
   );
   // Only a fee row.
   await fee('bafa_0000000000000000000000003', 'wf-c', VIEWER, APP, '2026-11-04T08:00:00Z');
-  // Another user, and one outside the window.
+  // Another user's rows inside the window, one per table, and the viewer's own rows outside it, one
+  // per table. None may be listed for the viewer.
   await workflow('wf-other', OTHER, APP, '2026-11-05T11:00:00Z');
+  await spend(
+    'bsa_00000000000000000000000006',
+    'wf-other-spend',
+    OTHER,
+    APP,
+    '2026-11-05T13:00:00Z',
+    'tracked'
+  );
+  await fee('bafa_0000000000000000000000007', 'wf-other-fee', OTHER, APP, '2026-11-05T14:00:00Z');
   await workflow('wf-old', VIEWER, APP, '2026-09-01T00:00:00Z');
+  await spend(
+    'bsa_00000000000000000000000008',
+    'wf-old-spend',
+    VIEWER,
+    APP,
+    '2026-09-02T00:00:00Z',
+    'tracked'
+  );
+  await fee('bafa_0000000000000000000000009', 'wf-old-fee', VIEWER, APP, '2026-09-03T00:00:00Z');
   // Two spend rows on one workflow (two app blocks), one already paid out: listed once.
   await spend(
     'bsa_00000000000000000000000004',
@@ -216,6 +235,9 @@ describe('getAppWorkflowRecords', () => {
 describe('listAppWorkflowIdsForUser', () => {
   const range = { from: new Date('2026-10-15T00:00:00Z'), to: new Date('2026-11-07T00:00:00Z') };
 
+  // Exactly these four: another user's in-window rows (`wf-other*`, one per table) and the viewer's
+  // out-of-window rows (`wf-old*`, one per table) are absent. Dropping any branch's `user_id` /
+  // `viewer_user_id` predicate, or its window, lists one of them and turns this red.
   it('unions the three tables for the spender, newest first, once each', async () => {
     expect(await listAppWorkflowIdsForUser({ userId: VIEWER, ...range, limit: 20 })).toEqual([
       'wf-b',
@@ -223,6 +245,25 @@ describe('listAppWorkflowIdsForUser', () => {
       'wf-a',
       'wf-c',
     ]);
+  });
+
+  it('control: the other user’s rows are listed for that user, from every table', async () => {
+    expect(await listAppWorkflowIdsForUser({ userId: OTHER, ...range, limit: 20 })).toEqual([
+      'wf-other-fee',
+      'wf-other-spend',
+      'wf-other',
+    ]);
+  });
+
+  it('control: the viewer’s old rows are listed by a window that covers them, from every table', async () => {
+    expect(
+      await listAppWorkflowIdsForUser({
+        userId: VIEWER,
+        from: new Date('2026-08-31T00:00:00Z'),
+        to: new Date('2026-09-04T00:00:00Z'),
+        limit: 20,
+      })
+    ).toEqual(['wf-old-fee', 'wf-old-spend', 'wf-old']);
   });
 
   it('filters by app', async () => {

@@ -734,16 +734,9 @@ export async function getAppFeedbackForRefund(id: number): Promise<AppFeedbackFo
 }
 
 /**
- * Record a moderator App refund on its report. With `resolve`, the report is closed: moderator status
- * `actioned` — the triage vocabulary's "a moderator acted on it" — stamped with who and when. Without
- * it the status is left as it was (some of what it reported was not refunded) and only the note is
- * written. Either way the refund is appended to the triage note so the queue shows what was done
- * without a second lookup. The developer's own `ownerStatus` is
- * left alone: it is theirs to set, and setting it would notify the reporter in the developer's name.
- *
- * Appended, never overwritten: the note may already hold another moderator's text, and nothing
- * restores an overwritten note. Scoped on the area and the reporter, so a refund cannot close a
- * report it was not checked against. Returns whether a row was updated.
+ * Record a moderator App refund on its report: append the note, and with `resolve` set moderator status
+ * `actioned`. `ownerStatus` is left alone because changing it notifies the reporter in the
+ * developer's name; the note is appended because an overwritten note cannot be recovered.
  */
 export async function modResolveAppFeedbackWithRefund({
   moderatorId,
