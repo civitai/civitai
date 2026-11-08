@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import type { ReactElement } from 'react';
 import { useEffect, useState } from 'react';
 import { Button, Drawer, Switch, Text } from '@mantine/core';
@@ -157,6 +158,7 @@ export function HatTurfPanel({
   const setShowHats = useHatTurfStore((state) => state.setShowHats);
   const optIn = useJoin();
   const { cosmeticId } = useChosenHat();
+  const mobile = useIsMobile({ type: 'media' });
   if (!feed) return null;
 
   const joined = !!user && stock?.optedIn === true;
@@ -224,18 +226,20 @@ export function HatTurfPanel({
         />
       </div>
       <hr className={classes.divider} />
-      <div className={classes.pad}>
+      <div className={clsx(classes.pad, classes.showHatsPad)}>
+        {/* The switch first and its label right after it; on a phone a bigger switch in a full
+            36px tap row. */}
         <Switch
-          size="xs"
+          size={mobile ? 'md' : 'xs'}
           label="Show hats"
-          labelPosition="left"
           checked={showHats}
           onChange={(event) => {
             const show = event.currentTarget.checked;
             setShowHats(show);
             track(show ? 'hide_all_hats_off' : 'hide_all_hats_on', feed.event);
           }}
-          styles={{ root: { width: '100%' }, body: { justifyContent: 'space-between' } }}
+          classNames={{ body: classes.showHats }}
+          data-testid="hat-turf-show-hats"
         />
       </div>
     </div>

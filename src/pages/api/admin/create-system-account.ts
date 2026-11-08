@@ -11,6 +11,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { isSystemAccountMeta, SYSTEM_ACCOUNT_META } from '@civitai/auth';
 import { isReservedModerationUsername } from '~/server/auth/moderation-account';
 import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 /**
  * Creates an account for an internal system user (e.g. a review agent) from an email, with no
@@ -98,6 +99,7 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
         // onboarding handler, and an incomplete account would be refused by the onboarded gate.
         onboarding: OnboardingComplete,
         excludeFromLeaderboards: true,
+        flags: UserFlag.ExcludeFromEventPoints,
         rewardsEligibility: 'Ineligible',
         meta: SYSTEM_ACCOUNT_META,
       },

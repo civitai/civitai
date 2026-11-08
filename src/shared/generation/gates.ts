@@ -289,6 +289,8 @@ export const WORKFLOW_UNAVAILABLE = 'Workflow is currently unavailable';
  * `rulesToStates` leaves unset for `hidden` — so a hidden rule's message can
  * never reach a refusal, and a shown one only says what this viewer's
  * generator config (`toGateRuleViews`) already carries.
+ * Deliberately separate from `gateMessage`, the generator UI's copy, which has a
+ * different base text and separator.
  */
 export function gateRefusalText(base: string, message?: string): string {
   const extra = message?.trim();

@@ -544,6 +544,8 @@ export async function updateTrainingWorkflowRecords(
     history,
     sampleImagesPrompts: derived.sampleImagesPrompts,
     transactionData: derived.transactionData ?? trainingResults.transactionData ?? [],
+    // Rewritten on every sync, so it clears once the hold ends.
+    heldForReview: derived.underReview || undefined,
   };
 
   const newMetadata: FileMetadata = {

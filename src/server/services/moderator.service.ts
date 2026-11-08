@@ -33,7 +33,7 @@ type ModelModActivity = {
 
 type ModelVersionModActivity = {
   entityType: 'modelVersion';
-  activity: TagActivities | 'review';
+  activity: TagActivities | 'review' | `trainingData:${'approve' | 'deny'}`;
 };
 
 type ImageTagModActivity = {
