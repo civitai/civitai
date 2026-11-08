@@ -118,6 +118,12 @@ const invoke = (headers: Record<string, string> = { host: 'civitai.com' }) => {
   return { done, json };
 };
 
+// Reset per test: `clearAllMocks` keeps an implementation, so one test's never-settling seeds
+// would otherwise park every later test that awaits the bootstrap without advancing the clock.
+beforeEach(() => {
+  h.eventSeeds.mockReset().mockResolvedValue([]);
+});
+
 describe('/api/user/settings read deadlines', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -318,6 +324,7 @@ describe('settings bootstrap during a server render', () => {
       liveNow: true,
       navBanners: [],
       siteAlerts: { version: 7, alerts: [] },
+      eventSeeds: [],
       session: { user: { id: 42, username: 'x' } },
     });
   });
