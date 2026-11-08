@@ -49,6 +49,8 @@ const {
 } = vi.hoisted(() => {
   const state = {
     flagEnabled: true,
+    // `app-blocks-review-autodeploy`: gates the new-submission alert (and the automatic preview).
+    autodeployEnabled: false,
     // app_blocks row returned by findFirst (null = not provisioned yet → 404)
     appBlock: null as null | Record<string, unknown>,
     // approved publish request match for (slug, sha) — race backstop
@@ -109,7 +111,11 @@ vi.mock('~/env/server', () => ({
 // is hard-false so a regression that repointed back to it would 503.
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn(async (flag: string) =>
-    flag === 'app-blocks-pipeline-enabled' ? mockFlag.enabled : false
+    flag === 'app-blocks-pipeline-enabled'
+      ? mockFlag.enabled
+      : flag === 'app-blocks-review-autodeploy'
+      ? state.autodeployEnabled
+      : false
   ),
 }));
 vi.mock('~/server/db/client', () => ({
@@ -231,6 +237,7 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', mockFetch);
     state.flagEnabled = true;
+    state.autodeployEnabled = false;
     state.appBlock = {
       id: APP_BLOCK_ID,
       appId: `appblk-${SLUG}`,
@@ -252,10 +259,20 @@ describe('git-push webhook — no-trust-on-push gate', () => {
   // ---- the mod-alerts Discord ping ----------------------------------------
   // The park path (202) is the SUCCESS path of the "Author via git" flow. It must NOT raise the
   // red "Apps build-chain rejected" failure alarm (noisy, ~1/day from fleet automation); the
-  // genuine failure stages keep that. A NEW pending request does post the one neutral
-  // "New app submission" alert every submission gets (review-autodeploy.service).
+  // genuine failure stages keep that. With `app-blocks-review-autodeploy` on, a NEW pending
+  // request posts the one neutral "New app submission" alert (review-autodeploy.service); off, none.
 
-  it('a parked unreviewed push posts only the new-submission alert, never the failure alarm', async () => {
+  it('autodeploy flag OFF: a parked unreviewed push does NOT ping the mod-alerts webhook', async () => {
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(202);
+    expect(mockPubReqCreate).toHaveBeenCalledTimes(1);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('autodeploy flag ON: a parked unreviewed push posts only the new-submission alert, never the failure alarm', async () => {
+    state.autodeployEnabled = true;
     const res = makeRes();
     await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
     expect(res._status).toBe(202);

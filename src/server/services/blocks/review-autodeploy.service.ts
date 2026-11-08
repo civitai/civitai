@@ -264,10 +264,20 @@ export type NewPendingSubmission = {
 
 /**
  * Everything that follows a NEW pending publish request: the moderator alert and the automatic
- * preview. Called fire-and-forget after the row commits, once per new request (not on a refresh of
- * an existing one). Never throws.
+ * preview, both behind `app-blocks-review-autodeploy` (off: nothing is posted or queued). Called
+ * fire-and-forget after the row commits, once per new request (not on a refresh of an existing
+ * one). Never throws.
  */
 export async function onNewPendingSubmission(sub: NewPendingSubmission): Promise<void> {
+  try {
+    const { isAppBlocksReviewAutodeployEnabled } = await import(
+      '~/server/services/app-blocks-flag'
+    );
+    if (!(await isAppBlocksReviewAutodeployEnabled())) return;
+  } catch (err) {
+    warn('onNewPendingSubmission', `flag read failed (id=${sub.publishRequestId})`, err);
+    return;
+  }
   await Promise.allSettled([
     notifyModsOfNewSubmission(sub),
     autoStartReviewPreview({

@@ -417,6 +417,22 @@ describe('moderator alert', () => {
     expect(description).toContain('Submitted by git push');
   });
 
+  it('flag OFF: a new submission posts no alert and queues nothing', async () => {
+    m.autodeployOn.mockResolvedValue(false);
+    const r = row({ id: sub.publishRequestId });
+    rows = [r];
+    await expect(onNewPendingSubmission(sub)).resolves.toBeUndefined();
+    expect(m.notifyModAlert).not.toHaveBeenCalled();
+    expect(r.deployState).toBeNull();
+  });
+
+  it('CONTROL: flag ON, the same submission posts exactly one alert', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ username: 'alice' });
+    rows = [row({ id: sub.publishRequestId })];
+    await onNewPendingSubmission(sub);
+    expect(m.notifyModAlert).toHaveBeenCalledTimes(1);
+  });
+
   it('a webhook failure (rejected, or a throw) is reported, never thrown, and the auto-start still runs', async () => {
     m.notifyModAlert.mockRejectedValue(new Error('webhook 500'));
     const r = row({ id: sub.publishRequestId });
