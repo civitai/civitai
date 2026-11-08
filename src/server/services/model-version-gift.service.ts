@@ -424,7 +424,9 @@ export async function claimGift({ userId, code }: { userId: number; code: string
     userId,
     modelVersionId: version.id,
     permissions,
-    addedById: link.createdById,
+    // The claimer, as purchases record the buyer: the personal-data export keys EntityAccess on
+    // addedById, so the creator here would put every recipient in the creator's export.
+    addedById: userId,
   });
   if (outcome === 'unavailable') throw throwBadRequestError(INVALID_GIFT_MESSAGE);
 

@@ -168,10 +168,18 @@ describe('claimGift', () => {
       CLAIMER,
       3,
       JSON.stringify({ giftLinkId: 1 }),
-      OWNER,
+      CLAIMER,
     ]);
     expect(mockBustOrchestrator).toHaveBeenCalledTimes(1);
     expect(mockBustOrchestrator).toHaveBeenCalledWith(VERSION_ID, CLAIMER);
+  });
+
+  // Keep addedById the claimer, not the creator: the personal-data export reads EntityAccess by
+  // addedById, so the creator would carry every recipient's id and recipients would lose their grant.
+  it('records the claimer, not the creator, as who added the grant', async () => {
+    seed();
+    await claimGift({ userId: CLAIMER, code });
+    expect(grantValues()[4]).toBe(CLAIMER);
   });
 
   it('grants download to a generation-only holder when the version sells download', async () => {

@@ -33,5 +33,12 @@ export function resolveGiftClaimPage({
   }
   if (!session)
     return { redirect: { destination: getLoginLink({ returnUrl: '/gift' }), permanent: false } };
-  return { props: { initialCode: ctx.req.cookies[GIFT_CODE_COOKIE] ?? '' } };
+  const initialCode = ctx.req.cookies[GIFT_CODE_COOKIE] ?? '';
+  // Read once: left in place, the next account to sign in on this browser would get it prefilled.
+  if (initialCode)
+    appendSetCookie(
+      ctx.res,
+      `${GIFT_CODE_COOKIE}=; Path=/gift; Max-Age=0; HttpOnly; Secure; SameSite=Lax`
+    );
+  return { props: { initialCode } };
 }

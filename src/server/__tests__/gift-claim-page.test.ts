@@ -53,11 +53,14 @@ describe('the gift claim page', () => {
     });
   });
 
-  it('pre-fills the code from the cookie for a signed-in visitor', () => {
-    const c = ctx({ cookies: { [GIFT_CODE_COOKIE]: CODE } }).ctx;
+  it('pre-fills the code from the cookie for a signed-in visitor, then clears the cookie', () => {
+    const { ctx: c, headers } = ctx({ cookies: { [GIFT_CODE_COOKIE]: CODE } });
     expect(resolveGiftClaimPage({ features: ON, session: {}, ctx: c })).toEqual({
       props: { initialCode: CODE },
     });
+    expect(headers['Set-Cookie']).toContain(
+      `${GIFT_CODE_COOKIE}=; Path=/gift; Max-Age=0; HttpOnly; Secure; SameSite=Lax`
+    );
   });
 
   it('is a 404, setting nothing, while the flag is off', () => {

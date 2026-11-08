@@ -102,7 +102,7 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
       userId,
       modelVersionId: VERSION,
       permissions: 3,
-      addedById: OWNER,
+      addedById: userId,
     });
 
   const count = async (q: string) => Number((await sql.query(q)).rows[0].n);
