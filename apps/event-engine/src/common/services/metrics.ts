@@ -2,7 +2,7 @@ import { RedisWithHelpers, SimpleClickhouse, withRedisHelpers } from '../utils/q
 import { EntityType, EntityMetricMap, ENTITY_METRIC_TYPES } from '../types/metric-types';
 import { IClickhouseClient, IRedisClient } from '../types/package-stubs';
 import { chunk, sleep } from '../utils/basic';
-import { cacheKeys } from '../utils/cache-keys';
+import { cacheKeys, METRIC_RECENT_EVENT_TTL } from '../utils/cache-keys';
 import { logger } from '../utils/logger';
 
 const FETCH_BATCH_SIZE = 1000;
@@ -12,6 +12,11 @@ const CACHE_SLIDE_CHANCE = 0.1; // 10% chance of sliding the TTL on each access
 const LOCK_DURATION = 2; // 2 seconds lock
 const LOCK_RETRY_DELAY = 200; // 100ms delay between retries
 const LOCK_MAX_RETRIES = 10; // Maximum number of retry attempts
+// The main app's MetricService (event-engine-common) reads these same hashes and
+// refreshes one whose POPULATED_AT_FIELD is this old; an unstamped hash refreshes
+// only on a small share of its reads. Keep both in step with event-engine-common.
+const REFRESH_AFTER = 60 * 60;
+const POPULATED_AT_FIELD = '_populatedAt';
 
 export class MetricService {
   private ch: SimpleClickhouse;
@@ -102,7 +107,7 @@ export class MetricService {
         // Convert string values back to numbers for metric fields
         const metrics: any = {};
         for (const [key, value] of entries) {
-          if (key === 'notFound') continue;
+          if (key === 'notFound' || key === POPULATED_AT_FIELD) continue;
           metrics[key] = parseInt(value, 10);
         }
         results[id] = metrics as EntityMetricMap[T];
@@ -158,8 +163,15 @@ export class MetricService {
         const freshData = await this.fetchFromClickhouse(entityType, lockedIds);
         logger.metric(`ClickHouse fetch completed, got data for ${Object.keys(freshData).length} entities`);
 
-        // Cache the results and release locks
+        // Cache the results and release locks. Stamped like event-engine-common's
+        // populate, including the early refresh when a recent event may be missing.
         const cacheAndLockOps: Promise<any>[] = [];
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const stamp = {
+          field: POPULATED_AT_FIELD,
+          value: String(nowSeconds),
+          ifMarker: String(nowSeconds - REFRESH_AFTER + METRIC_RECENT_EVENT_TTL),
+        };
 
         for (const id of lockedIds) {
           if (freshData[id]) {
@@ -170,7 +182,13 @@ export class MetricService {
             }
 
             cacheAndLockOps.push(
-              this.redis.hSetEx(this.getCacheKey(entityType, id), metricsToCache, CACHE_TTL)
+              this.redis.hReplaceStampedEx(
+                this.getCacheKey(entityType, id),
+                cacheKeys.metricRecentEvent(entityType, id),
+                stamp,
+                metricsToCache,
+                CACHE_TTL
+              )
             );
 
             results[id] = freshData[id];

@@ -75,6 +75,17 @@ const redisHelpers = (redis: IRedisClient) => {
         return 0
       end
     `,
+    // hReplaceEx that also stamps ARGV[2]: ARGV[3] normally, ARGV[4] when the marker
+    // KEYS[2] exists. Checked in the same script as the write, so a marker set just
+    // before it can't be missed. ARGV[5..] are field/value pairs. KEYS[2] must be
+    // hash-tagged to KEYS[1]'s cluster slot.
+    hReplaceStampedEx: `
+      redis.call('DEL', KEYS[1])
+      local stamp = ARGV[3]
+      if redis.call('EXISTS', KEYS[2]) == 1 then stamp = ARGV[4] end
+      redis.call('HSET', KEYS[1], ARGV[2], stamp, unpack(ARGV, 5))
+      return redis.call('EXPIRE', KEYS[1], ARGV[1])
+    `,
   };
   const scriptShas: Partial<Record<keyof typeof scripts, string>> = {};
 
@@ -129,6 +140,21 @@ const redisHelpers = (redis: IRedisClient) => {
           [field, incrBy.toString(), String(ttl), String(recentEventTtl)],
         );
         return result !== 0;
+      },
+      async hReplaceStampedEx(
+        key: string,
+        markerKey: string,
+        stamp: { field: string; value: string; ifMarker: string },
+        fields: Record<string, string>,
+        ttl: number
+      ) {
+        return executeScript('hReplaceStampedEx', [key, markerKey], [
+          String(ttl),
+          stamp.field,
+          stamp.value,
+          stamp.ifMarker,
+          ...Object.entries(fields).flat(),
+        ]);
       },
     }
   }

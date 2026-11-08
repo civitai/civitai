@@ -13,6 +13,7 @@ import {
   METRIC_RECENT_EVENT_TTL as ENGINE_METRIC_RECENT_EVENT_TTL,
 } from '../../../../apps/event-engine/src/common/utils/cache-keys';
 import { withRedisHelpers as withEngineRedisHelpers } from '../../../../apps/event-engine/src/common/utils/query-utils';
+import { MetricService as EngineMetricService } from '../../../../apps/event-engine/src/common/services/metrics';
 import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 
 // The image metric cache has two writers on one Redis: the event-engine's per-event
@@ -96,6 +97,8 @@ function setup() {
     chQueries: () => chQueries,
     tip,
     service: new MetricService(ch, redis),
+    // The event-engine's own (vendored) MetricService writes the same hashes.
+    engineService: new EngineMetricService(ch, redis),
     advance: (ms: number) => {
       lua.nowMs += ms;
     },
@@ -147,6 +150,28 @@ describe('image metric cache: an event the ClickHouse snapshot has not caught up
     await service.fetch('Image', [IMAGE_ID]);
 
     await vi.waitFor(() => expect(lua.hash(metricKey)?.tippedAmount).toBe('30'));
+    expect(lua.errors).toEqual([]);
+  });
+
+  it('a tip just before the event-engine populates the image is restored too', async () => {
+    const { lua, chTotals, tip, service, engineService, advance } = setup();
+    // An unstamped hash refreshes on a random share of reads; take that chance away.
+    vi.spyOn(Math, 'random').mockReturnValue(0.99);
+
+    expect(await tip(30)).toBe(false);
+    advance(19_000);
+    await engineService.fetch('Image', [IMAGE_ID]);
+    expect(lua.hash(metricKey)?.tippedAmount).toBeUndefined();
+
+    chTotals.tippedAmount = 30;
+    advance(METRIC_RECENT_EVENT_TTL * 1000 + 1000);
+    await service.fetch('Image', [IMAGE_ID]);
+
+    await vi.waitFor(() => expect(lua.hash(metricKey)?.tippedAmount).toBe('30'));
+    // The event-engine's reader doesn't take the stamp for a metric.
+    expect((await engineService.fetch('Image', [IMAGE_ID]))[IMAGE_ID]).not.toHaveProperty(
+      '_populatedAt'
+    );
     expect(lua.errors).toEqual([]);
   });
 
