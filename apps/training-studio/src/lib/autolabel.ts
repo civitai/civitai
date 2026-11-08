@@ -20,6 +20,7 @@ const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 // user's Buzz (the earlier auto-label loop recurred after its fix with the same signature).
 export const MAX_SUBMITS_PER_MEDIA = 3;
 const submitsByMedia = new Map<string, number>();
+export const CAP_REFUSAL = `Auto-labeled ${MAX_SUBMITS_PER_MEDIA} times already this session — edit this label by hand.`;
 
 // Counted per blob, not per URL string: a re-signed URL for the same blob must not reset its count.
 function mediaKey(mediaUrl: string): string {
@@ -130,7 +131,7 @@ export async function runAutoLabel(
     console.warn(
       `[training-studio] auto-label refused ${refused.length} item(s) over the per-image cap`
     );
-    for (const item of refused) onResult({ key: item.key, status: 'failed' });
+    for (const item of refused) onResult({ key: item.key, status: 'failed', error: CAP_REFUSAL });
   }
   await Promise.all(
     chunk(allowed, BATCH_SIZE).map((batch) => runBatch(mode, media, batch, onResult, signal))

@@ -57,6 +57,7 @@
     isTriggerTag,
     labelOptions,
     labelString,
+    mergeAutoLabel,
     nextImgId,
     parseLabel,
     plural,
@@ -66,6 +67,7 @@
     tagsHaveTrigger,
     type DatasetFilter,
     type Img,
+    type LabelPosition,
     type Selection,
   } from './trainingFlow';
   import LabelEditorModal from './LabelEditorModal.svelte';
@@ -638,18 +640,75 @@
     }
   }
 
-  function applyLabel(img: Img, r: AutoLabelResult) {
+  function applyLabel(img: Img, r: AutoLabelResult, position: LabelPosition = 'replace') {
     img.labeling = false;
     img.labelTried = true; // attempted (any outcome) — the drain labels each image once; failures go manual
     if (labelRun?.keys.has(r.key)) labelRun.done += 1; // count only this pass's own targets
     img.labelError = r.status === 'failed' ? r.error : undefined;
     if (r.status === 'failed') return;
-    if (r.tags?.length) {
-      // The user's exclude list: auto-label results never apply these (case-insensitive exact tag).
-      // Captions are untouched — the list is a tag concept.
-      img.tags = [...new Set(r.tags)].filter((t) => !excludedSet.has(t.toLowerCase())); // chips are keyed on the tag string — keep unique
+    Object.assign(img, mergeAutoLabel(img, r, labelMode, position, excludedSet));
+  }
+
+  // "Label all": the tagger or the captioner over every uploaded image, merged into the labels they
+  // already have — a dataset that arrived with tags can gain captions, or the reverse. It takes the
+  // drain's slot, so neither starts while the other runs; the drain resumes after.
+  type LabelAllPolicy = LabelPosition | 'skip';
+  let labelAllChoice = $state<LabelType | null>(null);
+  // WD tagging reads pixels; audio datasets only have the captioner.
+  const labelAllEngine = $derived<LabelType>(media === 'audio' ? 'caption' : (labelAllChoice ?? labelMode));
+  let labelAllPolicy = $state<LabelAllPolicy>('after');
+  let labelAllNotice = $state<string | null>(null);
+  const labelAllTargets = $derived(
+    images.filter(
+      (i) =>
+        isTrainable(i) &&
+        !!i.blobUrl &&
+        !i.labeling &&
+        i.id !== inlineFocusId &&
+        (labelAllPolicy !== 'skip' || !isLabeled(i))
+    )
+  );
+
+  async function labelAll() {
+    if (labelController || labelAllTargets.length === 0) return;
+    const controller = new AbortController();
+    labelController = controller;
+    labelAllNotice = null;
+    const targets = labelAllTargets;
+    const position: LabelPosition = labelAllPolicy === 'skip' ? 'after' : labelAllPolicy;
+    const { byKey, items } = startLabelPass(targets);
+    labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
+    let failed = 0;
+    let reason: string | undefined;
+    try {
+      await runAutoLabel(
+        labelAllEngine,
+        media,
+        items,
+        (r) => {
+          const img = byKey.get(r.key);
+          if (!img || controller.signal.aborted) return;
+          if (r.status === 'failed') {
+            failed += 1;
+            reason ??= r.error;
+          }
+          applyLabel(img, r, position);
+        },
+        controller.signal
+      );
+    } catch (err) {
+      if (!isAbort(err)) for (const i of targets) if (i.labeling) patch(i.id, { labeling: false });
+    } finally {
+      if (labelController === controller) {
+        labelController = null;
+        labelRun = null;
+      }
     }
-    if (r.caption) img.caption = r.caption;
+    if (controller.signal.aborted) return;
+    // A refused or failed run must say so — the daily limit and the per-image cap both land here.
+    if (failed > 0)
+      labelAllNotice = `${plural(failed, 'image')} not labeled${reason ? `: ${reason}` : ' — use Re-run in the editor.'}`;
+    void maybeAutoLabel();
   }
 
   // One drop target's worth of handlers, shared by the empty-state dropzone and the populated
@@ -1042,6 +1101,71 @@
         {/if}
       {/if}
     </div>
+    {#if uploadedCount > 0}
+      <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-dark-4 pt-3">
+        <div class="flex items-center gap-2">
+          <span class="font-mono text-xs text-dark-2">Label all with</span>
+          <ToggleGroup
+            type="single"
+            bind:value={
+              () => labelAllEngine,
+              (v) => {
+                if (v === 'tag' || v === 'caption') labelAllChoice = v;
+              }
+            }
+            variant="outline"
+            size="sm"
+          >
+            <ToggleGroupItem value="tag" aria-label="Run the tagger" disabled={media === 'audio'}>
+              Tags
+            </ToggleGroupItem>
+            <ToggleGroupItem value="caption" aria-label="Run the captioner">Captions</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="font-mono text-xs text-dark-2">Existing labels</span>
+          <ToggleGroup
+            type="single"
+            bind:value={
+              () => labelAllPolicy,
+              (v) => {
+                if (v === 'after' || v === 'before' || v === 'replace' || v === 'skip')
+                  labelAllPolicy = v;
+              }
+            }
+            variant="outline"
+            size="sm"
+          >
+            <ToggleGroupItem value="after" aria-label="Add the new labels after existing ones">
+              Add after
+            </ToggleGroupItem>
+            <ToggleGroupItem value="before" aria-label="Add the new labels before existing ones">
+              Add before
+            </ToggleGroupItem>
+            <ToggleGroupItem value="replace" aria-label="Replace existing labels">
+              Replace
+            </ToggleGroupItem>
+            <ToggleGroupItem value="skip" aria-label="Only label images without a label">
+              Skip labeled
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        <Button
+          size="xs"
+          class="ml-auto"
+          onclick={labelAll}
+          disabled={labelRun != null || labelingActive || labelAllTargets.length === 0}
+        >
+          <IconSparkles size={13} stroke={2} class="mr-1 inline" />Label {plural(
+            labelAllTargets.length,
+            'image'
+          )}
+        </Button>
+        {#if labelAllNotice}
+          <p class="w-full font-mono text-xs text-buzz" role="status">{labelAllNotice}</p>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   {#if images.length === 0}
