@@ -7,18 +7,10 @@
  * first round finishes, then wait for that round and work its findings. It only adds context; it
  * never blocks a call.
  *
- * Two kinds of call count (`hookEvent`):
- *   - a Bash `gh pr create` / `gh pr ready` (`prEvent`: the command and what gh printed, no I/O);
- *   - a GitHub MCP `create_pull_request`, or `update_pull_request` with `draft: false`
- *     (`mcpPrEvent`: the tool's input and response, no I/O).
- * Then the PR's head must be in civitai/civitai, not a fork (`prHeadRepo`: ONE `gh api` read, made
- * only once the call qualified, and skipped when an MCP create's `head` is a branch of this repo). gh prints
- * the base repo's URL for a fork's PR too, so the URL cannot say. Any check that fails or cannot run
- * means no nudge, silently.
- *
- * The PR number comes from what the tool returned, never from what it was asked (the Bash and MCP
- * response shapes are documented beside CREATED_URL, READY_REF and mcpResponsePr). A gh command
- * quoted in an echo or a commit message is not a gh segment (`ghPrMatch`), so it fires nothing.
+ * The PR's head must be in civitai/civitai, not a fork (`prHeadRepo`), because gh prints the base
+ * repo's URL for a fork's PR too, so the URL cannot say. The PR number comes from what the tool
+ * returned, never from what it was asked. Any check that fails or cannot run means no nudge,
+ * silently.
  */
 
 import { spawnSync } from 'child_process';
@@ -249,7 +241,8 @@ export function mcpPrEvent(toolName, toolInput, toolResponse) {
 
 /**
  * `{ action, pr, draft }` when the hook's input is a call that opened or readied a civitai/civitai
- * PR whose head is in civitai/civitai, else null.
+ * PR whose head is in civitai/civitai, else null. The head is read with ONE `gh api` call, made
+ * only once the call qualified, and skipped when an MCP create's `head` already names this repo.
  */
 export function hookEvent(input, env = process.env, deps = {}) {
   const toolName = input?.tool_name || '';
