@@ -41,7 +41,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen }));
 
 import { cacheIt } from '~/server/middleware.trpc';
-import { cacheItKeyHash } from '~/server/utils/cache-it-key';
+import { cacheItKeyHash } from '~/server/utils/query-cache-key';
 import { hashifyObject } from '~/utils/string-helpers';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';

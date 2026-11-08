@@ -27,7 +27,7 @@ import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { getRequestBoardDomainColor, getRequestDomainColor } from '~/server/utils/server-domain';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { slugit } from '~/utils/string-helpers';
-import { cacheItKeyHash } from '~/server/utils/cache-it-key';
+import { cacheItKeyHash } from '~/server/utils/query-cache-key';
 import { booleanString } from '~/utils/zod-helpers';
 
 export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
