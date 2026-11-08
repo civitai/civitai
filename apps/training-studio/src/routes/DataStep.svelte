@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { buzzMode } from '$lib/buzz-mode.svelte';
   import JSZip from 'jszip';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Alert from '@civitai/ui/components/ui/alert/index.js';
@@ -22,11 +23,16 @@
     IconArrowLeft,
     IconArrowRight,
     IconBoltFilled,
+    IconLayoutGrid,
+    IconLayoutList,
+    IconLayoutRows,
+    IconTrash,
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
-  import { hostConfig, portalProps } from '$lib/host';
+  import { browser, hostConfig, portalProps } from '$lib/host';
   import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
   import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { playOnHover, resetOnLeave } from '$lib/video-preview';
@@ -38,6 +44,8 @@
   import { loraTypeById, mediaCount, type LabelType, type Media } from '$lib/data/trainingModels';
   import { pool } from '$lib/pool';
   import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
+  import { buildTagExcluder, loadTagCategories, type TagCategories } from '$lib/autolabel-exclude';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { isAbort } from '$lib/upload';
   import { trainingBlobKey } from '$lib/train-core';
   import { buildDatasetZip, saveBlob, uniqueBaseNames } from '$lib/dataset-zip';
@@ -53,6 +61,7 @@
     isTriggerTag,
     labelOptions,
     labelString,
+    mergeAutoLabel,
     nextImgId,
     parseLabel,
     plural,
@@ -62,12 +71,15 @@
     tagsHaveTrigger,
     type DatasetFilter,
     type Img,
+    type LabelPosition,
     type Selection,
   } from './trainingFlow';
   import LabelEditorModal from './LabelEditorModal.svelte';
+  import TagEditor from './TagEditor.svelte';
   import GenerationPickerModal from './GenerationPickerModal.svelte';
   import { fileDrop, isZip, pickedFiles } from './fileDrop';
   import { inFlight, uploadedFields, uploadTile } from './tileUpload';
+  import { datasetEpoch, planRemoval } from './datasetRemoval';
   import ReuseDatasetModal from './ReuseDatasetModal.svelte';
   import ManageTagsModal from './ManageTagsModal.svelte';
   import type { GenerationItem } from '$lib/data/trainingRows';
@@ -81,6 +93,8 @@
     labelMode = $bindable('tag'),
     autoLabel = $bindable('auto'),
     excludeTags = $bindable([]),
+    excludeCharacter = $bindable(true),
+    excludeSource = $bindable(true),
     filter = $bindable('all'),
     reuseItems = [],
     onContinue,
@@ -98,6 +112,9 @@
      *  settle, and tags auto-label results must never apply (tag mode; a caption no-op). */
     autoLabel: 'auto' | 'manual';
     excludeTags: string[];
+    /** Drop the tagger's character / source-material (Danbooru "copyright") tags. */
+    excludeCharacter: boolean;
+    excludeSource: boolean;
     /** Owned by the flow so Review's "see which" can land on the Mature view. */
     filter: DatasetFilter;
     /** A "Train again" hand-off: existing blobs (air + caption) to seed the dataset with, no re-upload. */
@@ -217,11 +234,22 @@
   const labeledCount = $derived(images.filter((i) => isTrainable(i) && isLabeled(i)).length);
   const allLabeled = $derived(uploadedCount > 0 && labeledCount === uploadedCount);
   const labelingActive = $derived(images.some((i) => i.labeling));
+  // The card whose inline editor has focus: an auto-label pass taking it would unmount the editor and
+  // drop what's being typed. Focus leaving commits the draft, then re-offers the card to auto-label.
+  let inlineFocusId = $state<number | null>(null);
   // Uploaded images with no label, not already being labeled, and not already auto-label-attempted —
   // what an auto-label run targets. Excluding attempted ones stops the button re-offering a model that
   // returned nothing (failed steps go to the editor's Re-run).
   const unlabeled = $derived(
-    images.filter((i) => isTrainable(i) && !isLabeled(i) && !i.labeling && !i.labelTried && !!i.blobUrl)
+    images.filter(
+      (i) =>
+        isTrainable(i) &&
+        !isLabeled(i) &&
+        !i.labeling &&
+        !i.labelTried &&
+        !!i.blobUrl &&
+        i.id !== inlineFocusId
+    )
   );
   const canContinue = $derived(uploadedCount > 0 && !busy && !labelingActive && allLabeled);
   const enough = $derived(uploadedCount >= type.minImg);
@@ -240,11 +268,23 @@
   function showTag(tag: string) {
     tagFilter = { tag, ids: images.filter((i) => i.tags.includes(tag)).map((i) => i.id) };
   }
+  // A card being edited inline stays under Labeled/Unlabeled until the filter changes, or the first
+  // keystroke of a caption would label it and pull it out of the grid mid-word.
+  let editedInline = $state<{ filter: DatasetFilter; ids: number[] }>({ filter: 'all', ids: [] });
+  const keptInView = (i: Img) => editedInline.filter === filter && editedInline.ids.includes(i.id);
+  function showFilter(next: DatasetFilter) {
+    filter = next;
+    editedInline = { filter: next, ids: [] };
+  }
+  function keepInView(id: number) {
+    if (editedInline.filter !== filter) editedInline = { filter, ids: [id] };
+    else if (!editedInline.ids.includes(id)) editedInline.ids.push(id);
+  }
   const statusShownImages = $derived(
     filter === 'labeled'
-      ? images.filter(isLabeled)
+      ? images.filter((i) => isLabeled(i) || keptInView(i))
       : filter === 'unlabeled'
-        ? images.filter((i) => !isLabeled(i))
+        ? images.filter((i) => !isLabeled(i) || keptInView(i))
         : filter === 'mature'
           ? images.filter(isMature)
           : filter === 'failed'
@@ -435,6 +475,7 @@
   async function importZip(file: File) {
     if (importing) return;
     importing = true;
+    const current = epoch.capture();
     try {
       const zip = await JSZip.loadAsync(file);
       const captions = new Map<string, string>();
@@ -462,7 +503,8 @@
           path: m.entry.name,
         }))
       );
-      await addImported(entries);
+      // A Remove all while the zip was extracting: the user emptied the dataset this would refill.
+      if (current()) await addImported(entries);
     } finally {
       importing = false;
     }
@@ -553,6 +595,39 @@
     images = images.filter((x) => x.id !== id);
   }
 
+  const epoch = datasetEpoch();
+  // Remove all, or only the tiles the current filter shows.
+  let removeDialogOpen = $state(false);
+  const filtered = $derived(filter !== 'all' || tagFilter != null);
+  const removeTargets = $derived(filtered ? shownImages : images);
+  function removeMany(ids: number[]) {
+    removeDialogOpen = false;
+    const { kept, removed, abortLabelPass } = planRemoval(images, ids, labelController != null);
+    if (removed.length === 0) return;
+    for (const tile of removed) {
+      uploads.abort(tile.id);
+      URL.revokeObjectURL(tile.previewUrl);
+    }
+    if (abortLabelPass) {
+      // Null the slot synchronously, as the label-mode switch does: the aborted drain's finally
+      // runs later and must not be what frees it.
+      labelController?.abort();
+      labelController = null;
+      labelRun = null;
+    }
+    images = kept;
+    if (kept.length === 0) {
+      epoch.bump();
+      dupOwnerIds = [];
+      labelAllNotice = null;
+    }
+    // A filter left over an emptied view would show a blank grid with the rest of the dataset hidden.
+    if (filtered && shownImages.length === 0) {
+      tagFilter = null;
+      showFilter('all');
+    }
+  }
+
   // Free auto-labeling, automatic: it kicks off as soon as an upload batch settles (and after a retry),
   // tag models get WD tags, caption models get a caption. A single drain loop labels every uploaded image
   // once — images that finish uploading while a run is in flight are picked up on the next pass, so a
@@ -575,6 +650,10 @@
     labelController = controller;
     try {
       while (unlabeled.length > 0) {
+        // Load before claiming: an await between startLabelPass and runAutoLabel lets a mode switch
+        // abort a pass that still submits, while the replacement drain submits the same images.
+        await ensureTagCategories();
+        if (controller.signal.aborted) return;
         const targets = unlabeled;
         const { byKey, items } = startLabelPass(targets);
         labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
@@ -610,18 +689,76 @@
     }
   }
 
-  function applyLabel(img: Img, r: AutoLabelResult) {
+  function applyLabel(img: Img, r: AutoLabelResult, position: LabelPosition = 'replace') {
     img.labeling = false;
     img.labelTried = true; // attempted (any outcome) — the drain labels each image once; failures go manual
     if (labelRun?.keys.has(r.key)) labelRun.done += 1; // count only this pass's own targets
     img.labelError = r.status === 'failed' ? r.error : undefined;
     if (r.status === 'failed') return;
-    if (r.tags?.length) {
-      // The user's exclude list: auto-label results never apply these (case-insensitive exact tag).
-      // Captions are untouched — the list is a tag concept.
-      img.tags = [...new Set(r.tags)].filter((t) => !excludedSet.has(t.toLowerCase())); // chips are keyed on the tag string — keep unique
+    Object.assign(img, mergeAutoLabel(img, r, labelMode, position, excludeTag));
+  }
+
+  // Shares labelController with the drain, so neither starts while the other runs; the drain resumes after.
+  type LabelAllPolicy = LabelPosition | 'skip';
+  let labelAllChoice = $state<LabelType | null>(null);
+  // WD tagging reads pixels; audio datasets only have the captioner.
+  const labelAllEngine = $derived<LabelType>(media === 'audio' ? 'caption' : (labelAllChoice ?? labelMode));
+  let labelAllPolicy = $state<LabelAllPolicy>('after');
+  let labelAllNotice = $state<string | null>(null);
+  const labelAllTargets = $derived(
+    images.filter(
+      (i) =>
+        isTrainable(i) &&
+        !!i.blobUrl &&
+        !i.labeling &&
+        i.id !== inlineFocusId &&
+        (labelAllPolicy !== 'skip' || !isLabeled(i))
+    )
+  );
+
+  async function labelAll() {
+    if (labelController || labelAllTargets.length === 0) return;
+    const controller = new AbortController();
+    labelController = controller;
+    labelAllNotice = null;
+    const position: LabelPosition = labelAllPolicy === 'skip' ? 'after' : labelAllPolicy;
+    let targets: Img[] = [];
+    let failed = 0;
+    let reason: string | undefined;
+    try {
+      await ensureTagCategories(); // before claiming, as in ensureLabeling
+      if (controller.signal.aborted) return;
+      targets = labelAllTargets;
+      const { byKey, items } = startLabelPass(targets);
+      labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
+      await runAutoLabel(
+        labelAllEngine,
+        media,
+        items,
+        (r) => {
+          const img = byKey.get(r.key);
+          if (!img || controller.signal.aborted) return;
+          if (r.status === 'failed') {
+            failed += 1;
+            reason ??= r.error;
+          }
+          applyLabel(img, r, position);
+        },
+        controller.signal
+      );
+    } catch (err) {
+      if (!isAbort(err)) for (const i of targets) if (i.labeling) patch(i.id, { labeling: false });
+    } finally {
+      if (labelController === controller) {
+        labelController = null;
+        labelRun = null;
+      }
     }
-    if (r.caption) img.caption = r.caption;
+    if (controller.signal.aborted) return;
+    // Daily-limit and per-image-cap refusals arrive as failed results.
+    if (failed > 0)
+      labelAllNotice = `${plural(failed, 'image')} not labeled${reason ? `: ${reason}` : ' — use Re-run in the editor.'}`;
+    void maybeAutoLabel();
   }
 
   // One drop target's worth of handlers, shared by the empty-state dropzone and the populated
@@ -655,6 +792,28 @@
         nsfwLevel: i.nsfwLevel,
       }))
     );
+  }
+
+  // 'large' is one uncropped image per row with its editor beside it, for hand-labeling image by image.
+  type LabelView = 'grid' | 'inline' | 'large';
+  const LABEL_VIEW_KEY = 'ts-label-view';
+  function storedLabelView(): LabelView {
+    try {
+      const v = browser ? localStorage.getItem(LABEL_VIEW_KEY) : null;
+      return v === 'inline' || v === 'large' ? v : 'grid';
+    } catch {
+      return 'grid';
+    }
+  }
+  let labelView = $state(storedLabelView());
+  const editsOnCard = $derived(labelView !== 'grid');
+  function setLabelView(next: LabelView) {
+    labelView = next;
+    try {
+      localStorage.setItem(LABEL_VIEW_KEY, next);
+    } catch {
+      // Blocked storage only loses the remembered choice.
+    }
   }
 
   // ---- label editor: opens LabelEditorModal for one uploaded image ----
@@ -691,8 +850,28 @@
 
   let manageOpen = $state(false);
 
-  // The exclude list's matcher — one definition so entry dedupe and result filtering can't drift.
+  // Entry dedupe for the exclude list; result filtering is excludeTag.
   const excludedSet = $derived(new Set(excludeTags.map((t) => t.toLowerCase())));
+  let tagCategories = $state.raw<TagCategories | null>(null);
+  const excludeTag = $derived(
+    buildTagExcluder({ never: excludeTags, categories: tagCategories, excludeCharacter, excludeSource })
+  );
+  // Awaited before each auto-label submit so the first result already sees the category lists. A failed
+  // chunk load labels without them rather than blocking labeling; the next run retries.
+  let warnedTagCategories = false;
+  async function ensureTagCategories() {
+    if (tagCategories) return;
+    tagCategories = await loadTagCategories().catch((err) => {
+      if (!warnedTagCategories) {
+        warnedTagCategories = true;
+        console.warn(
+          '[training-studio] tag categories failed to load; character/source exclusion is off for this run',
+          err
+        );
+      }
+      return null;
+    });
+  }
 
   // ---- Exclude list editing: comma/Enter-separated entry, deduped case-insensitively.
   let excludeDraft = $state('');
@@ -714,6 +893,7 @@
     try {
       // Not a drain-pass index, so the drain's progress counter never counts it.
       const item = [{ key: 'relabel', mediaUrl: img.blobUrl }];
+      await ensureTagCategories();
       await runAutoLabel(labelMode, media, item, (r) => applyLabel(img, r), new AbortController().signal);
     } catch (err) {
       if (!isAbort(err)) patch(id, { labeling: false });
@@ -735,7 +915,9 @@
             {rating}
           </Tooltip.Trigger>
           <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
-            {#if isMember}
+            {#if !buzzMode.blueFirst}
+              Rated {rating}. Mature content can't be paid with Green Buzz, so it is charged in Yellow.
+            {:else if isMember}
               Rated {rating}. Mature content can't be paid with Green Buzz, so anything beyond your
               Blue Buzz is charged in Yellow.
             {:else}
@@ -981,6 +1163,14 @@
               </button>
             </span>
           {/each}
+          <label class="inline-flex items-center gap-1.5 font-mono text-xs text-dark-2">
+            <Checkbox bind:checked={excludeCharacter} />
+            Exclude character tags
+          </label>
+          <label class="inline-flex items-center gap-1.5 font-mono text-xs text-dark-2">
+            <Checkbox bind:checked={excludeSource} />
+            Exclude source material tags
+          </label>
         </div>
         {#if tagFreq.length}
           <Button
@@ -994,6 +1184,71 @@
         {/if}
       {/if}
     </div>
+    {#if uploadedCount > 0}
+      <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-dark-4 pt-3">
+        <div class="flex items-center gap-2">
+          <span class="font-mono text-xs text-dark-2">Label all with</span>
+          <ToggleGroup
+            type="single"
+            bind:value={
+              () => labelAllEngine,
+              (v) => {
+                if (v === 'tag' || v === 'caption') labelAllChoice = v;
+              }
+            }
+            variant="outline"
+            size="sm"
+          >
+            <ToggleGroupItem value="tag" aria-label="Run the tagger" disabled={media === 'audio'}>
+              Tags
+            </ToggleGroupItem>
+            <ToggleGroupItem value="caption" aria-label="Run the captioner">Captions</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="font-mono text-xs text-dark-2">Existing labels</span>
+          <ToggleGroup
+            type="single"
+            bind:value={
+              () => labelAllPolicy,
+              (v) => {
+                if (v === 'after' || v === 'before' || v === 'replace' || v === 'skip')
+                  labelAllPolicy = v;
+              }
+            }
+            variant="outline"
+            size="sm"
+          >
+            <ToggleGroupItem value="after" aria-label="Add the new labels after existing ones">
+              Add after
+            </ToggleGroupItem>
+            <ToggleGroupItem value="before" aria-label="Add the new labels before existing ones">
+              Add before
+            </ToggleGroupItem>
+            <ToggleGroupItem value="replace" aria-label="Replace existing labels">
+              Replace
+            </ToggleGroupItem>
+            <ToggleGroupItem value="skip" aria-label="Only label images without a label">
+              Skip labeled
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        <Button
+          size="xs"
+          class="ml-auto"
+          onclick={labelAll}
+          disabled={labelRun != null || labelingActive || labelAllTargets.length === 0}
+        >
+          <IconSparkles size={13} stroke={2} class="mr-1 inline" />Label {plural(
+            labelAllTargets.length,
+            'image'
+          )}
+        </Button>
+        {#if labelAllNotice}
+          <p class="w-full font-mono text-xs text-buzz" role="status">{labelAllNotice}</p>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   {#if images.length === 0}
@@ -1030,7 +1285,6 @@
     </button>
   {:else}
     <!-- Drag-and-drop is pointer-only by nature; the keyboard path is the Add more button. -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       {...drop}
       class="relative grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"
@@ -1090,41 +1344,74 @@
             >
               <IconPlus size={13} stroke={2} class="mr-1 inline" />Add more
             </Button>
+            {#if removeTargets.length > 0}
+              <Button
+                variant="ghost"
+                size="xs"
+                class="text-red-400 hover:text-red-300"
+                onclick={() => (removeDialogOpen = true)}
+              >
+                <IconTrash size={13} stroke={2} class="mr-1 inline" />{filtered
+                  ? `Remove ${removeTargets.length} shown`
+                  : 'Remove all'}
+              </Button>
+            {/if}
           </div>
         </div>
 
         <div class="mb-3">
-          <ToggleGroup
-            type="single"
-            value={filter}
-            onValueChange={(v) => {
-              if (v === 'all' || v === 'labeled' || v === 'unlabeled' || v === 'mature' || v === 'failed')
-                filter = v;
-            }}
-            variant="outline"
-            size="sm"
-            class="self-start"
-          >
-            <ToggleGroupItem value="all" aria-label="Show all images">All {images.length}</ToggleGroupItem>
-            <ToggleGroupItem value="labeled" aria-label="Show labeled images">
-              Labeled {labeledTotal}
-            </ToggleGroupItem>
-            <ToggleGroupItem value="unlabeled" aria-label="Show unlabeled images">
-              Unlabeled <span class={unlabeledTotal > 0 ? 'ml-1 font-semibold text-dark-0' : 'ml-1'}
-                >{unlabeledTotal}</span
-              >
-            </ToggleGroupItem>
-            {#if matureTotal > 0 || filter === 'mature'}
-              <ToggleGroupItem value="mature" aria-label="Show images rated mature">
-                Mature <span class={matureTotal > 0 ? 'ml-1 font-semibold text-buzz' : 'ml-1'}>{matureTotal}</span>
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <ToggleGroup
+              type="single"
+              value={filter}
+              onValueChange={(v) => {
+                if (v === 'all' || v === 'labeled' || v === 'unlabeled' || v === 'mature' || v === 'failed')
+                  showFilter(v);
+              }}
+              variant="outline"
+              size="sm"
+              class="self-start"
+            >
+              <ToggleGroupItem value="all" aria-label="Show all images">All {images.length}</ToggleGroupItem>
+              <ToggleGroupItem value="labeled" aria-label="Show labeled images">
+                Labeled {labeledTotal}
               </ToggleGroupItem>
-            {/if}
-            {#if failedTotal > 0 || filter === 'failed'}
-              <ToggleGroupItem value="failed" aria-label="Show files that failed to upload">
-                Failed <span class={failedTotal > 0 ? 'ml-1 font-semibold text-red-400' : 'ml-1'}>{failedTotal}</span>
+              <ToggleGroupItem value="unlabeled" aria-label="Show unlabeled images">
+                Unlabeled <span class={unlabeledTotal > 0 ? 'ml-1 font-semibold text-dark-0' : 'ml-1'}
+                  >{unlabeledTotal}</span
+                >
               </ToggleGroupItem>
-            {/if}
-          </ToggleGroup>
+              {#if matureTotal > 0 || filter === 'mature'}
+                <ToggleGroupItem value="mature" aria-label="Show images rated mature">
+                  Mature <span class={matureTotal > 0 ? 'ml-1 font-semibold text-buzz' : 'ml-1'}>{matureTotal}</span>
+                </ToggleGroupItem>
+              {/if}
+              {#if failedTotal > 0 || filter === 'failed'}
+                <ToggleGroupItem value="failed" aria-label="Show files that failed to upload">
+                  Failed <span class={failedTotal > 0 ? 'ml-1 font-semibold text-red-400' : 'ml-1'}>{failedTotal}</span>
+                </ToggleGroupItem>
+              {/if}
+            </ToggleGroup>
+            <ToggleGroup
+              type="single"
+              value={labelView}
+              onValueChange={(v) => {
+                if (v === 'grid' || v === 'inline' || v === 'large') setLabelView(v);
+              }}
+              variant="outline"
+              size="sm"
+            >
+              <ToggleGroupItem value="grid" aria-label="Compact grid" title="Compact grid — edit labels in a dialog">
+                <IconLayoutGrid size={14} stroke={2} />
+              </ToggleGroupItem>
+              <ToggleGroupItem value="inline" aria-label="Edit labels on the cards" title="Edit labels right on each card">
+                <IconLayoutList size={14} stroke={2} class="mr-1 inline" />Edit inline
+              </ToggleGroupItem>
+              <ToggleGroupItem value="large" aria-label="One large image per row" title="One large, uncropped image per row, with its label beside it">
+                <IconLayoutRows size={14} stroke={2} class="mr-1 inline" />Large
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
           {#if tagFilter}
             <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-dark-2">
               <span>Showing {mediaCount(shownImages.length, media)} tagged</span>
@@ -1161,10 +1448,24 @@
           </div>
         {/if}
 
-        <div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
+        <div
+          class="grid gap-3 {labelView === 'large'
+            ? 'grid-cols-1'
+            : labelView === 'inline'
+              ? 'grid-cols-[repeat(auto-fill,minmax(220px,1fr))]'
+              : 'grid-cols-[repeat(auto-fill,minmax(140px,1fr))]'}"
+        >
           {#each shownImages as img (img.id)}
-            <div class="overflow-hidden rounded-md border border-dark-4 bg-dark-6">
-              <div class="relative aspect-square bg-dark-7">
+            <div
+              class="overflow-hidden rounded-md border border-dark-4 bg-dark-6 {labelView === 'large'
+                ? 'md:grid md:grid-cols-[3fr_2fr]'
+                : ''}"
+            >
+              <div
+                class="relative bg-dark-7 {labelView === 'large'
+                  ? 'grid min-h-48 place-items-center'
+                  : 'aspect-square'}"
+              >
                 {#if !img.previewUrl}
                   <!-- Reused-blob preview still hydrating (or unavailable) — the air still trains. -->
                   <div class="flex h-full flex-col items-center justify-center gap-2 p-2.5 text-center">
@@ -1178,9 +1479,17 @@
                     </span>
                   </div>
                 {:else if img.mediaType === 'image'}
-                  <img src={img.previewUrl} alt={img.name} class="h-full w-full object-cover" />
+                  <!-- Lazy: a few hundred full-width images must not all decode at once in the large view. -->
+                  <img
+                    src={img.previewUrl}
+                    alt={img.name}
+                    loading="lazy"
+                    decoding="async"
+                    class={labelView === 'large'
+                      ? 'max-h-[75dvh] w-full object-contain'
+                      : 'h-full w-full object-cover'}
+                  />
                 {:else if img.mediaType === 'video'}
-                  <!-- svelte-ignore a11y_media_has_caption -->
                   <video
                     src={img.previewUrl}
                     muted
@@ -1189,7 +1498,9 @@
                     preload="metadata"
                     onmouseenter={playOnHover}
                     onmouseleave={resetOnLeave}
-                    class="h-full w-full object-cover"
+                    class={labelView === 'large'
+                      ? 'max-h-[75dvh] w-full object-contain'
+                      : 'h-full w-full object-cover'}
                   ></video>
                 {:else}
                   <div class="flex h-full flex-col items-center justify-center gap-2 p-2.5 text-center">
@@ -1251,7 +1562,21 @@
                 {/if}
               </div>
 
-              <div class="min-h-[44px] p-2.5">
+              <div
+                class="min-h-[44px] p-2.5"
+                onfocusin={editsOnCard
+                  ? () => {
+                      keepInView(img.id);
+                      inlineFocusId = img.id;
+                    }
+                  : undefined}
+                onfocusout={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null) && inlineFocusId === img.id) {
+                    inlineFocusId = null;
+                    void maybeAutoLabel();
+                  }
+                }}
+              >
                 {#if img.status !== 'uploaded'}
                   <!-- The failure overlay covers the preview, so the filename is how the user finds it. -->
                   <div class="font-mono text-xs text-dark-2">
@@ -1262,6 +1587,32 @@
                   <div class="flex items-center justify-center gap-1 font-mono text-xs text-primary">
                     <IconSparkles size={12} stroke={2} /> labeling…
                   </div>
+                {:else if editsOnCard}
+                  {#if img.labelError}
+                    <div class="mb-1 font-mono text-xs leading-tight text-red-300">{img.labelError}</div>
+                  {/if}
+                  {#if labelMode === 'tag'}
+                    <TagEditor
+                      tags={img.tags}
+                      onchange={(tags) => patch(img.id, { tags })}
+                      name={img.name}
+                      {trigger}
+                      compact={labelView === 'inline'}
+                    />
+                  {:else}
+                    <Textarea
+                      bind:value={img.caption}
+                      rows={labelView === 'large' ? 8 : 4}
+                      placeholder="Describe the image…"
+                      aria-label={`Caption for ${img.name}`}
+                      class="min-h-24 resize-y text-sm leading-snug"
+                    />
+                    {#if triggerText && !captionTriggerHit(trigger, img.caption)}
+                      <p class="mt-1 text-xs text-dark-2">
+                        <span class="text-buzz">{triggerText}</span> is prepended automatically.
+                      </p>
+                    {/if}
+                  {/if}
                 {:else if img.tags.length === 0 && !img.caption}
                   {#if img.labelError}
                     <div class="mb-1 font-mono text-xs leading-tight text-red-300">{img.labelError}</div>
@@ -1312,9 +1663,10 @@
     </div>
   {/if}
 
-  <!-- Below lg the actions float over a long image grid instead of waiting at its end. -->
+  <!-- Below lg the actions float over a long image grid instead of waiting at its end. Embedded, they
+       clear the host's sticky footer (`--footer-height`); standalone the var is unset and adds 0. -->
   <div
-    class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5 max-lg:sticky max-lg:bottom-3 max-lg:z-20 max-lg:rounded-xl max-lg:border max-lg:bg-dark-6 max-lg:p-3 max-lg:shadow-lg"
+    class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5 max-lg:sticky max-lg:bottom-[calc(0.75rem+var(--footer-height,0px)+var(--safe-area-inset-bottom-unpaid,0px))] max-lg:z-20 max-lg:rounded-xl max-lg:border max-lg:bg-dark-6 max-lg:p-3 max-lg:shadow-lg"
   >
     <Button variant="outline" onclick={onBack}>
       <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Back
@@ -1324,7 +1676,7 @@
         <button
           id="continue-blocked-reason"
           type="button"
-          onclick={() => (filter = 'unlabeled')}
+          onclick={() => showFilter('unlabeled')}
           class="font-mono text-xs text-buzz underline decoration-dotted underline-offset-2 transition-colors hover:text-buzz/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         >
           {uploadedCount - labeledCount} unlabeled — show {uploadedCount - labeledCount === 1
@@ -1393,6 +1745,37 @@
       </Button>
       <Button size="sm" onclick={() => applyLabelModeSwitch(pendingLabelMode!, 'convert')}>
         Convert existing labels
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={removeDialogOpen}>
+  <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>
+    <Dialog.Header>
+      <Dialog.Title>
+        {filtered
+          ? `Remove ${plural(removeTargets.length, 'shown file')}?`
+          : `Remove all ${plural(removeTargets.length, 'file')}?`}
+      </Dialog.Title>
+      <Dialog.Description>
+        {#if filtered}
+          Only the files this filter shows are removed; the rest of the dataset stays.
+        {:else}
+          The dataset is emptied.
+        {/if}
+        Their labels go with them and any upload still running is cancelled. <strong>Download .zip</strong>
+        first to keep a copy with the labels.
+      </Dialog.Description>
+    </Dialog.Header>
+    <Dialog.Footer>
+      <Dialog.Close>
+        {#snippet child({ props })}
+          <Button {...props} variant="ghost" size="sm">Cancel</Button>
+        {/snippet}
+      </Dialog.Close>
+      <Button variant="destructive" size="sm" onclick={() => removeMany(removeTargets.map((i) => i.id))}>
+        {filtered ? 'Remove shown' : 'Remove all'}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

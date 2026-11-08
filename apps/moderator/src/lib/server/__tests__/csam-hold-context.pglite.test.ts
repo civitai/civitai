@@ -43,7 +43,8 @@ beforeEach(async () => {
     CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "status" TEXT NOT NULL DEFAULT 'Published',
       "userId" INTEGER);
     CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, "index" INTEGER);
-    CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "title" TEXT NOT NULL, "coverId" INTEGER);
+    CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "title" TEXT NOT NULL, "coverId" INTEGER,
+      "bannerId" INTEGER);
     CREATE TABLE "CommentV3" ("id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL,
       "entityId" INTEGER NOT NULL, "parentId" INTEGER);
 
@@ -53,13 +54,14 @@ beforeEach(async () => {
       (5, 'art-cover', 'image', 1, false);
     INSERT INTO "Image" ("id","url","type","postId","index") VALUES
       (6, 'post-clip', 'video', 90, 0), (7, 'post-still', 'image', 90, 1);
+    INSERT INTO "Image" ("id","url","type","nsfwLevel","minor") VALUES (8, 'art-banner', 'image', 4, false);
     INSERT INTO "User" VALUES (10, 'someone', 1), (11, 'plain', NULL);
     INSERT INTO "UserProfile" VALUES (10, 'a bio', 'a message', 'sfw bio', NULL, 'somewhere', 2, 3),
       (12, NULL, 'only a message', NULL, NULL, NULL, 2, 2);
     INSERT INTO "User" VALUES (12, 'covered', NULL);
     INSERT INTO "Post" VALUES (90, 'A post title', '2026-10-01', 10, NULL);
     INSERT INTO "Model" VALUES (70, 'A model name', 'Published', 10);
-    INSERT INTO "Article" VALUES (50, 'An article title', 5);
+    INSERT INTO "Article" VALUES (50, 'An article title', 5, 8);
     -- comments on a post, an image, a model, an article and a bounty; 105 is a reply under 100,
     -- carrying the post on its own row. 106 has no row: the comment is gone.
     INSERT INTO "CommentV3" VALUES (100, 'post', 90, NULL), (101, 'image', 4, NULL),
@@ -144,7 +146,7 @@ describe('getHoldContexts: comment parents', () => {
     expect(parent?.images[0]).toMatchObject({ url: 'img-parent', minor: true });
   });
 
-  it('resolves a CommentV2 on a model and on an article with its cover', async () => {
+  it('resolves a CommentV2 on a model and on an article with its cover and banner', async () => {
     expect(await parentOf('CommentV2', 102)).toMatchObject({
       type: 'model',
       id: 70,
@@ -152,7 +154,7 @@ describe('getHoldContexts: comment parents', () => {
     });
     const article = await parentOf('CommentV2', 103);
     expect(article).toMatchObject({ type: 'article', id: 50, title: 'An article title' });
-    expect(article?.images.map((i) => i.url)).toEqual(['art-cover']);
+    expect(article?.images.map((i) => i.url)).toEqual(['art-cover', 'art-banner']);
   });
 
   it('keeps a type with no page we read as a bare reference', async () => {

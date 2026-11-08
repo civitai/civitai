@@ -22,16 +22,21 @@ import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconApps,
   IconArrowLeft,
+  IconCategory,
   IconClock,
+  IconCode,
   IconDownload,
   IconEyeOff,
   IconFlask,
   IconInfoCircle,
+  IconPlayerPlay,
   IconPlugConnected,
+  IconShield,
   IconShieldCheck,
   IconThumbUp,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
+import { useDisclosure } from '@mantine/hooks';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { useCallback, useState } from 'react';
@@ -40,11 +45,15 @@ import {
   appInitial,
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
+import { APPS_STORE_HREF } from '~/shared/constants/apps-routes.constants';
 import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { ListingPermissionsDisclosure } from '~/components/Apps/ListingPermissionsDisclosure';
 import { blockScopePermissions } from '~/components/Apps/listingPermissions';
-import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
+import {
+  buildListingDetailRows,
+  type ListingDetailRow,
+} from '~/components/Apps/appListingDetailRows';
 import { appsStoreCategoryHref } from '~/components/Apps/appsStoreQueryParams';
 import { LISTING_REVIEWS_ANCHOR_ID } from '~/components/Apps/listingKindLabels';
 import { buildListingStatChips, type ListingStatChip } from '~/components/Apps/appListingStatChips';
@@ -55,15 +64,26 @@ import {
   shouldShowOffsiteDisclosure,
 } from '~/components/Apps/appListingDetailView';
 import { AppListingActionsMenu } from '~/components/Apps/AppListingActionsMenu';
+import { AppListingOfficialBadge } from '~/components/Apps/AppListingOfficialBadge';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
+import { useAppStoreDetailView, useTrackAppStoreAction } from '~/components/Apps/appStoreTelemetry';
+import {
+  APP_VISIT_LINK_REL,
+  appVisitHref,
+  withAppSurface,
+} from '~/shared/utils/app-store-telemetry';
 import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
 import {
   NO_BROKEN_SCREENSHOTS,
   withBrokenIndex,
   type BrokenScreenshotIndexes,
 } from '~/components/Apps/appListingScreenshotNav';
-import { RelatedListings } from '~/components/Apps/RelatedListings';
+import { RelatedListings, useRelatedRail } from '~/components/Apps/RelatedListings';
+import {
+  RELATED_RAIL_NEUTRAL_HEADING,
+  relatedRailFirstHeading,
+} from '~/components/Apps/related-listings';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaboratorByline';
 import { visibilityBadgeFor } from '~/components/Apps/listingVisibilityCopy';
@@ -72,6 +92,11 @@ import { AppListingComments } from '~/components/Apps/AppListingComments';
 import { AppListingDescription } from '~/components/Apps/AppListingDescription';
 import { ConnectScopesDisclosure } from '~/components/Apps/ConnectScopesDisclosure';
 import { AppListingReviews } from '~/components/Apps/AppListingReviews';
+import {
+  ReviewListingModal,
+  ReviewListingTrigger,
+  useCanReviewListing,
+} from '~/components/Apps/ReviewListingButton';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -301,7 +326,7 @@ function HeroCover({
 
 /**
  * Header STAT CHIPS — the model page's `IconBadge` + `StatHoverCard` row, over the two
- * public aggregates a listing has: recommendations and installs.
+ * public aggregates a listing shows: recommendations and plays.
  *
  * 🔴 Each chip carries `data-listing-stat="<key>"` AND an `aria-label`. The attribute
  * is what the a11y test asserts on: a chip's visible text is a bare number, which any
@@ -333,6 +358,7 @@ function StatChips({ detail, preview }: { detail: ListingDetail; preview: boolea
 
   const glyph: Record<ListingStatChip['key'], ReactNode> = {
     recommend: <IconThumbUp size={18} />,
+    plays: <IconPlayerPlay size={18} />,
     installs: <IconDownload size={18} />,
   };
 
@@ -643,7 +669,20 @@ function ScreenshotGallery({
 }
 
 /** Kind-aware primary action button + (for info/connect stubs) an inline note. */
-function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpenPage: boolean }) {
+function PrimaryAction({
+  detail,
+  canOpenPage,
+  visitRedirectHref,
+}: {
+  detail: ListingDetail;
+  canOpenPage: boolean;
+  /**
+   * For an OFF-SITE listing, the `/apps/go` visit redirect its Visit CTA goes through (records
+   * the visit, then 302s to the listing's STORED URL); null otherwise. Decided by the caller so
+   * this renderer keeps routing on `action` alone (see `appListingDetailView.test.ts`).
+   */
+  visitRedirectHref: string | null;
+}) {
   const action = getDetailPrimaryAction(detail, { canOpenPage });
   // The recents store is ACCOUNT-scoped (#4048): every write carries the id of
   // the viewer who made it, so a later account in the same browser profile does
@@ -666,10 +705,22 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   // `__tests__/appListingActionGlyph.test.ts`.
   const glyphFor = (mode: DetailActionMode) => ACTION_GLYPH_ICONS[detailActionGlyph(mode)];
 
+  // Acquisition telemetry: every followed primary CTA is a `cta_click`; the launch / visit it
+  // leads to is recorded server-side with surface `detail` (the run route's `App_Open`, the
+  // `/apps/go` redirect's `App_Visit`). This component is rendered only outside `preview`.
+  const trackStoreAction = useTrackAppStoreAction();
+  const onCtaClick = () => trackStoreAction('cta_click', detail.id, { surface: 'detail' });
+
   if (action.mode === 'open' && action.href) {
     const GlyphIcon = glyphFor('open');
     return (
-      <Button component={Link} href={action.href} leftSection={<GlyphIcon size={16} />} fullWidth>
+      <Button
+        component={Link}
+        href={withAppSurface(action.href, 'detail')}
+        onClick={onCtaClick}
+        leftSection={<GlyphIcon size={16} />}
+        fullWidth
+      >
         {action.label}
       </Button>
     );
@@ -677,13 +728,16 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
 
   if (action.mode === 'visit' && action.href) {
     const GlyphIcon = glyphFor('visit');
+    // The on-site "Open live" escape hatch is a Civitai-hosted origin, not an off-site visit, so
+    // it has no redirect and keeps its direct link.
+    const visitHref = visitRedirectHref ?? action.href;
     return (
       <Stack gap={4}>
         <Button
           component="a"
-          href={action.href}
+          href={visitHref}
           target="_blank"
-          rel="noopener noreferrer"
+          rel={visitRedirectHref ? APP_VISIT_LINK_REL : 'noopener noreferrer'}
           leftSection={<GlyphIcon size={16} />}
           data-testid="apps-listing-open-live"
           fullWidth
@@ -693,7 +747,10 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
           // following this link IS the moment the app is opened, and it leaves
           // the SPA — so it is the only chance to record the open. A detail-page
           // VIEW never records.
-          onClick={() => recordRecentlyOpenedApp(toRecentAppFromListing(detail), recentsOwnerId)}
+          onClick={() => {
+            recordRecentlyOpenedApp(toRecentAppFromListing(detail), recentsOwnerId);
+            onCtaClick();
+          }}
         >
           {action.label}
         </Button>
@@ -751,6 +808,8 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   );
 }
 
+const RELATED_RAIL_ANCHOR_ID = 'app-listing-related';
+
 /**
  * The "Details" accordion in the right rail — the model page's version-details panel,
  * over the listing's scalars. Rows come from the PURE `buildListingDetailRows`, so the
@@ -761,6 +820,33 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
  * `ModelVersionDetails.module.scss`, not copied: two copies of a border colour is
  * exactly how two surfaces stop matching.
  */
+/**
+ * One leading glyph per Details row, dimmed like the model page's details icons. A
+ * `Record` over the row-key union, so a new row key fails to typecheck until it has one.
+ */
+const DETAIL_ROW_ICONS: Record<ListingDetailRow['key'], Icon> = {
+  kind: IconApps,
+  category: IconCategory,
+  rating: IconShield,
+  source: IconCode,
+  reviews: IconThumbUp,
+  plays: IconPlayerPlay,
+  installs: IconDownload,
+  updated: IconClock,
+};
+
+function DetailRowIcon({ rowKey }: { rowKey: ListingDetailRow['key'] }) {
+  const RowIcon = DETAIL_ROW_ICONS[rowKey];
+  return (
+    <RowIcon
+      size={16}
+      style={{ opacity: 0.5, flexShrink: 0 }}
+      aria-hidden
+      data-listing-detail-icon={rowKey}
+    />
+  );
+}
+
 function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boolean }) {
   const rows = buildListingDetailRows(detail, { preview, formatDate: (iso) => formatDate(iso) });
   return (
@@ -789,7 +875,10 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                 className={detailClasses.detailRow}
                 data-listing-detail-row={row.key}
               >
-                <Text className={detailClasses.detailLabel}>{row.label}</Text>
+                <Group gap={6} wrap="nowrap">
+                  <DetailRowIcon rowKey={row.key} />
+                  <Text className={detailClasses.detailLabel}>{row.label}</Text>
+                </Group>
                 {row.href ? (
                   // 🔴 `rel="noopener noreferrer"` is NOT optional on a `target="_blank"`
                   // link to a third-party page. Without `noopener` the opened tab holds a
@@ -873,10 +962,41 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                 )}
               </div>
             ))}
+            {/* Not a `data-listing-detail-row`: it is navigation, not a listing fact. */}
+            {!preview && <RelatedRailLink detail={detail} />}
           </Stack>
         </Accordion.Panel>
       </Accordion.Item>
     </Accordion>
+  );
+}
+
+/**
+ * The Details panel's jump to the related rail. 🔴 Its text is the rail's FIRST rendered
+ * heading, read from the rail's own data (`useRelatedRail` — the same queries, deduped), so
+ * it never says "More in <category>" over a rail that leads with "Popular apps". Until the
+ * rail has loaded it reads the neutral {@link RELATED_RAIL_NEUTRAL_HEADING}, which cannot be
+ * wrong about what it lands on.
+ */
+function RelatedRailLink({ detail }: { detail: ListingDetail }) {
+  const { sections, loading } = useRelatedRail({
+    listingId: detail.id,
+    category: detail.category,
+  });
+  const heading =
+    relatedRailFirstHeading({ category: detail.category, sections, loading }) ??
+    RELATED_RAIL_NEUTRAL_HEADING;
+  return (
+    <div className={detailClasses.detailRow}>
+      <Anchor
+        size="sm"
+        href={`#${RELATED_RAIL_ANCHOR_ID}`}
+        underline="always"
+        data-testid="apps-listing-details-related-link"
+      >
+        {`${heading} →`}
+      </Anchor>
+    </div>
   );
 }
 
@@ -901,7 +1021,7 @@ export interface AppListingDetailBodyProps {
    *     wrong; see the section's own comment for the four writers,
    *   - the comments thread + the recommend reviews list (a shadow listing has no
    *     Thread and no review rows; querying them would 404 / N+1),
-   *   - the header STAT CHIPS (recommendations + installs are usage aggregates a
+   *   - the header STAT CHIPS (recommendations + plays are usage aggregates a
    *     shadow listing structurally does not have — zeros there would read as facts
    *     about the app rather than about the posture),
    *   - the `⋮` overflow MENU and everything in it (owner edit, review, report, and
@@ -962,7 +1082,8 @@ export function AppListingDetailBody({
   // the old block explained — why the modals are siblings of the `Menu` rather
   // than of a `Menu.Item`, why the report affordance's two prop bags must both be
   // spread, why the mod set is an intersection rather than a hand-rolled list —
-  // moved with the code and is documented there.
+  // moved with the code and is documented there. The ONE exception is the review
+  // modal: this body owns it (see `canReview` below) and the menu hands its item to it.
   //
   // What stays here is only what is TRUE OF THIS SURFACE: the trigger's geometry
   // (Mantine's default size + a 20px glyph, `variant="light"`), and `preview`.
@@ -985,12 +1106,25 @@ export function AppListingDetailBody({
   //     would put a live launch back onto an UNAPPROVED shadow listing, which is
   //     precisely what that posture exists to prevent.
   const primaryAction = getDetailPrimaryAction(detail, { canOpenPage });
+  // Tagged with the `detail` surface exactly like the Open CTA, so the two stay one destination.
   const heroLaunchHref =
     !preview && primaryAction.mode === 'open' && !primaryAction.external && primaryAction.href
-      ? primaryAction.href
+      ? withAppSurface(primaryAction.href, 'detail')
       : null;
+  // One `detail_view` per mount (acquisition funnel). Never in the moderator preview.
+  useAppStoreDetailView(detail.id, !preview);
   const visibilityBadge = visibilityBadgeFor(detail.restrictedAudience);
   const categoryHref = appsStoreCategoryHref(detail.category);
+
+  // REVIEW ENTRY POINTS: the `⋮` item, the Reviews-heading button and the empty-state
+  // CTA all open THIS one modal, so the page never holds two review forms. Same gate as
+  // the menu's item (`useCanReviewListing`; the detail surface admits viewer actions).
+  const canReview = useCanReviewListing({
+    ownerUserId: detail.creator?.id ?? null,
+    listingKind: detail.kind,
+  });
+  const [reviewOpened, reviewModal] = useDisclosure(false);
+  const showReviewCta = !preview && canReview;
 
   return (
     <Stack gap="lg">
@@ -1009,7 +1143,7 @@ export function AppListingDetailBody({
         {!preview && (
           <ActionIcon
             component={Link}
-            href="/apps/store-preview"
+            href={APPS_STORE_HREF}
             aria-label="Back to store"
             variant="filled"
             color="dark"
@@ -1034,6 +1168,7 @@ export function AppListingDetailBody({
             }}
             surface="detail"
             preview={preview}
+            onOpenReview={reviewModal.open}
           />
         </Box>
       </Box>
@@ -1084,6 +1219,7 @@ export function AppListingDetailBody({
                 <Title order={2} className="line-clamp-2">
                   {detail.name}
                 </Title>
+                {detail.isOfficial && <AppListingOfficialBadge />}
                 {detail.isBeta && (
                   <Badge
                     color="violet"
@@ -1210,7 +1346,13 @@ export function AppListingDetailBody({
             {!preview && (
               <Card withBorder data-testid="apps-listing-action-card">
                 <Card.Section inheritPadding py="sm" px="sm">
-                  <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+                  <PrimaryAction
+                    detail={detail}
+                    canOpenPage={canOpenPage}
+                    visitRedirectHref={
+                      detail.kind === 'offsite' ? appVisitHref(detail.id, 'detail') : null
+                    }
+                  />
                   {/* FORKABLE APPS — "Fork", for a viewer with App Assistant and the rollout
                       flag, on a forkable, publicly visible on-site app. Renders nothing else. */}
                   <ListingForkButton listing={detail} />
@@ -1462,19 +1604,6 @@ export function AppListingDetailBody({
         </ContainerGrid2.Col>
       </ContainerGrid2>
 
-      {/* DISCOVERY — "More in <category>" + a persistent "Browse all apps" link.
-          Placed AFTER the two-column body but BEFORE the reviews/comments: those
-          threads are unbounded, so a rail below them would be buried behind an
-          arbitrary amount of scrolling for the viewers most likely to want it (the
-          ones who read the listing and didn't convert). Omitted in read-only preview —
-          it is a live, tRPC-backed surface. */}
-      {!preview && (
-        <>
-          <Divider />
-          <RelatedListings listingId={detail.id} category={detail.category} />
-        </>
-      )}
-
       {/* Recent reviews — thumbs/recommend list (mod-filtered, escaped plain text).
           Full-width below the grid, with the model page's `Title order={2}` section
           heading. Omitted in preview: a shadow listing has no review rows and we must
@@ -1489,14 +1618,37 @@ export function AppListingDetailBody({
         // with middle-click, and before hydration, and it survives being copied.
         <Stack gap="md" id={LISTING_REVIEWS_ANCHOR_ID}>
           <Divider />
-          <Title order={2}>Reviews</Title>
-          <AppListingReviews appListingId={detail.id} />
+          <Group justify="space-between" align="center" gap="sm">
+            <Title order={2}>Reviews</Title>
+            {showReviewCta && (
+              <ReviewListingTrigger appListingId={detail.id} onOpen={reviewModal.open} />
+            )}
+          </Group>
+          <AppListingReviews
+            appListingId={detail.id}
+            onLeaveReview={showReviewCta ? reviewModal.open : undefined}
+          />
         </Stack>
+      )}
+      {showReviewCta && (
+        <ReviewListingModal
+          appListingId={detail.id}
+          opened={reviewOpened}
+          onClose={reviewModal.close}
+        />
       )}
 
       {/* Not in preview: a shadow listing has no comments to load. */}
       {!preview && (
         <AppListingComments serialId={detail.serialId} ownerUserId={detail.creator?.id ?? null} />
+      )}
+
+      {/* `id` is the target of the Details panel's related-rail link (RELATED_RAIL_ANCHOR_ID). Omitted in preview: live, tRPC-backed surface. */}
+      {!preview && (
+        <Stack gap="lg" id={RELATED_RAIL_ANCHOR_ID}>
+          <Divider />
+          <RelatedListings listingId={detail.id} category={detail.category} />
+        </Stack>
       )}
     </Stack>
   );

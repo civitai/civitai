@@ -246,7 +246,7 @@ describe('chunked image-upload relay', () => {
         user: { id: OWNER, bannedAt: new Date('2026-01-01') },
       });
       const { res } = await start();
-      expect(res.statusCode).toBe(401);
+      expect(res.statusCode).toBe(403);
       expect(mockStart).not.toHaveBeenCalled();
     });
 

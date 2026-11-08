@@ -55,4 +55,25 @@ describe('Tripo versions', () => {
     expect(result.data?.seed).toBeUndefined();
     expect(result.data?.textureSeed).toBe(42);
   });
+
+  it('a blank face limit goes out unset so Tripo picks the count, not the 1000 minimum', () => {
+    const faceLimitFor = (faceLimit?: unknown) => {
+      const store = storeOn('txt2model3d');
+      store.set({
+        prompt: 'a treasure chest',
+        ...(faceLimit !== undefined && { faceLimit }),
+      } as never);
+      const result = store.validate() as { success: boolean; data?: { faceLimit?: number } };
+      expect(result.success).toBe(true);
+      return result.data?.faceLimit;
+    };
+
+    expect(faceLimitFor()).toBeUndefined();
+    // a stored or remixed blank
+    expect(faceLimitFor(null)).toBeUndefined();
+    expect(faceLimitFor('')).toBeUndefined();
+    expect(faceLimitFor(30_000)).toBe(30_000);
+    expect(faceLimitFor(500)).toBe(1_000);
+    expect(faceLimitFor(5_000_000)).toBe(2_000_000);
+  });
 });

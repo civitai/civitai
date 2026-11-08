@@ -34,7 +34,7 @@ export type TurfEntry = {
   team: string;
   // The team's join cosmetic: the ledger names a turf credit as (player, this, 'turf').
   cosmeticId: number;
-  // The leading team's earliest eligible stickerers, at most the credited cap in force.
+  // The leading team's earliest eligible stickerers, at most that team's credited cap in force.
   players: number[];
   // When the newest live sticker went on; the map keeps the most recent images when full.
   lastAt: number;
@@ -69,7 +69,8 @@ export const TURF_CLAIM_KEY = 'turf';
  */
 export function computeImageTurf(
   rows: readonly TurfStickerRow[],
-  creditedPlayers: number,
+  // How many stickerers an action credits on an image the team leads (turfCreditedByTeam).
+  creditedPlayers: (team: string) => number,
   teamCosmetic: (team: string) => number | undefined
 ): { counts: TurfCounts; entry: TurfEntry | null } {
   const shown: Record<string, number> = {};
@@ -93,7 +94,7 @@ export function computeImageTurf(
   if (!leader || !cosmeticId) return { counts, entry: null };
   const players = rows
     .filter((r) => r.eligible && r.team === leader)
-    .slice(0, creditedPlayers)
+    .slice(0, creditedPlayers(leader))
     .map((r) => r.userId);
   // Not Math.max(...rows): spreading past ~125k arguments overflows the stack on a busy image.
   const lastAt = rows.reduce((max, r) => Math.max(max, r.createdAt.getTime()), 0);

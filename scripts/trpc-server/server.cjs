@@ -4,16 +4,30 @@
  *
  * It serves `/api/trpc/[trpc]`, the internal image-delivery lookup
  * (`/api/internal/image-delivery/[id]`, a high-volume route whose handler is tiny, so most of its
- * cost under Next is the router), plus the probe and metrics routes from the SAME compiled
- * pages-API route modules that `server.js` serves, by calling each module's exported
+ * cost under Next is the router), the three browser beacons (`/api/internal/ping`,
+ * `/api/internal/pulse`, `/api/track/batch`: high-volume POSTs with tiny handlers, the same
+ * reason), plus the probe and metrics routes (the list is `./served-pages.cjs`) from the SAME
+ * compiled pages-API route modules that `server.js` serves, by calling each module's exported
  * `handler(req, res, ctx)` — Next's own direct-invocation contract
  * (`next/dist/build/templates/pages-api.js`). That keeps everything the route module does per
- * request (instrumentation, the request span, `prepare`, `apiResolver`: cookies, query, the
- * 17mb body parse) and skips the router-server, the proxy and base-server. What it still has to
+ * request (instrumentation, the request span, `prepare`, `apiResolver`: cookies, query, and the
+ * body parse under the module's own `config.api.bodyParser`, 17mb for tRPC and Next's 1mb default
+ * for the beacons) and skips the router-server, the proxy and base-server. What it still has to
  * do in their place is in `./next-compat.cjs`.
  *
  * Mode: `TRPC_SERVER_MODE=route` (the default) is the only one implemented. Anything else exits
  * non-zero at boot.
+ *
+ * Profile: `STANDALONE_SERVER_PROFILE` picks WHICH pages it serves (`./served-pages.cjs`). `trpc`
+ * (the default, unset) is the fixed list above. `api` adds every pages-API route under `/api/v1/`,
+ * which the proxy covers under Next, so before those routes run it does what Next does around the
+ * proxy: the proxy's request-body cap (non-GET bodies cut at `proxyClientMaxBodySize`), then the
+ * proxy middlewares' effect (451 region block, default response headers, verified-crawler request
+ * header) through the one implementation the proxy and the tRPC route share. An unknown profile
+ * exits non-zero at boot, and so does `api` when instrumentation did not register that policy.
+ * A redirect or rewrite that could apply to a served page also stops the boot (neither is
+ * ported). A route module that fails to load is logged and answers 500 instead, unless it is on
+ * the fixed tRPC list, which still stops the boot.
  *
  * Boot order mirrors `server.js` + `next/dist/server/lib/start-server.js`:
  *   1. process env, chdir and the standalone config, exactly as the generated `server.js` sets them
@@ -39,6 +53,18 @@ const MODE = process.env.TRPC_SERVER_MODE || 'route';
 if (MODE !== 'route') {
   console.error(
     `[trpc-server] TRPC_SERVER_MODE=${JSON.stringify(MODE)} is not implemented; only "route" is.`
+  );
+  process.exit(1);
+}
+
+/** Which pages to serve (see that file). Unset is the `trpc` profile, the list this server always served. */
+const served = require('./served-pages.cjs');
+const PROFILE = served.resolveProfile(process.env.STANDALONE_SERVER_PROFILE);
+if (!PROFILE) {
+  console.error(
+    `[trpc-server] STANDALONE_SERVER_PROFILE=${JSON.stringify(
+      process.env.STANDALONE_SERVER_PROFILE
+    )} is not a profile; expected one of ${served.PROFILES.join(', ')}.`
   );
   process.exit(1);
 }
@@ -104,25 +130,26 @@ const pagesManifest = JSON.parse(
   fs.readFileSync(path.join(distDir, 'server', 'pages-manifest.json'), 'utf8')
 );
 
-/** The only pages this server answers. Anything else is a 404. */
-const SERVED_PAGES = [
-  '/api/trpc/[trpc]',
-  // Exact one-segment matches only (see `createPageMatcher`): a trailing slash or more segments
-  // get this server's plain 404, where Next would redirect or render its 404 page. Its caller
-  // sends `/api/internal/image-delivery/<key>` only; the parity harness pins those answers.
-  '/api/internal/image-delivery/[id]',
-  '/api/live',
-  '/api/health',
-  '/api/ready',
-  '/api/metrics',
-];
+/** The only pages this server answers (see `./served-pages.cjs`). Anything else is a 404. */
+const SERVED_PAGES = served.servedPages(PROFILE, pagesManifest);
 for (const page of SERVED_PAGES) {
   if (!pagesManifest[page]) throw new Error(`[trpc-server] ${page} is not in pages-manifest.json`);
 }
 
-const routing = compat.createRouting({ routesManifest, nextConfig });
+// Refuses to start if a redirect or rewrite (neither is ported) could apply to a served page.
+const routing = compat.createRouting({ routesManifest, nextConfig, pages: SERVED_PAGES });
 const matchPage = compat.createPageMatcher(SERVED_PAGES);
-const routeModules = new Map();
+const routeModules = compat.createRouteModuleLoader(
+  // Awaited, as Next's NodeModuleLoader does: a route whose graph has top-level await is
+  // compiled as an async module, and `require` then returns a promise of its exports.
+  (page) => require(path.join(distDir, 'server', pagesManifest[page])),
+  (message, err) => console.error(message, err)
+);
+/**
+ * `applyApiRequestPolicy(req, res)` from instrumentation (set at boot when a served page needs it):
+ * true when it has answered the request itself (the 451).
+ */
+let applyApiPolicy = null;
 const relativeProjectDir = path.relative(process.cwd(), dir);
 
 // --- request handling -----------------------------------------------------------------------------
@@ -153,7 +180,17 @@ async function handle(req, res) {
   compat.fillForwardedHeaders(req, { hostname, port: listenPort });
   compat.stripInternalQuery(req);
 
-  const mod = routeModules.get(matched.page);
+  // What Next does around the proxy, for the pages it covers there. Next invokes the proxy through
+  // base-server's request handler, which has already filled the `x-forwarded-*` headers above on
+  // this same request, so the proxy (and so the policy here) sees them. First the proxy's
+  // request-body cap (a clone-and-truncate of non-GET bodies), then the proxy middlewares' effect.
+  if (applyApiPolicy && served.needsApiPolicy(matched.page)) {
+    await compat.applyProxyBodyLimit(req, nextConfig);
+    if (applyApiPolicy(req, res)) return;
+  }
+
+  // Rejects while the page's module fails to load; requestListener answers that with a 500.
+  const mod = await routeModules.get(matched.page);
   await mod.handler(req, res, {
     waitUntil: undefined,
     requestMeta: { relativeProjectDir, distDir },
@@ -220,7 +257,9 @@ server.on('listening', async () => {
   listenPort = typeof addr === 'object' && addr ? addr.port : listenPort;
   // start-server exports the bound port; the warmer self-requests on it.
   process.env.PORT = String(listenPort);
-  console.log(`[trpc-server] listening on ${hostname}:${listenPort} (mode ${MODE})`);
+  console.log(
+    `[trpc-server] listening on ${hostname}:${listenPort} (mode ${MODE}, profile ${PROFILE})`
+  );
 
   try {
     // --- 4. instrumentation.ts register() --------------------------------------------------------
@@ -229,17 +268,34 @@ server.on('listening', async () => {
     await compat.ensureInstrumentationRegistered(dir, nextConfig.distDir || '.next');
     console.log('[trpc-server] instrumentation registered');
 
-    // --- 5. route modules -----------------------------------------------------------------------
-    for (const page of SERVED_PAGES) {
-      // Awaited, as Next's NodeModuleLoader does: a route whose graph has top-level await is
-      // compiled as an async module, and `require` then returns a promise of its exports.
-      const mod = await require(path.join(distDir, 'server', pagesManifest[page]));
-      if (typeof mod.handler !== 'function') {
-        throw new Error(`[trpc-server] ${page} has no exported handler(req, res, ctx)`);
+    // The proxy's API policy, for a profile that serves pages the proxy covers under Next.
+    // Registered by instrumentation (`registerStandaloneApiPolicy`); its absence is a boot failure,
+    // never a silent pass-through.
+    if (SERVED_PAGES.some(served.needsApiPolicy)) {
+      applyApiPolicy = globalThis[Symbol.for(served.API_POLICY_GLOBAL_KEY)];
+      if (typeof applyApiPolicy !== 'function') {
+        throw new Error(
+          `[trpc-server] profile ${PROFILE} serves proxy-covered pages, but instrumentation registered no API policy`
+        );
       }
-      routeModules.set(page, mod);
     }
-    console.log(`[trpc-server] ready: ${SERVED_PAGES.join(', ')}`);
+
+    // --- 5. route modules -----------------------------------------------------------------------
+    // A page whose module fails to load is logged and skipped (requests to it retry the load and
+    // answer 500 while it fails), so one broken /api/v1/ route cannot take down the rest. The
+    // exception is the fixed tRPC list, every profile's core: a failure there still stops the boot,
+    // exactly as before profiles existed, so an image that cannot serve tRPC crash-loops and stalls
+    // its rollout instead of going Ready and answering 500.
+    const failed = await routeModules.preload(SERVED_PAGES);
+    const failedCore = failed.filter((page) => served.TRPC_PAGES.includes(page));
+    if (failedCore.length > 0) {
+      throw new Error(`[trpc-server] core page(s) failed to load: ${failedCore.join(', ')}`);
+    }
+    console.log(
+      `[trpc-server] ready (profile ${PROFILE}, ${SERVED_PAGES.length} pages${
+        failed.length ? `, ${failed.length} failed to load: ${failed.join(', ')}` : ''
+      }): ${SERVED_PAGES.join(', ')}`
+    );
     markReady();
   } catch (err) {
     markFailed(err);

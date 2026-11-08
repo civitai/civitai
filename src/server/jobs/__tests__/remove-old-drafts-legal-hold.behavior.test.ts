@@ -161,13 +161,13 @@ describe('remove-old-drafts under a legal hold', () => {
   });
 });
 
+// Comments are not kept for a held author: they go with the model.
 describe("remove-old-drafts and a held author's comments on a free owner's model", () => {
   const LEGACY_MODEL = 160; // a held author left a legacy comment: it cascades and has no thread
   const THREAD_MODEL = 170; // a held author commented in its thread
-  const CONTROL_MODEL = 180; // only its free owner commented
 
   beforeEach(async () => {
-    const extra = [LEGACY_MODEL, THREAD_MODEL, CONTROL_MODEL];
+    const extra = [LEGACY_MODEL, THREAD_MODEL];
     await db.exec(`
       DELETE FROM "Thread"; DELETE FROM "Comment";
       INSERT INTO "Model" (id, "userId") VALUES ${extra
@@ -177,34 +177,21 @@ describe("remove-old-drafts and a held author's comments on a free owner's model
         .map((id) => `(${id}0, ${id}, now() - interval '200 days', now() - interval '200 days')`)
         .join(', ')};
       INSERT INTO "Comment" ("userId", "modelId") VALUES (${MARKED_OWNER}, ${LEGACY_MODEL});
-      INSERT INTO "Thread" (id, "modelId") VALUES (700, ${THREAD_MODEL}), (800, ${CONTROL_MODEL});
+      INSERT INTO "Thread" (id, "modelId") VALUES (700, ${THREAD_MODEL});
       INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES
-        (7001, ${MARKED_OWNER}, 700), (7002, ${FREE_OWNER}, 700), (8001, ${FREE_OWNER}, 800);
+        (7001, ${MARKED_OWNER}, 700), (7002, ${FREE_OWNER}, 700);
     `);
     dbMock.dbRead.$queryRaw.mockResolvedValue(extra.map((id) => ({ id, userId: FREE_OWNER })));
   });
 
-  it('keeps a model a held author left a legacy comment on, and the comment', async () => {
-    await (removeOldDrafts as unknown as () => Promise<void>)();
-
-    expect(await remainingModels()).toContain(LEGACY_MODEL);
-    const legacy = await db.query(`SELECT 1 FROM "Comment" WHERE "modelId" = ${LEGACY_MODEL}`);
-    expect(legacy.rows).toHaveLength(1);
-  });
-
-  it("detaches the held author's thread before the delete, so the model goes and its comments stay", async () => {
+  it('deletes the models and the comments with them', async () => {
     await (removeOldDrafts as unknown as () => Promise<void>)();
 
     const remaining = await remainingModels();
+    expect(remaining).not.toContain(LEGACY_MODEL);
     expect(remaining).not.toContain(THREAD_MODEL);
-    // The control proves the foreign keys cascade: without the detach, thread 700 would go too.
-    expect(remaining).not.toContain(CONTROL_MODEL);
-    const comments = await db.query<{ id: number }>(`SELECT id FROM "CommentV2" ORDER BY id`);
-    expect(comments.rows.map((r) => r.id)).toEqual([7001, 7002]);
-    const thread = await db.query<{ modelId: number | null; detachedFrom: unknown }>(
-      `SELECT "modelId", metadata -> 'detachedFrom' AS "detachedFrom" FROM "Thread" WHERE id = 700`
-    );
-    expect(thread.rows).toEqual([{ modelId: null, detachedFrom: { modelId: THREAD_MODEL } }]);
+    expect((await db.query(`SELECT 1 FROM "Comment"`)).rows).toEqual([]);
+    expect((await db.query(`SELECT 1 FROM "CommentV2"`)).rows).toEqual([]);
   });
 });
 

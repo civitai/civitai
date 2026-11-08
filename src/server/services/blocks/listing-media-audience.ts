@@ -65,7 +65,7 @@ import {
  * then to `null`. A hidden screenshot is dropped from the gallery and order is preserved. Nothing
  * is ever replaced by an asset the viewer may not see.
  *
- * NOT FOR AUTHORS OR MODERATORS. An owner's own "My apps" row and the moderator review surfaces
+ * NOT FOR AUTHORS OR MODERATORS. An owner's own "My builds" row and the moderator review surfaces
  * must show what is actually attached, so they keep using the raw builders in
  * `listing-media-url.ts`. The moderator preview reaches this module only through
  * {@link MODERATOR_REVIEW_MEDIA}, which says so at the call site.
@@ -167,6 +167,18 @@ export function listingMediaCeiling(
   const ratingMax = nsfwLevelFromContentRating(contentRating);
   const ratingLevels = flagifyBrowsingLevel(browsingLevels.filter((l) => l <= ratingMax));
   return redHostMediaCeiling(audience, sfwBrowsingLevelsFlag & ratingLevels);
+}
+
+/**
+ * A listing's own `content_rating` as a media ceiling: every level up to it, with nothing added
+ * for a host or a viewer. For a surface that publishes media under the listing's rating tag (the
+ * registry adapter, which publishes each app tagged with its rating, to the tokens that may read
+ * it), so no image it carries can be rated above that tag. Unlike {@link listingMediaCeiling} it
+ * is not held to SFW: an `x` listing's X icon is within its own tag.
+ */
+export function listingRatingMediaCeiling(contentRating: string | null | undefined): number {
+  const ratingMax = nsfwLevelFromContentRating(contentRating);
+  return flagifyBrowsingLevel(browsingLevels.filter((l) => l <= ratingMax));
 }
 
 /** The gate's level comparison, for labels that describe where an image shows. */

@@ -17,7 +17,8 @@ const chain = {
   where: () => chain,
   execute: async () => imageReports.rows,
 };
-vi.mock('$lib/server/db', () => ({ dbRead: { selectFrom: () => chain }, dbWrite: {} }));
+// The report-to-image map reads the primary.
+vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: { selectFrom: () => chain } }));
 // Pulls in `$app/server`, which only resolves inside a SvelteKit build.
 vi.mock('$lib/server/user-actions.service', () => ({ setImageFlag: vi.fn() }));
 vi.mock('$lib/server/reports.service', () => ({ setReportStatus }));

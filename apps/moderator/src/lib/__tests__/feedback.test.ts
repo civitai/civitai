@@ -123,6 +123,7 @@ describe('feedbackAreaOptions', () => {
       'apps-marketplace',
       'apps-platform',
       'bitdex-image-feed',
+      'orchestration',
       'semantic-image-search',
       'site-bug-report',
     ]);
@@ -148,7 +149,7 @@ describe('feedbackAreaLabel', () => {
 
   it('says which areas the no-area view leaves out', () => {
     expect(FEEDBACK_ANY_AREA_LABEL).toBe(
-      'Area — any except App feedback, Apps platform (developers)'
+      'Area — any except App feedback, Apps platform (developers), Generation & training errors'
     );
   });
 });
@@ -175,6 +176,10 @@ describe('splitContext', () => {
       sessionId: 'v913JNcgDs',
       consoleErrors,
       networkErrors,
+      errorRef: '0123456789ab',
+      workflowId: 'wf_1-a',
+      jobId: 'job-2',
+      toast: { title: 'Failed to submit', message: 'Something broke (ref: 0123456789ab)' },
     });
 
     // 🔴 A WHOLE-OBJECT `toEqual`, which makes this the LEDGER: a key added to `FeedbackContext`
@@ -190,7 +195,49 @@ describe('splitContext', () => {
       networkErrors: [
         { url: 'https://civitai.com/api/trpc/x', status: 500, initiatorType: 'fetch' },
       ],
+      errorRef: '0123456789ab',
+      workflowId: 'wf_1-a',
+      jobId: 'job-2',
+      toast: { title: 'Failed to submit', message: 'Something broke (ref: 0123456789ab)' },
       other: null,
+    });
+  });
+
+  /**
+   * The "Report this" fields. The producer validates them at write time only; the column has no
+   * schema at rest, so a value that fails the producer's own pattern is shown under "other" as text,
+   * never claimed and drawn as if it were an id the orchestrator issued.
+   */
+  describe('the toast report fields', () => {
+    it('sends ids that fail the producer pattern to "other", not to the copy buttons', () => {
+      const bad = {
+        errorRef: '0123456789AB',
+        workflowId: 'a b',
+        jobId: 'https://x.example/j',
+      };
+      const ctx = splitContext(bad);
+      expect([ctx.errorRef, ctx.workflowId, ctx.jobId]).toEqual([null, null, null]);
+      expect(ctx.other).toEqual(bad);
+    });
+
+    it('reads a toast with no title as title null', () => {
+      expect(splitContext({ toast: { message: 'boom' } }).toast).toEqual({
+        title: null,
+        message: 'boom',
+      });
+    });
+
+    it('sends a toast with an unknown key or over-long text to "other" whole', () => {
+      for (const toast of [
+        { message: 'boom', href: 'https://x.example' },
+        { message: 'x'.repeat(301) },
+        { title: 7, message: 'boom' },
+        { title: 'no message' },
+      ]) {
+        const ctx = splitContext({ toast });
+        expect(ctx.toast, JSON.stringify(toast)).toBeNull();
+        expect(ctx.other).toEqual({ toast });
+      }
     });
   });
 
@@ -219,6 +266,10 @@ describe('splitContext', () => {
         sessionId: null,
         consoleErrors: [],
         networkErrors: [],
+        errorRef: null,
+        workflowId: null,
+        jobId: null,
+        toast: null,
         other: null,
       });
     }

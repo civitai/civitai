@@ -2,16 +2,13 @@ import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHa
 import type { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
 import { dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readImageReactionIdViaKysely,
-  readImageReactionIdViaPrisma,
-} from '~/server/services/hot-reads-5.reads';
+import { readImageReactionIdViaKysely } from '~/server/services/hot-reads-5.reads';
 import { articleMetrics, bountyEntryMetrics, postMetrics } from '~/server/metrics';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
 import { isV3WriteSurface } from '~/server/services/commentv3/write.service';
 import { onReactionCreated, onReactionRemoved } from '~/server/events/points/hooks';
+import type { EventPointGrant } from '~/server/events/points/award';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 
@@ -66,11 +63,14 @@ export const toggleReaction = async ({
   reaction,
   isModerator,
   eventPoints = true,
+  onEventPoints,
 }: ToggleReactionInput & {
   userId: number;
   isModerator?: boolean;
   // False for automated accounts (the challenge judge): event points are for people engaging.
   eventPoints?: boolean;
+  // Handed the created reaction's live event-point grants, which resolve before the ledger write.
+  onEventPoints?: (grants: Promise<EventPointGrant[]>) => void;
 }) => {
   if (!(await claimToggleWindow({ entityType, entityId, userId, reaction }))) return 'ignored';
   if (entityType === 'comment' && (await isV3WriteComment(entityId)))
@@ -85,7 +85,11 @@ export const toggleReaction = async ({
     // Enforce on create only — a user blocked after reacting can still un-react.
     await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
     await createReaction({ entityType, entityId, userId, reaction });
-    if (eventPoints) void onReactionCreated({ entityType, entityId, userId });
+    if (eventPoints) {
+      const grants = onReactionCreated({ entityType, entityId, userId });
+      // Awaiting is optional: the award runs to the end either way.
+      if (onEventPoints) onEventPoints(grants);
+    }
     return 'created';
   }
 };
@@ -161,13 +165,11 @@ const getReaction = async ({
         select: { id: true },
       });
     case 'image':
-      if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
-        return await readImageReactionIdViaKysely(await getKyselyWithoutLag(), {
-          userId,
-          reaction,
-          imageId: entityId,
-        });
-      return await readImageReactionIdViaPrisma(db, { userId, reaction, imageId: entityId });
+      return await readImageReactionIdViaKysely(await getKyselyWithoutLag(), {
+        userId,
+        reaction,
+        imageId: entityId,
+      });
     case 'post':
       return await db.postReaction.findFirst({
         where: { userId, reaction, postId: entityId },

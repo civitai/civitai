@@ -12,6 +12,10 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { md5 } from '~/shared/utils/md5';
 import { trpc } from '~/utils/trpc';
+import {
+  DEFAULT_EVENT_POINT_POPS,
+  type EventPointPops,
+} from '~/shared/constants/event-point-pops.constants';
 // const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 // const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
 //   ssr: false,
@@ -20,11 +24,17 @@ import { trpc } from '~/utils/trpc';
 export function CivitaiSessionProvider({
   children,
   disableHidden,
+  showEventCosmetics,
+  eventPointPops,
 }: {
   children: React.ReactNode;
   disableHidden?: boolean;
+  /** This device's choice, from its cookie: what a signed-out viewer gets, and a fallback. */
+  showEventCosmetics?: boolean;
+  /** This device's choice, from its cookie, until the account's settings are read. */
+  eventPointPops?: EventPointPops;
 }) {
-  const { data, update, status } = useSession();
+  const { data, update } = useSession();
   const user = data?.user;
   const { allowMatureContent, region, verifiedBot } = useAppContext();
   // `AppContext.region` is optional because _app's `region` PROP is SSR-only. This CONTEXT
@@ -49,6 +59,8 @@ export function CivitaiSessionProvider({
   const settingsShowNsfw = settings?.showNsfw;
   const settingsBlurNsfw = settings?.blurNsfw;
   const settingsAutoplayGifs = settings?.autoplayGifs;
+  const settingsShowEventCosmetics = settings?.showEventCosmetics;
+  const settingsEventPointPops = settings?.eventPointPops;
 
   const sessionUser = useMemo(() => {
     if (!user) {
@@ -65,7 +77,14 @@ export function CivitaiSessionProvider({
               blurNsfw: false,
             }
           : publicContentSettings;
-      return { type: 'unauthed', settings } as UnauthedUser;
+      return {
+        type: 'unauthed',
+        settings: {
+          ...settings,
+          showEventCosmetics: showEventCosmetics ?? true,
+          eventPointPops: eventPointPops ?? DEFAULT_EVENT_POINT_POPS,
+        },
+      } as UnauthedUser;
     }
 
     const isMember = user.tier != null;
@@ -88,6 +107,13 @@ export function CivitaiSessionProvider({
         allowAds: settingsAllowAds ?? !isMember ? true : false,
         autoplayGifs: settingsAutoplayGifs ?? user.autoplayGifs ?? true,
         blurNsfw: settingsBlurNsfw ?? user.blurNsfw,
+        // The account's own choice once its settings are read. Before that (a degraded bootstrap)
+        // this device's cookie, so an "off" viewer gets no flash of hats.
+        showEventCosmetics: settings
+          ? settingsShowEventCosmetics ?? true
+          : showEventCosmetics ?? true,
+        eventPointPops:
+          (settings ? settingsEventPointPops : eventPointPops) ?? DEFAULT_EVENT_POINT_POPS,
       },
     };
     if (!allowMatureContent)
@@ -100,12 +126,17 @@ export function CivitaiSessionProvider({
     data?.expires,
     allowMatureContent,
     disableHidden,
+    showEventCosmetics,
+    eventPointPops,
     isRestricted,
     settingsAllowAds,
     settingsDisableHidden,
     settingsShowNsfw,
     settingsBlurNsfw,
     settingsAutoplayGifs,
+    settingsShowEventCosmetics,
+    settingsEventPointPops,
+    settings,
     verifiedBot,
   ]);
 
@@ -153,6 +184,8 @@ type BrowsingSettings = {
   disableHidden: boolean;
   allowAds: boolean;
   autoplayGifs: boolean;
+  showEventCosmetics: boolean;
+  eventPointPops: EventPointPops;
 };
 
 const CivitaiSessionContext = createContext<AuthedUser | UnauthedUser | null>(null);
@@ -171,4 +204,6 @@ const publicContentSettings: BrowsingSettings = {
   disableHidden: true,
   allowAds: true,
   autoplayGifs: true,
+  showEventCosmetics: true,
+  eventPointPops: DEFAULT_EVENT_POINT_POPS,
 };

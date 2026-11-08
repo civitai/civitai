@@ -4,6 +4,7 @@ import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { dbRead, type dbWrite } from '~/server/db/client';
 import type { TeamAward } from '~/server/events/base.event';
 import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 
 // Each crucible carrying `eventTag` gives the entrant's team `points` for each accepted entrant,
@@ -141,7 +142,8 @@ async function countedEntryIds(entryIds: number[], db: typeof dbRead | typeof db
     WHERE ce.id = ANY(${entryIds}::int[])
       AND c.status <> ${CrucibleStatus.Cancelled}::"CrucibleStatus"
       AND ${visibleEntryImageSql(Prisma.sql`c."nsfwLevel"`, 0)}
-      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT u."excludeFromLeaderboards"
+      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+      AND (u.flags & ${UserFlag.ExcludeFromEventPoints}::int) = 0
   `;
   return new Set(rows.map((r) => r.id));
 }

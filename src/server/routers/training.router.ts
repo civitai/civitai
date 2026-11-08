@@ -48,6 +48,7 @@ import {
   router,
 } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { isBaseModelKey } from '~/utils/training-blocked-models';
 
 const TRAINING_ANNOUNCEMENT_KEY = 'training-announcement';
 // Written by the moderator app's Training Models page; read here for the training form's alert box.
@@ -181,12 +182,26 @@ export const trainingRouter = router({
     .use(isFlagProtected('imageTraining'))
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
     .query(() => getTrainingServiceStatus()),
+  /**
+   * Training on/off for anyone, signed in or not: only `available`. getStatus stays behind the
+   * imageTraining flag because it also carries the operator message and blocked models. Read by
+   * the public status page (status-next.civitai.com).
+   */
+  getPublicStatus: publicProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
+    .query(async () => {
+      const { available } = await getTrainingServiceStatus();
+      return { available };
+    }),
   getStatusModerator: moderatorProcedure.query(() => getTrainingServiceStatus()),
   setStatus: moderatorProcedure
     .input(
       z.object({
         available: z.boolean(),
         message: z.string().max(2000).nullish(),
+        blockedModels: z.array(z.string().refine(isBaseModelKey, 'Unknown base model')).optional(),
+        blockedModelReasons: z.record(z.string(), z.string().max(300)).nullish(),
       })
     )
     .use(purgeOnSuccess(['training-status']))

@@ -24,9 +24,12 @@ const transitionNotices: Partial<
 };
 
 export async function getDealPartiesWithTitle(dealId: number) {
-  const [deal] = await dbWrite.$queryRaw<{ buyerId: number; sellerId: number; title: string }[]>`
-    SELECT d."buyerId", d."sellerId", o."title"
+  const [deal] = await dbWrite.$queryRaw<
+    { buyerId: number; sellerId: number; title: string; sellerName: string | null }[]
+  >`
+    SELECT d."buyerId", d."sellerId", o."title", s."username" AS "sellerName"
     FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
+    LEFT JOIN "User" s ON s."id" = d."sellerId"
     WHERE d."id" = ${dealId}::int`;
   return deal;
 }

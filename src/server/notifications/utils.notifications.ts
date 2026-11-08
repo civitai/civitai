@@ -5,6 +5,7 @@ import { ratingReviewNotifications } from '~/server/notifications/rating-review.
 import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
 import { creatorServiceNotifications } from '~/server/notifications/creator-service.notifications';
 import { appBlockNotifications } from '~/server/notifications/app-block.notifications';
+import { appBuzzRefundNotifications } from '~/server/notifications/app-buzz-refund.notifications';
 import { appCollaboratorNotifications } from '~/server/notifications/app-collaborator.notifications';
 import { appFeedbackNotifications } from '~/server/notifications/app-feedback.notifications';
 import { appListingNotifications } from '~/server/notifications/app-listing.notifications';
@@ -24,6 +25,7 @@ import {
   storylineNotifications,
   storylineOwnerNotifications,
   storylineInviteNotifications,
+  storylineFollowNotifications,
 } from '~/server/notifications/storyline.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
@@ -65,6 +67,7 @@ export const notificationProcessors = {
   ...creatorServiceNotifications,
   ...appListingNotifications,
   ...appBlockNotifications,
+  ...appBuzzRefundNotifications,
   ...appCollaboratorNotifications,
   ...appFeedbackNotifications,
   ...appModeratorMessageNotifications,
@@ -77,6 +80,7 @@ export const notificationProcessors = {
   ...storylineNotifications,
   ...storylineOwnerNotifications,
   ...storylineInviteNotifications,
+  ...storylineFollowNotifications,
   ...buzzNotifications,
   ...collectionNotifications,
   ...imageNotifications,

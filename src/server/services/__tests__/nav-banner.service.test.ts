@@ -11,7 +11,13 @@ vi.mock('~/server/flipt/tester-segment', async () => {
   return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
 });
 
-const { getNavBanners } = await import('~/server/services/nav-banner.service');
+// The real join check reads the event's team cosmetic; tests below set what it returns.
+const cosmetic = vi.hoisted(() => ({ getEventCosmetic: vi.fn(async () => ({ obtained: false })) }));
+vi.mock('~/server/services/event.service', () => cosmetic);
+
+const { getNavBanners, JOINED_READ_DEADLINE_MS } = await import(
+  '~/server/services/nav-banner.service'
+);
 const { logToAxiom } = await import('~/server/logging/client');
 
 const TESTER = { id: 10 };
@@ -291,5 +297,61 @@ describe('getNavBanners', () => {
       event: 'broken',
       message: 'flag has no Flipt key',
     });
+  });
+});
+
+// The strip used to tell every player to 'Join a team', members included.
+describe('the cta for a viewer already on a team', () => {
+  const copy = { banner: { cta: 'Join a team', joinedCta: 'See the standings' } };
+  const def = {
+    name: 'e1',
+    title: 'e1 title',
+    startDate: new Date(0),
+    endDate: new Date(8.64e15),
+    ...copy,
+  };
+  const open = async () => 'open' as const;
+  const cta = async (viewer: { id: number } | undefined, hasJoined: () => Promise<boolean>) =>
+    (await getNavBanners({ viewer, eventDefs: [def], getAccess: open, hasJoined }))[0]?.cta;
+
+  it('a member sees the joined cta; a viewer on no team is asked to join', async () => {
+    expect(await cta(TESTER, async () => true)).toBe('See the standings');
+    expect(await cta(TESTER, async () => false)).toBe('Join a team');
+  });
+
+  it('signed out never asks, and is asked to join', async () => {
+    const hasJoined = vi.fn(async () => true);
+    expect(await cta(ANON, hasJoined)).toBe('Join a team');
+    expect(hasJoined).not.toHaveBeenCalled();
+  });
+
+  it('a failed read keeps the strip, with the join cta', async () => {
+    expect(
+      await cta(TESTER, async () => {
+        throw new Error('redis down');
+      })
+    ).toBe('Join a team');
+  });
+
+  it('a read slower than the deadline keeps the strip, with the join cta', async () => {
+    const slow = () =>
+      new Promise<boolean>((resolve) =>
+        setTimeout(() => resolve(true), JOINED_READ_DEADLINE_MS * 3)
+      );
+    expect(await cta(TESTER, slow)).toBe('Join a team');
+  });
+
+  // The default check: the home block's test of joining, the event's team cosmetic obtained.
+  it("the birthday strip reads the viewer's team cosmetic for its joined cta", async () => {
+    testerFlag.reset({ public: true });
+    cosmetic.getEventCosmetic.mockResolvedValueOnce({ obtained: true });
+    const [banner] = await getNavBanners({ viewer: MOD, now: DURING });
+    expect(banner.cta).toBe('See the standings');
+    expect(cosmetic.getEventCosmetic).toHaveBeenCalledWith({
+      event: 'birthday2026',
+      user: { id: MOD.id, isModerator: true },
+    });
+    cosmetic.getEventCosmetic.mockResolvedValueOnce({ obtained: false });
+    expect((await getNavBanners({ viewer: MOD, now: DURING }))[0].cta).toBe('Join a team');
   });
 });

@@ -106,6 +106,10 @@ const KNOWN_REACHABLE: { file: string; reason: string }[] = [
     reason: 'via civitai-axiom/src/client.ts; drops with it.',
   },
   {
+    file: 'packages/civitai-axiom/src/redact-credentials.ts',
+    reason: 'via civitai-axiom/src/client.ts; drops with it.',
+  },
+  {
     file: 'packages/civitai-buzz/src/client.ts',
     reason:
       'PRE-EXISTING, invisible until this guard learned to resolve unaliased workspace packages. Static chain: _app -> SignalsProviderStack -> SignalsNotifications -> shared/constants/buzz.constants.ts -> the @civitai/buzz BARREL, which `export * from ./client`. buzz.constants only needs ./account-types. Fix needs an `exports` map on @civitai/buzz (it ships none) so the import can go deep.',
@@ -125,6 +129,11 @@ const KNOWN_REACHABLE: { file: string; reason: string }[] = [
  * runtime `if (!req) return` was present.
  */
 const SERVER_ONLY_EDGES: { file: string; spec: string; reason: string }[] = [
+  {
+    file: 'src/pages/_app.tsx',
+    spec: '~/server/bot-cache/bot-cache',
+    reason: 'server-only: reads the server env and Flipt.',
+  },
   {
     file: 'src/pages/_app.tsx',
     spec: '~/server/services/settings-bootstrap.service',

@@ -210,6 +210,24 @@ const DECLARED_MIGRATIONS: Record<string, DeclaredMigration> = {
       },
     ],
   },
+  '20261225120200_remix_apps_as_rows': {
+    liveReferences: 1,
+    grants: [
+      {
+        clientId: 'civitai-remix-apps',
+        op: 'set',
+        value: 0,
+        pinnedSql:
+          'INSERT INTO "OauthClient" ( "id", "secret", "name", "description", "redirectUris", ' +
+          '"allowedOrigins", "grants", "allowedScopes", "isConfidential", "accessMode", ' +
+          '"userId", "isVerified" ) SELECT \'civitai-remix-apps\', NULL, \'Civitai Remix Apps\', ' +
+          "'Owner of the system remix app rows. Not a sign-in client.', ARRAY[]::TEXT[], " +
+          "ARRAY[]::TEXT[], ARRAY[]::TEXT[], 0, true, 'disabled', -1, true WHERE EXISTS " +
+          '(SELECT 1 FROM "User" WHERE "id" = -1) ON CONFLICT ("id") DO NOTHING;',
+        note: 'no scopes: it only owns the remix app rows, and never signs in',
+      },
+    ],
+  },
 };
 
 /**

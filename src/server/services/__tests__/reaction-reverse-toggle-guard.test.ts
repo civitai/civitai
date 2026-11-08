@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 
 type Row = Record<string, unknown>;
 
@@ -31,7 +32,18 @@ const { mockOnCreated, mockOnRemoved } = vi.hoisted(() => ({
   mockOnRemoved: vi.fn(async () => undefined),
 }));
 
-vi.mock('~/server/db/db-lag-helpers', () => ({ getDbWithoutLag: async () => dbMock.dbWrite }));
+vi.mock('~/server/db/db-lag-helpers', () => ({
+  getDbWithoutLag: async () => dbMock.dbWrite,
+  getKyselyWithoutLag: async () => ({}),
+}));
+// The image reaction's existence check is a Kysely read: answered from the same table.
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getImageReactionId: async (_db: unknown, key: Row) => {
+    const table = (dbMock.dbWrite as unknown as Record<string, { rows: Row[] }>).imageReaction;
+    return table.rows.find(matches(key)) ? { id: 1 } : undefined;
+  },
+}));
 vi.mock('~/server/metrics', () => {
   const metrics = { queueUpdate: vi.fn(async () => undefined) };
   return {

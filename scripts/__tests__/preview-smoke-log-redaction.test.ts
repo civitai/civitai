@@ -8,13 +8,8 @@ import { PREVIEW_SESSION_MAX_AGE_S } from '../../tests/preview-fixtures';
 import { maskSecret, redactSecrets, wrapWrite } from '../../tests/preview-redact';
 
 /**
- * The preview smoke log printed a live session token. The print was Playwright's own:
- * a failed `route.fetch()` / APIRequestContext call carries a "Call log" listing the
- * request headers, and the list reporter writes it verbatim. playwright.preview.config.ts
- * now wraps stdout/stderr (tests/preview-redact.ts).
- *
  * Two tiers:
- *  - `redactSecrets` on literal strings, including the exact line shape the leak had;
+ *  - `redactSecrets` on literal strings, including Playwright's call-log header line shape;
  *  - END TO END: the real Playwright CLI, invoked the way the smoke task invokes it
  *    (`--reporter=list,json`, which REPLACES the config's reporters), running a probe
  *    that fails a request with a fake credential in its cookie header. Run once through
@@ -206,8 +201,6 @@ describe('wrapWrite', () => {
 
 describe('minted preview session lifetime', () => {
   // Bounded to a smoke run, so a copy of the cookie that escapes masking expires quickly.
-  // The suite takes minutes (one run: 66 tests in ~3 min) and the CI run that hosts it is
-  // capped at 2h, so nothing in the suite can use the cookie past this.
   it('is pinned at 2 hours', () => {
     expect(PREVIEW_SESSION_MAX_AGE_S).toBe(2 * 60 * 60);
   });

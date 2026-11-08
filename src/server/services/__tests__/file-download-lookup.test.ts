@@ -6,6 +6,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // which this repo's eslint config forbids.
 import type * as FileService from '../file.service';
 import type * as ModelHelpers from '~/server/common/model-helpers';
+import type * as HotReads5Reads from '~/server/services/hot-reads-5.reads';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 
 // file.service.ts imports `@prisma/client` (type-only) plus a wide graph that
 // calls Prisma runtime helpers at module load. Mirror the house stub pattern
@@ -53,8 +56,25 @@ vi.mock('@prisma/client', () => {
   );
 });
 
-const modelVersionFindFirst = dbMock.dbRead.modelVersion.findFirst;
-const modelFileFindMany = dbMock.dbRead.modelFile.findMany;
+// The version and its model, in the Prisma shape the Kysely reader returns (`null` for no row).
+// Its rows, against a real database, are pinned in hot-reads-5.kysely-parity.test.ts.
+const { versionRead } = vi.hoisted(() => ({ versionRead: vi.fn() }));
+vi.mock('~/server/services/hot-reads-5.reads', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5Reads>()),
+  readModelVersionForFileViaKysely: versionRead,
+}));
+
+// The version's files are read through Kysely (`listDownloadFiles`, which takes the client and the
+// filters the Prisma `where` was built from); its rows are pinned against a real database in
+// hot-reads-6.kysely-parity.test.ts.
+const { listDownloadFilesMock } = vi.hoisted(() => ({ listDownloadFilesMock: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  listDownloadFiles: listDownloadFilesMock,
+}));
+/** The filters of the `n`th files read. */
+const filesFilter = (n = 0) => listDownloadFilesMock.mock.calls[n][1];
+
 const modelFileFindFirst = dbMock.dbRead.modelFile.findFirst;
 const recommendedResourceFindFirst = dbMock.dbRead.recommendedResource.findFirst;
 
@@ -149,8 +169,8 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
   }, 60000);
 
   beforeEach(() => {
-    modelVersionFindFirst.mockReset();
-    modelFileFindMany.mockReset();
+    versionRead.mockReset();
+    listDownloadFilesMock.mockReset();
     modelFileFindFirst.mockReset();
     recommendedResourceFindFirst.mockReset();
     hasEntityAccessMock.mockReset();
@@ -159,27 +179,27 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
 
     hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
     getPaidAccessMock.mockResolvedValue({});
-    modelFileFindMany.mockResolvedValue([aFile]);
+    listDownloadFilesMock.mockResolvedValue([aFile]);
   });
 
   // --- Fix #4: orphaned ModelVersion.model -------------------------------
-  it('passes a `model: { is: {} }` existence filter so orphaned-model versions are dropped at the DB', async () => {
-    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+  // The version read's inner join drops a version whose model row was hard-deleted (an orphaned
+  // foreign key); that join, against a real database, is pinned in hot-reads-5.kysely-parity.test.ts.
+  it('reads the version once, by its id, through Kysely on the replica', async () => {
+    const { kyselyRead } = await import('~/server/db/kyselyDb');
+    versionRead.mockResolvedValue(publishedModelVersion());
     resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
     await getFileForModelVersion({ modelVersionId: 1, noAuth: true });
 
-    expect(modelVersionFindFirst).toHaveBeenCalledTimes(1);
-    const args = modelVersionFindFirst.mock.calls[0][0];
-    // The load-bearing fix: without `model: { is: {} }`, a version whose `model`
-    // FK points at a deleted Model makes Prisma throw "Inconsistent query result:
-    // Field model is required to return data, got null" → 500.
-    expect(args.where.model).toEqual({ is: {} });
+    expect(versionRead.mock.calls).toEqual([[kyselyRead, 1]]);
+    expect(versionRead.mock.calls[0][0]).toBe(kyselyRead);
+    expect(dbMock.dbRead.modelVersion.findFirst).not.toHaveBeenCalled();
   });
 
-  it('returns not-found (→404) when the orphan filter drops the row (findFirst → null)', async () => {
-    // Post-fix DB behaviour: an orphan-model version is filtered out, so findFirst
-    // returns null instead of throwing. The handler maps that to `not-found`.
-    modelVersionFindFirst.mockResolvedValue(null);
+  it('returns not-found (→404) when the version read finds no row, as for an orphan', async () => {
+    // An orphan-model version comes back as no row, not a throw. The handler maps that to
+    // `not-found`.
+    versionRead.mockResolvedValue(null);
     const result = await getFileForModelVersion({ modelVersionId: 1, noAuth: true });
 
     expect(result.status).toBe('not-found');
@@ -187,7 +207,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
 
   // --- Fix #3: genuinely-unresolvable delivery URL -----------------------
   it('returns resolve-failed (→404 no-store), NOT error (→500), when the delivery URL cannot be resolved', async () => {
-    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    versionRead.mockResolvedValue(publishedModelVersion());
     // Both storage-resolver and delivery-worker rejected → resolveDownloadUrl throws.
     resolveDownloadUrlMock.mockRejectedValue(new Error('Delivery worker error: Not Found'));
     // Authenticated owner-or-mod so the request passes the auth gate and reaches
@@ -210,7 +230,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
   });
 
   it('returns success with the resolved url on the happy path', async () => {
-    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    versionRead.mockResolvedValue(publishedModelVersion());
     resolveDownloadUrlMock.mockResolvedValue({
       url: 'https://cdn.example.com/signed',
       urlExpiryDate: new Date(),
@@ -226,7 +246,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
   });
 
   it('never picks a replaced file when resolving the primary file', async () => {
-    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    versionRead.mockResolvedValue(publishedModelVersion());
     resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
 
     await getFileForModelVersion({
@@ -235,11 +255,11 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
       user: { id: 1, isModerator: true },
     });
 
-    expect(modelFileFindMany.mock.calls[0][0].where).toMatchObject({ replacedAt: null });
+    expect(filesFilter()).toMatchObject({ notReplaced: true });
   });
 
   it('never picks a replaced file when resolving by type', async () => {
-    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    versionRead.mockResolvedValue(publishedModelVersion());
     resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
 
     await getFileForModelVersion({
@@ -249,11 +269,11 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
       user: { id: 1, isModerator: true },
     });
 
-    expect(modelFileFindMany.mock.calls[0][0].where).toMatchObject({ replacedAt: null });
+    expect(filesFilter()).toMatchObject({ notReplaced: true });
   });
 
   it('still serves a replaced file asked for by its id', async () => {
-    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    versionRead.mockResolvedValue(publishedModelVersion());
     resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
 
     await getFileForModelVersion({
@@ -263,7 +283,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
       user: { id: 1, isModerator: true },
     });
 
-    expect(modelFileFindMany.mock.calls[0][0].where).not.toHaveProperty('replacedAt');
+    expect(filesFilter().notReplaced).toBeUndefined();
   });
 
   // --- Access denial must not masquerade as "you need to log in" ----------
@@ -271,7 +291,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
   // answers with a redirect to /login. Already having a session, they were bounced straight back to
   // the page they came from — the download button appeared to do nothing at all.
   it('returns no-access (→403), NOT unauthorized (→/login), for a signed-in user without a grant', async () => {
-    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    versionRead.mockResolvedValue(publishedModelVersion());
     hasEntityAccessMock.mockResolvedValue([{ hasAccess: false, permissions: -1 }]);
 
     const result = await getFileForModelVersion({
@@ -284,7 +304,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
   });
 
   it('still returns unauthorized (→/login) when there is no session at all', async () => {
-    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    versionRead.mockResolvedValue(publishedModelVersion());
     hasEntityAccessMock.mockResolvedValue([{ hasAccess: false, permissions: -1 }]);
 
     const result = await getFileForModelVersion({ modelVersionId: 1 });
@@ -294,7 +314,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
   });
 
   it('routes an active paid gate to early-access (→purchase) rather than a bare denial', async () => {
-    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    versionRead.mockResolvedValue(publishedModelVersion());
     const endsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     getPaidAccessMock.mockResolvedValue({ 1: { endsAt, terms: { download: { price: 100 } } } });
     // Has an access record, but not the EarlyAccessDownload bit (e.g. paid for generation only).
@@ -315,7 +335,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
   // is non-zero and reads as "already holds the download grant". The purchase route was skipped and
   // the user got a dead-end 403 instead of the buy CTA.
   it('routes a user with no grant at all to early-access, not a bare denial', async () => {
-    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    versionRead.mockResolvedValue(publishedModelVersion());
     const endsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     getPaidAccessMock.mockResolvedValue({ 1: { endsAt, terms: { download: { price: 100 } } } });
     hasEntityAccessMock.mockResolvedValue([{ hasAccess: false, permissions: -1 }]);
@@ -329,7 +349,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
   });
 
   it('lets an actual early-access buyer through the gate', async () => {
-    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    versionRead.mockResolvedValue(publishedModelVersion());
     const endsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     getPaidAccessMock.mockResolvedValue({ 1: { endsAt, terms: { download: { price: 100 } } } });
     hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 2 }]);
@@ -349,7 +369,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
   // file while still hiding it from everyone else.
   describe('unpublished models', () => {
     beforeEach(() => {
-      modelVersionFindFirst.mockResolvedValue(unpublishedModelVersion());
+      versionRead.mockResolvedValue(unpublishedModelVersion());
       resolveDownloadUrlMock.mockResolvedValue({
         url: 'https://cdn.example.com/signed',
         urlExpiryDate: new Date(),
@@ -390,7 +410,7 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
     });
 
     it('still hides a deleted model from its own owner', async () => {
-      modelVersionFindFirst.mockResolvedValue(
+      versionRead.mockResolvedValue(
         unpublishedModelVersion({
           model: { ...publishedModelVersion().model, status: 'Deleted' },
         })
@@ -476,8 +496,8 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
     (where.visibility === undefined || f.visibility === where.visibility);
 
   beforeEach(() => {
-    modelVersionFindFirst.mockReset();
-    modelFileFindMany.mockReset();
+    versionRead.mockReset();
+    listDownloadFilesMock.mockReset();
     modelFileFindFirst.mockReset();
     recommendedResourceFindFirst.mockReset();
     hasEntityAccessMock.mockReset();
@@ -486,22 +506,32 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
 
     hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
     getPaidAccessMock.mockResolvedValue({});
-    modelVersionFindFirst.mockImplementation(async () =>
-      publishedModelVersion({ id: HOST_VERSION_ID })
-    );
+    versionRead.mockImplementation(async () => publishedModelVersion({ id: HOST_VERSION_ID }));
     resolveDownloadUrlMock.mockImplementation(async (_id: number, url: string) => ({
       url,
       urlExpiryDate: new Date(),
     }));
 
-    // Prisma stubs that ENFORCE the where clause — this is what makes a
+    // Stubs that ENFORCE the where clause — this is what makes a
     // mismatched (versionId, fileId) pair come back empty, exactly as in prod.
     modelFileFindFirst.mockImplementation(async ({ where }: any) => {
       const found = UNIVERSE.filter((f) => matches(f, where)).sort((a, b) => a.id - b.id);
       return found[0] ?? null;
     });
-    modelFileFindMany.mockImplementation(async ({ where }: any) =>
-      UNIVERSE.filter((f) => matches(f, where))
+    // The Kysely files read enforces the same filters, given as the inputs the Prisma `where` was
+    // built from.
+    listDownloadFilesMock.mockImplementation(
+      async (
+        _db: unknown,
+        filter: { modelVersionId: number; type?: string; publicOnly?: boolean }
+      ) =>
+        UNIVERSE.filter((f) =>
+          matches(f, {
+            modelVersionId: filter.modelVersionId,
+            type: filter.type,
+            visibility: filter.publicOnly ? 'Public' : undefined,
+          })
+        )
     );
     // The host version links the VAE version as a component.
     recommendedResourceFindFirst.mockImplementation(async ({ where }: any) =>
@@ -601,8 +631,7 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
     // The pin is applied in memory so the file's siblings come back too (they decide whether its
     // download name needs a variant suffix), which leaves the version — the boundary that matters —
     // as the only thing keeping another version's file out of the result set.
-    const where = modelFileFindMany.mock.calls[0][0].where;
-    expect(where).toMatchObject({ modelVersionId: 4242 });
+    expect(filesFilter()).toMatchObject({ modelVersionId: 4242 });
   });
 
   it('a pinned URL serves the file that was pinned, not the first on the version', async () => {
@@ -640,16 +669,16 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
   }, 60000);
 
   beforeEach(() => {
-    modelVersionFindFirst.mockReset();
-    modelFileFindMany.mockReset();
+    versionRead.mockReset();
+    listDownloadFilesMock.mockReset();
     hasEntityAccessMock.mockReset();
     resolveDownloadUrlMock.mockReset();
     getPaidAccessMock.mockReset();
 
     hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
     getPaidAccessMock.mockResolvedValue({});
-    modelFileFindMany.mockResolvedValue([aFile]);
-    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    listDownloadFilesMock.mockResolvedValue([aFile]);
+    versionRead.mockResolvedValue(publishedModelVersion());
     resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
   });
 
@@ -706,5 +735,183 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
     // is exactly the distinction the comment above claims this assertion makes.
     expect(optionsArg()).toStrictEqual({ direct: undefined, ...ATTRIBUTION });
     expect(optionsArg()?.direct).not.toBe(true);
+  });
+});
+
+// The API and search index advertise each file's name against every file on the version. The
+// download route must name against the same set, not only the files the request could pick from,
+// or two files that share an uploaded name download under one name and overwrite each other.
+describe('getFileForModelVersion — names against every file on the version', () => {
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
+  let getDownloadFilename: typeof FileService.getDownloadFilename;
+  beforeAll(async () => {
+    ({ getFileForModelVersion, getDownloadFilename } = await import('../file.service'));
+  }, 60000);
+
+  const version = publishedModelVersion();
+  const file = (id: number, type: string, visibility: string) => ({
+    id,
+    url: `https://abcd1234.r2.cloudflarestorage.com/civitai/files/${id}.safetensors`,
+    name: 'shared.safetensors',
+    overrideName: null as string | null,
+    type,
+    visibility,
+    metadata: { format: 'SafeTensor' },
+    hashes: [{ hash: `h${id}` }],
+  });
+  let versionFiles: ReturnType<typeof file>[] = [];
+
+  beforeEach(() => {
+    versionRead.mockReset();
+    listDownloadFilesMock.mockReset();
+    hasEntityAccessMock.mockReset();
+    resolveDownloadUrlMock.mockReset();
+    getPaidAccessMock.mockReset();
+
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
+    getPaidAccessMock.mockResolvedValue({});
+    versionRead.mockResolvedValue(version);
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+    // The Kysely files read, enforcing its filter the way the other describes here do.
+    listDownloadFilesMock.mockImplementation(
+      async (_db: unknown, filter: { type?: string; publicOnly?: boolean }) =>
+        versionFiles.filter(
+          (f) =>
+            (filter.type === undefined || f.type === filter.type) &&
+            (!filter.publicOnly || f.visibility === 'Public')
+        )
+    );
+  });
+
+  const ATTRIBUTION = { caller: 'download-route', actor: 'user' } as const;
+  const servedName = () => resolveDownloadUrlMock.mock.calls[0][2];
+  const advertisedName = (id: number) =>
+    getDownloadFilename({
+      model: { ...version.model, type: version.model.type as ModelType },
+      modelVersion: version,
+      file: versionFiles.find((f) => f.id === id)!,
+      versionFiles,
+    });
+
+  it('serves each ?type= download under the name the API gives that file', async () => {
+    versionFiles = [file(1, 'Model', 'Public'), file(2, 'VAE', 'Public')];
+    expect(advertisedName(1)).not.toBe(advertisedName(2));
+
+    for (const type of ['Model', 'VAE'] as const) {
+      await getFileForModelVersion({
+        modelVersionId: 1,
+        type,
+        user: { id: 1 },
+        attribution: ATTRIBUTION,
+      });
+    }
+
+    expect(resolveDownloadUrlMock.mock.calls.map((call) => call[2])).toEqual([
+      advertisedName(1),
+      advertisedName(2),
+    ]);
+  });
+
+  it.each([
+    ['the primary file', {}],
+    ['a pinned file id', { fileId: 1 }],
+  ])('names %s against private siblings the viewer cannot see', async (_label, pick) => {
+    versionFiles = [file(1, 'Model', 'Public'), file(2, 'Model', 'Private')];
+    expect(advertisedName(1)).not.toBe('shared.safetensors');
+
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      ...pick,
+      user: { id: 1 },
+      attribution: ATTRIBUTION,
+    });
+
+    expect(resolveDownloadUrlMock.mock.calls[0][0]).toBe(1);
+    expect(servedName()).toBe(advertisedName(1));
+  });
+
+  // Stored names reach the delivery path as they are, so they are made header-safe on read.
+  it('hands the delivery path a stored override name without an encoded line break', async () => {
+    versionFiles = [{ ...file(1, 'Model', 'Public'), overrideName: 'old%0D%0Aname.safetensors' }];
+
+    await getFileForModelVersion({ modelVersionId: 1, user: { id: 1 }, attribution: ATTRIBUTION });
+
+    expect(servedName()).toBe('old_0D_0Aname.safetensors');
+    expect(advertisedName(1)).toBe('old_0D_0Aname.safetensors');
+  });
+
+  it('cleans the uploaded name a LoRA keeps, and leaves an ordinary one byte-identical', () => {
+    const lora = { name: 'BB Bunny', type: 'LORA' as ModelType };
+    const named = (name: string) => {
+      const f = { ...file(1, 'Model', 'Public'), name };
+      return getDownloadFilename({
+        model: lora,
+        modelVersion: version,
+        file: f,
+        versionFiles: [f],
+      });
+    };
+
+    expect(named('bunny%0d%0a\u200e"x".safetensors')).toBe('bunny_0d_0a_x_.safetensors');
+    expect(named('AshleyGraves_Krea2_byKonan (v2) 100%.safetensors')).toBe(
+      'AshleyGraves_Krea2_byKonan (v2) 100%.safetensors'
+    );
+  });
+});
+
+describe('getFileForModelVersion — a file that failed its scan', () => {
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
+  beforeAll(async () => {
+    ({ getFileForModelVersion } = await import('../file.service'));
+  }, 60000);
+
+  beforeEach(() => {
+    versionRead.mockReset();
+    listDownloadFilesMock.mockReset();
+    hasEntityAccessMock.mockReset();
+    resolveDownloadUrlMock.mockReset();
+    getPaidAccessMock.mockReset();
+
+    versionRead.mockResolvedValue(publishedModelVersion());
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
+    getPaidAccessMock.mockResolvedValue({});
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+  });
+
+  const statusFor = async (
+    scan: { pickleScanResult: string; virusScanResult: string },
+    user: { id: number; isModerator?: boolean }
+  ) => {
+    listDownloadFilesMock.mockResolvedValue([{ ...aFile, ...scan }]);
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user,
+      attribution: { caller: 'download-route', actor: 'user' },
+    });
+    return result.status;
+  };
+
+  const owner = { id: 999 };
+  const member = { id: 5 };
+  const moderator = { id: 6, isModerator: true };
+
+  it('refuses a pickle or virus Danger file to members and the owner, not to moderators', async () => {
+    for (const scan of [
+      { pickleScanResult: 'Danger', virusScanResult: 'Success' },
+      { pickleScanResult: 'Success', virusScanResult: 'Danger' },
+    ]) {
+      expect([
+        await statusFor(scan, member),
+        await statusFor(scan, owner),
+        await statusFor(scan, moderator),
+      ]).toEqual(['failed-scan', 'failed-scan', 'success']);
+    }
+  });
+
+  it('serves a file whose scan errored or is still pending', async () => {
+    expect([
+      await statusFor({ pickleScanResult: 'Error', virusScanResult: 'Success' }, member),
+      await statusFor({ pickleScanResult: 'Pending', virusScanResult: 'Pending' }, member),
+    ]).toEqual(['success', 'success']);
   });
 });

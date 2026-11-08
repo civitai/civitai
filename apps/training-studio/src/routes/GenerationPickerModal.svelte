@@ -106,7 +106,6 @@
             : 'border-dark-4 hover:border-dark-2'}"
         >
           {#if media === 'video'}
-            <!-- svelte-ignore a11y_media_has_caption -->
             <video
               src={item.url}
               muted

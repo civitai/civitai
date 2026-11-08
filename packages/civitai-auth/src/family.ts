@@ -3,6 +3,9 @@ import type { SessionClaims } from './types';
 /** No session outlives this, counted from the sign-in it descends from (`iat0`). */
 export const SESSION_LINEAGE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
+/** An impersonation session ends this long after it starts, however often it is refreshed. */
+export const IMPERSONATION_MAX_AGE_MS = 60 * 60 * 1000;
+
 export type FamilyClaims = Pick<SessionClaims, 'sid' | 'iat0' | 'impersonatedBy' | 'impExp'>;
 
 /** A root session is its own family; every descendant carries the root's id as `sid`. */

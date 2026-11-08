@@ -1764,7 +1764,6 @@ async function getViewerPendingSubmissions({
   /** The viewer own band. Marked on each row, never filtered on. */
   viewerLevels: number;
 }) {
-  // Through Kysely, on the replica.
   const pendingInput = {
     surface: SURFACE,
     targetType: TARGET_TYPE,

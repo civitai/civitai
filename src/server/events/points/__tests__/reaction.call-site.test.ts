@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as Award from '~/server/events/points/award';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 
 // `toggleReaction` is where an Image or Article reaction is created and deleted. What this pins:
 // the create awards, deleting the actor's last reaction removes, and a failing points call never
@@ -20,7 +21,17 @@ vi.mock('~/server/events/points/award', async (importOriginal) => ({
   isHattedEntityOnceLoaded: async (entityType: string, entityId: number) =>
     hatted.has(`${entityType}:${entityId}`),
 }));
-vi.mock('~/server/db/db-lag-helpers', () => ({ getDbWithoutLag: async () => dbMock.dbWrite }));
+// The image reaction's existence check, a Kysely read on the client the lag decision picks: the
+// tests answer it directly, so the client is a stand-in.
+const { imageReactionId } = vi.hoisted(() => ({ imageReactionId: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getImageReactionId: imageReactionId,
+}));
+vi.mock('~/server/db/db-lag-helpers', () => ({
+  getDbWithoutLag: async () => dbMock.dbWrite,
+  getKyselyWithoutLag: async () => ({}),
+}));
 vi.mock('~/server/services/block-check.service', () => ({
   throwIfBlockedByEntityOwner: vi.fn(async () => undefined),
 }));
@@ -45,26 +56,53 @@ beforeEach(() => {
 
 describe('toggleReaction event points', () => {
   it('awards the reaction it creates', async () => {
-    db.imageReaction.findFirst.mockResolvedValue(null);
+    imageReactionId.mockResolvedValue(undefined);
 
     expect(await toggleReaction(like)).toBe('created');
     await settle();
 
     expect(awardEventPoints).toHaveBeenCalledTimes(1);
-    expect(awardEventPoints).toHaveBeenCalledWith([
-      {
-        type: 'reaction',
-        actorId: USER,
-        entityType: 'Image',
-        entityId: 7,
-        time: expect.any(Date),
-        sourceId: `ImageReaction:7:${USER}`,
-      },
-    ]);
+    expect(awardEventPoints).toHaveBeenCalledWith(
+      [
+        {
+          type: 'reaction',
+          actorId: USER,
+          entityType: 'Image',
+          entityId: 7,
+          time: expect.any(Date),
+          sourceId: `ImageReaction:7:${USER}`,
+        },
+      ],
+      expect.any(Function)
+    );
+  });
+
+  it('hands onEventPoints the grants the award reports, before it finishes', async () => {
+    imageReactionId.mockResolvedValue(undefined);
+    let finish: () => void = () => undefined;
+    awardEventPoints.mockImplementationOnce(async (_actions, onGrants) => {
+      (onGrants as (g: unknown[]) => void)([{ event: 'e', team: 'Yellow', points: 5 }]);
+      // The ledger insert is still running.
+      await new Promise<void>((resolve) => (finish = resolve));
+      return undefined;
+    });
+    let grants: Promise<unknown> | undefined;
+    expect(await toggleReaction({ ...like, onEventPoints: (g) => (grants = g) })).toBe('created');
+    await expect(grants).resolves.toEqual([{ event: 'e', team: 'Yellow', points: 5 }]);
+    finish();
+  });
+
+  it('resolves onEventPoints with none for an image without a hat', async () => {
+    imageReactionId.mockResolvedValue(undefined);
+    hatted.clear();
+    let grants: Promise<unknown> | undefined;
+    await toggleReaction({ ...like, onEventPoints: (g) => (grants = g) });
+    await expect(grants).resolves.toEqual([]);
+    expect(awardEventPoints).not.toHaveBeenCalled();
   });
 
   it("removes when the deleted reaction was the actor's last on the image", async () => {
-    db.imageReaction.findFirst.mockResolvedValue({ id: 1 });
+    imageReactionId.mockResolvedValue({ id: 1 });
     db.imageReaction.deleteMany.mockResolvedValue({ count: 1 });
     db.imageReaction.count.mockResolvedValue(0);
 
@@ -78,7 +116,7 @@ describe('toggleReaction event points', () => {
   });
 
   it('sends nothing for a delete that matched no row', async () => {
-    db.imageReaction.findFirst.mockResolvedValue({ id: 1 });
+    imageReactionId.mockResolvedValue({ id: 1 });
     db.imageReaction.deleteMany.mockResolvedValue({ count: 0 });
 
     expect(await toggleReaction(like)).toBe('noop');
@@ -89,7 +127,7 @@ describe('toggleReaction event points', () => {
   });
 
   it('is not failed by a failing points call', async () => {
-    db.imageReaction.findFirst.mockResolvedValue(null);
+    imageReactionId.mockResolvedValue(undefined);
     awardEventPoints.mockRejectedValueOnce(new Error('redis down'));
 
     await expect(toggleReaction(like)).resolves.toBe('created');
@@ -100,7 +138,7 @@ describe('toggleReaction event points', () => {
 
 describe('the reaction does not wait on points', () => {
   it('resolves while the points call is still pending', async () => {
-    db.imageReaction.findFirst.mockResolvedValue(null);
+    imageReactionId.mockResolvedValue(undefined);
     awardEventPoints.mockReturnValueOnce(new Promise(() => undefined));
 
     expect(await raceSettle(toggleReaction(like))).toBe('done');

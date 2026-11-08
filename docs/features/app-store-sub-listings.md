@@ -1,7 +1,7 @@
 # App Store sub-listings
 
 A parent app can place individual items it contains (for example, one generator inside
-`custom-generators`) into the `/apps` store as their own cards, badged "in ‹Parent›". The
+`custom-generators`) into the store (`/apps/store`) as their own cards, badged "in ‹Parent›". The
 item's author publishes it from inside the app; a moderator approves it. An off-site parent's
 platform instead syncs its catalog server-to-server ([Catalog sync](#catalog-sync-off-site-parents)).
 
@@ -161,7 +161,7 @@ rotate the client secret.
 ## Store read path
 
 `listAvailableListings` takes `includeSubListings`. `appListings.listAvailable` sets it only when
-the caller opts in (`input.includeSubListings`, sent by the `/apps` store grid alone) AND the
+the caller opts in (`input.includeSubListings`, sent by the `/apps/store` grid alone) AND the
 `app-store-sub-listings` flag is on for the viewer, so other callers (the related-apps rail on a
 detail page) only ever get app cards. With it, the keyset runs over the union of listings
 and approved children. Both arms apply `storeEligibilityWhere` to the **parent** row, so a child

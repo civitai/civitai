@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as PlacementModeration from '~/server/services/placement-moderation.service';
 import type * as PlacementSpaceService from '~/server/services/placement-space.service';
 import type { ResolvedPlacementSpace } from '~/server/services/placement-space.service';
@@ -19,6 +20,15 @@ const assertCanPlace = vi.fn();
 // placement-reads.kysely-parity.test.ts.
 const { displayCount } = vi.hoisted(() => ({ displayCount: vi.fn() }));
 vi.mock('@civitai/db-queries/placement', () => ({ countPlacements: displayCount }));
+// `getPlacementConfig`'s KeyValue read, through Kysely: no stored row, so the compiled defaults
+// apply.
+const { placementConfigRow } = vi.hoisted(() => ({
+  placementConfigRow: vi.fn(async () => undefined),
+}));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: placementConfigRow,
+}));
 // `reservedFreeSlots` is deliberately NOT stubbed: it is the predicate the claim
 // decides on, and a double would let the count-under-lock be tested against a
 // shape the real query does not have.
@@ -123,6 +133,21 @@ describe('createFreePlacement', () => {
     // query is `expiresAt <= now()`, which NULL never satisfies.
     expect(written.expiresAt).toBeInstanceOf(Date);
     expect(written.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(written).not.toHaveProperty('track');
+  });
+
+  it('stores a moving sticker’s track beside its data', async () => {
+    const track = { v: 1, ms: 100, x: [[0, 0.2]], y: [[0, 0.5]], s: [[0, 0.1]], r: [[0, 0]] };
+    await createFreePlacement({
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: TARGET,
+      placerId: PLACER,
+      data: { cosmeticId: 5 },
+      track,
+    });
+
+    expect(placementCreate.mock.calls[0][0].data.track).toEqual(track);
   });
 
   // The owner is taken from the space this function resolved, from the target it
@@ -580,9 +605,13 @@ describe('the advisory locks have exactly one call site', () => {
   // transaction, for a decision's final update. The only lock in either transaction.
   // text-scan/actions/model-rules-hold takes one per model (two-arg hashtext('model-rules-hold:Model')
   // form) around the open-hold check and the hold write. The only lock in its transaction.
+  // access-token takes one per resource (classed two-arg form, 0x41544b) around the active-token
+  // count-then-insert, article saves' shared-text reads and every go-live revoke. Always before the
+  // Article row lock; the ingestion recompute takes article.service.ts's bare id lock first, then it.
   // apps/storage-migration-run takes one per app block (0x41534d01, hashtext of the id) around the
   // approve gate's open-run check and the plan reservation. The only lock in its transaction.
   const ALLOWED = [
+    'services/access-token.service.ts',
     'services/apps/storage-migration-run.service.ts',
     'services/article.service.ts',
     'services/creator-announcement.service.ts',
@@ -592,6 +621,7 @@ describe('the advisory locks have exactly one call site', () => {
     'services/free-placement.service.ts',
     'services/game-frame-report.service.ts',
     'services/item-holder-lock.ts',
+    'services/model-version-gift.service.ts',
     'services/platform-feedback.service.ts',
     'services/scan-label-flag.service.ts',
     'services/storyline-placement.service.ts',

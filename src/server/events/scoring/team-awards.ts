@@ -9,9 +9,10 @@ type AwardEvent = {
   scoring?: Partial<EventScoring>;
 };
 
-// The awards a team holds by `until`. Every reader (live base, standings, winner, payout, chart)
-// goes through this one window: inside the event, and before `until`, as an action counts before
-// the cut. One naming a team the event does not have counts for nobody; the config test catches it.
+// The awards a team holds by `until`. The referee's live team base and per-hour chart and the
+// standings (whose first place is the winner) all read this one window: inside the event, and before
+// `until`, as an action counts before the cut. One naming a team the event does not have counts for
+// nobody; the config test catches it.
 export const teamAwardsBy = (
   event: AwardEvent,
   until: Date,

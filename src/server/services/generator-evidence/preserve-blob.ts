@@ -46,6 +46,8 @@ export type StoredEvidenceBlob = {
   }[];
   /** For an input: the outputs of the same workflow, which were made from it. */
   derivedOutputIds?: string[];
+  /** For an output: the orchestrator job that produced it. */
+  orchestratorJobId?: string;
 };
 
 export type EvidenceStore = {

@@ -1,7 +1,7 @@
-import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
+import type { CommentSectionInput } from '~/server/schema/commentv3.schema';
 import { trpc } from '~/utils/trpc';
 
-type ToggleLockCommentsProps = CommentConnectorInput & {
+type ToggleLockCommentsProps = CommentSectionInput & {
   children: ({
     isLoading,
     locked,
@@ -22,35 +22,26 @@ export function ToggleLockComments({
 }: ToggleLockCommentsProps) {
   const queryUtils = trpc.useUtils();
 
-  // Use dedicated getThreadDetails for thread metadata
-  const { data: threadMeta } = trpc.commentv2.getThreadDetails.useQuery({
-    entityId,
-    entityType,
-  });
+  const { data: lock } = trpc.commentv3.getSectionLock.useQuery({ entityId, entityType });
 
-  const { mutate, isPending: isLoading } = trpc.commentv2.toggleLockThread.useMutation({
+  const { mutate, isPending: isLoading } = trpc.commentv3.toggleSectionLock.useMutation({
     onMutate: async () => {
-      queryUtils.commentv2.getThreadDetails.setData({ entityId, entityType }, (old) => {
-        if (!old) return { id: -1, locked: true };
-        return { ...old, locked: !old.locked };
-      });
+      queryUtils.commentv3.getSectionLock.setData({ entityId, entityType }, (old) => ({
+        locked: !old?.locked,
+      }));
     },
     onSuccess: () => {
-      queryUtils.commentv2.getThreadDetails.invalidate({ entityId, entityType });
-      // A surface on the v3 comment suite reads its lock from there.
+      // The section read carries the lock too.
       void queryUtils.commentv3.invalidate();
       onSuccess?.();
     },
     onError: () => {
-      queryUtils.commentv2.getThreadDetails.setData({ entityType, entityId }, (old) => {
-        if (!old || old.id === -1) return null;
-        return { ...old, locked: !old.locked };
-      });
+      void queryUtils.commentv3.getSectionLock.invalidate({ entityId, entityType });
     },
   });
 
   const handleClick = () => mutate({ entityId, entityType });
-  const locked = threadMeta?.locked ?? false;
+  const locked = lock?.locked ?? false;
 
   return children({ toggle: handleClick, isLoading, locked });
 }

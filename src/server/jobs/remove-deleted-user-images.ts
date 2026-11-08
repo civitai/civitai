@@ -9,9 +9,9 @@ import {
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
+import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { createJob, getJobDate } from './job';
@@ -33,7 +33,7 @@ export const DEFAULT_IMAGES_PER_RUN = 0;
 
 /**
  * Two cursors because the populations move in opposite directions and one cursor cannot serve
- * both: a fresh self-deletion has to be purged within a tick or two, while the 74,828-account
+ * both: a fresh self-deletion has to be purged within a tick or two, while the account
  * backlog takes months. FRESH is an ascending high-water mark over accounts deleted after the
  * mark; BACKLOG is a descending cursor over everything below it. Collapsing them back into a
  * single cursor strands every new deletion behind the whole backlog — in *either* direction,
@@ -173,8 +173,7 @@ async function drainUser(
                 AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
             )
             AND NOT ${held}
-        ),
-        ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT id FROM doomed` }, markerView)}
+        )
         DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
       `;
     }
@@ -335,6 +334,9 @@ async function blockUserImages(
     };
   } catch (error) {
     return { deletedImages: 0, blockedImages, budgetUsed, drained: false, canceled: false, error };
+  } finally {
+    // Every exit: a later run skips the rows this one already blocked.
+    if (blockedImages) await refreshProfilePicturesForUsersLazy([userId]);
   }
 }
 

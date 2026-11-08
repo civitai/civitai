@@ -17,6 +17,7 @@ import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
 import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
 import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
 import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
+import { useReactionNudgeClass } from '~/components/HatTurf/reaction-nudge';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { ThemeIcon } from '@mantine/core';
@@ -30,7 +31,7 @@ export function ImageCard(props: Props) {
   );
 }
 
-function ImageCardContent({ data }: Props) {
+function ImageCardContent({ data, hideCreator }: Props) {
   const { getImages, ...context } = useImagesContext();
   const features = useFeatureFlags();
   // Called unconditionally: inside the `??` below it would sit after a
@@ -59,7 +60,7 @@ function ImageCardContent({ data }: Props) {
       }
       header={
         <div className="flex w-full items-start justify-between">
-          <div className="flex flex-col items-start gap-1">
+          <div className="flex flex-nowrap items-center gap-1">
             <HatTurfBadge imageId={data.id} />
             {data.type === 'video' && data.metadata && 'duration' in data.metadata && (
               <DurationBadge duration={data.metadata.duration ?? 0} className={cardClasses.chip} />
@@ -77,14 +78,16 @@ function ImageCardContent({ data }: Props) {
               the image at the same bottom edge, so an anchored panel lands on the
               reaction counts. */}
           {safe && <RemixedCardFlyout imageId={data.id} />}
-          <UserAvatarSimple
-            {...data.user}
-            classNames={{
-              avatar: cardClasses.creatorAvatar,
-              namePill: cardClasses.creatorPill,
-              namePillPlate: cardClasses.creatorPillPlate,
-            }}
-          />
+          {!hideCreator && (
+            <UserAvatarSimple
+              {...data.user}
+              classNames={{
+                avatar: cardClasses.creatorAvatar,
+                namePill: cardClasses.creatorPill,
+                namePillPlate: cardClasses.creatorPillPlate,
+              }}
+            />
+          )}
           <ImageCardActionRow data={data} />
         </div>
       )}
@@ -92,15 +95,20 @@ function ImageCardContent({ data }: Props) {
   );
 }
 
-function ImageCardActionRow({ data }: Props) {
+function ImageCardActionRow({ data }: { data: ImagesInfiniteModel }) {
   const features = useFeatureFlags();
+  const nudge = useReactionNudgeClass({
+    imageId: data.id,
+    ownerId: data.user.id,
+    reactions: data.reactions,
+  });
   const hasMetaButton = features.imageCardInfoButton && data.hasMeta;
 
   return (
     <div className={cardClasses.actions}>
       <div className={cardClasses.actionRow}>
         <Reactions
-          className={cardClasses.reactions}
+          className={clsx(cardClasses.reactions, nudge)}
           entityId={data.id}
           entityType="image"
           reactions={data.reactions}
@@ -143,4 +151,8 @@ function ImageCardActionRow({ data }: Props) {
   );
 }
 
-type Props = { data: ImagesInfiniteModel };
+type Props = {
+  data: ImagesInfiniteModel;
+  /** For a gallery of one creator's images (their own profile), where the name repeats on every card. */
+  hideCreator?: boolean;
+};

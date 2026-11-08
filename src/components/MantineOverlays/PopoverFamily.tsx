@@ -45,8 +45,9 @@ import { OverlayFastPathContext } from './overlayFastPathContext';
 /**
  * Popover, Menu and HoverCard: one Mantine `Popover` underneath, so one implementation, with a
  * `kind` for what differs (the Mantine components, which props count as "opened", and the extra
- * attributes each target adds). The trigger markup each kind emits while closed is a copy of what
- * Mantine 7.17.8 emits; `__tests__/overlay-fast-path.ssr.test.ts` pins it byte for byte.
+ * attributes each target adds). The trigger markup each kind emits while closed copies what Mantine
+ * emits; `__tests__/overlay-fast-path.ssr.test.ts` pins it byte for byte, so re-run it on a Mantine
+ * upgrade.
  */
 
 type AnyComponent = ComponentType<AnyProps>;

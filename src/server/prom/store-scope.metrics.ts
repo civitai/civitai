@@ -159,8 +159,14 @@ export type StoreScopeEntrypoint =
   // Starting a fork (`appListings.startFork`): the parent must be a store listing the viewer could
   // open, under this scope.
   | 'trpc-fork-start'
+  // The signed-in "My apps" home (`appListings.listMyApps`): a store read keyed on the
+  // viewer's own rows, gated like the grid.
+  | 'trpc-my-apps'
   | 'rest-list'
   | 'rest-detail'
+  // The registry adapter's catalog read (`src/server/registry-adapter`), a separate process that
+  // publishes the public catalog to registries. Anonymous by construction, like `rest-list`.
+  | 'registry-adapter'
   // 🔴 NOT A STORE SURFACE, and the first entry here that isn't. The post-detail
   // "Published with <app>" chip branches on this same scope to decide whether an
   // on-site app may be named on a public post page, so it belongs in the pair —

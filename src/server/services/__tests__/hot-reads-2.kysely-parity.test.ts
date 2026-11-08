@@ -8,6 +8,7 @@ import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
 import { readTaggedGolden } from '~/server/db/__tests__/tagged-golden';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 import {
   readModelWithDetailsViaKysely,
   type ModelWithDetails,
@@ -141,15 +142,15 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
 
     await prisma.$executeRawUnsafe(`
       INSERT INTO ${t('User')} (id, username, image, "createdAt", "deletedAt", muted, "bannedAt",
-        "excludeFromLeaderboards", "profilePictureId", settings, "publicSettings") VALUES
+        "excludeFromLeaderboards", flags, "profilePictureId", settings, "publicSettings") VALUES
         (${CREATOR}, 'creator', 'avatar.png', '2025-05-06 07:08:09.123', NULL, true,
-          '2026-01-02 03:04:05.678', true, ${PICTURE}, '{"creatorShop": {"enabled": true}}',
-          '{"showcase": [1, 2]}'),
-        (${BARE}, 'bare', NULL, '2024-03-04 05:06:07.891', NULL, false, NULL, false, NULL, NULL, NULL),
-        (${NAMELESS}, NULL, NULL, '2024-03-05 05:06:07.891', NULL, false, NULL, false, NULL, '{}', '{}'),
+          '2026-01-02 03:04:05.678', true, ${UserFlag.ExcludeFromEventPoints}, ${PICTURE},
+          '{"creatorShop": {"enabled": true}}', '{"showcase": [1, 2]}'),
+        (${BARE}, 'bare', NULL, '2024-03-04 05:06:07.891', NULL, false, NULL, false, 0, NULL, NULL, NULL),
+        (${NAMELESS}, NULL, NULL, '2024-03-05 05:06:07.891', NULL, false, NULL, false, 0, NULL, '{}', '{}'),
         (${DELETED}, 'gone', NULL, '2024-03-06 05:06:07.891', '2026-02-03 04:05:06.789', false,
-          NULL, false, NULL, '{}', '{}'),
-        (${SYSTEM}, 'civitai', NULL, '2020-01-01 00:00:00.000', NULL, false, NULL, false, NULL,
+          NULL, false, 0, NULL, '{}', '{}'),
+        (${SYSTEM}, 'civitai', NULL, '2020-01-01 00:00:00.000', NULL, false, NULL, false, 0, NULL,
           '{}', '{}')
     `);
     await prisma.$executeRawUnsafe(`

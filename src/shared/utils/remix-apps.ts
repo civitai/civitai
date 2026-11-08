@@ -7,7 +7,7 @@ import { getEngineRefusal, getRemixTier, type RemixSourceImage } from '~/shared/
  * the apps the server will run.
  */
 export function resolveRemixAppEngine(
-  app: RemixAppDefinition,
+  app: Pick<RemixAppDefinition, 'name' | 'engine'>,
   image: RemixSourceImage,
   viewer: { isGreen: boolean; showNsfw: boolean }
 ): { tier: RemixTier; engine: RemixAppEngine } | { refusal: string } {

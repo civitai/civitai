@@ -26,6 +26,7 @@ import {
 import { drainEventPointsPush, markEventPointsDirty } from '~/server/events/points/push';
 import type { EventPointType } from '~/server/events/points/types';
 import { sysRedis } from '~/server/redis/client';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { loadTeamAwards } from '~/server/events/scoring/team-awards';
 import type { TeamAward } from '~/server/events/base.event';
@@ -179,7 +180,7 @@ export function refereeQueryParams(
 
 const MAX_INT32 = 2147483647;
 
-// Who must not earn or give points. Hidden (banned, deleted, excluded from leaderboards): looked up
+// Who must not earn or give points. Hidden (banned, deleted, excluded from event points): looked up
 // in Postgres among the people the recomputed rows involve. New accounts: every id from the first
 // account registered inside the new-account window, since ids are assigned in registration order.
 // A threshold, not a list: a month of signups is ~250k ids, past what fits in a query's URL.
@@ -203,7 +204,7 @@ async function restrictedUsers(event: RefereeEvent, window: Window) {
     const rows = await dbRead.$queryRaw<{ id: number }[]>`
       SELECT id FROM "User"
       WHERE id = ANY(${part}::int[])
-        AND ("bannedAt" IS NOT NULL OR "deletedAt" IS NOT NULL OR "excludeFromLeaderboards")
+        AND ("bannedAt" IS NOT NULL OR "deletedAt" IS NOT NULL OR (flags & ${UserFlag.ExcludeFromEventPoints}::int) <> 0)
     `;
     hidden.push(...rows.map((r) => r.id));
   }
@@ -352,13 +353,10 @@ export function teamHoursByDay(
   return days;
 }
 
-async function writeTeamHours(
-  event: RefereeEvent,
-  window: Window,
-  rows: RefereeRow[],
-  awards: readonly TeamAward[]
-) {
-  const days = teamHoursByDay(window, rows, awards);
+async function writeTeamHours(event: RefereeEvent, window: Window, rows: RefereeRow[]) {
+  // Points earned by play only. Team awards (a Crucible's lump sum) count in totals and standings,
+  // but one hour of hundreds of thousands would flatten every other hour of the chart.
+  const days = teamHoursByDay(window, rows);
   await sysRedis.hSet(eventSeasonKeys(event.name, 'live').teamHours, {
     ...Object.fromEntries([...days].map(([day, teams]) => [day, JSON.stringify(teams)])),
     [TEAM_HOURS_CUT_FIELD]: window.cut.toISOString(),
@@ -451,7 +449,7 @@ export async function runEventPointsReferee(
   }
   // Feeds only the chart: a failed write must not fail a settle that has already landed.
   if (season === 'live')
-    await writeTeamHours(event, window, rows, awards).catch((error) =>
+    await writeTeamHours(event, window, rows).catch((error) =>
       logSysRedisFailOpen('write-degraded', 'writeTeamHours', error, { event: event.name })
     );
   return {

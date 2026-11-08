@@ -4,6 +4,7 @@ import type * as Push from '~/server/events/points/push';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 /**
  * Team points per accepted crucible entrant: the hook that grants and revokes against real Postgres
@@ -87,7 +88,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (
       id int PRIMARY KEY, "bannedAt" timestamptz, "deletedAt" timestamptz,
       "createdAt" timestamptz DEFAULT '2020-01-01', meta jsonb,
-      "excludeFromLeaderboards" boolean DEFAULT false
+      flags int NOT NULL DEFAULT 0
     );
     CREATE TABLE "CreatorMilestone" (key text PRIMARY KEY, threshold numeric);
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz);
@@ -248,8 +249,8 @@ describe('team points for accepted crucible entrants', () => {
       `UPDATE "User" SET "deletedAt" = now() WHERE id = ${BLUE}`,
     ],
     [
-      'its entrant is excluded from leaderboards',
-      `UPDATE "User" SET "excludeFromLeaderboards" = true WHERE id = ${BLUE}`,
+      'its entrant is excluded from event points',
+      `UPDATE "User" SET flags = ${UserFlag.ExcludeFromEventPoints} WHERE id = ${BLUE}`,
     ],
   ])('stops counting an entry at the next settle once %s', async (_, change) => {
     await acceptCrucibleEntry(await enter(1));
@@ -259,7 +260,7 @@ describe('team points for accepted crucible entrants', () => {
 
     expect(await settled()).toBe(0);
     await db.query(
-      `UPDATE "User" SET "bannedAt" = NULL, "deletedAt" = NULL, "excludeFromLeaderboards" = false
+      `UPDATE "User" SET "bannedAt" = NULL, "deletedAt" = NULL, flags = 0
        WHERE id = ${BLUE}`
     );
   });

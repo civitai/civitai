@@ -231,6 +231,14 @@ describe('createAuthVerifier — 90-day sign-in limit', () => {
     expect(await verifierAt(T0 + 4 * 60 * 60 * 1000).verifyToken(token)).toBeNull();
   });
 
+  // Deliberate: every impersonation is minted with impExp, so one without it predates the rule and
+  // is refused. Deploying this ends every impersonation open at the time, once.
+  it('rejects an impersonation token without impExp', async () => {
+    const token = await mint({ iat0: T0, impersonatedBy: 100 });
+    expect(await verifierAt(T0 + 60 * 1000).verifyToken(token)).toBeNull();
+    expect(await verifierAt(T0 + 60 * 1000).verifyToken(await mint({ iat0: T0 }))).not.toBeNull();
+  });
+
   it('accepts a token without iat0 unless required', async () => {
     const token = await mint({});
     expect(await verifierAt(T0 + 365 * DAY).verifyToken(token)).not.toBeNull();

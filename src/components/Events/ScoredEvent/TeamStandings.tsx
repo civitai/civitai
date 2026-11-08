@@ -1,5 +1,5 @@
 import { Group, Paper, Progress, SegmentedControl, Stack, Text, ThemeIcon } from '@mantine/core';
-import { IconChartLine, IconFlame, IconTrophy } from '@tabler/icons-react';
+import { IconChartLine, IconFlame, IconMapPin, IconTrophy } from '@tabler/icons-react';
 import type { ChartOptions } from 'chart.js';
 import {
   Chart as ChartJS,
@@ -349,6 +349,61 @@ export function TopHats({ standings }: { standings: Standings }) {
           );
         })}
       </div>
+    </Stack>
+  );
+}
+
+/** The people Hat Turf has credited most: ten, like the hardest-working hats. */
+export function TopTurfPlayers({ standings }: { standings: Standings }) {
+  const teamColor = useTeamColor();
+  const top = (standings.topTurfPlayers ?? []).slice(0, 10);
+
+  return (
+    <Stack gap="md">
+      <EventSectionHeading
+        icon={IconMapPin}
+        title="Top turf players"
+        color="yellow"
+        subtitle="The players Hat Turf has earned the most points for."
+      />
+      {top.length ? (
+        <div
+          className="grid gap-2 @md:grid-flow-col @md:grid-cols-2 @md:grid-rows-5 @md:gap-x-3"
+          data-testid="top-turf-players"
+        >
+          {top.map((p, i) => (
+            <Paper
+              key={`${p.userId}:${p.team}`}
+              withBorder
+              radius="md"
+              className={EVENT_CARD_SURFACE}
+              data-testid="top-turf-player"
+            >
+              <Group gap="sm" px="sm" py={10} wrap="nowrap">
+                <Text fw={800} fz={18} w={24} ta="center">
+                  {i + 1}
+                </Text>
+                <div className="min-w-0 flex-1">
+                  <UserAvatar
+                    userId={p.userId}
+                    user={standings.users[p.userId]}
+                    avatarSize="sm"
+                    withUsername
+                    linkToProfile
+                  />
+                </div>
+                <Text fw={800} c={teamColor(p.team)} className="tabular-nums">
+                  {numberWithCommas(p.points)}
+                </Text>
+              </Group>
+            </Paper>
+          ))}
+        </div>
+      ) : (
+        <Text size="sm" c="dimmed" data-testid="top-turf-players-empty">
+          Turf scores land here once the first hats start earning.
+        </Text>
+      )}
     </Stack>
   );
 }

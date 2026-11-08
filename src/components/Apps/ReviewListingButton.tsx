@@ -254,6 +254,32 @@ export function ReviewListingModal({
 }
 
 /**
+ * A "Leave a review" / "Edit review" button with no modal and no gate: the caller runs
+ * {@link useCanReviewListing} and owns the {@link ReviewListingModal} `onOpen` opens.
+ * Reads `getMyReview` (protected) on mount, so mount it only for an eligible viewer.
+ */
+export function ReviewListingTrigger({
+  appListingId,
+  onOpen,
+}: {
+  appListingId: string;
+  onOpen: () => void;
+}) {
+  const { data: myReview } = trpc.appListings.getMyReview.useQuery({ appListingId });
+  return (
+    <Button
+      variant="light"
+      size="xs"
+      leftSection={<IconThumbUp size={14} />}
+      onClick={onOpen}
+      data-testid="apps-listing-reviews-cta"
+    >
+      {myReview ? 'Edit review' : 'Leave a review'}
+    </Button>
+  );
+}
+
+/**
  * The standalone review affordance: eligibility gate + a compact Button + the modal.
  *
  * UNCHANGED public API and unchanged behaviour — it is now composed from the two

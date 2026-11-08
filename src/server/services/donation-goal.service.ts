@@ -16,7 +16,10 @@ import {
   endPaidAccessNow,
   getPaidAccess,
 } from '~/server/services/paid-access.service';
-import { bustMvCache } from '~/server/services/model-version.service';
+import {
+  assertSellableInDomainCurrency,
+  bustMvCache,
+} from '~/server/services/model-version.service';
 import {
   isNonCommercialBaseModel,
   notCommerciallyAvailableMessage,
@@ -260,11 +263,12 @@ export const donateToGoal = async ({
   if (goal.entityType === 'ModelVersion' && goal.entityId != null) {
     const version = await dbRead.modelVersion.findUnique({
       where: { id: goal.entityId },
-      select: { baseModel: true },
+      select: { baseModel: true, modelId: true },
     });
     if (version && isNonCommercialBaseModel(version.baseModel)) {
       throw new Error(notCommerciallyAvailableMessage(version.baseModel));
     }
+    if (version) await assertSellableInDomainCurrency({ modelId: version.modelId, buzzType });
   }
 
   let performedTransaction = false;

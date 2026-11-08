@@ -13,7 +13,6 @@ import {
 } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   readModelVersionPrivacyViaKysely,
   readModelVersionPrivacyViaPrisma,
@@ -218,10 +217,9 @@ export async function prepareModelVersionResponse(
   // Creator Controls: gate the version download count (public API — no owner/mod
   // bypass wired here, matching buildPublicModelResponse). The base query doesn't
   // carry meta/owner, so fetch the privacy inputs directly.
-  let privacy = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-    ? await readModelVersionPrivacyViaKysely((await loadKyselyDb()).kyselyRead, version.id)
-    : undefined;
-  // `undefined` is OFF, or a version whose model or user row is gone, for which Prisma throws.
+  const { kyselyRead } = await loadKyselyDb();
+  let privacy = await readModelVersionPrivacyViaKysely(kyselyRead, version.id);
+  // `undefined` is a version whose model or user row is gone; the Prisma read throws for it.
   if (privacy === undefined) privacy = await readModelVersionPrivacyViaPrisma(dbRead, version.id);
   // Only resolve CP membership when something is actually hidden (version meta, model
   // meta, or the owner's user default). When nothing is hidden, the resolver returns

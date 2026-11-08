@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { MEDIA_OVERLAY_ATTR, useDrawnMediaBox } from '~/components/EdgeMedia/useDrawnMediaBox';
 import { DraftStickerLayer } from '~/components/Sticker/DraftStickerLayer';
+import { EVENT_HAT_CORNERS } from '~/components/Sticker/peek-toggle-corner';
 import { StickerPlacementOverlay } from '~/components/Sticker/StickerPlacementOverlay';
 import { useStickerPlacements } from '~/components/Sticker/placement.util';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
+import { useTrackPlayback } from '~/components/Sticker/useTrackPlayback';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { stickersRevealed, useStickerRevealStore } from '~/store/sticker-reveal.store';
 import { useStickerHistoryStep } from '~/store/sticker-history.store';
@@ -25,8 +28,16 @@ const ARM_AT = 0.6;
  * the box *is* the coordinate system, so it is what the draft store measures drags
  * against and what every stored fraction means.
  */
-export function ImageStickerOverlay({ imageId }: { imageId: number }) {
+export function ImageStickerOverlay({
+  imageId,
+  wearsHat = false,
+}: {
+  imageId: number;
+  /** The image wears an event hat, which the owner's peek toggle must not sit under. */
+  wearsHat?: boolean;
+}) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const treatment = useStickerTreatment();
   const revealed = useStickerRevealStore(stickersRevealed);
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
@@ -111,7 +122,11 @@ export function ImageStickerOverlay({ imageId }: { imageId: number }) {
 
   const active = placements.length > 0 || isPlacing;
 
-  const { hostRef, box } = useDrawnMediaBox(active);
+  const { hostRef, box, media } = useDrawnMediaBox(active);
+  // `tagName`, not `instanceof`: this renders on the server, which has no HTMLVideoElement.
+  const video =
+    features.stickerVideoTracks && media?.tagName === 'VIDEO' ? (media as HTMLVideoElement) : null;
+  const { hiddenIds, bindPose } = useTrackPlayback(imageId, video);
 
   if (!active) return null;
 
@@ -128,6 +143,7 @@ export function ImageStickerOverlay({ imageId }: { imageId: number }) {
               placements={placements}
               viewerId={currentUser?.id}
               treatment={treatment}
+              takenCorners={wearsHat ? EVENT_HAT_CORNERS : undefined}
               // Every time they arrive on screen (Justin, 2026-08-12) — hence
               // `armed`, which tracks intersection rather than mount, because the
               // carousel mounts a slide long before anyone looks at it and keeps it
@@ -149,9 +165,12 @@ export function ImageStickerOverlay({ imageId }: { imageId: number }) {
               // pressing the plus is often what mounts this in the first place.
               paced={!isPlacing}
               step={historyStep}
+              // A replay shows every sticker it steps through, whatever the video's time.
+              hiddenIds={historyStep == null ? hiddenIds : undefined}
+              bindPose={bindPose}
             />
           )}
-          {isPlacing && <DraftStickerLayer />}
+          {isPlacing && <DraftStickerLayer video={video} />}
         </div>
       )}
     </div>

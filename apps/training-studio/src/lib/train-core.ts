@@ -47,6 +47,11 @@ import {
   isRetiredBaseAir,
   isRetiredEcosystem,
 } from '$lib/data/trainingModels';
+import {
+  blockedRunMessage,
+  type RunModelRef,
+  type TrainingServiceStatus,
+} from '$lib/service-status-core';
 import { MatureAckRequiredError } from '$lib/mature-charge';
 import { slugify } from '$lib/slug';
 import type { TrainingTextCheck } from '$lib/training-text';
@@ -108,7 +113,7 @@ export interface TrainingRunInput {
    *  by `resolveCurrencies` — never trusted from the wire. */
   currencies?: string[];
   /** The user ticked Review's mature-dataset confirm: the run unlocks mature content at submit and is
-   *  charged from Blue + Yellow. */
+   *  charged in Yellow (after Blue when `currencies` spends Blue). */
   matureAck?: boolean;
   meta: TrainingStudioMeta;
 }
@@ -120,6 +125,19 @@ export interface SubmitOptions {
   /** Opt each epoch job into an NDJSON live trace (`events` or `logs`); `none` (the default) sends
    *  nothing — an unknown field on the submit could get the whole workflow rejected. */
   traceMode?: string;
+  /** The training service status read just before the submit. A run on a blocked model is refused
+   *  before any orchestrator call; omitted, nothing is refused on it. */
+  status?: TrainingServiceStatus | null;
+}
+
+/** Why a run can't start right now — training is off, or its model is blocked — or null when it can. */
+export function unavailableRunMessage(
+  run: RunModelRef,
+  status: TrainingServiceStatus | null | undefined
+): string | null {
+  if (!status) return null;
+  if (!status.available) return status.message ?? 'Training is unavailable right now.';
+  return blockedRunMessage(run, status);
 }
 
 // Real-spend wallets (Buzz), same set the whatif quotes against. The default when the client sends
@@ -127,8 +145,11 @@ export interface SubmitOptions {
 const CURRENCIES: BuzzClientAccount[] = ['blue', 'yellow'];
 const runCurrencies = (input?: string[]) => resolveCurrencies(input, CURRENCIES);
 
-// Members may pay for mature content in Blue; the orchestrator drops it for everyone else.
-const MATURE_CURRENCIES: BuzzClientAccount[] = ['blue', 'yellow'];
+/** The accounts that may pay for mature content: Yellow, after Blue only if the user's order spends Blue
+ *  (members may pay for mature content in Blue; the orchestrator drops it for everyone else). Never Green. */
+function matureCurrencies(currencies: string[] | undefined): BuzzClientAccount[] {
+  return runCurrencies(currencies).includes('blue') ? ['blue', 'yellow'] : ['yellow'];
+}
 
 /** How a submit is charged. Always `manual`, so viewing a run never changes what it was charged; a run the
  *  user confirmed as mature unlocks at submit instead, and is charged once, in the accounts that may pay
@@ -138,7 +159,7 @@ function chargeFields(currencies: string[] | undefined, matureUnlock: boolean) {
     ? {
         upgradeMode: 'manual' as const,
         allowMatureContent: true,
-        currencies: [...MATURE_CURRENCIES],
+        currencies: matureCurrencies(currencies),
       }
     : { upgradeMode: 'manual' as const, currencies: runCurrencies(currencies) };
 }
@@ -522,6 +543,10 @@ export async function submitTrainingBatch(
   if (!Array.isArray(runs) || runs.length === 0)
     throw new TrainingBatchValidationError('runs must be a non-empty array.');
   runs.forEach((run, i) => validateRun(run, `runs[${i}]`));
+  for (const run of runs) {
+    const unavailable = unavailableRunMessage(run, opts.status);
+    if (unavailable) throw new TrainingBatchValidationError(unavailable);
+  }
   await assertMatureAcked(client, runs);
 
   // Every run's trigger word is checked before ANY submit, so a refused batch never part-charges. A
@@ -645,7 +670,7 @@ function sourceMatureCount(
 async function buildContinuation(
   client: OrchestratorClient,
   opts: ContinueOpts,
-  { callbacks, traceMode = 'events' }: SubmitOptions
+  { callbacks, traceMode = 'events', status }: SubmitOptions
 ): Promise<{
   body: WorkflowTemplate;
   steps: number | undefined;
@@ -677,6 +702,17 @@ async function buildContinuation(
     throw new Error('keep training: source run has no ecosystem to reference the checkpoint by');
   if (isRetiredEcosystem(ecosystem))
     throw new Error('keep training: this model is no longer offered for training');
+  // The source's `model` is what it trained (`customModel || model` at submit).
+  const unavailable = unavailableRunMessage(
+    {
+      ecosystem,
+      modelVariant: typeof input.modelVariant === 'string' ? input.modelVariant : undefined,
+      version: typeof input.version === 'string' ? input.version : undefined,
+      model: typeof input.model === 'string' ? input.model : undefined,
+    },
+    status
+  );
+  if (unavailable) throw new TrainingBatchValidationError(unavailable);
   const continueFrom = continueFromAir(ecosystem, modelKey);
 
   const origEpochs = Number(input.epochs) || 10;

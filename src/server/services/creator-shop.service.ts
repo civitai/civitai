@@ -26,10 +26,14 @@ import { removePlacementsByCosmetic } from '~/server/services/placement-moderati
 import {
   claimBoxRefundsForCosmetic,
   listOwedBoxRefunds,
+  listOwedPackBoxRefunds,
   markBoxRefundPaid,
+  markPackBoxRefundPaid,
   pullCosmeticFromBoxes,
   type OwedBoxRefund,
+  type OwedPackBoxRefund,
 } from '~/server/services/mystery-box-takedown.service';
+import { boxPackTermsOf } from '@civitai/shared/mystery-box';
 import { getPrefixRefundState, refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { detectEmptyLoopSeam } from '~/server/utils/animation-loop-seam';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
@@ -39,6 +43,7 @@ import { constants } from '~/server/common/constants';
 import {
   REJECTED_IS_FINAL,
   appendItemHistory,
+  awaitsRequestedChanges,
   buildCosmeticData,
   changesDisplay,
   creatorGrantRemaining,
@@ -65,6 +70,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   createBuzzTransaction,
+  getMultiAccountTransactionsByPrefix,
   refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
@@ -84,6 +90,8 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { logToAxiom } from '~/server/logging/client';
+import { Tracker } from '~/server/clickhouse/client';
+import { logSectionPlacements } from '~/server/services/cosmetic-shop-featured-log.service';
 import {
   CosmeticShopItemStatus,
   CosmeticSource,
@@ -992,6 +1000,9 @@ export const updateCreatorShopItem = async ({
     recordChange('sellableByOthers', yesNo(meta.sellableByOthers), yesNo(nextSellableByOthers));
     recordChange('sellerShare', meta.sellerShare ?? 0, nextSellerShare);
   }
+  // Without this a save with nothing changed resubmits the item unaltered.
+  if (existing.status === CosmeticShopItemStatus.RequestedChanges && !changes.length)
+    throw throwBadRequestError('Make the requested changes before resubmitting');
 
   const reviewNote = !backToReview
     ? undefined
@@ -1280,11 +1291,16 @@ export const setCreatorShopItemListed = async ({
     if (current.status === CosmeticShopItemStatus.Rejected)
       throw throwBadRequestError(REJECTED_IS_FINAL);
     const meta = current.meta as CosmeticShopItemMeta | null;
+    // Still waiting on the creator: listing again must not put it back in the queue unaltered. A
+    // pack stays RequestedChanges through a cover or text edit, so the history decides.
+    const keepsVerdict =
+      current.status === CosmeticShopItemStatus.RequestedChanges &&
+      (!meta?.history?.length || awaitsRequestedChanges(meta.history));
     return tx.cosmeticShopItem.update({
       where: { id },
       data: {
         listed,
-        ...(listed
+        ...(listed && !keepsVerdict
           ? {
               status: CosmeticShopItemStatus.PendingReview,
               rejectionReason: null,
@@ -1357,16 +1373,22 @@ export const unarchiveCreatorShopItem = async ({
     const rejectionUnprovable = !meta.history?.length && !!current.rejectionReason;
     if (wasLastReviewARejection(meta.history) || (rejectionUnprovable && !isModerator))
       throw throwBadRequestError(REJECTED_IS_FINAL);
+    // An item archived while it waited on requested changes comes back still waiting on them.
+    const keepsVerdict = awaitsRequestedChanges(meta.history);
     return tx.cosmeticShopItem.update({
       where: { id },
       data: {
         // Same rule as re-listing: archiving ended this item's resale listings, so
         // bringing it back is a fresh submission, not an undo.
-        status: CosmeticShopItemStatus.PendingReview,
         archivedAt: null,
-        rejectionReason: null,
-        reviewedById: null,
-        reviewedAt: null,
+        ...(keepsVerdict
+          ? { status: CosmeticShopItemStatus.RequestedChanges }
+          : {
+              status: CosmeticShopItemStatus.PendingReview,
+              rejectionReason: null,
+              reviewedById: null,
+              reviewedAt: null,
+            }),
         meta: {
           ...meta,
           displayApproved: recordedDisplayVerdict({
@@ -2076,6 +2098,18 @@ export const getCreatorShopResaleStats = async ({ userId }: { userId: number }) 
 // Moderator: review queue
 // ---------------------------------------------------------------------------
 
+// Pending items have no verdict yet, so they go by submission; anything reviewed goes by when it
+// was approved or sent back. `id` breaks ties so a page boundary can't drop or repeat an item.
+export const reviewQueueOrder = (
+  sort: GetReviewQueueInput['sort'],
+  status: GetReviewQueueInput['status']
+): Prisma.CosmeticShopItemOrderByWithRelationInput[] => {
+  const dir = sort === 'newest' ? 'desc' : 'asc';
+  return status === CosmeticShopItemStatus.PendingReview
+    ? [{ createdAt: dir }, { id: dir }]
+    : [{ reviewedAt: { sort: dir, nulls: 'last' } }, { createdAt: dir }, { id: dir }];
+};
+
 export const getCreatorShopReviewQueue = async ({
   limit,
   page,
@@ -2165,12 +2199,7 @@ export const getCreatorShopReviewQueue = async ({
       where,
       take,
       skip,
-      // `id` breaks ties so a page boundary can't drop or repeat an item when
-      // two submissions share a createdAt.
-      orderBy: [
-        { createdAt: sort === 'newest' ? 'desc' : 'asc' },
-        { id: sort === 'newest' ? 'desc' : 'asc' },
-      ],
+      orderBy: reviewQueueOrder(sort, status),
       select: {
         ...creatorShopItemSelect,
         // A pack has no cosmetic, so its author is the lister — without this the
@@ -2450,6 +2479,51 @@ const takedownMoneyMove = <T>(fn: () => Promise<T>) =>
 
 type PrefixRefund = Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
 
+/** One pack box's share of the pack charge, or null when the purchase records no pack terms. */
+function packBoxShareOf(owed: OwedPackBoxRefund) {
+  const pack = boxPackTermsOf(owed.purchaseMeta);
+  return pack ? Math.floor(owed.unitAmount / pack.size) : null;
+}
+
+/**
+ * Pays one pack box its share of the pack's charge, into the account the charge came from. Its
+ * external id is the box's own, so a retry after a landed attempt is refused as a duplicate (409),
+ * which is read as paid; it doesn't start with the charge's prefix, so it is never listed as part of
+ * the charge. Returns the Buzz paid.
+ */
+async function refundPackBoxShare(owed: OwedPackBoxRefund, title: string) {
+  const amount = packBoxShareOf(owed);
+  if (amount === null) throw new Error(`Purchase ${owed.buzzTransactionId} records no pack terms`);
+  if (amount <= 0) return 0;
+  const accountTypes = new Set(
+    (await getMultiAccountTransactionsByPrefix(owed.buzzTransactionId)).map(
+      (leg) => leg.accountType
+    )
+  );
+  // A pack is paid from one account; a split charge has no single place to return a share to.
+  if (accountTypes.size !== 1)
+    throw new Error(
+      `Pack charge ${owed.buzzTransactionId} has ${accountTypes.size} account types; refund it by hand`
+    );
+  const [toAccountType] = [...accountTypes];
+  try {
+    await takedownMoneyMove(() =>
+      createBuzzTransaction({
+        fromAccountId: 0,
+        toAccountId: owed.userId,
+        toAccountType,
+        amount,
+        type: TransactionType.Refund,
+        description: `Cosmetic removed - ${title}`,
+        externalTransactionId: `takedown-pack-share:${owed.boxSourceKey}`,
+      })
+    );
+  } catch (error) {
+    if (getBuzzApiStatus(error) !== 409) throw error;
+  }
+  return amount;
+}
+
 /**
  * A purchase's refund, finished when an earlier attempt reversed part of it: a lost response, or a
  * run that died before recording it, makes the prefix refund answer 409 and reverse nothing, so
@@ -2578,7 +2652,19 @@ export const takedownCosmeticShopItem = async ({
     }
     // Official-shop placements are curated rows, not a status filter — drop them
     // or the item keeps rendering in its section.
+    const placements = await dbWrite.cosmeticShopSectionItem.findMany({
+      where: { shopItemId: id },
+      select: { shopSectionId: true },
+    });
     await dbWrite.cosmeticShopSectionItem.deleteMany({ where: { shopItemId: id } });
+    const tracker = new Tracker();
+    for (const { shopSectionId } of placements)
+      await logSectionPlacements({
+        tracker,
+        sectionId: shopSectionId,
+        removed: [id],
+        reason: 'takedown',
+      });
     await endResaleListings({ shopItemId: id, title: item.title });
 
     if (item.addedById) {
@@ -2885,6 +2971,49 @@ export const takedownCosmeticShopItem = async ({
           boxId: purchase.boxDefinitionId,
           error: `Box purchase ${purchase.buzzTransactionId} has no recorded payouts; the creator's share cannot be re-derived`,
         });
+    }
+
+    let owedPackBoxes: OwedPackBoxRefund[] = [];
+    try {
+      owedPackBoxes = await listOwedPackBoxRefunds({ cosmeticId, shopItemId: id });
+    } catch (error) {
+      failures.push({
+        stage: 'box',
+        userId: 0,
+        error: `Pack box refunds not read: ${errorMessage(error)}`,
+      });
+    }
+    for (const owed of owedPackBoxes) {
+      let amount = 0;
+      try {
+        amount = await refundPackBoxShare(owed, item.title);
+      } catch (error) {
+        // Still owed: "Retry takedown" pays it, on the same external id.
+        failures.push({
+          stage: 'refund',
+          userId: owed.userId,
+          amount: packBoxShareOf(owed) ?? owed.unitAmount,
+          error: `Pack box ${owed.boxItemId}: ${errorMessage(error)}`,
+        });
+        await logTakedown('error', 'Pack box buyer refund failed', {
+          shopItemId: id,
+          userId: owed.userId,
+          buzzTransactionId: owed.buzzTransactionId,
+          boxItemId: owed.boxItemId.toString(),
+          error: errorMessage(error),
+        });
+        continue;
+      }
+      await markPackBoxRefundPaid(owed.buzzTransactionId, owed.boxItemId).catch((error) =>
+        logTakedown('error', 'Pack box refund paid but not marked', {
+          shopItemId: id,
+          buzzTransactionId: owed.buzzTransactionId,
+          boxItemId: owed.boxItemId.toString(),
+          error: errorMessage(error),
+        })
+      );
+      boxRefundedUserIds.push(owed.userId);
+      boxRefundedValue += amount;
     }
   }
 

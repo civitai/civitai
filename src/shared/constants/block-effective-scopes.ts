@@ -136,7 +136,7 @@ export type BlockScopeManifestInput = { scopes?: unknown } | null | undefined;
  *         `properties.scopes` declares no `uniqueItems`.
  *       · So pre-change `getInstallConfig` could return `['x','x']`, and that array reaches
  *         `src/components/Apps/AppSettingsModal.tsx` (`declaredScopes = installConfig?.scopes`)
- *         → `src/components/Apps/BlockScopeList.tsx`, which renders one `<Group key={scope}>`
+ *         → its permission list, which rendered one keyed row
  *         per element — i.e. two siblings with the SAME React key.
  *     Two consumers would have absorbed the duplicate anyway — `grantScopes` puts the result in
  *     a `new Set` ceiling (the `const ceiling = new Set(effectiveBlockScopes(...))` that
