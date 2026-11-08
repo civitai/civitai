@@ -616,9 +616,9 @@
         const targets = unlabeled;
         const { byKey, items } = startLabelPass(targets);
         labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
+        await ensureTagCategories();
         // A result that resolves between abort and delivery must be dropped — post-switch it
         // would write an OLD-mode label into a freshly reset tile and mark it done.
-        await ensureTagCategories();
         const sent = await runAutoLabel(
           labelMode,
           media,
@@ -816,8 +816,19 @@
   );
   // Awaited before each auto-label submit so the first result already sees the category lists. A failed
   // chunk load labels without them rather than blocking labeling; the next run retries.
+  let warnedTagCategories = false;
   async function ensureTagCategories() {
-    if (!tagCategories) tagCategories = await loadTagCategories().catch(() => null);
+    if (tagCategories) return;
+    tagCategories = await loadTagCategories().catch((err) => {
+      if (!warnedTagCategories) {
+        warnedTagCategories = true;
+        console.warn(
+          '[training-studio] tag categories failed to load; character/source exclusion is off for this run',
+          err
+        );
+      }
+      return null;
+    });
   }
 
   // ---- Exclude list editing: comma/Enter-separated entry, deduped case-insensitively.

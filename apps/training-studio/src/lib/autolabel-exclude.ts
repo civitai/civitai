@@ -70,7 +70,7 @@ export function buildTagExcluder(opts: ExcludeOptions): TagExcluder {
 
 let categoriesLoad: Promise<TagCategories> | null = null;
 
-/** The tagger's Character and Copyright names (~535 KB), split into its own chunk and fetched once,
+/** The tagger's Character and Copyright names (a large JSON), split into its own chunk and fetched once,
  *  before the first auto-label result is merged. Regenerate with scripts/gen-tag-categories.mjs. */
 export function loadTagCategories(): Promise<TagCategories> {
   categoriesLoad ??= import('./data/tag-categories.json')

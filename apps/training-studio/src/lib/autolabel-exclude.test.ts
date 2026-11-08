@@ -16,7 +16,7 @@ const tagsAfter = (tags: string[], opts: Parameters<typeof buildTagExcluder>[0])
   mergeAutoLabel({ tags: [], caption: '' }, { tags }, 'tag', 'replace', buildTagExcluder(opts))
     .tags;
 
-// The tagger emits underscore form (image-scan-pipeline.ts rewrites WD14 `_` to spaces).
+// Raw tagger output keeps `_`; the excluder folds it to match the space-form lists.
 const creatorCase = [
   'lowres',
   'best_quality',
