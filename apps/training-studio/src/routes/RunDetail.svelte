@@ -549,11 +549,26 @@
   const featured = $derived(newestFirst.find((e) => e.id === selectedId) ?? recommended);
 
   const publishEpoch = $derived(featured?.modelUrl ? featured : publishTarget);
+  // The dataset-sharing choice the publish entry carries (the in-app trainer asks the same two).
+  let ownRights = $state(false);
+  let shareDataset = $state(false);
   const publishLink = $derived.by(() => {
     const toUrl = publishUrl();
     if (!toUrl || !publishEpoch) return null;
-    return hostLink(toUrl({ workflowId: d.workflowId, epoch: publishEpoch.number }));
+    return hostLink(
+      toUrl({
+        workflowId: d.workflowId,
+        epoch: publishEpoch.number,
+        ownRights,
+        shareDataset: ownRights && shareDataset,
+      })
+    );
   });
+  const dataPolicyUrl = $derived(hostConfig().dataPolicyUrl);
+  function setOwnRights(next: boolean) {
+    ownRights = next;
+    if (!next) shareDataset = false;
+  }
 
   // Independent of `publishTarget` so the link outlives the checkpoints' blob retention.
   const modelLink = $derived.by(() => {
@@ -1313,6 +1328,29 @@
               This run was published as a model on Civitai.
             </p>
           {:else if publishLink && publishEpoch}
+            <div class="flex w-full flex-col gap-2 border-b border-dark-4 pb-3">
+              <label class="inline-flex items-center gap-2 text-sm text-dark-0">
+                <Checkbox bind:checked={() => ownRights, setOwnRights} />
+                I own the rights to all these files
+              </label>
+              <label
+                class="inline-flex items-center gap-2 text-sm {ownRights ? 'text-dark-0' : 'text-dark-2'}"
+              >
+                <Checkbox bind:checked={shareDataset} disabled={!ownRights} />
+                Share my dataset with the published model
+              </label>
+              <p class="m-0 text-xs text-dark-2">
+                Shared datasets can be downloaded from the model page once it's published.
+                {#if dataPolicyUrl}
+                  See the <a
+                    href={dataPolicyUrl}
+                    target="_blank"
+                    rel="noopener"
+                    class="text-blue-400 underline">dataset storage policy</a
+                  >.
+                {/if}
+              </p>
+            </div>
             <Button size="sm" {...publishLink}>
               <IconUpload size={14} stroke={2} />Publish a model page
             </Button>

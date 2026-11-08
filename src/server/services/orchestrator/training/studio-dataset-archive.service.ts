@@ -18,7 +18,8 @@ import {
   ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
 } from '~/server/utils/archive-helpers';
-import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import { isTrainingModerationApproved } from '~/server/services/orchestrator/training/publish-from-workflow';
+import { studioDatasetVisibility } from '~/server/services/training-data-share.service';
 import { bytesToKB } from '~/utils/number-helpers';
 import { getGetUrlByKey, getUploadBucket, getUploadS3Client } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
@@ -42,7 +43,14 @@ const MAX_PENDING_ENTRIES = 2;
 const MAX_UPLOAD_QUEUE_SIZE = 2;
 
 export type StudioDatasetArchive =
-  | { status: 'archived'; items: number; skipped: number; at: string }
+  | {
+      status: 'archived';
+      items: number;
+      skipped: number;
+      /** Every item of an approved run is in the zip: the only zip that can be shared. */
+      complete?: boolean;
+      at: string;
+    }
   | { status: 'unavailable'; reason: string; at: string };
 
 type FileMetadata = Record<string, unknown> & {
@@ -333,29 +341,45 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
       status: 'archived',
       items: stored.included,
       skipped: stored.skipped,
+      complete:
+        stored.skipped === 0 &&
+        stored.included === items.length &&
+        isTrainingModerationApproved(workflow),
       at: new Date().toISOString(),
     };
 
-    // Conditional on the row still being the placeholder, so a file the owner swapped in while this
-    // ran is not overwritten (the zip it built is then orphaned, which is the cheaper failure).
-    const { count } = await dbWrite.modelFile.updateMany({
-      where: { id: file.id, sizeKB: 0 },
-      data: {
-        url: stored.url,
-        sizeKB,
-        exists: true,
-        // A dataset is never public by default — the in-app trainer only shares one the owner
-        // opted into. This also closes the placeholders created Public before 2026-10-13.
-        visibility: ModelFileVisibility.Private,
-        metadata: {
-          ...metadata,
-          numImages: stored.included,
-          numCaptions: stored.captions,
-          datasetArchive: archived,
+    const swapped = await dbWrite.$transaction(async (tx) => {
+      // Locked and re-read: the owner's sharing choice can be written while this ran. Conditional on
+      // the row still being the placeholder, so a file the owner swapped in meanwhile is not
+      // overwritten (the zip it built is then orphaned, which is the cheaper failure).
+      const [row] = await tx.$queryRaw<{ metadata: FileMetadata | null }[]>`
+        SELECT metadata FROM "ModelFile" WHERE id = ${file.id} AND "sizeKB" = 0 FOR UPDATE`;
+      if (!row) return false;
+      const current = row.metadata ?? {};
+      await tx.modelFile.update({
+        where: { id: file.id },
+        data: {
+          url: stored.url,
+          sizeKB,
+          exists: true,
+          // Shared only when the owner opted in; a row without that choice (every placeholder made
+          // before it existed, including those created Public before 2026-10-13) stays Private.
+          visibility: await studioDatasetVisibility(tx, {
+            modelVersionId: file.modelVersionId,
+            metadata: current,
+            complete: archived.complete === true,
+          }),
+          metadata: {
+            ...current,
+            numImages: stored.included,
+            numCaptions: stored.captions,
+            datasetArchive: archived,
+          },
         },
-      },
+      });
+      return true;
     });
-    if (count === 0) return { fileId, outcome: 'skipped' };
+    if (!swapped) return { fileId, outcome: 'skipped' };
 
     await deleteFilesForModelVersionCache(file.modelVersionId);
     await registerFileLocation({

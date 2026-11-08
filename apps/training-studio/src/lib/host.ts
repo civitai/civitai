@@ -30,6 +30,10 @@ export interface GenerateRequest {
 export interface PublishRequest {
   workflowId: string;
   epoch: number;
+  /** The owner's dataset-sharing choice: they hold the rights to the files, and want the dataset
+   *  shared with the published model. Sharing is applied only with the rights. */
+  ownRights?: boolean;
+  shareDataset?: boolean;
 }
 
 /** What "view this run's model" hands the host: the Civitai model stamped onto the workflow. */
@@ -73,6 +77,9 @@ export interface HostContext {
      *  Always opens in a new tab: it leaves for the external ticket portal. Absent => the panel
      *  asks for a ticket without a link. */
     supportUrl?: string;
+    /** The host's dataset storage policy, linked beside the dataset-sharing choice. Absent => the
+     *  choice shows without a link. */
+    dataPolicyUrl?: string;
   };
   /** The host's URL for a location — for real `<a href>`s (middle-click / open-in-new-tab). */
   hrefFor: (loc: StudioLocation) => string;

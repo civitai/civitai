@@ -28,6 +28,7 @@ import {
 } from '~/server/services/hot-reads-6.reads';
 import type { DownloadFilesWhere } from '@civitai/db-queries/hot-reads-6';
 import { hasEntityAccess } from './common.service';
+import { trainingDataShareHeld } from './training-data-share.service';
 import {
   getVersionEarlyAccess,
   isModelArchived,
@@ -350,6 +351,14 @@ export const getFileForModelVersion = async ({
     }
   }
   if (!file) return { status: 'not-found' };
+  // A shared dataset is served to others only while neither its owner nor its content is held.
+  if (
+    file.type === 'Training Data' &&
+    !isOwner &&
+    !isMod &&
+    (await trainingDataShareHeld(dbRead, modelVersionId))
+  )
+    return { status: 'not-found' };
   if (!isMod && hasFailedScan(file)) return { status: 'failed-scan' };
 
   // Named against every file on the version, not only the files this request could pick from:

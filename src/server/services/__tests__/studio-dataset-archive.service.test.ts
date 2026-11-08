@@ -44,6 +44,8 @@ vi.mock('~/server/services/orchestrator/client', () => ({
 }));
 const getWorkflow = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/orchestrator/workflows', () => ({ getWorkflow }));
+const ownerHeld = vi.hoisted(() => vi.fn());
+vi.mock('~/server/services/legal-hold.service', () => ({ ownerHeld, ownerHeldSql: () => '' }));
 vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelFileService>()),
   deleteFilesForModelVersionCache: async () => undefined,
@@ -69,10 +71,35 @@ const placeholder = (
   },
 });
 
-const workflowWith = (items: { air: string; caption?: string }[]) => ({
+const workflowWith = (
+  items: { air: string; caption?: string }[],
+  moderationStatus: string | undefined = 'approved'
+) => ({
   id: 'wf-1',
-  steps: [{ $type: 'training', input: { trainingData: { type: 'blobs', items } } }],
+  steps: [
+    {
+      $type: 'training',
+      input: { trainingData: { type: 'blobs', items } },
+      output: { moderationStatus },
+    },
+  ],
 });
+
+/** The swap's write: the one update that points the row at a zip. */
+const swaps = () =>
+  dbMock.dbWrite.modelFile.update.mock.calls
+    .map(([args]) => args as { where: unknown; data: Record<string, unknown> })
+    .filter((args) => 'url' in args.data);
+/** The row the swap locks and re-reads, as the archive sees it at write time. */
+const lockedRow = (metadata: Record<string, unknown> = {}) =>
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([
+    {
+      metadata: {
+        selectedEpochUrl: 'https://orch.example/v2/consumer/blobs/E.safetensors',
+        ...metadata,
+      },
+    },
+  ]);
 
 const fetchMock = vi.fn();
 const blobResponse = (bytes: string, contentType: string) =>
@@ -90,7 +117,9 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
   dbMock.dbWrite.modelFile.findUnique.mockReset();
   dbMock.dbWrite.modelFile.update.mockReset().mockResolvedValue({});
-  dbMock.dbWrite.modelFile.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  dbMock.dbWrite.$queryRaw.mockReset();
+  lockedRow();
+  ownerHeld.mockReset().mockResolvedValue(false);
 });
 
 describe('archiveStudioDataset', () => {
@@ -122,8 +151,12 @@ describe('archiveStudioDataset', () => {
     expect(await zip.file('01.png')!.async('string')).toBe('png-bytes');
     expect(await zip.file('01.txt')!.async('string')).toBe('a red fox');
 
-    const { where, data } = dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0];
-    expect(where).toEqual({ id: 7, sizeKB: 0 });
+    const [{ where, data }] = swaps();
+    expect(where).toEqual({ id: 7 });
+    // The row is locked only while it is still the placeholder.
+    expect(dbMock.dbWrite.$queryRaw.mock.calls[0][0].join('?')).toMatch(
+      /WHERE id = \? AND "sizeKB" = 0 FOR UPDATE/
+    );
     expect(data).toMatchObject({
       url: expect.stringMatching(
         /^https:\/\/storage\.example\/bucket\/training-images\/5\/.+\.zip$/
@@ -150,7 +183,7 @@ describe('archiveStudioDataset', () => {
     await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'unavailable' });
 
     expect(uploads.stored).toHaveLength(0);
-    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+    expect(swaps()).toHaveLength(0);
     expect(dbMock.dbWrite.modelFile.update.mock.calls[0][0].data.metadata).toMatchObject({
       datasetArchive: { status: 'unavailable' },
     });
@@ -175,7 +208,7 @@ describe('archiveStudioDataset', () => {
     await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'unavailable' });
 
     expect(uploads.stored).toHaveLength(0);
-    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+    expect(swaps()).toHaveLength(0);
   });
 
   it('leaves a file alone once it is no longer a placeholder', async () => {
@@ -208,7 +241,7 @@ describe('archiveStudioDataset for an owner who can no longer be minted a token'
     expect(fetchMock.mock.calls[0][1]).toMatchObject({
       headers: { Authorization: 'Bearer service-token' },
     });
-    expect(dbMock.dbWrite.modelFile.updateMany.mock.calls[0][0].data.visibility).toBe('Private');
+    expect(swaps()[0].data.visibility).toBe('Private');
   });
 
   it('still reads an owner in good standing with their own token', async () => {
@@ -243,7 +276,7 @@ describe('archiveStudioDataset for an owner who can no longer be minted a token'
       datasetArchiveServiceAttempts: 1,
       datasetArchiveRetryAfter: expect.any(String),
     });
-    expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+    expect(swaps()).toHaveLength(0);
     expect(uploads.stored).toHaveLength(0);
   });
 
@@ -292,5 +325,74 @@ describe('archiveStudioDataset for an owner who can no longer be minted a token'
 
     await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'retry', attempts: 2 });
     expect(dbMock.dbWrite.modelFile.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('archiveStudioDataset applies the owner’s sharing choice only to the real zip', () => {
+  const items = [
+    { air: 'AAA.png', caption: 'a' },
+    { air: 'BBB.png', caption: 'b' },
+  ];
+  const shared = { ownRights: true, shareDataset: true };
+  const archive = async () => {
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'archived' });
+    return swaps()[0].data.visibility;
+  };
+
+  beforeEach(() => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(placeholder());
+    getWorkflow.mockResolvedValue(workflowWith(items));
+    fetchMock.mockImplementation(async () => blobResponse('png-bytes', 'image/png'));
+  });
+
+  it('a shared, complete, approved dataset with nothing held is Public', async () => {
+    lockedRow(shared);
+    expect(await archive()).toBe('Public');
+    expect(swaps()[0].data.metadata).toMatchObject({ datasetArchive: { complete: true } });
+  });
+
+  it('reads the choice at write time, not from the row it started with', async () => {
+    // The choice landed while the zip was being built: only the locked re-read sees it.
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(placeholder({}));
+    lockedRow(shared);
+    expect(await archive()).toBe('Public');
+  });
+
+  it.each([
+    ['rights, not shared', { ownRights: true, shareDataset: false }, 'Sensitive'],
+    ['no choice', {}, 'Private'],
+    ['shared without the rights', { ownRights: false, shareDataset: true }, 'Private'],
+  ])('%s is %s', async (_, choice, expected) => {
+    lockedRow(choice);
+    expect(await archive()).toBe(expected);
+  });
+
+  it('a held owner or held content keeps a shared dataset Private', async () => {
+    lockedRow(shared);
+    ownerHeld.mockResolvedValue(true);
+    expect(await archive()).toBe('Private');
+  });
+
+  it('a run that is not approved keeps a shared dataset Private', async () => {
+    lockedRow(shared);
+    getWorkflow.mockResolvedValue(workflowWith(items, 'underReview'));
+    expect(await archive()).toBe('Private');
+  });
+
+  it('a zip missing any item of the run keeps a shared dataset Private', async () => {
+    lockedRow(shared);
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes('/BBB.png')
+        ? new Response('', { status: 404 })
+        : blobResponse('png-bytes', 'image/png')
+    );
+    expect(await archive()).toBe('Private');
+    expect(swaps()[0].data.metadata).toMatchObject({ datasetArchive: { complete: false } });
+  });
+
+  it('a file swapped in while the zip was built is left alone', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'skipped' });
+    expect(swaps()).toHaveLength(0);
   });
 });

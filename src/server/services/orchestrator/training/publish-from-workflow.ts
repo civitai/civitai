@@ -43,6 +43,11 @@ import {
   ModelUploadType,
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
+import {
+  normalizeTrainingDataShare,
+  setStudioDatasetShare,
+  type TrainingDataShare,
+} from '~/server/services/training-data-share.service';
 
 type TrainingStudioMeta = {
   name?: string;
@@ -189,10 +194,19 @@ function refuse(message: string): never {
  * `assertTrainingSourcePublishable`, so the two cannot disagree about what counts as approved.
  */
 export function assertTrainingModerationApproved(workflow: Workflow): void {
-  const { step } = getTrainingStep(workflow);
-  const output = step.output as TrainingOutput | ImageResourceTrainingOutput | null | undefined;
-  if (output?.moderationStatus !== APPROVED_TRAINING_MODERATION_STATUS)
-    refuse(TRAINING_NOT_APPROVED_MESSAGE);
+  if (!isTrainingModerationApproved(workflow)) refuse(TRAINING_NOT_APPROVED_MESSAGE);
+}
+
+/** The test `assertTrainingModerationApproved` applies, as a boolean: false for a run with no
+ *  readable training step. */
+export function isTrainingModerationApproved(workflow: Workflow): boolean {
+  let output: TrainingOutput | ImageResourceTrainingOutput | null | undefined;
+  try {
+    output = getTrainingStep(workflow).step.output as typeof output;
+  } catch {
+    return false;
+  }
+  return output?.moderationStatus === APPROVED_TRAINING_MODERATION_STATUS;
 }
 
 /**
@@ -339,11 +353,14 @@ export async function createDraftModelFromWorkflow({
   workflow,
   selectedEpochNumber,
   name,
+  share,
 }: {
   user: SessionUser;
   workflow: Workflow;
   selectedEpochNumber: number;
   name?: string;
+  /** The owner's dataset-sharing choice, when the publish entry carried one. */
+  share?: TrainingDataShare;
 }): Promise<{
   modelId: number;
   modelVersionId: number;
@@ -380,6 +397,7 @@ export async function createDraftModelFromWorkflow({
     // failed write leaves the draft unstamped, which only matters once its workflow is gone.
     if ((existing.meta as ModelMeta | null)?.trainingStudioModerationApproved !== true)
       await stampTrainingModerationApproved(existing.id);
+    if (share) await setStudioDatasetShare(existing.modelVersions[0].id, share);
     return {
       modelId: existing.id,
       modelVersionId: existing.modelVersions[0].id,
@@ -490,6 +508,7 @@ export async function createDraftModelFromWorkflow({
     metadata: {
       trainingResults,
       selectedEpochUrl: selectedEpoch.modelUrl,
+      ...(share && normalizeTrainingDataShare(share)),
     },
     userId: user.id,
     select: { id: true },

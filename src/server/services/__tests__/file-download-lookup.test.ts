@@ -110,6 +110,12 @@ vi.mock('~/utils/delivery-worker', () => ({
   resolveDownloadUrl: resolveDownloadUrlMock,
 }));
 
+// Held owner / held content, for a shared training dataset. Not held unless a test says so.
+const { shareHeldMock } = vi.hoisted(() => ({ shareHeldMock: vi.fn() }));
+vi.mock('~/server/services/training-data-share.service', () => ({
+  trainingDataShareHeld: shareHeldMock,
+}));
+
 function publishedModelVersion(overrides: Record<string, unknown> = {}) {
   return {
     id: 1,
@@ -913,5 +919,64 @@ describe('getFileForModelVersion — a file that failed its scan', () => {
       await statusFor({ pickleScanResult: 'Error', virusScanResult: 'Success' }, member),
       await statusFor({ pickleScanResult: 'Pending', virusScanResult: 'Pending' }, member),
     ]).toEqual(['success', 'success']);
+  });
+});
+
+describe('getFileForModelVersion — a shared training dataset', () => {
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
+  beforeAll(async () => {
+    ({ getFileForModelVersion } = await import('../file.service'));
+  }, 60000);
+
+  const dataset = { ...aFile, id: 56, name: 'data.zip', type: 'Training Data', metadata: {} };
+  const download = (user: { id: number; isModerator?: boolean }) =>
+    getFileForModelVersion({
+      modelVersionId: 1,
+      type: 'Training Data',
+      user,
+      attribution: { path: 'test', actor: 'test' } as never,
+    });
+
+  beforeEach(() => {
+    versionRead.mockReset().mockResolvedValue(publishedModelVersion());
+    listDownloadFilesMock.mockReset().mockResolvedValue([dataset]);
+    hasEntityAccessMock.mockReset().mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
+    getPaidAccessMock.mockReset().mockResolvedValue({});
+    resolveDownloadUrlMock
+      .mockReset()
+      .mockResolvedValue({ url: 'https://cdn/data.zip', urlExpiryDate: new Date() });
+    shareHeldMock.mockReset().mockResolvedValue(false);
+  });
+
+  it('is served to others while nothing is held', async () => {
+    expect((await download({ id: 1 })).status).toBe('success');
+    expect(shareHeldMock).toHaveBeenCalledWith(expect.anything(), 1);
+  });
+
+  it('is the same not-found as a missing file for others once its owner or content is held', async () => {
+    shareHeldMock.mockResolvedValue(true);
+    const result = await download({ id: 1 });
+    expect(result).toEqual({ status: 'not-found' });
+    expect(resolveDownloadUrlMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['its owner', { id: 999 }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('is still served to %s while held', async (_, user) => {
+    shareHeldMock.mockResolvedValue(true);
+    expect((await download(user)).status).toBe('success');
+  });
+
+  it('does not gate a model file', async () => {
+    shareHeldMock.mockResolvedValue(true);
+    listDownloadFilesMock.mockResolvedValue([aFile]);
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1 },
+      attribution: { path: 'test', actor: 'test' } as never,
+    });
+    expect(result.status).toBe('success');
+    expect(shareHeldMock).not.toHaveBeenCalled();
   });
 });

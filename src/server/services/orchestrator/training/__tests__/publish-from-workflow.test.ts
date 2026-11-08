@@ -16,6 +16,7 @@ const {
   mockGetToken,
   mockGetWorkflow,
   mockUpdateWorkflow,
+  mockSetShare,
 } = vi.hoisted(() => ({
   mockUpsertModel: vi.fn(),
   mockUpsertModelVersion: vi.fn(),
@@ -23,6 +24,11 @@ const {
   mockGetToken: vi.fn(),
   mockGetWorkflow: vi.fn(),
   mockUpdateWorkflow: vi.fn(),
+  mockSetShare: vi.fn(),
+}));
+vi.mock('~/server/services/training-data-share.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  setStudioDatasetShare: mockSetShare,
 }));
 
 vi.mock('~/server/services/model.service', () => ({ upsertModel: mockUpsertModel }));
@@ -1018,5 +1024,52 @@ describe('stampWorkflowPublished', () => {
       stampWorkflowPublished({ ownerId: 5, callerId: 5, workflowId: 'wf-studio-1', modelId: 42 })
     ).resolves.toBeUndefined();
     consoleSpy.mockRestore();
+  });
+});
+
+describe('the dataset-sharing choice at publish', () => {
+  it('records the choice on the placeholder, which stays Private until the real zip is in', async () => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 1,
+      share: { ownRights: true, shareDataset: true },
+    });
+    const file = mockCreateFile.mock.calls[0][0];
+    expect(file.visibility).toBe('Private');
+    expect(file.metadata).toMatchObject({ ownRights: true, shareDataset: true });
+  });
+
+  it('stores a share without the rights as not shared', async () => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 1,
+      share: { ownRights: false, shareDataset: true },
+    });
+    expect(mockCreateFile.mock.calls[0][0].metadata).toMatchObject({
+      ownRights: false,
+      shareDataset: false,
+    });
+  });
+
+  it('re-entry on an existing draft updates the stored choice; an entry with none leaves it', async () => {
+    mockFindFirst.mockResolvedValue({ id: 77, meta: {}, modelVersions: [{ id: 88 }] });
+    const share = { ownRights: true, shareDataset: false };
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 3,
+      share,
+    });
+    expect(mockSetShare).toHaveBeenCalledWith(88, share);
+
+    mockSetShare.mockClear();
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 3,
+    });
+    expect(mockSetShare).not.toHaveBeenCalled();
   });
 });

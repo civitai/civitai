@@ -33,6 +33,9 @@
       // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
       // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
       supportUrl: `${data.civitaiUrl}/support-portal`,
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
+      // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
+      dataPolicyUrl: `${data.civitaiUrl}/content/training/data-policy`,
     },
     hrefFor,
     navigate: (loc, opts) => goto(hrefFor(loc), opts?.refreshAll ? { invalidateAll: true } : undefined),
@@ -42,10 +45,12 @@
     // the link goes live per-user as the flag widens.
     generateUrl: ({ air, workflowId, name }) =>
       `${data.civitaiUrl}/generate?${new URLSearchParams({ air, workflowId, name })}`,
-    publishUrl: ({ workflowId, epoch }) =>
+    publishUrl: ({ workflowId, epoch, ownRights, shareDataset }) =>
       `${data.civitaiUrl}/models/train/from-orchestrator?${new URLSearchParams({
         workflowId,
         epoch: String(epoch),
+        ownRights: ownRights ? '1' : '0',
+        shareDataset: ownRights && shareDataset ? '1' : '0',
       })}`,
     modelPageUrl: ({ modelId }) => `${data.civitaiUrl}/models/${modelId}`,
   });

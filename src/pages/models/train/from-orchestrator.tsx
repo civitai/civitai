@@ -18,6 +18,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbWrite } from '~/server/db/client';
 import { getLoginLink } from '~/utils/login-helpers';
 import { Flags } from '~/shared/utils/flags';
+import { trainingDataShareFromQuery } from '~/server/services/training-data-share.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { getConsumerBlobId } from '~/shared/orchestrator/blob-url';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
@@ -103,6 +104,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         user: session.user,
         workflow,
         selectedEpochNumber: epoch,
+        share: trainingDataShareFromQuery(ctx.query),
       }));
     } catch (error) {
       return refuse(getPublishRefusalReason(error) ?? 'unavailable');
