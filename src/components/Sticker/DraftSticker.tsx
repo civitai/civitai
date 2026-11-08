@@ -369,8 +369,9 @@ export function DraftSticker({
   // The two standoffs ride along because they come from the same measurement,
   // and because the side they apply to is decided in the same breath — see the
   // note above `setPosition` in `measure`.
-  const [{ flipped, below, above }, setPosition] = useState({
+  const [{ flipped, below, above, lift }, setPosition] = useState({
     flipped: false,
+    lift: 0,
     below: 0,
     above: 0,
   });
@@ -380,8 +381,8 @@ export function DraftSticker({
   // so it has to keep its identity across a drag — otherwise re-binding them is
   // back on the pointermove path, which is the whole problem. It reads the two
   // values it needs through a ref instead of closing over them.
-  const frame = useRef({ flipped, rotation: draft.rotation });
-  frame.current = { flipped, rotation: draft.rotation };
+  const frame = useRef({ flipped, lift, rotation: draft.rotation });
+  frame.current = { flipped, lift, rotation: draft.rotation };
 
   const clip = useRef<HTMLElement | null>(null);
 
@@ -390,7 +391,7 @@ export function DraftSticker({
     const button = buttonRef.current;
     if (!element || !button) return;
 
-    const { flipped, rotation } = frame.current;
+    const { flipped, lift, rotation } = frame.current;
     const tray = useStore.getState().tray;
     // 🔴 THE SIDE AND THE TWO STANDOFFS MOVE IN ONE UPDATE. Writing the margin
     // to the node while the class comes from state splits them across a render:
@@ -404,6 +405,7 @@ export function DraftSticker({
       tray: tray?.getBoundingClientRect() ?? null,
       clip: clip.current?.getBoundingClientRect() ?? null,
       flipped,
+      lift,
       rotation,
       knobOffset: KNOB_OFFSET,
       outset: HANDLE_OUTSET,
@@ -416,7 +418,8 @@ export function DraftSticker({
     setPosition((current) =>
       current.flipped === next.flipped &&
       current.below === next.below &&
-      current.above === next.above
+      current.above === next.above &&
+      current.lift === next.lift
         ? current
         : next
     );
@@ -866,7 +869,7 @@ export function DraftSticker({
           // no constant is right at both ends of the scale range or at both ends
           // of the rotation range. Set from the same state as the class above,
           // never written to the node separately.
-          ...(flipped ? { marginBottom: above } : { marginTop: below }),
+          ...(flipped ? { marginBottom: above - lift } : { marginTop: below - lift }),
         }}
         // Outside the rotated body but still inside the draft, and the layer
         // starts a move from a press anywhere on it, so without this every press
