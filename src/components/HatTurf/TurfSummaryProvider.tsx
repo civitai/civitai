@@ -26,10 +26,9 @@ const WATCH_BATCH = 50;
 const WATCH_REFRESH_MS = 30_000;
 // Cards mount a few at a time while scrolling; their marks go out together.
 const WATCH_COALESCE_MS = 250;
-// After a mark goes out, newly mounted cards wait at least this long for the next one, so a scroll
-// sends one mark every couple of seconds rather than one per few cards. A change in that wait is not
-// pushed to the new card, which draws its page's read: already older than the wait. Also keeps a fast
-// scroll under the watch's per-caller rate limit.
+// Newly mounted cards wait at least this long after a mark for the next, so a scroll stays under
+// the watch's per-caller rate limit. A change landing during the wait is not pushed to the new
+// card, which shows its page's read.
 const WATCH_MIN_GAP_MS = 2_000;
 // A card that watches again rereads its image's counts when what is drawn is older than this: a
 // change made while nobody watched it was pushed to nobody.
