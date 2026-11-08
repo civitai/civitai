@@ -1798,7 +1798,7 @@ describe('AppListingCard — acquisition telemetry', () => {
 
   const OFFSITE = {
     kind: 'offsite' as const,
-    name: 'External App',
+    name: 'Pixel Forge',
     kindData: { kind: 'offsite' as const, externalUrl: 'https://ext.app' },
   };
   const GRID = {
@@ -1876,7 +1876,7 @@ describe('AppListingCard — acquisition telemetry', () => {
 
   test('clicking the card TITLE (the stretched card link) queues ONE card_click', async () => {
     renderWithProviders(<AppListingCard card={base(OFFSITE)} telemetry={GRID} />);
-    const title = page.getByRole('link', { name: 'External App' });
+    const title = page.getByRole('link', { name: 'Pixel Forge' });
     await expect.element(title).toHaveAttribute('href', '/apps/store-preview/my-app');
     title.element().addEventListener('click', (e) => e.preventDefault());
     await title.click();
