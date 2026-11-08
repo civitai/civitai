@@ -2756,11 +2756,8 @@ You agree to the following with respect to the Model (each a “Permission”):
   return license;
 }
 
-/**
- * A mature model without a .com face is off civitai.com; a stale page or direct call must not take
- * .com's currency for it. Read from the primary: the face can have been removed seconds ago.
- * Neutral message: it must not disclose the model's .com status.
- */
+// Read from the primary: the face can have been removed seconds ago. Neutral message: it must not
+// disclose the model's .com status.
 export async function assertSellableInDomainCurrency({
   modelId,
   buzzType,

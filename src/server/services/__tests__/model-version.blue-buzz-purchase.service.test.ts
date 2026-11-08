@@ -114,7 +114,6 @@ const seed = ({
     baseModel,
     model: { id: 1, name: 'Model', userId: OWNER, nsfw: false },
   };
-  // The Green check reads the face from the primary, never the version row above.
   dbMock.dbWrite.model.findUniqueOrThrow.mockResolvedValue({
     nsfw: false,
     nsfwLevel: 1,
