@@ -223,6 +223,7 @@ export type DownloadAlertWhatIf = {
   canEstimateCost: boolean;
   preBoost: boolean;
   setPreBoost: (on: boolean) => void;
+  boostRequired?: boolean;
   download?: {
     preparation: DownloadPreparation;
     boostable: boolean;
@@ -234,15 +235,43 @@ export type DownloadAlertWhatIf = {
 
 /** Takes the whatIf as a prop because the two generation forms each have their own provider. */
 export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) {
-  const { data, download, isLoading, isSuccess, canEstimateCost, preBoost, setPreBoost } = whatIf;
+  const {
+    data,
+    download,
+    isLoading,
+    isSuccess,
+    canEstimateCost,
+    preBoost,
+    setPreBoost,
+    boostRequired,
+  } = whatIf;
   // Too tall for a phone. Mobile gets the same offer as a confirm on Generate instead
   // (`resolveBoostSubmitFields`).
   const isMobile = useGeneratorLayout() !== 'desktop';
 
   // Rendering from the last settled response keeps the alert on screen while a changed form re-prices.
-  const settledRef = useRef<{ ready?: boolean; download: typeof download } | null>(null);
-  if (isSuccess && !isLoading) settledRef.current = { ready: data.ready, download };
+  const settledRef = useRef<{
+    ready?: boolean;
+    download: typeof download;
+    boostRequired?: boolean;
+  } | null>(null);
+  if (isSuccess && !isLoading) settledRef.current = { ready: data.ready, download, boostRequired };
   const settled = settledRef.current;
+
+  // FormFooter holds Generate for a required boost with nothing shown to download. Say why.
+  if (canEstimateCost && settled?.boostRequired && !settled.download) {
+    const size = isMobile ? 'xs' : 'sm';
+    return (
+      <Alert color="yellow" radius="md" p={size}>
+        <Stack gap={6}>
+          <BoostRequiredNote size={size} />
+          <Text size={size}>
+            The download couldn&apos;t be priced just now. Try again in a moment.
+          </Text>
+        </Stack>
+      </Alert>
+    );
+  }
 
   if (!canEstimateCost || !settled || (settled.ready !== false && !settled.download)) {
     return null;
