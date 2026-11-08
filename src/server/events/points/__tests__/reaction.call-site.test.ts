@@ -62,16 +62,43 @@ describe('toggleReaction event points', () => {
     await settle();
 
     expect(awardEventPoints).toHaveBeenCalledTimes(1);
-    expect(awardEventPoints).toHaveBeenCalledWith([
-      {
-        type: 'reaction',
-        actorId: USER,
-        entityType: 'Image',
-        entityId: 7,
-        time: expect.any(Date),
-        sourceId: `ImageReaction:7:${USER}`,
-      },
-    ]);
+    expect(awardEventPoints).toHaveBeenCalledWith(
+      [
+        {
+          type: 'reaction',
+          actorId: USER,
+          entityType: 'Image',
+          entityId: 7,
+          time: expect.any(Date),
+          sourceId: `ImageReaction:7:${USER}`,
+        },
+      ],
+      expect.any(Function)
+    );
+  });
+
+  it('hands onEventPoints the grants the award reports, before it finishes', async () => {
+    imageReactionId.mockResolvedValue(undefined);
+    let finish: () => void = () => undefined;
+    awardEventPoints.mockImplementationOnce(async (_actions, onGrants) => {
+      (onGrants as (g: unknown[]) => void)([{ event: 'e', team: 'Yellow', points: 5 }]);
+      // The ledger insert is still running.
+      await new Promise<void>((resolve) => (finish = resolve));
+      return undefined;
+    });
+    let grants: Promise<unknown> | undefined;
+    expect(await toggleReaction({ ...like, onEventPoints: (g) => (grants = g) })).toBe('created');
+    await expect(grants).resolves.toEqual([{ event: 'e', team: 'Yellow', points: 5 }]);
+    finish();
+  });
+
+  it('resolves onEventPoints with none for an image without a hat', async () => {
+    imageReactionId.mockResolvedValue(undefined);
+    hatted.clear();
+    let grants: Promise<unknown> | undefined;
+    await toggleReaction({ ...like, onEventPoints: (g) => (grants = g) });
+    await expect(grants).resolves.toEqual([]);
+    expect(awardEventPoints).not.toHaveBeenCalled();
   });
 
   it("removes when the deleted reaction was the actor's last on the image", async () => {

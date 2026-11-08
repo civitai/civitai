@@ -317,7 +317,7 @@ describe('Hat Turf on image detail', () => {
     click(q('hat-turf-detail-hat'));
     click(await placeHatButton());
     // The server read (h.stickers) never changes in this test: only the mutation succeeds.
-    h.place.mock.calls[0][1].onSuccess();
+    h.place.mock.calls[0][1].onSuccess({ reactionEarns: false });
     await vi.waitFor(() => expect(q('hat-turf-placed')).not.toBeNull());
     expect(q('hat-turf-draft')).toBeNull();
     expect(hats().length).toBe(3);

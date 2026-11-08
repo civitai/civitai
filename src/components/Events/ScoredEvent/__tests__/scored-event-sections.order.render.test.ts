@@ -83,6 +83,9 @@ vi.mock('~/components/Events/ScoredEvent/TeamHatShelf', () => ({ TeamHatShelf: m
 vi.mock('~/components/Events/ScoredEvent/HatCatalogPreview', () => ({
   HatCatalogPreview: marker('catalog'),
 }));
+vi.mock('~/components/HatTurf/EventPointPopsSetting', () => ({
+  EventPointPopsSetting: () => null,
+}));
 vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: marker('rules') }));
 // Its own browser test covers what it shows.
 vi.mock('~/components/Events/ScoredEvent/HatTurfEventSection', () => ({
