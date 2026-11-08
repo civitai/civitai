@@ -176,6 +176,21 @@ export const PERMISSIONS = [
   },
   // Checked by this literal in the main app's `/api/mod/label-store/predictions` (`ModeratorGrantId`).
   { id: 'labelStore.submitPrediction', label: 'Submit model predictions to the label store' },
+  // Money: gives a user back the Buzz an App Blocks generation charged them (the generation legs and
+  // the app author's fee). Also the read right for the lookup, which lists one account's App spend.
+  // Checked by this literal in the main app's `/api/mod/apps/workflow-charges` and
+  // `/api/mod/apps/refund-workflows` (`ModeratorGrantId`), so rename them together.
+  {
+    id: 'apps.buzz.refund',
+    label: 'Look up and refund a user’s App Blocks Buzz spend',
+  },
+  // Raises the per-call ceiling for a holder of `apps.buzz.refund`; useless without it. Apart
+  // because one call can return the spend of many generations. Checked by the same endpoint by this
+  // literal.
+  {
+    id: 'apps.buzz.refund.large',
+    label: 'Refund more than 5,000 App Blocks Buzz in one call',
+  },
   // Model Flags → Needs review lists two kinds of lead, each ruled by its own right: a held text-scan
   // detection (flag or dismiss, recorded with a reason) and a file match (set minor or dismiss). The
   // page grant opens the tab; the tab lists, and its actions rule, only the kinds held here.
