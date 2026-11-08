@@ -3778,6 +3778,7 @@ export interface BoxOpening {
   tierPoolSize: number;
   itemRoll: number;
   rewardStatus: string;
+  guaranteed: boolean;
   createdAt: Date;
 }
 
@@ -4402,6 +4403,8 @@ export interface ModelVersionGiftRedemption {
   userId: number;
   user?: User;
   claimedAt: Date;
+  revokedAt: Date | null;
+  revokedById: number | null;
 }
 
 export interface PaidAccess {

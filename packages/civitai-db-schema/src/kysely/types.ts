@@ -1948,6 +1948,10 @@ export type BoxOpening = {
    * granted | refunded (text + CHECK)
    */
   rewardStatus: string;
+  /**
+   * Drawn from a pack's guaranteed tiers only.
+   */
+  guaranteed: Generated<boolean>;
   createdAt: Generated<Timestamp>;
 };
 export type BoxRevision = {
@@ -4330,6 +4334,11 @@ export type ModelVersionGiftRedemption = {
   giftLinkId: number;
   userId: number;
   claimedAt: Generated<Timestamp>;
+  /**
+   * Set when the link's owner or a moderator removed this claimer's gifted access.
+   */
+  revokedAt: Timestamp | null;
+  revokedById: number | null;
 };
 export type ModelVersionMetric = {
   modelVersionId: number;

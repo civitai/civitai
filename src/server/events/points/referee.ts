@@ -28,7 +28,7 @@ import type { EventPointType } from '~/server/events/points/types';
 import { sysRedis } from '~/server/redis/client';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import { teamAwardsBy } from '~/server/events/scoring/team-awards';
+import { loadTeamAwards } from '~/server/events/scoring/team-awards';
 import type { TeamAward } from '~/server/events/base.event';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -426,7 +426,8 @@ export async function runEventPointsReferee(
   const final = await finalDayTotals(event, window);
   const totals = refereeTotals([...final, ...rows]);
   // A preview's cut never passes the start, so no award reaches its base.
-  for (const { team, points } of teamAwardsBy(event, window.cut))
+  const awards = await loadTeamAwards(event, window.cut);
+  for (const { team, points } of awards)
     totals.team.set(team, (totals.team.get(team) ?? 0) + points);
   const changed = await resetLiveBase(sysRedis, event, season, window.cut, totals);
   // This runs in a job: its corrections go out before it returns, not on a later window, except the

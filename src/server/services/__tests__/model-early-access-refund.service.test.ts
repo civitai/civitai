@@ -538,14 +538,14 @@ describe('getModelEarlyAccessRefundRequirement', () => {
 
     const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
 
-    // The gift granted generation only, so the refunded download's bit goes and generation stays.
+    // Both of the refunded download's bits are named; the write keeps the gift's generation bit.
     expect(result.purchases).toEqual([
       {
         modelVersionId: VERSION_ID,
         buyerId: BUYER_ID,
         buzzTransactionIds: ['tx-dl'],
         narrow: {
-          revokePermissions: 2,
+          revokePermissions: 3,
           removeKeys: ['download-buzzTransactionId', 'download-purchasedAt'],
         },
       },
@@ -553,7 +553,7 @@ describe('getModelEarlyAccessRefundRequirement', () => {
     expect(result.exemptBuyerCount).toBe(0);
   });
 
-  it('revokes no bit from a gift row that did not record what the gift granted', async () => {
+  it('narrows, rather than deletes, a gift row that did not record what the gift granted', async () => {
     setupRefundData({
       accessRows: [
         {
@@ -568,7 +568,7 @@ describe('getModelEarlyAccessRefundRequirement', () => {
 
     const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
 
-    expect(result.purchases[0].narrow?.revokePermissions).toBe(0);
+    expect(result.purchases[0].narrow?.revokePermissions).toBe(3);
   });
 
   it.each([

@@ -28,7 +28,8 @@ import {
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { getRequestBoardDomainColor, getRequestDomainColor } from '~/server/utils/server-domain';
 import { withSpan } from '~/server/utils/otel-helpers';
-import { hashifyObject, slugit } from '~/utils/string-helpers';
+import { slugit } from '~/utils/string-helpers';
+import { cacheItKeyHash } from '~/server/utils/query-cache-key';
 import { booleanString } from '~/utils/zod-helpers';
 
 export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
@@ -92,7 +93,7 @@ export function cacheIt<TInput extends object>({
       for (const [key, value] of Object.entries(_input)) {
         if (excludeKeys?.includes(key as keyof TInput)) continue;
         if (Array.isArray(value)) cacheKeyObj[key] = [...new Set(value)].sort();
-        else if (value) cacheKeyObj[key] = value;
+        else if (value !== undefined) cacheKeyObj[key] = value;
       }
     }
     for (const [varyKey, varyValue] of Object.entries(varyBy?.(ctx) ?? {})) {
@@ -100,7 +101,7 @@ export function cacheIt<TInput extends object>({
         throw new Error(`cacheIt: varyBy key "${varyKey}" collides with an input key on ${path}`);
       cacheKeyObj[varyKey] = varyValue;
     }
-    const hash = withSpan('trpc:middleware:cacheIt:hash', () => hashifyObject(cacheKeyObj));
+    const hash = withSpan('trpc:middleware:cacheIt:hash', () => cacheItKeyHash(cacheKeyObj));
     const cacheKey = `${REDIS_KEYS.TRPC.BASE}:${key ?? path.replace('.', ':')}:${hash}` as const;
     const cached = await redis.packed.get(cacheKey);
     if (cached) {

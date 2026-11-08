@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { writeStickerPose } from '~/components/Sticker/sticker-pose-style';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { stickerTrackKeyframes } from '~/components/Sticker/sticker-pose-style';
 import type { StickerTrack } from '~/shared/utils/sticker-track';
-import { sampleStickerTrack, stickerTrackMoves } from '~/shared/utils/sticker-track';
+import {
+  sampleStickerTrack,
+  stickerTrackAnimates,
+  stickerTrackFrames,
+} from '~/shared/utils/sticker-track';
 import { trpc } from '~/utils/trpc';
 
 const NONE: ReadonlySet<number> = new Set();
@@ -16,10 +20,13 @@ export function trackHiddenIdsAt(tracks: TrackRow[], timeMs: number): ReadonlySe
 const sameIds = (a: ReadonlySet<number>, b: ReadonlySet<number>) =>
   a.size === b.size && [...a].every((id) => b.has(id));
 
+type Ref = (node: HTMLElement | null) => void;
+
 /**
- * Plays sticker tracks against this video's time; `bindPose(id)` is the ref that lets a recorded
- * path move a placed sticker. Moving poses are written straight to the elements once per video
- * frame, so playback never renders React.
+ * Plays sticker tracks against this video's time; `bindPose(id)` is the ref that lets a track
+ * move and fade a placed sticker. Each such sticker gets one paused Web Animation of its track,
+ * and the video's time is its clock: playback sets one number per sticker per frame and never
+ * renders React. A hidden sticker (`hiddenIds`) is hidden outright as well, so it takes no tap.
  */
 export function useTrackPlayback(imageId: number, video: HTMLVideoElement | null) {
   const { data: tracks } = trpc.placement.getStickerTracks.useQuery(
@@ -27,33 +34,54 @@ export function useTrackPlayback(imageId: number, video: HTMLVideoElement | null
     { enabled: !!video, staleTime: 60_000 }
   );
   const [hiddenIds, setHiddenIds] = useState(NONE);
-  const nodes = useRef(new Map<number, HTMLElement>());
-  const moving = useRef(new Map<number, StickerTrack>());
-
   const rows = tracks as TrackRow[] | undefined;
-  moving.current = new Map(
-    (rows ?? []).filter(({ track }) => stickerTrackMoves(track)).map(({ id, track }) => [id, track])
+  const animations = useRef(new Map<number, Animation>());
+
+  // An Animation refuses a time that is not finite, and a video reports NaN before it has loaded.
+  const clock = useCallback(() => {
+    const ms = (video?.currentTime ?? 0) * 1000;
+    return Number.isFinite(ms) ? ms : 0;
+  }, [video]);
+
+  const keyframes = useMemo(
+    () =>
+      new Map(
+        (rows ?? [])
+          .filter(({ track }) => stickerTrackAnimates(track))
+          .map(({ id, track }) => {
+            const { duration, frames } = stickerTrackFrames(track);
+            return [id, { duration, keyframes: stickerTrackKeyframes(frames) }] as const;
+          })
+      ),
+    [rows]
   );
 
-  const pose = useCallback(
-    (id: number, node: HTMLElement) => {
-      const track = moving.current.get(id);
-      if (track && video)
-        writeStickerPose(node, sampleStickerTrack(track, video.currentTime * 1000));
-    },
-    [video]
-  );
-
-  const bindPose = useCallback(
-    (id: number) => (node: HTMLElement | null) => {
-      if (!node) return void nodes.current.delete(id);
-      nodes.current.set(id, node);
-      // A paused video presents no frame, so a sticker mounted now would sit at its first pose.
-      // A new ref each render on purpose: re-attaching re-poses a sticker whose `data` React rewrote.
-      pose(id, node);
-    },
-    [pose]
-  );
+  // One stable ref per sticker, so a re-render does not rebuild its animation. New tracks make
+  // new refs, and React swaps them: the old one cancels, the new one builds.
+  const refs = useMemo(() => {
+    const byId = new Map<number, Ref>();
+    return (id: number): Ref => {
+      let ref = byId.get(id);
+      if (!ref) {
+        ref = (node) => {
+          animations.current.get(id)?.cancel();
+          animations.current.delete(id);
+          const track = keyframes.get(id);
+          if (!node || !track) return;
+          const animation = node.animate(track.keyframes, {
+            duration: track.duration,
+            fill: 'both',
+          });
+          animation.pause();
+          // A paused video presents no frame, so a sticker mounted now would sit at its first pose.
+          animation.currentTime = clock();
+          animations.current.set(id, animation);
+        };
+        byId.set(id, ref);
+      }
+      return ref;
+    };
+  }, [keyframes, clock]);
 
   useEffect(() => {
     if (!video || !rows?.length) {
@@ -62,10 +90,10 @@ export function useTrackPlayback(imageId: number, video: HTMLVideoElement | null
     }
 
     const update = () => {
-      const timeMs = video.currentTime * 1000;
+      const timeMs = clock();
       const next = trackHiddenIdsAt(rows, timeMs);
       setHiddenIds((current) => (sameIds(current, next) ? current : next));
-      for (const [id, node] of nodes.current) pose(id, node);
+      for (const animation of animations.current.values()) animation.currentTime = timeMs;
     };
 
     let frame = 0;
@@ -87,7 +115,7 @@ export function useTrackPlayback(imageId: number, video: HTMLVideoElement | null
       video.removeEventListener('seeked', update);
       video.removeEventListener('timeupdate', update);
     };
-  }, [video, rows, pose]);
+  }, [video, rows, clock]);
 
-  return { hiddenIds, bindPose };
+  return { hiddenIds, bindPose: refs };
 }

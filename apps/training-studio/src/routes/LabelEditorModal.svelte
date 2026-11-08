@@ -26,7 +26,8 @@
     labelMode: LabelType;
     trigger: string;
     tagVocab: string[];
-    onRelabel: (id: number) => void;
+    /** Absent when the host has no auto-label: the Re-run buttons don't render. */
+    onRelabel?: (id: number) => void;
     /** Where `editing` sits in the grid's sequence; `index` is -1 when it isn't in it. */
     position: { index: number; total: number };
     onStep: (delta: -1 | 1) => void;
@@ -132,11 +133,13 @@
                 <div class="mb-2 flex items-center justify-between gap-2">
                   <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Tags</span>
                   <div class="flex items-center gap-1">
+                    {#if onRelabel}
                     <Button variant="ghost" size="xs" onclick={() => onRelabel(editing.id)} disabled={editing.labeling}>
                       <IconSparkles size={12} stroke={2} class="mr-1 inline" />{editing.labeling
                         ? 'labeling…'
                         : 'Re-run'}
                     </Button>
+                    {/if}
                     {#if editing.tags.length > 0}
                       <Button variant="ghost" size="xs" onclick={clearTags}>Clear all</Button>
                     {/if}
@@ -178,11 +181,13 @@
               <div>
                 <div class="mb-2 flex items-center justify-between gap-2">
                   <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Caption</span>
+                  {#if onRelabel}
                   <Button variant="ghost" size="xs" onclick={() => onRelabel(editing.id)} disabled={editing.labeling}>
                     <IconSparkles size={12} stroke={2} class="mr-1 inline" />{editing.labeling
                       ? 'labeling…'
                       : 'Re-run'}
                   </Button>
+                  {/if}
                 </div>
                 <Textarea
                   bind:value={editing.caption}

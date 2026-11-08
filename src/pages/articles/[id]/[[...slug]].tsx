@@ -47,6 +47,9 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ArticleCoverStickers } from '~/components/Article/ArticleCoverStickers';
+import { ArticleCoverHat } from '~/components/Article/ArticleCoverHat';
+import { imageMediaHatClearLeft } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { ArticleBanner } from '~/components/Article/Detail/ArticleBanner';
@@ -255,6 +258,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     data: memoizedImageData,
   });
   const image = items.find((item) => item.id === article?.coverImage?.id);
+  const showEventCosmetics = useShowEventCosmetics();
   const banner = items.find((item) => item.id === article?.bannerImage?.id);
 
   if (isLoading) return <PageLoader />;
@@ -488,7 +492,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         measures the media against, which needs one shared offset
         parent.
       */}
-      <div className="relative size-full">
+      <div
+        className="relative size-full"
+        style={imageMediaHatClearLeft(showEventCosmetics ? article.eventDecoration : null)}
+      >
+        <ArticleCoverHat articleId={article.id} decoration={article.eventDecoration} />
         <ImageGuard2 image={image} connectType="article" connectId={article.id}>
           {(safe) => (
             <>
@@ -499,7 +507,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               >
                 <Center className="size-full">
                   <div className="relative size-full">
-                    <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                    <ImageGuard2.BlurToggle className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10" />
                     <ImageContextMenu
                       image={image}
                       noDelete={true}

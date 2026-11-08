@@ -23,6 +23,25 @@ export const EARLY_ACCESS_PURCHASES = [
 /** Meta key a gift claim records its permissions under, so a refund can leave the gift's bits. */
 export const GIFT_PERMISSIONS_KEY = 'gift-permissions';
 
+/** The bits a grant row's recorded purchases pay for. */
+export function purchasedPermissions(meta: Record<string, unknown>) {
+  return EARLY_ACCESS_PURCHASES.reduce((bits, kind) => {
+    const transactionId = meta[kind.transactionKey];
+    return typeof transactionId === 'string' && transactionId.length > 0
+      ? bits | kind.permissions
+      : bits;
+  }, 0);
+}
+
+/** The bits a gift claim granted on a grant row. A gift row without its recorded bits counts as all. */
+export function giftedPermissions(meta: Record<string, unknown>) {
+  if (meta.giftLinkId == null) return 0;
+  const recorded = meta[GIFT_PERMISSIONS_KEY];
+  return typeof recorded === 'number'
+    ? recorded
+    : EntityAccessPermission.EarlyAccessGeneration | EntityAccessPermission.EarlyAccessDownload;
+}
+
 /**
  * The one writer of a user's grant to a model version (a purchase or a gift claim). A single
  * statement that merges in the database: permissions are OR-ed and `meta` keys merged into the
@@ -87,10 +106,24 @@ export async function getModelVersionAccessPermissions(
   return row?.permissions ?? 0;
 }
 
+/** {@link giftedPermissions} of a row's `meta` column, for a write that must read the row as it is. */
+function giftedPermissionsSql(column: string) {
+  const meta = asJsonbObjectSql(column);
+  return Prisma.sql`(CASE
+    WHEN COALESCE(jsonb_typeof(${meta} -> 'giftLinkId'), 'null') = 'null' THEN 0
+    WHEN jsonb_typeof(${meta} -> ${GIFT_PERMISSIONS_KEY}::text) = 'number'
+      THEN (${meta} ->> ${GIFT_PERMISSIONS_KEY}::text)::numeric::int
+    ELSE ${
+      EntityAccessPermission.EarlyAccessGeneration | EntityAccessPermission.EarlyAccessDownload
+    }::int
+  END)`;
+}
+
 /**
  * Takes back refunded purchases. With `narrow`, only those bits and meta keys go and the row stays
- * for what is kept (an older purchase or a gift); without it, the whole grant goes. Neither throws
- * on a row that is already gone.
+ * for what is kept (an older purchase or a gift); without it, the whole grant goes. A gift's bits
+ * are never taken: they are read from the row when it is written. Neither throws on a row that is
+ * already gone.
  */
 export async function revokeModelVersionAccess({
   userId,
@@ -104,7 +137,8 @@ export async function revokeModelVersionAccess({
   if (narrow) {
     await dbWrite.$executeRaw`
       UPDATE "EntityAccess"
-         SET "permissions" = "permissions" & ~${narrow.revokePermissions}::int,
+         SET "permissions" = "permissions"
+               & ~(${narrow.revokePermissions}::int & ~${giftedPermissionsSql('"meta"')}),
              "meta" = ${asJsonbObjectSql('"meta"')} - ${narrow.removeKeys}::text[]
        WHERE "accessToId" = ${modelVersionId} AND "accessToType" = 'ModelVersion'
          AND "accessorId" = ${userId} AND "accessorType" = 'User'`;

@@ -12,7 +12,7 @@ the audit behind it, and every measured number.
 
 **Successor design (proposed, nothing built):**
 [paid-model-loading-boost-workflow.md](paid-model-loading-boost-workflow.md) — boosting as its own
-workflow, what it would change in the decisions below, and why `BOOST_NON_REFUNDABLE` becomes wrong
+workflow, what it would change in the decisions below, and why `BOOST_REFUND_POLICY` becomes wrong
 the day it ships.
 
 **Sources:** the 2026-08-18 lab call and the 2026-09-10 call (Justin, Koen, Briant), Koen's DMs

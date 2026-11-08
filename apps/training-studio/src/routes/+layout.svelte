@@ -22,6 +22,12 @@
     config: {
       imageLocation: env.PUBLIC_IMAGE_LOCATION || null,
       signalsEndpoint: env.PUBLIC_SIGNALS_ENDPOINT || null,
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
+      // svelte-ignore state_referenced_locally — fixed for the session (false only in the dev-login preview)
+      canAutoLabel: data.canAutoLabel,
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
+      // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
+      autoLabelUrl: `${data.civitaiUrl}/models/train`,
       // canGenerateUnpublished stays unset: the standalone shell doesn't gate epoch generation.
       // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
       // svelte-ignore state_referenced_locally — the session user's tier is fixed for the page's life

@@ -43,21 +43,29 @@ export async function refundAllLegsByPrefix(
 }
 
 /**
- * Refunds one transaction, treating "already refunded" as done. A repeat refund answers 200 today
- * and 409 once Buzz stops pre-checking duplicate external ids; the client's own retry after a lost
- * response gets the same 409. A 409 counts as done only when `refund-<transactionId>` is on the
- * ledger, so any other conflict still throws.
+ * Refunds one transaction, treating "already refunded" as done. Buzz may answer a repeat refund 200
+ * or 409, and the client's own retry after a lost response gets the same 409. A 409 counts as done
+ * only when `refund-<transactionId>` is on the ledger, so any other conflict still throws.
+ *
+ * `created` says whether THIS call made the refund. A 409 with the refund on the ledger is `false`.
+ * Because a repeat can also answer 200, a caller that must not count someone else's refund passes
+ * `readLedgerFirst`: the ledger is read before the call, and a refund already there is returned as
+ * `created: false` without calling Buzz.
  */
 export async function refundTransactionOnce(
   transactionId: string,
   description?: string,
-  details?: MixedObject
-): Promise<{ transactionId: string }> {
+  details?: MixedObject,
+  opts?: { readLedgerFirst?: boolean }
+): Promise<{ transactionId: string; created: boolean }> {
+  if (opts?.readLedgerFirst && (await getTransactionByExternalId(`refund-${transactionId}`)))
+    return { transactionId, created: false };
   try {
-    return await refundTransaction(transactionId, description, details);
+    const result = await refundTransaction(transactionId, description, details);
+    return { ...result, created: true };
   } catch (error) {
     if (!(await isConflictWithRefundOnLedger(error, transactionId))) throw error;
-    return { transactionId };
+    return { transactionId, created: false };
   }
 }
 

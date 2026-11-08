@@ -39,6 +39,21 @@ export type GiftIndexPage = {
   nextCursor: string | null;
 };
 
+/** GET .../gifts/[giftId]/claims and .../gifts/batch/[batchId]/claims. */
+export type GiftClaimsPage = {
+  claims: {
+    giftLinkId: number;
+    userId: number;
+    username: string | null;
+    claimedAt: string;
+    /** When the claimer's gifted access was removed; null while it stands. */
+    revokedAt: string | null;
+  }[];
+  nextCursor: string | null;
+  /** Claims from before claimers were told the creator can see them: counted, never named. Sent on the first page only; null after it. */
+  hiddenCount: number | null;
+};
+
 export type GiftStatus = 'Active' | 'Claimed' | 'Expired' | 'Revoked';
 
 const isPast = (d: string | null, now: Date) => !!d && new Date(d) <= now;

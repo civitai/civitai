@@ -11,6 +11,7 @@ import {
 } from '~/server/schema/training-studio-auto-label.schema';
 import {
   pollStudioAutoLabel,
+  STUDIO_AUTO_LABEL_RATE_LIMITS,
   submitStudioAutoLabel,
 } from '~/server/services/training-studio-auto-label.service';
 import {
@@ -49,6 +50,7 @@ import {
   router,
 } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { isBaseModelKey } from '~/utils/training-blocked-models';
 
 const TRAINING_ANNOUNCEMENT_KEY = 'training-announcement';
 // Written by the moderator app's Training Models page; read here for the training form's alert box.
@@ -140,7 +142,6 @@ export const trainingRouter = router({
     .input(getAutoLabelUploadUrlSchema)
     .use(isFlagProtected('imageTraining'))
     .use(isFlagProtected('trainingAutoLabelOrchestrator'))
-    // Per image: one presign each.
     .use(rateLimit(usageLimits('auto-label.upload')))
     .mutation(({ input, ctx }) => getAutoLabelUploadUrl({ ...input, userId: ctx.user.id })),
   submitAutoLabelWorkflow: guardedProcedure
@@ -148,7 +149,6 @@ export const trainingRouter = router({
     .input(submitAutoLabelWorkflowSchema)
     .use(isFlagProtected('imageTraining'))
     .use(isFlagProtected('trainingAutoLabelOrchestrator'))
-    // Per batch of up to 16 images.
     .use(rateLimit(usageLimits('auto-label.submit')))
     .mutation(({ input, ctx }) => submitAutoLabelWorkflow({ ...input, userId: ctx.user.id })),
   getAutoLabelWorkflow: guardedProcedure
@@ -156,7 +156,6 @@ export const trainingRouter = router({
     .input(getAutoLabelWorkflowSchema)
     .use(isFlagProtected('imageTraining'))
     .use(isFlagProtected('trainingAutoLabelOrchestrator'))
-    // Polling, every 5 s per in-flight workflow.
     .use(rateLimit(usageLimits('auto-label.poll')))
     .query(({ input, ctx }) => getAutoLabelWorkflow({ ...input, userId: ctx.user.id })),
   // Training Studio auto-label (the embedded element's host methods). Free to the user, so it runs
@@ -165,13 +164,21 @@ export const trainingRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(studioAutoLabelSubmitSchema)
     .use(isFlagProtected('trainingStudioUi'))
-    .use(rateLimit(usageLimits('auto-label.submit')))
+    .use(
+      rateLimit(STUDIO_AUTO_LABEL_RATE_LIMITS.submit.rules, undefined, {
+        sharedKey: STUDIO_AUTO_LABEL_RATE_LIMITS.submit.key,
+      })
+    )
     .mutation(({ input, ctx }) => submitStudioAutoLabel({ ...input, userId: ctx.user.id })),
   studioAutoLabelPoll: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(studioAutoLabelPollSchema)
     .use(isFlagProtected('trainingStudioUi'))
-    .use(rateLimit(usageLimits('auto-label.poll')))
+    .use(
+      rateLimit(STUDIO_AUTO_LABEL_RATE_LIMITS.poll.rules, undefined, {
+        sharedKey: STUDIO_AUTO_LABEL_RATE_LIMITS.poll.key,
+      })
+    )
     .query(({ input, ctx }) => pollStudioAutoLabel({ ...input, userId: ctx.user.id })),
   getStatus: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
@@ -196,6 +203,8 @@ export const trainingRouter = router({
       z.object({
         available: z.boolean(),
         message: z.string().max(2000).nullish(),
+        blockedModels: z.array(z.string().refine(isBaseModelKey, 'Unknown base model')).optional(),
+        blockedModelReasons: z.record(z.string(), z.string().max(300)).nullish(),
       })
     )
     .use(purgeOnSuccess(['training-status']))

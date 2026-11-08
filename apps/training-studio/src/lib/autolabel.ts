@@ -2,9 +2,10 @@
 // workflow, and stream results back per tile via `onResult`. Mirrors the main app's poll loop (5s in
 // prod; a touch faster here). Results are keyed by the `key` the caller sends, which must be unique per run.
 
-import { backend } from '$lib/host';
+import { autoLabelAvailable, backend } from '$lib/host';
 import { abortableDelay } from '$lib/pool';
 import { isAbort } from '$lib/upload';
+import { AutoLabelRefusedError } from '$lib/autolabel-errors';
 import type { Media } from '$lib/data/trainingModels';
 import type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/backend';
 
@@ -20,6 +21,7 @@ const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 // user's Buzz (the earlier auto-label loop recurred after its fix with the same signature).
 export const MAX_SUBMITS_PER_MEDIA = 3;
 const submitsByMedia = new Map<string, number>();
+const AUTO_LABEL_UNAVAILABLE = 'Auto-labeling is unavailable right now.';
 export const CAP_REFUSAL = `Auto-labeled ${MAX_SUBMITS_PER_MEDIA} times already this session — edit this label by hand.`;
 
 // Counted per blob, not per URL string: a re-signed URL for the same blob must not reset its count.
@@ -48,6 +50,17 @@ export function claimSubmits(ledger: Map<string, number>, items: AutoLabelItem[]
     allowed.push(item);
   }
   return { allowed, refused };
+}
+
+/** Return the slots `claimSubmits` took for `items` — only for a submit that was refused before any
+ *  orchestrator work (see `AutoLabelRefusedError`); a failure that may have been charged keeps them. */
+export function releaseSubmits(ledger: Map<string, number>, items: AutoLabelItem[]) {
+  for (const item of items) {
+    const key = mediaKey(item.mediaUrl);
+    const count = ledger.get(key) ?? 0;
+    if (count <= 1) ledger.delete(key);
+    else ledger.set(key, count - 1);
+  }
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -83,6 +96,7 @@ async function runBatch(
   let submitError: string | undefined;
   try {
     const workflowId = await submitBatch(mode, media, batch).catch((err) => {
+      if (err instanceof AutoLabelRefusedError) releaseSubmits(submitsByMedia, batch);
       if (!isAbort(err) && err instanceof Error) submitError = err.message;
       throw err;
     });
@@ -126,6 +140,11 @@ export async function runAutoLabel(
   onResult: (r: AutoLabelResult) => void,
   signal: AbortSignal
 ): Promise<number> {
+  if (!autoLabelAvailable()) {
+    for (const item of items)
+      onResult({ key: item.key, status: 'failed', error: AUTO_LABEL_UNAVAILABLE });
+    return 0;
+  }
   const { allowed, refused } = claimSubmits(submitsByMedia, items, MAX_SUBMITS_PER_MEDIA);
   if (refused.length) {
     console.warn(

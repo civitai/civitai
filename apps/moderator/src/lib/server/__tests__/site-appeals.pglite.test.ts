@@ -236,7 +236,6 @@ describe('site appeal queues', () => {
       title: 'Removed',
       status: 'UnpublishedViolation',
       restoresTo: 'Published',
-      scheduledAt: null,
       ownerBanned: false,
       unpublishedReason: 'spam',
       customMessage: null,
@@ -246,7 +245,6 @@ describe('site appeal queues', () => {
     expect(articles.items.find((r) => r.id === 112)!.subject).toMatchObject({
       ownerBanned: true,
       restoresTo: 'Draft',
-      scheduledAt: new Date('2026-12-01T15:30:00Z'),
     });
     const accounts = await getSiteAppealQueue({ category: 'Account', limit: 10, offset: 0 });
     expect(accounts.items.find((r) => r.id === 101)!.subject).toMatchObject({

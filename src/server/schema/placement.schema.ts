@@ -21,7 +21,12 @@ import {
   STICKER_MEDIA_TYPES,
 } from '~/shared/utils/sticker-placement';
 import type { StickerTrack } from '~/shared/utils/sticker-track';
-import { STICKER_TRACK_MAX_PAIRS, stickerTrackRefusal } from '~/shared/utils/sticker-track';
+import {
+  STICKER_TRACK_EASES,
+  STICKER_TRACK_MAX_KEYS,
+  STICKER_TRACK_MAX_PAIRS,
+  stickerTrackRefusal,
+} from '~/shared/utils/sticker-track';
 
 export const placementSurfaceSchema = z.enum(
   placementSurfaces as [string, ...string[]]
@@ -65,15 +70,33 @@ const stickerTrackPairs = z
 
 /** Shape here, rules in `stickerTrackRefusal`; the creator's size limit is checked by the service. */
 export const stickerTrackSchema = z
-  .object({
-    v: z.literal(1),
-    ms: z.number().int(),
-    show: stickerTrackPairs.optional(),
-    x: stickerTrackPairs,
-    y: stickerTrackPairs,
-    s: stickerTrackPairs,
-    r: stickerTrackPairs,
-  })
+  .discriminatedUnion('v', [
+    z.object({
+      v: z.literal(1),
+      ms: z.number().int(),
+      show: stickerTrackPairs.optional(),
+      x: stickerTrackPairs,
+      y: stickerTrackPairs,
+      s: stickerTrackPairs,
+      r: stickerTrackPairs,
+    }),
+    z.object({
+      v: z.literal(2),
+      keys: z
+        .array(
+          z.object({
+            t: z.number().int(),
+            x: finite,
+            y: finite,
+            s: finite,
+            r: finite,
+            o: finite,
+            ease: z.enum(STICKER_TRACK_EASES),
+          })
+        )
+        .max(STICKER_TRACK_MAX_KEYS),
+    }),
+  ])
   .superRefine((track, ctx) => {
     const refusal = stickerTrackRefusal(track as StickerTrack);
     if (refusal) ctx.addIssue({ code: 'custom', message: `track: ${refusal}` });
