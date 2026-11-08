@@ -103,4 +103,21 @@ describe("the standalone auto-label endpoint shares the embed procedures' bucket
       await expect(endpointAttempt(which)).resolves.toBeDefined();
     }
   );
+
+  it('lets a moderator through at the limit, as the middleware does', async () => {
+    const { key, rules } = STUDIO_AUTO_LABEL_RATE_LIMITS.submit;
+    redisMock.redis.packed.hGet.mockResolvedValue(Array(rules[0].limit).fill(Date.now()));
+    const moderator = { id: 8, isModerator: true } as never;
+    await expect(
+      claimRateLimitAttempt({ rules, keyName: key, user: moderator, req })
+    ).resolves.toBeTypeOf('function');
+  });
+
+  it('fails open when the attempt cannot be written', async () => {
+    const { key, rules } = STUDIO_AUTO_LABEL_RATE_LIMITS.submit;
+    mockHSetWithTTL.mockRejectedValue(new Error('sysredis failover'));
+    const record = await claimRateLimitAttempt({ rules, keyName: key, user, req });
+    await expect(record()).resolves.toBeUndefined();
+    expect(mockHSetWithTTL).toHaveBeenCalled();
+  });
 });

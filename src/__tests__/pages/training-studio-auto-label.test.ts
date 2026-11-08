@@ -32,6 +32,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 }));
 
 import handler from '~/pages/api/training-studio/auto-label';
+import { STUDIO_AUTO_LABEL_RATE_LIMITS } from '~/server/services/training-studio-auto-label.service';
 
 const mediaUrl = 'https://orchestration.civitai.com/v2/consumer/blobs/a.png';
 const submitBody = { mode: 'tag', media: 'image', items: [{ mediaUrl, key: 'a' }] };
@@ -96,10 +97,14 @@ describe('/api/training-studio/auto-label', () => {
   it.each([
     ['submit', { method: 'POST', body: submitBody }, 'training:studioAutoLabelSubmit'],
     ['poll', { method: 'GET', query: { workflowId: 'wf-1' } }, 'training:studioAutoLabelPoll'],
-  ])("draws a %s from the embed procedure's bucket", async (_l, req, keyName) => {
+  ] as const)("draws a %s from the embed procedure's bucket", async (which, req, keyName) => {
     await call(req);
     expect(limiter.claim).toHaveBeenCalledWith(
-      expect.objectContaining({ keyName, user: { id: 7 } })
+      expect.objectContaining({
+        keyName,
+        rules: STUDIO_AUTO_LABEL_RATE_LIMITS[which].rules,
+        user: { id: 7 },
+      })
     );
     expect(limiter.record).toHaveBeenCalled();
   });

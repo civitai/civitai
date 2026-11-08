@@ -42,7 +42,7 @@ const CAPTION_TEMPERATURE = 0.7;
 export const STUDIO_AUTO_LABEL_DAILY_ITEMS = 1200;
 /** Per-minute limits on `training.studioAutoLabelSubmit` / `studioAutoLabelPoll` and the standalone
  *  Studio's REST endpoint. `key` names the bucket (each procedure's tRPC path with `:`), so both
- *  surfaces share one quota per user. Polling every 5s per in-flight workflow fits in 1500/min. */
+ *  surfaces share one quota per user. */
 export const STUDIO_AUTO_LABEL_RATE_LIMITS = {
   submit: { key: 'training:studioAutoLabelSubmit', rules: [{ limit: 100, period: 60 }] },
   poll: { key: 'training:studioAutoLabelPoll', rules: [{ limit: 1500, period: 60 }] },
