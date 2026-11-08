@@ -29,34 +29,10 @@ import {
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { APP_BLOCK_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MODERATOR REFUND OF APP BLOCKS SPEND
-//
-// An App Blocks generation can succeed on the orchestrator and still deliver nothing to the user,
-// because of a fault on our side. The automatic refunds only cover a workflow that FAILED (the
-// orchestrator credits it back, and the author-fee observers reverse the fee), so a succeeded one has
-// no way back. This gives a moderator one — for SUCCEEDED workflows only. It moves money and nothing
-// else: the user's charge legs and the author fee (plus, when linked, a note on the report).
-//
-// WHERE A WORKFLOW'S MONEY IS — two kinds of charge, found two different ways:
-//
-//   1. The generation itself. The ORCHESTRATOR debits the viewer, as a Buzz multi-transaction made
-//      with NO external id prefix, so it cannot be listed by prefix. Each leg's Buzz transaction id
-//      (one per colour drained) is on the workflow's own `transactions.list` as a `debit`, and the
-//      orchestrator's own refunds of that workflow are `credit` entries beside them. Refunding a leg
-//      is `refundTransaction(<leg id>)`, which Buzz records once, as `refund-<leg id>`.
-//   2. The app author's fee. civitai debits it itself, under `block-author-fee-charge-<workflowId>`,
-//      and returns it under `block-author-fee-reversal-<workflowId>` — one key for every path that
-//      returns it, so it is returned at most once.
-//
-// 🔴 A LEG IS REFUNDED IN FULL OR NOT AT ALL — Buzz has no partial refund of a transaction. So a
-// colour the orchestrator has already PARTLY credited cannot be squared by refunding legs, and that
-// workflow is refused rather than over-refunded. One the orchestrator credited IN FULL is done.
-//
-// 🔴 THE AUTHOR IS NEVER CLAWED BACK. A fee whose accrual day is still open is reversed — the accrual
-// row goes, so the author is never paid it. A fee whose day has closed may already have been minted to
-// the author; the viewer is still refunded it, and the platform absorbs it.
-// ─────────────────────────────────────────────────────────────────────────────
+// Moderator refund of App Blocks spend, for a SUCCEEDED workflow that delivered nothing. It moves
+// money and nothing else: the user's generation legs, found by id on the orchestrator's own
+// `transactions.list` (they carry no external id prefix), and the app author's fee, charged and
+// returned under `block-author-fee-charge-` / `block-author-fee-reversal-<workflowId>`.
 
 export const APP_REFUND_CAP_BUZZ = 5_000;
 export const APP_REFUND_MAX_WORKFLOWS = 50;
@@ -74,17 +50,20 @@ const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']
 const BUZZ_TRANSACTION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const INSPECT_CONCURRENCY = 5;
 
-export type SkipReason =
-  | 'not-app-blocks'
-  | 'workflow-not-found'
-  | 'mixed-users'
-  | 'not-terminal'
-  | 'not-succeeded'
-  | 'unsupported-charge'
-  | 'charges-unreadable'
-  | 'orchestrator-partial-refund'
-  | 'no-charges'
-  | 'lookup-failed';
+/** Every reason the planner skips a workflow — the lookup reports the same one. */
+export const SKIP_REASONS = [
+  'not-app-blocks',
+  'workflow-not-found',
+  'mixed-users',
+  'not-terminal',
+  'not-succeeded',
+  'unsupported-charge',
+  'charges-unreadable',
+  'orchestrator-partial-refund',
+  'no-charges',
+  'lookup-failed',
+] as const;
+export type SkipReason = (typeof SKIP_REASONS)[number];
 
 export type ChargeLeg = {
   /** The Buzz transaction id the orchestrator recorded for this debit. */
@@ -234,6 +213,7 @@ async function inspectWorkflow(
       });
     }
 
+    // A leg is refunded whole or not at all — Buzz has no partial refund of a transaction.
     // The orchestrator's own credits, per colour. EXACTLY the debited amount: every leg of that
     // colour is settled. Anything else — part of it, more than it, or a credit in a colour nothing
     // was debited in — means the orchestrator's books for this workflow are not a whole-leg picture,
@@ -311,8 +291,6 @@ async function inspectWorkflow(
     };
   }
 }
-
-// ─── Lookup ──────────────────────────────────────────────────────────────────
 
 export type RefundState = 'none' | 'partial' | 'full';
 
@@ -406,8 +384,6 @@ export async function lookupAppWorkflowCharges(input: {
     }),
   };
 }
-
-// ─── Plan ────────────────────────────────────────────────────────────────────
 
 type FeePlan = {
   state: AuthorFeeState;
@@ -527,8 +503,6 @@ export async function planAppWorkflowRefunds(workflowIds: string[], now = new Da
 
 export type AppWorkflowRefundPlan = Awaited<ReturnType<typeof planAppWorkflowRefunds>>;
 
-// ─── Feedback ────────────────────────────────────────────────────────────────
-
 /**
  * Refuses a feedback link that does not describe these refunds: a report that is not App feedback,
  * that another user filed, or that names a different app. Runs on the plan, before any money moves.
@@ -556,8 +530,6 @@ export async function assertFeedbackMatchesPlan(feedbackId: number, plan: AppWor
   }
   return feedback;
 }
-
-// ─── Execute ─────────────────────────────────────────────────────────────────
 
 export type LegResult = {
   transactionId: string;
@@ -613,6 +585,10 @@ function legResults(plan: RefundablePlan) {
 }
 
 /**
+ * The author is never clawed back: a fee whose accrual day is still open is reversed (the accrual row
+ * goes, so it is never paid out); one whose day has closed may already be the author's, so the user is
+ * refunded it and the platform absorbs it.
+ *
  * The author fee, in the treatment the plan chose. `created` is false when the fee turned out to be
  * back with the user already — this call returned nothing, and must not count it.
  */
@@ -676,9 +652,9 @@ async function applyFee(
 
 /**
  * Refunds one leg. `created` when THIS call made the refund; `existed` when it was already on the
- * ledger. Buzz answers a repeat refund 200 today (409 once it stops pre-checking duplicates), so the
- * response alone cannot tell the two apart: the ledger is read right before the call, and a 409 is
- * `existed` only with `refund-<id>` on the ledger, as `refundTransactionOnce` decides it.
+ * ledger. Buzz may answer a repeat refund 200 or 409, so the response cannot tell created from
+ * existed; the ledger is read right before the call, and a 409 counts as existed only with
+ * `refund-<id>` on the ledger.
  */
 async function refundLeg(
   transactionId: string,

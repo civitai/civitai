@@ -185,8 +185,8 @@ export const PERMISSIONS = [
     label: 'Look up and refund a user’s App Blocks Buzz spend',
   },
   // Raises the per-call ceiling for a holder of `apps.buzz.refund`; useless without it. Apart
-  // because one call can return the spend of up to 50 generations. Checked by the same endpoint
-  // by this literal.
+  // because one call can return the spend of many generations. Checked by the same endpoint by this
+  // literal.
   {
     id: 'apps.buzz.refund.large',
     label: 'Refund more than 5,000 App Blocks Buzz in one call',

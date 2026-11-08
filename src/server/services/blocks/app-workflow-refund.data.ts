@@ -4,11 +4,7 @@ import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 
-// The I/O half of the moderator App refund (`app-workflow-refund.service.ts`): every database and
-// orchestrator read or write it makes, and nothing else. Kept apart so the money logic can be tested
-// against fixtures, and so each statement here is one place to read.
-//
-// Every read is on the PRIMARY. A refund decides from these rows whether money is still owed, and a
+// Every read is on the PRIMARY: a refund decides from these rows whether money is still owed, and a
 // replica a moment behind a reversal would answer "still owed".
 
 /** `block_workflows`: written at submit for every non-dev App Blocks generation. */
@@ -84,8 +80,8 @@ export async function getAppWorkflowRecords(workflowIds: string[]): Promise<AppW
  * three tables because none of them alone is complete: `block_workflows` skips nothing a viewer ran
  * but is best-effort, and the other two are only written for a spend that went through.
  *
- * ⚠️ `block_spend_attribution` and `block_author_fee_accrual` have no index on the SPENDER — theirs
- * lead with the app, the owner or the author. Both are small, and this is a moderator read.
+ * No index on the spender (theirs lead with the app, owner or author), so this scans them; acceptable
+ * only for a bounded moderator read.
  */
 export async function listAppWorkflowIdsForUser(input: {
   userId: number;

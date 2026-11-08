@@ -724,17 +724,13 @@ export type AppFeedbackForRefund = {
 
 /** The columns the moderator App refund checks before it moves money against a report. */
 export async function getAppFeedbackForRefund(id: number): Promise<AppFeedbackForRefund | null> {
-  const row = await dbWrite.feedback.findUnique({
-    where: { id },
-    select: { id: true, area: true, userId: true, appListing: { select: { appBlockId: true } } },
-  });
-  if (!row) return null;
-  return {
-    id: row.id,
-    area: row.area,
-    userId: row.userId,
-    appBlockId: row.appListing?.appBlockId ?? null,
-  };
+  const rows = await dbWrite.$queryRaw<AppFeedbackForRefund[]>`
+    SELECT f."id", f."area", f."userId", al."app_block_id" AS "appBlockId"
+    FROM "Feedback" f
+    LEFT JOIN "app_listings" al ON al."id" = f."appListingId"
+    WHERE f."id" = ${id}
+  `;
+  return rows[0] ?? null;
 }
 
 /**

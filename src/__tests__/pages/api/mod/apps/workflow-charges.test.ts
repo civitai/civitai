@@ -81,6 +81,7 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 import handler from '~/pages/api/mod/apps/workflow-charges';
 import {
   planAppWorkflowRefunds,
+  SKIP_REASONS,
   type SkipReason,
 } from '~/server/services/blocks/app-workflow-refund.service';
 
@@ -403,71 +404,47 @@ describe('refundBlocker is the refund planner’s skip reason', () => {
     transactions,
   });
 
-  const cases: [string, () => void][] = [
-    [
-      'not-app-blocks',
-      () => h.getAppWorkflowRecords.mockResolvedValue({ workflows: [], spends: [], fees: [] }),
-    ],
-    [
-      'workflow-not-found',
-      () => h.getOrchestratorWorkflowCharges.mockResolvedValue({ found: false }),
-    ],
-    [
-      'mixed-users',
-      () =>
-        h.getAppWorkflowRecords.mockResolvedValue({
-          workflows: [recorded()],
-          spends: [{ ...recorded(OWNER), attributedAt: TODAY }],
-          fees: [],
-        }),
-    ],
-    [
-      'not-terminal',
-      () =>
-        h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('processing', [debit(10, 41)])),
-    ],
-    [
-      'not-succeeded',
-      () => h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('failed', [debit(14, 53)])),
-    ],
-    [
-      'charges-unreadable',
-      () => {
-        h.getAppWorkflowRecords.mockResolvedValue({
-          workflows: [recorded()],
-          spends: [{ ...recorded(), buzzAmount: 59, attributedAt: TODAY }],
-          fees: [],
-        });
-        h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('succeeded', []));
-      },
-    ],
-    [
-      'unsupported-charge',
-      () =>
-        h.getOrchestratorWorkflowCharges.mockResolvedValue(
-          charges('succeeded', [debit(11, 43, 'yellow', 'fund-17')])
-        ),
-    ],
-    [
-      'orchestrator-partial-refund',
-      () =>
-        h.getOrchestratorWorkflowCharges.mockResolvedValue(
-          charges('succeeded', [
-            debit(12, 97),
-            { type: 'credit', amount: 31, id: 'credit-1', accountType: 'yellow' },
-          ])
-        ),
-    ],
-    [
-      'no-charges',
-      () => h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('succeeded', [])),
-    ],
-    [
-      'lookup-failed',
-      () =>
-        h.getOrchestratorWorkflowCharges.mockRejectedValue(new Error('orchestrator unavailable')),
-    ],
-  ];
+  // A Record, so adding a SkipReason without a case here fails the test typecheck.
+  const setups: Record<SkipReason, () => void> = {
+    'not-app-blocks': () =>
+      h.getAppWorkflowRecords.mockResolvedValue({ workflows: [], spends: [], fees: [] }),
+    'workflow-not-found': () =>
+      h.getOrchestratorWorkflowCharges.mockResolvedValue({ found: false }),
+    'mixed-users': () =>
+      h.getAppWorkflowRecords.mockResolvedValue({
+        workflows: [recorded()],
+        spends: [{ ...recorded(OWNER), attributedAt: TODAY }],
+        fees: [],
+      }),
+    'not-terminal': () =>
+      h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('processing', [debit(10, 41)])),
+    'not-succeeded': () =>
+      h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('failed', [debit(14, 53)])),
+    'charges-unreadable': () => {
+      h.getAppWorkflowRecords.mockResolvedValue({
+        workflows: [recorded()],
+        spends: [{ ...recorded(), buzzAmount: 59, attributedAt: TODAY }],
+        fees: [],
+      });
+      h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('succeeded', []));
+    },
+    'unsupported-charge': () =>
+      h.getOrchestratorWorkflowCharges.mockResolvedValue(
+        charges('succeeded', [debit(11, 43, 'yellow', 'fund-17')])
+      ),
+    'orchestrator-partial-refund': () =>
+      h.getOrchestratorWorkflowCharges.mockResolvedValue(
+        charges('succeeded', [
+          debit(12, 97),
+          { type: 'credit', amount: 31, id: 'credit-1', accountType: 'yellow' },
+        ])
+      ),
+    'no-charges': () =>
+      h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('succeeded', [])),
+    'lookup-failed': () =>
+      h.getOrchestratorWorkflowCharges.mockRejectedValue(new Error('orchestrator unavailable')),
+  };
+  const cases = Object.entries(setups) as [SkipReason, () => void][];
 
   beforeEach(() => {
     h.listAppWorkflowIdsForUser.mockResolvedValue([WF]);
@@ -475,20 +452,8 @@ describe('refundBlocker is the refund planner’s skip reason', () => {
     h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('succeeded', [debit(13, 47)]));
   });
 
-  it('covers every skip reason the planner has', () => {
-    const reasons: SkipReason[] = [
-      'not-app-blocks',
-      'workflow-not-found',
-      'mixed-users',
-      'not-terminal',
-      'not-succeeded',
-      'unsupported-charge',
-      'charges-unreadable',
-      'orchestrator-partial-refund',
-      'no-charges',
-      'lookup-failed',
-    ];
-    expect(cases.map(([reason]) => reason).sort()).toEqual([...reasons].sort());
+  it('covers every skip reason the planner exports', () => {
+    expect(cases.map(([reason]) => reason).sort()).toEqual([...SKIP_REASONS].sort());
   });
 
   it.each(cases)('%s', async (reason, setup) => {
