@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type * as TrainingDataRestricted from '~/server/services/training-data-restricted.service';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { assertDownloadUrlsResolve } from '~/tests/api/v1/download-url-seam.helper';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -71,9 +70,7 @@ vi.mock('~/server/services/file.service', () => ({
 vi.mock('~/server/utils/url-helpers', () => ({ getBaseUrl: () => 'https://civitai.com' }));
 // The listing rule is tested on PGlite (training-data-share.behavior.test.ts); here only that this
 // surface asks it with the request's host and applies the answer.
-vi.mock('~/server/services/training-data-restricted.service', async (importOriginal) => ({
-  withoutServerOnlyKeys: (await importOriginal<typeof TrainingDataRestricted>())
-    .withoutServerOnlyKeys,
+vi.mock('~/server/services/training-data-restricted.service', () => ({
   trainingDataListing:
     async (
       _db: unknown,
@@ -444,6 +441,7 @@ describe('GET /api/v1/models/[id] — a mature training dataset', () => {
       nsfwLevel: 4,
       fullyRated: true,
       datasetArchive: { items: 3, skipped: 0, complete: true },
+      trainingResults: { version: 2, epochs: [{ epochNumber: 1 }] },
     },
   };
   beforeEach(() => {
@@ -464,9 +462,15 @@ describe('GET /api/v1/models/[id] — a mature training dataset', () => {
     expect(ids(await invoke('7', 'civitai.red'))).toContain(15);
   });
 
-  it('is listed with the sharing choice but without the server-only metadata', async () => {
+  it('is listed without its metadata', async () => {
     const res: any = await invoke('7', 'civitai.red');
     const file = res.body.modelVersions[0].files.find((f: any) => f.id === 15);
-    expect(file.metadata).toEqual({ ownRights: true, shareDataset: true });
+    expect(file.metadata ?? {}).toEqual({});
+  });
+
+  it('a model file beside it keeps its metadata', async () => {
+    const res: any = await invoke('7', 'civitai.red');
+    const file = res.body.modelVersions[0].files.find((f: any) => f.id === 11);
+    expect(file.metadata).toEqual({ format: 'SafeTensor', size: 'pruned', fp: 'fp16' });
   });
 });
