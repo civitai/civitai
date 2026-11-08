@@ -233,6 +233,16 @@ beforeAll(async () => {
       (1331, 1321, 0, true), (1332, 1321, 1, false);
     INSERT INTO "Image" (id, "acceptableMinor") VALUES (1411, true);
     INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (1401, 1411, 'Published', now());
+    -- Flagged images connected to public bounties, an entry and a published article: 1531 is the
+    -- only image of bounty 1521; entry 1523 and article 1541 have a flagged image ahead of a clean one.
+    INSERT INTO "Bounty" VALUES (1521, ${OWNER}, 'Public'), (1522, ${OWNER}, 'Public');
+    INSERT INTO "BountyEntry" VALUES (1523, 1522, ${OWNER});
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (1541, null, 'Published', now());
+    INSERT INTO "Image" (id, "acceptableMinor") VALUES
+      (1531, true), (1533, true), (1534, false), (1551, true), (1552, false);
+    INSERT INTO "ImageConnection" VALUES
+      (1531, 1521, 'Bounty'), (1533, 1523, 'BountyEntry'), (1534, 1523, 'BountyEntry'),
+      (1551, 1541, 'Article'), (1552, 1541, 'Article');
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -249,6 +259,7 @@ const hidden: [string, string, number, number][] = [
   ['a flagged image', 'Image', 1211, 1211],
   ['a post whose only image is flagged', 'Post', 1201, 1211],
   ['an article whose cover is flagged', 'Article', 1401, 1411],
+  ['a public bounty whose only image is flagged', 'Bounty', 1521, 1531],
   ['an entry on a Private bounty', 'BountyEntry', 3, 103],
   ['an image on a scheduled post', 'Image', 212, 212],
   ['an image on a draft post', 'Image', 213, 213],
@@ -286,6 +297,8 @@ const fallback: [string, string, number, number, number][] = [
   ['a post whose first image is flagged', 'Post', 1202, 1213, 1212],
   ['a public model whose first image is flagged', 'Model', 1301, 1332, 1331],
   ['a version whose first image is flagged', 'ModelVersion', 1311, 1332, 1331],
+  ['an entry on a public bounty whose first image is flagged', 'BountyEntry', 1523, 1534, 1533],
+  ['a published article whose first content image is flagged', 'Article', 1541, 1552, 1551],
 ];
 
 const visible: [string, string, number, number][] = [

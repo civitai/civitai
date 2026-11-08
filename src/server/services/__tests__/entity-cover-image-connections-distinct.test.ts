@@ -233,8 +233,8 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         `WHEN 'Bounty' THEN e."entityId" WHEN 'BountyEntry' THEN be."bountyId" END ` +
         `LEFT JOIN "Article" a ON e."entityType" = 'Article' AND a.id = e."entityId" ` +
         `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL ` +
-        // A nested Prisma.sql (`imageNotFlagged`), run against rows in
-        // entity-cover-image-visibility.behavior.test.ts.
+        // A nested Prisma.sql (`imageNotFlagged`); its rows are in
+        // entity-cover-image-visibility.behavior.test.ts (bounty 1521, entry 1523, article 1541).
         'AND ? ' +
         // Only types with a visibility rule here, then canViewBounty or the article rule.
         `AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article') ` +
