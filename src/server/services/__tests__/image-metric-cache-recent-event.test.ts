@@ -184,7 +184,10 @@ describe('image metric cache: an event the ClickHouse snapshot has not caught up
     "a new image's first tip survives a not-found populate by %s",
     async (writer) => {
       const { lua, chTotals, tip, service, engineService, advance } = setup();
-      const populator = writer === 'event-engine' ? engineService : service;
+      const populate = () =>
+        writer === 'event-engine'
+          ? engineService.fetch('Image', [IMAGE_ID])
+          : service.fetch('Image', [IMAGE_ID]);
       // Every read slides the entry's TTL to 12h, and an unstamped entry never refreshes
       // by chance (sliding is 10% of reads, the unstamped refresh 5%).
       vi.spyOn(Math, 'random').mockReturnValue(0.07);
@@ -192,7 +195,7 @@ describe('image metric cache: an event the ClickHouse snapshot has not caught up
 
       expect(await tip(30)).toBe(false);
       advance(19_000);
-      await populator.fetch('Image', [IMAGE_ID]);
+      await populate();
       expect(lua.hash(metricKey)?.notFound).toBe('1');
 
       // A second tip lands on the not-found entry, and a read keeps it past its 5 min.
