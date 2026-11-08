@@ -1188,8 +1188,7 @@ export const deleteUser = async ({
       // transaction, so nothing else in it commits. It also clears "subscriptionId": a second pointer
       // to the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
       dbWrite.$executeRaw(guardedAccountScrubSql(user.id, markerView)),
-      // The account's ProfilePictureHold records go with it, unless it is held: then the scrub above
-      // fails the transaction, and this statement's guard is the scrub's own test.
+      // Deletes the account's ProfilePictureHold records; same held-account guard as the scrub above.
       dbWrite.$executeRaw(deleteProfilePictureHoldsSql(user.id, markerView)),
       ...(removeModels
         ? []

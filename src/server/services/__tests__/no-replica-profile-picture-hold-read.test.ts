@@ -13,7 +13,7 @@ const PATTERN = /ProfilePictureHold|profilePictureHold/;
 
 // Files that exist for the table: none may import a read client at all.
 const DEDICATED: Record<string, number> = {
-  'src/server/services/profile-picture-hold.service.ts': 6,
+  'src/server/services/profile-picture-hold.service.ts': 5,
   'src/server/notifications/primary-notification-queries.ts': 2,
   'src/server/services/personal-data-export/sources/profile-pictures.ts': 1,
   'apps/moderator/src/lib/server/profile-picture-hold.ts': 4,
@@ -68,7 +68,8 @@ describe('ProfilePictureHold access', () => {
   });
 
   // A line naming the table in a shared file must not sit in a statement on a read client: the
-  // statement opening within the few lines above it must not name one.
+  // statement opening within the few lines above it must not name one. Best-effort: it looks back
+  // 6 lines, so a longer statement opened on a read client further up would pass.
   it('the shared files read it on no read-replica client', () => {
     for (const file of Object.keys(SHARED)) {
       const lines = readFileSync(path.join(ROOT, file), 'utf8').split('\n');

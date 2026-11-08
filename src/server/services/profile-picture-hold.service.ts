@@ -17,8 +17,7 @@ import { avatarRemovalUndisclosedSql } from '~/server/services/profile-picture-h
 import { refreshProfilePicturesForUsers } from '~/server/services/user.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
-// 🔴 Every read of "ProfilePictureHold" goes through dbWrite: no read-replica role is granted the
-// table, so a read-replica query naming it fails with a permission error.
+// 🔴 Reads of "ProfilePictureHold" use dbWrite: see no-replica-profile-picture-hold-read.test.ts.
 
 export const PROFILE_PICTURE_SYNC_OVERDUE_MINUTES = 15;
 export const PROFILE_PICTURE_SYNC_HEARTBEAT = 'profile-picture-sync-heartbeat';
@@ -96,7 +95,7 @@ export async function syncProfilePictureForImage(
           WHEN u.image = ${image.url} OR EXISTS (
             SELECT 1 FROM "Image" bi
             WHERE bi."userId" = u.id AND bi.url = u.image
-              AND (bi.ingestion = 'Blocked' OR bi."needsReview" = 'csam')
+              AND (bi.ingestion = 'Blocked' OR bi."needsReview" IS NOT NULL)
           ) THEN NULL
           ELSE u.image
         END
@@ -217,15 +216,6 @@ export async function runProfilePictureSync({ limit = 1000 }: { limit?: number }
     );
   }
   return summary;
-}
-
-/** The users with a record for any of `imageIds`. Its image is no longer their profilePictureId. */
-export async function getHeldProfilePictureUserIds(imageIds: number[]): Promise<number[]> {
-  if (!imageIds.length) return [];
-  const rows = await dbWrite.$queryRaw<{ userId: number }[]>`
-    SELECT DISTINCT "userId" FROM "ProfilePictureHold" WHERE "imageId" IN (${Prisma.join(imageIds)})
-  `;
-  return rows.map((r) => r.userId);
 }
 
 /**

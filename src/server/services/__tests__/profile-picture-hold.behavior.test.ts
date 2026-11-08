@@ -413,6 +413,18 @@ describe('syncProfilePictureForImage', () => {
       expect(await image(OWNER)).toBeNull();
     });
 
+    it.each(['minor', 'poi', 'newUser', 'appeal'])(
+      "is cleared when it is another image of the user's under a %s review",
+      async (needsReview) => {
+        const other = OWNER * 100 + 2;
+        await review(other, needsReview);
+        await db.query(`UPDATE "User" SET image = $1 WHERE id = $2`, [`img-${other}`, OWNER]);
+        await block(avatar(OWNER));
+        await runProfilePictureSync();
+        expect(await image(OWNER)).toBeNull();
+      }
+    );
+
     it('is kept when it is a url that is not one of their images', async () => {
       await db.query(`UPDATE "User" SET image = 'https://example.invalid/a.png' WHERE id = $1`, [
         OWNER,
