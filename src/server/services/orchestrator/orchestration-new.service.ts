@@ -1862,16 +1862,6 @@ async function hasQueuedDownloads(data: unknown) {
 }
 
 /**
- * Submits a generation workflow using generation-graph input.
- *
- * Validates:
- * - Graph input validation
- * - Resource validation (subscription, epochs, canGenerate, POI)
- * - Prompt POI detection
- *
- * Note: Generation status check should be done in the router before calling this function.
- */
-/**
  * What a boost-to-load submit adds. The orchestrator forces a free-tier workflow into the free lane,
  * which a boost cannot leave, so a non-member's boosted load is pinned to the paid tier it pays for.
  */
@@ -1881,6 +1871,16 @@ const BOOST_REQUIRED =
 const BOOST_UNAVAILABLE =
   "The download boost couldn't be confirmed, so nothing was charged. Try again.";
 
+/**
+ * Submits a generation workflow using generation-graph input.
+ *
+ * Validates:
+ * - Graph input validation
+ * - Resource validation (subscription, epochs, canGenerate, POI)
+ * - Prompt POI detection
+ *
+ * Note: Generation status check should be done in the router before calling this function.
+ */
 export async function generateFromGraph({
   input,
   externalCtx,
@@ -2098,10 +2098,8 @@ export async function generateFromGraph({
   // download. If that check fails the generation still goes out, unboosted and unbilled for it.
   const boostWhatIf = downloadPriority ? await priceDownloads() : undefined;
   const boostDownloads = !!boostWhatIf?.steps?.some((step) => readPreparation(step));
-  // Boost-to-load fails CLOSED: a non-member's cold checkpoint goes out only boosted. A failed price,
-  // a reply outside the high lane, or one showing no download is refused rather than sent free: with
-  // no download shown the submit would carry no boost, and a model evicted in between would then
-  // load free for a non-member, which the members gate exists to prevent.
+  // Fails CLOSED: with no download shown the submit carries no boost, and a model evicted in
+  // between would load free for a non-member.
   if (
     boostRequired &&
     (!boostWhatIf || !boostDownloads || readDownloadPriority(boostWhatIf) !== 'high')

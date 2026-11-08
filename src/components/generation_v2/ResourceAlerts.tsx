@@ -258,7 +258,6 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
   if (isSuccess && !isLoading) settledRef.current = { ready: data.ready, download, boostRequired };
   const settled = settledRef.current;
 
-  // FormFooter holds Generate for a required boost with nothing shown to download. Say why.
   if (canEstimateCost && settled?.boostRequired && !settled.download) {
     const size = isMobile ? 'xs' : 'sm';
     return (
