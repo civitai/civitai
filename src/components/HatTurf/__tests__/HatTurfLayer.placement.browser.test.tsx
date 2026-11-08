@@ -425,7 +425,7 @@ describe('a hat is placed with the sticker editor', () => {
     await drag(KNOB, { x: c.x + 80, y: c.y });
     const pose = await saved();
     expect(pose.rotation).toBeCloseTo(90, 0);
-    await act(async () => h.mutate.mock.calls[0][1].onSuccess({ reactionEarns: false }));
+    await act(async () => h.mutate.mock.calls[0][1].onSuccess());
 
     const placed = await editorPart('[data-testid="hat-turf-placed"]');
     const picture = drawnRect('contain', [700, 500], { width: 700, height: 500 });
@@ -450,7 +450,7 @@ describe('a hat is placed with the sticker editor', () => {
     expect(q('hat-turf-draft')!.querySelector('[data-testid="hat-turf-cone"]')).toBeNull();
 
     await saved();
-    await act(async () => h.mutate.mock.calls[0][1].onSuccess({ reactionEarns: false }));
+    await act(async () => h.mutate.mock.calls[0][1].onSuccess());
     await vi.waitFor(() => expect(artOf('hat-turf-placed')).toBeTruthy());
     expect(artOf('hat-turf-placed')!.getAttribute('src')).toContain('party-cap-art');
     expect(q('hat-turf-placed')!.querySelector('[data-testid="hat-turf-cone"]')).toBeNull();
@@ -508,7 +508,7 @@ describe('hats and the card chips painted over the picture', () => {
       ).toBe(true);
 
       await saved();
-      await act(async () => h.mutate.mock.calls[0][1].onSuccess({ reactionEarns: false }));
+      await act(async () => h.mutate.mock.calls[0][1].onSuccess());
       const placed = await editorPart('[data-testid="hat-turf-placed"]');
       expect(topAt(placed), 'a placed hat paints over the chips').toBe(q('chip'));
     } finally {

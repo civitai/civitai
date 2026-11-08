@@ -7,7 +7,7 @@ import { callMainApp } from '$lib/server/main-app';
 import { firstError } from '$lib/server/form-errors';
 import { darkFlagEnabled } from '$lib/server/main-app-flags';
 import { sessionCookies } from '$lib/server/session-cookies';
-import type { GiftList } from './gift-links';
+import type { GiftList } from '../gift-links';
 
 const versionIdSchema = z.coerce.number().int().positive();
 // The page sends the end of the picked day in the creator's zone. A post that ran before hydration sends
@@ -50,7 +50,15 @@ async function versionOrThrow(versionId: string, user: App.Locals['user']) {
   const version = await dbRead
     .selectFrom('ModelVersion as mv')
     .innerJoin('Model as m', 'm.id', 'mv.modelId')
-    .select(['mv.id', 'mv.name', 'm.id as modelId', 'm.name as modelName', 'm.userId', 'm.nsfw', 'm.nsfwLevel'])
+    .select([
+      'mv.id',
+      'mv.name',
+      'm.id as modelId',
+      'm.name as modelName',
+      'm.userId',
+      'm.nsfw',
+      'm.nsfwLevel',
+    ])
     .where('mv.id', '=', id.data)
     .executeTakeFirst();
   // The main app re-checks ownership on every call; this only keeps the page from rendering.

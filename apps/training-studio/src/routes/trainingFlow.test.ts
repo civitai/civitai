@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { MODEL_CARDS, cardByType, cardsForMedia } from '$lib/data/trainingModels';
+import {
+  LORA_TYPES,
+  MODEL_CARDS,
+  cardByType,
+  catalogFlagKeys,
+  cardsForMedia,
+  editCards,
+  visibleVersions,
+  type ModelVersionInfo,
+} from '$lib/data/trainingModels';
 import {
   MAX_SAMPLE_PROMPTS,
   addSamplePrompt,
@@ -15,6 +24,7 @@ import {
   paramDeviations,
   paramHelpText,
   promptHasTrigger,
+  recommendedCardFor,
   runExtraCapabilities,
   sampleImagesProblem,
   seedPrompts,
@@ -487,5 +497,67 @@ describe('withTags', () => {
   it('returns the same array when nothing new was typed, so an empty commit is not an edit', () => {
     const tags = ['smile'];
     expect(withTags(tags, ' , smile ')).toBe(tags);
+  });
+});
+
+describe('per-model flag gates', () => {
+  const imageTypes = (flags: string[]) => cardsForMedia('image', new Set(flags)).map((c) => c.type);
+
+  it('offers Krea 2 only to a viewer with krea2-training', () => {
+    expect(imageTypes([])).not.toContain('krea2');
+    expect(imageTypes(['krea2-training'])).toContain('krea2');
+  });
+
+  it('offers Z-Image Base to everyone and Turbo only behind its flag', () => {
+    const zimage = cardByType('zimage')!;
+    expect(versionOptions(zimage, new Set()).map((v) => v.key)).toEqual(['zimagebase']);
+    expect(newRun(zimage, new Set()).versionKey).toBe('zimagebase');
+    expect(imageTypes([])).toContain('zimage');
+    expect(versionOptions(zimage, new Set(['zimage-turbo-training'])).map((v) => v.key)).toEqual([
+      'zimageturbo',
+      'zimagebase',
+    ]);
+  });
+
+  it('offers Flux.2 to everyone', () => {
+    expect(imageTypes([])).toContain('flux2');
+  });
+
+  it('offers LTX 2.0 to everyone and skips the gated 2.5/2.3 defaults', () => {
+    const videoTypes = (flags: string[]) =>
+      cardsForMedia('video', new Set(flags)).map((c) => c.type);
+    expect(videoTypes([])).toContain('ltx');
+    const ltx = cardByType('ltx')!;
+    expect(versionOptions(ltx, new Set()).map((v) => v.key)).toEqual(['ltx2']);
+    expect(newRun(ltx, new Set(['ltx23-training'])).versionKey).toBe('ltx23');
+  });
+
+  it('never offers Flux.2 Klein 9B without a Klein flag, on any card or recommendation', () => {
+    const KLEIN_FLAGS = ['flux2-klein-training', 'flux2-klein-edit-training'];
+    // Every other gate open: the most a non-Klein viewer could see.
+    const flags = new Set(catalogFlagKeys().filter((k) => !KLEIN_FLAGS.includes(k)));
+    const klein9bAir = cardByType('flux2klein')!.versions.find((v) => v.modelVariant === '9b')!.air;
+    const isKlein9b = (v: ModelVersionInfo) => v.air === klein9bAir;
+    const offered = (on: ReadonlySet<string>) =>
+      [...cardsForMedia('image', on), ...cardsForMedia('video', on), ...editCards(on)]
+        .flatMap((c) => visibleVersions(c, on))
+        .filter(isKlein9b);
+
+    expect(offered(flags)).toEqual([]);
+    for (const t of LORA_TYPES)
+      for (const media of ['image', 'video'] as const) {
+        const card = recommendedCardFor(t.id, media, flags);
+        expect(visibleVersions(card, flags).some(isKlein9b)).toBe(false);
+      }
+    // Either Klein flag alone exposes 9B, so the check above can fail.
+    for (const k of KLEIN_FLAGS) expect(offered(new Set([...flags, k])).length).toBeGreaterThan(0);
+  });
+});
+
+describe('newRun on a card with no version open to the viewer', () => {
+  it('refuses rather than seed a gated version', () => {
+    const zimage = cardByType('zimage')!;
+    const turboOnly = { ...zimage, versions: zimage.versions.filter((v) => v.flagKey) };
+    expect(() => newRun(turboOnly, new Set())).toThrow();
   });
 });

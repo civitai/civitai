@@ -2835,8 +2835,14 @@ const getAllImagesUncaptured = async (
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
-    // Acceptable in collections, need to check for contest collection only
     if (!collectionId) AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
+    // In a collection the image's owner and moderators still see it; a collection manager does not.
+    else if (!isModerator) {
+      // Not isPersonalized: the bound userId already keys the cached query per viewer.
+      if (userId) {
+        AND.push(Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`);
+      } else AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
+    }
     if (browsingLevel)
       AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
     AND.push(imageReviewedSql());
@@ -7524,6 +7530,11 @@ export const getEntityCoverImage = async ({
     [Prisma.sql`TRUE`, ...imageVisibilityConditions({ userId: viewer?.id, isModerator })],
     ' AND '
   );
+  // The IMAGES branch has this through imageVisible; the others pick a cover among many images, so
+  // they apply it before DISTINCT ON and fall back to the next image.
+  const imageNotFlagged = Prisma.sql`(
+    i."acceptableMinor" = FALSE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean
+  )`;
 
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.
@@ -7605,6 +7616,7 @@ export const getEntityCoverImage = async ({
           )
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND ${imageNotFlagged}
           AND (
             (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
             OR NOT i."modelRestricted"
@@ -7643,6 +7655,7 @@ export const getEntityCoverImage = async ({
           )
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND ${imageNotFlagged}
           AND (
             (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
             OR NOT i."modelRestricted"
@@ -7687,6 +7700,7 @@ export const getEntityCoverImage = async ({
           )
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
+              AND ${imageNotFlagged}
         ) t
 
         UNION
@@ -7711,6 +7725,7 @@ export const getEntityCoverImage = async ({
             )
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
+            AND ${imageNotFlagged}
             AND (
               (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
               OR NOT i."modelRestricted"
@@ -7767,6 +7782,7 @@ export const getEntityCoverImage = async ({
           LEFT JOIN "Article" a ON e."entityType" = 'Article' AND a.id = e."entityId"
           WHERE i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
+            AND ${imageNotFlagged}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
             AND (
