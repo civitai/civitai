@@ -96,6 +96,23 @@ const reviewSubmissionSql = ({ collectionId, userId }: ReviewViewer) => Prisma.s
 )`;
 
 /**
+ * `i` is still a REVIEW submission, added by its own uploader, to a collection the viewer owns or
+ * has MANAGE on. The by-id counterpart of `reviewSubmissionSql`, which needs the collection's id.
+ */
+export const pendingSubmissionToManagedCollectionSql = (userId: number) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "CollectionItem" rci
+  JOIN "Collection" rc ON rc.id = rci."collectionId"
+  WHERE rci."imageId" = i.id
+    AND rci."status" = 'REVIEW'
+    AND rci."addedById" = i."userId"
+    AND (rc."userId" = ${userId} OR EXISTS (
+      SELECT 1 FROM "CollectionContributor" rcc
+      WHERE rcc."collectionId" = rc.id AND rcc."userId" = ${userId}
+        AND rcc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
+    ))
+)`;
+
+/**
  * The images a collection's reviewer may see before they are rated: those that are REVIEW or
  * REJECTED submissions of that collection by their uploader, when the viewer owns it or has
  * MANAGE on it. Used as an arm of `getAllImages`' pending filter over `Image` aliased `i`; every

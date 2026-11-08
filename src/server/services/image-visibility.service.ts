@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { pendingSubmissionToManagedCollectionSql } from '~/server/services/collection-review.sql';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 
@@ -89,8 +90,13 @@ export function imageVisibilityConditions({
     // mod review) — never serve it by direct id to anyone but the owner. Feeds already
     // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
     Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`,
-    // Owner-only, as in the image feeds (`pendingOthersImageConditions`).
-    Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`,
+    // Owner-only, as in the image feeds (`pendingOthersImageConditions`), except to a manager of a
+    // collection it is still a REVIEW submission to, so they can judge it.
+    userId
+      ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId} OR ${pendingSubmissionToManagedCollectionSql(
+          userId
+        )})`
+      : Prisma.sql`(i."acceptableMinor" = FALSE)`,
     ...imageBlockedForConditions({ userId }),
   ];
 }

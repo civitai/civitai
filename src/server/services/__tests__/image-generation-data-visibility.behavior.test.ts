@@ -76,6 +76,11 @@ beforeAll(async () => {
     );
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "CollectionItem" (
+      id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "addedById" int,
+      status text NOT NULL
+    );
   `);
   const raw = pgliteRaw(db);
   // Tagged-template calls, and `managesPostCollection`'s single prebuilt `Prisma.sql` argument.
@@ -89,7 +94,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.exec(
-    `TRUNCATE "Image", "Post", "CollectionContributor", "Article", "Bounty", "BountyEntry", "ImageConnection";`
+    `TRUNCATE "Image", "Post", "CollectionContributor", "Article", "Bounty", "BountyEntry", "ImageConnection", "Collection", "CollectionItem";`
   );
   vi.mocked(amIBlockedByUser).mockReset().mockResolvedValue(false);
   vi.spyOn(imageResourcesCache, 'fetch').mockResolvedValue({});
@@ -862,5 +867,42 @@ describe('a flagged image on a single-image read', () => {
     expect(await visibleTo({ userId: MANAGER })).toBe(false);
     await db.exec(`UPDATE "Image" SET "acceptableMinor" = false`);
     expect(await visibleTo({ userId: MANAGER })).toBe(true);
+  });
+
+  describe('submitted to a contest collection', () => {
+    beforeEach(async () => {
+      await seed({ image: { '"acceptableMinor"': 'true' } });
+      await db.exec(`
+        INSERT INTO "Collection" VALUES (7, ${VIEWER + 1});
+        INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, '{MANAGE}');
+        INSERT INTO "CollectionItem" ("collectionId", "imageId", "addedById", status)
+          VALUES (7, 1, ${OWNER}, 'REVIEW');
+      `);
+    });
+
+    it('shows it to a manager and the collection owner while it is under review', async () => {
+      expect(await visibleTo({ userId: MANAGER })).toBe(true);
+      expect(await visibleTo({ userId: VIEWER + 1 })).toBe(true);
+    });
+
+    it('hides it from a manager once it is accepted', async () => {
+      await db.exec(`UPDATE "CollectionItem" SET status = 'ACCEPTED'`);
+      expect(await visibleTo({ userId: MANAGER })).toBe(false);
+    });
+
+    it('hides it from a stranger and a signed-out viewer while it is under review', async () => {
+      expect(await visibleTo(OTHER)).toBe(false);
+      expect(await visibleTo(ANON)).toBe(false);
+    });
+
+    it('hides it from a manager when someone other than its owner submitted it', async () => {
+      await db.exec(`UPDATE "CollectionItem" SET "addedById" = ${VIEWER}`);
+      expect(await visibleTo({ userId: MANAGER })).toBe(false);
+    });
+
+    it('hides it from a manager of a different collection', async () => {
+      await db.exec(`UPDATE "CollectionContributor" SET "collectionId" = 8`);
+      expect(await visibleTo({ userId: MANAGER })).toBe(false);
+    });
   });
 });
