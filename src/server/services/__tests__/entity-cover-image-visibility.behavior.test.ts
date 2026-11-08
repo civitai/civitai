@@ -206,6 +206,7 @@ beforeAll(async () => {
     INSERT INTO "Image" (id, "postId") VALUES
       (1031, 1021), (1032, 1022), (1033, 1023), (1071, 1061), (1072, 1062);
     INSERT INTO "Image" (id) VALUES (1051), (1052), (1053), (1054), (111), (112);
+    INSERT INTO "Image" (id, "userId") VALUES (1081, -1), (1082, 0);
     INSERT INTO "Article" (id, "coverId", "userId", status, "publishedAt") VALUES
       (1041, 1051, -1, 'Draft', null), (1042, 1052, 0, 'Draft', null),
       (1043, null, -1, 'Draft', null), (1044, null, 0, 'Draft', null);
@@ -338,6 +339,8 @@ const placeholderOwned: [string, string, number, number, number][] = [
   ['a Private bounty owned by 0', 'Bounty', 12, 112, 0],
   ['a draft article with content images only, owned by -1', 'Article', 1043, 1053, -1],
   ['a draft article with content images only, owned by 0', 'Article', 1044, 1054, 0],
+  ['a postless image owned by -1', 'Image', 1081, 1081, -1],
+  ['a postless image owned by 0', 'Image', 1082, 1082, 0],
 ];
 
 describe('getEntityCoverImage respects the parent entity visibility', () => {

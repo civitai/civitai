@@ -1311,72 +1311,31 @@ export async function getGlobalRecommendMean(): Promise<number> {
  *
  * 🔴 THE TWO SECURITY-BOUNDARY AXES ARE LITERAL KEY SEGMENTS, NOT HASH INPUT.
  *
- * `queryCache` builds its redis key as `[key, version, hashifyObject(query)]
- * .join(':')` (`~/server/utils/cache-helpers`). `hashifyObject` → `hashify`
- * (`~/utils/string-helpers`) is a **32-bit** rolling hash
- * (`hash = (hash << 5) - hash + chr; hash |= 0`). It is neither injective nor
- * one-way, and it is LINEAR — collisions against a chosen target are constructed
- * algebraically, not brute-forced. An earlier revision of this code passed a
- * single constant `key` and relied on "every axis is interpolated into the
- * statement, so every axis is in the key". That reasoning silently assumes the
- * hash is injective, and it is not.
- *
- * It matters because an ATTACKER SUPPLIES HASHED BYTES. `decodeListingCursor`
- * slices `cursorSortKey` and `cursorId` out of a lenient base64url decode as
- * arbitrary free strings (only `cursorMean` is range-validated), the router
- * validates `cursor` only as a bounded string (`LISTING_CURSOR_MAX`), and both land in this
- * statement as bound params. That is enough tuning room to steer the 32-bit hash
- * onto any target value.
+ * `queryCache` builds its redis key as `[key, version, queryCacheKeyHash(query)]
+ * .join(':')` (`~/server/utils/cache-helpers`), a SHA-256 of the statement. The caller
+ * supplies hashed bytes: `decodeListingCursor` slices `cursorSortKey` and `cursorId`
+ * out of a lenient base64url decode as free strings (only `cursorMean` is
+ * range-validated), and both land in this statement as bound params. A boundary that
+ * lived only inside the hash would rest on that hash never colliding.
  *
  * So the two axes that are SECURITY BOUNDARIES are lifted out of the hashed
  * payload and into the `key` string itself:
  *
  *   · `scope` — `listingPublicVisibilityFilter`. `full` is the whole approved
  *     catalog; `public-external` is offsite-only. That is the public/onsite
- *     boundary (civitai#3983). A cross-scope collision would serve on-site apps
- *     into the anonymous `GET /api/v1/apps` response, and the reverse direction
- *     is cache poisoning.
- *   · `redCapable` — `listingMatureFilter`. A cross-capability collision serves
+ *     boundary (civitai#3983). A cross-scope entry would serve on-site apps
+ *     into the anonymous `GET /api/v1/apps` response.
+ *   · `redCapable` — `listingMatureFilter`. A cross-capability entry serves
  *     `r`/`x` listings onto a SFW host.
  *
- * With both in the literal prefix, a hash collision can only ever mix two pages
- * WITHIN one viewer class — the class boundary is no longer hash-dependent.
+ * With both in the literal prefix, the class boundary does not depend on the hash.
  * `__tests__/app-listing.catalog-cache.test.ts` pins that the boundary lives in
  * the un-hashed segments.
  *
- * 🔴 WHAT IS LEFT UN-CONTAINED, STATED AS A RESIDUAL RATHER THAN A REASSURANCE. The
- * remaining axes (`kind`, `category`, `sort`, `cursor`, `limit`) stay in the hash, and
- * a constructed collision across them is CROSS-USER CACHE POISONING of the shared
- * `/apps` grid — not, as an earlier version of this comment said, "the attacker's own
- * page served back to themselves". The entry is shared by every viewer in the class,
- * and `full` is the class for ordinary logged-in users. The attacker's crafted-cursor
- * request MISSES, so it is the request that WRITES the colliding key; every later
- * reader deriving that key HITS it. So one request can pin the store's first page to
- * an arbitrary filtered — or empty — result for up to `CacheTTL.sm` (180s) for everyone
- * in that class.
- *
- * What it is NOT is a disclosure boundary: every row in a poisoned page came from a
- * statement carrying the SAME `scope` and `redCapable` predicates, so no listing
- * appears that the viewer was not already entitled to see. That is the whole reason
- * those two axes, and only those two, were lifted out of the hash.
- *
- * This residual is ACCEPTED, deliberately, and the cost of accepting it is the 180s
- * grid defect above. The alternative to accepting it is putting the remaining axes in
- * the literal key too, and the blocker is `cursor`: it is a free-form string of up to
- * `LISTING_CURSOR_MAX` characters, so lifting it out of the hash makes the redis keyspace
- * AND the `cache_name` metric label request-controlled and unbounded — exactly the
- * property the note at the bottom of this comment relies on. (`kind`, `category` and
- * `sort` are closed enums and `limit` is 1..50, so those four could be lifted; they would
- * multiply the label cardinality by their product, and they do not help while `cursor`
- * stays hashed, because `cursor` is the tuning room the collision is built out of.) Widening
- * `hashify` is the other alternative and it is global — see below.
- *
- * If that trade stops holding, the fix is to key on a per-axis allowlist plus a
- * cursor DIGEST computed with a real hash, not to widen `hashify`.
- *
- * 🔴 DO NOT "FIX" THIS BY WIDENING `hashify` — it is used across the codebase for
- * cache keys, DOM ids and de-dup, so changing its output is a global blast radius.
- * The containment belongs here, at the one call site that has a security boundary.
+ * The remaining axes (`kind`, `category`, `sort`, `cursor`, `limit`) stay in the hash:
+ * `cursor` is a free-form string of up to `LISTING_CURSOR_MAX` characters, so a literal
+ * segment for it would make the redis keyspace AND the `cache_name` metric label
+ * request-controlled and unbounded.
  *
  * Why `queryCache` + a bust tag, and not the alternatives:
  *
@@ -1405,11 +1364,10 @@ export async function getGlobalRecommendMean(): Promise<number> {
  * returns, so a flag-on page must never be served to a flag-off viewer.
  *
  * 🔴 THE AUDIENCE FLOOR IS A LITERAL KEY SEGMENT FOR THE SAME REASON `scope` IS, and it
- * had to be: it changes which ROWS the cached statement returns. Folding it into
- * `hashifyObject` would put a security-boundary axis behind a 32-bit non-injective hash,
+ * had to be: it changes which ROWS the cached statement returns. Folding it into the
+ * statement hash would put a security-boundary axis behind a hash of caller-chosen bytes,
  * and leaving it out entirely would serve one cohort's id page to another — a moderator's
- * page, including `draft` listings, to a general viewer. It is a closed 3-value enum, so
- * it triples a keyspace that was bounded at 6 rather than opening it.
+ * page, including `draft` listings, to a general viewer. It is a closed 3-value enum.
  */
 function catalogPageCache(
   scope: StoreVisibilityScope,
@@ -1627,7 +1585,7 @@ export async function listAvailableListings(
   //
   // The cache is built PER VIEWER CLASS: `scope`, `floor`, `redCapable`, the sub-listing
   // state and the mature state (`mature`) are literal segments of the redis key,
-  // deliberately outside the 32-bit `hashifyObject` of the statement. See
+  // deliberately outside the statement hash. See
   // {@link catalogPageCache}.
   //
   // TTL = `CacheTTL.sm` (180s). Rows enter and leave only through moderator or owner

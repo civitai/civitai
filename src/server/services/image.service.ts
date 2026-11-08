@@ -6322,7 +6322,20 @@ export const getImage = async ({
   return image;
 };
 
-export const getImageResources = async ({ id }: GetByIdInput) => {
+/**
+ * The resources on an image the viewer may open by id (`assertImageVisibleToViewer`), else
+ * NOT_FOUND, and whether a signed-out viewer may open it too.
+ */
+export const getImageResources = async ({
+  id,
+  viewer,
+}: GetByIdInput & { viewer?: { id: number; isModerator?: boolean } }) => {
+  const { visibleSignedOut } = await assertImageVisibleToViewer({
+    id,
+    userId: viewer?.id,
+    isModerator: viewer?.isModerator,
+    withSignedOutVerdict: true,
+  });
   const resources = await dbRead.$queryRaw<
     (ImageResourceHelperModel & { sfwName: string | null })[]
   >`
@@ -6354,7 +6367,7 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
     AND irh."modelVersionId" IS NOT NULL
   `;
 
-  return resources;
+  return { resources, visibleSignedOut: !!visibleSignedOut };
 };
 
 export type ImagesForModelVersions = {
@@ -7527,7 +7540,13 @@ export const getEntityCoverImage = async ({
   const isModerator = !!viewer?.isModerator;
   // TRUE keeps Prisma.join non-empty: the helper returns no conditions for moderators.
   const imageVisible = Prisma.join(
-    [Prisma.sql`TRUE`, ...imageVisibilityConditions({ userId: viewer?.id, isModerator })],
+    [
+      Prisma.sql`TRUE`,
+      ...imageVisibilityConditions({
+        userId: signedIn ? viewerId ?? undefined : undefined,
+        isModerator,
+      }),
+    ],
     ' AND '
   );
   // The IMAGES branch has this through imageVisible; the others pick a cover among many images, so
