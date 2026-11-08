@@ -130,6 +130,29 @@ describe('the gift index', () => {
   });
 
   it('rejects a cursor that is not one it issued', () => {
+    const b64 = (s: string) => Buffer.from(s).toString('base64url');
     expect(() => decodeGiftIndexCursor('not-a-cursor')).toThrow();
+    // Date.parse accepts these; the timestamp cast would not.
+    expect(() => decodeGiftIndexCursor(b64('1|42'))).toThrow();
+    expect(() => decodeGiftIndexCursor(b64('Nov 2026|42'))).toThrow();
+    expect(decodeGiftIndexCursor(b64('2026-11-02T00:00:00.000Z|42'))).toEqual({
+      createdAt: '2026-11-02T00:00:00.000Z',
+      key: '42',
+    });
+  });
+
+  it("counts a batch's revoked and expired codes as no longer live", async () => {
+    const batchId = '00000000-0000-4000-8000-0000000000bb';
+    await insert(100, 4, { batchId });
+    await db.query(
+      `UPDATE "ModelVersionGiftLink" SET "revokedAt" = now() WHERE id = (SELECT min(id) FROM "ModelVersionGiftLink")`
+    );
+    await db.query(
+      `UPDATE "ModelVersionGiftLink" SET "expiresAt" = now() - interval '1 day'
+        WHERE id = (SELECT min(id) + 1 FROM "ModelVersionGiftLink")`
+    );
+    const [batch] = (await page(OWNER, 50)).items;
+    expect(batch).toMatchObject({ kind: 'batch', total: 4, claimed: 0, live: 2 });
+    expect(batch.expiresAt).not.toBeNull();
   });
 });

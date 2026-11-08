@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { afterNavigate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import * as Alert from '@civitai/ui/components/ui/alert/index.js';
   import { ConfirmButton } from '@civitai/ui/components/confirm/index.js';
@@ -11,6 +12,8 @@
 
   let pending = $state(false);
   let failure = $state<string | null>(null);
+  // Paging keeps this component, so a failed revoke's message would sit above unrelated rows.
+  afterNavigate(() => (failure = null));
 
   const fmt = (d: string | null) => (d ? new Date(d).toLocaleDateString() : 'Never');
 
