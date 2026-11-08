@@ -2770,7 +2770,10 @@ export async function assertSellableInDomainCurrency({
     where: { id: modelId },
     select: { nsfw: true, nsfwLevel: true, sfwName: true, sfwCoverImageId: true },
   });
-  if (face.nsfw && !hasCompleteSfwFace(face))
+  // A rated model with no PG/PG-13 bit is off .com whatever its nsfw flag says. Level 0 is unrated
+  // (a new model's launch) and stays sellable.
+  const noSfwLevel = face.nsfwLevel > 0 && (face.nsfwLevel & sfwBrowsingLevelsFlag) === 0;
+  if (noSfwLevel || (face.nsfw && !hasCompleteSfwFace(face)))
     throw throwBadRequestError('This model version is not available with this currency.');
 }
 
