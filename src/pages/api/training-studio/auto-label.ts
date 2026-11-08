@@ -10,7 +10,10 @@ import {
 } from '~/server/services/training-studio-auto-label.service';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
-import { allowTrainingStudio } from '~/server/utils/training-studio-access';
+import {
+  allowTrainingStudio,
+  isStandaloneStudioAllowed,
+} from '~/server/utils/training-studio-access';
 import type { SessionUser } from '~/types/session';
 
 export const config = { api: { bodyParser: { sizeLimit: '64kb' } } };
@@ -32,6 +35,8 @@ async function takeAttempt(
 export default AuthedEndpoint(
   async (req, res, user) => {
     if (!(await allowTrainingStudio(req, res, user, { pageFlag: false }))) return;
+    if (!(await isStandaloneStudioAllowed(user)))
+      return res.status(403).json({ error: 'Training Studio is not available on this account' });
     res.setHeader('Cache-Control', 'no-store');
 
     try {

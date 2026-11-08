@@ -48,25 +48,26 @@ import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
 const user = { id: 7, isModerator: false } as never;
 const req = { headers: {}, socket: { remoteAddress: '10.0.0.1' } } as unknown as NextApiRequest;
 
-// The procedures' own rateLimit() calls in training.router.ts (default key: the tRPC path).
-const PROCEDURES = {
-  submit: { path: 'training.studioAutoLabelSubmit', rules: { limit: 100, period: 60 } },
-  poll: { path: 'training.studioAutoLabelPoll', rules: { limit: 1500, period: 60 } },
+// The procedures in training.router.ts, which rate-limit with STUDIO_AUTO_LABEL_RATE_LIMITS' rules
+// under their default key (the tRPC path).
+const PROCEDURE_PATHS = {
+  submit: 'training.studioAutoLabelSubmit',
+  poll: 'training.studioAutoLabelPoll',
 } as const;
 
-async function procedureAttempt(which: keyof typeof PROCEDURES) {
-  rateLimit(PROCEDURES[which].rules);
+async function procedureAttempt(which: keyof typeof PROCEDURE_PATHS) {
+  rateLimit(STUDIO_AUTO_LABEL_RATE_LIMITS[which].rules);
   await captured.handler!({
     ctx: { user, req },
     input: {},
-    path: PROCEDURES[which].path,
+    path: PROCEDURE_PATHS[which],
     next: async () => ({ ok: true }),
   });
   const [, cacheKey, hashKey] = mockHSetWithTTL.mock.calls.at(-1)!;
   return { cacheKey, hashKey };
 }
 
-async function endpointAttempt(which: keyof typeof PROCEDURES) {
+async function endpointAttempt(which: keyof typeof PROCEDURE_PATHS) {
   const limit = STUDIO_AUTO_LABEL_RATE_LIMITS[which];
   const record = await claimRateLimitAttempt({ rules: limit.rules, keyName: limit.key, user, req });
   await record();
@@ -90,10 +91,9 @@ describe("the standalone auto-label endpoint shares the embed procedures' bucket
   });
 
   it.each(['submit', 'poll'] as const)(
-    'uses the same %s limit, so the embed spending it refuses the endpoint',
+    'a %s limit spent on the embed refuses the endpoint',
     async (which) => {
-      const { limit } = PROCEDURES[which].rules;
-      expect(STUDIO_AUTO_LABEL_RATE_LIMITS[which].rules).toEqual([PROCEDURES[which].rules]);
+      const [{ limit }] = STUDIO_AUTO_LABEL_RATE_LIMITS[which].rules;
       redisMock.redis.packed.hGet.mockResolvedValue(Array(limit).fill(Date.now()));
       await expect(endpointAttempt(which)).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
       redisMock.redis.packed.hGet.mockResolvedValue(Array(limit - 1).fill(Date.now()));

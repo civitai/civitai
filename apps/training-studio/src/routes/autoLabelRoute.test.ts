@@ -116,4 +116,10 @@ describe('standalone auto-label routes', () => {
     answer(404, { message: 'Workflow not found' });
     expect(await poll('wf-other')).toMatchObject({ status: 404 });
   });
+
+  it('refuses a poll from the dev-login preview without calling out', async () => {
+    const fetch = answer(200, { done: true, results: [] });
+    expect(await poll('wf-1', { devPreview: true })).toMatchObject({ status: 503 });
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });

@@ -16,11 +16,19 @@ vi.mock('~/server/services/feature-flags.service', () => ({
   computeUserFeatureFlagsOverlay: h.overlay,
   getFliptGatedEligibility: vi.fn(() => ({})),
 }));
+const flipt = vi.hoisted(() => ({ isFlipt: vi.fn(async () => false) }));
+vi.mock('~/server/flipt/client', () => ({
+  FLIPT_FEATURE_FLAGS: { TRAINING_STUDIO: 'trainingStudio' },
+  isFlipt: flipt.isFlipt,
+}));
 vi.mock('~/server/services/user.service', () => ({
   getUserSettings: vi.fn(async () => ({ features: {} })),
 }));
 
-import { allowTrainingStudio } from '~/server/utils/training-studio-access';
+import {
+  allowTrainingStudio,
+  isStandaloneStudioAllowed,
+} from '~/server/utils/training-studio-access';
 
 const user = (over: Record<string, unknown> = {}) =>
   ({ id: 1, onboarding: OnboardingSteps.Buzz, emailVerified: new Date(), ...over } as never);
@@ -91,5 +99,24 @@ describe('allowTrainingStudio', () => {
         pageFlag: false,
       })
     ).toBe(false);
+  });
+});
+
+describe('isStandaloneStudioAllowed', () => {
+  beforeEach(() => flipt.isFlipt.mockReset().mockResolvedValue(false));
+
+  it("follows the standalone Studio's beta flag, evaluated with the user's context", async () => {
+    expect(await isStandaloneStudioAllowed(user({ id: 5, tier: 'gold' }))).toBe(false);
+    flipt.isFlipt.mockResolvedValue(true);
+    expect(await isStandaloneStudioAllowed(user({ id: 5, tier: 'gold' }))).toBe(true);
+    expect(flipt.isFlipt).toHaveBeenCalledWith(
+      'trainingStudio',
+      '5',
+      expect.objectContaining({ userId: '5', tier: 'gold' })
+    );
+  });
+
+  it('lets moderators in without the flag, as the standalone Studio does', async () => {
+    expect(await isStandaloneStudioAllowed(user({ isModerator: true }))).toBe(true);
   });
 });

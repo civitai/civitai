@@ -40,9 +40,10 @@ const CAPTION_TEMPERATURE = 0.7;
 /** Items one user may auto-label per UTC day: p99 of per-user-day auto-label items over 14 days
  *  (1,133 on 2026-10-26), rounded up. */
 export const STUDIO_AUTO_LABEL_DAILY_ITEMS = 1200;
-/** The per-minute limits on `training.studioAutoLabelSubmit` / `studioAutoLabelPoll`, for the
- *  standalone Studio's REST endpoint: `key` is each procedure's bucket, so both surfaces share one
- *  quota per user. Keep `rules` in step with the procedures' `rateLimit()`. */
+/** Per-minute limits on `training.studioAutoLabelSubmit` / `studioAutoLabelPoll` and the standalone
+ *  Studio's REST endpoint. `key` is each procedure's bucket (its tRPC path), so both surfaces share
+ *  one quota per user. Per batch (≤16 items), 100/min covers ~1600 items/min; polling every 5s per
+ *  in-flight workflow fits in 1500/min. */
 export const STUDIO_AUTO_LABEL_RATE_LIMITS = {
   submit: { key: 'training:studioAutoLabelSubmit', rules: [{ limit: 100, period: 60 }] },
   poll: { key: 'training:studioAutoLabelPoll', rules: [{ limit: 1500, period: 60 }] },

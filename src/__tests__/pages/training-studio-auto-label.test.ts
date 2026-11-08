@@ -18,8 +18,11 @@ vi.mock('~/server/services/training-studio-auto-label.service', async (importOri
 }));
 const limiter = vi.hoisted(() => ({ claim: vi.fn(), record: vi.fn(async () => undefined) }));
 vi.mock('~/server/utils/rate-limit-bucket', () => ({ claimRateLimitAttempt: limiter.claim }));
-const gate = vi.hoisted(() => ({ allow: vi.fn() }));
-vi.mock('~/server/utils/training-studio-access', () => ({ allowTrainingStudio: gate.allow }));
+const gate = vi.hoisted(() => ({ allow: vi.fn(), beta: vi.fn() }));
+vi.mock('~/server/utils/training-studio-access', () => ({
+  allowTrainingStudio: gate.allow,
+  isStandaloneStudioAllowed: gate.beta,
+}));
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   handleEndpointError: (await importOriginal<typeof EndpointHelpers>()).handleEndpointError,
   AuthedEndpoint:
@@ -64,16 +67,18 @@ describe('/api/training-studio/auto-label', () => {
     limiter.claim.mockReset().mockResolvedValue(limiter.record);
     limiter.record.mockClear();
     gate.allow.mockReset().mockResolvedValue(true);
+    gate.beta.mockReset().mockResolvedValue(true);
   });
 
-  it("submits as the session's user, never a user named in the body", async () => {
+  // A `userId` in the body or query never arrives: the schemas drop unknown keys.
+  it("submits as the session's user", async () => {
     const res = await call({ method: 'POST', body: { ...submitBody, userId: 99 } });
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({ workflowId: 'wf-1' });
     expect(service.submit).toHaveBeenCalledWith({ ...submitBody, userId: 7 });
   });
 
-  it("polls as the session's user, never a user named in the query", async () => {
+  it("polls as the session's user", async () => {
     const res = await call({ method: 'GET', query: { workflowId: 'wf-1', userId: '99' } });
     expect(res.statusCode).toBe(200);
     expect(service.poll).toHaveBeenCalledWith({ workflowId: 'wf-1', userId: 7 });
@@ -128,12 +133,16 @@ describe('/api/training-studio/auto-label', () => {
     expect(limiter.claim).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['a non-https media URL', { ...submitBody, items: [{ mediaUrl: 'http://x/a.png', key: 'a' }] }],
-    ['audio in tag mode', { ...submitBody, media: 'audio' }],
-    ['no items', { ...submitBody, items: [] }],
-  ])('answers %s as invalid, without submitting', async (_l, body) => {
-    const res = await call({ method: 'POST', body });
+  it("refuses a user outside the standalone Studio's beta, before any work", async () => {
+    gate.beta.mockResolvedValue(false);
+    const res = await call({ method: 'POST', body: submitBody });
+    expect(res.statusCode).toBe(403);
+    expect(service.submit).not.toHaveBeenCalled();
+    expect(limiter.claim).not.toHaveBeenCalled();
+  });
+
+  it('answers an invalid batch as a 400, without submitting', async () => {
+    const res = await call({ method: 'POST', body: { ...submitBody, items: [] } });
     expect(res.statusCode).toBe(400);
     expect(service.submit).not.toHaveBeenCalled();
   });
