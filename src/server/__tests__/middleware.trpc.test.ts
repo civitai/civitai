@@ -195,7 +195,7 @@ describe('rateLimit recordAttempt — round-4 fail-open wrapper', () => {
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     const [subtype, fn, err, extra] = mockLogSysRedisFailOpen.mock.calls[0];
     expect(subtype).toBe('rate-limit-write-degraded');
-    expect(fn).toBe('middleware.trpc.recordAttempt');
+    expect(fn).toBe('rate-limit-bucket.claimRateLimitAttempt');
     expect(err).toBe(synthetic);
     // The extra payload should carry enough to disambiguate the call. The hash
     // key is namespaced by principal kind (`user:` / `ip:`) so the two key

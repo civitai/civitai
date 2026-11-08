@@ -38,6 +38,7 @@ vi.mock('~/server/services/training-studio-auto-label.service', async (importOri
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { trainingRouter } from '~/server/routers/training.router';
+import { resolveUsageLimitRules } from '~/server/services/usage-limit-config.service';
 import { STUDIO_AUTO_LABEL_RATE_LIMITS } from '~/server/services/training-studio-auto-label.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -91,7 +92,10 @@ describe("the embed's auto-label procedures draw from the shared bucket", () => 
   });
 
   it.each(['submit', 'poll'] as const)('a %s is refused at the shared limit', async (which) => {
-    const [{ limit }] = STUDIO_AUTO_LABEL_RATE_LIMITS[which].rules;
+    const [{ limit }] = await resolveUsageLimitRules(
+      STUDIO_AUTO_LABEL_RATE_LIMITS[which].rules.usageLimitIds,
+      undefined
+    );
     redisMock.redis.packed.hGet.mockResolvedValue(Array(limit).fill(Date.now()));
     await expect(call[which]()).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
     redisMock.redis.packed.hGet.mockResolvedValue(Array(limit - 1).fill(Date.now()));

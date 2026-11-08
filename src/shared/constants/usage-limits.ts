@@ -229,7 +229,7 @@ export const usageLimitDefs = [
     message: 'You can only queue a few model loads an hour. Try again shortly.',
   },
   {
-    // ~1000 images/min is the soft ceiling for legitimate use; each image needs one presign.
+    // One presign per image.
     id: 'auto-label.upload',
     area: 'auto-label',
     kind: 'abuse',
@@ -238,7 +238,7 @@ export const usageLimitDefs = [
     base: 1000,
   },
   {
-    // Batches of up to 16: 100/min covers ~1600 images/min, headroom above the upload ceiling.
+    // One per batch of up to 16 images.
     id: 'auto-label.submit',
     area: 'auto-label',
     kind: 'abuse',
@@ -247,7 +247,7 @@ export const usageLimitDefs = [
     base: 100,
   },
   {
-    // A 1000-image run is ~63 workflows; a third in flight at 12 polls/min each is ~250/min.
+    // Every 5 s per in-flight workflow.
     id: 'auto-label.poll',
     area: 'auto-label',
     kind: 'abuse',
@@ -316,26 +316,6 @@ export function usageLimitApplies(
 
 export function usageLimitMessage(def: UsageLimitDef, resolution: UsageLimitResolution) {
   return typeof def.message === 'function' ? def.message(resolution) : def.message;
-}
-
-/** The current calendar window in UTC: when it started and when it resets. */
-export function usageLimitWindowBounds(
-  window: Exclude<UsageLimitWindow, { type: 'rolling' }>,
-  now: Date
-): { start: Date; resetAt: Date } {
-  const year = now.getUTCFullYear();
-  const month = now.getUTCMonth();
-  if (window.type === 'utc-month') {
-    return {
-      start: new Date(Date.UTC(year, month, 1)),
-      resetAt: new Date(Date.UTC(year, month + 1, 1)),
-    };
-  }
-  const day = now.getUTCDate();
-  return {
-    start: new Date(Date.UTC(year, month, day)),
-    resetAt: new Date(Date.UTC(year, month, day + 1)),
-  };
 }
 
 /** A reference to registry entries, resolved per request by `rateLimit()`. */

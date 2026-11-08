@@ -5,7 +5,6 @@ import {
   isBucketCountable,
   resolveUsageLimitValues,
   usageLimitDefs,
-  usageLimitWindowBounds,
   type UsageLimitDef,
   type UsageLimitValues,
 } from '~/shared/constants/usage-limits';
@@ -26,7 +25,6 @@ describe('buildUsageLimitConfig', () => {
   });
 
   it('applies an override up to 100x the largest code limit, inclusive', () => {
-    // posts.daily's largest code limit is 150.
     const { config, fallbacks } = buildUsageLimitConfig(
       row({ 'posts.daily': { base: 15_000 }, 'posts.hourly': { base: 1 } })
     );
@@ -139,7 +137,7 @@ describe('resolveUsageLimitValues tier order', () => {
 
 /**
  * The monthly gift allowance (claims per UTC month: free 3, Bronze 15, Silver 30, Gold 60) is the
- * next entry the registry takes. Its shape, resolved and windowed, without registering it.
+ * next entry the registry takes. Its shape, resolved, without registering it.
  */
 describe('a per-tier calendar-month entry', () => {
   const gifts: UsageLimitValues = {
@@ -163,25 +161,5 @@ describe('a per-tier calendar-month entry', () => {
     expect(isBucketCountable({ type: 'utc-day' })).toBe(false);
     expect(isBucketCountable({ type: 'rolling', seconds: 2 * 24 * 60 * 60 })).toBe(false);
     expect(isBucketCountable({ type: 'rolling', seconds: 24 * 60 * 60 })).toBe(true);
-  });
-});
-
-describe('usageLimitWindowBounds', () => {
-  const at = (iso: string) => new Date(iso);
-
-  it.each([
-    ['2026-11-08T10:00:00Z', '2026-11-01T00:00:00.000Z', '2026-12-01T00:00:00.000Z'],
-    ['2026-12-31T23:59:59Z', '2026-12-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z'],
-    ['2028-02-29T12:00:00Z', '2028-02-01T00:00:00.000Z', '2028-03-01T00:00:00.000Z'],
-    ['2026-12-01T00:00:00Z', '2026-12-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z'],
-  ])('utc-month at %s runs %s to %s', (now, start, resetAt) => {
-    const bounds = usageLimitWindowBounds({ type: 'utc-month' }, at(now));
-    expect([bounds.start.toISOString(), bounds.resetAt.toISOString()]).toEqual([start, resetAt]);
-  });
-
-  it('utc-day crosses a month end in UTC, not local time', () => {
-    const bounds = usageLimitWindowBounds({ type: 'utc-day' }, at('2026-11-30T23:30:00Z'));
-    expect(bounds.start.toISOString()).toBe('2026-11-30T00:00:00.000Z');
-    expect(bounds.resetAt.toISOString()).toBe('2026-12-01T00:00:00.000Z');
   });
 });

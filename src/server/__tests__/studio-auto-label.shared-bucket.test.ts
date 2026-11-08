@@ -42,6 +42,7 @@ vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorCl
 
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { rateLimit } from '~/server/middleware.trpc';
+import { resolveUsageLimitRules } from '~/server/services/usage-limit-config.service';
 import { STUDIO_AUTO_LABEL_RATE_LIMITS } from '~/server/services/training-studio-auto-label.service';
 import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
 
@@ -88,7 +89,7 @@ describe("the standalone auto-label endpoint shares the embed procedures' bucket
     const embed = await procedureAttempt(which);
     const standalone = await endpointAttempt(which);
     expect(standalone).toEqual(embed);
-    expect(embed.cacheKey).toContain(PROCEDURE_PATHS[which].replace('.', ':'));
+    expect(embed.cacheKey.endsWith(`:${PROCEDURE_PATHS[which].replace('.', ':')}`)).toBe(true);
     // Positive control: the harness can tell two buckets apart.
     expect(await endpointAttempt(which === 'submit' ? 'poll' : 'submit')).not.toEqual(embed);
   });
@@ -96,7 +97,10 @@ describe("the standalone auto-label endpoint shares the embed procedures' bucket
   it.each(['submit', 'poll'] as const)(
     'a %s limit spent on the embed refuses the endpoint',
     async (which) => {
-      const [{ limit }] = STUDIO_AUTO_LABEL_RATE_LIMITS[which].rules;
+      const [{ limit }] = await resolveUsageLimitRules(
+        STUDIO_AUTO_LABEL_RATE_LIMITS[which].rules.usageLimitIds,
+        undefined
+      );
       redisMock.redis.packed.hGet.mockResolvedValue(Array(limit).fill(Date.now()));
       await expect(endpointAttempt(which)).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
       redisMock.redis.packed.hGet.mockResolvedValue(Array(limit - 1).fill(Date.now()));
@@ -106,7 +110,8 @@ describe("the standalone auto-label endpoint shares the embed procedures' bucket
 
   it('lets a moderator through at the limit, as the middleware does', async () => {
     const { key, rules } = STUDIO_AUTO_LABEL_RATE_LIMITS.submit;
-    redisMock.redis.packed.hGet.mockResolvedValue(Array(rules[0].limit).fill(Date.now()));
+    const [{ limit }] = await resolveUsageLimitRules(rules.usageLimitIds, undefined);
+    redisMock.redis.packed.hGet.mockResolvedValue(Array(limit).fill(Date.now()));
     const moderator = { id: 8, isModerator: true } as never;
     await expect(
       claimRateLimitAttempt({ rules, keyName: key, user: moderator, req })

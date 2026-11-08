@@ -16,6 +16,8 @@ import {
   type RateLimit,
   type RuleUsage,
 } from '~/server/utils/rate-limit-window';
+import { resolveUsageLimitRules } from '~/server/services/usage-limit-config.service';
+import { isUsageLimitRef, type UsageLimitRef } from '~/shared/constants/usage-limits';
 import type { SessionUser } from '~/types/session';
 
 /**
@@ -74,10 +76,11 @@ export async function peekRateLimit({
 }
 
 /**
- * One attempt against `keyName`'s rules for this caller, counted as the tRPC `rateLimit()` middleware
- * counts it, so a REST endpoint can draw from a procedure's bucket (`keyName` = its path with `:`).
- * Throws TOO_MANY_REQUESTS past a limit; otherwise returns the write that records the attempt.
- * Moderators and non-prod envs are exempt, as in the middleware.
+ * One attempt against `keyName`'s rules for this caller: the body of the tRPC `rateLimit()`
+ * middleware, and how a REST endpoint draws from a procedure's bucket (`keyName` = its path with
+ * `:`). `rules` is a fixed list or `usageLimits(...ids)`, resolved per call from the usage-limit
+ * config. Throws TOO_MANY_REQUESTS past a limit; otherwise returns the write that records the
+ * attempt. Moderators and non-prod envs are exempt.
  */
 export async function claimRateLimitAttempt({
   rules,
@@ -85,7 +88,7 @@ export async function claimRateLimitAttempt({
   user,
   req,
 }: {
-  rules: RateLimit[];
+  rules: RateLimit[] | UsageLimitRef;
   keyName: string;
   user: SessionUser | undefined;
   req: NextApiRequest;
@@ -93,7 +96,9 @@ export async function claimRateLimitAttempt({
   // Preview shares a dev DB with a few CI smoke accounts; daily quotas exhaust across PR runs (civitai#2592).
   if (user?.isModerator || isDev || isTest || isPreview) return async () => undefined;
 
-  const validLimits = selectRateLimitRules(rules, user);
+  const validLimits = isUsageLimitRef(rules)
+    ? await resolveUsageLimitRules(rules.usageLimitIds, user)
+    : selectRateLimitRules(rules, user);
   const bucket = rateLimitBucket(keyName, user, req);
   const { cacheKey, hashKey } = bucket;
   const attempts = await readRateLimitAttempts(bucket);

@@ -69,6 +69,11 @@ describe('getUsageLimitConfig', () => {
     expect(firingLogs()).toHaveLength(1);
     expect((await resolveUsageLimit('posts.daily', free)).limit).toBe(25);
     expect(findKeyValue).toHaveBeenCalledTimes(2);
+
+    vi.advanceTimersByTime(USAGE_LIMIT_CONFIG_TTL_MS + 1);
+    await getUsageLimitConfig();
+    await settle();
+    expect(findKeyValue).toHaveBeenCalledTimes(3);
   });
 
   it('logs a refused override once per distinct failure, not once per refresh', async () => {
