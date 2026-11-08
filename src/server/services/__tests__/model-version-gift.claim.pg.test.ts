@@ -435,8 +435,9 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
     // Connections opened by a test, closed even when it fails.
     const extra: Client[] = [];
     afterEach(async () => {
-      await sql.query(`DROP TRIGGER IF EXISTS gate ON "EntityAccess"`);
+      // Ending them first rolls back their open transactions, which the DROP would wait on.
       for (const client of extra.splice(0)) await client.end().catch(() => undefined);
+      await sql.query(`DROP TRIGGER IF EXISTS gate ON "EntityAccess"`);
     });
 
     async function connect() {
