@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {
+  GITHUB_MCP_PR_TOOL,
   ghPrMatch,
   hookEvent,
   mcpPrEvent,
@@ -379,8 +380,8 @@ describe('the nudge text', () => {
         'asked, and why>"`; with the HQ MCP tools, `pr_review_why_set`. The intent is internal: never ' +
         'put it in the PR body or a GitHub comment. Then wait for the round: run ' +
         '`hq pr-review watch civitai/civitai#7801` in the background, or call the HQ MCP tool ' +
-        '`pr_review_watch` and do what its `next` says until it returns the round. Then work the ' +
-        'round as the skill says.'
+        '`pr_review_watch` and do what its `next` says until it returns the round (stop after two ' +
+        'hours without one, as the CLI watch does). Then work the round as the skill says.'
     );
   });
 
@@ -393,8 +394,8 @@ describe('the nudge text', () => {
         '`pr_review_why_set`. The intent is internal: never put it in the PR body or a GitHub ' +
         'comment. After the PR is marked ready, wait for the round: run `hq ' +
         'pr-review watch civitai/civitai#7811` in the background, or call the HQ MCP tool ' +
-        '`pr_review_watch` and do what its `next` says until it returns the round. Then work the ' +
-        'round as the skill says.'
+        '`pr_review_watch` and do what its `next` says until it returns the round (stop after two ' +
+        'hours without one, as the CLI watch does). Then work the round as the skill says.'
     );
   });
 
@@ -587,3 +588,38 @@ describe.skipIf(process.platform === 'win32')(
     });
   }
 );
+
+// The settings.json matcher decides whether the hook runs at all, and the logic regex decides
+// whether it nudges. A tool name one accepts and the other rejects is a silent miss, so the two
+// are pinned to the same answer over every name shape the hook claims to handle, and over the
+// names it must refuse.
+describe('the settings.json MCP matcher and the logic regex agree', () => {
+  const settings = JSON.parse(
+    readFileSync(resolve(__dirname, '../../.claude/settings.json'), 'utf8')
+  );
+  const matchers = (settings.hooks.PostToolUse as { matcher: string }[])
+    .map((h) => h.matcher)
+    .filter((m) => m.includes('pull_request'));
+  const names: [string, boolean][] = [
+    ['mcp__github__create_pull_request', true],
+    ['mcp__github__update_pull_request', true],
+    ['mcp__GitHub__create_pull_request', true],
+    ['mcp__GITHUB__create_pull_request', true],
+    ['mcp__plugin_github_github__update_pull_request', true],
+    ['mcp__claude_ai_GitHub__create_pull_request', true],
+    ['mcp__github__create_pull_request_review', false],
+    ['mcp__github__update_pull_request_draft_state', false],
+    ['mcp__gitlab__create_pull_request', false],
+    ['xmcp__github__create_pull_request', false],
+    ['Bash', false],
+  ];
+
+  it('has exactly one MCP pull-request matcher', () => {
+    expect(matchers).toHaveLength(1);
+  });
+
+  it.each(names)('%s: matcher and logic both say %s', (name, want) => {
+    expect(new RegExp(matchers[0]).test(name)).toBe(want);
+    expect(GITHUB_MCP_PR_TOOL.test(name)).toBe(want);
+  });
+});

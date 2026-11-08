@@ -189,7 +189,7 @@ export function prHeadRepo(pr, env = process.env, run = spawnSync) {
 }
 
 // The GitHub MCP server's PR tools, under whatever name the session gave the server.
-const GITHUB_MCP_PR_TOOL = /^mcp__.*github.*__(create_pull_request|update_pull_request)$/i;
+export const GITHUB_MCP_PR_TOOL = /^mcp__.*github.*__(create_pull_request|update_pull_request)$/i;
 const PR_URL = /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/pull\/([1-9][0-9]*)$/;
 
 /**
@@ -276,8 +276,8 @@ export function nudge({ action, pr, draft }) {
     `\`pr_review_why_set\`. The intent is internal: never put it in the PR body or a GitHub comment.`;
   const wait =
     `wait for the round: run \`hq pr-review watch ${ref}\` in the background, or call the HQ MCP ` +
-    `tool \`pr_review_watch\` and do what its \`next\` says until it returns the round. Then work ` +
-    `the round as the skill says.`;
+    `tool \`pr_review_watch\` and do what its \`next\` says until it returns the round (stop after ` +
+    `two hours without one, as the CLI watch does). Then work the round as the skill says.`;
   if (action === 'create' && draft) {
     return (
       `${ref} was opened as a draft. The hosted review (the \`pr-review\` check) skips drafts, so it ` +

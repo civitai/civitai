@@ -22,7 +22,7 @@
         ]
       },
       {
-        "matcher": "mcp__.*[Gg]it[Hh]ub.*__(create|update)_pull_request$",
+        "matcher": "^mcp__.*[Gg][Ii][Tt][Hh][Uu][Bb].*__(create|update)_pull_request$",
         "hooks": [
           {
             "type": "command",
