@@ -8,8 +8,8 @@ import classes from './reaction-nudge.module.css';
 // Two pulses of the ring (reaction-nudge.module.css), or a static ring for as long under reduced motion.
 export const REACTION_NUDGE_MS = 2_400;
 // A server follows turf map changes at most every 2s (HATS_FOLLOW_MS in points/award.ts) and scores a
-// reaction on the map it holds: the glow waits that long before asking for one. An idle server can
-// still be behind; a busy one has followed by then.
+// reaction on the map it holds: the nudge waits that long before asking whether a reaction earns. An
+// idle server can still be behind; a busy one has followed by then.
 export const REACTION_NUDGE_DELAY_MS = 2_000;
 const SESSION_KEY = 'hatTurfReactionNudged';
 
@@ -29,20 +29,27 @@ function takeOnce(imageId: number) {
 const useNudgeStore = create<{ armed: Record<number, string> }>(() => ({ armed: {} }));
 
 /**
- * After a placement whose image would pay the placer's team for a reaction (the place response's
- * `reactionEarns`), the image's reaction bar glows in that team's colour, once per image per session,
- * starting once servers have had time to follow the map that answer was read from.
+ * After a placement, once servers have had time to follow the map it changed, asks `earns` whether
+ * the placer reacting to the image would pay their team; if so its reaction bar glows in that team's
+ * colour. Once per image per session.
  */
-export function armReactionNudge(imageId: number, team: string) {
+export function armReactionNudge(imageId: number, team: string, earns: () => Promise<boolean>) {
   if (!takeOnce(imageId)) return;
   setTimeout(() => {
-    useNudgeStore.setState((s) => ({ armed: { ...s.armed, [imageId]: team } }));
-    setTimeout(() => {
-      useNudgeStore.setState((s) => {
-        const { [imageId]: _, ...armed } = s.armed;
-        return { armed };
-      });
-    }, REACTION_NUDGE_MS);
+    // Only the nudge rides on the answer: a failed ask shows nothing.
+    Promise.resolve()
+      .then(earns)
+      .then((yes) => {
+        if (!yes) return;
+        useNudgeStore.setState((s) => ({ armed: { ...s.armed, [imageId]: team } }));
+        setTimeout(() => {
+          useNudgeStore.setState((s) => {
+            const { [imageId]: _, ...armed } = s.armed;
+            return { armed };
+          });
+        }, REACTION_NUDGE_MS);
+      })
+      .catch(() => undefined);
   }, REACTION_NUDGE_DELAY_MS);
 }
 

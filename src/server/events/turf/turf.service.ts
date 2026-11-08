@@ -237,11 +237,7 @@ export type PlaceTurfStickerInput = {
   source?: 'feed' | 'image-detail';
 };
 
-export async function placeTurfSticker(
-  input: PlaceTurfStickerInput,
-  now = new Date(),
-  { reactionEarnsMs = REACTION_EARNS_MS } = {}
-) {
+export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new Date()) {
   const event = await getTurfEvent(input.event, now);
   if (!event || !isRunning(event, now)) throw throwBadRequestError("Turf isn't open right now");
   const { userId, imageId } = input;
@@ -338,24 +334,42 @@ export async function placeTurfSticker(
       throw throwBadRequestError("You've already put a hat sticker on this image");
     throw error;
   }
-  const synced = requestTurfSync(event, imageId);
-  void synced.catch(logSyncError);
-  // Only drives the reaction nudge: a failed or slow read must not fail or hold up a placement
-  // already made, so the whole answer is raced against one deadline.
-  const reactionEarns = await withSysReadDeadline(
-    reactionPaysTeam(event, imageId, userId, team, synced),
-    reactionEarnsMs
+  void requestTurfSync(event, imageId).catch(logSyncError);
+}
+
+// Longest the reactionEarns answer (a running sync and two Redis reads) takes before answering false.
+export const REACTION_EARNS_MS = 1_500;
+
+/**
+ * Whether the viewer reacting to this image now would pay their team: what the reaction nudge shows
+ * on, asked after a placement. Only drives the nudge, so a failed or slow read answers false.
+ */
+export async function getReactionEarns(
+  { event: name, imageId, userId }: { event: string; imageId: number; userId: number },
+  now = new Date(),
+  { deadlineMs = REACTION_EARNS_MS } = {}
+) {
+  return withSysReadDeadline(
+    (async () => {
+      const event = await getTurfEvent(name, now);
+      if (!event || !isRunning(event, now)) return false;
+      // Shadow turf answers only its testers, as only they can place.
+      if (event.turf.mode === 'shadow') {
+        const testers = await flagAudienceAmong(event.turf.testerFlag, [userId]);
+        if (!testers.has(userId)) return false;
+      }
+      // strict: a failed read of a hand-set team throws rather than answering for a guessed one.
+      const team = await event.getUserTeam(userId, { strict: true });
+      return reactionPaysTeam(event, imageId, userId, team);
+    })(),
+    deadlineMs
   ).catch((error) => {
-    void logToAxiom({ type: 'error', name: 'event-turf', fn: 'reactionPaysTeam', error }).catch(
+    void logToAxiom({ type: 'error', name: 'event-turf', fn: 'getReactionEarns', error }).catch(
       () => undefined
     );
     return false;
   });
-  return { reactionEarns };
 }
-
-// Longest a placement waits on `reactionEarns` (its own sync and two Redis reads) before answering false.
-export const REACTION_EARNS_MS = 1_500;
 
 /**
  * Whether the placer reacting to this image would pay their own team, decided from what the award
@@ -364,13 +378,7 @@ export const REACTION_EARNS_MS = 1_500;
  * from the map, not the stickers: until a sync writes it, a reaction scores on the old map, which
  * may name another team. Ignores the daily per-owner cap.
  */
-async function reactionPaysTeam(
-  event: TurfEvent,
-  imageId: number,
-  userId: number,
-  team: string,
-  synced: Promise<void>
-) {
+async function reactionPaysTeam(event: TurfEvent, imageId: number, userId: number, team: string) {
   const rule = event.scoring?.types?.reaction;
   if (!rule?.entities.includes('Image') || !(await isEventPointsEnabled())) return false;
   const key = `Image:${imageId}`;
@@ -379,9 +387,9 @@ async function reactionPaysTeam(
   const hat = rawHat ? decodeHat(rawHat) : undefined;
   if (hat) return sameTeam(hat.team) && hat.ownerId !== userId;
   if (event.turf.mode !== 'live') return false;
-  // This placement's sync first, so a lead it just took is in the map. A failed sync leaves the old
-  // map, which is still what a reaction scores on.
-  await synced.catch(() => undefined);
+  // A sync still running on this server first, so a lead the placement just took is in the map. A
+  // failed sync leaves the old map, which is still what a reaction scores on.
+  await syncing.get(`${event.name}:${imageId}`)?.done.catch(() => undefined);
   const rawEntry = await sysRedis.hGet(turfKeys(event.name).map, key);
   const entry = rawEntry ? decodeTurfEntry(rawEntry) : undefined;
   return !!entry && sameTeam(entry.team) && entry.players.some((p) => p !== userId);
