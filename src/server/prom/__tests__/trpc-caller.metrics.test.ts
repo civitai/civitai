@@ -1,6 +1,11 @@
 import { instrumentationRegistry } from '@civitai/telemetry/client';
 import client from 'prom-client';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The recording is switched on by TRPC_CALLER_METRICS, read when the module loads.
+vi.hoisted(() => {
+  process.env.TRPC_CALLER_METRICS = 'true';
+});
 
 import {
   classifyTrpcCaller,
@@ -26,7 +31,7 @@ const USER = { id: 7 };
 
 describe('classifyTrpcCaller', () => {
   it('pins the exported name and the five caller classes', () => {
-    expect(TRPC_CALLER_SECONDS_METRIC).toBe('civitai_app_trpc_caller_seconds_sum');
+    expect(TRPC_CALLER_SECONDS_METRIC).toBe('civitai_app_trpc_caller_seconds_total');
     expect([...TRPC_CALLER_CLASSES]).toEqual([
       'session',
       'api_key',
@@ -208,9 +213,10 @@ describe('recordTrpcCaller', () => {
   it('exports only the seconds counter: no per-call total is registered or exported', async () => {
     recordTrpcCaller('a.b', 'session', 1);
     const text = await instrumentationRegistry.metrics();
-    expect(text).toContain('# TYPE civitai_app_trpc_caller_seconds_sum counter');
-    expect(text).toContain('civitai_app_trpc_caller_seconds_sum{path="a.b",caller="session"} 1');
+    expect(text).toContain('# TYPE civitai_app_trpc_caller_seconds_total counter');
+    expect(text).toContain('civitai_app_trpc_caller_seconds_total{path="a.b",caller="session"} 1');
     expect(text).not.toContain('civitai_app_trpc_caller_total');
+    expect(text).not.toContain('civitai_app_trpc_caller_seconds_sum');
     expect(
       instrumentationRegistry.getSingleMetric('civitai_app_trpc_caller_total')
     ).toBeUndefined();
