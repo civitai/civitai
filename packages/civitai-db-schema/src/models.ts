@@ -776,6 +776,8 @@ export interface User {
   serviceDealsSold?: ServiceDeal[];
   mysteryBoxesSold?: ItemDefinition[];
   gameFrameGames?: GameFrameGame[];
+  giftLinksCreated?: ModelVersionGiftLink[];
+  giftRedemptions?: ModelVersionGiftRedemption[];
 }
 
 export interface CustomerSubscription {
@@ -1181,6 +1183,7 @@ export interface ModelVersion {
   coveredCheckpoints?: CoveredCheckpoint[];
   wildcardSet?: WildcardSet | null;
   licensingRoot?: LicensingRoot | null;
+  giftLinks?: ModelVersionGiftLink[];
 }
 
 export interface LicensingRoot {
@@ -4373,6 +4376,33 @@ export interface EntityAccess {
   addedAt: Date;
   permissions: number;
   meta: JsonValue | null;
+}
+
+export interface ModelVersionGiftLink {
+  id: number;
+  modelVersionId: number;
+  modelVersion?: ModelVersion;
+  createdById: number;
+  createdBy?: User;
+  codeHash: string;
+  codeHint: string;
+  label: string | null;
+  batchId: string | null;
+  maxRedemptions: number | null;
+  redemptionCount: number;
+  expiresAt: Date | null;
+  revokedAt: Date | null;
+  revokedById: number | null;
+  createdAt: Date;
+  redemptions?: ModelVersionGiftRedemption[];
+}
+
+export interface ModelVersionGiftRedemption {
+  giftLinkId: number;
+  giftLink?: ModelVersionGiftLink;
+  userId: number;
+  user?: User;
+  claimedAt: Date;
 }
 
 export interface PaidAccess {
