@@ -18,7 +18,13 @@ import { trpc } from '~/utils/trpc';
 export function useNextPendingReview(publishRequestId: string) {
   const features = useFeatureFlags();
   const router = useRouter();
-  const [caughtUp, setCaughtUp] = useState(false);
+  /*
+    Keyed on the id it was reached FROM, not a bare boolean: "Approve & next" pushes this same
+    dynamic route with a new id and Next keeps the page mounted, so a plain flag would carry
+    "All caught up" over to a submission opened afterwards.
+  */
+  const [caughtUpFrom, setCaughtUpFrom] = useState<string | null>(null);
+  const caughtUp = caughtUpFrom === publishRequestId;
   const pendingQuery = trpc.blocks.listPendingRequests.useQuery(
     { limit: 50 },
     { enabled: !!features?.appBlocks && !!features?.appReviewPage, retry: false }
@@ -34,7 +40,7 @@ export function useNextPendingReview(publishRequestId: string) {
     exclude.add(publishRequestId);
     const next = nextPendingRequestId(pendingQuery.data.items, exclude);
     if (next) void router.push(`/apps/review/${next}`);
-    else setCaughtUp(true);
+    else setCaughtUpFrom(publishRequestId);
   }, [pendingApprovalIds, publishRequestId, pendingQuery.data, router]);
 
   return { openNext, caughtUp };

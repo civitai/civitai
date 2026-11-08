@@ -91,13 +91,6 @@ export const getServerSideProps = createServerSideProps<ReviewDetailPageProps>({
 });
 
 export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageProps) {
-  // Keyed on the id: "Approve & next" pushes this same dynamic route with a new id, and Next
-  // keeps the page component mounted across that — the key resets the per-submission state
-  // (the "All caught up" flag, the action bar) instead of carrying it over.
-  return <ReviewDetailPageBody key={publishRequestId} publishRequestId={publishRequestId} />;
-}
-
-function ReviewDetailPageBody({ publishRequestId }: ReviewDetailPageProps) {
   const features = useFeatureFlags();
   // After a decision: the next oldest pending submission, or "All caught up".
   const { openNext, caughtUp } = useNextPendingReview(publishRequestId);
