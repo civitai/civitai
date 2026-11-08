@@ -42,12 +42,19 @@ export function usePreBoostWhatIf<T extends Record<string, unknown> | null>({
   const [preBoostRevision, setPreBoostRevision] = useState<number | null>(null);
   const { getResourceData } = useResourceDataContext();
 
+  // The generator opts in to boost-to-load: a free account's cold checkpoint is then priced with
+  // `boostRequired` instead of refused. Every whatIf below and the submit carry the same opt-in.
+  const basePayload = useMemo(
+    () => (queryPayload ? { ...queryPayload, acceptBoostRequired: true } : null),
+    [queryPayload]
+  );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const base = trpc.orchestrator.whatIfFromGraph.useQuery(queryPayload as any, {
-    enabled: enabled && !!queryPayload,
+  const base = trpc.orchestrator.whatIfFromGraph.useQuery(basePayload as any, {
+    enabled: enabled && !!basePayload,
   });
 
   const preparation = base.data?.preparation;
+  const required = !!base.data?.boostRequired;
   // The real model type, not the AIR: a Checkpoint shipping a standalone denoiser advertises
   // `diffusionmodel`/`unet` in its AIR, which is every Flux / Wan / ZImage / Anima / Boogu base model.
   const hasBaseWeights = useMemo(
@@ -57,18 +64,19 @@ export function usePreBoostWhatIf<T extends Record<string, unknown> | null>({
       ),
     [preparation, getResourceData]
   );
-  const boostable = isBoostable(preparation, hasBaseWeights);
+  // Required: the boost is the only way to load it, so it is sold whatever the ETAs say.
+  const boostable = (required && !!preparation) || isBoostable(preparation, hasBaseWeights);
 
   const boostedPayload = useMemo(
-    () => (queryPayload ? { ...queryPayload, downloadPriority: 'high' } : null),
-    [queryPayload]
+    () => (basePayload ? { ...basePayload, downloadPriority: 'high' } : null),
+    [basePayload]
   );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const boosted = trpc.orchestrator.whatIfFromGraph.useQuery(boostedPayload as any, {
     enabled: enabled && !!boostedPayload && boostable,
   });
 
-  const preBoost = boostable && preBoostRevision === revision;
+  const preBoost = required || (boostable && preBoostRevision === revision);
   const boostFee =
     (boosted.data?.cost as { fixed?: Record<string, number> | null } | undefined)?.fixed
       ?.downloadPriority ?? null;
@@ -78,7 +86,7 @@ export function usePreBoostWhatIf<T extends Record<string, unknown> | null>({
     preBoost,
     setPreBoost: (on: boolean) => setPreBoostRevision(on ? revision : null),
     download: preparation
-      ? { preparation, boostable, boostFee, pricing: boosted.isFetching }
+      ? { preparation, boostable, boostFee, pricing: boosted.isFetching, required }
       : undefined,
   };
 }
@@ -87,6 +95,7 @@ type BoostDownloads = {
   preparation: DownloadPreparation;
   boostable: boolean;
   boostFee: number | null;
+  required?: boolean;
 };
 
 /**
@@ -104,14 +113,19 @@ export async function resolveBoostSubmitFields({
   preBoost: boolean;
   download?: BoostDownloads;
   askFirst: boolean;
-}): Promise<{ downloadPriority?: 'high' } | null> {
-  if (preBoost) return { downloadPriority: 'high' };
+}): Promise<{ downloadPriority?: 'high'; acceptBoostRequired: true } | null> {
+  const fields = { acceptBoostRequired: true } as const;
+  // A phone has no switch to show a required boost on, so it still gets the confirm, minus the
+  // option to go without.
+  const askRequired = askFirst && !!download?.required;
+  if (preBoost && !askRequired) return { ...fields, downloadPriority: 'high' };
   // No price, no offer — a dialog whose Boost button is disabled can only waste a tap.
-  if (!askFirst || !download?.boostable || download.boostFee == null) return {};
+  if (!askFirst || !download?.boostable || download.boostFee == null) return fields;
   const choice = await confirmDownloadBoost({
     preparation: download.preparation,
     boostFee: download.boostFee,
+    required: download.required,
   });
   if (!choice) return null;
-  return choice === 'boost' ? { downloadPriority: 'high' } : {};
+  return choice === 'boost' ? { ...fields, downloadPriority: 'high' } : fields;
 }

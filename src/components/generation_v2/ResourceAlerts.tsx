@@ -25,6 +25,7 @@ import {
   BOOST_LANE_LABEL,
   DownloadLanesInfo,
   BoostFeeNote,
+  BoostRequiredNote,
 } from '~/components/ResourceLoad/download-lanes';
 import { DownloadEtaCompare } from '~/components/ResourceLoad/DownloadEtaCompare';
 import { useWhatIfContext } from '~/components/form-graph/generation/WhatIfProvider';
@@ -227,6 +228,7 @@ export type DownloadAlertWhatIf = {
     boostable: boolean;
     boostFee: number | null;
     pricing: boolean;
+    required?: boolean;
   };
 };
 
@@ -251,15 +253,21 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
     const preparation = settled.download?.preparation;
     if (!preparation) return null;
     const size = preparation.resources.reduce((sum, r) => sum + r.sizeBytes, 0);
+    const required = !!settled.download?.required;
+    // A required boost is always sent, so the wait to state is the boosted one.
+    const eta = required
+      ? preparation.boostedEtaSeconds ?? preparation.etaSeconds
+      : preparation.etaSeconds;
     return (
-      <Alert color="blue" radius="md" p="xs">
-        <Text size="xs">
-          {preparation.resources.length === 1 ? 'A resource needs' : 'Resources need'} to be loaded
-          first{size > 0 ? ` — ${formatBytes(size)}` : ''}
-          {preparation.etaSeconds != null
-            ? `. Ready in ${formatDownloadEta(preparation.etaSeconds)}.`
-            : '.'}
-        </Text>
+      <Alert color={required ? 'yellow' : 'blue'} radius="md" p="xs">
+        <Stack gap={6}>
+          {required && <BoostRequiredNote size="xs" />}
+          <Text size="xs">
+            {preparation.resources.length === 1 ? 'A resource needs' : 'Resources need'} to be
+            loaded first{size > 0 ? ` — ${formatBytes(size)}` : ''}
+            {eta != null ? `. Ready in ${formatDownloadEta(eta)}.` : '.'}
+          </Text>
+        </Stack>
       </Alert>
     );
   }
@@ -278,7 +286,7 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
     );
   }
 
-  const { preparation, boostable, boostFee, pricing } = settled.download;
+  const { preparation, boostable, boostFee, pricing, required } = settled.download;
   const { etaSeconds, boostedEtaSeconds, lane } = preparation;
   const count = preparation.resources.length;
   const resourcesLabel = count === 1 ? 'resource' : `${count} resources`;
@@ -288,6 +296,7 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
   return (
     <Alert color={on ? 'yellow' : 'blue'} radius="md" p="sm">
       <Stack gap="sm">
+        {required && <BoostRequiredNote />}
         {on ? (
           <Text size="sm">
             <Text span fw={600}>
@@ -330,7 +339,7 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
                 size="sm"
                 color="yellow"
                 checked={on}
-                disabled={boostFee == null}
+                disabled={boostFee == null || required}
                 onChange={(e) => setPreBoost(e.currentTarget.checked)}
                 label="Boost download"
                 styles={{ label: { fontWeight: 600 } }}

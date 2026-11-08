@@ -1,5 +1,5 @@
 import { Badge, Text } from '@mantine/core';
-import { IconBolt, IconGauge, IconUsers } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBolt, IconGauge, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { formatDownloadEtaShort } from '~/components/ResourceLoad/download-eta';
@@ -16,16 +16,34 @@ const LANES = [
 export const BOOST_LANE_LABEL = 'Express';
 
 /**
- * Cancelling a boosted generation does not return the fee. One string, rendered at every purchase
- * point, so no surface can be the one that leaves it unsaid.
+ * When the fee comes back and when it does not. One string, rendered at every purchase point, so no
+ * surface can be the one that leaves it unsaid.
  */
-export const BOOST_NON_REFUNDABLE = "The boost fee isn't refunded if you cancel the generation.";
+export const BOOST_NON_REFUNDABLE =
+  'The boost is refunded if the download never starts, but not once it has.';
 
 export function BoostFeeNote({ className }: { className?: string }) {
   return (
     <Text size="xs" c="yellow.6" className={className}>
       {BOOST_NON_REFUNDABLE}
     </Text>
+  );
+}
+
+/** Why a free account's boost is not optional, on every surface that sells a required boost. */
+export function BoostRequiredNote({ size = 'sm' }: { size?: 'xs' | 'sm' }) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5">
+        <IconAlertTriangle size={size === 'xs' ? 14 : 16} color="var(--mantine-color-yellow-6)" />
+        <Text size={size} fw={700}>
+          Temporary capacity limitation
+        </Text>
+      </div>
+      <Text size={size}>
+        Free accounts need to boost to load this model for now. Members continue to load for free.
+      </Text>
+    </div>
   );
 }
 

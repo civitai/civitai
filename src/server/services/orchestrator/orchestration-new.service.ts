@@ -214,6 +214,8 @@ export type GenerateOptions = {
   input: Record<string, unknown>;
   externalCtx: GenerationCtx;
   downloadPriority?: DownloadPriority;
+  /** The generator's opt-in to boost-to-load. See `coverageAudience`. */
+  acceptBoostRequired?: boolean;
   inputGate: GenerationInputGate;
 } & GenerationContext;
 
@@ -250,6 +252,8 @@ export type WhatIfOptions = {
   token: string;
   currencies?: BuzzSpendType[];
   downloadPriority?: DownloadPriority;
+  /** The generator's opt-in to boost-to-load. See `coverageAudience`. */
+  acceptBoostRequired?: boolean;
 };
 
 /**
@@ -643,6 +647,8 @@ type ResourceValidationResult = {
   isPrivateGeneration: boolean;
   hasPoiResource: boolean;
   hasTipEligibleResource: boolean;
+  /** A resource was admitted only because the submit will pay for a Download Boost. */
+  boostRequired: boolean;
 };
 
 /**
@@ -662,7 +668,8 @@ async function validateAndEnrichResources(
     resources: RawAirResource[];
     orchestratorToken?: string;
     requestEcosystem?: string;
-  }
+  },
+  acceptBoostRequired = false
 ): Promise<ResourceValidationResult> {
   const rawAirResources = rawAir?.resources ?? [];
   if (resourceRefs.length === 0 && rawAirResources.length === 0) {
@@ -672,6 +679,7 @@ async function validateAndEnrichResources(
       isPrivateGeneration: false,
       hasPoiResource: false,
       hasTipEligibleResource: false,
+      boostRequired: false,
     };
   }
 
@@ -682,7 +690,7 @@ async function validateAndEnrichResources(
   const [resources] = await Promise.all([
     resourceRefs.length > 0
       ? withSpan('gen:validateResources:getResourceData', () =>
-          getResourceData(resourceRefs, { user })
+          getResourceData(resourceRefs, { user, acceptBoostRequired })
         )
       : Promise.resolve([] as Awaited<ReturnType<typeof getResourceData>>),
     rawAirResources.length > 0
@@ -740,6 +748,7 @@ async function validateAndEnrichResources(
     hasPoiResource: resources.some((r) => r.model.poi),
     // Raw-AIR epochs are not ModelVersions, so the orchestrator has no creator to tip for them.
     hasTipEligibleResource: anyTipEligible(resources),
+    boostRequired: resources.some((r) => r.boostRequired),
   };
 }
 
@@ -1297,6 +1306,7 @@ export async function createWorkflowStepsFromGraph({
   sourceImageIds,
   isGreen,
   orchestratorToken,
+  acceptBoostRequired = false,
 }: {
   data: GenerationData;
   /**
@@ -1330,6 +1340,8 @@ export async function createWorkflowStepsFromGraph({
    * bridge) reject raw-AIR resources.
    */
   orchestratorToken?: string;
+  /** The generator's opt-in to boost-to-load. See `coverageAudience`. */
+  acceptBoostRequired?: boolean;
 }): Promise<{
   steps: WorkflowStepTemplate[];
   workflowMetadata?: Record<string, unknown>;
@@ -1341,6 +1353,7 @@ export async function createWorkflowStepsFromGraph({
    */
   tags: string[];
   hasTipEligibleResource: boolean;
+  boostRequired: boolean;
 }> {
   data = expandAvatarData(data);
 
@@ -1353,12 +1366,18 @@ export async function createWorkflowStepsFromGraph({
     isPrivateGeneration,
     hasPoiResource,
     hasTipEligibleResource,
+    boostRequired,
   } = await withSpan('gen:createSteps:validateResources', () =>
-    validateAndEnrichResources(resourceIds, user, {
-      resources: collectRawAirResources(data),
-      orchestratorToken,
-      requestEcosystem: 'ecosystem' in data ? data.ecosystem : undefined,
-    })
+    validateAndEnrichResources(
+      resourceIds,
+      user,
+      {
+        resources: collectRawAirResources(data),
+        orchestratorToken,
+        requestEcosystem: 'ecosystem' in data ? data.ecosystem : undefined,
+      },
+      acceptBoostRequired
+    )
   );
 
   // Check for POI in prompt
@@ -1582,6 +1601,7 @@ export async function createWorkflowStepsFromGraph({
       workflowMetadata,
       tags: extraTags,
       hasTipEligibleResource,
+      boostRequired,
     };
   });
 }
@@ -1851,6 +1871,16 @@ async function hasQueuedDownloads(data: unknown) {
  *
  * Note: Generation status check should be done in the router before calling this function.
  */
+/**
+ * What a boost-to-load submit adds. The orchestrator forces a free-tier workflow into the free lane,
+ * which a boost cannot leave, so a non-member's boosted load is pinned to the paid tier it pays for.
+ */
+const BOOST_TO_LOAD_BODY = { tier: 'paid', downloadPriority: 'high' } as const;
+const BOOST_REQUIRED =
+  'Free accounts need to boost to load this model for now. Members continue to load for free.';
+const BOOST_UNAVAILABLE =
+  "The download boost couldn't be confirmed, so nothing was charged. Try again.";
+
 export async function generateFromGraph({
   input,
   externalCtx,
@@ -1872,6 +1902,7 @@ export async function generateFromGraph({
   externalId,
   acknowledgedSoftBlock,
   downloadPriority,
+  acceptBoostRequired,
   inputGate,
   remixRun,
 }: GenerateOptions) {
@@ -1986,6 +2017,7 @@ export async function generateFromGraph({
     workflowMetadata,
     tags: assemblyTags,
     hasTipEligibleResource,
+    boostRequired,
   } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
@@ -1996,7 +2028,9 @@ export async function generateFromGraph({
     sourceImageIds,
     isGreen,
     orchestratorToken: token,
+    acceptBoostRequired,
   });
+  if (boostRequired && downloadPriority !== 'high') throw throwBadRequestError(BOOST_REQUIRED);
 
   // Determine workflow tags
   const ecosystem = 'ecosystem' in data ? data.ecosystem : undefined;
@@ -2055,6 +2089,7 @@ export async function generateFromGraph({
         experimental,
         // @ts-ignore - BuzzSpendType is properly supported
         currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
+        ...(boostRequired ? BOOST_TO_LOAD_BODY : {}),
       },
       query: { whatif: true },
     }).catch(() => undefined);
@@ -2063,6 +2098,14 @@ export async function generateFromGraph({
   // download. If that check fails the generation still goes out, unboosted and unbilled for it.
   const boostWhatIf = downloadPriority ? await priceDownloads() : undefined;
   const boostDownloads = !!boostWhatIf?.steps?.some((step) => readPreparation(step));
+  // Boost-to-load fails CLOSED: a non-member's cold checkpoint goes out only boosted, so a failed
+  // price or a reply the orchestrator left out of the high lane is refused rather than sent free.
+  // No preparation means it is resident by now, and it goes out as any resident submit does.
+  if (
+    boostRequired &&
+    (!boostWhatIf || (boostDownloads && readDownloadPriority(boostWhatIf) !== 'high'))
+  )
+    throw throwBadRequestError(BOOST_UNAVAILABLE);
   // The submit reply predates the orchestrator queueing any download, so the queue card's first
   // render has nothing to show. A whatIf of the same steps does, and runs alongside the submit.
   //
@@ -2110,6 +2153,8 @@ export async function generateFromGraph({
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       externalId,
       ...(boostDownloads ? { downloadPriority } : {}),
+      // Only here: every other submit stays byte-identical and the orchestrator derives the tier.
+      ...(boostRequired && boostDownloads ? { tier: BOOST_TO_LOAD_BODY.tier } : {}),
     },
   })) as TextToImageResponse;
 
@@ -2165,6 +2210,7 @@ export async function whatIfFromGraph({
   token,
   currencies,
   downloadPriority,
+  acceptBoostRequired,
   inputGate,
 }: WhatIfOptions) {
   // Provide fallback for fields that don't affect cost estimation.
@@ -2180,12 +2226,13 @@ export async function whatIfFromGraph({
   };
   const { data, computedKeys } = validateInput(whatIfInput, externalCtx);
   await assertGraphInputsUsable(data, userId, inputGate);
-  const { steps } = await createWorkflowStepsFromGraph({
+  const { steps, boostRequired } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
     isWhatIf: true,
     user: userId ? { id: userId, isModerator, tier: externalCtx.user.tier } : undefined,
     orchestratorToken: token,
+    acceptBoostRequired,
   });
 
   // Submit what-if request to orchestrator
@@ -2197,6 +2244,8 @@ export async function whatIfFromGraph({
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       ...(downloadPriority ? { downloadPriority } : {}),
+      // Priced as the submit will send it, or a free account reads the free lane's price.
+      ...(boostRequired && downloadPriority === 'high' ? { tier: BOOST_TO_LOAD_BODY.tier } : {}),
     },
     query: {
       whatif: true,
@@ -2230,6 +2279,8 @@ export async function whatIfFromGraph({
     cost: workflow.cost,
     ready,
     preparation,
+    // Omitted unless set: the submit is refused without `downloadPriority: 'high'`.
+    ...(boostRequired ? { boostRequired: true as const } : {}),
     // Both additive and OMITTED when empty, matching the App Blocks snapshot contract.
     // 🔴 Consequence a client must know: an absent `modelSubstitutions` means "no
     // substitution" OR "a server that predates this field" — the two are

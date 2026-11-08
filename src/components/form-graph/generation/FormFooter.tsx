@@ -484,7 +484,13 @@ export function SubmitButton({
   const { selectedType } = useSelectedBuzzType();
   const { color } = useBuzzCurrencyConfig(selectedType);
 
-  const { isError, isLoading: isWhatIfLoading, canEstimateCost, gateBlocked } = useWhatIfContext();
+  const {
+    isError,
+    isLoading: isWhatIfLoading,
+    canEstimateCost,
+    gateBlocked,
+    download,
+  } = useWhatIfContext();
   const totalCost = useTotalGenerationCost(store);
 
   const {
@@ -504,7 +510,9 @@ export function SubmitButton({
     isBuzzLoading ||
     isError ||
     !canEstimateCost ||
-    insufficientBuzz;
+    insufficientBuzz ||
+    // A required boost with no price yet: the submit would be refused, or sent at an unseen fee.
+    (!!download?.required && download.boostFee == null);
 
   useEffect(() => {
     setBlockedTarget(running && submitBlocked ? GEN_SUBMIT_TARGET : null);
