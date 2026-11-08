@@ -548,6 +548,7 @@ export {
   mediaFromBlobs,
   splitPassThroughStep,
   splitPassThroughStepOutput,
+  withEveryBlobSurfaceable,
 } from './output';
 
 /**
