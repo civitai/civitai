@@ -7,7 +7,7 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import type { DragEndEvent } from '@dnd-kit/core';
+import type { CollisionDetection, DragEndEvent, Modifier } from '@dnd-kit/core';
 import {
   rectSortingStrategy,
   SortableContext,
@@ -19,9 +19,10 @@ import { ActionIcon, Button, Text, TextInput } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { DateTimePicker } from '@mantine/dates';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { IconPencil, IconTrash } from '@tabler/icons-react';
+import { IconGripVertical, IconPencil, IconTrash } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRef, useState } from 'react';
+import type { RefObject } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { formatDate } from '~/utils/date-helpers';
@@ -31,6 +32,36 @@ import type { UploadedMedia } from './batch-composer.utils';
 const ROW_HEIGHT = 80;
 const CARD_HEIGHT = 230;
 const THUMB_SIZE = 64;
+
+/** Only the dragged image's own post competes for the drop, so other posts never react. */
+const sameCollection: CollisionDetection = (args) => {
+  const postKey = args.active.data.current?.postKey;
+  return closestCenter({
+    ...args,
+    droppableContainers: args.droppableContainers.filter(
+      (container) => container.data.current?.postKey === postKey
+    ),
+  });
+};
+
+/** Keeps the dragged image inside the box that holds its post's images. */
+const stayInPost: Modifier = ({ transform, draggingNodeRect, active }) => {
+  const box = (
+    active?.data.current?.boxRef as RefObject<HTMLElement> | undefined
+  )?.current?.getBoundingClientRect();
+  if (!box || !draggingNodeRect) return transform;
+  return {
+    ...transform,
+    x: Math.min(
+      Math.max(transform.x, box.left - draggingNodeRect.left),
+      box.right - draggingNodeRect.right
+    ),
+    y: Math.min(
+      Math.max(transform.y, box.top - draggingNodeRect.top),
+      box.bottom - draggingNodeRect.bottom
+    ),
+  };
+};
 
 export function BatchReviewTable({
   posts,
@@ -59,7 +90,7 @@ export function BatchReviewTable({
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     // A short hold, so a swipe on the thumbnails still scrolls the list on a phone.
-    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
@@ -74,7 +105,12 @@ export function BatchReviewTable({
   };
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={sameCollection}
+      modifiers={[stayInPost]}
+      onDragEnd={handleDragEnd}
+    >
       <div
         ref={scrollRef}
         className="max-h-[65vh] overflow-auto rounded-lg border border-gray-2 dark:border-dark-5"
@@ -149,7 +185,7 @@ function ReviewRow({
     setEditingTitle(false);
   };
 
-  const thumbs = <ReviewThumbs postNumber={index + 1} media={post.media} />;
+  const thumbs = <ReviewThumbs postKey={post.key} postNumber={index + 1} media={post.media} />;
 
   const title = editingTitle ? (
     <TextInput
@@ -282,9 +318,19 @@ function ReviewRow({
   );
 }
 
-function ReviewThumbs({ postNumber, media }: { postNumber: number; media: UploadedMedia[] }) {
+function ReviewThumbs({
+  postKey,
+  postNumber,
+  media,
+}: {
+  postKey: string;
+  postNumber: number;
+  media: UploadedMedia[];
+}) {
+  const boxRef = useRef<HTMLDivElement>(null);
   const thumbs = (
     <div
+      ref={boxRef}
       className="flex flex-wrap items-center gap-1"
       role="group"
       aria-label={`Images of post ${postNumber}`}
@@ -293,6 +339,8 @@ function ReviewThumbs({ postNumber, media }: { postNumber: number; media: Upload
         <ReviewThumb
           key={item.url}
           item={item}
+          postKey={postKey}
+          boxRef={boxRef}
           label={`Image ${position + 1} of ${media.length}, post ${postNumber}`}
           sortable={media.length > 1}
         />
@@ -309,15 +357,20 @@ function ReviewThumbs({ postNumber, media }: { postNumber: number; media: Upload
 
 function ReviewThumb({
   item,
+  postKey,
+  boxRef,
   label,
   sortable,
 }: {
   item: UploadedMedia;
+  postKey: string;
+  boxRef: RefObject<HTMLElement | null>;
   label: string;
   sortable: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.url,
+    data: { postKey, boxRef },
     disabled: !sortable,
   });
   return (
@@ -329,8 +382,8 @@ function ReviewThumb({
       {...(sortable ? attributes : {})}
       {...(sortable ? listeners : {})}
       className={clsx(
-        'shrink-0 overflow-hidden rounded',
-        sortable && 'cursor-grab touch-none',
+        'relative shrink-0 overflow-hidden rounded',
+        sortable && 'cursor-grab touch-manipulation',
         isDragging && 'relative z-10 cursor-grabbing opacity-80 shadow-lg'
       )}
       style={{
@@ -351,6 +404,17 @@ function ReviewThumb({
         draggable={false}
         className="size-full object-cover"
       />
+      {sortable && (
+        // The only part with touch-action: none, so a swipe that starts elsewhere on a
+        // thumbnail still scrolls the list on a phone.
+        <span
+          aria-hidden
+          data-testid="batch-review-thumb-handle"
+          className="absolute bottom-0 right-0 flex size-6 touch-none items-end justify-end rounded-tl bg-black/40 p-0.5 text-white"
+        >
+          <IconGripVertical size={16} />
+        </span>
+      )}
     </div>
   );
 }
