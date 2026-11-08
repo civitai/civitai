@@ -164,7 +164,7 @@ const states = () => rows.map((r) => r.deployState);
 /** sysRedis MULTI whose INCR answers `count` (or throws). */
 function budgetCounter(count: number | Error) {
   const chain = {
-    set: vi.fn(() => chain),
+    set: vi.fn((..._a: unknown[]) => chain),
     incr: vi.fn(() => chain),
     exec: vi.fn(async () => {
       if (count instanceof Error) throw count;
@@ -252,7 +252,9 @@ describe('autoStartReviewPreview', () => {
     expect(m.startClaimedReviewBuild).not.toHaveBeenCalled();
     // Keyed on the submitter and the UTC date.
     const day = new Date().toISOString().slice(0, 10);
-    expect(counter.set.mock.calls[0][0]).toBe(`system:blocks:review-auto-builds:9:${day}`);
+    expect((counter.set.mock.calls[0] as unknown[])[0]).toBe(
+      `system:blocks:review-auto-builds:9:${day}`
+    );
   });
 
   it(`CONTROL: the ${AUTO_REVIEW_BUILDS_PER_USER_PER_DAY}th still starts`, async () => {
@@ -410,7 +412,7 @@ describe('moderator alert', () => {
     dbMock.dbRead.user.findUnique.mockResolvedValue({ username: 'bob' });
     await notifyModsOfNewSubmission({ ...sub, appName: 'Evil`\n@everyone', origin: 'push' });
     const [title, description] = m.notifyModAlert.mock.calls[0] as [string, string];
-    expect(title).toBe('New app submission: Evil  @everyone');
+    expect(title).toBe('New app submission: Evil @everyone');
     expect(description.split('\n')).toHaveLength(4);
     expect(description).toContain('Submitted by git push');
   });
@@ -452,9 +454,12 @@ describe('agent review auto-start', () => {
     expect(m.startAgentReview).not.toHaveBeenCalled();
   });
 
-  it('counts a running review with no reported cost at its cap ($30 + 4 x $2 running + $2 > $40)', async () => {
-    spend(30, 4);
+  it('counts a running review with no reported cost at its cap ($30 + 5 x $2 running + $2 > $40)', async () => {
+    spend(30, 5);
     expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('budget-refused');
+    // Landing exactly ON the budget fits ($30 + 4 x $2 + $2 = $40)…
+    spend(30, 4);
+    expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');
     // …and the same spend with nothing running fits.
     spend(30, 0);
     expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');

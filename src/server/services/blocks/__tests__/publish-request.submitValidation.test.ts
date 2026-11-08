@@ -87,14 +87,22 @@ beforeEach(() => {
 
 describe('submitVersion — deep manifest validation at submit', () => {
   it('CONTROL: a manifest approve would accept is queued', async () => {
-    const result = await submitVersion({ bundleBuffer: await bundle(VALID), submittedByUserId: 1 });
+    const result = await submitVersion({
+      bundleBuffer: await bundle(VALID),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+    });
     expect(result.slug).toBe('my-app');
     expect(db.createPublishRequest).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a manifest approve would refuse, with EVERY validator error, before anything is stored', async () => {
     const { iframe: _drop, contentRating: _rating, ...noIframe } = VALID;
-    const run = submitVersion({ bundleBuffer: await bundle(noIframe), submittedByUserId: 1 });
+    const run = submitVersion({
+      bundleBuffer: await bundle(noIframe),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+    });
 
     const err = await run.catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ManifestValidationRefusal);
@@ -159,6 +167,7 @@ describe('submitVersion — deep manifest validation at submit', () => {
         iframe: { ...VALID.iframe, sandbox: 'allow-scripts allow-popups' },
       }),
       submittedByUserId: 1,
+      submitterIsModerator: false,
     }).catch((e: unknown) => e);
     expect((err as InstanceType<typeof ManifestValidationRefusal>).errors).toContain(
       'sandbox token "allow-popups" is not allowed for trustTier=unverified'
@@ -169,7 +178,13 @@ describe('submitVersion — deep manifest validation at submit', () => {
 
 describe('submitVersion — follow-ups of a new pending request', () => {
   it('hands the new request to the follow-ups exactly once', async () => {
-    const result = await submitVersion({ bundleBuffer: await bundle(VALID), submittedByUserId: 1 });
+    const result = await submitVersion({
+      bundleBuffer: await bundle(VALID),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+    });
+    // Fire-and-forget behind a dynamic import: wait for it rather than for one tick.
+    await vi.waitFor(() => expect(followUps.onNewPendingSubmission).toHaveBeenCalled());
     await flush();
     expect(followUps.onNewPendingSubmission).toHaveBeenCalledTimes(1);
     expect(followUps.onNewPendingSubmission).toHaveBeenCalledWith({
@@ -178,6 +193,7 @@ describe('submitVersion — follow-ups of a new pending request', () => {
       version: '0.1.0',
       appName: 'My App',
       submittedByUserId: 1,
+      submitterIsModerator: false,
       origin: 'upload',
     });
   });
@@ -198,8 +214,14 @@ describe('submitVersion — follow-ups of a new pending request', () => {
   ])('a follow-up that %s cannot fail the submit', async (_how, impl) => {
     followUps.onNewPendingSubmission.mockImplementation(impl as () => Promise<void>);
     await expect(
-      submitVersion({ bundleBuffer: await bundle(VALID), submittedByUserId: 1 })
+      submitVersion({
+        bundleBuffer: await bundle(VALID),
+        submittedByUserId: 1,
+        submitterIsModerator: false,
+      })
     ).resolves.toMatchObject({ slug: 'my-app' });
+    // Fire-and-forget behind a dynamic import: wait for it rather than for one tick.
+    await vi.waitFor(() => expect(followUps.onNewPendingSubmission).toHaveBeenCalled());
     await flush();
     expect(followUps.onNewPendingSubmission).toHaveBeenCalledTimes(1);
   });
