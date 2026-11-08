@@ -355,7 +355,10 @@ export function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }
   });
   const visible = data.filter(
     (feature) =>
-      !fliptGatedToggleableKeys.has(feature.key) || (userFeatures && feature.key in userFeatures)
+      (!fliptGatedToggleableKeys.has(feature.key) ||
+        (userFeatures && feature.key in userFeatures)) &&
+      // A non-member who opted in would get a button that only leads to the supporter pitch.
+      (feature.key !== 'civitaiLinkNav' || flags.civitaiLink)
   );
   const toggleFlag = useToggleFeatureFlag();
 

@@ -7,6 +7,8 @@ export function CivitaiLinkNavSwitch() {
   const features = useFeatureFlags();
   const toggleFlag = useToggleFeatureFlag();
 
+  if (!features.civitaiLink) return null;
+
   return (
     <Switch
       p="xs"

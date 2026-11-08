@@ -1,6 +1,6 @@
 /**
- * The Civitai Link button is in the nav only for a signed-in user who turned it on, at both
- * render sites (desktop bar and phone bar). The popover itself is stubbed to a labelled button.
+ * The Civitai Link button is in the nav only for a signed-in member who turned it on, at both
+ * render sites (desktop bar and phone bar).
  */
 import '@mantine/core/styles.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -8,7 +8,7 @@ import { page } from 'vitest/browser';
 import { PHONE_VIEWPORT, renderAtViewport } from '../../../../test/geometry-setup';
 
 const { state } = vi.hoisted(() => ({
-  state: { user: null as null | { id: number }, civitaiLinkNav: false },
+  state: { user: null as null | { id: number }, civitaiLink: true, civitaiLinkNav: false },
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => state.user }));
@@ -17,6 +17,7 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
     canWrite: true,
     isRed: false,
     buzzSpendPop: false,
+    civitaiLink: state.civitaiLink,
     civitaiLinkNav: state.civitaiLinkNav,
   }),
 }));
@@ -50,6 +51,7 @@ const link = () => page.getByLabelText('Civitai Link', { exact: true });
 beforeEach(() => {
   document.body.innerHTML = '';
   state.user = { id: 1 };
+  state.civitaiLink = true;
   state.civitaiLinkNav = false;
 });
 
@@ -68,6 +70,14 @@ describe.each([
     await renderAtViewport(<AppHeader renderSearchComponent={renderSearch} />, viewport);
     // One per render site (desktop bar and phone bar); a site that dropped the flag shows 1 or 0.
     await expect.poll(() => link().elements().length).toBe(2);
+  });
+
+  test('stays hidden for a non-member who opted in', async () => {
+    state.civitaiLink = false;
+    state.civitaiLinkNav = true;
+    await renderAtViewport(<AppHeader renderSearchComponent={renderSearch} />, viewport);
+    await expect.element(page.getByLabelText('Search models').first()).toBeInTheDocument();
+    expect(link().elements()).toHaveLength(0);
   });
 
   test('stays hidden when signed out, even with the flag on', async () => {

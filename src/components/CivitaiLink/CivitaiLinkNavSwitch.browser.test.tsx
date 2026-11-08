@@ -13,7 +13,7 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 const { store } = vi.hoisted(() => {
   const listeners = new Set<() => void>();
   const store = {
-    flags: { civitaiLinkNav: false } as Record<string, boolean>,
+    flags: { civitaiLink: true, civitaiLinkNav: false } as Record<string, boolean>,
     listeners,
     set(next: Record<string, boolean>) {
       store.flags = next;
@@ -86,7 +86,7 @@ function renderBoth() {
 }
 
 beforeEach(() => {
-  store.flags = { civitaiLinkNav: false };
+  store.flags = { civitaiLink: true, civitaiLinkNav: false };
 });
 
 describe('Civitai Link nav setting', () => {
@@ -106,5 +106,19 @@ describe('Civitai Link nav setting', () => {
     await userEvent.click(prefs);
     await expect.element(dialog).not.toBeChecked();
     await expect.element(prefs).not.toBeChecked();
+  });
+
+  test('a non-member sees neither switch', async () => {
+    store.flags = { civitaiLink: false, civitaiLinkNav: false };
+    renderWithProviders(
+      <>
+        <div data-testid="mounted" />
+        <CivitaiLinkNavSwitch />
+        <ToggleableFeatures data={linkFeature} />
+      </>
+    );
+    // The sentinel proves the tree rendered; members get two switches (see above).
+    await expect.element(page.getByTestId('mounted')).toBeInTheDocument();
+    expect(page.getByRole('switch').elements()).toHaveLength(0);
   });
 });
