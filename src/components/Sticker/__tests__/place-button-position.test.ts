@@ -551,4 +551,18 @@ describe('a cluster with no side that fits', () => {
   it('is not moved where it already fits', () => {
     expect(position(100, 60)?.lift).toBe(0);
   });
+
+  it('is not pulled over the sticker for the tray, which the page can scroll away from', () => {
+    // An image whose lower half is under the open tray; the clip is the whole media box.
+    const result = placeButtonPosition({
+      sticker: element(220, STICKER.height, STICKER.width),
+      cluster: element(220 + STICKER.height + below, 200, 220),
+      tray: { top: 400, bottom: 900, left: 0, right: 1000 },
+      clip: { top: 60, bottom: 900, left: 100, right: 500 },
+      flipped: false,
+      ...STANDOFF,
+    });
+
+    expect(result?.lift).toBe(0);
+  });
 });

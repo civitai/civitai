@@ -275,7 +275,7 @@ export function placeButtonPosition({
     flipped: nextFlipped,
     below: clearance.below,
     above: clearance.above,
-    lift: placeButtonLift(nextFlipped ? boxes.above : boxes.below, nextFlipped, tray, clip),
+    lift: placeButtonLift(nextFlipped ? boxes.above : boxes.below, nextFlipped, clip),
   };
 }
 
@@ -283,13 +283,11 @@ export function placeButtonPosition({
  * How far to pull the cluster in over the sticker when neither side fits, so its buttons stay
  * reachable. A tall cluster (a pinned moment, a recorder) on a sticker low in a short viewport
  * otherwise hangs past the clipping edge, where nothing can press Place.
+ *
+ * The clip only, never the tray: scrolling the page brings a cluster out from under the tray,
+ * and lifting for it covered the sticker for as long as the tray stayed open.
  */
-export function placeButtonLift(box: Box, flipped: boolean, tray: Box | null, clip: Box | null) {
+export function placeButtonLift(box: Box, flipped: boolean, clip: Box | null) {
   if (flipped) return Math.max(0, Math.ceil((clip?.top ?? 0) - box.top));
-  const limits = [
-    clip?.bottom,
-    tray && box.right > tray.left && box.left < tray.right ? tray.top : undefined,
-  ].filter((limit): limit is number => limit != null);
-  if (!limits.length) return 0;
-  return Math.max(0, Math.ceil(box.bottom - Math.min(...limits)));
+  return clip ? Math.max(0, Math.ceil(box.bottom - clip.bottom)) : 0;
 }
