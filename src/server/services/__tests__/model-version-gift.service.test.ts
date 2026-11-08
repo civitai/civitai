@@ -20,6 +20,7 @@ const {
   createGiftLink,
   generateGiftCode,
   hashGiftCode,
+  listGiftClaims,
   listGiftLinks,
   mintGiftCodes,
   normalizeGiftCode,
@@ -162,6 +163,7 @@ describe('claimGift', () => {
     await expect(claimGift({ userId: CLAIMER, code })).resolves.toMatchObject({
       modelVersionId: VERSION_ID,
       alreadyHadAccess: false,
+      notice: 'The creator can see that you claimed this.',
     });
     expect(grantValues()).toEqual([
       VERSION_ID,
@@ -192,9 +194,9 @@ describe('claimGift', () => {
 
   it('spends no slot on someone who already holds what the gift grants', async () => {
     seed({ held: 3 });
-    await expect(claimGift({ userId: CLAIMER, code })).resolves.toMatchObject({
-      alreadyHadAccess: true,
-    });
+    const result = await claimGift({ userId: CLAIMER, code });
+    expect(result).toMatchObject({ alreadyHadAccess: true });
+    expect(result).not.toHaveProperty('notice');
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
@@ -292,6 +294,8 @@ describe('who may manage gifts', () => {
       revokeGiftLinks({ userId, isModerator, modelVersionId: VERSION_ID, id: 1 }),
     create: (userId: number, isModerator = false) =>
       createGiftLink({ userId, isModerator, modelVersionId: VERSION_ID } as CreateArgs),
+    claims: (userId: number, isModerator = false) =>
+      listGiftClaims({ userId, isModerator, modelVersionId: VERSION_ID, id: 1 }),
   };
 
   it.each(Object.entries(manage))(
@@ -300,19 +304,24 @@ describe('who may manage gifts', () => {
       seed();
       await expect(fn(CLAIMER)).rejects.toThrow('You do not own this model version.');
       expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+      expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.modelVersionGiftLink.updateMany).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.modelVersionGiftLink.createMany).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.modelVersionGiftLink.create).not.toHaveBeenCalled();
     }
   );
 
-  const { list, revoke } = manage;
-  it.each(Object.entries({ list, revoke }))('%s lets a moderator through', async (_n, fn) => {
-    seed();
-    dbMock.dbWrite.modelVersionGiftLink.updateMany.mockResolvedValue({ count: 1 });
-    dbMock.dbWrite.modelVersionGiftLink.findMany.mockResolvedValue([]);
-    await expect(fn(CLAIMER, true)).resolves.toBeDefined();
-  });
+  const { list, revoke, claims } = manage;
+  it.each(Object.entries({ list, revoke, claims }))(
+    '%s lets a moderator through',
+    async (_n, fn) => {
+      seed();
+      dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+      dbMock.dbWrite.modelVersionGiftLink.updateMany.mockResolvedValue({ count: 1 });
+      dbMock.dbWrite.modelVersionGiftLink.findMany.mockResolvedValue([]);
+      await expect(fn(CLAIMER, true)).resolves.toBeDefined();
+    }
+  );
 
   // Decision (lead review of #8146): moderators list and revoke, but never mint free access to a
   // creator's paid version. Do not route mint through the moderator check.

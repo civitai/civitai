@@ -26,13 +26,17 @@ surfaces.
   immediately, including a claim already in flight. **People who already claimed keep their access.**
   Who claimed which link is `ModelVersionGiftRedemption`; a grant's `meta.giftLinkId` holds only the most
   recent link that user claimed.
+- **Claimers:** the creator or a moderator can list who claimed a link or a batch (username and claim
+  time, newest first). The claim page tells the recipient the creator can see that they claimed, and every claim that is
+  recorded returns the same sentence as `notice` (`GIFT_CLAIM_NOTICE`), so an API claimer is told too. Claims
+  made before `GIFT_CLAIMER_NAMES_VISIBLE_SINCE`, when that notice did not exist, are only counted
+  (`hiddenCount`, on the first page only), never named.
 
 Out of scope:
 
 - Gifting free versions or comics.
 - Gifting generation only on a version that sells download.
 - Buying a gift for someone else.
-- Claimer usernames: creators see counts only.
 - An owner-menu entry on the model page (a follow-up).
 
 ## How access is granted
@@ -119,10 +123,14 @@ path segment, which a client-side navigation still puts in the Next data fetch.
   - `POST [id]/gifts` with `{ count, expiresAt?, label? }` mints single-use codes.
   - `POST [id]/gifts/link` with `{ maxRedemptions?, expiresAt?, label? }` creates a gift link.
   - `DELETE [id]/gifts/[giftId]` and `DELETE [id]/gifts/batch/[batchId]` revoke.
+  - `GET [id]/gifts/[giftId]/claims` and `GET [id]/gifts/batch/[batchId]/claims` return `{ claims,
+    nextCursor, hiddenCount }`: `{ giftLinkId, userId, username, claimedAt }`, newest first, at most
+    `GIFT_CLAIMS_PAGE_MAX` (100) per page. Owner or moderator, read from the replica.
 - **Creator Studio:** `/models/gifts` lists every link and batch across the creator's versions, with
   revoke, and links to `/models/gifts/[versionId]`. The version page is linked from a gated version's row
   on `/models`. Both call the REST routes with the creator's session. Codes appear once, in the action
-  result, with copy and CSV download. A mature model's link points at civitai.red.
+  result, with copy and CSV download. A mature model's link points at civitai.red. A claimed link or
+  batch row on the version page expands to its claimers, through `/models/gifts/[versionId]/claims`.
 
 ## Tests
 

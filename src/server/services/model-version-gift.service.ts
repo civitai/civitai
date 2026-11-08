@@ -18,6 +18,9 @@ import {
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
 import {
+  GIFT_CLAIM_NOTICE,
+  GIFT_CLAIMER_NAMES_VISIBLE_SINCE,
+  GIFT_CLAIMS_PAGE_MAX,
   GIFT_INDEX_PAGE_MAX,
   GIFT_LIVE_CODES_MAX_PER_VERSION,
   GIFT_LIST_HISTORY,
@@ -389,6 +392,73 @@ export function giftIndexSql({
   `;
 }
 
+export type GiftClaim = {
+  giftLinkId: number;
+  userId: number;
+  username: string | null;
+  claimedAt: Date;
+};
+
+/** Opaque keyset cursor over (claimedAt, giftLinkId, userId), newest first. */
+function encodeGiftClaimsCursor(c: GiftClaim) {
+  return Buffer.from(`${c.claimedAt.toISOString()}|${c.giftLinkId}|${c.userId}`).toString(
+    'base64url'
+  );
+}
+
+export function decodeGiftClaimsCursor(cursor: string) {
+  const [at, link, user] = Buffer.from(cursor, 'base64url').toString().split('|');
+  const ids = [Number(link), Number(user)];
+  if (
+    !at ||
+    // Exactly what encodeGiftClaimsCursor writes, and a real date (no month 13).
+    Number.isNaN(Date.parse(at)) ||
+    new Date(at).toISOString() !== at ||
+    !ids.every((n) => Number.isInteger(n) && n > 0)
+  )
+    throw throwBadRequestError('Invalid cursor.');
+  return { claimedAt: at, giftLinkId: ids[0], userId: ids[1] };
+}
+
+type GiftClaimsTarget = { modelVersionId: number; id?: number; batchId?: string };
+
+const claimsOf = ({ modelVersionId, id, batchId }: GiftClaimsTarget) => Prisma.sql`
+  l."modelVersionId" = ${modelVersionId}
+  AND ${id != null ? Prisma.sql`l.id = ${id}` : Prisma.sql`l."batchId" = ${batchId}`}
+`;
+
+/**
+ * Who claimed one gift link, or any code of one batch, of this version, from `visibleSince` on:
+ * earlier claimers were never told the creator would see them.
+ */
+export function giftClaimsSql({
+  cursor,
+  limit,
+  visibleSince,
+  ...target
+}: GiftClaimsTarget & {
+  cursor: { claimedAt: string; giftLinkId: number; userId: number } | null;
+  limit: number;
+  visibleSince: Date;
+}) {
+  return Prisma.sql`
+    SELECT r."giftLinkId", r."userId", u.username, r."claimedAt"
+      FROM "ModelVersionGiftRedemption" r
+      JOIN "ModelVersionGiftLink" l ON l.id = r."giftLinkId"
+      JOIN "User" u ON u.id = r."userId"
+     WHERE ${claimsOf(target)}
+       AND r."claimedAt" >= ${visibleSince.toISOString()}::timestamp(3)
+       ${
+         cursor
+           ? Prisma.sql`AND (r."claimedAt", r."giftLinkId", r."userId")
+                 < (${cursor.claimedAt}::timestamp(3), ${cursor.giftLinkId}, ${cursor.userId})`
+           : Prisma.empty
+       }
+     ORDER BY r."claimedAt" DESC, r."giftLinkId" DESC, r."userId" DESC
+     LIMIT ${limit + 1}
+  `;
+}
+
 /** Shapes one page of `giftIndexSql` rows: the extra row only says there is a next page. */
 export function toGiftIndexPage(rows: GiftIndexRow[], limit: number) {
   const page = rows.slice(0, limit);
@@ -450,6 +520,68 @@ export async function listMyGiftLinks({
     giftIndexSql({ userId, cursor: decoded, limit: take })
   );
   return toGiftIndexPage(rows, take);
+}
+
+/** How many of the same claims came before `visibleSince`: counted, never named. */
+export function giftHiddenClaimsSql({
+  visibleSince,
+  ...target
+}: GiftClaimsTarget & { visibleSince: Date }) {
+  return Prisma.sql`
+    SELECT count(*)::int AS hidden
+      FROM "ModelVersionGiftRedemption" r
+      JOIN "ModelVersionGiftLink" l ON l.id = r."giftLinkId"
+     WHERE ${claimsOf(target)}
+       AND r."claimedAt" < ${visibleSince.toISOString()}::timestamp(3)
+  `;
+}
+
+/** The claimers of a link or batch, for its owner or a moderator. */
+export async function listGiftClaims({
+  userId,
+  isModerator,
+  modelVersionId,
+  id,
+  batchId,
+  cursor,
+  limit = GIFT_CLAIMS_PAGE_MAX,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  modelVersionId: number;
+  id?: number;
+  batchId?: string;
+  cursor?: string | null;
+  limit?: number;
+}) {
+  if ((id == null) === (batchId == null))
+    throw throwBadRequestError('Pass exactly one of id or batchId.');
+  await assertCanManageGifts({ userId, isModerator, modelVersionId });
+  const take = Math.min(Math.max(1, Math.floor(limit)), GIFT_CLAIMS_PAGE_MAX);
+  const target = { modelVersionId, id, batchId, visibleSince: GIFT_CLAIMER_NAMES_VISIBLE_SINCE };
+  // The hidden count doesn't change between pages, so only the first page asks for it.
+  const [rows, hidden] = await Promise.all([
+    dbRead.$queryRaw<GiftClaim[]>(
+      giftClaimsSql({
+        ...target,
+        cursor: cursor ? decodeGiftClaimsCursor(cursor) : null,
+        limit: take,
+      })
+    ),
+    cursor
+      ? null
+      : dbRead
+          .$queryRaw<{ hidden: number }[]>(giftHiddenClaimsSql(target))
+          .then((r) => r[0]?.hidden ?? 0),
+  ]);
+  const claims = rows.slice(0, take);
+  const last = claims[claims.length - 1];
+  return {
+    claims,
+    nextCursor: rows.length > take && last ? encodeGiftClaimsCursor(last) : null,
+    /** null on every page after the first. */
+    hiddenCount: hidden,
+  };
 }
 
 /** Revokes one link, or every link of a bulk batch. Already-granted access is kept. */
@@ -592,7 +724,7 @@ export async function claimGift({ userId, code }: { userId: number; code: string
 
   // Not bustMvCache: its caches are per version, and an uncapped link would refresh them per claim.
   await bustOrchestratorModelCache(version.id, userId);
-  return { ...result, alreadyHadAccess: false };
+  return { ...result, alreadyHadAccess: false, notice: GIFT_CLAIM_NOTICE };
 }
 
 export type ClaimGiftResult = Awaited<ReturnType<typeof claimGift>>;
