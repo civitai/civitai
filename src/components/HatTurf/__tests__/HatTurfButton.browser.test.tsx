@@ -37,6 +37,7 @@ const h = vi.hoisted(() => ({
   mutate: vi.fn(),
   optIn: vi.fn(),
   invalidate: vi.fn(async () => undefined),
+  earns: vi.fn(async () => false),
   user: { id: 1 } as { id: number } | null,
   trackAction: vi.fn<(data: unknown) => Promise<void>>(async () => undefined),
 }));
@@ -76,6 +77,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             getStock: { invalidate: h.invalidate },
             getSummaries: { invalidate: h.invalidate },
             getStickersForImages: { invalidate: h.invalidate },
+            reactionEarns: { fetch: h.earns },
           },
         }),
       }
@@ -140,6 +142,7 @@ import { IntersectionObserverProvider } from '~/components/IntersectionObserver/
 import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
 import type { TurfSummaries } from '~/components/HatTurf/TurfSummaryProvider';
 import { STICKER_PLACEMENT_MAX_SCALE } from '~/shared/utils/sticker-placement';
+import { REACTION_NUDGE_DELAY_MS } from '~/components/HatTurf/reaction-nudge';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { renderWithProviders, LOADABLE_IMAGE_DATA_URI } from '../../../../test/component-setup';
 import { cleanup } from 'vitest-browser-react';
@@ -343,12 +346,22 @@ describe('Hat Turf button on a feed ImageCard', () => {
     expect(input.data.y).toBeCloseTo(0.3, 1);
     expect(actions()).not.toContain('feed_place_save');
     // The server accepted it: the hat stays, the button says placed, stock is refetched.
-    options.onSuccess({ reactionEarns: false });
+    options.onSuccess();
     expect(actions()).toEqual(['feed_place_start', 'feed_place_save']);
     await vi.waitFor(() => expect(q('hat-turf-placed')).not.toBeNull());
     expect(q('hat-turf-draft')).toBeNull();
     expect(document.body.querySelector('[aria-label="Your hat is placed here"]')).not.toBeNull();
     expect(h.invalidate).toHaveBeenCalled();
+    // The reaction nudge asks about this image after its delay, never as part of the placement.
+    expect(h.earns).not.toHaveBeenCalled();
+    await vi.waitFor(
+      () =>
+        expect(h.earns).toHaveBeenCalledWith(
+          { event: 'birthday2026', imageId: 77 },
+          { staleTime: 0 }
+        ),
+      { timeout: REACTION_NUDGE_DELAY_MS + 2_000 }
+    );
   });
 
   test('the draft hat moves with the arrow keys', async () => {

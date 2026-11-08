@@ -67,8 +67,17 @@ export function useHatStock() {
         left: data.left,
         ownerOff: data.ownerOff,
         cap: data.cap,
-        /** How many of a leading team's stickers score; the badge caps its points at this. */
+        /** How many of the viewer's team's stickers score on an image it leads. */
         creditedPlayers: data.creditedPlayers,
+        /** Per team, how many of its stickers score on an image it leads (creditedForTeam). */
+        creditedByTeam: data.creditedByTeam,
+        /** How long a sticker counts (stickerExpiresAt); null when stickers do not expire. */
+        expiry: data.expiry
+          ? {
+              ttlHours: data.expiry.ttlHours,
+              rolloutAt: data.expiry.rolloutAt ? new Date(data.expiry.rolloutAt) : undefined,
+            }
+          : null,
         // The wire may hand back a string; the countdown needs a Date.
         nextAt: data.nextAt ? new Date(data.nextAt) : null,
         /** Hats per hour, with the team's catch-up applied. */

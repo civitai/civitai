@@ -58,6 +58,7 @@
     runVersion,
     sampleImagesProblem,
     runVersionLabel,
+    blockedSelectionMessage,
     filledPrompts,
     teLocked,
     withTrigger,
@@ -125,6 +126,8 @@
 
   // Moderators can switch training off on the main app; the flow's banner carries their message.
   const trainingDisabled = $derived(serviceStatus.value?.available === false);
+  // A run on a model that went down after it was picked (a stale tab, a restored draft).
+  const blockedMessage = $derived(blockedSelectionMessage(selection.runs, serviceStatus.value));
 
   // Green (membership) Buzz can't pay for NSFW training, so spending it requires an explicit attestation.
   let attestSfw = $state(false);
@@ -439,6 +442,7 @@
     if (
       starting ||
       trainingDisabled ||
+      blockedMessage ||
       total == null ||
       (needsAttestation && !attestSfw) ||
       ackMissing ||
@@ -455,7 +459,7 @@
   }
 
   async function reallyStart() {
-    if (starting || trainingDisabled) return;
+    if (starting || trainingDisabled || blockedMessage) return;
     spendDialogOpen = false;
     starting = true;
     startError = '';
@@ -1031,6 +1035,7 @@
       onclick={start}
       disabled={starting ||
         trainingDisabled ||
+        !!blockedMessage ||
         total == null ||
         (needsAttestation && !attestSfw) ||
         ackMissing ||
@@ -1048,6 +1053,8 @@
       <p class="mt-2 text-center font-mono text-xs text-dark-2">
         Training is currently disabled — see the notice above.
       </p>
+    {:else if blockedMessage}
+      <p class="mt-2 text-center font-mono text-xs text-buzz">{blockedMessage}</p>
     {:else if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
     {:else if imagesProblem}

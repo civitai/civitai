@@ -17,7 +17,7 @@ describe('computeImageTurf', () => {
     // Pink reaches 2 with its third sticker overall, Blue only with the fourth.
     const { counts, entry } = computeImageTurf(
       [row(1, 'Blue'), row(2, 'Pink'), row(3, 'Pink'), row(4, 'Blue'), row(5, 'Blue', false)],
-      25,
+      () => 25,
       cosmetic
     );
     expect(counts.leader).toBe('Pink');
@@ -28,7 +28,7 @@ describe('computeImageTurf', () => {
   it('ineligible stickers show but never decide the lead', () => {
     const { counts, entry } = computeImageTurf(
       [row(1, 'Blue'), row(2, 'Pink', false), row(3, 'Pink', false)],
-      25,
+      () => 25,
       cosmetic
     );
     expect(counts.shown).toEqual({ Blue: 1, Pink: 2 });
@@ -39,7 +39,7 @@ describe('computeImageTurf', () => {
   it("credits the leading team's earliest eligible stickerers, up to the cap", () => {
     const { entry } = computeImageTurf(
       [row(1, 'Pink'), row(2, 'Pink', false), row(3, 'Pink'), row(4, 'Blue'), row(5, 'Pink')],
-      2,
+      () => 2,
       cosmetic
     );
     expect(entry).toMatchObject({ team: 'Pink', cosmeticId: 12, players: [1, 3] });
@@ -48,7 +48,7 @@ describe('computeImageTurf', () => {
   // One image past ~125k stickers threw here, and the throw also stopped the whole-event reconcile.
   it('handles an image with 200k stickers', () => {
     const rows = Array.from({ length: 200_000 }, (_, i) => row(i + 1, 'Blue'));
-    const { entry } = computeImageTurf(rows, 25, cosmetic);
+    const { entry } = computeImageTurf(rows, () => 25, cosmetic);
     expect(entry?.lastAt).toBe(rows[rows.length - 1].createdAt.getTime());
   });
 });

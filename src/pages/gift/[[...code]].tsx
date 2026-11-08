@@ -44,7 +44,8 @@ export default function GiftClaimPage({ initialCode }: { initialCode: string }) 
             ) : (
               <>
                 <Text ta="center" c="dimmed">
-                  Claiming gives your account access to the model at no cost.
+                  Claiming gives your account access to the model at no cost. The creator can see
+                  that you claimed this.
                 </Text>
                 <TextInput
                   w="100%"

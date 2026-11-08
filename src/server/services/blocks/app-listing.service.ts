@@ -1965,6 +1965,40 @@ export async function getStoreVisibleListingSummary(
 }
 
 /**
+ * The off-site destination of one listing, for the `/apps/go/<listingId>` visit redirect — through
+ * the SAME visibility gate as `getListingDetail` (`loadStoreVisibleListingRow`), so a listing this
+ * viewer's detail page would 404 yields null here too, indistinguishable from a missing id.
+ *
+ * Null also for an ON-SITE listing and for an off-site one whose stored URL is not https. The URL
+ * returned is the listing's STORED `externalUrl` (re-guarded by `safeExternalUrl`, the same check
+ * the card and detail DTOs apply) — there is no parameter through which a caller could supply a
+ * destination, which is what keeps the redirect from being an open redirect.
+ */
+export async function getStoreVisibleOffsiteDestination(
+  listingId: string,
+  opts: {
+    redCapable: boolean;
+    scope?: StoreVisibilityScope;
+    floor?: ListingAudienceFloor;
+    /** Required (nullable) like `getStoreVisibleListingSummary`: missing reads as PG. */
+    viewerBrowsingLevel: number | null | undefined;
+  }
+): Promise<{ id: string; url: string } | null> {
+  const gated = await loadStoreVisibleListingRow(
+    { id: listingId },
+    {
+      redCapable: opts.redCapable,
+      scope: opts.scope,
+      floor: opts.floor ?? 'public',
+      browsingLevel: opts.viewerBrowsingLevel,
+    }
+  );
+  if (!gated || gated.row.kind !== 'offsite') return null;
+  const url = safeExternalUrl(gated.row.externalUrl);
+  return url ? { id: gated.row.id, url } : null;
+}
+
+/**
  * One listing resolved for the viewer's "My apps" home: its store card plus the raw inputs of
  * {@link storeVisibleListingRowGate}. The gate is deliberately NOT applied here — the pure
  * `buildMyApps` applies it, so the exclusion of delisted / unpublished / hidden listings is

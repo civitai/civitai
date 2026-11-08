@@ -75,7 +75,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 const countsOf = (rows: ReturnType<typeof sticker>[]) =>
-  JSON.stringify(computeImageTurf(rows, 25, (t) => (t === 'Blue' ? 11 : 12)).counts);
+  JSON.stringify(
+    computeImageTurf(
+      rows,
+      () => 25,
+      (t) => (t === 'Blue' ? 11 : 12)
+    ).counts
+  );
 
 describe('syncTurfImages', () => {
   it('pushes counts only for the images whose counts changed', async () => {
@@ -310,7 +316,13 @@ describe('reconcileTurf', () => {
     const event = (await getTurfEvent('e', NOW))!;
     const a = { ...sticker(900, 5, 'Blue'), eligible: true };
     const b = { ...sticker(901, 6, 'Pink'), eligible: true };
-    const bCounts = JSON.stringify(computeImageTurf([b], 25, () => 12).counts);
+    const bCounts = JSON.stringify(
+      computeImageTurf(
+        [b],
+        () => 25,
+        () => 12
+      ).counts
+    );
     // After the snapshot, an older sync moved 901: the write differs for both, so both are pushed.
     realWrite({ [KEYS.counts]: { 'Image:901': 'moved since' } });
     redisMock.sysRedis.hGetAll.mockResolvedValueOnce({ 'Image:901': bCounts }); // 900 changed, 901 not

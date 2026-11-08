@@ -26,13 +26,18 @@ surfaces.
   immediately, including a claim already in flight. **People who already claimed keep their access.**
   Who claimed which link is `ModelVersionGiftRedemption`; a grant's `meta.giftLinkId` holds only the most
   recent link that user claimed.
+- **Claimers:** the creator or a moderator can list who claimed a link or a batch (username and claim
+  time, newest first). The claim page tells the recipient the creator can see that they claimed. The
+  same sentence (`GIFT_CLAIM_NOTICE`) is returned with every recorded claim as `notice`, since the creator
+  can list claimers. Claims made before `GIFT_CLAIMER_NAMES_VISIBLE_SINCE`, when that notice did not
+  exist, are only counted (`hiddenCount`, on the first page only), never named. That moment must be
+  later than the production deploy of the notice.
 
 Out of scope:
 
 - Gifting free versions or comics.
 - Gifting generation only on a version that sells download.
 - Buying a gift for someone else.
-- Claimer usernames: creators see counts only.
 - An owner-menu entry on the model page (a follow-up).
 
 ## How access is granted
@@ -111,14 +116,22 @@ path segment, which a client-side navigation still puts in the Next data fetch.
   full-access key also passes), answers 404 while the flag is off, sends `private, no-store`, and gives
   every write the same onboarded, not-muted and email-verified gates as the tRPC writes.
   - `POST gifts/claim` with `{ code }`.
+  - `GET gifts?limit=&cursor=` returns `{ items, nextCursor }`: the caller's own links and batches across
+    every version of every model they own, newest first, at most `GIFT_INDEX_PAGE_MAX` (100) per page.
+    Owner only; a moderator manages another creator's gifts per version.
   - `GET [id]/gifts` returns `{ links, batches }`: links, and one summary row per bulk batch (total,
     claimed, still live). Live ones sort first and are all listed; never codes.
   - `POST [id]/gifts` with `{ count, expiresAt?, label? }` mints single-use codes.
   - `POST [id]/gifts/link` with `{ maxRedemptions?, expiresAt?, label? }` creates a gift link.
   - `DELETE [id]/gifts/[giftId]` and `DELETE [id]/gifts/batch/[batchId]` revoke.
-- **Creator Studio:** `/models/gifts/[versionId]`, linked from a gated version's row on `/models`. It
-  calls the REST routes with the creator's session. Codes appear once, in the action result, with copy
-  and CSV download. A mature model's link points at civitai.red.
+  - `GET [id]/gifts/[giftId]/claims` and `GET [id]/gifts/batch/[batchId]/claims` return `{ claims,
+    nextCursor, hiddenCount }`: `{ giftLinkId, userId, username, claimedAt }`, newest first, at most
+    `GIFT_CLAIMS_PAGE_MAX` (100) per page. Owner or moderator, read from the replica.
+- **Creator Studio:** `/models/gifts` lists every link and batch across the creator's versions, with
+  revoke, and links to `/models/gifts/[versionId]`. The version page is linked from a gated version's row
+  on `/models`. Both call the REST routes with the creator's session. Codes appear once, in the action
+  result, with copy and CSV download. A mature model's link points at civitai.red. A claimed link or
+  batch row on the version page expands to its claimers, through `/models/gifts/[versionId]/claims`.
 
 ## Tests
 

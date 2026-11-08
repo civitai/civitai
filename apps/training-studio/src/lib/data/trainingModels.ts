@@ -943,6 +943,26 @@ export const editCards = (enabledFlags?: ReadonlySet<string>): ModelCard[] =>
     (c) => c.pairs && !c.retired && (!enabledFlags || isCardVisible(c, enabledFlags))
   );
 
+/** The catalog version an AI-Toolkit run names no base for trains on: the ecosystem's default base,
+ *  taken as the first catalog version on its ecosystem, variant and version selector (the catalog lists
+ *  each shared ecosystem's default card first: SDXL 1.0 before Illustrious and Pony). */
+export const ecosystemDefaultVersion = (run: {
+  ecosystem: string;
+  modelVariant?: string;
+  version?: string;
+}): { card: ModelCard; version: ModelVersionInfo } | undefined => {
+  for (const card of MODEL_CARDS) {
+    const version = card.versions.find(
+      (v) =>
+        v.ecosystem === run.ecosystem &&
+        (v.modelVariant || undefined) === (run.modelVariant || undefined) &&
+        (!run.version || !v.version || v.version === run.version)
+    );
+    if (version) return { card, version };
+  }
+  return undefined;
+};
+
 /** True when this AIR is the base of a retired card. */
 export const isRetiredBaseAir = (air: string): boolean => !!findByAir(air)?.card.retired;
 

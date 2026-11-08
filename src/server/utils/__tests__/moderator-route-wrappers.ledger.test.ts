@@ -205,7 +205,10 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
   'v1/me': 'reports the flag',
   'v1/model-versions/[id]': 'moderators also see unpublished versions',
   'v1/model-versions/[id]/gifts/[giftId]': 'owner-or-moderator gift revoke',
+  'v1/model-versions/[id]/gifts/[giftId]/claims': 'owner-or-moderator gift claimer list',
   'v1/model-versions/[id]/gifts/batch/[batchId]': 'owner-or-moderator gift batch revoke',
+  'v1/model-versions/[id]/gifts/batch/[batchId]/claims':
+    'owner-or-moderator gift batch claimer list',
   'v1/model-versions/[id]/gifts/index': 'owner-or-moderator gift list; mint is owner-only',
   'v1/model-versions/bust-cache': 'owner-or-moderator cache bust; owners bust their own versions',
   'v1/model-versions/early-access': 'owner-or-moderator early-access settings',

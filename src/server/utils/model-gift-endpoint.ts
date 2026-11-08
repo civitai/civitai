@@ -1,9 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { TRPCError } from '@trpc/server';
+import * as z from 'zod';
 import { getRequestCredential } from '~/server/auth/request-credential';
 import { EMAIL_VERIFICATION_REQUIRED_MESSAGE } from '~/server/common/content-restriction';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { OnboardingSteps } from '~/server/common/enums';
+import { GIFT_CLAIMS_PAGE_MAX } from '~/server/services/model-version-gift.constants';
 import { mutedAccountRefusal } from '~/server/services/account-restriction.service';
 import { isAccountMuted } from '~/server/services/account-standing.service';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
@@ -37,6 +39,12 @@ export function GiftEndpoint(
     }
   }, allowedMethods);
 }
+
+/** The paging query of the claimer lists. */
+export const giftClaimsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(GIFT_CLAIMS_PAGE_MAX).default(GIFT_CLAIMS_PAGE_MAX),
+  cursor: z.string().min(1).max(200).optional(),
+});
 
 export function parseVersionId(req: NextApiRequest) {
   const id = Number(req.query.id);

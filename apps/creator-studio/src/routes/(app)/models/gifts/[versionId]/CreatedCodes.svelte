@@ -3,13 +3,10 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
-  import { codesCsv } from './gift-links';
+  import { codesCsv } from '../gift-links';
 
-  let {
-    codes,
-    giftBase,
-    ondismiss,
-  }: { codes: string[]; giftBase: string; ondismiss: () => void } = $props();
+  let { codes, giftBase, ondismiss }: { codes: string[]; giftBase: string; ondismiss: () => void } =
+    $props();
 
   const single = $derived(codes.length === 1);
   const links = $derived(codes.map((code) => `${giftBase}${code}`).join('\n'));
@@ -24,9 +21,7 @@
   }
 
   function download() {
-    const url = URL.createObjectURL(
-      new Blob([codesCsv(codes, giftBase)], { type: 'text/csv' })
-    );
+    const url = URL.createObjectURL(new Blob([codesCsv(codes, giftBase)], { type: 'text/csv' }));
     const a = document.createElement('a');
     a.href = url;
     a.download = 'gift-links.csv';

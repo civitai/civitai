@@ -58,3 +58,41 @@ describe('applyTurfOverride: drawCeiling', () => {
     expect(applyTurfOverride(BASE, raw)).toEqual({ config: BASE, invalid: true });
   });
 });
+
+describe('applyTurfOverride: sticker lifetime and team-relative credit', () => {
+  const ENABLE = {
+    ttlHours: 48,
+    rolloutAt: '2026-11-08T12:00:00Z',
+    creditedCatchUp: [{ from: '2026-11-08T12:00:00Z', max: 2, min: 0.4, gap: 0.25 }],
+  };
+
+  it('reads the lifetime, its rollout and the credit catch-up from the live override', () => {
+    const { config, invalid } = applyTurfOverride(BASE, JSON.stringify(ENABLE));
+    expect(invalid).toBe(false);
+    expect(config).toMatchObject({
+      ttlHours: 48,
+      rolloutAt: new Date('2026-11-08T12:00:00Z'),
+      creditedCatchUp: [{ from: new Date('2026-11-08T12:00:00Z'), max: 2, min: 0.4, gap: 0.25 }],
+    });
+  });
+
+  it.each([
+    ['a zero lifetime', { ttlHours: 0 }],
+    ['a lifetime as a string', { ttlHours: '48' }],
+    ['a rollout that is not a date', { rolloutAt: 'soon' }],
+    // Coerced, null and 0 would be 1970: no fresh lifetime for anyone.
+    ['a null rollout', { rolloutAt: null }],
+    ['a rollout of 0', { rolloutAt: 0 }],
+    ['a rollout of "0"', { rolloutAt: '0' }],
+    ['a rollout that is only a year', { rolloutAt: '2026' }],
+    // Deliberate: a lifetime with no rollout would expire every older sticker at once.
+    ['a lifetime with no rollout', { rolloutAt: undefined }],
+    [
+      'a credit catch-up min above 1',
+      { creditedCatchUp: [{ from: '2026-11-08T12:00:00Z', max: 2, min: 1.5, gap: 0.25 }] },
+    ],
+  ])('ignores the whole override for %s', (_, bad) => {
+    const raw = JSON.stringify({ ...ENABLE, mode: 'off', ...bad });
+    expect(applyTurfOverride(BASE, raw)).toEqual({ config: BASE, invalid: true });
+  });
+});
