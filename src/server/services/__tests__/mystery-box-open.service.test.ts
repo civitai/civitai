@@ -630,6 +630,7 @@ describe('opening a mystery box', () => {
 
 describe("a pack's boxes", () => {
   const PACK_TX = 'item-purchase-v1-1-77-packkey';
+  const SECOND_PACK_BOX = BOX_ITEM + BigInt(1);
   const packBox = (id: bigint, n: number): ItemRow => ({
     ...holderBox(id),
     sourceKey: packBoxSourceKey(PACK_TX, n),
@@ -647,7 +648,7 @@ describe("a pack's boxes", () => {
   const PACK_META = { pack: { size: 10, guaranteedTierIds: [RARE] } };
 
   beforeEach(() => {
-    world.items = [packBox(BOX_ITEM, 1), packBox(BOX_ITEM + 1n, 2)];
+    world.items = [packBox(BOX_ITEM, 1), packBox(SECOND_PACK_BOX, 2)];
     world.purchases = [packPurchase(PACK_META)];
   });
 
@@ -671,7 +672,7 @@ describe("a pack's boxes", () => {
   });
 
   it('every other box of the pack draws from the whole box', async () => {
-    const result = await open({ boxItemId: BOX_ITEM + 1n });
+    const result = await open({ boxItemId: SECOND_PACK_BOX });
     expect(result).toMatchObject({ tierId: COMMON, guaranteed: false });
     expect(mocks.randomInt.mock.calls[0]).toEqual([4]);
   });

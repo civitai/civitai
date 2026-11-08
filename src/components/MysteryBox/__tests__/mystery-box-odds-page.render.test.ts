@@ -46,6 +46,7 @@ const page = (overrides: Partial<MysteryBoxOddsPageData> = {}): MysteryBoxOddsPa
   event: { title: "Civitai's 4th Birthday" },
   teams: ['Blue', 'Pink'],
   price: 500,
+  pack: null,
   tiers: [
     { id: COMMON, key: 'common', name: 'Common', color: null, weight: 3, sortOrder: 0 },
     { id: RARE, key: 'rare', name: 'Rare', color: '#3b82f6', weight: 1, sortOrder: 1 },

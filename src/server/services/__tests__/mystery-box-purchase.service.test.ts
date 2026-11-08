@@ -488,7 +488,7 @@ describe('buying a pack of boxes', () => {
   it('sells a pack that exactly fits what is left beyond the boxes already held', async () => {
     world.contents = [hat(1), hat(2), hat(3), rare(4)];
     world.items.push({
-      id: 90n,
+      id: BigInt(90),
       itemDefinitionId: BOX_ID,
       holderId: BUYER_ID,
       sourceKey: 'earlier',
@@ -515,7 +515,7 @@ describe('buying a pack of boxes', () => {
   it('refuses when fewer than a pack are left beyond the boxes already held', async () => {
     world.contents = [hat(1), hat(2), rare(4)];
     world.items.push({
-      id: 90n,
+      id: BigInt(90),
       itemDefinitionId: BOX_ID,
       holderId: BUYER_ID,
       sourceKey: 'earlier',

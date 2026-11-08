@@ -145,6 +145,7 @@ describe('afterOpen', () => {
       rewardType: 'cosmetic',
       cosmeticId: 1002,
       odds: { tierWeight: 3, eligibleWeight: 4, tierPoolSize: 2 },
+      guaranteed: false,
       replayed: false,
     });
 
