@@ -1,4 +1,13 @@
-import { Button, CloseButton, Group, Select, Text, TextInput, ThemeIcon } from '@mantine/core';
+import {
+  Button,
+  CloseButton,
+  Group,
+  Portal,
+  Select,
+  Text,
+  TextInput,
+  ThemeIcon,
+} from '@mantine/core';
 import {
   IconAlertTriangle,
   IconInfoCircle,
@@ -8,6 +17,7 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { PAGE_MODAL_Z_INDEX } from '~/components/Dialog/Templates/PageModal';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { Countdown } from '~/components/Countdown/Countdown';
@@ -248,7 +258,7 @@ export function StickerPlacementTray({
     ? 'Drag out as many as you like, then pay to place the ones you want.'
     : 'Tap or drag a sticker onto the image.';
 
-  return (
+  const tray = (
     // Measured as the obstacle the buy button avoids, and deliberately measured
     // at full width rather than at the visible panel's `max-w-xl`: this root
     // spans the viewport and takes the clicks across all of it.
@@ -259,10 +269,14 @@ export function StickerPlacementTray({
     <div
       ref={trayRef}
       {...{ [STICKER_EDITOR_ATTR]: '' }}
-      className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3 pb-[max(0.75rem,var(--safe-area-inset-bottom))]"
-      // Hidden, not unmounted: the buy button keeps measuring this box, so its
-      // side does not flip while the controls are hidden.
-      style={previewing ? { visibility: 'hidden' } : undefined}
+      className="fixed inset-x-0 bottom-0 flex justify-center p-3 pb-[max(0.75rem,var(--safe-area-inset-bottom))]"
+      style={{
+        // Portaled to <body>, so it has to clear the image modal itself.
+        zIndex: PAGE_MODAL_Z_INDEX + 1,
+        // Hidden, not unmounted: the buy button keeps measuring this box, so its
+        // side does not flip while the controls are hidden.
+        ...(previewing ? { visibility: 'hidden' } : null),
+      }}
     >
       <div className="flex w-full max-w-xl flex-col">
         {/* Above the tray, not in place of it: the row of what you own is the
@@ -505,4 +519,10 @@ export function StickerPlacementTray({
       </div>
     </div>
   );
+
+  // On a phone the bar sits in the image page's bottom sheet, which is slid down
+  // with a transform while collapsed. A transform makes an element the containing
+  // block for `position: fixed`, so rendered in place the tray pinned to the
+  // bottom of the sheet, below the screen.
+  return <Portal>{tray}</Portal>;
 }

@@ -241,8 +241,8 @@ export function StickerPlacementBar({
             arrowSize={10}
             shadow="md"
             radius="md"
-            // Under the placement tray, which is `z-30` and fixed to the bottom
-            // of the viewport. Mantine's default (300) put this hint on top of
+            // Under the placement tray, which is fixed to the bottom of the
+            // viewport above the image modal. Mantine's default (300) put this hint on top of
             // the panel it exists to send people to — pointing at a button that
             // was no longer the thing to press.
             zIndex={20}
