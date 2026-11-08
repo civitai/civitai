@@ -14,6 +14,7 @@ const act = (React as unknown as { act: typeof actType }).act;
 
 const h = vi.hoisted(() => ({
   cosmetics: true,
+  joined: true,
   pops: 'all' as 'all' | 'active',
   watch: vi.fn(),
   onWatched: undefined as undefined | ((data: unknown) => void),
@@ -22,6 +23,7 @@ const h = vi.hoisted(() => ({
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
+    'event.getCosmetic': { useQuery: () => ({ data: { obtained: h.joined } }) },
     'event.watchPoints': {
       useMutation: (opts: { onSuccess?: (d: unknown) => void }) => {
         h.onWatched = opts.onSuccess;
@@ -51,6 +53,7 @@ const { EventPointsSelfPops } = await import('~/components/HatTurf/EventPointsSe
 let root: ReturnType<typeof createRoot> | undefined;
 beforeEach(() => {
   h.cosmetics = true;
+  h.joined = true;
   h.pops = 'all';
   h.watch.mockClear();
   h.handlers.clear();
@@ -86,6 +89,7 @@ describe('EventPointsSelfPops', () => {
   it.each([
     ['event cosmetics off', () => (h.cosmetics = false)],
     ['the setting on Active only', () => (h.pops = 'active')],
+    ['a viewer who has not joined the event', () => (h.joined = false)],
   ])('with %s, watches nothing and listens for nothing', (_name, set) => {
     set();
     mount();

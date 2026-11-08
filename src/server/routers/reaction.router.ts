@@ -5,6 +5,7 @@ import {
 import {
   getMyImageReactionsSchema,
   toggleReactionSchema,
+  toggleReactionWithPointsSchema,
   reactionRateLimits,
 } from './../schema/reaction.schema';
 import { getUserReactionsForImages } from '~/server/services/image.service';
@@ -30,7 +31,7 @@ export const reactionRouter = router({
    */
   toggleWithPoints: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
-    .input(toggleReactionSchema)
+    .input(toggleReactionWithPointsSchema)
     // One reaction quota per user, shared with reaction.toggle.
     .use(rateLimit(reactionRateLimits, undefined, { sharedKey: SITE_REACTION_RATE_LIMIT_KEY }))
     .mutation(toggleReactionWithPointsHandler),

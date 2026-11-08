@@ -114,6 +114,16 @@ describe('toggleReactionWithPointsHandler', () => {
     await expect(slow).resolves.toEqual([grant('Yellow', 5)]);
   });
 
+  it('does not wait for points when asked not to (event cosmetics off)', async () => {
+    createdWith(new Promise<EventPointGrant[]>(() => undefined));
+    await expect(
+      toggleReactionWithPointsHandler({ ctx, input: { ...input, waitForPoints: false } })
+    ).resolves.toEqual({ result: 'created' });
+    // The service got no listener, so it was never asked to wait.
+    expect(mockToggleReaction.mock.calls[0][0].onEventPoints).toBeUndefined();
+    expect(mockToggleReaction.mock.calls[0][0]).not.toHaveProperty('waitForPoints');
+  });
+
   it('returns the plain result when nothing was created', async () => {
     mockToggleReaction.mockResolvedValue('removed');
     await expect(toggleReactionWithPointsHandler({ ctx, input })).resolves.toEqual({

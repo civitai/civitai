@@ -321,6 +321,17 @@ describe('markWatched self', () => {
     expect(fake.writes).toEqual(['self:5']);
   });
 
+  it('keeps own totals in their own set, so a set full of hats does not refuse one', async () => {
+    for (let i = 0; i < MAX_WATCHED_PER_EVENT; i++) fake.set(KEY).set(`x${i}`, NOW + 60_000);
+    const marked = await markWatched(
+      { event: EVENT.name, topics: [], self: true },
+      deps({ selfUserId: 5 })
+    );
+    expect(marked).toBe(1);
+    expect(fake.set(eventPointKeys(EVENT.name).watchSelf).has('self:5')).toBe(true);
+    expect(fake.set(KEY).has('self:5')).toBe(false);
+  });
+
   it('marks no self for a signed-out caller, or without asking', async () => {
     await markWatched({ event: EVENT.name, topics: [], self: true }, deps());
     await markWatched({ event: EVENT.name, topics: [TEAMS_WATCH] }, deps({ selfUserId: 5 }));

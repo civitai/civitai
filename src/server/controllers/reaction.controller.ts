@@ -9,7 +9,10 @@ import {
   imageReactionMilestones,
 } from '~/server/notifications/reaction.notifications';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
-import type { ToggleReactionInput } from '~/server/schema/reaction.schema';
+import type {
+  ToggleReactionInput,
+  ToggleReactionWithPointsInput,
+} from '~/server/schema/reaction.schema';
 import { isReactionAllowedForEntity } from '~/server/schema/reaction.schema';
 import { getContestsFromEntity } from '~/server/services/collection.service';
 import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
@@ -374,16 +377,16 @@ export const EVENT_POINTS_WAIT_MS = 300;
  */
 export const toggleReactionWithPointsHandler = async ({
   ctx,
-  input,
+  input: { waitForPoints = true, ...input },
 }: {
   ctx: ProtectedContext;
-  input: ToggleReactionInput;
+  input: ToggleReactionWithPointsInput;
 }): Promise<{ result: ToggleReactionResult; eventPoints?: EventPointGrant[] }> => {
   let pending: Promise<EventPointGrant[]> | undefined;
   const result = await toggleReactionHandler({
     ctx,
     input,
-    onEventPoints: (grants) => (pending = grants),
+    onEventPoints: waitForPoints ? (grants) => (pending = grants) : undefined,
   });
   if (!pending) return { result };
   const userId = ctx.user.id;

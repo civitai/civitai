@@ -20,6 +20,8 @@ export const WATCH_TTL_MS = 90_000;
 export const WATCH_REFRESH_MS = 30_000;
 // Most topics one event's set holds. At the cap, new topics are refused and marked ones still refresh.
 export const MAX_WATCHED_PER_EVENT = 20_000;
+// Most players one event's own-total set holds; it has its own key, so it never crowds out hats.
+export const MAX_SELF_WATCHED_PER_EVENT = 50_000;
 // Most topics one mark call may name.
 export const MAX_TOPICS_PER_MARK = 50;
 // The member for the event's live team totals; the preview's is its keyed id (keys.ts).
@@ -99,19 +101,39 @@ export async function markWatched(
       valid.push(topic);
     else if (listedOwners.has(topic)) valid.push(topic);
   }
-  if (self && deps.selfUserId) valid.push(selfWatchMember(deps.selfUserId));
-  if (!valid.length) return 0;
+  const keys = eventPointKeys(name);
+  const mark = (key: string, members: string[], cap: number) =>
+    markIn(deps, name, key, members, cap, { now, endsAt, alwaysRoom: teams });
+  const [topicsMarked, selfMarked] = await Promise.all([
+    mark(keys.watch, valid, MAX_WATCHED_PER_EVENT),
+    self && deps.selfUserId
+      ? mark(keys.watchSelf, [selfWatchMember(deps.selfUserId)], MAX_SELF_WATCHED_PER_EVENT)
+      : 0,
+  ]);
+  return topicsMarked + selfMarked;
+}
 
-  const key = eventPointKeys(name).watch;
+// Members already in the set always refresh; new ones only while there is room. The team totals are
+// one topic every viewer of the page shares, so they always have room: a set full of hats must not
+// turn them off for everyone. The size is read before the write, so concurrent calls can overshoot
+// the cap by up to MAX_TOPICS_PER_MARK each.
+async function markIn(
+  deps: MarkWatchDeps,
+  event: string,
+  key: string,
+  members: string[],
+  cap: number,
+  { now, endsAt, alwaysRoom }: { now: number; endsAt: number; alwaysRoom: string }
+) {
+  if (!members.length) return 0;
   await deps.redis.zRemRangeByScore(key, '-inf', now);
-  const [size, scores] = await Promise.all([deps.redis.zCard(key), deps.redis.zmScore(key, valid)]);
-  // Topics already in the set always refresh; new ones only while there is room. The team totals are
-  // one topic every viewer of the page shares, so they always have room: a set full of hats must not
-  // turn them off for everyone. The size is read before the write, so concurrent calls can overshoot
-  // the cap by up to MAX_TOPICS_PER_MARK each.
-  let room = Math.max(0, MAX_WATCHED_PER_EVENT - Number(size));
-  const marked = valid.filter((topic, i) => scores[i] != null || topic === teams || room-- > 0);
-  if (marked.length < valid.length) deps.logCapReached?.(name, valid.length - marked.length);
+  const [size, scores] = await Promise.all([
+    deps.redis.zCard(key),
+    deps.redis.zmScore(key, members),
+  ]);
+  let room = Math.max(0, cap - Number(size));
+  const marked = members.filter((m, i) => scores[i] != null || m === alwaysRoom || room-- > 0);
+  if (marked.length < members.length) deps.logCapReached?.(event, members.length - marked.length);
   if (!marked.length) return 0;
   const lapse = now + WATCH_TTL_MS;
   await Promise.all([
@@ -130,10 +152,11 @@ export async function readWatched(
   event: string,
   topics: string[],
   now: number,
-  redis: Pick<typeof sysRedis, 'zmScore'> = sysRedis
+  redis: Pick<typeof sysRedis, 'zmScore'> = sysRedis,
+  set: 'watch' | 'watchSelf' = 'watch'
 ) {
   if (!topics.length) return new Set<string>();
-  const scores = await redis.zmScore(eventPointKeys(event).watch, topics);
+  const scores = await redis.zmScore(eventPointKeys(event)[set], topics);
   return new Set(topics.filter((_, i) => scores[i] != null && Number(scores[i]) > now));
 }
 

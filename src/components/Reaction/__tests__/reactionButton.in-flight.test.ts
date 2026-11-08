@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as TrpcUtils from '~/utils/trpc';
 
-type Variables = { entityId: number };
+type Variables = { entityId: number; waitForPoints?: boolean };
 type Points = { event: string; team: string; points: number }[];
 type Answer = { result: string; eventPoints?: Points };
 type CallbackSet = {
@@ -224,10 +224,11 @@ describe('ReactionButton — the event-points pop', () => {
     expect(pops()).toEqual([]);
   });
 
-  it('pops nothing with event cosmetics off', () => {
+  it('pops nothing with event cosmetics off, and does not ask the server to wait', () => {
     h.showEventCosmetics = false;
     const { click } = mount(303);
     act(() => click());
+    expect(h.calls[0].variables).toMatchObject({ waitForPoints: false });
     act(() => settle(h.calls[0], earned));
     expect(pops()).toEqual([]);
   });

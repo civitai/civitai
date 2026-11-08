@@ -159,7 +159,8 @@ export function ReactionButton({
     snapshot.current = { previous, answers: answers.get(k) ?? 0 };
     pending.set(k, (pending.get(k) ?? 0) + 1);
     toggleReaction({ entityType, entityId, reaction, value: !previous });
-    mutate({ entityId, entityType, reaction });
+    // With event cosmetics off no pop shows, so the answer need not wait for the points.
+    mutate({ entityId, entityType, reaction, waitForPoints: showEventCosmetics });
   };
 
   const canClick = !!currentUser && !readonly && !isLoading;

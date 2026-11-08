@@ -65,14 +65,13 @@ export async function selectWatched(
   const hatId = (hat: Hat) => seasonHatTopicId(event.name, hat, season);
   const ownerId = (owner: number) => seasonOwnerTopicId(event.name, owner, season);
   const teamsId = seasonTeamsTopicId(event.name, season);
-  const topics = [
-    ...hats.map(hatId),
-    ...owners.map(ownerId),
-    ...owners.map(selfWatchMember),
-    ...(teams ? [teamsId] : []),
-  ];
+  const topics = [...hats.map(hatId), ...owners.map(ownerId), ...(teams ? [teamsId] : [])];
   try {
-    const watched = await readWatched(event.name, topics, Date.now());
+    const now = Date.now();
+    const [watched, selves] = await Promise.all([
+      readWatched(event.name, topics, now),
+      readWatched(event.name, owners.map(selfWatchMember), now, undefined, 'watchSelf'),
+    ]);
     const watchedOwners = owners.filter((owner) => watched.has(ownerId(owner)));
     const listed = await listedOwnerTopics(event.name, watchedOwners.map(ownerId));
     return {
@@ -80,7 +79,7 @@ export async function selectWatched(
       teams: teams && watched.has(teamsId),
       owners: watchedOwners.filter((owner) => listed.get(ownerId(owner)) === owner),
       // Players watching their own total: not gated on the roster, since the push goes to them alone.
-      selves: owners.filter((owner) => watched.has(selfWatchMember(owner))),
+      selves: owners.filter((owner) => selves.has(selfWatchMember(owner))),
     };
   } catch (error) {
     logPush('error', event.name, {

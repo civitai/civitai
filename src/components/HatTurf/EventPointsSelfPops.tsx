@@ -13,8 +13,9 @@ const SELF_WATCH_REFRESH_MS = 30_000;
 
 /**
  * "All" point pops: whenever the viewer's own event total rises, from anyone's action, pops the rise.
- * Mounted once per app. With event cosmetics off, or the setting on "Active only", it does nothing at
- * all: no watch, no signal handler.
+ * Mounted once per app, it watches only for a player who joined the event, and only while the tab is
+ * visible. With event cosmetics off, or the setting on "Active only", it does nothing at all: no
+ * watch, no signal handler.
  */
 export function EventPointsSelfPops() {
   const user = useCurrentUser();
@@ -22,7 +23,11 @@ export function EventPointsSelfPops() {
   const pops = useBrowsingSettings((x) => x.eventPointPops);
   const on = !!user && showEventCosmetics && pops === 'all';
   const definition = usePlayableEventDecoration('Image', on);
-  if (!on || !definition) return null;
+  const { data: cosmetic } = trpc.event.getCosmetic.useQuery(
+    { event: definition?.event ?? '' },
+    { enabled: on && !!definition, staleTime: 5 * 60_000 }
+  );
+  if (!on || !definition || !cosmetic?.obtained) return null;
   return <SelfPops event={definition.event} />;
 }
 
@@ -49,10 +54,17 @@ function SelfPops({ event }: { event: string }) {
   });
   useEffect(() => {
     base.current = undefined;
-    const mark = () => mutate({ event, topics: [], self: true });
+    // A hidden tab lets its mark lapse: its pushes would pop for nobody.
+    const mark = () => {
+      if (document.visibilityState === 'visible') mutate({ event, topics: [], self: true });
+    };
     mark();
     const id = setInterval(mark, SELF_WATCH_REFRESH_MS);
-    return () => clearInterval(id);
+    document.addEventListener('visibilitychange', mark);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', mark);
+    };
   }, [event, mutate]);
 
   const onPush = useCallback(

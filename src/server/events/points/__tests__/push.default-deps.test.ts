@@ -113,13 +113,14 @@ describe('the pusher with its default deps', () => {
     markEventPointsDirty(event, HAT, new Date());
     expect(await drainEventPointsPush()).toEqual({ left: 0 });
     expect(topicSend).not.toHaveBeenCalled();
-    // One interest-set read per flush, for the hat, its owner's roster card, their own total and the
-    // teams together.
+    // Per flush, one interest-set read for the hat, its owner's roster card and the teams together,
+    // and one of the own-total set for the owner.
     const owner = seasonOwnerTopicId(event.name, HAT.ownerId, 'live');
-    expect(zmScore().mock.calls).toEqual([
-      [eventPointKeys(event.name).watch, [hatTopicId(HAT), owner, `self:${HAT.ownerId}`, 'teams']],
-      [eventPointKeys(event.name).watch, [hatTopicId(HAT), owner, `self:${HAT.ownerId}`, 'teams']],
-    ]);
+    const flushReads = [
+      [eventPointKeys(event.name).watch, [hatTopicId(HAT), owner, 'teams']],
+      [eventPointKeys(event.name).watchSelf, [`self:${HAT.ownerId}`]],
+    ];
+    expect(zmScore().mock.calls).toEqual([...flushReads, ...flushReads]);
   });
 
   it('fails closed: an interest-set read error sends nothing', async () => {
@@ -332,13 +333,9 @@ describe('the pusher in the preview', () => {
     expect(zmScore().mock.calls).toEqual([
       [
         eventPointKeys(preview.name).watch,
-        [
-          keyedHat,
-          seasonOwnerTopicId(preview.name, HAT.ownerId, 'preview'),
-          `self:${HAT.ownerId}`,
-          keyedTeams,
-        ],
+        [keyedHat, seasonOwnerTopicId(preview.name, HAT.ownerId, 'preview'), keyedTeams],
       ],
+      [eventPointKeys(preview.name).watchSelf, [`self:${HAT.ownerId}`]],
     ]);
     expect(topicSend.mock.calls).toEqual([
       [
