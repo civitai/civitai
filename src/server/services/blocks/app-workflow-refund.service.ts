@@ -31,9 +31,10 @@ import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { APP_BLOCK_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
 
 // Moderator refund of App Blocks spend, for a SUCCEEDED workflow that delivered nothing. It moves
-// money and nothing else: the user's generation legs, found by id on the orchestrator's own
-// `transactions.list` (they carry no external id prefix), and the app author's fee, charged and
-// returned under `block-author-fee-charge-` / `block-author-fee-reversal-<workflowId>`.
+// money — the user's generation legs, found by id on the orchestrator's own `transactions.list` (they
+// carry no external id prefix), and the app author's fee, charged and returned under
+// `block-author-fee-charge-` / `block-author-fee-reversal-<workflowId>` — and then, after the money
+// has moved and never undoing it, writes the linked feedback note/status and sends the notification.
 
 export const APP_REFUND_CAP_BUZZ = 5_000;
 export const APP_REFUND_MAX_WORKFLOWS = 50;
@@ -308,8 +309,8 @@ export const WORKFLOW_CHARGES_DEFAULT_DAYS = 30;
 export const WORKFLOW_CHARGES_MAX_DAYS = 90;
 
 /**
- * `[from, to)`: `to` defaults to now and `from` to 30 days before `to`. Refuses an empty or inverted
- * window and one wider than 90 days — the lookup reads the orchestrator once per workflow, so the
+ * `[from, to)`: `to` defaults to now and `from` to WORKFLOW_CHARGES_DEFAULT_DAYS before `to`. Refuses
+ * an empty or inverted window and one wider than WORKFLOW_CHARGES_MAX_DAYS — the lookup reads the orchestrator once per workflow, so the
  * window is what bounds it alongside `limit`.
  */
 export function resolveChargesWindow(input: { from?: Date; to?: Date }, now: Date) {
@@ -580,12 +581,12 @@ function legResults(plan: RefundablePlan) {
 }
 
 /**
+ * Returns the author fee in the treatment the plan chose. `created` is false when the fee turned out
+ * to be back with the user already — this call returned nothing, and must not count it.
+ *
  * The author is never clawed back: a fee whose accrual day is still open is reversed (the accrual row
  * goes, so it is never paid out); one whose day has closed may already be the author's, so the user is
  * refunded it and the platform absorbs it.
- *
- * The author fee, in the treatment the plan chose. `created` is false when the fee turned out to be
- * back with the user already — this call returned nothing, and must not count it.
  */
 async function applyFee(
   workflowId: string,

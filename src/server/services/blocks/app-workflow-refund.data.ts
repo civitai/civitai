@@ -80,8 +80,9 @@ export async function getAppWorkflowRecords(workflowIds: string[]): Promise<AppW
  * three tables: none alone is complete (block_workflows is best-effort; the other two exist only for
  * a spend that went through).
  *
- * No index on the spender (theirs lead with the app, owner or author), so this scans them; acceptable
- * only for a bounded moderator read.
+ * `block_workflows` is indexed on the spender (`block_workflows_user_app_idx`); the other two are
+ * not (theirs lead with the app, owner or author), so those branches scan; acceptable only for a
+ * bounded moderator read.
  */
 export async function listAppWorkflowIdsForUser(input: {
   userId: number;

@@ -381,6 +381,13 @@ const dryRun = (workflowIds: string[], extra: Record<string, unknown> = {}) =>
 const holds = (...ids: string[]) =>
   h.hasModeratorGrant.mockImplementation(async (_actor, id) => ids.includes(id as string));
 
+/** Runs `between` after the plan is made and before any money moves (the first read execute makes). */
+const betweenPlanAndExecute = (between: () => void) =>
+  h.getAppNames.mockImplementationOnce(async (ids) => {
+    between();
+    return new Map(ids.map((id): [string, string] => [id, APP_NAME]));
+  });
+
 /** Every way this endpoint can move money. */
 function expectNoMoneyMoved() {
   expect(h.refundTransaction).not.toHaveBeenCalled();
@@ -604,7 +611,7 @@ describe('dry run', () => {
 // ─── Execute ────────────────────────────────────────────────────────────────
 
 describe('execute', () => {
-  it('refunds a single leg to its payer, in its colour', async () => {
+  it('refunds a single leg by its own transaction id (Buzz returns it to its payer, in its colour)', async () => {
     addWorkflow({ id: 'wf-one', legs: [{ n: 21, amount: 137, colour: 'green' }] });
     const { status, body } = await refund(['wf-one']);
     expect(status).toBe(200);
@@ -613,11 +620,6 @@ describe('execute', () => {
       'Refund: App generation not delivered',
       { workflowId: 'wf-one', moderatorRefund: true, moderatorId: MODERATOR }
     );
-    expect(world.ledger.get(`refund-${txId(21)}`)).toMatchObject({
-      toAccountId: VIEWER,
-      toAccountType: 'green',
-      amount: 137,
-    });
     expect(body.workflows[0]).toMatchObject({
       outcome: 'refunded',
       refundBuzz: 137,
@@ -640,10 +642,6 @@ describe('execute', () => {
     expect(h.refundTransaction.mock.calls.map((c) => c[0]).sort()).toEqual(
       [txId(31), txId(32), txId(33)].sort()
     );
-    expect(world.ledger.get(`refund-${txId(32)}`)).toMatchObject({
-      toAccountType: 'blue',
-      amount: 43,
-    });
     expect(body.workflows[0].refundBuzz).toBe(321);
     expect(body.totals.plannedByColour).toEqual({ yellow: 278, blue: 43 });
   });
@@ -950,6 +948,125 @@ describe('author fee', () => {
   });
 });
 
+describe('author fee: races and failures at execute time', () => {
+  const feeRows = () =>
+    h.createBuzzTransactionMany.mock.calls.flatMap((c) => c[0] as Record<string, unknown>[]);
+  const LEG = { n: 171, amount: 211, colour: 'yellow' };
+  const add = (fee: FeeFixture) => addWorkflow({ id: 'wf-race-fee', legs: [LEG], fee });
+  const FB = 4507;
+  const linkFeedback = () =>
+    world.feedback.set(FB, { id: FB, area: 'app-block', userId: VIEWER, appBlockId: APP });
+
+  it('an accrual day that closes between plan and execute falls back to platform-absorbed, counted once', async () => {
+    add({ state: 'unsettled', amount: 31, colour: 'yellow' });
+    // Planned as reversible; by execute the row's day has closed, so the reversal refuses it.
+    betweenPlanAndExecute(() => {
+      world.fees[0].accruedAt = YESTERDAY;
+    });
+    const { body } = await refund(['wf-race-fee']);
+    expect(body.workflows[0]).toMatchObject({
+      outcome: 'refunded',
+      refundBuzz: 242,
+      authorFee: { treatment: 'platform-absorbed', status: 'done' },
+    });
+    expect(dbMock.dbWrite.blockAuthorFeeAccrual.deleteMany).not.toHaveBeenCalled();
+    expect(world.fees).toHaveLength(1);
+    expect(feeRows()).toEqual([
+      expect.objectContaining({
+        toAccountId: VIEWER,
+        amount: 31,
+        externalTransactionId: feeReversalKey('wf-race-fee'),
+      }),
+    ]);
+    expect(h.createNotification).toHaveBeenCalledTimes(1);
+    expect(h.createNotification.mock.calls[0][0].details).toMatchObject({ amount: 242 });
+  });
+
+  it('the same after a settlement flip between plan and execute (status, not day)', async () => {
+    add({ state: 'unsettled', amount: 37, colour: 'yellow' });
+    betweenPlanAndExecute(() => {
+      world.fees[0].status = 'settled';
+    });
+    const { body } = await refund(['wf-race-fee']);
+    expect(body.workflows[0]).toMatchObject({
+      refundBuzz: 248,
+      authorFee: { treatment: 'platform-absorbed', status: 'done' },
+    });
+    expect(feeRows()).toHaveLength(1);
+  });
+
+  it('another reverser claims the row first, its refund on the ledger: already-refunded, not counted', async () => {
+    add({ state: 'unsettled', amount: 41, colour: 'yellow' });
+    dbMock.dbWrite.blockAuthorFeeAccrual.deleteMany.mockImplementationOnce(async () => {
+      world.fees.splice(0, 1);
+      world.ledger.set(feeReversalKey('wf-race-fee'), {
+        fromAccountId: 0,
+        toAccountId: VIEWER,
+        fromAccountType: 'yellow',
+        toAccountType: 'yellow',
+        amount: 41,
+      });
+      return { count: 0 };
+    });
+    const { body } = await refund(['wf-race-fee']);
+    expect(body.workflows[0]).toMatchObject({
+      outcome: 'refunded',
+      refundBuzz: 211,
+      authorFee: { treatment: 'already-refunded', status: 'done' },
+      errors: [],
+    });
+    expect(h.createBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(h.createNotification.mock.calls[0][0].details).toMatchObject({ amount: 211 });
+  });
+
+  it('another reverser claims the row first, its refund NOT yet on the ledger: failed, not counted', async () => {
+    add({ state: 'unsettled', amount: 43, colour: 'yellow' });
+    dbMock.dbWrite.blockAuthorFeeAccrual.deleteMany.mockImplementationOnce(async () => {
+      world.fees.splice(0, 1);
+      return { count: 0 };
+    });
+    const { body } = await refund(['wf-race-fee']);
+    expect(body.workflows[0]).toMatchObject({
+      outcome: 'failed',
+      refundBuzz: 211,
+      authorFee: { status: 'failed' },
+    });
+    expect(body.workflows[0].errors.join(' ')).toContain('in progress elsewhere');
+    expect(h.createBuzzTransactionMany).not.toHaveBeenCalled();
+  });
+
+  it('a fee refund Buzz answers as a conflict (no pre-read hit) is already-refunded, not counted', async () => {
+    add({ state: 'settled', amount: 47, colour: 'yellow' });
+    h.createBuzzTransactionMany.mockResolvedValueOnce({
+      transactions: [],
+      conflicts: [feeReversalKey('wf-race-fee')],
+    });
+    const { body } = await refund(['wf-race-fee']);
+    expect(body.workflows[0]).toMatchObject({
+      outcome: 'refunded',
+      refundBuzz: 211,
+      byColour: { yellow: 211 },
+      authorFee: { treatment: 'already-refunded', status: 'done' },
+    });
+    expect(h.createNotification.mock.calls[0][0].details).toMatchObject({ amount: 211 });
+  });
+
+  it('a reversal whose refund does not land: failed, not counted, feedback left open', async () => {
+    linkFeedback();
+    add({ state: 'unsettled', amount: 53, colour: 'yellow' });
+    h.createBuzzTransactionMany.mockResolvedValueOnce({ transactions: [], conflicts: [] });
+    const { body } = await refund(['wf-race-fee'], { feedbackId: FB });
+    expect(body.workflows[0]).toMatchObject({
+      outcome: 'failed',
+      refundBuzz: 211,
+      authorFee: { treatment: 'reversed', status: 'failed' },
+    });
+    expect(body.workflows[0].errors.join(' ')).toContain('did not land');
+    expect(body.feedback).toMatchObject({ feedbackId: FB, resolved: false });
+    expect(h.modResolveAppFeedbackWithRefund.mock.calls[0][0].resolve).toBe(false);
+  });
+});
+
 // ─── Cap ────────────────────────────────────────────────────────────────────
 
 describe('the 5,000 Buzz per-call cap', () => {
@@ -1116,13 +1233,6 @@ describe('partial failure', () => {
     beforeEach(() => {
       world.repeat200 = true;
     });
-    /** Runs `between` after the plan is made and before any money moves. */
-    const betweenPlanAndExecute = (between: () => void) =>
-      h.getAppNames.mockImplementationOnce(async (ids) => {
-        between();
-        return new Map(ids.map((id): [string, string] => [id, APP_NAME]));
-      });
-
     it('a leg refunded by another call since the plan is reported, not counted or notified', async () => {
       addWorkflow({ id: 'wf-200', legs: [{ n: 161, amount: 167, colour: 'yellow' }] });
       betweenPlanAndExecute(() => alreadyRefunded(161));

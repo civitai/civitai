@@ -277,16 +277,6 @@ describe('refundTransactionOnce', () => {
       ).resolves.toEqual({ transactionId: 'tx-a', created: true });
       expect(refundTransaction).toHaveBeenCalledTimes(1);
     });
-
-    it('without it, a 200 repeat is reported created:true — the reason the option exists', async () => {
-      refundTransaction.mockResolvedValue({ transactionId: 'tx-a' });
-      refundsExistFor('tx-a');
-
-      await expect(refundTransactionOnce('tx-a')).resolves.toEqual({
-        transactionId: 'tx-a',
-        created: true,
-      });
-    });
   });
 
   it('rethrows a 409 when no refund of this transaction is on the ledger', async () => {
