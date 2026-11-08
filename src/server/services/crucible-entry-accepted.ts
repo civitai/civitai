@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { crucibleTeamAwardSubscriber } from '~/server/events/crucible-team-award';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
@@ -22,7 +23,9 @@ export type CrucibleEntrySubscriber = {
   revoke: (entry: CrucibleEntryRef) => Promise<void>;
 };
 
-export const CRUCIBLE_ENTRY_SUBSCRIBERS: readonly CrucibleEntrySubscriber[] = [];
+export const CRUCIBLE_ENTRY_SUBSCRIBERS: readonly CrucibleEntrySubscriber[] = [
+  crucibleTeamAwardSubscriber,
+];
 
 const ACCEPTED_TTL_SECONDS = 90 * 24 * 60 * 60;
 
@@ -41,7 +44,7 @@ async function crucibleTags(crucibleId: number) {
   return crucible?.eventTags ?? [];
 }
 
-const interested = (subscribers: readonly CrucibleEntrySubscriber[], tags: string[]) =>
+const interested = (subscribers: readonly CrucibleEntrySubscriber[], tags: readonly string[]) =>
   subscribers.filter((s) => s.eventTags.some((tag) => tags.includes(tag)));
 
 /** Read from the primary, so a withdraw or removal that just committed is seen. */
@@ -61,7 +64,8 @@ async function isStillAcceptable(entryId: number) {
 
 /**
  * Accepts an entry: every interested subscriber runs, and only once all of them succeed is the
- * entry recorded as accepted. A failure throws and leaves it unrecorded for the next sweep.
+ * entry recorded as accepted. A failure takes the entry back from the subscribers that ran, then
+ * throws and leaves it unrecorded for the next sweep.
  * Returns false when it was already accepted, or judges can no longer see it.
  *
  * A removal or withdrawal commits before it revokes, so the entry is checked on the primary before
@@ -70,16 +74,27 @@ async function isStillAcceptable(entryId: number) {
  */
 export async function acceptCrucibleEntry(
   entry: CrucibleEntryRef,
-  subscribers: readonly CrucibleEntrySubscriber[] = CRUCIBLE_ENTRY_SUBSCRIBERS
+  subscribers: readonly CrucibleEntrySubscriber[] = CRUCIBLE_ENTRY_SUBSCRIBERS,
+  // From a caller that already read them: the crucible's tags, and that the entry is unrecorded.
+  known: { tags?: readonly string[]; unrecorded?: boolean } = {}
 ) {
   const key = acceptedKey(entry.crucibleId);
   const field = String(entry.entryId);
-  if (await sysRedis.hExists(key, field)) return false;
+  if (!known.unrecorded && (await sysRedis.hExists(key, field))) return false;
   if (!(await isStillAcceptable(entry.entryId))) return false;
 
   const acceptedAt = new Date();
-  const targets = interested(subscribers, await crucibleTags(entry.crucibleId));
-  for (const subscriber of targets) await subscriber.accept({ ...entry, acceptedAt });
+  const targets = interested(subscribers, known.tags ?? (await crucibleTags(entry.crucibleId)));
+  for (const [i, subscriber] of targets.entries()) {
+    try {
+      await subscriber.accept({ ...entry, acceptedAt });
+    } catch (error) {
+      // All or nothing: the entry stays unrecorded, so what the earlier subscribers (and this one,
+      // partway) granted would otherwise outlive a departure no revoke reaches.
+      await revokeCrucibleEntry(entry, targets.slice(0, i + 1));
+      throw error;
+    }
+  }
 
   await sysRedis.hSet(key, field, JSON.stringify({ at: acceptedAt, userId: entry.userId }));
   await sysRedis.expire(key, ACCEPTED_TTL_SECONDS);
@@ -132,68 +147,62 @@ export async function revokeCrucibleEntry(
   }
 }
 
-/**
- * The judgeable entries of running crucibles tagged with one of `eventTags`, oldest first, skipping
- * `excludeCrucibleIds`.
- */
-export const getJudgeableTaggedEntries = (eventTags: string[], excludeCrucibleIds: number[]) =>
+// Most entries one sweep accepts; the rest wait for the next.
+const MAX_ACCEPTS_PER_SWEEP = 200;
+
+const getTaggedRunningCrucibles = (eventTags: string[]) =>
+  dbRead.$queryRaw<{ id: number; eventTags: string[] }[]>`
+    SELECT c.id, c."eventTags" FROM "Crucible" c
+    WHERE c."eventTags" && ${eventTags}::text[]
+      AND c.status = ${CrucibleStatus.Active}::"CrucibleStatus"
+      AND c."endAt" > now()
+  `;
+
+/** One crucible's judgeable entries outside `acceptedIds`, oldest first. */
+const getUnacceptedJudgeableEntries = (crucibleId: number, acceptedIds: number[], limit: number) =>
   dbRead.$queryRaw<CrucibleEntryRef[]>`
     SELECT ce.id AS "entryId", ce."crucibleId", ce."userId"
     FROM "Crucible" c
     JOIN "CrucibleEntry" ce ON ce."crucibleId" = c.id
     JOIN "Image" i ON i.id = ce."imageId"
-    WHERE c."eventTags" && ${eventTags}::text[]
-      AND c.status = ${CrucibleStatus.Active}::"CrucibleStatus"
-      AND c."endAt" > now()
-      ${
-        excludeCrucibleIds.length
-          ? Prisma.sql`AND c.id <> ALL(${excludeCrucibleIds}::int[])`
-          : Prisma.empty
-      }
+    WHERE c.id = ${crucibleId}
+      AND ce.id <> ALL(${acceptedIds}::int[])
       AND ${visibleEntryImageSql(Prisma.sql`c."nsfwLevel"`, 0)}
     ORDER BY ce.id
+    LIMIT ${limit}
   `;
 
 /**
- * Revokes the accepted entries of running tagged crucibles that have left without a removal or a
- * withdrawal calling revoke: a deleted image leaves the row with no image, and a deleted account
- * takes the row with it.
+ * Revokes one crucible's accepted entries that left without a removal or a withdrawal calling
+ * revoke: a deleted image leaves the row with no image, and a deleted account takes the row with
+ * it. Returns the ids still accepted.
  */
 async function revokeDepartedEntries(
-  eventTags: string[],
+  crucibleId: number,
+  accepted: Record<string, string>,
   subscribers: readonly CrucibleEntrySubscriber[]
 ) {
-  const crucibles = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT c.id FROM "Crucible" c
-    WHERE c."eventTags" && ${eventTags}::text[]
-      AND c.status = ${CrucibleStatus.Active}::"CrucibleStatus"
-      AND c."endAt" > now()
+  const entryIds = Object.keys(accepted).map(Number);
+  if (!entryIds.length) return { kept: [] as number[], revoked: 0 };
+  const present = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "CrucibleEntry"
+    WHERE id = ANY(${entryIds}::int[]) AND "imageId" IS NOT NULL
   `;
+  const kept = new Set(present.map((e) => e.id));
   let revoked = 0;
-  for (const { id: crucibleId } of crucibles) {
-    const accepted = await sysRedis.hGetAll(acceptedKey(crucibleId));
-    const entryIds = Object.keys(accepted).map(Number);
-    if (!entryIds.length) continue;
-    const present = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT id FROM "CrucibleEntry"
-      WHERE id = ANY(${entryIds}::int[]) AND "imageId" IS NOT NULL
-    `;
-    const kept = new Set(present.map((e) => e.id));
-    for (const entryId of entryIds) {
-      if (kept.has(entryId)) continue;
-      // The row may be gone with its entrant, so who entered comes from the record.
-      const { userId } = JSON.parse(accepted[String(entryId)]) as { userId: number };
-      await revokeCrucibleEntry({ entryId, crucibleId, userId }, subscribers);
-      revoked++;
-    }
+  for (const entryId of entryIds) {
+    if (kept.has(entryId)) continue;
+    // The row may be gone with its entrant, so who entered comes from the record.
+    const { userId } = JSON.parse(accepted[String(entryId)]) as { userId: number };
+    await revokeCrucibleEntry({ entryId, crucibleId, userId }, subscribers);
+    revoked++;
   }
-  return revoked;
+  return { kept: [...kept], revoked };
 }
 
 /**
- * Takes back accepted entries that have left the crucible, then accepts the new ones. In a crucible
- * without an AI theme review an entry is accepted once judges can see it; crucibles named in the
- * theme-review config are not accepted here.
+ * Takes back accepted entries that have left the crucible, then accepts the new ones, at most
+ * MAX_ACCEPTS_PER_SWEEP in all. Theme-reviewed crucibles are left to the review.
  */
 export async function sweepAcceptedCrucibleEntries(
   subscribers: readonly CrucibleEntrySubscriber[] = CRUCIBLE_ENTRY_SUBSCRIBERS
@@ -201,28 +210,27 @@ export async function sweepAcceptedCrucibleEntries(
   const result = { accepted: 0, failed: 0, revoked: 0, skipped: false };
   const tags = subscribedTags(subscribers);
   if (!tags.length) return result;
-  result.revoked = await revokeDepartedEntries(tags, subscribers);
 
   const reviews = await getCrucibleThemeReviews();
-  if (!reviews) return { ...result, skipped: true };
+  result.skipped = !reviews;
+  const reviewed = new Set(reviews?.map((r) => r.crucibleId));
+  let budget = MAX_ACCEPTS_PER_SWEEP;
 
-  const entries = await getJudgeableTaggedEntries(
-    tags,
-    reviews.map((r) => r.crucibleId)
-  );
-  const byCrucible = new Map<number, CrucibleEntryRef[]>();
-  for (const entry of entries) {
-    const list = byCrucible.get(entry.crucibleId) ?? [];
-    list.push(entry);
-    byCrucible.set(entry.crucibleId, list);
-  }
+  for (const crucible of await getTaggedRunningCrucibles(tags)) {
+    const accepted = await sysRedis.hGetAll(acceptedKey(crucible.id));
+    const { kept, revoked } = await revokeDepartedEntries(crucible.id, accepted, subscribers);
+    result.revoked += revoked;
+    if (!reviews || reviewed.has(crucible.id) || budget <= 0) continue;
 
-  for (const [crucibleId, list] of byCrucible) {
-    const accepted = await sysRedis.hGetAll(acceptedKey(crucibleId));
-    for (const entry of list) {
-      if (String(entry.entryId) in accepted) continue;
+    const entries = await getUnacceptedJudgeableEntries(crucible.id, kept, budget);
+    budget -= entries.length;
+    for (const entry of entries) {
       try {
-        if (await acceptCrucibleEntry(entry, subscribers)) result.accepted++;
+        const done = await acceptCrucibleEntry(entry, subscribers, {
+          tags: crucible.eventTags,
+          unrecorded: true,
+        });
+        if (done) result.accepted++;
       } catch (error) {
         result.failed++;
         logToAxiom({
