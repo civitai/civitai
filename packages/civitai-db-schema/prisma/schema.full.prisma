@@ -6247,6 +6247,8 @@ model BoxOpening {
   itemRoll           Int
   /// granted | refunded (text + CHECK)
   rewardStatus       String
+  /// Drawn from a pack's guaranteed tiers only.
+  guaranteed         Boolean  @default(false)
   createdAt          DateTime @default(now())
 
   @@index([userId, createdAt])

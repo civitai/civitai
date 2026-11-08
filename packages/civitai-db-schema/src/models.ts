@@ -3778,6 +3778,7 @@ export interface BoxOpening {
   tierPoolSize: number;
   itemRoll: number;
   rewardStatus: string;
+  guaranteed: boolean;
   createdAt: Date;
 }
 
