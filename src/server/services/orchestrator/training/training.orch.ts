@@ -62,6 +62,7 @@ import {
   isRetiredTrainingTarget,
   trainingModelInfo,
 } from '~/utils/training';
+import { modelUnavailability, unavailableModelMessage } from '~/utils/training-blocked-models';
 
 async function isSafeTensor(modelVersionId: number) {
   // it's possible we need to modify this if a model somehow has pickle and safetensor
@@ -411,10 +412,15 @@ export const createTrainingWorkflow = async ({
 
   const baseModel = modelVersion.trainingDetails.baseModel;
   if (!baseModel) throw throwBadRequestError('Missing base model');
-  if ((status.blockedModels ?? []).includes(baseModel))
+  const unavailable = modelUnavailability(status, baseModel);
+  if (unavailable) {
+    const info = trainingModelInfo[baseModel as TrainingDetailsBaseModelList];
     throw throwBadRequestError(
-      'This model has been blocked from training - please try another one.'
+      info
+        ? unavailableModelMessage(info.pretty, unavailable.reason)
+        : 'This model has been blocked from training - please try another one.'
     );
+  }
   if (trainingModelInfo[baseModel as TrainingDetailsBaseModelList]?.disabled)
     throw throwBadRequestError('This base model is not available for training.');
 
