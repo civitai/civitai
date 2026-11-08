@@ -186,7 +186,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry" | "ProfilePictureSync";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -1724,7 +1724,6 @@ export interface Image {
   blockedFor: string | null;
   scanJobs: JsonValue | null;
   assignedUser?: User | null;
-  profilePictureHold?: ProfilePictureHold | null;
   sortAt: Date;
   minor: boolean;
   poi: boolean;
@@ -4744,16 +4743,6 @@ export interface ImageCdnAccessClaim {
   url: string;
   token: string;
   claimedUntil: Date;
-}
-
-export interface ProfilePictureHold {
-  id: number;
-  userId: number;
-  imageId: number;
-  image?: Image;
-  reason: string;
-  exportable: boolean;
-  createdAt: Date;
 }
 
 export interface JobQueue {
