@@ -578,6 +578,9 @@ const featureFlags = createFeatureFlags({
   birthday2026: { availability: ['mod'], fliptKey: 'birthday-2026' },
   // Read through useHatTurfFeed, which also checks the event is playable.
   hatTurfFeedCard: { availability: ['mod'], fliptKey: 'hat-turf-feed-card' },
+  // The Hat Turf feed sorts and Show filters; checked TOGETHER with `hatTurfFeedCard`, so testers can
+  // have them before every player does.
+  hatTurfFeedSorts: { availability: ['mod'], fliptKey: 'hat-turf-feed-sorts' },
   // Hat Turf on the image detail page; read through useHatTurfDetail, which also checks the event
   // is playable and the turf is not off. Separate from the feed flag so each can roll out alone.
   hatTurfImageDetail: { availability: ['mod'], fliptKey: 'birthday2026-turf-image-detail' },
