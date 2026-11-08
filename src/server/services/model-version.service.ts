@@ -216,7 +216,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
-import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
+import { hasCompleteSfwFace, resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -2756,6 +2756,24 @@ You agree to the following with respect to the Model (each a “Permission”):
   return license;
 }
 
+// Read from the primary: the face can have been removed seconds ago. Neutral message: it must not
+// disclose the model's .com status.
+export async function assertSellableInDomainCurrency({
+  modelId,
+  buzzType,
+}: {
+  modelId: number;
+  buzzType: BuzzSpendType;
+}) {
+  if (buzzType !== 'green') return;
+  const face = await dbWrite.model.findUniqueOrThrow({
+    where: { id: modelId },
+    select: { nsfw: true, nsfwLevel: true, sfwName: true, sfwCoverImageId: true },
+  });
+  if (face.nsfw && !hasCompleteSfwFace(face))
+    throw throwBadRequestError('This model version is not available with this currency.');
+}
+
 export const earlyAccessPurchase = async ({
   userId,
   modelVersionId,
@@ -2786,7 +2804,6 @@ export const earlyAccessPurchase = async ({
           id: true,
           name: true,
           userId: true,
-          nsfw: true,
         },
       },
     },
@@ -2816,6 +2833,8 @@ export const earlyAccessPurchase = async ({
   if (buzzType === 'blue' && !acceptsBlueBuzz(terms)) {
     throw throwBadRequestError('This model version does not accept Blue Buzz.');
   }
+
+  await assertSellableInDomainCurrency({ modelId: modelVersion.model.id, buzzType });
 
   // The EA donation goal is the forward relation (DonationGoal entity target), not a config back-link.
   // Only an active goal receives the purchase's donation record. We use the raw owner accessor (not the

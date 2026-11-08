@@ -4752,6 +4752,7 @@ export interface ProfilePictureHold {
   imageId: number;
   image?: Image;
   reason: string;
+  exportable: boolean;
   createdAt: Date;
 }
 

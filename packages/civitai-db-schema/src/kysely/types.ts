@@ -4924,6 +4924,7 @@ export type ProfilePictureHold = {
   userId: number;
   imageId: number;
   reason: string;
+  exportable: Generated<boolean>;
   createdAt: Generated<Timestamp>;
 };
 export type PurchasableReward = {

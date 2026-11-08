@@ -22,6 +22,7 @@ import {
 } from '$lib/data/trainingModels';
 import type { TrainingRunPayload } from '$lib/backend';
 import type { TrainingItem } from '$lib/train-core';
+import type { TagExcluder } from '$lib/autolabel-exclude';
 
 export const CUSTOM_VERSION_KEY = 'custom';
 export const MAX_RUNS = 5;
@@ -680,6 +681,42 @@ export function withTags(tags: string[], text: string): string[] {
 export function parseLabel(text: string, mode: LabelType): { tags: string[]; caption: string } {
   const t = text.trim();
   return mode === 'tag' ? { tags: splitTags(t), caption: '' } : { tags: [], caption: t };
+}
+
+/** Where an auto-label result goes relative to the label an image already has. */
+export type LabelPosition = 'after' | 'before' | 'replace';
+
+/** An image's label after an auto-label result lands. Only the dataset format's field reaches
+ *  training (labelString), so a tagger result on a caption dataset — or a caption on a tag dataset —
+ *  is written into that field, which is how one .txt ends up holding both. `exclude` filters tagger
+ *  output only. An empty result keeps the label. */
+export function mergeAutoLabel(
+  img: Pick<Img, 'tags' | 'caption'>,
+  result: { tags?: string[]; caption?: string },
+  format: LabelType,
+  position: LabelPosition,
+  exclude: TagExcluder
+): { tags: string[]; caption: string } {
+  const newTags = [...new Set(result.tags ?? [])].filter((t) => !exclude(t));
+  const newCaption = result.caption?.trim() ?? '';
+
+  if (format === 'tag') {
+    const incoming = newTags.length ? newTags : splitTags(newCaption);
+    if (!incoming.length) return { tags: img.tags, caption: img.caption };
+    if (position === 'replace') return { tags: incoming, caption: img.caption };
+    const [first, second] = position === 'after' ? [img.tags, incoming] : [incoming, img.tags];
+    return { tags: [...new Set([...first, ...second])], caption: img.caption };
+  }
+
+  const incoming = newTags.length ? newTags.join(', ') : newCaption;
+  const existing = img.caption.trim();
+  if (!incoming) return { tags: img.tags, caption: img.caption };
+  if (position === 'replace' || !existing) return { tags: img.tags, caption: incoming };
+  // A retry must not stack a second copy. Whole lines: a new result may be a substring of an old one.
+  if (`\n${existing}\n`.includes(`\n${incoming}\n`))
+    return { tags: img.tags, caption: img.caption };
+  const caption = position === 'after' ? `${existing}\n${incoming}` : `${incoming}\n${existing}`;
+  return { tags: img.tags, caption };
 }
 
 // Parse a Review-step numeric field, falling back to a safe generic value when blank/garbage: Number('') is

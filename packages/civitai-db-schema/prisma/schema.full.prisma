@@ -7732,12 +7732,13 @@ model ImageCdnAccessClaim {
 /// put back once the image is available again. One row per image; an owner can have several.
 /// Written only by the profile-picture-sync job and its backfill.
 model ProfilePictureHold {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  imageId   Int      @unique
-  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  reason    String
-  createdAt DateTime @default(now())
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  imageId    Int      @unique
+  image      Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  reason     String
+  exportable Boolean  @default(false)
+  createdAt  DateTime @default(now())
 
   @@index([userId, createdAt(sort: Desc)])
 }
