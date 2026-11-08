@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   pops: 'all' as 'all' | 'active',
   watch: vi.fn(),
   onWatched: undefined as undefined | ((data: unknown) => void),
+  onWatchFailed: undefined as undefined | (() => void),
   handlers: new Map<string, (data: unknown) => void>(),
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -24,8 +25,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: makeTrpcProxy({
     'event.getCosmetic': { useQuery: () => ({ data: { obtained: h.joined } }) },
     'event.watchPoints': {
-      useMutation: (opts: { onSuccess?: (d: unknown) => void }) => {
+      useMutation: (opts: { onSuccess?: (d: unknown) => void; onError?: () => void }) => {
         h.onWatched = opts.onSuccess;
+        h.onWatchFailed = opts.onError;
         return { mutate: h.watch };
       },
     },
@@ -83,6 +85,33 @@ describe('EventPointsSelfPops', () => {
     mount();
     push(45);
     expect(pops()).toEqual([]);
+  });
+
+  describe('marks', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+    const shown = () => act(() => document.dispatchEvent(new Event('visibilitychange')));
+
+    it('a tab shown again soon after its last mark sends none; the interval still renews it', () => {
+      mount();
+      expect(h.watch).toHaveBeenCalledTimes(1);
+      act(() => vi.advanceTimersByTime(5_000));
+      shown();
+      expect(h.watch).toHaveBeenCalledTimes(1);
+      act(() => vi.advanceTimersByTime(25_000));
+      expect(h.watch).toHaveBeenCalledTimes(2);
+      // Long enough after the last mark (20s), a tab shown again marks at once.
+      act(() => vi.advanceTimersByTime(21_000));
+      shown();
+      expect(h.watch).toHaveBeenCalledTimes(3);
+    });
+
+    it('a failed mark does not hold back the next', () => {
+      mount();
+      act(() => h.onWatchFailed?.());
+      shown();
+      expect(h.watch).toHaveBeenCalledTimes(2);
+    });
   });
 
   it.each([
