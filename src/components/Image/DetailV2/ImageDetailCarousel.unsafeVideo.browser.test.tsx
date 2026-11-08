@@ -65,6 +65,7 @@ const video = {
 const noop = () => undefined;
 
 test('a hidden video slide builds no player until it is revealed, then autoplays', async () => {
+  mediaRenders.length = 0;
   renderWithProviders(
     <div style={{ width: 400, height: 300, display: 'flex' }}>
       <ImageDetailCarousel

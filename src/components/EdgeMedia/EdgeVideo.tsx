@@ -344,7 +344,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         // the video the moment it is maximized.
         videoElem.pause();
       }
-    }, [canPlay, isCurrentStack, standby, autoPlay, isSelfFullscreen, resumeId]);
+    }, [canPlay, isCurrentStack, standby, autoPlay, isSelfFullscreen, resumeId, videoUrl]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
@@ -453,9 +453,9 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           playsInline
           onMouseOver={!options?.anim && hoverPlay ? handleMouseEnter : undefined}
           onMouseLeave={!options?.anim && hoverPlay ? handleMouseLeave : undefined}
-          // Never the caller's `autoPlay`: React builds this element during render, and a render it
-          // throws away (an interrupted or suspended transition) is never attached, yet the browser
-          // still autoplays it, detached and audible. The play effect above only runs once committed.
+          // Not the caller's `autoPlay`: React creates this element during render, and the browser
+          // autoplays the element of a discarded render, detached and audible. Only the play effect
+          // (committed players) may start it.
           autoPlay={autoPlay === undefined && !!(options?.anim && disablePoster)}
           loop
           poster={!disablePoster ? coverUrl : undefined}

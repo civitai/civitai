@@ -11,7 +11,7 @@ vi.mock('~/client-utils/cf-images-utils', async (importOriginal) => ({
 
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 
-/** A 30 s tone, so a playing element is really playing, with sound. */
+// Must outlast the wait below, or a finished clip reads as never played.
 function toneUrl() {
   const rate = 8000;
   const n = rate * 30;
@@ -99,7 +99,6 @@ describe('EdgeVideo autoPlay', () => {
     open?.();
 
     await vi.waitFor(() => expect(created.length).toBeGreaterThan(0));
-    // Long enough for the tone to load and an autoplay to start.
     await wait(1000);
     expect(created.every((video) => !video.isConnected)).toBe(true);
     expect(created.filter((video) => !video.paused)).toEqual([]);
