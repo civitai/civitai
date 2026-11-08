@@ -750,6 +750,19 @@ describe('takedownCosmeticShopItem on a pack box that drew it', () => {
     expect(result.boxRefundedValue).toBe(337);
   });
 
+  it('pays the last box the remainder, so a whole pack taken down returns exactly its price', async () => {
+    // Box 3 of 3: 333 + 333 + 334 = 1000. Earlier boxes keep the rounded-down share (the test above).
+    await seedPack({ price: 1000, size: 3 });
+    const result = await takedown();
+    expect(credits()).toEqual([
+      expect.objectContaining({
+        amount: 334,
+        externalTransactionId: `takedown-pack-share:${packKey(3)}`,
+      }),
+    ]);
+    expect(result.boxRefundedValue).toBe(334);
+  });
+
   it('counts a share refused as a duplicate as paid', async () => {
     await seedPack();
     buzz.createBuzzTransaction.mockRejectedValue(
