@@ -21,6 +21,7 @@ vi.mock('~/components/Image/Detail/ImageDetailModal', async () => {
       'data-image-id': String(query.imageId ?? imageId),
       'data-list': images?.length ?? 0,
       'data-sheet': query.active ? 'expanded' : 'collapsed',
+      'data-highlight': query.highlight ?? '',
     });
   }
   return { default: Detail };
@@ -56,6 +57,7 @@ const layers = () =>
     id: el.getAttribute('data-image-id'),
     list: el.getAttribute('data-list'),
     sheet: el.getAttribute('data-sheet'),
+    highlight: el.getAttribute('data-highlight'),
   }));
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
@@ -110,5 +112,21 @@ describe('gallery tile on an open image detail', () => {
 
     await vi.waitFor(() => expect(layers().at(-1)?.id).toBe(String(TILE_ID)));
     expect(layers().at(-1)?.sheet).toBe('collapsed');
+  });
+
+  test('an image opened over a comment link does not inherit its highlight', async () => {
+    await renderAtPage(`/images/${FIRST_ID}`, { imageId: String(FIRST_ID) });
+    // The opener's route as a comment notification links it.
+    const router = getBrowserRouter();
+    router.replace(
+      { query: { ...router.query, highlight: 777 } },
+      `${router.asPath}?highlight=777`
+    );
+    await vi.waitFor(() => expect(getBrowserRouter().query.highlight).toBe(777));
+
+    await page.getByText('gallery tile').click();
+
+    await vi.waitFor(() => expect(layers().at(-1)?.id).toBe(String(TILE_ID)));
+    expect(layers().at(-1)?.highlight).toBe('');
   });
 });
