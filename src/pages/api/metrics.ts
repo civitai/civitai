@@ -6,6 +6,9 @@ import { instrumentationRegistry } from '~/server/prom/client';
 // Side-effect import: registers the challenge state gauges (collect()-based) on the default
 // registry so they are present + scraped even before the first challenge op runs this session.
 import '~/server/prom/challenge.metrics';
+// Side-effect import: registers the app publish review-queue gauges (collect()-based, one replica
+// read per minute, served from the last good snapshot).
+import '~/server/prom/app-publish-queue.metrics';
 // Side-effect import: registers the co-occurrence retention heartbeat gauge (read from KeyValue,
 // cached for a minute).
 import '~/server/prom/resource-intent-cooc.metrics';

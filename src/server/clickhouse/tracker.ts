@@ -343,6 +343,12 @@ export const ActionType = [
   // redirect, so it has no `trackActionSchema` arm.
   'AppStore_Action',
   'App_Visit',
+  // App Blocks in-app telemetry, emitted by the two block hosts: an error the viewer saw after the
+  // app loaded, and one row per host session on unmount/pagehide. Same Enum16 hazard as above
+  // (migrations/2026-11-07-app-telemetry-error-session-actions.sql, plus the tracker restart):
+  // until both are applied the tracker drops these rows silently and nothing else changes.
+  'App_Error',
+  'App_Session',
 ] as const;
 
 // Written without ip and userAgent, whoever calls: `actions` has no TTL, and these feed per-user
@@ -353,6 +359,9 @@ const ACTOR_META_FREE_ACTION_TYPES: ReadonlySet<ActionType> = new Set([
   // Store funnel rows (impressions are high-volume) need only the user id. NOT `App_Open` /
   // `App_Visit`: their counts de-dupe per actor at read time and need the ip fallback.
   'AppStore_Action',
+  // Operational app telemetry: per-app error and engagement rates need the user id at most.
+  'App_Error',
+  'App_Session',
 ]);
 export type ActionType = (typeof ActionType)[number];
 
