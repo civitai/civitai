@@ -16,10 +16,13 @@ vi.mock('~/server/services/feature-flags.service', () => ({
   computeUserFeatureFlagsOverlay: h.overlay,
   getFliptGatedEligibility: vi.fn(() => ({})),
 }));
-const flipt = vi.hoisted(() => ({ isFliptSync: vi.fn((): boolean | null => false) }));
+const flipt = vi.hoisted(() => ({
+  isFliptSync: vi.fn((): boolean | null => false),
+  ensure: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: { TRAINING_STUDIO: 'trainingStudio' },
-  ensureFliptInitialized: vi.fn(async () => undefined),
+  ensureFliptInitialized: flipt.ensure,
   isFliptSync: flipt.isFliptSync,
 }));
 vi.mock('~/server/services/user.service', () => ({
@@ -104,7 +107,10 @@ describe('allowTrainingStudio', () => {
 });
 
 describe('isStandaloneStudioAllowed', () => {
-  beforeEach(() => flipt.isFliptSync.mockReset().mockReturnValue(false));
+  beforeEach(() => {
+    flipt.isFliptSync.mockReset().mockReturnValue(false);
+    flipt.ensure.mockReset().mockResolvedValue(undefined);
+  });
 
   it("follows the standalone Studio's beta flag, evaluated with the user's context", async () => {
     expect(await isStandaloneStudioAllowed(user({ id: 5, tier: 'gold' }))).toBe(false);
@@ -123,6 +129,12 @@ describe('isStandaloneStudioAllowed', () => {
 
   it('falls back to moderators only when the flag cannot be evaluated', async () => {
     flipt.isFliptSync.mockReturnValue(null);
+    expect(await isStandaloneStudioAllowed(user({ isModerator: true }))).toBe(true);
+    expect(await isStandaloneStudioAllowed(user())).toBe(false);
+  });
+
+  it('fails closed to moderators when Flipt throws', async () => {
+    flipt.ensure.mockRejectedValue(new Error('flipt down'));
     expect(await isStandaloneStudioAllowed(user({ isModerator: true }))).toBe(true);
     expect(await isStandaloneStudioAllowed(user())).toBe(false);
   });
