@@ -48,7 +48,7 @@ export function useCloseOnEscape(close: () => void) {
     if (event.key === 'Enter' || event.key === ' ') return record(event);
     if (event.key !== 'Escape') return;
     overlayWasOpen.current = visibleOverlays().some((el) => isEngaged(el, lastInteracted.current));
-  }, []);
+  }, [record]);
   useWindowEvent('keydown', snapshot, { capture: true });
   useWindowEvent('pointerdown', record, { capture: true });
 
