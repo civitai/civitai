@@ -373,7 +373,6 @@ const featureFlags = createFeatureFlags({
     toggleable: true,
     default: true,
     displayName: 'Training Studio',
-    badge: 'Beta',
     description: `Use the new Training Studio for LoRA training. Turn this off to go back to the classic trainer, which stops starting new runs on ${formatDate(
       CLASSIC_TRAINER_RETIRES_AT,
       'MMMM D, YYYY',
