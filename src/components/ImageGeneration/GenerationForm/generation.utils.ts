@@ -64,6 +64,9 @@ export const useGenerationStatus = () => {
   }, [data, currentUser, isLoading]);
 };
 
+const GENERATION_CONFIG_STALE_MS = 60_000;
+const GENERATION_CONFIG_REFETCH_MS = 5 * 60_000;
+
 const DEFAULT_GENERATION_CONFIG = {
   unstableResources: [] as number[],
   selfHostedDisabledEcosystems: [] as string[],
@@ -84,9 +87,13 @@ const DEFAULT_GENERATION_CONFIG = {
  * fields should call this hook so React Query dedupes the request.
  */
 export const useGenerationConfig = () => {
+  // Gate lifts and outage hides must reach an open generator without a reload.
+  // The result is per-user and not edge-cached, so the interval is kept long.
   const { data } = trpc.generation.getGenerationConfig.useQuery(undefined, {
     gcTime: Infinity,
-    staleTime: Infinity,
+    staleTime: GENERATION_CONFIG_STALE_MS,
+    refetchOnWindowFocus: true,
+    refetchInterval: GENERATION_CONFIG_REFETCH_MS,
     trpc: { context: { skipBatch: true } },
   });
 
