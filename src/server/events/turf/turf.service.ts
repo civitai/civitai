@@ -29,6 +29,7 @@ import {
   decodeTurfEntry,
   encodeTurfEntry,
   turfKeys,
+  turfRankScore,
   type TurfCounts,
   type TurfEntry,
   type TurfStickerRow,
@@ -58,7 +59,7 @@ export const TURF_OWNER_OFF_SETTING = 'eventTurfOwnerOff';
  * their own images (a player cannot wall theirs off); otherwise only an explicit opt-in counts.
  * Placing a hat does not opt anyone in; Hat Turf was announced as opt-in only.
  */
-const inTurf = (alias: string, event: string) => {
+export const inTurf = (alias: string, event: string) => {
   const u = Prisma.raw(`"${alias}"`);
   return Prisma.sql`CASE WHEN (${u}.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event}) = 'true'
     THEN false ELSE COALESCE((${u}.settings -> ${TURF_SETTING} ->> ${event}) = 'true', false) END`;
@@ -143,7 +144,7 @@ export async function getTurfEvent(name: string, now = new Date()): Promise<Turf
   return { ...def, turf: config };
 }
 
-const isRunning = (event: TurfEvent, now: Date) =>
+export const isRunning = (event: TurfEvent, now: Date) =>
   event.turf.mode !== 'off' && now >= event.startDate && now < event.endDate;
 
 // #region supply
@@ -620,14 +621,19 @@ function computeImages(
   return { entries, counts, stickers };
 }
 
-// Per image (ARGV: ticket, then field, map value, counts value; '' = none): writes the map entry and
-// counts only when the ticket is above the image's stamp, so an older read never lands after a newer
-// one. Returns a code per image: 1 map changed, 2 counts changed, 4 stale (nothing written).
+// Per image (ARGV: ticket, then field, map value, counts value, rank value; '' = none): writes the map
+// entry and counts only when the ticket is above the image's stamp, so an older read never lands after
+// a newer one. Returns a code per image: 1 map changed, 2 counts changed, 4 stale (nothing written).
+// The feed indexes (KEYS 4 on: hatted, rank total, then each team's rank in event.teams order) are
+// rewritten on every write that lands, changed or not, so they hold what the counts hold and a
+// reconcile, which writes every image in either, repairs them. The rank value is encodeTurfRank's; it carries the scores as strings, so the
+// script does no arithmetic.
 const WRITE_TURF_SCRIPT = `
 local ticket = tonumber(ARGV[1])
+local teams = #KEYS - 5
 local out = {}
-for i = 2, #ARGV, 3 do
-  local f, mv, cv = ARGV[i], ARGV[i + 1], ARGV[i + 2]
+for i = 2, #ARGV, 4 do
+  local f, mv, cv, rv = ARGV[i], ARGV[i + 1], ARGV[i + 2], ARGV[i + 3]
   local code = 0
   if ticket > tonumber(redis.call('HGET', KEYS[3], f) or '0') then
     redis.call('HSET', KEYS[3], f, ARGV[1])
@@ -639,6 +645,22 @@ for i = 2, #ARGV, 3 do
         redis.call('HSET', KEYS[j], f, v) code = code + j
       end
     end
+    local id = string.sub(f, 7)
+    local hatted, ranks = false, {}
+    for tok in string.gmatch(rv, '[^,]+') do
+      if tok == 'h' then
+        hatted = true
+      else
+        local k, score = string.match(tok, '^(%w+)=(%d+)$')
+        if k then ranks[k] = score end
+      end
+    end
+    if hatted then redis.call('SADD', KEYS[4], id) else redis.call('SREM', KEYS[4], id) end
+    for t = 0, teams do
+      local k = t == 0 and 't' or tostring(t)
+      if ranks[k] then redis.call('ZADD', KEYS[5 + t], ranks[k], id)
+      else redis.call('ZREM', KEYS[5 + t], id) end
+    end
   else
     code = 4
   end
@@ -647,26 +669,59 @@ end
 return out`;
 
 /**
- * Writes images' map entries and counts under one ticket (see WRITE_TURF_SCRIPT), then logs the
- * map changes: hash first, then the log, as the hat map does, since followers re-read the hash for
- * each logged key. Returns the keys whose map and whose counts changed.
+ * An image's feed index entry for WRITE_TURF_SCRIPT: `h` when it shows any live sticker, `t=` its
+ * rank over every team's counted stickers, `<n>=` its rank for event.teams[n - 1]. Empty for a contest
+ * entry, which the feed never ranks or filters on, since its viewers are shown no Hat Turf.
+ */
+export function encodeTurfRank(
+  imageId: number,
+  counts: TurfCounts | undefined,
+  contest: boolean,
+  teams: readonly string[]
+) {
+  if (!counts || contest) return '';
+  const tokens: string[] = [];
+  if (Object.values(counts.shown).some((n) => n > 0)) tokens.push('h');
+  let total = 0;
+  for (const [team, n] of Object.entries(counts.counted)) {
+    if (n <= 0) continue;
+    total += n;
+    const index = teams.findIndex((t) => t.toLowerCase() === team.toLowerCase());
+    if (index >= 0) tokens.push(`${index + 1}=${turfRankScore(n, imageId)}`);
+  }
+  if (total > 0) tokens.push(`t=${turfRankScore(total, imageId)}`);
+  return tokens.join(',');
+}
+
+/**
+ * Writes images' map entries, counts and feed indexes under one ticket (see WRITE_TURF_SCRIPT),
+ * then logs the map changes: hash first, then the log, as the hat map does, since followers re-read
+ * the hash for each logged key. Returns the keys whose map and whose counts changed.
  */
 async function writeTurf(
   event: TurfEvent,
   ticket: number,
   fields: string[],
   map: Map<string, string>,
-  counts: Map<string, string>
+  counts: Map<string, string>,
+  ranks: Map<string, string>
 ) {
   const keys = turfKeys(event.name);
   const mapChanged: string[] = [];
   const countsChanged: string[] = [];
   for (const part of chunk(fields, 500)) {
     const codes = (await sysRedis.eval(WRITE_TURF_SCRIPT, {
-      keys: [keys.map, keys.counts, keys.stamp],
+      keys: [
+        keys.map,
+        keys.counts,
+        keys.stamp,
+        keys.hatted,
+        keys.rankTotal,
+        ...event.teams.map((team) => keys.rankTeam(team)),
+      ],
       arguments: [
         String(ticket),
-        ...part.flatMap((k) => [k, map.get(k) ?? '', counts.get(k) ?? '']),
+        ...part.flatMap((k) => [k, map.get(k) ?? '', counts.get(k) ?? '', ranks.get(k) ?? '']),
       ],
     })) as number[];
     part.forEach((k, i) => {
@@ -680,6 +735,14 @@ async function writeTurf(
     await sysRedis.xTrim(keys.log, 'MAXLEN', MAP_LOG_MAX, { strategyModifier: '~' });
   return { mapChanged, countsChanged };
 }
+
+const turfRanks = (event: TurfEvent, counts: Map<string, TurfCounts>, contest: Set<number>) =>
+  new Map(
+    [...counts].map(([k, c]) => {
+      const imageId = imageIdOf(k);
+      return [k, encodeTurfRank(imageId, c, contest.has(imageId), event.teams)];
+    })
+  );
 
 /** A ticket for a sync or reconcile about to read: one taken later reads newer stickers. */
 const takeTicket = (event: TurfEvent) => sysRedis.incr(turfKeys(event.name).seq);
@@ -707,7 +770,8 @@ export async function syncTurfImages(event: TurfEvent, imageIds: number[], now =
     ticket,
     imageIds.map((id) => `Image:${id}`),
     new Map([...entries].map(([k, e]) => [k, encodeTurfEntry(e)])),
-    new Map([...counts].map(([k, c]) => [k, JSON.stringify(c)]))
+    new Map([...counts].map(([k, c]) => [k, JSON.stringify(c)])),
+    turfRanks(event, counts, contest)
   );
   const changes: TurfPush[] = countsChanged.map((k) => {
     const imageId = imageIdOf(k);
@@ -827,10 +891,18 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
     });
   const desired = new Map([...kept].map(([k, e]) => [k, encodeTurfEntry(e)]));
   const desiredCounts = new Map([...counts].map(([k, c]) => [k, JSON.stringify(c)]));
+  const ranks = turfRanks(event, counts, contest);
   // Read now, not at the start: an image a sync added during the reads is cleared if it has gone.
+  // The feed indexes too, so an entry with no counts (written by an older script during a deploy)
+  // is cleared as well.
+  const indexed = [
+    ...((await sysRedis.sMembers(keys.hatted)) ?? []),
+    ...((await sysRedis.zRange(keys.rankTotal, 0, -1)) ?? []),
+  ].map((id) => `Image:${String(id)}`);
   const fields = new Set([
     ...Object.keys((await sysRedis.hGetAll(keys.counts)) ?? {}),
     ...Object.keys((await sysRedis.hGetAll(keys.map)) ?? {}),
+    ...indexed,
     ...desired.keys(),
     ...desiredCounts.keys(),
   ]);
@@ -846,7 +918,7 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
   const mapChanged: string[] = [];
   const countsChanged: string[] = [];
   for (const [ticket, part] of byTicket) {
-    const written = await writeTurf(event, ticket, part, desired, desiredCounts);
+    const written = await writeTurf(event, ticket, part, desired, desiredCounts, ranks);
     mapChanged.push(...written.mapChanged);
     countsChanged.push(...written.countsChanged);
   }
@@ -875,7 +947,12 @@ export async function reconcileAllTurf(now = new Date()) {
     const event = await getTurfEvent(def.name, now);
     if (!event || event.turf.mode === 'off') continue;
     const at = new Date(now.getTime() + Date.now() - startedAt);
-    results.push({ event: def.name, ...(await reconcileTurf(event, at)) });
+    const began = Date.now();
+    const result = { event: def.name, ...(await reconcileTurf(event, at)), ms: 0 };
+    result.ms = Date.now() - began;
+    // How long a pass takes as the event grows: it writes every image's feed indexes too.
+    void logToAxiom({ type: 'info', name: 'event-turf', message: 'reconciled', ...result });
+    results.push(result);
   }
   return results;
 }
