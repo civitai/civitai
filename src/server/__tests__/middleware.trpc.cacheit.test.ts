@@ -255,7 +255,7 @@ describe('cacheIt cache-key composition', () => {
  * The key's hash segment. `model.getAllPagedSimple` varies its key on `isModerator`, so two
  * callers whose values hash alike would read each other's cached response.
  */
-type QueryInput = { query?: string; limit?: number };
+type QueryInput = { query?: string; limit?: number; allowDerivatives?: boolean };
 
 function invokeAs(isModerator: boolean, input: QueryInput, next: ReturnType<typeof vi.fn>) {
   const mw = cacheIt<QueryInput>({
@@ -317,6 +317,22 @@ describe('cacheIt key hash', () => {
     await invokeAs(false, { query: 'cat', limit: 20 }, next);
     await invokeAs(false, { limit: 20, query: 'cat' }, next);
     expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['false', { allowDerivatives: false }],
+    ['zero', { limit: 0 }],
+    ['an empty string', { query: '' }],
+  ])('an input value of %s does not share the key of an omitted one', async (_, input) => {
+    const next = vi.fn().mockResolvedValue(COMPUTED);
+    await invokeAs(false, {}, next);
+    await invokeAs(false, input, next);
+    expect(next).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses to key on a Set or Map, which would hash alike whatever they hold', () => {
+    expect(() => cacheItKeyHash({ ids: new Set([1]) })).toThrow(/Set/);
+    expect(() => cacheItKeyHash({ ids: new Map([[1, 1]]) })).toThrow(/Map/);
   });
 
   it('values JSON writes alike get different hashes', () => {

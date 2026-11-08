@@ -21,12 +21,18 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+// The viewer's own tag votes; not what decides visibility.
+vi.mock('@civitai/db-queries/tag', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  listImageTagVotes: vi.fn(async () => []),
+}));
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
   amIBlockedByUser: vi.fn(),
 }));
 
 import { imageRouter } from '~/server/routers/image.router';
+import { tagRouter } from '~/server/routers/tag.router';
 import { imageResourcesCache, imageTagsCache } from '~/server/redis/caches';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -81,7 +87,7 @@ beforeEach(async () => {
     1: { resources: [{ modelVersionId: 5, versionName: 'v1', detected: true }] },
   } as never);
   vi.spyOn(imageTagsCache, 'fetch').mockResolvedValue({
-    1: { tags: [{ tagId: 7, tagName: 'tag', automated: true }] },
+    1: { tags: [{ tagId: 7, tagName: 'tag', automated: true, concrete: true }] },
   } as never);
 });
 
@@ -198,6 +204,9 @@ describe('image.getDetail visibility', () => {
     await seed();
     vi.mocked(amIBlockedByUser).mockResolvedValue(true);
     expect(await sees(STRANGER)).toBe(false);
+    expect(amIBlockedByUser).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: VIEWER, targetUserId: OWNER })
+    );
     expect(await sees(MOD)).toBe(true);
   });
 
@@ -206,6 +215,72 @@ describe('image.getDetail visibility', () => {
     const hidden = await errorOf(STRANGER, 1);
     const missing = await errorOf(STRANGER, 999);
     expect(hidden).toBe(missing);
+    expect(JSON.parse(hidden).code).toBe('NOT_FOUND');
+  });
+});
+
+describe('tag.getVotableTags on an image', () => {
+  function tagCallerFor(user: User) {
+    return tagRouter.createCaller({
+      user,
+      acceptableOrigin: true,
+      tokenScope: TokenScope.Full,
+      apiKeyId: null,
+      req: { headers: {} },
+      res: { setHeader: () => undefined },
+      cache: { edgeTTL: 0 },
+      features: { canViewNsfw: true },
+      track: { action: vi.fn(() => Promise.resolve(true)) },
+    } as never);
+  }
+
+  async function seesTags(user: User, id = 1) {
+    try {
+      const tags = await tagCallerFor(user).getVotableTags({ type: 'image', id });
+      expect(tags.map((t) => t.name)).toEqual(['tag']);
+      return true;
+    } catch (e) {
+      if ((e as { code?: string }).code === 'NOT_FOUND') return false;
+      throw e;
+    }
+  }
+
+  it('a visible image returns its tags to anyone', async () => {
+    await seed();
+    expect(await seesTags(ANON)).toBe(true);
+    expect(await seesTags(STRANGER)).toBe(true);
+  });
+
+  it.each(HIDDEN)('an image %s is NOT_FOUND to a stranger and signed out', async (_, state) => {
+    await seed(state);
+    expect(await seesTags(STRANGER)).toBe(false);
+    expect(await seesTags(ANON)).toBe(false);
+  });
+
+  it.each(HIDDEN)(
+    'an image %s still returns tags to its owner and a moderator',
+    async (_, state) => {
+      await seed(state);
+      expect(await seesTags(SELF)).toBe(true);
+      expect(await seesTags(MOD)).toBe(true);
+    }
+  );
+
+  it('a hidden image fails exactly like an id that does not exist, and never as a server error', async () => {
+    await seed({ post: { '"publishedAt"': 'NULL' } });
+    const errorFor = async (id: number) => {
+      const e = await tagCallerFor(STRANGER)
+        .getVotableTags({ type: 'image', id })
+        .then(
+          () => undefined,
+          (err: unknown) => err
+        );
+      expect(e).toBeDefined();
+      const { name, code, message } = e as { name: string; code: string; message: string };
+      return JSON.stringify({ name, code, message, keys: Object.keys(e as object).sort() });
+    };
+    const hidden = await errorFor(1);
+    expect(hidden).toBe(await errorFor(999));
     expect(JSON.parse(hidden).code).toBe('NOT_FOUND');
   });
 });

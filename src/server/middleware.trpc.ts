@@ -91,7 +91,7 @@ export function cacheIt<TInput extends object>({
       for (const [key, value] of Object.entries(_input)) {
         if (excludeKeys?.includes(key as keyof TInput)) continue;
         if (Array.isArray(value)) cacheKeyObj[key] = [...new Set(value)].sort();
-        else if (value) cacheKeyObj[key] = value;
+        else if (value !== undefined) cacheKeyObj[key] = value;
       }
     }
     for (const [varyKey, varyValue] of Object.entries(varyBy?.(ctx) ?? {})) {

@@ -35,13 +35,20 @@ function tagged(value: unknown): unknown {
   if (value instanceof Date) return ['date', String(value.getTime())];
   if (Array.isArray(value)) return ['array', value.map(tagged)];
   switch (typeof value) {
-    case 'object':
+    case 'object': {
+      // A Map, Set or class instance would hash by its own keys, so every one alike.
+      const proto = Object.getPrototypeOf(value);
+      if (proto !== Object.prototype && proto !== null)
+        throw new Error(
+          `cacheItKeyHash: cannot key on a ${proto?.constructor?.name ?? 'non-plain'} object`
+        );
       return [
         'object',
         Object.keys(value as object)
           .sort()
           .map((k) => [k, tagged((value as Record<string, unknown>)[k])]),
       ];
+    }
     case 'number':
     case 'bigint':
     case 'symbol':
