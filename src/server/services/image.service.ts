@@ -1610,7 +1610,13 @@ export const getOpenImageReportIds = async (id: number, reason: ReportReason) =>
   return rows.map((r) => r.id);
 };
 
-export const getImageDetail = async ({ id }: GetByIdInput) => {
+export const getImageDetail = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+  // The resource and tag caches are keyed by image id alone, so the viewer check runs first.
+  await assertImageVisibleToViewer({ id, userId, isModerator });
   const [resourcesData, tagsData] = await Promise.all([
     imageResourcesCache.fetch([id]),
     imageTagsCache.fetch([id]),
