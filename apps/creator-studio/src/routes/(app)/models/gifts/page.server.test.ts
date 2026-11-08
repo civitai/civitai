@@ -11,11 +11,18 @@ vi.mock('$lib/server/session-cookies', () => ({ sessionCookies: () => 'cookie' }
 const { actions, load } = await import('./+page.server');
 
 const user = { id: 7 };
+const jar = new Map<string, string>();
+const cookies = {
+  get: (k: string) => jar.get(k),
+  set: (k: string, v: string) => void jar.set(k, v),
+  delete: (k: string) => void jar.delete(k),
+};
 const loadAt = (url: string) =>
   load({
     locals: { user },
     request: new Request(url),
     url: new URL(url),
+    cookies,
   } as unknown as Parameters<typeof load>[0]);
 
 function revoke(fields: Record<string, string>) {
@@ -24,10 +31,12 @@ function revoke(fields: Record<string, string>) {
   return actions.revoke({
     locals: { user },
     request: new Request('https://studio.test/models/gifts?/revoke', { method: 'POST', body }),
+    cookies,
   } as unknown as Parameters<typeof actions.revoke>[0]);
 }
 
 beforeEach(() => {
+  jar.clear();
   flag.on = true;
   callMainApp.mockReset();
   callMainApp.mockResolvedValue({ ok: true, data: { items: [], nextCursor: null, revoked: 1 } });
@@ -44,6 +53,19 @@ describe('/models/gifts', () => {
   it('asks the main app for the page the cursor names', async () => {
     await loadAt('https://studio.test/models/gifts?cursor=a%2Bb');
     expect(callMainApp).toHaveBeenCalledWith('/api/v1/model-versions/gifts?cursor=a%2Bb', 'cookie');
+  });
+
+  it('reads the primary once, on the load right after a revoke', async () => {
+    await loadAt('https://studio.test/models/gifts');
+    await revoke({ versionId: '5', id: '9' });
+    await loadAt('https://studio.test/models/gifts');
+    await loadAt('https://studio.test/models/gifts');
+    expect(callMainApp.mock.calls.map((c) => c[0])).toEqual([
+      '/api/v1/model-versions/gifts',
+      '/api/v1/model-versions/5/gifts/9',
+      '/api/v1/model-versions/gifts?fresh=1',
+      '/api/v1/model-versions/gifts',
+    ]);
   });
 
   it("revokes a link or a batch on the row's own version", async () => {

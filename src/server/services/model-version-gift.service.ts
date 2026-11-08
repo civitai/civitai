@@ -231,6 +231,19 @@ export async function listGiftLinks({
   return queryGiftList(dbWrite, modelVersionId);
 }
 
+/** One bulk batch's summary columns, over its "ModelVersionGiftLink" rows grouped by "batchId". */
+const batchSummarySql = Prisma.sql`
+  min("label") AS "label",
+  count(*)::int AS "total",
+  count(*) FILTER (WHERE "redemptionCount" > 0)::int AS "claimed",
+  count(*) FILTER (
+    WHERE "revokedAt" IS NULL AND "redemptionCount" < "maxRedemptions"
+      AND ("expiresAt" IS NULL OR "expiresAt" > now())
+  )::int AS "live",
+  min("createdAt") AS "createdAt",
+  max("expiresAt") AS "expiresAt"
+`;
+
 export async function queryGiftList(
   client: Pick<typeof dbWrite, '$queryRaw'>,
   modelVersionId: number
@@ -253,16 +266,7 @@ export async function queryGiftList(
     `,
     client.$queryRaw<GiftBatchSummary[]>`
       SELECT * FROM (
-        SELECT "batchId",
-               min("label") AS "label",
-               count(*)::int AS "total",
-               count(*) FILTER (WHERE "redemptionCount" > 0)::int AS "claimed",
-               count(*) FILTER (
-                 WHERE "revokedAt" IS NULL AND "redemptionCount" < "maxRedemptions"
-                   AND ("expiresAt" IS NULL OR "expiresAt" > now())
-               )::int AS "live",
-               min("createdAt") AS "createdAt",
-               max("expiresAt") AS "expiresAt"
+        SELECT "batchId", ${batchSummarySql}
           FROM "ModelVersionGiftLink"
          WHERE "modelVersionId" = ${modelVersionId} AND "batchId" IS NOT NULL
          GROUP BY "batchId"
@@ -361,17 +365,16 @@ export function giftIndexSql({
         FROM "ModelVersionGiftLink" l
        WHERE l."modelVersionId" IN (SELECT id FROM owned) AND l."batchId" IS NULL
       UNION ALL
-      SELECT 'batch', b."batchId", b."modelVersionId", min(b."createdAt"), max(b."expiresAt"),
-             min(b.label), NULL, NULL, NULL, NULL, NULL,
-             count(*)::int,
-             count(*) FILTER (WHERE b."redemptionCount" > 0)::int,
-             count(*) FILTER (
-               WHERE b."revokedAt" IS NULL AND b."redemptionCount" < b."maxRedemptions"
-                 AND (b."expiresAt" IS NULL OR b."expiresAt" > now())
-             )::int
-        FROM "ModelVersionGiftLink" b
-       WHERE b."modelVersionId" IN (SELECT id FROM owned) AND b."batchId" IS NOT NULL
-       GROUP BY b."batchId", b."modelVersionId"
+      -- Aggregates every batch of the creator's on each page; past a few thousand batches, move the
+      -- cursor and a LIMIT into each branch.
+      SELECT 'batch', b."batchId", b."modelVersionId", b."createdAt", b."expiresAt", b.label,
+             NULL, NULL, NULL, NULL, NULL, b.total, b.claimed, b.live
+        FROM (
+          SELECT "batchId", "modelVersionId", ${batchSummarySql}
+            FROM "ModelVersionGiftLink"
+           WHERE "modelVersionId" IN (SELECT id FROM owned) AND "batchId" IS NOT NULL
+           GROUP BY "batchId", "modelVersionId"
+        ) b
     )
     SELECT i.*, o."versionName", o."modelId", o."modelName"
       FROM items i
@@ -433,15 +436,17 @@ export async function listMyGiftLinks({
   userId,
   cursor,
   limit = GIFT_INDEX_PAGE_MAX,
+  fresh = false,
 }: {
   userId: number;
   cursor?: string | null;
   limit?: number;
+  /** Read the primary: the caller has just written (a revoke) and must see it. */
+  fresh?: boolean;
 }) {
   const take = Math.min(Math.max(1, Math.floor(limit)), GIFT_INDEX_PAGE_MAX);
   const decoded = cursor ? decodeGiftIndexCursor(cursor) : null;
-  // The primary: Creator Studio re-reads right after a revoke.
-  const rows = await dbWrite.$queryRaw<GiftIndexRow[]>(
+  const rows = await (fresh ? dbWrite : dbRead).$queryRaw<GiftIndexRow[]>(
     giftIndexSql({ userId, cursor: decoded, limit: take })
   );
   return toGiftIndexPage(rows, take);

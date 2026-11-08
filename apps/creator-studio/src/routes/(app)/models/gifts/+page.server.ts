@@ -18,11 +18,21 @@ async function assertEnabled(user: App.Locals['user']) {
   if (!(await darkFlagEnabled(MODEL_GIFT_LINKS_FLAG, user))) error(404, 'Not found');
 }
 
-export const load: PageServerLoad = async ({ locals, request, url }) => {
+// Set by a revoke, so the load that re-runs right after it reads the primary instead of the replica.
+const FRESH_COOKIE = 'cs-gifts-fresh';
+
+export const load: PageServerLoad = async ({ locals, request, url, cookies }) => {
   await assertEnabled(locals.user);
+  const query = new URLSearchParams();
   const cursor = url.searchParams.get('cursor');
+  if (cursor) query.set('cursor', cursor);
+  if (cookies.get(FRESH_COOKIE)) {
+    query.set('fresh', '1');
+    cookies.delete(FRESH_COOKIE, { path: '/models/gifts' });
+  }
+  const qs = query.toString();
   const result = await callMainApp<GiftIndexPage>(
-    `/api/v1/model-versions/gifts${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
+    `/api/v1/model-versions/gifts${qs ? `?${qs}` : ''}`,
     sessionCookies(request)
   );
   return {
@@ -34,7 +44,7 @@ export const load: PageServerLoad = async ({ locals, request, url }) => {
 
 export const actions: Actions = {
   // The main app re-checks that the caller may manage this version and that the gift belongs to it.
-  revoke: async ({ locals, request }) => {
+  revoke: async ({ locals, request, cookies }) => {
     await assertEnabled(locals.user);
     const parsed = revokeSchema.safeParse(Object.fromEntries(await request.formData()));
     if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
@@ -45,6 +55,7 @@ export const actions: Actions = {
       method: 'DELETE',
     });
     if (!result.ok) return fail(result.status, { error: result.error });
+    cookies.set(FRESH_COOKIE, '1', { path: '/models/gifts', maxAge: 30, httpOnly: true });
     return { revoked: result.data.revoked };
   },
 };

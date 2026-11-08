@@ -6,6 +6,11 @@ import { GiftEndpoint } from '~/server/utils/model-gift-endpoint';
 const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(GIFT_INDEX_PAGE_MAX).default(GIFT_INDEX_PAGE_MAX),
   cursor: z.string().min(1).max(200).optional(),
+  // Read the primary, for a page loaded right after a revoke.
+  fresh: z
+    .literal('1')
+    .optional()
+    .transform((v) => v === '1'),
 });
 
 export default GiftEndpoint(

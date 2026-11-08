@@ -39,7 +39,17 @@ describe('GET /api/v1/model-versions/gifts', () => {
   it("lists the session user's gifts, whatever user the query names", async () => {
     const res = await call({ userId: '99', cursor: 'abc' });
     expect(res.statusCode).toBe(200);
-    expect(listMyGiftLinks).toHaveBeenCalledWith({ userId: 7, limit: 100, cursor: 'abc' });
+    expect(listMyGiftLinks).toHaveBeenCalledWith({
+      userId: 7,
+      limit: 100,
+      cursor: 'abc',
+      fresh: false,
+    });
+  });
+
+  it('reads the primary only when asked to', async () => {
+    await call({ fresh: '1' });
+    expect(listMyGiftLinks).toHaveBeenCalledWith(expect.objectContaining({ fresh: true }));
   });
 
   it('refuses a page larger than the cap', async () => {
