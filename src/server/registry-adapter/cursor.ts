@@ -128,12 +128,9 @@ export type PollingAdapterOptions = {
 export const NARROWED_KEPT_PER_READ = 32;
 
 /**
- * {@link readableBy}, computed once per `(sets, schema, audience)`: every subscription that polls
- * within one shared read (`read` returns the same object, `buildEntitiesPerRead`) and has the same
- * audience gets the same list. Bounded: an entry lives only as long as its `sets` object (a
- * `WeakMap`), and each read keeps at most {@link NARROWED_KEPT_PER_READ} lists (more than the
- * served schemas times the four audiences there are). The lists are shared, so callers must not
- * change them.
+ * {@link readableBy}, computed once per `(sets, schema, audience)`, so subscriptions polling one
+ * shared read (`buildEntitiesPerRead`) with the same audience get the same list. The lists are
+ * shared across subscriptions: callers must not change them.
  */
 export function createReadableMemo(): (
   sets: EntitySets,

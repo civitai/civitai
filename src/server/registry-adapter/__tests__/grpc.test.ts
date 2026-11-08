@@ -259,8 +259,7 @@ describe('🔴 the wire: the spec proto’s field numbers', () => {
   const upsert = (body: unknown): StreamEvent => ({
     type: 'upsert',
     entity: { urn: 'u', schemas: ['s'], rev: 'r', body },
-    // builds one event to encode, not a paging fake
-    // eslint-disable-next-line local-rules/no-unbounded-paging-fake
+    // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- builds one event to encode, not a paging fake
     cursor: 'c',
   });
   it.each<[string, unknown, string]>([
@@ -285,7 +284,6 @@ describe('🔴 the wire: the spec proto’s field numbers', () => {
     ],
   ])('upsert with %s as its body: the body is its JSON text', (_name, body, hex) => {
     expect(encodeEvent(upsert(body)).toString('hex')).toBe(hex);
-    // And back: a consumer reads the same value from those bytes.
     expect(decodeEvent(Buffer.from(hex, 'hex'))).toEqual(upsert(body));
   });
 
@@ -330,7 +328,6 @@ describe('🔴 the HTTP binding is unchanged: its events carry JSON objects', ()
           // no changes
         })(),
     });
-    // HTTP: the raw SSE text, as the server wrote it.
     httpServer = createRegistryServer(one());
     await new Promise<void>((resolve) => httpServer!.listen(0, '127.0.0.1', resolve));
     const { port: httpPort } = httpServer.address() as AddressInfo;
@@ -343,10 +340,8 @@ describe('🔴 the HTTP binding is unchanged: its events carry JSON objects', ()
     expect(bodyText).toBe(
       '{"slug":"alpha","stars":4.5,"listed":true,"retired":null,"tags":["a",1,{"q":[]}]}'
     );
-    // A JSON object, not a string holding one.
     expect(typeof (JSON.parse(data) as { entity: { body: unknown } }).entity.body).toBe('object');
 
-    // gRPC: the raw bytes of each message, as the server sent them (no decoding).
     const RawClient = grpc.makeGenericClientConstructor(
       { Subscribe: { ...SOURCE_SERVICE.Subscribe, responseDeserialize: (b: Buffer) => b } },
       'Source'
