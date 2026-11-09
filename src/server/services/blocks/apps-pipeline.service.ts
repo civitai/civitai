@@ -469,7 +469,8 @@ export type TriggerReviewBuildArgs = {
   slug: string;
   sha: string;
   publishRequestId: string;
-  modUserId: number;
+  /** The starting moderator's id, or `system` for an automatic start (a run label value). */
+  modUserId: number | 'system';
   callbackUrl: string;
 };
 
@@ -1192,7 +1193,12 @@ fi
 
 echo "review smoke test: PASSED"
 
-# ---- Apply the review manifest into the namespace --------------------------
+# ---- Recreate the review resources, then apply ----------------------------
+# A same-sha rebuild renders the SAME names. Delete them first so every apply creates them fresh:
+# the cluster janitor reaps review resources 14 days after their creationTimestamp, and civitai
+# reports the preview expired 14 days after this build started, so the two clocks only agree if
+# a rebuild resets creation. Every rendered object is namespaced and named by REVIEW_NAME.
+kubectl delete -f /tmp/rendered.yaml --ignore-not-found=true --wait=true
 kubectl apply -f /tmp/rendered.yaml
 kubectl -n ${ns} rollout status deploy/\${REVIEW_NAME} --timeout=180s
 `;

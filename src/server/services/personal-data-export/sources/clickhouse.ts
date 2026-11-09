@@ -52,6 +52,8 @@ type ChTable = {
   description: string;
   /** Kept keys; every other key is dropped. Unset: every key except credentials and classifier. */
   keep?: RegExp;
+  /** Columns of this table never written, whatever `keep` and the name policy say. */
+  drop?: readonly string[];
   /** Fields added to every record. */
   add?: Record<string, unknown>;
   /** Read even when it means a full scan: the record is one the export must carry. */
@@ -130,6 +132,9 @@ export const CH_TABLES: ChTable[] = [
     description: 'Account activity, including sign-ins with IP address and device.',
     // Sign-ins are in scope for every request.
     required: true,
+    // Withheld by decision: on a mute or unmute it carries the moderation reason, and the row is
+    // exported to its actor. Scoped to this table; a `source` column elsewhere is decided there.
+    drop: ['source'],
   },
   {
     file: 'data/clickhouse/generation-jobs.jsonl',
@@ -197,7 +202,9 @@ function keepsColumn(table: ChTable, k: string) {
   if (!decided) keptColumns.set(table, (decided = new Map()));
   let keep = decided.get(k);
   if (keep === undefined) {
-    keep = table.keep
+    keep = table.drop?.includes(k)
+      ? false
+      : table.keep
       ? table.keep.test(k)
       : columnDecision(`ch:${table.table}`, k) === 'read' && !CH_DENY_RE.test(k);
     decided.set(k, keep);

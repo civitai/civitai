@@ -67,7 +67,8 @@ export const USER_CREATOR_BUST_WINDOW_S = 2;
  * WHAT IS LEFT TO THE TTL (≤ 60 s, on top of the edge cache's own TTL, which already applied to all of
  * these before this cache existed): stats and rank (written by jobs), the published-model count,
  * cosmetics granted or removed by event and shop paths that do not refresh the session, and
- * `excludeFromLeaderboards` (moderator-only, masked for everyone else by the handler).
+ * `excludeFromLeaderboards` and `excludeFromEventPoints` (moderator-only, masked for everyone else by
+ * the handler).
  *
  * Deliberately NOT here:
  *   - negative results (`cacheNotFound: false`): a user who does not exist yet, or a deleted one being

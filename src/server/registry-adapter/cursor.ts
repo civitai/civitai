@@ -9,15 +9,10 @@
  * to notice, but it is still in the stored set, so its absence is a delete. A cursor whose set
  * is gone answers `cursor_expired`, never a silent gap.
  *
- * The app, release and schema streams ({@link RATED_SCHEMAS}) are served per AUDIENCE
- * (`audience.ts`), as the document streams are (`doc-feed.ts`): each subscription's served set
- * holds only the entities its token may read ({@link readableBy}), so a re-rating moves an app's
- * entities out of (deletes) or into (upserts) that audience's stream, and an entity whose body
- * differs per audience (an app's `forkOf`) has a rev per audience, so it is re-sent when its
- * audience's body changes. Such a set records the audience it was
- * served to, so the same entities served to two audiences name two cursors, a cursor issued to
- * one audience is `cursor_expired` for another (checked before anything in the set is used), and
- * the states and their retention are kept per audience.
+ * The app, release and schema streams ({@link RATED_SCHEMAS}) are narrowed per audience, as
+ * `audience.ts` describes. Here that is: a served set holds what {@link readableBy} returns for
+ * the subscription's audience, records that audience's key ({@link cursorFor} digests it), and is
+ * kept under a stream key of its own per audience ({@link streamOf}).
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import { contextAudience } from '~/server/registry-adapter/audience';
@@ -114,7 +109,11 @@ export function diffServed(
 export type PollingAdapterOptions = {
   namespace: string;
   serves: readonly string[];
-  /** Every entity, grouped by schema. A throw ends the subscription with `unavailable`. */
+  /**
+   * Every entity, grouped by schema. A throw ends the subscription with `unavailable`. The sets
+   * returned are never changed afterwards, and returning the same object to every poll of one
+   * catalog read (`buildEntitiesPerRead`) lets them share the narrowing ({@link createReadableMemo}).
+   */
   read: () => Promise<EntitySets>;
   store: SnapshotStore;
   pollMs: number;
@@ -122,7 +121,39 @@ export type PollingAdapterOptions = {
   onError?: (err: unknown) => void;
 };
 
+/**
+ * Narrowed entity lists kept per read of the entity sets. A set object is never changed once
+ * read, so `(sets, schema, audience.key)` always narrows to the same list.
+ */
+export const NARROWED_KEPT_PER_READ = 32;
+
+/**
+ * {@link readableBy}, computed once per `(sets, schema, audience)`, so subscriptions polling one
+ * shared read (`buildEntitiesPerRead`) with the same audience get the same list. The lists are
+ * shared across subscriptions: callers must not change them.
+ */
+export function createReadableMemo(): (
+  sets: EntitySets,
+  schema: string,
+  audience: Audience
+) => Entity[] {
+  const memo = new WeakMap<EntitySets, Map<string, Entity[]>>();
+  return (sets, schema, audience) => {
+    let lists = memo.get(sets);
+    if (!lists) memo.set(sets, (lists = new Map()));
+    const key = `${schema}\n${audience.key}`;
+    let list = lists.get(key);
+    if (!list) {
+      if (lists.size >= NARROWED_KEPT_PER_READ) lists.clear();
+      list = readableBy(sets, schema, audience);
+      lists.set(key, list);
+    }
+    return list;
+  };
+}
+
 export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
+  const narrow = createReadableMemo();
   /** What `audience` may read of `schema` now. */
   const current = async (schema: string, audience: Audience): Promise<Entity[]> => {
     let sets: EntitySets;
@@ -132,7 +163,7 @@ export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
       opts.onError?.(err);
       throw new ProtocolError('unavailable', 'the catalog could not be read');
     }
-    return readableBy(sets, schema, audience);
+    return narrow(sets, schema, audience);
   };
 
   const save = async (set: ServedSet): Promise<string> => {

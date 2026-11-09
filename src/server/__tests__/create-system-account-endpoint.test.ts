@@ -5,6 +5,7 @@ import type * as ModeratorService from '~/server/services/moderator.service';
 import type * as UsernamePermitted from '~/server/services/username-permitted';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { OnboardingComplete } from '~/server/common/enums';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 // WEBHOOK_TOKEN comes from the worker-level env mock (src/__tests__/setup.ts).
 const TOKEN = 'test-webhook-token';
@@ -120,6 +121,7 @@ describe('POST /api/admin/create-system-account', () => {
       username: 'CivDisputes',
       emailVerified: expect.any(Date),
       excludeFromLeaderboards: true,
+      flags: UserFlag.ExcludeFromEventPoints,
       rewardsEligibility: 'Ineligible',
       meta: { systemAccount: true },
     });

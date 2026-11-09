@@ -318,6 +318,15 @@ const featureFlags = createFeatureFlags({
   siteAppealForm: { availability: ['mod'], fliptKey: 'site-appeal-form' },
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
+  // Whether the Civitai Link button shows in the top nav. Separate from `civitaiLink`, which gates
+  // who can use Link at all; this one is the user's own opt-in.
+  civitaiLinkNav: {
+    toggleable: true,
+    default: false,
+    displayName: 'Civitai Link',
+    description: 'Show the Civitai Link button in the top navigation bar.',
+    availability: ['public'],
+  },
   imageTraining: { availability: ['user'] },
   videoTraining: { availability: ['public'] },
   aiToolkitSd15: { availability: ['public'], fliptKey: 'ai-toolkit-sd15' },
@@ -373,7 +382,6 @@ const featureFlags = createFeatureFlags({
     toggleable: true,
     default: true,
     displayName: 'Training Studio',
-    badge: 'Beta',
     description: `Use the new Training Studio for LoRA training. Turn this off to go back to the classic trainer, which stops starting new runs on ${formatDate(
       CLASSIC_TRAINER_RETIRES_AT,
       'MMMM D, YYYY',
@@ -428,32 +436,11 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  // Retired (see 868m4c2dn): the `images_v6` search index is no longer fed or served. Static
-  // availability is empty so image search is off for everyone.
-  // MEASURED 2026-10-03: the index holds 0 documents and `[]` filterable attributes. That is an
-  // observation with a date on it, NOT a consequence of `retired` — 🔴 nothing holds it that way.
-  // `retired` only stops the processor writing and syncing, so no `reset` runs to configure
-  // settings ("the index is stale for as long as it is retired",
-  // `src/server/search-index/base.search-index.ts`); an index that was set up before retirement
-  // keeps the settings and documents it had. And this one is still writable from outside the
-  // processor: `src/pages/api/mod/search/images-update.ts` writes to it without consulting
-  // `retired`, as the entry note in `src/server/meilisearch/util.ts` records. So re-measure before
-  // acting on the figures above; do not infer them from the flag.
-  // 🔴 This is NO LONGER a safe no-deploy toggle, and it fails quietly rather than loudly.
-  // Re-adding an `image-search` Flipt key here and turning that flag on would point image search
-  // at that index: filtered or sorted queries error, and the rest return zero hits.
-  // Re-enabling requires REBUILDING the index first — a full reindex of ~64M documents
-  // via `imagesSearchIndex` (`/api/mod/update-index`), which saturates the search backend for
-  // several days and badly degrades search for every other index while it runs. Measured on the
-  // last full ingestion: p95 search latency ~4.6s and p99 above 10s, sustained over six days.
-  // So: treat re-enabling as a planned project, not a flag flip.
-  imageSearch: { availability: [] },
-  // Whether the Images entry appears in the search pickers/tabs at all. Split from `imageSearch`
-  // (which gates whether image search actually RUNS) so the entry could stay visible with a
-  // "temporarily disabled for maintenance" notice while the index is retired — see 868m8yafw.
-  // Now [] : the entry is hidden from the header search, the quick-search pickers and the /search
-  // tabs, and /search/images redirects to /search/models. Set to ['public'] to show the notice again.
-  imageSearchEntry: [],
+  // All of image search: the Images entry in the pickers and tabs, /search/images (redirects to
+  // models without it), /search/semantic, "more like this", and the semanticImageSearch procedures.
+  // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
+  // does, Flipt decides both ways, so keep mods in its rule.
+  imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -492,8 +479,6 @@ const featureFlags = createFeatureFlags({
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
   creatorShop: { availability: ['mod'], fliptKey: 'creator-shop' },
-  // The /search/semantic page and its procedures. Moderators only: no Flipt flag exists for it.
-  semanticImageSearch: { availability: ['mod'] },
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
@@ -535,8 +520,8 @@ const featureFlags = createFeatureFlags({
   // testers while stickers themselves open up. Required *in addition to*
   // `stickers`, so placement cannot outlive the feature it belongs to.
   stickerPlacement: { availability: ['mod'], fliptKey: 'sticker-placement' },
-  // Recording a sticker's movement over a video. Gates sending a track on create only;
-  // reads are not gated.
+  // Stickers that follow a video's time. Gates sending a track on create, reading tracks
+  // (`getStickerTracks`) and the pin control. Without it a track sticker draws at its `data` pose.
   stickerVideoTracks: { availability: ['mod'], fliptKey: 'sticker-video-tracks' },
   // The sticker book profile tab. Its own flag rather than riding `stickers`:
   // the tab publishes what a creator owns and what their work has collected on a
@@ -570,6 +555,9 @@ const featureFlags = createFeatureFlags({
   birthday2026: { availability: ['mod'], fliptKey: 'birthday-2026' },
   // Read through useHatTurfFeed, which also checks the event is playable.
   hatTurfFeedCard: { availability: ['mod'], fliptKey: 'hat-turf-feed-card' },
+  // The Hat Turf feed sorts and Show filters; checked TOGETHER with `hatTurfFeedCard`, so testers can
+  // have them before every player does.
+  hatTurfFeedSorts: { availability: ['mod'], fliptKey: 'hat-turf-feed-sorts' },
   // Hat Turf on the image detail page; read through useHatTurfDetail, which also checks the event
   // is playable and the turf is not off. Separate from the feed flag so each can roll out alone.
   hatTurfImageDetail: { availability: ['mod'], fliptKey: 'birthday2026-turf-image-detail' },
@@ -688,6 +676,8 @@ const featureFlags = createFeatureFlags({
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
   giftMemberships: { availability: ['public'], fliptKey: 'gift-memberships' },
+  // Dark until Flipt turns it on: docs/features/model-gift-links.md.
+  modelGiftLinks: { availability: [], fliptKey: 'model-gift-links' },
   buzzMemberships: { availability: ['mod'], fliptKey: 'buzz-memberships' },
   coinbasePayments: [],
   emerchantpayPayments: [],

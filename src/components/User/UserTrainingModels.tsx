@@ -16,6 +16,7 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
+import { TRAINING_REVIEW_COPY } from '@civitai/shared/training-review';
 import { HoverCard, Popover, Tooltip } from '~/components/MantineOverlays';
 import { useDebouncedValue, useClipboard, useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -64,7 +65,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { isAir, splitUppercase } from '~/utils/string-helpers';
 import { getAirModelLink } from '~/shared/utils/air';
-import { trainingModelInfo } from '~/utils/training';
+import { isHeldForTrainingReview, trainingModelInfo } from '~/utils/training';
 import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -110,6 +111,14 @@ type TrainingModelRow = MyTrainingModelGetAll['items'][number] & {
   refundInfo: RefundInfo | null;
   costInfo: CostInfo | null;
 };
+
+/** How a training status reads to its owner. */
+export const trainingStatusLabel = (status: TrainingStatus, heldForReview = false) =>
+  status === TrainingStatus.InReview
+    ? 'Ready'
+    : status === TrainingStatus.Paused && heldForReview
+    ? TRAINING_REVIEW_COPY.pendingLabel
+    : splitUppercase(status);
 
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -470,8 +479,12 @@ export default function UserTrainingModels() {
                 <HoverCard.Target>
                   <Badge color={trainingStatusFields[mv.trainingStatus]?.color ?? 'gray'}>
                     <Group gap={6} wrap="nowrap">
-                      {splitUppercase(
-                        mv.trainingStatus === TrainingStatus.InReview ? 'Ready' : mv.trainingStatus
+                      {trainingStatusLabel(
+                        mv.trainingStatus,
+                        isHeldForTrainingReview(
+                          mv.trainingStatus,
+                          thisFileMetadata?.trainingResults
+                        )
                       )}
                       {isRunning && <Loader size={12} />}
                     </Group>
@@ -889,7 +902,7 @@ export default function UserTrainingModels() {
               {Object.values(TrainingStatus).map((s) => (
                 <Checkbox
                   key={s}
-                  label={s === TrainingStatus.InReview ? 'Ready' : splitUppercase(s)}
+                  label={trainingStatusLabel(s)}
                   checked={statusFilter.includes(s)}
                   onChange={(e) => {
                     if (e.currentTarget.checked) {

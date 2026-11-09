@@ -1948,6 +1948,10 @@ export type BoxOpening = {
    * granted | refunded (text + CHECK)
    */
   rewardStatus: string;
+  /**
+   * Drawn from a pack's guaranteed tiers only.
+   */
+  guaranteed: Generated<boolean>;
   createdAt: Generated<Timestamp>;
 };
 export type BoxRevision = {
@@ -4328,6 +4332,34 @@ export type ModelVersionExploration = {
   name: string;
   prompt: string;
   modelVersionId: number;
+};
+export type ModelVersionGiftLink = {
+  id: Generated<number>;
+  modelVersionId: number;
+  createdById: number;
+  codeHash: string;
+  codeHint: string;
+  label: string | null;
+  batchId: string | null;
+  /**
+   * null = uncapped. CHECKs (> 0, redemptionCount <= maxRedemptions) live only in the migration.
+   */
+  maxRedemptions: number | null;
+  redemptionCount: Generated<number>;
+  expiresAt: Timestamp | null;
+  revokedAt: Timestamp | null;
+  revokedById: number | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ModelVersionGiftRedemption = {
+  giftLinkId: number;
+  userId: number;
+  claimedAt: Generated<Timestamp>;
+  /**
+   * Set when the link's owner or a moderator removed this claimer's gifted access.
+   */
+  revokedAt: Timestamp | null;
+  revokedById: number | null;
 };
 export type ModelVersionMetric = {
   modelVersionId: number;
@@ -6807,6 +6839,8 @@ export type DB = {
   ModelVersion: ModelVersion;
   ModelVersionEngagement: ModelVersionEngagement;
   ModelVersionExploration: ModelVersionExploration;
+  ModelVersionGiftLink: ModelVersionGiftLink;
+  ModelVersionGiftRedemption: ModelVersionGiftRedemption;
   ModelVersionMetric: ModelVersionMetric;
   ModelVersionMonetization: ModelVersionMonetization;
   ModelVersionSale: ModelVersionSale;

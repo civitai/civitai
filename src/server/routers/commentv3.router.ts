@@ -16,7 +16,7 @@ import {
   toggleThreadMuteHandler,
 } from '~/server/controllers/commentv3.controller';
 import { rateLimit } from '~/server/middleware.trpc';
-import { commentRateLimits } from '~/server/schema/comment.schema';
+import { COMMENT_V3_RATE_LIMIT_KEY, commentRateLimits } from '~/server/schema/comment.schema';
 import {
   commentV3IdSchema,
   getCommentRepliesSchema,
@@ -49,12 +49,12 @@ export const commentv3Router = router({
   create: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(createCommentV3Schema)
-    .use(rateLimit(commentRateLimits, undefined, { sharedKey: 'commentv3:write' }))
+    .use(rateLimit(commentRateLimits, undefined, { sharedKey: COMMENT_V3_RATE_LIMIT_KEY }))
     .mutation(createCommentV3Handler),
   update: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(updateCommentV3Schema)
-    .use(rateLimit(commentRateLimits, undefined, { sharedKey: 'commentv3:write' }))
+    .use(rateLimit(commentRateLimits, undefined, { sharedKey: COMMENT_V3_RATE_LIMIT_KEY }))
     .mutation(updateCommentV3Handler),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })

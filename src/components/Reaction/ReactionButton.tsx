@@ -6,6 +6,9 @@ import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { trpc } from '~/utils/trpc';
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
+import { useTeamColor } from '~/components/Events/events.utils';
+import { popAnchor, showPointPop } from '~/components/HatTurf/PointPop';
 
 /**NOTES**
  Why use zustand?
@@ -120,9 +123,20 @@ export function ReactionButton({
   };
   // `isPending` lands a render late, so two clicks in one frame both passed it.
   const inFlight = useRef(false);
-  const { mutate, isPending: isLoading } = trpc.reaction.toggle.useMutation({
-    onSuccess(result, variables) {
+  const showEventCosmetics = useShowEventCosmetics();
+  const teamColor = useTeamColor();
+  // The button pressed, and where it was then, for a pop once the answer lands.
+  const pressed = useRef<{ el: Element; at: { x: number; y: number } } | undefined>(undefined);
+  const { mutate, isPending: isLoading } = trpc.reaction.toggleWithPoints.useMutation({
+    onSuccess({ result, eventPoints }, variables) {
       settle(variables, result);
+      // Only what the reaction earned the viewer's own team; the server drops other teams' grants.
+      if (!showEventCosmetics || result !== 'created' || !eventPoints?.length) return;
+      const from = pressed.current;
+      if (!from) return;
+      const at = from.el.isConnected ? popAnchor(from.el) : from.at;
+      for (const { team, points } of eventPoints)
+        showPointPop({ points, team, color: teamColor(team) }, at);
     },
     onError(_error, variables) {
       settle(variables);
@@ -137,6 +151,7 @@ export function ReactionButton({
     e.stopPropagation();
     if (inFlight.current) return;
     inFlight.current = true;
+    pressed.current = { el: e.currentTarget, at: popAnchor(e.currentTarget) };
     // Read the store, not the rendered value: a sibling button for the same entity may have toggled
     // in this same frame.
     const previous = useStore.getState().reactions[key]?.[reaction] ?? hasReactedInitial;
@@ -144,7 +159,8 @@ export function ReactionButton({
     snapshot.current = { previous, answers: answers.get(k) ?? 0 };
     pending.set(k, (pending.get(k) ?? 0) + 1);
     toggleReaction({ entityType, entityId, reaction, value: !previous });
-    mutate({ entityId, entityType, reaction });
+    // With event cosmetics off no pop shows, so the answer need not wait for the points.
+    mutate({ entityId, entityType, reaction, waitForPoints: showEventCosmetics });
   };
 
   const canClick = !!currentUser && !readonly && !isLoading;

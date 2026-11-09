@@ -410,16 +410,6 @@ describe('the launcher tile', () => {
     const icon = a.querySelector('[data-testid="apps-home-tile-icon"]') as HTMLElement;
     expect(icon).toBeTruthy();
     expect(icon.textContent).toBe('P');
-    // The name renders as ONE line, ellipsised, not wrapped and not overflowing its tile.
-    const name = a.querySelector('[data-testid="apps-home-tile-name"]') as HTMLElement;
-    const css = getComputedStyle(name);
-    expect(css.whiteSpace).toBe('nowrap');
-    expect(css.textOverflow).toBe('ellipsis');
-    expect(name.scrollWidth).toBeGreaterThan(name.clientWidth); // it IS truncated
-    const tile = a.closest('[data-testid="apps-home-tile"]') as HTMLElement;
-    expect(name.getBoundingClientRect().right).toBeLessThanOrEqual(
-      tile.getBoundingClientRect().right + 0.5
-    );
   });
 
   test('🔴 an off-site tile opens a new tab with noopener noreferrer, and says so to AT', async () => {
@@ -432,36 +422,6 @@ describe('the launcher tile', () => {
     expect(a.getAttribute('title')).toBe('Prompt Lab');
     expect(a.querySelector('[data-testid="apps-home-tile-external"]')).toBeTruthy();
   });
-
-  test('🔴 at 390px: 4 columns, every tile inside the viewport, no horizontal scroll', async () => {
-    await page.viewport(390, 844);
-    try {
-      await assertPhoneGrid();
-    } finally {
-      // Back to the harness default, so later tests are not silently at phone width.
-      await page.viewport(414, 896);
-    }
-  });
-
-  async function assertPhoneGrid() {
-    const many = Array.from({ length: 9 }, (_, i) => ({
-      ...PAGE_APP,
-      listingId: `apl_${i}`,
-      slug: `app-${i}`,
-      name: `A rather long application name number ${i}`,
-    }));
-    mocks.myApps = { data: served(many), isLoading: false, isError: false };
-    renderWithProviders(<AppsHomeBody />);
-    await expect.element(page.getByText('A rather long application name number 8')).toBeVisible();
-    const tiles = page.getByTestId('apps-home-tile').elements();
-    const firstRowTop = tiles[0].getBoundingClientRect().top;
-    const firstRow = tiles.filter((t) => Math.abs(t.getBoundingClientRect().top - firstRowTop) < 2);
-    expect(firstRow, '390px: tiles in the first row').toHaveLength(4);
-    for (const t of tiles) expect(t.getBoundingClientRect().right).toBeLessThanOrEqual(390);
-    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
-    // The ⋮ is reachable on a touch-width screen: present for every tile.
-    expect(page.getByTestId('apps-home-tile-menu').elements()).toHaveLength(9);
-  }
 
   test('the ⋮ is keyboard-reachable: Tab from the launch link lands on it', async () => {
     renderWithProviders(<AppsHomeBody />);

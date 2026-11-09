@@ -644,3 +644,23 @@ describe('reportCsamImages and images set aside from the CSAM queue', () => {
     });
   });
 });
+
+// Scan Labels: a csam-realistic vote can come after a 2-of-3 block already acted. The hold it sends
+// is this report, and it must still take the plain-blocked image out of the purge.
+describe('reportCsamImages on an image a plain block already removed', () => {
+  const moderator = { id: 2, isModerator: true } as never;
+
+  it('holds it and the blocked-image purge keeps it', async () => {
+    const { reviewHeldBlockedImagesSql } = await import('~/server/jobs/image-ingestion');
+    // The stand-in keeps ingestion as text; the purge's query casts to the enum's name.
+    await holder.db.exec(`CREATE DOMAIN "ImageIngestionStatus" AS text`);
+    const held = async () =>
+      (await run(reviewHeldBlockedImagesSql)).rows.map((r) => (r as { id: number }).id);
+    expect(await held()).not.toContain(DECIDED);
+
+    await reportCsamImages({ imageIds: [DECIDED], user: moderator });
+
+    expect(await imageRow(DECIDED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+    expect(await held()).toContain(DECIDED);
+  });
+});

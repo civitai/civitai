@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
 import {
@@ -188,6 +189,7 @@ export default PublicEndpoint(
         user: session?.user,
         direct: shouldResolveDirect(req),
         attribution: { caller: 'download-route', actor: resolveActorFor(session?.user) },
+        redCapable: isRedCapableHost(req.headers.host),
       });
 
       if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');

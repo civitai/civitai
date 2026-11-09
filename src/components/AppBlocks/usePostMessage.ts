@@ -89,6 +89,14 @@ interface UsePostMessageOptions {
     outcome: BridgeMessageOutcome;
   }) => void;
   /**
+   * Called once per inbound message from OUR block — after the origin, source-window and shape
+   * checks, before any drop path — so it counts what the block sent, whatever happened to it.
+   * Feeds `App_Session.messagesToHost`. Not `onOutcome`: a NACK reports a second outcome for a
+   * message already counted, so outcomes are not one per message. Read through a ref, so an
+   * inline callback does not re-bind the listener; a throw is swallowed.
+   */
+  onInbound?: () => void;
+  /**
    * Opt-in opaque-origin transport for sandboxed frames WITHOUT
    * `allow-same-origin` (unverified/external blocks). Such a frame runs at an
    * opaque origin: `event.origin === 'null'` on everything it sends, and a
@@ -294,7 +302,10 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
     host,
     appBlockId,
     onOutcome = recordBridgeMessage,
+    onInbound,
   } = opts;
+  const onInboundRef = useRef(onInbound);
+  onInboundRef.current = onInbound;
   const handlersRef = useRef<Map<string, Set<(payload: unknown) => void>>>(new Map());
   const recentTimestampsRef = useRef<number[]>([]);
   const seenRequestIdsRef = useRef<Map<string, number>>(new Map());
@@ -367,6 +378,12 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       if (event.source !== iframeRef.current?.contentWindow) return;
       const data = event.data as IncomingMessage | null;
       if (!data || typeof data !== 'object' || typeof data.type !== 'string') return;
+
+      try {
+        onInboundRef.current?.();
+      } catch {
+        // swallow — observability must not affect the bridge
+      }
 
       const now = Date.now();
 

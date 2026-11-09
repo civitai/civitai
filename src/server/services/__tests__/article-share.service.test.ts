@@ -339,6 +339,24 @@ describe('getArticleByShareToken: cover and viewer', () => {
     expect(result.status === 'ok' && !!result.article.coverImage).toBe(shown);
   });
 
+  // The banner stands in for a missing cover, under the same servable rule.
+  it.each([
+    ['not scanned', { ingestion: 'Pending' }, undefined],
+    ['awaiting review', { needsReview: 'minor' }, undefined],
+    ['scanned and clear', {}, 6],
+  ])('with no cover, shows a banner that is %s', async (_, over, shownId) => {
+    articles({ coverImage: null, bannerImage: cover({ id: 6, ...over }) });
+    const result = await read();
+    expect(result.status).toBe('ok');
+    expect(result.status === 'ok' && result.article.coverImage?.id).toBe(shownId);
+  });
+
+  it('shows the cover over the banner', async () => {
+    articles({ coverImage: cover({}), bannerImage: cover({ id: 6 }) });
+    const result = await read();
+    expect(result.status === 'ok' && result.article.coverImage?.id).toBe(5);
+  });
+
   it('refuses a signed-in viewer the author has blocked', async () => {
     vi.mocked(amIBlockedByUser).mockResolvedValueOnce(true);
     expect(await read(STRANGER)).toEqual({ status: 'unavailable' });

@@ -33,6 +33,7 @@ const h = vi.hoisted(() => ({
   follows: vi.fn(),
   addons: vi.fn(),
   navBanners: vi.fn(),
+  eventSeeds: vi.fn(),
   siteAlerts: vi.fn(),
   session: vi.fn(),
   tos: vi.fn(async (_: { domainColor: string }) => undefined as unknown),
@@ -79,6 +80,8 @@ vi.mock('~/server/services/announcement.service', async (importOriginal) => ({
 }));
 // Its only export. Loading the real module pulls the whole event engine into this graph.
 vi.mock('~/server/services/nav-banner.service', () => ({ getNavBanners: h.navBanners }));
+// The same, for the event seeds.
+vi.mock('~/server/services/event-seeds.service', () => ({ getEventSeeds: h.eventSeeds }));
 vi.mock('~/server/services/site-alert.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SiteAlertService>()),
   getActiveSiteAlerts: h.siteAlerts,
@@ -115,6 +118,12 @@ const invoke = (headers: Record<string, string> = { host: 'civitai.com' }) => {
   return { done, json };
 };
 
+// Reset per test: `clearAllMocks` keeps an implementation, so one test's never-settling seeds
+// would otherwise park every later test that awaits the bootstrap without advancing the clock.
+beforeEach(() => {
+  h.eventSeeds.mockReset().mockResolvedValue([]);
+});
+
 describe('/api/user/settings read deadlines', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -125,6 +134,7 @@ describe('/api/user/settings read deadlines', () => {
     h.follows.mockResolvedValue([7]);
     h.addons.mockResolvedValue([{ id: 'a' }]);
     h.navBanners.mockResolvedValue([{ id: 'event:e1' }]);
+    h.eventSeeds.mockResolvedValue([{ event: 'e1', access: 'open' }]);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -141,6 +151,7 @@ describe('/api/user/settings read deadlines', () => {
     expect(body.announcements).toEqual([{ id: 1 }]);
     expect(body.liveNow).toBe(true);
     expect(body.navBanners).toEqual([{ id: 'event:e1' }]);
+    expect(body.eventSeeds).toEqual([{ event: 'e1', access: 'open' }]);
   });
 
   it('still answers when a dependency never replies, and seeds the SAFE settings default', async () => {
@@ -187,6 +198,7 @@ describe('/api/user/settings read deadlines', () => {
   it('degrades each hanging member independently', async () => {
     h.announcements.mockReturnValue(new Promise(() => undefined));
     h.liveNow.mockReturnValue(new Promise(() => undefined));
+    h.eventSeeds.mockReturnValue(new Promise(() => undefined));
     const { json } = invoke();
     await vi.runAllTimersAsync();
 
@@ -194,6 +206,8 @@ describe('/api/user/settings read deadlines', () => {
     const body = json.mock.calls[0][0];
     expect(body.announcements).toBeUndefined();
     expect(body.liveNow).toBe(false);
+    // No seeds: the client fetches the event queries for itself, as before.
+    expect(body.eventSeeds).toBeUndefined();
     // The member that did reply is unaffected.
     expect(body.settings).toEqual({ showNsfw: true });
   });
@@ -236,14 +250,17 @@ describe('/api/user/settings nav banners', () => {
     await vi.runAllTimersAsync();
     await done;
     expect(h.navBanners).toHaveBeenCalledTimes(1);
-    expect(h.navBanners.mock.calls[0]).toEqual([{ viewer: { id: 42, isModerator: true } }]);
+    // Plus the request's own cosmetic-read memo, which carries nothing from the request.
+    expect(h.navBanners.mock.calls[0]).toEqual([
+      { viewer: { id: 42, isModerator: true }, reads: expect.any(Map) },
+    ]);
   });
 
   it('resolves them as signed out when there is no session', async () => {
     const { done } = invoke();
     await vi.runAllTimersAsync();
     await done;
-    expect(h.navBanners.mock.calls[0]).toEqual([{ viewer: undefined }]);
+    expect(h.navBanners.mock.calls[0]).toEqual([{ viewer: undefined, reads: expect.any(Map) }]);
   });
 });
 
@@ -310,6 +327,7 @@ describe('settings bootstrap during a server render', () => {
       liveNow: true,
       navBanners: [],
       siteAlerts: { version: 7, alerts: [] },
+      eventSeeds: [],
       session: { user: { id: 42, username: 'x' } },
     });
   });

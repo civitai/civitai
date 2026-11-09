@@ -28,7 +28,9 @@ export type ModeratorGrantId =
   | 'user.ban'
   | 'user.strike'
   | 'user.message.asCivitai'
-  | 'labelStore.submitPrediction';
+  | 'labelStore.submitPrediction'
+  | 'apps.buzz.refund'
+  | 'apps.buzz.refund.large';
 
 export async function hasModeratorGrant(
   user: { roles?: string[] },

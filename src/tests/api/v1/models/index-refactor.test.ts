@@ -40,6 +40,10 @@ vi.mock('~/server/utils/region-blocking', () => ({
   isRegionRestricted: mockIsRegionRestricted,
 }));
 
+vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  isRedCapableHost: (host?: string | null) => host === 'civitai.red',
+}));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   // Passthrough: invoke handler with no session user (the anon public path).
   MixedAuthEndpoint: (handler: any) => (req: any, res: any) => handler(req, res, undefined),
@@ -87,11 +91,11 @@ beforeAll(async () => {
   handler = mod.default as any;
 }, 120000);
 
-async function invoke(query: Record<string, unknown>) {
+async function invoke(query: Record<string, unknown>, host = 'civitai.com') {
   const req = {
     method: 'GET',
     query,
-    headers: { host: 'civitai.com' },
+    headers: { host },
     url: '/api/v1/models',
   } as unknown as NextApiRequest;
   const res = fakeRes();
@@ -114,6 +118,12 @@ describe('/api/v1/models refactor — public maturity contract preserved', () =>
     const [, ctx] = mockRunModelSearch.mock.calls[0];
     expect(ctx.browsingLevel).toBe(publicBrowsingLevelsFlag);
     expect(ctx.nsfwImagePassthrough).toBe(false);
+  });
+
+  it('tells the search whether the host is red-capable, which decides the datasets it lists', async () => {
+    await invoke({}, 'civitai.com');
+    await invoke({}, 'civitai.red');
+    expect(mockRunModelSearch.mock.calls.map(([, ctx]) => ctx.redCapable)).toEqual([false, true]);
   });
 
   it('nsfw=true → allBrowsingLevelsFlag + nsfwImagePassthrough true (legacy widening kept)', async () => {

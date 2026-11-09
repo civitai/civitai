@@ -117,7 +117,8 @@ const DERIVED_BASES: Record<string, string> = {
   // `remix-app.router.ts` `admin.*`: mod-only edits of the remix app rows, and a mod's own test run.
   remixAppAdminProcedure: 'moderatorProcedure',
   remixAppProcedure: 'protectedProcedure',
-  semanticSearchProcedure: 'protectedProcedure',
+  // `semantic-image-search.router.ts`: read-only image search, open to signed-out visitors.
+  semanticSearchProcedure: 'publicProcedure',
   servicesGuardedProcedure: 'guardedProcedure',
   servicesProcedure: 'protectedProcedure',
   sharedStorageProcedure: 'publicProcedure',

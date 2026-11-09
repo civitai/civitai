@@ -2214,6 +2214,8 @@ export const REDIS_SYS_KEYS = {
   FEEDBACK: {
     // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
     RATE_LIMIT: 'system:feedback:rate-limit',
+    // Fixed-window count of HQ filing attempts per reporter — `system:feedback:hq-filing:${userId}`.
+    HQ_FILING: 'system:feedback:hq-filing',
   },
   PRICING: {
     // Hash of userId → extra licensing-fee slots (see FEE_ALLOWANCE_BOOST_* in @civitai/buzz).
@@ -2310,6 +2312,16 @@ export const REDIS_SYS_KEYS = {
     // Per-API-key (fallback per-IP) rate-limit counter for the token-authed bundle-submit
     // endpoint (`/api/v1/blocks/submit-version`). On sysRedis like the retool limiter + BUZZ_CAP.
     SUBMIT_RATE_LIMIT: 'system:blocks:submit-rate-limit',
+    // Per-slug counter for git pushes recorded for review, and per-user for the web manifest
+    // editor's commits. Same `SET NX EX` + `INCR` shape as SUBMIT_RATE_LIMIT, on sysRedis.
+    PUSH_REVIEW_RATE_LIMIT: 'system:blocks:push-review-rate-limit',
+    // Review previews started automatically at submit, per submitter per UTC day
+    // (`system:blocks:review-auto-builds:${userId}:${YYYY-MM-DD}`). Past the budget the submit
+    // still succeeds and the preview waits for a moderator to start it.
+    REVIEW_AUTO_BUILDS: 'system:blocks:review-auto-builds',
+    // New-submission moderator alerts per submitter per UTC hour
+    // (`system:blocks:review-submission-alerts:${userId}:${YYYY-MM-DDTHH}`).
+    REVIEW_SUBMISSION_ALERTS: 'system:blocks:review-submission-alerts',
     /**
      * Per-user (fallback per-IP) rate-limit counter for the dev/preview
      * block-token mint (`/api/v1/blocks/dev-token`). Same `SET NX EX` + `INCR`
@@ -3259,6 +3271,9 @@ const REDIS_KEYS_UNPREFIXED = {
     LIMIT: {
       BASE: 'packed:trpc:limit',
       KEYS: 'packed:trpc:limit:keys',
+      // `<userId>` hashes of abuse limits the user is refused by now: field = limiter key,
+      // value = retry time (epoch ms), each field expiring at that time.
+      ACTIVE: 'trpc:limit:active',
     },
     // `<bucket>:<userId>` sorted sets of in-flight request slots (`inFlightLimit`).
     IN_FLIGHT: 'trpc:in-flight',

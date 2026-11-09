@@ -275,6 +275,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // segment. DEFAULT-OFF — absent or Flipt unreachable holds nothing. See
   // `storage-migration-run.service.ts`.
   APP_BLOCKS_STORAGE_MIGRATION_HOLD = 'app-blocks-storage-migration-hold',
+  // Who may DECLARE an App Storage permission hook (`storage.collections.<c>.hook`): checked at
+  // submit, on the git-push path and at approve, for a hook that is new or changed against the
+  // approved manifest, on the actor who introduced it (the submitter, or the pusher on the git-push
+  // path). EVALUATED PER AUTHOR — entityId = the user id, context = `buildFliptContext(user)` — so
+  // ramp it with a cohort segment. DEFAULT-OFF: absent or Flipt unreachable refuses every hook
+  // declaration. 🔴 It gates declaring a hook and nothing else: no flag may skip a hook an approved
+  // version declares (that would fail open). See `storage-hooks.ts`.
+  APP_BLOCKS_STORAGE_HOOKS = 'app-blocks-storage-hooks',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
   // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
   TEXT_SCAN = 'text-scan',
@@ -416,6 +424,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // through `coverageAudience`, which is where it meets the tier.
   // docs/features/paid-model-loading-members-gate.md
   GENERATION_LOADING_OPEN_TO_ALL = 'generation-loading-open-to-all',
+  // On: a non-member may load a cold checkpoint by paying for a Download Boost, if the generator
+  // opts in (`acceptBoostRequired`). Off, unknown or unreachable: the members gate holds. Entity is
+  // the user id; read through `coverageAudience`.
+  GENERATION_LOADING_BOOST_FOR_FREE = 'generation-loading-boost-for-free',
   // On: generateFromGraph / whatIfFromGraph refuse input urls on external hosts. Off (and unknown
   // or unreachable): they are allowed and counted in generation_input_url_refusals_total{mode="log"}.
   GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS = 'generation-input-refuse-external-hosts',
@@ -446,6 +458,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every mint and every link fetch. The key
   // must exist in flag state (enabled: false) before this code serves traffic.
   DOWNLOAD_LINKS_ENABLED = 'download-links-enabled',
+  // The standalone Training Studio's closed-beta gate (apps/training-studio/src/lib/server/flipt.ts),
+  // read here for its main-app endpoints. Evaluate with the user's Flipt context, or a segmented
+  // flag matches nobody.
+  TRAINING_STUDIO = 'trainingStudio',
+  // Gates sending the reporter's page capture to HQ.
+  FEEDBACK_HQ_SCREENSHOT = 'feedback-hq-screenshot',
+  // Gates storing a feedback report's page capture as a scanned image owned by the capture account.
+  // Evaluated with the reporter's id.
+  FEEDBACK_CAPTURE_SCAN = 'feedback-capture-scan',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

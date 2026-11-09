@@ -28,6 +28,8 @@ import {
 } from '~/server/services/hot-reads-6.reads';
 import type { DownloadFilesWhere } from '@civitai/db-queries/hot-reads-6';
 import { hasEntityAccess } from './common.service';
+import { trainingDataShareRestricted } from './training-data-restricted.service';
+import { trainingDataServableOnHost } from '~/shared/utils/training-data-visibility';
 import {
   getVersionEarlyAccess,
   isModelArchived,
@@ -201,6 +203,7 @@ export const getFileForModelVersion = async ({
   fileId,
   direct,
   attribution,
+  redCapable,
 }: {
   modelVersionId: number;
   type?: ModelFileType;
@@ -227,6 +230,10 @@ export const getFileForModelVersion = async ({
    * resolver for attribution only. Required so every caller names itself.
    */
   attribution: ResolveAttribution;
+  /** Whether the request's host serves mature content (`isRedCapableHost`). When false, a
+   *  Training Data file rated above PG13 or not fully rated is not-found for anyone but its owner
+   *  or a moderator. */
+  redCapable: boolean;
 }): Promise<ModelVersionFileResult> => {
   // The version and its model. The read's inner join drops a version whose model row was
   // hard-deleted (an orphaned foreign key), so that version is `not-found` (404), not a 500.
@@ -350,6 +357,23 @@ export const getFileForModelVersion = async ({
     }
   }
   if (!file) return { status: 'not-found' };
+  if (
+    file.type === 'Training Data' &&
+    !isOwner &&
+    !isMod &&
+    !trainingDataServableOnHost(
+      file.metadata as { nsfwLevel?: unknown; fullyRated?: unknown } | null,
+      redCapable
+    )
+  )
+    return { status: 'not-found' };
+  if (
+    file.type === 'Training Data' &&
+    !isOwner &&
+    !isMod &&
+    (await trainingDataShareRestricted(dbRead, modelVersionId))
+  )
+    return { status: 'not-found' };
   if (!isMod && hasFailedScan(file)) return { status: 'failed-scan' };
 
   // Named against every file on the version, not only the files this request could pick from:

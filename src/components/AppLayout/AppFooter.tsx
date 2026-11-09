@@ -3,7 +3,7 @@ import { useLocalStorage } from '@mantine/hooks';
 import { IconArrowUp } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRef, useState } from 'react';
-import { AssistantButton } from '~/components/Assistant/AssistantButton';
+import { FloatingHelpMenu } from '~/components/Assistant/FloatingHelpMenu';
 import { ManageConsentFooterLink } from '~/components/Consent/ManageConsentFooterLink';
 import { PrivacyPreferencesFooterLink } from '~/components/Consent/PrivacyPreferencesFooterLink';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -188,7 +188,7 @@ export function AppFooter() {
               <IconArrowUp size={20} stroke={2.5} />
             </Button>
           )}
-          <AssistantButton />
+          <FloatingHelpMenu />
         </div>
       </div>
       {/* THIS is the box that carries the background, so this is the box that

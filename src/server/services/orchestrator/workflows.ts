@@ -135,7 +135,12 @@ export async function queryWorkflows({
   fromDate,
   toDate,
   ...query
-}: z.output<typeof workflowQuerySchema> & { token: string; hideMatureContent: boolean }) {
+}: z.output<typeof workflowQuerySchema> & {
+  token: string;
+  hideMatureContent: boolean;
+  /** Workflows carrying any of these tags are left out. Server-set only, never client input. */
+  excludeTags?: string[];
+}) {
   const client = createOrchestratorClient(token);
 
   // Additive read instrumentation: time ONLY the orchestrator client network call (not the whole handler) and

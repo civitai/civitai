@@ -224,6 +224,7 @@ describe('the resolution write', () => {
       report: REPORT,
       server: {
         ...SERVER,
+        changedAt: NOW,
         resolution: {
           fixedIn: { component: 'cli', version: '2.4.0' },
           publicNote: 'Fixed in 2.4.0 — update the CLI.',
@@ -255,6 +256,7 @@ describe('the resolution write', () => {
     expect(result).toEqual({ success: true, triaged: id });
     expect(((await contextOf(id)) as { server: unknown }).server).toEqual({
       ...SERVER,
+      changedAt: NOW,
       resolution: { fixedIn: { component: 'docs', version: '' }, at: NOW, byId: moderatorId },
     });
   });
@@ -412,7 +414,8 @@ describe('the resolution write', () => {
       })
     );
     expect(result).toEqual({ success: true, triaged: id });
-    expect(await contextOf(id)).toEqual({ report: REPORT, server: SERVER });
+    // The change feed's stamp is the one key a clear adds: see `stampPlatformChange`.
+    expect(await contextOf(id)).toEqual({ report: REPORT, server: { ...SERVER, changedAt: NOW } });
   });
 
   /**
@@ -462,7 +465,8 @@ describe('the resolution write', () => {
       })
     );
     expect(result).toEqual({ success: true, triaged: id });
-    expect(await contextOf(id)).toEqual({ report: REPORT, server: SERVER });
+    // The change feed's stamp is the one key a clear adds: see `stampPlatformChange`.
+    expect(await contextOf(id)).toEqual({ report: REPORT, server: { ...SERVER, changedAt: NOW } });
   });
 
   it('refuses a resolution form that does not say which resolution it was editing', async () => {
@@ -550,7 +554,7 @@ describe('status changes on apps-platform rows stamp handledAt', () => {
     expect(row.status).toBe('dismissed');
     expect(row.handledById).toBe(moderatorId);
     expect(row.handledAt).not.toBeNull();
-    expect(await contextOf(id)).toEqual({ report: REPORT, server: SERVER });
+    expect(await contextOf(id)).toEqual({ report: REPORT, server: { ...SERVER, changedAt: NOW } });
   });
 
   it('on the bulk bar, which never writes a resolution even when one is posted', async () => {
@@ -572,7 +576,26 @@ describe('status changes on apps-platform rows stamp handledAt', () => {
       expect(row.status).toBe('dismissed');
       expect(row.handledById).toBe(moderatorId);
       expect(row.handledAt).not.toBeNull();
-      expect(await contextOf(id)).toEqual({ report: REPORT, server: SERVER });
+      expect(await contextOf(id)).toEqual({
+        report: REPORT,
+        server: { ...SERVER, changedAt: NOW },
+      });
+    }
+  });
+
+  it('stamps no other area, even one whose context has a `server` object', async () => {
+    const context = { path: '/models', server: { ...SERVER } };
+    const one = await seedFeedback(db, { userId: reporterId, area: 'site-bug-report', context });
+    const many = await seedFeedback(db, { userId: reporterId, area: 'site-bug-report', context });
+    expect(
+      await triageAction(event({ id: String(one), expectedStatus: 'new', status: 'dismissed' }))
+    ).toEqual({ success: true, triaged: one });
+    expect(
+      await bulkTriageAction(event({ status: 'dismissed', rows: `${many}:new` }))
+    ).toMatchObject({ success: true });
+    for (const id of [one, many]) {
+      expect((await readFeedback(db, id)).status).toBe('dismissed');
+      expect(await contextOf(id)).toEqual(context);
     }
   });
 });

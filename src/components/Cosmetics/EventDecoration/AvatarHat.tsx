@@ -1,3 +1,4 @@
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getAvatarHatLayout } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
@@ -16,7 +17,9 @@ export const avatarHatOverhang = (hat: AvatarShowcaseHat, size: number) =>
 
 /** A showcase hat on a round avatar `size` px across. Draws over the avatar and its frame. */
 export function AvatarHat({ hat, size }: { hat: AvatarShowcaseHat; size: number }) {
+  const shown = useShowEventCosmetics();
   const layout = getAvatarHatLayout(hat.fit, size);
+  if (!shown) return null;
   return (
     <EdgeMedia
       src={hat.url}

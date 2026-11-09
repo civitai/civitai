@@ -396,7 +396,7 @@ describe('publishing a draft that has a share link', () => {
     await saveAs(ArticleStatus.Published);
     const published = { ...draft, status: ArticleStatus.Published, publishedAt: new Date() };
     dbMock.dbRead.article.findUnique.mockResolvedValue(published as never);
-    dbMock.dbWrite.article.findUnique.mockResolvedValue(published as never);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([published] as never);
     await unpublishArticleById({ id: ARTICLE, userId: AUTHOR });
 
     // Everything else the read requires is in place, so only the link can refuse it.
@@ -477,8 +477,7 @@ describe('a moderator unpublishing an article', () => {
       publishedAt: new Date(),
       status: ArticleStatus.Published,
     };
-    dbMock.dbRead.article.findUnique.mockResolvedValue(published as never);
-    dbMock.dbWrite.article.findUnique.mockResolvedValue(published as never);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([published] as never);
   });
 
   it('revokes every share link on it', async () => {

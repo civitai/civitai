@@ -115,6 +115,7 @@ import {
   isUsernamePermitted,
   restoreUser,
   setLeaderboardEligibility,
+  setEventPointsExclusion,
   setUserMuted,
   setUserSetting,
   setEmailVerificationRequired,
@@ -235,7 +236,11 @@ export const getUserCreatorHandler = async ({
       isModerator: ctx.user?.isModerator,
     });
     if (!user) throw throwNotFoundError('Could not find user');
-    if (!ctx.user?.isModerator) user.excludeFromLeaderboards = false; // Mask from non-moderators
+    if (!ctx.user?.isModerator) {
+      // Mask from non-moderators
+      user.excludeFromLeaderboards = false;
+      user.excludeFromEventPoints = false;
+    }
 
     return user;
   } catch (error) {
@@ -1778,6 +1783,14 @@ export const getUserPurchasedRewardsHandler = async ({ ctx }: { ctx: ProtectedCo
     throw throwDbError(error);
   }
 };
+
+export async function setEventPointsExclusionHandler({
+  input,
+}: {
+  input: SetLeaderboardEligibilitySchema;
+}) {
+  await setEventPointsExclusion(input);
+}
 
 export async function setLeaderboardEligibilityHandler({
   ctx,

@@ -159,7 +159,7 @@ const image = {
   stats: { likeCountAllTime: 1082, heartCountAllTime: 12400, tippedAmountCountAllTime: 25000 },
 } as unknown as Parameters<typeof ImageCard>[0]['data'];
 
-async function renderCard() {
+async function renderCard(viewport: { width: number; height: number } = PHONE_VIEWPORT) {
   useHatTurfStore.setState({ cosmeticId: null, showHats: true });
   await renderAtViewport(
     <TurfSummaryContext.Provider
@@ -180,7 +180,7 @@ async function renderCard() {
         </div>
       </IntersectionObserverProvider>
     </TurfSummaryContext.Provider>,
-    PHONE_VIEWPORT
+    viewport
   );
   await vi.waitFor(() =>
     expect(document.body.querySelector('[data-testid="hat-turf-gear"] svg')).not.toBeNull()
@@ -219,6 +219,56 @@ describe('Hat Turf button geometry on a feed card', () => {
         expect(Math.abs(g.y - c.y) * z).toBeLessThanOrEqual(0.5);
       } finally {
         document.documentElement.style.zoom = '';
+      }
+    }
+  );
+
+  // Seen on a phone: "Show hats" sat at the row's left and its switch at the far right, too small
+  // to hit. The switch comes first and its label right after it, and on a phone the switch is
+  // bigger in a tap row taller than it. A 44px row in the panel's 12px pad then read as too much
+  // padding around one switch, so the space above and below the switch is bounded too.
+  test.each([
+    ['phone', PHONE_VIEWPORT],
+    ['desktop', { width: 1280, height: 800 }],
+  ] as const)(
+    'Show hats in the panel: switch first, its label beside it (%s)',
+    async (name, vp) => {
+      await renderCard(vp);
+      (document.body.querySelector('[data-testid="hat-turf-gear"]') as HTMLElement).click();
+      await vi.waitFor(() =>
+        expect(document.body.querySelector('[data-testid="hat-turf-show-hats"]')).not.toBeNull()
+      );
+      // The phone panel is a sheet that slides up: measure it at rest.
+      await new Promise((r) => setTimeout(r, 600));
+      await nextLayout();
+      // The test id lands on the switch's input; measure from its root.
+      const root = document.body
+        .querySelector('[data-testid="hat-turf-show-hats"]')!
+        .closest('.mantine-Switch-root')!;
+      const track = root.querySelector('.mantine-Switch-track')!.getBoundingClientRect();
+      const label = root.querySelector('.mantine-Switch-label')!;
+      const text = document.createRange();
+      text.selectNodeContents(label);
+      const words = text.getBoundingClientRect();
+      expect(track.right).toBeLessThanOrEqual(words.left);
+      expect(words.left - track.right).toBeLessThan(16);
+      const body = root.querySelector('.mantine-Switch-body')!.getBoundingClientRect();
+      if (name === 'phone') {
+        expect(body.height).toBeGreaterThanOrEqual(32);
+        expect(track.height).toBeGreaterThanOrEqual(24);
+        // From the divider above the row to the switch, and from the switch to the sheet's edge.
+        const pad = root.parentElement!.getBoundingClientRect();
+        expect({ above: track.top - pad.top, below: pad.bottom - track.bottom }).toEqual({
+          above: expect.toSatisfy((px: number) => px <= 14),
+          below: expect.toSatisfy((px: number) => px <= 14),
+        });
+        // The whole row takes the tap: a press near its bottom edge, under the label, flips it.
+        const hit = document.elementFromPoint(words.left + 4, body.bottom - 2) as HTMLElement;
+        expect(hit.closest('label')).not.toBeNull();
+        hit.click();
+        await vi.waitFor(() => expect(useHatTurfStore.getState().showHats).toBe(false));
+      } else {
+        expect(track.height).toBeLessThan(24);
       }
     }
   );

@@ -1,4 +1,5 @@
 import type { MantineColor } from '@mantine/core';
+import { TRAINING_REVIEW_COPY } from '@civitai/shared/training-review';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 
 // nb: these should be proper AIRs now
@@ -22,8 +23,7 @@ export const trainingStatusFields: {
   },
   [TrainingStatus.Paused]: {
     color: 'orange',
-    description:
-      'Your training will resume or terminate within 1 business day. No action is required on your part.',
+    description: TRAINING_REVIEW_COPY.pendingBody,
   },
   [TrainingStatus.Denied]: {
     color: 'red',
