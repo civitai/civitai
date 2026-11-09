@@ -149,12 +149,12 @@ describe.skipIf(!parityUrl)('hot reads 10: Kysely returns exactly what Prisma re
     for (const statement of schemaStatements) await exec(statement);
     await exec(`
       INSERT INTO ${t('Collection')}
-        (id, name, description, nsfw, "userId", "imageId", write, read, type, mode, metadata, availability, "nsfwLevel")
+        (id, name, description, nsfw, "userId", "imageId", write, read, type, mode, metadata, availability, "nsfwLevel", "archivedAt")
       VALUES
-        (${C_FULL}, 'Full collection', 'Every relation', true, ${U_FULL}, ${IMG_COVER}, 'Review', 'Public', 'Image', 'Contest', '{"endsAt":"2026-12-01","submissionLimit":3}', 'Unsearchable', 28),
-        (${C_BARE}, 'Bare collection', NULL, NULL, ${U_BARE}, NULL, 'Private', 'Private', NULL, NULL, '{}', 'Public', 0),
-        (${C_DANGLING}, 'Dangling collection', 'Gone cover', false, ${U_DANGLING}, ${IMG_GONE}, 'Public', 'Unlisted', 'Model', 'Bookmark', '{"note":"x"}', 'Private', 6),
-        (${C_OTHER}, 'Other collection', 'Untagged cover', false, ${U_OTHER}, ${IMG_PLAIN}, 'Private', 'Public', 'Post', NULL, '[]', 'EarlyAccess', 13)
+        (${C_FULL}, 'Full collection', 'Every relation', true, ${U_FULL}, ${IMG_COVER}, 'Review', 'Public', 'Image', 'Contest', '{"endsAt":"2026-12-01","submissionLimit":3}', 'Unsearchable', 28, NULL),
+        (${C_BARE}, 'Bare collection', NULL, NULL, ${U_BARE}, NULL, 'Private', 'Private', NULL, NULL, '{}', 'Public', 0, NULL),
+        (${C_DANGLING}, 'Dangling collection', 'Gone cover', false, ${U_DANGLING}, ${IMG_GONE}, 'Public', 'Unlisted', 'Model', 'Bookmark', '{"note":"x"}', 'Private', 6, '2026-10-01 12:34:56.789'),
+        (${C_OTHER}, 'Other collection', 'Untagged cover', false, ${U_OTHER}, ${IMG_PLAIN}, 'Private', 'Public', 'Post', NULL, '[]', 'EarlyAccess', 13, NULL)
     `);
     await exec(`
       INSERT INTO ${t('User')} (id, username, image, "deletedAt", "profilePictureId") VALUES
