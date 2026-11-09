@@ -7,13 +7,13 @@ import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums'
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead } from '~/server/db/client';
 import { trainingDataListing } from '~/server/services/training-data-restricted.service';
-import { publicFileMetadata } from '~/server/utils/public-file-metadata';
 import { ModelSort } from '~/server/common/enums';
 import {
   createModelFileDownloadUrl,
   createSerializedFileDownloadUrl,
 } from '~/server/common/model-helpers';
 import { getDownloadFilename } from '~/server/services/file.service';
+import { publicFileMetadata } from '~/server/utils/public-file-metadata';
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { publicModelResponseKey } from '~/server/services/model-version.service';
 import { PublicEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';

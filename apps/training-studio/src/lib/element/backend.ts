@@ -12,6 +12,7 @@ import type {
   StudioLocation,
 } from '$lib/host';
 import { UploadError } from '$lib/upload';
+import { AutoLabelRefusedError } from '$lib/autolabel-errors';
 import { computeFromPrices } from '$lib/pricing-core';
 import * as orch from '$lib/orchestrator-core';
 import type { OrchestratorClient } from '$lib/orchestrator-core';
@@ -105,6 +106,9 @@ export interface StudioElementHost {
 class UnauthorizedError extends Error {}
 
 const AUTO_LABEL_UNAVAILABLE = 'Auto-labeling is unavailable right now.';
+// Nothing was sent, so the image keeps its cap slot.
+const autoLabelUnavailable = () =>
+  Promise.reject(new AutoLabelRefusedError(AUTO_LABEL_UNAVAILABLE));
 
 export function elementBackend(host: StudioElementHost): StudioBackend {
   // Orchestrator tokens are short-lived and a watched training outlives them, so a 401 anywhere in a
@@ -199,9 +203,7 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     },
 
     autoLabelSubmit: (items, mode, media) =>
-      host.autoLabelSubmit
-        ? host.autoLabelSubmit(items, mode, media)
-        : Promise.reject(new Error(AUTO_LABEL_UNAVAILABLE)),
+      host.autoLabelSubmit ? host.autoLabelSubmit(items, mode, media) : autoLabelUnavailable(),
 
     autoLabelPoll: (workflowId, signal) =>
       host.autoLabelPoll

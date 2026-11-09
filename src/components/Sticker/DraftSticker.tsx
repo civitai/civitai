@@ -18,7 +18,7 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
@@ -35,7 +35,6 @@ import { payoutCopy, stickerPurchaseCopy } from '~/components/Sticker/payout-cop
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { DRAFT_STICKER_Z } from '~/components/Sticker/placement-layers';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
-import { StickerMomentControl } from '~/components/Sticker/StickerMomentControl';
 import { purchaseCanBeRetriedFresh, useBuyStickerUses } from '~/components/Sticker/sticker.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import type { StickerTreatment } from '~/components/Sticker/treatments/sticker-treatments';
@@ -45,7 +44,7 @@ import {
   STICKER_PLACEMENT_MIN_OPACITY,
   snapScaleOvershoot,
 } from '~/shared/utils/sticker-placement';
-import { encodeStickerTrack, momentStickerTrack } from '~/shared/utils/sticker-track';
+import { stickerKeysTrack } from '~/shared/utils/sticker-track-edit';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -148,6 +147,16 @@ const CORNERS = [
  * and the pair never settles. Selection raises z-order so the one last touched
  * is on top and reachable; beyond that, moving the stickers apart is the fix.
  */
+/**
+ * A sticker in Movement drawn at its key opacity, as `filter` because the treatments own
+ * `opacity`. Never fainter than a ghost, so a sticker on a hidden key can still be picked up.
+ */
+const keyFade = (shown: number | undefined) =>
+  shown == null || shown >= 1
+    ? undefined
+    : { filter: `opacity(${Math.max(shown, KEY_GHOST_OPACITY)})` };
+const KEY_GHOST_OPACITY = 0.2;
+
 export function DraftSticker({
   draft,
   art,
@@ -160,7 +169,6 @@ export function DraftSticker({
   ownerUsername,
   onGesture,
   onDuplicate,
-  video,
   purchase,
   commit,
   artwork,
@@ -191,8 +199,6 @@ export function DraftSticker({
    * component cannot.
    */
   onDuplicate?: (id: string) => string | null;
-  /** The video being placed on, which offers pinning to a moment. Absent elsewhere. */
-  video?: HTMLVideoElement | null;
   /**
    * What this draft still has to buy, decided ACROSS the drafts on the image
    * rather than frozen onto this one when it was created.
@@ -587,41 +593,55 @@ export function DraftSticker({
     if (!useStore.getState().interaction) select(draft.id);
   };
 
-  // A take in progress, which nothing may place until it is finished.
-  const [capturing, setCapturing] = useState(false);
-
   // One payload for both buttons, so the two offers cannot drift into placing
   // different stickers. `free` is the only thing that differs, and it selects a
   // path rather than asserting anything — the server re-decides all of it.
+  // Label of this draft's pay button; the editor's floating Place presses that button.
+  const primaryLabel = commit
+    ? null
+    : purchase && effectiveMode === 'pack' && purchase.pack
+    ? purchase.refill
+      ? 'Buy another pack'
+      : 'Purchase sticker'
+    : purchase
+    ? 'Buy a use'
+    : placingFree
+    ? 'Place free'
+    : `Place · ${numberWithCommas(price)} Buzz`;
+  const setPrimaryLabel = useStore((state) => state.setPrimaryLabel);
+  useEffect(() => {
+    setPrimaryLabel(draft.id, primaryLabel);
+    return () => setPrimaryLabel(draft.id, null);
+  }, [draft.id, primaryLabel, setPrimaryLabel]);
+
   const placementInput = () => {
     const scale = snapScaleOvershoot(draft.scale, creatorMaxScale);
+    const track =
+      draft.motion?.on && draft.motion.keys.length
+        ? (() => {
+            const keys = stickerKeysTrack(draft.motion.keys);
+            return {
+              ...keys,
+              keys: keys.keys.map((key) => ({
+                ...key,
+                s: snapScaleOvershoot(key.s, creatorMaxScale),
+              })),
+            };
+          })()
+        : null;
+    const first = track?.keys[0];
     return {
       imageId: draft.imageId,
       free: placingFree,
-      ...(draft.recording?.length
-        ? {
-            track: encodeStickerTrack(
-              draft.recording.map((pose) => ({
-                ...pose,
-                scale: snapScaleOvershoot(pose.scale, creatorMaxScale),
-              }))
-            ),
-          }
-        : draft.moment
-        ? {
-            track: momentStickerTrack(
-              { x: draft.x, y: draft.y, scale, rotation: draft.rotation },
-              draft.moment.startMs,
-              draft.moment.durationMs
-            ),
-          }
-        : {}),
+      ...(track ? { track } : {}),
       data: {
         cosmeticId: draft.cosmeticId,
-        x: draft.x,
-        y: draft.y,
-        scale,
-        rotation: draft.rotation,
+        // A moving sticker's own pose is its first key, so anything that ignores tracks draws
+        // it where it starts.
+        x: first?.x ?? draft.x,
+        y: first?.y ?? draft.y,
+        scale: first ? snapScaleOvershoot(first.s, creatorMaxScale) : scale,
+        rotation: first?.r ?? draft.rotation,
         flip: draft.flip,
         opacity: draft.opacity,
         // Sent only when there is something to send, so an opened-then-abandoned
@@ -824,11 +844,13 @@ export function DraftSticker({
             die-cut edge and a plate both grow the sticker's apparent bounds — so
             positioning against the undressed version means moving it again after
             paying. */}
-        {dressed.animationClassName ? (
-          <div className={dressed.animationClassName}>{artworkImage}</div>
-        ) : (
-          artworkImage
-        )}
+        <div style={keyFade(draft.shown)}>
+          {dressed.animationClassName ? (
+            <div className={dressed.animationClassName}>{artworkImage}</div>
+          ) : (
+            artworkImage
+          )}
+        </div>
 
         {/* Hidden rather than unmounted: the chrome keeps its box, so the buy
             button's measured side is still right when it comes back. */}
@@ -903,25 +925,6 @@ export function DraftSticker({
           {!opaque && opacityControl}
           {removeControl}
         </div>
-
-        {video && (
-          <StickerMomentControl
-            video={video}
-            moment={draft.moment}
-            following={selected}
-            onChange={(moment) => useStore.getState().move(draft.id, { moment })}
-            recorder={{
-              recording: draft.recording,
-              onRecordingChange: (recording) => useStore.getState().move(draft.id, { recording }),
-              pose: () => {
-                const now = useStore.getState().drafts.find(({ id }) => id === draft.id) ?? draft;
-                return { x: now.x, y: now.y, scale: now.scale, rotation: now.rotation };
-              },
-              onPose: (pose) => useStore.getState().move(draft.id, pose),
-              onCapturing: setCapturing,
-            }}
-          />
-        )}
 
         {commit ?? (
           <>
@@ -1016,6 +1019,7 @@ export function DraftSticker({
                 buzzAmount={purchase.pack.unitAmount}
                 accountTypes={purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
                 label={purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
+                data-draft-primary={draft.id}
                 loading={purchasingShopItem}
                 onPerformTransaction={buySticker}
               />
@@ -1028,6 +1032,7 @@ export function DraftSticker({
                 buzzAmount={purchase.perUse ?? 0}
                 accountTypes={spendTypes}
                 label="Buy a use"
+                data-draft-primary={draft.id}
                 loading={buyUses.isPending}
                 // A sticker sold before per-use pricing existed has no price to
                 // charge, and the listing price is not a stand-in for one. Says so
@@ -1039,11 +1044,6 @@ export function DraftSticker({
                 }
                 onPerformTransaction={buyOneUse}
               />
-            ) : capturing || draft.recording?.length === 0 ? (
-              // Placing now would send the last finished take, or a still sticker before the first.
-              <Text size="xs" c="white" className="rounded-full bg-black/80 px-2 py-0.5">
-                {capturing ? 'Finish recording to place' : 'Record the movement to place'}
-              </Text>
             ) : placingFree ? (
               // Not a `BuzzTransactionButton`. That control exists to show a price
               // and check a balance against it, and a free placement has neither —
@@ -1058,6 +1058,7 @@ export function DraftSticker({
                 style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
                 loading={place.isPending}
                 onClick={() => place.mutate(placementInput())}
+                data-draft-primary={draft.id}
               >
                 Place free
               </Button>
@@ -1068,6 +1069,7 @@ export function DraftSticker({
                 buzzAmount={price}
                 accountTypes={spendTypes}
                 label="Place"
+                data-draft-primary={draft.id}
                 loading={place.isPending}
                 onPerformTransaction={() => place.mutate(placementInput())}
               />

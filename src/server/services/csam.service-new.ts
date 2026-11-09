@@ -51,6 +51,7 @@ import type { BoundedArchive } from '~/server/utils/archive-helpers';
 import {
   createBoundedArchive,
   createByteBudget,
+  FAILED_ARCHIVE_SETTLE_MS,
   deriveUploadPartGeometry,
   ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
@@ -2983,6 +2984,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         const limit = plimit(10);
         // Bounded in bytes, not count: original sizes vary too much for an entry count to bound memory.
         const budget = createByteBudget();
+        // A failed archive stops its running reads and waits for them before its caller removes
+        // the scratch dirs they write into.
+        const readers = new AbortController();
+        const running = new Set<Promise<void>>();
         const hoursSinceSent = report.reportSentAt
           ? (Date.now() - report.reportSentAt.getTime()) / 3_600_000
           : 0;
@@ -2999,12 +3004,15 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           try {
             original = await spoolOriginalImage(image, {
               reserve: budget.reserve,
+              cancel: readers.signal,
               spoolDir: `${reportDirs.images}/spool`,
               onRetry: (failedAttempt) => {
                 attempts = Math.max(attempts, failedAttempt + 1);
               },
             });
           } catch (e) {
+            // Stopped because another image failed: not this image's failure.
+            if (readers.signal.aborted) throw e;
             // A full URL may be on a host we do not control: after a day of retries its failing
             // no longer holds the archive back. A stored object's failure is always retried.
             const retried =
@@ -3072,18 +3080,30 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           for await (const page of scanUserImages()) {
             await Promise.all(
               page.map((image) =>
-                limit(() =>
-                  archiveImage(image).catch((e) => {
+                limit(() => {
+                  const task = archiveImage(image).catch((e) => {
                     // Before this slot frees: queued reads would otherwise still open.
                     limit.clearQueue();
                     throw e;
-                  })
-                )
+                  });
+                  running.add(task);
+                  const done = () => running.delete(task);
+                  task.then(done, done);
+                  return task;
+                })
               )
             );
           }
         } catch (e) {
+          readers.abort(e);
           budget.abort(e);
+          // Only reads that started: `clearQueue` leaves a queued task's promise unsettled.
+          let settleTimer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([
+            Promise.allSettled(running),
+            new Promise((resolve) => (settleTimer = setTimeout(resolve, FAILED_ARCHIVE_SETTLE_MS))),
+          ]);
+          clearTimeout(settleTimer);
           throw e;
         }
 

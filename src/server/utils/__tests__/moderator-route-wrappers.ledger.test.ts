@@ -206,6 +206,7 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
   'v1/model-versions/[id]': 'moderators also see unpublished versions',
   'v1/model-versions/[id]/gifts/[giftId]': 'owner-or-moderator gift revoke',
   'v1/model-versions/[id]/gifts/[giftId]/claims': 'owner-or-moderator gift claimer list',
+  'v1/model-versions/[id]/gifts/[giftId]/claims/[userId]': 'owner-or-moderator gift claim removal',
   'v1/model-versions/[id]/gifts/batch/[batchId]': 'owner-or-moderator gift batch revoke',
   'v1/model-versions/[id]/gifts/batch/[batchId]/claims':
     'owner-or-moderator gift batch claimer list',

@@ -458,6 +458,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every mint and every link fetch. The key
   // must exist in flag state (enabled: false) before this code serves traffic.
   DOWNLOAD_LINKS_ENABLED = 'download-links-enabled',
+  // The standalone Training Studio's closed-beta gate (apps/training-studio/src/lib/server/flipt.ts),
+  // read here for its main-app endpoints. Evaluate with the user's Flipt context, or a segmented
+  // flag matches nobody.
+  TRAINING_STUDIO = 'trainingStudio',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

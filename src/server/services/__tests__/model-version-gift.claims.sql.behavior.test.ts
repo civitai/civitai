@@ -22,9 +22,14 @@ const { decodeGiftClaimsCursor, giftClaimsSql, listGiftClaims } = await import(
 );
 
 /** Who claimed a gift link or batch, on the gift migration's own tables. */
-const MIGRATION = path.resolve(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261229120000_model_version_gift_link/migration.sql'
+const MIGRATIONS = [
+  '20261229120000_model_version_gift_link',
+  '20261231000100_model_version_gift_redemption_revoked',
+].map((dir) =>
+  path.resolve(
+    __dirname,
+    `../../../../packages/civitai-db-schema/prisma/migrations/${dir}/migration.sql`
+  )
 );
 
 const BATCH = '00000000-0000-4000-8000-0000000000aa';
@@ -49,7 +54,7 @@ beforeAll(async () => {
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY);
     INSERT INTO "ModelVersion" VALUES (100), (200);
   `);
-  await db.exec(readFileSync(MIGRATION, 'utf8'));
+  for (const file of MIGRATIONS) await db.exec(readFileSync(file, 'utf8'));
 });
 afterAll(() => db.close());
 beforeEach(async () => {
@@ -80,7 +85,12 @@ async function claimers(
   cursor = null
 ) {
   const sql = giftClaimsSql({ ...args, cursor, visibleSince: VISIBLE_SINCE });
-  return (await db.query<{ userId: number; username: string }>(sql.text, sql.values)).rows;
+  return (
+    await db.query<{ userId: number; username: string; revokedAt: Date | null }>(
+      sql.text,
+      sql.values
+    )
+  ).rows;
 }
 
 describe('gift claimers', () => {
@@ -106,6 +116,20 @@ describe('gift claimers', () => {
     await claim(other, 7, '2026-11-01T00:00:03.000');
     const rows = await claimers({ modelVersionId: 100, batchId: BATCH, limit: 50 });
     expect(rows.map((r) => r.userId)).toEqual([6, 5]);
+  });
+
+  it('lists a removed claim with when it was removed', async () => {
+    const a = await link(100);
+    await claim(a, 2, '2026-11-01T00:00:01.000');
+    await claim(a, 3, '2026-11-01T00:00:02.000');
+    await db.query(
+      `UPDATE "ModelVersionGiftRedemption" SET "revokedAt" = '2026-11-02T00:00:00.000' WHERE "userId" = 2`
+    );
+    const rows = await claimers({ modelVersionId: 100, id: a, limit: 50 });
+    expect(rows.map((r) => [r.userId, r.revokedAt])).toEqual([
+      [3, null],
+      [2, new Date('2026-11-02T00:00:00.000Z')],
+    ]);
   });
 
   it('finds nothing for a gift asked for under another version', async () => {

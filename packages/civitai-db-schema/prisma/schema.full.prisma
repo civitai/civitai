@@ -7218,6 +7218,9 @@ model ModelVersionGiftRedemption {
   userId     Int
   user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   claimedAt  DateTime             @default(now())
+  /// Set when the link's owner or a moderator removed this claimer's gifted access.
+  revokedAt   DateTime?
+  revokedById Int?
 
   @@id([giftLinkId, userId])
   @@index([userId])

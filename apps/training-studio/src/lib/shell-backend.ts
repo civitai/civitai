@@ -20,6 +20,7 @@ import type { EpochArchive } from '$lib/orchestrator-core';
 import { parseServiceStatus } from '$lib/service-status-core';
 import { MatureAckRequiredError } from '$lib/mature-charge';
 import { UploadError, uploadProblem } from '$lib/upload';
+import { AUTO_LABEL_UNAVAILABLE_CODE, AutoLabelRefusedError } from '$lib/autolabel-errors';
 
 /** Pull `message` out of a SvelteKit error body, falling back to a status-tagged default. */
 async function messageOf(res: Response, fallback: string): Promise<string> {
@@ -30,6 +31,19 @@ async function messageOf(res: Response, fallback: string): Promise<string> {
     // non-JSON body
   }
   return fallback;
+}
+
+/** Why an auto-label submit failed. Our route answers 4xx only for a refusal made before any workflow
+ *  existed (its own, or the main app's gates, validation and limits), and its marked 503 when
+ *  auto-label is unavailable: those return the image's cap slot. Every other failure (a 502, a gateway
+ *  503) may have come after a workflow was created and stays counted. */
+async function autoLabelSubmitFailure(res: Response): Promise<Error> {
+  const fallback = `auto-label submit failed (${res.status})`;
+  const body = (await res.json().catch(() => null)) as { message?: string; code?: string } | null;
+  const refused =
+    (res.status >= 400 && res.status < 500) ||
+    (res.status === 503 && body?.code === AUTO_LABEL_UNAVAILABLE_CODE);
+  return refused ? new AutoLabelRefusedError(body?.message || fallback) : new Error(fallback);
 }
 
 /** A refused training submit; a 409 carrying the server's mature count becomes `MatureAckRequiredError`,
@@ -125,7 +139,7 @@ export const shellBackend: StudioBackend = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ mode, media, items }),
     });
-    if (!res.ok) throw new Error(`auto-label submit failed (${res.status})`);
+    if (!res.ok) throw await autoLabelSubmitFailure(res);
     return (await res.json()) as { workflowId: string };
   },
 

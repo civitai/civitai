@@ -157,7 +157,8 @@ describe('a moment sticker follows the video', () => {
 
     seek(0.1);
 
-    expect((hidden().element() as HTMLElement).style.left).toBe('90%');
+    // Drawn, not inline: playback animates over the element's own style.
+    expect(getComputedStyle(hidden().element()).left).toBe('90%');
   });
 
   test('only the sticker outside its window is hidden', async () => {

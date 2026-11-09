@@ -16,6 +16,7 @@ const { svc, flags, standing } = vi.hoisted(() => ({
     mintGiftCodes: vi.fn(async () => ({ batchId: 'b', codes: [] })),
     listGiftLinks: vi.fn(async () => ({ links: [], batches: [] })),
     revokeGiftLinks: vi.fn(async () => ({ revoked: 1 })),
+    removeGiftClaim: vi.fn(async () => ({ removed: true })),
   },
   flags: { modelGiftLinks: true },
   standing: { muted: false },
@@ -105,6 +106,14 @@ const ROUTES: Array<{
     query: { id: '5', batchId: BATCH },
     service: 'revokeGiftLinks',
     args: { ...actor, batchId: BATCH },
+  },
+  {
+    name: 'DELETE claim',
+    path: '~/pages/api/v1/model-versions/[id]/gifts/[giftId]/claims/[userId]',
+    method: 'DELETE',
+    query: { id: '5', giftId: '9', userId: '20' },
+    service: 'removeGiftClaim',
+    args: { ...actor, giftLinkId: 9, claimerId: 20 },
   },
 ];
 const WRITES = ROUTES.filter((r) => r.method !== 'GET');
@@ -206,7 +215,9 @@ it.each(ROUTES.filter((r) => r.service === 'mintGiftCodes' || r.service === 'cre
   }
 );
 
-it.each(ROUTES.filter((r) => r.service === 'listGiftLinks' || r.service === 'revokeGiftLinks'))(
+it.each(
+  ROUTES.filter((r) => ['listGiftLinks', 'revokeGiftLinks', 'removeGiftClaim'].includes(r.service))
+)(
   '$name hands the service the caller’s moderator flag, so a moderator can list and revoke',
   async (route) => {
     await call(route, {}, { ...USER, isModerator: true } as SessionUser);
@@ -215,3 +226,13 @@ it.each(ROUTES.filter((r) => r.service === 'listGiftLinks' || r.service === 'rev
     );
   }
 );
+
+it.each([
+  { id: '5', giftId: '9', userId: 'x' },
+  { id: '5', giftId: '0', userId: '20' },
+  { id: 'x', giftId: '9', userId: '20' },
+])('DELETE claim refuses %o with 400 before calling the service', async (query) => {
+  const route = { ...ROUTES.find((r) => r.name === 'DELETE claim')!, query };
+  expect((await call(route, {})).status).toBe(400);
+  expect(serviceCalls()).toBe(0);
+});

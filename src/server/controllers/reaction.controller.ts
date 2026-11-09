@@ -402,12 +402,23 @@ export const toggleReactionWithPointsHandler = async ({
 type ToggleReactionResult = Awaited<ReturnType<typeof toggleReactionHandler>>;
 
 // Grants for the viewer's own team, summed per event. Another team's are dropped: the pop is for
-// points that help the viewer's side.
+// points that help the viewer's side, so a viewer who holds none of an event's team hats (joined
+// or bought) has none there. getUserTeam alone would not say so: it seeds a team for anyone.
 async function viewerTeamGrants(grants: EventPointGrant[], userId: number) {
   const byEvent = new Map<string, EventPointGrant>();
   if (!grants.length) return [];
+  const names = [...new Set(grants.map((g) => g.event))];
+  const held = await dbRead.$queryRaw<{ event: string }[]>`
+    SELECT DISTINCT c.data->>'event' AS event FROM "UserCosmetic" uc
+    JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+    WHERE uc."userId" = ${userId}
+      AND c.data->>'event' IN (${Prisma.join(names)})
+      AND c.data->>'team' IS NOT NULL
+  `;
+  const joined = new Set(held.map((h) => h.event));
   const events = await loadEvents();
-  for (const name of new Set(grants.map((g) => g.event))) {
+  for (const name of names) {
+    if (!joined.has(name)) continue;
     const team = await events.find((e) => e.name === name)?.getUserTeam(userId);
     if (!team) continue;
     const points = grants

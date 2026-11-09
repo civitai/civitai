@@ -162,6 +162,29 @@ describe('ClickHouse', () => {
     ).toEqual({ jobId: 'j', cost: 3, provider: 'p' });
   });
 
+  it('drops `source` from an account-activity row and keeps the rest of it', () => {
+    const activity = CH_TABLES.find((t) => t.table === 'default.userActivities')!;
+    expect(
+      reduceChRow(activity, {
+        type: 'Muted',
+        time: '2026-11-08 12:00:00',
+        userId: 42,
+        targetUserId: 77,
+        landingPage: '/models/1',
+        source: 'mute-pending-review (queue: spam)',
+      })
+    ).toEqual({
+      type: 'Muted',
+      time: '2026-11-08 12:00:00',
+      userId: 42,
+      targetUserId: 77,
+      landingPage: '/models/1',
+    });
+    // Scoped to that table: a `source` column elsewhere goes by that table's own policy.
+    const buzz = CH_TABLES.find((t) => t.table === 'default.buzzTransactions')!;
+    expect(reduceChRow(buzz, { type: 'tip', source: 's' })).toMatchObject({ source: 's' });
+  });
+
   it("leaves another user's id out of a Buzz row, as the app's own Buzz export does", () => {
     const buzz = CH_TABLES.find((t) => t.table === 'default.buzzTransactions')!;
     const reward = reduceChRow(buzz, {

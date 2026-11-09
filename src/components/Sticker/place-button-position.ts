@@ -289,7 +289,7 @@ export function placeButtonPosition({
 
 /**
  * How far to pull the cluster in over the sticker when neither side fits, so its buttons stay
- * reachable. A tall cluster (a pinned moment, a recorder) on a sticker low in a short viewport
+ * reachable. A tall cluster on a sticker low in a short viewport
  * otherwise hangs past the clipping edge, where nothing can press Place.
  *
  * `tray` is passed only by a host that opts in. A sticker draft leaves it out: scrolling brings
