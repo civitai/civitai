@@ -182,6 +182,26 @@ export async function releaseUnreleasedReviewsOfLivePosts({ limit = 1000 } = {})
 }
 
 /**
+ * Releases this review if its post is live and it was never released. Run before an edit: the edit
+ * moves `updatedAt` past the post's date, where the sweep no longer finds it.
+ */
+export async function releaseReviewIfUnreleased(reviewId: number) {
+  const released = await dbWrite.$queryRaw<ReleasedReview[]>`
+    UPDATE "ResourceReview" rr
+    SET "updatedAt" = now()
+    FROM "Post" p, "Model" m
+    WHERE rr.id = ${reviewId}
+      AND p.id = rr."postId"
+      AND m.id = rr."modelId"
+      AND p."publishedAt" <= now()
+      AND rr."updatedAt" < p."publishedAt"
+    RETURNING rr.id, rr."modelId", rr."modelVersionId", rr.recommended, rr."userId",
+      m."userId" AS "modelOwnerId"
+  `;
+  return announceReleased(released);
+}
+
+/**
  * The reviews written from these posts count as pending again once the posts are taken down:
  * touched so the metric jobs recount them, the rating totals busted. Nobody is notified.
  */

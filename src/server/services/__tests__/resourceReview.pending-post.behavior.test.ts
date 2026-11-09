@@ -44,8 +44,13 @@ vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
   onModelReviewsChanged: async () => undefined,
 }));
 
-const { createResourceReview, getResourceReview, getUserRatingTotals, upsertResourceReview } =
-  await import('~/server/services/resourceReview.service');
+const {
+  createResourceReview,
+  getResourceReview,
+  getUserRatingTotals,
+  updateResourceReview,
+  upsertResourceReview,
+} = await import('~/server/services/resourceReview.service');
 const {
   refreshReviewsForUnpublishedPosts,
   releasePendingReviewsForPosts,
@@ -379,6 +384,42 @@ describe('against Postgres', () => {
       expect.objectContaining({ key: 'new-review:21:101' })
     );
     expect(await releaseUnreleasedReviewsOfLivePosts()).toEqual([]);
+  });
+
+  // An edit moves `updatedAt` past the post's date, where the sweep no longer finds the review.
+  describe('editing a review whose post went live before the sweep released it', () => {
+    beforeEach(() => {
+      dbMock.dbWrite.resourceReview.findUnique.mockResolvedValue({ modelId: 10 } as never);
+    });
+
+    it.each([
+      [
+        'updateResourceReview',
+        () => updateResourceReview({ id: 1, userId: 101, details: 'edited' }),
+      ],
+      [
+        'upsertResourceReview',
+        () => upsertResourceReview({ ...review, id: 1, userId: 101, details: 'edited' }),
+      ],
+    ])('releases and notifies it once (%s)', async (_label, edit) => {
+      await insertReviews([[1, 101, LIVE]]);
+
+      await edit();
+      await edit();
+
+      expect(createNotification).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ key: 'new-review:21:101' })
+      );
+    });
+
+    it('leaves a review of a post still scheduled pending', async () => {
+      await insertReviews([[1, 101, SCHEDULED]]);
+
+      await updateResourceReview({ id: 1, userId: 101, details: 'edited' });
+
+      expect(createNotification).not.toHaveBeenCalled();
+      expect(bustRatingTotalsForRows).not.toHaveBeenCalled();
+    });
   });
 
   // The fire-and-forget form callers use after their post write commits. The leaves run for real
