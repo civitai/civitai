@@ -49,7 +49,9 @@ function world(over: { status?: string; served?: boolean; flag?: boolean; auto?:
     // SET XX: only an attempt still recorded is upgraded.
     markTakedownConfirmed: vi.fn(async (s: string) => {
       w.storeWrites++;
-      if (w.takedown.has(s)) w.takedown.set(s, 'confirmed');
+      if (!w.takedown.has(s)) return false;
+      w.takedown.set(s, 'confirmed');
+      return true;
     }),
     clearTakedown: vi.fn(async (s: string) => {
       w.storeWrites++;
@@ -279,13 +281,13 @@ describe('restoreLiveApp (after a relist commits)', () => {
     expect(w.takedown.has(SLUG)).toBe(false);
   });
 
-  it('a failed restore is reported, not retried, and keeps the marker for the next relist', async () => {
+  it('a failed restore is reported, not retried, and keeps the marker (unconfirmed) for the next relist', async () => {
     const { w, deps } = world({ status: 'approved', served: false });
     w.takedown.set(SLUG, 'confirmed');
     deps.waitForJob.mockResolvedValue('failed');
     expect(await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps })).toBe('failed');
     expect(actions(w)).toEqual(['restore']);
-    expect(w.takedown.has(SLUG)).toBe(true);
+    expect(w.takedown.get(SLUG)).toBe('attempted');
     expect(deps.report).toHaveBeenCalledWith(
       expect.stringContaining('live restore Job cool-app-live-pointer ended failed'),
       expect.objectContaining({ slug: SLUG, outcome: 'failed' })
@@ -376,8 +378,8 @@ describe('ordering: the newest state wins', () => {
 });
 
 // The production store, on an in-memory Redis with SET NX / XX semantics: the attempt and the
-// confirmation are separate values of one key, and a confirmation never re-creates a key that a
-// deploy cleared while the unpublish ran.
+// confirmation are separate values of one key, and a confirmation never re-creates as confirmed a
+// key that a deploy cleared while the unpublish ran.
 describe('the Redis store', () => {
   const KEY = `system:blocks:live-pointer-takedown:${SLUG}`;
   function redisKv() {
@@ -399,7 +401,7 @@ describe('the Redis store', () => {
     return rest;
   };
 
-  it('attempted before the Job, confirmed after it, and never confirmed once a deploy cleared it', async () => {
+  it('attempted before the Job, confirmed after it, and re-attempted (not confirmed) once a deploy cleared it', async () => {
     const kv = redisKv();
     const { w, deps, finish } = world({ status: 'suspended', auto: false });
     void syncLivePointer(SLUG, { deps: withoutStore(deps) });

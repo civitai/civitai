@@ -10,6 +10,10 @@
  *     a Job that fails may still have removed the pointer; it is the evidence a restore runs on.
  *   - CONFIRMED: an unpublish Job of the app succeeded. Only this stops a later takedown from
  *     running the unpublish again.
+ * A restore downgrades the marker to attempted before its Job starts (a restore Job that fails
+ * may still write the pointer) and clears it when the Job succeeds. An unpublish whose
+ * confirmation finds the marker cleared (a deploy wrote the pointer while the Job ran, and the Job
+ * may have removed it after) records the attempt again, so the evidence is never lost.
  *
  * ONE reconciler per app ({@link syncLivePointer}) does both. It never acts on what a caller
  * intended, only on the app's CURRENT state, read each time it decides:
@@ -21,7 +25,8 @@
  * was on comes back after it is turned off; with no marker a relist does nothing here.
  *
  * Ordering: the Jobs of one app run one at a time (a per-app lock) under one shared Job name. A
- * caller that finds the lock held asks the holder to look again (DIRTY), and the holder re-reads
+ * caller asks for a look (DIRTY) BEFORE it tries the lock, so a holder that lets go in between
+ * still sees the request when it checks after its release; the holder re-reads
  * the app after every Job until nothing is left to do, so the newest state wins however the
  * takedowns and relists interleave. The lock is renewed before each Job; a holder that dies leaves
  * it to expire LOCK_TTL_S after its last renewal.
@@ -51,10 +56,10 @@ export type LivePointerStore = {
   /** Record that an unpublish is starting. */
   markTakedownAttempted: (slug: string) => Promise<void>;
   /**
-   * Record that the unpublish succeeded. Only upgrades a recorded attempt: when a deploy cleared
-   * the marker while the Job ran (it wrote the pointer back), the app is not taken down.
+   * Record that the unpublish succeeded. Only upgrades a recorded attempt; false when there was
+   * none (a deploy cleared the marker while the Job ran).
    */
-  markTakedownConfirmed: (slug: string) => Promise<void>;
+  markTakedownConfirmed: (slug: string) => Promise<boolean>;
   clearTakedown: (slug: string) => Promise<void>;
   /** Take the app's lock; false when another run holds it. */
   acquire: (slug: string) => Promise<boolean>;
@@ -112,9 +117,9 @@ const redisStore: LivePointerStore = {
   markTakedownAttempted: async (slug) => {
     await (await sys()).set((await redisKeys()).takedown(slug), 'attempted');
   },
-  markTakedownConfirmed: async (slug) => {
-    await (await sys()).set((await redisKeys()).takedown(slug), 'confirmed', { XX: true });
-  },
+  markTakedownConfirmed: async (slug) =>
+    (await (await sys()).set((await redisKeys()).takedown(slug), 'confirmed', { XX: true })) !=
+    null,
   clearTakedown: async (slug) => {
     await (await sys()).del((await redisKeys()).takedown(slug));
   },
@@ -304,10 +309,10 @@ async function nextStep(slug: string, d: LiveUnpublishDeps): Promise<Step | null
 export async function syncLivePointer(slug: string, opts: Opts = {}): Promise<SyncOutcome> {
   const d = { ...defaultDeps, ...opts.deps };
   try {
-    if (!(await d.store.acquire(slug))) {
-      await d.store.markDirty(slug);
-      return 'queued';
-    }
+    // Asked BEFORE the lock is tried: a holder that releases between this caller's lock read and
+    // any later write would otherwise never see the request. A holder consumes it as it reads.
+    await d.store.markDirty(slug);
+    if (!(await d.store.acquire(slug))) return 'queued';
   } catch (err) {
     warn(`live pointer lock of ${slug} unavailable`, err);
     d.report(`live pointer of ${slug} not reconciled: lock unavailable`, {
@@ -363,7 +368,9 @@ async function runStep(
     const job = await d.triggerPointerJob({ slug, action: 'unpublish' });
     const jobOutcome = await d.waitForJob(job.name, opts.waitTimeoutMs ?? JOB_TIMEOUT_MS);
     if (jobOutcome === 'succeeded') {
-      await d.store.markTakedownConfirmed(slug);
+      // No attempt left to confirm: a deploy cleared it while the Job ran, and the Job may have
+      // removed the pointer that deploy wrote. Keep the evidence: re-reading decides what is next.
+      if (!(await d.store.markTakedownConfirmed(slug))) await d.store.markTakedownAttempted(slug);
       return true;
     }
     const message = `live unpublish Job ${job.name} ended ${jobOutcome}; ${slug} may still be served`;
@@ -380,6 +387,9 @@ async function runStep(
     await d.store.clearTakedown(slug);
     return true;
   }
+  // A restore Job that fails may still write the pointer later, so from here the takedown is no
+  // longer confirmed: a later takedown runs the unpublish again. Cleared when the Job succeeds.
+  await d.store.markTakedownAttempted(slug);
   const job = await d.triggerPointerJob({
     slug,
     action: 'restore',

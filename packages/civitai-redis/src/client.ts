@@ -2327,9 +2327,9 @@ export const REDIS_SYS_KEYS = {
     // reserved before the start and released once its report row exists (or the start failed).
     AGENT_REVIEW_AUTOSTART_RESERVED: 'system:blocks:agent-review-autostart-reserved',
     // Live app pointer on the shared static server, per app slug. TAKEDOWN
-    // (`...:${slug}`, no TTL) is set to 'attempted' when this platform starts a live unpublish for
-    // the app (the evidence a relist restores on), upgraded to 'confirmed' when that unpublish
-    // succeeded, and cleared when its pointer is written back (a restore or a deploy). LOCK
+    // (`...:${slug}`, no TTL) is set to 'attempted' when this platform starts a live unpublish or
+    // restore for the app (the evidence a relist restores on), upgraded to 'confirmed' when an
+    // unpublish succeeded, and cleared when its pointer is written back (a restore or a deploy). LOCK
     // (`...:${slug}`, SET NX EX) serialises the pointer Jobs of one app; DIRTY (`...:${slug}`)
     // asks the lock holder to look at the app again before it lets go.
     LIVE_POINTER_TAKEDOWN: 'system:blocks:live-pointer-takedown',
