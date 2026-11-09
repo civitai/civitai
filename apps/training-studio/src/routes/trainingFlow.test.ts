@@ -246,6 +246,19 @@ describe('buildTrainingRuns extra fields', () => {
     expect(video.noiseOffset).toBe(0);
     expect(video.flipAugmentation).toBe(false);
   });
+
+  it('sends the fallback, not 0, for a cleared numeric field', () => {
+    const out = build(run('sdxl'), 'tag', { unetLr: '', networkDim: '  ' });
+    const d = defaultRunParams(run('sdxl'));
+    expect(out.unetLr).toBe(Number(d.unetLr));
+    expect(out.networkDim).toBe(Number(d.networkDim));
+    expect(out.unetLr).toBeGreaterThan(0);
+  });
+
+  it('falls back to the Prodigy rate for a cleared LR under Prodigy', () => {
+    const out = build(run('sdxl'), 'tag', { optimizer: 'Prodigy', unetLr: '' });
+    expect(out.unetLr).toBe(1);
+  });
 });
 
 describe('sample prompts', () => {
