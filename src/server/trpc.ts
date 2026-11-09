@@ -10,7 +10,7 @@ import { mutedAccountRefusal } from '~/server/services/account-restriction.servi
 import { isAccountMuted } from '~/server/services/account-standing.service';
 import type { NextApiRequest } from 'next';
 import { OnboardingSteps } from '~/server/common/enums';
-import { withSpan } from '~/server/utils/otel-helpers';
+import { withRecordableSpan } from '~/server/utils/otel-helpers';
 import {
   acquireBulkheadSlot,
   BulkheadFullError,
@@ -106,6 +106,9 @@ export type TRPCMeta = TRPCScopeMeta & {
   requireFullUserCredential?: boolean;
 };
 
+const serializeSpanName = () =>
+  `trpc:serialize:${responseWritesDevalue() ? 'devalue' : 'superjson'}`;
+
 const t = initTRPC
   .context<Context>()
   .meta<TRPCMeta>()
@@ -119,20 +122,17 @@ const t = initTRPC
     // off the wire is byte-for-byte superjson. The shared `buildTransformer`
     // fills the request-read / response-read (union) and request-write
     // (superjson, never exercised server-side) slots.
-    transformer: buildTransformer((data: any) => {
+    transformer: buildTransformer((data: any) =>
       // instrumentSerialize times the serialize (the exact frame that pegs the
       // loop on an oversized response — see trpc-serialize-log.ts) and, only
       // above a cheap duration floor, logs the offending procedure + byte size.
-      // The span label is read from the same per-request decision the write
-      // uses, so the freeze-instrumentation frame name matches what is ACTUALLY
-      // written (superjson vs devalue). The wrappers are pass-through.
-      const devalue = responseWritesDevalue();
-      return instrumentSerialize(() =>
-        withSpan(`trpc:serialize:${devalue ? 'devalue' : 'superjson'}`, () =>
-          responseWriteSerialize(data)
-        )
-      );
-    }),
+      // The span is opened only where it can be recorded, and its label is read
+      // from the same per-request decision the write uses (superjson vs devalue).
+      // The wrappers are pass-through.
+      instrumentSerialize(() =>
+        withRecordableSpan(serializeSpanName, () => responseWriteSerialize(data))
+      )
+    ),
     errorFormatter,
   });
 

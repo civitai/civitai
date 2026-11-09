@@ -48,19 +48,21 @@ export function setWithSpanSkipUnsampledGate(gate: (() => boolean) | undefined):
  *   - a parent with the sampled flag set but not recording (e.g. one that has already ENDED,
  *     as in work that outlives its request): its children ARE recorded today.
  */
-function shouldSkipUnsampledSpan(): boolean {
-  const gate = withSpanGateState.gate;
-  if (gate === undefined) return false;
+function isUnsampledLocalParentActive(): boolean {
   const parent = trace.getActiveSpan();
   if (parent === undefined || parent.isRecording()) return false;
   const parentContext = parent.spanContext();
-  if (
-    parentContext.isRemote ||
-    (parentContext.traceFlags & TraceFlags.SAMPLED) !== 0 ||
-    !isSpanContextValid(parentContext)
-  ) {
-    return false;
-  }
+  return (
+    !parentContext.isRemote &&
+    (parentContext.traceFlags & TraceFlags.SAMPLED) === 0 &&
+    isSpanContextValid(parentContext)
+  );
+}
+
+function shouldSkipUnsampledSpan(): boolean {
+  const gate = withSpanGateState.gate;
+  if (gate === undefined) return false;
+  if (!isUnsampledLocalParentActive()) return false;
   try {
     return gate() === true;
   } catch {
@@ -127,13 +129,32 @@ export function withSpan<T>(
   // exported, yet opening it still pays for span allocation, attribute handling and an extra
   // context switch. When the gate is on, run the work directly instead: same return value, same
   // throw, and the active span inside the work is the parent, which shares the trace id. See
-  // `shouldSkipUnsampledSpan` for exactly which parents qualify.
+  // `isUnsampledLocalParentActive` for exactly which parents qualify.
   if (shouldSkipUnsampledSpan()) {
     return typeof attrsOrFn === 'function' ? attrsOrFn() : maybeFn!();
   }
 
   const [attrs, fn] = typeof attrsOrFn === 'function' ? [{}, attrsOrFn] : [attrsOrFn, maybeFn!];
+  return runInSpan(name, attrs, fn);
+}
 
+/**
+ * `withSpan` for per-call hot paths: under an unsampled local parent (see
+ * `isUnsampledLocalParentActive` for exactly which parents qualify) it runs `fn` directly,
+ * gate or no gate, since a span opened there is never recorded or exported. Every other parent
+ * shape gets the same span `withSpan` opens. `name` may be a function so a computed name costs
+ * nothing on the skipped path.
+ */
+export function withRecordableSpan<T>(name: string | (() => string), fn: () => T): T {
+  if (isUnsampledLocalParentActive()) return fn();
+  return runInSpan(typeof name === 'function' ? name() : name, {}, fn);
+}
+
+function runInSpan<T>(
+  name: string,
+  attrs: Record<string, string | number | boolean>,
+  fn: () => T
+): T {
   return tracer.startActiveSpan(name, (span) => {
     try {
       if (attrs) span.setAttributes(attrs);
