@@ -10,6 +10,7 @@ import {
   createSerializedFileDownloadUrl,
 } from '~/server/common/model-helpers';
 import { getDownloadFilename } from '~/server/services/file.service';
+import { publicFileMetadata } from '~/server/utils/public-file-metadata';
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { publicModelResponseKey } from '~/server/services/model-version.service';
 import { PublicEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
@@ -116,7 +117,7 @@ async function buildPublicModelResponse(
                 .filter((file) => file.visibility === ModelFileVisibility.Public)
                 .map(({ hashes, metadata, modelVersionId, ...file }) => ({
                   ...file,
-                  metadata: removeEmpty(metadata),
+                  metadata: removeEmpty(publicFileMetadata(file.type, metadata)),
                   name: safeDecodeURIComponent(
                     getDownloadFilename({
                       model,

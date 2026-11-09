@@ -8,6 +8,8 @@ import type {
 import {
   momentStickerTrack,
   sampleStickerTrack,
+  STICKER_TRACK_MAX_FADE_MS,
+  STICKER_TRACK_MAX_FAINT_MS,
   STICKER_TRACK_MAX_KEYS,
   stickerTrackAnimates,
   stickerTrackFrames,
@@ -137,6 +139,12 @@ describe('what the player and the size limit see in keys', () => {
   });
 });
 
+/** `n` longest fades back to back, alternating in and out, each `gap` ms after the last. */
+const fades = (n: number, gap = 0) =>
+  Array.from({ length: n + 1 }, (_, i) =>
+    key(i * (STICKER_TRACK_MAX_FADE_MS + gap), { o: i % 2 ? 1 : 0, ease: 'smooth' })
+  );
+
 describe('stickerTrackRefusal on keys', () => {
   const ok: StickerTrackV2 = { v: 2, keys: [key(0), key(500, { x: 0.8 })] };
 
@@ -154,6 +162,18 @@ describe('stickerTrackRefusal on keys', () => {
     ['a shown key fainter than a still sticker may be', [key(0, { o: 0.1 })], /o too faint/],
     ['a position off the media', [key(0, { x: -0.1 })], /x out of bounds/],
     ['an unknown ease', [key(0, { ease: 'bounce' as StickerTrackEase })], /unknown ease/],
+    ['a long fade in', [key(0, { o: 0, ease: 'smooth' }), key(10_000)], /fade too long/],
+    ['a long fade out', [key(0, { ease: 'smooth' }), key(10_000, { o: 0 })], /fade too long/],
+    [
+      'a fade just past the limit',
+      [key(0, { o: 0, ease: 'smooth' }), key(STICKER_TRACK_MAX_FADE_MS + 1)],
+      /fade too long/,
+    ],
+    [
+      'short fades that add up past the limit',
+      fades(STICKER_TRACK_MAX_FAINT_MS / STICKER_TRACK_MAX_FADE_MS + 1),
+      /too much fading/,
+    ],
     [
       'too many keys',
       Array.from({ length: STICKER_TRACK_MAX_KEYS + 1 }, (_, i) => key(i)),
@@ -161,6 +181,22 @@ describe('stickerTrackRefusal on keys', () => {
     ],
   ])('refuses %s', (_, keys, message) => {
     expect(stickerTrackRefusal({ v: 2, keys })).toMatch(message);
+  });
+
+  // A fade can spend all of its time below the floor, so how long it lasts bounds how long the
+  // sticker stays faint; jump and two hidden keys never draw it faint at all.
+  it.each<[string, StickerTrackKey[]]>([
+    ['the longest fade', [key(0, { o: 0, ease: 'smooth' }), key(STICKER_TRACK_MAX_FADE_MS)]],
+    ['a long jump out of hiding', [key(0, { o: 0, ease: 'jump' }), key(10_000)]],
+    ['a long jump into hiding', [key(0, { ease: 'jump' }), key(10_000, { o: 0 })]],
+    ['a long gap between hidden keys', [key(0, { o: 0 }), key(10_000, { o: 0 })]],
+    ['a long glide between shown keys', [key(0, { o: 0.4 }), key(10_000, { x: 0.8 })]],
+    [
+      'fades that add up to the limit',
+      fades(STICKER_TRACK_MAX_FAINT_MS / STICKER_TRACK_MAX_FADE_MS),
+    ],
+  ])('accepts %s', (_, keys) => {
+    expect(stickerTrackRefusal({ v: 2, keys })).toBeNull();
   });
 
   it('is enforced by the create schema', () => {
@@ -176,5 +212,12 @@ describe('stickerTrackRefusal on keys', () => {
     expect(late.error?.issues[0].message).toMatch(/^track: keys: times must increase/);
     expect(parse({ v: 2, keys: [{ ...key(0), ease: 'bounce' }] }).success).toBe(false);
     expect(parse({ v: 3, keys: [key(0)] }).success).toBe(false);
+    const faint = parse({
+      v: 2,
+      keys: fades(STICKER_TRACK_MAX_FAINT_MS / STICKER_TRACK_MAX_FADE_MS + 1),
+    });
+    expect(faint.error?.issues[0].message).toMatch(/^track: keys: too much fading/);
+    const long = parse({ v: 2, keys: [key(0, { o: 0, ease: 'smooth' }), key(10_000)] });
+    expect(long.error?.issues[0].message).toMatch(/^track: keys: fade too long/);
   });
 });

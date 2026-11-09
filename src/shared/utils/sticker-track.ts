@@ -3,8 +3,8 @@
  *
  * - **v2, keys** (`StickerTrackV2`): the format for keys set by hand. Each key is a time, a whole
  *   pose and an opacity, and an ease that says how the sticker travels to the next key.
- * - **v1, channels** (`StickerTrackV1`): a recorded path or a moment sticker, as the placer writes
- *   them today (`encodeStickerTrack`, `momentStickerTrack`).
+ * - **v1, channels** (`StickerTrackV1`): a recorded path or a moment sticker. The placer no longer
+ *   writes them, but stored v1 tracks are still read; the builders remain for tests.
  *
  * `Placement.data` keeps the position, scale and rotation at time zero, so every
  * reader that ignores the track still draws the sticker where it starts. `data`
@@ -118,6 +118,14 @@ export const STICKER_TRACK_MIN_MS = 10;
 export const STICKER_TRACK_MAX_TICK_MS = 1000;
 /** Above the longest accepted video (`maxVideoDurationSeconds`), so a rounding at the end is not refused. */
 export const STICKER_TRACK_MAX_DURATION_MS = 300_000;
+/**
+ * Longest a segment may fade between a hidden key and a shown one. A fade can be drawn below the
+ * opacity floor for up to its whole length, so this and `STICKER_TRACK_MAX_FAINT_MS` bound how
+ * long a sticker can sit faint.
+ */
+export const STICKER_TRACK_MAX_FADE_MS = 2000;
+/** Longest the fades of one track may last in all, so chained fades cannot keep a sticker faint either. */
+export const STICKER_TRACK_MAX_FAINT_MS = 8000;
 /** Of the JSON text: several times a 30 s track that never holds still. */
 export const STICKER_TRACK_MAX_BYTES = 128 * 1024;
 /**
@@ -183,10 +191,6 @@ export function encodeStickerTrack(
     r: channel('r', (sample) => sample.rotation),
   };
 }
-
-/** How long a moment sticker shows, in the choices the placer gets. */
-export const STICKER_MOMENT_DURATIONS_MS = [500, 1000, 1500, 2000, 3000] as const;
-export const STICKER_MOMENT_DEFAULT_DURATION_MS = 1000;
 
 /** One pose, shown for `durationMs` from `startMs` and hidden the rest of the video. */
 export function momentStickerTrack(
@@ -427,9 +431,14 @@ const KEY_BOUNDS: [Exclude<keyof StickerTrackKey, 't' | 'ease'>, [number, number
   ['o', [0, 1]],
 ];
 
+/** A segment drawn faint: one end hidden, the other shown, eased rather than snapped. */
+const fadesFaint = (from: StickerTrackKey, to: StickerTrackKey) =>
+  from.ease !== 'jump' && (from.o === 0) !== (to.o === 0);
+
 function keysRefusal(keys: StickerTrackKey[]): string | null {
   if (keys.length === 0) return 'keys: empty';
   if (keys.length > STICKER_TRACK_MAX_KEYS) return 'too many keys';
+  let faintMs = 0;
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     if (!Number.isInteger(key.t) || key.t < 0 || key.t > STICKER_TRACK_MAX_DURATION_MS)
@@ -445,6 +454,12 @@ function keysRefusal(keys: StickerTrackKey[]): string | null {
     // through fainter values on its way to 0, which is the point of a fade.
     if (key.o !== 0 && key.o < STICKER_PLACEMENT_MIN_OPACITY) return 'keys: o too faint';
     if (!STICKER_TRACK_EASES.includes(key.ease)) return 'keys: unknown ease';
+    if (i > 0 && fadesFaint(keys[i - 1], key)) {
+      const fadeMs = key.t - keys[i - 1].t;
+      if (fadeMs > STICKER_TRACK_MAX_FADE_MS) return 'keys: fade too long';
+      faintMs += fadeMs;
+      if (faintMs > STICKER_TRACK_MAX_FAINT_MS) return 'keys: too much fading';
+    }
   }
   return null;
 }

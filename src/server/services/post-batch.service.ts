@@ -14,7 +14,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { trpcSlowLogThresholdMs } from '~/server/logging/trpc-slow-log';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { sysRedis, type RedisKeyTemplateSys } from '~/server/redis/client';
-import { getDailyPostLimit } from '~/server/schema/post.schema';
+import { getDailyPostLimit } from '~/server/services/usage-limit-config.service';
 import type { ScheduleBatchInput, ValidateBatchScheduleInput } from '~/server/schema/post.schema';
 import {
   addImageTechniques,
@@ -62,7 +62,7 @@ async function loadBatchScheduleContext(user: SessionUser, now: Date) {
     SELECT "publishedAt" FROM "Post" WHERE "userId" = ${user.id} AND "publishedAt" >= ${startOfTodayUtc}
   `;
   return {
-    dailyLimit: getDailyPostLimit(user),
+    dailyLimit: await getDailyPostLimit(user),
     existingPublishedAts: rows.map((row) => row.publishedAt),
   };
 }

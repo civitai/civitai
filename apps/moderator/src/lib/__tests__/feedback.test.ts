@@ -199,8 +199,69 @@ describe('splitContext', () => {
       workflowId: 'wf_1-a',
       jobId: 'job-2',
       toast: { title: 'Failed to submit', message: 'Something broke (ref: 0123456789ab)' },
+      trpcErrors: [],
+      environment: [],
       other: null,
     });
+  });
+
+  it('reads the environment, the server stamp and failed tRPC calls of a bug report', () => {
+    const ctx = splitContext({
+      build: '5.1.444+a8f29fe',
+      route: '/models/[id]',
+      clientAt: '2026-11-08T23:40:00.000Z',
+      device: {
+        viewport: { width: 390, height: 844 },
+        screen: { width: 390, height: 844 },
+        pixelRatio: 3,
+        touch: true,
+        colorScheme: 'dark',
+        language: 'en-US',
+      },
+      server: {
+        userAgent: 'Mozilla/5.0 (iPhone)',
+        tier: 'gold',
+        site: 'red',
+        host: 'civitai.red',
+        build: '5.1.444',
+        flags: { assistant: true, shellMaster: false },
+      },
+      trpcErrors: [{ path: 'image.create', code: 'BAD_REQUEST', at: '2026-11-08T23:39:00.000Z' }],
+    });
+
+    expect(ctx.environment).toEqual([
+      { label: 'App version', value: '5.1.444+a8f29fe' },
+      { label: 'Route', value: '/models/[id]' },
+      { label: 'Screen', value: '390×844 at 3x · screen 390×844 · touch · dark · en-US' },
+      { label: 'Sent at (their clock)', value: '2026-11-08T23:40:00.000Z' },
+      { label: 'Browser', value: 'Mozilla/5.0 (iPhone)' },
+      { label: 'Site', value: 'civitai.red (red)' },
+      { label: 'Tier', value: 'gold' },
+      { label: 'Server build', value: '5.1.444' },
+      { label: 'Flags on', value: 'assistant' },
+    ]);
+    expect(ctx.trpcErrors).toEqual([
+      {
+        path: 'image.create',
+        code: 'BAD_REQUEST',
+        httpStatus: null,
+        at: '2026-11-08T23:39:00.000Z',
+      },
+    ]);
+    expect(ctx.other).toBeNull();
+  });
+
+  it('leaves a malformed trpcErrors array under other', () => {
+    const bad = [{ code: 'BAD_REQUEST', at: '2026-11-08T23:39:00.000Z' }];
+    const ctx = splitContext({ trpcErrors: bad });
+    expect(ctx.trpcErrors).toEqual([]);
+    expect(ctx.other).toEqual({ trpcErrors: bad });
+  });
+
+  it('leaves a `server` object of another shape, and a malformed device, under other', () => {
+    const ctx = splitContext({ server: { fingerprint: 'abc' }, device: { viewport: 'big' } });
+    expect(ctx.environment).toEqual([]);
+    expect(ctx.other).toEqual({ server: { fingerprint: 'abc' }, device: { viewport: 'big' } });
   });
 
   /**
@@ -266,6 +327,8 @@ describe('splitContext', () => {
         sessionId: null,
         consoleErrors: [],
         networkErrors: [],
+        trpcErrors: [],
+        environment: [],
         errorRef: null,
         workflowId: null,
         jobId: null,
