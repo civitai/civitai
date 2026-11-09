@@ -40,12 +40,16 @@ const redisReads = () =>
 
 let flag: boolean | null = null;
 
-beforeEach(() => {
+// lru-cache keeps its last clock reading until a 1ms timer clears it, and a case with no
+// `advance` never yields to that timer, so a reading left by the previous case (later than this
+// case's restarted clock) would age every entry here. Let it clear before each case.
+beforeEach(async () => {
   vi.clearAllMocks();
   installFakeCacheRedis();
   resetL1SwitchesForTests();
   clock = 5_000_000;
   vi.spyOn(performance, 'now').mockImplementation(() => clock);
+  await sleep(5);
   vi.mocked(isFliptSync).mockImplementation((key: string) =>
     key === 'basic-tags-l1-long-ttl' ? flag : null
   );

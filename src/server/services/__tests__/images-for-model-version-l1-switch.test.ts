@@ -94,12 +94,16 @@ let tagReads: MockInstance<(typeof tagIdsForImagesCache)['fetch']>;
 const plant = (versionId: number) =>
   fs.plant(`${PREFIX}${versionId}`, { ...entryFor(versionId), cachedAt: new Date() }, 86400);
 
-beforeEach(() => {
+// lru-cache keeps its last clock reading until a 1ms timer clears it, and a case with no
+// `advance` never yields to that timer, so a reading left by the previous case (later than this
+// case's restarted clock) would age every entry here. Let it clear before each case.
+beforeEach(async () => {
   vi.clearAllMocks();
   fs = installFakeCacheRedis();
   resetL1SwitchesForTests();
   clock = 7_000_000;
   vi.spyOn(performance, 'now').mockImplementation(() => clock);
+  await sleep(5);
   vi.mocked(isFliptSync).mockImplementation((key: string) =>
     key === 'model-version-images-l1' ? flag : null
   );

@@ -43,7 +43,7 @@ function build() {
       mGet: vi.fn(async (keys: RedisKeyTemplateCache[]) =>
         keys.map((k) => (store.has(k) ? structuredClone(store.get(k)) : null))
       ),
-      set: vi.fn(async (key: RedisKeyTemplateCache, value: unknown) => {
+      set: vi.fn(async (key: RedisKeyTemplateCache, value: unknown, _options?: unknown) => {
         store.set(key, structuredClone(value));
         return 'OK';
       }),
