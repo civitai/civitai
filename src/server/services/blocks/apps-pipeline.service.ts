@@ -354,8 +354,22 @@ export async function waitForReviewHostReachable(
     dohEnabled?: boolean;
     // fetch impl for the DoH query; defaults to fetchImpl ?? fetch.
     dohFetchImpl?: typeof fetch;
+    // The preview is on the shared static server (`app-blocks-review-shared-server`). Its route
+    // already exists and is moderator-gated: a request with no `Sec-Fetch-Dest` counts as an
+    // ENTRY request and is denied, so "not 404" proves nothing. Probe instead as a non-entry
+    // request (`Sec-Fetch-Dest: empty`, which the gate lets through) and require 200: a 404
+    // means the server has not read the published meta yet (it re-reads every 5s). No DNS wait:
+    // the wildcard record already covers review hosts. Retries every 1s for 15s by default.
+    sharedServer?: boolean;
   } = {}
 ): Promise<boolean> {
+  if (opts.sharedServer) {
+    return waitForSharedReviewHost(host, {
+      ...opts,
+      timeoutMs: opts.timeoutMs ?? 15_000,
+      intervalMs: opts.intervalMs ?? 1_000,
+    });
+  }
   // Generous default budget: the dominant lag is external-dns record creation
   // (its sync loop runs on ~a 60s cycle), not the deploy. Env
   // REVIEW_HOST_REACHABLE_TIMEOUT_MS (180s) — tunable without a code change.
@@ -439,6 +453,60 @@ export async function waitForReviewHostReachable(
 
     if (now() >= deadline) return false;
     await sleep(intervalMs);
+    if (now() >= deadline) return false;
+  }
+}
+
+/** The request a shared-server review probe makes: a non-entry GET that the mod gate admits. */
+export const SHARED_REVIEW_PROBE_HEADERS = { 'Sec-Fetch-Dest': 'empty' } as const;
+
+async function waitForSharedReviewHost(
+  host: string,
+  opts: {
+    timeoutMs: number;
+    intervalMs: number;
+    attemptTimeoutMs?: number;
+    fetchImpl?: typeof fetch;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+    signalFactory?: (ms: number) => AbortSignal | undefined;
+    originIp?: string | null;
+    originProbe?: OriginProbe;
+  }
+): Promise<boolean> {
+  const now = opts.now ?? (() => Date.now());
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const signalFactory = opts.signalFactory ?? ((ms: number) => AbortSignal.timeout(ms));
+  const attemptTimeoutMs = opts.attemptTimeoutMs ?? 5_000;
+  const originIp =
+    opts.originIp ?? env.APPS_REVIEW_INGRESS_TARGET ?? env.APPS_DEV_TUNNEL_INGRESS_TARGET ?? null;
+  const originProbe = opts.originProbe ?? defaultOriginProbe;
+  const doFetch = opts.fetchImpl ?? fetch;
+  const deadline = now() + opts.timeoutMs;
+  for (;;) {
+    let status = 0;
+    try {
+      if (originIp) {
+        ({ status } = await originProbe(`http://${originIp}/`, {
+          method: 'GET',
+          headers: { Host: host, ...SHARED_REVIEW_PROBE_HEADERS },
+          redirect: 'manual',
+          signal: signalFactory(attemptTimeoutMs),
+        }));
+      } else {
+        ({ status } = await doFetch(`https://${host}/`, {
+          method: 'GET',
+          headers: { ...SHARED_REVIEW_PROBE_HEADERS },
+          redirect: 'manual',
+          signal: signalFactory(attemptTimeoutMs),
+        }));
+      }
+    } catch {
+      status = 0;
+    }
+    if (status === 200) return true;
+    if (now() >= deadline) return false;
+    await sleep(opts.intervalMs);
     if (now() >= deadline) return false;
   }
 }
@@ -533,6 +601,9 @@ export type TriggerApplyReviewArgs = {
   sha: string;
   publishRequestId: string;
   imageRef: string;
+  /** Publish to the shared static server instead of applying per-preview objects
+   *  (`app-blocks-review-shared-server`; the caller reads the flag once per build). */
+  sharedServer?: boolean;
 };
 
 /**
@@ -613,7 +684,7 @@ export async function triggerApplyReview(
                 { name: 'tmp', mountPath: '/tmp' },
               ],
               command: ['/bin/bash', '-c'],
-              args: [buildApplyReviewScript(ns)],
+              args: [buildApplyReviewScript(ns, { sharedServer: args.sharedServer === true })],
               resources: {
                 requests: { cpu: '50m', memory: '64Mi' },
                 limits: { cpu: '500m', memory: '256Mi' },
@@ -651,6 +722,160 @@ export async function triggerApplyReview(
 }
 
 /**
+ * A one-container Job that runs a templates script under the `apps-applier` SA, with the
+ * `app-templates` ConfigMap at /templates. The script itself starts the pod that holds the one
+ * scoped credential it needs, waits for it and exits 0/1. Pre-deletes a same-name Job (404 is
+ * fine) so a repeat run starts fresh.
+ */
+async function runTemplatesScriptJob(args: {
+  name: string;
+  labels: Record<string, string>;
+  env: Array<{ name: string; value: string }>;
+  script: string;
+}): Promise<{ name: string }> {
+  const target = await getDp1Target();
+  const ns = env.APPS_KUBE_NAMESPACE;
+  const job = {
+    apiVersion: 'batch/v1',
+    kind: 'Job',
+    metadata: { name: args.name, namespace: ns, labels: { app: args.name, ...args.labels } },
+    spec: {
+      backoffLimit: 0,
+      ttlSecondsAfterFinished: 86400,
+      template: {
+        metadata: { labels: args.labels },
+        spec: {
+          serviceAccountName: 'apps-applier',
+          restartPolicy: 'Never',
+          securityContext: {
+            runAsNonRoot: true,
+            runAsUser: 65532,
+            runAsGroup: 65532,
+            seccompProfile: { type: 'RuntimeDefault' },
+          },
+          containers: [
+            {
+              name: 'run',
+              image: 'alpine/k8s:1.34.0',
+              imagePullPolicy: 'IfNotPresent',
+              env: args.env,
+              securityContext: {
+                allowPrivilegeEscalation: false,
+                readOnlyRootFilesystem: true,
+                capabilities: { drop: ['ALL'] },
+              },
+              volumeMounts: [
+                { name: 'templates', mountPath: '/templates', readOnly: true },
+                { name: 'tmp', mountPath: '/tmp' },
+              ],
+              command: ['/bin/bash', '-c'],
+              args: [args.script],
+              resources: {
+                requests: { cpu: '20m', memory: '32Mi' },
+                limits: { cpu: '200m', memory: '128Mi' },
+              },
+            },
+          ],
+          volumes: [
+            { name: 'templates', configMap: { name: 'app-templates' } },
+            { name: 'tmp', emptyDir: { sizeLimit: '8Mi' } },
+          ],
+        },
+      },
+    },
+  };
+  await k8sFetch(
+    target,
+    `/apis/batch/v1/namespaces/${ns}/jobs/${args.name}?propagationPolicy=Background`,
+    { method: 'DELETE' }
+  ).then(async (r) => {
+    if (!r.ok && r.status !== 404) {
+      const body = await r.text().catch(() => '');
+      throw new Error(`pre-delete Job ${args.name} ${r.status}: ${body.slice(0, 240)}`);
+    }
+  });
+  const res = await k8sFetch(target, `/apis/batch/v1/namespaces/${ns}/jobs`, {
+    method: 'POST',
+    body: JSON.stringify(job),
+  });
+  const created = await unwrap<{ metadata: { name: string } }>(res);
+  return { name: created.metadata.name };
+}
+
+/** Script of the review unpublish Job: deletes the preview's meta, so its host stops serving. */
+export const REVIEW_UNPUBLISH_SCRIPT = 'set -euo pipefail\nbash /templates/review-unpublish.sh\n';
+
+/**
+ * Unpublish a review preview from the shared static server: a Job running
+ * `/templates/review-unpublish.sh` for the preview's host. Idempotent (an already-unpublished
+ * preview is fine); the preview's files expire with the bucket's lifecycle rule.
+ */
+export async function triggerReviewUnpublish(args: {
+  slug: string;
+  sha: string;
+  publishRequestId: string;
+}): Promise<{ name: string }> {
+  const host = reviewHostSha(args.sha);
+  return runTemplatesScriptJob({
+    name: `${args.slug}-review-unpub-${host.slice(0, 8)}`.slice(0, 63),
+    labels: {
+      'civitai.com/role': 'publish-job',
+      'civitai.com/review-mode': 'true',
+      'civitai.com/app-slug': args.slug,
+      'civitai.com/publish-request-id': args.publishRequestId,
+    },
+    env: [
+      { name: 'REVIEW_HOST_SHA', value: host },
+      { name: 'SHA', value: args.sha },
+      { name: 'PUBLISH_REQUEST_ID', value: args.publishRequestId },
+    ],
+    script: REVIEW_UNPUBLISH_SCRIPT,
+  });
+}
+
+/** Script of the live unpublish Job: deletes the app's live pointer, so its host stops serving. */
+export const LIVE_UNPUBLISH_SCRIPT = 'set -euo pipefail\nbash /templates/live-unpublish.sh\n';
+
+/** The message `/templates/live-unpublish.sh` exits with for the shared server's readiness app. */
+export const READINESS_APP_REFUSAL = "is the shared static server's readiness probe app";
+
+/**
+ * Remove a LIVE app from the shared static server: a Job running `/templates/live-unpublish.sh`,
+ * which deletes only the app's live pointer (the build's files are kept; the next publish
+ * restores the app). The script refuses the shared server's readiness app.
+ */
+export async function triggerLiveUnpublish(slug: string): Promise<{ name: string }> {
+  return runTemplatesScriptJob({
+    name: `${slug}-live-unpub`.slice(0, 63),
+    labels: { 'civitai.com/role': 'publish-job', 'civitai.com/app-slug': slug },
+    env: [{ name: 'SLUG', value: slug }],
+    script: LIVE_UNPUBLISH_SCRIPT,
+  });
+}
+
+/**
+ * The apps the shared static server uses as its readiness probe, read from the
+ * `ready-probe-slugs` key of the templates ConfigMap (the same list the unpublish script
+ * enforces). One slug per line; blank lines and `#` comments ignored.
+ */
+export async function readReadinessProbeSlugs(): Promise<string[]> {
+  const target = await getDp1Target();
+  const ns = env.APPS_KUBE_NAMESPACE;
+  const res = await k8sFetch(target, `/api/v1/namespaces/${ns}/configmaps/app-templates`, {
+    method: 'GET',
+  });
+  const cm = await unwrap<{ data?: Record<string, string> }>(res);
+  return parseReadinessProbeSlugs(cm?.data?.['ready-probe-slugs'] ?? '');
+}
+
+export function parseReadinessProbeSlugs(raw: string): string[] {
+  return raw
+    .split('\n')
+    .map((l) => l.replace(/#.*$/, '').trim())
+    .filter((l) => l.length > 0);
+}
+
+/**
  * Tear down a review environment by label selector. Deletes the review
  * Deployment + Service + IngressRoute + Middleware(s) created for a publish
  * request. Best-effort + idempotent: 404s are ignored, and a single failed
@@ -667,6 +892,32 @@ export async function deleteReviewResources(args: {
   sha: string;
   publishRequestId: string;
 }): Promise<void> {
+  // Shared static server: the preview is a published meta, not objects. Unpublish it with a Job
+  // (the web pod holds no storage credential). The label sweep below still runs: it removes any
+  // per-preview objects a preview built before the flag was turned on still has.
+  try {
+    const { isAppBlocksReviewSharedServerEnabled } = await import(
+      '~/server/services/app-blocks-flag'
+    );
+    if (await isAppBlocksReviewSharedServerEnabled()) {
+      if (/^[0-9a-f]{40}$/.test(args.sha)) {
+        await triggerReviewUnpublish(args);
+      } else {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[apps-pipeline] deleteReviewResources: no review sha for ${args.publishRequestId}; nothing to unpublish`
+        );
+      }
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[apps-pipeline] review unpublish failed for ${args.publishRequestId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   // Label selector restricts every LIST to review resources for THIS publish
@@ -978,8 +1229,8 @@ export type ApplyScriptOptions = {
  *   3. per-app objects ON only: render and `kubectl apply` the per-app manifest and wait for the
  *      rollout. With it OFF no Deployment, Service, IngressRoute or Middleware is created.
  *
- * The review sandbox script (buildApplyReviewScript) never publishes: a pending build is never
- * published.
+ * The review sandbox script (buildApplyReviewScript) never publishes to the LIVE lane: a pending
+ * build is only ever published to the shared server's separate, moderator-gated review lane.
  *
  * Exported for the tests, which run it under bash with kubectl and curl stubbed.
  */
@@ -1110,14 +1361,25 @@ ${apply}`;
  * `review-${SLUG}-${REVIEW_HOST_SHA}` so it never collides with the live app's
  * Deployment (`${SLUG}`).
  *
+ * With `sharedServer` (the `app-blocks-review-shared-server` flag) nothing is rendered: after
+ * the same smoke test the Job runs the shared static server's review-lane publish
+ * (`PUBLISH_LANE=review /templates/publish.sh`) and the preview is served by the shared server.
+ *
  * Exported so the orchestration test locks the smoke + render shape, mirroring
  * buildApplyScript.
  */
-export function buildApplyReviewScript(ns: string): string {
-  return `#!/usr/bin/env bash
+export type ApplyReviewScriptOptions = {
+  /** Publish to the shared static server (review lane) instead of rendering and applying the
+   *  per-preview objects. Set from the `app-blocks-review-shared-server` flag. */
+  sharedServer?: boolean;
+};
+
+export function buildApplyReviewScript(ns: string, opts: ApplyReviewScriptOptions = {}): string {
+  const header = `#!/usr/bin/env bash
 set -euo pipefail
 
-# MUST be exported: envsubst (below) only substitutes EXPORTED env vars. SLUG /
+`;
+  const render = `# MUST be exported: envsubst (below) only substitutes EXPORTED env vars. SLUG /
 # SHA / IMAGE / REVIEW_HOST_SHA come from the container env (exported), but
 # REVIEW_NAME is computed here — without \`export\` it renders EMPTY in the
 # manifest, producing invalid names (Deployment/Service "" + Middleware
@@ -1139,7 +1401,8 @@ else
 fi
 cat /tmp/rendered.yaml
 
-# ---- Pre-flight smoke test against the candidate review image ---------------
+`;
+  const smoke = `# ---- Pre-flight smoke test against the candidate review image ---------------
 SMOKE_POD="smoke-review-\${REVIEW_HOST_SHA}"
 SMOKE_POD="\$(printf '%s' "\${SMOKE_POD}" | head -c 60)"
 echo "review smoke test: creating pod \${SMOKE_POD} from \${IMAGE}"
@@ -1193,7 +1456,8 @@ fi
 
 echo "review smoke test: PASSED"
 
-# ---- Recreate the review resources, then apply ----------------------------
+`;
+  const apply = `# ---- Recreate the review resources, then apply ----------------------------
 # A same-sha rebuild renders the SAME names. Delete them first so every apply creates them fresh:
 # the cluster janitor reaps review resources 14 days after their creationTimestamp, and civitai
 # reports the preview expired 14 days after this build started, so the two clocks only agree if
@@ -1202,4 +1466,11 @@ kubectl delete -f /tmp/rendered.yaml --ignore-not-found=true --wait=true
 kubectl apply -f /tmp/rendered.yaml
 kubectl -n ${ns} rollout status deploy/\${REVIEW_NAME} --timeout=180s
 `;
+  // Shared server: nothing is rendered or applied. The review-lane publish writes the build's
+  // files then its meta (the meta last, so the host never serves a half-written build), and it
+  // is always fatal. A same-sha rebuild re-uploads every file.
+  const publish = `# ---- Publish to the shared static server (review lane) -----------------
+PUBLISH_LANE=review bash /templates/publish.sh
+`;
+  return opts.sharedServer ? header + smoke + publish : header + render + smoke + apply;
 }

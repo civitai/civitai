@@ -4,7 +4,11 @@ import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
+import {
+  isAppBlocksPipelineEnabled,
+  isAppBlocksReviewSharedServerEnabled,
+} from '~/server/services/app-blocks-flag';
+import { isStoredReviewPreviewState } from '~/shared/constants/app-review-preview.constants';
 import {
   triggerApplyReview,
   waitForApplyJob,
@@ -18,6 +22,7 @@ import { deriveFailureClass, parseBuildSignals } from '~/server/services/blocks/
 import {
   markReviewPreviewState,
   parseReviewDetail,
+  releaseSettledBuildSlot,
 } from '~/server/services/blocks/publish-request.service';
 import { recordAppBlockBuildOutcome } from '~/server/prom/app-block-build.metrics';
 import {
@@ -263,7 +268,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       select: { deployDetail: true, status: true, deployState: true },
     });
     baseDetail = { ...parseReviewDetail(row?.deployDetail), sha: body.sha };
-    if (row && !(row.status === 'pending' && (row.deployState ?? '').startsWith('preview-'))) {
+    if (row && !(row.status === 'pending' && isStoredReviewPreviewState(row.deployState))) {
       previewNoLongerActive = true;
     }
   } catch {
@@ -271,6 +276,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
 
   if (previewNoLongerActive) {
+    // This build is over, so the build slot its (torn-down, superseded or decided) row still
+    // holds is released now, and the queue moves on.
+    await releaseSettledBuildSlot(body.publishRequestId);
+    reviewBuildSettled(body.publishRequestId, false);
     res.status(200).json({
       ok: true,
       applied: false,
@@ -375,6 +384,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     failureClass: 'none',
   });
 
+  // Read once per build, so the apply Job and the reachability probe agree on the serving path.
+  const sharedServer = await isAppBlocksReviewSharedServerEnabled().catch(() => false);
+
   let applyJob: { name: string };
   try {
     applyJob = await triggerApplyReview({
@@ -382,6 +394,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       sha: body.sha,
       publishRequestId: body.publishRequestId,
       imageRef: body.imageRef,
+      sharedServer,
     });
   } catch (e) {
     // Job creation failed — no watcher will run to free the dedup mark, so free
@@ -410,6 +423,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     sha: body.sha,
     jobName: applyJob.name,
     baseDetail,
+    sharedServer,
   });
 });
 
@@ -422,6 +436,8 @@ export async function watchReviewApplyJob(args: {
   baseDetail: ReturnType<typeof parseReviewDetail>;
   /** What to do once the build stops holding a slot. Injectable for the watcher's tests. */
   onSettled?: (publishRequestId: string, live: boolean) => void;
+  /** The preview was published to the shared static server (probe it there). */
+  sharedServer?: boolean;
 }): Promise<void> {
   const settled = args.onSettled ?? reviewBuildSettled;
   // Every write below is a WATCHER advancing write — it must only ever touch the
@@ -441,7 +457,9 @@ export async function watchReviewApplyJob(args: {
       // ERR_NAME_NOT_RESOLVED. Gate "live" on a real reachability probe: stay on
       // "deploying…" until the host actually answers, so the link is never dead.
       const host = args.baseDetail.host;
-      const reachable = host ? await waitForReviewHostReachable(host) : true;
+      const reachable = host
+        ? await waitForReviewHostReachable(host, { sharedServer: args.sharedServer === true })
+        : true;
       if (reachable) {
         const marked = await markReviewPreviewState(
           args.publishRequestId,

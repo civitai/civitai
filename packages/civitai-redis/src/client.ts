@@ -2320,6 +2320,10 @@ export const REDIS_SYS_KEYS = {
     // New-submission moderator alerts per submitter per UTC hour
     // (`system:blocks:review-submission-alerts:${userId}:${YYYY-MM-DDTHH}`).
     REVIEW_SUBMISSION_ALERTS: 'system:blocks:review-submission-alerts',
+    // Agent-review auto-start budget reserved by starts in flight, in US cents, per UTC day
+    // (`system:blocks:agent-review-autostart-reserved:${YYYY-MM-DD}`): the per-review cap is
+    // reserved before the start and released once its report row exists (or the start failed).
+    AGENT_REVIEW_AUTOSTART_RESERVED: 'system:blocks:agent-review-autostart-reserved',
     /**
      * Per-user (fallback per-IP) rate-limit counter for the dev/preview
      * block-token mint (`/api/v1/blocks/dev-token`). Same `SET NX EX` + `INCR`

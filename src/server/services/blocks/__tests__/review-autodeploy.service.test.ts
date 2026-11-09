@@ -165,16 +165,38 @@ const queued = () => row({ deployState: 'preview-queued' });
 const states = () => rows.map((r) => r.deployState);
 
 /** sysRedis MULTI whose INCR answers `count` (or throws). */
+/**
+ * Today's agent-review auto-start reservation, in cents: a real counter shared by the MULTI's
+ * INCRBY and the plain INCRBY that releases it, so concurrent starts see each other.
+ */
+const reservation = { cents: 0, fail: false };
+
 function budgetCounter(count: number | Error) {
+  let incrByCents: number | null = null;
   const chain = {
     set: vi.fn((..._a: unknown[]) => chain),
     incr: vi.fn(() => chain),
+    incrBy: vi.fn((_k: string, cents: number) => {
+      incrByCents = cents;
+      return chain;
+    }),
     exec: vi.fn(async () => {
+      if (incrByCents !== null) {
+        const cents = incrByCents;
+        incrByCents = null;
+        if (reservation.fail) throw new Error('redis down');
+        reservation.cents += cents;
+        return ['OK', reservation.cents];
+      }
       if (count instanceof Error) throw count;
       return ['OK', count];
     }),
   };
   redisMock.sysRedis.multi.mockImplementation(() => chain);
+  redisMock.sysRedis.incrBy.mockImplementation(async (_k: string, cents: number) => {
+    reservation.cents += cents;
+    return reservation.cents;
+  });
   return chain;
 }
 
@@ -193,6 +215,8 @@ beforeEach(() => {
   m.startAgentReview.mockResolvedValue({});
   m.notifyModAlert.mockReset();
   m.notifyModAlert.mockResolvedValue('delivered');
+  reservation.cents = 0;
+  reservation.fail = false;
   budgetCounter(1);
   envMock.set({
     NEXTAUTH_URL: 'https://civitai.example',
@@ -378,11 +402,41 @@ describe('the platform build cap', () => {
     expect(lockCalls.n).toBe(2);
   });
 
-  it('flag OFF: queued previews are left queued (the flag is the kill switch)', async () => {
-    rows = [queued()];
+  // The flag is the kill switch for automatic builds, so nothing queued is built with it off. But
+  // a queued row never expires and nothing else starts it: left queued it would be stranded.
+  it('flag OFF: queued previews are not built, and are handed back to "waiting for a moderator"', async () => {
+    const q = queued();
+    rows = [q];
     m.autodeployOn.mockResolvedValue(false);
     expect(await drainReviewPreviewQueue()).toEqual({ started: 0, waiting: false });
     expect(m.startClaimedReviewBuild).not.toHaveBeenCalled();
+    expect(q.deployState).toBeNull();
+    expect(q.deployDetail).toBeNull();
+  });
+
+  it('a superseded or decided request whose build is still running keeps its slot', async () => {
+    rows = [row({ status: 'withdrawn', deployState: 'preview-building' }), building(), building()];
+    const q = queued();
+    rows.push(q);
+    expect(await drainReviewPreviewQueue()).toEqual({ started: 0, waiting: true });
+    expect(q.deployState).toBe('preview-queued');
+  });
+
+  it('a preview torn down mid-build (preview-cancelling) keeps its slot', async () => {
+    rows = [row({ deployState: 'preview-cancelling' }), building(), building()];
+    const q = queued();
+    rows.push(q);
+    expect(await drainReviewPreviewQueue()).toEqual({ started: 0, waiting: true });
+  });
+
+  it('CONTROL: once that build settles (row cleared), the queued preview starts', async () => {
+    const settled = row({ status: 'withdrawn', deployState: 'preview-building' });
+    rows = [settled, building(), building()];
+    const q = queued();
+    rows.push(q);
+    settled.deployState = null;
+    expect(await drainReviewPreviewQueue()).toEqual({ started: 1, waiting: false });
+    expect(startedIds()).toEqual([q.id]);
   });
 });
 
@@ -685,5 +739,52 @@ describe('agent review auto-start needs the agent-review feature on', () => {
     m.agentBaseOn.mockResolvedValue(false);
     expect(await maybeAutoStartAgentReview('pubreq_live')).toBe('disabled');
     expect(m.startAgentReview).not.toHaveBeenCalled();
+  });
+});
+
+describe('agent review auto-start: concurrent go-lives share the budget', () => {
+  /** Runs started today with no cost yet; each start adds one after its I/O. */
+  let running = 0;
+  beforeEach(() => {
+    running = 0;
+    dbMock.dbRead.appReviewAgentReport.findFirst.mockResolvedValue(null);
+    // $38 already reported today: room for exactly one more $2 review under the $40 budget.
+    dbMock.dbWrite.appReviewAgentReport.aggregate.mockResolvedValue({ _sum: { costUsd: 38 } });
+    dbMock.dbWrite.appReviewAgentReport.count.mockImplementation(async () => running);
+    m.startAgentReview.mockImplementation(async () => {
+      await sleep(20); // stage the bundle, provision the Job...
+      running++; // ...then its running report row exists
+      return {};
+    });
+  });
+
+  it('two at budget-minus-one-cap at once: exactly one starts', async () => {
+    const outcomes = await Promise.all([
+      maybeAutoStartAgentReview('pubreq_a'),
+      maybeAutoStartAgentReview('pubreq_b'),
+    ]);
+    expect(outcomes.sort()).toEqual(['budget-refused', 'started']);
+    expect(m.startAgentReview).toHaveBeenCalledTimes(1);
+    // Every reservation is released once its start is over.
+    expect(reservation.cents).toBe(0);
+  });
+
+  it('CONTROL: one at a time, the second sees the first one running and is refused', async () => {
+    expect(await maybeAutoStartAgentReview('pubreq_a')).toBe('started');
+    expect(await maybeAutoStartAgentReview('pubreq_b')).toBe('budget-refused');
+  });
+
+  it('an unreadable reservation refuses rather than starting uncounted', async () => {
+    reservation.fail = true;
+    dbMock.dbWrite.appReviewAgentReport.aggregate.mockResolvedValue({ _sum: { costUsd: 0 } });
+    expect(await maybeAutoStartAgentReview('pubreq_a')).toBe('budget-refused');
+    expect(m.startAgentReview).not.toHaveBeenCalled();
+  });
+
+  it('a start that throws still releases its reservation', async () => {
+    dbMock.dbWrite.appReviewAgentReport.aggregate.mockResolvedValue({ _sum: { costUsd: 0 } });
+    m.startAgentReview.mockRejectedValue(new Error('k8s down'));
+    expect(await maybeAutoStartAgentReview('pubreq_a')).toBe('error');
+    expect(reservation.cents).toBe(0);
   });
 });

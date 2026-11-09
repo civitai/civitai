@@ -2,6 +2,11 @@ import { TRPCError } from '@trpc/server';
 import type { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+// Light (its heavy dependencies are dynamic imports), so imported statically.
+import {
+  isLiveUnpublishRefused,
+  unpublishLiveApp,
+} from '~/server/services/blocks/live-unpublish.service';
 import {
   assertAcceptedAppDeveloperTermsTrpc,
   assertListingOwnerAcceptedAppDeveloperTerms,
@@ -553,6 +558,25 @@ async function flipBackingBlockStatus(
   return flip.count > 0;
 }
 
+/**
+ * LIVE UNPUBLISH (`app-blocks-live-unpublish`): before an action that suspends an on-site block,
+ * refuse it for the shared static server's readiness app, whose live pointer the unpublish script
+ * will not remove. A refused delist, surfaced to the caller; never retried.
+ */
+async function refuseLiveTakedownOfReadinessApp(slug: string): Promise<void> {
+  if (await isLiveUnpublishRefused(slug)) {
+    throw new OffsiteModerationError(
+      'FORBIDDEN',
+      `"${slug}" is the shared static server's readiness probe app and cannot be taken down.`
+    );
+  }
+}
+
+/** After the takedown commits: remove the on-site app from the shared static server. Fire-and-forget. */
+function unpublishLiveAppSoon(slug: string): void {
+  void unpublishLiveApp(slug).catch(() => undefined);
+}
+
 export type DelistListingResult = { appListingId: string; status: 'removed' };
 
 /**
@@ -595,6 +619,7 @@ export async function delistListing(opts: {
   const listing = await classifyListingForAction(input.appListingId);
   const isOnsite = listing.kind === 'onsite';
   const eventId = newAppListingModerationEventId();
+  if (isOnsite && listing.appBlockId) await refuseLiveTakedownOfReadinessApp(listing.slug);
 
   await dbWrite.$transaction(async (tx) => {
     // Allow approved → removed AND removed → removed (the enforced-takedown lock). The
@@ -670,6 +695,7 @@ export async function delistListing(opts: {
 
   // Catalog bust: delist removes the listing from the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
+  if (isOnsite && listing.appBlockId) unpublishLiveAppSoon(listing.slug);
 
   return { appListingId: input.appListingId, status: 'removed' };
 }
@@ -1578,6 +1604,7 @@ export async function resetOnsiteListingToPending(opts: {
 
   const eventId = newAppListingModerationEventId();
   const publishRequestId = `pubreq_${newUlid()}`;
+  await refuseLiveTakedownOfReadinessApp(listing.slug);
 
   try {
     await dbWrite.$transaction(async (tx) => {
@@ -1683,6 +1710,8 @@ export async function resetOnsiteListingToPending(opts: {
 
   // Catalog bust: onsite reset-to-pending — same membership change as the offsite path.
   await bustAppListingCatalogCache().catch(() => undefined);
+  // The re-approval publishes again; until then the subdomain must not serve the old version.
+  unpublishLiveAppSoon(listing.slug);
 
   return { appListingId: input.appListingId, status: 'pending', publishRequestId };
 }
@@ -1772,6 +1801,18 @@ export async function unpublishOwnListing(opts: {
   const { input, userId } = opts;
   const reason = input.reason?.trim() ? input.reason.trim() : null;
 
+  // Read before the tx (no I/O inside it): the readiness refusal and the post-commit unpublish
+  // need the slug. The tx re-reads and authorizes on the primary.
+  const preview = await dbRead.appListing.findUnique({
+    where: { id: input.appListingId },
+    select: { kind: true, slug: true, appBlockId: true, userId: true },
+  });
+  const onsiteSlug =
+    preview?.kind === 'onsite' && preview.appBlockId && preview.userId === userId
+      ? preview.slug
+      : null;
+  if (onsiteSlug) await refuseLiveTakedownOfReadinessApp(onsiteSlug);
+
   await dbWrite.$transaction(async (tx) => {
     const listing = await loadOwnedListingInTx(tx, input.appListingId, userId);
     if (listing.status !== 'approved') {
@@ -1830,6 +1871,7 @@ export async function unpublishOwnListing(opts: {
 
   // Catalog bust: owner-unpublish removes the listing from the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
+  if (onsiteSlug) unpublishLiveAppSoon(onsiteSlug);
 
   return { appListingId: input.appListingId, status: 'removed' };
 }

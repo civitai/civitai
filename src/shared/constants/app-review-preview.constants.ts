@@ -35,3 +35,23 @@ export const BUILDING_REVIEW_PREVIEW_STATES = [
 export function isReviewPreviewBuilding(state: string | null | undefined): boolean {
   return (BUILDING_REVIEW_PREVIEW_STATES as readonly string[]).includes(state ?? '');
 }
+
+/**
+ * NOT a preview state (no UI, never reported): a preview a moderator tore down while its build
+ * was still running. The build keeps running, so the row keeps holding its build slot until the
+ * build's callback (or the stale window) settles it back to no preview.
+ */
+export const CANCELLING_REVIEW_PREVIEW_STATE = 'preview-cancelling';
+
+/** deploy_state values that hold a platform build slot (with a fresh `deployUpdatedAt`). */
+export const BUILD_SLOT_HOLDING_STATES: readonly string[] = [
+  ...BUILDING_REVIEW_PREVIEW_STATES,
+  CANCELLING_REVIEW_PREVIEW_STATE,
+];
+
+/** A stored value the review UI and the preview lifecycle treat as a preview. */
+export function isStoredReviewPreviewState(
+  state: string | null | undefined
+): state is StoredReviewPreviewState {
+  return (STORED_REVIEW_PREVIEW_STATES as readonly string[]).includes(state ?? '');
+}

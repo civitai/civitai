@@ -1,6 +1,11 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
 import {
+  BUILD_SLOT_HOLDING_STATES,
+  CANCELLING_REVIEW_PREVIEW_STATE,
+  isReviewPreviewBuilding,
+  isStoredReviewPreviewState,
   REVIEW_PREVIEW_MAX_AGE_MS,
+  STORED_REVIEW_PREVIEW_STATES,
   type ReviewPreviewState,
   type StoredReviewPreviewState,
 } from '~/shared/constants/app-review-preview.constants';
@@ -5037,7 +5042,9 @@ export async function markReviewPreviewState(
         status: 'pending',
         // Only advance a row that is STILL an active preview (torn-down rows have
         // deployState=null → excluded → no resurrection).
-        ...(opts?.requireActivePreview ? { deployState: { startsWith: 'preview-' } } : {}),
+        ...(opts?.requireActivePreview
+          ? { deployState: { in: [...STORED_REVIEW_PREVIEW_STATES] } }
+          : {}),
         // Stale-watcher guard: only advance if the row's current detail still
         // belongs to this build's sha (the serialized `"sha":"<sha>"` fragment).
         ...(opts?.expectedSha ? { deployDetail: { contains: `"sha":"${opts.expectedSha}"` } } : {}),
@@ -5406,8 +5413,8 @@ export async function getReviewStatus(opts: {
     },
   });
   if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
-  const isPreviewState =
-    typeof row.deployState === 'string' && row.deployState.startsWith('preview-');
+  // `preview-cancelling` is not a preview: the moderator tore it down; only its build runs on.
+  const isPreviewState = isStoredReviewPreviewState(row.deployState);
   const stored = isPreviewState ? (row.deployState as StoredReviewPreviewState) : null;
   const detail = isPreviewState ? parseReviewDetail(row.deployDetail) : {};
   const state: ReviewPreviewState | null =
@@ -5966,6 +5973,32 @@ export async function teardownReviewStorageForRequest(publishRequestId: string):
   }
 }
 
+/**
+ * A review build finished for a row that is no longer an active preview (torn down mid-build,
+ * superseded, withdrawn or decided): release the build slot it still holds. Only a slot-holding
+ * row that is NOT an active pending preview is touched. Never throws.
+ */
+export async function releaseSettledBuildSlot(publishRequestId: string): Promise<void> {
+  try {
+    const { dbWrite } = await import('~/server/db/client');
+    await dbWrite.appBlockPublishRequest.updateMany({
+      where: {
+        id: publishRequestId,
+        deployState: { in: [...BUILD_SLOT_HOLDING_STATES] },
+        OR: [{ status: { not: 'pending' } }, { deployState: CANCELLING_REVIEW_PREVIEW_STATE }],
+      },
+      data: { deployState: null, deployDetail: null, deployUpdatedAt: new Date() },
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[releaseSettledBuildSlot] failed (id=${publishRequestId}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
 /** Fire-and-forget queue drain (review-autodeploy.service). Never rejects. */
 function drainReviewQueueSoon(): Promise<unknown> {
   return import('./review-autodeploy.service')
@@ -6037,12 +6070,23 @@ export async function teardownPreview(opts: {
   // Clear the DB regardless of the k8s outcome. Only ever runs when the row was
   // a preview-* state (guarded above), so it can't clobber a production
   // building/live deploy_state.
-  await dbWrite.appBlockPublishRequest.update({
-    where: { id: opts.publishRequestId },
-    data: { deployState: null, deployDetail: null, deployUpdatedAt: new Date() },
-  });
-  // A torn-down build frees its slot for the next queued preview.
-  void drainReviewQueueSoon();
+  if (isReviewPreviewBuilding(row.deployState)) {
+    // Its build is still running and keeps its build slot until its callback settles it
+    // (releaseSettledBuildSlot) or the stale window passes. Not a preview any more: the UI shows
+    // none and the callback will not publish or deploy it. deployUpdatedAt is kept, so the stale
+    // window still counts from the build's last state change.
+    await dbWrite.appBlockPublishRequest.update({
+      where: { id: opts.publishRequestId },
+      data: { deployState: CANCELLING_REVIEW_PREVIEW_STATE, deployDetail: null },
+    });
+  } else {
+    await dbWrite.appBlockPublishRequest.update({
+      where: { id: opts.publishRequestId },
+      data: { deployState: null, deployDetail: null, deployUpdatedAt: new Date() },
+    });
+    // A torn-down queued or live preview held no running build; the queue may move on.
+    void drainReviewQueueSoon();
+  }
 
   return { publishRequestId: row.id, tornDown: true };
 }

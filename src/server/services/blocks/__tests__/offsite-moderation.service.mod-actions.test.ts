@@ -168,6 +168,16 @@ vi.mock('~/server/utils/app-block-ids', () => ({
   // claim's seat remediation writes AppOwnershipEvents through `recordOwnershipEvent`.
   newAppOwnershipEventId: () => `aoe_test_${++ids.n}`,
 }));
+// LIVE UNPUBLISH (`app-blocks-live-unpublish`): what the delist paths hand the shared static
+// server. Its own behaviour (flag, Job, readiness list) is pinned in live-unpublish.service.test.ts.
+const live = vi.hoisted(() => ({
+  refused: vi.fn(async (_slug: string) => false),
+  unpublish: vi.fn(async (_slug: string) => 'unpublished' as const),
+}));
+vi.mock('~/server/services/blocks/live-unpublish.service', () => ({
+  isLiveUnpublishRefused: (slug: string) => live.refused(slug),
+  unpublishLiveApp: (slug: string) => live.unpublish(slug),
+}));
 // Assert owner-notification emission without pulling the notifications client graph.
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({
   notifyAppListingOwner: mockNotify,
@@ -2538,5 +2548,84 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     );
     expect(relistCall?.[0]?.data).not.toHaveProperty('contentRating');
     expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LIVE UNPUBLISH: every path that suspends a live on-site block also removes it from the shared
+// static server, after the takedown commits; the readiness app is refused before anything moves.
+// ---------------------------------------------------------------------------
+describe('live unpublish on takedown', () => {
+  beforeEach(() => {
+    live.refused.mockResolvedValue(false);
+    live.unpublish.mockResolvedValue('unpublished');
+  });
+
+  it('ON-SITE mod delist: unpublishes the app after the delist commits', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(live.unpublish).toHaveBeenCalledWith(SLUG);
+    expect(live.unpublish.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockWrite.appBlock.updateMany.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('OFF-SITE mod delist: nothing to unpublish (no hosted app)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(live.unpublish).not.toHaveBeenCalled();
+  });
+
+  it('the readiness app: the delist is REFUSED before anything changes, and not unpublished', async () => {
+    live.refused.mockResolvedValue(true);
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    await expect(
+      delistListing({
+        input: { appListingId: APP_ID, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+    expect(live.unpublish).not.toHaveBeenCalled();
+  });
+
+  it('ON-SITE owner unpublish: unpublishes the app after the takedown commits', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce({
+      kind: 'onsite',
+      slug: SLUG,
+      appBlockId: BLOCK_ID,
+      userId: OWNER,
+    });
+    mockWrite.appListing.findUnique.mockResolvedValueOnce({
+      userId: OWNER,
+      status: 'approved',
+      kind: 'onsite',
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId: BLOCK_ID,
+      externalUrl: null,
+      connectClientId: null,
+    });
+    await unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(live.unpublish).toHaveBeenCalledWith(SLUG);
+  });
+
+  it('owner unpublish of someone else’s listing: nothing is unpublished', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce({
+      kind: 'onsite',
+      slug: SLUG,
+      appBlockId: BLOCK_ID,
+      userId: OWNER + 1,
+    });
+    await unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER }).catch(
+      () => undefined
+    );
+    expect(live.unpublish).not.toHaveBeenCalled();
   });
 });

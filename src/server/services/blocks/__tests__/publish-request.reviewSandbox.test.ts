@@ -148,6 +148,7 @@ import {
   markReviewPreviewState,
   withdrawRequest,
   parseReviewDetail,
+  releaseSettledBuildSlot,
 } from '~/server/services/blocks/publish-request.service';
 import { MAX_CONCURRENT_REVIEW_BUILDS } from '~/server/services/blocks/review-autodeploy.service';
 import { REVIEW_PREVIEW_MAX_AGE_MS } from '~/shared/constants/app-review-preview.constants';
@@ -565,6 +566,18 @@ describe('previewRequest repeat preview (push origin, unchanged tree)', () => {
 
 describe('getReviewStatus', () => {
   beforeEach(() => mockDbRead.appBlockPublishRequest.findUnique.mockReset());
+
+  it('a preview torn down mid-build (preview-cancelling) reads as no preview', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-cancelling',
+      deployDetail: null,
+      deployUpdatedAt: new Date(),
+    });
+    const r = await getReviewStatus({ publishRequestId: PUBREQ });
+    expect(r.state).toBeNull();
+  });
 
   it('returns the preview state + parsed detail', async () => {
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
@@ -1006,6 +1019,26 @@ describe('teardownPreview', () => {
     expect(updateArg.data.deployUpdatedAt).toBeInstanceOf(Date);
   });
 
+  // Its build is still running: the row keeps holding the build slot (preview-cancelling, not a
+  // preview) until the build's callback settles it; the stale window still counts from its last
+  // state change, so deployUpdatedAt is not touched.
+  it.each(['preview-building', 'preview-deploying'])(
+    '%s pending: torn down to preview-cancelling, keeping its build slot',
+    async (state) => {
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+        id: PUBREQ,
+        status: 'pending',
+        deployState: state,
+        deployDetail: JSON.stringify({ sha: SHA }),
+        slug: 'my-app',
+      });
+      const res = await teardownPreview({ publishRequestId: PUBREQ });
+      expect(res).toEqual({ publishRequestId: PUBREQ, tornDown: true });
+      const updateArg = mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0];
+      expect(updateArg.data).toEqual({ deployState: 'preview-cancelling', deployDetail: null });
+    }
+  );
+
   it('non-pending / non-preview state: no-op, tornDown:false (no delete, no DB clear)', async () => {
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
       id: PUBREQ,
@@ -1086,7 +1119,15 @@ describe('markReviewPreviewState (stale-watcher sha guard)', () => {
         where: expect.objectContaining({
           id: PUBREQ,
           status: 'pending',
-          deployState: { startsWith: 'preview-' },
+          deployState: {
+            in: [
+              'preview-queued',
+              'preview-building',
+              'preview-deploying',
+              'preview-live',
+              'preview-failed',
+            ],
+          },
           deployDetail: { contains: `"sha":"${SHA_A}"` },
         }),
       })
@@ -1283,9 +1324,17 @@ describe('markReviewPreviewState requireActivePreview guard', () => {
     const arg = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls[0][0];
     expect(arg.where.id).toBe(PUBREQ);
     expect(arg.where.status).toBe('pending');
-    // The load-bearing guard: a torn-down row (deployState=null) won't match
-    // startsWith 'preview-', so a late build callback can't resurrect it.
-    expect(arg.where.deployState).toEqual({ startsWith: 'preview-' });
+    // The load-bearing guard: a torn-down row (deployState=null, or preview-cancelling while
+    // its build still runs) is not a preview state, so a late build callback can't resurrect it.
+    expect(arg.where.deployState).toEqual({
+      in: [
+        'preview-queued',
+        'preview-building',
+        'preview-deploying',
+        'preview-live',
+        'preview-failed',
+      ],
+    });
   });
 
   it('without the opt (initial preview-building mark) does NOT constrain deployState', async () => {
@@ -1296,5 +1345,20 @@ describe('markReviewPreviewState requireActivePreview guard', () => {
     // Initial mark transitions from null / preview-failed → preview-building, so
     // it must NOT require an existing preview-* state.
     expect(arg.where.deployState).toBeUndefined();
+  });
+});
+
+describe('releaseSettledBuildSlot', () => {
+  it('clears only a slot-holding row that is not an active pending preview', async () => {
+    mockDbWrite.appBlockPublishRequest.updateMany.mockClear();
+    await releaseSettledBuildSlot(PUBREQ);
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: PUBREQ,
+        deployState: { in: ['preview-building', 'preview-deploying', 'preview-cancelling'] },
+        OR: [{ status: { not: 'pending' } }, { deployState: 'preview-cancelling' }],
+      },
+      data: { deployState: null, deployDetail: null, deployUpdatedAt: expect.any(Date) },
+    });
   });
 });

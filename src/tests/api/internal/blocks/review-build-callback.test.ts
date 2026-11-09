@@ -19,6 +19,7 @@ const {
   SECRET,
   mockEnvStore,
   mockFlag,
+  mockRelease,
   mockTriggerApplyReview,
   mockWaitApply,
   mockWaitReachable,
@@ -33,7 +34,8 @@ const {
   return {
     SECRET,
     mockEnvStore: { BLOCK_BUILD_CALLBACK_SECRET: SECRET } as Record<string, unknown>,
-    mockFlag: { enabled: true },
+    mockFlag: { enabled: true, sharedServer: false },
+    mockRelease: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
     mockTriggerApplyReview: vi.fn(async () => ({ name: 'review-apply-1' })),
     mockWaitApply: vi.fn(async () => 'succeeded'),
     // Default: the review host becomes reachable → the watcher marks preview-live.
@@ -79,7 +81,11 @@ vi.mock('~/env/server', () => ({
 }));
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn(async (flag: string) =>
-    flag === 'app-blocks-pipeline-enabled' ? mockFlag.enabled : false
+    flag === 'app-blocks-pipeline-enabled'
+      ? mockFlag.enabled
+      : flag === 'app-blocks-review-shared-server'
+      ? mockFlag.sharedServer
+      : false
   ),
 }));
 vi.mock('~/server/db/client', () => ({
@@ -97,6 +103,7 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 }));
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   markReviewPreviewState: mockMarkPreview,
+  releaseSettledBuildSlot: (...a: unknown[]) => mockRelease(...a),
   parseReviewDetail: (raw: string | null | undefined) => {
     if (!raw) return {};
     try {
@@ -301,6 +308,51 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     expect(mockMarkPreview).not.toHaveBeenCalled();
   });
 
+  // A finished build of a request that is no longer an active preview (torn down mid-build,
+  // superseded, decided) releases the build slot its row still holds, so the queue moves on.
+  it('a build finishing for a no-longer-active preview releases its build slot', async () => {
+    mockRelease.mockClear();
+    mockFindUnique.mockResolvedValueOnce({
+      deployDetail: null,
+      status: 'withdrawn',
+      deployState: 'preview-building',
+    });
+    const { req, res } = makeReqRes(goodBody());
+    await handler(req, res);
+    expect(res.body).toMatchObject({ applied: false });
+    expect(mockRelease).toHaveBeenCalledWith(PUBREQ);
+  });
+
+  it('a torn-down-mid-build preview (preview-cancelling) is not resurrected by its build', async () => {
+    mockRelease.mockClear();
+    mockFindUnique.mockResolvedValueOnce({
+      deployDetail: null,
+      status: 'pending',
+      deployState: 'preview-cancelling',
+    });
+    const { req, res } = makeReqRes(goodBody());
+    await handler(req, res);
+    expect(res.body).toMatchObject({ applied: false });
+    expect(mockTriggerApplyReview).not.toHaveBeenCalled();
+    expect(mockRelease).toHaveBeenCalledWith(PUBREQ);
+  });
+
+  it.each([true, false])(
+    'the review apply Job is told shared server = %s, from the flag read once per build',
+    async (on) => {
+      mockFlag.sharedServer = on;
+      try {
+        const { req, res } = makeReqRes(goodBody());
+        await handler(req, res);
+        expect(mockTriggerApplyReview).toHaveBeenCalledWith(
+          expect.objectContaining({ sharedServer: on })
+        );
+      } finally {
+        mockFlag.sharedServer = false;
+      }
+    }
+  );
+
   it('request already decided (approved) → aborts: no apply, no state write', async () => {
     // The request was approved/rejected before the build finished; the approve
     // path already tore down + flipped deployState to a production value. A late
@@ -329,6 +381,19 @@ describe('watchReviewApplyJob (reachability gate)', () => {
   const HOST = 'review-abc123def4567890.civit.ai';
   const baseDetail = { sha: SHA, host: HOST, url: `https://${HOST}/${SLUG}` };
 
+  it('a shared-server preview is probed on the shared route', async () => {
+    mockWaitReachable.mockClear();
+    await watchReviewApplyJob({
+      publishRequestId: PUBREQ,
+      sha: SHA,
+      jobName: 'review-apply-1',
+      baseDetail,
+      sharedServer: true,
+      onSettled: () => undefined,
+    });
+    expect(mockWaitReachable).toHaveBeenCalledWith(HOST, { sharedServer: true });
+  });
+
   beforeEach(() => {
     mockWaitApply.mockClear();
     mockWaitApply.mockResolvedValue('succeeded');
@@ -346,7 +411,7 @@ describe('watchReviewApplyJob (reachability gate)', () => {
       jobName: 'review-apply-1',
       baseDetail,
     });
-    expect(mockWaitReachable).toHaveBeenCalledWith(HOST);
+    expect(mockWaitReachable).toHaveBeenCalledWith(HOST, { sharedServer: false });
     expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-live', baseDetail, {
       requireActivePreview: true,
       expectedSha: SHA,
