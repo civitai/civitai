@@ -104,15 +104,24 @@ async function grantReleasedPayouts(endDate: Date) {
         payoutBlockedAt: null,
         rankType: { not: NewOrderRankType.Acolyte },
       },
-      select: playerPayoutSelect,
+      select: { ...playerPayoutSelect, startAt: true },
     })
   ).filter(isPayablePlayer);
   if (released.length === 0) return;
 
-  const earliest = released.reduce(
-    (min, p) => (p.payoutReleaseFrom! < min ? p.payoutReleaseFrom! : min),
-    released[0].payoutReleaseFrom!
-  );
+  // Held days are paid from the release day, but judgments cast before a later career
+  // reset (startAt) stay forfeited, as in the regular grant.
+  const payFrom = released.map((p) => {
+    const releaseDay = startOfDay(p.payoutReleaseFrom!);
+    return { userId: p.userId, from: p.startAt > releaseDay ? p.startAt : releaseDay };
+  });
+  const earliest = payFrom.reduce((min, p) => (p.from < min ? p.from : min), payFrom[0].from);
+  const userConditions = payFrom
+    .map(
+      (p) =>
+        `(userId = ${p.userId} AND createdAt >= parseDateTimeBestEffort('${p.from.toISOString()}'))`
+    )
+    .join(' OR ');
   const rows = await clickhouse.$query<GrantCandidate & { dayMs: number }>`
     SELECT
       userId,
@@ -121,17 +130,14 @@ async function grantReleasedPayouts(endDate: Date) {
       SUM(grantedExp * multiplier) as totalExp
     FROM knights_new_order_image_rating FINAL
     WHERE createdAt >= ${earliest} AND createdAt < ${endDate}
-      AND userId IN (${released.map((p) => p.userId).join(',')})
+      AND (${userConditions})
       AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
     GROUP BY userId, dayMs
   `;
-  const from = new Map(released.map((p) => [p.userId, p.payoutReleaseFrom!]));
-  const grants = rows
-    .filter((r) => new Date(Number(r.dayMs)) >= startOfDay(from.get(r.userId)!))
-    .map((r) => ({
-      ...r,
-      externalId: `new-order-${r.userId}-${new Date(Number(r.dayMs)).toISOString()}`,
-    }));
+  const grants = rows.map((r) => ({
+    ...r,
+    externalId: `new-order-${r.userId}-${new Date(Number(r.dayMs)).toISOString()}`,
+  }));
   await grantBatches(grants);
   await dbWrite.newOrderPlayer.updateMany({
     where: { userId: { in: released.map((p) => p.userId) }, payoutBlockedAt: null },
