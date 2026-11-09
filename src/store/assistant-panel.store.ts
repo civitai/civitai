@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 /**
- * Whether the CivBot chat is showing. Lifted out of `AssistantButton`'s local state
+ * Whether the CivBot chat is showing. Lifted out of the footer button's local state
  * so the support menu can open it — the chat used to live inside the support modal,
  * and the menu that replaced it needs a way back to it.
  */

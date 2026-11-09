@@ -156,6 +156,17 @@ export type FeedbackConsoleError = {
 
 export type FeedbackToast = { title: string | null; message: string };
 
+/** A failed tRPC call: procedure path, tRPC code, HTTP status when known, and when it failed. */
+export type FeedbackTrpcError = {
+  path: string;
+  code: string;
+  httpStatus: number | null;
+  at: string;
+};
+
+/** One line of the reporter's environment, already formatted for display as text. */
+export type FeedbackEnvironmentRow = { label: string; value: string };
+
 export type FeedbackContext = {
   path: string | null;
   filters: FeedbackFilters | null;
@@ -167,6 +178,11 @@ export type FeedbackContext = {
   consoleErrors: FeedbackConsoleError[];
   /** Requests that came back 4xx/5xx. Empty on the same three cases as `consoleErrors`. */
   networkErrors: FeedbackNetworkError[];
+  /** Failed tRPC calls. Empty on the same three cases as `consoleErrors`. */
+  trpcErrors: FeedbackTrpcError[];
+  /** Build, route, device, and what the server stamped (browser, tier, site, flags), in display
+   *  order. Client rows are claims; the `server` rows were written by the submit procedure. */
+  environment: FeedbackEnvironmentRow[];
   /** From a toast's "Report this": the server-fault ref and orchestrator ids it carried, and the
    *  text the reporter was shown. Rendered as text only — reporter-supplied claims. */
   errorRef: string | null;
@@ -232,6 +248,60 @@ const isConsoleError = (value: unknown): value is FeedbackConsoleError =>
   typeof value.count === 'number' &&
   Number.isFinite(value.count) &&
   Object.keys(value).length === CONSOLE_ERROR_FIELDS.length;
+
+const isTrpcError = (
+  value: unknown
+): value is Omit<FeedbackTrpcError, 'httpStatus'> & {
+  httpStatus?: number;
+} =>
+  isPlainObject(value) &&
+  isString(value.path) &&
+  isString(value.code) &&
+  isString(value.at) &&
+  (value.httpStatus === undefined || typeof value.httpStatus === 'number');
+
+const isNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+
+/** `390×844 at 3x · screen 390×844 · touch · dark · en-US · America/Denver`, or null if malformed. */
+function describeDevice(device: Record<string, unknown>): string | null {
+  const { viewport, screen, pixelRatio } = device;
+  if (!isPlainObject(viewport) || !isNumber(viewport.width) || !isNumber(viewport.height))
+    return null;
+  const parts = [
+    `${viewport.width}×${viewport.height}${isNumber(pixelRatio) ? ` at ${pixelRatio}x` : ''}`,
+  ];
+  if (isPlainObject(screen) && isNumber(screen.width) && isNumber(screen.height))
+    parts.push(`screen ${screen.width}×${screen.height}`);
+  if (device.touch === true) parts.push('touch');
+  for (const key of ['colorScheme', 'language', 'timeZone'] as const)
+    if (isString(device[key])) parts.push(device[key] as string);
+  if (device.online === false) parts.push('offline');
+  return parts.join(' · ');
+}
+
+const SERVER_STAMP_KEYS = ['userAgent', 'tier', 'site', 'host', 'build', 'flags'];
+
+/** The submit procedure's stamp as rows, or null when `server` is not that shape. */
+function describeServerStamp(server: Record<string, unknown>): FeedbackEnvironmentRow[] | null {
+  if (Object.keys(server).some((key) => !SERVER_STAMP_KEYS.includes(key))) return null;
+  const rows: FeedbackEnvironmentRow[] = [];
+  if (isString(server.userAgent)) rows.push({ label: 'Browser', value: server.userAgent });
+  if (isString(server.site))
+    rows.push({
+      label: 'Site',
+      value: isString(server.host) ? `${server.host} (${server.site})` : server.site,
+    });
+  rows.push({ label: 'Tier', value: isString(server.tier) ? server.tier : 'none' });
+  if (isString(server.build)) rows.push({ label: 'Server build', value: server.build });
+  if (isPlainObject(server.flags)) {
+    const on = Object.entries(server.flags)
+      .filter(([, value]) => value === true)
+      .map(([key]) => key);
+    rows.push({ label: 'Flags on', value: on.length ? on.join(', ') : 'none of the stamped ones' });
+  }
+  return rows;
+}
 
 const isToastText = (value: unknown): value is string =>
   typeof value === 'string' && value.length <= FEEDBACK_TOAST_TEXT_MAX_LENGTH;
@@ -299,6 +369,8 @@ export function splitContext(context: unknown): FeedbackContext {
     sessionId: null,
     consoleErrors: [],
     networkErrors: [],
+    trpcErrors: [],
+    environment: [],
     errorRef: null,
     workflowId: null,
     jobId: null,
@@ -308,6 +380,8 @@ export function splitContext(context: unknown): FeedbackContext {
   if (!isPlainObject(context)) return out;
 
   const other: Record<string, unknown> = {};
+  const client: Partial<Record<'build' | 'route' | 'clientAt' | 'device', string>> = {};
+  let serverRows: FeedbackEnvironmentRow[] = [];
   for (const [key, value] of Object.entries(context)) {
     if (value === undefined) continue;
     if (key === 'path' && typeof value === 'string') {
@@ -336,6 +410,14 @@ export function splitContext(context: unknown): FeedbackContext {
       out.consoleErrors = value;
     } else if (key === 'networkErrors' && Array.isArray(value) && value.every(isNetworkError)) {
       out.networkErrors = value;
+    } else if (key === 'trpcErrors' && Array.isArray(value) && value.every(isTrpcError)) {
+      out.trpcErrors = value.map((entry) => ({ ...entry, httpStatus: entry.httpStatus ?? null }));
+    } else if ((key === 'build' || key === 'route' || key === 'clientAt') && isString(value)) {
+      client[key] = value;
+    } else if (key === 'device' && isPlainObject(value) && describeDevice(value)) {
+      client.device = describeDevice(value)!;
+    } else if (key === 'server' && isPlainObject(value) && describeServerStamp(value)) {
+      serverRows = describeServerStamp(value)!;
     } else if (key === 'errorRef' && isString(value) && FEEDBACK_ERROR_REF_PATTERN.test(value)) {
       out.errorRef = value;
     } else if (
@@ -350,6 +432,16 @@ export function splitContext(context: unknown): FeedbackContext {
       other[key] = value;
     }
   }
+
+  const clientLabels = {
+    build: 'App version',
+    route: 'Route',
+    device: 'Screen',
+    clientAt: 'Sent at (their clock)',
+  } as const;
+  for (const key of ['build', 'route', 'device', 'clientAt'] as const)
+    if (client[key]) out.environment.push({ label: clientLabels[key], value: client[key]! });
+  out.environment.push(...serverRows);
 
   if (Object.keys(other).length) out.other = other;
   return out;

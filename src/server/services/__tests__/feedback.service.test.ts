@@ -11,7 +11,8 @@ const { mocks } = vi.hoisted(() => ({
 
 vi.mock('~/server/flipt/client', () => ({ isFlipt: mocks.isFlipt }));
 
-const { createFeedback, isFeedbackAreaEnabled } = await import('../feedback.service');
+const { buildFeedbackServerStamp, createFeedback, FEEDBACK_STAMPED_FLAGS, isFeedbackAreaEnabled } =
+  await import('../feedback.service');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -322,5 +323,112 @@ describe('isFeedbackAreaEnabled — the Flipt evaluation context', () => {
     it('and OFF for an anonymous request', async () => {
       await expect(isFeedbackAreaEnabled({ area: 'bitdex-image-feed' })).resolves.toBe(false);
     });
+  });
+});
+
+/**
+ * The server stamp is the part of a report a client cannot claim. These go through
+ * `createFeedbackSchema` first, as the router does, so a forged `server` key is tested at the
+ * boundary that drops it.
+ */
+describe('the server stamp', () => {
+  const features = new Proxy({} as Record<string, boolean>, {
+    get: (_target, key) =>
+      key === 'assistant' ? true : key === 'secretRolloutFlag' ? true : false,
+  });
+
+  it('records the user agent, tier, site, build and the allow-listed flags, and no other header', () => {
+    const stamp = buildFeedbackServerStamp({
+      headers: {
+        'user-agent': 'Mozilla/5.0 (iPhone)',
+        host: 'civitai.red',
+        cookie: 'civ-token=LIVE',
+        authorization: 'Bearer LIVE',
+      } as never,
+      tier: 'gold',
+      domain: 'red',
+      features: features as never,
+    });
+
+    expect(stamp).toMatchObject({
+      userAgent: 'Mozilla/5.0 (iPhone)',
+      tier: 'gold',
+      site: 'red',
+      host: 'civitai.red',
+    });
+    expect(Object.keys(stamp.flags).sort()).toEqual([...FEEDBACK_STAMPED_FLAGS].sort());
+    expect(stamp.flags.assistant).toBe(true);
+    const serialised = JSON.stringify(stamp);
+    expect(serialised).not.toContain('LIVE');
+    expect(serialised).not.toContain('secretRolloutFlag');
+  });
+
+  it('replaces a client-sent `server` object with the stamp', async () => {
+    const parsed = createFeedbackSchema.parse({
+      area: 'site-bug-report',
+      message: 'broken',
+      context: { path: '/models', server: { tier: 'founder', site: 'blue' } },
+    });
+    // Positive control for the next line: a known key survives the same parse.
+    expect(parsed.context?.path).toBe('/models');
+    expect((parsed.context as Record<string, unknown>).server).toBeUndefined();
+
+    const server = buildFeedbackServerStamp({
+      headers: {},
+      tier: 'free',
+      domain: 'blue',
+      features: features as never,
+    });
+    await createFeedback({ ...parsed, userId: 7, server });
+
+    expect(writtenContext().server).toEqual(server);
+    expect(writtenContext().server.tier).toBe('free');
+  });
+});
+
+describe('the client environment fields', () => {
+  it('accepts what the client sends and drops an error message from a tRPC entry', () => {
+    const parsed = createFeedbackSchema.parse({
+      area: 'site-bug-report',
+      message: 'broken',
+      context: {
+        route: '/models/[id]/[[...slug]]',
+        build: '5.1.444+a8f29fe',
+        clientAt: '2026-11-08T23:40:00.000Z',
+        device: {
+          viewport: { width: 390, height: 844 },
+          screen: { width: 390, height: 844 },
+          pixelRatio: 3,
+          touch: true,
+          colorScheme: 'dark',
+          language: 'en-US',
+          timeZone: 'America/Denver',
+          online: true,
+        },
+        trpcErrors: [
+          {
+            path: 'image.create',
+            code: 'BAD_REQUEST',
+            httpStatus: 400,
+            at: '2026-11-08T23:39:00.000Z',
+            message: 'prompt "secret words" was refused',
+          },
+        ],
+      },
+    });
+    expect(parsed.context?.device?.viewport.width).toBe(390);
+    expect(parsed.context?.trpcErrors?.[0].path).toBe('image.create');
+    expect(JSON.stringify(parsed)).not.toContain('secret words');
+  });
+
+  it('refuses a tRPC path that is not a procedure name', () => {
+    const result = createFeedbackSchema.safeParse({
+      area: 'site-bug-report',
+      message: 'broken',
+      context: {
+        trpcErrors: [{ path: 'a b c', code: 'BAD_REQUEST', at: '2026-11-08T23:39:00.000Z' }],
+      },
+    });
+    expect(result.success).toBe(false);
   });
 });

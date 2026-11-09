@@ -112,6 +112,7 @@ describe('feedback.create — extended context reaches the service', () => {
         screenshotId: UUID_SHOT,
         sessionId: 'faro-abc',
       },
+      server: expect.objectContaining({ flags: expect.any(Object) }),
     });
   });
 
