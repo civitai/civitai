@@ -8,22 +8,18 @@ import {
   type Dialect,
 } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { HashGate } from '~/server/services/download-by-hash.service';
 
 // The candidate SQL, run as written against an in-process Postgres; the gate is a fake per file.
 vi.setConfig({ hookTimeout: 120_000, testTimeout: 60_000 });
 
-const holder = vi.hoisted(() => ({ kysely: null as unknown, logs: [] as unknown[] }));
+const holder = vi.hoisted(() => ({ kysely: null as unknown }));
 vi.mock('~/server/db/kyselyDb.lazy', () => ({
   loadKyselyDb: async () => ({ kyselyRead: holder.kysely }),
 }));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: async (data: unknown) => {
-    holder.logs.push(data);
-  },
-}));
 
-const { pickFileByHash, parseContentHash, MAX_HASH_CANDIDATES } = await import(
+const { pickFileByHash, parseContentHash } = await import(
   '~/server/services/download-by-hash.service'
 );
 
@@ -58,11 +54,13 @@ const dialect = (pg: PGlite): Dialect => {
 const SCHEMA = `
 CREATE TABLE "Model" (
   id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL, mode text,
-  poi boolean NOT NULL DEFAULT false, "deletedAt" timestamp(3)
+  poi boolean NOT NULL DEFAULT false, "deletedAt" timestamp(3),
+  availability text NOT NULL DEFAULT 'Public'
 );
 CREATE TABLE "ModelVersion" (
   id int PRIMARY KEY, "modelId" int NOT NULL, status text NOT NULL, "publishedAt" timestamp(3),
-  "usageControl" text NOT NULL DEFAULT 'Download', "requireAuth" boolean NOT NULL DEFAULT false
+  "usageControl" text NOT NULL DEFAULT 'Download', "requireAuth" boolean NOT NULL DEFAULT false,
+  availability text NOT NULL DEFAULT 'Public'
 );
 CREATE TABLE "ModelFile" (
   id int PRIMARY KEY, "modelVersionId" int NOT NULL, "sizeKB" double precision NOT NULL,
@@ -86,7 +84,7 @@ beforeAll(async () => {
 });
 afterAll(() => pg.close());
 beforeEach(async () => {
-  holder.logs = [];
+  loggingMock.logToAxiom.mockClear();
   await pg.exec(`TRUNCATE "Model", "ModelVersion", "ModelFile", "ModelFileHash", "PaidAccess"`);
 });
 
@@ -101,20 +99,41 @@ type Copy = {
   scan?: string;
   paid?: boolean;
   hashType?: string;
+  modelAvailability?: string;
+  versionAvailability?: string;
+  paidEndsDaysAgo?: number;
+  /** Any other column, set after the row is written. */
+  model?: Record<string, unknown>;
+  version?: Record<string, unknown>;
+  file?: Record<string, unknown>;
 };
 
-/** One file carrying HASH. Model, version and file all take the id `id`. */
+async function set(table: string, id: number, cols: Record<string, unknown> = {}) {
+  for (const [col, value] of Object.entries(cols))
+    await pg.query(`UPDATE "${table}" SET "${col}" = $1 WHERE id = $2`, [value, id]);
+}
+
+/** One file carrying HASH. Model, version and file all take the id `id`; lower ids are older. */
 async function copy(id: number, c: Copy = {}) {
-  await pg.query(`INSERT INTO "Model" (id, "userId", status, mode) VALUES ($1, $2, $3, $4)`, [
-    id,
-    c.ownerId ?? OWNER + 100,
-    c.modelStatus ?? 'Published',
-    c.mode ?? null,
-  ]);
   await pg.query(
-    `INSERT INTO "ModelVersion" (id, "modelId", status, "publishedAt")
-     VALUES ($1, $1, $2, now() - make_interval(days => $3))`,
-    [id, c.versionStatus ?? 'Published', c.publishedDaysAgo ?? id]
+    `INSERT INTO "Model" (id, "userId", status, mode, availability) VALUES ($1, $2, $3, $4, $5)`,
+    [
+      id,
+      c.ownerId ?? OWNER + 100,
+      c.modelStatus ?? 'Published',
+      c.mode ?? null,
+      c.modelAvailability ?? 'Public',
+    ]
+  );
+  await pg.query(
+    `INSERT INTO "ModelVersion" (id, "modelId", status, "publishedAt", availability)
+     VALUES ($1, $1, $2, now() - make_interval(days => $3), $4)`,
+    [
+      id,
+      c.versionStatus ?? 'Published',
+      c.publishedDaysAgo ?? 1000 - id,
+      c.versionAvailability ?? 'Public',
+    ]
   );
   await pg.query(
     `INSERT INTO "ModelFile" (id, "modelVersionId", "sizeKB", visibility, "pickleScanResult")
@@ -126,10 +145,14 @@ async function copy(id: number, c: Copy = {}) {
     c.hashType ?? 'SHA256',
     HASH,
   ]);
-  if (c.paid)
+  await set('Model', id, c.model);
+  await set('ModelVersion', id, c.version);
+  await set('ModelFile', id, c.file);
+  if (c.paid || c.paidEndsDaysAgo !== undefined)
     await pg.query(
-      `INSERT INTO "PaidAccess" ("entityType", "entityId") VALUES ('ModelVersion', $1)`,
-      [id]
+      `INSERT INTO "PaidAccess" ("entityType", "entityId", "endsAt")
+       VALUES ('ModelVersion', $1, now() - make_interval(days => $2))`,
+      [id, c.paidEndsDaysAgo ?? null]
     );
 }
 
@@ -149,12 +172,13 @@ const pick = (gate: HashGate, viewer?: { id?: number; isModerator?: boolean }, k
   pickFileByHash({ hash: HASH, kind: kind as 'sha256', viewer, gate });
 
 const tried = (gate: ReturnType<typeof fakeGate>) => gate.mock.calls.map(([a]) => a.fileId);
-const messages = () => holder.logs.map((l) => (l as { message: string }).message);
+const logs = () => loggingMock.logToAxiom.mock.calls.map(([data]) => data);
+const messages = () => logs().map((l) => (l as { message: string }).message);
 
 describe('choosing among files that share a hash', () => {
-  it('tries a free copy before a paid one, even when the paid one is newer', async () => {
-    await copy(1, { paid: true, publishedDaysAgo: 1 });
-    await copy(2, { publishedDaysAgo: 30 });
+  it('tries a free copy before a paid one, even when the paid one is older', async () => {
+    await copy(1, { paid: true, publishedDaysAgo: 30 });
+    await copy(2, { publishedDaysAgo: 1 });
     const gate = fakeGate([1, 2]);
 
     const result = await pick(gate, { id: STRANGER });
@@ -164,8 +188,8 @@ describe('choosing among files that share a hash', () => {
   });
 
   it("tries the caller's own copy first, even an unpublished one", async () => {
-    await copy(1, { publishedDaysAgo: 1 });
-    await copy(2, { ownerId: OWNER, versionStatus: 'Draft', publishedDaysAgo: 30 });
+    await copy(1, { publishedDaysAgo: 30 });
+    await copy(2, { ownerId: OWNER, versionStatus: 'Draft', publishedDaysAgo: 1 });
     const gate = fakeGate([1, 2]);
 
     expect((await pick(gate, { id: OWNER })).fileResult).toMatchObject({ fileId: 2 });
@@ -175,20 +199,61 @@ describe('choosing among files that share a hash', () => {
     expect(tried(other)).toEqual([1]);
   });
 
+  it("tries the oldest copy first, so a re-upload never takes the original's downloads", async () => {
+    await copy(1, { publishedDaysAgo: 2 });
+    await copy(2, { publishedDaysAgo: 400 });
+    const gate = fakeGate([1, 2]);
+
+    expect((await pick(gate, { id: STRANGER })).fileResult).toMatchObject({ fileId: 2 });
+    expect(tried(gate)).toEqual([2]);
+  });
+
+  it('counts an expired paid window as free', async () => {
+    await copy(1, { paid: true });
+    await copy(2, { paidEndsDaysAgo: 1 });
+    const gate = fakeGate([]);
+
+    await pick(gate, { id: STRANGER });
+
+    expect(tried(gate)).toEqual([2, 1]);
+  });
+
+  it('tries a login-only copy after an open one for an anonymous caller only', async () => {
+    await copy(1, { version: { requireAuth: true } });
+    await copy(2);
+
+    const anon = fakeGate([]);
+    await pick(anon);
+    expect(tried(anon)).toEqual([2, 1]);
+
+    const signedIn = fakeGate([]);
+    await pick(signedIn, { id: STRANGER });
+    expect(tried(signedIn)).toEqual([1, 2]);
+  });
+
+  it('tries a published copy before an unpublished one a moderator can reach', async () => {
+    await copy(1, { versionStatus: 'Draft' });
+    await copy(2, { paid: true });
+    const gate = fakeGate([]);
+
+    await pick(gate, { id: STRANGER, isModerator: true });
+
+    expect(tried(gate)).toEqual([2, 1]);
+  });
+
   it('runs at most five copies through the gate', async () => {
     for (let id = 1; id <= 6; id++) await copy(id);
-    // Copy 6 is the oldest, so it is tried last.
+    // Copy 6 is the newest, so it is tried last.
     const gate = fakeGate([6]);
 
     const result = await pick(gate, { id: STRANGER });
 
     expect(result.fileResult.status).toBe('not-found');
     expect(tried(gate)).toEqual([1, 2, 3, 4, 5]);
-    expect(MAX_HASH_CANDIDATES).toBe(5);
     expect(messages()).toEqual(['capped_refusal']);
 
     // Control: the same passing copy within the first five is served.
-    holder.logs = [];
+    loggingMock.logToAxiom.mockClear();
     const within = fakeGate([5]);
     expect((await pick(within, { id: STRANGER })).fileResult).toMatchObject({ fileId: 5 });
     expect(messages()).toEqual([]);
@@ -206,6 +271,14 @@ describe('choosing among files that share a hash', () => {
     expect(tried(gate)).toEqual([1, 2, 3]);
   });
 
+  it('logs a refusal as capped only when copies were left untried', async () => {
+    await copy(1);
+    await copy(2, { modelStatus: 'Deleted' });
+
+    expect((await pick(fakeGate([]))).fileResult.status).toBe('not-found');
+    expect(messages()).not.toContain('capped_refusal');
+  });
+
   it('ranks unauthorized over no-access over failed-scan over not-found', async () => {
     await copy(1);
     await copy(2);
@@ -221,13 +294,19 @@ describe('choosing among files that share a hash', () => {
     ).toBe('failed-scan');
   });
 
-  it('stops at a storage failure instead of repeating it on every copy', async () => {
+  it('serves the next copy when one copy cannot be resolved from storage', async () => {
     await copy(1);
     await copy(2);
     const gate = fakeGate([2], { 1: 'resolve-failed' });
 
-    expect((await pick(gate)).fileResult.status).toBe('resolve-failed');
-    expect(tried(gate)).toEqual([1]);
+    expect((await pick(gate)).fileResult).toMatchObject({ fileId: 2 });
+    // A storage failure is answered only when no copy gave a refusal or passed.
+    expect((await pick(fakeGate([], { 1: 'resolve-failed' }))).fileResult.status).toBe(
+      'resolve-failed'
+    );
+    expect(
+      (await pick(fakeGate([], { 1: 'resolve-failed', 2: 'early-access' }))).fileResult.status
+    ).toBe('early-access');
   });
 });
 
@@ -243,6 +322,48 @@ describe('the pre-filter only drops copies the gate would refuse this caller', (
 
     expect((await pick(gate, { id: STRANGER })).fileResult).toMatchObject({ fileId: 9 });
     expect(tried(gate)).toEqual([9]);
+  });
+
+  it('never offers a stranger a private copy, so a refusal cannot reveal one', async () => {
+    await copy(1, { modelAvailability: 'Private' });
+    await copy(2, { versionAvailability: 'Private' });
+    const gate = fakeGate([]);
+
+    expect((await pick(gate, { id: STRANGER })).fileResult.status).toBe('not-found');
+    expect(gate).not.toHaveBeenCalled();
+
+    // Control: the owner and a moderator are still offered both.
+    await pg.query(`UPDATE "Model" SET "userId" = $1`, [OWNER]);
+    const owner = fakeGate([]);
+    await pick(owner, { id: OWNER });
+    expect(tried(owner)).toEqual([1, 2]);
+    const mod = fakeGate([]);
+    await pick(mod, { id: STRANGER, isModerator: true });
+    expect(tried(mod)).toEqual([1, 2]);
+  });
+
+  it.each([
+    ['a POI model', { model: { poi: true } }],
+    ['a failed virus scan', { file: { virusScanResult: 'Danger' } }],
+    ['generation-only use', { version: { usageControl: 'Generation' } }],
+    ['an unpublished model', { modelStatus: 'Unpublished' }],
+  ] as [string, Copy][])('never offers a stranger a copy on %s', async (_, excluded) => {
+    await copy(1, excluded);
+    await copy(2);
+    const gate = fakeGate([]);
+
+    await pick(gate, { id: STRANGER });
+
+    expect(tried(gate)).toEqual([2]);
+  });
+
+  it("offers an owner their copy on a model that isn't published yet", async () => {
+    await copy(1, { ownerId: OWNER, modelStatus: 'Draft', versionStatus: 'Draft' });
+    const gate = fakeGate([]);
+
+    await pick(gate, { id: OWNER });
+
+    expect(tried(gate)).toEqual([1]);
   });
 
   it('never offers an owner the copy on their own deleted model', async () => {
@@ -276,7 +397,7 @@ describe('copies whose sizes disagree carry a wrong hash', () => {
 
     expect((await pick(gate)).fileResult.status).toBe('not-found');
     expect(gate).not.toHaveBeenCalled();
-    expect(holder.logs).toEqual([
+    expect(logs()).toEqual([
       expect.objectContaining({
         message: 'hash_size_mismatch',
         urlKind: 'sha256',
@@ -288,11 +409,18 @@ describe('copies whose sizes disagree carry a wrong hash', () => {
 
   it('serves copies within 1 KB of each other', async () => {
     await copy(1, { sizeKB: 100 });
-    await copy(2, { sizeKB: 100.5 });
+    await copy(2, { sizeKB: 101 });
     const gate = fakeGate([1, 2]);
 
     expect((await pick(gate)).fileResult.status).toBe('success');
-    expect(holder.logs).toEqual([]);
+    expect(logs()).toEqual([]);
+  });
+
+  it('refuses copies just over 1 KB apart', async () => {
+    await copy(1, { sizeKB: 100 });
+    await copy(2, { sizeKB: 101.01 });
+
+    expect((await pick(fakeGate([1, 2]))).fileResult.status).toBe('not-found');
   });
 
   it('ignores a size that only a copy the caller cannot get disagrees on', async () => {
@@ -312,17 +440,31 @@ describe('taken-down copies are logged, not refused', () => {
     const result = await pick(fakeGate([1]));
 
     expect(result.fileResult).toMatchObject({ status: 'success', fileId: 1 });
-    expect(holder.logs).toHaveLength(1);
-    expect(holder.logs[0]).toMatchObject({
+    expect(logs()).toHaveLength(1);
+    expect(logs()[0]).toMatchObject({
       message: 'served_with_taken_down_copy',
       urlKind: 'sha256',
       servedFileId: 1,
       groupSize: 3,
       sizeMismatch: true,
     });
-    expect([...(holder.logs[0] as { takenDownFileIds: number[] }).takenDownFileIds].sort()).toEqual(
-      [2, 3]
-    );
+    expect([...(logs()[0] as { takenDownFileIds: number[] }).takenDownFileIds].sort()).toEqual([
+      2, 3,
+    ]);
+  });
+
+  it.each([
+    ['a taken-down model', { mode: 'TakenDown' }],
+    ['a model with a deletion date', { model: { deletedAt: new Date() } }],
+  ] as [string, Copy][])('counts a copy on %s as taken down', async (_, takenDown) => {
+    await copy(1);
+    await copy(2, takenDown);
+
+    await pick(fakeGate([1]));
+
+    expect(logs()).toEqual([
+      expect.objectContaining({ message: 'served_with_taken_down_copy', takenDownFileIds: [2] }),
+    ]);
   });
 
   it('logs nothing when no copy was taken down', async () => {
@@ -330,7 +472,7 @@ describe('taken-down copies are logged, not refused', () => {
     await copy(2);
 
     expect((await pick(fakeGate([1]))).fileResult.status).toBe('success');
-    expect(holder.logs).toEqual([]);
+    expect(logs()).toEqual([]);
   });
 });
 

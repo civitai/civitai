@@ -38,7 +38,9 @@ export type HashCandidate = {
 
 /**
  * Every copy of the content, pre-filtered to the ones the gate could pass for this viewer and
- * ordered so the likeliest pass is tried first. The pre-filter only narrows: the gate still
+ * ordered so the likeliest pass is tried first. Within a tier the oldest copy wins, so a re-upload
+ * never takes the original's downloads. Private copies are left out as the by-hash lookup hides
+ * them, so a refusal cannot confirm that a private model holds these bytes. The pre-filter only narrows: the gate still
  * decides every candidate. One index lookup on the hash, then primary-key joins.
  */
 export async function findHashCandidates({
@@ -66,6 +68,7 @@ export async function findHashCandidates({
         mv."publishedAt",
         mv."usageControl",
         mv."requireAuth",
+        (mv.availability = 'Private' OR m.availability = 'Private') AS private,
         m."userId" AS "ownerId",
         m.status AS "modelStatus",
         m.mode,
@@ -105,6 +108,7 @@ export async function findHashCandidates({
               v.owner
               OR (
                 NOT v.poi
+                AND NOT v.private
                 AND v."modelStatus" = 'Published'
                 AND v."versionStatus" = 'Published'
                 AND v."usageControl" = 'Download'
@@ -132,7 +136,7 @@ export async function findHashCandidates({
         WHEN "modelStatus" = 'Published' AND "versionStatus" = 'Published' THEN 2
         ELSE 3
       END,
-      "publishedAt" DESC NULLS LAST,
+      "publishedAt" ASC NULLS LAST,
       "fileId"
     LIMIT ${MAX_HASH_CANDIDATES}
   `.execute(kyselyRead);
@@ -150,6 +154,8 @@ const REFUSAL_PRECEDENCE: GateStatus[] = [
   'downloads-disabled',
   'failed-scan',
   'archived',
+  'resolve-failed',
+  'error',
   'not-found',
 ];
 
@@ -200,10 +206,6 @@ export async function pickFileByHash({
         });
       return { fileResult, modelVersionId: candidate.modelVersionId };
     }
-    // A storage failure is not a refusal: answer it now rather than repeat it on every copy.
-    if (fileResult.status === 'resolve-failed' || fileResult.status === 'error')
-      return { fileResult, modelVersionId: candidate.modelVersionId };
-
     const rank = REFUSAL_PRECEDENCE.indexOf(fileResult.status);
     if (!refusal || rank < REFUSAL_PRECEDENCE.indexOf(refusal.fileResult.status))
       refusal = { fileResult, modelVersionId: candidate.modelVersionId };

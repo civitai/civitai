@@ -176,10 +176,24 @@ describe('/api/download/{sha256|blake3}/<hash>', () => {
     expect(holder.params[1]).toEqual(expect.arrayContaining([HASH.toUpperCase(), 'BLAKE3']));
   });
 
+  it("passes an anonymous or moderator caller's standing to the lookup", async () => {
+    mockGetServerAuthSession.mockResolvedValue(null);
+    await run(sha256Route, HASH);
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: true } });
+    await run(sha256Route, HASH);
+
+    expect(holder.params[0]).not.toContain(42);
+    expect(holder.params[0]).toContain(false);
+    expect(holder.params[1]).toEqual(expect.arrayContaining([42, true]));
+  });
+
   it('refuses a malformed hash with a 400 before any lookup', async () => {
     for (const bad of [HASH.slice(2), `${HASH.slice(1)}z`, [HASH, HASH]]) {
       const res = await run(sha256Route, bad);
       expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        error: 'Invalid hash: expected 64 hexadecimal characters',
+      });
     }
     expect(holder.params).toEqual([]);
     expect(mockGetFileForModelVersion).not.toHaveBeenCalled();
