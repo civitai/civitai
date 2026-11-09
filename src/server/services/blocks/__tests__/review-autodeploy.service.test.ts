@@ -745,14 +745,14 @@ describe('agent review auto-start needs the agent-review feature on', () => {
 describe('agent review auto-start: concurrent go-lives share the budget', () => {
   /** Runs started today with no cost yet; each start adds one after its I/O. */
   let running = 0;
-  beforeEach(async () => {
-    // Resolve every module the start imports BEFORE the two concurrent calls: CI showed one of two
-    // concurrent first imports of a mocked module getting the real one (its flags read off).
-    await import('~/server/services/app-blocks-flag');
-    await import('~/server/services/blocks/agent-review.service');
-    await import('~/server/redis/client');
-    await import('~/server/db/client');
-    await import('~/env/server');
+  // Flags and the start are INJECTED here: under CI's module sharing, a concurrent call could
+  // resolve the real flags module instead of this file's mock and read the flags as off.
+  const deps = {
+    autostartOn: async () => true,
+    agentReviewOn: async () => true,
+    startAgentReview: (...a: unknown[]) => m.startAgentReview(...a),
+  };
+  beforeEach(() => {
     running = 0;
     dbMock.dbRead.appReviewAgentReport.findFirst.mockResolvedValue(null);
     // $38 already reported today: room for exactly one more $2 review under the $40 budget.
@@ -767,8 +767,8 @@ describe('agent review auto-start: concurrent go-lives share the budget', () => 
 
   it('two at budget-minus-one-cap at once: exactly one starts', async () => {
     const outcomes = await Promise.all([
-      maybeAutoStartAgentReview('pubreq_a'),
-      maybeAutoStartAgentReview('pubreq_b'),
+      maybeAutoStartAgentReview('pubreq_a', deps),
+      maybeAutoStartAgentReview('pubreq_b', deps),
     ]);
     expect(outcomes.sort()).toEqual(['budget-refused', 'started']);
     expect(m.startAgentReview).toHaveBeenCalledTimes(1);
@@ -777,21 +777,21 @@ describe('agent review auto-start: concurrent go-lives share the budget', () => 
   });
 
   it('CONTROL: one at a time, the second sees the first one running and is refused', async () => {
-    expect(await maybeAutoStartAgentReview('pubreq_a')).toBe('started');
-    expect(await maybeAutoStartAgentReview('pubreq_b')).toBe('budget-refused');
+    expect(await maybeAutoStartAgentReview('pubreq_a', deps)).toBe('started');
+    expect(await maybeAutoStartAgentReview('pubreq_b', deps)).toBe('budget-refused');
   });
 
   it('an unreadable reservation refuses rather than starting uncounted', async () => {
     reservation.fail = true;
     dbMock.dbWrite.appReviewAgentReport.aggregate.mockResolvedValue({ _sum: { costUsd: 0 } });
-    expect(await maybeAutoStartAgentReview('pubreq_a')).toBe('budget-refused');
+    expect(await maybeAutoStartAgentReview('pubreq_a', deps)).toBe('budget-refused');
     expect(m.startAgentReview).not.toHaveBeenCalled();
   });
 
   it('a start that throws still releases its reservation', async () => {
     dbMock.dbWrite.appReviewAgentReport.aggregate.mockResolvedValue({ _sum: { costUsd: 0 } });
     m.startAgentReview.mockRejectedValue(new Error('k8s down'));
-    expect(await maybeAutoStartAgentReview('pubreq_a')).toBe('error');
+    expect(await maybeAutoStartAgentReview('pubreq_a', deps)).toBe('error');
     expect(reservation.cents).toBe(0);
   });
 });

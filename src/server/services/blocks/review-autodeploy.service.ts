@@ -469,16 +469,33 @@ function perReviewCapUsd(env: { AGENT_REVIEW_COST_CAP_USD: string }): number {
  * and one more review at its per-review cap fits in today's platform budget. Past the budget it is
  * refused; a moderator can still start one by hand. Never throws.
  */
+export type AgentAutostartDeps = {
+  autostartOn: () => Promise<boolean>;
+  agentReviewOn: () => Promise<boolean>;
+  startAgentReview: (args: { publishRequestId: string; modUserId: null }) => Promise<unknown>;
+};
+
 export async function maybeAutoStartAgentReview(
-  publishRequestId: string
+  publishRequestId: string,
+  /** Injectable for the concurrency test; defaults to the flags and agent-review service. */
+  deps: Partial<AgentAutostartDeps> = {}
 ): Promise<AgentReviewAutostartOutcome> {
   try {
-    const { isAppBlocksAgenticReviewAutostartEnabled, isAppBlocksAgenticReviewEnabled } =
-      await import('~/server/services/app-blocks-flag');
+    const d: AgentAutostartDeps = {
+      autostartOn: async () =>
+        (
+          await import('~/server/services/app-blocks-flag')
+        ).isAppBlocksAgenticReviewAutostartEnabled(),
+      agentReviewOn: async () =>
+        (await import('~/server/services/app-blocks-flag')).isAppBlocksAgenticReviewEnabled(),
+      startAgentReview: async (args) =>
+        (await import('./agent-review.service')).startAgentReview(args),
+      ...deps,
+    };
     // Both: the autostart flag AND the agent-review feature flag's base value. While agent review
     // is dark (base off) no pod is provisioned automatically, whatever the autostart flag says.
-    if (!(await isAppBlocksAgenticReviewAutostartEnabled())) return 'disabled';
-    if (!(await isAppBlocksAgenticReviewEnabled())) return 'disabled';
+    if (!(await d.autostartOn())) return 'disabled';
+    if (!(await d.agentReviewOn())) return 'disabled';
 
     const [{ dbRead }, { env }] = await Promise.all([
       import('~/server/db/client'),
@@ -506,8 +523,7 @@ export async function maybeAutoStartAgentReview(
         record('agent_review_budget_refused');
         return 'budget-refused';
       }
-      const { startAgentReview } = await import('./agent-review.service');
-      await startAgentReview({ publishRequestId, modUserId: null });
+      await d.startAgentReview({ publishRequestId, modUserId: null });
       record('agent_review_auto_started');
       return 'started';
     } finally {
