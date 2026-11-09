@@ -12,7 +12,6 @@ import { trpc } from '~/utils/trpc';
 
 const schema = z.object({ content: commentContentSchema });
 
-/** A new comment on the model page's discussion. */
 export default function CommentEditModal() {
   const dialog = useDialogContext();
 

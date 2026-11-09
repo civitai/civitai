@@ -401,6 +401,10 @@ describe('notification queries on CommentV3', () => {
     const undo = `UPDATE "Model" SET status = 'Published', poi = false WHERE id = 1`;
     await temporarily(change, undo, async () => {
       expect(await emitted('new-comment-response')).toEqual([]);
+      // 201, the model reply naming user 9, goes quiet; the image reply naming 10 does not.
+      expect(pairs(await run(mentionNotifications['new-mention'].prepareQuery))).toEqual([
+        [104, 10],
+      ]);
       expect((await emitted('new-thread-response')).filter((t) => t.details.modelId === 1)).toEqual(
         []
       );

@@ -163,9 +163,8 @@ export function CommentSectionProvider({
   );
   // The thread answers with the comment the link marks, which a model-page link may name by its old id.
   const highlightedId = thread.data?.highlightId ?? linkedHighlight;
-  // A link to a comment that is gone, hidden from this viewer or on another entity shows the whole
-  // section rather than an empty one.
-  // The thread answers with the comment it resolved, which a model-page link may name by its old id.
+  // The id the thread resolved, which a model-page link may name by its old id. A link to a comment
+  // that is gone, hidden from this viewer or on another entity shows the whole section instead.
   const focusedId =
     wantedFocus && !thread.isError ? thread.data?.comment.id ?? wantedFocus : undefined;
 

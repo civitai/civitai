@@ -389,7 +389,7 @@ describe('commentv3 create', () => {
     });
 
     // The model metrics job finds the models to recount by this event, replies included, so one
-    // event per comment, keyed by the model, as the v1 path tracked it.
+    // event per comment, keyed by the model.
     it('tracks a model comment and a reply once each, against the model', async () => {
       dbMock.dbRead.model.findUnique.mockResolvedValue({
         locked: false,
@@ -601,7 +601,7 @@ describe('a model with its comments locked', () => {
     expect(m.updateCommentContent).not.toHaveBeenCalled();
   });
 
-  // The lock closes the conversation, not the owner's moderation of it, as under v1.
+  // The lock closes the conversation, not the owner's moderation of it.
   it('still lets its owner hide a comment', async () => {
     await expect(
       toggleHideCommentV3Handler({ ctx: ctx(ARTICLE_OWNER), input: { id: 400 } })

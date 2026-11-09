@@ -267,18 +267,19 @@ deployed); every comment is now addressed by its CommentV3 id.
 3. Fires `reportAcceptedReward` for each reporter
 4. Sends `'tos-violation'` notification to comment owner
 
-(`comment.controller.ts` and `comment.service.ts` were deleted in the model flip, 2026-11-06 and 2026-11-07, not deployed; a model comment is flagged by its CommentV3 id through `bulkSetCommentV3TosViolation`.)
 5. ModActivity tracked implicitly via reward system
 
 Comment stays in DB; hidden from public views via `where: { tosViolation: false }` filter.
 
+(`comment.controller.ts` and `comment.service.ts` were deleted in the model flip, 2026-11-06 and 2026-11-07, not deployed; a model comment is flagged by its CommentV3 id through `bulkSetCommentV3TosViolation`.)
+
 **CommentV2 — column exists, no endpoint.** `tosViolation` column on CommentV2. The `commentv2` router that later held `setTosViolation` was deleted 2026-11-05 (release 2 of the CommentV3 write flip, not deployed); the endpoint is now `commentv3.setTosViolation`. Reports reference it for display only.
 
 **`removeAsTos` action implementation:**
-- Bulk over `{ commentIds?: number[], commentV2Ids?: number[] }`
+- Bulk over `{ commentV2Ids: number[] }` (CommentV3 ids; the v1 `commentIds` list was dropped in the model flip)
 - For each: mirror the legacy flow (flag + reports → Actioned + reward + notification)
 - Build a new `setCommentV2TosViolation` service that mirrors the legacy one for CommentV2 — Phase 1 deliverable (added to checklist below)
-- Single handler: iterate each list, call the variant-appropriate service, collect affected IDs for the audit row
+- Single handler: `bulkSetCommentV3TosViolation` over the list, collecting affected IDs for the audit row
 
 No search index update needed (filter-based hiding, not deletion).
 

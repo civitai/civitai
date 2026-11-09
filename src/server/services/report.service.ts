@@ -430,7 +430,6 @@ export const createReport = async ({
   // only mods can create csam reports
   if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
 
-  // The old `Comment` table is read by nothing; a comment is reported by its CommentV3 id.
   if (type === ReportEntity.Comment)
     throw throwBadRequestError('Report a comment with the commentV3 type and its comment id.');
 

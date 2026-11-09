@@ -1319,7 +1319,7 @@ just implementation — the model discussion UI moves onto the unified provider)
 includes its reactions and reports: reads of reactions come from `CommentV3Reaction`, and the model
 surface's client switches its reaction entityType from `commentOld` to `comment` (its comment ids
 are new ids from that point). After each surface's reads and writes are flipped and stable, its old
-write path is removed; `commentOld` is removed once the model surface is flipped. The first write
+write path is removed; `commentOld` was removed with the model flip (built 2026-11-07). The first write
 flip also carries the Clavata trigger, its consumer, the text-scan profile and
 `ReportEntity.CommentV3` (the Clavata bullet under Phase 1 above). A surface that writes
 `CommentV3` directly must also delete through the v3 service. The mirror's delete is safe against
@@ -1358,7 +1358,7 @@ Per-surface cutover checklist additions from the residue sweep:
 (notification queries, moderator app reads, creator-studio, metrics jobs, the challenge gate) move
 once the Phase 3 backfill converges, _before_ the first Phase 4 write flip — see the Phase 4
 prerequisite. What lands after the flips is the cleanup that requires old write paths to be gone
-(enum/endpoint collapses, `commentOld` removal, handler retirement). Notifications and the
+(enum/endpoint collapses, handler retirement). Notifications and the
 moderator app are the two largest consumers and get their own sections below. The rest:
 
 - event-engine: one CDC handler on `CommentV3` replaces `comments.ts` + `comment-v2.ts`; owner
@@ -1400,18 +1400,18 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
     and ClickHouse `entityMetricEvents` (`metricType='commentCount'`), both downstream of the
     metrics/CDC work above; no direct change, but its inputs must not gap during the CDC handler
     swap — include comment-count continuity in the Phase 5 event-engine verification.
-- Reaction/report consumers: `reaction.service.ts` drops the `commentOld` branch;
+- Reaction/report consumers (the `commentOld` reaction type, its service branch, enum value and
+  client key went with the model flip, built 2026-11-07):
   `goodContent.reward.ts`'s `typeToTable` and the buzz-tip labels in `src/utils/buzz.ts` collapse to
   one mapping; `ReportEntity.Comment`/`ReportEntity.CommentV2` collapse to one value in
   `report-helpers.ts` + `report.service.ts` (accept both from clients for one release), and
   `ReportModal.tsx` lists one comment entity. The reaction entity enum
-  (`src/server/schema/reaction.schema.ts` — contains both `'comment'` and `'commentOld'`) and its
+  (`src/server/schema/reaction.schema.ts`) and its
   twin switch in `reaction.controller.ts` (which also emits `Comment_*` vs `CommentV2_*` ClickHouse
   events) collapse too; keep both input values accepted for a release since it's a breaking tRPC
   input change, and note ClickHouse history keeps the old event-type literals forever — readers
   (`apps/creator-studio/src/lib/server/analytics.ts:329`, `analytics-detail.ts`) must match old
-  literals alongside `CommentV3_*`. Client twin: the `commentOld` key in
-  `src/components/Reaction/Reactions.tsx`.
+  literals alongside `CommentV3_*`.
 - Raw-SQL stragglers found in the full sweep, each a contained rewrite:
   `src/server/services/resourceReview.service.ts` (**owns** its Thread: creates one eagerly on
   review create, dropped in Phase 5; its two `thread.commentCount` reads count live top-level
@@ -1587,11 +1587,10 @@ deletes about half of each:
   then the `commentV3` entry lists only reports with no old link, so the mirror's copies are not
   listed twice.
 - `entity-url.ts` + `retool/user-lookup/CommentsPanel.svelte`: `modelCommentUrl()`/`commentV2Url()`
-  collapse to one builder; the "Model comments"/"Other comments" panels and the separate
-  `commentIds`/`commentV2Ids` checkbox groups become one list. The backing mod endpoints
-  (`src/pages/api/mod/comment/bulk-delete.ts`, `remove-as-tos.ts`, `restore-from-tos.ts`) accept
-  a single `commentIds` list; keep the old dual-list shape as an accepted alias for one release so
-  the moderator app and main app can deploy independently.
+  collapse to one builder; the "Model comments"/"Other comments" panels become one list. The
+  backing mod endpoints (`src/pages/api/mod/comment/bulk-delete.ts`, `remove-as-tos.ts`,
+  `restore-from-tos.ts`) take only `commentV2Ids` (CommentV3 ids) since the model flip; the v1
+  `commentIds` list is gone, and renaming the field to `commentIds` is the only step left.
 
 Sequencing: the moderator app's read rewrite lands **during the dual-write window, before the
 first write flip** (CommentV3 is complete then, and dual-write is one-directional — waiting until
@@ -1630,8 +1629,7 @@ Also:
 `Thread` entirely; the recursive CTE in `getReplyThreads`; the dynamic
 `as unknown as Prisma.ThreadWhereUniqueInput` casts (7 sites); the entity COALESCE chain (9 sites
 plus the four added since); the v1/v2 UNIONs in notifications; one CDC handler; the duplicate
-reaction and report join tables (four tables become two); the `commentOld` reaction type and one
-`ReportEntity` value; the `{ commentIds, commentV2Ids }` dual-id API shape; the duplicated
+reaction and report join tables (four tables become two); one `ReportEntity` value; the `{ commentIds, commentV2Ids }` dual-id API shape; the duplicated
 exclusion logic; `src/server/common/thread-chain.ts` (its 100-deep ancestor walk,
 `seededThreadChainCte` and `threadIsRooted`), which `path @>` replaces for the lock check, the
 mute check and block-hide alike.

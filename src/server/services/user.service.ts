@@ -1882,8 +1882,8 @@ export const removeAllContent = async ({
       afterCommentsV3Deleted(await dbWrite.$transaction((tx) => deleteCommentsV3(tx, batch)));
     }
     // Not the rows the CommentV3 pass handled: deleting a CommentV2 placeholder blanks it, and deleting
-    // a v1 row cascades to its replies' live CommentV3 rows. A v1 row the mirror never copied has no
-    // other path out of the database until the table is dropped.
+    // a v1 row cascades to its replies' live CommentV3 rows. A v1 row the mirror never copied is
+    // removed by nothing else when its author's content is removed.
     await dbWrite.$executeRaw`
       DELETE FROM "CommentV2" c2
       WHERE c2."userId" = ${id} AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;

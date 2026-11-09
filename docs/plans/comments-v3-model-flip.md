@@ -54,6 +54,10 @@ the v1 `comment` router is deleted. A read-only adapter (v1-shaped payloads from
   open the right thread; `getThread` resolves a link's `highlight` the same way.
   They cover every model comment, filter `notCommentMuted`, and stamp `version: 4`. The detail
   fetcher resolves an id by `legacyV1Id`, and, on a version-4 row only, by a model comment's own id.
+  Replies, thread responses and mentions also filter `notOnHiddenModel`, the twin of the
+  section's visibility check: on an unpublished or POI model a reply notifies only when it answers
+  the owner, and thread responses and mentions go to no one; the owner still gets new-comment and
+  new-comment-nested.
 - **Event engine.** `commentV3Handler` counts model comments (`ModelMetric.commentCount` and the
   owner's `UserMetric.commentCount`); the `Comment`-table handler is deleted, and the CommentV2
   handler skips model threads. Deploy the event engine before or with the main app: until it runs,
@@ -72,6 +76,9 @@ the v1 `comment` router is deleted. A read-only adapter (v1-shaped payloads from
     that has a CommentV3 twin (`legacyV1Id`): deleting it would cascade to the v1 replies and,
     through the mirror, to their live CommentV3 rows. The CommentV3 pass blanks or deletes the
     twin; only v1 rows with no twin are deleted.
+  - The parity job counts the old-side presence checks (`v2_ghosts`, `thread_count_mismatch`, the
+    `*_extra` links) as rows written on CommentV3 (`V3_NATIVE`): recorded, not paged. `v1_ghosts`
+    still pages, since a new model comment has no `legacyV1Id`.
 - **A hazard for later edits:** the v1 mirror's UPDATE trigger copies every mirrored column from
   the v1 row into CommentV3. Every CommentV3 write to those columns keeps the v1 row in step, so
   that copy is a no-op; a new write that skips the v1 sync would be reverted by the next v1 write.
@@ -87,7 +94,7 @@ the v1 `comment` router is deleted. A read-only adapter (v1-shaped payloads from
   - Ids that predate the flip are resolved through `legacyV1Id` (`commentV3IdsByOldId`): a CSAM hold
     on a `Comment` (the decision, and the moderator app's list, context and link), a scam review's
     `Comment` subject, and a scam-cleanup record of kind `comments`, which the overturn restores on
-    CommentV3. A Clavata or text-scan verdict on a `Comment` row runs the `commentsV2` cleanup.
+    CommentV3; no new record of that kind is written. A Clavata or text-scan verdict on a `Comment` row runs the `commentsV2` cleanup.
   - A report can no longer be filed on `ReportEntity.Comment`; old `CommentReport` links reach
     CommentV3 through `CommentV3Report`, which the mirror fills.
 - **Deleted:** the `comment` router and controller, `comment.service.ts`, `hot-reads-4` (service and
@@ -98,7 +105,7 @@ the v1 `comment` router is deleted. A read-only adapter (v1-shaped payloads from
   reverse copy (the rollback path); `trg_moderation_comment` and what drains its queue (the `Comment`
   entry in `entity-moderation.ts`, the Clavata cutover target and the `Comment` text-scan profile),
   since a v1 row synced from a CommentV3 edit still queues a scan there; and `removeAllContent`'s
-  delete of v1 rows with no CommentV3 twin, the only way out for a deleted user's text in one.
+  delete of v1 rows with no CommentV3 twin, the only path that removes such a row when its author's content is removed.
 
 ## Client
 
@@ -121,7 +128,8 @@ the v1 `comment` router is deleted. A read-only adapter (v1-shaped payloads from
 One release, no migration. The event engine deploys before or with the main app. The moderator
 app deploys with the main app: before it, its model-comment actions send v1 ids the endpoints no
 longer read and are refused; deployed first, it sends CommentV3 ids that the old endpoints look for
-in CommentV2 and find nothing. Before it ships, a read-only check that every live v1 model comment has
+in CommentV2: they find nothing for a comment written to the v1 table, which is every model comment
+but the few on old v2 model threads, and the app reports nothing affected. Before it ships, a read-only check that every live v1 model comment has
 its v3 row (2 orphan replies whose parents are gone were the only gap on 2026-11-06). Rollback is the
 reverse copy over `model`, then reverting the release.
 

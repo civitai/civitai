@@ -12,7 +12,6 @@ import { ThreadSort } from '~/server/common/enums';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { trpc } from '~/utils/trpc';
 
-/** The hidden comments the model page's discussion leaves out. */
 export default function HiddenCommentsModal(props: { modelId: number | string }) {
   // A direct `?dialog=hiddenComments` load passes `modelId` from the URL, as a string.
   const modelId = parseNumericString(props.modelId) || 0;

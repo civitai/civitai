@@ -19,9 +19,14 @@ const AUTHOR = 2;
 const STRANGER = 3;
 const comment = (over: Partial<CommentV3Comment> = {}) =>
   ({ id: 10, user: { id: AUTHOR }, locked: false, hidden: false, ...over } as CommentV3Comment);
-const useAbilitiesAs = (id: number, isModerator = false, over?: Partial<CommentV3Comment>) => {
+const useAbilitiesAs = (
+  id: number,
+  isModerator = false,
+  over?: Partial<CommentV3Comment>,
+  lockedAbove = false
+) => {
   h.user = { id, isModerator };
-  return useCommentAbilities(comment(over), false);
+  return useCommentAbilities(comment(over), lockedAbove);
 };
 
 beforeEach(() => {
@@ -46,5 +51,18 @@ describe("a comment's menu", () => {
     expect(useAbilitiesAs(STRANGER).reply).toBe(true);
     expect(useAbilitiesAs(STRANGER, false, { locked: true }).reply).toBe(false);
     expect(useAbilitiesAs(STRANGER, false, { hidden: true }).reply).toBe(false);
+  });
+
+  it('under a lock above, takes Reply from everyone and Edit from all but moderators', () => {
+    expect(useAbilitiesAs(STRANGER, false, {}, true).reply).toBe(false);
+    expect(useAbilitiesAs(AUTHOR, false, {}, true).edit).toBe(false);
+    expect(useAbilitiesAs(STRANGER, true, {}, true)).toMatchObject({ edit: true, reply: false });
+  });
+
+  it('takes Reply away in a muted or force-locked section', () => {
+    h.section = { ...h.section, isMuted: true };
+    expect(useAbilitiesAs(STRANGER).reply).toBe(false);
+    h.section = { ownerId: OWNER, isMuted: false, forceLocked: true };
+    expect(useAbilitiesAs(STRANGER).reply).toBe(false);
   });
 });

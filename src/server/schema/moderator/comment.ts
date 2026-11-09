@@ -2,7 +2,6 @@ import * as z from 'zod';
 
 const idList = z.array(z.coerce.number().int().positive()).max(500);
 
-// Shared by the comment actions, so the contract is written once.
 export const commentIdSchema = z.object({
   commentV2Ids: idList
     .min(1)

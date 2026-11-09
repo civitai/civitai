@@ -34,7 +34,6 @@ import { useCommentSection } from './CommentSectionContext';
 import type { CommentV3Comment } from './types';
 import { useCommentMutations } from './useCommentMutations';
 
-/** What the viewer may do to one comment. */
 export function useCommentAbilities(comment: CommentV3Comment, lockedAbove: boolean) {
   const { ownerId, isMuted, forceLocked } = useCommentSection();
   const currentUser = useCurrentUser();

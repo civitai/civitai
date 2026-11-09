@@ -429,7 +429,6 @@ export async function setTosViolationV3Handler({
   return bulkSetCommentV3TosViolation({ ids: [input.id], actor: { id: ctx.user.id, ip: ctx.ip } });
 }
 
-/** Moderators only: closes a comment's replies, or reopens them. */
 export async function toggleCommentLockV3Handler({
   ctx,
   input,

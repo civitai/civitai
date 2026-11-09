@@ -8,7 +8,6 @@ import type { CommentV3Comment } from '~/components/CommentsV3/types';
 import { LoadMoreButton } from '~/components/LoadMoreButton/LoadMoreButton';
 import { CommentMasonryVirtual } from '~/components/Model/ModelDiscussion/CommentMasonryVirtual';
 
-/** The model page's comment cards, from the `CommentSectionProvider` around it. */
 export function ModelDiscussionV2({ modelUserId }: Props) {
   const {
     entityId,

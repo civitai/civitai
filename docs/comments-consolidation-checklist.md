@@ -606,7 +606,8 @@ Surface-specific extras:
       `Model.meta.commentsLocked` (which v1 left to the page, which only hides the discussion) and a
       published version (with exactly one, the writer needs access to it, for early access). A pre-flip comment's v1 row stays in step
       (`syncOldRows`). The three model-page processors filter `notCommentMuted` and address a
-      comment by `modelPageId`; `MODEL_ONLY` is gone. The event engine counts model comments from
+      comment by `modelPageId`; `MODEL_ONLY` is gone. Replies, thread responses and mentions
+      filter `notOnHiddenModel`: on an unpublished or POI model they reach at most the owner. The event engine counts model comments from
       CommentV3; deploy it before or with the main app (until it runs, a v3-only model comment is
       missed by the owner's `UserMetric.commentCount` for good). The section leaves hidden comments
       out (`leavesOutHiddenComments`; the first page returns `counts: { visible, hidden }`) and
@@ -709,9 +710,10 @@ Main app cleanup:
 - [ ] Mute copy says "thread": restate for exact subtree semantics
 - [x] `commentv2.router` mute procedures move to the v3 router, keeping one shared rate-limit
       budget (`commentv3:mute`, was `commentv2.mute`; done early: built 2026-11-05, release 2, not deployed)
-- [ ] Mod endpoints `bulk-delete`/`remove-as-tos`/`restore-from-tos` take single `commentIds`;
-      `moderator-endpoint-catalog.generated.ts` regenerated. The model flip (built 2026-11-07) dropped
-      the v1 `commentIds` list: they take only `commentV2Ids` (CommentV3 ids), which the rename is left
+- [ ] Mod endpoints `bulk-delete`/`remove-as-tos`/`restore-from-tos`: rename `commentV2Ids` to
+      `commentIds` (one list of CommentV3 ids); `moderator-endpoint-catalog.generated.ts` regenerated.
+      The model flip (built 2026-11-07) already dropped the v1 `commentIds` list, so they take only
+      `commentV2Ids` today; only the rename is left
 
 - [ ] `src/server/common/thread-chain.ts` deleted: `throwIfThreadChainLocked` went with the v2
       write path (built 2026-11-05, release 2, not deployed); still imported by `block-check.service.ts`
