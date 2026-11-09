@@ -20,7 +20,9 @@ export async function pickItem(
   userId: number,
   rank: string,
   skipped: Skipped | null,
-  slot?: number
+  slot?: number,
+  /** Yes/no question ids already handed out ahead of the player, oldest first: the stretch counts them. */
+  ahead?: number[]
 ): Promise<PickedItem | null> {
   const feed = await getFeed(db, userId, { limit: 1, exclude: skipped?.queue });
   const secret = feedSecret();
@@ -63,6 +65,7 @@ export async function pickItem(
           stretch: yesNo.stretch,
           force: !feed,
           exclude: skipped?.yesno,
+          ahead,
           slot,
         });
   if (offer) {

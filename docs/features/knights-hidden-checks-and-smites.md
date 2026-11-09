@@ -21,7 +21,7 @@ ordinary vote in every way a player can see.
   `payOutVotes` as a settled queue vote: a right answer earns gold and bulk XP and works smites off, a wrong one drops its gold.
   Accuracy counts the check only from then.
 - A wrong answer can cost the player a warning or a smite, decided when the check is graded. It is stored on the vote
-  (`consequence`) and shown as a notice that the player dismisses (`readHiddenNotices`, `dismissHiddenNotices`); reading never
+  (`consequence`) and shown as a notice that the player dismisses (only a notice from the current career, since `startAt`; a career reset leaves the old one behind) (`readHiddenNotices`, `dismissHiddenNotices`); reading never
   changes anything, so a preload cannot lose it.
 
 ## Smites (`src/lib/server/smites`)

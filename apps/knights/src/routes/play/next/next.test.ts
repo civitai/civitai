@@ -104,6 +104,11 @@ describe('GET /play/next', () => {
     expect(pickYesNo.mock.calls[0][1].slot).toBe(hidden.slot);
   });
 
+  it('tells the yes/no picker which yes/no questions are already ahead of the player, oldest first, so the stretch counts them', async () => {
+    await ask([token('yesno', 3), token('queue', 9), token('yesno', 4)]);
+    expect(pickYesNo.mock.calls[0][1].ahead).toEqual([3, 4]);
+  });
+
   it('rolls the same for the same items, so asking again cannot reroll', async () => {
     await ask([token('queue', 9)]);
     await ask([token('queue', 9)]);

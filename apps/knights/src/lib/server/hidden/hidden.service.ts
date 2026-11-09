@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { sql, type Kysely, type Transaction } from 'kysely';
+import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { REFERENCE_POOL } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
@@ -226,7 +226,10 @@ export async function answerHiddenCheck(
 const noticeOf = (consequence: string): Notice =>
   consequence === 'smite' ? SMITE_NOTICE : WARNING_NOTICE;
 
-/** What graded checks cost the player that they have not dismissed yet. Reading changes nothing, so a preload cannot lose it. */
+/**
+ * What graded checks cost the player in this career that they have not dismissed yet. A career reset moves
+ * `startAt`, and a notice from before it belongs to the old career. Reading changes nothing, so a preload cannot lose it.
+ */
 export async function readHiddenNotices(db: Executor, playerId: number): Promise<Notice[]> {
   const rows = await db
     .selectFrom('KnightsVote')
@@ -234,6 +237,9 @@ export async function readHiddenNotices(db: Executor, playerId: number): Promise
     .where('playerId', '=', playerId)
     .where('consequence', 'is not', null)
     .where('noticedAt', 'is', null)
+    .where(
+      sql<SqlBool>`"createdAt" >= COALESCE((SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = "KnightsVote"."playerId"), 'epoch')`
+    )
     .execute();
   if (rows.length === 0) return [];
   return [noticeOf(rows.some((r) => r.consequence === 'smite') ? 'smite' : 'warning')];

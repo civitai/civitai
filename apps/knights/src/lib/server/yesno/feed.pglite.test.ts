@@ -43,7 +43,14 @@ async function seed(rows: YesNoRow[]) {
 }
 const pick = (
   userId: number,
-  o: { rank?: string; share?: number; stretch?: number; force?: boolean; exclude?: number[] } = {}
+  o: {
+    rank?: string;
+    share?: number;
+    stretch?: number;
+    force?: boolean;
+    exclude?: number[];
+    ahead?: number[];
+  } = {}
 ) =>
   pickYesNo(db, {
     userId,
@@ -53,6 +60,7 @@ const pick = (
     stretch: o.stretch ?? 8,
     force: o.force,
     exclude: o.exclude,
+    ahead: o.ahead,
   });
 const answer = async (userId: number, itemId: number, value = 'yes') => {
   clock = new Date(clock.getTime() + 1000);
@@ -219,6 +227,49 @@ describe('stretches', () => {
       'Violence',
     ]);
     expect(await pick(1, { stretch: 2 })).toBeNull();
+  });
+
+  it('counts the questions already handed out ahead of the player as part of the stretch, with the banner on the first only', async () => {
+    await seed([
+      row('v1', 10, { axis: 'violence' }),
+      row('v2', 11, { axis: 'violence' }),
+      row('v3', 12, { axis: 'violence' }),
+      row('l1', 13, { axis: 'language' }),
+      row('l2', 14, { axis: 'language' }),
+    ]);
+    await seedPlayer(pg, 1);
+
+    // Nothing is answered: each pick only sees the ones before it as handed out.
+    const ahead: number[] = [];
+    const seen: { prompt: string; banner: boolean }[] = [];
+    for (let i = 0; i < 5; i++) {
+      const offer = (await pick(1, { stretch: 2, exclude: ahead, ahead }))!;
+      seen.push({ prompt: offer.prompt, banner: offer.banner !== null });
+      ahead.push(offer.itemId);
+    }
+    expect(seen).toEqual([
+      { prompt: 'Question l1?', banner: true },
+      { prompt: 'Question l2?', banner: false },
+      { prompt: 'Question v1?', banner: true },
+      { prompt: 'Question v2?', banner: false },
+      { prompt: 'Question v3?', banner: false },
+    ]);
+  });
+
+  it('does not count a handed-out question twice once its vote is recorded', async () => {
+    const ids = await seed([
+      row('v1', 10, { axis: 'violence' }),
+      row('v2', 11, { axis: 'violence' }),
+      row('v3', 12, { axis: 'violence' }),
+      row('l1', 13, { axis: 'language' }),
+      row('l2', 14, { axis: 'language' }),
+    ]);
+    await seedPlayer(pg, 1);
+    await answer(1, ids.l1);
+    // l1 is both on the ledger and still named in the page's buffer: it counts once, so a stretch of 2 has room for another.
+    const offer = (await pick(1, { stretch: 2, exclude: [ids.l1], ahead: [ids.l1] }))!;
+    expect(offer.prompt).toBe('Question l2?');
+    expect(offer.banner).toBeNull();
   });
 
   it('moves on, with a banner, when the latest axis was switched off or has nothing left for the player', async () => {
