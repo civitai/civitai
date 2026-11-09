@@ -23,7 +23,7 @@ const SORT_OPTIONS: { value: ListingSort; label: string }[] = [
 export function AppsStoreFeedFilters(groupProps: GroupProps) {
   const { filters, setFilters } = useAppsStoreQueryParams();
   const { kind, category, sort } = filters;
-  useRememberAppsStoreSort();
+  const chooseSort = useRememberAppsStoreSort();
 
   return (
     // Full width on mobile, like every other feed: `SubNav2` puts the gear on this same row.
@@ -38,7 +38,7 @@ export function AppsStoreFeedFilters(groupProps: GroupProps) {
         label={SORT_OPTIONS.find((o) => o.value === sort)?.label ?? sort}
         value={sort}
         options={SORT_OPTIONS}
-        onClick={(value) => setFilters({ sort: value })}
+        onClick={chooseSort}
       />
       <AppsStoreFiltersDropdown filters={{ kind, category }} onChange={setFilters} />
     </Group>

@@ -58,8 +58,9 @@ const { useRememberAppsStoreSort } = await import('~/components/Apps/useRemember
 const act = (React as unknown as { act: (callback: () => void) => void }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+let choose: ReturnType<typeof useRememberAppsStoreSort>;
 function Probe() {
-  useRememberAppsStoreSort();
+  choose = useRememberAppsStoreSort();
   return null;
 }
 
@@ -91,7 +92,7 @@ afterEach(() => {
 describe('useRememberAppsStoreSort', () => {
   it('reopens the store on the sort last chosen when the link into it is bare', () => {
     mount();
-    act(() => router.navigate({ sort: 'newest' }));
+    act(() => choose('newest'));
     act(() => root?.unmount());
 
     root = createRoot(container as HTMLDivElement);
@@ -101,19 +102,29 @@ describe('useRememberAppsStoreSort', () => {
     expect(router.state.query).toEqual({ sort: 'newest' });
   });
 
+  it('applies it again when a bare link arrives while the store stays mounted', () => {
+    mount();
+    act(() => choose('newest'));
+    act(() => router.navigate({}));
+
+    expect(router.state.query).toEqual({ sort: 'newest' });
+    expect(stored()).toBe('newest');
+  });
+
   it('lets a sort in the address win, and remembers it', () => {
     router.navigate({ sort: 'name' });
     localStorage.setItem('apps-store-filters', JSON.stringify({ sort: 'newest' }));
     mount();
 
+    expect(router.state.replaceCalls).toBe(0);
     expect(router.state.query).toEqual({ sort: 'name' });
     expect(stored()).toBe('name');
   });
 
   it('remembers Most popular, so choosing it undoes another sort', () => {
     mount();
-    act(() => router.navigate({ sort: 'newest' }));
-    act(() => router.navigate({}));
+    act(() => choose('newest'));
+    act(() => choose('popular'));
     act(() => root?.unmount());
 
     root = createRoot(container as HTMLDivElement);
@@ -124,10 +135,33 @@ describe('useRememberAppsStoreSort', () => {
     expect(stored()).toBe('popular');
   });
 
-  it('ignores a remembered sort the store no longer offers', () => {
-    localStorage.setItem('apps-store-filters', JSON.stringify({ sort: 'bogus' }));
+  it('treats a sort the store does not offer as no sort', () => {
+    localStorage.setItem('apps-store-filters', JSON.stringify({ sort: 'newest' }));
+    router.navigate({ sort: 'bogus' });
     mount();
 
-    expect(router.state.query).toEqual({});
+    expect(router.state.query).toEqual({ sort: 'newest' });
+  });
+
+  it('waits for the router before reading the address, so a sort in it is not overwritten', () => {
+    localStorage.setItem('apps-store-filters', JSON.stringify({ sort: 'newest' }));
+    router.state.isReady = false;
+    router.navigate({});
+    mount();
+
+    expect(router.state.replaceCalls).toBe(0);
+
+    router.state.isReady = true;
+    act(() => router.navigate({ sort: 'name' }));
+
+    expect(router.state.replaceCalls).toBe(0);
+    expect(stored()).toBe('name');
+  });
+
+  it('does not rewrite the address when the remembered sort is the default', () => {
+    localStorage.setItem('apps-store-filters', JSON.stringify({ sort: 'popular' }));
+    mount();
+
+    expect(router.state.replaceCalls).toBe(0);
   });
 });
