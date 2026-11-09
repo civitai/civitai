@@ -7,9 +7,9 @@
 -- and after 20261019220000_evidence_hold and 20261204120000_evidence_hold_image_prior_state, whose
 -- functions this replaces. Hand-applied. Dry run: the whole file inside BEGIN; ... ROLLBACK;.
 --
--- Not applied as of 20261231120100_feedback_capture_owner_hold. Before applying it, carry that
--- migration's feedback capture clause into evidence_hold_keep_image below and skip owner -2 in the
--- image legs of evidence_hold_owner_held (as `holdLegsSql` does), or captures lose their keep. Carry
+-- Before applying it, carry 20261231120100_feedback_capture_owner_hold's feedback capture clause
+-- into evidence_hold_keep_image below and skip owner -2 in the image legs of evidence_hold_owner_held
+-- (as `holdLegsSql` does), or captures lose their keep. Carry
 -- 20261231130100_feedback_capture_hold_lifetime's capture clauses into evidence_hold_purge_unheld and
 -- evidence_hold_guard_kept below too.
 
