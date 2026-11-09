@@ -118,9 +118,9 @@ export type LicenseRecord = {
   // several licences use for a liability disclaimer rather than an attribution.
   attribution?: string;
   disableMature?: boolean;
-  // Models on this licence's base models are held for moderator review before they publish.
+  // The licence requires moderator review before a model on its base models publishes.
   prePublishReview?: boolean;
-  // Generations using any resource on this licence's base models are capped at PG-13.
+  // The licence requires a capped output level for generations using its base models' resources.
   capGenerationOutput?: boolean;
   // License forbids commercial use (drives commercial-use override + monetization block).
   nonCommercial?: boolean;

@@ -683,9 +683,9 @@ type LicenseDetails = {
   // When true, mature content is restricted (auto-derives `restrictedNsfwLevels`
   // to MATURE_NSFW_LEVELS). Use this instead of hand-listing levels.
   disableMature?: boolean;
-  // Models on this licence's base models are held for moderator review before they publish.
+  // The licence requires moderator review before a model on its base models publishes.
   prePublishReview?: boolean;
-  // Generations using any resource on this licence's base models are capped at PG-13.
+  // The licence requires a capped output level for generations using its base models' resources.
   capGenerationOutput?: boolean;
   // When true, the license forbids commercial use. Drives both the commercial-use
   // permission override (-> [None]) and the per-version monetization block. The set

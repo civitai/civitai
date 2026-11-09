@@ -30,12 +30,12 @@ export type Fibo2Data = InferData<typeof fibo2> & { workflow: string; quantity?:
 export const createFibo2Input = defineHandler<Fibo2Data, [ImageGenStepTemplate]>((data, ctx) => {
   const model = fibo2ModelOf(data.workflow);
   const isEdit = model === 'editTurbo';
+  if (fibo2VersionId === undefined) throw new Error('Fibo 2.0 has no official version id set');
   // The official version runs the orchestrator's own weights; a fine-tune of `dev` rides as
-  // diffusionModel. Edit always runs the official editTurbo weights.
+  // diffusionModel.
+  const checkpoint = 'model' in data ? data.model : undefined;
   const diffusionModel =
-    !isEdit && data.model && data.model.id !== fibo2VersionId
-      ? ctx.airs.getOrThrow(data.model.id)
-      : undefined;
+    checkpoint && checkpoint.id !== fibo2VersionId ? ctx.airs.getOrThrow(checkpoint.id) : undefined;
 
   return [
     {

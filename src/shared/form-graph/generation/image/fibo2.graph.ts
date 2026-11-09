@@ -9,8 +9,8 @@ import { familyResources, familyScope, makeTextBlock, type FamilyExt } from '../
  * LoRAs, since they are trained against `dev`.
  */
 
-// TODO(fibo2): the official CivitaiOfficial version id, once it exists. Registering this graph in
-// hub.graph.ts before it is set would send every checkpoint, the official one included, as a fine-tune.
+// TODO(fibo2): before registering this graph in the hub, set the official CivitaiOfficial version
+// id (the handler refuses to build while it is unset) and cap quantity at 4, the orchestrator's limit.
 export const fibo2VersionId: number | undefined = undefined;
 
 export type Fibo2Model = 'dev' | 'editTurbo';
@@ -24,7 +24,12 @@ const modelSlider = (model: Fibo2Model, opts: Parameters<typeof sliderDef>[0]) =
   scope: [model],
 });
 
+// Edit offers no checkpoint: it always runs the official editTurbo weights, so a picked fine-tune
+// would be credited for an image it never ran.
 const dev = defineGraph<FamilyExt>()
+  .field('model', ({ _ext }) =>
+    checkpointDef({ ecosystem: _ext.ecosystem, workflow: _ext.workflow, ext: _ext })
+  )
   .field('resources', familyResources)
   .field('cfgScale', modelSlider('dev', { min: 1, max: 10, step: 0.5, default: 5 }))
   .field('steps', modelSlider('dev', { min: 10, max: 60, default: 30 }));
@@ -41,9 +46,6 @@ const models = branch('fibo2Model', (ext: FamilyExt) => fibo2ModelOf(ext.workflo
 
 export const fibo2 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({ max: 16 }))
-  .field('model', ({ _ext }) =>
-    checkpointDef({ ecosystem: _ext.ecosystem, workflow: _ext.workflow, ext: _ext })
-  )
   .use(models)
   .field('aspectRatio', SDXL_FULL_AR)
   .field('seed', SEED)
