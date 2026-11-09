@@ -55,6 +55,11 @@ describe('capsGenerationOutput', () => {
     expect(caps({ baseModels: ['Fibo 2.0'] })).toBe(true);
   });
 
+  it('caps a base-model string that differs from the record only in case', () => {
+    expect(caps({ baseModels: ['FIBO 2.0'] })).toBe(true);
+    expect(caps({ baseModels: ['fibo 2.0'] })).toBe(true);
+  });
+
   it('caps a Fibo 2.0 LoRA inside an otherwise unflagged request', () => {
     expect(caps({ baseModels: ['SDXL 1.0', 'Fibo 2.0'], requestEcosystem: 'SDXL' })).toBe(true);
   });

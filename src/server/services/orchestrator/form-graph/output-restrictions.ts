@@ -1,5 +1,5 @@
 import {
-  baseModelByName,
+  baseModelRecords,
   ecosystemByKey,
   getBaseModelLicense,
   getBaseModelsByEcosystemId,
@@ -7,6 +7,10 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import { workflowConfigByKey } from '~/shared/generation/config/workflows';
 import { getEcosystemByAirSegment, parseRawAirResourceUrn } from '~/shared/utils/air';
+
+// Case-insensitive: a stored base-model string that differs from the record only in case must still
+// resolve, or a capped base model would go uncapped.
+const baseModelIdByLowerName = new Map(baseModelRecords.map((m) => [m.name.toLowerCase(), m.id]));
 
 const licenseCapsOutput = (baseModelId: number) =>
   !!getBaseModelLicense(baseModelId)?.capGenerationOutput;
@@ -31,8 +35,11 @@ export function capsGenerationOutput({
   rawAirs: string[];
   requestEcosystem?: string;
 }) {
-  if (baseModels.some((name) => !!name && licenseCapsOutput(baseModelByName.get(name)?.id ?? -1)))
-    return true;
+  const baseModelCaps = (name: string) => {
+    const id = baseModelIdByLowerName.get(name.toLowerCase());
+    return id !== undefined && licenseCapsOutput(id);
+  };
+  if (baseModels.some((name) => !!name && baseModelCaps(name))) return true;
   const rawAirCapped = rawAirs.some((air) => {
     const segment = parseRawAirResourceUrn(air)?.ecosystem;
     const ecosystem = segment ? getEcosystemByAirSegment(segment) : undefined;
