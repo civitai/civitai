@@ -1,4 +1,4 @@
-import { createAuthVerifier, type AuthVerifier } from './verify';
+import { createAuthVerifier, type AuthVerifier, type AuthVerifierConfig } from './verify';
 import { loadAuthEnv } from './env';
 import { hubFetch } from './hub';
 import { getCacheRedis, sessionCacheKey } from './redis';
@@ -78,6 +78,8 @@ export interface SessionClientConfig {
    * (the write still throws, per its contract — the callback is fire-and-forget observability only).
    */
   onHubWriteLeg?: (outcome: 'hit' | 'timeout' | 'error', durationSeconds: number) => void;
+  /** Forwarded to the internal `createAuthVerifier` — see AuthVerifierConfig.verifiedTokenCache. */
+  verifiedTokenCache?: AuthVerifierConfig['verifiedTokenCache'];
 }
 
 export function createSessionClient(config: SessionClientConfig = {}): SessionClient {
@@ -88,6 +90,7 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     (_verifier ??= createAuthVerifier({
       isRevoked: config.isRevoked,
       onJwksLeg: config.onJwksLeg,
+      verifiedTokenCache: config.verifiedTokenCache,
     })).verifyToken(token);
 
   // Per-pod single-flight: collapse concurrent read-misses for the same user into ONE hub fetch, so a cache
