@@ -6,6 +6,10 @@
 -- Apply AFTER 20261227140000_evidence_hold_owner_held_indexes (the function relies on its indexes),
 -- and after 20261019220000_evidence_hold and 20261204120000_evidence_hold_image_prior_state, whose
 -- functions this replaces. Hand-applied. Dry run: the whole file inside BEGIN; ... ROLLBACK;.
+--
+-- Not applied as of 20261231120100_feedback_capture_owner_hold. Before applying it, carry that
+-- migration's feedback capture clause into evidence_hold_keep_image below and skip owner -2 in the
+-- image legs of evidence_hold_owner_held (as `holdLegsSql` does), or captures lose their keep.
 
 -- Whether owner `uid` is held. The same answer as `ownerHeldSql` in
 -- src/server/services/legal-hold.service.ts (every account hold, the placeholder owner, the marker),
