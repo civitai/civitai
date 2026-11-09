@@ -55,7 +55,7 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
     () => undefined
   );
   if (!allowed) return res.status(404).json({ error: 'Not found' });
-  if (!session.user?.isModerator && (await isTakenDownModelFile(userId, key)))
+  if (!session.user?.isModerator && (await isWithheldModelFile(userId, key)))
     return res.status(404).json({ error: 'Not found' });
 
   // This is a catch-all `/api/download/[...key]` route. Clients that hit a
@@ -130,10 +130,11 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
 }
 
 /**
- * Whether `key` is a file of a taken-down model the caller owns: those files are moderators-only.
- * Walks from the caller's models (indexed on userId), so it never scans every file's url.
+ * Whether `key` is a file of a deleted or taken-down model the caller owns: those files are
+ * moderators-only, as on the download route. Walks from the caller's models (indexed on userId),
+ * so it never scans every file's url.
  */
-async function isTakenDownModelFile(userId: number, key: string) {
+async function isWithheldModelFile(userId: number, key: string) {
   const suffix = `/${key}`;
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT mf.id
@@ -141,8 +142,8 @@ async function isTakenDownModelFile(userId: number, key: string) {
     JOIN "ModelVersion" mv ON mv."modelId" = m.id
     JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id
     WHERE m."userId" = ${userId}
-      AND m.mode = 'TakenDown'
-      AND right(mf.url, ${suffix.length}) = ${suffix}
+      AND (m.mode = 'TakenDown' OR m.status = 'Deleted')
+      AND right(mf.url, length(${suffix})) = ${suffix}
     LIMIT 1
   `;
   return rows.length > 0;

@@ -54,7 +54,7 @@ vi.mock('~/server/logging/client', () => ({
 import handler from '~/pages/api/download/[...key]';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
-// The taken-down-file lookup. No key belongs to a taken-down model unless a test says so.
+// The withheld-file lookup. No key belongs to a deleted or taken-down model unless a test says so.
 const mockQueryRaw = dbMock.dbRead.$queryRaw;
 beforeEach(() => {
   mockQueryRaw.mockResolvedValue([] as never);
@@ -405,12 +405,21 @@ describe('/api/download/[...key] — ownership scope', () => {
   });
 });
 
-describe('/api/download/[...key] — a taken-down model', () => {
+describe('/api/download/[...key] — a deleted or taken-down model', () => {
   const KEY = ['model', '42', 'mine.safetensors'];
-  // Rows only for the taken-down file's own key suffix.
+  // A row only when the lookup scopes to the caller's own models in either state, for this key.
+  // The SQL itself was run against a dev database; this fake stands in for it.
   const takenDown = () =>
-    mockQueryRaw.mockImplementation(((_sql: TemplateStringsArray, ...values: unknown[]) =>
-      Promise.resolve(values.includes('/model/42/mine.safetensors') ? [{ id: 1 }] : [])) as never);
+    mockQueryRaw.mockImplementation(((sql: TemplateStringsArray, ...values: unknown[]) => {
+      const text = sql.join('?');
+      const scoped =
+        text.includes(`m."userId" = ?`) &&
+        text.includes(`m.mode = 'TakenDown' OR m.status = 'Deleted'`) &&
+        values.includes(42);
+      return Promise.resolve(
+        scoped && values.includes('/model/42/mine.safetensors') ? [{ id: 1 }] : []
+      );
+    }) as never);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -451,5 +460,18 @@ describe('/api/download/[...key] — a taken-down model', () => {
     await handler(req, res);
 
     expect(res._getRedirect()).toBe('https://cdn.example.com/signed');
+  });
+
+  // Postgres has no right(text, bigint), and Prisma sends a JS number as bigint: the length must be
+  // computed in SQL, or every lookup errors.
+  it('takes the suffix length from the suffix in SQL, not as a number parameter', async () => {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+    const { req, res } = createMocks({ key: KEY });
+
+    await handler(req, res);
+    const [sql, ...values] = mockQueryRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+
+    expect(sql.join('?')).toContain('right(mf.url, length(?))');
+    expect(values).not.toContain('/model/42/mine.safetensors'.length);
   });
 });
