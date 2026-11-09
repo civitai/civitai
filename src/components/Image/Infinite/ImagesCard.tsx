@@ -19,6 +19,7 @@ import { ElementInView, useElementInView } from '~/components/IntersectionObserv
 import { Metrics } from '~/components/Metrics';
 import { ImageBuzzTip, Reactions } from '~/components/Reaction/Reactions';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
+import { HatTimeLeft } from '~/components/HatTurf/HatTimeLeft';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
 import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
 import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
@@ -192,6 +193,12 @@ function ImagesCardContent({
                 {/* Steps clear of an event decoration sitting on the corner. */}
                 <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-[4] flex flex-nowrap items-center gap-1">
                   <HatTurfBadge imageId={image.id} />
+                  {image.turfPlacedAt && (
+                    <HatTimeLeft
+                      placedAt={image.turfPlacedAt}
+                      className="inline-flex h-6 items-center rounded-full bg-black/60 px-2 text-xs font-bold text-white"
+                    />
+                  )}
                   {/* This row's chips take the Hat Turf badge's 24px so they read as one line. */}
                   <ImageGuard2.BlurToggle radius="xl" h={24} style={{ pointerEvents: 'auto' }} />
                   {safe && storyline && (
