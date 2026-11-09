@@ -925,7 +925,7 @@ describe('publishPrivateModel', () => {
     mockPrivateModel({});
 
     await publish(false);
-    const republish = mockDbWrite.$executeRaw.mock.calls.find(([strings]) =>
+    const republish = mockDbWrite.$queryRaw.mock.calls.find(([strings]) =>
       (strings as string[]).join('?').includes('UPDATE "Post"')
     );
     expect(republish).toBeDefined();

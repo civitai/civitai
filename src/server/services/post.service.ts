@@ -1178,15 +1178,7 @@ export const updatePost = async ({
   else await userPostCountCache.refresh(post.userId);
   // A scheduled date writes publishedAt too; the scheduled-publishing job releases those reviews.
   if (publishedAtWritten && post.publishedAt && post.publishedAt <= new Date())
-    void releasePendingReviewsForPosts([post.id]).catch((error) =>
-      logToAxiom({
-        name: 'post-service',
-        type: 'error',
-        message: 'Failed to release pending resource reviews',
-        postId: post.id,
-        error: (error as Error)?.message,
-      }).catch(() => undefined)
-    );
+    releasePostReviews([post.id]);
   const textChanged = data.title !== undefined || data.detail !== undefined;
   if (publishedAtWritten || (textChanged && post.publishedAt))
     scanEntityInBackground({ entityType: 'Post', entityId: post.id });
@@ -1258,6 +1250,24 @@ export async function afterPostsPublish(posts: { postId: number; userId: number 
     });
   }
   await userImageVideoCountCaches.refresh(userIds);
+}
+
+/**
+ * After a publish has committed, the reviews written from those posts go public; posts still
+ * scheduled are skipped. Pass only the posts this write moved: a repeat would notify again. Never
+ * throws: the posts are already up, and a failure leaves only held reviews.
+ */
+export function releasePostReviews(postIds: number[]) {
+  if (!postIds.length) return;
+  void releasePendingReviewsForPosts(postIds).catch((error) =>
+    logToAxiom({
+      name: 'post-service',
+      type: 'error',
+      message: 'Failed to release pending resource reviews',
+      postIds,
+      error: (error as Error)?.message,
+    }).catch(() => undefined)
+  );
 }
 
 /**

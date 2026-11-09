@@ -87,7 +87,6 @@ import {
   userModelCountCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { refreshUnpublishedPostReviews } from '~/server/services/post.service';
 import {
   bustModelGallerySettings,
   getCreatorGalleryHiddenUserIds,
@@ -4851,6 +4850,30 @@ async function tryHoldModelForLiteralRules(args: Parameters<typeof holdModelForL
   }
 }
 
+/**
+ * Releases or recounts the reviews written from posts a publish or unpublish moved. post.service is
+ * loaded on use: model.service has never imported it, and a static import would load it, with its
+ * module-scope caches, everywhere model.service loads.
+ */
+function syncPostReviews(change: 'release' | 'unpublish', postIds: number[]) {
+  if (!postIds.length) return;
+  void import('~/server/services/post.service')
+    .then((posts) =>
+      change === 'release'
+        ? posts.releasePostReviews(postIds)
+        : posts.refreshUnpublishedPostReviews(postIds)
+    )
+    .catch((error) =>
+      logToAxiom({
+        name: 'model-service',
+        type: 'error',
+        message: 'Failed to sync the resource reviews of moved posts',
+        postIds,
+        error: (error as Error)?.message,
+      }).catch(() => undefined)
+    );
+}
+
 export const publishModelById = async ({
   id,
   versionIds: requestedVersionIds,
@@ -4920,6 +4943,7 @@ export const publishModelById = async ({
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
   else publishedAt = new Date();
 
+  let movedPostIds: number[] = [];
   const model = await dbWrite.$transaction(
     async (tx) => {
       // The caller read the meta before this: a wipe, a moderator or a scan may have written the
@@ -5042,7 +5066,7 @@ export const publishModelById = async ({
         // overwrite every attached post's publishedAt and let an owner repeatedly
         // bump old posts to the top of feeds. Mirrors the unpublish path's
         // `WHERE "publishedAt" IS NOT NULL`.
-        await tx.$executeRaw`
+        const movedPosts = await tx.$queryRaw<{ id: number }[]>`
           UPDATE "Post" p
           SET "publishedAt" = CASE
                                 WHEN p."metadata" ->> 'prevPublishedAt' IS NOT NULL
@@ -5056,7 +5080,9 @@ export const publishModelById = async ({
             AND p."userId" = ${model.userId}
             AND p."modelVersionId" IN (${Prisma.join(versionIds, ',')})
             AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())
+          RETURNING p.id
         `;
+        movedPostIds = movedPosts.map((post) => post.id);
       }
       await updateModelLastVersionAt({ id, tx, onlyForward: republishing });
 
@@ -5106,6 +5132,7 @@ export const publishModelById = async ({
     scanEntitiesInBackground('Post', versionPostIds);
     void onStorySparkPostsRestored({ postIds: versionPostIds });
   }
+  syncPostReviews('release', movedPostIds);
 
   // Republish only: a dropped Update on this path has no recovery without an updatedAt bump (both
   // image indexes re-derive a missing Update solely from a delta scan of moved rows, and a
@@ -5333,7 +5360,10 @@ export const unpublishModelById = async ({
       select: { id: true },
     });
     void onStorySparkPostsHidden({ postIds: posts.map((x) => x.id) });
-    refreshUnpublishedPostReviews(posts.map((x) => x.id));
+    syncPostReviews(
+      'unpublish',
+      posts.map((x) => x.id)
+    );
     const images = await dbWrite.image.findMany({
       where: { postId: { in: posts.map((x) => x.id) } },
       select: { id: true },
@@ -7437,6 +7467,7 @@ export const publishPrivateModel = async (
 
   const heldVerdict = await import('~/server/services/text-scan/actions/model-nsfw');
   let heldVerdictApplied = false;
+  let movedPostIds: number[] = [];
   await dbWrite.$transaction(async (tx) => {
     // Everything above ran before this transaction, and a takedown can land in between. Re-read
     // under a lock that the writes below then hold: the model first, then its versions, the order
@@ -7486,7 +7517,7 @@ export const publishPrivateModel = async (
       // then the model went through a Private cycle). Strips the stash on
       // success. Mirrors the CASE pattern used by publishModelVersionById
       // and publishModelById.
-      await tx.$executeRaw`
+      const movedPosts = await tx.$queryRaw<{ id: number }[]>`
         UPDATE "Post"
         SET
           "publishedAt" = CASE
@@ -7498,7 +7529,9 @@ export const publishPrivateModel = async (
         WHERE "modelVersionId" IN (${Prisma.join(versionIds, ',')})
         AND "userId" = ${model.userId}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        RETURNING id
       `;
+      movedPostIds = movedPosts.map((post) => post.id);
     }
 
     await tx.modelVersion.updateMany({
@@ -7550,6 +7583,7 @@ export const publishPrivateModel = async (
     }
   });
   if (heldVerdictApplied) await heldVerdict.finishHeldVerdictApply(modelId);
+  syncPostReviews('release', movedPostIds);
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {

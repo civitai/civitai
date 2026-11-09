@@ -172,6 +172,7 @@ import {
   addPostImage,
   createPost,
   refreshUnpublishedPostReviews,
+  releasePostReviews,
 } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
@@ -2120,6 +2121,7 @@ export const publishModelVersionById = async ({
     select: { entityId: true },
   });
 
+  let movedPostIds: number[] = [];
   const version = await dbWrite.$transaction(
     async (tx) => {
       // Re-checked here, under a lock, because the caller's check ran before this transaction and
@@ -2182,7 +2184,7 @@ export const publishModelVersionById = async ({
       // overwrite every attached post's publishedAt and let an owner repeatedly
       // bump old posts to the top of feeds. Mirrors the `WHERE "publishedAt" IS
       // NOT NULL` guard in the unpublish path below.
-      await tx.$executeRaw`
+      const movedPosts = await tx.$queryRaw<{ id: number }[]>`
         UPDATE "Post"
         SET
           "publishedAt" = CASE
@@ -2194,7 +2196,9 @@ export const publishModelVersionById = async ({
         WHERE "userId" = ${updatedVersion.model.userId}
         AND "modelVersionId" = ${updatedVersion.id}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        RETURNING id
       `;
+      movedPostIds = movedPosts.map((post) => post.id);
 
       if (!currentVersion.model.publishedAt) {
         // Safeguard to ensure the model is marked as published if it wasn't
@@ -2239,6 +2243,7 @@ export const publishModelVersionById = async ({
     posts.map((p) => p.id)
   );
   void onStorySparkPostsRestored({ postIds: posts.map((p) => p.id) });
+  releasePostReviews(movedPostIds);
 
   await updateModelLastVersionAt({ id: version.modelId, onlyForward: republishing });
   await bustMvCache(version.id, version.modelId);

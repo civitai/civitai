@@ -110,7 +110,9 @@ const matches = (row: VersionRow, where: VersionWhere) =>
   (where.modelId === undefined || row.modelId === where.modelId);
 
 const rawSql = () =>
-  mockTx.$executeRaw.mock.calls.map(([strings]) => (strings as string[]).join('?'));
+  [...mockTx.$executeRaw.mock.calls, ...mockTx.$queryRaw.mock.calls].map(([strings]) =>
+    (strings as string[]).join('?')
+  );
 
 beforeEach(() => {
   vi.clearAllMocks();

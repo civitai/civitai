@@ -55,7 +55,13 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
-vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
+const { releasePostReviews } = vi.hoisted(() => ({ releasePostReviews: vi.fn() }));
+vi.mock('~/server/services/post.service', () => ({
+  addPostImage: vi.fn(),
+  createPost: vi.fn(),
+  releasePostReviews,
+  refreshUnpublishedPostReviews: vi.fn(),
+}));
 vi.mock('~/server/services/model.service', () => ({
   updateModelLastVersionAt: mockUpdateModelLastVersionAt,
 }));
@@ -182,5 +188,28 @@ describe('story sparks across a version publish lifecycle', () => {
     await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false, republishing: true });
 
     expect(onStorySparkPostsRestored).toHaveBeenCalledExactlyOnceWith({ postIds: [5, 6] });
+  });
+});
+
+describe('reviews written from the posts of a version', () => {
+  // The guarded post UPDATE returns the posts it moved; an already-public post is not among them.
+  const postUpdateMoves = (ids: number[]) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      /UPDATE "Post"/.test(strings.join('?')) ? ids.map((id) => ({ id })) : []) as never);
+
+  it('releases the reviews of the posts the publish put back up', async () => {
+    postUpdateMoves([5]);
+
+    await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false, republishing: true });
+
+    expect(releasePostReviews).toHaveBeenCalledExactlyOnceWith([5]);
+  });
+
+  it('releases nothing again when every post was already public', async () => {
+    postUpdateMoves([]);
+
+    await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false, republishing: true });
+
+    expect(releasePostReviews.mock.calls.flatMap(([ids]) => ids)).toEqual([]);
   });
 });

@@ -133,6 +133,7 @@ import {
   afterPostPublish,
   afterPostsPublish,
   afterPostsUnpublish,
+  releasePostReviews,
 } from '~/server/services/post.service';
 import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
@@ -4450,7 +4451,7 @@ async function revealCrucibleEntryPosts(entries: { crucibleId: number } | { imag
         )`
       : Prisma.sql`i.id = ${entries.imageId}`;
   try {
-    const posts = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
+    const posts = await dbWrite.$queryRaw<{ id: number; userId: number; hidden: boolean }[]>`
       WITH entry_posts AS (
         SELECT DISTINCT p.id, p."userId", p."publishedAt" > now() AS hidden
         FROM "Image" i
@@ -4463,9 +4464,10 @@ async function revealCrucibleEntryPosts(entries: { crucibleId: number } | { imag
         FROM entry_posts e
         WHERE p.id = e.id AND e.hidden
       )
-      SELECT id, "userId" FROM entry_posts
+      SELECT id, "userId", hidden FROM entry_posts
     `;
     await afterPostsPublish(posts.map((post) => ({ postId: post.id, userId: post.userId })));
+    releasePostReviews(posts.filter((post) => post.hidden).map((post) => post.id));
   } catch (error) {
     logToAxiom({
       type: 'error',
