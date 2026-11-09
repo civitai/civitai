@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RemixGalleryService from '~/server/services/remix-gallery.service';
 import type * as StickerPlacementService from '~/server/services/sticker-placement.service';
+import type * as HttpErrors from '~/server/prom/http-errors';
+import type * as LoggingClient from '~/server/logging/client';
 
 /**
  * `getImageCardSummaries` stands in for three procedures on clients with `placementCardFold`, so
@@ -56,9 +58,19 @@ vi.mock('~/server/services/remix-gallery.service', async (importOriginal) => ({
   ...(await importOriginal<typeof RemixGalleryService>()),
   getRemixGalleryCardSummaries: services.getRemixGalleryCardSummaries,
 }));
-// The route's `onError` reporter, which a failed half is handed to instead of being thrown.
-const reporter = vi.hoisted(() => ({ reportTrpcError: vi.fn(async () => undefined) }));
-vi.mock('~/server/trpc/report-trpc-error', () => reporter);
+// What a failed half is reported through instead of being thrown: 5xx counter and log line.
+const reporter = vi.hoisted(() => ({
+  recordTrpcError: vi.fn(),
+  logToAxiom: vi.fn((_data: unknown, _datastream?: string): Promise<void> => Promise.resolve()),
+}));
+vi.mock('~/server/prom/http-errors', async (importOriginal) => ({
+  ...(await importOriginal<typeof HttpErrors>()),
+  recordTrpcError: reporter.recordTrpcError,
+}));
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof LoggingClient>()),
+  logToAxiom: reporter.logToAxiom,
+}));
 
 import { TRPCError } from '@trpc/server';
 import { placementCaller } from '~/server/routers/__tests__/placement.router.test-utils';
@@ -202,22 +214,73 @@ describe('placement router — each half of the folded card read fails on its ow
   it('reports a failed half the way a thrown procedure error is reported, naming the half', async () => {
     services.getRemixGalleryCardSummaries.mockRejectedValueOnce(new Error('remix read failed'));
 
-    await placementCaller({ user: { id: 917 } }).getImageCardSummaries({
+    const folded = (await placementCaller({ user: { id: 917 } }).getImageCardSummaries({
       imageIds: IDS,
       stickers: 'placements',
       remix: true,
-    });
+    })) as Folded;
 
-    expect(reporter.reportTrpcError).toHaveBeenCalledTimes(1);
-    expect(reporter.reportTrpcError).toHaveBeenCalledWith(
+    expect(reporter.recordTrpcError).toHaveBeenCalledTimes(1);
+    expect(reporter.recordTrpcError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'INTERNAL_SERVER_ERROR' }),
+      'placement.getImageCardSummaries'
+    );
+    expect(reporter.logToAxiom).toHaveBeenCalledTimes(1);
+    const [line, datastream] = reporter.logToAxiom.mock.calls[0];
+    expect(datastream).toBe('civitai-prod');
+    // The ref the client was shown is the one logged, so a user's report can be found.
+    const shownRef = folded.errors?.remix?.message.match(/\(ref: ([0-9a-f]{12})\)/)?.[1];
+    expect(shownRef).toBeDefined();
+    expect(line).toEqual(
       expect.objectContaining({
         path: 'placement.getImageCardSummaries',
-        type: 'query',
-        userId: 917,
-        detail: { half: 'remix' },
-        error: expect.objectContaining({ code: 'INTERNAL_SERVER_ERROR' }),
+        half: 'remix',
+        user: 917,
+        errorRef: shownRef,
+        type: 'error',
       })
     );
+    expect(line).not.toHaveProperty('input');
+  });
+
+  it('answers without waiting for the log write, even one that never finishes', async () => {
+    reporter.logToAxiom.mockReturnValueOnce(new Promise<void>(() => undefined));
+    services.getRemixGalleryCardSummaries.mockRejectedValueOnce(new Error('remix read failed'));
+
+    const answer = placementCaller().getImageCardSummaries({
+      imageIds: IDS,
+      stickers: 'counts',
+      remix: true,
+    });
+    const timedOut = Symbol('timed out');
+    const settled = await Promise.race([
+      answer,
+      new Promise((resolve) => setTimeout(() => resolve(timedOut), 1000)),
+    ]);
+
+    expect(settled).not.toBe(timedOut);
+    expect(reporter.logToAxiom).toHaveBeenCalledTimes(1);
+    expect((settled as Folded).errors?.remix?.code).toBe('INTERNAL_SERVER_ERROR');
+  });
+
+  it('answers even when the log write rejects or throws', async () => {
+    reporter.logToAxiom
+      .mockImplementationOnce(() => Promise.reject(new Error('ingest down')))
+      .mockImplementationOnce(() => {
+        throw new Error('logger broke');
+      });
+    services.getStickerPlacementCounts.mockRejectedValueOnce(new Error('counts read failed'));
+    services.getRemixGalleryCardSummaries.mockRejectedValueOnce(new Error('remix read failed'));
+
+    const folded = (await placementCaller().getImageCardSummaries({
+      imageIds: IDS,
+      stickers: 'counts',
+      remix: true,
+    })) as Folded;
+
+    expect(reporter.logToAxiom).toHaveBeenCalledTimes(2);
+    expect(folded.errors?.stickers?.code).toBe('INTERNAL_SERVER_ERROR');
+    expect(folded.errors?.remix?.code).toBe('INTERNAL_SERVER_ERROR');
   });
 
   it("keeps a client-fault half's own code and message, as the procedure would have shown it", async () => {
@@ -272,6 +335,7 @@ describe('placement router — each half of the folded card read fails on its ow
     expect(folded.errors).toBeUndefined();
     expect(folded.stickers).toBeDefined();
     expect(folded.remix).toBeDefined();
-    expect(reporter.reportTrpcError).not.toHaveBeenCalled();
+    expect(reporter.recordTrpcError).not.toHaveBeenCalled();
+    expect(reporter.logToAxiom).not.toHaveBeenCalled();
   });
 });

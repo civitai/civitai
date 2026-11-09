@@ -118,7 +118,9 @@ import type { Context } from '~/server/createContext';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { getClientSafeError } from '~/server/trpc/client-safe-error';
-import { reportTrpcError } from '~/server/trpc/report-trpc-error';
+import { buildCentralErrorLog, logToAxiom } from '~/server/logging/client';
+import { recordTrpcError } from '~/server/prom/http-errors';
+import { isClientAbortError } from '~/server/utils/errorHandling';
 
 /**
  * Placement is gated separately from stickers.
@@ -207,33 +209,43 @@ function remixCardSummaryArgs(ctx: Context, imageIds: number[], browsingLevel: n
 /** A half of `getImageCardSummaries` that failed, as the client is told about it. */
 export type CardSummaryHalfError = { code: TRPC_ERROR_CODE_KEY; message: string };
 
+const CARD_SUMMARIES_PATH = 'placement.getImageCardSummaries';
+
 /**
- * One half of a combined read, settled on its own. A failed half is reported the way a thrown
- * procedure error is (`reportTrpcError`: the 5xx counter and the log line, with the half named),
- * and answered as an error with the message the client would have seen had that half been its own
- * procedure (`getClientSafeError` masks a server fault exactly as the error formatter does), so
- * the half that succeeded still reaches the client.
+ * One half of a combined read, settled on its own. A failed half is answered as an error with the
+ * message the client would have seen had that half been its own procedure (`getClientSafeError`
+ * masks a server fault exactly as the error formatter does, and caches the ref on the error, so
+ * the logged `errorRef` is the one the client is shown), so the half that succeeded still reaches
+ * the client. It is also counted (`recordTrpcError`, 5xx only) and logged with the half named,
+ * fire-and-forget: nothing the report does can delay or fail the procedure.
  */
-async function settleCardSummaryHalf<T>(
+function settleCardSummaryHalf<T>(
   result: PromiseSettledResult<T>,
   half: 'stickers' | 'remix',
-  ctx: Context,
-  input: unknown
-): Promise<{ data?: T; error?: CardSummaryHalfError }> {
+  ctx: Context
+): { data?: T; error?: CardSummaryHalfError } {
   if (result.status === 'fulfilled') return { data: result.value };
   const error = getTRPCErrorFromUnknown(result.reason);
-  await reportTrpcError({
-    error,
-    type: 'query',
-    path: 'placement.getImageCardSummaries',
-    input,
-    userId: ctx.user?.id,
-    userAgent: ctx.req?.headers?.['user-agent'],
-    detail: { half },
-  });
-  return {
-    error: { code: error.code, message: getClientSafeError(error)?.message ?? error.message },
-  };
+  const safe = getClientSafeError(error);
+  try {
+    // A client abort is not a server fault: the route's onError skips both for it, so does this.
+    if (!isClientAbortError(error)) {
+      recordTrpcError(error, CARD_SUMMARIES_PATH);
+      // Fixed keys after the spread, so the error cannot overwrite them; none is `type`, so the
+      // severity `type` from buildCentralErrorLog still decides the level, as in the route.
+      const line = {
+        ...buildCentralErrorLog(error),
+        path: CARD_SUMMARIES_PATH,
+        half,
+        user: ctx.user?.id,
+        errorRef: safe?.errorRef,
+      };
+      void Promise.resolve(logToAxiom(line, 'civitai-prod')).catch(() => undefined);
+    }
+  } catch {
+    // Never let reporting a failed half fail the half that succeeded.
+  }
+  return { error: { code: error.code, message: safe?.message ?? error.message } };
 }
 
 function assertStorylinesEnabled(ctx: Context) {
@@ -367,10 +379,8 @@ export const placementRouter = router({
             )
           : undefined,
       ]);
-      const [stickers, remix] = await Promise.all([
-        settleCardSummaryHalf(stickersResult, 'stickers', ctx, input),
-        settleCardSummaryHalf(remixResult, 'remix', ctx, input),
-      ]);
+      const stickers = settleCardSummaryHalf(stickersResult, 'stickers', ctx);
+      const remix = settleCardSummaryHalf(remixResult, 'remix', ctx);
       const errors: { stickers?: CardSummaryHalfError; remix?: CardSummaryHalfError } = {};
       if (stickers.error) errors.stickers = stickers.error;
       if (remix.error) errors.remix = remix.error;
