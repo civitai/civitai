@@ -171,6 +171,7 @@ export const MODEL_CARDS: ModelCard[] = [
     label: 'caption',
     description: 'Efficient Flux.2 with faster generation.',
     released: '2026-01-15',
+    flagKey: 'flux2-klein-training',
     versions: [
       {
         key: 'flux2klein_9b',

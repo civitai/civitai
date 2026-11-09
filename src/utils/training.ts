@@ -26,6 +26,7 @@ export const studioModelFlagFeatures = {
   'yue2-training': 'yue2Training',
   'flux3-klein-training': 'flux3KleinTraining',
   'moss-image-training': 'mossImageTraining',
+  'flux2-klein-training': 'fluxTwoKleinTraining',
   'flux2-klein-edit-training': 'flux2KleinEditTraining',
   'training-studio-audio-training': 'trainingStudioAudioTraining',
   'krea2-training': 'krea2Training',
