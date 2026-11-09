@@ -147,6 +147,11 @@ export type ImportResult = {
   axes: number;
 };
 
+/** One line with every count, so a missing field can never print as a blank. */
+export function formatImportSummary(result: ImportResult): string {
+  return `${result.axes} axes; ${result.inserted} inserted, ${result.updated} updated, ${result.unchanged} unchanged, ${result.refused} refused (changed but already answered), ${result.moderated} skipped (moderated), ${result.retired} retired, ${result.revived} reworded copies reopened.`;
+}
+
 /**
  * Upserts questions by their producer id. An item that already has answers is never touched, so a re-import cannot change
  * what a recorded answer was an answer to. The axis questions are created once and never overwritten (their consensus size is tuned in the table).
