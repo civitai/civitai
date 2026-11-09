@@ -38,6 +38,7 @@ CREATE TYPE "Availability" AS ENUM ('Public', 'Private');
 CREATE TYPE "ModelUploadType" AS ENUM ('Created', 'Trained');
 CREATE TYPE "CommercialUse" AS ENUM ('None', 'Image', 'RentCivit', 'Rent', 'Sell');
 CREATE TYPE "ModelType" AS ENUM ('Checkpoint', 'LORA', 'TextualInversion', 'VAE', 'LoCon', 'DoRA', 'Upscaler');
+CREATE TYPE "ScanResultCode" AS ENUM ('Pending', 'Success', 'Danger', 'Error');
 CREATE TABLE "Model" (
   id INT PRIMARY KEY, poi BOOLEAN NOT NULL, availability "Availability" NOT NULL,
   "uploadType" "ModelUploadType" NOT NULL, "allowCommercialUse" "CommercialUse"[] NOT NULL,
@@ -49,7 +50,9 @@ CREATE TABLE "ModelVersion" (
 );
 CREATE TABLE "ModelFile" (
   id SERIAL PRIMARY KEY, "modelVersionId" INT NOT NULL, "scannedAt" TIMESTAMP, type TEXT NOT NULL,
-  metadata JSONB
+  metadata JSONB,
+  "pickleScanResult" "ScanResultCode" NOT NULL DEFAULT 'Pending',
+  "virusScanResult" "ScanResultCode" NOT NULL DEFAULT 'Pending'
 );
 CREATE TABLE "EcosystemCheckpoints" (id INT);
 CREATE TABLE "GenerationBaseModel" ("baseModel" TEXT);
@@ -57,7 +60,7 @@ CREATE TABLE "CoveredCheckpoint" (version_id INT);
 INSERT INTO "GenerationBaseModel" VALUES ('SDXL 1.0');
 `;
 
-type SeedFile = { type: string; scanned?: boolean; metadata: unknown };
+type SeedFile = { type: string; scanned?: boolean; pickleScan?: string; metadata: unknown };
 
 // Each version is a Draft trained SDXL LoRA, so only its files decide coverage.
 const VERSIONS: Record<number, SeedFile[]> = {
@@ -75,6 +78,8 @@ const VERSIONS: Record<number, SeedFile[]> = {
     { type: 'Training Data', metadata: { trainingResults: { version: 2, epochs: [] } } },
     { type: 'Model', scanned: true, metadata: { format: 'SafeTensor' } },
   ],
+  7: [{ type: 'Model', scanned: true, pickleScan: 'Danger', metadata: { format: 'SafeTensor' } }],
+  8: [{ type: 'Model', scanned: true, pickleScan: 'Success', metadata: { format: 'SafeTensor' } }],
 };
 
 let db: PGlite;
@@ -93,9 +98,9 @@ beforeAll(async () => {
     );
     for (const file of files)
       await db.query(
-        `INSERT INTO "ModelFile" ("modelVersionId", "scannedAt", type, metadata)
-         VALUES ($1, CASE WHEN $2 THEN now() END, $3, $4)`,
-        [id, file.scanned ?? false, file.type, file.metadata]
+        `INSERT INTO "ModelFile" ("modelVersionId", "scannedAt", type, metadata, "pickleScanResult")
+         VALUES ($1, CASE WHEN $2 THEN now() END, $3, $4, $5)`,
+        [id, file.scanned ?? false, file.type, file.metadata, file.pickleScan ?? 'Pending']
       );
   }
   await db.exec(currentViewMigration());
@@ -126,5 +131,15 @@ describe('GenerationCoverage — trained files', () => {
     [6, 'an empty-epochs zip beside a scanned model file'],
   ])('covers version %i under both rules, %s', async (versionId) => {
     expect(await coverage(versionId)).toEqual({ covered: true, coveredNext: true });
+  });
+});
+
+describe('GenerationCoverage — scan results', () => {
+  it('does not cover a version whose model file failed its pickle scan', async () => {
+    expect(await coverage(7)).toBeNull();
+  });
+
+  it('covers the same version shape with a clean scan', async () => {
+    expect(await coverage(8)).toEqual({ covered: true, coveredNext: true });
   });
 });

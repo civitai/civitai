@@ -329,7 +329,9 @@ CREATE TABLE "hot_reads_2_parity"."TagsOnImageVote" (
 -- BIGINT or NUMERIC, not INTEGER) and their plans are the production ones:
 --   "UserStat"           migrations/20251123233705_userstats_shrink
 --   "ModelReportStat"    migrations/20230209225221_rename_inaction_unaction
---   "GenerationCoverage" migrations/20261105120000_generation_coverage_training_results_need_epoch
+--   "GenerationCoverage" migrations/20261231160000_generation_coverage_trained_files_need_epoch,
+--                        minus its scan_excluded test: V_FULL's config file carries a Danger scan
+--                        so the file read is exercised, and the reads assert V_FULL covered
 --   "ImageTag"           migrations/20260921130000_tag_drop_nsfw_enum
 
 CREATE VIEW "hot_reads_2_parity"."UserStat"
