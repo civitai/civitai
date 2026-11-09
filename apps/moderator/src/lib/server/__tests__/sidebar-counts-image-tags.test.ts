@@ -156,7 +156,8 @@ describe('the image-tags scan is single-flight across servers', () => {
       expect.any(String),
       expect.objectContaining({ NX: true, EX: expect.any(Number) })
     );
-    const ex = redis.set.mock.calls.find(([key]) => String(key).includes('fill-lock'))![2].EX;
+    const call = redis.set.mock.calls.find(([key]) => String(key).includes('fill-lock'));
+    const ex = (call?.[2] as { EX: number }).EX;
     expect(ex * 1000).toBeGreaterThan(IMAGE_TAGS_COUNT_TIMEOUT_MS);
   });
 });

@@ -87,7 +87,7 @@ async function withLastGood<T>(
     lock === null ||
     (await getRedis()
       .set(lock, '1', { NX: true, EX: lockSeconds })
-      .then((reply) => reply === 'OK')
+      .then((reply) => reply !== null)
       .catch(() => false));
   if (locked) {
     const fill = run();
