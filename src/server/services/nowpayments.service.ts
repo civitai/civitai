@@ -1118,12 +1118,52 @@ const watchListedPayments = async (
   );
 };
 
+/** NowPayments has finished payments it first reported failed; a later `finished` must still credit. */
+const LATE_FINISH_LOOKBACK_DAYS = 30;
+
+const lateFinishWhere = () => ({
+  createdAt: { gte: dayjs.utc().subtract(LATE_FINISH_LOOKBACK_DAYS, 'day').toDate() },
+  OR: [{ status: 'failed' }, { status: 'expired', payAmount: { gt: 0 } }],
+});
+
+/** Credits a closed deposit NowPayments now reports paid, and logs each one for audit. */
+const processLateFinish = async (
+  paymentId: number,
+  row: { status: string; createdAt: Date },
+  payment: NOWPayments.CreatePaymentResponse
+) => {
+  const { userId, buzzAmount, transactionId } = await processDeposit(
+    paymentId,
+    payment.payment_status,
+    eventFromPayment(payment)
+  );
+  const after = await dbWrite.cryptoDeposit.findUnique({
+    where: { paymentId: BigInt(paymentId) },
+    select: { status: true, buzzCredited: true },
+  });
+  await logToAxiom({
+    name: 'nowpayments-late-finish-credited',
+    type: 'warning',
+    paymentId,
+    userId,
+    buzz: buzzAmount,
+    transactionId,
+    npStatus: payment.payment_status,
+    previousStatus: row.status,
+    status: after?.status ?? null,
+    buzzCredited: after?.buzzCredited ?? null,
+    rowAgeDays: dayjs.utc().diff(row.createdAt, 'day'),
+  }).catch(() => undefined);
+};
+
 /**
  * Polls NOWPayments once for each paid deposit still in flight. The reconcile job only lists
  * payments created in the last 72h, so a payment that settles later is otherwise credited only
  * if its IPN arrives. Settled payments go through processDeposit, closed ones record their status.
  * Then checks the listed ids (WATCH_PAYMENT_IDS_KEY) that have no row to poll. A listed id is
  * credited only once it is also on WATCH_CREDIT_OK_KEY, including one whose open row this loop polls.
+ * Also re-polls failed/expired rows from the last LATE_FINISH_LOOKBACK_DAYS, crediting only those
+ * NOWPayments now reports finished or partially_paid.
  */
 export const watchOpenDeposits = async () => {
   const listed = await readPaymentIdList(WATCH_PAYMENT_IDS_KEY);
@@ -1132,26 +1172,44 @@ export const watchOpenDeposits = async () => {
   // Listed ids whose row this loop would have credited: the row may predate the listing (an IPN).
   const heldBack = new Map<number, string>();
 
-  const open = await dbRead.cryptoDeposit.findMany({
-    where: openDepositWhere(),
-    select: { paymentId: true, status: true },
-  });
+  const [open, closedUnpaid] = await Promise.all([
+    dbRead.cryptoDeposit.findMany({
+      where: openDepositWhere(),
+      select: { paymentId: true, status: true, createdAt: true },
+    }),
+    dbRead.cryptoDeposit.findMany({
+      where: lateFinishWhere(),
+      select: { paymentId: true, status: true, createdAt: true },
+    }),
+  ]);
+  const rows = [
+    ...open.map((row) => ({ ...row, late: false })),
+    ...closedUnpaid.map((row) => ({ ...row, late: true })),
+  ];
 
-  const outcomes = await mapWithConcurrency(open, RECONCILE_FETCH_CONCURRENCY, async (row) => {
+  const outcomes = await mapWithConcurrency(rows, RECONCILE_FETCH_CONCURRENCY, async (row) => {
     const paymentId = Number(row.paymentId);
     try {
       const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
       if (!payment) throw new Error('not found on NowPayments');
-      if (awaitingOk.has(paymentId) && isDepositComplete(payment.payment_status)) {
+      const complete = isDepositComplete(payment.payment_status);
+      if (awaitingOk.has(paymentId) && complete) {
         heldBack.set(paymentId, payment.payment_status);
-        return { lookupFailed: false, closed: false };
+        return { lookupFailed: false, closed: false, lateFinished: false };
       }
-      if (payment.payment_status !== row.status || isDepositComplete(payment.payment_status)) {
+      // A closed row only ever moves to a credit; any other NP status leaves it as it is.
+      if (row.late) {
+        if (!complete) return { lookupFailed: false, closed: false, lateFinished: false };
+        await processLateFinish(paymentId, row, payment);
+        return { lookupFailed: false, closed: false, lateFinished: true };
+      }
+      if (payment.payment_status !== row.status || complete) {
         await processDeposit(paymentId, payment.payment_status, eventFromPayment(payment));
       }
       return {
         lookupFailed: false,
         closed: !OPEN_DEPOSIT_STATUSES.includes(payment.payment_status),
+        lateFinished: false,
       };
     } catch (e) {
       await log({
@@ -1159,21 +1217,22 @@ export const watchOpenDeposits = async () => {
         paymentId,
         error: e instanceof Error ? e.message : String(e),
       });
-      return { lookupFailed: true, closed: false };
+      return { lookupFailed: true, closed: false, lateFinished: false };
     }
   });
 
   const listedReport = await watchListedPayments(
     listed,
     creditOk,
-    new Set(open.map((r) => Number(r.paymentId))),
+    new Set(rows.map((r) => Number(r.paymentId))),
     heldBack
   );
 
   const report = await getOpenDepositReport();
   return {
-    checked: open.length,
+    checked: rows.length,
     closed: outcomes.filter((o) => o.closed).length,
+    lateFinished: outcomes.filter((o) => o.lateFinished).length,
     lookupFailed: outcomes.filter((o) => o.lookupFailed).length,
     counts: report.counts,
     digest: report.items.filter((i) => !i.held && i.daysOpen >= OPEN_DEPOSIT_DIGEST_AFTER_DAYS),

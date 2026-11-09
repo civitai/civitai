@@ -99,6 +99,7 @@ import {
   watchOpenDeposits,
   getOpenDepositReport,
   recordUnverifiedDeposit,
+  eventFromPayment,
 } from '~/server/services/nowpayments.service';
 import { findHandGrantsForDeposit } from '~/server/services/nowpayments-manual-credit';
 
@@ -1175,12 +1176,13 @@ function resetDepositMocks() {
 }
 
 type DepositRow = Record<string, unknown>;
-/** Applies the subset of a Prisma where-clause the deposit queries use: equality, in, gt and OR. */
+/** Applies the subset of a Prisma where-clause the deposit queries use: equality, in, gt, gte and OR. */
 const matchesWhere = (row: DepositRow, where: Record<string, any>): boolean =>
   Object.entries(where).every(([key, cond]) => {
     if (key === 'OR') return (cond as Record<string, any>[]).some((w) => matchesWhere(row, w));
     if (cond && typeof cond === 'object' && 'in' in cond) return cond.in.includes(row[key]);
     if (cond && typeof cond === 'object' && 'gt' in cond) return (row[key] as number) > cond.gt;
+    if (cond && typeof cond === 'object' && 'gte' in cond) return (row[key] as Date) >= cond.gte;
     return (row[key] ?? null) === cond;
   });
 
@@ -1383,7 +1385,7 @@ describe('watchOpenDeposits', () => {
     return watchOpenDeposits();
   };
 
-  it('polls paid in-flight and partially_paid rows only', async () => {
+  it('polls paid in-flight rows, and failed or paid expired rows from the last 30 days', async () => {
     const result = await watch(
       [
         openRow(811, 'waiting', 5),
@@ -1396,13 +1398,19 @@ describe('watchOpenDeposits', () => {
         openRow(818, 'held', 5),
         openRow(819, 'buzz_failed', 5),
         openRow(820, 'expired', 5),
+        { ...openRow(821, 'expired', 5), payAmount: 0 },
+        openRow(822, 'failed', 29),
+        { ...openRow(823, 'failed', 29), payAmount: null },
+        openRow(824, 'failed', 31),
+        openRow(825, 'refunded', 5),
+        openRow(826, 'unverified_exhausted', 5),
       ],
       {}
     );
 
     const polled = mockNowpaymentsCaller.getPaymentStatus.mock.calls.map(([id]) => Number(id));
-    expect(polled.sort()).toEqual([811, 812, 813, 814, 815]);
-    expect(result.checked).toBe(5);
+    expect(polled.sort()).toEqual([811, 812, 813, 814, 815, 820, 822, 823]);
+    expect(result.checked).toBe(8);
     expect(result.counts).toMatchObject({ open: 5, held: 1, finishedUncredited: 1 });
   });
 
@@ -1483,6 +1491,124 @@ describe('watchOpenDeposits', () => {
 
     expect(result).toMatchObject({ closed: 0, lookupFailed: 1 });
     expect(result.digest.map((i) => i.paymentId)).toEqual(['808']);
+  });
+
+  describe('a row closed unpaid that NOWPayments later finishes', () => {
+    /** The Buzz ledger keyed by externalTransactionId; a duplicate is refused like the buzz service does. */
+    let ledger: Map<string, number>;
+    const lateLogs = () =>
+      loggingMock.logToAxiom.mock.calls
+        .map(([data]) => data as Record<string, unknown>)
+        .filter((d) => d.name === 'nowpayments-late-finish-credited');
+
+    beforeEach(() => {
+      ledger = new Map();
+      mockGetTransactionByExternalId.mockImplementation(async (id: string) =>
+        ledger.has(id) ? { transactionId: `tx-${id}` } : null
+      );
+      mockGrantBuzzPurchase.mockImplementation(async ({ externalTransactionId, amount }: any) => {
+        // Let a concurrent caller run between the ledger check and the write.
+        await new Promise((r) => setTimeout(r, 5));
+        if (ledger.has(externalTransactionId))
+          throw new Error('Request failed: conflict with the transaction');
+        ledger.set(externalTransactionId, amount);
+        return `tx-${externalTransactionId}`;
+      });
+    });
+
+    it.each(['failed', 'expired'])(
+      'credits a %s row NOWPayments reports finished, once',
+      async (closed) => {
+        const result = await watch([openRow(831, closed, 23)], { 831: 'finished' });
+
+        expect(mockGrantBuzzPurchase).toHaveBeenCalledTimes(1);
+        expect([...ledger]).toEqual([['np-deposit-831', 5000]]);
+        expect(mockGrantBuzzPurchase).toHaveBeenCalledWith(
+          expect.objectContaining({ externalTransactionId: 'np-deposit-831', userId: 42 })
+        );
+        expect(rowStatus[831]).toBe('finished');
+        expect(result).toMatchObject({ checked: 1, lateFinished: 1, closed: 0 });
+        expect(lateLogs()).toEqual([
+          expect.objectContaining({
+            paymentId: 831,
+            userId: 42,
+            buzz: 5000,
+            npStatus: 'finished',
+            previousStatus: closed,
+            status: 'finished',
+            rowAgeDays: 23,
+          }),
+        ]);
+      }
+    );
+
+    it.each(['failed', 'expired', 'waiting', 'refunded'])(
+      'leaves a failed row alone while NOWPayments reports %s',
+      async (npStatus) => {
+        const result = await watch([openRow(832, 'failed', 5)], { 832: npStatus });
+
+        expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledTimes(1);
+        expect(mockDbWrite.cryptoDeposit.upsert).not.toHaveBeenCalled();
+        expect(mockDbWrite.cryptoDeposit.updateMany).not.toHaveBeenCalled();
+        expect(rowStatus[832]).toBe('failed');
+        expect(result).toMatchObject({ lateFinished: 0, closed: 0 });
+        expect(lateLogs()).toEqual([]);
+      }
+    );
+
+    it('settles a failed row already credited by hand under np-deposit-<id> without granting again', async () => {
+      ledger.set('np-deposit-833', 5000);
+
+      await watch([openRow(833, 'failed', 23)], { 833: 'finished' });
+
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(ledger.size).toBe(1);
+      expect(rowStatus[833]).toBe('finished');
+      expect(mockDbWrite.cryptoDeposit.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ update: expect.objectContaining({ buzzCredited: 5000 }) })
+      );
+      expect(lateLogs()).toEqual([
+        expect.objectContaining({
+          paymentId: 833,
+          transactionId: 'already_granted',
+          status: 'finished',
+        }),
+      ]);
+    });
+
+    it('does not credit again when the finished webhook is replayed after the sweep credited it', async () => {
+      await watch([openRow(834, 'failed', 23)], { 834: 'finished' });
+      const event = eventFromPayment(makePayment({ payment_id: 834 }));
+      await processDeposit(834, 'finished', event);
+      await processDeposit(834, 'finished', event);
+
+      expect(mockGrantBuzzPurchase).toHaveBeenCalledTimes(1);
+      expect([...ledger]).toEqual([['np-deposit-834', 5000]]);
+      expect(rowStatus[834]).toBe('finished');
+    });
+
+    it('credits once when the sweep and the finished webhook race', async () => {
+      const held = new Set<string>();
+      mockWithDistributedLock.mockImplementation(async ({ key }: any, fn: () => Promise<any>) => {
+        if (held.has(key)) return undefined;
+        held.add(key);
+        try {
+          return await fn();
+        } finally {
+          held.delete(key);
+        }
+      });
+
+      await Promise.all([
+        watch([openRow(835, 'failed', 23)], { 835: 'finished' }),
+        processDeposit(835, 'finished', eventFromPayment(makePayment({ payment_id: 835 }))),
+      ]);
+
+      expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledWith(835);
+      expect(mockGrantBuzzPurchase).toHaveBeenCalledTimes(1);
+      expect([...ledger]).toEqual([['np-deposit-835', 5000]]);
+      expect(rowStatus[835]).toBe('finished');
+    });
   });
 
   describe('listed payment ids with no row (lost IPN)', () => {
@@ -1605,9 +1731,7 @@ describe('watchOpenDeposits', () => {
 
         expect(mockDbWrite.cryptoDeposit.upsert).not.toHaveBeenCalled();
         expect(rowStatus[911]).toBeUndefined();
-        expect(result.listed).toEqual([
-          { paymentId: '911', state: 'in_flight', status: npStatus },
-        ]);
+        expect(result.listed).toEqual([{ paymentId: '911', state: 'in_flight', status: npStatus }]);
       }
     );
 
