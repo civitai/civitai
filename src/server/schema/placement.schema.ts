@@ -310,6 +310,25 @@ export const getRemixGalleryCardSummariesSchema = z.object({
   browsingLevel: z.number().min(0).default(publicBrowsingLevelsFlag),
 });
 
+/**
+ * The sticker read and the remix-gallery read for one set of cards, in one call.
+ *
+ * Each half is optional and answers exactly what its own procedure answers for
+ * the same ids: `stickers: 'placements'` is `getStickerPlacementsAndCounts`,
+ * `stickers: 'counts'` is `getStickerPlacementCounts`, and `remix` is
+ * `getRemixGalleryCardSummaries` at `browsingLevel`. Same id cap as both, so a
+ * chunk of either is a chunk of this.
+ *
+ * `browsingLevel` keeps that procedure's PG default for the reason given there,
+ * and sits at the top level so the domain cap rewrites it like any other.
+ */
+export const getImageCardSummariesSchema = z.object({
+  imageIds: z.array(z.number().int().positive()).min(1).max(100),
+  stickers: z.enum(['placements', 'counts']).optional(),
+  remix: z.boolean().optional(),
+  browsingLevel: z.number().min(0).default(publicBrowsingLevelsFlag),
+});
+
 export const submitToRemixGallerySchema = z
   .object({
     hostImageId: z.number().int().positive(),

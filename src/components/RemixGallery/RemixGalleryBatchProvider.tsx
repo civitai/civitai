@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo } from 'react';
 import type { RemixGalleryCardSummary } from '~/server/services/remix-gallery.service';
+import type { CardSummaryChunk, FoldedCardBatches } from '~/components/Sticker/card-summaries.util';
 
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -22,7 +23,8 @@ const RemixGalleryBatchContext = createContext<Record<number, RemixGalleryCardSu
  * nothing else, while a gallery entry has to clear published, scanned, unflagged,
  * within-browsing-level and a minor-host ceiling. Fusing them would weld a strict
  * safety contract onto a query that has none, to save a request that HTTP/2 and
- * HTTP/3 already multiplex.
+ * HTTP/3 already multiplex. (`placementCardFold` shares the REQUEST between the
+ * two, never the query: each half still runs its own service read.)
  *
  * Chunked in arrival order for the same reason the sticker batch is: a feed
  * appends lower ids as it pages, so sorting would reshuffle every chunk boundary
@@ -31,10 +33,55 @@ const RemixGalleryBatchContext = createContext<Record<number, RemixGalleryCardSu
 export function RemixGalleryBatchProvider({
   imageIds,
   children,
+  folded,
 }: {
   imageIds: number[];
   children: React.ReactNode;
+  /** This surface's answers from the folded card read, which replace the call below. */
+  folded?: FoldedCardBatches['remix'];
 }) {
+  const { enabled, browsingLevel } = useRemixBatchRequest();
+
+  // The sticker batch's chunker, not a third copy of it. Its own tests pin the
+  // property both providers depend on and neither spells out in code: chunking
+  // in ARRIVAL order keeps an earlier chunk's key stable as a feed appends lower
+  // ids, where sorting would reshuffle every boundary and refetch the surface.
+  const chunks = useMemo(
+    () => (enabled && !folded ? chunkIds(imageIds, SUMMARY_FETCH_CHUNK) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [imageIds.join(','), enabled, !folded]
+  );
+
+  const ownQueries = trpc.useQueries((t) =>
+    chunks.map((chunk) =>
+      t.placement.getRemixGalleryCardSummaries(
+        { imageIds: chunk, browsingLevel },
+        { staleTime: 60_000 }
+      )
+    )
+  );
+  const queries: CardSummaryChunk<Record<number, RemixGalleryCardSummary>>[] = folded ?? ownQueries;
+
+  const summaries = useMemo(
+    () => Object.assign({}, ...queries.map((query) => query.data ?? {})),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [queries.map((query) => query.dataUpdatedAt).join(',')]
+  ) as Record<number, RemixGalleryCardSummary>;
+
+  if (!enabled) return <>{children}</>;
+
+  return (
+    <RemixGalleryBatchContext.Provider value={summaries}>
+      {children}
+    </RemixGalleryBatchContext.Provider>
+  );
+}
+
+/**
+ * Whether a surface asks for remix-gallery summaries, and at which level. Shared
+ * with the folded card read so both ask alike.
+ */
+export function useRemixBatchRequest() {
   const features = useFeatureFlags();
   const enabled = !!features.remixGallery;
   // 🔴 The viewer's level has to travel with the request, exactly as it does on
@@ -58,39 +105,7 @@ export function RemixGalleryBatchProvider({
   // `forcedBrowsingLevel`, which this hook honours — so what widens is a page's
   // curation choice, never a ceiling.
   const browsingLevel = useViewerBrowsingLevelDebounced();
-
-  // The sticker batch's chunker, not a third copy of it. Its own tests pin the
-  // property both providers depend on and neither spells out in code: chunking
-  // in ARRIVAL order keeps an earlier chunk's key stable as a feed appends lower
-  // ids, where sorting would reshuffle every boundary and refetch the surface.
-  const chunks = useMemo(
-    () => (enabled ? chunkIds(imageIds, SUMMARY_FETCH_CHUNK) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [imageIds.join(','), enabled]
-  );
-
-  const queries = trpc.useQueries((t) =>
-    chunks.map((chunk) =>
-      t.placement.getRemixGalleryCardSummaries(
-        { imageIds: chunk, browsingLevel },
-        { staleTime: 60_000 }
-      )
-    )
-  );
-
-  const summaries = useMemo(
-    () => Object.assign({}, ...queries.map((query) => query.data ?? {})),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [queries.map((query) => query.dataUpdatedAt).join(',')]
-  ) as Record<number, RemixGalleryCardSummary>;
-
-  if (!enabled) return <>{children}</>;
-
-  return (
-    <RemixGalleryBatchContext.Provider value={summaries}>
-      {children}
-    </RemixGalleryBatchContext.Provider>
-  );
+  return { enabled, browsingLevel };
 }
 
 /**

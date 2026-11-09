@@ -1,6 +1,11 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { useCallback, useMemo } from 'react';
+import type { ImageCardSummaries } from '~/components/Sticker/card-summaries.util';
+import {
+  cardSummaryInput,
+  useDetailCardSummaryFold,
+} from '~/components/Sticker/card-summaries.util';
 import { freeRefusalMessage, freeRefusalOutcome } from '~/components/Sticker/free-offer';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -80,10 +85,23 @@ export function useStickerPlacements(imageIds: number[], enabled = true) {
     [imageIds.join(',')]
   );
 
-  const { data, isLoading, isError } = trpc.placement.getStickerPlacementsAndCounts.useQuery(
+  const fold = useDetailCardSummaryFold();
+  const legacy = trpc.placement.getStickerPlacementsAndCounts.useQuery(
     { imageIds: ids },
-    { enabled: enabled && ids.length > 0, staleTime: 60_000 }
+    { enabled: !fold.on && enabled && ids.length > 0, staleTime: 60_000 }
   );
+  const folded = trpc.placement.getImageCardSummaries.useQuery(
+    cardSummaryInput({
+      imageIds: ids,
+      stickers: 'placements',
+      remix: fold.remix,
+      browsingLevel: fold.browsingLevel,
+    }),
+    { enabled: fold.on && enabled && ids.length > 0, staleTime: 60_000 }
+  );
+  const { data, isLoading, isError } = fold.on
+    ? { data: folded.data?.stickers, isLoading: folded.isLoading, isError: folded.isError }
+    : legacy;
 
   const bundle = data as StickerPlacementBundle | undefined;
   const byImage = useMemo(() => groupPlacementsByImage(bundle?.placements), [bundle]);
@@ -151,10 +169,23 @@ export function useStickerPlacementCounts(imageIds: number[], enabled = true) {
     [imageIds.join(',')]
   );
 
-  const { data, isLoading, isError } = trpc.placement.getStickerPlacementCounts.useQuery(
+  const fold = useDetailCardSummaryFold();
+  const legacy = trpc.placement.getStickerPlacementCounts.useQuery(
     { imageIds: ids },
-    { enabled: enabled && ids.length > 0, staleTime: 60_000 }
+    { enabled: !fold.on && enabled && ids.length > 0, staleTime: 60_000 }
   );
+  const folded = trpc.placement.getImageCardSummaries.useQuery(
+    cardSummaryInput({
+      imageIds: ids,
+      stickers: 'counts',
+      remix: fold.remix,
+      browsingLevel: fold.browsingLevel,
+    }),
+    { enabled: fold.on && enabled && ids.length > 0, staleTime: 60_000 }
+  );
+  const { data, isLoading, isError } = fold.on
+    ? { data: folded.data?.stickers?.counts, isLoading: folded.isLoading, isError: folded.isError }
+    : legacy;
 
   // `isLoading` and `isError` alongside the counts because zero, not-yet-known
   // and never-arriving are three different states with different affordances,
@@ -275,14 +306,41 @@ export function useForgetStickerPlacement() {
         }
       );
 
+      // The folded call's entries hold the same listing under `stickers`.
+      queryClient.setQueriesData<ImageCardSummaries>(
+        { queryKey: getQueryKey(trpc.placement.getImageCardSummaries), exact: false },
+        (entry) => {
+          if (!entry?.stickers?.placements) return undefined;
+          const result = dropPlacementFromBundle(
+            entry.stickers as StickerPlacementBundle,
+            placementId
+          );
+          if (result.countedOn !== undefined) countedOn = result.countedOn;
+          return result.bundle && { ...entry, stickers: result.bundle };
+        }
+      );
+
       // A count-only entry for the same image (an earlier signed-out view of it)
       // is a separate cache entry with the same number in it.
 
-      if (countedOn !== undefined)
+      if (countedOn !== undefined) {
+        const imageId = countedOn;
         queryClient.setQueriesData<Record<number, number>>(
           { queryKey: getQueryKey(trpc.placement.getStickerPlacementCounts), exact: false },
-          (counts) => decrementPlacementCount(counts, countedOn as number)
+          (counts) => decrementPlacementCount(counts, imageId)
         );
+        queryClient.setQueriesData<ImageCardSummaries>(
+          { queryKey: getQueryKey(trpc.placement.getImageCardSummaries), exact: false },
+          (entry) => {
+            const stickers = entry?.stickers;
+            if (!entry || !stickers || stickers.placements) return undefined;
+            const counts = decrementPlacementCount(stickers.counts, imageId);
+            return counts === stickers.counts
+              ? undefined
+              : { ...entry, stickers: { ...stickers, counts: counts as Record<number, number> } };
+          }
+        );
+      }
 
       await utils.placement.getStickerPlacementDetail.invalidate({ placementId });
     },

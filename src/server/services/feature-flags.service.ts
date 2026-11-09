@@ -168,6 +168,12 @@ const featureFlags = createFeatureFlags({
   // Per-user opt-in to the standalone tRPC server (routing cookie: `~/server/trpc/trpc-pool-cookie`).
   // `[]`: dark, and fails CLOSED when the key is absent or Flipt is down.
   trpcPoolRoute: { availability: [], fliptKey: 'trpc-pool-route' },
+  // Perf: a feed surface and the image detail view ask for their sticker and remix-gallery card
+  // data in ONE `placement.getImageCardSummaries` call instead of one call each. Same reads, same
+  // answers, fewer requests. OFF = the separate calls, unchanged. `[]`: dark, and fails CLOSED
+  // when the key is absent or Flipt is down, so the `placement-card-fold` rollout is the only
+  // on-switch (NOT `['mod']`: that would switch it on for every moderator at deploy).
+  placementCardFold: { availability: [], fliptKey: 'placement-card-fold' },
   // The two-pane /user/account shell. `['mod']` is the staging cohort while it bakes — it is the
   // static fallback only, so it decides nothing while Flipt answers; the `account-settings-v2`
   // rollout is still the on-switch, and OFF serves the legacy single-column page byte-identically.

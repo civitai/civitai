@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo } from 'react';
+import type { CardSummaryChunk, FoldedCardBatches } from '~/components/Sticker/card-summaries.util';
 import type { StickerTreatmentKey } from '~/components/Sticker/treatments/sticker-treatments';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
 import type { PlacedSticker, StickerPlacementBundle } from '~/components/Sticker/placement.util';
@@ -24,6 +25,23 @@ type StickerPlacementBatch = {
 const StickerPlacementBatchContext = createContext<StickerPlacementBatch | null>(null);
 
 /**
+ * Whether a surface fetches sticker data at all, and whether it wants placements
+ * or counts alone. Shared with the folded card read so both decide alike.
+ */
+export function useStickerBatchWants(alwaysFetch?: boolean) {
+  const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
+  const revealed = useStickerRevealStore(stickersRevealed);
+
+  const enabled = !!features.stickers && !!features.stickerPlacement;
+  // Same rule as the detail view: a signed-in viewer always fetches, because a
+  // pending placement is one they either paid for or are being asked to answer,
+  // and neither is discoverable from the count (which is approved-only).
+  const wantPlacements = enabled && (revealed || !!currentUser || !!alwaysFetch);
+  return { enabled, wantPlacements };
+}
+
+/**
  * Placement data for a whole surface, fetched once for the ids on it.
  *
  * The alternative — placement riding along in the feed payload — would mean
@@ -43,6 +61,7 @@ export function StickerPlacementBatchProvider({
   imageIds,
   children,
   alwaysFetch,
+  folded,
 }: {
   imageIds: number[];
   children: React.ReactNode;
@@ -55,12 +74,10 @@ export function StickerPlacementBatchProvider({
    * with no stickers on them and no error anywhere.
    */
   alwaysFetch?: boolean;
+  /** This surface's answers from the folded card read, which replace both calls below. */
+  folded?: Pick<FoldedCardBatches, 'combined' | 'countsOnly'>;
 }) {
-  const features = useFeatureFlags();
-  const currentUser = useCurrentUser();
-  const revealed = useStickerRevealStore(stickersRevealed);
-
-  const enabled = !!features.stickers && !!features.stickerPlacement;
+  const { enabled, wantPlacements } = useStickerBatchWants(alwaysFetch);
 
   const chunks = useMemo(
     () => (enabled ? chunkIds(imageIds, PLACEMENT_FETCH_CHUNK) : []),
@@ -68,33 +85,32 @@ export function StickerPlacementBatchProvider({
     [imageIds.join(','), enabled]
   );
 
-  // Same rule as the detail view: a signed-in viewer always fetches, because a
-  // pending placement is one they either paid for or are being asked to answer,
-  // and neither is discoverable from the count (which is approved-only).
-  const wantPlacements = enabled && (revealed || !!currentUser || !!alwaysFetch);
-
   // ONE call per chunk wherever placements are wanted: the combined call carries
   // the counts too. The count-only call is for the one case that wants nothing
   // else — an anonymous viewer with stickers hidden — and stays the
   // edge-cacheable request it always was. Before this, a signed-in viewer paid
   // for both calls on every chunk of every surface.
-  const countQueries = trpc.useQueries((t) =>
+  const ownCountQueries = trpc.useQueries((t) =>
     chunks.map((chunk) =>
       t.placement.getStickerPlacementCounts(
         { imageIds: chunk },
-        { staleTime: 60_000, enabled: !wantPlacements }
+        { staleTime: 60_000, enabled: !folded && !wantPlacements }
       )
     )
   );
 
-  const combinedQueries = trpc.useQueries((t) =>
+  const ownCombinedQueries = trpc.useQueries((t) =>
     chunks.map((chunk) =>
       t.placement.getStickerPlacementsAndCounts(
         { imageIds: chunk },
-        { staleTime: 60_000, enabled: wantPlacements }
+        { staleTime: 60_000, enabled: !folded && wantPlacements }
       )
     )
   );
+
+  const countQueries: CardSummaryChunk<Record<number, number>>[] =
+    folded?.countsOnly ?? ownCountQueries;
+  const combinedQueries: CardSummaryChunk<unknown>[] = folded?.combined ?? ownCombinedQueries;
 
   // Change stamps rather than the query arrays, which are new on every render.
   const countStamps = countQueries.map((query) => query.dataUpdatedAt).join(',');

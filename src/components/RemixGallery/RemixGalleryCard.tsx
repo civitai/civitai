@@ -43,9 +43,15 @@ import {
   useViewerBrowsingLevelDebounced,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { SparkStorylineTile } from '~/components/RemixGallery/SparkStorylineTile';
+import {
+  cardSummaryInput,
+  detailStickerMode,
+  useDetailCardSummaryFold,
+} from '~/components/Sticker/card-summaries.util';
 import type { SparkStorylineCardEntry } from '~/server/services/remix-gallery.service';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { stickersRevealed, useStickerRevealStore } from '~/store/sticker-reveal.store';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { REMIX_GALLERY_ROW_WIDTH } from '~/shared/utils/remix-gallery';
 import { formatDate } from '~/utils/date-helpers';
@@ -199,10 +205,24 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
   );
 
   // The feed card's summary, so the stories listed here are the ones its hover strip lists.
-  const { data: summaries } = trpc.placement.getRemixGalleryCardSummaries.useQuery(
+  const fold = useDetailCardSummaryFold();
+  const revealed = useStickerRevealStore(stickersRevealed);
+  const wantSummary = enabled && !!features.storylines;
+  const { data: legacySummaries } = trpc.placement.getRemixGalleryCardSummaries.useQuery(
     { imageIds: [imageId], browsingLevel },
-    { enabled: enabled && !!features.storylines }
+    { enabled: wantSummary && !fold.on }
   );
+  // The sticker bar's input for this image, so the bar's request answers this card too.
+  const { data: folded } = trpc.placement.getImageCardSummaries.useQuery(
+    cardSummaryInput({
+      imageIds: [imageId],
+      stickers: detailStickerMode({ signedIn: !!currentUser, revealed }),
+      remix: fold.remix,
+      browsingLevel: fold.browsingLevel,
+    }),
+    { enabled: wantSummary && fold.on, staleTime: 60_000 }
+  );
+  const summaries = fold.on ? folded?.remix : legacySummaries;
   const storylines = features.storylines ? summaries?.[imageId]?.storylines : undefined;
 
   if (!enabled || !visibility?.render) return null;

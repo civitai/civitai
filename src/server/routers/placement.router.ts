@@ -16,6 +16,7 @@ import {
   getRemixSourcesForImageSchema,
   getRemixGalleryVisibilitySchema,
   getRemixGalleryCardSummariesSchema,
+  getImageCardSummariesSchema,
   getStickerPlacementDetailSchema,
   getStickerPlacementsSchema,
   getStickerTracksSchema,
@@ -178,6 +179,27 @@ function assertSurfaceRouted(surface: PlacementSurface) {
   if (surface === 'storyline') throw throwAuthorizationError(STORYLINE_REFUSALS.notAvailable);
 }
 
+/**
+ * What `getStickerPlacementsAndCounts` is asked, from the session. One copy, so
+ * the combined card read cannot ask about a different viewer than the
+ * procedure it stands in for.
+ */
+function stickerBundleArgs(ctx: Context, imageIds: number[]) {
+  return { imageIds, viewerId: ctx.user?.id, isModerator: ctx.user?.isModerator };
+}
+
+/** What `getRemixGalleryCardSummaries` is asked, for the same reason. */
+function remixCardSummaryArgs(ctx: Context, imageIds: number[], browsingLevel: number) {
+  return {
+    imageIds,
+    browsingLevel: viewerBrowsingLevel(ctx, browsingLevel),
+    storylinesFor:
+      ctx.features.storylines && ctx.features.remixGallery
+        ? { viewer: ctx.user && { id: ctx.user.id, isModerator: ctx.user.isModerator } }
+        : undefined,
+  };
+}
+
 function assertStorylinesEnabled(ctx: Context) {
   if (!ctx.features.storylines) throw throwAuthorizationError(STORYLINE_REFUSALS.notAvailable);
 }
@@ -278,12 +300,33 @@ export const placementRouter = router({
   getStickerPlacementsAndCounts: publicProcedure
     .input(getStickerPlacementsSchema)
     .query(({ input, ctx }) =>
-      getStickerPlacementsAndCounts({
-        imageIds: input.imageIds,
-        viewerId: ctx.user?.id,
-        isModerator: ctx.user?.isModerator,
-      })
+      getStickerPlacementsAndCounts(stickerBundleArgs(ctx, input.imageIds))
     ),
+
+  // For clients on `placementCardFold`. Each half runs its own procedure's
+  // service call with the same arguments, so only the request is shared, never
+  // a query or a safety contract. The procedures it stands in for stay for
+  // clients off the flag and for older bundles.
+  getImageCardSummaries: publicProcedure
+    .input(getImageCardSummariesSchema)
+    .query(async ({ input, ctx }) => {
+      const [stickers, remix] = await Promise.all([
+        input.stickers === 'placements'
+          ? getStickerPlacementsAndCounts(stickerBundleArgs(ctx, input.imageIds))
+          : input.stickers === 'counts'
+          ? getStickerPlacementCounts(input.imageIds).then((counts) => ({
+              counts,
+              placements: undefined,
+            }))
+          : undefined,
+        input.remix
+          ? getRemixGalleryCardSummaries(
+              remixCardSummaryArgs(ctx, input.imageIds, input.browsingLevel)
+            )
+          : undefined,
+      ]);
+      return { stickers, remix };
+    }),
 
   getStickerTracks: publicProcedure
     .input(getStickerTracksSchema)
@@ -479,14 +522,7 @@ export const placementRouter = router({
   getRemixGalleryCardSummaries: publicProcedure
     .input(getRemixGalleryCardSummariesSchema)
     .query(({ input, ctx }) =>
-      getRemixGalleryCardSummaries({
-        imageIds: input.imageIds,
-        browsingLevel: viewerBrowsingLevel(ctx, input.browsingLevel),
-        storylinesFor:
-          ctx.features.storylines && ctx.features.remixGallery
-            ? { viewer: ctx.user && { id: ctx.user.id, isModerator: ctx.user.isModerator } }
-            : undefined,
-      })
+      getRemixGalleryCardSummaries(remixCardSummaryArgs(ctx, input.imageIds, input.browsingLevel))
     ),
 
   // Whether to draw the card at all, and at what price. Its own query because
