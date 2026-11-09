@@ -14,10 +14,19 @@ const redis = vi.hoisted(() => {
   return {
     store,
     get: vi.fn(async (key: string) => store.get(key) ?? null),
-    set: vi.fn(async (key: string, value: string) => void store.set(key, value)),
+    set: vi.fn(async (key: string, value: string, opts?: { NX?: boolean }) => {
+      if (opts?.NX && store.has(key)) return null;
+      store.set(key, value);
+      return 'OK';
+    }),
+    del: vi.fn(async (key: string) => Number(store.delete(key))),
   };
 });
 
+vi.mock('../image-tags-count', () => ({
+  countImageTagsNeedingReview: async () => 0,
+  IMAGE_TAGS_COUNT_TIMEOUT_MS: 120_000,
+}));
 vi.mock('../redis', () => ({ getRedis: () => redis }));
 vi.mock('../db', () => ({
   dbRead: {

@@ -15,7 +15,7 @@
   <h1>Knights of New Order review</h1>
   <p>
     Groups of Knights of New Order accounts that look like one operator. Block holds the group's
-    payouts: gold keeps being earned but is frozen, so it cannot be spent or converted and its votes
+    payouts: gold keeps being earned but is frozen, so it cannot be spent or converted and the players' votes
     are not labelled, and payouts from the daily grant stay pending. Clear removes the hold; frozen
     gold becomes spendable again and held grant days are released. Holds placed automatically are
     listed under Payouts held and can be cleared on appeal.

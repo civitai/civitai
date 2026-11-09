@@ -24,7 +24,7 @@ export type InquisitorVote = {
   label: string;
   votes: number;
   weight: number;
-  /** Votes for this answer by the rank that cast them, lowest rank first; ranks with none are left out. */
+  /** Votes for this answer by the stage the item was at when they were cast, lowest stage first; stages with none are left out. A higher rank can vote at a lower stage, so this is not the voter's rank. */
   stages: { stage: string; votes: number }[];
 };
 

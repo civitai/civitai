@@ -24,10 +24,19 @@ const redis = vi.hoisted(() => {
   return {
     store,
     get: vi.fn(async (key: string) => store.get(key) ?? null),
-    set: vi.fn(async (key: string, value: string) => void store.set(key, value)),
+    set: vi.fn(async (key: string, value: string, opts?: { NX?: boolean }) => {
+      if (opts?.NX && store.has(key)) return null;
+      store.set(key, value);
+      return 'OK';
+    }),
+    del: vi.fn(async (key: string) => Number(store.delete(key))),
   };
 });
 
+vi.mock('../image-tags-count', () => ({
+  countImageTagsNeedingReview: async () => 0,
+  IMAGE_TAGS_COUNT_TIMEOUT_MS: 120_000,
+}));
 vi.mock('../redis', () => ({ getRedis: () => redis }));
 vi.mock('../db', () => ({
   dbRead: {
@@ -244,7 +253,7 @@ describe('Needs review badge when a part does not answer', () => {
   });
 
   it('still answers when Redis does not', async () => {
-    // One write per part kept (image tags, minor queue, held detections).
+    // The first three Redis writes fail, whichever parts they belong to.
     for (let part = 0; part < 3; part++) redis.set.mockRejectedValueOnce(new Error('redis down'));
     expect((await getSidebarCounts()).counts).toMatchObject({ modelFlagsNeedsReview: 12 });
     redis.get.mockRejectedValueOnce(new Error('redis down'));

@@ -170,7 +170,7 @@ describe('getInquisitorQueue', () => {
     ]);
   });
 
-  it('breaks each answer down by the rank that voted it, lowest rank first', async () => {
+  it('breaks each answer down by the stage it was voted at, lowest stage first', async () => {
     await insertItem(1, 1, 'Inquisitor');
     await insertVote(1, 11, '8', 1, 'pending', null, 11, 'Paladin');
     await insertVote(1, 12, '8', 1, 'pending', null, 12, 'Knight');

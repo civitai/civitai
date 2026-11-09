@@ -10,18 +10,26 @@ const redis = vi.hoisted(() => {
   return {
     store,
     get: vi.fn(async (key: string) => store.get(key) ?? null),
-    set: vi.fn(async (key: string, value: string) => void store.set(key, value)),
+    set: vi.fn(async (key: string, value: string, opts?: { NX?: boolean }) => {
+      if (opts?.NX && store.has(key)) return null;
+      store.set(key, value);
+      return 'OK';
+    }),
+    del: vi.fn(async (key: string) => Number(store.delete(key))),
   };
 });
 
 vi.mock('../redis', () => ({ getRedis: () => redis }));
+vi.mock('../image-tags-count', () => ({
+  countImageTagsNeedingReview: imageTagsCount,
+  IMAGE_TAGS_COUNT_TIMEOUT_MS: 120_000,
+}));
 vi.mock('../db', () => ({
   dbRead: {
-    selectFrom: (table: string) => {
+    selectFrom: () => {
       const chain: Record<string, unknown> = {};
       for (const m of ['innerJoin', 'select', 'where']) chain[m] = () => chain;
-      chain.executeTakeFirst = async () =>
-        table.startsWith('TagsOnImageNew') ? imageTagsCount() : { count: 0 };
+      chain.executeTakeFirst = async () => ({ count: 0 });
       return chain;
     },
   },
@@ -56,10 +64,12 @@ vi.mock('../knights/inquisitor.service', () => ({ countInquisitorQueue: async ()
 vi.mock('../knights/link-review.service', () => ({ countPendingLinkReviews: async () => 2 }));
 
 const { getSidebarCounts } = await import('../sidebar-counts.service');
+const { IMAGE_TAGS_COUNT_TIMEOUT_MS } = await import('../image-tags-count');
 
 beforeEach(() => {
   redis.store.clear();
   vi.clearAllMocks();
+  imageTagsCount.mockReset();
   vi.useFakeTimers();
 });
 afterEach(() => vi.useRealTimers());
@@ -72,13 +82,17 @@ describe('sidebar counts when the image-tags count is slow', () => {
     await vi.advanceTimersByTimeAsync(3_000);
     const { counts, unavailable } = await pending;
 
-    expect(counts).toMatchObject({ knightsInquisitor: 6, knightsLinkReviews: 2, modelFlagsAppeals: 4 });
+    expect(counts).toMatchObject({
+      knightsInquisitor: 6,
+      knightsLinkReviews: 2,
+      modelFlagsAppeals: 4,
+    });
     expect(counts).not.toHaveProperty('imageTags');
     expect(unavailable).toContain('imageTags');
   });
 
   it('stands in the last value a fill landed while the next one is slow', async () => {
-    imageTagsCount.mockResolvedValueOnce({ count: '9' });
+    imageTagsCount.mockResolvedValueOnce(9);
     expect((await getSidebarCounts()).counts.imageTags).toBe(9);
 
     imageTagsCount.mockReturnValue(new Promise(() => {}));
@@ -88,5 +102,61 @@ describe('sidebar counts when the image-tags count is slow', () => {
 
     expect(counts.imageTags).toBe(9);
     expect(unavailable).not.toContain('imageTags');
+  });
+});
+
+describe('the image-tags scan is single-flight across servers', () => {
+  const lockKey = () => [...redis.store.keys()].find((key) => key.includes('fill-lock'));
+
+  it('does not start a second scan while one is running, and answers from the last value', async () => {
+    imageTagsCount.mockResolvedValueOnce(9);
+    await getSidebarCounts();
+    imageTagsCount.mockReturnValue(new Promise(() => {}));
+
+    const first = getSidebarCounts();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await first;
+    expect(imageTagsCount).toHaveBeenCalledTimes(2);
+
+    const second = getSidebarCounts();
+    await vi.advanceTimersByTimeAsync(0);
+    const { counts } = await second;
+
+    expect(imageTagsCount).toHaveBeenCalledTimes(2);
+    expect(counts.imageTags).toBe(9);
+  });
+
+  it('releases the lock when the scan lands, so the next fill scans again', async () => {
+    imageTagsCount.mockResolvedValue(4);
+    await getSidebarCounts();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(lockKey()).toBeUndefined();
+    await getSidebarCounts();
+    expect(imageTagsCount).toHaveBeenCalledTimes(2);
+  });
+
+  it('releases the lock when the scan fails', async () => {
+    imageTagsCount.mockRejectedValue(new Error('statement timeout'));
+    const { unavailable } = await getSidebarCounts();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(unavailable).toContain('imageTags');
+    expect(lockKey()).toBeUndefined();
+  });
+
+  it('holds the lock for longer than the scan is allowed to run', async () => {
+    imageTagsCount.mockReturnValue(new Promise(() => {}));
+    const pending = getSidebarCounts();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await pending;
+
+    expect(redis.set).toHaveBeenCalledWith(
+      expect.stringContaining('fill-lock'),
+      expect.any(String),
+      expect.objectContaining({ NX: true, EX: expect.any(Number) })
+    );
+    const ex = redis.set.mock.calls.find(([key]) => String(key).includes('fill-lock'))![2].EX;
+    expect(ex * 1000).toBeGreaterThan(IMAGE_TAGS_COUNT_TIMEOUT_MS);
   });
 });

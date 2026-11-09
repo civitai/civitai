@@ -11,6 +11,7 @@ import { bounded } from './bounded';
 import { getRedis } from './redis';
 import { getImageReviewCounts } from './image-review.service';
 import { countStuckIngestion, countIngestionErrorImages } from './ingestion.service';
+import { countImageTagsNeedingReview, IMAGE_TAGS_COUNT_TIMEOUT_MS } from './image-tags-count';
 import { getImageRatingReviewCount } from './image-rating-review.service';
 import { countModeratorArticles } from './articles.service';
 import { getRatingReviewCounts } from './rating-reviews.service';
@@ -59,22 +60,48 @@ export const LAST_GOOD_MS = 15 * 60_000;
 const lastGoodKey = (part: string) =>
   prefixCacheKey(`mod:sidebar-counts:last-good:${part}`) as RedisKeyTemplateCache;
 
+const fillLockKey = (part: string) =>
+  prefixCacheKey(`mod:sidebar-counts:fill-lock:${part}`) as RedisKeyTemplateCache;
+
 /**
  * A part of a badge sum, waited on for `ms` at most. A late or failed fill is answered with the last
  * value any server landed in the past `LAST_GOOD_MS`: stale by what changed since, not missing. Null
  * only when there is none. Kept in Redis, not in this process: every server fills the shared counts,
  * so a per-process value made consecutive refreshes disagree (see `cache.ts`).
+ *
+ * `lockSeconds`: a fill that outlives its wait keeps running (nothing cancels the query), and the
+ * counts refill every minute, so a slow part would stack scans. With it, one server at a time runs the
+ * fill, holding a Redis lock until the fill settles or `lockSeconds` passes (set it longer than the
+ * query can run); a refresh that does not get the lock answers from the last value.
  */
-async function withLastGood<T>(part: string, run: () => Promise<T>, ms: number): Promise<T | null> {
+async function withLastGood<T>(
+  part: string,
+  run: () => Promise<T>,
+  ms: number,
+  { lockSeconds }: { lockSeconds?: number } = {}
+): Promise<T | null> {
   const key = lastGoodKey(part);
-  const fill = run();
-  // A fill that outlives the wait still lands, so the next refresh has it.
-  fill
-    .then((value) =>
-      getRedis().set(key, JSON.stringify({ value, at: Date.now() }), { EX: LAST_GOOD_MS / 1000 })
-    )
-    .catch(() => undefined);
-  const fresh = await bounded(() => fill, ms);
+  const lock = lockSeconds ? fillLockKey(part) : null;
+  let fresh: T | null = null;
+  const locked =
+    lock === null ||
+    (await getRedis()
+      .set(lock, '1', { NX: true, EX: lockSeconds })
+      .then((reply) => reply === 'OK')
+      .catch(() => false));
+  if (locked) {
+    const fill = run();
+    // A fill that outlives the wait still lands, so the next refresh has it.
+    fill
+      .then((value) =>
+        getRedis().set(key, JSON.stringify({ value, at: Date.now() }), { EX: LAST_GOOD_MS / 1000 })
+      )
+      .catch(() => undefined)
+      .finally(() => {
+        if (lock) void Promise.resolve(getRedis().del(lock)).catch(() => undefined);
+      });
+    fresh = await bounded(() => fill, ms);
+  }
   if (fresh !== null) return fresh;
   try {
     const raw = await getRedis().get(key);
@@ -151,23 +178,11 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     // inflate a badge whose page can never show them, so the count never reaches zero.
     // Waited on for 3 seconds at most: this scan can run for minutes on a large TagsOnImageNew, and
     // every other badge in the fill waits behind it.
-    withLastGood(
-      'image-tags',
-      async () =>
-        Number(
-          (
-            await dbRead
-              .selectFrom('TagsOnImageNew as toi')
-              .innerJoin('Image as i', 'i.id', 'toi.imageId')
-              .select((eb) => eb.fn.count('toi.imageId').distinct().as('count'))
-              .where(sql<boolean>`((toi.attributes >> 9)::integer & 1) = 1`)
-              .where(sql<boolean>`((toi.attributes >> 10)::integer & 1) <> 1`)
-              .where('i.nsfwLevel', '<', NsfwLevel.Blocked)
-              .executeTakeFirst()
-          )?.count ?? 0
-        ),
-      3_000
-    ),
+    // Waited on for 3 seconds at most, and at most one scan runs across all servers: it can take
+    // minutes on a large TagsOnImageNew, and every other badge in the fill waits behind it.
+    withLastGood('image-tags', countImageTagsNeedingReview, 3_000, {
+      lockSeconds: IMAGE_TAGS_COUNT_TIMEOUT_MS / 1000 + 60,
+    }),
     getImageRatingReviewCount(),
     dbRead
       .selectFrom('Image')

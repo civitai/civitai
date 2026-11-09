@@ -71,7 +71,7 @@
           <TableRow>
             <TableHead>Knights voted</TableHead>
             <TableHead class="text-right">Votes</TableHead>
-            <TableHead>By rank</TableHead>
+            <TableHead>By stage</TableHead>
             <TableHead class="text-right">Weight</TableHead>
           </TableRow>
         </TableHeader>
