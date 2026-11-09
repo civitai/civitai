@@ -9,7 +9,8 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { HoverCard } from '~/components/MantineOverlays';
-import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
+import { getHotkeyHandler, useDebouncedValue } from '@mantine/hooks';
+import { useSearchFocusHotkeys } from '~/hooks/useSearchFocusHotkeys';
 import { IconChevronDown, IconSearch } from '@tabler/icons-react';
 import type { Hit } from 'instantsearch.js';
 import { useRouter } from 'next/router';
@@ -546,10 +547,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     onSubmit?.();
   };
 
-  useHotkeys([
-    ['/', focusInput],
-    ['mod+k', focusInput],
-  ]);
+  useSearchFocusHotkeys(focusInput);
 
   useEffect(() => {
     // Only set the query when the debounced search changes
