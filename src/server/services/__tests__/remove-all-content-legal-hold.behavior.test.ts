@@ -229,6 +229,7 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "needsReview" text, "blockedFor" text
     );
+    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     ${[...SEEDED_TABLES, ...QA_DATA]
       .map((t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`)
       .join('\n')}

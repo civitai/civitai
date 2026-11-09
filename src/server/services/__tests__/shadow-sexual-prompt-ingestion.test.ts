@@ -31,6 +31,7 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 
 import { applyIngestionSideEffects, type ScanImage } from '../image-scan-pipeline';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 
 const image = {
   id: 77,
@@ -106,5 +107,19 @@ describe('applyIngestionSideEffects: the shadow sexual-prompt scan', () => {
       outcome: { ...outcome, ingestion: ImageIngestionStatus.Blocked },
     });
     expect(submit).not.toHaveBeenCalled();
+  });
+});
+
+describe('applyIngestionSideEffects: feedback page captures', () => {
+  it('never puts a capture in the rating queue', async () => {
+    await applyIngestionSideEffects({
+      image: { ...image, userId: FEEDBACK_CAPTURE_OWNER_ID } as ScanImage,
+      outcome,
+    });
+    expect(addImageToQueue).not.toHaveBeenCalled();
+
+    // The control: the same image under an ordinary owner is queued.
+    await applyIngestionSideEffects({ image, outcome });
+    expect(addImageToQueue).toHaveBeenCalledTimes(1);
   });
 });

@@ -7,6 +7,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { deleteImages } from '~/server/services/image.service';
 import {
   accountHoldSql,
+  captureImageKeptSql,
   assertAccountNotUnderLegalHold,
   isLegalHoldAbort,
   LEGAL_HOLD_STOPPED,
@@ -43,7 +44,9 @@ export default ModEndpoint(
 
       let deletedImages = 0;
       for (const batch of chunk(imageIds, batchSize)) {
-        const result = await deleteImages(batch, true, { onlyWhere: unlessHeld });
+        const result = await deleteImages(batch, true, {
+          onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}`,
+        });
         deletedImages += result.length;
       }
 

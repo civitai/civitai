@@ -6,6 +6,7 @@ import {
   FEEDBACK_AREA_DISABLED_MESSAGE,
   isFeedbackAreaEnabled,
 } from '~/server/services/feedback.service';
+import { captureFeedbackScreenshot } from '~/server/services/feedback-capture.service';
 import { fileFeedbackToHq } from '~/server/services/feedback-hq.service';
 import { FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
 import { rateLimit } from '~/server/middleware.trpc';
@@ -45,8 +46,14 @@ export const feedbackRouter = router({
         features: ctx.features,
       });
       const saved = await createFeedback({ ...input, userId: ctx.user.id, server });
-      // Not awaited: HQ must never delay or fail the submit.
-      void fileFeedbackToHq({ ...input, feedbackId: saved.id, userId: ctx.user.id, server });
+      // Not awaited: the capture and HQ must never delay or fail the submit. Neither throws.
+      void captureFeedbackScreenshot({
+        feedbackId: saved.id,
+        reporterId: ctx.user.id,
+        screenshotId: input.context?.screenshotId,
+      }).then((capture) =>
+        fileFeedbackToHq({ ...input, feedbackId: saved.id, userId: ctx.user.id, server, capture })
+      );
       return saved;
     }),
 });

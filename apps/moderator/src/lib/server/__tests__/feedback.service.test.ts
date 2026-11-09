@@ -731,6 +731,7 @@ describe('feedbackPanelExtras', () => {
     expect(await service.feedbackPanelExtras(row!, {})).toEqual({
       siblings: [],
       knownIssues: [],
+      captureView: 'none',
     });
     // The control: the same row and the same `Bug` DO produce options once the grant is held, so
     // the empty result above is the grant and not an empty table.
@@ -757,5 +758,51 @@ describe('feedbackPanelExtras', () => {
 
     expect(extras.knownIssues).toEqual([]);
     expect(extras.siblings.map((s) => s.id)).toEqual([siblingId]);
+  });
+});
+
+describe('getFeedbackCaptureView', () => {
+  const KEY = '11112222-3333-4444-8555-666677778888';
+  const CAPTURE_OWNER = -2;
+
+  beforeEach(async () => {
+    await db.exec(`
+      CREATE TABLE "Image" (
+        "id" INTEGER PRIMARY KEY,
+        "userId" INTEGER NOT NULL,
+        "ingestion" TEXT NOT NULL,
+        "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
+        "needsReview" TEXT,
+        "blockedFor" TEXT,
+        "poi" BOOLEAN,
+        "minor" BOOLEAN,
+        "tosViolation" BOOLEAN
+      );
+      INSERT INTO "Image" VALUES
+        (1, ${CAPTURE_OWNER}, 'Scanned', 1, NULL, NULL, false, false, false),
+        (2, ${CAPTURE_OWNER}, 'Scanned', 1, 'csam', NULL, false, false, false),
+        (3, ${CAPTURE_OWNER}, 'Pending', 0, NULL, NULL, NULL, NULL, NULL),
+        (4, ${CAPTURE_OWNER}, 'Blocked', 1, NULL, 'Moderated', false, false, false),
+        (5, 7, 'Scanned', 1, NULL, NULL, false, false, false);
+    `);
+  });
+
+  it.each([
+    ['no capture', {}, 'none'],
+    ['a capture never checked', { screenshotId: KEY }, 'blur'],
+    ['an unverified capture', { screenshotId: KEY, screenshotCheck: 'unverified' }, 'blur'],
+    ['not the reporter’s upload', { screenshotId: KEY, screenshotCheck: 'not-owner' }, 'hide'],
+    ['a clean capture', { screenshotId: KEY, screenshotImageId: 1 }, 'show'],
+    ['a capture under review', { screenshotId: KEY, screenshotImageId: 2 }, 'hide-locked'],
+    ['a capture still scanning', { screenshotId: KEY, screenshotImageId: 3 }, 'blur'],
+    ['a blocked capture', { screenshotId: KEY, screenshotImageId: 4 }, 'hide'],
+    [
+      'an image the capture account does not own',
+      { screenshotId: KEY, screenshotImageId: 5 },
+      'hide',
+    ],
+    ['a purged capture', { screenshotId: KEY, screenshotImageId: 99 }, 'expired'],
+  ])('%s', async (_label, context, view) => {
+    expect(await service.getFeedbackCaptureView(context)).toBe(view);
   });
 });

@@ -232,6 +232,7 @@ beforeAll(async () => {
       details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]'
     );
+    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     CREATE TABLE "Cosmetic" (id int PRIMARY KEY, "createdById" int, data jsonb);
     CREATE TABLE "CosmeticShopItem" (
       id int PRIMARY KEY,
