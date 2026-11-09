@@ -6,8 +6,7 @@ import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import { StickerAttributionHoverCard } from '~/components/Sticker/StickerAttributionHoverCard';
 
-// The harness loads neither Tailwind nor Mantine's stylesheet, and the card's placement rests on
-// exactly two rules from them: the anchor is `fixed`, and the dropdown is `absolute`.
+// Harness loads no Tailwind/Mantine CSS; placement needs `.fixed` and the dropdown's `absolute`.
 const stylesheet = document.createElement('style');
 stylesheet.textContent = `.fixed { position: fixed; } .mantine-Popover-dropdown { position: absolute; }`;
 document.head.append(stylesheet);
@@ -20,7 +19,6 @@ vi.mock('~/components/Sticker/sticker-attribution.util', () => ({
   }),
 }));
 
-// What `RenderHtml` leaves behind once a sticker has resolved: the span carries the img.
 function Thread({ style }: { style?: CSSProperties }) {
   const ref = useRef<HTMLDivElement>(null);
   return (
