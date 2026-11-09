@@ -1,3 +1,4 @@
+import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { Prisma } from '@prisma/client';
 import { logToAxiom } from '~/server/logging/client';
 import { ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
@@ -128,33 +129,56 @@ export function trainingDataOwnerView<
 
 /**
  * Files without their training epochs' urls, which are the orchestrator's links to the run's
- * weights; everything else about each epoch is kept. For a model whose weights are withheld
- * (`isModelWithheld`) from everyone but moderators.
+ * weights; everything else about each epoch is kept. A file whose own `url` is one of those links
+ * (a Training Studio dataset placeholder holds its selected epoch until it is archived) loses it
+ * too. For a model whose weights are withheld (`isModelWithheld`) from everyone but moderators.
  */
-export function withoutEpochUrls<T extends { metadata?: unknown }[] | null | undefined>(
-  files: T
-): T {
+export function withoutEpochUrls<
+  T extends { url?: unknown; metadata?: unknown }[] | null | undefined
+>(files: T): T {
   return files?.map((file) => {
     const metadata = file.metadata as Record<string, unknown> | null | undefined;
-    if (!metadata || typeof metadata !== 'object') return file;
-    const { selectedEpochUrl: _selected, ...kept } = metadata;
-    const trainingResults = kept.trainingResults as { epochs?: unknown } | undefined;
-    if (Array.isArray(trainingResults?.epochs)) {
-      kept.trainingResults = {
-        ...trainingResults,
-        epochs: trainingResults.epochs.map((epoch: unknown) => {
-          if (!epoch || typeof epoch !== 'object') return epoch;
-          const {
-            modelUrl: _url,
-            model_url: _legacyUrl,
-            ...rest
-          } = epoch as Record<string, unknown>;
-          return rest;
-        }),
-      };
+    const epochUrls = new Set<unknown>();
+    let kept = metadata;
+    if (metadata && typeof metadata === 'object') {
+      const { selectedEpochUrl, ...rest } = metadata;
+      epochUrls.add(selectedEpochUrl);
+      const trainingResults = rest.trainingResults as { epochs?: unknown } | undefined;
+      if (Array.isArray(trainingResults?.epochs)) {
+        rest.trainingResults = {
+          ...trainingResults,
+          epochs: trainingResults.epochs.map((epoch: unknown) => {
+            if (!epoch || typeof epoch !== 'object') return epoch;
+            const { modelUrl, model_url, ...epochRest } = epoch as Record<string, unknown>;
+            epochUrls.add(modelUrl);
+            epochUrls.add(model_url);
+            return epochRest;
+          }),
+        };
+      }
+      kept = rest;
     }
-    return { ...file, metadata: kept };
+    const url =
+      typeof file.url === 'string' &&
+      (epochUrls.has(file.url) || isTrustedOrchestratorUrl(file.url))
+        ? undefined
+        : file.url;
+    return { ...file, ...('url' in file ? { url } : {}), metadata: kept };
   }) as T;
+}
+
+/** Whether any of `files` could hold an epoch url, so a view need not look its model up otherwise. */
+export function mayCarryEpochUrls(
+  files: { url?: unknown; metadata?: unknown }[] | null | undefined
+) {
+  return !!files?.some((file) => {
+    const metadata = file.metadata as Record<string, unknown> | null | undefined;
+    return (
+      !!metadata?.selectedEpochUrl ||
+      !!metadata?.trainingResults ||
+      (typeof file.url === 'string' && isTrustedOrchestratorUrl(file.url))
+    );
+  });
 }
 
 /** A `Training Data` file's metadata as its owner sees it (`trainingDataOwnerView`). */

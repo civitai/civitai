@@ -28,6 +28,7 @@ import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-fi
 import {
   trainingDataOwnerView,
   trainingDataPublicView,
+  mayCarryEpochUrls,
   withoutEpochUrls,
 } from '~/server/services/training-data-restricted.service';
 import { isModelWithheld } from '~/server/utils/model-withheld';
@@ -79,6 +80,7 @@ function versionModel(data: VersionFiles, modelVersionId: number) {
 }
 
 async function withheld(data: NonNullable<VersionFiles>) {
+  if (!mayCarryEpochUrls(data.files)) return false;
   const model = await versionModel(data, data.modelVersionId);
   return !!model && isModelWithheld(model);
 }

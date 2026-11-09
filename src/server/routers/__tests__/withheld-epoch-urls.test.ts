@@ -243,6 +243,36 @@ describe('modelVersion.getByIdForEdit and a taken-down model', () => {
 });
 
 describe('withoutEpochUrls', () => {
+  // A Training Studio dataset placeholder holds its selected epoch as its own url until archived.
+  it("drops a file's own url when it is an epoch url, and keeps any other url", () => {
+    const placeholder = { url: EPOCH_URL, metadata: { selectedEpochUrl: EPOCH_URL } };
+    const orchestratorOnly = {
+      url: 'https://orchestration.civitai.com/v2/consumer/blobs/x.safetensors',
+      metadata: {},
+    };
+    const archived = { url: 'training-images/7/d.zip', metadata: { selectedEpochUrl: EPOCH_URL } };
+
+    const [a, b, c] = withoutEpochUrls([placeholder, orchestratorOnly, archived]);
+
+    expect(a.url).toBeUndefined();
+    expect(b.url).toBeUndefined();
+    expect(c.url).toBe('training-images/7/d.zip');
+  });
+
+  it('reads no model for a response whose files carry no epoch urls', async () => {
+    dbMock.dbRead.modelVersion.findUnique.mockResolvedValue({
+      model: { userId: OWNER, status: 'Published', mode: 'TakenDown' },
+    } as never);
+    getFilesByVersionIdHandler.mockResolvedValue({
+      modelVersionId: VERSION,
+      files: [{ id: 1, type: 'Model', visibility: 'Public', metadata: { format: 'SafeTensor' } }],
+    });
+
+    await modelFileRouter.createCaller(ctx(undefined)).getByVersionId({ id: VERSION });
+
+    expect(dbMock.dbRead.modelVersion.findUnique).not.toHaveBeenCalled();
+  });
+
   it('removes a legacy run epoch url and keeps the rest of the epoch', () => {
     const legacy = {
       metadata: {
