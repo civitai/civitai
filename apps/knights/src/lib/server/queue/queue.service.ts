@@ -14,7 +14,8 @@ import { servableImage } from '@civitai/db/knights';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { RANKS, type Rank } from '../ranks';
 import { creditVote, insertVote, lockPlayerVoting } from './vote-record';
-import { FEED_STRETCH_SIZE, isStageRank, nextRank, stagesWorkedBy } from './ranks';
+import { FEED_STRETCH_SIZE, isStageRank, nextStaffedRank, stagesWorkedBy } from './ranks';
+import { SMITES } from '../smites/config';
 import {
   FEED,
   itemBucket,
@@ -306,12 +307,37 @@ export async function enqueueItem(db: Executor, input: NewItem, now: Date): Prom
   return row.id;
 }
 
+/**
+ * The stage ranks that have a player who can vote: a player waiting on a career reset cannot (see `insertVote`).
+ * One read, so a job asks once and not per item.
+ */
+export async function staffedRanks(db: Executor): Promise<Set<string>> {
+  const rows = await db
+    .selectFrom('NewOrderPlayer as p')
+    .select('p.rankType')
+    .distinct()
+    .where('p.rankType', 'in', ['Knight', 'Templar', 'Paladin'])
+    .where(
+      (eb) =>
+        eb
+          .selectFrom('NewOrderSmite as s')
+          .select((sb) => sb.fn.countAll().as('n'))
+          .whereRef('s.targetPlayerId', '=', 'p.userId')
+          .where('s.cleansedAt', 'is', null),
+      '<',
+      SMITES.max
+    )
+    .execute();
+  return new Set(rows.map((r) => r.rankType));
+}
+
 async function escalate(
   trx: Executor,
   item: { id: number; minRank: string },
-  now: Date
+  now: Date,
+  staffed: ReadonlySet<string>
 ): Promise<'escalated' | 'inquisitor'> {
-  const next = nextRank(item.minRank);
+  const next = nextStaffedRank(item.minRank, staffed);
   if (next && next !== 'Inquisitor') {
     await trx
       .updateTable('KnightsQueueItem')
@@ -490,7 +516,10 @@ export async function castVote(
 
         if (decision.kind === 'pending') return { result: { status: 'recorded' }, xp: [voted] };
         if (decision.kind === 'split') {
-          return { result: { status: await escalate(trx, item, now) }, xp: [voted] };
+          return {
+            result: { status: await escalate(trx, item, now, await staffedRanks(trx)) },
+            xp: [voted],
+          };
         }
 
         if (writesBack) {
@@ -764,10 +793,14 @@ export async function applyPendingResolutions(
   return counts;
 }
 
+/**
+ * Moves items whose stage window lapsed. An item with no vote at its stage had no one to answer it, so it gets another
+ * window at the same stage; one with votes goes to the next rank that has players, or to the Inquisitors.
+ */
 export async function escalateExpired(
   db: Kysely<DB>,
   { now, limit = 200 }: { now: Date; limit?: number }
-): Promise<{ escalated: number; toInquisitor: number }> {
+): Promise<{ escalated: number; toInquisitor: number; extended: number }> {
   return db.transaction().execute(async (trx) => {
     const due = await trx
       .selectFrom('KnightsQueueItem')
@@ -780,9 +813,45 @@ export async function escalateExpired(
       .skipLocked()
       .execute();
 
-    const counts = { escalated: 0, toInquisitor: 0 };
-    for (const item of due) {
-      const outcome = await escalate(trx, item, now);
+    const counts = { escalated: 0, toInquisitor: 0, extended: 0 };
+    if (due.length === 0) return counts;
+
+    const voted = new Set(
+      (
+        await trx
+          .selectFrom('KnightsVote as v')
+          .innerJoin('KnightsQueueItem as i', (join) =>
+            join.onRef('i.id', '=', 'v.itemId').onRef('i.minRank', '=', 'v.stage')
+          )
+          .select('v.itemId')
+          .distinct()
+          .where(
+            'v.itemId',
+            'in',
+            due.map((item) => item.id)
+          )
+          .execute()
+      ).map((row) => row.itemId)
+    );
+    const idle = due.filter((item) => !voted.has(item.id));
+    if (idle.length > 0) {
+      await trx
+        .updateTable('KnightsQueueItem')
+        .set({ expiresAt: utc(addHours(now, KNIGHTS_STAGE_TTL_HOURS)), updatedAt: utc(now) })
+        .where(
+          'id',
+          'in',
+          idle.map((item) => item.id)
+        )
+        .execute();
+      counts.extended = idle.length;
+    }
+
+    const handedUp = due.filter((item) => voted.has(item.id));
+    if (handedUp.length === 0) return counts;
+    const staffed = await staffedRanks(trx);
+    for (const item of handedUp) {
+      const outcome = await escalate(trx, item, now, staffed);
       if (outcome === 'escalated') counts.escalated++;
       else counts.toInquisitor++;
     }

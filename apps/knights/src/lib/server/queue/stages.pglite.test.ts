@@ -138,6 +138,7 @@ describe('stage consensus and escalation', () => {
 
   it('keeps collecting past four Knight votes and sends a split at ten to the Templars', async () => {
     await players('Knight', 1, 10);
+    await player(90, 'Templar');
     await image(10);
     const id = await item(10);
 
@@ -175,6 +176,7 @@ describe('stage consensus and escalation', () => {
 
   it('sends a Templar split at six votes to the Paladins', async () => {
     await players('Templar', 1, 6);
+    await player(91, 'Paladin');
     await image(10);
     const id = await item(10, { minRank: 'Templar' });
 
@@ -262,16 +264,20 @@ describe('stage consensus and escalation', () => {
     ]);
   });
 
-  it('moves an item that sat out its stage up one stage, as an escalation', async () => {
+  it('moves an item that sat out its stage with a vote up one stage, as an escalation', async () => {
+    await player(1, 'Knight');
+    await player(2, 'Templar');
     await image(10);
     const id = await enqueueItem(
       db,
       { questionKey: Q, imageId: 10, source: 'test', expiresAt: NOW },
       NOW
     );
+    await vote(1, id, '4');
     expect(await escalateExpired(db, { now: hoursAfter(1) })).toEqual({
       escalated: 1,
       toInquisitor: 0,
+      extended: 0,
     });
     expect(await itemRow(id)).toMatchObject({
       minRank: 'Templar',

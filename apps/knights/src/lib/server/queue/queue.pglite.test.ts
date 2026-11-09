@@ -420,6 +420,7 @@ describe('resolution', () => {
   it('keeps a split open until ten votes, then escalates to Templars with votes still pending', async () => {
     await fiveKnights(1);
     await fiveKnights(6);
+    await player(90, 'Templar');
     await image(10, 4);
     const id = await item(10);
     const answers = ['1', '2', '4', '8', '16', '1', '2', '4', '8', '16'];
@@ -972,9 +973,14 @@ describe('escalateExpired', () => {
       expires: new Date('2026-12-15T11:00:00Z'),
     });
     const fresh = await item(12, { expires: new Date('2026-12-16T11:00:00Z') });
+    await player(1, 'Knight');
+    await player(2, 'Templar');
+    await player(3, 'Paladin');
+    await vote(1, stale, '4');
+    await vote(3, stalePaladin, '4');
 
     const res = await escalateExpired(db, { now: NOW });
-    expect(res).toEqual({ escalated: 1, toInquisitor: 1 });
+    expect(res).toEqual({ escalated: 1, toInquisitor: 1, extended: 0 });
     expect(await itemRow(stale)).toMatchObject({ status: 'Open', minRank: 'Templar' });
     expect(await itemRow(stalePaladin)).toMatchObject({
       status: 'Inquisitor',
@@ -986,6 +992,105 @@ describe('escalateExpired', () => {
     expect(
       (await pg.query<{ n: number }>(`SELECT count(*)::int AS n FROM "KnightsQueueItem"`)).rows[0].n
     ).toBe(3);
+  });
+});
+
+describe('escalation with empty ranks', () => {
+  const PAST = new Date('2026-12-15T11:00:00Z');
+  const TTL_END = new Date('2026-12-18T12:00:00Z');
+
+  /** A Knight item that one player has voted on, then lapsed. */
+  async function votedAndLapsed() {
+    await image(10);
+    const id = await item(10, { expires: PAST });
+    await player(1, 'Knight');
+    expect((await vote(1, id, '4')).status).toBe('recorded');
+    return id;
+  }
+
+  it('sends a voted item straight to the Inquisitors when no Templar or Paladin plays', async () => {
+    const id = await votedAndLapsed();
+    expect(await escalateExpired(db, { now: NOW })).toEqual({
+      escalated: 0,
+      toInquisitor: 1,
+      extended: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      minRank: 'Inquisitor',
+      escalationReason: 'no-consensus',
+    });
+  });
+
+  it('skips an empty Templar rank and lands on the Paladins', async () => {
+    const id = await votedAndLapsed();
+    await player(2, 'Paladin');
+    expect(await escalateExpired(db, { now: NOW })).toEqual({
+      escalated: 1,
+      toInquisitor: 0,
+      extended: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Paladin', votesNeeded: 2 });
+  });
+
+  it('still goes to the Templars when they play', async () => {
+    const id = await votedAndLapsed();
+    await player(2, 'Templar');
+    await player(3, 'Paladin');
+    await escalateExpired(db, { now: NOW });
+    expect(await itemRow(id)).toMatchObject({ minRank: 'Templar', votesNeeded: 3 });
+  });
+
+  it('does not count a Paladin who is waiting on a career reset', async () => {
+    const id = await votedAndLapsed();
+    await player(2, 'Paladin');
+    await pg.query(
+      `INSERT INTO "NewOrderSmite" ("targetPlayerId") SELECT 2 FROM generate_series(1, 3)`
+    );
+    await escalateExpired(db, { now: NOW });
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor' });
+  });
+
+  it('skips an empty rank when a split vote hands the item up', async () => {
+    for (let i = 1; i <= 10; i++) await player(i, 'Knight');
+    await player(20, 'Paladin');
+    await image(10);
+    const id = await item(10);
+    for (let i = 1; i <= 10; i++) await vote(i, id, i % 2 ? '4' : '8');
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Paladin' });
+  });
+
+  it('extends an item nobody voted on instead of escalating it', async () => {
+    await player(2, 'Templar');
+    await image(10);
+    const id = await item(10, { expires: PAST });
+    expect(await escalateExpired(db, { now: NOW })).toEqual({
+      escalated: 0,
+      toInquisitor: 0,
+      extended: 1,
+    });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Open',
+      minRank: 'Knight',
+      escalationReason: null,
+      escalatedAt: null,
+      expiresAt: TTL_END,
+    });
+    await player(1, 'Knight');
+    expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([id]);
+  });
+
+  it('extends a zero-vote item at a higher stage even if earlier stages had votes', async () => {
+    await image(10);
+    const id = await item(10, { minRank: 'Templar', expires: PAST });
+    await player(1, 'Knight');
+    await pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
+       VALUES ($1,1,$2,$3,10,'Knight','4',1)`,
+      [id, NOW, Q]
+    );
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({ extended: 1, toInquisitor: 0 });
+    expect(await itemRow(id)).toMatchObject({ minRank: 'Templar', expiresAt: TTL_END });
   });
 });
 
