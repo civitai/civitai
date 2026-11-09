@@ -82,6 +82,11 @@ export const manualPayinCreditExternalId = (payinHash: string) =>
 const DEPOSIT_HELD_MESSAGE = 'Deposit held: a hand grant cites this payment';
 type HeldReason = 'hand_grant_covers' | 'soft_hand_grant_match' | 'hand_grant_scan_incomplete';
 const HELD = 'held';
+/**
+ * Closed unpaid on our side. NowPayments can still finish such a payment; crediting one then fails
+ * closed, and a failed attempt leaves the row here for the late sweep (watchOpenDeposits).
+ */
+const LATE_FINISH_STATUSES = ['failed', 'expired'];
 
 
 // The IPN body carries no payin_hash, so an IPN-driven event costs one status lookup. A null on
@@ -213,7 +218,7 @@ export const recordUnverifiedDeposit = async (event: NOWPayments.WebhookEvent) =
   await dbWrite.cryptoDeposit.updateMany({
     where: {
       paymentId,
-      status: { in: [...OPEN_DEPOSIT_STATUSES, 'partially_paid', 'failed', 'expired'] },
+      status: { in: [...OPEN_DEPOSIT_STATUSES, 'partially_paid'] },
     },
     data: { status: 'buzz_failed', retryCount: 0 },
   });
@@ -224,12 +229,7 @@ export const processDeposit = async (
   webhookStatus: string,
   event: NOWPayments.WebhookEvent,
   /** A moderator crediting by hand; recorded on the ledger row. */
-  actor?: { modUserId: number; ticketId?: string },
-  /**
-   * A deposit NowPayments finished after its row closed unpaid: hold, rather than credit, when the
-   * hand-grant scan is unsure, and record what the ledger already holds as buzzCredited.
-   */
-  opts?: { lateFinish?: boolean }
+  actor?: { modUserId: number; ticketId?: string }
 ) => {
   const userId = userIdFromOrderId(event.order_id);
   if (!userId) {
@@ -258,14 +258,24 @@ export const processDeposit = async (
   let buzzGrantFailed = false;
   let held = false;
   let heldReason: HeldReason | undefined;
+  let failure: string | undefined;
+  // A late finish holds, rather than credits, when the hand-grant scan is unsure, and records what
+  // the ledger already holds. Decided from the row, so every caller (webhook, sweeps, mod tools) agrees.
+  let lateStatus: string | undefined;
   /** What the ledger already holds for this deposit when it was credited before (often by hand). */
   let ledgerAmount: number | undefined;
 
   if (isDepositComplete(webhookStatus)) {
+    const prior = await dbWrite.cryptoDeposit.findUnique({
+      where: { paymentId: BigInt(paymentId) },
+      select: { status: true },
+    });
+    if (prior && LATE_FINISH_STATUSES.includes(prior.status)) lateStatus = prior.status;
     const outcomeAmount = event.outcome_amount;
     if (!outcomeAmount || outcomeAmount <= 0) {
       // NOWPayments can report a payment paid before its amount settles; the sweep retries it.
       buzzGrantFailed = true;
+      failure = 'no outcome_amount';
       await log({
         message: 'Finished deposit with no outcome_amount',
         paymentId,
@@ -341,7 +351,7 @@ export const processDeposit = async (
               : overflowed.length
               ? 'hand_grant_scan_incomplete'
               : undefined;
-            if (opts?.lateFinish && uncertain) {
+            if (lateStatus && uncertain) {
               heldReason = uncertain;
               await log({
                 type: 'warning',
@@ -389,7 +399,7 @@ export const processDeposit = async (
         }
         // A late finish is often one support already paid by hand, for an amount that need not match
         // NP's figure; support reconciles buzzCredited against the ledger, which includes any bonus.
-        if (opts?.lateFinish && transactionId === 'already_granted' && ledgerAmount != null) {
+        if (lateStatus && transactionId === 'already_granted' && ledgerAmount != null) {
           buzzAmount = ledgerAmount;
           bonusBuzz = null;
           multiplierInt = null;
@@ -414,6 +424,7 @@ export const processDeposit = async (
 
         if (!transactionId && !held) {
           buzzGrantFailed = true;
+          failure = result ? 'no transaction id' : 'credit already running';
           await log({
             message: 'Failed to create buzz transaction for deposit',
             paymentId,
@@ -428,6 +439,7 @@ export const processDeposit = async (
           transactionId = 'already_granted';
         } else {
           buzzGrantFailed = true;
+          failure = errMsg;
           await log({
             message: 'Buzz grant failed for deposit',
             paymentId,
@@ -470,7 +482,8 @@ export const processDeposit = async (
   // confirming → finished | buzz_failed — never move backward
   let depositStatus: string;
   if (buzzGrantFailed) {
-    depositStatus = 'buzz_failed';
+    // A late row stays put for the late sweep: the retry sweep would credit it without failing closed.
+    depositStatus = lateStatus ?? 'buzz_failed';
   } else if (held) {
     depositStatus = HELD;
   } else if (isDepositComplete(webhookStatus)) {
@@ -633,7 +646,7 @@ export const processDeposit = async (
     transactionId: transactionId || undefined,
   });
 
-  return { userId, buzzAmount, transactionId, heldReason };
+  return { userId, buzzAmount, transactionId, heldReason, failure };
 };
 
 /**
@@ -1160,7 +1173,11 @@ const watchListedPayments = async (
   );
 };
 
-/** NowPayments has finished payments it first reported failed; a later `finished` must still credit. */
+/**
+ * How far back the daily sweep re-polls failed/expired rows: one NowPayments lookup per row per day.
+ * It is also where retrying stops: a late attempt that keeps failing stays failed and is retried
+ * daily until the row ages out of this window.
+ */
 const LATE_FINISH_LOOKBACK_DAYS = 30;
 
 const lateFinishWhere = () => ({
@@ -1169,31 +1186,23 @@ const lateFinishWhere = () => ({
 });
 
 /**
- * Credits a closed deposit NowPayments now reports paid, failing closed: a doubtful hand-grant
- * scan holds it for support. Logs every attempt for audit; returns whether the row is now finished.
+ * Credits a closed deposit NowPayments now reports paid (processDeposit fails closed on a late row).
+ * Logs each attempt processDeposit returns from, credited or not; returns whether the row is now finished.
  */
 const processLateFinish = async (
   paymentId: number,
   row: { status: string; createdAt: Date },
   payment: NOWPayments.CreatePaymentResponse
 ) => {
-  const { userId, buzzAmount, transactionId, heldReason } = await processDeposit(
+  const { userId, buzzAmount, transactionId, heldReason, failure } = await processDeposit(
     paymentId,
     payment.payment_status,
-    eventFromPayment(payment),
-    undefined,
-    { lateFinish: true }
+    eventFromPayment(payment)
   );
   const after = await dbWrite.cryptoDeposit.findUnique({
     where: { paymentId: BigInt(paymentId) },
     select: { status: true, buzzCredited: true },
   });
-  // A row the retry sweep already exhausted would never be retried from here.
-  if (after?.status === 'buzz_failed')
-    await dbWrite.cryptoDeposit.updateMany({
-      where: { paymentId: BigInt(paymentId), status: 'buzz_failed' },
-      data: { retryCount: 0 },
-    });
   const credited = after?.status === 'finished';
   await logToAxiom({
     name: 'nowpayments-late-finish',
@@ -1203,6 +1212,7 @@ const processLateFinish = async (
     credited,
     held: after?.status === HELD,
     heldReason,
+    error: failure,
     buzz: buzzAmount,
     transactionId,
     npStatus: payment.payment_status,

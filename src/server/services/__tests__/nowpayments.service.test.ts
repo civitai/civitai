@@ -305,7 +305,12 @@ describe('processDeposit', () => {
       const event = makeWebhookEvent({ outcome_amount: amount });
       const result = await processDeposit(12345, 'finished', event);
 
-      expect(result).toEqual({ userId: 42, buzzAmount: 0, transactionId: undefined });
+      expect(result).toEqual({
+        userId: 42,
+        buzzAmount: 0,
+        transactionId: undefined,
+        failure: 'no outcome_amount',
+      });
       expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
       expect(mockDbWrite.cryptoDeposit.upsert).toHaveBeenCalledWith(
         expect.objectContaining({ create: expect.objectContaining({ status: 'buzz_failed' }) })
@@ -1204,7 +1209,7 @@ function serveDepositTable(table: () => DepositRow[]) {
 describe('recordUnverifiedDeposit', () => {
   beforeEach(resetDepositMocks);
 
-  it.each(['waiting', 'confirming', 'confirmed', 'sending', 'partially_paid', 'failed', 'expired'])(
+  it.each(['waiting', 'confirming', 'confirmed', 'sending', 'partially_paid'])(
     'hands a %s row to the retry sweep when a paid IPN cannot be verified',
     async (status) => {
       let rowStatus = status;
@@ -1221,21 +1226,27 @@ describe('recordUnverifiedDeposit', () => {
     }
   );
 
-  it.each(['finished', 'held', 'unverified', 'refunded', 'unverified_exhausted'])(
-    'leaves a %s row where it is when a paid IPN cannot be verified',
-    async (status) => {
-      let rowStatus = status;
-      mockDbWrite.cryptoDeposit.updateMany.mockImplementation(async ({ where, data }: any) => {
-        if (!where.status.in.includes(rowStatus)) return { count: 0 };
-        rowStatus = data.status;
-        return { count: 1 };
-      });
+  // failed/expired belong to the late sweep, which fails closed; the retry sweep does not.
+  it.each([
+    'finished',
+    'held',
+    'unverified',
+    'refunded',
+    'unverified_exhausted',
+    'failed',
+    'expired',
+  ])('leaves a %s row where it is when a paid IPN cannot be verified', async (status) => {
+    let rowStatus = status;
+    mockDbWrite.cryptoDeposit.updateMany.mockImplementation(async ({ where, data }: any) => {
+      if (!where.status.in.includes(rowStatus)) return { count: 0 };
+      rowStatus = data.status;
+      return { count: 1 };
+    });
 
-      await recordUnverifiedDeposit(makeWebhookEvent({ payment_status: 'finished' }));
+    await recordUnverifiedDeposit(makeWebhookEvent({ payment_status: 'finished' }));
 
-      expect(rowStatus).toBe(status);
-    }
-  );
+    expect(rowStatus).toBe(status);
+  });
 });
 
 const staffTipCitingPayment = {
@@ -1695,20 +1706,42 @@ describe('watchOpenDeposits', () => {
       expect(rowStatus[837]).toBe('finished');
     });
 
-    it('hands a late finish whose grant fails back to the retry sweep', async () => {
+    // buzz_failed would hand it to retryFailedDeposits, which credits without failing closed.
+    it('leaves a late finish whose grant fails on its row for the next late sweep, and logs the error', async () => {
       mockGrantBuzzPurchase.mockRejectedValueOnce(new Error('buzz service 503'));
 
-      const result = await watch([openRow(838, 'failed', 23)], {
-        838: 'finished',
-      });
+      const result = await watch([openRow(838, 'failed', 23)], { 838: 'finished' });
 
-      expect(rowStatus[838]).toBe('buzz_failed');
-      expect(mockDbWrite.cryptoDeposit.updateMany).toHaveBeenCalledWith({
-        where: { paymentId: BigInt(838), status: 'buzz_failed' },
-        data: { retryCount: 0 },
-      });
+      expect(ledger.size).toBe(0);
+      expect(rowStatus[838]).toBe('failed');
       expect(result.lateFinished).toBe(0);
-      expect(lateLogs()).toEqual([expect.objectContaining({ paymentId: 838, credited: false })]);
+      expect(lateLogs()).toEqual([
+        expect.objectContaining({ paymentId: 838, credited: false, error: 'buzz service 503' }),
+      ]);
+    });
+
+    it.each([
+      ['a soft hand-grant match', 'soft'],
+      ['an incomplete hand-grant scan', 'overflow'],
+    ])('holds a late finished IPN on a failed row with %s', async (_, kind) => {
+      vi.mocked(findHandGrantsForDeposit).mockResolvedValueOnce(
+        kind === 'soft' ? softMatch : overflow
+      );
+      rowStatus[846] = 'failed';
+
+      await processDeposit(846, 'finished', eventFromPayment(makePayment({ payment_id: 846 })));
+
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(rowStatus[846]).toBe('held');
+    });
+
+    it('leaves a failed row whose late IPN credit fails out of the retry sweep', async () => {
+      mockGrantBuzzPurchase.mockRejectedValueOnce(new Error('buzz service 503'));
+      rowStatus[847] = 'expired';
+
+      await processDeposit(847, 'finished', eventFromPayment(makePayment({ payment_id: 847 })));
+
+      expect(rowStatus[847]).toBe('expired');
     });
 
     it('credits nothing when NOWPayments answers with a different payment', async () => {
