@@ -305,6 +305,34 @@ export function isTrainable(img: Img): boolean {
   return img.status === 'uploaded';
 }
 
+export const isLabeled = (img: Img) => img.tags.length > 0 || img.caption.trim().length > 0;
+
+/** Whether auto-label can read this image's media. A reused run's items (Train again, Reuse a dataset)
+ *  only hold a browser-local `blob:` preview URL, which the labeler can't fetch and the submit refuses. */
+export const canAutoLabelImage = (img: Pick<Img, 'blobUrl'>) =>
+  !!img.blobUrl?.startsWith('https://');
+
+/** Trainable images an auto-label pass may send. `skipTried` leaves out images auto-label already
+ *  attempted (the drain); `focusId` is the card whose inline editor is open. */
+export function autoLabelTargets(
+  images: Img[],
+  opts: { skipLabeled: boolean; skipTried: boolean; focusId: number | null }
+): Img[] {
+  return images.filter(
+    (i) =>
+      isTrainable(i) &&
+      canAutoLabelImage(i) &&
+      !i.labeling &&
+      i.id !== opts.focusId &&
+      !(opts.skipTried && i.labelTried) &&
+      !(opts.skipLabeled && isLabeled(i))
+  );
+}
+
+/** Trainable images auto-label can't read, which keep the manual editor. */
+export const handLabelOnlyCount = (images: Img[]) =>
+  images.filter((i) => isTrainable(i) && !canAutoLabelImage(i)).length;
+
 export function isFailed(img: Img): boolean {
   return img.status === 'blocked' || img.status === 'error';
 }
@@ -734,6 +762,20 @@ export function seedPrompts(labels: string[], trigger = ''): SamplePrompt[] {
  *  models. The trigger word is applied server-side (triggerWord), so it isn't included here. */
 export function labelString(img: Img, mode: LabelType): string {
   return mode === 'tag' ? img.tags.join(', ') : img.caption.trim();
+}
+
+/** The label text a format switch leaves on an image. The current text comes first (it carries
+ *  hand-edits); the imported source label is only the fallback for a cleared field. 'relabel' clears
+ *  the text for auto-label to refill, except on source-labeled items (the dialog promises they survive)
+ *  and on tiles auto-label can't read, which nothing would re-label. */
+export function labelTextAfterSwitch(
+  img: Img,
+  prev: LabelType,
+  choice: 'convert' | 'relabel'
+): string {
+  const source = img.sourceLabel?.trim();
+  const kept = labelString(img, prev) || source || '';
+  return choice === 'relabel' && !source && canAutoLabelImage(img) ? '' : kept;
 }
 
 /** Tag-text splitting, shared by every tag-entry path (parseLabel, the label editor, the exclude

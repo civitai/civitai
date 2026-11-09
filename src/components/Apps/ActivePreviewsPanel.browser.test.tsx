@@ -4,7 +4,7 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 
 /**
- * Global "Active previews (N / cap)" panel — browser-mode render test
+ * Global "Active previews" panel — browser-mode render test
  * (`Component tests` in CI). The panel was extracted from `src/pages/apps/review.tsx`
  * to `ActivePreviewsPanel.tsx` (mirrors the #3163 `OnsiteReviewModal` extraction)
  * so it is importable WITHOUT the page's `getServerSideProps` server graph — this
@@ -62,7 +62,10 @@ vi.mock('~/utils/notifications', () => ({
 vi.mock('~/utils/trpc', () => {
   const mutation =
     (name: string) =>
-    (opts?: { onSuccess?: (res: unknown, vars: unknown) => void; onError?: (e: { message: string }) => void }) => ({
+    (opts?: {
+      onSuccess?: (res: unknown, vars: unknown) => void;
+      onError?: (e: { message: string }) => void;
+    }) => ({
       mutate: (vars: unknown) => {
         mocks.mutate(name, vars);
         void opts?.onSuccess?.(undefined, vars);
