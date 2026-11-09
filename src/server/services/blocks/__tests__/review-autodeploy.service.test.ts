@@ -20,6 +20,7 @@ import type * as PublishRequestService from '~/server/services/blocks/publish-re
 const m = vi.hoisted(() => ({
   autodeployOn: vi.fn(async () => true),
   agentAutostartOn: vi.fn(async () => true),
+  agentBaseOn: vi.fn(async () => true),
   startClaimedReviewBuild: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
   startAgentReview: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
   notifyModAlert: vi.fn(async (..._a: unknown[]): Promise<string> => 'delivered'),
@@ -29,6 +30,7 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
   isAppBlocksReviewAutodeployEnabled: () => m.autodeployOn(),
   isAppBlocksAgenticReviewAutostartEnabled: () => m.agentAutostartOn(),
+  isAppBlocksAgenticReviewEnabled: () => m.agentBaseOn(),
 }));
 vi.mock('~/server/services/blocks/publish-request.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PublishRequestService>()),
@@ -77,9 +79,10 @@ function matches(row: Row, where: Where): boolean {
   return Object.entries(where).every(([key, cond]) => {
     const value = (row as unknown as Record<string, unknown>)[key];
     if (cond && typeof cond === 'object' && !(cond instanceof Date)) {
-      const c = cond as { in?: unknown[]; gt?: Date; not?: unknown };
+      const c = cond as { in?: unknown[]; gt?: Date; gte?: Date; not?: unknown };
       if (c.in) return c.in.includes(value);
       if (c.gt) return value instanceof Date && value.getTime() > c.gt.getTime();
+      if (c.gte) return value instanceof Date && value.getTime() >= c.gte.getTime();
       if ('not' in c) return value !== c.not;
     }
     return value === cond;
@@ -183,6 +186,7 @@ beforeEach(() => {
   installFakeDb();
   m.autodeployOn.mockResolvedValue(true);
   m.agentAutostartOn.mockResolvedValue(true);
+  m.agentBaseOn.mockResolvedValue(true);
   m.startClaimedReviewBuild.mockReset();
   m.startClaimedReviewBuild.mockResolvedValue({});
   m.startAgentReview.mockReset();
@@ -400,19 +404,33 @@ describe('moderator alert', () => {
     expect(m.notifyModAlert).toHaveBeenCalledWith(
       'New app submission: My App',
       [
-        '**My App** `my-app` v1.2.0',
+        '**My App** my\\-app v1.2.0',
         'Author: alice',
         'Submitted by bundle upload',
         'Review: https://civitai.example/apps/review/pubreq_01ABC',
-      ].join('\n')
+      ].join('\n'),
+      { noMentions: true }
     );
   });
 
-  it('author-written text cannot break out of the code span or add lines', async () => {
+  it('a manifest name written as a markdown link renders as text, not a masked link', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ username: 'alice' });
+    const appName = '[Open review](https://evil.example/phish)';
+    await notifyModsOfNewSubmission({ ...sub, appName });
+    const [title, description] = m.notifyModAlert.mock.calls[0] as [string, string];
+    const escaped = '\\[Open review\\]\\(https\\://evil.example/phish\\)';
+    expect(description.split('\n')[0]).toBe(`**${escaped}** my\\-app v1.2.0`);
+    expect(title).toBe(`New app submission: ${escaped}`);
+    // No unescaped `](`, so Discord has no link to render; the only URL is our review link.
+    expect(description).not.toMatch(/(?<!\\)\]\(/);
+    expect(description.match(/https:\/\//g)).toHaveLength(1);
+  });
+
+  it('author-written text cannot add lines, break formatting or mention anyone', async () => {
     dbMock.dbRead.user.findUnique.mockResolvedValue({ username: 'bob' });
     await notifyModsOfNewSubmission({ ...sub, appName: 'Evil`\n@everyone', origin: 'push' });
     const [title, description] = m.notifyModAlert.mock.calls[0] as [string, string];
-    expect(title).toBe('New app submission: Evil @everyone');
+    expect(title).toBe('New app submission: Evil\\` @\u200beveryone');
     expect(description.split('\n')).toHaveLength(4);
     expect(description).toContain('Submitted by git push');
   });
@@ -513,5 +531,159 @@ describe('agent review auto-start', () => {
     spend(0);
     m.startAgentReview.mockRejectedValue(new Error('k8s down'));
     expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('error');
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('moderator alert throttle', () => {
+  const sub = {
+    publishRequestId: 'pubreq_01ABC',
+    slug: 'my-app',
+    version: '1.2.0',
+    appName: 'My App',
+    submittedByUserId: 9,
+    origin: 'upload' as const,
+  };
+  /** One counter per Redis key, like the real INCR: the alert key and the budget key apart. */
+  function countersByKey(fail?: (key: string) => boolean) {
+    const counts = new Map<string, number>();
+    redisMock.sysRedis.multi.mockImplementation(() => {
+      let key = '';
+      const chain = {
+        set: vi.fn((k: string) => {
+          key = k;
+          return chain;
+        }),
+        incr: vi.fn(() => chain),
+        exec: vi.fn(async () => {
+          if (fail?.(key)) throw new Error('redis down');
+          const n = (counts.get(key) ?? 0) + 1;
+          counts.set(key, n);
+          return ['OK', n];
+        }),
+      };
+      return chain;
+    });
+    return counts;
+  }
+  beforeEach(() => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ username: 'alice' });
+  });
+
+  it('posts 10 alerts per submitter per hour, then ONE roll-up, then nothing', async () => {
+    const counts = countersByKey();
+    const outcomes: string[] = [];
+    for (let i = 0; i < 13; i++) outcomes.push(await notifyModsOfNewSubmission(sub));
+
+    expect(outcomes.slice(0, 11)).toEqual(Array(11).fill('delivered'));
+    expect(outcomes.slice(11)).toEqual(['throttled', 'throttled']);
+    const titles = m.notifyModAlert.mock.calls.map((c) => c[0]);
+    expect(titles).toHaveLength(11);
+    expect(titles.slice(0, 10)).toEqual(Array(10).fill('New app submission: My App'));
+    expect(titles[10]).toBe('More app submissions from alice');
+    const hour = new Date().toISOString().slice(0, 13);
+    expect([...counts.keys()]).toEqual([`system:blocks:review-submission-alerts:9:${hour}`]);
+  });
+
+  it('counts per submitter: another account still gets its alerts', async () => {
+    countersByKey();
+    for (let i = 0; i < 12; i++) await notifyModsOfNewSubmission(sub);
+    m.notifyModAlert.mockClear();
+    expect(await notifyModsOfNewSubmission({ ...sub, submittedByUserId: 10 })).toBe('delivered');
+    expect(m.notifyModAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it('an unreadable throttle posts NOTHING (fails silent, never floods)', async () => {
+    countersByKey((key) => key.includes('review-submission-alerts'));
+    expect(await notifyModsOfNewSubmission(sub)).toBe('throttled');
+    expect(m.notifyModAlert).not.toHaveBeenCalled();
+  });
+});
+
+describe('automatic-build budget refund', () => {
+  beforeEach(() => redisMock.sysRedis.decr.mockClear());
+  it('a submit a moderator already previewed gives its budget token back', async () => {
+    const r = row({ deployState: 'preview-live' });
+    rows = [r];
+    budgetCounter(1);
+    const day = new Date().toISOString().slice(0, 10);
+    expect(await autoStartReviewPreview({ publishRequestId: r.id, submittedByUserId: 9 })).toBe(
+      'not-queued'
+    );
+    expect(redisMock.sysRedis.decr).toHaveBeenCalledWith(
+      `system:blocks:review-auto-builds:9:${day}`
+    );
+  });
+
+  it('CONTROL: a queued submit keeps its token', async () => {
+    rows = [row({})];
+    budgetCounter(1);
+    await autoStartReviewPreview({ publishRequestId: rows[0].id, submittedByUserId: 9 });
+    expect(redisMock.sysRedis.decr).not.toHaveBeenCalled();
+  });
+});
+
+describe('agent review budget counts runs that ended with no cost report', () => {
+  type Report = { status: string; costUsd: number | null; startedAt: Date };
+  function reportsTable(reports: Report[]) {
+    const where = (r: Report, w: Record<string, unknown>) =>
+      matches(r as unknown as Row, w as Where);
+    dbMock.dbWrite.appReviewAgentReport.count.mockImplementation(
+      async ({ where: w }: { where: Record<string, unknown> }) =>
+        reports.filter((r) => where(r, w)).length
+    );
+    dbMock.dbWrite.appReviewAgentReport.aggregate.mockImplementation(
+      async ({ where: w }: { where: Record<string, unknown> }) => ({
+        _sum: {
+          costUsd: reports.filter((r) => where(r, w)).reduce((a, r) => a + (r.costUsd ?? 0), 0),
+        },
+      })
+    );
+  }
+  beforeEach(() => {
+    dbMock.dbRead.appReviewAgentReport.findFirst.mockResolvedValue(null);
+  });
+
+  it('a torn-down run with no cost counts at the per-review cap', async () => {
+    // 20 runs started today and torn down before reporting: 20 x $2 = $40 already committed.
+    reportsTable(
+      Array.from({ length: 20 }, () => ({
+        status: 'torn-down',
+        costUsd: null,
+        startedAt: new Date(),
+      }))
+    );
+    expect(await maybeAutoStartAgentReview('pubreq_live')).toBe('budget-refused');
+    expect(m.startAgentReview).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: the same runs with their real (low) cost reported leave room', async () => {
+    reportsTable(
+      Array.from({ length: 20 }, () => ({
+        status: 'complete',
+        costUsd: 0.5,
+        startedAt: new Date(),
+      }))
+    );
+    expect(await maybeAutoStartAgentReview('pubreq_live')).toBe('started');
+  });
+
+  it('a run from yesterday does not count', async () => {
+    const yesterday = new Date(Date.now() - 36 * 60 * 60 * 1000);
+    reportsTable(
+      Array.from({ length: 30 }, () => ({ status: 'failed', costUsd: null, startedAt: yesterday }))
+    );
+    expect(await maybeAutoStartAgentReview('pubreq_live')).toBe('started');
+  });
+});
+
+describe('agent review auto-start needs the agent-review feature on', () => {
+  it('base agent-review flag OFF: no auto-start even with the autostart flag on', async () => {
+    dbMock.dbRead.appReviewAgentReport.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.appReviewAgentReport.aggregate.mockResolvedValue({ _sum: { costUsd: 0 } });
+    dbMock.dbWrite.appReviewAgentReport.count.mockResolvedValue(0);
+    m.agentBaseOn.mockResolvedValue(false);
+    expect(await maybeAutoStartAgentReview('pubreq_live')).toBe('disabled');
+    expect(m.startAgentReview).not.toHaveBeenCalled();
   });
 });

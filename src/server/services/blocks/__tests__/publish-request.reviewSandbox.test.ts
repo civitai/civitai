@@ -1214,15 +1214,33 @@ describe('listActiveReviewPreviews', () => {
 
     const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
     expect(arg.where.status).toBe('pending');
-    expect(arg.where.deployState).toEqual({
-      in: ['preview-queued', 'preview-building', 'preview-deploying', 'preview-live'],
+    // A queued preview is listed however old (it never expires); the others only within the
+    // coarse 14-day cutoff, the same rule as isReviewPreviewExpired.
+    const [queuedArm, activeArm] = arg.where.OR;
+    expect(queuedArm).toEqual({ deployState: 'preview-queued' });
+    expect(activeArm.deployState).toEqual({
+      in: ['preview-building', 'preview-deploying', 'preview-live'],
     });
-    // Coarse DB cutoff ≈ now - the 14-day preview max age.
-    const cutoff: Date = arg.where.deployUpdatedAt.gt;
+    const cutoff: Date = activeArm.deployUpdatedAt.gt;
     expect(Math.abs(cutoff.getTime() - (Date.now() - REVIEW_PREVIEW_MAX_AGE_MS))).toBeLessThan(
       5000
     );
     expect(arg.orderBy).toEqual({ deployUpdatedAt: 'asc' });
+  });
+
+  it('keeps a queued preview listed after 14 days', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'old-queued',
+        slug: 's1',
+        version: '1.0.0',
+        deployState: 'preview-queued',
+        deployDetail: JSON.stringify({ actor: 'system' }),
+        deployUpdatedAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+      },
+    ]);
+    const res = await listActiveReviewPreviews();
+    expect(res.active.map((p) => p.publishRequestId)).toEqual(['old-queued']);
   });
 
   it('leaves out a preview whose BUILD started past the max age, though its last write is recent', async () => {

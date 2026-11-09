@@ -219,7 +219,11 @@ export async function autoStartReviewPreview(args: {
         deployUpdatedAt: now,
       },
     });
-    if (count === 0) return 'not-queued';
+    if (count === 0) {
+      // A moderator started it first (or it left pending): this submit used no automatic build.
+      await refundAutoBuildBudget(args.submittedByUserId);
+      return 'not-queued';
+    }
     record('auto_started');
     await drainReviewPreviewQueue();
     return 'queued';
@@ -233,10 +237,15 @@ export async function autoStartReviewPreview(args: {
  * Count one automatic build against the submitter's UTC-day budget. Fails CLOSED: an unreadable
  * counter is `unavailable`, which the caller treats like a spent budget.
  */
-async function takeAutoBuildBudget(userId: number): Promise<'ok' | 'limited' | 'unavailable'> {
-  const { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } = await import('~/server/redis/client');
+async function autoBuildBudgetKey(userId: number) {
+  const { REDIS_SYS_KEYS } = await import('~/server/redis/client');
   const day = new Date().toISOString().slice(0, 10);
-  const key = `${REDIS_SYS_KEYS.BLOCKS.REVIEW_AUTO_BUILDS}:${userId}:${day}` as const;
+  return `${REDIS_SYS_KEYS.BLOCKS.REVIEW_AUTO_BUILDS}:${userId}:${day}` as const;
+}
+
+async function takeAutoBuildBudget(userId: number): Promise<'ok' | 'limited' | 'unavailable'> {
+  const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
+  const key = await autoBuildBudgetKey(userId);
   try {
     const res = await withSysReadDeadline(
       sysRedis
@@ -250,6 +259,45 @@ async function takeAutoBuildBudget(userId: number): Promise<'ok' | 'limited' | '
     return used <= AUTO_REVIEW_BUILDS_PER_USER_PER_DAY ? 'ok' : 'limited';
   } catch {
     return 'unavailable';
+  }
+}
+
+/** Give back a build taken by {@link takeAutoBuildBudget}. Best-effort. */
+async function refundAutoBuildBudget(userId: number): Promise<void> {
+  try {
+    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
+    await withSysReadDeadline(sysRedis.decr(await autoBuildBudgetKey(userId)));
+  } catch {
+    // The counter expires with the day; a lost refund costs one build of budget.
+  }
+}
+
+/** New-submission alerts per submitter per UTC hour, before they are rolled up. */
+export const SUBMISSION_ALERTS_PER_USER_PER_HOUR = 10;
+
+/**
+ * Whether this submitter's next alert is posted: `alert` up to the hourly limit, `rollup` exactly
+ * once when it is passed (one "more submissions" notice), `silent` after that. Fails to SILENT:
+ * when the counter cannot be read no alert is posted, so an outage can never flood the channel.
+ */
+async function takeSubmissionAlertSlot(userId: number): Promise<'alert' | 'rollup' | 'silent'> {
+  try {
+    const { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } = await import('~/server/redis/client');
+    const hour = new Date().toISOString().slice(0, 13);
+    const key = `${REDIS_SYS_KEYS.BLOCKS.REVIEW_SUBMISSION_ALERTS}:${userId}:${hour}` as const;
+    const res = await withSysReadDeadline(
+      sysRedis
+        .multi()
+        .set(key, '0', { NX: true, EX: 2 * 60 * 60 })
+        .incr(key)
+        .exec()
+    );
+    const n = Number(res?.[1]);
+    if (!Number.isFinite(n)) return 'silent';
+    if (n <= SUBMISSION_ALERTS_PER_USER_PER_HOUR) return 'alert';
+    return n === SUBMISSION_ALERTS_PER_USER_PER_HOUR + 1 ? 'rollup' : 'silent';
+  } catch {
+    return 'silent';
   }
 }
 
@@ -287,11 +335,17 @@ export async function onNewPendingSubmission(sub: NewPendingSubmission): Promise
   ]);
 }
 
-/** Post the new submission to the moderator alerts channel. Never throws. */
+/**
+ * Post the new submission to the moderator alerts channel, at most
+ * {@link SUBMISSION_ALERTS_PER_USER_PER_HOUR} per submitter per hour, then one roll-up notice.
+ * Never throws.
+ */
 export async function notifyModsOfNewSubmission(
   sub: NewPendingSubmission
-): Promise<'delivered' | 'rejected' | 'unconfigured' | 'error'> {
+): Promise<'delivered' | 'rejected' | 'unconfigured' | 'throttled' | 'error'> {
   try {
+    const slot = await takeSubmissionAlertSlot(sub.submittedByUserId);
+    if (slot === 'silent') return 'throttled';
     const [{ dbRead }, { getBaseUrl }, { notifyModAlert }] = await Promise.all([
       import('~/server/db/client'),
       import('~/server/utils/url-helpers'),
@@ -300,23 +354,42 @@ export async function notifyModsOfNewSubmission(
     const user = await dbRead.user
       .findUnique({ where: { id: sub.submittedByUserId }, select: { username: true } })
       .catch(() => null);
-    const name = plain(sub.appName, 100);
+    const author = discordText(user?.username ?? `user ${sub.submittedByUserId}`, 60);
+    if (slot === 'rollup') {
+      return await notifyModAlert(
+        `More app submissions from ${author}`,
+        [
+          `${author} has submitted more than ${SUBMISSION_ALERTS_PER_USER_PER_HOUR} apps this hour; further submissions this hour are not alerted.`,
+          `Queue: ${getBaseUrl()}/apps/review`,
+        ].join('\n'),
+        { noMentions: true }
+      );
+    }
+    const name = discordText(sub.appName, 100);
     const description = [
-      `**${name}** \`${plain(sub.slug, 40)}\` v${plain(sub.version, 32)}`,
-      `Author: ${plain(user?.username ?? `user ${sub.submittedByUserId}`, 60)}`,
+      `**${name}** ${discordText(sub.slug, 40)} v${discordText(sub.version, 32)}`,
+      `Author: ${author}`,
       `Submitted by ${sub.origin === 'push' ? 'git push' : 'bundle upload'}`,
       `Review: ${getBaseUrl()}/apps/review/${sub.publishRequestId}`,
     ].join('\n');
-    return await notifyModAlert(`New app submission: ${name}`, description);
+    return await notifyModAlert(`New app submission: ${name}`, description, { noMentions: true });
   } catch (err) {
     warn('notifyModsOfNewSubmission', `failed (id=${sub.publishRequestId})`, err);
     return 'error';
   }
 }
 
-/** Author-controlled text in a Discord embed: one line, no code-span breakout, bounded. */
-function plain(value: string, max: number): string {
-  return value.replace(/[`\r\n]+/g, ' ').slice(0, max);
+/**
+ * Author-controlled text in a Discord embed: one line, bounded, with every markdown character
+ * escaped (so `[label](url)` cannot render as a masked link) and `@` broken so it cannot read as a
+ * mention. The webhook payload also disables mentions outright (`noMentions`).
+ */
+export function discordText(value: string, max: number): string {
+  return value
+    .replace(/[\r\n\t]+/g, ' ')
+    .slice(0, max)
+    .replace(/[\\`*_~|>[\]()<#:-]/g, (c) => `\\${c}`)
+    .replace(/@/g, '@\u200b');
 }
 
 /**
@@ -344,8 +417,10 @@ export type AgentReviewAutostartOutcome =
 
 /**
  * The agent review spend counted against today's platform budget (UTC day): the recorded cost of
- * every agent review started today, plus the per-review cap for each still running with no cost
- * reported yet (what it may still spend).
+ * every agent review started today, plus the per-review cap for each one started today with NO
+ * cost reported, whatever its status. A torn-down, failed or swept run ends without the callback
+ * ever recording its cost (the callback only writes `running` rows), so its real spend is unknown
+ * and is counted at the most it could have been.
  */
 export async function agentReviewSpendTodayUsd(now: Date = new Date()): Promise<number> {
   const [{ dbWrite }, { env }] = await Promise.all([
@@ -353,16 +428,16 @@ export async function agentReviewSpendTodayUsd(now: Date = new Date()): Promise<
     import('~/env/server'),
   ]);
   const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const [costed, runningUncosted] = await Promise.all([
+  const [costed, uncosted] = await Promise.all([
     dbWrite.appReviewAgentReport.aggregate({
       where: { startedAt: { gte: dayStart }, costUsd: { not: null } },
       _sum: { costUsd: true },
     }),
     dbWrite.appReviewAgentReport.count({
-      where: { startedAt: { gte: dayStart }, costUsd: null, status: 'running' },
+      where: { startedAt: { gte: dayStart }, costUsd: null },
     }),
   ]);
-  return Number(costed._sum.costUsd ?? 0) + runningUncosted * perReviewCapUsd(env);
+  return Number(costed._sum.costUsd ?? 0) + uncosted * perReviewCapUsd(env);
 }
 
 function perReviewCapUsd(env: { AGENT_REVIEW_COST_CAP_USD: string }): number {
@@ -372,7 +447,8 @@ function perReviewCapUsd(env: { AGENT_REVIEW_COST_CAP_USD: string }): number {
 
 /**
  * Start the agent review for a request whose preview just went live, when the
- * `app-blocks-agentic-review-autostart` flag is on, no agent review has run for the request yet,
+ * `app-blocks-agentic-review-autostart` flag is on and the `app-blocks-agentic-review` flag's base
+ * value is on, no agent review has run for the request yet,
  * and one more review at its per-review cap fits in today's platform budget. Past the budget it is
  * refused; a moderator can still start one by hand. Never throws.
  */
@@ -380,10 +456,12 @@ export async function maybeAutoStartAgentReview(
   publishRequestId: string
 ): Promise<AgentReviewAutostartOutcome> {
   try {
-    const { isAppBlocksAgenticReviewAutostartEnabled } = await import(
-      '~/server/services/app-blocks-flag'
-    );
+    const { isAppBlocksAgenticReviewAutostartEnabled, isAppBlocksAgenticReviewEnabled } =
+      await import('~/server/services/app-blocks-flag');
+    // Both: the autostart flag AND the agent-review feature flag's base value. While agent review
+    // is dark (base off) no pod is provisioned automatically, whatever the autostart flag says.
     if (!(await isAppBlocksAgenticReviewAutostartEnabled())) return 'disabled';
+    if (!(await isAppBlocksAgenticReviewEnabled())) return 'disabled';
 
     const [{ dbRead }, { env }] = await Promise.all([
       import('~/server/db/client'),

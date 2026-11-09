@@ -440,8 +440,15 @@ export async function watchReviewApplyJob(args: {
       const host = args.baseDetail.host;
       const reachable = host ? await waitForReviewHostReachable(host) : true;
       if (reachable) {
-        await markReviewPreviewState(args.publishRequestId, 'preview-live', args.baseDetail, guard);
-        reviewBuildSettled(args.publishRequestId, true);
+        const marked = await markReviewPreviewState(
+          args.publishRequestId,
+          'preview-live',
+          args.baseDetail,
+          guard
+        );
+        // Live only if THIS preview was still the active one: a torn-down or superseded preview
+        // (the guard matched no row) must not start an agent review.
+        reviewBuildSettled(args.publishRequestId, marked > 0);
       } else {
         // Deploy is healthy but its host never became publicly reachable within
         // the budget (DNS propagation stall, or a genuinely-broken route). Do

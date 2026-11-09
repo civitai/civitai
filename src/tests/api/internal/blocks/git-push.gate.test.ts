@@ -158,6 +158,7 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 }));
 
 import { isFlipt } from '~/server/flipt/client';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { appDeveloperTermsRefusalMessage } from '~/shared/constants/app-developer-terms.constants';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
 // Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
@@ -273,6 +274,23 @@ describe('git-push webhook — no-trust-on-push gate', () => {
 
   it('autodeploy flag ON: a parked unreviewed push posts only the new-submission alert, never the failure alarm', async () => {
     state.autodeployEnabled = true;
+    // The per-submitter alert throttle reads a counter: first alert of the hour. The automatic
+    // build's budget counter is left unreadable, so no preview is queued from this test.
+    redisMock.sysRedis.multi.mockImplementation(() => {
+      let key = '';
+      const chain = {
+        set: vi.fn((k: string) => {
+          key = k;
+          return chain;
+        }),
+        incr: vi.fn(() => chain),
+        exec: vi.fn(async () => {
+          if (!key.includes('review-submission-alerts')) throw new Error('not in this test');
+          return ['OK', 1];
+        }),
+      };
+      return chain;
+    });
     const res = makeRes();
     await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
     expect(res._status).toBe(202);

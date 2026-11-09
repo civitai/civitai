@@ -4877,8 +4877,14 @@ async function findActiveReviewPreviewRows(): Promise<ActiveReviewPreviewRow[]> 
   const rows = await dbRead.appBlockPublishRequest.findMany({
     where: {
       status: 'pending',
-      deployState: { in: ACTIVE_REVIEW_PREVIEW_STATES },
-      deployUpdatedAt: { gt: new Date(now - REVIEW_PREVIEW_MAX_AGE_MS) },
+      OR: [
+        // A queued preview holds no resources and never expires (isReviewPreviewExpired).
+        { deployState: 'preview-queued' },
+        {
+          deployState: { in: ACTIVE_REVIEW_PREVIEW_STATES.filter((st) => st !== 'preview-queued') },
+          deployUpdatedAt: { gt: new Date(now - REVIEW_PREVIEW_MAX_AGE_MS) },
+        },
+      ],
     },
     orderBy: { deployUpdatedAt: 'asc' }, // oldest first — the natural teardown-candidate order
     select: {
@@ -5022,7 +5028,7 @@ export async function markReviewPreviewState(
   state: StoredReviewPreviewState,
   detail: ReviewPreviewDetail,
   opts?: { requireActivePreview?: boolean; expectedSha?: string }
-): Promise<void> {
+): Promise<number> {
   try {
     const { dbWrite } = await import('~/server/db/client');
     const res = await dbWrite.appBlockPublishRequest.updateMany({
@@ -5048,6 +5054,7 @@ export async function markReviewPreviewState(
         `[markReviewPreviewState] no pending request matched (id=${publishRequestId}, state=${state})`
       );
     }
+    return res.count;
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(
@@ -5055,6 +5062,7 @@ export async function markReviewPreviewState(
         err instanceof Error ? err.message : String(err)
       }`
     );
+    return 0;
   }
 }
 

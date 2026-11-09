@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Readable } from 'node:stream';
 import type * as BuildAttemptsService from '~/server/services/blocks/build-attempts.service';
+import type * as ReviewAutodeployService from '~/server/services/blocks/review-autodeploy.service';
 
 /**
  * MOD REVIEW SANDBOX (#2831) — coverage for POST
@@ -94,6 +95,15 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerApplyReview: mockTriggerApplyReview,
   waitForApplyJob: mockWaitApply,
   waitForReviewHostReachable: mockWaitReachable,
+}));
+// What a settled build does next (drain the queue; maybe start the agent review) is pinned in
+// review-autodeploy.service.test.ts; here only WHETHER the watcher reports the build live.
+const { mockSettled } = vi.hoisted(() => ({
+  mockSettled: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/review-autodeploy.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReviewAutodeployService>()),
+  onReviewBuildSettled: (...a: unknown[]) => mockSettled(...a),
 }));
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   markReviewPreviewState: mockMarkPreview,
@@ -354,6 +364,25 @@ describe('watchReviewApplyJob (reachability gate)', () => {
     // Not marked failed, and the dedup slot is NOT freed on the happy path.
     expect(mockMarkPreview).toHaveBeenCalledTimes(1);
     expect(mockRedisDel).not.toHaveBeenCalled();
+  });
+
+  // A watcher whose preview was torn down (or superseded by a newer build) writes nothing: its
+  // guarded live-mark matches no row. It must not report the build live, or an agent review
+  // would start for a preview that no longer exists.
+  it.each([
+    [1, true],
+    [0, false],
+  ])('a live-mark matching %d row(s) settles the build with live=%s', async (matched, live) => {
+    mockMarkPreview.mockResolvedValueOnce(matched as never);
+    mockSettled.mockClear();
+    await watchReviewApplyJob({
+      publishRequestId: PUBREQ,
+      sha: SHA,
+      jobName: 'review-apply-1',
+      baseDetail,
+    });
+    await vi.waitFor(() => expect(mockSettled).toHaveBeenCalled());
+    expect(mockSettled).toHaveBeenCalledWith({ publishRequestId: PUBREQ, live });
   });
 
   it('apply succeeded + host NEVER reachable → marks preview-failed with the DNS detail + frees the dedup slot', async () => {
