@@ -1636,6 +1636,7 @@ export async function createWorkflowStepsFromGraph({
  * with its token-derived `isGreen`/`isModerator` in the router). Resource
  * enrichment, canGenerate/availability gating, and POI detection still run
  * (inside `createWorkflowStepsFromGraph`), so the resource belt is intact.
+ * The licence output cap is the caller's to apply: `capOutput` must reach the submit body.
  */
 export async function createWorkflowStepsFromGraphInput({
   input,
@@ -1651,7 +1652,11 @@ export async function createWorkflowStepsFromGraphInput({
   isWhatIf?: boolean;
   isGreen?: boolean;
   inputGate: GenerationInputGate;
-}): Promise<{ steps: WorkflowStepTemplate[]; workflowMetadata?: Record<string, unknown> }> {
+}): Promise<{
+  steps: WorkflowStepTemplate[];
+  workflowMetadata?: Record<string, unknown>;
+  capOutput: boolean;
+}> {
   const { data, computedKeys } = validateInput(input, externalCtx);
   await assertGraphInputsUsable(data, user?.id, inputGate);
   const sourceImageIds = isWhatIf
@@ -1665,7 +1670,7 @@ export async function createWorkflowStepsFromGraphInput({
   // It is intentionally `undefined` on whatIf — the caller must only attach it to
   // the REAL submit body, mirroring `generateFromGraph` (see below). Return it so
   // the App-Blocks submit path can carry it; the normal path bakes it in directly.
-  const { steps, workflowMetadata } = await createWorkflowStepsFromGraph({
+  const { steps, workflowMetadata, capOutput } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
     user: user && { ...user, tier: externalCtx.user.tier },
@@ -1673,7 +1678,7 @@ export async function createWorkflowStepsFromGraphInput({
     sourceImageIds,
     isGreen,
   });
-  return { steps, workflowMetadata };
+  return { steps, workflowMetadata, capOutput };
 }
 
 type SnippetsPayloadShape = {

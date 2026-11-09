@@ -1999,7 +1999,7 @@ async function createBlockTextToImageStep(opts: {
     // the population phase 3's reject/degrade decision has to be measured on.
     'block'
   );
-  const { steps, workflowMetadata } = await createWorkflowStepsFromGraphInput({
+  const { steps, workflowMetadata, capOutput } = await createWorkflowStepsFromGraphInput({
     input: opts.input,
     externalCtx,
     user: { id: opts.user.id, isModerator: opts.user.isModerator },
@@ -2056,6 +2056,7 @@ async function createBlockTextToImageStep(opts: {
         ? { ...workflowMetadata, [WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY]: modelSubstitutions }
         : workflowMetadata,
     modelSubstitutions,
+    capOutput,
   };
 }
 
@@ -7635,11 +7636,12 @@ export const blocksRouter = router({
         // `createBlockTextToImageStep` returns it. Mirrors the normal form path
         // (`generateFromGraph` passes `metadata: workflowMetadata`). `removeEmpty`
         // already stripped fields the block context lacks (e.g. remixOfId).
-        const { step, workflowMetadata, modelSubstitutions } = await createBlockTextToImageStep({
-          input: generateInput,
-          user,
-          isGreen,
-        });
+        const { step, workflowMetadata, modelSubstitutions, capOutput } =
+          await createBlockTextToImageStep({
+            input: generateInput,
+            user,
+            isGreen,
+          });
         const submitted = await submitWorkflow({
           token,
           body: {
@@ -7648,8 +7650,13 @@ export const blocksRouter = router({
             currencies,
             metadata: workflowMetadata,
             // Authoritative maturity clamp on the REAL submit — the orchestrator
-            // rejects mature output when this is false. Token-claim derived.
-            ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+            // rejects mature output when this is false. Token-claim derived, and a base-model
+            // licence that caps output holds the submit to PG-13 whatever the token allows.
+            ...(capOutput
+              ? { nsfwLevel: 'pg13' as const, allowMatureContent: false }
+              : allowMatureContent === false
+              ? { allowMatureContent: false }
+              : {}),
             // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s
             // OWN internal 3× retry of THIS call — collapses to the existing
             // workflow on the orchestrator (dedupe on (userId, externalId)) → no

@@ -1401,7 +1401,7 @@ describe('classifyException — GROUP D: bizlogic phrasings (moderation + SFW-mo
   it.each([
     ['The prompt has been blocked due to mature content, which is not allowed on this site'],
     [
-      'The prompt has been blocked due to mature content, which private and in-training resources cannot generate',
+      'The prompt has been blocked due to mature content, which the resources or workflow in this generation cannot produce',
     ],
   ])('tags the mature-content block %j as bizlogic', (value) => {
     const r = classifyException(exc('TRPCClientError', value));

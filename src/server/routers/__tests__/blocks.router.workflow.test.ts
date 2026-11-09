@@ -5496,6 +5496,23 @@ describe('blocks workflow — color-domain maturity enforcement', () => {
       expect(lastSubmitBody()).not.toHaveProperty('allowMatureContent');
     });
 
+    it('a base-model licence that caps output holds a mature token to PG-13 on the real submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, domain: 'red', maxBrowsingLevel: ALL_CEILING })
+      );
+      mockCreateStepsFromGraph.mockResolvedValue({
+        steps: [{ $type: 'textToImage', name: 's1', input: {} }],
+        workflowMetadata: undefined,
+        capOutput: true,
+      });
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(lastSubmitBody()).toMatchObject({ nsfwLevel: 'pg13', allowMatureContent: false });
+    });
+
     it('legacy token (no claim) FAILS CLOSED to SFW on the real submit', async () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
       happyVersionLookup();

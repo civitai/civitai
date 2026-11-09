@@ -10,8 +10,7 @@ import { familyResources, familyScope, makeTextBlock, type FamilyExt } from '../
  */
 
 // The official version id; the handler throws while it is unset. Registering this graph in the hub
-// also needs quantity capped at 4, the orchestrator's limit for this model. Do not register it before
-// generation enforces the licence's `capGenerationOutput` flag: until then nothing caps its output.
+// also needs quantity capped at 4, the orchestrator's limit for this model.
 export const fibo2VersionId: number | undefined = undefined;
 
 export type Fibo2Model = 'dev' | 'editTurbo';
