@@ -58,6 +58,15 @@ export const REFUSAL_STATUS: Record<Refusal, number> = {
 export const dealPercentOff = (price: number, listPrice: number) =>
   listPrice > 0 ? Math.max(0, Math.round((1 - price / listPrice) * 100)) : 0;
 
+/**
+ * How much more Buzz a pack gives than its list price buys at the base rate, in whole percent.
+ * Rounded down so the label never overstates; a deal's discount is shown on its own tag.
+ */
+export const packBonusPercent = (buzz: number | null, listPrice: number, goldPerBuzz: number) =>
+  buzz && listPrice > 0 && goldPerBuzz > 0
+    ? Math.max(0, Math.floor(((buzz * goldPerBuzz - listPrice) * 100) / listPrice))
+    : 0;
+
 const TIER = { bronze: 'Bronze', silver: 'Silver', gold: 'Gold' } as const;
 export const tierName = (tier: string | null) =>
   tier && tier in TIER ? TIER[tier as keyof typeof TIER] : tier ?? '';

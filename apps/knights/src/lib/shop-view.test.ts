@@ -9,6 +9,7 @@ import {
   dealPercentOff,
   membershipPerksUrl,
   durationLabel,
+  packBonusPercent,
   packNote,
   refusalText,
   tierName,
@@ -64,6 +65,16 @@ describe('shop wording', () => {
     expect(dealPercentOff(0, 0)).toBe(0);
     expect(dealPercentOff(5, 0)).toBe(0);
     expect(dealPercentOff(120, 100)).toBe(0);
+  });
+
+  it('states a Buzz pack bonus against the base rate, rounded down so it never overstates', () => {
+    // 20 gold = 1 Buzz: 2,800 Buzz at the base rate would cost 56,000 gold.
+    expect(packBonusPercent(2800, 52_000, 20)).toBe(7);
+    expect(packBonusPercent(10_500, 184_000, 20)).toBe(14);
+    expect(packBonusPercent(1000, 20_000, 20)).toBe(0);
+    expect(packBonusPercent(900, 20_000, 20)).toBe(0);
+    expect(packBonusPercent(1000, 0, 20)).toBe(0);
+    expect(packBonusPercent(null, 20_000, 20)).toBe(0);
   });
 
   it('names tiers and durations', () => {
