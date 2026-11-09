@@ -41,7 +41,6 @@ import {
   IconTagOff,
   IconTrash,
 } from '@tabler/icons-react';
-import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
@@ -92,6 +91,7 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { Gated } from '~/components/Gated/Gated';
+import { buildModelMetaDescription } from '~/components/Model/model-meta-description';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { modelOgEndpoint } from '~/components/Meta/og-image-url';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
@@ -162,6 +162,7 @@ import { getDefaultModelVersion } from '~/server/services/model-version.service'
 import { getServerBrowsingLevel, getServerImageQueryFilters } from '~/server/utils/browsing-level';
 import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { isMobileUserAgent } from '~/shared/utils/mobile-user-agent';
 import {
   getIsSafeBrowsingLevel,
   publicBrowsingLevelsFlag,
@@ -441,7 +442,7 @@ export const getServerSideProps = createServerSideProps({
     }
 
     return {
-      props: { id },
+      props: { id, initialMobile: isMobileUserAgent(ctx.req.headers['user-agent']) },
       gating,
       suppressAds,
     };
@@ -450,6 +451,7 @@ export const getServerSideProps = createServerSideProps({
 
 export default function ModelDetailsV2({
   id,
+  initialMobile,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
 
@@ -877,12 +879,13 @@ export default function ModelDetailsV2({
   const thumbsUpCount = model.rank?.thumbsUpCountAllTime ?? 0;
   const thumbsDownCount = model.rank?.thumbsDownCountAllTime ?? 0;
   const totalRatingCount = thumbsUpCount + thumbsDownCount;
+  const plainDescription = removeTags(model.description ?? '');
   const metaSchema = {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
     applicationCategory: 'Multimedia',
     applicationSubCategory: `${selectedEcosystemName} Model`,
-    description: removeTags(model.description ?? ''),
+    description: plainDescription,
     name: model.name,
     image: imageUrl,
     // Google rejects an aggregateRating whose item has no author, so deleted users get a placeholder.
@@ -943,7 +946,15 @@ export default function ModelDetailsV2({
         title: `${model.name}${
           selectedVersion ? ' - ' + selectedVersion.name : ''
         } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`,
-        description: truncate(removeTags(model.description ?? ''), { length: 150 }),
+        description: buildModelMetaDescription({
+          name: model.name,
+          ecosystemName: selectedEcosystemName,
+          typeName: getDisplayName(model.type),
+          creator: !model.user.deletedAt ? model.user.username : undefined,
+          downloads: model.rank?.downloadCountAllTime,
+          likes: model.rank?.thumbsUpCountAllTime,
+          description: plainDescription,
+        }),
         images: versionImages,
         ogEndpoint: modelOgEndpoint(model),
         canonical: `/models/${model.id}/${slugit(model.name)}`,
@@ -1638,6 +1649,7 @@ export default function ModelDetailsV2({
                   version={selectedVersion}
                   image={image}
                   onFavoriteClick={handleToggleFavorite}
+                  initialMobile={initialMobile}
                 />
               )}
             </PageStack>
