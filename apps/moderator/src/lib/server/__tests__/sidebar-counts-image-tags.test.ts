@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { imageTagsCount } = vi.hoisted(() => ({ imageTagsCount: vi.fn() }));
+const { imageTagsCount, logToAxiom } = vi.hoisted(() => ({
+  imageTagsCount: vi.fn(),
+  logToAxiom: vi.fn(async () => undefined),
+}));
+
+vi.mock('../axiom', () => ({ logToAxiom }));
 
 vi.mock('../cache', () => ({
   createCache: ({ fetch }: { fetch: () => Promise<unknown> }) => ({ get: () => fetch() }),
@@ -15,7 +20,9 @@ const redis = vi.hoisted(() => {
       store.set(key, value);
       return 'OK';
     }),
-    del: vi.fn(async (key: string) => Number(store.delete(key))),
+    eval: vi.fn(async (_script: string, opts: { keys: string[]; arguments: string[] }) =>
+      store.get(opts.keys[0]) === opts.arguments[0] ? Number(store.delete(opts.keys[0])) : 0
+    ),
   };
 });
 
@@ -136,13 +143,43 @@ describe('the image-tags scan is single-flight across servers', () => {
     expect(imageTagsCount).toHaveBeenCalledTimes(2);
   });
 
-  it('releases the lock when the scan fails', async () => {
-    imageTagsCount.mockRejectedValue(new Error('statement timeout'));
+  it('keeps the lock after a failed scan, so it is retried when the lock expires and not every refresh', async () => {
+    imageTagsCount.mockRejectedValue(new Error('canceling statement due to statement timeout'));
+
     const { unavailable } = await getSidebarCounts();
     await vi.advanceTimersByTimeAsync(0);
-
     expect(unavailable).toContain('imageTags');
-    expect(lockKey()).toBeUndefined();
+    expect(lockKey()).toBeDefined();
+
+    await getSidebarCounts();
+    expect(imageTagsCount).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs a failed scan with the part and the error message', async () => {
+    imageTagsCount.mockRejectedValue(new Error('canceling statement due to statement timeout'));
+
+    await getSidebarCounts();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(logToAxiom).toHaveBeenCalledWith({
+      type: 'sidebar-count-fill-failed',
+      part: 'image-tags',
+      message: 'canceling statement due to statement timeout',
+    });
+  });
+
+  it("does not release a lock another server took after this one's expired", async () => {
+    let land!: (count: number) => void;
+    imageTagsCount.mockReturnValue(new Promise<number>((resolve) => (land = resolve)));
+    const pending = getSidebarCounts();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await pending;
+
+    redis.store.set(lockKey()!, 'another-servers-token');
+    land(5);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(redis.store.get(lockKey()!)).toBe('another-servers-token');
   });
 
   it('holds the lock for longer than the scan is allowed to run', async () => {

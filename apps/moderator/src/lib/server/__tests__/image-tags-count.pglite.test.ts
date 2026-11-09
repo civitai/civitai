@@ -52,7 +52,7 @@ describe('countImageTagsNeedingReview', () => {
     expect(await countImageTagsNeedingReview()).toBe(2);
   });
 
-  it('runs the scan in a read-only transaction under a statement timeout', async () => {
+  it('runs the scan in a transaction under a statement timeout', async () => {
     statements.length = 0;
 
     await countImageTagsNeedingReview();

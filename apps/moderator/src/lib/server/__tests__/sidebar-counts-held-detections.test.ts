@@ -29,7 +29,9 @@ const redis = vi.hoisted(() => {
       store.set(key, value);
       return 'OK';
     }),
-    del: vi.fn(async (key: string) => Number(store.delete(key))),
+    eval: vi.fn(async (_script: string, opts: { keys: string[]; arguments: string[] }) =>
+      store.get(opts.keys[0]) === opts.arguments[0] ? Number(store.delete(opts.keys[0])) : 0
+    ),
   };
 });
 

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { sql } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import {
@@ -5,6 +6,7 @@ import {
   ORCHESTRATION_FEEDBACK_AREA,
 } from '@civitai/shared/feedback.constants';
 import { prefixCacheKey, type RedisKeyTemplateCache } from '@civitai/redis';
+import { logToAxiom } from './axiom';
 import { createCache } from './cache';
 import { dbRead } from './db';
 import { bounded } from './bounded';
@@ -63,16 +65,23 @@ const lastGoodKey = (part: string) =>
 const fillLockKey = (part: string) =>
   prefixCacheKey(`mod:sidebar-counts:fill-lock:${part}`) as RedisKeyTemplateCache;
 
+/** Deletes the lock only while it still holds this server's token, so a lock that expired and was taken by another server is not released from under it. */
+const RELEASE_LOCK = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0`;
+
 /**
  * A part of a badge sum, waited on for `ms` at most. A late or failed fill is answered with the last
  * value any server landed in the past `LAST_GOOD_MS`: stale by what changed since, not missing. Null
  * only when there is none. Kept in Redis, not in this process: every server fills the shared counts,
  * so a per-process value made consecutive refreshes disagree (see `cache.ts`).
  *
+ * A failed fill is logged with the part and the error message, whatever the part.
+ *
  * `lockSeconds`: a fill that outlives its wait keeps running (nothing cancels the query), and the
  * counts refill every minute, so a slow part would stack scans. With it, one server at a time runs the
- * fill, holding a Redis lock until the fill settles or `lockSeconds` passes (set it longer than the
- * query can run); a refresh that does not get the lock answers from the last value.
+ * fill, holding a Redis lock (set `lockSeconds` longer than the query can run). The lock is released
+ * when the fill lands; after a failed fill it is kept until it expires, so a fill that keeps failing is
+ * retried every `lockSeconds`, not every minute. A refresh that does not get the lock answers from the
+ * last value.
  */
 async function withLastGood<T>(
   part: string,
@@ -82,24 +91,33 @@ async function withLastGood<T>(
 ): Promise<T | null> {
   const key = lastGoodKey(part);
   const lock = lockSeconds ? fillLockKey(part) : null;
+  const token = randomUUID();
   let fresh: T | null = null;
   const locked =
     lock === null ||
     (await getRedis()
-      .set(lock, '1', { NX: true, EX: lockSeconds })
+      .set(lock, token, { NX: true, EX: lockSeconds })
       .then((reply) => reply !== null)
       .catch(() => false));
   if (locked) {
     const fill = run();
     // A fill that outlives the wait still lands, so the next refresh has it.
     fill
-      .then((value) =>
-        getRedis().set(key, JSON.stringify({ value, at: Date.now() }), { EX: LAST_GOOD_MS / 1000 })
+      .then(
+        async (value) => {
+          await getRedis()
+            .set(key, JSON.stringify({ value, at: Date.now() }), { EX: LAST_GOOD_MS / 1000 })
+            .catch(() => undefined);
+          if (lock) await getRedis().eval(RELEASE_LOCK, { keys: [lock], arguments: [token] });
+        },
+        (error: unknown) =>
+          void logToAxiom({
+            type: 'sidebar-count-fill-failed',
+            part,
+            message: error instanceof Error ? error.message : String(error),
+          }).catch(() => undefined)
       )
-      .catch(() => undefined)
-      .finally(() => {
-        if (lock) void Promise.resolve(getRedis().del(lock)).catch(() => undefined);
-      });
+      .catch(() => undefined);
     fresh = await bounded(() => fill, ms);
   }
   if (fresh !== null) return fresh;
