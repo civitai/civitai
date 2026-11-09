@@ -51,6 +51,7 @@ import type {
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
   SetCollectionAiReviewInput,
+  SetCollectionArchivedInput,
 } from '~/server/schema/collection.schema';
 import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -158,6 +159,9 @@ export type CollectionContributorPermissionFlags = {
   isContributor: boolean;
   isCollaborator: boolean;
   collaborationDisabled: boolean;
+  // Archived collections stay readable but accept no new entries — write/writeReview are
+  // forced false for everyone, the owner and moderators included.
+  archived: boolean;
   isOwner: boolean;
   followPermissions: CollectionContributorPermission[];
   publicCollection: boolean;
@@ -256,6 +260,7 @@ export async function getUserCollectionPermissionsByIds({
     mode: CollectionMode | null;
     contributorPermissions: CollectionContributorPermission[] | null;
     collaborationDisabledAt: Date | null;
+    archivedAt: Date | null;
     hasAcceptedSeat: boolean;
   };
 
@@ -268,6 +273,7 @@ export async function getUserCollectionPermissionsByIds({
       c.type::"CollectionType" as "type",
       c.mode::"CollectionMode" as "mode",
       c."collaborationDisabledAt",
+      c."archivedAt",
       ${
         userId
           ? Prisma.sql`cc.permissions as "contributorPermissions", ci.id IS NOT NULL as "hasAcceptedSeat"`
@@ -305,6 +311,7 @@ export async function getUserCollectionPermissionsByIds({
       isContributor: false,
       isCollaborator: false,
       collaborationDisabled: !!collection.collaborationDisabledAt,
+      archived: !!collection.archivedAt,
       isOwner: false,
       publicCollection: false,
       followPermissions: [],
@@ -410,6 +417,17 @@ export async function getUserCollectionPermissionsByIds({
     return permissions;
   });
 
+  // Archive is an absolute write block, applied after every per-user grant above so it also
+  // closes the owner and moderator branches — an archived collection accepts no new entries
+  // from anyone until it's unarchived. Read/manage are untouched, so the owner can still view
+  // it and unarchive it.
+  for (const permission of results) {
+    if (permission.archived) {
+      permission.write = false;
+      permission.writeReview = false;
+    }
+  }
+
   return results;
 }
 
@@ -478,6 +496,7 @@ function createEmptyPermissions(collectionId: number): CollectionContributorPerm
     isContributor: false,
     isCollaborator: false,
     collaborationDisabled: false,
+    archived: false,
     isOwner: false,
     publicCollection: false,
     followPermissions: [],
@@ -496,6 +515,7 @@ type CollectionForPermission = {
   imageId?: number;
   type?: CollectionType;
   mode?: CollectionMode | null;
+  archivedAt?: Date | null;
 };
 
 export const getUserCollectionsWithPermissions = async <
@@ -510,14 +530,21 @@ export const getUserCollectionsWithPermissions = async <
     permission,
     contributingOnly = true,
     includeActiveContests = false,
+    excludeArchived = false,
     contestModelId,
   } = input;
   let { permissions = [] } = input;
   // By default, owned collections will be always returned
   const AND: Prisma.Sql[] = [];
   const SELECT: Prisma.Sql = Prisma.raw(
-    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type", c."mode", c."createdAt", c."updatedAt"`
+    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type", c."mode", c."archivedAt", c."createdAt", c."updatedAt"`
   );
+
+  // The "Save to collection" picker passes this to drop archived collections from every branch;
+  // management surfaces (MyCollections) leave it off so the owner can still see and unarchive them.
+  const excludeArchivedFilter = excludeArchived
+    ? Prisma.sql`AND c."archivedAt" IS NULL`
+    : Prisma.empty;
 
   if (input.type) {
     AND.push(Prisma.sql`(c."type" = ${input.type}::"CollectionType" OR c."type" IS NULL)`);
@@ -538,6 +565,7 @@ export const getUserCollectionsWithPermissions = async <
       FROM "Collection" c
       WHERE "userId" = ${userId}
         ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+        ${excludeArchivedFilter}
 
     )`,
   ];
@@ -552,6 +580,7 @@ export const getUserCollectionsWithPermissions = async <
       FROM "Collection" c
       WHERE "write" = ${CollectionWriteConfiguration.Public}::"CollectionWriteConfiguration"
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+          ${excludeArchivedFilter}
     `);
   }
 
@@ -569,6 +598,7 @@ export const getUserCollectionsWithPermissions = async <
       WHERE "read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"
         ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
         ${excludeContests}
+        ${excludeArchivedFilter}
 
     `);
   }
@@ -587,6 +617,7 @@ export const getUserCollectionsWithPermissions = async <
           AND cc."collectionId" IS NOT NULL
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
           ${excludeContests}
+          ${excludeArchivedFilter}
     )`);
   }
 
@@ -616,6 +647,7 @@ export const getUserCollectionsWithPermissions = async <
             WHERE m."id" = ${contestModelId} AND m."userId" = ${userId}
           )
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+          ${excludeArchivedFilter}
         LIMIT 100
     )`);
   }
@@ -825,6 +857,38 @@ export async function getPendingCollectionReviewCounts({
 
   return { total, byCollection };
 }
+
+// Archiving keeps the collection readable but drops it out of the "Save to collection" picker
+// and blocks new entries; unarchiving clears the timestamp. Scoped to the owner (moderators
+// exempt) so a direct call can't archive someone else's collection even though the router
+// already gates on ownership. Bookmark collections (a user's Liked/Favorites) are refused: the
+// UI offers no archive toggle for them, so archiving one via a direct call would strand it with
+// no in-product way back.
+export const setCollectionArchived = async ({
+  id,
+  archived,
+  userId,
+  isModerator,
+}: SetCollectionArchivedInput & { userId: number; isModerator?: boolean }) => {
+  const collection = await dbRead.collection.findUnique({
+    where: { id },
+    select: { id: true, userId: true, mode: true },
+  });
+  if (!collection || (!isModerator && collection.userId !== userId))
+    throw throwNotFoundError(`No collection with id ${id}`);
+  if (collection.mode === CollectionMode.Bookmark)
+    throw throwBadRequestError('Bookmark collections cannot be archived.');
+
+  await dbWrite.collection.update({
+    where: { id },
+    data: { archivedAt: archived ? new Date() : null },
+  });
+
+  await collectionsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await preventReplicationLag('collection', id);
+
+  return { id, archived };
+};
 
 const inputToCollectionType = {
   modelId: CollectionType.Model,
@@ -2407,7 +2471,8 @@ export const getUserCollectionItemsByItem = async ({
 }: {
   input: GetUserCollectionItemsByItemSchema & { userId: number; isModerator?: boolean };
 }) => {
-  const { userId, isModerator, modelId, imageId, articleId, postId, model3dId } = input;
+  const { userId, isModerator, modelId, imageId, articleId, postId, model3dId, excludeArchived } =
+    input;
 
   const userCollections = await getUserCollectionsWithPermissions({
     input: {
@@ -2417,6 +2482,7 @@ export const getUserCollectionItemsByItem = async ({
         CollectionContributorPermission.MANAGE,
       ],
       userId,
+      excludeArchived,
     },
   });
 

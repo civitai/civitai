@@ -262,6 +262,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   the four `ServiceDealFile.malwareScan*` columns: `20261128150000_creator_service_final_malware_scan`
     //   `ApiKey.workerDeviceId`: `20261130120000_worker_identity`
     //   `ServiceOffering.sellerAffirmation`: `20261202120000_service_offering_seller_affirmation`
+    //   `Collection.archivedAt`: `20260831000000_collection_archived_at`
     //   `ModActivity.host`: `20261205120000_mod_activity_host`
     //   `OauthClient.skipConsent` / `OauthClient.tokenRateLimit`: `20261026173940_oauth_client_trusted_settings`
     //   `Comment.removedByAuthor`: `20261210120000_comment_removed_by_author`
@@ -296,6 +297,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ServiceDealFile.malwareScanAttempts',
       'ApiKey.workerDeviceId',
       'ServiceOffering.sellerAffirmation',
+      'Collection.archivedAt',
       'ModActivity.host',
       'OauthClient.skipConsent',
       'OauthClient.tokenRateLimit',
