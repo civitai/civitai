@@ -2143,8 +2143,12 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     });
 
     it('a workflow still reads a link in a $ref-wired text field as an image input', async () => {
-      const steps = body().steps;
-      steps[1] = { ...steps[1], input: { image: { $ref: '$arguments', path: 'prompt' } } };
+      const [gen, , transcode] = body().steps;
+      const upscale = {
+        $type: 'imageUpscaler',
+        input: { image: { $ref: '$arguments', path: 'prompt' } },
+      };
+      const steps = [gen, upscale, transcode];
       await refusedBeforeTheOrchestrator(
         body({ steps, arguments: { prompt: 'https://example.com/a\u0001.png' } })
       );

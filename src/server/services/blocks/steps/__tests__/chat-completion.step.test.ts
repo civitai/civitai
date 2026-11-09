@@ -1657,7 +1657,7 @@ describe('free-text param paths', () => {
     const declared = Object.fromEntries(
       listRegisteredSteps()
         .filter(([, step]) => step.freeTextParamPaths !== undefined)
-        .map(([id, step]) => [id, step.freeTextParamPaths])
+        .map(([id, step]): [string, unknown] => [id, step.freeTextParamPaths])
     );
     expect(declared).toEqual({ 'chat-completion': ['messages[].content'] });
   });
