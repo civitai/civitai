@@ -10,7 +10,7 @@ import type * as Submit from '~/server/services/text-scan/submit';
 /** Reviews written from a post wait for it; a publish now releases them, a scheduled date does not. */
 
 const { sync } = vi.hoisted(() => ({
-  sync: vi.fn<ReviewVisibility['syncReviewsOfMovedPosts']>(),
+  sync: vi.fn<(typeof ReviewVisibility)['syncReviewsOfMovedPosts']>(),
 }));
 
 vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
