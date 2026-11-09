@@ -97,7 +97,8 @@ describe('fibo2.handler', () => {
   // A checkpoint kept on an edit would be recorded as a used resource for an image it never ran.
   it('an edit carries no checkpoint', () => {
     const parsed = parse('img2img:edit', { model: FINE_TUNE, images: [IMAGE] });
-    expect(parsed.success && 'model' in parsed.data && parsed.data.model).toBeFalsy();
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && 'model' in parsed.data).toBe(false);
   });
 
   it('refuses to build while the official version id is unset', async () => {

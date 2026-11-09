@@ -9,8 +9,8 @@ import { familyResources, familyScope, makeTextBlock, type FamilyExt } from '../
  * LoRAs, since they are trained against `dev`.
  */
 
-// TODO(fibo2): before registering this graph in the hub, set the official CivitaiOfficial version
-// id (the handler refuses to build while it is unset) and cap quantity at 4, the orchestrator's limit.
+// The official version id; the handler throws while it is unset. Registering this graph in the hub
+// also needs quantity capped at 4, the orchestrator's limit for this model.
 export const fibo2VersionId: number | undefined = undefined;
 
 export type Fibo2Model = 'dev' | 'editTurbo';
@@ -24,8 +24,6 @@ const modelSlider = (model: Fibo2Model, opts: Parameters<typeof sliderDef>[0]) =
   scope: [model],
 });
 
-// Edit offers no checkpoint: it always runs the official editTurbo weights, so a picked fine-tune
-// would be credited for an image it never ran.
 const dev = defineGraph<FamilyExt>()
   .field('model', ({ _ext }) =>
     checkpointDef({ ecosystem: _ext.ecosystem, workflow: _ext.workflow, ext: _ext })
@@ -34,11 +32,12 @@ const dev = defineGraph<FamilyExt>()
   .field('cfgScale', modelSlider('dev', { min: 1, max: 10, step: 0.5, default: 5 }))
   .field('steps', modelSlider('dev', { min: 10, max: 60, default: 30 }));
 
+// No `model` field: an edit always runs the official editTurbo weights, so a picked fine-tune would
+// be credited for an image it never ran.
 const editTurbo = defineGraph<FamilyExt>()
   .field('cfgScale', modelSlider('editTurbo', { min: 1, max: 5, step: 0.5, default: 1 }))
   .field('steps', modelSlider('editTurbo', { min: 1, max: 12, default: 4 }));
 
-/** Tagged: the picked key is stamped into state as `fibo2Model`. */
 const models = branch('fibo2Model', (ext: FamilyExt) => fibo2ModelOf(ext.workflow), {
   dev,
   editTurbo,

@@ -3224,7 +3224,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "Bria AI's Fibo 2.0 text-to-image and image editing model",
     type: 'image',
     ecosystemId: ECO.Fibo2,
-    // Until launch: only moderators see it, and nothing generates on it.
+    // Remove at launch.
     hidden: true,
     licenseId: 55,
   },
