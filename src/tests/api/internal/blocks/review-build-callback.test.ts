@@ -373,7 +373,10 @@ describe('watchReviewApplyJob (reachability gate)', () => {
     [1, true],
     [0, false],
   ])('a live-mark matching %d row(s) settles the build with live=%s', async (matched, live) => {
-    mockMarkPreview.mockResolvedValueOnce(matched as never);
+    // By state, not Once: a watcher started by an earlier handler test can still be running and
+    // would take a Once value meant for this one.
+    mockMarkPreview.mockImplementation((async (_id: string, state: string) =>
+      state === 'preview-live' ? matched : 0) as never);
     mockSettled.mockClear();
     await watchReviewApplyJob({
       publishRequestId: PUBREQ,
@@ -383,6 +386,8 @@ describe('watchReviewApplyJob (reachability gate)', () => {
     });
     await vi.waitFor(() => expect(mockSettled).toHaveBeenCalled());
     expect(mockSettled).toHaveBeenCalledWith({ publishRequestId: PUBREQ, live });
+    expect(mockSettled).not.toHaveBeenCalledWith({ publishRequestId: PUBREQ, live: !live });
+    mockMarkPreview.mockImplementation(async () => undefined);
   });
 
   it('apply succeeded + host NEVER reachable → marks preview-failed with the DNS detail + frees the dedup slot', async () => {
