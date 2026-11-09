@@ -550,7 +550,7 @@
   const featured = $derived(newestFirst.find((e) => e.id === selectedId) ?? recommended);
 
   const publishEpoch = $derived(featured?.modelUrl ? featured : publishTarget);
-  // The dataset-sharing choice the publish entry carries (the in-app trainer asks the same two).
+  // The dataset-sharing choice the publish entry carries.
   let ownRights = $state(false);
   let shareDataset = $state(false);
   let shareTouched = $state(false);

@@ -6,6 +6,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // which this repo's eslint config forbids.
 import type * as FileService from '../file.service';
 import type * as ModelHelpers from '~/server/common/model-helpers';
+import type * as TrainingDataRestricted from '~/server/services/training-data-restricted.service';
 import type * as HotReads5Reads from '~/server/services/hot-reads-5.reads';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import type { ModelType } from '~/shared/utils/prisma/enums';
@@ -112,7 +113,8 @@ vi.mock('~/utils/delivery-worker', () => ({
 
 // Restricted owner or content, for a shared training dataset. Unrestricted unless a test says so.
 const { shareRestrictedMock } = vi.hoisted(() => ({ shareRestrictedMock: vi.fn() }));
-vi.mock('~/server/services/training-data-restricted.service', () => ({
+vi.mock('~/server/services/training-data-restricted.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrainingDataRestricted>()),
   trainingDataShareRestricted: shareRestrictedMock,
 }));
 

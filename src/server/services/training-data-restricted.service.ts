@@ -62,8 +62,8 @@ type ListedFile = { id: number; type: string; visibility: string };
  * Whether a file may be listed: a `Training Data` file is left out where its download would be
  * refused, so the listing never offers one. That is a shared dataset `trainingDataShareRestricted`
  * refuses, or one `trainingDataServableOnHost` refuses on this host. Neither applies to the
- * owner and moderators (`viewerManages`). Versions with no dataset cost no query; when the check
- * can't be read, every dataset among them is left out.
+ * owner and moderators (`viewerManages`). Fails closed: every dataset is left out when the check
+ * can't be read.
  */
 export async function trainingDataListing(
   db: Pick<Prisma.TransactionClient, '$queryRaw'>,

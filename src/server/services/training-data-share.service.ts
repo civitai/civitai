@@ -24,7 +24,6 @@ export function trainingDataShareFromQuery(
 
 type DatasetRow = { id: number; sizeKB: number; metadata: Record<string, unknown> | null };
 
-/** Both answers may only drop. */
 function lowered(stored: TrainingDataShare, next: TrainingDataShare): TrainingDataShare {
   return normalizeTrainingDataShare({
     ownRights: stored.ownRights && next.ownRights,
