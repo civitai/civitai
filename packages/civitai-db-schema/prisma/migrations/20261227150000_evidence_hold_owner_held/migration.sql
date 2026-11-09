@@ -12,6 +12,17 @@
 -- (as `holdLegsSql` does), or captures lose their keep. Carry
 -- 20261231130100_feedback_capture_hold_lifetime's capture clauses into evidence_hold_purge_unheld and
 -- evidence_hold_guard_kept below too.
+--
+-- Until those clauses are carried in, the block below refuses this file on a database that has the
+-- capture migrations (applied as written, it would drop every capture clause). Remove the block in
+-- the same change that carries them. Apply as one transaction
+-- (psql -v ON_ERROR_STOP=1 --single-transaction -f migration.sql) so the refusal stops the file.
+DO $$
+BEGIN
+  IF to_regprocedure('evidence_hold_capture_held(integer,text,text,boolean)') IS NOT NULL THEN
+    RAISE EXCEPTION '20261227150000_evidence_hold_owner_held does not yet carry the feedback capture clauses of 20261231120100 and 20261231130100: carry them in, and remove this block, before applying it';
+  END IF;
+END $$;
 
 -- Whether owner `uid` is held. The same answer as `ownerHeldSql` in
 -- src/server/services/legal-hold.service.ts (every account hold, the placeholder owner, the marker),

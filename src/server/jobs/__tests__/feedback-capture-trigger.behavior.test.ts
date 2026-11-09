@@ -328,11 +328,39 @@ describe('20261231130100_feedback_capture_hold_lifetime', () => {
       await fresh.exec(BASE_SCHEMA);
       await fresh.exec(LIVE_EVIDENCE_HOLD);
       await fresh.exec(LIVE_KEEP_IMAGE);
-      await fresh.exec(CAPTURE_MIGRATION);
       await fresh.exec(OWNER_HELD_MIGRATION);
+      await fresh.exec(CAPTURE_MIGRATION);
       const before = await defs();
       expect(before.join()).toContain('evidence_hold_owner_held(');
       await expect(fresh.exec(LIFETIME_MIGRATION)).rejects.toThrow(/supersedes it/);
+      expect(await defs()).toEqual(before);
+    } finally {
+      await fresh.close();
+    }
+  });
+
+  it('makes 20261227150000 refuse to drop the capture clauses, leaving the functions in place', async () => {
+    const fresh = new PGlite();
+    const defs = async () =>
+      (
+        await fresh.query<{ def: string }>(
+          `SELECT pg_get_functiondef(p.oid) AS def FROM pg_proc p
+           WHERE p.proname IN ('evidence_hold_keep_image', 'evidence_hold_purge_unheld', 'evidence_hold_guard_kept')
+           ORDER BY p.proname`
+        )
+      ).rows.map((r) => r.def);
+    try {
+      await fresh.exec(BASE_SCHEMA);
+      await fresh.exec(LIVE_EVIDENCE_HOLD);
+      await fresh.exec(LIVE_KEEP_IMAGE);
+      await fresh.exec(CAPTURE_MIGRATION);
+      await fresh.exec(NEVER_SUBJECT_MIGRATION);
+      await fresh.exec(LIFETIME_MIGRATION);
+      const before = await defs();
+      expect(before).toHaveLength(3);
+      await expect(fresh.exec(OWNER_HELD_MIGRATION)).rejects.toThrow(
+        /does not yet carry the feedback capture clauses/
+      );
       expect(await defs()).toEqual(before);
     } finally {
       await fresh.close();
