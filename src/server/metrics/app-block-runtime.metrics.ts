@@ -1308,9 +1308,12 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // is known and before the operation runs, whatever its outcome: the question it answers is "who
   // still calls the old routes", so a refused call is still a caller. Both labels are closed sets;
   // no app label (the per-app split is `civitai_app_block_requests_total`).
+  // 🔴 NOT `civitai_app_block_storage_ops_total`: that name is the legacy KV datastore's counter
+  // (`appStorageOpsCounter` in @civitai/telemetry, labels op/outcome). Sharing it would make
+  // whichever registers second inherit the other's labels and silently drop every increment.
   const storageOpsTotal = getOrCreateCounter(
     reg,
-    'civitai_app_block_storage_ops_total',
+    'civitai_app_block_doc_store_tally_ops_total',
     'App Blocks storage tally operations dispatched, by op (inc|mark|unmark) and route (legacy = the deprecated POST …/counters/:name and PUT|DELETE …/marks/:name, v2 = PATCH /:coll/:key with an update operator). Counted before the operation runs, whatever its outcome; every series is published at 0 from the first scrape',
     ['op', 'route']
   );
@@ -2004,10 +2007,10 @@ export function recordDocStoreError(endpoint: DocStoreEndpoint, code: StorageApi
   }
 }
 
-/** The update operators a storage tally can be (`civitai_app_block_storage_ops_total{op}`). */
+/** The update operators a storage tally can be (`civitai_app_block_doc_store_tally_ops_total{op}`). */
 export const STORAGE_TALLY_OPS = ['inc', 'mark', 'unmark'] as const;
 export type StorageTallyOp = (typeof STORAGE_TALLY_OPS)[number];
-/** The routes a storage tally can arrive on (`civitai_app_block_storage_ops_total{route}`). */
+/** The routes a storage tally can arrive on (`civitai_app_block_doc_store_tally_ops_total{route}`). */
 export const STORAGE_TALLY_ROUTES = ['legacy', 'v2'] as const;
 export type StorageTallyRoute = (typeof STORAGE_TALLY_ROUTES)[number];
 

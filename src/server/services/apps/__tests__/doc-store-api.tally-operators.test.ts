@@ -802,11 +802,12 @@ describe('the report mark', () => {
   it('the reports-per-day limit is ONE budget across both routes', async () => {
     expect(DOC_STORE_REPORT_RATE_LIMIT_MAX).toBeLessThan(DOC_STORE_TALLY_RATE_LIMIT_MAX);
     const app = freshApp();
-    for (let i = 0; i < DOC_STORE_REPORT_RATE_LIMIT_MAX; i++) await putPost(app, `r${i}`);
-    // Alternate the routes: each report spends from the same daily bucket.
+    await putPost(app, 'r0');
+    // Alternate the routes: each report spends from the same daily bucket, even a repeat of one
+    // already filed (the mark itself is idempotent).
     for (let i = 0; i < DOC_STORE_REPORT_RATE_LIMIT_MAX; i++) {
       const route = i % 2 === 0 ? 'legacy' : 'v2';
-      expect((await send(app, 'v3', route, 'mark', 'posts', `r${i}`, 'report')).status).toBe(200);
+      expect((await send(app, 'v3', route, 'mark', 'posts', 'r0', 'report')).status).toBe(200);
     }
     for (const route of ROUTES) {
       const r = await send(app, 'v3', route, 'mark', 'posts', 'r0', 'report');
@@ -944,7 +945,9 @@ describe('🔴 REGRESSION: a tally never changes a document body or its registry
     const regBefore = await registry();
     const rowsBefore = await rows();
     expect(regBefore.posts).toHaveLength(1);
-    for (const who of ['v2', 'v3'] as const) {
+    // The AUTHOR too: a write into `data` would succeed for them, so it could not hide behind
+    // a not_author refusal.
+    for (const who of ['v1', 'v2', 'v3'] as const) {
       expect((await send(app, who, route, 'inc', 'posts', 'reg', 'views', { by: 3 })).status).toBe(
         200
       );
@@ -957,9 +960,9 @@ describe('🔴 REGRESSION: a tally never changes a document body or its registry
     // The tallies landed (positive control) ...
     const snap = await snapshot(app, 'posts', 'reg');
     expect(snap.tallies).toEqual([
-      { kind: 'counter', name: 'views', count: 6 },
-      { kind: 'mark', name: 'report', count: 2 },
-      { kind: 'mark', name: 'vote', count: 1 },
+      { kind: 'counter', name: 'views', count: 9 },
+      { kind: 'mark', name: 'report', count: 3 },
+      { kind: 'mark', name: 'vote', count: 2 },
     ]);
     // ... and neither the bodies, the versions, the seqs nor the registry's view moved.
     expect(await rows()).toEqual(rowsBefore);
@@ -1018,8 +1021,8 @@ describe('deprecation: the old routes say so, the PATCH does not', () => {
   });
 });
 
-describe('civitai_app_block_storage_ops_total{op, route}', () => {
-  const METRIC = 'civitai_app_block_storage_ops_total';
+describe('civitai_app_block_doc_store_tally_ops_total{op, route}', () => {
+  const METRIC = 'civitai_app_block_doc_store_tally_ops_total';
   async function count(op: string, route: string): Promise<number> {
     const metric = client.register.getSingleMetric(METRIC) as
       | { get(): Promise<{ values: { labels: Record<string, string>; value: number }[] }> }

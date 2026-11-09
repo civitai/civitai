@@ -519,7 +519,7 @@ export function parseTallyPatch(
 
 /**
  * Sent on every response of a deprecated per-tally route. No `Sunset`: removal waits for the
- * usage `civitai_app_block_storage_ops_total{route="legacy"}` shows.
+ * usage `civitai_app_block_doc_store_tally_ops_total{route="legacy"}` shows.
  */
 export const LEGACY_TALLY_HEADERS = {
   Deprecation: 'true',

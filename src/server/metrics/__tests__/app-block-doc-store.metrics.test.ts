@@ -283,7 +283,7 @@ describe('seeded series', () => {
     );
     const reg = new Registry();
     seedAppBlockDocStoreMetrics(reg);
-    const ops = await values('civitai_app_block_storage_ops_total', reg);
+    const ops = await values('civitai_app_block_doc_store_tally_ops_total', reg);
     expect(ops.map((v) => `${v.labels.op}|${v.labels.route}`).sort()).toEqual(
       ['inc|legacy', 'inc|v2', 'mark|legacy', 'mark|v2', 'unmark|legacy', 'unmark|v2'].sort()
     );
