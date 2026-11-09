@@ -147,3 +147,19 @@ export async function releasePendingReviewsForPosts(
     await createResourceReviewNotification(review).catch(() => undefined);
   return released;
 }
+
+/**
+ * The reviews written from these posts count as pending again once the posts are taken down:
+ * touched so the metric jobs recount them, the rating totals busted. Nobody is notified.
+ */
+export async function refreshReviewsForUnpublishedPosts(postIds: number[]) {
+  if (!postIds.length) return [];
+  const refreshed = await dbWrite.$queryRaw<{ modelId: number; modelVersionId: number }[]>`
+    UPDATE "ResourceReview"
+    SET "updatedAt" = now()
+    WHERE "postId" IN (${Prisma.join(postIds)})
+    RETURNING "modelId", "modelVersionId"
+  `;
+  if (refreshed.length) await bustRatingTotalsForRows(refreshed).catch(() => undefined);
+  return refreshed;
+}

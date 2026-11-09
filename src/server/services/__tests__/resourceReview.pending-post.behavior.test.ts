@@ -45,9 +45,11 @@ vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
 
 const { createResourceReview, getResourceReview, getUserRatingTotals, upsertResourceReview } =
   await import('~/server/services/resourceReview.service');
-const { releasePendingReviewsForPosts, visibleReviewForViewerSql } = await import(
-  '~/server/services/resourceReview.visibility'
-);
+const {
+  refreshReviewsForUnpublishedPosts,
+  releasePendingReviewsForPosts,
+  visibleReviewForViewerSql,
+} = await import('~/server/services/resourceReview.visibility');
 
 const AUTHOR = 42;
 const MODEL_OWNER = 7;
@@ -306,5 +308,29 @@ describe('against Postgres', () => {
     await releasePendingReviewsForPosts([LIVE], { onlyUnreleased: true });
 
     expect(createNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('recounts the reviews of an unpublished post without notifying anyone', async () => {
+    await pg.exec(`UPDATE "Post" SET "publishedAt" = NULL WHERE id = ${LIVE}`);
+    await insertReviews([
+      [1, 101, LIVE],
+      [2, 102, SCHEDULED],
+      [3, 103, null],
+    ]);
+
+    await refreshReviewsForUnpublishedPosts([LIVE]);
+
+    const { rows } = await pg.query<{ id: number; touched: boolean }>(
+      `SELECT id, "updatedAt" > now() - interval '1 minute' AS touched FROM "ResourceReview" ORDER BY id`
+    );
+    expect(rows).toEqual([
+      { id: 1, touched: true },
+      { id: 2, touched: false },
+      { id: 3, touched: false },
+    ]);
+    expect(bustRatingTotalsForRows).toHaveBeenCalledExactlyOnceWith([
+      expect.objectContaining({ modelId: 10, modelVersionId: 21 }),
+    ]);
+    expect(createNotification).not.toHaveBeenCalled();
   });
 });

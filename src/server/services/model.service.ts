@@ -87,6 +87,7 @@ import {
   userModelCountCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { refreshUnpublishedPostReviews } from '~/server/services/post.service';
 import {
   bustModelGallerySettings,
   getCreatorGalleryHiddenUserIds,
@@ -5332,6 +5333,7 @@ export const unpublishModelById = async ({
       select: { id: true },
     });
     void onStorySparkPostsHidden({ postIds: posts.map((x) => x.id) });
+    refreshUnpublishedPostReviews(posts.map((x) => x.id));
     const images = await dbWrite.image.findMany({
       where: { postId: { in: posts.map((x) => x.id) } },
       select: { id: true },

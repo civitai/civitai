@@ -168,7 +168,11 @@ import {
   getOrchestratorVersionAirs,
 } from '~/server/services/orchestrator/models';
 import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
-import { addPostImage, createPost } from '~/server/services/post.service';
+import {
+  addPostImage,
+  createPost,
+  refreshUnpublishedPostReviews,
+} from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
   runClickHouseRead,
@@ -2424,6 +2428,7 @@ export const unpublishModelVersionById = async ({
     select: { id: true },
   });
   void onStorySparkPostsHidden({ postIds: posts.map((x) => x.id) });
+  refreshUnpublishedPostReviews(posts.map((x) => x.id));
   const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },

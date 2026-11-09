@@ -24,7 +24,10 @@ import {
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { releasePendingReviewsForPosts } from '~/server/services/resourceReview.visibility';
+import {
+  refreshReviewsForUnpublishedPosts,
+  releasePendingReviewsForPosts,
+} from '~/server/services/resourceReview.visibility';
 import {
   imageMetaCache,
   imageResourcesCache,
@@ -1257,9 +1260,27 @@ export async function afterPostsPublish(posts: { postId: number; userId: number 
   await userImageVideoCountCaches.refresh(userIds);
 }
 
+/**
+ * After an unpublish has committed, the reviews written from those posts stop counting. Never
+ * throws: the posts are already down, and a failure leaves only stale counts.
+ */
+export function refreshUnpublishedPostReviews(postIds: number[]) {
+  if (!postIds.length) return;
+  void refreshReviewsForUnpublishedPosts(postIds).catch((error) =>
+    logToAxiom({
+      name: 'post-service',
+      type: 'error',
+      message: 'Failed to recount the resource reviews of unpublished posts',
+      postIds,
+      error: (error as Error)?.message,
+    }).catch(() => undefined)
+  );
+}
+
 /** Everything an unpublish needs besides the write: the images leave search, the counts drop. */
 export async function afterPostsUnpublish(posts: { postId: number; userId: number }[]) {
   if (!posts.length) return;
+  refreshUnpublishedPostReviews(posts.map((post) => post.postId));
   void onStorySparkPostsHidden({ postIds: posts.map((post) => post.postId) });
   const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((post) => post.postId) } },
