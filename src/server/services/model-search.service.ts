@@ -4,6 +4,7 @@ import type { SessionUser } from '~/types/session';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import { publicFileMetadata } from '~/server/utils/public-file-metadata';
 import {
   isTransientMeiliError,
   MeiliCallTimeoutError,
@@ -361,6 +362,7 @@ export async function runModelSearch(
                 // it out of the response.
                 .map(({ hashes, modelVersionId: _ownerVersionId, ...file }) => ({
                   ...file,
+                  metadata: publicFileMetadata(file.type, file.metadata),
                   name: safeDecodeURIComponent(
                     getDownloadFilename({
                       model,
