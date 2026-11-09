@@ -296,8 +296,6 @@ function runRecordProcedureDuration<T>(
 const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
   const userId = ctx.user?.id;
   recordTrpcCall(ctx.req?.headers, !!ctx.user);
-  // Classified up front (the context is in scope here), recorded when the procedure settles.
-  // Both halves are non-throwing; see trpc-caller.metrics.ts.
   const caller = TRPC_CALLER_METRICS
     ? safeClassifyTrpcCaller({
         cache: ctx.cache,

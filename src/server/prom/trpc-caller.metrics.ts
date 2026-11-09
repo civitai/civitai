@@ -31,9 +31,9 @@ import {
 // the family exports no HELP/TYPE lines and no series.
 //
 // HOT PATH: one anchored regex test on the user agent (anonymous callers only) and one number
-// addition per call. A prom-client `inc` costs a label hash and validation (~0.4 us each, measured),
-// so seconds accumulate in plain per-(path, caller) cells and are folded into the counter by its
-// own `collect`, which prom-client runs on every scrape. A call allocates nothing after
+// addition per call. A prom-client `inc` hashes and validates labels on every call, so seconds
+// accumulate in plain per-(path, caller) cells and are folded into the counter by its own
+// `collect`, which prom-client runs on every scrape. A call allocates nothing after
 // the first one for its pair. `caller` must be one of TRPC_CALLER_CLASSES: the type enforces it
 // and `safeClassifyTrpcCaller` is the only producer.
 
@@ -97,7 +97,10 @@ const TOOL_USER_AGENT_PATTERN = new RegExp(
 
 /** The tRPC context fields the classifier reads. All optional: a server-side caller sets fewer. */
 export type TrpcCallerInput = {
-  /** `null` only on server-side prefetch contexts (`createServerSideHelpers`), see below. */
+  /**
+   * `null` on server-side prefetch contexts (`createServerSideHelpers`) and on contexts built by
+   * hand with `cache: null` (`api/v1/blocks/tip.ts`); both count as `internal`, see below.
+   */
   cache?: unknown;
   apiKeyId?: number | null;
   subject?: unknown;
@@ -110,9 +113,10 @@ export type TrpcCallerInput = {
  * The caller class of one tRPC procedure call. Pure, total, and always one of TRPC_CALLER_CLASSES.
  *
  * Order matters:
- *  1. `internal`: the app calling its own procedures during a server render. The server-side
- *     helpers build their context with `cache: null`, and that is the only context that does
- *     (the HTTP route always sets a cache object; `edgeCacheIt` relies on the same signal).
+ *  1. `internal`: any context with `cache: null`. The server-side helpers build theirs that way
+ *     for a server render, and so does the hand-built context in `api/v1/blocks/tip.ts`, so that
+ *     API route's calls also count as `internal`. The HTTP tRPC route always sets a cache object
+ *     (`edgeCacheIt` relies on the same signal).
  *  2. `api_key`: a bearer API key or OAuth token. Checked BEFORE the session, because token auth
  *     also resolves a user.
  *  3. `session`: a signed-in user (a banned account included: it is still signed in).
@@ -143,9 +147,9 @@ declare global {
   var __civitaiTrpcCallerPending: Pending | undefined;
 }
 
-// Pending deltas, keyed path -> caller. Bounded by (paths x 5): the same pairs the counters hold.
-// Pinned on globalThis for the same reason as `instrumentationRegistry`: the counters are created
-// once per process, so their `collect` must drain the map every webpack graph (and every HMR
+// Pending seconds, keyed path -> caller; bounded by (paths x 5), the pairs the counter holds.
+// Pinned on globalThis for the same reason as `instrumentationRegistry`: the counter is created
+// once per process, so its `collect` must drain the map every webpack graph (and every HMR
 // re-evaluation) of this module records into, not only the one that created them.
 const pending: Pending = (globalThis.__civitaiTrpcCallerPending ??= new Map());
 

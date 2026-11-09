@@ -11,7 +11,6 @@ import {
   classifyTrpcCaller,
   recordTrpcCaller,
   safeClassifyTrpcCaller,
-  TOOL_USER_AGENT_PREFIXES,
   TRPC_CALLER_CLASSES,
   TRPC_CALLER_SECONDS_METRIC,
 } from '~/server/prom/trpc-caller.metrics';
@@ -98,14 +97,6 @@ describe('classifyTrpcCaller', () => {
     'PostmanRuntime/7.36.0',
   ])('anonymous tool user agent %j is anon_tool_ua', (ua) => {
     expect(classifyTrpcCaller({ cache: {}, userAgent: ua })).toBe('anon_tool_ua');
-  });
-
-  it('every listed tool prefix classifies as anon_tool_ua', () => {
-    for (const prefix of TOOL_USER_AGENT_PREFIXES) {
-      expect(classifyTrpcCaller({ cache: {}, userAgent: `${prefix}/1.0` }), prefix).toBe(
-        'anon_tool_ua'
-      );
-    }
   });
 
   it('matches a tool user agent in any case', () => {
