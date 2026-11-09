@@ -3,6 +3,7 @@ import { templateHandler } from '~/server/db/db-helpers';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh } from '~/server/metrics/metric-helpers';
+import { visibleReviewSql } from '~/server/services/resourceReview.visibility';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 
@@ -304,6 +305,7 @@ async function getReviewStatsForBatch(
       AND mv."status" = 'Published'
       AND r.exclude = false
       AND r."tosViolation" = false
+      AND ${visibleReviewSql('r')}
     GROUP BY mv."modelId", mv."baseModel"`,
     [ids, ids[0], ids[ids.length - 1]]
   );

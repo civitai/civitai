@@ -655,10 +655,10 @@ export interface WithBlockScopeOpts {
 
   /**
    * Methods beyond GET and POST that this route serves, added to the CORS preflight's
-   * `Access-Control-Allow-Methods`. Without it a browser refuses a cross-origin PUT or
-   * DELETE before it is sent. Only the document store (`blocks/storage`) declares any.
+   * `Access-Control-Allow-Methods`. Without it a browser refuses a cross-origin PUT,
+   * DELETE or PATCH before it is sent. Only the document store (`blocks/storage`) declares any.
    */
-  extraCorsMethods?: readonly ('PUT' | 'DELETE')[];
+  extraCorsMethods?: readonly ('PUT' | 'DELETE' | 'PATCH')[];
 
   /**
    * Opt-in: write THIS route's refusals in its own envelope instead of the wrapper's
@@ -845,8 +845,10 @@ function rememberWarnedOrigin(origin: string) {
 }
 
 // `Retry-After` is not a CORS-safelisted response header; a cross-origin block can't read a
-// 429's wait unless it is exposed.
-const BLOCK_CORS_EXPOSE_HEADERS = 'Retry-After';
+// 429's wait unless it is exposed. `Deprecation` and `Link` likewise: the document store's
+// deprecated per-tally routes announce themselves with them (`LEGACY_TALLY_HEADERS`), and an SDK
+// can only warn about what it can read.
+const BLOCK_CORS_EXPOSE_HEADERS = 'Retry-After, Deprecation, Link';
 
 /**
  * Sets block-CORS headers when the origin is in the allowlist (union of

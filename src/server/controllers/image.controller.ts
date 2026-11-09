@@ -121,6 +121,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { moderatorApp } from '~/server/services/moderator-app.service';
 import { ModeratorClientError } from '@civitai/moderation';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
+import { visibleReviewWhere } from '~/server/services/resourceReview.visibility';
 
 export const moderateImageHandler = async ({
   input,
@@ -893,6 +894,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
               userId: { in: userIds },
               modelId: input.modelId,
               modelVersionId: input.modelVersionId,
+              ...visibleReviewWhere(user?.id),
             },
             select: {
               userId: true,

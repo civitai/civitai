@@ -104,16 +104,23 @@ const contestEntry = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
 )`;
 
 /**
- * FROM and WHERE for `userId`'s own stickers drawn on the feed: live, on an image anyone may see whose
- * owner allows turf, not a contest entry, as getTurfStickersForImages draws them. Aliases s, i and p.
+ * FROM and WHERE for the stickers the feed draws, narrowed by `and`: live, placed by an active user,
+ * on an image anyone may see whose owner allows turf, not a contest entry. Aliases s, u, i and p.
  */
-export function ownDrawnStickers(event: TurfEvent, userId: number, now: Date) {
+function drawnStickers(event: TurfEvent, now: Date, and: Prisma.Sql) {
   return Prisma.sql`FROM "EventTurfSticker" s
+    JOIN "User" u ON u.id = s."userId"
     JOIN "Image" i ON i.id = s."imageId"
     JOIN "Post" p ON p.id = i."postId"
-    WHERE s.event = ${event.name} AND s."userId" = ${userId}
+    WHERE s.event = ${event.name} AND ${and}
       AND s."removedAt" IS NULL ${unexpired(event, now)} AND ${imageVisible}
+      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
       AND NOT ${contestEntry(Prisma.sql`s."imageId"`)} AND ${ownerAllowsTurf(event.name)}`;
+}
+
+/** FROM and WHERE for `userId`'s own stickers the feed draws (drawnStickers). */
+export function ownDrawnStickers(event: TurfEvent, userId: number, now: Date) {
+  return drawnStickers(event, now, Prisma.sql`s."userId" = ${userId}`);
 }
 
 /** The images among `imageIds` that are entries in a contest (see contestEntry). */
@@ -1169,14 +1176,7 @@ export async function getTurfStickersForImages(
       SELECT s.id, s."imageId", s."userId", s.team, s."cosmeticId", s.data, s."createdAt",
         row_number() OVER (PARTITION BY s."imageId", s.team ORDER BY s."createdAt" DESC, s.id DESC)
           AS "teamRank"
-      FROM "EventTurfSticker" s
-      JOIN "User" u ON u.id = s."userId"
-      JOIN "Image" i ON i.id = s."imageId"
-      JOIN "Post" p ON p.id = i."postId"
-      WHERE s.event = ${event.name} AND s."imageId" = ANY(${imageIds}::int[])
-        AND s."removedAt" IS NULL ${unexpired(event, now)} AND ${imageVisible}
-        AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
-        AND NOT ${contestEntry(Prisma.sql`s."imageId"`)} AND ${ownerAllowsTurf(event.name)}
+      ${drawnStickers(event, now, Prisma.sql`s."imageId" = ANY(${imageIds}::int[])`)}
     ), picked AS (
       SELECT id, "imageId", "userId", team, "cosmeticId", data, "createdAt", row_number() OVER (
         PARTITION BY "imageId" ORDER BY "teamRank", "createdAt" DESC, id DESC
