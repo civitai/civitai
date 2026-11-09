@@ -102,18 +102,59 @@ async function withdrawForSlug(request: APIRequestContext, slug: string) {
   }
 }
 
-/** Abort every approve and count the attempts. */
-async function blockApprovals(page: Page): Promise<{ count: () => number }> {
+/**
+ * The spec's network layer for the review pages:
+ *  - every `blocks.approveRequest` is ABORTED and counted (nothing is ever approved);
+ *  - once `liftFloorFor` is set, the publish-request payloads of OUR OWN submissions are
+ *    served with an empty `approveFloorMissing`, so the client offers Approve & next.
+ *
+ * 🔴 WHY THE FLOOR IS LIFTED IN THE RESPONSE AND NOT BY UPLOADING MEDIA. A fresh submission's
+ * store listing has no icon and no cover, so the UI correctly disables Approve with "Cannot
+ * approve yet…" (the cheap check below pins exactly that). Making the fixture genuinely
+ * approvable would mean uploading two images to the image CDN, creating `Image` rows on the
+ * shared dev database and waiting for the scan pipeline to mark them Scanned (`setIcon` /
+ * `setCover` refuse anything else). No preview spec does that today, and nothing here is
+ * about media. The server-side gate is untouched (and approve never reaches it anyway): only
+ * the CLIENT's copy of the floor is rewritten, for our two ids only.
+ */
+async function routeReviewTraffic(
+  page: Page
+): Promise<{ approvals: () => number; liftFloorFor: (ids: string[]) => void }> {
   let n = 0;
+  let lifted = new Set<string>();
   await page.route('**/api/trpc/**', async (route) => {
-    if (route.request().url().includes('blocks.approveRequest')) {
+    const url = route.request().url();
+    if (url.includes('blocks.approveRequest')) {
       n += 1;
       await route.abort();
       return;
     }
+    if (lifted.size > 0 && url.includes('blocks.getPublishRequest')) {
+      const response = await route.fetch();
+      let body: unknown;
+      try {
+        body = await response.json();
+      } catch {
+        await route.fulfill({ response });
+        return;
+      }
+      for (const entry of Array.isArray(body) ? body : [body]) {
+        const req = (
+          entry as { result?: { data?: { json?: { request?: Record<string, unknown> } } } }
+        )?.result?.data?.json?.request;
+        if (req && typeof req.id === 'string' && lifted.has(req.id)) req.approveFloorMissing = [];
+      }
+      await route.fulfill({ response, json: body });
+      return;
+    }
     await route.continue();
   });
-  return { count: () => n };
+  return {
+    approvals: () => n,
+    liftFloorFor: (ids) => {
+      lifted = new Set(ids);
+    },
+  };
 }
 
 /** Fully inside the viewport AND the top-most element at its own centre. */
@@ -168,6 +209,7 @@ async function describeDialogs(page: Page) {
       return {
         tag: h.tagName.toLowerCase(),
         role: h.getAttribute('role'),
+        ariaModal: h.getAttribute('aria-modal'),
         cls: (h.className && typeof h.className === 'string' ? h.className : '').slice(0, 160),
         ariaLabel: h.getAttribute('aria-label'),
         labelledByText: labelText.slice(0, 120),
@@ -244,8 +286,11 @@ async function acceptTermsForThisDomain(page: Page) {
 async function expectNoOpenDialog(page: Page, where: string) {
   const dialogs = await describeDialogs(page);
   for (const d of dialogs) console.log(`[review-flow diag] ${where}: dialog ${JSON.stringify(d)}`);
+  // MODAL dialogs only (`aria-modal="true"`, which Mantine's Modal and Drawer content carry).
+  // A non-modal popover with `role="dialog"` — e.g. the site's "Make this nav yours" tip —
+  // blocks nothing and would only make this flaky.
   const open = dialogs.filter(
-    (d) => d.visible && (d.role === 'dialog' || d.role === 'alertdialog')
+    (d) => d.visible && (d.role === 'dialog' || d.role === 'alertdialog') && d.ariaModal === 'true'
   );
   expect(
     open.map((d) => d.ariaLabel || d.labelledByText || d.text),
@@ -293,10 +338,22 @@ test.describe('App review page: overview, sticky actions, approve & next (mod, n
     const request = page.request;
     await withdrawForSlug(request, SLUG_A);
     await withdrawForSlug(request, SLUG_B);
-    const approvals = await blockApprovals(page);
+    const traffic = await routeReviewTraffic(page);
     try {
       const idA = await submit(request, SLUG_A);
-      await submit(request, SLUG_B);
+      const idB = await submit(request, SLUG_B);
+
+      // 0. The real gate, as shipped: a listing with no icon or cover cannot be approved, and
+      //    the bar says why rather than offering a button the server would refuse.
+      await page.goto(`/apps/review/${idA}`, { waitUntil: 'domcontentloaded' });
+      await expect(page.getByText(/Cannot approve yet:.*no icon or cover/)).toBeVisible();
+      await expect(
+        page.getByRole('button', { name: 'Approve & next', exact: true })
+      ).toBeDisabled();
+      await expect(page.getByRole('button', { name: 'Reject…', exact: true })).toBeEnabled();
+
+      // From here on, our two submissions read as approvable (see `routeReviewTraffic`).
+      traffic.liftFloorFor([idA, idB]);
 
       // 1. Overview is the default.
       await page.goto(`/apps/review/${idA}`, { waitUntil: 'domcontentloaded' });
@@ -336,7 +393,7 @@ test.describe('App review page: overview, sticky actions, approve & next (mod, n
       await expect(page).toHaveURL(/\/apps\/review\/[^/?]+/);
       await page.getByRole('button', { name: 'Undo', exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`/apps/review/${idA}`));
-      expect(approvals.count(), 'Undo inside the window must send nothing').toBe(0);
+      expect(traffic.approvals(), 'Undo inside the window must send nothing').toBe(0);
       const still = await trpcQuery<{ pending: { id: string } | null }>(
         request,
         'blocks.getMyPendingForSlug',
