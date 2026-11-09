@@ -43,19 +43,24 @@ function PlaceAllControl({
     // Read fresh: a Buzz purchase can sit between the press and this call, and a draft removed
     // meanwhile must not be placed. Taken once, so later re-renders cannot change the run.
     const now = useStore.getState();
-    const fresh = placeAllPlan({ drafts: now.drafts, ready: now.readyPlacements, price });
-    if (fresh.total > plan.total || fresh.queue.length < 2)
+    const items = placeAllPlan({ drafts: now.drafts, ready: now.readyPlacements, price }).queue.map(
+      (draftId) => ({ draftId, input: now.readyPlacements[draftId].input() })
+    );
+    // Priced from what will be sent, so the amount checked bounds the amount charged.
+    const charged = items.filter((item) => !item.input.free).length * price;
+    if (charged > plan.total || items.length < 2)
       return showErrorNotification({
         title: 'Your stickers changed',
         error: new Error('Nothing was placed. Check them and press Place all again.'),
       });
-    const items = fresh.queue.map((draftId) => ({
-      draftId,
-      input: now.readyPlacements[draftId].input(),
-    }));
     setRunning(true);
     try {
-      const result = await runPlaceAll(items, (input) => create.mutateAsync(input), cancelDraft);
+      const result = await runPlaceAll(
+        items,
+        (input) => create.mutateAsync(input),
+        cancelDraft,
+        (draftId) => useStore.getState().drafts.some((draft) => draft.id === draftId)
+      );
       if (result.failed)
         showErrorNotification({
           title: `Placed ${result.placed} of ${items.length}`,

@@ -29,15 +29,18 @@ export function placeAllPlan({
  * Inputs are taken before the first call, so the run places what was confirmed and nothing a
  * re-render changed meanwhile. Each placement is its own escrow on the server, so a failure leaves
  * the earlier ones placed and stops: the rest keep their drafts and their own buttons.
+ * A draft removed mid-run (Remove, or the session ending) is skipped, never charged.
  */
 export async function runPlaceAll(
   items: PlaceAllItem[],
   place: (input: CreateStickerPlacementInput) => Promise<{ status: string }>,
-  onPlaced: (draftId: string) => void
+  onPlaced: (draftId: string) => void,
+  stillWanted: (draftId: string) => boolean
 ) {
   let placed = 0;
   let pending = 0;
   for (const item of items) {
+    if (!stillWanted(item.draftId)) continue;
     try {
       const result = await place(item.input);
       placed++;

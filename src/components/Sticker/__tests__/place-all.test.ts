@@ -38,7 +38,7 @@ describe('runPlaceAll', () => {
       .mockResolvedValueOnce({ status: 'approved' });
     const onPlaced = vi.fn();
 
-    const result = await runPlaceAll(items, place, onPlaced);
+    const result = await runPlaceAll(items, place, onPlaced, () => true);
 
     expect(place.mock.calls.map(([sent]) => sent.data.cosmeticId)).toEqual([1, 2, 3]);
     expect(onPlaced.mock.calls.map(([id]) => id)).toEqual(['a', 'b', 'c']);
@@ -54,10 +54,20 @@ describe('runPlaceAll', () => {
       .mockResolvedValueOnce({ status: 'approved' });
     const onPlaced = vi.fn();
 
-    const result = await runPlaceAll(items, place, onPlaced);
+    const result = await runPlaceAll(items, place, onPlaced, () => true);
 
     expect(place).toHaveBeenCalledTimes(2);
     expect(onPlaced.mock.calls.map(([id]) => id)).toEqual(['a']);
     expect(result).toEqual({ placed: 1, pending: 0, failed: { draftId: 'b', error: refusal } });
+  });
+
+  it('skips a draft removed during the run, and charges nothing for it', async () => {
+    const place = vi.fn().mockResolvedValue({ status: 'approved' });
+    const onPlaced = vi.fn();
+
+    const result = await runPlaceAll(items, place, onPlaced, (id) => id !== 'b');
+
+    expect(place.mock.calls.map(([sent]) => sent.data.cosmeticId)).toEqual([1, 3]);
+    expect(result).toEqual({ placed: 2, pending: 0, failed: null });
   });
 });

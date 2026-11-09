@@ -29,12 +29,14 @@ const PRICE = 700;
 
 /** Every press, with its variables, in order. */
 const placed: { imageId: number; free: boolean; data: Record<string, unknown> }[] = [];
+/** Whether the draft's own placement is in flight. */
+const placeState = { pending: false };
 
 vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementUtil>()),
   useCreateStickerPlacement: () => ({
     mutate: (variables: (typeof placed)[number]) => placed.push(variables),
-    isPending: false,
+    isPending: placeState.pending,
   }),
 }));
 
@@ -142,6 +144,7 @@ const renderDraft = async (
     commit,
     motion,
     opacity,
+    purchase,
   }: {
     ownerShare?: number;
     maxScale?: number;
@@ -149,6 +152,7 @@ const renderDraft = async (
     commit?: ReactNode;
     motion?: StickerDraft['motion'];
     opacity?: number;
+    purchase?: StickerDraft['purchase'];
   } = {}
 ) => {
   renderWithProviders(
@@ -174,6 +178,7 @@ const renderDraft = async (
         ownerUsername="creator"
         onGesture={() => true}
         commit={commit}
+        purchase={purchase}
       />
     </div>
   );
@@ -235,6 +240,7 @@ const choosePaid = async () => {
 
 beforeEach(() => {
   placed.length = 0;
+  placeState.pending = false;
   useStickerPlacementDraftStore.setState({ placingAll: false, readyPlacements: {} });
 });
 
@@ -473,6 +479,12 @@ describe('what a draft sends when it is placed', () => {
 
 describe('what a draft offers Place all', () => {
   const offered = () => useStickerPlacementDraftStore.getState().readyPlacements[draft.id];
+  // The label is registered by an effect in the same commit as the offer, so once it is there an
+  // absent offer was withheld rather than not registered yet.
+  const registered = () =>
+    expect
+      .poll(() => useStickerPlacementDraftStore.getState().primaryLabels[draft.id])
+      .toBeTruthy();
 
   test('offers exactly what its own button sends', async () => {
     await renderDraft(null);
@@ -481,6 +493,16 @@ describe('what a draft offers Place all', () => {
     await pressPaid();
 
     expect(offered()!.input()).toEqual(placed[0]);
+  });
+
+  test('sends what the draft says when Place all runs, not when it was offered', async () => {
+    await renderDraft(null);
+    await expect.poll(() => offered()).toBeDefined();
+
+    await page.getByText('Add a note').click();
+    await page.getByPlaceholder('Say something with it (optional)').fill('hello');
+
+    await expect.poll(() => offered()!.input().data.comment).toBe('hello');
   });
 
   test('offers the free placement as free', async () => {
@@ -498,7 +520,22 @@ describe('what a draft offers Place all', () => {
         ],
       },
     });
-    await expect.element(page.getByRole('button', { name: 'Place' })).toBeDisabled();
+    await registered();
+    expect(offered()).toBeUndefined();
+  });
+
+  test('is not offered while a use still has to be bought', async () => {
+    await renderDraft(null, {
+      purchase: { refill: false, perUse: 50, creatorUsername: 'maker' },
+    });
+    await registered();
+    expect(offered()).toBeUndefined();
+  });
+
+  test('is not offered while its own placement is in flight', async () => {
+    placeState.pending = true;
+    await renderDraft(null);
+    await registered();
     expect(offered()).toBeUndefined();
   });
 
@@ -516,6 +553,13 @@ describe('what a draft offers Place all', () => {
     await pressPaid();
 
     expect(placed).toHaveLength(0);
+  });
+
+  test('its own Place free is disabled too while Place all runs', async () => {
+    useStickerPlacementDraftStore.setState({ placingAll: true });
+    await renderDraft({ instant: true });
+
+    await expect.element(page.getByRole('button', { name: 'Place free' })).toBeDisabled();
   });
 });
 

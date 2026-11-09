@@ -661,7 +661,8 @@ export function DraftSticker({
   // button (hats) and a purchase still to make keep it out.
   const latestInput = useRef(placementInput);
   latestInput.current = placementInput;
-  const readyToPlace = !commit && !purchase && !motionRefused;
+  // Not while its own placement is in flight, or Place all would place it a second time.
+  const readyToPlace = !commit && !purchase && !motionRefused && !place.isPending;
   const setReadyPlacement = useStore((state) => state.setReadyPlacement);
   const placingAll = useStore((state) => state.placingAll);
   useEffect(() => {
