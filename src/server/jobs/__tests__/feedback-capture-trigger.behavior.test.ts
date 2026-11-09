@@ -306,7 +306,7 @@ describe('20261231130100_feedback_capture_hold_lifetime', () => {
 
   it('changes the applied sweep only by the capture clause', () => {
     const ours = fn(LIFETIME_MIGRATION, 'evidence_hold_purge_unheld', '$$ LANGUAGE sql').replace(
-      /\n\s*AND NOT \(i\."userId" = -2 AND EXISTS \([\s\S]*?\n\s*\)\);/,
+      /\n\s*-- Per row by primary key[^\n]*\n\s*AND NOT CASE WHEN i\."userId" = -2 THEN[\s\S]*?ELSE false END;/,
       ';'
     );
     expect(ours).toBe(fn(LIVE_EVIDENCE_HOLD, 'evidence_hold_purge_unheld', '$$ LANGUAGE sql'));

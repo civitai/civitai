@@ -3,8 +3,8 @@
 -- src/server/services/legal-hold.service.ts reads.
 --
 -- evidence_hold_purge_unheld and evidence_hold_guard_kept are otherwise unchanged from
--- 20261019220000_evidence_hold, as applied; feedback-capture-hold-lifetime.behavior.test.ts keeps them
--- so.
+-- 20261019220000_evidence_hold, as applied;
+-- src/server/jobs/__tests__/feedback-capture-trigger.behavior.test.ts keeps them so.
 --
 -- Apply AFTER 20261231120100_feedback_capture_owner_hold. Hand-applied. Dry run: the whole file inside
 -- BEGIN; ... ROLLBACK;.
@@ -42,11 +42,11 @@ CREATE OR REPLACE FUNCTION evidence_hold_purge_unheld(target_user INTEGER DEFAUL
   DELETE FROM "EvidenceHoldImage" i
   WHERE (target_user IS NULL OR i."userId" = target_user)
     AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = i."userId")
-    AND NOT (i."userId" = -2 AND EXISTS (
-      SELECT 1 FROM "Image" im
-      WHERE im."id" = i."imageId"
-        AND evidence_hold_capture_state_held(im."id", im."needsReview", im."blockedFor", im."minor")
-    ));
+    -- Per row by primary key, and only for capture rows: never a scan of "Image".
+    AND NOT CASE WHEN i."userId" = -2 THEN COALESCE((
+      SELECT evidence_hold_capture_state_held(im."id", im."needsReview", im."blockedFor", im."minor")
+      FROM "Image" im WHERE im."id" = i."imageId"
+    ), false) ELSE false END;
 $$ LANGUAGE sql SET search_path = public, pg_temp;
 
 CREATE OR REPLACE FUNCTION evidence_hold_guard_kept() RETURNS trigger AS $$
