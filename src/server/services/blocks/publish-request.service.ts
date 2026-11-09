@@ -5369,7 +5369,46 @@ export async function previewRequest(params: PreviewRequestParams): Promise<Prev
   if (!claim.claimed) {
     throw new Error(`can only preview a pending request (${params.publishRequestId} changed)`);
   }
+  await unpublishReplacedSharedPreview(claim.claimed, claim.replacedDeployDetail);
   return startClaimedReviewBuild(claim.claimed, params.actor);
+}
+
+/**
+ * A rebuild (a start over a row that already had a preview) REPLACES the row's deploy detail, and
+ * that detail is the only record that the old build was published to the shared static server's
+ * review lane. So unpublish it here, from the detail the claim replaced, in whatever state it was
+ * left: a `preview-failed` preview can be published too (the publish succeeded and a later step
+ * failed). Without this the old meta stays served behind the mod-gate until the bucket lifecycle
+ * expires it.
+ *
+ * Only for a detail that RECORDS `sharedServer: true` and a full sha: a per-preview preview, or
+ * one whose serving mode was never recorded (its build never reached the apply step, so nothing
+ * was published), has nothing on the shared server. Unpublishing deletes only
+ * `review/<sha16>/meta.json` in the bucket; a per-preview route for the same host (a same-sha
+ * rebuild with the flag off) is a different backend and outranks the shared review route, so it
+ * is unaffected. Best-effort: it never blocks the rebuild.
+ */
+async function unpublishReplacedSharedPreview(
+  request: { id: string; slug: string },
+  replacedDeployDetail: string | null | undefined
+): Promise<void> {
+  const replaced = parseReviewDetail(replacedDeployDetail);
+  if (replaced.sharedServer !== true || !/^[0-9a-f]{40}$/.test(replaced.sha ?? '')) return;
+  try {
+    const { triggerReviewUnpublish } = await import('./apps-pipeline.service');
+    await triggerReviewUnpublish({
+      slug: request.slug,
+      sha: replaced.sha as string,
+      publishRequestId: request.id,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[previewRequest] unpublish of the replaced shared-server preview failed (id=${request.id}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
 }
 
 /**
