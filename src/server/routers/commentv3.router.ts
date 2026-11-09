@@ -4,6 +4,7 @@ import {
   getCommentSectionHandler,
   getCommentThreadHandler,
   setTosViolationV3Handler,
+  toggleCommentLockV3Handler,
   toggleHideCommentV3Handler,
   togglePinCommentV3Handler,
   createCommentV3Handler,
@@ -37,11 +38,7 @@ import {
 } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-/**
- * The v3 comment suite (`src/components/CommentsV3`). Writes serve only
- * `constants.comments.v3WriteSurfaces`; model comments still write through the v1 `comment`
- * router.
- */
+/** The v3 comment suite (`src/components/CommentsV3`), for every comment surface. */
 export const commentv3Router = router({
   getSection: publicProcedure.input(getCommentSectionSchema).query(getCommentSectionHandler),
   getReplies: publicProcedure.input(getCommentRepliesSchema).query(getCommentRepliesHandler),
@@ -69,6 +66,7 @@ export const commentv3Router = router({
     .input(commentV3IdSchema)
     .mutation(togglePinCommentV3Handler),
   setTosViolation: moderatorProcedure.input(commentV3IdSchema).mutation(setTosViolationV3Handler),
+  toggleLock: moderatorProcedure.input(commentV3IdSchema).mutation(toggleCommentLockV3Handler),
   getSectionLock: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(commentSectionSchema)

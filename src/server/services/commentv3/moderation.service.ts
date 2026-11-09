@@ -18,6 +18,15 @@ import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
  * The v2 twins in `commentsv2.service.ts` act on the old tables.
  */
 
+/** The comments addressed by their old `Comment` id, which older reports and holds still carry. */
+export async function commentV3IdsByOldId(ids: number[], db: Prisma.TransactionClient = dbWrite) {
+  if (!ids.length) return [];
+  const rows = await db.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "CommentV3" WHERE "legacyV1Id" = ANY(${ids}::int[])
+  `;
+  return rows.map((r) => r.id);
+}
+
 /** Of `ids`, the comments on surfaces that write CommentV3 directly. */
 export async function v3WriteCommentIds(ids: number[], db: Prisma.TransactionClient = dbWrite) {
   if (!ids.length) return [];

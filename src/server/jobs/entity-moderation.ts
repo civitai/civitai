@@ -47,9 +47,9 @@ const tracker = new Tracker();
 
 const autoMuteCleanup: Partial<Record<AllModKeys, ScamCleanup>> = {
   Chat: 'chatMessages',
-  Comment: 'comments',
+  // The commentsV2 cleanup also hides comments on surfaces that write CommentV3, model comments among them.
+  Comment: 'commentsV2',
   CommentV2: 'commentsV2',
-  // The commentsV2 cleanup also hides comments on surfaces that write CommentV3.
   CommentV3: 'commentsV2',
 };
 

@@ -1,3 +1,4 @@
+import type * as ModerationModule from '~/server/services/commentv3/moderation.service';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { recordTx, useTxClients } from '~/__tests__/tx-client';
@@ -17,7 +18,8 @@ const mocks = vi.hoisted(() => ({
   },
   deleteChatMessage: vi.fn(),
   unpublishPostAsModerator: vi.fn(),
-  bulkSetCommentTosViolation: vi.fn(),
+  bulkSetCommentV3TosViolation: vi.fn(),
+  commentV3IdsByOldId: vi.fn(),
   bulkSetCommentV2TosViolation: vi.fn(),
   toggleBan: vi.fn(),
   clearUserProfileFields: vi.fn(),
@@ -46,8 +48,10 @@ vi.mock('~/server/services/moderator-grants', () => ({
   hasModeratorGrant: (...a: unknown[]) => mocks.hasModeratorGrant(...a),
 }));
 // Hand-listed: the real services pull search-index and cache graphs that build clients at load.
-vi.mock('~/server/services/comment.service', () => ({
-  bulkSetCommentTosViolation: mocks.bulkSetCommentTosViolation,
+vi.mock('~/server/services/commentv3/moderation.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModerationModule>()),
+  bulkSetCommentV3TosViolation: mocks.bulkSetCommentV3TosViolation,
+  commentV3IdsByOldId: mocks.commentV3IdsByOldId,
 }));
 vi.mock('~/server/services/commentsv2.service', () => ({
   bulkSetCommentV2TosViolation: mocks.bulkSetCommentV2TosViolation,
@@ -125,7 +129,7 @@ beforeEach(() => {
   dbMock.dbWrite.user.findUnique.mockResolvedValue({ bannedAt: null });
   dbMock.dbWrite.model.findUnique.mockResolvedValue({ meta: {}, nsfw: false });
   dbMock.dbWrite.article.findUnique.mockResolvedValue({ status: 'Published', metadata: {} });
-  mocks.bulkSetCommentTosViolation.mockResolvedValue({ count: 1 });
+  mocks.bulkSetCommentV3TosViolation.mockResolvedValue({ count: 1 });
   mocks.bulkSetCommentV2TosViolation.mockResolvedValue({ count: 1 });
   mocks.deleteChatMessage.mockResolvedValue({ messageId: 55, chatId: 3 });
   mocks.createStrike.mockResolvedValue({ id: 31 });
@@ -275,11 +279,14 @@ describe('textScan.resolveCsamHold', () => {
   });
 
   describe('removal per entity type', () => {
-    it('removes a legacy model comment', async () => {
+    it('removes a comment a pre-flip hold names by its old id, through its CommentV3 row', async () => {
+      mocks.commentV3IdsByOldId.mockImplementation(async (ids: number[]) =>
+        ids[0] === 55 ? [9055] : []
+      );
       findFirst.mockResolvedValue(pendingHold({ entityType: 'Comment' }));
       await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
-      expect(mocks.bulkSetCommentTosViolation).toHaveBeenCalledWith({
-        ids: [55],
+      expect(mocks.bulkSetCommentV3TosViolation).toHaveBeenCalledWith({
+        ids: [9055],
         actor: { id: 7, ip: undefined },
       });
     });

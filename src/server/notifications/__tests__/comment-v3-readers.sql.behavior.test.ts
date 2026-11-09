@@ -286,11 +286,17 @@ describe('notification queries on CommentV3', () => {
     expect(modelReply.dedupeKey).toBe('comment:v1:101');
   });
 
-  it('the model page processors carry the old ids, and only for comments with one', async () => {
+  it('the model page processors carry a comment’s old id, and its own where it has none', async () => {
     const comment = await emitted('new-comment');
-    expect(pairs(comment)).toEqual([[55, 1]]);
-    expect(comment[0].key).toBe('new-comment-model:owner:v3:55');
-    expect(comment[0].dedupeKey).toBe('comment:v1:55');
+    // 202 has no old id: a v2 comment on the model thread, as a comment written since the flip is.
+    expect(pairs(comment)).toEqual([
+      [55, 1],
+      [202, 1],
+    ]);
+    const old = comment.find((c) => c.details.commentId === 55)!;
+    expect(old.details.version).toBe(4);
+    expect(old.key).toBe('new-comment-model:owner:v3:55');
+    expect(old.dedupeKey).toBe('comment:v1:55');
 
     const response = await emitted('new-comment-response');
     expect(pairs(response)).toEqual([
@@ -298,14 +304,17 @@ describe('notification queries on CommentV3', () => {
       [101, 2],
     ]);
     expect(response.find((r) => r.details.commentId === 101)!.details).toMatchObject({
+      version: 4,
       modelId: 1,
       parentId: 55,
     });
 
-    expect(pairs(await emitted('new-comment-nested'))).toEqual([
+    const nested = await emitted('new-comment-nested');
+    expect(pairs(nested)).toEqual([
       [57, 1],
       [101, 1],
     ]);
+    expect(nested.every((n) => n.details.version === 4)).toBe(true);
   });
 
   it('new-mention notifies the named, keyed as the comment it is in, and honours a block', async () => {
@@ -330,7 +339,29 @@ describe('notification queries on CommentV3', () => {
     const out = await run(reactionNotifications['comment-reaction-milestone'].prepareQuery);
     expect(out.map((r) => [r.userId, r.details])).toEqual([
       [8, { modelName: 'M', modelId: 1, rootCommentId: 55, commentId: 101, reactionCount: 5 }],
+      [4, { modelName: 'M', modelId: 1, rootCommentId: 202, commentId: 202, reactionCount: 5 }],
     ]);
+  });
+
+  it('the model page processors honour the owner’s section mute and a thread mute', async () => {
+    await temporarily(
+      `INSERT INTO "CommentTopicMute"("userId", "entityType", "entityId") VALUES (1, 'model', 1)`,
+      `DELETE FROM "CommentTopicMute" WHERE "userId" = 1 AND "entityType" = 'model'`,
+      async () => {
+        expect(await emitted('new-comment')).toEqual([]);
+        expect(await emitted('new-comment-nested')).toEqual([]);
+        // Replies still reach the author of the comment answered.
+        expect(pairs(await emitted('new-comment-response'))).toHaveLength(2);
+      }
+    );
+    // User 2 mutes their model comment 200: replies under it stop reaching them.
+    await temporarily(
+      `INSERT INTO "CommentMute"("userId", "commentId") VALUES (2, 200)`,
+      `DELETE FROM "CommentMute" WHERE "userId" = 2`,
+      async () => {
+        expect(await emitted('new-comment-response')).toEqual([]);
+      }
+    );
   });
 
   it('a mute by the recipient drops only their notification', async () => {
@@ -474,6 +505,10 @@ describe('the detail fetcher', () => {
         { type: 'new-thread-response', details: { version: 3, commentId: 400 } },
         { type: 'new-thread-response', details: { version: 3, commentId: 401 } },
         { type: 'new-thread-response', details: { version: 3, commentId: 402 } },
+        // Since the model flip a model comment with no old id is addressed by its own; image
+        // comment 100 still may not stand in.
+        { type: 'new-comment', details: { version: 4, commentId: 202 } },
+        { type: 'new-comment', details: { version: 4, commentId: 100 } },
       ])
     ).toEqual([
       ['model top', 2],
@@ -483,6 +518,8 @@ describe('the detail fetcher', () => {
       ['reply "mention:6"', 3],
       [undefined, undefined],
       [undefined, undefined],
+      [undefined, undefined],
+      ['v2 on the model thread', 4],
       [undefined, undefined],
     ]);
   });

@@ -146,11 +146,6 @@ const getReaction = async ({
   // A stale hit is handled downstream: deleteReaction reports 0 rows.
   const db = await getDbWithoutLag();
   switch (entityType) {
-    case 'commentOld':
-      return await db.commentReaction.findFirst({
-        where: { userId, reaction, commentId: entityId },
-        select: { id: true },
-      });
     case 'comment':
       return await db.commentV2Reaction.findFirst({
         where: { userId, reaction, commentId: entityId },
@@ -204,12 +199,6 @@ const deleteReaction = async ({
   userId: number;
 }) => {
   switch (entityType) {
-    case 'commentOld': {
-      const { count } = await dbWrite.commentReaction.deleteMany({
-        where: { commentId: entityId, userId, reaction },
-      });
-      return count;
-    }
     case 'comment': {
       const { count } = await dbWrite.commentV2Reaction.deleteMany({
         where: { commentId: entityId, userId, reaction },
@@ -260,11 +249,6 @@ const createReaction = async ({
   ...data
 }: ToggleReactionInput & { userId: number }) => {
   switch (entityType) {
-    case 'commentOld':
-      return await dbWrite.commentReaction.create({
-        data: { ...data, commentId: entityId },
-        select: { reaction: true },
-      });
     case 'comment':
       return await dbWrite.commentV2Reaction.create({
         data: { ...data, commentId: entityId },

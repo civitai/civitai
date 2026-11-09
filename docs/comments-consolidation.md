@@ -63,7 +63,7 @@ section that holds the detail.
   and resource-review counts (were `Thread.commentCount`), the collection judged check and the
   metrics jobs (were root-thread CommentV2 joins) count live top-level `CommentV3` rows, not `CommentTopic.commentCount`, which counts
   replies and tombstones; model-comment notifications keep the v1 detail shape and `comment:v1:`
-  dedupe key and address comments by `legacyV1Id` until the model surface flips (_Notifications
+  dedupe key and address comments by `legacyV1Id` (since the model flip, `modelPageId`) (_Notifications
   impact_); the mute filter is `notCommentMuted` over `path`, and `thread-chain.ts` stays for the
   block guard, the block hide sweep and the v2 lock check (_Thread mute_; the v2 lock check went
   2026-11-05, release 2 of the write flip, not deployed); the moderator
@@ -869,7 +869,8 @@ the child thread and quietly orphans them. Neither survives into the new model. 
   tombstoned or not (verified 2026-10-20, both orders). It fails closed, and nothing in the app
   hard-deletes a `User` row: erasure is `deleteUser` (soft delete, PII nulled) plus
   `removeAllContent`, whose comment deletes the mirror turns into tombstones with blank content
-  and hard-deletes. If a hard User delete is ever wanted, tombstones need an owner that survives
+  and hard-deletes (v1 `Comment` rows that have a CommentV3 twin are skipped, so the mirror's
+  cascade never reaches their replies). If a hard User delete is ever wanted, tombstones need an owner that survives
   it (a sentinel user, or `userId` nullable with `SET NULL`) — a schema decision, not a recipe.
 
 ## Moderation, blocking, and comment-gating — preserve-behavior checklist
@@ -880,8 +881,11 @@ must be explicitly re-verified on the new service, because they're what a naive 
 **Moderator actions** (all live in the services being rewritten):
 
 - **Hide** (`toggleHideComment`, both systems): `hidden` column carries over. Since #5076 a hidden
-  v2 comment renders in place as a placeholder with its replies visible, so there is no hidden-count
-  query to port; the v1 "See N hidden" modal retires with the model flip.
+  v2 comment renders in place as a placeholder with its replies visible, so no other surface has a
+  hidden-count query to port. The model page is the exception: it leaves hidden top-level comments
+  out (`constants.comments.leavesOutHiddenComments`), its first page returns `counts: { visible,
+  hidden }`, and "See N more hidden comments" opens `HiddenCommentsModal` (the section with
+  `hidden: true`), rebuilt on CommentV3 in the model flip.
 - **Block-hide** (`block-hide-comments.service.ts`, #5082): blocking a user can bulk-hide their
   comments on the blocker's content — a v2-only hidden writer today, which becomes one
   `UPDATE … WHERE userId AND entityType/entityId` on the new table.
@@ -931,7 +935,8 @@ parentId = id`) → per-comment `locked` is now **subtree-scoped**: the write pa
   the Phase 5 cron-jobs section.
 - `throwOnBlockedCommentContent` (content blocklist) runs on create **and** edit in all three
   write paths (`commentsv2.service.ts`, `comment.controller.ts`, `comics.router.ts`); carries over
-  with the service. (The v2 and comics write paths are deleted, 2026-11-05, release 2 of the write flip, not deployed.)
+  with the service. (The v2 and comics write paths are deleted, 2026-11-05, release 2 of the write flip, and the v1
+  model write path on 2026-11-06, the model flip; neither deployed.)
 - Every write also calls `queueScamScan` (text-scan pipeline, 2026-10); the new write path must
   keep that call, and `text-scan` needs a `CommentV3` profile and entity type.
 - Comment **reads** are entity-gated too: each surface's `assertVisible` in `commentv3/surfaces.ts`
@@ -1442,11 +1447,11 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
 they fell into three shapes:
 
 - **Pure-v1** (`new-comment`, `new-comment-response`, `new-comment-nested`, plus the model arm of
-  `reaction.notifications.ts`): read v1-shaped model rows of CommentV3 (with a `legacyV1Id`) since Phase 3. Until the
-  model surface flips, its dialog reads the v1 `Comment` table, so they keep the v1 detail shape and
-  `comment:v1:` dedupe namespace and address comments by their old id in `legacyV1Id` (a v1 row from
-  the shared sequence carries its own id there). They switch to the v3 id with the
-  model flip.
+  `reaction.notifications.ts`): read model rows of CommentV3. They keep the `comment:v1:` dedupe
+  namespace and address a comment by `modelPageId` (`COALESCE(legacyV1Id, id)`), so keys and links
+  sent before the model flip still match; the model flip (built 2026-11-06) made them filter
+  `notCommentMuted` and stamp `version: 4`, and the detail fetcher resolves a version-4 row's id
+  as the comment's own id too (`docs/plans/comments-v3-model-flip.md`).
 - **Per-entity v2** (`new-image-comment`, `new-post-comment`, `new-article-comment`,
   `new-bounty-comment`, `new-bounty-entry-comment`, `new-challenge-comment`, `new-crucible-comment`, `new-storyline-comment`,
   `new-app-listing-comment`, `new-review-response`, the three `model3d` types, `new-comment-reply`): each was a `CommentV2 → Thread` join on one entity FK; since

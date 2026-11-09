@@ -333,7 +333,6 @@ export async function getBountyEntries(
 }
 
 export type UserComment = {
-  /** The old `Comment` id, which the bulk actions and the model page's dialog still address. */
   id: number;
   createdAt: Date;
   content: string;
@@ -341,19 +340,13 @@ export type UserComment = {
   modelId: number | null;
 };
 
-/** Rows with an old `Comment` id. Tombstones keep their `userId`, so are excluded. */
+/** Comments on models. Tombstones keep their `userId`, so are excluded. */
 export async function getComments(userId: number, limit = 25): Promise<Capped<UserComment>> {
   return dbRead
     .selectFrom('CommentV3')
-    .select([
-      sql<number>`"legacyV1Id"`.as('id'),
-      'createdAt',
-      'content',
-      'tosViolation',
-      'entityId as modelId',
-    ])
+    .select(['id', 'createdAt', 'content', 'tosViolation', 'entityId as modelId'])
     .where('userId', '=', userId)
-    .where('legacyV1Id', 'is not', null)
+    .where('entityType', '=', 'model')
     .where('deletedAt', 'is', null)
     .orderBy('createdAt', 'desc')
     .limit(limit + 1)
@@ -361,7 +354,7 @@ export async function getComments(userId: number, limit = 25): Promise<Capped<Us
     .then((rows) => capped(rows, limit));
 }
 
-// Retool's "Other Comments": every comment not on the model page.
+// Retool's "Other Comments": every surface but the model page.
 export type UserCommentV2 = {
   id: number;
   createdAt: Date;
@@ -390,7 +383,7 @@ export async function getCommentsV2(userId: number, limit = 25): Promise<Capped<
     .selectFrom('CommentV3')
     .select(['id', 'createdAt', 'content', 'tosViolation', 'entityType', 'entityId'])
     .where('userId', '=', userId)
-    .where('legacyV1Id', 'is', null)
+    .where('entityType', '<>', 'model')
     .where('deletedAt', 'is', null)
     .orderBy('createdAt', 'desc')
     .limit(limit + 1)

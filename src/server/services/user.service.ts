@@ -1868,11 +1868,16 @@ export const removeAllContent = async ({
       const batch = v3Ids.slice(i, i + REMOVE_V3_COMMENTS_BATCH);
       afterCommentsV3Deleted(await dbWrite.$transaction((tx) => deleteCommentsV3(tx, batch)));
     }
-    // Not the rows the CommentV3 pass handled: the mirror's delete would blank a placeholder it left.
+    // Not the rows the CommentV3 pass handled: deleting a CommentV2 placeholder blanks it, and deleting
+    // a v1 row cascades to its replies' live CommentV3 rows. A v1 row the mirror never copied has no
+    // other path out of the database until the table is dropped.
     await dbWrite.$executeRaw`
       DELETE FROM "CommentV2" c2
       WHERE c2."userId" = ${id} AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
-    await dbWrite.$executeRaw`DELETE FROM "Comment" WHERE "userId" = ${id}`;
+    await dbWrite.$executeRaw`
+      DELETE FROM "Comment" c
+      WHERE c."userId" = ${id}
+        AND NOT EXISTS (SELECT 1 FROM "CommentV3" v WHERE v."legacyV1Id" = c.id)`;
     // CommentV3 first, as every write on a surface that writes it locks it, before the cascade
     // reaches CommentV2.
     await dbWrite.$executeRaw`
@@ -2990,18 +2995,12 @@ export const toggleBan = async ({
     // reopen. See `bulkSetCommentV2TosViolation`.
     if (removeComments) {
       try {
-        await Promise.all([
-          dbWrite.comment.updateMany({
-            where: { userId: id, tosViolation: false },
-            data: { tosViolation: true },
-          }),
-          // Not a comment on a CommentV3-write surface: `setUserCommentsV3Tos` flags those, locking
-          // CommentV3 first as every write there does, so the two cannot deadlock.
-          dbWrite.$executeRaw`
-            UPDATE "CommentV2" c2 SET "tosViolation" = true, "updatedAt" = now()
-            WHERE c2."userId" = ${id} AND NOT c2."tosViolation"
-              AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`,
-        ]);
+        // Not a comment on a CommentV3-write surface: `setUserCommentsV3Tos` flags those, locking
+        // CommentV3 first as every write there does, so the two cannot deadlock.
+        await dbWrite.$executeRaw`
+          UPDATE "CommentV2" c2 SET "tosViolation" = true, "updatedAt" = now()
+          WHERE c2."userId" = ${id} AND NOT c2."tosViolation"
+            AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
       } catch (error) {
         logToAxiom({
           type: 'error',

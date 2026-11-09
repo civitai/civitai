@@ -20,7 +20,8 @@ beforeEach(() => vi.clearAllMocks());
 describe('Clavata scam auto-mute', () => {
   it.each([
     ['Chat', 'chatMessages'],
-    ['Comment', 'comments'],
+    // A v1 row's author has their model comments on CommentV3 now.
+    ['Comment', 'commentsV2'],
     ['CommentV2', 'commentsV2'],
     ['CommentV3', 'commentsV2'],
   ] as const)('%s mutes with cleanup %s', async (type, cleanup) => {

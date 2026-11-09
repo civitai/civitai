@@ -164,8 +164,7 @@ describe('toggleReactionHandler — owner of a resource review', () => {
 
 const ALL_REACTIONS: ReviewReactions[] = ['Like', 'Dislike', 'Heart', 'Laugh', 'Cry'];
 const CONTENT: ReviewReactions[] = ['Like', 'Heart', 'Laugh', 'Cry'];
-// The set each entity type's site UI offers: `Reactions.tsx` / `JudgeReactionBar` for content,
-// the legacy `ReactionPicker` (every value) for commentOld.
+// The set each entity type's site UI offers: `Reactions.tsx` / `JudgeReactionBar`.
 const EXPECTED_ALLOWED: Record<ReactionEntityType, ReviewReactions[]> = {
   image: CONTENT,
   post: CONTENT,
@@ -173,11 +172,9 @@ const EXPECTED_ALLOWED: Record<ReactionEntityType, ReviewReactions[]> = {
   bountyEntry: CONTENT,
   comment: CONTENT,
   resourceReview: CONTENT,
-  commentOld: ALL_REACTIONS,
 };
 const ENTITY_TYPES = Object.keys(EXPECTED_ALLOWED) as ReactionEntityType[];
 const HELD_TABLE: Record<ReactionEntityType, string> = {
-  commentOld: 'commentReaction',
   comment: 'commentV2Reaction',
   image: 'imageReaction',
   post: 'postReaction',
@@ -186,7 +183,6 @@ const HELD_TABLE: Record<ReactionEntityType, string> = {
   bountyEntry: 'bountyEntryReaction',
 };
 const HELD_FK: Record<ReactionEntityType, string> = {
-  commentOld: 'commentId',
   comment: 'commentId',
   image: 'imageId',
   post: 'postId',

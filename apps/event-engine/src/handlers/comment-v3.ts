@@ -2,7 +2,7 @@ import { createEventHandler } from './base';
 
 /**
 ## Metrics driven by the CommentV3 table, for the surfaces in COMMENT_V3_SURFACES:
-- Article, Image, Post and BountyMetric.commentCount (create, delete, tombstone)
+- Article, Image, Post, Bounty and ModelMetric.commentCount (create, delete, tombstone)
 - UserMetric.commentCount (same) — comments received by the owner of the commented-on entity
 
 The surfaces are the ones the main app reads from CommentV3 (`constants.comments.v3ReadSurfaces`
@@ -28,6 +28,7 @@ export const COMMENT_V3_SURFACES = [
   'model3d',
   'appListing',
   'comicChapter',
+  'model',
 ];
 
 interface CommentV3Record {
@@ -51,6 +52,7 @@ const SURFACES: Record<string, { metric?: string; ownerSql: string }> = {
   image: { metric: 'Image', ownerSql: ownedBy('"Image"') },
   post: { metric: 'Post', ownerSql: ownedBy('"Post"') },
   bounty: { metric: 'Bounty', ownerSql: ownedBy('"Bounty"') },
+  model: { metric: 'Model', ownerSql: ownedBy('"Model"') },
   review: { ownerSql: ownedBy('"ResourceReview"') },
   bountyEntry: { ownerSql: ownedBy('"BountyEntry"') },
   challenge: { ownerSql: ownedBy('"Challenge"', '"createdById"') },

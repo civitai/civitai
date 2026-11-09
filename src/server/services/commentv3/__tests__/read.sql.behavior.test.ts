@@ -18,7 +18,9 @@ import {
   getCommentLock,
   getCommentReplies,
   getCommentSection,
+  countSectionComments,
   getCommentThread,
+  resolveModelPageCommentId,
 } from '~/server/services/commentv3/read.service';
 
 // Against real Postgres, with CommentV3 rows as the mirror or the v3 write path stores them.
@@ -170,6 +172,19 @@ describe('getCommentSection', () => {
     expect(page.nextCursor).toBeNull();
   });
 
+  it('leaves a hidden top-level comment out where the surface asks, rather than folded in', async () => {
+    const page = await section(reader, { budget: 100, hidden: 'exclude' });
+    expect(page.rootIds).toEqual([600, 100, 200, 500, 800]);
+    const asModerator = await section(moderator, { budget: 100, hidden: 'exclude' });
+    expect(asModerator.rootIds).not.toContain(700);
+    expect((await section(reader, { budget: 100, hidden: 'only' })).rootIds).toEqual([700]);
+  });
+
+  it('counts the top-level comments this viewer may see, apart from the hidden ones', async () => {
+    // The section's own roots: an excluded author's, a ToS removal and an empty placeholder are not.
+    expect(await countSectionComments(db, ARTICLE, reader)).toEqual({ visible: 5, hidden: 1 });
+  });
+
   it('opens at most the per-root cap under one comment, shallowest first', async () => {
     const page = await section(reader, { repliesPerRoot: 7, budget: 100 });
     expect(page.children[100].ids).toEqual([101, 102, 103, 104, 105]);
@@ -316,6 +331,25 @@ describe('getCommentThread', () => {
         entity: { entityType: 'article', entityId: 11 },
       })
     ).not.toBeNull();
+  });
+});
+
+describe('resolveModelPageCommentId', () => {
+  // Model 7: 950 with old id 100 (also article comment 100's id) and 951, written since the flip.
+  // Model 8: 960 with old id 950 (model 7's comment's own id).
+  it('names a model comment by its old id, or by its own, never another model’s', async () => {
+    await pg.exec(`
+      INSERT INTO "Model" VALUES (7), (8);
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('model', 7), ('model', 8);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "legacyV1Id") VALUES
+        (950, 'model', 7, 2, 'old', 100), (951, 'model', 7, 2, 'new', NULL),
+        (960, 'model', 8, 2, 'other', 950);`);
+    expect(await resolveModelPageCommentId(db, 7, 951)).toBe(951);
+    expect(await resolveModelPageCommentId(db, 7, 950)).toBe(950);
+    expect(await resolveModelPageCommentId(db, 7, 100)).toBe(950);
+    expect(await resolveModelPageCommentId(db, 8, 950)).toBe(960);
+    // Not an old id on this model: taken as the comment's own, which the thread read checks.
+    expect(await resolveModelPageCommentId(db, 8, 951)).toBe(951);
   });
 });
 

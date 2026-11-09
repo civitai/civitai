@@ -33,7 +33,6 @@ const routers = {
   buzz: () => import('./buzz.router').then((m) => m.buzzRouter),
   chat: () => import('./chat.router').then((m) => m.chatRouter),
   collection: () => import('./collection.router').then((m) => m.collectionRouter),
-  comment: () => import('./comment.router').then((m) => m.commentRouter),
   contestScore: () => import('./contest-score.router').then((m) => m.contestScoreRouter),
   commentv3: () => import('./commentv3.router').then((m) => m.commentv3Router),
   common: () => import('~/server/routers/common.router').then((m) => m.commonRouter),

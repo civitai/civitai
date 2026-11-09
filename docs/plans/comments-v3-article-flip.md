@@ -190,13 +190,13 @@ review of every `CommentsV2` mount (2026-10-27); "Read flip as built" below reco
 | 3D model               | `hideWhenLocked`                                                           | `getThreadEntityOwnerId` has no `model3d` case (owner exemption)                          |
 | App listing            | Divider and "Discussion" title, `hideWhenLocked`                           | no `appListing` owner case; its browser test mocks the v2 provider                        |
 | Comic chapter          | inline on the comics page, `ownerId` only                                  | top-level comments write through `commentv3.create` since write flip release 2; links open the chapter |
-| Model discussion       | needs design                                                               | still the v1 masonry and dialog; `model` rows mix v1 and v2 ids                           |
+| Model discussion       | masonry of cards and thread dialog (`comments-v3-model-flip.md`)           | built 2026-11-06 with its write flip; `model` surface gates, page budget 8                |
 
 Questions and answers have no surface to flip: their code was removed in #7543, and their threads stay as data until Phase 6 archives them to `qa_archive`.
 
 ### Read flip as built (2026-11-02; comic chapters 2026-11-03; not yet deployed)
 
-Every surface in the table above except model discussion reads CommentV3
+Every surface in the table above reads CommentV3
 (`v3ReadSurfaces`); their writes went through `commentv2` and reached CommentV3 by the mirror until
 release 2 of the write flip (built 2026-11-05, not deployed), which writes CommentV3 directly and deletes the `commentv2` router.
 
@@ -228,9 +228,11 @@ release 2 of the write flip (built 2026-11-05, not deployed), which writes Comme
 - **The v2 client suite is removed.** `components/CommentsV2/` is gone: what the v3 suite borrowed
   (`HiddenComment`, `CommentBadge`, `useScrollToHighlightedComment`, `useSectionMute`,
   `ToggleLockComments`, the two stylesheets) moved into `CommentsV3/`, and `HiddenCommentsModal`
-  (v1 model discussion) into `Model/ModelDiscussion/`. The `commentv2` read procedures stayed for
+  (v1 model discussion) into `Model/ModelDiscussion/` (kept in the model flip and rebuilt on CommentV3,
+  `comments-v3-model-flip.md`). The `commentv2` read procedures stayed for
   clients on the previous build, until release 2 of the write flip (built 2026-11-05, not deployed) deleted the router.
-- **Not flipped.** Model discussion, which reads v1 `Comment`, not CommentV2.
+- **Not flipped here.** Model discussion flipped reads and writes together on 2026-11-06
+  (`comments-v3-model-flip.md`).
 
 ## Stage B: writes
 
@@ -337,6 +339,7 @@ Before the deploy, in this order:
 3. The read flip for every other surface (`Flipping another surface`) and the remaining
    cross-surface readers, in one PR; image and post queries timed on the production replica
    first. A surface goes back to the old reads by leaving `v3ReadSurfaces`. Built 2026-11-02 for
-   all but model discussion ("Read flip as built").
+   all but model discussion ("Read flip as built"), which flipped 2026-11-06
+   (`comments-v3-model-flip.md`).
 4. The write flip for every read-flipped surface at once, in two releases
    (`comments-v3-write-flip.md`); the old-row sync stays until Phase 6. Model comments flip last.

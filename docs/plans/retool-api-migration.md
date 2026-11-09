@@ -250,8 +250,11 @@ Group 2 (UserLink cleanup) is **not a new endpoint** — fold into the existing 
 
 | Action | Privileged | Bulk? | Input |
 |---|---|---|---|
-| `bulkDelete` | no | **yes** | `{ commentIds?: number[], commentV2Ids?: number[] }` — at least one required |
-| `removeAsTos` | no | **yes** | `{ commentIds?: number[], commentV2Ids?: number[] }` — soft-hide, retains row for evidence |
+| `bulkDelete` | no | **yes** | `{ commentV2Ids: number[] }` — CommentV3 ids, at least one |
+| `removeAsTos` | no | **yes** | `{ commentV2Ids: number[] }` — soft-hide, retains row for evidence |
+
+Both took a second list, `commentIds` (v1 `Comment` ids), until the model flip (2026-11-07, not
+deployed); every comment is now addressed by its CommentV3 id.
 
 @dev: — Group 4 description says SQL body wasn't in source list. Need to find the exact "Remove as TOS Violation" behavior. Best guess: sets a flag (e.g. `tosViolation: true`) + hides from public views. Will dig into existing report-action code first.
 @justin: Yeah. Send a sub agent to dig.
@@ -263,6 +266,8 @@ Group 2 (UserLink cleanup) is **not a new endpoint** — fold into the existing 
 2. `updateCommentReportStatusByReason(id, TOSViolation, Actioned)` (comment.service.ts:213-230) — flips reports to Actioned
 3. Fires `reportAcceptedReward` for each reporter
 4. Sends `'tos-violation'` notification to comment owner
+
+(`comment.controller.ts` and `comment.service.ts` were deleted in the model flip, 2026-11-06 and 2026-11-07, not deployed; a model comment is flagged by its CommentV3 id through `bulkSetCommentV3TosViolation`.)
 5. ModActivity tracked implicitly via reward system
 
 Comment stays in DB; hidden from public views via `where: { tosViolation: false }` filter.

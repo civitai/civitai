@@ -91,7 +91,6 @@ const userFindFirst = dbMock.dbWrite.user.findFirst;
 // default for a write verb, so an undeclared one returns `undefined` and the fan-out throws.
 const userLinkDeleteMany = dbMock.dbWrite.userLink.deleteMany;
 const imageUpdateMany = dbMock.dbWrite.image.updateMany;
-const commentUpdateMany = dbMock.dbWrite.comment.updateMany;
 const commentV2Updates = () =>
   dbMock.dbWrite.$executeRaw.mock.calls
     .map(([strings, ...values]) => ({
@@ -114,7 +113,6 @@ beforeEach(() => {
   userFindFirst.mockResolvedValue(null);
   userLinkDeleteMany.mockResolvedValue({ count: 0 });
   imageUpdateMany.mockResolvedValue({ count: 0 });
-  commentUpdateMany.mockResolvedValue({ count: 0 });
 });
 
 describe('toggleBan -> user search index', () => {
@@ -204,13 +202,9 @@ describe('toggleBan -> removeComments', () => {
     });
   });
 
-  it('flags both comment tables when asked, and does not touch the author-owned hide', async () => {
+  it('flags the author’s comments when asked, and does not touch the author-owned hide', async () => {
     await ban(true);
 
-    expect(commentUpdateMany).toHaveBeenCalledWith({
-      where: { userId: USER_ID, tosViolation: false },
-      data: { tosViolation: true },
-    });
     const [v2] = commentV2Updates();
     expect(v2.sql).toContain('SET "tosViolation" = true');
     expect(v2.sql).not.toContain('hidden');
@@ -236,7 +230,6 @@ describe('toggleBan -> removeComments', () => {
   it('leaves comments alone otherwise — it is opt-in, like removeMedia', async () => {
     await ban();
 
-    expect(commentUpdateMany).not.toHaveBeenCalled();
     expect(commentV2Updates()).toEqual([]);
     expect(v3Tos).not.toHaveBeenCalled();
   });

@@ -9,7 +9,6 @@
     ".": "./src/index.ts",
     "./hot-reads": "./src/hot-reads.db.ts",
     "./hot-reads-3": "./src/hot-reads-3.db.ts",
-    "./hot-reads-4": "./src/hot-reads-4.db.ts",
     "./hot-reads-5": "./src/hot-reads-5.db.ts",
     "./hot-reads-6": "./src/hot-reads-6.db.ts",
     "./hot-reads-7": "./src/hot-reads-7.db.ts",

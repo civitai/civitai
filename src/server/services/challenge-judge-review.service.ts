@@ -2,7 +2,7 @@ import { dbWrite } from '~/server/db/client';
 import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { judgeReviewCommentSql } from '~/server/games/daily-challenge/challenge-helpers';
 import { clearLadder } from '~/server/games/daily-challenge/challenge-pairwise-store';
-import { bulkDeleteComments } from '~/server/services/comment.service';
+import { bulkDeleteCommentsV2 } from '~/server/services/commentsv2.service';
 import { writeJudgeComment } from '~/server/services/commentv3/comment-write.service';
 import { toggleReaction } from '~/server/services/reaction.service';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
@@ -86,7 +86,7 @@ export async function rejudgeEntries({
       WHERE cm."entityId" = ANY(${imageIds}::int[]) AND ${judgeComment}
     `
   ).map((r) => r.id);
-  await bulkDeleteComments({ commentIds: [], commentV2Ids: commentIds });
+  await bulkDeleteCommentsV2({ ids: commentIds });
 
   const owed = JSON.stringify(Object.fromEntries(imageIds.map((imageId) => [imageId, 0])));
   await dbWrite.$transaction([
