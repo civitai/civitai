@@ -846,17 +846,43 @@ export const LIVE_UNPUBLISH_SCRIPT = 'set -euo pipefail\nbash /templates/live-un
 /** The message `/templates/live-unpublish.sh` exits with for the shared server's readiness app. */
 export const READINESS_APP_REFUSAL = "is the shared static server's readiness probe app";
 
+/** Script of the live restore Job: re-publishes the app's approved build, writing its pointer back. */
+export const LIVE_RESTORE_SCRIPT =
+  'set -euo pipefail\nPUBLISH_REQUIRED=1 bash /templates/publish.sh\n';
+
+/** The one Job name for an app's live pointer, shared by takedown and restore. */
+export function livePointerJobName(slug: string): string {
+  return `${slug}-live-pointer`.slice(0, 63);
+}
+
 /**
- * Remove a LIVE app from the shared static server: a Job running `/templates/live-unpublish.sh`,
- * which deletes only the app's live pointer (the build's files are kept; the next publish
- * restores the app). The script refuses the shared server's readiness app.
+ * Change a LIVE app's pointer on the shared static server. ONE Job name per app for both
+ * directions, so starting either deletes the other still in flight (live-unpublish.service also
+ * runs them one at a time per app and re-reads the app after each).
+ *
+ *   - `unpublish`: `/templates/live-unpublish.sh`, which deletes only the app's live pointer (the
+ *     build's files are kept). The script refuses the shared server's readiness app.
+ *   - `restore`: `/templates/publish.sh` (live lane, required) for the app's approved build. Its
+ *     files and meta are still in the bucket, so the publish uploads nothing and only writes the
+ *     pointer back. No smoke test: this build already passed one and served.
  */
-export async function triggerLiveUnpublish(slug: string): Promise<{ name: string }> {
+export async function triggerLivePointerJob(
+  args:
+    | { slug: string; action: 'unpublish' }
+    | { slug: string; action: 'restore'; sha: string; imageRef: string }
+): Promise<{ name: string }> {
   return runTemplatesScriptJob({
-    name: `${slug}-live-unpub`.slice(0, 63),
-    labels: { 'civitai.com/app-slug': slug },
-    env: [{ name: 'SLUG', value: slug }],
-    script: LIVE_UNPUBLISH_SCRIPT,
+    name: livePointerJobName(args.slug),
+    labels: { 'civitai.com/app-slug': args.slug, 'civitai.com/live-pointer-action': args.action },
+    env:
+      args.action === 'restore'
+        ? [
+            { name: 'SLUG', value: args.slug },
+            { name: 'SHA', value: args.sha },
+            { name: 'IMAGE', value: args.imageRef },
+          ]
+        : [{ name: 'SLUG', value: args.slug }],
+    script: args.action === 'restore' ? LIVE_RESTORE_SCRIPT : LIVE_UNPUBLISH_SCRIPT,
   });
 }
 

@@ -5191,7 +5191,9 @@ export async function markReviewPreviewState(
         err instanceof Error ? err.message : String(err)
       }`
     );
-    return 0;
+    // -1, not 0: the write failed, so whether the row is still this preview is UNKNOWN. A caller
+    // that acts on "matched no row" (the watcher unpublishes an orphaned preview) must not act.
+    return -1;
   }
 }
 
@@ -6123,12 +6125,18 @@ export async function teardownReviewStorageForRequest(publishRequestId: string):
 
 /**
  * A review build finished for a row that is no longer an active preview: release the build slot
- * it still holds. Two shapes hold one (see buildSlotHolderWhere): a superseded, withdrawn or
+ * it still holds, but only the slot of THAT build: the row's detail must still carry the build's
+ * sha (and, when the caller knows it, its `buildStartedAt`), so an old build's callback or watcher
+ * can never free the slot a newer build of the same request now holds. Two shapes hold one (see buildSlotHolderWhere): a superseded, withdrawn or
  * decided row still in a building state, and a preview torn down mid-build (no preview, its
  * started-build detail kept). An active pending preview is never touched. Never throws.
  */
-export async function releaseSettledBuildSlot(publishRequestId: string): Promise<void> {
+export async function releaseSettledBuildSlot(
+  publishRequestId: string,
+  build: { sha: string; buildStartedAt?: string }
+): Promise<void> {
   try {
+    if (!/^[0-9a-f]{40}$/.test(build.sha)) return;
     const { dbWrite } = await import('~/server/db/client');
     await dbWrite.appBlockPublishRequest.updateMany({
       where: {
@@ -6136,6 +6144,12 @@ export async function releaseSettledBuildSlot(publishRequestId: string): Promise
         OR: [
           { deployState: { in: [...BUILDING_REVIEW_PREVIEW_STATES] }, status: { not: 'pending' } },
           { deployState: null, deployDetail: { contains: STARTED_REVIEW_BUILD_DETAIL_MARK } },
+        ],
+        AND: [
+          { deployDetail: { contains: `"sha":"${build.sha}"` } },
+          ...(build.buildStartedAt
+            ? [{ deployDetail: { contains: `"buildStartedAt":"${build.buildStartedAt}"` } }]
+            : []),
         ],
       },
       data: { deployState: null, deployDetail: null, deployUpdatedAt: new Date() },

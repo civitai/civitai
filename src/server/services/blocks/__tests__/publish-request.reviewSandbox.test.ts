@@ -1391,23 +1391,44 @@ describe('markReviewPreviewState requireActivePreview guard', () => {
 });
 
 describe('releaseSettledBuildSlot', () => {
-  it('clears only a slot-holding row that is not an active pending preview', async () => {
+  const STARTED = '2026-11-09T10:00:00.000Z';
+  const slotHolder = [
+    // superseded, withdrawn or decided while its build ran
+    {
+      deployState: { in: ['preview-building', 'preview-deploying'] },
+      status: { not: 'pending' },
+    },
+    // torn down mid-build: no preview, started-build detail kept
+    { deployState: null, deployDetail: { contains: '"buildStartedAt":' } },
+  ];
+
+  it("clears only a slot-holding row that is not an active pending preview, and only THAT build's", async () => {
     mockDbWrite.appBlockPublishRequest.updateMany.mockClear();
-    await releaseSettledBuildSlot(PUBREQ);
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA, buildStartedAt: STARTED });
     expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith({
       where: {
         id: PUBREQ,
-        OR: [
-          // superseded, withdrawn or decided while its build ran
-          {
-            deployState: { in: ['preview-building', 'preview-deploying'] },
-            status: { not: 'pending' },
-          },
-          // torn down mid-build: no preview, started-build detail kept
-          { deployState: null, deployDetail: { contains: '"buildStartedAt":' } },
+        OR: slotHolder,
+        AND: [
+          { deployDetail: { contains: `"sha":"${SHA}"` } },
+          { deployDetail: { contains: `"buildStartedAt":"${STARTED}"` } },
         ],
       },
       data: { deployState: null, deployDetail: null, deployUpdatedAt: expect.any(Date) },
     });
+  });
+
+  it('with only the sha known (the build callback), matches on the sha', async () => {
+    mockDbWrite.appBlockPublishRequest.updateMany.mockClear();
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA });
+    expect(mockDbWrite.appBlockPublishRequest.updateMany.mock.calls[0][0].where.AND).toEqual([
+      { deployDetail: { contains: `"sha":"${SHA}"` } },
+    ]);
+  });
+
+  it('no valid sha: releases nothing', async () => {
+    mockDbWrite.appBlockPublishRequest.updateMany.mockClear();
+    await releaseSettledBuildSlot(PUBREQ, { sha: '' });
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
   });
 });

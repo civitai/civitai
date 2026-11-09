@@ -20,6 +20,7 @@ const {
   mockEnvStore,
   mockFlag,
   mockRelease,
+  mockReviewUnpublish,
   mockTriggerApplyReview,
   mockWaitApply,
   mockWaitReachable,
@@ -36,6 +37,7 @@ const {
     mockEnvStore: { BLOCK_BUILD_CALLBACK_SECRET: SECRET } as Record<string, unknown>,
     mockFlag: { enabled: true, sharedServer: false },
     mockRelease: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+    mockReviewUnpublish: vi.fn(async (..._a: unknown[]) => ({ name: 'review-unpub-1' })),
     mockTriggerApplyReview: vi.fn(async () => ({ name: 'review-apply-1' })),
     mockWaitApply: vi.fn(async () => 'succeeded'),
     // Default: the review host becomes reachable → the watcher marks preview-live.
@@ -100,6 +102,7 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerApplyReview: mockTriggerApplyReview,
   waitForApplyJob: mockWaitApply,
   waitForReviewHostReachable: mockWaitReachable,
+  triggerReviewUnpublish: (...a: unknown[]) => mockReviewUnpublish(...a),
 }));
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   markReviewPreviewState: mockMarkPreview,
@@ -320,7 +323,7 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     const { req, res } = makeReqRes(goodBody());
     await handler(req, res);
     expect(res.body).toMatchObject({ applied: false });
-    expect(mockRelease).toHaveBeenCalledWith(PUBREQ);
+    expect(mockRelease).toHaveBeenCalledWith(PUBREQ, { sha: SHA });
   });
 
   it('a torn-down-mid-build preview (no preview, build detail kept) is not resurrected by its build', async () => {
@@ -334,7 +337,8 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     await handler(req, res);
     expect(res.body).toMatchObject({ applied: false });
     expect(mockTriggerApplyReview).not.toHaveBeenCalled();
-    expect(mockRelease).toHaveBeenCalledWith(PUBREQ);
+    // Only THIS build's slot: identified by its sha.
+    expect(mockRelease).toHaveBeenCalledWith(PUBREQ, { sha: SHA });
   });
 
   it.each([true, false])(
@@ -485,10 +489,80 @@ describe('watchReviewApplyJob (reachability gate)', () => {
         baseDetail,
         onSettled: () => order.push('settled'),
       });
-      expect(mockRelease).toHaveBeenCalledWith(PUBREQ);
+      expect(mockRelease).toHaveBeenCalledWith(PUBREQ, { sha: SHA, buildStartedAt: undefined });
       expect(order).toEqual(['release', 'settled']);
     }
   );
+
+  // An old watcher must never free the slot a newer build of the same request holds.
+  it("the watcher releases only its own build's slot (its sha and buildStartedAt)", async () => {
+    mockRelease.mockClear();
+    const started = '2026-11-09T10:00:00.000Z';
+    await watchReviewApplyJob({
+      publishRequestId: PUBREQ,
+      sha: SHA,
+      jobName: 'review-apply-1',
+      baseDetail: { ...baseDetail, buildStartedAt: started },
+      onSettled: () => undefined,
+    });
+    expect(mockRelease).toHaveBeenCalledWith(PUBREQ, { sha: SHA, buildStartedAt: started });
+  });
+
+  // The apply Job published this sha, but the row stopped being this preview while it ran: its
+  // teardown's unpublish may have landed first, and the row no longer has the sha to retry it.
+  it.each([
+    ['live', true],
+    ['host unreachable', false],
+  ] as const)(
+    'published (%s) for a row that is no longer this preview: the watcher unpublishes that sha',
+    async (_label, reachable) => {
+      mockReviewUnpublish.mockClear();
+      mockWaitReachable.mockResolvedValueOnce(reachable);
+      mockMarkPreview.mockImplementation((async () => 0) as never);
+      try {
+        await watchReviewApplyJob({
+          publishRequestId: PUBREQ,
+          slug: SLUG,
+          sha: SHA,
+          jobName: 'review-apply-1',
+          baseDetail,
+          sharedServer: true,
+          onSettled: () => undefined,
+        });
+      } finally {
+        mockMarkPreview.mockImplementation(async () => undefined);
+      }
+      expect(mockReviewUnpublish).toHaveBeenCalledTimes(1);
+      expect(mockReviewUnpublish).toHaveBeenCalledWith({
+        slug: SLUG,
+        sha: SHA,
+        publishRequestId: PUBREQ,
+      });
+    }
+  );
+
+  it.each([
+    ['the row is still this preview', 1, true],
+    ['the write failed (unknown)', -1, true],
+    ['per-preview serving (nothing published to the shared server)', 0, false],
+  ] as const)('CONTROL: no unpublish when %s', async (_label, matched, sharedServer) => {
+    mockReviewUnpublish.mockClear();
+    mockMarkPreview.mockImplementation((async () => matched) as never);
+    try {
+      await watchReviewApplyJob({
+        publishRequestId: PUBREQ,
+        slug: SLUG,
+        sha: SHA,
+        jobName: 'review-apply-1',
+        baseDetail,
+        sharedServer,
+        onSettled: () => undefined,
+      });
+    } finally {
+      mockMarkPreview.mockImplementation(async () => undefined);
+    }
+    expect(mockReviewUnpublish).not.toHaveBeenCalled();
+  });
 
   it('apply succeeded + host NEVER reachable → marks preview-failed with the DNS detail + frees the dedup slot', async () => {
     mockWaitReachable.mockResolvedValueOnce(false);

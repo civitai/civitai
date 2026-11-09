@@ -10,6 +10,7 @@ import {
 } from '~/server/services/app-blocks-flag';
 import {
   triggerApplyReview,
+  triggerReviewUnpublish,
   waitForApplyJob,
   waitForReviewHostReachable,
 } from '~/server/services/blocks/apps-pipeline.service';
@@ -277,7 +278,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   if (previewNoLongerActive) {
     // This build is over, so the build slot its (torn-down, superseded or decided) row still
     // holds is released now, and the queue moves on.
-    await releaseSettledBuildSlot(body.publishRequestId);
+    await releaseSettledBuildSlot(body.publishRequestId, { sha: body.sha });
     reviewBuildSettled(body.publishRequestId, false);
     res.status(200).json({
       ok: true,
@@ -421,6 +422,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
 
   void watchReviewApplyJob({
     publishRequestId: body.publishRequestId,
+    slug: body.slug,
     sha: body.sha,
     jobName: applyJob.name,
     baseDetail,
@@ -432,6 +434,8 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
 // this runs fire-and-forget, so it can't be observed through the HTTP response).
 export async function watchReviewApplyJob(args: {
   publishRequestId: string;
+  /** The app, for unpublishing a preview nobody is looking at any more (see below). */
+  slug?: string;
   sha: string;
   jobName: string;
   baseDetail: ReturnType<typeof parseReviewDetail>;
@@ -446,7 +450,10 @@ export async function watchReviewApplyJob(args: {
   const onSettled = args.onSettled ?? reviewBuildSettled;
   const settled = async (id: string, live: boolean) => {
     try {
-      await releaseSettledBuildSlot(id);
+      await releaseSettledBuildSlot(id, {
+        sha: args.sha,
+        buildStartedAt: args.baseDetail.buildStartedAt,
+      });
     } catch {
       /* never throws; the stale window is the backstop */
     }
@@ -459,6 +466,34 @@ export async function watchReviewApplyJob(args: {
   // superseded watcher's late write can't clobber the newer preview (see
   // markReviewPreviewState's expectedSha guard).
   const guard = { requireActivePreview: true as const, expectedSha: args.sha };
+  // The apply Job published this sha to the shared server, but its row is no longer this active
+  // preview (torn down, withdrawn, superseded or decided while it ran). That teardown's unpublish
+  // may have run BEFORE this publish landed, and the row no longer carries the sha to retry it: so
+  // unpublish it now, for the sha this watcher knows. Idempotent.
+  const unpublishOrphan = async () => {
+    if (args.sharedServer !== true) return;
+    if (!args.slug) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[review-build-callback] no slug to unpublish the orphaned preview of ${args.publishRequestId}`
+      );
+      return;
+    }
+    try {
+      await triggerReviewUnpublish({
+        slug: args.slug,
+        sha: args.sha,
+        publishRequestId: args.publishRequestId,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[review-build-callback] orphaned preview unpublish failed for ${args.publishRequestId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  };
   try {
     const outcome = await waitForApplyJob(args.jobName);
     if (outcome === 'succeeded') {
@@ -480,7 +515,8 @@ export async function watchReviewApplyJob(args: {
           guard
         );
         // Live only if THIS preview was still the active one: a torn-down or superseded preview
-        // (the guard matched no row) must not start an agent review.
+        // (the guard matched no row) must not start an agent review, and is unpublished.
+        if (marked === 0) await unpublishOrphan();
         await settled(args.publishRequestId, marked > 0);
       } else {
         // Deploy is healthy but its host never became publicly reachable within
@@ -490,7 +526,7 @@ export async function watchReviewApplyJob(args: {
         // suppressed within the TTL window.
         await clearReviewApplyMark(args.publishRequestId, args.sha);
         recordReviewApplyFailure();
-        await markReviewPreviewState(
+        const marked = await markReviewPreviewState(
           args.publishRequestId,
           'preview-failed',
           {
@@ -500,6 +536,8 @@ export async function watchReviewApplyJob(args: {
           },
           guard
         );
+        // Published (the Job succeeded) for a row that is no longer this preview: unpublish it.
+        if (marked === 0) await unpublishOrphan();
         await settled(args.publishRequestId, false);
       }
     } else {

@@ -537,10 +537,10 @@ async function watchApplyJobAndRecord(args: {
       await bustAppListingCatalogCache().catch(() => undefined);
 
       await markRequestDeployState(args.slug, args.sha, 'live');
-      // A delist that landed while this deploy ran was taken down before this publish wrote the
-      // app's live pointer back: take it down again (flag-gated inside; never throws).
+      // This publish wrote the app's live pointer, so it is no longer taken down; a delist that
+      // landed while it ran is taken down again (flag-gated inside; never throws).
       void import('~/server/services/blocks/live-unpublish.service')
-        .then((m) => m.takeDownIfSuspendedAfterDeploy(args.slug))
+        .then((m) => m.afterLiveDeploy(args.slug))
         .catch(() => undefined);
       await safe(setCommitStatus, {
         slug: args.slug,

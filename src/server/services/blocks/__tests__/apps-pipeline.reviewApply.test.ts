@@ -33,9 +33,10 @@ vi.mock('node:fs/promises', () => ({
 import {
   triggerApplyReview,
   deleteReviewResources,
+  LIVE_RESTORE_SCRIPT,
   LIVE_UNPUBLISH_SCRIPT,
   REVIEW_UNPUBLISH_SCRIPT,
-  triggerLiveUnpublish,
+  triggerLivePointerJob,
   parseReadinessProbeSlugs,
 } from '~/server/services/blocks/apps-pipeline.service';
 
@@ -242,28 +243,58 @@ describe('triggerApplyReview / deleteReviewResources', () => {
   });
 
   it('live unpublish: a Job running the live unpublish script for the slug', async () => {
-    await triggerLiveUnpublish('my-app');
+    await triggerLivePointerJob({ slug: 'my-app', action: 'unpublish' });
     const [job] = jobPosts();
     expect(scriptOf(job)).toBe(LIVE_UNPUBLISH_SCRIPT);
     expect(LIVE_UNPUBLISH_SCRIPT).toContain('bash /templates/live-unpublish.sh');
     expect(envOf(job)).toEqual({ SLUG: 'my-app' });
-    expect(job.metadata.name).toBe('my-app-live-unpub');
+    expect(job.metadata.name).toBe('my-app-live-pointer');
+  });
+
+  // Takedown and restore share ONE Job name per app: starting either deletes the other in flight.
+  it('live restore: the live-lane publish of the approved build, under the same Job name', async () => {
+    await triggerLivePointerJob({
+      slug: 'my-app',
+      action: 'restore',
+      sha: SHA,
+      imageRef: `ghcr.io/civitai/app-block-my-app:${SHA}`,
+    });
+    const [job] = jobPosts();
+    expect(scriptOf(job)).toBe(LIVE_RESTORE_SCRIPT);
+    expect(LIVE_RESTORE_SCRIPT).toContain('PUBLISH_REQUIRED=1 bash /templates/publish.sh');
+    expect(LIVE_RESTORE_SCRIPT).not.toContain('PUBLISH_LANE');
+    expect(envOf(job)).toEqual({
+      SLUG: 'my-app',
+      SHA,
+      IMAGE: `ghcr.io/civitai/app-block-my-app:${SHA}`,
+    });
+    expect(job.metadata.name).toBe('my-app-live-pointer');
+    // The same-name Job is deleted before this one is created.
+    const del = calls.find((c) => c.method === 'DELETE');
+    expect(del?.url).toContain('/jobs/my-app-live-pointer');
   });
 
   // `apply-job` is the role the cluster grants the access both scripts need to start their pod
   // (the role every apply Job uses); any other role leaves the Job unable to do anything.
-  it('both new Jobs run as role apply-job (Job and pod labels)', async () => {
+  it('the new Jobs run as role apply-job (Job and pod labels)', async () => {
     await deleteReviewResources({
       slug: 'my-app',
       sha: SHA,
       publishRequestId: PUBREQ,
       sharedServer: true,
     });
-    await triggerLiveUnpublish('my-app');
+    await triggerLivePointerJob({ slug: 'my-app', action: 'unpublish' });
+    await triggerLivePointerJob({
+      slug: 'my-app',
+      action: 'restore',
+      sha: SHA,
+      imageRef: `ghcr.io/civitai/app-block-my-app:${SHA}`,
+    });
     const jobs = jobPosts();
     expect(jobs.map((j) => j.metadata.name)).toEqual([
       'my-app-review-unpub-aaaaaaaa',
-      'my-app-live-unpub',
+      'my-app-live-pointer',
+      'my-app-live-pointer',
     ]);
     for (const job of jobs) {
       expect(job.metadata.labels['civitai.com/role']).toBe('apply-job');

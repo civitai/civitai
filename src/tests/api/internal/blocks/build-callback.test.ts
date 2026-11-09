@@ -148,7 +148,7 @@ vi.mock('~/server/services/blocks/publish-request.service', () => ({
   markRequestDeployState: mockMarkDeploy,
 }));
 vi.mock('~/server/services/blocks/live-unpublish.service', () => ({
-  takeDownIfSuspendedAfterDeploy: (slug: string) => mockAfterDeploy(slug),
+  afterLiveDeploy: (slug: string) => mockAfterDeploy(slug),
 }));
 
 import {
