@@ -33,7 +33,9 @@ vi.mock('../cache', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   bustKeyBestEffort,
 }));
-vi.mock('$env/dynamic/private', () => ({ env: { CIVITAI_APP_URL: 'https://civitai.com' } }));
+vi.mock('$env/dynamic/private', () => ({
+  env: { CIVITAI_APP_URL: 'https://civitai.com', WEBHOOK_TOKEN: 'test-token' },
+}));
 vi.mock('$app/server', () => ({
   getRequestEvent: () => ({
     locals: {},
@@ -72,13 +74,14 @@ describe('the feedback capture account', () => {
 
   // A ban from before the refusal can still be lifted.
   it('can still be unbanned', async () => {
-    captured.length = 0;
     const result = await setBanned({ userId: -2, ban: false, moderatorId: 7 });
     expect(result).not.toEqual({
       ok: false,
       error: expect.stringMatching(/feedback page captures/),
     });
-    expect(captured.length).toBeGreaterThan(0);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/mod/ban-user'))).toBe(
+      true
+    );
   });
 
   it('is never banned, and nothing is written or sent', async () => {
