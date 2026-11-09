@@ -1368,7 +1368,7 @@ describe('watchOpenDeposits', () => {
     userId: 42,
     status,
     payCurrency: 'btc',
-    payAmount: 10,
+    payAmount: 10 as number | null,
     createdAt: daysAgo(ageDays),
     user: { username: 'tester' },
   });
@@ -1401,7 +1401,7 @@ describe('watchOpenDeposits', () => {
     return watchOpenDeposits();
   };
 
-  it('polls paid in-flight rows, and failed or paid expired rows from the last 30 days', async () => {
+  it('polls paid in-flight rows, and failed or expired rows from the last 30 days', async () => {
     const result = await watch(
       [
         openRow(811, 'waiting', 5),
@@ -1415,6 +1415,7 @@ describe('watchOpenDeposits', () => {
         openRow(819, 'buzz_failed', 5),
         openRow(820, 'expired', 5),
         { ...openRow(821, 'expired', 5), payAmount: 0 },
+        { ...openRow(827, 'expired', 5), payAmount: null },
         openRow(822, 'failed', 29),
         { ...openRow(823, 'failed', 29), payAmount: null },
         openRow(824, 'failed', 31),
@@ -1425,8 +1426,8 @@ describe('watchOpenDeposits', () => {
     );
 
     const polled = mockNowpaymentsCaller.getPaymentStatus.mock.calls.map(([id]) => Number(id));
-    expect(polled.sort()).toEqual([811, 812, 813, 814, 815, 820, 822, 823]);
-    expect(result.checked).toBe(8);
+    expect(polled.sort()).toEqual([811, 812, 813, 814, 815, 820, 821, 822, 823, 827]);
+    expect(result.checked).toBe(10);
     expect(result.counts).toMatchObject({ open: 5, held: 1, finishedUncredited: 1 });
   });
 
@@ -1568,6 +1569,14 @@ describe('watchOpenDeposits', () => {
       expect([...ledger]).toEqual([['np-deposit-841', 2500]]);
       expect(rowStatus[841]).toBe('finished');
       expect(result.lateFinished).toBe(1);
+    });
+
+    // e.g. an expired row whose paid IPN could not be confirmed: no other sweep picks it up.
+    it('credits an expired row that never recorded an amount once NOWPayments finishes it', async () => {
+      await watch([{ ...openRow(848, 'expired', 23), payAmount: null }], { 848: 'finished' });
+
+      expect([...ledger]).toEqual([['np-deposit-848', 5000]]);
+      expect(rowStatus[848]).toBe('finished');
     });
 
     it.each(['failed', 'expired', 'waiting', 'refunded'])(

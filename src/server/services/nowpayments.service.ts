@@ -1182,7 +1182,8 @@ const LATE_FINISH_LOOKBACK_DAYS = 30;
 
 const lateFinishWhere = () => ({
   createdAt: { gte: dayjs.utc().subtract(LATE_FINISH_LOOKBACK_DAYS, 'day').toDate() },
-  OR: [{ status: 'failed' }, { status: 'expired', payAmount: { gt: 0 } }],
+  // No payAmount filter: a row closed before its amount was recorded can still finish.
+  status: { in: LATE_FINISH_STATUSES },
 });
 
 /**
