@@ -46,11 +46,7 @@ export type K8sTarget = {
 // Exported for reuse by the sibling dev-tunnel service (renders/deletes the
 // ephemeral dev-tunnel Traefik route via the SAME in-pod SA k8s API surface as
 // the review render). Kept thin + dependency-free on purpose.
-export async function k8sFetch(
-  target: K8sTarget,
-  path: string,
-  init?: RequestInit
-): Promise<Response> {
+export async function k8sFetch(target: K8sTarget, path: string, init?: RequestInit): Promise<Response> {
   const url = `${target.server.replace(/\/$/, '')}${path}`;
   const headers: HeadersInit = {
     Authorization: `Bearer ${target.token}`,
@@ -369,10 +365,14 @@ export async function waitForReviewHostReachable(
   const doFetch = opts.fetchImpl ?? fetch;
   const now = opts.now ?? (() => Date.now());
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const signalFactory = opts.signalFactory ?? ((ms: number) => AbortSignal.timeout(ms));
+  const signalFactory =
+    opts.signalFactory ?? ((ms: number) => AbortSignal.timeout(ms));
 
   const originIp =
-    opts.originIp ?? env.APPS_REVIEW_INGRESS_TARGET ?? env.APPS_DEV_TUNNEL_INGRESS_TARGET ?? null;
+    opts.originIp ??
+    env.APPS_REVIEW_INGRESS_TARGET ??
+    env.APPS_DEV_TUNNEL_INGRESS_TARGET ??
+    null;
 
   const deadline = now() + timeoutMs;
 
@@ -460,7 +460,9 @@ export function resolveReviewTriggerUrl(
 ): string {
   if (reviewUrl) return reviewUrl;
   if (buildUrl) return buildUrl.replace(/\/trigger-build\/?$/, '/trigger-review-build');
-  throw new Error('APPS_TEKTON_REVIEW_TRIGGER_URL / APPS_TEKTON_TRIGGER_URL not configured');
+  throw new Error(
+    'APPS_TEKTON_REVIEW_TRIGGER_URL / APPS_TEKTON_TRIGGER_URL not configured'
+  );
 }
 
 export type TriggerReviewBuildArgs = {
@@ -479,7 +481,9 @@ export type TriggerReviewBuildArgs = {
  * carries `mode:'review'` + the publishRequestId + modUserId so the receiver
  * creates a review-labelled PipelineRun that builds from the in-review repo.
  */
-export async function triggerReviewBuild(args: TriggerReviewBuildArgs): Promise<{ name: string }> {
+export async function triggerReviewBuild(
+  args: TriggerReviewBuildArgs
+): Promise<{ name: string }> {
   const url = resolveReviewTriggerUrl(
     env.APPS_TEKTON_REVIEW_TRIGGER_URL,
     env.APPS_TEKTON_TRIGGER_URL
@@ -541,7 +545,9 @@ export type TriggerApplyReviewArgs = {
  * `app-templates` ConfigMap (the review template is added to that CM in the
  * talos PR as `review.yaml.tmpl`).
  */
-export async function triggerApplyReview(args: TriggerApplyReviewArgs): Promise<{ name: string }> {
+export async function triggerApplyReview(
+  args: TriggerApplyReviewArgs
+): Promise<{ name: string }> {
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   const host = reviewHostSha(args.sha);
@@ -713,10 +719,7 @@ export async function deleteReviewResources(args: {
           const body = await listRes.text().catch(() => '');
           // eslint-disable-next-line no-console
           console.warn(
-            `[apps-pipeline] deleteReviewResources list ${k.label} ${listRes.status}: ${body.slice(
-              0,
-              160
-            )}`
+            `[apps-pipeline] deleteReviewResources list ${k.label} ${listRes.status}: ${body.slice(0, 160)}`
           );
         }
         continue;
@@ -739,9 +742,7 @@ export async function deleteReviewResources(args: {
             const body = await delRes.text().catch(() => '');
             // eslint-disable-next-line no-console
             console.warn(
-              `[apps-pipeline] deleteReviewResources delete ${k.label}/${name} ${
-                delRes.status
-              }: ${body.slice(0, 160)}`
+              `[apps-pipeline] deleteReviewResources delete ${k.label}/${name} ${delRes.status}: ${body.slice(0, 160)}`
             );
           }
         } catch (err) {
@@ -857,13 +858,9 @@ export async function triggerApply(args: TriggerApplyArgs): Promise<{ name: stri
   // Delete an existing Job by the same name first (re-pushes of the same
   // SHA must restart the apply cycle, not silently succeed because the
   // first one finished).
-  await k8sFetch(
-    target,
-    `/apis/batch/v1/namespaces/${ns}/jobs/${jobName}?propagationPolicy=Background`,
-    {
-      method: 'DELETE',
-    }
-  ).then(async (r) => {
+  await k8sFetch(target, `/apis/batch/v1/namespaces/${ns}/jobs/${jobName}?propagationPolicy=Background`, {
+    method: 'DELETE',
+  }).then(async (r) => {
     // 404 is fine — first time we're applying for this SHA.
     if (!r.ok && r.status !== 404) {
       const body = await r.text().catch(() => '');
@@ -946,7 +943,9 @@ export async function waitForApplyJob(
       // DeadlineExceeded) is the cleanest "give up" signal. Don't rely on
       // .status.failed (which counts individual Pod attempts and can climb
       // mid-retry without the Job being terminal).
-      const failed = status.conditions?.find((c) => c.type === 'Failed' && c.status === 'True');
+      const failed = status.conditions?.find(
+        (c) => c.type === 'Failed' && c.status === 'True'
+      );
       if (failed) return 'failed';
     }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
@@ -1194,7 +1193,12 @@ fi
 
 echo "review smoke test: PASSED"
 
-# ---- Apply the review manifest into the namespace --------------------------
+# ---- Recreate the review resources, then apply ----------------------------
+# A same-sha rebuild renders the SAME names. Delete them first so every apply creates them fresh:
+# the cluster janitor reaps review resources 14 days after their creationTimestamp, and civitai
+# reports the preview expired 14 days after this build started, so the two clocks only agree if
+# a rebuild resets creation. Every rendered object is namespaced and named by REVIEW_NAME.
+kubectl delete -f /tmp/rendered.yaml --ignore-not-found=true --wait=true
 kubectl apply -f /tmp/rendered.yaml
 kubectl -n ${ns} rollout status deploy/\${REVIEW_NAME} --timeout=180s
 `;

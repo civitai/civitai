@@ -144,14 +144,13 @@ import {
   teardownReviewForRequest,
   teardownAgentReviewForRequest,
   teardownPreview,
-  countActiveReviewPreviews,
   listActiveReviewPreviews,
   markReviewPreviewState,
   withdrawRequest,
   parseReviewDetail,
-  REVIEW_PREVIEW_TTL_MS,
 } from '~/server/services/blocks/publish-request.service';
 import { MAX_CONCURRENT_REVIEW_BUILDS } from '~/server/services/blocks/review-autodeploy.service';
+import { REVIEW_PREVIEW_MAX_AGE_MS } from '~/shared/constants/app-review-preview.constants';
 
 const PUBREQ = 'pubreq_0123456789ABCDEFGHJKMNPQRS';
 const SHA = 'a'.repeat(40);
@@ -619,6 +618,29 @@ describe('getReviewStatus', () => {
     // An expired preview mints no access URL: there is nothing left to open.
     if (expected === 'preview-expired') expect(r.previewUrl).toBeUndefined();
   });
+
+  // The clock is the BUILD's start, which precedes the resources' creation (the janitor's clock),
+  // not the last state change: a preview that went live an hour ago from a build started 14d1h
+  // ago has already been reaped.
+  it.each([
+    [14 * DAY + HOUR, 'preview-expired'],
+    [14 * DAY - HOUR, 'preview-live'],
+  ])(
+    'a live row whose build started %d ms ago (last write 1h ago) reports %s',
+    async (startedAgo, expected) => {
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+        id: PUBREQ,
+        status: 'pending',
+        deployState: 'preview-live',
+        deployDetail: JSON.stringify({
+          buildStartedAt: new Date(Date.now() - startedAgo).toISOString(),
+        }),
+        deployUpdatedAt: new Date(Date.now() - HOUR),
+      });
+      const r = await getReviewStatus({ publishRequestId: PUBREQ });
+      expect(r.state).toBe(expected);
+    }
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -893,66 +915,6 @@ describe('parseReviewDetail', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Concurrency cap — countActiveReviewPreviews builds the ACTIVE predicate
-// (pending + preview-building/deploying/live + within the TTL window). The DB
-// filtering is mocked away, so we assert the WHERE clause carries the exact
-// predicate (that's what excludes failed/null/expired/non-pending in prod) and
-// that the count is the returned row count.
-// ---------------------------------------------------------------------------
-describe('countActiveReviewPreviews', () => {
-  beforeEach(() => {
-    mockDbRead.appBlockPublishRequest.findMany.mockReset();
-    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
-  });
-
-  it('queries pending + active preview-* states within the TTL window, oldest-first', async () => {
-    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
-      {
-        id: 'a',
-        slug: 's1',
-        version: '1.0.0',
-        deployState: 'preview-live',
-        deployDetail: null,
-        deployUpdatedAt: new Date(),
-      },
-      {
-        id: 'b',
-        slug: 's2',
-        version: '1.0.0',
-        deployState: 'preview-building',
-        deployDetail: null,
-        deployUpdatedAt: new Date(),
-      },
-    ]);
-    const before = Date.now();
-    const count = await countActiveReviewPreviews();
-    expect(count).toBe(2);
-
-    const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
-    expect(arg.where.status).toBe('pending');
-    // `preview-queued` is active: a queued automatic preview is listed (and can be torn down).
-    expect(arg.where.deployState).toEqual({
-      in: ['preview-queued', 'preview-building', 'preview-deploying', 'preview-live'],
-    });
-    // TTL cutoff ≈ now - REVIEW_PREVIEW_TTL_MS (the 14-day preview max age).
-    const cutoff: Date = arg.where.deployUpdatedAt.gt;
-    expect(cutoff).toBeInstanceOf(Date);
-    expect(cutoff.getTime()).toBeLessThanOrEqual(before - REVIEW_PREVIEW_TTL_MS + 5000);
-    expect(cutoff.getTime()).toBeGreaterThanOrEqual(before - REVIEW_PREVIEW_TTL_MS - 5000);
-    // oldest-first — the natural teardown order.
-    expect(arg.orderBy).toEqual({ deployUpdatedAt: 'asc' });
-    // no exclusion by default.
-    expect(arg.where.id).toBeUndefined();
-  });
-
-  it('respects excludePublishRequestId (so a rebuild never counts itself)', async () => {
-    await countActiveReviewPreviews({ excludePublishRequestId: PUBREQ });
-    const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
-    expect(arg.where.id).toEqual({ not: PUBREQ });
-  });
-});
-
-// ---------------------------------------------------------------------------
 // A moderator's start and the platform BUILD cap. The cap bounds automatic
 // starts (they queue); a moderator's explicit start jumps the queue and is
 // admitted even with every slot held. The old cap on LIVE previews is gone.
@@ -993,6 +955,12 @@ describe('previewRequest and the build cap', () => {
       ([arg]: any[]) => arg.data.deployState === 'preview-building'
     );
     expect(JSON.parse(claim![0].data.deployDetail)).toEqual({ actor: 'moderator', modUserId: 5 });
+    // The build's own mark (with the sha) carries the build start the expiry clock counts from.
+    const built = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls
+      .map(([arg]: any[]) => arg.data)
+      .find((d: any) => d.deployState === 'preview-building' && d.deployDetail.includes('"sha"'));
+    const startedAt = Date.parse(JSON.parse(built.deployDetail).buildStartedAt);
+    expect(Math.abs(Date.now() - startedAt)).toBeLessThan(60_000);
   });
 
   it('a request that stopped being pending before the claim is refused, nothing triggered', async () => {
@@ -1249,7 +1217,29 @@ describe('listActiveReviewPreviews', () => {
     expect(arg.where.deployState).toEqual({
       in: ['preview-queued', 'preview-building', 'preview-deploying', 'preview-live'],
     });
+    // Coarse DB cutoff ≈ now - the 14-day preview max age.
+    const cutoff: Date = arg.where.deployUpdatedAt.gt;
+    expect(Math.abs(cutoff.getTime() - (Date.now() - REVIEW_PREVIEW_MAX_AGE_MS))).toBeLessThan(
+      5000
+    );
     expect(arg.orderBy).toEqual({ deployUpdatedAt: 'asc' });
+  });
+
+  it('leaves out a preview whose BUILD started past the max age, though its last write is recent', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'old-build',
+        slug: 's1',
+        version: '1.0.0',
+        deployState: 'preview-live',
+        deployDetail: JSON.stringify({
+          buildStartedAt: new Date(Date.now() - REVIEW_PREVIEW_MAX_AGE_MS - 60_000).toISOString(),
+        }),
+        deployUpdatedAt: new Date(),
+      },
+    ]);
+    const res = await listActiveReviewPreviews();
+    expect(res.active).toEqual([]);
   });
 
   it('returns an empty active list + the cap when nothing is active', async () => {

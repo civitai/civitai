@@ -61,11 +61,8 @@ export function useReviewPreview(publishRequestId: string) {
   // (e.g. while building) only for stabilization input.
   const url = statusQuery.data?.previewUrl ?? detail?.url;
   const inProgress = isReviewPreviewBuilding(state);
-  const isQueued = state === 'preview-queued';
   const isLive = state === 'preview-live';
   const isFailed = state === 'preview-failed';
-  // Past its maximum age; its resources are gone, so the only action is a rebuild.
-  const isExpired = state === 'preview-expired';
 
   // Stabilize the IFRAME src so it does NOT change on every poll. getReviewStatus
   // mints a fresh `?mr=<token>` previewUrl every 60s poll; binding the iframe
@@ -86,9 +83,7 @@ export function useReviewPreview(publishRequestId: string) {
     detail,
     isLive,
     inProgress,
-    isQueued,
     isFailed,
-    isExpired,
     stableIframeSrc,
     error: statusQuery.error,
   };

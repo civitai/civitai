@@ -317,6 +317,23 @@ export async function startAgentReview(
     throw err;
   }
 
+  // AUDIT: who started this run. An automatic start (no moderator) is recorded as `system`.
+  // Fire-and-forget: the audit must never fail the start.
+  const { logToAxiom } = await import('~/server/logging/client');
+  logToAxiom(
+    {
+      name: 'app-blocks.review.agent-start',
+      type: 'info',
+      publishRequestId,
+      reportId,
+      slug: request.slug,
+      actor: args.modUserId == null ? 'system' : 'moderator',
+      modUserId: args.modUserId,
+      sections: targeted ? requested : null,
+    },
+    'webhooks'
+  ).catch(() => null);
+
   return { reportId, agentName };
 }
 

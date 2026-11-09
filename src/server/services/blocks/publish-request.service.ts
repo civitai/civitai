@@ -4844,16 +4844,6 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
  *  DeployState values. */
 export type { ReviewPreviewState, StoredReviewPreviewState };
 
-/**
- * An active review preview's lifetime window (ms): from its last state change until the cluster's
- * `review-sandbox-janitor` reaps it. A preview the janitor has already deleted — but whose DB row
- * still reads `preview-live`, because the janitor can't write the civitai DB — ages OUT of the
- * active list once its `deployUpdatedAt` is older than this, and `getReviewStatus` reports it
- * `preview-expired`. Before that, a preview stays up until the request is decided, withdrawn or
- * superseded.
- */
-export const REVIEW_PREVIEW_TTL_MS = REVIEW_PREVIEW_MAX_AGE_MS;
-
 /** deploy_state values that count as an ACTIVE review preview. Excludes
  *  `preview-failed` (dead) and `null` (never started). */
 const ACTIVE_REVIEW_PREVIEW_STATES: StoredReviewPreviewState[] = [
@@ -4873,26 +4863,22 @@ type ActiveReviewPreviewRow = {
 };
 
 /**
- * Fetch the currently-active review-preview rows, oldest-first. The predicate —
- * `status='pending'` AND `deployState IN (queued|building|deploying|live)` AND
- * `deployUpdatedAt > now() - REVIEW_PREVIEW_TTL_MS` — is shared by the active count
- * and the listActivePreviews query. (The BUILD cap counts a narrower set:
- * `buildSlotHolderWhere` in review-autodeploy.service.)
+ * Fetch the currently-active review-preview rows, oldest-first: `status='pending'` AND
+ * `deployState IN (queued|building|deploying|live)` AND `deployUpdatedAt` within the preview max
+ * age (`REVIEW_PREVIEW_MAX_AGE_MS`; the exact expiry is {@link isReviewPreviewExpired}). (The
+ * BUILD cap counts a narrower set: `buildSlotHolderWhere` in review-autodeploy.service.)
  * The `status='pending'` + `preview-` prefix filter is load-bearing: deploy_state
  * is SHARED with the production build lifecycle, so an approved row's `building`/
  * `live` value must never be counted here.
  */
-async function findActiveReviewPreviewRows(opts?: {
-  excludePublishRequestId?: string;
-}): Promise<ActiveReviewPreviewRow[]> {
+async function findActiveReviewPreviewRows(): Promise<ActiveReviewPreviewRow[]> {
   const { dbRead } = await import('~/server/db/client');
-  const cutoff = new Date(Date.now() - REVIEW_PREVIEW_TTL_MS);
-  return dbRead.appBlockPublishRequest.findMany({
+  const now = Date.now();
+  const rows = await dbRead.appBlockPublishRequest.findMany({
     where: {
       status: 'pending',
       deployState: { in: ACTIVE_REVIEW_PREVIEW_STATES },
-      deployUpdatedAt: { gt: cutoff },
-      ...(opts?.excludePublishRequestId ? { id: { not: opts.excludePublishRequestId } } : {}),
+      deployUpdatedAt: { gt: new Date(now - REVIEW_PREVIEW_MAX_AGE_MS) },
     },
     orderBy: { deployUpdatedAt: 'asc' }, // oldest first — the natural teardown-candidate order
     select: {
@@ -4904,18 +4890,16 @@ async function findActiveReviewPreviewRows(opts?: {
       deployUpdatedAt: true,
     },
   });
-}
-
-/**
- * Count active review previews (see {@link findActiveReviewPreviewRows} for the
- * predicate). Global across all mods. Pass `excludePublishRequestId` to omit a
- * specific request.
- */
-export async function countActiveReviewPreviews(opts?: {
-  excludePublishRequestId?: string;
-}): Promise<number> {
-  const rows = await findActiveReviewPreviewRows(opts);
-  return rows.length;
+  // The DB cutoff is the coarse filter; a preview whose BUILD started past the max age is gone too.
+  return rows.filter(
+    (r) =>
+      !isReviewPreviewExpired(
+        r.deployState as StoredReviewPreviewState,
+        parseReviewDetail(r.deployDetail),
+        r.deployUpdatedAt,
+        now
+      )
+  );
 }
 
 export type ActiveReviewPreview = {
@@ -4977,6 +4961,12 @@ export type ReviewPreviewDetail = {
   modUserId?: number;
   /** When an automatic start was queued for a build slot (ISO). */
   queuedAt?: string;
+  /**
+   * When this build started (ISO), stamped by startClaimedReviewBuild and carried through the
+   * callback's later writes. The preview's resources are created after it (a re-apply recreates
+   * them), so a 14-day expiry counted from here is never later than the janitor's reap.
+   */
+  buildStartedAt?: string;
 };
 
 /** Pack a ReviewPreviewDetail into the deploy_detail string column. */
@@ -5262,7 +5252,7 @@ export async function startClaimedReviewBuild(
     import('./apps-pipeline.service'),
     import('./review-autodeploy.service'),
   ]);
-  const actorDetail = reviewActorDetail(actor);
+  const actorDetail = { ...reviewActorDetail(actor), buildStartedAt: new Date().toISOString() };
   // Every write after the claim requires the row to still be an active preview, so a moderator's
   // teardown mid-start is not resurrected.
   const guard = { requireActivePreview: true };
@@ -5358,16 +5348,22 @@ export type ReviewStatusResult = {
 
 /**
  * Past its maximum age the cluster janitor has reaped the preview's resources, so it is reported
- * `preview-expired` (the UI offers a rebuild). A queued preview holds no resources and never
- * expires.
+ * `preview-expired` (the UI offers a rebuild). Counted from the build's start
+ * (`detail.buildStartedAt`), which precedes the resources' creation, so it never reads live after
+ * the janitor's reap; a row written before that field existed falls back to its last state change.
+ * A queued preview holds no resources and never expires.
  */
 export function isReviewPreviewExpired(
   state: StoredReviewPreviewState,
+  detail: ReviewPreviewDetail,
   updatedAt: Date | null,
   now: number = Date.now()
 ): boolean {
-  if (state === 'preview-queued' || !updatedAt) return false;
-  return now - updatedAt.getTime() > REVIEW_PREVIEW_MAX_AGE_MS;
+  if (state === 'preview-queued') return false;
+  const started = detail.buildStartedAt ? Date.parse(detail.buildStartedAt) : NaN;
+  const from = Number.isFinite(started) ? started : updatedAt?.getTime();
+  if (from === undefined) return false;
+  return now - from > REVIEW_PREVIEW_MAX_AGE_MS;
 }
 
 /**
@@ -5405,9 +5401,11 @@ export async function getReviewStatus(opts: {
   const isPreviewState =
     typeof row.deployState === 'string' && row.deployState.startsWith('preview-');
   const stored = isPreviewState ? (row.deployState as StoredReviewPreviewState) : null;
-  const state: ReviewPreviewState | null =
-    stored && isReviewPreviewExpired(stored, row.deployUpdatedAt) ? 'preview-expired' : stored;
   const detail = isPreviewState ? parseReviewDetail(row.deployDetail) : {};
+  const state: ReviewPreviewState | null =
+    stored && isReviewPreviewExpired(stored, detail, row.deployUpdatedAt)
+      ? 'preview-expired'
+      : stored;
 
   let previewUrl: string | undefined;
   if (state === 'preview-live' && opts.modUserId != null && detail.host && detail.url) {
