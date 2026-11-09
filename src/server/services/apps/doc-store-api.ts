@@ -479,7 +479,7 @@ export function parseTallyPatch(
     });
   }
   const operators = fields.filter(isOperator);
-  if (operators.length > 99) { // MUTANT M2
+  if (operators.length > 1) {
     throw patchRefusal('multiple_operators', 'PATCH takes exactly one update operator', {
       operators,
     });
@@ -491,7 +491,7 @@ export function parseTallyPatch(
     );
   }
   const [operator] = operators;
-  if (fields.length > operators.length) { // MUTANT M2
+  if (fields.length > 1) {
     throw patchRefusal('operator_with_data', `${operator} cannot be combined with other fields`, {
       operator,
     });
@@ -1072,7 +1072,7 @@ async function run(
       assertImportTallyPublishScope(access, shared);
       const { by } = parseBody(incrementBody, body);
       // The bucket first: a refused request costs no subject lookup.
-      if (req.method !== 'PATCH') await charge('tally', access, req); // MUTANT M1
+      await charge('tally', access, req);
       const user = shared ? await assertTrusted(uid) : null;
       // Under `write: 'none'` an increment can CREATE a public document under the app's key. The
       // store does not say whether this one did, so the key is scanned on every such increment.
@@ -1083,21 +1083,17 @@ async function run(
       // Only under `write: 'none'` can an increment create (and so stamp) a document.
       const incremented = decl.write === 'none' ? await withSchemaMajor(access, coll) : coll;
       const counted = await store.increment(ctx, incremented, route.key, route.name, by);
-      if (req.method === 'PATCH') {
-        // MUTANT M4
-        await store.put(ctx, coll, route.key, { [route.name]: counted.value }).catch(() => undefined);
-      }
       afterCommit();
       return ok(counted);
     }
     case 'mark':
     case 'unmark': {
       // Before any budget or trust lookup: a withdrawal is a 400 for everyone.
-      if (route.op === 'unmark' && req.method !== 'PATCH') refuseReportWithdrawal(route.name); // MUTANT M3
+      if (route.op === 'unmark') refuseReportWithdrawal(route.name);
       const uid = requireViewer(access);
       assertImportTallyPublishScope(access, shared);
       if (route.op === 'mark') parseBody(markBody, body);
-      if (req.method !== 'PATCH') await charge('tally', access, req); // MUTANT M1
+      await charge('tally', access, req);
       if (route.op === 'mark' && route.name === REPORT_MARK) await charge('report', access, req);
       if (shared) await assertTrusted(uid);
       const result =
