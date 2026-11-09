@@ -15,7 +15,8 @@ function setup(limits: VoteLimit[] = limitsOf(3)) {
   const gate = createVoteGate({
     client: () => redis.client,
     limits: async () => limits,
-    timeoutMs: 50,
+    // Generous: starting the Lua engine under a loaded machine must not read as a Redis that is down.
+    timeoutMs: 2000,
   });
   const at = () => new Date(redis.clock.now);
   return { ...redis, gate, at };
@@ -118,7 +119,7 @@ describe('vote gate limits', () => {
     const gate = createVoteGate({
       client: () => redis.client,
       limits: async () => limits,
-      timeoutMs: 50,
+      timeoutMs: 2000,
     });
     const at = () => new Date(redis.clock.now);
     await gate.guard(7, at(), async () => 'ok');
@@ -173,5 +174,77 @@ describe('vote gate moderators', () => {
       expect(await gate.guard(7, at(), async () => 'ok', { moderator: true })).toBe('ok');
     }
     expect(values.size).toBe(0);
+  });
+});
+
+const SLOT = 'knights:vote-limit:{7}:inflight';
+const MINUTE_WINDOW = 'knights:vote-limit:{7}:w60';
+const COOLDOWN = 'knights:vote-limit:{7}:cooldown';
+
+describe('vote gate failure handling', () => {
+  it('frees the slot of a check that finished after the vote went ahead without it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const redis = fakeRedis();
+    const slow: GateClient = {
+      pTTL: redis.client.pTTL,
+      eval: (script, options) =>
+        new Promise((done) => setTimeout(done, 120)).then(() => redis.client.eval(script, options)),
+    };
+    const gate = createVoteGate({
+      client: () => slow,
+      limits: async () => limitsOf(1000),
+      timeoutMs: 10,
+    });
+
+    expect(await gate.guard(7, new Date(0), async () => 'ok')).toBe('ok');
+    await vi.waitFor(() => expect(redis.get(SLOT)).toBe('1'));
+    await vi.waitFor(() => expect(redis.get(SLOT)).toBe('0'));
+  });
+
+  it('never takes a slot count below zero when it is released twice', async () => {
+    const { gate, at, get } = setup(limitsOf(1000));
+    const entry = await gate.enter(7, at());
+    if (entry.status !== 'open') throw new Error('expected an open gate');
+    await entry.release();
+    await entry.release();
+    expect(get(SLOT)).toBe('0');
+  });
+
+  it('lets a leaked slot expire on schedule however often the player keeps trying', async () => {
+    const { gate, at, clock, pttl } = setup(limitsOf(1000));
+    for (let i = 0; i < 3; i++) await gate.enter(7, at());
+    const ttl = pttl(SLOT);
+
+    clock.now += 20_000;
+    expect((await gate.enter(7, at())).status).toBe('limited');
+    expect(pttl(SLOT)).toBe(ttl - 20_000);
+
+    clock.now += 11_000;
+    expect((await gate.enter(7, at())).status).toBe('open');
+  });
+
+  it('puts an expiry back on a window counter that has none', async () => {
+    const { gate, at, seed, pttl } = setup(limitsOf(1000));
+    seed(MINUTE_WINDOW, '5');
+    expect(pttl(MINUTE_WINDOW)).toBe(-1);
+
+    await gate.enter(7, at());
+    expect(pttl(MINUTE_WINDOW)).toBe(MINUTE);
+  });
+
+  it('keeps a longer running cooldown when a shorter window trips afterwards', async () => {
+    const { gate, at, seed, pttl, clock } = setup(limitsOf(1));
+    seed(COOLDOWN, '1', 60 * MINUTE);
+    expect(await gate.guard(7, at(), async () => 'ok')).toEqual({
+      status: 'limited',
+      until: new Date(60 * MINUTE),
+    });
+    expect(pttl(COOLDOWN)).toBe(60 * MINUTE);
+
+    // Once it has run its course, a minute trip sets only the ten minutes.
+    clock.now += 60 * MINUTE;
+    await gate.guard(7, at(), async () => 'ok');
+    await gate.guard(7, at(), async () => 'ok');
+    expect(pttl(COOLDOWN)).toBe(10 * MINUTE);
   });
 });

@@ -3,12 +3,8 @@ import type { VoteLimit } from '../queue/vote-rate';
 
 /** The Redis commands the gate uses; the shared sys client and the test double both fit. */
 export type GateClient = {
-  incr: (key: string) => Promise<number>;
-  decr: (key: string) => Promise<number>;
-  pExpire: (key: string, ms: number) => Promise<unknown>;
+  eval: (script: string, options: { keys: string[]; arguments: string[] }) => Promise<unknown>;
   pTTL: (key: string) => Promise<number>;
-  set: (key: string, value: string, options?: { PX: number }) => Promise<unknown>;
-  del: (key: string) => Promise<unknown>;
 };
 
 export type GateEntry =
@@ -19,7 +15,7 @@ export type Limited = { status: 'limited'; until: Date };
 
 /** A burst from one player is answered, not queued: this many votes at once, the rest are refused. */
 export const IN_FLIGHT_CAP = 3;
-/** A slot nobody released (a crashed request) frees itself. */
+/** A slot nobody released (a crashed or abandoned request) frees itself this long after it was taken. */
 const IN_FLIGHT_TTL_MS = 30_000;
 /** The answer to a request over the cap: try again in a moment. */
 const BUSY_RETRY_MS = 1_000;
@@ -34,8 +30,47 @@ const COOLDOWN_MS: Record<number, number> = {
   86400: 24 * 60 * MINUTE_MS,
 };
 
-// `{id}` is a hash tag: one player's keys share a slot, so the gate also works on a cluster.
+// `{id}` is a hash tag: one player's keys share a slot, so the script also runs on a cluster.
 const keyOf = (userId: number, part: string) => `knights:vote-limit:{${userId}}:${part}`;
+
+/**
+ * The whole check in one atomic step, so no interleaving of requests (or a command that fails halfway) can leave a counter
+ * without its expiry or shorten a cooldown. KEYS: cooldown, in-flight slot, then one counter per window. ARGV: slot cap,
+ * slot ttl, then per window its length, its max and the cooldown a trip sets (all ms). Returns {0, 0} entered, {1, ms}
+ * limited for `ms`, {2, 0} too many in flight.
+ */
+export const ENTER_SCRIPT = `
+local cooldown = redis.call('PTTL', KEYS[1])
+if cooldown > 0 then return {1, cooldown} end
+local held = redis.call('INCR', KEYS[2])
+if held == 1 or redis.call('PTTL', KEYS[2]) < 0 then redis.call('PEXPIRE', KEYS[2], ARGV[2]) end
+if held > tonumber(ARGV[1]) then
+  redis.call('DECR', KEYS[2])
+  return {2, 0}
+end
+local wanted = 0
+for i = 1, math.floor((#ARGV - 2) / 3) do
+  local base = 3 + (i - 1) * 3
+  local count = redis.call('INCR', KEYS[2 + i])
+  if count == 1 or redis.call('PTTL', KEYS[2 + i]) < 0 then
+    redis.call('PEXPIRE', KEYS[2 + i], ARGV[base])
+  end
+  if wanted == 0 and count > tonumber(ARGV[base + 1]) then wanted = tonumber(ARGV[base + 2]) end
+end
+if wanted == 0 then return {0, 0} end
+local running = redis.call('PTTL', KEYS[1])
+if running < wanted then
+  redis.call('SET', KEYS[1], '1', 'PX', tostring(wanted))
+  running = wanted
+end
+redis.call('DECR', KEYS[2])
+return {1, running}`;
+
+/** Gives a slot back, never going below zero. */
+export const RELEASE_SCRIPT = `
+local held = tonumber(redis.call('GET', KEYS[1]) or '0')
+if held > 0 then return redis.call('DECR', KEYS[1]) end
+return 0`;
 
 export type VoteGateOptions = {
   client: () => GateClient;
@@ -54,51 +89,50 @@ export function createVoteGate({ client, limits, timeoutMs = REDIS_TIMEOUT_MS }:
 
   async function enterOnce(userId: number, now: Date): Promise<GateEntry> {
     const redis = client();
-    const cooldownKey = keyOf(userId, 'cooldown');
-    const cooldown = await redis.pTTL(cooldownKey);
-    if (cooldown > 0) return { status: 'limited', until: new Date(now.getTime() + cooldown) };
-
     const slotKey = keyOf(userId, 'inflight');
+    const found = await limits();
+    const [code, ms] = (await redis.eval(ENTER_SCRIPT, {
+      keys: [
+        keyOf(userId, 'cooldown'),
+        slotKey,
+        ...found.map(({ windowSeconds }) => keyOf(userId, `w${windowSeconds}`)),
+      ],
+      arguments: [
+        String(IN_FLIGHT_CAP),
+        String(IN_FLIGHT_TTL_MS),
+        ...found.flatMap(({ windowSeconds, max }) => [
+          String(windowSeconds * 1000),
+          String(max),
+          String(COOLDOWN_MS[windowSeconds] ?? windowSeconds * 1000),
+        ]),
+      ],
+    })) as [number, number];
+    if (code === 1) return { status: 'limited', until: new Date(now.getTime() + Number(ms)) };
+    if (code === 2) return { status: 'limited', until: new Date(now.getTime() + BUSY_RETRY_MS) };
     const release = async () => {
       try {
-        const left = await within(redis.decr(slotKey), timeoutMs);
-        if (left < 0) await within(redis.del(slotKey), timeoutMs);
+        await within(redis.eval(RELEASE_SCRIPT, { keys: [slotKey], arguments: [] }), timeoutMs);
       } catch (error) {
         console.error('knights: could not release a vote slot', { userId, error });
       }
     };
-    const held = await redis.incr(slotKey);
-    await redis.pExpire(slotKey, IN_FLIGHT_TTL_MS);
-    if (held > IN_FLIGHT_CAP) {
-      await release();
-      return { status: 'limited', until: new Date(now.getTime() + BUSY_RETRY_MS) };
-    }
-
-    let tripped: number | null = null;
-    for (const { windowSeconds, max } of await limits()) {
-      const key = keyOf(userId, `w${windowSeconds}`);
-      const count = await redis.incr(key);
-      if (count === 1) await redis.pExpire(key, windowSeconds * 1000);
-      if (count > max && tripped === null) tripped = windowSeconds;
-    }
-    if (tripped === null) return { status: 'open', release };
-
-    // Never shorten a cooldown that is already running.
-    const wanted = COOLDOWN_MS[tripped] ?? tripped * 1000;
-    const running = await redis.pTTL(cooldownKey);
-    if (running < wanted) await redis.set(cooldownKey, '1', { PX: wanted });
-    await release();
-    return { status: 'limited', until: new Date(now.getTime() + Math.max(running, wanted)) };
+    return { status: 'open', release };
   }
 
   async function enter(userId: number, now: Date): Promise<GateEntry> {
     const open: GateEntry = { status: 'open', release: async () => undefined };
     if (now.getTime() < downUntil) return open;
+    const attempt = enterOnce(userId, now);
     try {
-      return await within(enterOnce(userId, now), timeoutMs * 4);
+      return await within(attempt, timeoutMs * 4);
     } catch (error) {
       downUntil = now.getTime() + DOWN_FOR_MS;
       console.error('knights: vote limits were not checked in Redis', { userId, error });
+      // The abandoned check may still land and take a slot nobody will use.
+      attempt.then(
+        (late) => (late.status === 'open' ? late.release() : undefined),
+        () => undefined
+      );
       return open;
     }
   }

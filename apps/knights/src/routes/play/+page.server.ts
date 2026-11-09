@@ -180,35 +180,52 @@ const limitedFailure = (until: Date) =>
 
 type VoteEvent = { request: Request; locals: App.Locals };
 
-async function recordVote({ request, locals }: VoteEvent) {
-  if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
+type ParsedVote = {
+  ref: NonNullable<ReturnType<typeof openItem>>;
+  answer: string;
+  blockReason: string | null;
+  itemId: number;
+};
+
+/** Reads and checks the form without touching the database, so only real vote attempts reach the limits. */
+async function readVote({
+  request,
+  locals,
+}: VoteEvent): Promise<{ failure: ReturnType<typeof fail> } | ParsedVote> {
   const form = await request.formData();
   const token = form.get('item');
   const answer = form.get('answer');
   const reasonField = form.get('blockReason');
   if (typeof token !== 'string' || typeof answer !== 'string') {
-    return fail(400, { message: 'Pick an answer.' });
+    return { failure: fail(400, { message: 'Pick an answer.' }) };
   }
   if (reasonField !== null && typeof reasonField !== 'string') {
-    return fail(400, { message: BLOCK_REASON_TEXT });
+    return { failure: fail(400, { message: BLOCK_REASON_TEXT }) };
   }
   const blockReason = reasonField === '' ? null : reasonField;
   if (blockReason !== null && !isBlockReason(blockReason)) {
-    return fail(400, { message: BLOCK_REASON_TEXT });
+    return { failure: fail(400, { message: BLOCK_REASON_TEXT }) };
   }
   let ref: ReturnType<typeof openItem>;
   try {
     ref = openItem(feedSecret(), locals.user.id, token);
   } catch (error) {
     console.error('knights: the feed cannot be served', { error });
-    return fail(500, { message: 'Your judgment could not be recorded. Try again in a moment.' });
+    return {
+      failure: fail(500, {
+        message: 'Your judgment could not be recorded. Try again in a moment.',
+      }),
+    };
   }
-  if (!ref) return fail(400, { message: 'Pick an answer.' });
+  if (!ref) return { failure: fail(400, { message: 'Pick an answer.' }) };
   const itemId = ref.id;
   if (ref.kind === 'yesno' && blockReason !== null) {
-    return fail(400, { message: BLOCK_REASON_TEXT });
+    return { failure: fail(400, { message: BLOCK_REASON_TEXT }) };
   }
+  return { ref, answer, blockReason, itemId };
+}
 
+async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { locals }: VoteEvent) {
   try {
     const result =
       ref.kind === 'hidden'
@@ -256,10 +273,14 @@ async function recordVote({ request, locals }: VoteEvent) {
 export const actions: Actions = {
   // Every kind of vote (rating, yes/no, hidden check) passes the Redis vote limits here, before any database work.
   vote: async (event) => {
+    // Only a real vote attempt counts against the limits: the muted check and the form come first.
+    if ((await getStanding(db, event.locals.user.id)).muted) return mutedFailure();
+    const parsed = await readVote(event);
+    if ('failure' in parsed) return parsed.failure;
     const outcome = await voteGate.guard(
       event.locals.user.id,
       queueDeps.now(),
-      () => recordVote(event),
+      () => recordVote(parsed, event),
       { moderator: event.locals.user.isModerator }
     );
     return 'until' in outcome ? limitedFailure(outcome.until) : outcome;

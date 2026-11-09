@@ -41,7 +41,7 @@ vi.mock('$lib/server/vote-limits/runtime', async () => {
     voteGate: createVoteGate({
       client: () => redis.current as never,
       limits: async () => limitsFromConfig(live.config),
-      timeoutMs: 50,
+      timeoutMs: 2000,
     }),
   };
 });
@@ -96,16 +96,29 @@ describe('vote action Redis limits', () => {
     for (let i = 0; i < 6; i++) expect(await submit()).toMatchObject({ status: 500 });
   });
 
-  it('refuses every vote for ten minutes once the minute window trips, without touching the database', async () => {
+  it('refuses every vote for ten minutes once the minute window trips, without starting a vote', async () => {
     for (let i = 0; i < 40; i++) expect(await submit()).toEqual({ success: true });
     castVote.mockClear();
-    getStanding.mockClear();
 
     expect(await submit()).toMatchObject({ status: 429, data: { lockoutSeconds: 600 } });
     expect(await submit('hidden')).toMatchObject({ status: 429, data: { lockoutSeconds: 600 } });
     expect(castVote).not.toHaveBeenCalled();
     expect(answerHiddenCheck).not.toHaveBeenCalled();
-    expect(getStanding).not.toHaveBeenCalled();
+  });
+
+  it('counts only real vote attempts: a malformed form never uses up the limits', async () => {
+    for (let i = 0; i < 60; i++) {
+      const body = new FormData();
+      body.set('answer', '4');
+      const bad = await actions.vote({
+        request: new Request('http://knights.test/play', { method: 'POST', body }),
+        locals: { user: { id: 7 } },
+      } as never);
+      expect(bad).toMatchObject({ status: 400 });
+    }
+    expect(await submit()).toEqual({ success: true });
+    expect(store.values.size).toBeGreaterThan(0);
+    expect(store.get('knights:vote-limit:{7}:w60')).toBe('1');
   });
 
   it('trips where the live config says', async () => {
