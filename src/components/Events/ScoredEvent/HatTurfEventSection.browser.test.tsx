@@ -43,7 +43,7 @@ vi.mock('~/components/Decorations/usePlayableEventDecoration', () => ({
 import { cleanup } from 'vitest-browser-react';
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { HatTurfEventSection } from './HatTurfEventSection';
-import { FiltersProvider } from '~/providers/FiltersProvider';
+import { FiltersProvider, useFiltersContext } from '~/providers/FiltersProvider';
 import { renderWithProviders } from '../../../../test/component-setup';
 
 const section = () => document.body.querySelector('[data-testid="hat-turf-event-section"]');
@@ -218,10 +218,17 @@ describe('Hat Turf on the event page', () => {
 
 describe('the link to your live hats', () => {
   const link = () => document.body.querySelector('[data-testid="hat-turf-my-hats"]');
+  const ImageFilters = () => {
+    const images = useFiltersContext((state) => state.images);
+    return <output data-testid="image-filters">{JSON.stringify(images)}</output>;
+  };
+  const imageFilters = () =>
+    JSON.parse(document.body.querySelector('[data-testid="image-filters"]')!.textContent!);
   const renderInFeed = () =>
     renderWithProviders(
       <FiltersProvider>
         <HatTurfEventSection event="birthday2026" team="blue" />
+        <ImageFilters />
       </FiltersProvider>
     );
   const joined = (liveHats: number) =>
@@ -234,6 +241,30 @@ describe('the link to your live hats', () => {
     await vi.waitFor(() => expect(link()).not.toBeNull());
     expect(link()!.textContent).toBe('My live hats (4)');
     expect(link()!.getAttribute('href')).toBe('/images');
+  });
+
+  // Deliberate: the click keeps a Hat Turf sort already set. My live hats ranks under a sort
+  // (readMyTurfPage), so the sort still means something there; clearing it would drop the choice.
+  test('a click turns on My live hats in the image feed filters, keeping a set hat sort', async () => {
+    localStorage.setItem('image-filters', JSON.stringify({ hatSort: 'most' }));
+    // Keep the test page from following the link; the link's own click handler still runs.
+    const stay = (e: MouseEvent) => e.preventDefault();
+    window.addEventListener('click', stay, true);
+    try {
+      joined(4);
+      h.player = { event: 'birthday2026', teams: ['Blue'] };
+      await renderInFeed();
+      await vi.waitFor(() => expect(link()).not.toBeNull());
+      expect(imageFilters()).toMatchObject({ hatSort: 'most' });
+      expect(imageFilters().hatTurfMine).toBeUndefined();
+      (link() as HTMLElement).click();
+      await vi.waitFor(() =>
+        expect(imageFilters()).toMatchObject({ hatSort: 'most', hatTurfMine: true })
+      );
+    } finally {
+      window.removeEventListener('click', stay, true);
+      localStorage.removeItem('image-filters');
+    }
   });
 
   test.each([
