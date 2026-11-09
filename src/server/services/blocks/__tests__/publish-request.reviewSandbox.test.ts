@@ -968,7 +968,11 @@ describe('previewRequest and the build cap', () => {
     const claim = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls.find(
       ([arg]: any[]) => arg.data.deployState === 'preview-building'
     );
-    expect(JSON.parse(claim![0].data.deployDetail)).toEqual({ actor: 'moderator', modUserId: 5 });
+    expect(JSON.parse(claim![0].data.deployDetail)).toEqual({
+      actor: 'moderator',
+      modUserId: 5,
+      buildStartedAt: expect.any(String),
+    });
     // The build's own mark (with the sha) carries the build start the expiry clock counts from.
     const built = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls
       .map(([arg]: any[]) => arg.data)
@@ -1120,15 +1124,7 @@ describe('markReviewPreviewState (stale-watcher sha guard)', () => {
         where: expect.objectContaining({
           id: PUBREQ,
           status: 'pending',
-          deployState: {
-            in: [
-              'preview-queued',
-              'preview-building',
-              'preview-deploying',
-              'preview-live',
-              'preview-failed',
-            ],
-          },
+          deployState: { startsWith: 'preview-' },
           deployDetail: { contains: `"sha":"${SHA_A}"` },
         }),
       })

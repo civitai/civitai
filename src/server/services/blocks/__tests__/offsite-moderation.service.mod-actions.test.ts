@@ -2723,17 +2723,24 @@ describe('live restore on relist', () => {
     };
   }
 
+  // Icon + cover set and matching the recorded baseline, so the republish takes the IMMEDIATE arm
+  // (the same fixture shape as the republish scan-gate tests).
+  function republishImmediately() {
+    mockWrite.appListing.findUnique.mockResolvedValue(withAssets(ownerRemovedOnsite()));
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue(
+      ownerUnpublishEvent(approvedAssets({ iconId: 1, coverId: 2 }))
+    );
+  }
+
   it('ON-SITE owner republish (immediate): re-publishes the app', async () => {
-    mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerRemovedOnsite());
-    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
+    republishImmediately();
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
     expect(live.restore).toHaveBeenCalledWith({ slug: SLUG, appBlockId: BLOCK_ID });
   });
 
   it('ON-SITE owner republish whose block was not suspended (drift): nothing restored', async () => {
-    mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerRemovedOnsite());
-    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
+    republishImmediately();
     mockWrite.appBlock.updateMany.mockResolvedValueOnce({ count: 0 });
     await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     expect(live.restore).not.toHaveBeenCalled();
