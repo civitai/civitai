@@ -616,6 +616,30 @@ export const trpcVanilla: CreateTRPCClient<AppRouter> = createTRPCClient<AppRout
   ],
 });
 
+/**
+ * A mutation client whose requests SURVIVE THE PAGE UNLOADING: every request is sent with
+ * `fetch(…, { keepalive: true })`, so a send started from `pagehide` / `visibilitychange`
+ * (closing or leaving the tab) is not cancelled with the document. Same endpoint, headers,
+ * transformer and wire format as the main client's unbatched link — it is that link with one
+ * extra fetch option — and auth rides the same-origin cookies, as everywhere else.
+ *
+ * Mutations only: no batching, no edge-cache routing. Keepalive bodies share a ~64 KiB
+ * per-page budget, so keep what goes through here small (an approval's input is ~100 bytes).
+ * Used by the review page's delayed "Approve & next" (`pendingApprovalQueue`).
+ */
+export const trpcKeepalive: CreateTRPCClient<AppRouter> = createTRPCClient<AppRouter>({
+  links: [
+    httpLink({
+      transformer: clientTransformer,
+      url,
+      headers: getHeaders(),
+      // Read `globalThis.fetch` per call (not captured at module init) so a test can stub it.
+      fetch: (input, init) =>
+        globalThis.fetch(input, { ...(init as RequestInit), keepalive: true }),
+    }),
+  ],
+});
+
 export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<AppRouter>({
   config(opts) {
     const { ctx } = opts;

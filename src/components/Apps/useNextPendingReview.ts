@@ -1,5 +1,6 @@
 import { useRouter } from 'next/router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { reviewApprovalQueue } from '~/components/Apps/pendingApprovalQueue';
 import { usePendingApprovalIds } from '~/components/Apps/reviewApprovalToasts';
 import { nextPendingRequestId } from '~/components/Apps/reviewDecisionFlow';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -30,6 +31,23 @@ export function useNextPendingReview(publishRequestId: string) {
     { enabled: !!features?.appBlocks && !!features?.appReviewPage, retry: false }
   );
   const pendingApprovalIds = usePendingApprovalIds();
+
+  /*
+    🔴 An approval that does NOT go through UN-does "caught up". "Approve & next" on the LAST
+    pending submission records A's approval and lands here with `caughtUpFrom = A` while the URL
+    stays /apps/review/A; the toast's Undo then pushes that same URL, Next keeps the page
+    mounted, and without this the moderator stayed on "No more app submissions waiting" with A
+    un-approved. A failed commit re-opens A the same way. Either one means A is pending again,
+    so the review shows A.
+  */
+  useEffect(
+    () =>
+      reviewApprovalQueue.subscribe((event) => {
+        if (event.type !== 'undone' && event.type !== 'failed') return;
+        setCaughtUpFrom((from) => (from === event.entry.id ? null : from));
+      }),
+    []
+  );
 
   const openNext = useCallback(() => {
     if (!pendingQuery.data) {

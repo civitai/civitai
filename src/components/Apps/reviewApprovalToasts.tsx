@@ -5,8 +5,10 @@ import Router from 'next/router';
 import { useEffect, useMemo, useSyncExternalStore, useState } from 'react';
 import {
   bindPendingApprovalLifecycle,
+  isInReviewArea,
   PENDING_APPROVAL_DELAY_MS,
   reviewApprovalQueue,
+  type PendingApprovalEntry,
   type PendingApprovalQueue,
 } from '~/components/Apps/pendingApprovalQueue';
 
@@ -37,6 +39,37 @@ function ensureLifecycleBound(queue: PendingApprovalQueue) {
 }
 
 const toastId = (id: string) => `review-approve-${id}`;
+
+/**
+ * The Undo of every approval still in its window, by request id — so the review page's own
+ * action bar (Back to a request inside its window) offers the SAME undo as the toast, with the
+ * same toast cleanup, rather than a second, drifting copy. Removed once the entry leaves the
+ * window (committed, undone or failed).
+ */
+const undoHandlers = new Map<string, (opts?: { navigate?: boolean }) => boolean>();
+
+/**
+ * Undo a pending approval exactly as the toast's Undo does. `navigate: false` when the caller
+ * is already showing the request (the action bar). `false` when there was nothing to undo.
+ */
+export function undoReviewApproval(
+  id: string,
+  opts?: { navigate?: boolean },
+  queue: PendingApprovalQueue = reviewApprovalQueue
+): boolean {
+  const handler = undoHandlers.get(id);
+  if (handler) return handler(opts);
+  return queue.undo(id);
+}
+
+/** Where the router is now, or `null` outside a Next router (a component harness). */
+function currentPath(): string | null {
+  try {
+    return typeof Router.asPath === 'string' ? Router.asPath : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The countdown body of the pending-approval toast. Re-renders on its own 250ms tick. */
 function PendingApprovalCountdown({
@@ -119,18 +152,21 @@ export function enqueueReviewApproval({
   const accepted = queue.enqueue({ id, label, commit });
   if (!accepted) return false;
 
-  const undo = () => {
-    if (queue.undo(id)) {
-      hideNotification(toastId(id));
-      showNotification({
-        message: `Undone — ${label} was not approved.`,
-        color: 'gray',
-        autoClose: 3000,
-      });
-      // Back to the submission the moderator just un-approved.
-      void Router.push(reviewHref).catch(() => undefined);
-    }
+  const undo = ({ navigate = true }: { navigate?: boolean } = {}) => {
+    if (!queue.undo(id)) return false;
+    hideNotification(toastId(id));
+    showNotification({
+      message: `Undone — ${label} was not approved.`,
+      color: 'gray',
+      autoClose: 3000,
+    });
+    // Back to the submission the moderator just un-approved. (The review page also drops its
+    // "No more app submissions waiting" state on this undo — `useNextPendingReview` — since
+    // after the LAST submission this push is to the URL it is already on.)
+    if (navigate) void Router.push(reviewHref).catch(() => undefined);
+    return true;
   };
+  undoHandlers.set(id, undo);
 
   showNotification({
     id: toastId(id),
@@ -139,11 +175,14 @@ export function enqueueReviewApproval({
     // Closed by the queue's own events, never by a timer racing the countdown.
     autoClose: false,
     withCloseButton: false,
-    message: <PendingApprovalCountdown id={id} label={label} queue={queue} onUndo={undo} />,
+    message: <PendingApprovalCountdown id={id} label={label} queue={queue} onUndo={() => undo()} />,
   });
 
   const unsubscribe = queue.subscribe((event) => {
     if (event.entry.id !== id) return;
+    if (event.type === 'committed' || event.type === 'undone' || event.type === 'failed') {
+      if (undoHandlers.get(id) === undo) undoHandlers.delete(id);
+    }
     if (event.type === 'committed') {
       unsubscribe();
       hideNotification(toastId(id));
@@ -200,11 +239,28 @@ export function enqueueReviewApproval({
           </Stack>
         ),
       });
-      // Re-open the request it failed on, so the moderator is looking at it.
-      void Router.push(reviewHref).catch(() => undefined);
+      // Re-open the request it failed on, so the moderator is looking at it — but only while
+      // they are still in the review area. A moderator who has LEFT it (the leave is what
+      // committed the approval) is not yanked back; the persistent toast's "Open request" is
+      // the way back.
+      const here = currentPath();
+      if (here != null && isInReviewArea(here)) void Router.push(reviewHref).catch(() => undefined);
     }
   });
   return true;
+}
+
+/**
+ * This request's entry in the approval queue (pending, committing or committed), or
+ * `undefined` — subscribe from a component. A failed approval is released from the queue, so
+ * it reads `undefined` and the request is actionable again.
+ */
+export function usePendingApprovalEntry(
+  id: string,
+  queue: PendingApprovalQueue = reviewApprovalQueue
+): PendingApprovalEntry | undefined {
+  const entries = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
+  return entries.find((e) => e.id === id);
 }
 
 /** Ids with an approval pending or in flight — subscribe from a component. */

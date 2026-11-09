@@ -129,7 +129,9 @@ function findingsDetail(s: AgentReviewSummary): string {
   if (s.overBroad) scope.push(`${s.overBroad} over-broad`);
   if (s.underDeclared) scope.push(`${s.underDeclared} under-declared`);
   if (s.inaccurate)
-    scope.push(`${s.inaccurate} weak justification${s.inaccurate === 1 ? '' : 's'}`);
+    // `inaccurate` counts `justificationAccurate: 'no'` (as the queue's server-side count does),
+    // so it is labelled for what it counts — not "weak", which is a different verdict.
+    scope.push(`${s.inaccurate} inaccurate justification${s.inaccurate === 1 ? '' : 's'}`);
   const scopeText = scope.length ? `Permissions: ${scope.join(', ')}. ` : '';
   return `${scopeText}Advisory — counts what the agent found; your judgement decides.`;
 }

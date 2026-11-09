@@ -262,10 +262,15 @@ export function ReviewQueuePendingBadge() {
     refetchInterval: APPS_REVIEW_POLL_MS,
     retry: false,
   });
-  if (!data?.total) return null;
+  // Approvals still in their undo window are hidden from the Pending list (`hideIds` below), so
+  // they are not counted here either: the badge and the rows it labels agree. Clamped, since a
+  // poll can land after the server approved one but before the queue marks it committed.
+  const pendingApprovalIds = usePendingApprovalIds();
+  const total = Math.max(0, (data?.total ?? 0) - pendingApprovalIds.size);
+  if (!total) return null;
   return (
     <Badge size="xs" color="blue" variant="filled" data-testid="apps-review-pending-count">
-      {data.total}
+      {total}
     </Badge>
   );
 }

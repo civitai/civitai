@@ -325,6 +325,22 @@ describe('🔴 the review page while ITS OWN approval is in the undo window (bro
     expect(reviewApprovalQueue.get(req.id)?.status).toBe('pending');
   });
 
+  test('🔴 the second click of a double click on "Approve & next" does not undo it', async () => {
+    // The queued view replaces the actions on the first click, so the second click of a double
+    // click lands on whatever is now under the pointer — possibly this Undo. That click carries
+    // `detail: 2`; a deliberate Undo does not.
+    const req = pendingRequest();
+    renderPage(req);
+    await page.getByTestId('apps-review-approve-next').click();
+    const undo = page.getByTestId('apps-review-bar-undo');
+    await expect.element(undo).toBeInTheDocument();
+    undo.element().dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 2 }));
+    expect(reviewApprovalQueue.get(req.id)?.status).toBe('pending');
+    // Positive control: a single click on the same button does undo.
+    undo.element().dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    await vi.waitFor(() => expect(reviewApprovalQueue.get(req.id)).toBeUndefined());
+  });
+
   test('once the queue has approved it, the page says so and offers nothing to send twice', async () => {
     const req = pendingRequest();
     await approveNextThenComeBack(req);

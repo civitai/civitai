@@ -1,5 +1,5 @@
 import { Alert, Box, Button, Chip, Group, Stack, Text, Textarea } from '@mantine/core';
-import { IconArrowRight, IconCheck, IconNote, IconX } from '@tabler/icons-react';
+import { IconArrowRight, IconCheck, IconClock, IconNote, IconX } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   ListingMediaSplitControlForListing,
@@ -13,12 +13,16 @@ import {
   reasonMeetsMin,
 } from '~/components/Apps/ReasonGatedActionModal';
 import { REJECT_REASON_CHIPS } from '~/components/Apps/reviewDecisionFlow';
-import { enqueueReviewApproval } from '~/components/Apps/reviewApprovalToasts';
+import {
+  enqueueReviewApproval,
+  undoReviewApproval,
+  usePendingApprovalEntry,
+} from '~/components/Apps/reviewApprovalToasts';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import type { ListingMediaSplitDecision } from '~/shared/constants/listing-media-split.constants';
 import { listingFloorApproveRefusal } from '~/shared/utils/listing-publish-floor';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
+import { trpc, trpcKeepalive } from '~/utils/trpc';
 import type { OnsiteReviewSelection } from '~/components/Apps/OnsiteReviewModal';
 
 /**
@@ -93,6 +97,20 @@ export function ReviewActionBar({
   // any re-render could disable the button. The queue refuses a second enqueue of the same id
   // as well; this keeps the second click from even reaching it.
   const delayedApproveFired = useRef(false);
+  /*
+    🔴 THIS REQUEST'S OWN DELAYED APPROVAL. Browser Back inside the 10 s window lands on a
+    request that is already queued for approval; offering the full bar there made "Approve &
+    next" a silent no-op (the queue refuses a second enqueue) and let "Approve" / "Reject" race
+    the timer, which then failed with a persistent "Could not approve" toast. So while the
+    request is queued — or already approved by that queue — the bar shows that state instead,
+    with the same Undo as the toast while the window is open.
+  */
+  const queued = usePendingApprovalEntry(request.id);
+  useEffect(() => {
+    // Undone (or failed and released): the request is actionable again, so a fresh
+    // "Approve & next" must not be swallowed by the double-click guard of the last one.
+    if (!queued) delayedApproveFired.current = false;
+  }, [queued]);
   const [mediaSplitChoice, setMediaSplitChoice] = useState<ListingMediaSplitDecision | null>(null);
   // `null` until the listing's media has loaded: approving then would send a decision nobody saw.
   // `MEDIA_SPLIT_NO_DECISION` once it has but the split cannot be read: approve proceeds and sends
@@ -163,7 +181,10 @@ export function ReviewActionBar({
     const accepted = enqueueReviewApproval({
       id: request.id,
       label: `${request.slug} v${request.version}`,
-      commit: () => utils.client.blocks.approveRequest.mutate(input),
+      // `keepalive`: this send may start from `pagehide` (the tab closing), and a plain fetch
+      // is cancelled with the page. Same procedure, input and wire format as the bar's own
+      // immediate approve.
+      commit: () => trpcKeepalive.blocks.approveRequest.mutate(input),
       onCommitted: async () => {
         await Promise.all([
           utils.blocks.listPendingRequests.invalidate(),
@@ -191,7 +212,7 @@ export function ReviewActionBar({
   // so a page can mount the bar unconditionally without an empty sticky shell.
   if (mode !== 'pending') return null;
 
-  const inner =
+  const actions =
     actionMode === 'reject' ? (
       <Stack gap="xs">
         {/* Common reasons PREFILL the field; the moderator can still edit the text, which is
@@ -349,6 +370,47 @@ export function ReviewActionBar({
         )}
       </Stack>
     );
+
+  // While this request's own delayed approval is queued (or done), that state replaces the
+  // actions — see `queued` above.
+  const inner = queued ? (
+    <Group
+      justify="space-between"
+      wrap="nowrap"
+      gap="sm"
+      data-testid="apps-review-bar-queued"
+      data-queued-status={queued.status}
+    >
+      <Group gap={6} wrap="nowrap">
+        {queued.status === 'committed' ? <IconCheck size={16} /> : <IconClock size={16} />}
+        <Text size="sm">
+          {queued.status === 'pending'
+            ? `Approval pending — ${queued.label} will be approved when the undo window ends.`
+            : queued.status === 'committing'
+            ? `Approving ${queued.label}…`
+            : `Approved ${queued.label}. Build started.`}
+        </Text>
+      </Group>
+      {queued.status === 'pending' && (
+        <Button
+          size="sm"
+          variant="filled"
+          onClick={(e) => {
+            // 🔴 This view replaces the actions the instant "Approve & next" enqueues, so the
+            // SECOND click of a double click on that button lands here. A click with
+            // `detail > 1` is that second click, never a deliberate Undo.
+            if (e.detail > 1) return;
+            undoReviewApproval(request.id, { navigate: false });
+          }}
+          data-testid="apps-review-bar-undo"
+        >
+          Undo
+        </Button>
+      )}
+    </Group>
+  ) : (
+    actions
+  );
 
   if (!sticky) return inner;
 

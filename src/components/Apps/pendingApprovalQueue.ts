@@ -213,7 +213,9 @@ type DocumentLike = Pick<Document, 'addEventListener' | 'removeEventListener' | 
  *  - a client-side route change to anywhere OUTSIDE `/apps/review` commits everything now
  *    (a change between review pages — including the full-page preview — keeps the timers);
  *  - `pagehide` and `visibilitychange` → hidden commit everything now (closing the tab, or
- *    switching away from it, ends the undo window: the browser may never run the timer);
+ *    switching away from it, ends the undo window: the browser may never run the timer).
+ *    🔴 A send started from `pagehide` is cancelled with the page unless it is a `keepalive`
+ *    request, so an entry's `commit` must use one — the review page's does (`trpcKeepalive`);
  *  - `beforeunload` asks the browser to warn while anything is still pending.
  * Returns the unbind function. Idempotent per (queue, targets) only via the caller.
  */
