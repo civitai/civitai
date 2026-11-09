@@ -21,6 +21,7 @@ import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { getGenerationFile } from '~/server/utils/resource-air';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type {
   LicensingFeeSettlementCurrency,
   LicensingFeeType,
@@ -380,9 +381,21 @@ export default MixedAuthEndpoint(async function handler(
     })}`;
   }
 
+  // The content-hash url serves the same bytes from any copy, so a downloader caches one file per
+  // content rather than per version. The id url stays as the fallback.
+  const downloadUrls = [downloadUrl];
+  const sha256 = targetFile.hashes.SHA256;
+  if (
+    !trainingResults &&
+    sha256 &&
+    (await isFlipt(FLIPT_FEATURE_FLAGS.DOWNLOAD_HASH_URLS, String(targetFile.id)))
+  )
+    downloadUrls.unshift(`${baseUrl}/api/download/sha256/${sha256.toLowerCase()}`);
+
   // if req url domain contains `api.`, strip /api/ from the download url
   if (req.headers.host?.includes('api.')) {
-    downloadUrl = downloadUrl.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
+    for (const [i, url] of downloadUrls.entries())
+      downloadUrls[i] = url.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
   }
   const { format } = targetFile.metadata;
 
@@ -544,7 +557,7 @@ export default MixedAuthEndpoint(async function handler(
     fileName: targetFile.name,
     // nullable - hashes (all available hash types)
     hashes: targetFile.hashes,
-    downloadUrls: withholdEpochUrl ? [] : [downloadUrl], // nullable
+    downloadUrls: withholdEpochUrl ? [] : downloadUrls, // nullable
     format, // nullable
     canGenerate,
     isFeatured,
