@@ -111,6 +111,7 @@ const fixedPricingDictionary = new Map<string, string>([
   ['priority', 'Priority Pricing'],
   ['format', 'Output Format'],
   ['additionalNetworks', 'Additional Resource Cost'],
+  ['fiboBaseFee', 'Fibo 2.0 Fee'],
 ]);
 
 const factorRowConfig: {

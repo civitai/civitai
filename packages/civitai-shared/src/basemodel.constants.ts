@@ -118,6 +118,10 @@ export type LicenseRecord = {
   // several licences use for a liability disclaimer rather than an attribution.
   attribution?: string;
   disableMature?: boolean;
+  // Models on this licence's base models are held for moderator review before they publish.
+  prePublishReview?: boolean;
+  // Generations using any resource on this licence's base models are capped at PG-13.
+  capGenerationOutput?: boolean;
   // License forbids commercial use (drives commercial-use override + monetization block).
   nonCommercial?: boolean;
   // License requires derivatives to carry the same license.
@@ -236,6 +240,7 @@ export const ECO = {
   Flux3Klein: 94,
   Flux3Klein_base: 95,
   MossImage: 96,
+  Fibo2: 97,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -946,6 +951,15 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'MOSS Image',
     familyId: 29,
     sortOrder: 272,
+  },
+
+  // Bria AI
+  {
+    id: ECO.Fibo2,
+    key: 'Fibo2',
+    displayName: 'Fibo 2.0',
+    familyId: 30,
+    sortOrder: 273,
   },
 
   // Audio ecosystems
@@ -2442,6 +2456,7 @@ export const BM = {
   Flux3Klein: 115,
   Flux3Klein_base: 116,
   MossImage: 117,
+  Fibo2: 118,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2473,6 +2488,15 @@ export const supportOverrides: SupportOverride[] = [
 // =============================================================================
 // Licenses (unchanged from v1)
 // =============================================================================
+
+// TODO(fibo2): placeholder until the licence name and URL are supplied, and the in-product
+// `attribution` wording if the licence demands one. Shared with `baseLicenses['bria fibo']` in
+// src/server/common/constants.ts.
+export const BRIA_FIBO_LICENSE_PLACEHOLDER = {
+  name: 'Bria AI Model License',
+  url: 'https://bria.ai/',
+  poweredBy: 'Powered by Bria AI',
+} as const;
 
 export const licenses: LicenseRecord[] = [
   {
@@ -2862,6 +2886,13 @@ export const licenses: LicenseRecord[] = [
     notice:
       'Tencent Hunyuan 3D 2.1 is licensed under the Tencent Hunyuan 3D 2.1 Community License Agreement, Copyright © 2025 Tencent. All Rights Reserved.',
   },
+  {
+    id: 55,
+    ...BRIA_FIBO_LICENSE_PLACEHOLDER,
+    disableMature: true,
+    prePublishReview: true,
+    capGenerationOutput: true,
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -3015,6 +3046,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 29,
     name: 'OpenMOSS',
     description: "OpenMOSS's image generation models",
+  },
+  {
+    id: 30,
+    name: 'Bria AI',
+    description: "Bria AI's image generation and editing models",
   },
 ];
 
@@ -3181,6 +3217,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.MossImage,
     licenseId: 13,
+  },
+  {
+    id: BM.Fibo2,
+    name: 'Fibo 2.0',
+    description: "Bria AI's Fibo 2.0 text-to-image and image editing model",
+    type: 'image',
+    ecosystemId: ECO.Fibo2,
+    // Until launch: only moderators see it, and nothing generates on it.
+    hidden: true,
+    licenseId: 55,
   },
   {
     id: BM.Flux3Video,

@@ -14,7 +14,10 @@ import {
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import {
+  BRIA_FIBO_LICENSE_PLACEHOLDER,
+  type BaseModel,
+} from '~/shared/constants/basemodel.constants';
 
 export const lipsum = `
 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
@@ -680,6 +683,10 @@ type LicenseDetails = {
   // When true, mature content is restricted (auto-derives `restrictedNsfwLevels`
   // to MATURE_NSFW_LEVELS). Use this instead of hand-listing levels.
   disableMature?: boolean;
+  // Models on this licence's base models are held for moderator review before they publish.
+  prePublishReview?: boolean;
+  // Generations using any resource on this licence's base models are capped at PG-13.
+  capGenerationOutput?: boolean;
   // When true, the license forbids commercial use. Drives both the commercial-use
   // permission override (-> [None]) and the per-version monetization block. The set
   // of affected base models is derived from this flag (see nonCommercialBaseModels).
@@ -1013,6 +1020,12 @@ const baseLicenses: Record<string, LicenseDetails> = {
     notice:
       'Tencent Hunyuan 3D 2.1 is licensed under the Tencent Hunyuan 3D 2.1 Community License Agreement, Copyright © 2025 Tencent. All Rights Reserved.',
   },
+  'bria fibo': {
+    ...BRIA_FIBO_LICENSE_PLACEHOLDER,
+    disableMature: true,
+    prePublishReview: true,
+    capGenerationOutput: true,
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -1059,6 +1072,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.3 Klein': baseLicenses['flux kommunity'],
   'Flux.3 Klein-base': baseLicenses['flux kommunity'],
   'MOSS Image': baseLicenses['apache 2.0'],
+  'Fibo 2.0': baseLicenses['bria fibo'],
   'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux2 dev nc'],
   'Flux.2 Klein 9B': baseLicenses['flux nc'],
