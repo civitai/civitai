@@ -80,6 +80,8 @@
  * without a rebuild; a change takes effect within one refresh interval):
  *  - TRPC_SERIALIZE_LOG_ENABLED (default true) — kill-switch; disabled ONLY by an
  *    explicit falsy token (false/0/no/off), so it can't be turned off by =yes/=on.
+ *    Unlike the thresholds it is read ONCE per process (see serializeLogEnabled), since
+ *    it is checked on every request and serialize; an env change takes effect on restart.
  *  - TRPC_SERIALIZE_SLOW_MS (default 250) — a single serialize taking >= this many
  *    ms is loop-blocking and logged. Normal serialize is sub-ms; the incident was
  *    ~6000ms. This is the AUTHORITATIVE loop-blocking trigger.
@@ -161,10 +163,23 @@ function getSerializeConfig(now: number = Date.now()): SerializeLogConfig {
   return cachedConfig;
 }
 
-/** TEST-ONLY: drop the cached config so an env change is picked up immediately. */
+// The kill-switch, read from env ONCE per process on first use and memoised. It is checked on
+// every tRPC response serialize and every tRPC request (runWithSerializeCtx), so re-reading
+// `process.env` there was a per-call cost for a value that cannot change under a running
+// process: an env change reaches a pod only through a restart. Both call sites read this one
+// memo, so the request-scope seed and the serialize wrapper can never disagree.
+let enabledMemo: boolean | undefined;
+
+function serializeLogEnabled(): boolean {
+  if (enabledMemo === undefined) enabledMemo = !envDisabled('TRPC_SERIALIZE_LOG_ENABLED');
+  return enabledMemo;
+}
+
+/** TEST-ONLY: drop the cached config and kill-switch memo so an env change is picked up immediately. */
 export function __resetConfigCacheForTests(): void {
   cachedConfig = undefined;
   cachedConfigAt = 0;
+  enabledMemo = undefined;
 }
 
 /**
@@ -207,7 +222,7 @@ const serializeCtxStorage = new AsyncLocalStorage<SerializeCtx>();
  * disarmed request hot path is untouched.
  */
 export function runWithSerializeCtx<T>(ctx: SerializeCtx, fn: () => T): T {
-  if (envDisabled('TRPC_SERIALIZE_LOG_ENABLED')) return fn();
+  if (!serializeLogEnabled()) return fn();
   return serializeCtxStorage.run(ctx, fn);
 }
 
@@ -417,9 +432,11 @@ function emit(payload: SerializeLogPayload): void {
  *                      value is passed through verbatim.
  */
 export function instrumentSerialize<T>(rawSerialize: () => T): T {
-  // FIRST: kill-switch. Disabled → a single boolean branch, before any config is
-  // built or allocated (mirrors runWithSerializeCtx's short-circuit).
-  if (envDisabled('TRPC_SERIALIZE_LOG_ENABLED')) return rawSerialize();
+  // FIRST: kill-switch (memoised, no env read per call). Disabled → a single boolean
+  // branch, before any config is built and before any timestamp is taken (mirrors
+  // runWithSerializeCtx's short-circuit). The timing below is needed whenever logging
+  // is enabled: the floor gate, the slow trigger and the log line all read serializeMs.
+  if (!serializeLogEnabled()) return rawSerialize();
 
   const cfg = getSerializeConfig(); // cached — not rebuilt per call
 
