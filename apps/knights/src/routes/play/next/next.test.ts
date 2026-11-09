@@ -4,18 +4,17 @@ const getPlayerStatus = vi.hoisted(() => vi.fn());
 const getFeed = vi.hoisted(() => vi.fn());
 const pickHiddenCheck = vi.hoisted(() => vi.fn());
 const pickYesNo = vi.hoisted(() => vi.fn());
-const voteLockUntil = vi.hoisted(() => vi.fn());
+const lockoutFor = vi.hoisted(() => vi.fn());
 const getStanding = vi.hoisted(() => vi.fn());
 const queueDeps = vi.hoisted(() => ({
   now: () => new Date('2026-12-15T12:00:00Z'),
-  voteLimits: undefined as unknown,
 }));
 const skipList = vi.hoisted(() => ({ add: vi.fn(), list: vi.fn() }));
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => `cdn/${key}` }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
-vi.mock('$lib/server/queue/vote-rate', () => ({ voteLockUntil }));
+vi.mock('$lib/server/vote-limits/runtime', () => ({ lockoutFor }));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
 vi.mock('$lib/server/skip-runtime', () => ({ skipStore: skipList }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 0.5 }) }));
@@ -60,7 +59,7 @@ beforeEach(() => {
     getFeed,
     pickHiddenCheck,
     pickYesNo,
-    voteLockUntil,
+    lockoutFor,
     skipList.list,
     getStanding,
   ]) {
@@ -72,7 +71,6 @@ beforeEach(() => {
   pickHiddenCheck.mockResolvedValue(null);
   pickYesNo.mockResolvedValue(null);
   skipList.list.mockResolvedValue([]);
-  queueDeps.voteLimits = undefined;
 });
 
 describe('GET /play/next', () => {
@@ -155,8 +153,7 @@ describe('GET /play/next', () => {
     [
       'paced',
       () => {
-        queueDeps.voteLimits = {};
-        voteLockUntil.mockResolvedValue(new Date('2026-12-15T12:05:00Z'));
+        lockoutFor.mockResolvedValue(new Date('2026-12-15T12:05:00Z'));
       },
     ],
   ])(

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   BUFFER_TARGET,
   refillCount,
@@ -6,9 +6,12 @@ import {
   REFILL_AT,
   MAX_EXCLUDED,
   createItemBuffer,
+  createSerialQueue,
   createVoteTracker,
   describeOutcome,
   itemKey,
+  postVote,
+  sendWithRetry,
 } from './optimistic';
 import type { PickedItem } from './optimistic';
 
@@ -283,5 +286,201 @@ describe('refillCount', () => {
   it('tops up to the full buffer otherwise, always asking for at least one', () => {
     expect(refillCount(4)).toBe(6);
     expect(refillCount(10)).toBe(1);
+  });
+});
+
+const busy = { type: 'failure', status: 429, data: { message: 'busy', busy: true } };
+const lockout = {
+  type: 'failure',
+  status: 429,
+  data: { message: 'too quick', lockoutSeconds: 600 },
+};
+const ok = { type: 'success' };
+
+describe('createSerialQueue', () => {
+  it('starts a post only after the previous one has settled, and keeps their order', async () => {
+    const queue = createSerialQueue();
+    let running = 0;
+    let mostAtOnce = 0;
+    const started: number[] = [];
+    const post = (n: number, ms: number) =>
+      queue.add(async () => {
+        running += 1;
+        mostAtOnce = Math.max(mostAtOnce, running);
+        started.push(n);
+        await new Promise((done) => setTimeout(done, ms));
+        running -= 1;
+        return n;
+      });
+
+    const results = await Promise.all([post(1, 15), post(2, 1), post(3, 5), post(4, 1)]);
+
+    expect(results).toEqual([1, 2, 3, 4]);
+    expect(started).toEqual([1, 2, 3, 4]);
+    expect(mostAtOnce).toBe(1);
+  });
+
+  it('carries on after a post that failed', async () => {
+    const queue = createSerialQueue();
+    await expect(queue.add(async () => Promise.reject(new Error('x')))).rejects.toThrow('x');
+    await expect(queue.add(async () => 'next')).resolves.toBe('next');
+  });
+});
+
+describe('sendWithRetry', () => {
+  it('sends a busy vote again after a wait, and stops once it succeeds', async () => {
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce(busy)
+      .mockResolvedValueOnce(busy)
+      .mockResolvedValue(ok);
+    const wait = vi.fn(async () => undefined);
+
+    expect(await sendWithRetry(send, wait, [10, 20, 30])).toBe(ok);
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(wait.mock.calls).toEqual([[10], [20]]);
+  });
+
+  it('gives up after its last retry and reports the vote as not recorded, without a lockout', async () => {
+    const send = vi.fn(async () => busy);
+    const result = await sendWithRetry(send, async () => undefined, [1, 1, 1]);
+
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(describeOutcome(result)).toEqual({ ok: false, message: 'busy', resync: false });
+  });
+
+  it('does not resend a real cooldown, which still asks for the lockout screen', async () => {
+    const send = vi.fn(async () => lockout);
+    const wait = vi.fn(async () => undefined);
+    const result = await sendWithRetry(send, wait);
+
+    expect(send).toHaveBeenCalledOnce();
+    expect(wait).not.toHaveBeenCalled();
+    expect(describeOutcome(result)).toMatchObject({ ok: false, resync: true });
+  });
+
+  it('does not resend a vote that never reached the server', async () => {
+    const send = vi.fn(async () => null);
+    expect(await sendWithRetry(send, async () => undefined)).toBeNull();
+    expect(send).toHaveBeenCalledOnce();
+  });
+});
+
+describe('postVote', () => {
+  const setup = (sends: (signal: AbortSignal) => Promise<{ reached: boolean; result: any }>) => {
+    const tracker = createVoteTracker();
+    const failures: unknown[] = [];
+    const onSettled = vi.fn(async () => undefined);
+    const queue = createSerialQueue();
+    const post = (key: string, send = sends) => {
+      tracker.claim(key, `t-${key}`);
+      return postVote(key, {
+        queue,
+        tracker,
+        send,
+        wait: async () => undefined,
+        onFailure: (outcome) => failures.push(outcome),
+        onSettled,
+        timeoutMs: 20,
+        retryDelays: [1, 1],
+      });
+    };
+    return { tracker, failures, onSettled, post };
+  };
+  const hangs = (signal: AbortSignal) =>
+    new Promise<{ reached: boolean; result: null }>((done) =>
+      signal.addEventListener('abort', () => done({ reached: false, result: null }))
+    );
+
+  it('gives up on a hung post, frees its item, and lets the votes queued behind it go out', async () => {
+    const sends = [hangs, async () => ({ reached: true, result: ok })];
+    const { tracker, failures, post } = setup(async (signal) => sends.shift()!(signal));
+
+    await Promise.all([post('a'), post('b')]);
+
+    expect(tracker.has('a')).toBe(false);
+    expect(tracker.has('b')).toBe(true);
+    expect(tracker.pending).toBe(0);
+    expect(failures).toEqual([
+      { ok: false, message: expect.stringMatching(/connection/i), resync: false },
+    ]);
+  });
+
+  it('marks its own vote settled, so the next stretch stops counting it as in flight', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((done) => (release = done));
+    const { tracker, post } = setup(async () => {
+      await gate;
+      return { reached: true, result: ok };
+    });
+    const first = post('a');
+    const second = post('b');
+    expect(tracker.voting()).toEqual(['t-a', 't-b']);
+    release();
+    await Promise.all([first, second]);
+    expect(tracker.voting()).toEqual([]);
+    expect(tracker.has('a')).toBe(true);
+  });
+
+  it('never has two posts in flight', async () => {
+    let running = 0;
+    let most = 0;
+    const { post } = setup(async () => {
+      running += 1;
+      most = Math.max(most, running);
+      await new Promise((done) => setTimeout(done, 3));
+      running -= 1;
+      return { reached: true, result: ok };
+    });
+    await Promise.all([post('a'), post('b'), post('c')]);
+    expect(most).toBe(1);
+  });
+
+  it('keeps a recorded vote marked sent and clears the pending count when one fails', async () => {
+    const results = [ok, lockout];
+    const { tracker, failures, post } = setup(async () => ({
+      reached: true,
+      result: results.shift(),
+    }));
+
+    await Promise.all([post('a'), post('b')]);
+
+    expect(tracker.pending).toBe(0);
+    expect(tracker.has('a')).toBe(true);
+    expect(failures).toEqual([{ ok: false, message: 'too quick', resync: true }]);
+  });
+
+  it('retries a busy vote and records it', async () => {
+    const results = [busy, ok];
+    const { tracker, failures, post } = setup(async () => ({
+      reached: true,
+      result: results.shift(),
+    }));
+    await post('a');
+    expect(failures).toEqual([]);
+    expect(tracker.has('a')).toBe(true);
+  });
+
+  it('frees the item when the vote is still busy after the last resend', async () => {
+    const { tracker, failures, post } = setup(async () => ({ reached: true, result: busy }));
+    await post('a');
+    expect(tracker.has('a')).toBe(false);
+    expect(failures).toEqual([{ ok: false, message: 'busy', resync: false }]);
+  });
+
+  it('frees the item when a busy vote is followed by a lost connection', async () => {
+    const results = [
+      { reached: true, result: busy },
+      { reached: false, result: null },
+    ];
+    const { tracker, post } = setup(async () => results.shift()!);
+    await post('a');
+    expect(tracker.has('a')).toBe(false);
+  });
+
+  it('reads the page again once the vote has settled, whatever it came to', async () => {
+    const { onSettled, post } = setup(async () => ({ reached: false, result: null }));
+    await post('a');
+    expect(onSettled).toHaveBeenCalledOnce();
   });
 });

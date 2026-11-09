@@ -1,4 +1,4 @@
-import { fail } from '@sveltejs/kit';
+import { type ActionFailure, fail } from '@sveltejs/kit';
 import { isBlockReason } from '$lib/block-reasons';
 import { db } from '$lib/server/db';
 import { getDailyStatus } from '$lib/server/daily/daily.service';
@@ -19,8 +19,8 @@ import { skipStore } from '$lib/server/skip-runtime';
 import { recordSkip, skippedFor } from '$lib/server/skips';
 import { railFor } from '$lib/server/rail-runtime';
 import { castVote, type RejectReason } from '$lib/server/queue/queue.service';
-import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
+import { lockoutFor, voteGate } from '$lib/server/vote-limits/runtime';
 import { feedSecret } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
 import { yesNoConfig } from '$lib/server/yesno/runtime';
@@ -155,9 +155,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
 
   // A muted player sees their record but is served nothing to judge: no item, no vote-pace lookup.
   const lockedUntil =
-    !muted && queueDeps.voteLimits && !locals.user.isModerator
-      ? await voteLockUntil(db, locals.user.id, now, queueDeps.voteLimits)
-      : null;
+    !muted && !locals.user.isModerator ? await lockoutFor(db, locals.user.id, now) : null;
   const skipped = lockedUntil || muted ? null : await skippedFor(skipStore, locals.user.id);
   const resetPending = status.smites >= status.maxSmites;
   // A muted Acolyte keeps the apprentice meter (read only: the apprenticeship serves them nothing to answer).
@@ -188,86 +186,122 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   };
 };
 
-export const actions: Actions = {
-  vote: async ({ request, locals }) => {
-    if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
-    const form = await request.formData();
-    const token = form.get('item');
-    const answer = form.get('answer');
-    const reasonField = form.get('blockReason');
-    if (typeof token !== 'string' || typeof answer !== 'string') {
-      return fail(400, { message: 'Pick an answer.' });
-    }
-    if (reasonField !== null && typeof reasonField !== 'string') {
-      return fail(400, { message: BLOCK_REASON_TEXT });
-    }
-    const blockReason = reasonField === '' ? null : reasonField;
-    if (blockReason !== null && !isBlockReason(blockReason)) {
-      return fail(400, { message: BLOCK_REASON_TEXT });
-    }
-    let ref: ReturnType<typeof openItem>;
-    try {
-      ref = openItem(feedSecret(), locals.user.id, token);
-    } catch (error) {
-      console.error('knights: the feed cannot be served', { error });
-      return fail(500, { message: 'Your judgment could not be recorded. Try again in a moment.' });
-    }
-    if (!ref) return fail(400, { message: 'Pick an answer.' });
-    const itemId = ref.id;
-    if (ref.kind === 'yesno' && blockReason !== null) {
-      return fail(400, { message: BLOCK_REASON_TEXT });
-    }
+const limitedFailure = (until: Date) =>
+  fail(429, {
+    message: 'You are judging too quickly. Rest a little.',
+    lockoutSeconds: Math.max(1, Math.ceil((until.getTime() - queueDeps.now().getTime()) / 1000)),
+  });
 
-    try {
-      const result =
-        ref.kind === 'hidden'
-          ? await answerHiddenCheck(
-              db,
-              {
-                userId: locals.user.id,
-                referenceId: itemId,
-                answer,
-                blockReason,
-                isModerator: locals.user.isModerator,
-              },
-              queueDeps
-            )
-          : ref.kind === 'yesno'
-          ? await castYesNoVote(
-              db,
-              { userId: locals.user.id, itemId, answer, isModerator: locals.user.isModerator },
-              queueDeps
-            )
-          : await castVote(
-              db,
-              {
-                userId: locals.user.id,
-                itemId,
-                answer,
-                blockReason,
-                isModerator: locals.user.isModerator,
-              },
-              queueDeps
-            );
-      if (result.status === 'limited') {
-        return fail(429, {
-          message: 'You are judging too quickly. Rest a little.',
-          lockoutSeconds: Math.max(
-            1,
-            Math.ceil((result.until.getTime() - queueDeps.now().getTime()) / 1000)
-          ),
-        });
-      }
-      if (result.status === 'rejected') {
-        return fail(result.reason === 'bad-block-reason' ? 400 : 409, {
-          message: REJECTION_TEXT[result.reason],
-        });
-      }
-      return { success: true };
-    } catch (error) {
-      console.error('knights: vote failed', { itemId, error });
-      return fail(500, { message: 'Your judgment could not be recorded. Try again in a moment.' });
+const busyFailure = () =>
+  fail(429, { message: 'The Order is catching up. Try that answer again.', busy: true });
+
+type VoteEvent = { request: Request; locals: App.Locals };
+
+type ParsedVote = {
+  ref: NonNullable<ReturnType<typeof openItem>>;
+  answer: string;
+  blockReason: string | null;
+  itemId: number;
+};
+
+/** Reads and checks the form without touching the database, so only real vote attempts reach the limits. */
+async function readVote({
+  request,
+  locals,
+}: VoteEvent): Promise<{ failure: ActionFailure<{ message: string }> } | ParsedVote> {
+  const form = await request.formData();
+  const token = form.get('item');
+  const answer = form.get('answer');
+  const reasonField = form.get('blockReason');
+  if (typeof token !== 'string' || typeof answer !== 'string') {
+    return { failure: fail(400, { message: 'Pick an answer.' }) };
+  }
+  if (reasonField !== null && typeof reasonField !== 'string') {
+    return { failure: fail(400, { message: BLOCK_REASON_TEXT }) };
+  }
+  const blockReason = reasonField === '' ? null : reasonField;
+  if (blockReason !== null && !isBlockReason(blockReason)) {
+    return { failure: fail(400, { message: BLOCK_REASON_TEXT }) };
+  }
+  let ref: ReturnType<typeof openItem>;
+  try {
+    ref = openItem(feedSecret(), locals.user.id, token);
+  } catch (error) {
+    console.error('knights: the feed cannot be served', { error });
+    return {
+      failure: fail(500, {
+        message: 'Your judgment could not be recorded. Try again in a moment.',
+      }),
+    };
+  }
+  if (!ref) return { failure: fail(400, { message: 'Pick an answer.' }) };
+  const itemId = ref.id;
+  if (ref.kind === 'yesno' && blockReason !== null) {
+    return { failure: fail(400, { message: BLOCK_REASON_TEXT }) };
+  }
+  return { ref, answer, blockReason, itemId };
+}
+
+async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { locals }: VoteEvent) {
+  try {
+    const result =
+      ref.kind === 'hidden'
+        ? await answerHiddenCheck(
+            db,
+            {
+              userId: locals.user.id,
+              referenceId: itemId,
+              answer,
+              blockReason,
+              isModerator: locals.user.isModerator,
+            },
+            queueDeps
+          )
+        : ref.kind === 'yesno'
+        ? await castYesNoVote(
+            db,
+            { userId: locals.user.id, itemId, answer, isModerator: locals.user.isModerator },
+            queueDeps
+          )
+        : await castVote(
+            db,
+            {
+              userId: locals.user.id,
+              itemId,
+              answer,
+              blockReason,
+              isModerator: locals.user.isModerator,
+            },
+            queueDeps
+          );
+    if (result.status === 'limited') return limitedFailure(result.until);
+    if (result.status === 'rejected') {
+      return fail(result.reason === 'bad-block-reason' ? 400 : 409, {
+        message: REJECTION_TEXT[result.reason],
+      });
     }
+    return { success: true };
+  } catch (error) {
+    console.error('knights: vote failed', { itemId, error });
+    return fail(500, { message: 'Your judgment could not be recorded. Try again in a moment.' });
+  }
+}
+
+export const actions: Actions = {
+  // Every kind of vote (rating, yes/no, hidden check) passes the Redis vote limits here, before any database work.
+  vote: async (event) => {
+    // Only a real vote attempt counts against the limits: the muted check and the form come first.
+    if ((await getStanding(db, event.locals.user.id)).muted) return mutedFailure();
+    const parsed = await readVote(event);
+    if ('failure' in parsed) return parsed.failure;
+    const outcome = await voteGate.guard(
+      event.locals.user.id,
+      queueDeps.now(),
+      () => recordVote(parsed, event),
+      { moderator: event.locals.user.isModerator }
+    );
+    if (!('until' in outcome)) return outcome;
+    return outcome.busy ? busyFailure() : limitedFailure(outcome.until);
   },
 
   // Moves a player past an item without judging it: no vote, pay, accuracy or Watch credit, and it is not served to them

@@ -95,7 +95,7 @@ votes, never player rows.
 
 ## Answering (`vote.ts`)
 
-`castYesNoVote` is the rating vote's path with a different decision: the same pacing gate, join gate, `reset-pending` and `no-weight`
+`castYesNoVote` is the rating vote's path with a different decision: the same pacing gate (and, ahead of it in the `/play` action, the same Redis vote limits), join gate, `reset-pending` and `no-weight`
 refusals, and `insertVote` / `creditVote`. The ledger row is under the item's own id, with `answer` `yes` or `no`, the vote XP at once
 and gold held as pending. The item row lock serialises its votes.
 

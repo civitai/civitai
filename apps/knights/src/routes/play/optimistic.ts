@@ -163,6 +163,81 @@ export const refillCount = (size: number): number =>
 type Outcome = { type: string; status?: number; data?: Record<string, unknown> };
 export type VoteOutcome = { ok: true } | { ok: false; message: string; resync: boolean };
 
+/** The server's answer when too many of one player's votes are in flight at once: not a rate limit, so the vote is simply sent again. */
+export const isBusy = (result: Outcome | null): boolean =>
+  result?.type === 'failure' && result.data?.busy === true;
+
+/** How long to wait before each resend of a vote the server found busy; no more resends than there are delays. */
+export const BUSY_RETRY_DELAYS_MS = [400, 1200, 3000];
+
+/** Sends a vote, and sends it again after a short wait while the server says it is busy. */
+export async function sendWithRetry(
+  send: () => Promise<Outcome | null>,
+  wait: (ms: number) => Promise<void>,
+  delays: readonly number[] = BUSY_RETRY_DELAYS_MS
+): Promise<Outcome | null> {
+  let result = await send();
+  for (const ms of delays) {
+    if (!isBusy(result)) break;
+    await wait(ms);
+    result = await send();
+  }
+  return result;
+}
+
+/** Runs tasks one at a time, in the order they were added: the next starts only after the previous has settled. */
+export function createSerialQueue() {
+  let tail: Promise<unknown> = Promise.resolve();
+  return {
+    add<T>(task: () => Promise<T>): Promise<T> {
+      const run = tail.then(task, task);
+      tail = run.catch(() => undefined);
+      return run;
+    },
+  };
+}
+
+/** A post that has had no answer by then is given up on, so one hung request cannot hold up the votes queued behind it. */
+export const POST_TIMEOUT_MS = 15_000;
+
+export type VoteSend = (
+  signal: AbortSignal
+) => Promise<{ reached: boolean; result: Outcome | null }>;
+
+export type PostVoteDeps = {
+  queue: ReturnType<typeof createSerialQueue>;
+  tracker: ReturnType<typeof createVoteTracker>;
+  /** Posts the vote once. `reached` is true only for an answer that was read in full; an abort or a lost connection is not. */
+  send: VoteSend;
+  wait: (ms: number) => Promise<void>;
+  /** A vote that came back as anything but recorded: the notice, and whether the page must be read again. */
+  onFailure: (outcome: Extract<VoteOutcome, { ok: false }>) => void;
+  /** After the vote has settled, whatever it came to. */
+  onSettled: () => Promise<void>;
+  timeoutMs?: number;
+  retryDelays?: readonly number[];
+};
+
+/**
+ * Posts one background vote in its turn, resends it while the server is busy, and settles it. A vote the server may not
+ * have recorded (never reached it, timed out, or still busy after the last resend) frees its item to be answered again.
+ */
+export async function postVote(key: string, deps: PostVoteDeps): Promise<void> {
+  const { queue, tracker, send, wait, onFailure, onSettled } = deps;
+  let reached = false;
+  const attempt = async () => {
+    const sent = await send(AbortSignal.timeout(deps.timeoutMs ?? POST_TIMEOUT_MS));
+    reached = sent.reached;
+    return sent.result;
+  };
+  const result = await queue.add(() => sendWithRetry(attempt, wait, deps.retryDelays));
+  const outcome = describeOutcome(result);
+  tracker.settle(key);
+  if (!reached || isBusy(result)) tracker.release(key);
+  if (!outcome.ok) onFailure(outcome);
+  await onSettled();
+}
+
 /**
  * What a background vote came back with. A refused vote is only worth a notice, since the player has moved on; one that
  * paces the player, or that no longer matches the session, needs the page reloaded to show the rest.

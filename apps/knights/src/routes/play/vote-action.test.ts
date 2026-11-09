@@ -13,6 +13,8 @@ vi.mock('$lib/server/skip-runtime', () => ({
   skipStore: { add: vi.fn(), list: vi.fn(async () => []) },
 }));
 vi.mock('$lib/server/db', () => ({ db: {} }));
+const guard = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/vote-limits/runtime', () => ({ voteGate: { guard }, lockoutFor: vi.fn() }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/queue/runtime', () => ({
   queueDeps: { now: () => new Date('2026-12-15T12:00:00Z') },
@@ -48,6 +50,8 @@ const submit = (fields: Record<string, string>, user: Record<string, unknown> = 
 };
 
 beforeEach(() => {
+  guard.mockReset();
+  guard.mockImplementation(async (_user, _now, work) => work());
   getStanding.mockReset();
   getStanding.mockResolvedValue({ banned: false, muted: false });
   castVote.mockReset();

@@ -24,8 +24,9 @@
   import {
     MAX_EXCLUDED,
     createItemBuffer,
+    createSerialQueue,
     createVoteTracker,
-    describeOutcome,
+    postVote,
     refillCount,
     type PickedItem,
   } from './optimistic';
@@ -344,39 +345,49 @@
     noteTimer = setTimeout(() => (note = null), NOTE_MS);
   }
 
-  async function post(action: URL, body: FormData, key: string, counted: boolean) {
-    let outcome = describeOutcome(null);
-    let reached = false;
-    try {
-      const response = await fetch(action, {
-        method: 'POST',
-        body,
-        headers: { accept: 'application/json', 'x-sveltekit-action': 'true' },
-      });
-      reached = true;
-      const result = deserialize(await response.text());
-      outcome = describeOutcome(result);
-      if (result.type === 'redirect' || result.type === 'error') await applyAction(result);
-    } catch {
-      // Keeps the lost-connection notice.
-    }
-    tracker.settle(key);
-    if (!reached) tracker.release(key);
-    if (!outcome.ok) {
-      if (counted) sentVotes = Math.max(0, sentVotes - 1);
-      counted = false;
-      tell(outcome.message);
-      dropBuffered(key);
-      if (outcome.resync) {
-        local = null;
-        clearBuffer();
-        refilling = false;
-      }
-    }
-    // The page's own data (status, rewards, level notices) is read again once the vote has landed.
-    await invalidate('app:play').catch(() => {});
-    // The page's data now holds the vote, so it stops being counted on top.
-    if (counted) sentVotes = Math.max(0, sentVotes - 1);
+  // Background votes go one at a time, in the order they were answered, so one player never has more than one in flight.
+  const votes = createSerialQueue();
+  const wait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+
+  function post(action: URL, body: FormData, key: string, counted: boolean) {
+    return postVote(key, {
+      queue: votes,
+      tracker,
+      wait,
+      send: async (signal) => {
+        try {
+          const response = await fetch(action, {
+            method: 'POST',
+            body,
+            headers: { accept: 'application/json', 'x-sveltekit-action': 'true' },
+            signal,
+          });
+          const result = deserialize(await response.text());
+          if (result.type === 'redirect' || result.type === 'error') await applyAction(result);
+          return { reached: true, result };
+        } catch {
+          // Keeps the lost-connection notice.
+          return { reached: false, result: null };
+        }
+      },
+      onFailure: (outcome) => {
+        if (counted) sentVotes = Math.max(0, sentVotes - 1);
+        counted = false;
+        tell(outcome.message);
+        dropBuffered(key);
+        if (outcome.resync) {
+          local = null;
+          clearBuffer();
+          refilling = false;
+        }
+      },
+      // The page's own data (status, rewards, level notices) is read again once the vote has landed.
+      onSettled: async () => {
+        await invalidate('app:play').catch(() => {});
+        // The page's data now holds the vote, so it stops being counted on top.
+        if (counted) sentVotes = Math.max(0, sentVotes - 1);
+      },
+    });
   }
 
   // The plain form post: once the page has the server's next item, what was on screen ahead of it goes. The item counts
@@ -448,7 +459,13 @@
   <title>Judge · Knights of New Order</title>
 </svelte:head>
 
-<svelte:window {onkeydown} />
+<svelte:window
+  {onkeydown}
+  onbeforeunload={(event) => {
+    // Votes still queued would be dropped silently.
+    if (tracker.pending > 0) event.preventDefault();
+  }}
+/>
 
 {#snippet pill(option: { value: string; label: string }, index: number, locked: boolean, asksReason: boolean)}
   {@const blocked = option.label.toLowerCase() === 'blocked'}

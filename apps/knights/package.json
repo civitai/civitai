@@ -42,6 +42,7 @@
     "svelte-check": "^4.0.0",
     "svelte-eslint-parser": "^0.43.0",
     "typescript": "^5.9.2",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "wasmoon": "1.16.0"
   }
 }

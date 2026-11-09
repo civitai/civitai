@@ -9,12 +9,11 @@ const railFor = vi.hoisted(() => vi.fn());
 const pickHiddenCheck = vi.hoisted(() => vi.fn());
 const hasUnseenReset = vi.hoisted(() => vi.fn());
 const readHiddenNotices = vi.hoisted(() => vi.fn());
-const voteLockUntil = vi.hoisted(() => vi.fn());
+const lockoutFor = vi.hoisted(() => vi.fn());
 const pickYesNo = vi.hoisted(() => vi.fn());
 const yesNoSettings = vi.hoisted(() => ({ share: 0.7, stretch: 8 }));
 const queueDeps = vi.hoisted(() => ({
   now: () => new Date('2026-12-15T12:00:00Z'),
-  voteLimits: undefined as unknown,
 }));
 const skipList = vi.hoisted(() => ({ add: vi.fn(), list: vi.fn() }));
 const NOW = new Date('2026-12-15T12:00:00Z');
@@ -22,7 +21,7 @@ vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
-vi.mock('$lib/server/queue/vote-rate', () => ({ voteLockUntil }));
+vi.mock('$lib/server/vote-limits/runtime', () => ({ lockoutFor, voteGate: { guard: vi.fn() } }));
 vi.mock('$lib/server/rail-runtime', () => ({ railFor }));
 vi.mock('$lib/server/daily/daily.service', () => ({ getDailyStatus }));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
@@ -97,11 +96,10 @@ beforeEach(() => {
   hasUnseenReset.mockResolvedValue(false);
   readHiddenNotices.mockReset();
   readHiddenNotices.mockResolvedValue([]);
-  voteLockUntil.mockReset();
+  lockoutFor.mockReset();
   pickYesNo.mockReset();
   pickYesNo.mockResolvedValue(null);
   yesNoSettings.share = 0.7;
-  queueDeps.voteLimits = undefined;
 });
 
 describe('play load', () => {
@@ -304,16 +302,14 @@ describe('play load', () => {
 });
 
 describe('play load vote pacing', () => {
-  const limits = [{ windowSeconds: 60, max: 3 }];
   const until = new Date('2026-12-15T12:00:30Z');
 
   beforeEach(() => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2 });
-    queueDeps.voteLimits = limits;
   });
 
   it('shows the lockout instead of the next image while the player is paced', async () => {
-    voteLockUntil.mockResolvedValue(until);
+    lockoutFor.mockResolvedValue(until);
 
     const page = await run();
 
@@ -322,18 +318,18 @@ describe('play load vote pacing', () => {
     expect(getFeed).not.toHaveBeenCalled();
     expect(pickHiddenCheck).not.toHaveBeenCalled();
     expect(pickYesNo).not.toHaveBeenCalled();
-    expect(voteLockUntil).toHaveBeenCalledWith(expect.anything(), 7, NOW, limits);
+    expect(lockoutFor).toHaveBeenCalledWith(expect.anything(), 7, NOW);
   });
 
   it('serves the feed when the player is not paced', async () => {
-    voteLockUntil.mockResolvedValue(null);
+    lockoutFor.mockResolvedValue(null);
     expect((await run()).lockoutSeconds).toBeNull();
     expect(getFeed).toHaveBeenCalled();
   });
 
   it('never paces a moderator', async () => {
     await run({ isModerator: true });
-    expect(voteLockUntil).not.toHaveBeenCalled();
+    expect(lockoutFor).not.toHaveBeenCalled();
     expect(getFeed).toHaveBeenCalled();
   });
 });
@@ -529,12 +525,11 @@ describe('play load yes/no questions', () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, smites: 3, maxSmites: 3 });
     expect((await run()).item).toBeNull();
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, smites: 0, maxSmites: 3 });
-    queueDeps.voteLimits = [{ windowSeconds: 60, max: 3 }];
-    voteLockUntil.mockResolvedValue(new Date('2026-12-15T12:00:30Z'));
+    lockoutFor.mockResolvedValue(new Date('2026-12-15T12:00:30Z'));
     expect((await run()).item).toBeNull();
     expect(pickYesNo).not.toHaveBeenCalled();
 
-    queueDeps.voteLimits = undefined;
+    lockoutFor.mockResolvedValue(null);
     yesNoSettings.share = 0;
     getFeed.mockResolvedValue(null);
     expect((await run()).item).toBeNull();

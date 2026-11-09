@@ -152,8 +152,8 @@
             <strong>earned</strong>; a wrong or inconclusive one drops it.
           </li>
           <li>
-            Judging is paced. Go too fast and you will be asked to rest for a short while before the next
-            image. Moderators are not paced.
+            Judging is paced. Go too fast and you will be asked to rest before the next image, for ten minutes
+            at first and for longer if you keep at it. Moderators are not paced.
           </li>
         </ul>
       </div>
