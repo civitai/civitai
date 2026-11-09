@@ -103,7 +103,11 @@ describe('gift codes', () => {
 describe('createGiftLink / mintGiftCodes', () => {
   it('stores only the hash and a 4-character hint, never the code it returns', async () => {
     seed();
-    const { code } = await createGiftLink({ userId: OWNER, modelVersionId: VERSION_ID });
+    const { code } = await createGiftLink({
+      userId: OWNER,
+      modelVersionId: VERSION_ID,
+      maxRedemptions: 10,
+    });
     const stored = JSON.stringify(dbMock.dbWrite.modelVersionGiftLink.create.mock.calls[0][0]);
     expect(stored).not.toContain(code.slice(4));
     expect(stored).toContain(hashGiftCode(code));
@@ -111,24 +115,24 @@ describe('createGiftLink / mintGiftCodes', () => {
 
   it('refuses someone who does not own the model', async () => {
     seed();
-    await expect(createGiftLink({ userId: CLAIMER, modelVersionId: VERSION_ID })).rejects.toThrow(
-      'You do not own this model version.'
-    );
+    await expect(
+      createGiftLink({ userId: CLAIMER, modelVersionId: VERSION_ID, maxRedemptions: 10 })
+    ).rejects.toThrow('You do not own this model version.');
     expect(dbMock.dbWrite.modelVersionGiftLink.create).not.toHaveBeenCalled();
   });
 
   it('refuses a version that is not gated', async () => {
     seed({ gate: null as never });
-    await expect(createGiftLink({ userId: OWNER, modelVersionId: VERSION_ID })).rejects.toThrow(
-      'gated model version'
-    );
+    await expect(
+      createGiftLink({ userId: OWNER, modelVersionId: VERSION_ID, maxRedemptions: 10 })
+    ).rejects.toThrow('gated model version');
   });
 
   it('rate-limits minting per creator', async () => {
     seed();
     redisMock.redis.incrBy.mockResolvedValue(20);
     await expect(
-      createGiftLink({ userId: OWNER, modelVersionId: VERSION_ID })
+      createGiftLink({ userId: OWNER, modelVersionId: VERSION_ID, maxRedemptions: 10 })
     ).resolves.toBeDefined();
     redisMock.redis.incrBy.mockResolvedValue(21);
     await expect(
@@ -394,7 +398,12 @@ describe('who may manage gifts', () => {
     revoke: (userId: number, isModerator = false) =>
       revokeGiftLinks({ userId, isModerator, modelVersionId: VERSION_ID, id: 1 }),
     create: (userId: number, isModerator = false) =>
-      createGiftLink({ userId, isModerator, modelVersionId: VERSION_ID } as CreateArgs),
+      createGiftLink({
+        userId,
+        isModerator,
+        modelVersionId: VERSION_ID,
+        maxRedemptions: 10,
+      } as CreateArgs),
     claims: (userId: number, isModerator = false) =>
       listGiftClaims({ userId, isModerator, modelVersionId: VERSION_ID, id: 1 }),
     removeClaim: (userId: number, isModerator = false) =>
@@ -453,7 +462,7 @@ describe('the live-code cap', () => {
   it.each([
     [
       'createGiftLink',
-      () => createGiftLink({ userId: OWNER, modelVersionId: VERSION_ID }),
+      () => createGiftLink({ userId: OWNER, modelVersionId: VERSION_ID, maxRedemptions: 10 }),
       'create',
     ],
     [
