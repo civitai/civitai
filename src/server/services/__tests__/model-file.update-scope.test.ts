@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import type * as StorageResolver from '~/utils/storage-resolver';
+import type * as TrainingDataRestricted from '~/server/services/training-data-restricted.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -54,6 +55,18 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
   createCachedObject: () => ({ bust: mockFileListBust, fetch: vi.fn() }),
 }));
+
+const { mockVersionHasStudioDataset } = vi.hoisted(() => ({
+  mockVersionHasStudioDataset: vi.fn(async (_db: unknown, _versionId: number) => false),
+}));
+// "Is a Training Studio version" has its own PGlite coverage (training-data-share.behavior.test.ts).
+vi.mock('~/server/services/training-data-restricted.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrainingDataRestricted>()),
+  versionHasStudioDataset: mockVersionHasStudioDataset,
+}));
+beforeEach(() => {
+  mockVersionHasStudioDataset.mockImplementation(async () => false);
+});
 
 import { updateFile } from '~/server/services/model-file.service';
 
@@ -709,18 +722,9 @@ describe('a new url from a client', () => {
 
 describe('an owner editing another Training Data file on a Training Studio version', () => {
   const studioVersion = (has: boolean) =>
-    dbMock.dbWrite.$queryRaw.mockImplementation(((
-      strings: TemplateStringsArray,
-      ...values: unknown[]
-    ) =>
-      Promise.resolve(
-        // Only for the file's own version.
-        has &&
-          strings.join('?').includes('selectedEpochUrl') &&
-          values.includes(FILE.modelVersionId)
-          ? [{ id: 2 }]
-          : []
-      )) as never);
+    mockVersionHasStudioDataset.mockImplementation(
+      async (_db, versionId) => has && versionId === FILE.modelVersionId
+    );
 
   beforeEach(() => {
     dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({

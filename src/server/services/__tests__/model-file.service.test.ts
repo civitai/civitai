@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as TrainingDataRestricted from '~/server/services/training-data-restricted.service';
 
 // One local named `mockDbRead` served BOTH clients, and the file drives both sides of a genuine
 // split: `count` (model-file.service:599), `findFirst` (:617) and `findMany` (:36) are dbRead,
@@ -26,6 +27,17 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   createCachedArray: () => ({ bust: vi.fn(), fetch: vi.fn() }),
 }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
+const { mockVersionHasStudioDataset } = vi.hoisted(() => ({
+  mockVersionHasStudioDataset: vi.fn(async (_db: unknown, _versionId: number) => false),
+}));
+// "Is a Training Studio version" has its own PGlite coverage (training-data-share.behavior.test.ts).
+vi.mock('~/server/services/training-data-restricted.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrainingDataRestricted>()),
+  versionHasStudioDataset: mockVersionHasStudioDataset,
+}));
+beforeEach(() => {
+  mockVersionHasStudioDataset.mockImplementation(async () => false);
+});
 
 import * as modelFileService from '~/server/services/model-file.service';
 import {
@@ -474,18 +486,11 @@ describe('createFile / updateFile — renaming a download (overrideName)', () =>
 });
 
 describe('createFile — a second Training Data file on a Training Studio version', () => {
-  /** The Studio-row lookup: the version has a Studio dataset row, or not. */
+  /** Whether the file's own version (5) is a Training Studio version. */
   const studioVersion = (has: boolean) =>
-    mockDbWrite.$queryRaw.mockImplementation(((
-      strings: TemplateStringsArray,
-      ...values: unknown[]
-    ) =>
-      Promise.resolve(
-        // Only for the file's own version.
-        has && strings.join('?').includes('selectedEpochUrl') && values.includes(5)
-          ? [{ id: 1 }]
-          : []
-      )) as never);
+    mockVersionHasStudioDataset.mockImplementation(
+      async (_db, versionId) => has && versionId === 5
+    );
   const create = (who: { userId: number; isModerator?: boolean }) =>
     modelFileService.createFile({
       name: 'dataset.zip',
