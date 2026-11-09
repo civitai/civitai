@@ -75,7 +75,9 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 /** A resolved submit's follow-up lands later, behind a dynamic import: let it land inside the
  *  test that caused it, so it cannot be counted by the next one. */
 const settleFollowUps = () =>
-  vi.waitFor(() => expect(followUps.onNewPendingSubmission).toHaveBeenCalled());
+  vi.waitFor(() => expect(followUps.onNewPendingSubmission).toHaveBeenCalled(), {
+    timeout: 15_000,
+  });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -190,7 +192,9 @@ describe('submitVersion — follow-ups of a new pending request', () => {
       submitterIsModerator: false,
     });
     // Fire-and-forget behind a dynamic import: wait for it rather than for one tick.
-    await vi.waitFor(() => expect(followUps.onNewPendingSubmission).toHaveBeenCalled());
+    await vi.waitFor(() => expect(followUps.onNewPendingSubmission).toHaveBeenCalled(), {
+      timeout: 15_000,
+    });
     await flush();
     expect(followUps.onNewPendingSubmission).toHaveBeenCalledTimes(1);
     expect(followUps.onNewPendingSubmission).toHaveBeenCalledWith({
@@ -226,7 +230,9 @@ describe('submitVersion — follow-ups of a new pending request', () => {
       })
     ).resolves.toMatchObject({ slug: 'my-app' });
     // Fire-and-forget behind a dynamic import: wait for it rather than for one tick.
-    await vi.waitFor(() => expect(followUps.onNewPendingSubmission).toHaveBeenCalled());
+    await vi.waitFor(() => expect(followUps.onNewPendingSubmission).toHaveBeenCalled(), {
+      timeout: 15_000,
+    });
     await flush();
     expect(followUps.onNewPendingSubmission).toHaveBeenCalledTimes(1);
   });

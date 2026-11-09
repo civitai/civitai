@@ -385,12 +385,16 @@ describe('watchReviewApplyJob (reachability gate)', () => {
       jobName: 'review-apply-1',
       baseDetail,
     });
-    await vi.waitFor(() =>
-      expect(
-        mockSettled.mock.calls.some(
-          (c) => (c[0] as { publishRequestId: string }).publishRequestId === OWN
-        )
-      ).toBe(true)
+    await vi.waitFor(
+      () =>
+        expect(
+          mockSettled.mock.calls.some(
+            (c) => (c[0] as { publishRequestId: string }).publishRequestId === OWN
+          )
+        ).toBe(true),
+      // The first settle in the file imports the real follow-up module (importOriginal), which
+      // takes longer than waitFor's 1s default on a CI runner.
+      { timeout: 15_000 }
     );
     expect(mockSettled).toHaveBeenCalledWith({ publishRequestId: OWN, live });
     expect(mockSettled).not.toHaveBeenCalledWith({ publishRequestId: OWN, live: !live });

@@ -295,7 +295,7 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
     expect(res._status).toBe(202);
     // The alert is fire-and-forget after the response.
-    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalled());
+    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalled(), { timeout: 15_000 });
     const titles = mockFetch.mock.calls.map(
       (c) =>
         (

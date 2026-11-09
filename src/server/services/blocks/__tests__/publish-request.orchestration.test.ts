@@ -4164,7 +4164,9 @@ describe('recordPendingFromPush', () => {
     mockDbWrite.appBlockPublishRequest.create.mockResolvedValue(undefined);
 
     await recordPendingFromPush(pushArgs);
-    await vi.waitFor(() => expect(mockDeleteReviewResources).toHaveBeenCalled());
+    await vi.waitFor(() => expect(mockDeleteReviewResources).toHaveBeenCalled(), {
+      timeout: 15_000,
+    });
     await flush();
 
     expect(mockDeleteReviewResources).toHaveBeenCalledTimes(1);
