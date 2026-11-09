@@ -20,7 +20,7 @@ export function calculateFervor({ correct, graded }: Ledger): number {
   // correct × scale × (correct / graded)², done as one integer division: the float product of the squared ratio can
   // land just under the exact value and floor to one less. BigInt keeps it exact at any volume.
   const c = BigInt(correct);
-  return Number((c * c * c * BigInt(PROGRESSION.fervorScale)) / BigInt(graded * graded));
+  return Number((c * c * c * BigInt(PROGRESSION.fervorScale)) / BigInt(graded) ** 2n);
 }
 
 const DAY_MS = 86_400_000;

@@ -29,6 +29,14 @@ describe('decideYesNo', () => {
     }
   });
 
+  it('is decided by the next answer after a tie, so the cap is only reached when it equals the consensus size', () => {
+    const rule4 = { needed: 4, max: 8 };
+    expect(decideYesNo(votes(2, 2), rule4)).toEqual({ kind: 'pending' });
+    expect(decideYesNo(votes(3, 2), rule4)).toEqual({ kind: 'consensus', value: 'yes' });
+    expect(decideYesNo(votes(2, 3), rule4)).toEqual({ kind: 'consensus', value: 'no' });
+    expect(decideYesNo(votes(2, 2), { needed: 4, max: 4 })).toEqual({ kind: 'exhausted' });
+  });
+
   it('prefers a majority over the cap', () => {
     expect(decideYesNo(votes(5, 3), { needed: 4, max: 8 })).toEqual({
       kind: 'consensus',

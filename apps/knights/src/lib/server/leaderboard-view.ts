@@ -1,13 +1,8 @@
 import { count } from '../format';
-import { formatTally, nextTallyAt } from '../tally';
 import { PROGRESSION } from './progression/config';
 import { calculateFervor } from './progression/fervor';
 
 const percent = (ratio: number) => `${Math.round(ratio * 100)}%`;
-
-/** Hours and minutes to the next UTC midnight, when the cached board is rebuilt, e.g. `6h 12m`. */
-export const nextTally = (now: Date): string =>
-  formatTally(nextTallyAt(now).getTime() - now.getTime());
 
 /** A worked fervor sum, e.g. `400 × 100 × 80% × 80% = 25,600`, run through the formula and config the app scores with. */
 export function fervorSum(correct: number, graded: number) {
