@@ -1620,23 +1620,33 @@ describe('free-text param paths', () => {
   function replaceAt(params: unknown, path: string, value: unknown) {
     let hits = 0;
     const copy = structuredClone(params);
+    /** Set `slot` (read with `get`, written with `put`) or descend into it. */
+    const visit = (get: () => unknown, put: (v: unknown) => void, rest: string[]) => {
+      if (rest.length) return descend(get(), rest);
+      if (get() === undefined) return;
+      put(structuredClone(value));
+      hits++;
+    };
     const descend = (node: unknown, segments: string[]): void => {
       const [head, ...rest] = segments;
       if (head === '[]') {
-        if (Array.isArray(node)) node.forEach((_, i) => set(node, i, rest));
+        if (!Array.isArray(node)) return;
+        const list: unknown[] = node;
+        list.forEach((_, i) =>
+          visit(
+            () => list[i],
+            (v) => (list[i] = v),
+            rest
+          )
+        );
       } else if (node && typeof node === 'object' && !Array.isArray(node)) {
-        set(node as Record<string, unknown>, head, rest);
+        const record = node as Record<string, unknown>;
+        visit(
+          () => record[head],
+          (v) => (record[head] = v),
+          rest
+        );
       }
-    };
-    const set = (
-      holder: Record<string | number, unknown>,
-      key: string | number,
-      rest: string[]
-    ) => {
-      if (rest.length) return descend(holder[key], rest);
-      if (holder[key] === undefined) return;
-      holder[key] = structuredClone(value);
-      hits++;
     };
     descend(copy, path.replace(/\[\]/g, '.[]').split('.'));
     return { params: copy, hits };
