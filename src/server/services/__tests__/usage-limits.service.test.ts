@@ -1,11 +1,9 @@
 import type { NextApiRequest } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { dbMock } from '~/__tests__/mocks/db.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { COMMENT_V3_RATE_LIMIT_KEY } from '~/server/schema/comment.schema';
 import { POST_CREATE_RATE_LIMIT_KEY } from '~/server/schema/post.schema';
-import { usageLimitCounters } from '~/server/services/usage-limit-counters';
 import { isBucketCountable, usageLimitDefs } from '~/shared/constants/usage-limits';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
@@ -37,8 +35,6 @@ const commentAttemptsBy: Record<string, number[]> = {};
 
 beforeEach(() => {
   vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
-  // The gifts.monthly counter reads claims through dbRead: this user has none.
-  vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([{ used: 0 }] as never);
   hSetWithTTL.mockReset();
   for (const key of Object.keys(attemptsBy)) delete attemptsBy[key];
   for (const key of Object.keys(commentAttemptsBy)) delete commentAttemptsBy[key];
@@ -98,7 +94,7 @@ describe('getUsageLimits', () => {
       (await getUsageLimits({ tokenScope: TokenScope.Full, user: veteran, req })).limits.map(
         (l) => l.id
       )
-    ).toEqual(['posts.daily', 'comments.hourly', 'comments.daily', 'gifts.monthly']);
+    ).toEqual(['posts.daily', 'comments.hourly', 'comments.daily']);
   });
 
   it('gives a paid member the multiplied daily limit', async () => {
@@ -136,10 +132,7 @@ describe('getUsageLimits', () => {
 
   it('reports no limit for a moderator, whom rateLimit() never counts', async () => {
     const { limits } = await getUsageLimits({ tokenScope: TokenScope.Full, user: moderator, req });
-    // The gift claim, not rateLimit(), enforces the gift allowance, and it exempts no one.
-    const [gifts, ...bucketed] = [...limits].reverse();
-    expect(gifts).toMatchObject({ id: 'gifts.monthly', limit: 3, used: 0, window: 'utc-month' });
-    expect(bucketed.every((l) => l.limit === null && l.window === null)).toBe(true);
+    expect(limits.every((l) => l.limit === null && l.window === null)).toBe(true);
     expect(postsOnly(limits)).toEqual([
       expect.objectContaining({ id: 'posts.hourly', limit: null, used: null, remaining: null }),
       expect.objectContaining({
@@ -158,13 +151,7 @@ describe('getUsageLimits', () => {
       user: moderator,
       req,
     });
-    expect(asUserRead.limits.map((l) => [l.id, l.limit])).toEqual([
-      ['posts.hourly', null],
-      ['posts.daily', null],
-      ['comments.hourly', null],
-      ['comments.daily', null],
-      ['gifts.monthly', 3],
-    ]);
+    expect(asUserRead.limits.every((l) => l.limit === null)).toBe(true);
 
     const asMediaWrite = await getUsageLimits({
       tokenScope: TokenScope.MediaWrite,
@@ -176,7 +163,6 @@ describe('getUsageLimits', () => {
       ['posts.daily', 20, 0],
       ['comments.hourly', 10, 0],
       ['comments.daily', 40, 0],
-      ['gifts.monthly', 3, 0],
     ]);
   });
 
@@ -184,9 +170,7 @@ describe('getUsageLimits', () => {
     commentAttemptsBy['user:8'] = [NOW - 1000, NOW - 2 * HOUR];
     const { limits } = await getUsageLimits({ tokenScope: TokenScope.Full, user: newcomer, req });
     const productIds = usageLimitDefs
-      .filter(
-        (d) => d.kind === 'product' && (isBucketCountable(d.window) || usageLimitCounters[d.id])
-      )
+      .filter((d) => d.kind === 'product' && isBucketCountable(d.window))
       .map((d) => d.id);
     expect(limits.map((l) => l.id)).toEqual(productIds);
     expect(limits.find((l) => l.id === 'comments.hourly')).toMatchObject({

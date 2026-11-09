@@ -63,7 +63,8 @@ describe('calendar-window product limits', () => {
     const [row] = await rowsFor([MONTHLY]);
 
     expect(counter).toHaveBeenCalledWith({
-      userId: 7,
+      user,
+      req,
       start: new Date(Date.UTC(2026, 10, 1)),
       end: new Date(NEXT_MONTH),
     });
@@ -103,6 +104,11 @@ describe('calendar-window product limits', () => {
     expect(ids).toEqual(registryOrder);
     expect(ids.indexOf(MONTHLY)).toBeGreaterThan(0);
     expect(ids.indexOf(MONTHLY)).toBeLessThan(ids.length - 1);
+  });
+
+  it('has no row when the counter says the user cannot reach the feature', async () => {
+    counters[MONTHLY] = vi.fn(async () => null);
+    expect(await rowsFor([MONTHLY])).toEqual([]);
   });
 
   it('ids narrow counted rows too', async () => {

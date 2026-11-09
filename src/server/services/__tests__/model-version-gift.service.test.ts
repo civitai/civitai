@@ -328,6 +328,16 @@ describe('claimGift', () => {
       });
       expect(grantValues()).toEqual([]);
       expect(mockBustOrchestrator).not.toHaveBeenCalled();
+      // Counted under the claimer's lock, over this UTC month.
+      expect(allowanceLocks()).toHaveLength(1);
+      const count = dbMock.dbWrite.$queryRaw.mock.calls.find((c: unknown[]) =>
+        (c[0] as string[]).join('?').includes('"claimedAt" >=')
+      );
+      expect(count?.slice(1)).toEqual([
+        CLAIMER,
+        new Date('2026-11-01T00:00:00.000Z'),
+        new Date('2026-12-01T00:00:00.000Z'),
+      ]);
     });
 
     it.each([

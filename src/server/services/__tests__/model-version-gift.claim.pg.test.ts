@@ -1,9 +1,11 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { PrismaClient } from '@prisma/client';
+import type { NextApiRequest } from 'next';
 import { Client } from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type { SessionUser } from '~/types/session';
 
 /**
  * The gift cap under real concurrency. A mock cannot race, so this runs the claim's own SQL
@@ -17,6 +19,8 @@ const URL_BASE = process.env.APPDATA_TEST_DATABASE_URL;
 const DB_NAME = 'model_gift_claim_test';
 
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
+const { getFeatureFlagsAsync } = vi.hoisted(() => ({ getFeatureFlagsAsync: vi.fn() }));
+vi.mock('~/server/services/feature-flags.service', () => ({ getFeatureFlagsAsync }));
 vi.mock('~/server/services/paid-access.service', () => ({ getPaidAccess: vi.fn() }));
 const { insertWithinLiveCap, queryGiftList, redeemGiftLink, revokeGiftRedemption } = await import(
   '~/server/services/model-version-gift.service'
@@ -603,8 +607,14 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
       vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation(
         (...args: Parameters<typeof prisma.$queryRaw>) => prisma.$queryRaw(...args)
       );
+      getFeatureFlagsAsync.mockResolvedValue({ modelGiftLinks: true });
       const counter = usageLimitCounters['gifts.monthly']!;
-      expect(await counter({ userId: CLAIMER, start: START, end: END })).toBe(2);
+      const args = { user: { id: CLAIMER } as SessionUser, req: {} as NextApiRequest };
+      expect(await counter({ ...args, start: START, end: END })).toBe(2);
+
+      // No row for a user the gift feature is not released to.
+      getFeatureFlagsAsync.mockResolvedValue({ modelGiftLinks: false });
+      expect(await counter({ ...args, start: START, end: END })).toBeNull();
     });
 
     it('lets a repeat claim of the same link through, even past a since-lowered limit', async () => {

@@ -113,7 +113,7 @@ export async function getUsageLimits({
       });
     })
   );
-  const counted = await countedLimits(user, wanted);
+  const counted = await countedLimits(user, req, wanted);
   const order = (row: UsageLimit) => usageLimitDefs.findIndex((def) => def.id === row.id);
   const limits = [...byArea.flat(), ...counted].sort((a, b) => order(a) - order(b));
   return { limits };
@@ -125,6 +125,7 @@ export async function getUsageLimits({
  */
 async function countedLimits(
   user: SessionUser,
+  req: NextApiRequest,
   wanted: Set<string> | undefined
 ): Promise<UsageLimit[]> {
   const now = Date.now();
@@ -137,7 +138,8 @@ async function countedLimits(
       const { limit, applies } = await resolveUsageLimit(def.id, user);
       if (!applies) return null;
       const { start, end } = calendarWindow(window.type, now);
-      const used = await counter({ userId: user.id, start, end });
+      const used = await counter({ user, req, start, end });
+      if (used === null) return null;
       const remaining = Math.max(0, limit - used);
       return {
         id: def.id,

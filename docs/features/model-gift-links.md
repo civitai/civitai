@@ -32,7 +32,7 @@ surfaces.
   nothing. Past the allowance the claim gets a 429 that tells the claimer to reach out to the person
   who gave them the link, with product rate-limit metadata (`id`, `limit`, `used`, `remaining`, and
   `resetAt` at the start of the next UTC month). `/api/v1/me/limits` lists the same count as a
-  `gifts.monthly` row.
+  `gifts.monthly` row, only to users the gift feature is released to.
 - **Revoke:** done by the creator or a moderator, for a link or a whole batch. Revoking stops new claims
   immediately, including a claim already in flight. **People who already claimed keep their access.**
   Who claimed which link is `ModelVersionGiftRedemption`; a grant's `meta.giftLinkId` holds only the most

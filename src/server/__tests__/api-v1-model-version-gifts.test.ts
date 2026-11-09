@@ -42,7 +42,13 @@ vi.mock('~/server/services/model-version-gift.service', async (importOriginal) =
 type Handler = (req: NextApiRequest, res: NextApiResponse, user: SessionUser) => Promise<void>;
 const load = async (path: string) => (await import(path)).default as Handler;
 
-const USER = { id: 7, username: 'u', onboarding: 15, isModerator: false } as SessionUser;
+const USER = {
+  id: 7,
+  username: 'u',
+  onboarding: 15,
+  isModerator: false,
+  tier: 'gold',
+} as SessionUser;
 const actor = { userId: 7, isModerator: false, modelVersionId: 5 };
 // Minting is owner-only, so the mint routes never hand the service a moderator flag.
 const owner = { userId: 7, modelVersionId: 5 };
@@ -65,7 +71,7 @@ const ROUTES: Array<{
     body: { code: 'cvg_abc', userId: 999 },
     service: 'claimGift',
     // The session user, for the monthly allowance's tier; never an id from the body.
-    args: { user: expect.objectContaining({ id: 7 }), code: 'cvg_abc' },
+    args: { user: expect.objectContaining({ id: 7, tier: 'gold' }), code: 'cvg_abc' },
   },
   {
     name: 'GET list',
