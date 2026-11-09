@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as DbHelpers from '~/server/db/db-helpers';
 import type * as ImageService from '~/server/services/image.service';
 import type * as MeilisearchClient from '~/server/meilisearch/client';
@@ -7,8 +7,8 @@ import type * as SystemCache from '~/server/services/system-cache';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import type { SessionUser } from '~/types/session';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 // Qdrant's payload lags Postgres: an image blocked, unpublished, made private or re-rated a moment
 // ago can still be a candidate. These tests pin that the search only ever returns what the
@@ -18,16 +18,9 @@ const h = vi.hoisted(() => {
   return {
     queryWithTimeout: vi.fn(),
     fakeGetAllImages: undefined as undefined | ((input: { ids: number[] }) => unknown),
-    embed: vi.fn(),
   };
 });
 
-vi.mock('~/server/services/orchestrator/client', () => ({
-  internalOrchestratorClient: { post: h.embed },
-}));
-vi.stubGlobal('fetch', async () =>
-  Response.json({ result: { config: { metadata: { modelRevision: 'r1', profile: 'p1' } } } })
-);
 vi.mock('~/server/prom/client', async (importOriginal) => ({
   ...(await importOriginal<typeof PromClient>()),
   registerCounter: () => ({ inc: vi.fn() }),
@@ -109,7 +102,7 @@ function rankedSource(ranking: number[]) {
   const source: CandidateSource = async (args) => {
     const { offset, limit } = args;
     calls.push(args);
-    return ranking.slice(offset, offset + limit);
+    return { ids: ranking.slice(offset, offset + limit) };
   };
   return { source, calls };
 }
@@ -126,9 +119,6 @@ function visibleOnly(visible: Set<number>) {
 }
 
 beforeEach(() => {
-  setEnv({ QDRANT_URL: 'http://qdrant.test' });
-  // A text query whose vector is already cached, so no embedding call is made.
-  redisMock.redis.packed.get.mockResolvedValue([0.1, 0.2]);
   h.fakeGetAllImages = undefined;
   h.queryWithTimeout.mockReset().mockRejectedValue(new Error('stop here'));
 });
@@ -251,71 +241,6 @@ describe('a stale index cannot surface a hidden image', () => {
   });
 });
 
-describe('query embedding', () => {
-  const vector = Array.from({ length: 256 }, (_, i) => i / 256);
-
-  beforeEach(() => {
-    redisMock.redis.packed.get.mockResolvedValue(null);
-    redisMock.redis.packed.set.mockClear();
-    h.embed.mockReset();
-    h.fakeGetAllImages = visibleOnly(new Set([5]));
-  });
-
-  it('embeds the normalised text through the recipe and caches the vector', async () => {
-    h.embed.mockResolvedValue({
-      data: {
-        model: 'wemm-2b',
-        modelRevision: 'r1',
-        profile: 'p1',
-        dimensions: 256,
-        embedding: vector,
-      },
-    });
-    const { source, calls } = rankedSource([5]);
-    const { items } = await searchSemanticImages({
-      input: input({ imageId: undefined, query: '  a red   fox ' }),
-      user: VIEWER,
-      candidateSource: source,
-    });
-
-    expect(h.embed.mock.calls[0][0].body).toEqual({
-      model: 'wemm-2b',
-      dimensions: 256,
-      precision: 'float32',
-      text: 'a red fox',
-    });
-    expect(calls[0].query).toEqual(vector);
-    expect(redisMock.redis.packed.set).toHaveBeenCalledWith(
-      expect.stringContaining(':wemm-2b:256:r1:p1:'),
-      vector,
-      expect.anything()
-    );
-    expect(items.map((x) => x.id)).toEqual([5]);
-  });
-
-  it('refuses a vector from a different profile than the index', async () => {
-    h.embed.mockResolvedValue({
-      data: {
-        model: 'wemm-2b',
-        modelRevision: 'r1',
-        profile: 'p2',
-        dimensions: 256,
-        embedding: vector,
-      },
-    });
-    const { source, calls } = rankedSource([5]);
-    await expect(
-      searchSemanticImages({
-        input: input({ imageId: undefined, query: 'fox' }),
-        user: VIEWER,
-        candidateSource: source,
-      })
-    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
-    expect(calls).toEqual([]);
-    expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
-  });
-});
-
 describe('tags that cannot be browsed', () => {
   it('returns an empty page when every chosen tag is one', async () => {
     h.fakeGetAllImages = visibleOnly(new Set([5]));
@@ -388,12 +313,189 @@ describe.each([
   });
 });
 
+describe('filters', () => {
+  const textQuery = (over: Partial<SemanticImageSearchInput> = {}) =>
+    input({ imageId: undefined, query: 'a red fox', ...over });
+
+  it('searches for a signed-out visitor', async () => {
+    h.fakeGetAllImages = visibleOnly(new Set([101, 103]));
+    const { source } = rankedSource([101, 102, 103]);
+    const { items } = await searchSemanticImages({ input: textQuery(), candidateSource: source });
+    expect(items.map((x) => x.id)).toEqual([101, 103]);
+  });
+
+  it("narrows to the chosen users' images", async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 31 }, { id: 32 }]);
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    const { source, calls } = rankedSource([101]);
+    await searchSemanticImages({
+      input: textQuery({ usernames: ['fox', 'vixen'] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.userIds).toEqual([31, 32]);
+  });
+
+  it('returns nothing, without asking the index, when no chosen user exists', async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue([]);
+    const { source, calls } = rankedSource([101]);
+    const result = await searchSemanticImages({
+      input: textQuery({ usernames: ['nobody'] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('narrows to tags chosen by name', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: 77 }]);
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({
+      input: textQuery({ tagNames: ['Fox'] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.tagIds).toEqual([77]);
+  });
+
+  it('returns nothing, without asking the index, for a tag name that does not exist', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([]);
+    const { source, calls } = rankedSource([101]);
+    const result = await searchSemanticImages({
+      input: textQuery({ tagNames: ['no-such-tag'] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('bounds the posted date', async () => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({
+      input: textQuery({ postedAfter: new Date('2026-01-01T00:00:00Z') }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.postedAfter).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('never proposes NSFW images on a base model that forbids NSFW', async () => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({ input: textQuery(), candidateSource: source });
+    const restricted = calls[0].filter.restrictedBaseModels;
+    expect(restricted?.nsfwLevels.length).toBeGreaterThan(0);
+    expect(restricted?.baseModels.length).toBeGreaterThan(0);
+  });
+
+  it("sends the viewer's browsing level, never an empty one", async () => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({ input: textQuery({ browsingLevel: 0 }), candidateSource: source });
+    expect(calls[0].filter.nsfwLevels.length).toBeGreaterThan(0);
+  });
+});
+
+describe('the search service call', () => {
+  type SentBody = {
+    query: unknown;
+    filter: { must: unknown[]; must_not: unknown[] };
+  } & Record<string, unknown>;
+  type Sent = { url: string; auth: string | null; body: SentBody };
+  function stubService(respond: (url: string) => Response) {
+    const sent: Sent[] = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      sent.push({
+        url,
+        auth: new Headers(init.headers).get('authorization'),
+        body: JSON.parse(String(init.body)),
+      });
+      return respond(url);
+    });
+    return sent;
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+  beforeEach(() => {
+    setEnv({ SEARCH_SERVICE_URL: 'http://search.test/', SEARCH_SERVICE_TOKEN: 'tok' });
+    h.fakeGetAllImages = visibleOnly(new Set([101, 102]));
+  });
+
+  it('sends text, the token and the Qdrant filter, and returns the spelling correction', async () => {
+    const sent = stubService(() =>
+      Response.json({
+        query: 'batmen',
+        corrected: 'batman',
+        changes: [{ from: 'batmen', to: 'batman', distance: 1 }],
+        hits: [
+          { id: 101, score: 0.7 },
+          { id: 102, score: 0.6 },
+        ],
+      })
+    );
+    const result = await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'batmen', tagIds: [42] }),
+      user: VIEWER,
+    });
+
+    expect(result.items.map((x) => x.id)).toEqual([101, 102]);
+    expect(result.correctedQuery).toBe('batman');
+    expect(sent[0].url).toBe('http://search.test/v1/search');
+    expect(sent[0].auth).toBe('Bearer tok');
+    expect(sent[0].body).toMatchObject({ collection: 'images', query: 'batmen', offset: 0 });
+    expect(sent[0].body.filter.must).toEqual(
+      expect.arrayContaining([
+        { key: 'nsfwLevel', match: { any: [PG] } },
+        { key: 'tagIds', match: { value: 42 } },
+      ])
+    );
+    // The base-model license rule, as a nested must_not.
+    expect(sent[0].body.filter.must_not).toContainEqual(
+      expect.objectContaining({ must: expect.any(Array) })
+    );
+  });
+
+  it('reports no correction when the service changed nothing', async () => {
+    stubService(() => Response.json({ query: 'fox', corrected: 'fox', changes: [], hits: [] }));
+    const result = await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'fox' }),
+      user: VIEWER,
+    });
+    expect(result.correctedQuery).toBeUndefined();
+  });
+
+  it('asks "more like this" through the Qdrant pass-through, without the source image', async () => {
+    const sent = stubService(() => Response.json({ result: { points: [{ id: 101 }] } }));
+    await searchSemanticImages({ input: input({ imageId: ANCHOR }), user: VIEWER });
+
+    expect(sent[0].url).toBe('http://search.test/qdrant/collections/images/points/query');
+    expect(sent[0].body.query).toBe(ANCHOR);
+    expect(sent[0].body.filter.must_not).toContainEqual({ has_id: [ANCHOR] });
+  });
+
+  it('answers NOT_FOUND for an image the index does not hold', async () => {
+    stubService(() => new Response('{}', { status: 404 }));
+    await expect(
+      searchSemanticImages({ input: input({ imageId: ANCHOR }), user: VIEWER })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('answers BAD_GATEWAY when the service fails', async () => {
+    stubService(() => new Response('{}', { status: 503 }));
+    await expect(
+      searchSemanticImages({ input: input({ imageId: undefined, query: 'fox' }), user: VIEWER })
+    ).rejects.toMatchObject({ code: 'BAD_GATEWAY' });
+  });
+});
+
 describe('collectPage', () => {
   it('stops after a bounded number of rounds when nothing hydrates', async () => {
     const { source, calls } = rankedSource(Array.from({ length: 5000 }, (_, i) => i + 1));
     const page = await collectPage({
-      candidates: (offset, limit) =>
-        source({ query: 1, filter: { must: [], must_not: [] }, offset, limit }),
+      candidates: async (offset, limit) =>
+        (
+          await source({ query: { similarTo: 1 }, filter: { nsfwLevels: [1] }, offset, limit })
+        ).ids,
       hydrate: async () => [],
       offset: 0,
       limit: 10,
@@ -405,8 +507,8 @@ describe('collectPage', () => {
 
   it('stops paging at the candidate offset cap', async () => {
     const { source, calls } = rankedSource(Array.from({ length: 5000 }, (_, i) => i + 1));
-    const candidates = (offset: number, limit: number) =>
-      source({ query: 1, filter: { must: [], must_not: [] }, offset, limit });
+    const candidates = async (offset: number, limit: number) =>
+      (await source({ query: { similarTo: 1 }, filter: { nsfwLevels: [1] }, offset, limit })).ids;
     const hydrate = async (ids: number[]) => ids.map((id) => ({ id })) as never;
 
     const last = await collectPage({

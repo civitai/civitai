@@ -8,7 +8,6 @@ import {
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import type * as CommentsV2Service from '~/server/services/commentsv2.service';
 import type * as ReactionService from '~/server/services/reaction.service';
 import type * as ReportService from '~/server/services/report.service';
 import type * as BlockCheckService from '~/server/services/block-check.service';
@@ -23,30 +22,9 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 // What the handlers do once let through is their own suites'; here, whether they are let through.
-const {
-  deleteComment,
-  upsertComment,
-  toggleHideComment,
-  togglePinComment,
-  toggleThreadMute,
-  toggleReaction,
-  createReport,
-} = vi.hoisted(() => ({
-  deleteComment: vi.fn(async ({ id }: { id: number }) => ({ id })),
-  upsertComment: vi.fn(async () => ({ id: 1 })),
-  toggleHideComment: vi.fn(async () => ({ id: 1 })),
-  togglePinComment: vi.fn(async () => ({ id: 1 })),
-  toggleThreadMute: vi.fn(async () => true),
+const { toggleReaction, createReport } = vi.hoisted(() => ({
   toggleReaction: vi.fn(async () => 'created'),
   createReport: vi.fn(async () => ({ status: 'Pending' })),
-}));
-vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof CommentsV2Service>()),
-  deleteComment,
-  upsertComment,
-  toggleHideComment,
-  togglePinComment,
-  toggleThreadMute,
 }));
 // The viewer owns the content every comment here hangs off, so the owner check lets them through.
 vi.mock('~/server/services/block-check.service', async (importOriginal) => ({
@@ -74,13 +52,6 @@ import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { deleteBountyEntry } from '~/server/services/bountyEntry.service';
 import { deleteArticleById } from '~/server/services/article.service';
 import { toggleReview } from '~/server/services/user.service';
-import {
-  deleteCommentV2Handler,
-  toggleHideCommentHandler,
-  togglePinnedCommentHandler,
-  upsertCommentV2Handler,
-  toggleThreadMuteHandler,
-} from '~/server/controllers/commentv2.controller';
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
 import { createReportHandler } from '~/server/controllers/report.controller';
 
@@ -698,17 +669,7 @@ describe('a member cannot act on a comment hidden for ToS', () => {
   const track = new Proxy({}, { get: () => async () => undefined });
   const ctx = (isModerator: boolean) =>
     ({ user: { id: 9, isModerator }, track, features: {}, req: {} } as never);
-  const acts = {
-    delete: {
-      handler: (id: number, mod: boolean) =>
-        deleteCommentV2Handler({ ctx: ctx(mod), input: { id } }),
-      service: deleteComment,
-    },
-    'thread mute': {
-      handler: (id: number, mod: boolean) =>
-        toggleThreadMuteHandler({ ctx: ctx(mod), input: { commentId: id } }),
-      service: toggleThreadMute,
-    },
+  const writes = {
     reaction: {
       handler: (id: number, mod: boolean) =>
         toggleReactionHandler({
@@ -724,37 +685,6 @@ describe('a member cannot act on a comment hidden for ToS', () => {
           input: { type: ReportEntity.CommentV2, id, reason: 'TOSViolation', details: {} } as never,
         }),
       service: createReport,
-    },
-  };
-  const writes = {
-    delete: acts.delete,
-    reaction: acts.reaction,
-    report: acts.report,
-    edit: {
-      handler: (id: number, mod: boolean) =>
-        upsertCommentV2Handler({
-          ctx: ctx(mod),
-          input: { id, entityType: 'model', entityId: 1, content: 'edited' } as never,
-        }),
-      service: upsertComment,
-    },
-    reply: {
-      handler: (id: number, mod: boolean) =>
-        upsertCommentV2Handler({
-          ctx: ctx(mod),
-          input: { entityType: 'comment', entityId: id, content: 'reply' } as never,
-        }),
-      service: upsertComment,
-    },
-    hide: {
-      handler: (id: number, mod: boolean) =>
-        toggleHideCommentHandler({ ctx: ctx(mod), input: { id } }),
-      service: toggleHideComment,
-    },
-    pin: {
-      handler: (id: number, mod: boolean) =>
-        togglePinnedCommentHandler({ ctx: ctx(mod), input: { id } }),
-      service: togglePinComment,
     },
   };
 

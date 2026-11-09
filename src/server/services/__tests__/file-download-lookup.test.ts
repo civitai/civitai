@@ -6,6 +6,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // which this repo's eslint config forbids.
 import type * as FileService from '../file.service';
 import type * as ModelHelpers from '~/server/common/model-helpers';
+import type * as TrainingDataRestricted from '~/server/services/training-data-restricted.service';
 import type * as HotReads5Reads from '~/server/services/hot-reads-5.reads';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import type { ModelType } from '~/shared/utils/prisma/enums';
@@ -108,6 +109,13 @@ vi.mock('~/server/services/paid-access.service', () => ({
 const resolveDownloadUrlMock = vi.fn();
 vi.mock('~/utils/delivery-worker', () => ({
   resolveDownloadUrl: resolveDownloadUrlMock,
+}));
+
+// Restricted owner or content, for a shared training dataset. Unrestricted unless a test says so.
+const { shareRestrictedMock } = vi.hoisted(() => ({ shareRestrictedMock: vi.fn() }));
+vi.mock('~/server/services/training-data-restricted.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrainingDataRestricted>()),
+  trainingDataShareRestricted: shareRestrictedMock,
 }));
 
 function publishedModelVersion(overrides: Record<string, unknown> = {}) {
@@ -703,6 +711,7 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
       user: A_USER,
       direct,
       attribution: ATTRIBUTION,
+      redCapable: false,
     });
 
     expect(resolveDownloadUrlMock).toHaveBeenCalledTimes(1);
@@ -715,7 +724,13 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
     [{ caller: 'download-route', actor: 'anon' }],
     [{ caller: 'wildcard', actor: 'user' }],
   ] as const)('forwards attribution %o unchanged', async (attribution) => {
-    await getFileForModelVersion({ modelVersionId: 1, noAuth: true, user: A_USER, attribution });
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      noAuth: true,
+      user: A_USER,
+      attribution,
+      redCapable: false,
+    });
 
     expect(optionsArg()).toStrictEqual({ direct: undefined, ...attribution });
   });
@@ -728,6 +743,7 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
       noAuth: true,
       user: A_USER,
       attribution: ATTRIBUTION,
+      redCapable: false,
     });
 
     // toStrictEqual, not toEqual: toEqual treats an undefined-valued key as equal
@@ -753,7 +769,7 @@ describe('getFileForModelVersion — names against every file on the version', (
     id,
     url: `https://abcd1234.r2.cloudflarestorage.com/civitai/files/${id}.safetensors`,
     name: 'shared.safetensors',
-    overrideName: null,
+    overrideName: null as string | null,
     type,
     visibility,
     metadata: { format: 'SafeTensor' },
@@ -803,6 +819,7 @@ describe('getFileForModelVersion — names against every file on the version', (
         type,
         user: { id: 1 },
         attribution: ATTRIBUTION,
+        redCapable: false,
       });
     }
 
@@ -824,9 +841,250 @@ describe('getFileForModelVersion — names against every file on the version', (
       ...pick,
       user: { id: 1 },
       attribution: ATTRIBUTION,
+      redCapable: false,
     });
 
     expect(resolveDownloadUrlMock.mock.calls[0][0]).toBe(1);
     expect(servedName()).toBe(advertisedName(1));
+  });
+
+  // Stored names reach the delivery path as they are, so they are made header-safe on read.
+  it('hands the delivery path a stored override name without an encoded line break', async () => {
+    versionFiles = [{ ...file(1, 'Model', 'Public'), overrideName: 'old%0D%0Aname.safetensors' }];
+
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1 },
+      attribution: ATTRIBUTION,
+      redCapable: false,
+    });
+
+    expect(servedName()).toBe('old_0D_0Aname.safetensors');
+    expect(advertisedName(1)).toBe('old_0D_0Aname.safetensors');
+  });
+
+  it('cleans the uploaded name a LoRA keeps, and leaves an ordinary one byte-identical', () => {
+    const lora = { name: 'BB Bunny', type: 'LORA' as ModelType };
+    const named = (name: string) => {
+      const f = { ...file(1, 'Model', 'Public'), name };
+      return getDownloadFilename({
+        model: lora,
+        modelVersion: version,
+        file: f,
+        versionFiles: [f],
+      });
+    };
+
+    expect(named('bunny%0d%0a\u200e"x".safetensors')).toBe('bunny_0d_0a_x_.safetensors');
+    expect(named('AshleyGraves_Krea2_byKonan (v2) 100%.safetensors')).toBe(
+      'AshleyGraves_Krea2_byKonan (v2) 100%.safetensors'
+    );
+  });
+});
+
+describe('getFileForModelVersion — a file that failed its scan', () => {
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
+  beforeAll(async () => {
+    ({ getFileForModelVersion } = await import('../file.service'));
+  }, 60000);
+
+  beforeEach(() => {
+    versionRead.mockReset();
+    listDownloadFilesMock.mockReset();
+    hasEntityAccessMock.mockReset();
+    resolveDownloadUrlMock.mockReset();
+    getPaidAccessMock.mockReset();
+
+    versionRead.mockResolvedValue(publishedModelVersion());
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
+    getPaidAccessMock.mockResolvedValue({});
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+  });
+
+  const statusFor = async (
+    scan: { pickleScanResult: string; virusScanResult: string },
+    user: { id: number; isModerator?: boolean }
+  ) => {
+    listDownloadFilesMock.mockResolvedValue([{ ...aFile, ...scan }]);
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user,
+      attribution: { caller: 'download-route', actor: 'user' },
+      redCapable: false,
+    });
+    return result.status;
+  };
+
+  const owner = { id: 999 };
+  const member = { id: 5 };
+  const moderator = { id: 6, isModerator: true };
+
+  it('refuses a pickle or virus Danger file to members and the owner, not to moderators', async () => {
+    for (const scan of [
+      { pickleScanResult: 'Danger', virusScanResult: 'Success' },
+      { pickleScanResult: 'Success', virusScanResult: 'Danger' },
+    ]) {
+      expect([
+        await statusFor(scan, member),
+        await statusFor(scan, owner),
+        await statusFor(scan, moderator),
+      ]).toEqual(['failed-scan', 'failed-scan', 'success']);
+    }
+  });
+
+  it('serves a file whose scan errored or is still pending', async () => {
+    expect([
+      await statusFor({ pickleScanResult: 'Error', virusScanResult: 'Success' }, member),
+      await statusFor({ pickleScanResult: 'Pending', virusScanResult: 'Pending' }, member),
+    ]).toEqual(['success', 'success']);
+  });
+});
+
+describe('getFileForModelVersion — a shared training dataset', () => {
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
+  beforeAll(async () => {
+    ({ getFileForModelVersion } = await import('../file.service'));
+  }, 60000);
+
+  const dataset = {
+    ...aFile,
+    id: 56,
+    name: 'data.zip',
+    type: 'Training Data',
+    metadata: { nsfwLevel: 1 },
+  };
+  const download = (user: { id: number; isModerator?: boolean }) =>
+    getFileForModelVersion({
+      modelVersionId: 1,
+      type: 'Training Data',
+      user,
+      attribution: { path: 'test', actor: 'test' } as never,
+      redCapable: true,
+    });
+
+  beforeEach(() => {
+    versionRead.mockReset().mockResolvedValue(publishedModelVersion());
+    listDownloadFilesMock.mockReset().mockResolvedValue([dataset]);
+    hasEntityAccessMock.mockReset().mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
+    getPaidAccessMock.mockReset().mockResolvedValue({});
+    resolveDownloadUrlMock
+      .mockReset()
+      .mockResolvedValue({ url: 'https://cdn/data.zip', urlExpiryDate: new Date() });
+    shareRestrictedMock.mockReset().mockResolvedValue(false);
+  });
+
+  it('is served to others while nothing is restricted', async () => {
+    expect((await download({ id: 1 })).status).toBe('success');
+  });
+
+  it('is the same not-found as a missing file for others once its owner or content is restricted', async () => {
+    shareRestrictedMock.mockResolvedValue(true);
+    const result = await download({ id: 1 });
+    expect(result).toEqual({ status: 'not-found' });
+    expect(resolveDownloadUrlMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['its owner', { id: 999 }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('is still served to %s while restricted', async (_, user) => {
+    shareRestrictedMock.mockResolvedValue(true);
+    expect((await download(user)).status).toBe('success');
+  });
+
+  it('does not gate a model file', async () => {
+    shareRestrictedMock.mockResolvedValue(true);
+    listDownloadFilesMock.mockResolvedValue([aFile]);
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1 },
+      attribution: { path: 'test', actor: 'test' } as never,
+      redCapable: true,
+    });
+    expect(result.status).toBe('success');
+    expect(shareRestrictedMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('getFileForModelVersion — a training dataset on each host', () => {
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
+  beforeAll(async () => {
+    ({ getFileForModelVersion } = await import('../file.service'));
+  }, 60000);
+
+  const MATURE = 4 | 1; // R and PG items
+  const datasetRated = (metadata: Record<string, unknown>) => ({
+    ...aFile,
+    id: 56,
+    name: 'data.zip',
+    type: 'Training Data',
+    metadata,
+  });
+  const download = (redCapable: boolean, user: { id: number; isModerator?: boolean } = { id: 1 }) =>
+    getFileForModelVersion({
+      modelVersionId: 1,
+      type: 'Training Data',
+      user,
+      attribution: { path: 'test', actor: 'test' } as never,
+      redCapable,
+    });
+
+  beforeEach(() => {
+    versionRead.mockReset().mockResolvedValue(publishedModelVersion());
+    hasEntityAccessMock.mockReset().mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
+    getPaidAccessMock.mockReset().mockResolvedValue({});
+    resolveDownloadUrlMock
+      .mockReset()
+      .mockResolvedValue({ url: 'https://cdn/data.zip', urlExpiryDate: new Date() });
+    shareRestrictedMock.mockReset().mockResolvedValue(false);
+  });
+
+  it.each([
+    ['a mature zip', { nsfwLevel: MATURE }, false, 'not-found'],
+    ['a mature zip', { nsfwLevel: MATURE }, true, 'success'],
+    ['a PG-13 zip', { nsfwLevel: 2 | 1 }, false, 'success'],
+    ['a classic unrated zip', {}, false, 'success'],
+    ['a classic unrated zip', {}, true, 'success'],
+    ['a fully rated SFW Studio zip', { nsfwLevel: 1, fullyRated: true }, false, 'success'],
+    ['a partly rated Studio zip', { nsfwLevel: 1, fullyRated: false }, false, 'not-found'],
+    ['a partly rated Studio zip', { nsfwLevel: 1, fullyRated: false }, true, 'success'],
+    ['an unrated Studio zip', { fullyRated: false }, false, 'not-found'],
+  ])('%s on a red-capable host %s is %s', async (_, metadata, redCapable, status) => {
+    listDownloadFilesMock.mockReset().mockResolvedValue([datasetRated(metadata)]);
+    const result = await download(redCapable);
+    expect(result.status).toBe(status);
+    if (status === 'not-found') expect(result).toEqual({ status: 'not-found' });
+  });
+
+  it('serves its owner their own mature zip off a red-capable host, and no one else', async () => {
+    listDownloadFilesMock.mockReset().mockResolvedValue([datasetRated({ nsfwLevel: MATURE })]);
+    expect((await download(false, { id: 999 })).status).toBe('success');
+    expect(await download(false, { id: 1 })).toEqual({ status: 'not-found' });
+  });
+
+  it('serves its owner a partly rated Studio zip made Public off a red-capable host, and no one else', async () => {
+    listDownloadFilesMock
+      .mockReset()
+      .mockResolvedValue([datasetRated({ nsfwLevel: 1, fullyRated: false })]);
+    expect((await download(false, { id: 999 })).status).toBe('success');
+    expect(await download(false, { id: 1 })).toEqual({ status: 'not-found' });
+  });
+
+  it('serves a moderator a mature zip off a red-capable host, and no one else', async () => {
+    listDownloadFilesMock.mockReset().mockResolvedValue([datasetRated({ nsfwLevel: MATURE })]);
+    expect((await download(false, { id: 1, isModerator: true })).status).toBe('success');
+    expect(await download(false, { id: 1 })).toEqual({ status: 'not-found' });
+  });
+
+  it("serves a mature model's weights on any host", async () => {
+    listDownloadFilesMock.mockReset().mockResolvedValue([aFile]);
+    versionRead.mockResolvedValue(publishedModelVersion({ nsfwLevel: 28 }));
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1 },
+      attribution: { path: 'test', actor: 'test' } as never,
+      redCapable: false,
+    });
+    expect(result.status).toBe('success');
   });
 });

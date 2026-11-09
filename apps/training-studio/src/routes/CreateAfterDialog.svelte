@@ -5,6 +5,7 @@
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { isAbort } from '$lib/upload';
   import { EDIT_IMAGE_OPTIONS, type EditImageOption } from '$lib/edit-helpers-core';
+  import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
@@ -140,6 +141,7 @@
         {:else}
           {@render generateButton(null)}
         {/if}
+        <BlueFirstNote />
       </div>
     </div>
 

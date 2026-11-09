@@ -242,12 +242,12 @@ async function articleItem(id: number) {
     return { kind: 'article' as const, article: null, body: null, images: null, ownerId: null };
   const [content, images] = await Promise.all([
     dbRead.selectFrom('Article').select('content').where('id', '=', id).executeTakeFirst(),
-    // The cover is a column, not a connection, and is what decides the article's rating.
+    // The cover and banner are columns, not connections, and they decide the article's rating.
     getImagesForConnection(
       'Article',
       id,
       { limit: IMAGE_LIMIT },
-      article.coverId ? [article.coverId] : []
+      [article.coverId, article.bannerId].filter((x): x is number => x != null)
     ),
   ]);
   return {

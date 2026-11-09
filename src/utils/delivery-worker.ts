@@ -128,6 +128,11 @@ export type ResolveOptions = ResolveAttribution & {
    * `shouldResolveDirect`.
    */
   direct?: boolean;
+  /**
+   * How long the signed URL should stay valid. Sent to the storage resolver only; the resolver
+   * decides, and the legacy delivery-worker path ignores it, so read the returned expiry.
+   */
+  expiresInSeconds?: number;
 };
 
 export async function getDownloadUrlByFileId(
@@ -161,6 +166,7 @@ export async function getDownloadUrlByFileId(
     // field never sees it on an ordinary resolve. (`caller` and `actor` above are
     // always sent; the resolver ignores fields it does not know.)
     ...(canRequestDirect ? { direct: true } : {}),
+    ...(options?.expiresInSeconds ? { expiresInSeconds: options.expiresInSeconds } : {}),
   });
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };

@@ -37,6 +37,7 @@ import type {
   BlockScopeRefusalKind,
 } from '~/server/middleware/block-scope.middleware';
 import {
+  markBlockRequestReadMiss,
   recordDocStoreError,
   type DocStoreEndpoint,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -60,6 +61,7 @@ import {
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
 import { assertOwnedModelVersions } from '~/server/services/apps/doc-store-ownership';
 import { validateDocAgainstCollectionSchema } from '~/server/services/apps/doc-store-schema';
+import { resolveSchemaMajor } from '~/server/services/apps/doc-store-schema-major';
 import type {
   DocAuthor,
   DocCollection,
@@ -261,6 +263,11 @@ function sendEnvelope(
   res.status(status).json(body);
 }
 
+/** True for a document-store READ of a key that does not exist (see `sendError`). */
+export function isDocumentReadMiss(req: NextApiRequest, code: StorageApiCode): boolean {
+  return code === 'not_found' && storageEndpointLabel(req) === 'storage_read';
+}
+
 function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): void {
   if (!(err instanceof DocStoreError)) {
     logToAxiom(
@@ -276,6 +283,12 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
     return;
   }
   const body = envelope(err.code, CLIENT_MESSAGE[err.code] ?? err.message, err.details);
+  // A document GET for a key that does not exist yet is a READ MISS: an app's first read of a key
+  // it has never written lands here by contract. Marked so the per-app REST counter reports it as
+  // `result="not_found"` instead of `client_error`. On `storage_read` this code comes only from the
+  // `get` op; the other `not_found` (an unmatched route) is labelled `storage_info` and stays an
+  // error. The envelope itself, and `doc_store_errors_total{code="not_found"}`, are unchanged.
+  if (isDocumentReadMiss(req, err.code)) markBlockRequestReadMiss(res);
   // Every refusal that names a retry delay (a 429, or a retryable 503) says so in the header.
   const retryAfter = err.details?.retryAfter;
   if (typeof retryAfter === 'number') {
@@ -526,6 +539,21 @@ function collectionOf(access: StorageAccess, name: string): DocCollection {
   // store's own way, before any budget, trust lookup or moderation is spent on it.
   assertCollection(coll);
   return coll;
+}
+
+/**
+ * `coll` with the schema major a write of a document body is stamped with
+ * (`DocCollection.schemaMajor`): the collection's current major in production, derived from the
+ * app's manifest history; `null` when it cannot be. Development and review data are not stamped.
+ */
+async function withSchemaMajor(access: StorageAccess, coll: DocCollection): Promise<DocCollection> {
+  if (access.ctx.ns !== PUBLISHED_NS) return coll;
+  const schemaMajor = await resolveSchemaMajor({
+    appBlockId: access.ctx.appId,
+    head: access.enforcedManifest,
+    collection: coll.name,
+  });
+  return { ...coll, schemaMajor };
 }
 
 function requireViewer(access: StorageAccess): number {
@@ -858,7 +886,7 @@ async function run(
           const afterCommit = user
             ? await moderate(access, user, 'append', '', { data: created.data })
             : nothingAfterCommit;
-          const doc = await store.create(ctx, coll, created.data);
+          const doc = await store.create(ctx, await withSchemaMajor(access, coll), created.data);
           landed();
           afterCommit(doc.key);
           return ok(await presentDoc(doc, decl), 201);
@@ -868,7 +896,9 @@ async function run(
           const afterCommit = user
             ? await moderate(access, user, 'update', route.key, { data, key: route.key })
             : nothingAfterCommit;
-          const doc = await store.put(ctx, coll, route.key, data, { ifVersion });
+          const doc = await store.put(ctx, await withSchemaMajor(access, coll), route.key, data, {
+            ifVersion,
+          });
           landed();
           afterCommit();
           return ok(await presentDoc(doc, decl));
@@ -907,7 +937,9 @@ async function run(
         user && decl.write === 'none'
           ? await moderate(access, user, 'counter', route.key, { key: route.key })
           : nothingAfterCommit;
-      const counted = await store.increment(ctx, coll, route.key, route.name, by);
+      // Only under `write: 'none'` can an increment create (and so stamp) a document.
+      const incremented = decl.write === 'none' ? await withSchemaMajor(access, coll) : coll;
+      const counted = await store.increment(ctx, incremented, route.key, route.name, by);
       afterCommit();
       return ok(counted);
     }

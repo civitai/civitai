@@ -77,9 +77,15 @@ export {
   type SessionRegistryRedis,
   type SessionKeys,
   type InvalidateInfo,
+  impersonatorCutKey,
 } from './session-registry';
 export { SESSION_REGISTRY_KEYS } from './session-registry-keys';
-export { familyId, familyClaims, SESSION_LINEAGE_MAX_AGE_MS } from './family';
+export {
+  familyId,
+  familyClaims,
+  IMPERSONATION_MAX_AGE_MS,
+  SESSION_LINEAGE_MAX_AGE_MS,
+} from './family';
 export type { FamilyClaims } from './family';
 export {
   cookiePrefix,

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { isSafeToRetry } from '@civitai/buzz';
 import { dbWrite } from '~/server/db/client';
+import { liveFile } from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
 import {
   serviceDealExhaustedLegsGauge,
@@ -136,12 +137,12 @@ export const dealFinalsClear = (deal: Prisma.Sql = Prisma.sql`"ServiceDeal"`) =>
   EXISTS (
     SELECT 1 FROM "ServiceDealFile" f
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
-      AND f."kind" = 'Final'::"ServiceDealFileKind"
+      AND f."kind" = 'Final'::"ServiceDealFileKind" AND ${liveFile(Prisma.sql`f`)}
   )
   AND NOT EXISTS (
     SELECT 1 FROM "ServiceDealFile" f
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
-      AND f."kind" = 'Final'::"ServiceDealFileKind"
+      AND f."kind" = 'Final'::"ServiceDealFileKind" AND ${liveFile(Prisma.sql`f`)}
       AND (f."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus"
         OR f."status" <> 'Ready'::"ServiceDealFileStatus")
   )

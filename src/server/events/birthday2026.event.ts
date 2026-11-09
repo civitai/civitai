@@ -96,6 +96,7 @@ export const birthday2026 = createEvent(name, {
     accent: 'Pick up a hat.',
     text: 'Four color teams, Nov 1 to Nov 30. Hat your best work and score for your team.',
     cta: 'Join a team',
+    joinedCta: 'See the standings',
     // The hero art's backdrop, so the strip runs on seamlessly to the left of the image.
     background: '#1c1a30',
   },
@@ -142,9 +143,65 @@ export const birthday2026 = createEvent(name, {
     },
     newAccountDays: 7,
     finalizeAfterMs: 24 * 60 * 60 * 1000,
-    // The Crucible seed: 1M per music-video Crucible, 50/30/20 to the teams of its top three, dated
-    // to the Crucible's end.
-    teamAwards: [],
+    // The music-video Crucibles: 1M each, 500k / 300k / 200k to the teams of its 1st / 2nd / 3rd
+    // entrants, dated to its end. Every placement counts, so one entrant can earn twice; a staff
+    // entry wins nothing, and a placer with no team leaves that share unawarded.
+    teamAwards: [
+      {
+        team: 'Green',
+        points: 500_000,
+        at: new Date('2026-11-06T11:15:06.595Z'),
+        reason: 'Crucible 254 Stomp-Clap, 1st',
+      },
+      {
+        team: 'Blue',
+        points: 300_000,
+        at: new Date('2026-11-06T11:15:06.595Z'),
+        reason: 'Crucible 254 Stomp-Clap, 2nd',
+      },
+      {
+        team: 'Blue',
+        points: 200_000,
+        at: new Date('2026-11-06T11:15:06.595Z'),
+        reason: 'Crucible 254 Stomp-Clap, 3rd',
+      },
+      {
+        team: 'Yellow',
+        points: 500_000,
+        at: new Date('2026-11-06T11:15:07.088Z'),
+        reason: 'Crucible 255 J-pop, 1st',
+      },
+      {
+        team: 'Blue',
+        points: 300_000,
+        at: new Date('2026-11-06T11:15:07.088Z'),
+        reason: 'Crucible 255 J-pop, 2nd',
+      },
+      {
+        team: 'Yellow',
+        points: 200_000,
+        at: new Date('2026-11-06T11:15:07.088Z'),
+        reason: 'Crucible 255 J-pop, 3rd',
+      },
+      {
+        team: 'Pink',
+        points: 500_000,
+        at: new Date('2026-11-06T11:15:07.565Z'),
+        reason: 'Crucible 256 Disco Funk, 1st',
+      },
+      {
+        team: 'Yellow',
+        points: 300_000,
+        at: new Date('2026-11-06T11:15:07.565Z'),
+        reason: 'Crucible 256 Disco Funk, 2nd',
+      },
+      {
+        team: 'Blue',
+        points: 200_000,
+        at: new Date('2026-11-06T11:15:07.565Z'),
+        reason: 'Crucible 256 Disco Funk, 3rd',
+      },
+    ],
   },
   turf: {
     mode: 'shadow',

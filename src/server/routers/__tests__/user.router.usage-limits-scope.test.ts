@@ -63,11 +63,33 @@ describe('user.getUsageLimits token scope', () => {
 
   it("shows a moderator's exemption to a session but regular rows to a MediaWrite-only token", async () => {
     const session = await caller(TokenScope.Full, MODERATOR).getUsageLimits();
-    expect(session.limits).toEqual([expect.objectContaining({ id: 'posts.daily', limit: null })]);
+    expect(session.limits.map((l) => [l.id, l.limit])).toEqual([
+      ['posts.daily', null],
+      ['comments.hourly', null],
+      ['comments.daily', null],
+    ]);
 
     const media = await caller(TokenScope.MediaWrite, MODERATOR).getUsageLimits();
-    expect(media.limits).toEqual([
-      expect.objectContaining({ id: 'posts.daily', limit: 20, used: 0, remaining: 20 }),
-    ]);
+    expect(media.limits[0]).toMatchObject({ id: 'posts.daily', limit: 20, used: 0, remaining: 20 });
+    expect(media.limits.every((l) => l.limit !== null)).toBe(true);
+  });
+});
+
+describe('user.getActiveLimits', () => {
+  it("reads only the caller's own hash, whatever id the input names", async () => {
+    const { redisMock } = await import('~/__tests__/mocks/redis.mock');
+    redisMock.redis.hGetAll.mockClear();
+    redisMock.redis.hGetAll.mockResolvedValueOnce({
+      'reaction:toggle': String(Date.now() + 60_000),
+    });
+    const active = await caller(TokenScope.Full).getActiveLimits({ userId: 7 } as never);
+    expect(active).toEqual([expect.objectContaining({ area: 'reactions' })]);
+    expect(redisMock.redis.hGetAll.mock.calls).toEqual([['trpc:limit:active:42']]);
+  });
+
+  it('refuses a token with neither usage-limits scope', async () => {
+    await expect(caller(TokenScope.ModelsRead).getActiveLimits()).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
   });
 });

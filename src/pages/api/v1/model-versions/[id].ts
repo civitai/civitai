@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { ModelFileVisibility, ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -12,6 +13,7 @@ import {
   createSerializedFileDownloadUrl,
 } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import {
   readModelVersionPrivacyViaKysely,
@@ -185,7 +187,9 @@ export async function prepareModelVersionResponse(
   // `null` means known-ungated; only `undefined` self-fetches.
   paidAccess?: PublicPaidAccessDto | null,
   // The .com face, as the API v1 model list resolves it: for a caller served only safe levels.
-  showSfwFace = false
+  showSfwFace = false,
+  // `isRedCapableHost` of the request: decides which training datasets are offered.
+  redCapable = false
 ) {
   // `availability` and the owner only decide visibility; they are not part of the response.
   const { files, model: modelRow, metrics, vaeId, availability, ...storedVersion } = modelVersion;
@@ -213,6 +217,7 @@ export async function prepareModelVersionResponse(
     );
   const includeDownloadUrl = model.mode !== ModelModifier.Archived;
   const includeImages = model.mode !== ModelModifier.TakenDown;
+  const listed = await trainingDataListing(dbRead, [{ id: version.id, files }], { redCapable });
 
   // Creator Controls: gate the version download count (public API — no owner/mod
   // bypass wired here, matching buildPublicModelResponse). The base query doesn't
@@ -258,7 +263,7 @@ export async function prepareModelVersionResponse(
     model: { ...model, mode: model.mode == null ? undefined : model.mode },
     files: includeDownloadUrl
       ? castedFiles
-          .filter((file) => file.visibility === ModelFileVisibility.Public)
+          .filter((file) => file.visibility === ModelFileVisibility.Public && listed(file))
           .map(({ hashes, url, visibility, metadata, modelVersionId, ...file }) => ({
             ...file,
             metadata: reduceToBasicFileMetadata(metadata),
@@ -337,7 +342,8 @@ export async function resModelVersionDetails(
     baseUrl,
     undefined,
     undefined,
-    showSfwFace
+    showSfwFace,
+    isRedCapableHost(req.headers.host)
   );
   if (!body) return res.status(404).json({ error: 'Missing model file' });
   // Only its owner or a moderator gets here with a Private version: never let a cache keep it.

@@ -39,7 +39,11 @@ const h = vi.hoisted(() => ({
     lastUsedAt: null;
     art?: { url: string; canvas?: number[]; bounds?: number[] } | null;
   }[],
-  stock: { available: 3, optedIn: true },
+  stock: { available: 3, optedIn: true } as {
+    available: number;
+    optedIn: boolean;
+    expiry?: { ttlHours: number; rolloutAt: string | null } | null;
+  },
   mutate: vi.fn(),
   optIn: vi.fn(),
   invalidate: vi.fn(async () => undefined),
@@ -70,6 +74,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             getStock: { invalidate: h.invalidate },
             getSummaries: { invalidate: h.invalidate },
             getStickersForImages: { invalidate: h.invalidate },
+            getImageStickers: { invalidate: h.invalidate },
           },
         }),
       }
@@ -153,7 +158,7 @@ const CARD = { width: 171, height: 228 };
 
 type Fit = 'contain' | 'cover';
 
-function renderPictures(pictures: [Fit, [number, number]][], card = CARD) {
+function renderPictures(pictures: [Fit, [number, number]][], card = CARD, after?: ReactNode) {
   return renderWithProviders(
     <TurfSummaryContext.Provider
       value={{
@@ -177,6 +182,7 @@ function renderPictures(pictures: [Fit, [number, number]][], card = CARD) {
             />
             <HatTurfLayer imageId={5 + i} />
             <OpenDraft />
+            {after}
           </div>
         </HatTurfCardProvider>
       ))}
@@ -312,7 +318,14 @@ describe('a hat is placed with the sticker editor', () => {
 
   test("a corner drag saves a bigger hat, stopping at a sticker's default ceiling", async () => {
     renderPicture('contain', [400, 300]);
-    await drag(CORNER, { x: 5000, y: 5000 });
+    const root = (await editorPart(CORNER)).parentElement!;
+    await measured('contain', [400, 300]);
+    const before = root.getBoundingClientRect().width;
+    // Re-sent until it lands, as above: a press before the layer settles leaves the hat unscaled.
+    await vi.waitFor(async () => {
+      await drag(CORNER, { x: 5000, y: 5000 });
+      expect(root.getBoundingClientRect().width).toBeGreaterThan(before);
+    });
 
     expect((await saved()).scale).toBeCloseTo(HAT_MAX_SCALE, 10);
   });
@@ -340,6 +353,23 @@ describe('a hat is placed with the sticker editor', () => {
     const pose = await saved();
     expect(pose.flip).toBe(true);
     expect(pose.opacity).toBe(1);
+  });
+
+  test('the preview is mirrored when flipped, and upright again when unflipped', async () => {
+    renderPicture('contain', [400, 300]);
+    const body = await editorPart(BODY);
+    const art = body.querySelector('[data-testid="hat-turf-art"], svg')!;
+    const mirrored = () => {
+      for (let el: Element | null = art; el && el !== body.parentElement; el = el.parentElement) {
+        if (getComputedStyle(el).transform === 'matrix(-1, 0, 0, 1, 0, 0)') return true;
+      }
+      return false;
+    };
+    expect(mirrored()).toBe(false);
+    (await editorPart('[aria-label="Flip this sticker"]')).click();
+    await vi.waitFor(() => expect(mirrored()).toBe(true));
+    (await editorPart('[aria-label="Unflip this sticker"]')).click();
+    await vi.waitFor(() => expect(mirrored()).toBe(false));
   });
 
   test('on a cropped card the hat stays on the part the card shows', async () => {
@@ -446,5 +476,110 @@ describe('a hat is placed with the sticker editor', () => {
       expect(q('hat-turf-draft')?.querySelector('[data-testid="hat-turf-cone"]')).toBeTruthy()
     );
     expect(q('hat-turf-draft')!.querySelector('img')).toBeNull();
+  });
+});
+
+// AspectRatioImageCard paints its header and footer chips over the picture as later, unstacked
+// siblings of the hat layer. A z-index on the resting layer put hats over the reaction counts and
+// the hat button (tester report, 2026-11-06); only the hat being placed may sit on top of them.
+describe('hats and the card chips painted over the picture', () => {
+  // Hats take no pointer events, so hit-testing can't see them until they do. The card's hover
+  // zoom is on too: its transform makes the layer a stacking context, which caps a draft's own
+  // z-index under the chips unless the layer itself is raised.
+  const hoveredAndHitTestable = () => {
+    const style = document.createElement('style');
+    style.textContent = [
+      '[data-testid="hat-turf-layer"], [data-testid="hat-turf-layer"] * { pointer-events: auto !important; }',
+      '[data-sticker-overlay] { transform: scale(1.05) rotate(0.02deg); }',
+    ].join('\n');
+    document.head.appendChild(style);
+    return () => style.remove();
+  };
+  const chip = <div data-testid="chip" style={{ position: 'absolute', inset: 0 }} />;
+  const topAt = (el: HTMLElement) => {
+    const { x, y } = centre(el);
+    return document.elementFromPoint(x, y);
+  };
+
+  test('a placed hat sits under the chips; the hat being placed sits over them', async () => {
+    const restore = hoveredAndHitTestable();
+    try {
+      renderPictures([['contain', [700, 500]]], { width: 700, height: 500 }, chip);
+      await measured('contain', [700, 500], { width: 700, height: 500 });
+      const draft = await editorPart(BODY);
+      expect(
+        q('hat-turf-layer')!.contains(topAt(draft)),
+        'the hat being placed is under the chips'
+      ).toBe(true);
+
+      await saved();
+      await act(async () => h.mutate.mock.calls[0][1].onSuccess());
+      const placed = await editorPart('[data-testid="hat-turf-placed"]');
+      expect(topAt(placed), 'a placed hat paints over the chips').toBe(q('chip'));
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe("the viewer's own hat says how long it keeps counting", () => {
+  const POSE = { x: 0.5, y: 0.4, scale: 0.25, rotation: 0, flip: false };
+  // Placed 2h 1m ago: 45h 59m of a 48h lifetime left.
+  const hat = (userId: number) => ({
+    id: userId,
+    userId,
+    team: 'blue',
+    cosmeticId: 11,
+    data: POSE,
+    createdAt: new Date(Date.now() - 121 * 60_000),
+  });
+  const renderHats = (stickers: ReturnType<typeof hat>[]) =>
+    renderWithProviders(
+      <TurfSummaryContext.Provider
+        value={{
+          event: 'birthday2026',
+          arm: 'control',
+          team: 'blue',
+          images: {},
+          open: {},
+          stickers: {},
+          joined: true,
+          watch: () => () => undefined,
+        }}
+      >
+        <HatTurfCardProvider>
+          <div style={{ position: 'relative', overflow: 'hidden', ...CARD }}>
+            <img
+              src={svg(300, 400)}
+              alt=""
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            />
+            <HatTurfLayer imageId={5} stickers={stickers} />
+          </div>
+        </HatTurfCardProvider>
+      </TurfSummaryContext.Provider>
+    );
+  const timeLeft = () =>
+    document.body.querySelectorAll<HTMLElement>('[data-testid="hat-turf-time-left"]');
+
+  test("on the viewer's own hat only, in whole hours", async () => {
+    h.stock = { ...h.stock, expiry: { ttlHours: 48, rolloutAt: null } };
+    renderHats([hat(2), hat(1)]);
+    await vi.waitFor(() => expect(timeLeft()).toHaveLength(1));
+    expect(timeLeft()[0].textContent).toBe('45h left');
+  });
+
+  test('an own hat past its lifetime shows nothing and rereads the hats', async () => {
+    h.stock = { ...h.stock, expiry: { ttlHours: 2, rolloutAt: null } };
+    h.invalidate.mockClear();
+    renderHats([hat(1)]);
+    await vi.waitFor(() => expect(h.invalidate).toHaveBeenCalled());
+    expect(timeLeft()).toHaveLength(0);
+  });
+
+  test('nothing while hats do not expire', async () => {
+    renderHats([hat(1)]);
+    await vi.waitFor(() => expect(q('hat-turf-hat')).not.toBeNull());
+    expect(timeLeft()).toHaveLength(0);
   });
 });

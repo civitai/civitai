@@ -27,6 +27,7 @@
 //
 // Reading a document is not audited: a shared document is readable by every viewer of
 // the app, so a moderator reading it reads nothing private.
+import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type {
@@ -99,7 +100,7 @@ async function resolveApp(appBlockId: string): Promise<AppIdentity> {
 /** Every on-platform app (an off-site listing has no storage), in a stable order. */
 async function allApps(): Promise<AppIdentity[]> {
   const blocks = await dbRead.appBlock.findMany({
-    where: { externalUrl: null },
+    where: { externalUrl: null, status: { notIn: REMIX_STATUSES } },
     select: blockSelect,
     orderBy: { id: 'asc' },
   });

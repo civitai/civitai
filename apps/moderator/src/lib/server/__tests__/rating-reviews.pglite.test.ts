@@ -1106,6 +1106,23 @@ describe('rating review images', () => {
     expect(preview.total).toBe(2);
   });
 
+  it('previews an article banner after its cover, since the banner rates the article too', async () => {
+    const cover = await seedImage({ url: 'cover' });
+    const banner = await seedImage({ url: 'banner' });
+    const body = await seedImage({ url: 'body' });
+    const articleId = await seedEntity(db, 'Article', {
+      userId: owner,
+      coverId: cover,
+      bannerId: banner,
+    });
+    await connect(body, 'Article', articleId);
+
+    const preview = await service.getRatingReviewImages('Article', articleId);
+
+    expect(preview.images.map((i) => i.url)).toEqual(['cover', 'banner', 'body']);
+    expect(preview.total).toBe(3);
+  });
+
   it('previews a bounty entry from its connections and a challenge by its cover alone', async () => {
     const entryId = await seedEntity(db, 'BountyEntry', { userId: owner });
     await connect(await seedImage({ url: 'e1' }), 'BountyEntry', entryId);

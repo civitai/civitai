@@ -4,7 +4,7 @@
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
-  import { dateTime } from '$lib/format';
+  import { LINK_CLASS, dateTime } from '$lib/format';
   import { FEEDBACK_STATUSES, handledByLabel, type FeedbackContext } from '$lib/feedback';
   import { feedbackRefusal, type FeedbackFormName } from '$lib/feedback-refusal';
   import { feedbackPanelHasUnsavedDraft, makeFeedbackPromoteDraft } from '$lib/feedback-drafts';
@@ -14,18 +14,21 @@
   import FeedbackPlatformContext from './FeedbackPlatformContext.svelte';
   import FeedbackPlatformResolution from './FeedbackPlatformResolution.svelte';
   import FeedbackAttachments from './FeedbackAttachments.svelte';
+  import FeedbackErrorReport from './FeedbackErrorReport.svelte';
   import FeedbackPromote from './FeedbackPromote.svelte';
   import type {
     FeedbackRow,
     FeedbackSibling,
     KnownIssueOption,
   } from '$lib/server/feedback.service';
+  import type { FeedbackCaptureView } from '@civitai/shared/feedback-capture';
 
   let {
     row,
     context,
     siblings,
     knownIssues,
+    captureView = 'blur',
     grafanaUrl,
     civitaiUrl,
     canTriage,
@@ -38,6 +41,8 @@
     siblings: FeedbackSibling[];
     /** Passed straight through to `FeedbackPromote`'s issue picker. */
     knownIssues: KnownIssueOption[];
+    /** How to show the page capture (`feedbackPanelExtras`). */
+    captureView?: FeedbackCaptureView;
     grafanaUrl: string | null;
     civitaiUrl: string;
     canTriage: boolean;
@@ -216,7 +221,17 @@
   <section class="flex min-w-0 flex-col gap-3">
     <h3 class="text-xs tracking-wide text-dark-2 uppercase">Report</h3>
     <p class="wrap-break-word text-sm whitespace-pre-wrap">{row.message}</p>
-    <FeedbackAttachments {context} />
+    <!-- Not gated on area: with the orchestration area's flag off, "Report this" files under
+         site-bug-report and those rows carry the same ids and toast text. -->
+    <FeedbackErrorReport {context} />
+    <FeedbackAttachments {context} {captureView} />
+    {#if context.hqTask}
+      <p class="text-sm">
+        <a class={LINK_CLASS} href={context.hqTask.url} target="_blank" rel="noopener noreferrer"
+          >HQ task {context.hqTask.id}</a
+        >
+      </p>
+    {/if}
   </section>
 
   <!-- Chosen by AREA, never by what the context happens to hold. An `apps-platform` row has none of

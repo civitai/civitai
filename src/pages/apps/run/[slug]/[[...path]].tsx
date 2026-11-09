@@ -21,7 +21,13 @@ import { isAppBlocksPrivateRunEnabled } from '~/server/services/app-blocks-flag'
 import { resolvePrivateRunAccess } from '~/server/services/blocks/private-run-access.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
+import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import {
+  ratingHiddenByBrowsingLevel,
+  type HiddenMatureRating,
+} from '~/server/services/blocks/app-listing-store-gate';
 import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
+import { APP_SURFACE_PARAM, resolveAppOpenSurface } from '~/shared/utils/app-store-telemetry';
 import { Page } from '~/components/AppLayout/Page';
 import {
   APPS_RUN_FROM_PARAM,
@@ -67,7 +73,7 @@ import type { PrivateRunAudience } from '~/shared/constants/block-scope.constant
  * live links to break.
  */
 
-interface PageProps {
+interface AppRunProps {
   appBlockId: string;
   blockId: string;
   appId: string;
@@ -130,6 +136,24 @@ interface PageProps {
 }
 
 /**
+ * 🔴 AN R/X APP THE VIEWER'S BROWSING LEVEL EXCLUDES (on a mature-capable site) does not run and
+ * is not a 404: the page renders a hidden state explaining why. These props carry NOTHING of the
+ * app but its rating — no name, id, iframe or scopes — so none of it reaches the HTML.
+ */
+interface HiddenRunProps {
+  hiddenByBrowsingLevel: { contentRating: HiddenMatureRating; signedIn: boolean };
+}
+
+type PageProps = AppRunProps | HiddenRunProps;
+
+/** The hidden state (`HiddenRunProps`), loaded only when a render needs it. */
+const HiddenByBrowsingLevelNotice = dynamic(() =>
+  import('~/components/Apps/HiddenByBrowsingLevelNotice').then(
+    (mod) => mod.HiddenByBrowsingLevelNotice
+  )
+);
+
+/**
  * Loaded only when the viewer actually has a hide to clear, so the common launch ships no
  * mutation code; client-only because the write must not happen during SSR.
  */
@@ -141,6 +165,20 @@ const ReopenClearsHide = dynamic(
 export const getServerSideProps = createServerSideProps<PageProps>({
   useSession: true,
   resolver: async ({ features, ctx, session }) => {
+    // The hidden state for an R/X app this viewer's browsing level excludes. Applied on BOTH
+    // paths below, AFTER the site gate (off a mature-capable host a mature app stays a plain 404)
+    // and before anything is recorded. Owners and moderators are not exempt.
+    const hiddenFor = (
+      contentRating: string | null | undefined
+    ): { props: HiddenRunProps } | null => {
+      const hidden = ratingHiddenByBrowsingLevel(
+        contentRating,
+        getServerBrowsingLevel({ canViewNsfw: !!features?.canViewNsfw, user: session?.user })
+      );
+      return hidden
+        ? { props: { hiddenByBrowsingLevel: { contentRating: hidden, signedIn: !!session?.user } } }
+        : null;
+    };
     // GATE FIRST, fail-closed. Both flags required. A viewer without them gets
     // a 404 — the page is invisible/un-enumerable until W10 launch widens the
     // `app-blocks-pages-enabled` segment.
@@ -251,6 +289,8 @@ export const getServerSideProps = createServerSideProps<PageProps>({
       if (!ratingAllowedOnHost(block.contentRating, privateHost)) {
         return { notFound: true };
       }
+      const privateHidden = hiddenFor(block.contentRating);
+      if (privateHidden) return privateHidden;
 
       // 🔴 NO `recordAppListingOpen` HERE, AND ITS ABSENCE IS THE FEATURE. Recording the
       // play would move `views.count` / `views.uniqueViewers` on the OWNER'S OWN analytics
@@ -299,6 +339,8 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     if (!ratingAllowedOnHost(page.contentRating, host)) {
       return { notFound: true };
     }
+    const hidden = hiddenFor(page.contentRating);
+    if (hidden) return hidden;
 
     // ── RECORD THE PLAY ────────────────────────────────────────────────────────
     // 🔴 AFTER EVERY FAIL-CLOSED GATE, DELIBERATELY. A launch that 404s — flags off,
@@ -316,9 +358,15 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // resolver — the `undefined` is only in the type. Passing an explicit `null` tells the
     // Tracker "known anonymous" so it skips a second JWE decrypt, which is precisely the
     // anonymous case its constructor note calls out.
+    // `from` and `surface` are acquisition attribution: where the launch link was built. Both
+    // are parsed to closed values (`parseAppsRunOrigin` / `resolveAppOpenSurface`), so a
+    // hand-edited query string can mislabel its own row but cannot put text in it.
+    const subListingId = isAppSubListingId(ctx.query?.sl) ? ctx.query.sl : null;
     void recordAppListingOpen({
       appBlockId: page.appBlockId,
-      subListingId: isAppSubListingId(ctx.query?.sl) ? ctx.query.sl : null,
+      subListingId,
+      launchOrigin,
+      surface: resolveAppOpenSurface(ctx.query?.[APP_SURFACE_PARAM], !!subListingId),
       session: session ?? null,
       ctx,
     });
@@ -487,7 +535,14 @@ export function privateRunNotice(args: { audience: PrivateRunAudience; status: s
   return `${why} ${which}`;
 }
 
-function AppPage(props: PageProps) {
+function RunPage(props: PageProps) {
+  if ('hiddenByBrowsingLevel' in props) {
+    return <HiddenByBrowsingLevelNotice {...props.hiddenByBrowsingLevel} />;
+  }
+  return <AppPage {...props} />;
+}
+
+function AppPage(props: AppRunProps) {
   const {
     appBlockId,
     blockId,
@@ -866,7 +921,7 @@ function AppPage(props: PageProps) {
  * Note the nav announcement slot (Buzz Bonus, event strips) still renders regardless
  * (`AppLayout` shows it in the `{!subNav && …}` branch), so it is NOT removed by this.
  */
-export default Page(AppPage, {
+export default Page(RunPage, {
   scrollable: false,
   subNav: null,
 });

@@ -1,14 +1,19 @@
 import { chunk } from 'lodash-es';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import type { AppOpenCountRow, AppOpenRecentRow } from '~/server/metrics/appListing.metrics.sql';
+import type {
+  AppCountRow,
+  AppOpenRecentRow,
+  AppVisitRecentRow,
+} from '~/server/metrics/appListing.metrics.sql';
 import {
   AFFECTED_APPROVED_LISTINGS_SQL,
   APP_LISTING_BATCH_SIZE,
   APP_LISTING_METRIC_UPSERT_SQL,
   APP_OPEN_CH_CHUNK_SIZE,
-  fetchAppOpenCounts,
+  fetchAppOpenAndVisitCounts,
   fetchRecentlyOpenedBlockIds,
+  fetchRecentlyVisitedListingIds,
 } from '~/server/metrics/appListing.metrics.sql';
 import { recordAppListingOpenDiscoveryDegrade } from '~/server/metrics/appListing.metrics.prom';
 import { logToAxiom } from '~/server/logging/client';
@@ -27,8 +32,8 @@ const log = createLogger('metrics:appListing');
  */
 const BATCH_SIZE = APP_LISTING_BATCH_SIZE;
 
-/** One affected listing plus the join key both counters need. */
-type AffectedListing = { id: string; appBlockId: string | null };
+/** One affected listing plus the join keys the counters need. */
+type AffectedListing = { id: string; appBlockId: string | null; kind: string };
 
 // ---------------------------------------------------------------------------
 // App Store Listings (W13) — AllTime-only rollup for AppListingMetric.
@@ -44,12 +49,13 @@ type AffectedListing = { id: string; appBlockId: string | null };
 //     has NO soft-delete/`deletedAt` column; a toggle-off flips `enabled=false`
 //     (which bumps `updated_at` via @updatedAt, so the incremental affected-query
 //     catches it). A hard uninstall (row DELETE) is NOT catchable incrementally —
-//     see the SQL note in appListing.metrics.sql. This drives the store `popular`
-//     sort (`install_count DESC`) and the top-rated Bayesian tiebreak.
+//     see the SQL note in appListing.metrics.sql. It is the tie-break of the store
+//     `popular` sort (after plays) and of the top-rated Bayesian sort (after plays).
 //
 //   • openCount     — on-site listings: PLAYS, derived from the ClickHouse
 //     `App_Open` event stream that the `/apps/run/<slug>` SSR resolver emits per
-//     launch (`app-listing-open.service.ts`). See below.
+//     launch (`app-listing-open.service.ts`). See below. It is the store
+//     `popular` sort's primary key and the top-rated sort's first tie-break.
 //
 // 🔴 OWNERSHIP CONTRACT: `thumbs_up_count` / `thumbs_down_count` are owned by the
 // SYNCHRONOUS writer in app-listing-review.service.ts (upsert tx). This job MUST
@@ -78,11 +84,12 @@ type AffectedListing = { id: string; appBlockId: string | null };
 // implements them. Stage 4 prints this next to the review count on a public card;
 // the label has to match what it counts.
 //
-// 🔴 OFF-SITE LISTINGS ARE STRUCTURALLY UNMEASURABLE, NOT AT ZERO. Their CTA is a
-// third-party anchor, so no on-platform request follows the click. Both counters
-// gate on `app_block_id`, which is NULL for off-site, so this falls out of the
-// join — but a `0` in `open_count` therefore means "no plays OR not measurable",
-// and the two are not distinguishable in the column. Stage 3 must project
+// 🔴 OFF-SITE LISTINGS ARE STRUCTURALLY UNMEASURABLE BY `open_count`, NOT AT ZERO. They
+// are never launched through `/apps/run`, so no `App_Open` exists for them; their use is
+// measured separately, by `visit_count` (below). Both install/open gate on
+// `app_block_id`, which is NULL for off-site, so this falls out of the join — but a `0` in
+// `open_count` therefore means "no plays OR not measurable", and the two are not
+// distinguishable in the column. Stage 3 must project
 // `openCount` as `null` for `kind='offsite'` rather than 0: the operator's
 // decision is that off-site cards OMIT the stat rather than show a zero that reads
 // as "nobody used it". Do not close the gap with a client beacon either — that
@@ -126,15 +133,12 @@ type AffectedListing = { id: string; appBlockId: string | null };
 // block in appListing.metrics.sql.ts. Read it before citing this file to populate
 // anything else; the exception is now spent, not widened.
 //
-// NOT POPULATED (left at their schema default 0 — no reader today, and each maps
-// to a feature that isn't live): `connect_count` (off-site OAuth-connect grants —
-// OAuth-connect submission is a locked-deferred product decision, so there are no
-// connect listings yet and nothing reads the count), `visit_count`, `tipped_count`,
-// `tipped_amount_count` (visit is never recorded server-side; AppListing is not a
-// BuzzTip entity — BuzzTip.entityId is Int, AppListing.id is a string ULID).
-// Populate each with the PR that ships its consumer, not speculatively. None of the
-// four has a source to derive from, so the `open_count` exception does not reach
-// them: populating one would mean inventing the number.
+// `visit_count` (off-site only) is derived from `App_Visit` keyed on `details.listingId`, like
+// open_count from App_Open. This job is its only writer.
+//
+// NOT WRITTEN BY THIS JOB: `connect_count` (no connect listings exist yet) and
+// `tipped_count` / `tipped_amount_count` (AppListing is not a BuzzTip entity — BuzzTip.entityId
+// is Int, AppListing.id is a string ULID).
 //
 // 🔴 MERGE NOTE (#4652 -> #4653, resolved deliberately, NOT by keeping both sides).
 // #4652 landed a block here headed "`open_count` IS THE NEXT ONE, AND ITS SOURCE ROWS
@@ -156,11 +160,14 @@ export const appListingMetrics = createMetricProcessor({
     //    only change is new plays would never be recomputed. (ClickHouse-first
     //    affected discovery — same shape as model3d.metrics.ts getDownloadTasks.)
     //    FAILS SOFT — see the asymmetry note on getRecentlyOpenedBlockIds.
-    const recentlyOpened = await getRecentlyOpenedBlockIds(ctx);
+    const [recentlyOpened, recentlyVisited] = await Promise.all([
+      getRecentlyOpenedBlockIds(ctx),
+      getRecentlyVisitedListingIds(ctx),
+    ]);
 
     // 2. Collect affected approved listing ids (string ULIDs — the shared
     //    number-typed getAffected helper can't be reused, so this is inline).
-    const affected = await getAffectedListings(ctx, recentlyOpened);
+    const affected = await getAffectedListings(ctx, recentlyOpened, recentlyVisited);
     log('appListingMetrics update', affected.length, 'affected listings');
     if (!affected.length) return;
 
@@ -170,9 +177,11 @@ export const appListingMetrics = createMetricProcessor({
     //    map too; a block missing from it is written as 0. Feeding only the
     //    recently-active blocks here would zero every other listing's play count.
     //    FAILS HARD, deliberately — see the asymmetry note on this function.
-    const openCounts = await getAllTimeOpenCounts(ctx, affected);
+    //    Visits for every affected OFF-SITE listing ride the SAME scan(s) — one pass over
+    //    `actions` reads both types, not a second all-time scan.
+    const { opens: openCounts, visits: visitCounts } = await getAllTimeCounts(ctx, affected);
 
-    // 4. Batched live-recompute + upsert (install/open only; thumbs untouched).
+    // 4. Batched live-recompute + upsert (install/open/visit; thumbs untouched).
     const tasks: Task[] = chunk(affected, BATCH_SIZE).map((batch, i) => async () => {
       ctx.jobContext.checkIfCanceled();
       log('appListing upsert batch', i + 1, 'of', tasks.length);
@@ -194,11 +203,16 @@ export const appListingMetrics = createMetricProcessor({
       }
       const blockIds = [...batchCounts.keys()];
       const counts = blockIds.map((id) => batchCounts.get(id) ?? 0);
+      // Every off-site listing in the batch, INCLUDING zero-visit ones (written as 0).
+      const visitListingIds = batch.filter((l) => l.kind === 'offsite').map((l) => l.id);
+      const visits = visitListingIds.map((id) => visitCounts.get(id) ?? 0);
 
       const query = await ctx.pg.cancellableQuery(APP_LISTING_METRIC_UPSERT_SQL, [
         ids,
         blockIds,
         counts,
+        visitListingIds,
+        visits,
       ]);
       ctx.jobContext.on('cancel', query.cancel);
       await query.result();
@@ -254,7 +268,7 @@ async function chCancellableQuery<T extends object>(
 /**
  * app_block_ids with an `App_Open` event since the watermark.
  *
- * 🔴 FAILS SOFT, AND THE ASYMMETRY WITH getAllTimeOpenCounts IS THE WHOLE POINT.
+ * 🔴 FAILS SOFT, AND THE ASYMMETRY WITH getAllTimeCounts IS THE WHOLE POINT.
  * This half only DISCOVERS candidates; it cannot corrupt a number. Degrading to
  * "no new plays this run" is self-healing — `setLastUpdate()` still runs, but the
  * watermark the NEXT run reads still covers the gap, so the plays this run missed
@@ -268,7 +282,7 @@ async function chCancellableQuery<T extends object>(
  * retry of exactly the same shape. This processor was pure Postgres before the
  * `open_count` work; that regression is not one it gets to introduce.
  *
- * The COUNT read (getAllTimeOpenCounts) deliberately does NOT do this: a partial
+ * The COUNT read (getAllTimeCounts) deliberately does NOT do this: a partial
  * or empty answer there is written over real counts as 0. Discovery degrades,
  * counting fails the run. Do not "make these consistent".
  *
@@ -309,22 +323,31 @@ async function getRecentlyOpenedBlockIds(ctx: MetricProcessorRunContext): Promis
 
 async function getAffectedListings(
   ctx: MetricProcessorRunContext,
-  recentlyOpenedBlockIds: string[]
+  recentlyOpenedBlockIds: string[],
+  recentlyVisitedListingIds: string[]
 ): Promise<AffectedListing[]> {
-  const query = await ctx.pg.cancellableQuery<{ id: string; app_block_id: string | null }>(
-    AFFECTED_APPROVED_LISTINGS_SQL,
-    [ctx.lastUpdate, recentlyOpenedBlockIds]
-  );
+  const query = await ctx.pg.cancellableQuery<{
+    id: string;
+    app_block_id: string | null;
+    kind: string;
+  }>(AFFECTED_APPROVED_LISTINGS_SQL, [
+    ctx.lastUpdate,
+    recentlyOpenedBlockIds,
+    recentlyVisitedListingIds,
+  ]);
   ctx.jobContext.on('cancel', query.cancel);
   const rows = await query.result();
   // ULIDs sort lexicographically; dedupe defensively.
   const byId = new Map<string, AffectedListing>();
-  for (const row of rows) byId.set(row.id, { id: row.id, appBlockId: row.app_block_id });
+  for (const row of rows)
+    byId.set(row.id, { id: row.id, appBlockId: row.app_block_id, kind: row.kind });
   return [...byId.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 /**
- * ALL-TIME deduped play count per app_block_id, for every affected on-site listing.
+ * ALL-TIME deduped play count per app_block_id (every affected on-site listing) AND visit
+ * count per listing id (every affected off-site listing), from ONE pass over `actions` per
+ * chunk — the two id sets share the chunks, so visits add no scan of their own.
  *
  * 🔴 FAILS HARD, unlike the discovery read above. `open_count` is DERIVED — a block
  * missing from this map is WRITTEN AS 0, not left alone — so a partial or empty
@@ -343,14 +366,40 @@ async function getAffectedListings(
  * against a small Postgres batch (200). See the ceiling note on
  * `fetchAppOpenCounts`.
  */
-async function getAllTimeOpenCounts(
+async function getAllTimeCounts(
   ctx: MetricProcessorRunContext,
   affected: AffectedListing[]
-): Promise<Map<string, number>> {
+): Promise<{ opens: Map<string, number>; visits: Map<string, number> }> {
   const appBlockIds = affected.map((l) => l.appBlockId).filter((id): id is string => !!id);
-  return fetchAppOpenCounts(
+  const offsiteListingIds = affected.filter((l) => l.kind === 'offsite').map((l) => l.id);
+  return fetchAppOpenAndVisitCounts(
     appBlockIds,
-    (sql) => chCancellableQuery<AppOpenCountRow>(ctx, sql),
+    offsiteListingIds,
+    (sql) => chCancellableQuery<AppCountRow>(ctx, sql),
     APP_OPEN_CH_CHUNK_SIZE
+  );
+}
+
+/**
+ * Listing ids with an `App_Visit` since the watermark — the visit twin of
+ * `getRecentlyOpenedBlockIds`, with the same soft-fail and the same degrade signal (the
+ * counter name says "open" for history; it counts any DISCOVERY degrade of this job).
+ */
+async function getRecentlyVisitedListingIds(ctx: MetricProcessorRunContext): Promise<string[]> {
+  return fetchRecentlyVisitedListingIds(
+    ctx.lastUpdate.toISOString(),
+    (sql) => chCancellableQuery<AppVisitRecentRow>(ctx, sql),
+    (error) => {
+      ctx.jobContext.checkIfCanceled();
+      log('appListingMetrics visit-discovery read failed; continuing without it', error);
+      recordAppListingOpenDiscoveryDegrade();
+      logToAxiom({
+        type: 'warning',
+        name: 'app-listing-metrics-visit-discovery-degraded',
+        message:
+          'AppListing metrics could not read App_Visit discovery from ClickHouse; missed visits are picked up on the next run',
+        details: { error: (error as Error)?.message },
+      }).catch();
+    }
   );
 }

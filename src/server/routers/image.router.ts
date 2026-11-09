@@ -110,7 +110,9 @@ export const imageRouter = router({
   getDetail: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
-    .query(({ input }) => getImageDetail({ ...input })),
+    .query(({ input, ctx }) =>
+      getImageDetail({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator })
+    ),
   getInfinite: heavyProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteImagesSchema)

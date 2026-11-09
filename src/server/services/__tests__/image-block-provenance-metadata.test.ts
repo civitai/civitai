@@ -131,6 +131,38 @@ describe('createImage', () => {
     expect(createdMetadata()).toEqual({ blockPublishedAppId: SERVER_APP_ID });
   });
 
+  it('writes the feedback capture stamp only from its argument', async () => {
+    const forged = { feedbackId: 1, reporterId: 999 };
+    await createImage({
+      url: KEY,
+      userId: 1,
+      type: 'image',
+      skipIngestion: true,
+      metadata: { ...CLIENT_METADATA, feedbackCapture: forged },
+    } as never);
+    expect(createdMetadata()).toEqual(UNRELATED);
+
+    dbMock.dbWrite.image.create.mockClear();
+    const stamp = { feedbackId: 7, reporterId: 42 };
+    await createImage({
+      url: KEY,
+      userId: 1,
+      type: 'image',
+      skipIngestion: true,
+      metadata: { ...CLIENT_METADATA, feedbackCapture: forged },
+      feedbackCapture: stamp,
+    } as never);
+    expect(createdMetadata()).toEqual({ ...UNRELATED, feedbackCapture: stamp });
+  });
+
+  it('drops a client feedback capture stamp at the image schema', () => {
+    const parsed = imageSchema.parse({
+      url: KEY,
+      metadata: { size: 1, feedbackCapture: { feedbackId: 1, reporterId: 2 } },
+    });
+    expect(parsed.metadata).toEqual({ size: 1 });
+  });
+
   it('leaves metadata absent when neither is given', async () => {
     await createImage({ url: KEY, userId: 1, type: 'image', skipIngestion: true } as never);
 

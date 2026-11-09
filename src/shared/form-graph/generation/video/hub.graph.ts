@@ -70,7 +70,7 @@ export const videoHub = defineGraph<RootCtx>()
       ...ecosystemFieldSchemas(
         _ext.workflow,
         hiddenEcosystems,
-        ecosystemStates.map((e) => e.key),
+        ecosystemStates,
         usableEcosystems
       ),
       default: defaultValue,

@@ -297,7 +297,11 @@ describe('getFileForModelVersion (the version and its model)', () => {
   const load = async () => (await import('~/server/services/file.service')).getFileForModelVersion;
   // A missing version: the resolution stops at the not-found answer, after the one read.
   const resolve = async () =>
-    (await load())({ modelVersionId: ID, attribution: { path: 'test' } as never });
+    (await load())({
+      modelVersionId: ID,
+      attribution: { path: 'test' } as never,
+      redCapable: true,
+    });
 
   it('one Kysely statement on the replica', async () => {
     q.getModelVersionForFile.mockResolvedValue(undefined as never);

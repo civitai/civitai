@@ -24,9 +24,9 @@ export const threadIsRooted = (alias: string) => Prisma.sql`num_nonnulls(
 ) > 0`;
 
 /**
- * Both a cycle backstop and a ceiling on how deep the old thread-chain walkers (the lock check, the
- * block guard, the block hide sweep) climb. `throwIfThreadChainLocked` treats the cap as "could not
- * resolve" and REFUSES the write: a walk that ran out of road has not proved the absence of a lock.
+ * Both a cycle backstop and a ceiling on how deep the old thread-chain walkers (the block guard, the
+ * block hide sweep) climb. A walker in `refuse` mode treats the cap as "could not resolve" and
+ * REFUSES: a walk that ran out of road has not proved the absence of what it looked for.
  * Real chains run past it (measurements: docs/comments-consolidation.md, Thread mute), so it bounds
  * the work; it is not a proof.
  */
@@ -34,7 +34,7 @@ export const MAX_THREAD_CHAIN_DEPTH = 100;
 
 /**
  * The ancestor walk up the old thread chain, for the block guard. Climbs `Thread.commentId ->
- * CommentV2.threadId` ONLY, the edge `throwIfThreadChainLocked` uses, never `Thread.parentThreadId`,
+ * CommentV2.threadId` ONLY, the edge the stored chain holds, never `Thread.parentThreadId`,
  * which older rows took from client input on the first reply.
  *
  * `UNION ALL` because the depth cap, not a dedupe, bounds it: `depth` is projected, so no row is a

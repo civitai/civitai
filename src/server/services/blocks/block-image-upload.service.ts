@@ -279,14 +279,24 @@ export async function stageGenerationOutputImage({
   width,
   height,
   source,
+  transform,
 }: {
   imageUrl: string;
   width: number | null;
   height: number | null;
   /** Names the caller in the blurhash failure log. */
   source: string;
+  /** Rewrites the bytes before they are stored; `width` / `height` are then measured from the result. */
+  transform?: (bytes: Buffer) => Promise<Buffer>;
 }) {
-  const { bytes, contentType } = await fetchGenerationOutputImage(imageUrl);
+  const fetched = await fetchGenerationOutputImage(imageUrl);
+  const bytes = transform ? await transform(fetched.bytes) : fetched.bytes;
+  const contentType = transform ? sniffSupportedImage(bytes) : fetched.contentType;
+  if (!contentType)
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'generation output is not a supported image',
+    });
 
   // The store the browser-direct upload path uses, so the scanner can read it; `key` is a fresh
   // uuid (satisfies `imageSchema.url`).
@@ -298,7 +308,7 @@ export async function stageGenerationOutputImage({
     '~/server/utils/image-blurhash'
   );
   const blur = await tryComputeImageBlurhash(bytes, { source });
-  const useOrchestratorDims = width != null && height != null;
+  const useOrchestratorDims = !transform && width != null && height != null;
 
   return {
     url: key,

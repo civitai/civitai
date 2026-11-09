@@ -13,6 +13,7 @@
     publishUrl,
   } from '$lib/host';
   import { loraBlobAir } from '$lib/train-core';
+  import { publishShareChoice } from '$lib/publish-url-core';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { locationHref } from '$lib/actions/locationHref';
   import { onSignal } from '$lib/signals';
@@ -41,7 +42,9 @@
   import { Toggle } from '@civitai/ui/components/ui/toggle/index.js';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
   import LossGraph from '$lib/components/LossGraph.svelte';
+  import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
+  import ReviewStatusPanel from '$lib/components/ReviewStatusPanel.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
   import {
@@ -96,13 +99,16 @@
   // terminal (ready/published/failed) → it will never arrive.
   const samplesPending = $derived(d.state === 'training');
 
-  // Live updates while training: re-read the run every few seconds so new epochs/samples stream in.
-  // Each tick re-arms after the refetch settles — success or failure, so one bad refetch can't end
-  // polling — and stops once the run leaves 'training' (this effect re-runs and the guard fails) or
-  // the component unmounts.
+  // Live updates while a run is training or held for review: re-read it so new epochs/samples stream
+  // in, and so a held run moves on by itself once reviewed. Every few seconds while training; once a
+  // minute while held, since a hold can last hours. Each tick re-arms after the refetch settles —
+  // success or failure, so one bad refetch can't end polling — and polling stops once the run is in
+  // neither state (this effect re-runs and the guard fails) or the component unmounts.
   const POLL_MS = 5000;
+  const REVIEW_POLL_MS = 60_000;
   $effect(() => {
-    if (!browser || d.state !== 'training') return;
+    if (!browser || (d.state !== 'training' && d.state !== 'review')) return;
+    const every = d.state === 'review' ? REVIEW_POLL_MS : POLL_MS;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
@@ -111,9 +117,9 @@
       } catch {
         // transient refetch failure — keep polling
       }
-      if (!stopped) timer = setTimeout(tick, POLL_MS);
+      if (!stopped) timer = setTimeout(tick, every);
     };
-    timer = setTimeout(tick, POLL_MS);
+    timer = setTimeout(tick, every);
     return () => {
       stopped = true;
       clearTimeout(timer);
@@ -456,7 +462,7 @@
   const continueQuoteKey = $derived.by(() => {
     const epochs = Number(furtherEpochs) || 0;
     if (!browser || !runComplete || quoteFromEpoch === null || epochs < 1) return null;
-    return `${workflowIdKey}#${quoteFromEpoch}#${epochs}#${buzzMode.value}`;
+    return `${workflowIdKey}#${quoteFromEpoch}#${epochs}#${buzzMode.value}#${buzzMode.blueFirst}`;
   });
   $effect(() => {
     // A stale "could not price" must not linger after the panel closes or the input empties.
@@ -506,7 +512,7 @@
   );
   // The run id is in the key so a tick never carries over to another run with the same price.
   const furtherAckKey = $derived.by(() => {
-    const key = matureAckKey(furtherSpend?.amount ?? quote?.cost, furtherMature);
+    const key = matureAckKey(quote?.cost, furtherSpend?.amount, furtherMature);
     return key && `${workflowIdKey}:${key}`;
   });
   let furtherAckedFor = $state<string | null>(null);
@@ -544,11 +550,30 @@
   const featured = $derived(newestFirst.find((e) => e.id === selectedId) ?? recommended);
 
   const publishEpoch = $derived(featured?.modelUrl ? featured : publishTarget);
+  let ownRights = $state(false);
+  let shareDataset = $state(false);
+  let shareTouched = $state(false);
   const publishLink = $derived.by(() => {
     const toUrl = publishUrl();
     if (!toUrl || !publishEpoch) return null;
-    return hostLink(toUrl({ workflowId: d.workflowId, epoch: publishEpoch.number }));
+    return hostLink(
+      toUrl({
+        workflowId: d.workflowId,
+        epoch: publishEpoch.number,
+        ...publishShareChoice(shareTouched, ownRights, shareDataset),
+      })
+    );
   });
+  const dataPolicyUrl = $derived(hostConfig().dataPolicyUrl);
+  function setOwnRights(next: boolean) {
+    shareTouched = true;
+    ownRights = next;
+    if (!next) shareDataset = false;
+  }
+  function setShareDataset(next: boolean) {
+    shareTouched = true;
+    shareDataset = next;
+  }
 
   // Independent of `publishTarget` so the link outlives the checkpoints' blob retention.
   const modelLink = $derived.by(() => {
@@ -599,6 +624,9 @@
     archiveParts = [];
     showLineage = false;
     furtherAckedFor = null;
+    ownRights = false;
+    shareDataset = false;
+    shareTouched = false;
   });
 </script>
 
@@ -839,7 +867,19 @@
     {/key}
   {/if}
 
-  {#if d.state === 'failed'}
+  {#if d.state === 'review' || d.state === 'rejected' || d.state === 'unreviewed'}
+    <ReviewStatusPanel
+      kind={d.state}
+      workflowId={d.workflowId}
+      heldSince={d.heldSince}
+    >
+      {#if d.state === 'unreviewed' && d.dataset.length}
+        <Button class="mt-4" variant="outline" onclick={reuseDataset}>
+          <IconRepeat size={14} stroke={2} class="mr-1.5 inline" />Try again with this dataset
+        </Button>
+      {/if}
+    </ReviewStatusPanel>
+  {:else if d.state === 'failed'}
     <div class="rounded-xl border border-red-500/20 bg-red-500/5 p-8 text-center">
       <IconAlertTriangle size={32} stroke={1.75} class="mx-auto text-red-400" />
       <h2 class="mt-3 text-base font-semibold text-white">This training didn't complete</h2>
@@ -1223,6 +1263,7 @@
                 <Button onclick={() => (confirming = true)}>Train further</Button>
               {/if}
             </div>
+            <BlueFirstNote />
             <div class="font-mono text-xs text-dark-2">
               {#if quoteError}
                 <span class="text-red-400">{quoteError}</span>
@@ -1263,9 +1304,11 @@
                     I understand {furtherSpend.uncertain ? 'up to ' : ''}<strong
                       >{furtherSpend.amount.toLocaleString()} Yellow Buzz</strong
                     > will be charged.
-                  {:else}
+                  {:else if buzzMode.blueFirst}
                     I understand anything beyond my <span class="text-blue-400">Blue</span> Buzz is
                     charged in <span class="text-yellow-400">Yellow</span> Buzz.
+                  {:else}
+                    I understand it is charged in <span class="text-yellow-400">Yellow</span> Buzz.
                   {/if}
                 </label>
               </div>
@@ -1293,6 +1336,29 @@
               This run was published as a model on Civitai.
             </p>
           {:else if publishLink && publishEpoch}
+            <div class="flex w-full flex-col gap-2 border-b border-dark-4 pb-3">
+              <label class="inline-flex items-center gap-2 text-sm text-dark-0">
+                <Checkbox bind:checked={() => ownRights, setOwnRights} />
+                I own the rights to all these files
+              </label>
+              <label
+                class="inline-flex items-center gap-2 text-sm {ownRights ? 'text-dark-0' : 'text-dark-2'}"
+              >
+                <Checkbox bind:checked={() => shareDataset, setShareDataset} disabled={!ownRights} />
+                Share my dataset with the published model
+              </label>
+              <p class="m-0 text-xs text-dark-2">
+                Shared datasets can be downloaded from the model page once it's published.
+                {#if dataPolicyUrl}
+                  See the <a
+                    href={dataPolicyUrl}
+                    target="_blank"
+                    rel="noopener"
+                    class="text-blue-400 underline">dataset storage policy</a
+                  >.
+                {/if}
+              </p>
+            </div>
             <Button size="sm" {...publishLink}>
               <IconUpload size={14} stroke={2} />Publish a model page
             </Button>

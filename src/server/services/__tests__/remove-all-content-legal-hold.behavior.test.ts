@@ -164,6 +164,7 @@ import {
   retryUnsettledBountyPayouts,
 } from '~/server/services/bounty.service';
 import { deleteImages } from '~/server/services/image.service';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { refundBidsForVersions } from '~/server/services/auction.service';
 import { KEPT_MODEL_STATUS } from '~/server/utils/legal-hold';
 import { restoreModelRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
@@ -227,8 +228,10 @@ beforeAll(async () => {
       details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]'
     );
     CREATE TABLE "Image" (
-      id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "needsReview" text, "blockedFor" text
+      id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "needsReview" text, "blockedFor" text,
+      minor boolean NOT NULL DEFAULT false
     );
+    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     ${[...SEEDED_TABLES, ...QA_DATA]
       .map((t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`)
       .join('\n')}
@@ -538,6 +541,19 @@ describe('removeAllContent', () => {
     );
   });
 
+  it('wipes the feedback capture account, keeping each capture its own state keeps', async () => {
+    const CAPTURE = FEEDBACK_CAPTURE_OWNER_ID;
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", "needsReview", minor) VALUES
+        (9701, ${CAPTURE}, 'csam', false), (9702, ${CAPTURE}, NULL, true), (9703, ${CAPTURE}, NULL, false);
+    `);
+    await removeAllContent({ id: CAPTURE });
+    const left = await holder.db.query<{ id: number }>(
+      `SELECT id FROM "Image" WHERE "userId" = ${CAPTURE} ORDER BY id`
+    );
+    expect(left.rows.map((r) => r.id)).toEqual([9701, 9702]);
+  });
+
   describe('comments that exist only in CommentV3', () => {
     beforeEach(async () => {
       await holder.db.exec(`
@@ -545,7 +561,7 @@ describe('removeAllContent', () => {
           (91, 'article', 1, NULL, '91', ${CLEAN}, 'gone'),
           (92, 'article', 1, NULL, '92', ${CLEAN}, 'kept as a placeholder'),
           (93, 'article', 1, 92, '92.93', ${BYSTANDER}, 'a reply by someone else'),
-          (94, 'image', 1, NULL, '94', ${CLEAN}, 'an image comment, wiped through CommentV2'),
+          (94, 'model', 1, NULL, '94', ${CLEAN}, 'a model comment, wiped through CommentV2'),
           (95, 'article', 1, NULL, '95', ${CLEAN}, 'above a held author''s reply'),
           (96, 'article', 1, 95, '95.96', ${HELD}, 'a held author''s reply');
         INSERT INTO "CommentV3Reaction" ("commentId", "userId") VALUES (93, ${CLEAN}), (93, ${BYSTANDER});
@@ -568,7 +584,7 @@ describe('removeAllContent', () => {
         { id: 93, content: 'a reply by someone else', deleted: false, tos: false },
         {
           id: 94,
-          content: 'an image comment, wiped through CommentV2',
+          content: 'a model comment, wiped through CommentV2',
           deleted: false,
           tos: false,
         },

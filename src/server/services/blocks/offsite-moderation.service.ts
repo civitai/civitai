@@ -2,6 +2,8 @@ import { TRPCError } from '@trpc/server';
 import type { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+// Light (its heavy dependencies are dynamic imports), so imported statically.
+import { restoreLiveApp, takeDownLiveApp } from '~/server/services/blocks/live-unpublish.service';
 import {
   assertAcceptedAppDeveloperTermsTrpc,
   assertListingOwnerAcceptedAppDeveloperTerms,
@@ -553,7 +555,31 @@ async function flipBackingBlockStatus(
   return flip.count > 0;
 }
 
-export type DelistListingResult = { appListingId: string; status: 'removed' };
+/**
+ * LIVE UNPUBLISH (`app-blocks-live-unpublish`), after an on-site takedown COMMITS: start removing
+ * the app from the shared static server. Never throws and never undoes the takedown. For the
+ * server's readiness app nothing is removed and the returned `liveNote` says so.
+ */
+async function takeDownLiveAppAfterCommit(slug: string): Promise<{ liveNote?: string }> {
+  return takeDownLiveApp(slug).catch(() => ({}));
+}
+
+/**
+ * LIVE RESTORE, after a relist COMMITS and the block is approved again: when this platform took
+ * the app off the shared static server (its takedown marker), re-publish its approved build so it
+ * serves again, whatever the `app-blocks-live-unpublish` flag says now. With no marker, nothing.
+ * Fire-and-forget, reported on failure, never retried.
+ */
+function restoreLiveAppSoon(slug: string, appBlockId: string): void {
+  void restoreLiveApp({ slug, appBlockId }).catch(() => undefined);
+}
+
+export type DelistListingResult = {
+  appListingId: string;
+  status: 'removed';
+  /** Set when the store takedown went through but the app keeps serving (the readiness app). */
+  liveNote?: string;
+};
 
 /**
  * MOD delist an APPROVED listing (approved → removed) — now DUAL-KIND (W13
@@ -670,8 +696,9 @@ export async function delistListing(opts: {
 
   // Catalog bust: delist removes the listing from the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
+  const live = isOnsite && listing.appBlockId ? await takeDownLiveAppAfterCommit(listing.slug) : {};
 
-  return { appListingId: input.appListingId, status: 'removed' };
+  return { appListingId: input.appListingId, status: 'removed', ...live };
 }
 
 export type RelistListingResult = { appListingId: string; status: 'approved' };
@@ -778,6 +805,10 @@ export async function relistListing(opts: {
 
   // Catalog bust: relist puts the listing back into the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
+  // The block is approved again (not on drift): put the app back on the shared static server.
+  if (isOnsite && listing.appBlockId && !onsiteBlockRestoreDrift) {
+    restoreLiveAppSoon(listing.slug, listing.appBlockId);
+  }
 
   return { appListingId: input.appListingId, status: 'approved' };
 }
@@ -1472,6 +1503,8 @@ export type ResetOnsiteListingToPendingResult = {
   appListingId: string;
   status: 'pending';
   publishRequestId: string;
+  /** Set when the store takedown went through but the app keeps serving (the readiness app). */
+  liveNote?: string;
 };
 
 /**
@@ -1683,8 +1716,10 @@ export async function resetOnsiteListingToPending(opts: {
 
   // Catalog bust: onsite reset-to-pending — same membership change as the offsite path.
   await bustAppListingCatalogCache().catch(() => undefined);
+  // The re-approval publishes again; until then the subdomain must not serve the old version.
+  const live = await takeDownLiveAppAfterCommit(listing.slug);
 
-  return { appListingId: input.appListingId, status: 'pending', publishRequestId };
+  return { appListingId: input.appListingId, status: 'pending', publishRequestId, ...live };
 }
 
 /**
@@ -1750,7 +1785,12 @@ async function loadOwnedListingInTx(
   };
 }
 
-export type UnpublishOwnListingResult = { appListingId: string; status: 'removed' };
+export type UnpublishOwnListingResult = {
+  appListingId: string;
+  status: 'removed';
+  /** Set when the store takedown went through but the app keeps serving (the readiness app). */
+  liveNote?: string;
+};
 
 /**
  * OWNER self-hide their OWN approved listing (approved → removed) — DUAL-KIND
@@ -1771,6 +1811,9 @@ export async function unpublishOwnListing(opts: {
 }): Promise<UnpublishOwnListingResult> {
   const { input, userId } = opts;
   const reason = input.reason?.trim() ? input.reason.trim() : null;
+
+  // The on-site slug, for the post-commit live unpublish (set only once the tx authorized it).
+  let onsiteSlug: string | null = null;
 
   await dbWrite.$transaction(async (tx) => {
     const listing = await loadOwnedListingInTx(tx, input.appListingId, userId);
@@ -1798,6 +1841,7 @@ export async function unpublishOwnListing(opts: {
       from: 'approved',
       to: 'suspended',
     });
+    if (isOnsite && listing.appBlockId) onsiteSlug = listing.slug;
     // 🔴 RECORD THE APPROVED ASSET SURFACE. This is the ONLY place the store learns what
     // imagery a moderator last signed off on — nothing else in the schema captures it (no
     // approve path writes a moderation event at all, and every existing `before`/`after`
@@ -1830,8 +1874,11 @@ export async function unpublishOwnListing(opts: {
 
   // Catalog bust: owner-unpublish removes the listing from the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
+  // Widened back from the closure assignment (TypeScript cannot see through it).
+  const slugToTakeDown = onsiteSlug as string | null;
+  const live = slugToTakeDown ? await takeDownLiveAppAfterCommit(slugToTakeDown) : {};
 
-  return { appListingId: input.appListingId, status: 'removed' };
+  return { appListingId: input.appListingId, status: 'removed', ...live };
 }
 
 /**
@@ -1936,6 +1983,8 @@ export async function republishOwnListing(opts: {
   // Set when the on-site block-restore flip matched 0 rows (drift — mirrors relist).
   let onsiteBlockRestoreDrift = false;
   let onsiteBlockId: string | null = null;
+  // Set when the IMMEDIATE arm approved the backing block again: the app to put back live.
+  let liveRestore: { slug: string; appBlockId: string } | null = null;
   // Set by the REVIEW arm; `null` means the republish went live immediately.
   let reviewReason: RepublishReviewReason | null = null;
 
@@ -2094,6 +2143,7 @@ export async function republishOwnListing(opts: {
         to: 'approved',
       });
       if (!flippedBlock) onsiteBlockRestoreDrift = true;
+      else liveRestore = { slug: listing.slug, appBlockId: listing.appBlockId };
     }
 
     await tx.appListingModerationEvent.create({
@@ -2139,6 +2189,9 @@ export async function republishOwnListing(opts: {
 
   // Catalog bust: owner-republish restores the listing to the catalog (or moves it to pending).
   await bustAppListingCatalogCache().catch(() => undefined);
+  // IMMEDIATE arm only (the review arm leaves the block suspended): serve the app again.
+  const restore = liveRestore as { slug: string; appBlockId: string } | null;
+  if (restore) restoreLiveAppSoon(restore.slug, restore.appBlockId);
 
   // 🔴 The narrowing is on the LOCAL, not on a re-read: `reviewReason` is assigned inside
   // the transaction callback and TypeScript cannot see through the closure, so it is

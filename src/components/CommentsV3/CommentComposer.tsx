@@ -1,4 +1,5 @@
 import { Alert, Button, Text } from '@mantine/core';
+import * as z from 'zod';
 import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
@@ -10,14 +11,14 @@ import { StickerPicker } from '~/components/Sticker/StickerPicker';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputRTE, useForm } from '~/libs/form';
-import { sectionMuteSchema, upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
+import { commentContentSchema, commentSectionSchema } from '~/server/schema/commentv3.schema';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { useCommentSection } from './CommentSectionContext';
 import type { CommentV3Comment } from './types';
 import { useCommentMutations } from './useCommentMutations';
 import classes from '~/components/CommentsV3/CommentComposer.module.scss';
 
-const contentSchema = upsertCommentv2Schema.pick({ content: true });
+const contentSchema = z.object({ content: commentContentSchema });
 
 /**
  * The editor. Writes a new top-level comment, a reply under `parent`, or an edit of `editing`.
@@ -140,7 +141,7 @@ export function CommentComposer() {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const { entityType, entityId, locked, isMuted, isReadonly, forceLocked } = useCommentSection();
-  const target = sectionMuteSchema.safeParse({ entityType, entityId });
+  const target = commentSectionSchema.safeParse({ entityType, entityId });
   const sectionMute = useSectionMute({
     target: target.success ? target.data : undefined,
     enabled: true,

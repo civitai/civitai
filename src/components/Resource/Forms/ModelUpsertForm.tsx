@@ -84,6 +84,7 @@ import styles from './ModelUpsertForm.module.scss';
 import { InputCollectionSelect } from '~/libs/form/components/CollectionSelectInput';
 import { ModelListingTabs } from '~/components/Resource/Forms/ModelListingTabs';
 import { RequestLockReviewLink } from '~/components/Model/LockReview/RequestLockReview';
+import { matureLockReasonSentence } from '~/shared/constants/mature-lock-reason.constants';
 import { requestableLocks } from '@civitai/shared/lock-review';
 
 const schema = modelUpsertSchema
@@ -468,9 +469,11 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     if (!model?.lockedProperties?.includes(key)) return defaultDescription;
     if (!model.id || !requestableLocks(model).some((lock) => lock === key))
       return 'Locked by moderator';
+    const reason = key === 'nsfw' && model.matureLockReason;
     return (
       <>
-        Locked by moderator · <RequestLockReviewLink model={{ ...model, id: model.id }} />
+        {reason ? matureLockReasonSentence(reason) : 'Locked by moderator'} ·{' '}
+        <RequestLockReviewLink model={{ ...model, id: model.id }} />
       </>
     );
   }
@@ -521,7 +524,8 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
             {features.modelComFace ? (
               <ModelListingTabs
                 modelId={model?.id}
-                comFaceRemoved={!!model?.comFaceRemoved}
+                comFaceRemoved={model?.comFaceRemoved}
+                comCoverState={model?.comCoverState}
                 redFields={
                   <>
                     {nameInput}

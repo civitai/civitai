@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { toPublicApiVersionFlags } from '~/shared/constants/model-version-flags.constants';
 import {
   coverageAudience,
   coveragePairForUser,
@@ -91,6 +92,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
@@ -363,6 +365,7 @@ const loadModelVersion = async ({
 
     return {
       ...version,
+      flags: ctx?.user?.isModerator ? version.flags : toPublicApiVersionFlags(version.flags),
       // A .com face has no per-version description; the .red one is not shown in its place.
       description: withSfwFace ? null : version.description,
       model: {
@@ -1305,7 +1308,7 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
 }) => {
   const { payWithBlue, ...rest } = input;
   try {
-    return earlyAccessPurchase({
+    return await earlyAccessPurchase({
       ...rest,
       userId: ctx.user.id,
       buzzType: payWithBlue ? 'blue' : getAllowedAccountTypes(ctx.features)[0],
@@ -1486,6 +1489,7 @@ export async function publishPrivateModelVersionHandler({
   if (!selectedEpochUrl) {
     throw throwBadRequestError('No selected epoch found');
   }
+  await assertNoFailedScanFiles({ id: version.id });
 
   if (!version.posts.length) {
     const post = await createModelVersionPostFromTraining({

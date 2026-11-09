@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import type * as StorageResolver from '~/utils/storage-resolver';
+import type * as TrainingDataRestricted from '~/server/services/training-data-restricted.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -19,12 +20,18 @@ const {
   mockDeleteObject,
   mockDeregister,
   mockFileListBust,
+  mockBustFileAirs,
+  mockVersionAirs,
+  mockBustAirs,
 } = vi.hoisted(() => ({
   mockResourceDataBust: vi.fn(() => Promise.resolve()),
   mockBustOrchestrator: vi.fn(() => Promise.resolve()),
   mockDeleteObject: vi.fn(() => Promise.resolve()),
   mockDeregister: vi.fn(() => Promise.resolve()),
   mockFileListBust: vi.fn(() => Promise.resolve()),
+  mockBustFileAirs: vi.fn(() => Promise.resolve()),
+  mockVersionAirs: vi.fn(() => Promise.resolve(['urn:air:old-kind'])),
+  mockBustAirs: vi.fn((_airs: string[]) => Promise.resolve()),
 }));
 // A new upload deletes the old object in the background; keep that off any real bucket.
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObject: mockDeleteObject }));
@@ -37,12 +44,29 @@ vi.mock('~/server/redis/resource-data.redis', () => ({
 }));
 vi.mock('~/server/services/orchestrator/models', () => ({
   bustOrchestratorModelCache: mockBustOrchestrator,
+  getOrchestratorVersionAirs: mockVersionAirs,
+  bustOrchestratorAirs: mockBustAirs,
+}));
+vi.mock('~/server/services/orchestrator/scanned-file-airs', () => ({
+  bustVersionScannedFileAirs: mockBustFileAirs,
 }));
 // The version's file list (the only createCachedObject in the service).
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
   createCachedObject: () => ({ bust: mockFileListBust, fetch: vi.fn() }),
 }));
+
+const { mockVersionHasStudioDataset } = vi.hoisted(() => ({
+  mockVersionHasStudioDataset: vi.fn(async (_db: unknown, _versionId: number) => false),
+}));
+// "Is a Training Studio version" has its own PGlite coverage (training-data-share.behavior.test.ts).
+vi.mock('~/server/services/training-data-restricted.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrainingDataRestricted>()),
+  versionHasStudioDataset: mockVersionHasStudioDataset,
+}));
+beforeEach(() => {
+  mockVersionHasStudioDataset.mockImplementation(async () => false);
+});
 
 import { updateFile } from '~/server/services/model-file.service';
 
@@ -123,7 +147,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   // clearAllMocks keeps a queued mockRejectedValueOnce; a test that never reaches its bust would
   // otherwise hand that rejection to the next test.
-  for (const bust of [mockFileListBust, mockResourceDataBust, mockBustOrchestrator])
+  for (const bust of [
+    mockFileListBust,
+    mockResourceDataBust,
+    mockBustOrchestrator,
+    mockBustFileAirs,
+  ])
     bust.mockReset().mockImplementation(() => Promise.resolve());
   withFile();
   linkedRows = [];
@@ -164,15 +193,24 @@ describe('updateFile', () => {
   });
 
   it('still writes the fields an owner may legitimately change', async () => {
-    await updateFile({ id: 1, overrideName: 'renamed', userId: 7 });
+    await updateFile({ id: 1, overrideName: 'renamed.safetensors', userId: 7 });
 
-    expect(writtenData()).toMatchObject({ overrideName: 'renamed' });
+    expect(writtenData()).toMatchObject({ overrideName: 'renamed.safetensors' });
   });
 
   it('edits the same record in place when the url is unchanged', async () => {
-    const result = await updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed', userId: 7 });
+    const result = await updateFile({
+      id: 1,
+      url: OLD_URL,
+      overrideName: 'renamed.safetensors',
+      userId: 7,
+    });
 
-    expect(writtenData()).toEqual({ url: OLD_URL, overrideName: 'renamed', metadata: undefined });
+    expect(writtenData()).toEqual({
+      url: OLD_URL,
+      overrideName: 'renamed.safetensors',
+      metadata: undefined,
+    });
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
     expect(result).toMatchObject({ id: 1, replacedFileId: undefined });
   });
@@ -180,7 +218,9 @@ describe('updateFile', () => {
   it('reports a file replaced since the lookup as not found, rather than a silent success', async () => {
     dbMock.dbWrite.modelFile.updateMany.mockResolvedValue({ count: 0 });
 
-    await expect(updateFile({ id: 1, overrideName: 'renamed', userId: 7 })).rejects.toMatchObject({
+    await expect(
+      updateFile({ id: 1, overrideName: 'renamed.safetensors', userId: 7 })
+    ).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
   });
@@ -317,9 +357,67 @@ describe('a new upload creates a new file record', () => {
 
     mockResourceDataBust.mockClear();
     mockBustOrchestrator.mockClear();
-    await updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed', userId: 7 });
+    await updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed.safetensors', userId: 7 });
     expect(mockResourceDataBust).not.toHaveBeenCalled();
     expect(mockBustOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it("busts the file-pinned AIRs on a new upload, the replaced file's included", async () => {
+    await updateFile({ id: 1, url: NEW_URL, userId: 7 });
+    expect(mockBustFileAirs).toHaveBeenCalledWith(10, expect.objectContaining({ modelId: 5 }), [1]);
+  });
+
+  // The upload can change the file's type, and with it the version's AIR kind; the bust after the
+  // write derives only the new AIR.
+  it("busts the version's AIRs as read before a new upload is written, once it has committed", async () => {
+    await updateFile({ id: 1, url: NEW_URL, type: 'Config', userId: 7 });
+    const [write] = dbMock.dbWrite.$transaction.mock.invocationCallOrder;
+    expect(mockVersionAirs).toHaveBeenCalledWith([10]);
+    expect(mockVersionAirs.mock.invocationCallOrder[0]).toBeLessThan(write);
+    expect(mockBustAirs).toHaveBeenCalledWith(['urn:air:old-kind']);
+    expect(mockBustAirs.mock.invocationCallOrder[0]).toBeGreaterThan(write);
+  });
+
+  it("busts the version's coverage caches, file-pinned AIRs included, when an edit changes the type", async () => {
+    await updateFile({ id: 1, type: 'Config', userId: 7 });
+    expect(mockResourceDataBust).toHaveBeenCalledWith([10]);
+    expect(mockBustFileAirs).toHaveBeenCalledWith(10, expect.objectContaining({ modelId: 5 }));
+    // Once before the write, while the old type still derives the old AIR, and once after.
+    const write = dbMock.dbWrite.modelFile.updateMany.mock.invocationCallOrder[0];
+    expect(mockBustOrchestrator.mock.invocationCallOrder.map((order) => order < write)).toEqual([
+      true,
+      false,
+    ]);
+
+    vi.clearAllMocks();
+    // The editor re-sends the stored type with every save.
+    await updateFile({ id: 1, type: 'Pruned Model', overrideName: 'renamed', userId: 7 });
+    expect(mockResourceDataBust).not.toHaveBeenCalled();
+    expect(mockBustOrchestrator).not.toHaveBeenCalled();
+    expect(mockBustFileAirs).not.toHaveBeenCalled();
+  });
+
+  // Two tabs open on the same file: one changes the type, the other then saves the type it loaded.
+  // Judged against its stale read the second write is no change and busts nothing, so it may only
+  // land over the type it read.
+  it('writes a sent type only over the type it was compared against', async () => {
+    await updateFile({ id: 1, type: 'Pruned Model', userId: 7 });
+    expect(dbMock.dbWrite.modelFile.updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { id: 1, type: 'Pruned Model' } })
+    );
+
+    await updateFile({ id: 1, overrideName: 'renamed', userId: 7 });
+    expect(dbMock.dbWrite.modelFile.updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { id: 1 } })
+    );
+  });
+
+  it('still succeeds when a cache bust fails after a type change', async () => {
+    mockBustFileAirs.mockRejectedValueOnce(new Error('orchestrator down'));
+
+    await expect(updateFile({ id: 1, type: 'Config', userId: 7 })).resolves.toMatchObject({
+      id: 1,
+    });
   });
 
   it('still succeeds when a cache bust fails after the swap', async () => {
@@ -379,7 +477,9 @@ describe('a published version keeps its files', () => {
   it('still allows metadata edits on a published version', async () => {
     withFile({ status: 'Published' });
 
-    await expect(updateFile({ id: 1, overrideName: 'renamed', userId: 7 })).resolves.toMatchObject({
+    await expect(
+      updateFile({ id: 1, overrideName: 'renamed.safetensors', userId: 7 })
+    ).resolves.toMatchObject({
       id: 1,
     });
   });
@@ -549,6 +649,36 @@ describe('the upload domain on a new dataset', () => {
   });
 });
 
+// The rating decides which hosts serve a dataset; it describes the zip it was taken from.
+describe('the rating on a new dataset', () => {
+  it('a dataset replaced with new content is unrated', async () => {
+    withFile({ type: 'Training Data', metadata: { nsfwLevel: 1, numImages: 3 } });
+
+    await updateFile({ id: 1, url: NEW_URL, userId: 7, uploadDomain: 'green' });
+
+    expect(createdData().metadata).toMatchObject({ numImages: 3 });
+    expect(createdData().metadata).not.toHaveProperty('nsfwLevel');
+  });
+
+  it("a Studio dataset replaced with new content loses the old zip's archive state", async () => {
+    withFile({
+      type: 'Training Data',
+      metadata: {
+        selectedEpochUrl: 'https://orch.test/epoch-1',
+        datasetArchive: { status: 'archived', complete: true },
+        nsfwLevel: 1,
+        fullyRated: true,
+      },
+    });
+
+    await updateFile({ id: 1, url: NEW_URL, userId: 7 });
+
+    expect(createdData().metadata).toMatchObject({ selectedEpochUrl: 'https://orch.test/epoch-1' });
+    expect(createdData().metadata).not.toHaveProperty('datasetArchive');
+    expect(createdData().metadata).not.toHaveProperty('fullyRated');
+  });
+});
+
 // Other versions can link a file as a component by its id; they follow it to the new record.
 describe('linked components', () => {
   it('repoints links to the old record at the new one, and only those', async () => {
@@ -590,7 +720,13 @@ describe('a new url from a client', () => {
 
   it('is not checked when the url is the one the file already has', async () => {
     await expect(
-      updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed', userId: 7, urlFromClient: true })
+      updateFile({
+        id: 1,
+        url: OLD_URL,
+        overrideName: 'renamed.safetensors',
+        userId: 7,
+        urlFromClient: true,
+      })
     ).resolves.toMatchObject({ id: 1 });
     expect(dbMock.dbWrite.modelFile.findFirst).not.toHaveBeenCalled();
   });
@@ -599,5 +735,126 @@ describe('a new url from a client', () => {
     await expect(
       updateFile({ id: 1, url: NEW_URL, userId: 99, isModerator: true, urlFromClient: true })
     ).resolves.toMatchObject({ id: NEW_ID });
+  });
+});
+
+describe('an owner editing another Training Data file on a Training Studio version', () => {
+  const studioVersion = (has: boolean) =>
+    mockVersionHasStudioDataset.mockImplementation(
+      async (_db, versionId) => has && versionId === FILE.modelVersionId
+    );
+
+  beforeEach(() => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...FILE,
+      type: 'Training Data',
+      visibility: 'Private',
+      metadata: {},
+    });
+  });
+
+  it('cannot make it Public', async () => {
+    studioVersion(true);
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Private');
+  });
+
+  it('can make it Public on a version with no Studio dataset', async () => {
+    studioVersion(false);
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Public');
+  });
+
+  it("leaves a moderator's edit unchanged", async () => {
+    studioVersion(true);
+    await updateFile({ id: 1, visibility: 'Public', userId: 99, isModerator: true });
+    expect(writtenData().visibility).toBe('Public');
+  });
+
+  it('cannot make it Public by replacing its content', async () => {
+    studioVersion(true);
+    withFile({ type: 'Training Data', metadata: {} });
+    await updateFile({ id: 1, url: NEW_URL, visibility: 'Public', userId: 7 });
+    expect(createdData().visibility).toBe('Private');
+  });
+
+  it('a stored Public file whose content is replaced without a visibility comes out Private', async () => {
+    studioVersion(true);
+    withFile({ type: 'Training Data', metadata: {} });
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...(await dbMock.dbWrite.modelFile.findUnique()),
+      visibility: 'Public',
+    } as never);
+    await updateFile({ id: 1, url: NEW_URL, userId: 7 });
+    expect(createdData().visibility).toBe('Private');
+  });
+
+  it('can make it Public by replacing its content on a version with no Studio dataset', async () => {
+    studioVersion(false);
+    withFile({ type: 'Training Data', metadata: {} });
+    await updateFile({ id: 1, url: NEW_URL, visibility: 'Public', userId: 7 });
+    expect(createdData().visibility).toBe('Public');
+  });
+});
+
+describe('an owner editing a Training Studio dataset directly', () => {
+  const studio = (
+    archive: Record<string, unknown>,
+    extra: Record<string, unknown> = {},
+    visibility = 'Private'
+  ) =>
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...FILE,
+      type: 'Training Data',
+      visibility,
+      sizeKB: 2048,
+      metadata: {
+        selectedEpochUrl: 'https://orch.test/epoch-1',
+        ownRights: true,
+        shareDataset: true,
+        datasetArchive: { status: 'archived', ...archive },
+        fullyRated: true,
+        ...extra,
+      },
+    });
+
+  beforeEach(() => {
+    // The share's restriction check: nothing restricted.
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ held: false }]);
+  });
+
+  it('can share a complete, fully rated zip', async () => {
+    studio({ complete: true });
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Public');
+  });
+
+  it.each([
+    ['an incomplete zip', { complete: false }, {}],
+    ['a zip with an unrated item', { complete: true }, { fullyRated: false }],
+    ['a placeholder', { status: 'pending', complete: true }, {}],
+  ])('cannot share %s', async (_, archive, extra) => {
+    studio(archive, extra);
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Private');
+  });
+
+  it('cannot share a zip whose owner or content is restricted', async () => {
+    studio({ complete: true });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ held: true }]);
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Private');
+  });
+
+  it('can always make it less visible', async () => {
+    studio({ complete: true }, {}, 'Public');
+    await updateFile({ id: 1, visibility: 'Private', userId: 7 });
+    expect(writtenData().visibility).toBe('Private');
+  });
+
+  it("leaves a moderator's edit as sent", async () => {
+    studio({ complete: false });
+    await updateFile({ id: 1, visibility: 'Public', userId: 1, isModerator: true });
+    expect(writtenData().visibility).toBe('Public');
   });
 });

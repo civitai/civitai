@@ -1,4 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ManifestSubmitValidation from '~/server/services/blocks/manifest-submit-validation';
+// Submit-time deep manifest validation is pinned in publish-request.submitValidation.test.ts;
+// this file's fixtures are not full manifests, so that seam is a no-op here (approve's own
+// validator is untouched).
+vi.mock('~/server/services/blocks/manifest-submit-validation', async (importOriginal) => ({
+  ...(await importOriginal<typeof ManifestSubmitValidation>()),
+  assertManifestValidAtSubmit: vi.fn(async () => undefined),
+}));
 import JSZip from 'jszip';
 import {
   computeBundleLineDiff,
@@ -150,6 +158,49 @@ describe('computeFileDiff', () => {
 });
 
 describe('computeManifestDiff', () => {
+  const withStorage = (collections: Record<string, unknown>) => ({
+    blockId: 'x',
+    storage: { collections },
+  });
+  const sharedColl = (extra: Record<string, unknown> = {}) => ({
+    visibility: 'shared',
+    write: 'own',
+    ...extra,
+  });
+
+  it('🔴 names the collections a version newly publishes to registries', () => {
+    const prev = withStorage({ notes: sharedColl(), pins: sharedColl({ registry: 'public' }) });
+    const curr = withStorage({
+      notes: sharedColl({ registry: 'public' }),
+      pins: sharedColl({ registry: 'public' }),
+    });
+    expect(computeManifestDiff(curr, prev).registryExports).toEqual({
+      exported: ['notes', 'pins'],
+      added: ['notes'],
+      removed: [],
+    });
+  });
+
+  it('names a collection that stops being published, and a first version that publishes', () => {
+    expect(
+      computeManifestDiff(
+        withStorage({ notes: sharedColl() }),
+        withStorage({
+          notes: sharedColl({ registry: 'public' }),
+        })
+      ).registryExports
+    ).toEqual({ exported: [], added: [], removed: ['notes'] });
+    expect(
+      computeManifestDiff(withStorage({ notes: sharedColl({ registry: 'public' }) }), null)
+        .registryExports
+    ).toEqual({ exported: ['notes'], added: ['notes'], removed: [] });
+  });
+
+  it('says nothing about registries when no version publishes', () => {
+    const diff = computeManifestDiff(withStorage({ notes: sharedColl() }), withStorage({}));
+    expect(Object.hasOwn(diff, 'registryExports')).toBe(false);
+  });
+
   it('treats null previous as a first-version diff', () => {
     const curr = { blockId: 'x', version: '0.1.0', name: 'X' };
     const result = computeManifestDiff(curr, null);

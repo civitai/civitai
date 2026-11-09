@@ -34,6 +34,8 @@ import { bulkAddBlockedImages } from '~/server/services/image.service';
 import { csamSendClaimCutoff } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
+import type { CsamContextText } from '~/server/services/csam-context-text';
+import { foldContextText } from '~/server/services/csam-context-text';
 
 type CsamReportImage = {
   id: number;
@@ -100,10 +102,11 @@ function foldImages(stored: unknown, added: { id: number }[]) {
 
 type GeneratedImagesEntry = NonNullable<CsamReportFormOutput['generatedImages']>[number];
 
-type FoldBlob = { url?: string; blobId?: string; status?: string };
+type FoldBlob = { url?: string; blobId?: string; status?: string; orchestratorJobId?: string };
 
 /** A preserved file is one blob however many filings name it; a legacy file is its URL. A copy that
- *  was preserved replaces one that could not be, but never a moderator's exclusion. */
+ *  was preserved replaces one that could not be, but never a moderator's exclusion. A kept blob
+ *  takes the producing job id a later filing knows and it lacks. */
 function foldBlobs(stored: unknown, added: unknown) {
   const byKey = new Map<unknown, FoldBlob>();
   for (const blob of [
@@ -116,7 +119,14 @@ function foldBlobs(stored: unknown, added: unknown) {
       !kept ||
       (kept.status !== 'preserved' && kept.status !== 'excluded' && blob?.status === 'preserved')
     )
-      byKey.set(key, blob);
+      byKey.set(
+        key,
+        kept?.orchestratorJobId && !blob.orchestratorJobId
+          ? { ...blob, orchestratorJobId: kept.orchestratorJobId }
+          : blob
+      );
+    else if (!kept.orchestratorJobId && blob?.orchestratorJobId)
+      byKey.set(key, { ...kept, orchestratorJobId: blob.orchestratorJobId });
   }
   return [...byKey.values()];
 }
@@ -151,6 +161,11 @@ function foldDetails(stored: unknown, added: CsamReportFormOutput | undefined) {
     const list = unionLists<unknown>(prior[key], next[key], (item) => item);
     if (list) folded[key] = list;
   }
+  const contextText = foldContextText(
+    prior.contextText,
+    (next as { contextText?: CsamContextText[] }).contextText
+  );
+  if (contextText) folded.contextText = contextText;
   const generatedImages = foldGeneratedImages(prior.generatedImages, next.generatedImages);
   if (generatedImages) folded.generatedImages = generatedImages;
   const nextEvidence = (next as Record<string, unknown>).generatorEvidence;
@@ -473,6 +488,7 @@ async function getTrainingDataZipStream({
     user: reportingUser ?? undefined,
     // Fetched server-side to build a report, not on a user's behalf.
     attribution: { caller: 'other', actor: 'internal' },
+    redCapable: true,
   });
   if (modelFile.status !== 'success') throw new Error('training data not found');
 

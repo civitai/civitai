@@ -1,3 +1,4 @@
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError, getTRPCErrorFromUnknown, type TRPCMiddlewareFunction } from '@trpc/server';
 import * as z from 'zod';
@@ -70,9 +71,16 @@ import {
 } from '~/server/services/buzz.service';
 import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz-read.projection';
 import {
+  recordAppBlockSubmitFailure,
   recordBlockBridgeRateLimitRefusal,
   recordConfirmedQuoteOvercharge,
+  recordSucceededWithoutMedia,
+  submitFailureAppBlockLabel,
 } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  appSubmitFailureFromError,
+  appSubmitFailureFromResult,
+} from '~/shared/constants/app-telemetry.constants';
 import {
   checkBlockCatalogRateLimit,
   checkBlockEstimateCellsRateLimit,
@@ -242,6 +250,7 @@ import {
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
+  classifySucceededWithoutMedia,
   buildBlockWorkflowStepsMetadata,
   WORKFLOW_METADATA_BLOCK_STEPS_KEY,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
@@ -428,6 +437,31 @@ const TERMINAL_BLOCK_WORKFLOW_STATUSES = new Set<BlockWorkflowStatus>([
   'expired',
   'canceled',
 ]);
+
+/**
+ * `civitai_app_block_submit_failures_total` for `submitWorkflow`. A middleware rather than a call
+ * per branch: the procedure has seven `kind` arms and two dozen refusal sites, and failures are
+ * both THROWN (limiters, scope, validation, orchestrator) and RETURNED as a failed snapshot (the
+ * per-call budget and workflow-ceiling refusals). Placed before `.input()`, so a body the schema
+ * refuses counts as `validation` too.
+ *
+ * The app id is known only once the token is verified inside the procedure, which writes it into
+ * the holder this middleware hands down; a failure before that is labelled `unknown`.
+ */
+export type BlockSubmitTelemetry = { appBlockIdLabel: string };
+const recordSubmitFailures = middleware(async ({ next }) => {
+  const blockSubmitTelemetry: BlockSubmitTelemetry = { appBlockIdLabel: 'unknown' };
+  const result = await next({ ctx: { blockSubmitTelemetry } });
+  try {
+    const reason = result.ok
+      ? appSubmitFailureFromResult(result.data)
+      : appSubmitFailureFromError(result.error);
+    if (reason) recordAppBlockSubmitFailure(blockSubmitTelemetry.appBlockIdLabel, reason);
+  } catch {
+    // instrument-only — never let classification change the submit's outcome
+  }
+  return result;
+});
 
 /**
  * H-2: every blocks router procedure gates on the Flipt flag. When the
@@ -2179,6 +2213,8 @@ export const blocksRouter = router({
         // NSFW-APP-RED-ONLY: mature (r/x) apps render in a model slot only on a
         // red-capable host. Threaded from the request host.
         redCapable: isRedCapableRequest(ctx),
+        // …and only for a viewer whose browsing level includes that rating (else omitted).
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
       });
     }),
 
@@ -2497,8 +2533,34 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Mod review queue is restricted to civitai team');
       }
-      return listPendingRequests({ limit: input.limit, cursor: input.cursor });
+      // The AI chip's data rides on the same gate as the report itself: a reviewer without
+      // the agentic surface gets no `agentReview` field at all (never a "not run" chip).
+      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
+      const includeAgentReview = await isAppBlocksAgenticReviewEnabled({ user: ctx.user }).catch(
+        () => false
+      );
+      return listPendingRequests({ limit: input.limit, cursor: input.cursor, includeAgentReview });
     }),
+
+  /**
+   * Mod queue: how many submissions are waiting for review across BOTH queues (on-site
+   * publish requests + listing requests) — the `/apps/review` Pending tab's count badge.
+   * Counts only, so the badge's poll fetches two numbers rather than two pages of rows.
+   */
+  countReviewQueue: moderatorProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    if (!ctx.user?.isModerator) {
+      throw throwAuthorizationError('Mod review queue is restricted to civitai team');
+    }
+    const [{ countPendingRequests }, { countPendingOffsiteRequests }] = await Promise.all([
+      import('~/server/services/blocks/publish-request.service'),
+      import('~/server/services/blocks/offsite-listing.service'),
+    ]);
+    const [onsite, offsite] = await Promise.all([
+      countPendingRequests(),
+      countPendingOffsiteRequests(),
+    ]);
+    return { onsite, offsite, total: onsite + offsite };
+  }),
 
   /**
    * Mod history: paginated list of publish requests that were approved,
@@ -2662,7 +2724,7 @@ export const blocksRouter = router({
       try {
         return await previewRequest({
           publishRequestId: input.publishRequestId,
-          modUserId: ctx.user.id,
+          actor: { kind: 'moderator', userId: ctx.user.id },
         });
       } catch (err) {
         throw new TRPCError({
@@ -2884,8 +2946,8 @@ export const blocksRouter = router({
     }),
 
   /**
-   * MOD REVIEW SANDBOX — MANUAL teardown of a single review preview (also the way
-   * to free a slot when the global concurrent-preview cap is hit). Deletes the
+   * MOD REVIEW SANDBOX — MANUAL teardown of a single review preview (also how a
+   * queued automatic preview is dropped from the queue). Deletes the
    * per-request review k8s resources (label-scoped) AND clears the DB preview
    * state so the request reverts to "no preview". Same mod-only flag gate as
    * previewRequest.
@@ -2914,8 +2976,9 @@ export const blocksRouter = router({
     }),
 
   /**
-   * MOD REVIEW SANDBOX — list the currently-active review previews (global across
-   * all mods) + the cap, for the "Active previews (N / cap)" panel. Same mod-only
+   * MOD REVIEW SANDBOX — list the currently-active (and queued) review previews
+   * (global across all mods) + the build cap and slots held, for the "Active
+   * previews" panel. Same mod-only
    * flag gate as previewRequest; no input.
    */
   listActivePreviews: moderatorProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
@@ -4441,7 +4504,9 @@ export const blocksRouter = router({
         !ctx.user?.isModerator,
         // NSFW-APP-RED-ONLY: a mature (r/x) app's detail resolves to NOT_FOUND
         // off a red-capable host (mirrors the run-page SSR 404).
-        isRedCapableRequest(ctx)
+        isRedCapableRequest(ctx),
+        // …and on one, an r/x app the viewer's browsing level excludes is NOT_FOUND too.
+        getRequestBrowsingLevel(ctx)
       );
       if (!detail) throw throwNotFoundError('App block not found');
       // LISTING-VISIBILITY GATE: a testers-only / private app the viewer may not see is
@@ -5012,15 +5077,23 @@ export const blocksRouter = router({
       // read-model write failure must NEVER fail the poll (its contract is to
       // return the snapshot). `updateBlockWorkflowStatus` is an indexed UPDATE
       // that no-ops (0 rows) when the row was never recorded (dev:live tokens).
+      //
+      // The write is TRANSITION-ONLY (1 only when the row's status changed), and
+      // that 1 is what makes the succeeded-without-media counter once-per-
+      // workflow: this branch runs on EVERY poll of a finished workflow.
       if (TERMINAL_BLOCK_WORKFLOW_STATUSES.has(snapshot.status)) {
         try {
           const { updateBlockWorkflowStatus } = await import(
             '~/server/services/blocks/block-workflows.service'
           );
-          await updateBlockWorkflowStatus({
+          const transitioned = await updateBlockWorkflowStatus({
             workflowId: input.workflowId,
             status: snapshot.status,
           });
+          if (transitioned === 1) {
+            const noMedia = classifySucceededWithoutMedia(workflow, snapshot);
+            if (noMedia) recordSucceededWithoutMedia(noMedia.stepType, noMedia.reason);
+          }
         } catch {
           /* best-effort: a read-model write failure never breaks the poll */
         }
@@ -6801,6 +6874,7 @@ export const blocksRouter = router({
    * reservation.**
    */
   submitWorkflow: publicProcedure
+    .use(recordSubmitFailures)
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
     // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(
@@ -6827,6 +6901,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
+      ctx.blockSubmitTelemetry.appBlockIdLabel = submitFailureAppBlockLabel(claims);
       // Above every `kind` branch: each returns early, and nothing is resolved or reserved yet.
       const rate = await checkBlockSubmitRateLimit(claims.blockInstanceId, claims.sub);
       if (!rate.allowed) {
@@ -9195,6 +9270,18 @@ export const blocksRouter = router({
       // the push webhook regardless of which token committed, so this naturally
       // re-enters the no-trust review path. replaceAllFiles is FALSE: we only
       // touch block.manifest.json, leaving the app's source untouched.
+      // Each edit is a new pending review (and possibly a review build): bound them per user.
+      const { takePushReviewSlot } = await import('~/server/services/blocks/submit-rate-limit');
+      const slot = await takePushReviewSlot(`user:${ctx.user!.id}`);
+      if (!slot.ok) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Too many manifest edits — try again in ${Math.max(
+            Math.ceil(slot.retryAfterSeconds / 60),
+            1
+          )} min`,
+        });
+      }
       const { commitFiles } = await import('~/server/services/blocks/forgejo.service');
       const manifestJson = Buffer.from(JSON.stringify(merged, null, 2) + '\n', 'utf8');
       const { sha } = await commitFiles({
@@ -14951,7 +15038,7 @@ function buildWorkflowTags(
     WORKFLOW_TAGS.IMAGE,
     workflowType,
     baseModel,
-    'app-block',
+    WORKFLOW_TAGS.APP_BLOCK,
     // Per-app subqueue tag — the SAME helper `blocks.queryAppWorkflows` filters
     // on, so the STAMP and the READ can never desync (see appBlockTag).
     appBlockTag(claims.appId),

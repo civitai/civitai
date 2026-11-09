@@ -36,14 +36,15 @@ const SCHEMA = `
   CREATE TABLE "Image" (
     id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
     "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
-    "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}', "scanJobs" jsonb
+    "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}', "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
   );
   CREATE TABLE "Post" (
     id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
     availability "Availability" DEFAULT 'Public', "collectionId" int
   );
   CREATE TABLE "Article" (
-    id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text
+    id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text,
+      "bannerId" int
   );
   CREATE TABLE "CollectionContributor" (
     "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
@@ -51,6 +52,11 @@ const SCHEMA = `
   CREATE TABLE "Bounty" (id int PRIMARY KEY, "userId" int, availability "Availability" DEFAULT 'Public');
   CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
   CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+  CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);
+  CREATE TABLE "CollectionItem" (
+    id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "addedById" int,
+    status text NOT NULL
+  );
 `;
 
 let replica: PGlite;
@@ -187,6 +193,26 @@ describe('an image a moderator article delete keeps for a CSAM review or block',
     const deleteArticle = `DELETE FROM "Article" WHERE id = 1;`;
     await Promise.all([replica.exec(deleteArticle), primary.exec(deleteArticle)]);
     expect([...(await getImageIdsVisibleToViewer({ ids: held, userId: VIEWER }))]).toEqual([]);
+
+    const cleanup = `TRUNCATE "Article";`;
+    await Promise.all([replica.exec(cleanup), primary.exec(cleanup)]);
+  });
+});
+
+describe('a postless article banner', () => {
+  it('is public once its article is, and owner-only while the article is a draft', async () => {
+    const seed = `
+      INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel", ingestion, "needsReview", "nsfwLevelLocked") VALUES
+        (301, ${OWNER}, NULL, 1, 'Scanned', NULL, false),
+        (302, ${OWNER}, NULL, 1, 'Scanned', NULL, false);
+      INSERT INTO "Article" (id, status, "publishedAt", ingestion, "bannerId") VALUES
+        (3, 'Published', now() - interval '1 day', 'Scanned', 301),
+        (4, 'Draft', NULL, 'Scanned', 302);`;
+    await Promise.all([replica.exec(seed), primary.exec(seed)]);
+
+    expect([...(await getImageIdsVisibleToViewer({ ids: [301, 302], userId: VIEWER }))]).toEqual([
+      301,
+    ]);
 
     const cleanup = `TRUNCATE "Article";`;
     await Promise.all([replica.exec(cleanup), primary.exec(cleanup)]);

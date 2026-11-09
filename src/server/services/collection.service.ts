@@ -19,12 +19,16 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  bustContestCollectionItemsCache,
+  bustContestCollectionItemsCacheForItems,
+} from '~/server/services/contest-collection-items.cache';
 import { CONTEST_BANNED_MESSAGE, isContestBanned } from '~/server/services/contest-ban';
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { getDbWithoutLag, kyselyMatching, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordChallengeEntrySubmitted } from '~/server/prom/challenge.metrics';
 import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
@@ -47,16 +51,18 @@ import type {
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
   SetCollectionAiReviewInput,
+  SetCollectionArchivedInput,
 } from '~/server/schema/collection.schema';
 import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { collectionsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { collectionWithoutImageSelect } from '~/server/selectors/collection.selector';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
-  collectionSelect,
-  collectionWithoutImageSelect,
-} from '~/server/selectors/collection.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+  readCollectionByIdViaKysely,
+  readCollectionByIdViaPrisma,
+} from '~/server/services/hot-reads-10.reads';
 import type { ArticleGetAll } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getModeratedTags } from '~/server/services/system-cache';
@@ -153,6 +159,9 @@ export type CollectionContributorPermissionFlags = {
   isContributor: boolean;
   isCollaborator: boolean;
   collaborationDisabled: boolean;
+  // Archived collections stay readable but accept no new entries — write/writeReview are
+  // forced false for everyone, the owner and moderators included.
+  archived: boolean;
   isOwner: boolean;
   followPermissions: CollectionContributorPermission[];
   publicCollection: boolean;
@@ -251,6 +260,7 @@ export async function getUserCollectionPermissionsByIds({
     mode: CollectionMode | null;
     contributorPermissions: CollectionContributorPermission[] | null;
     collaborationDisabledAt: Date | null;
+    archivedAt: Date | null;
     hasAcceptedSeat: boolean;
   };
 
@@ -263,6 +273,7 @@ export async function getUserCollectionPermissionsByIds({
       c.type::"CollectionType" as "type",
       c.mode::"CollectionMode" as "mode",
       c."collaborationDisabledAt",
+      c."archivedAt",
       ${
         userId
           ? Prisma.sql`cc.permissions as "contributorPermissions", ci.id IS NOT NULL as "hasAcceptedSeat"`
@@ -300,6 +311,7 @@ export async function getUserCollectionPermissionsByIds({
       isContributor: false,
       isCollaborator: false,
       collaborationDisabled: !!collection.collaborationDisabledAt,
+      archived: !!collection.archivedAt,
       isOwner: false,
       publicCollection: false,
       followPermissions: [],
@@ -405,6 +417,17 @@ export async function getUserCollectionPermissionsByIds({
     return permissions;
   });
 
+  // Archive is an absolute write block, applied after every per-user grant above so it also
+  // closes the owner and moderator branches — an archived collection accepts no new entries
+  // from anyone until it's unarchived. Read/manage are untouched, so the owner can still view
+  // it and unarchive it.
+  for (const permission of results) {
+    if (permission.archived) {
+      permission.write = false;
+      permission.writeReview = false;
+    }
+  }
+
   return results;
 }
 
@@ -473,6 +496,7 @@ function createEmptyPermissions(collectionId: number): CollectionContributorPerm
     isContributor: false,
     isCollaborator: false,
     collaborationDisabled: false,
+    archived: false,
     isOwner: false,
     publicCollection: false,
     followPermissions: [],
@@ -491,6 +515,7 @@ type CollectionForPermission = {
   imageId?: number;
   type?: CollectionType;
   mode?: CollectionMode | null;
+  archivedAt?: Date | null;
 };
 
 export const getUserCollectionsWithPermissions = async <
@@ -505,14 +530,21 @@ export const getUserCollectionsWithPermissions = async <
     permission,
     contributingOnly = true,
     includeActiveContests = false,
+    excludeArchived = false,
     contestModelId,
   } = input;
   let { permissions = [] } = input;
   // By default, owned collections will be always returned
   const AND: Prisma.Sql[] = [];
   const SELECT: Prisma.Sql = Prisma.raw(
-    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type", c."mode", c."createdAt", c."updatedAt"`
+    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type", c."mode", c."archivedAt", c."createdAt", c."updatedAt"`
   );
+
+  // The "Save to collection" picker passes this to drop archived collections from every branch;
+  // management surfaces (MyCollections) leave it off so the owner can still see and unarchive them.
+  const excludeArchivedFilter = excludeArchived
+    ? Prisma.sql`AND c."archivedAt" IS NULL`
+    : Prisma.empty;
 
   if (input.type) {
     AND.push(Prisma.sql`(c."type" = ${input.type}::"CollectionType" OR c."type" IS NULL)`);
@@ -533,6 +565,7 @@ export const getUserCollectionsWithPermissions = async <
       FROM "Collection" c
       WHERE "userId" = ${userId}
         ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+        ${excludeArchivedFilter}
 
     )`,
   ];
@@ -547,6 +580,7 @@ export const getUserCollectionsWithPermissions = async <
       FROM "Collection" c
       WHERE "write" = ${CollectionWriteConfiguration.Public}::"CollectionWriteConfiguration"
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+          ${excludeArchivedFilter}
     `);
   }
 
@@ -564,6 +598,7 @@ export const getUserCollectionsWithPermissions = async <
       WHERE "read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"
         ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
         ${excludeContests}
+        ${excludeArchivedFilter}
 
     `);
   }
@@ -582,6 +617,7 @@ export const getUserCollectionsWithPermissions = async <
           AND cc."collectionId" IS NOT NULL
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
           ${excludeContests}
+          ${excludeArchivedFilter}
     )`);
   }
 
@@ -611,6 +647,7 @@ export const getUserCollectionsWithPermissions = async <
             WHERE m."id" = ${contestModelId} AND m."userId" = ${userId}
           )
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+          ${excludeArchivedFilter}
         LIMIT 100
     )`);
   }
@@ -701,13 +738,11 @@ export const getCollectionById = async ({
 }) => {
   const { id } = input;
   const db = await getDbWithoutLag('collection', id);
-  const collection = await db.collection.findUnique({
-    where: { id },
-    select: {
-      ...collectionSelect,
-      user: { select: userWithCosmeticsSelect },
-    },
-  });
+  // `kysely-hot-reads-10` picks the path once per call: the Prisma read, or its one-statement Kysely
+  // twin on the matching pool (the primary when the lag check chose the primary, else the replica).
+  const collection = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_10))
+    ? await readCollectionByIdViaKysely(kyselyMatching(db), id)
+    : await readCollectionByIdViaPrisma(db, id);
   if (!collection) throw throwNotFoundError(`No collection with id ${id}`);
 
   const coverServable =
@@ -822,6 +857,38 @@ export async function getPendingCollectionReviewCounts({
 
   return { total, byCollection };
 }
+
+// Archiving keeps the collection readable but drops it out of the "Save to collection" picker
+// and blocks new entries; unarchiving clears the timestamp. Scoped to the owner (moderators
+// exempt) so a direct call can't archive someone else's collection even though the router
+// already gates on ownership. Bookmark collections (a user's Liked/Favorites) are refused: the
+// UI offers no archive toggle for them, so archiving one via a direct call would strand it with
+// no in-product way back.
+export const setCollectionArchived = async ({
+  id,
+  archived,
+  userId,
+  isModerator,
+}: SetCollectionArchivedInput & { userId: number; isModerator?: boolean }) => {
+  const collection = await dbRead.collection.findUnique({
+    where: { id },
+    select: { id: true, userId: true, mode: true },
+  });
+  if (!collection || (!isModerator && collection.userId !== userId))
+    throw throwNotFoundError(`No collection with id ${id}`);
+  if (collection.mode === CollectionMode.Bookmark)
+    throw throwBadRequestError('Bookmark collections cannot be archived.');
+
+  await dbWrite.collection.update({
+    where: { id },
+    data: { archivedAt: archived ? new Date() : null },
+  });
+
+  await collectionsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await preventReplicationLag('collection', id);
+
+  return { id, archived };
+};
 
 const inputToCollectionType = {
   modelId: CollectionType.Model,
@@ -1261,6 +1328,7 @@ export const saveItemInCollections = async ({
   }
 
   await dbWrite.$transaction(transactions);
+  if (itemKey === 'imageId') await bustContestCollectionItemsCache([input.imageId]);
 
   if (followCollectionIds.length > 0) {
     await Promise.all(
@@ -1804,6 +1872,7 @@ export const upsertCollection = async ({
   });
 
   await userCollectionCountCache.refresh(userId);
+  await bustContestCollectionItemsCache([imageId]);
 
   if (shouldScanCollection(null, collection))
     scanEntityInBackground({ entityType: 'Collection', entityId: collection.id });
@@ -2402,7 +2471,8 @@ export const getUserCollectionItemsByItem = async ({
 }: {
   input: GetUserCollectionItemsByItemSchema & { userId: number; isModerator?: boolean };
 }) => {
-  const { userId, isModerator, modelId, imageId, articleId, postId, model3dId } = input;
+  const { userId, isModerator, modelId, imageId, articleId, postId, model3dId, excludeArchived } =
+    input;
 
   const userCollections = await getUserCollectionsWithPermissions({
     input: {
@@ -2412,6 +2482,7 @@ export const getUserCollectionItemsByItem = async ({
         CollectionContributorPermission.MANAGE,
       ],
       userId,
+      excludeArchived,
     },
   });
 
@@ -2816,6 +2887,7 @@ export const updateCollectionItemsStatus = async ({
       "rejectionDetail" = ${persistedDetail}
       WHERE "collectionId" = ${collectionId} AND "id" IN (${Prisma.join(collectionItemIds)})
     `;
+    await bustContestCollectionItemsCacheForItems(collectionItemIds);
   }
 
   if (priorItems.length > 0) {
@@ -3633,6 +3705,7 @@ export const bulkSaveItems = async ({
 
   const { count } = await dbWrite.collectionItem.createMany({ data });
   const savedImageIds = data.map((d) => d.imageId).filter(isDefined);
+  await bustContestCollectionItemsCache(savedImageIds);
 
   // Entry fee (user challenges): charge AFTER the entries are written so a failed save never
   // leaves a paid-but-missing entry. Charges are idempotent per (challenge, image) and NEVER
@@ -3659,6 +3732,7 @@ export const bulkSaveItems = async ({
             imageIds,
           });
         });
+      await bustContestCollectionItemsCache(imageIds);
     };
 
     let chargeResult;
@@ -3934,6 +4008,7 @@ export const removeCollectionItem = async ({
     if (deletableIds.length) {
       await dbWrite.collectionItem.deleteMany({ where: { id: { in: deletableIds } } });
     }
+    if (tableKey === 'Image') await bustContestCollectionItemsCache([itemId]);
   }
 
   return {
@@ -3990,6 +4065,7 @@ export const setItemScore = async ({
     where: { id: collectionItemId },
     select: {
       id: true,
+      imageId: true,
       collection: {
         select: { id: true, mode: true },
       },
@@ -4005,6 +4081,7 @@ export const setItemScore = async ({
     create: { userId, collectionItemId: collectionItem.id, score },
     update: { score },
   });
+  await bustContestCollectionItemsCache([collectionItem.imageId]);
 
   return itemScore;
 };
@@ -4147,6 +4224,7 @@ export async function removeEntityFromAllCollections(
   await dbWrite.collectionItem.deleteMany({
     where: whereClause,
   });
+  if (entityType === 'image') await bustContestCollectionItemsCache([entityId]);
 }
 
 const collectionItemEntityColumn = {
@@ -4211,6 +4289,7 @@ export async function setCollectionItemsTag({
     where: { collectionId, id: { in: collectionItemIds }, ...changeable },
     data: { tagId },
   });
+  await bustContestCollectionItemsCache(found.map((item) => item.imageId));
 
   // The write has committed; a failed bust must not make the audit row record it as an error.
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId).catch((error) =>

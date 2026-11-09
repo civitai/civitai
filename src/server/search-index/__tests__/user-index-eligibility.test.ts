@@ -54,7 +54,7 @@ const { buildUsersIndexWhere, prepareUsersBatches, pullUsersData } = await impor
 const { CLEANUP_INDEXES } = await import('~/server/meilisearch/cleanup');
 const { Prisma } = await import('@prisma/client');
 
-const ELIGIBILITY = 'u.id != -1 AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL';
+const ELIGIBILITY = 'u.id != -1 AND u.id != -2 AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL';
 
 /** Drives the real query builders and hands back EVERY statement they issued, in order. */
 async function captureQueries(
@@ -163,5 +163,14 @@ describe('user search index eligibility', () => {
       expect(modelsSql).toContain('m.status =');
       expect(modelsSql).not.toContain('bannedAt');
     });
+  });
+});
+
+describe('the feedback capture account', () => {
+  it('is never indexed', async () => {
+    const { FEEDBACK_CAPTURE_OWNER_ID } = await import('@civitai/shared/feedback-capture');
+    expect(norm(userSearchIndexEligibilitySql().sql)).toContain(
+      `u.id != ${FEEDBACK_CAPTURE_OWNER_ID}`
+    );
   });
 });

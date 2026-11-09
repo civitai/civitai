@@ -18,6 +18,7 @@ import { hasV3SurfaceTwinSql, v3WriteSurfaceSql } from '~/server/services/commen
 
 import {
   accountHoldSql,
+  captureImageKeptSql,
   assertAccountNotUnderLegalHold,
   guardedAccountScrubSql,
   holdMarkerViewExists,
@@ -153,6 +154,7 @@ import {
 import { createNotification } from '~/server/services/notification.service';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { chunkIds } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -449,7 +451,7 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
 export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
- * Mod-driven: clear public profile fields (location/bio/message) on UserProfile.
+ * Mod-driven: clear public profile fields (location/bio/message/showcaseSections) on UserProfile.
  * No-op if no UserProfile row exists yet.
  *
  * Clearing bio/message also clears its SFW (civitai.com) override — otherwise the
@@ -457,10 +459,10 @@ export { isUsernamePermitted } from '~/server/services/username-permitted';
  */
 export async function clearUserProfileFields({
   userId,
-  fields = ['location', 'bio', 'message'],
+  fields = ['location', 'bio', 'message', 'showcaseSections'],
 }: {
   userId: number;
-  fields?: Array<'location' | 'bio' | 'message'>;
+  fields?: Array<'location' | 'bio' | 'message' | 'showcaseSections'>;
 }) {
   if (fields.length === 0) return { updated: false };
   const data: Prisma.UserProfileUpdateInput = {};
@@ -474,6 +476,7 @@ export async function clearUserProfileFields({
     data.sfwMessage = null;
     data.sfwMessageAddedAt = null;
   }
+  if (fields.includes('showcaseSections')) data.showcaseSections = [];
   const result = await dbWrite.userProfile.updateMany({ where: { userId }, data });
   return { updated: result.count > 0 };
 }
@@ -1276,6 +1279,17 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
     WHERE id = ${id}
   `);
   userUpdateCounter?.inc({ location: 'user.service:setLeaderboardEligibility' });
+}
+
+// Sets or clears the one bit in place, so a concurrent write to another flag is never lost.
+export async function setEventPointsExclusion({ id, setTo }: { id: number; setTo: boolean }) {
+  const bit = UserFlag.ExcludeFromEventPoints;
+  await dbWrite.$executeRaw`
+    UPDATE "User"
+    SET flags = CASE WHEN ${setTo} THEN flags | ${bit}::int ELSE flags & ~${bit}::int END
+    WHERE id = ${id}
+  `;
+  userUpdateCounter?.inc({ location: 'user.service:setEventPointsExclusion' });
   void syncOwnerEventHats(id);
   void syncEventRosterMember(id);
 }
@@ -1872,11 +1886,13 @@ export const removeAllContent = async ({
       DELETE FROM "CommentV2" c2
       WHERE c2."userId" = ${id} AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
     await dbWrite.$executeRaw`DELETE FROM "Comment" WHERE "userId" = ${id}`;
-    // CommentV3 first, as every write on these comments locks it, before the cascade reaches CommentV2.
+    // CommentV3 first, as every write on a surface that writes it locks it, before the cascade
+    // reaches CommentV2.
     await dbWrite.$executeRaw`
-      DELETE FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" IN (${owned(
-        'Article'
-      )})`;
+      DELETE FROM "CommentTopic"
+      WHERE ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))}
+        AND (("entityType" = 'article' AND "entityId" IN (${owned('Article')}))
+          OR ("entityType" = 'post' AND "entityId" IN (${owned('Post')})))`;
     await dbWrite.$executeRaw`DELETE FROM "Article" WHERE id IN (${owned('Article')})`;
     await dbWrite.$executeRaw`DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
     const formerOwnerHeld = heldModelIdsSql(
@@ -1920,9 +1936,11 @@ export const removeAllContent = async ({
     await deleteImages(
       images.map((i) => i.id),
       true,
-      { onlyWhere: unlessHeld }
+      { onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}` }
     );
-    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id IN (${owned('Image')})`;
+    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id IN (
+      ${owned('Image')} AND NOT ${captureImageKeptSql('o')}
+    )`;
     await refreshProfilePicturesForUsers([id]);
 
     // A hold that landed mid-wipe stopped the deletes above without an error.

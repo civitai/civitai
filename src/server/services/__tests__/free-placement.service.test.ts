@@ -133,6 +133,21 @@ describe('createFreePlacement', () => {
     // query is `expiresAt <= now()`, which NULL never satisfies.
     expect(written.expiresAt).toBeInstanceOf(Date);
     expect(written.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(written).not.toHaveProperty('track');
+  });
+
+  it('stores a moving sticker’s track beside its data', async () => {
+    const track = { v: 1, ms: 100, x: [[0, 0.2]], y: [[0, 0.5]], s: [[0, 0.1]], r: [[0, 0]] };
+    await createFreePlacement({
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: TARGET,
+      placerId: PLACER,
+      data: { cosmeticId: 5 },
+      track,
+    });
+
+    expect(placementCreate.mock.calls[0][0].data.track).toEqual(track);
   });
 
   // The owner is taken from the space this function resolved, from the target it
@@ -590,11 +605,18 @@ describe('the advisory locks have exactly one call site', () => {
   // transaction, for a decision's final update. The only lock in either transaction.
   // text-scan/actions/model-rules-hold takes one per model (two-arg hashtext('model-rules-hold:Model')
   // form) around the open-hold check and the hold write. The only lock in its transaction.
+  // access-token takes one per resource (classed two-arg form, 0x41544b) around the active-token
+  // count-then-insert, article saves' shared-text reads and every go-live revoke. Always before the
+  // Article row lock; the ingestion recompute takes article.service.ts's bare id lock first, then it.
   // apps/storage-migration-run takes one per app block (0x41534d01, hashtext of the id) around the
   // approve gate's open-run check and the plan reservation. The only lock in its transaction.
+  // blocks/review-autodeploy takes one platform-wide (0x72657631, 0) around the review build-slot
+  // count and claim. The only lock in its transaction.
   const ALLOWED = [
+    'services/access-token.service.ts',
     'services/apps/storage-migration-run.service.ts',
     'services/article.service.ts',
+    'services/blocks/review-autodeploy.service.ts',
     'services/creator-announcement.service.ts',
     'services/creator-gallery-hidden-users.service.ts',
     'services/creator-mystery-pack.service.ts',
@@ -602,6 +624,7 @@ describe('the advisory locks have exactly one call site', () => {
     'services/free-placement.service.ts',
     'services/game-frame-report.service.ts',
     'services/item-holder-lock.ts',
+    'services/model-version-gift.service.ts',
     'services/platform-feedback.service.ts',
     'services/scan-label-flag.service.ts',
     'services/storyline-placement.service.ts',
