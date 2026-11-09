@@ -4,6 +4,7 @@ import { studioPublishUrl } from '~/components/Training/studio-publish-url';
 import {
   PUBLISH_PATH,
   publishSearchParams,
+  publishShareChoice,
 } from '../../../apps/training-studio/src/lib/publish-url-core';
 
 import '~/__tests__/mocks/db.mock';
@@ -38,6 +39,28 @@ describe('the Training Studio publish link', () => {
       ownRights: true,
       shareDataset: true,
     });
-    expect(shareFrom(studioPublishUrl(req))).toEqual({ ownRights: false, shareDataset: false });
+    expect(shareFrom(studioPublishUrl({ ...req, ownRights: false, shareDataset: false }))).toEqual({
+      ownRights: false,
+      shareDataset: false,
+    });
+  });
+
+  it('reopening Publish with the boxes untouched carries no choice, so a stored share stays', () => {
+    const req = { workflowId: 'wf-1', epoch: 3 };
+    const untouched = publishShareChoice(false, false, false);
+    expect(shareFrom(studioLink({ ...req, ...untouched }))).toBeUndefined();
+    expect(shareFrom(studioPublishUrl({ ...req, ...untouched }))).toBeUndefined();
+  });
+
+  it('a touched box carries the choice, an untick included', () => {
+    const req = { workflowId: 'wf-1', epoch: 3 };
+    expect(shareFrom(studioLink({ ...req, ...publishShareChoice(true, false, false) }))).toEqual({
+      ownRights: false,
+      shareDataset: false,
+    });
+    expect(shareFrom(studioLink({ ...req, ...publishShareChoice(true, true, true) }))).toEqual({
+      ownRights: true,
+      shareDataset: true,
+    });
   });
 });

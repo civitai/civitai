@@ -13,6 +13,7 @@
     publishUrl,
   } from '$lib/host';
   import { loraBlobAir } from '$lib/train-core';
+  import { publishShareChoice } from '$lib/publish-url-core';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { locationHref } from '$lib/actions/locationHref';
   import { onSignal } from '$lib/signals';
@@ -552,6 +553,7 @@
   // The dataset-sharing choice the publish entry carries (the in-app trainer asks the same two).
   let ownRights = $state(false);
   let shareDataset = $state(false);
+  let shareTouched = $state(false);
   const publishLink = $derived.by(() => {
     const toUrl = publishUrl();
     if (!toUrl || !publishEpoch) return null;
@@ -559,15 +561,19 @@
       toUrl({
         workflowId: d.workflowId,
         epoch: publishEpoch.number,
-        ownRights,
-        shareDataset: ownRights && shareDataset,
+        ...publishShareChoice(shareTouched, ownRights, shareDataset),
       })
     );
   });
   const dataPolicyUrl = $derived(hostConfig().dataPolicyUrl);
   function setOwnRights(next: boolean) {
+    shareTouched = true;
     ownRights = next;
     if (!next) shareDataset = false;
+  }
+  function setShareDataset(next: boolean) {
+    shareTouched = true;
+    shareDataset = next;
   }
 
   // Independent of `publishTarget` so the link outlives the checkpoints' blob retention.
@@ -1336,7 +1342,7 @@
               <label
                 class="inline-flex items-center gap-2 text-sm {ownRights ? 'text-dark-0' : 'text-dark-2'}"
               >
-                <Checkbox bind:checked={shareDataset} disabled={!ownRights} />
+                <Checkbox bind:checked={() => shareDataset, setShareDataset} disabled={!ownRights} />
                 Share my dataset with the published model
               </label>
               <p class="m-0 text-xs text-dark-2">

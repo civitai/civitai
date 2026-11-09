@@ -11,10 +11,10 @@ export function studioPublishUrl({
   ownRights?: boolean;
   shareDataset?: boolean;
 }): string {
-  return `/models/train/from-orchestrator?${new URLSearchParams({
-    workflowId,
-    epoch: String(epoch),
-    ownRights: ownRights ? '1' : '0',
-    shareDataset: ownRights && shareDataset ? '1' : '0',
-  })}`;
+  const params = new URLSearchParams({ workflowId, epoch: String(epoch) });
+  if (ownRights !== undefined || shareDataset !== undefined) {
+    params.set('ownRights', ownRights ? '1' : '0');
+    params.set('shareDataset', ownRights && shareDataset ? '1' : '0');
+  }
+  return `/models/train/from-orchestrator?${params}`;
 }
