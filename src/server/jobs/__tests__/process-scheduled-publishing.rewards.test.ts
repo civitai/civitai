@@ -371,6 +371,20 @@ describe('processScheduledPublishing :: pending resource reviews', () => {
       { id: 12, modelOwnerId: 8 },
     ]);
   });
+
+  // The flipped posts are live once the transaction commits and are never flipped again.
+  it('releases before the unguarded engagements, so one that throws cannot skip it', async () => {
+    stubReads({
+      scheduled: [{ id: 1, userId: 10 }],
+      versions: [{ id: 100, userId: 10, extras: { modelId: 11 } }],
+    });
+    mockProcessEngagement.mockRejectedValueOnce(new Error('event engine down'));
+
+    await expect(runJob()).rejects.toThrow('event engine down');
+
+    expect(mockReleaseFlipped).toHaveBeenCalledExactlyOnceWith([1]);
+    expect(mockReleaseReviews).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('processScheduledPublishing :: search index reindex', () => {

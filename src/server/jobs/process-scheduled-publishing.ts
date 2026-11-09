@@ -425,6 +425,20 @@ export const processScheduledPublishing = createJob(
       );
     }
 
+    // Before the engagements, which are unguarded, and never throws. The flipped posts by id, then the
+    // sweep for every other unreleased review of a live post (`publishedPosts` is the reward window).
+    await releasePendingReviewsForPosts(flippedPosts.map((p) => p.id))
+      .then(async (flipped) => [...flipped, ...(await releaseUnreleasedReviewsOfLivePosts())])
+      .then((reviews) => refreshHasReceivedReviews(reviews))
+      .catch((error) =>
+        logToAxiom({
+          name: 'process-scheduled-publishing',
+          type: 'error',
+          message: 'Failed to release pending resource reviews',
+          error: (error as Error)?.message,
+        }).catch(() => undefined)
+      );
+
     // Process event engagements
     for (const model of scheduledModels) {
       if (!publishedModelIds.has(model.id)) continue;
@@ -452,20 +466,6 @@ export const processScheduledPublishing = createJob(
     // Before the unguarded engagements: a re-published chapter 1 gets its story spark back.
     if (publishedPosts.length)
       void onStorySparkPostsRestored({ postIds: publishedPosts.map((p) => p.id) });
-
-    // The posts this run flipped by id: one put back under its old date can be older than the
-    // sweep's week. The rest by state, not by `publishedPosts`, which is the reward window.
-    await releasePendingReviewsForPosts(flippedPosts.map((p) => p.id))
-      .then(async (flipped) => [...flipped, ...(await releaseUnreleasedReviewsOfLivePosts())])
-      .then((reviews) => refreshHasReceivedReviews(reviews))
-      .catch((error) =>
-        logToAxiom({
-          name: 'process-scheduled-publishing',
-          type: 'error',
-          message: 'Failed to release pending resource reviews',
-          error: (error as Error)?.message,
-        }).catch(() => undefined)
-      );
 
     for (const post of publishedPosts) {
       await eventEngine.processEngagement({

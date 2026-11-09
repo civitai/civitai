@@ -8,10 +8,11 @@
 -- `CREATE INDEX CONCURRENTLY` refuses to run in a transaction block. Every statement is idempotent, so
 -- re-running the file is safe.
 --
--- The CONCURRENTLY index build runs with no lock timeout (`SET lock_timeout = 0`). If it fails or is
--- interrupted it leaves an INVALID index behind, which `IF NOT EXISTS` then skips. Check with
+-- The CONCURRENTLY index builds run with no lock timeout (`SET lock_timeout = 0`). One that fails or
+-- is interrupted leaves an INVALID index behind, which `IF NOT EXISTS` then skips. Check each with
 --   SELECT indisvalid FROM pg_index WHERE indexrelid = '"ResourceReview_postId_idx"'::regclass;
--- and if it is false, run `DROP INDEX CONCURRENTLY "ResourceReview_postId_idx";`, then the CREATE again.
+--   SELECT indisvalid FROM pg_index WHERE indexrelid = '"ResourceReview_unreleased_postId_idx"'::regclass;
+-- and if one is false, `DROP INDEX CONCURRENTLY` it, then run its CREATE again.
 
 SET lock_timeout = '3s';
 
@@ -37,6 +38,11 @@ SET lock_timeout = 0;
 -- Serves the post-delete SET NULL and the release lookup by post.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "ResourceReview_postId_idx" ON "ResourceReview" ("postId");
 
--- Without fresh stats on the new column the per-minute review release sweep seq-scans the table until
--- autovacuum analyzes it. Run after the index; safe to repeat.
+-- The release sweep's set: reviews linked to a post and not yet announced. Small, whatever the
+-- table's size. Not in the Prisma schema, which cannot express a partial index.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "ResourceReview_unreleased_postId_idx" ON "ResourceReview" ("postId")
+  WHERE "postId" IS NOT NULL AND "releasedAt" IS NULL;
+
+-- Without fresh stats on the new columns the per-minute review release sweep seq-scans the table until
+-- autovacuum analyzes them. Run after the indexes; safe to repeat.
 ANALYZE "ResourceReview" ("postId", "releasedAt");

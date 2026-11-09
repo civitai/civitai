@@ -357,7 +357,7 @@ describe('against Postgres', () => {
     expect(createNotification).not.toHaveBeenCalled();
   });
 
-  it('the sweep releases reviews of posts that went live by the clock, once, and only recent ones', async () => {
+  it('the sweep releases every unreleased review of a live post, whatever its date, once', async () => {
     const LONG_LIVE = 4;
     await pg.exec(`INSERT INTO "Post" VALUES (${LONG_LIVE}, now() - interval '30 days')`);
     await insertReviews([
@@ -367,17 +367,16 @@ describe('against Postgres', () => {
       [4, 104, SCHEDULED],
       [5, 105, null],
     ]);
-    // Review 2 was released already; review 3's post went live long before the sweep's window.
+    // Review 2 was released already; review 3's post is back up under a date a month old.
     await pg.exec(
       `UPDATE "ResourceReview" SET "releasedAt" = now() - interval '1 hour' WHERE id = 2`
     );
 
     const released = await releaseUnreleasedReviewsOfLivePosts();
 
-    expect(released).toEqual([expect.objectContaining({ id: 1, modelOwnerId: MODEL_OWNER })]);
-    expect(createNotification).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ key: 'new-review:21:101' })
-    );
+    expect(released.map((review) => review.id).sort()).toEqual([1, 3]);
+    expect(released[0]).toEqual(expect.objectContaining({ modelOwnerId: MODEL_OWNER }));
+    expect(createNotification).toHaveBeenCalledTimes(2);
     expect(await releaseUnreleasedReviewsOfLivePosts()).toEqual([]);
   });
 
@@ -389,6 +388,24 @@ describe('against Postgres', () => {
 
     expect(released).toEqual([expect.objectContaining({ id: 1 })]);
     expect(createNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a review whose notification failed unmarked, so the next sweep tries it again', async () => {
+    await insertReviews([
+      [1, 101, LIVE],
+      [2, 102, LIVE],
+    ]);
+    dbMock.dbRead.modelVersion.findFirst.mockRejectedValueOnce(new Error('replica down'));
+
+    const first = await releaseUnreleasedReviewsOfLivePosts();
+    const second = await releaseUnreleasedReviewsOfLivePosts();
+
+    expect(first.map((review) => review.id)).toEqual([2]);
+    expect(second.map((review) => review.id)).toEqual([1]);
+    const { rows } = await pg.query<{ id: number }>(
+      `SELECT id FROM "ResourceReview" WHERE "releasedAt" IS NULL`
+    );
+    expect(rows).toEqual([]);
   });
 
   it('announces a review again when its post is unpublished and published again', async () => {

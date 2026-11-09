@@ -1960,6 +1960,9 @@ model ResourceReview {
   @@index([modelVersionId], type: Hash)
   @@index([userId], type: Hash)
   @@index([postId])
+  // NOTE: the partial index "ResourceReview_unreleased_postId_idx" (postId WHERE postId IS NOT NULL
+  // AND releasedAt IS NULL) serves the review release sweep. It lives only in migration
+  // 20261231130000_resource_review_post_id: Prisma does not support partial indexes.
 }
 
 model ResourceReviewReaction {
