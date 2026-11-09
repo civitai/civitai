@@ -10,10 +10,7 @@ import type {
   Flux1ProUltraImageGenInput,
 } from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
-import {
-  getClosestFluxUltraAspectRatioLabel,
-  samplersToComfySamplers,
-} from '~/shared/constants/generation.constants';
+import { getClosestFluxUltraAspectRatioLabel } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 import { defineHandler } from '../handlers/handler-factory';
@@ -74,7 +71,6 @@ export const createFluxInput = defineHandler<
 
   if (!data.model) throw new Error('Model is required for Flux imageGen workflows');
 
-  const comfy = samplersToComfySamplers['undefined'];
   const input: ComfyFlux1CreateImageGenInput = {
     engine: 'comfy',
     ecosystem: 'flux1',
@@ -85,8 +81,8 @@ export const createFluxInput = defineHandler<
     height: data.aspectRatio.height,
     steps,
     cfgScale,
-    sampler: comfy.sampler,
-    scheduler: comfy.scheduler,
+    sampler: 'euler_ancestral',
+    scheduler: 'normal',
     seed,
     quantity,
     outputFormat: data.outputFormat,
