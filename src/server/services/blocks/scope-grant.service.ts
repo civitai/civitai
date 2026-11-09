@@ -36,6 +36,10 @@
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  CONSENT_EXEMPT_SCOPES,
+  isConsentExemptScope,
+} from '~/shared/constants/block-scope.constants';
 import { newAppUserScopeGrantId } from '~/server/utils/app-block-ids';
 
 /**
@@ -1378,137 +1382,6 @@ function rethrowMissingRevokedScopesColumn(err: unknown, site: string): unknown 
   });
 }
 
-/**
- * Intersects the scopes the token would otherwise carry with the user's
- * granted scopes, returning the granted subset to sign + the withheld scopes
- * the host must re-consent for.
- *
- * The per-user storage scopes (`apps:storage:read` / `apps:storage:write`, the per-user
- * KV, and `apps:storage`, the document store's base scope) are intentionally NOT
- * consent-gated here — NOT the whole `apps:storage:*` family, since `apps:storage:publish`
- * is gated (see its entry below). The per-user KV scopes are each
- * an ambient-but-otherwise-gated scope with its own issuance-time / per-op check
- * (resolveStorageContext). Subjecting them to per-user consent would make the
- * publisher re-consent to their own block's storage on every version bump for
- * no security gain. The remaining user-resource scopes (user/ai/buzz/
- * social, models:write) flow through the consent gate.
- *
- * `apps:storage:shared:read` / `apps:storage:shared:write` (the SHARED, app-
- * global / cross-user datastore) are ALSO exempt — and, unlike the per-user
- * scopes, they are NOT publisher-only. Their governance is NOT a per-scope
- * consent prompt but the SERVER-SIDE controls in `resolveSharedContext`
- * (apps-shared.router.ts): a fail-closed min-trust gate (not-anon, not-banned,
- * not-muted, onboarding-complete, email-verified, account age ≥ 7d) plus
- * content moderation and one-vote / per-user-row / rate limits, all enforced at
- * every read/write REGARDLESS of the token scope. `shared:read` is reading
- * PUBLIC community data (anon-safe — the router allows anon reads by design);
- * `shared:write` is trust-gated PUBLIC posting/voting (the resolver rejects anon
- * and any ineligible caller before touching data, whether or not the scope is
- * present). A per-scope consent prompt would add nothing that the trust gate +
- * moderation don't already enforce — so, mirroring the per-user storage scopes,
- * these sign without a grant. (Pre-GA consideration, NOT built here: an EXPLICIT
- * shared-WRITE consent prompt if widening the audience beyond the trust gate.)
- *
- * `models:read:self` is ALSO exempt (allow-by-default): a low-sensitivity read
- * of the viewer's OWN models, and a no-op for an anon viewer (no user → nothing
- * to read), so it is safe in an anon token. Exempting it lets the block render
- * fully for a logged-in viewer with no upfront consent prompt; the consent gate
- * is reserved for the money / AI scopes (`ai:write:budgeted`, `buzz:read:self`),
- * which the host requests lazily on the first buzz-spending action (Generate)
- * rather than on load.
- *
- * `collections:read:self` / `collections:write:self` are exempt — but
- * `collections:read:private` is DELIBERATELY NOT (the read split, below). The
- * exempt pair's gate is SERVER-SIDE per op, not a per-scope consent prompt:
- * read:self covers own-PUBLIC + any PUBLIC collection (public data — nothing
- * sensitive to consent to), and the follow write is SELF-BOUND to the token
- * subject (a bookmark on the caller's OWN account). A per-scope consent prompt
- * would add nothing the visibility/ownership/subject checks don't already
- * enforce. Exempting them is ALSO the #3090 fix: a page-app token that declared a
- * consent-gated scope silently dropped it at mint (the user had no grant row) →
- * every op 403'd; consent-exempt scopes flow through partitionByConsent
- * unconditionally, so the minted PAGE token actually carries them end-to-end.
- *
- * `collections:read:private` (the subject's OWN PRIVATE collections) is the
- * CONSENT-GATED half of the read split and is INTENTIONALLY absent from this set:
- * reading a user's private collections IS sensitive, so it must flow through the
- * gated branch — the host surfaces it as `needs_consent`, the user grants it, and
- * only then does a token carry it. (This is the deliberate contrast to the #3090
- * exemption above: read:self always mints; read:private mints only after consent.)
- *
- * `posts:write:self` (create a REAL Post on the viewer's profile from an app's
- * own outputs) is likewise INTENTIONALLY ABSENT, for a strictly stronger version
- * of the `collections:read:private` reason. It is the first block scope that
- * writes PUBLIC, feed-visible, reward-earning content under the VIEWER'S name.
- * No server-side visibility/ownership check can substitute for it, because the
- * app IS acting on the subject's own account — ownership is satisfied by
- * construction, which is exactly what makes it dangerous rather than safe. So it
- * flows through the gated branch: the host surfaces it as `needs_consent`, the
- * user grants it, and only then does a token carry it.
- *
- * ⚠️ THE GRANT IS NOT THE WHOLE CONSENT. A one-time grant cannot inform about
- * content that differs on every call, so `blocks.createPostFromApp` is ALSO
- * gated on a per-post host-chrome confirm rendering the HOST-RESOLVED title /
- * detail / tags / image thumbnails / gallery target. Do NOT "simplify" that
- * confirm away as redundant with this grant — they answer different questions
- * ("may this app post as me at all" vs "may it post THIS").
- *
- * `social:react:self` (set the viewer's public, reward-paying reaction on an image) is
- * INTENTIONALLY ABSENT as well, and unlike `posts:write:self` there is NO per-action confirm
- * behind it — so this grant is the ONLY consent the reaction path has. Exempting it would mean
- * an app could react as the viewer with no prompt at all. Revoking it stops future reactions;
- * reactions already made stay (decision on civitai-app-starters#669).
- *
- * 🔴 MEMBERSHIP HERE MAKES A SCOPE UN-REVOKABLE, AND A REVOKE CONTROL ON ONE WOULD BE A
- * LIE. `partitionByConsent` below signs on `CONSENT_EXEMPT_SCOPES.has(scope) ||
- * grantedScopes.has(scope)` — the exempt test comes FIRST and never consults the grant —
- * so a suppression entry for a member of this set would be stored and enforce NOTHING.
- * `blocks.revokeScopes` therefore REFUSES every member of this set with a specific error rather than
- * accepting and silently doing nothing, and phase 3's UI must not offer a control for
- * them. Making revocation override exemption is deliberately NOT the design: each
- * exemption above rests on its own server-side gate (min-trust, moderation,
- * visibility/ownership, self-bound subject, rate limits), and removing the scope would
- * not remove those gates' subject matter — it would only break the #3090 page-token fix.
- * The scopes a revoke DOES reach are the gated ones: notably `ai:write:budgeted`,
- * `collections:read:private`, `posts:write:self`, `social:react:self`.
- */
-const CONSENT_EXEMPT_SCOPES = new Set([
-  // NOTE: block:settings:* is intentionally ABSENT — those scopes were removed
-  // from the block-scope registry (decorative/unenforced). Do NOT re-add them
-  // here: if a settings scope is ever reintroduced it must be reintroduced WITH
-  // an explicit consent decision, not silently exempted (a stale exempt entry
-  // would mint it consent-free the moment it re-entered the registry).
-  'apps:storage:read',
-  'apps:storage:write',
-  // SHARED (cross-user) storage — governed by resolveSharedContext's server-side
-  // min-trust gate + content moderation + rate limits, not per-scope consent.
-  'apps:storage:shared:read',
-  'apps:storage:shared:write',
-  // DOCUMENT STORE — `apps:storage` reaches only this app's own store: the viewer's private
-  // collections, reads of shared ones, marks and counters. Each is bounded by the app's
-  // reviewed `storage` declaration and by the server-side per-op checks of the storage
-  // routes. Its sibling `apps:storage:publish` is deliberately ABSENT: authoring documents
-  // other viewers read, under the viewer's identity, needs a grant — one prompt per app.
-  // (Unlike `apps:storage:shared:write` above, which signs consent-free today and which the
-  // publish scope replaces.)
-  'apps:storage',
-  'models:read:self',
-  // Collections — server-side visibility/ownership (read) + self-bound subject
-  // (follow) are the gate; see the block collections endpoints. #3090: exempting
-  // them guarantees they reach `claims.scopes` in the minted page token.
-  'collections:read:self',
-  'collections:write:self',
-  // goods:read:self — the app's OWN sales ledger, filtered to this viewer. The
-  // read is scoped to `claims.appBlockId` in the query, so it can only ever
-  // return what the calling app itself sold; there is no third-party data to
-  // consent to. Its sibling `goods:purchase:self` is deliberately ABSENT — money
-  // out of the viewer's balance always needs an explicit grant.
-  'goods:read:self',
-  // apps:store:items:write — gated per call server-side; a consent gate here would only drop
-  // the scope from tokens.
-  'apps:store:items:write',
-]);
-
 export function partitionByConsent(
   requestedScopes: string[],
   grantedScopes: Set<string>
@@ -1550,9 +1423,7 @@ export function consentGatedScopes(scopes: string[]): string[] {
  * could add a member — which would consent-exempt a gated scope at mint, the one change
  * in this file that silently widens what a token carries.
  */
-export function isConsentExemptScope(scope: string): boolean {
-  return CONSENT_EXEMPT_SCOPES.has(scope);
-}
+export { isConsentExemptScope };
 
 /**
  * The exempt set, as a sorted array, for tests and for an error message that needs to

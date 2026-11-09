@@ -138,6 +138,10 @@ const m = vi.hoisted(() => ({
   revokeCalls: [] as { appBlockId: string; scopes: string[] }[],
   /** Set to drive the error arms. `null` = the mutation succeeds. */
   revokeError: null as null | { code: string; message: string },
+  /** Fails ONLY the first call, then clears itself: the shape of a batch that raced another tab. */
+  revokeFirstError: null as null | { code: string; message: string },
+  /** What `listMyScopeGrants.fetch()` answers, for the one retry a refused batch gets. */
+  freshGrants: [] as unknown[],
   invalidateSpy: undefined as unknown as ReturnType<typeof vi.fn>,
   /**
    * 🔴 HOLDS THE MUTATION OPEN so the PENDING state is observable. Without it the promise settles
@@ -242,6 +246,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     isPending: false,
     mutateAsync: (vars: { appBlockId: string; scopes: string[] }) => {
       m.revokeCalls.push(vars);
+      if (m.revokeFirstError) {
+        const { code, message } = m.revokeFirstError;
+        m.revokeFirstError = null;
+        return Promise.reject({ data: { code }, message });
+      }
       const settle = () =>
         m.revokeError
           ? Promise.reject({ data: { code: m.revokeError.code }, message: m.revokeError.message })
@@ -272,7 +281,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'blocks.listMyScopeGrants': { useQuery: grantsQuery },
         'blocks.revokeScopes': { useMutation: revokeMutation },
       },
-      { useUtils: () => ({ blocks: { listMyScopeGrants: { invalidate: invalidateSpy } } }) }
+      {
+        useUtils: () => ({
+          blocks: {
+            listMyScopeGrants: {
+              invalidate: invalidateSpy,
+              fetch: () => Promise.resolve(m.freshGrants),
+            },
+          },
+        }),
+      }
     ),
   };
 });
@@ -343,6 +361,8 @@ beforeEach(() => {
   m.grants = [GRANT];
   m.revokeCalls = [];
   m.revokeError = null;
+  m.revokeFirstError = null;
+  m.freshGrants = [];
   m.gated = false;
   m.release = null;
   m.invalidateGated = false;
@@ -979,6 +999,58 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
       document.querySelector('[data-testid="scope-revoke-confirm-budget-note"]'),
       `${name}: the budget note rendered for a scope that clears no budget`
     ).toBeNull();
+  });
+});
+
+describe.each(SURFACES)('remove all — $name', ({ name, render }) => {
+  const allRemovable = () => [...GRANT.revokableScopes].sort();
+
+  test('🔴 ONE call carries exactly the removable scopes — never an exempt one', async () => {
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    await page.getByTestId('scope-revoke-all').click();
+    await expect.element(page.getByTestId('scope-revoke-all-confirm-body')).toBeVisible();
+    // The kept ones are named as a count, so "all" is never read as "everything".
+    await expect.element(page.getByTestId('scope-revoke-all-kept-note')).toBeVisible();
+    await page.getByTestId('scope-revoke-all-confirm').click();
+    expect(m.revokeCalls, name).toHaveLength(1);
+    expect(m.revokeCalls[0].appBlockId, name).toBe(GRANT.appBlockId);
+    expect([...m.revokeCalls[0].scopes].sort(), name).toEqual(allRemovable());
+    expect(m.invalidateSpy, name).toHaveBeenCalled();
+    expect(m.notify.success, name).toHaveBeenCalledTimes(1);
+  });
+
+  test('CANCELLING the confirm fires nothing', async () => {
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    await page.getByTestId('scope-revoke-all').click();
+    await page.getByTestId('scope-revoke-all-cancel').click();
+    expect(m.revokeCalls, name).toHaveLength(0);
+  });
+
+  test('🔴 a batch refused because another tab removed one is retried ONCE with what is still held', async () => {
+    m.revokeFirstError = { code: 'BAD_REQUEST', message: 'you do not hold that scope' };
+    m.freshGrants = [{ ...GRANT, grantedScopes: ['posts:write:self'] }];
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    await page.getByTestId('scope-revoke-all').click();
+    await page.getByTestId('scope-revoke-all-confirm').click();
+    expect(
+      m.revokeCalls.map((c) => [...c.scopes].sort()),
+      name
+    ).toEqual([allRemovable(), ['posts:write:self']]);
+    expect(m.notify.success, name).toHaveBeenCalledTimes(1);
+  });
+
+  test('a second refusal is shown, not retried again', async () => {
+    m.revokeError = { code: 'BAD_REQUEST', message: 'you do not hold that scope' };
+    m.freshGrants = [{ ...GRANT, grantedScopes: ['posts:write:self'] }];
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    await page.getByTestId('scope-revoke-all').click();
+    await page.getByTestId('scope-revoke-all-confirm').click();
+    expect(m.revokeCalls, name).toHaveLength(2);
+    expect(m.notify.success, name).not.toHaveBeenCalled();
   });
 });
 
