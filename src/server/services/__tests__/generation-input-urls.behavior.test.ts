@@ -67,6 +67,11 @@ const { __resetRecentExternalHostUsersForTest } = await import(
 const { MAX_KEYS, recordUploadKeyOwner, UNRECORDED_KEYS_ACCEPTED_UNTIL } = await import(
   '~/server/services/image-url-ownership'
 );
+const { getStep } = await import('~/server/services/blocks/steps');
+
+/** The external-host refusal, pinned as the literal a caller reads. */
+const EXTERNAL_MESSAGE =
+  'This request includes a link to an image hosted outside Civitai. Please upload the image instead.';
 
 const CALLER = 7;
 const OTHER = 8;
@@ -355,7 +360,7 @@ describe('assertGenerationInputsUsable', () => {
       () => 'accepted',
       (e: unknown) => {
         if (e instanceof TRPCError && e.code === 'BAD_REQUEST') {
-          expect(e.message).toBe(GENERATION_IMAGE_UNAVAILABLE_MESSAGE);
+          expect([GENERATION_IMAGE_UNAVAILABLE_MESSAGE, EXTERNAL_MESSAGE]).toContain(e.message);
           return 'refused';
         }
         throw e;
@@ -536,7 +541,7 @@ describe('assertGenerationInputsUsable', () => {
       for (const id of SPELLINGS) expect(await opaque([id])).toBe('refused');
     });
 
-    it('counts a plain link to one of our pages, and refuses one that carries a key or a url', async () => {
+    it('accepts a plain link to one of our pages, and refuses one that carries a key or a url', async () => {
       holder.refuseExternal = false;
       expect(await opaque(['https://civitai.com/models/123'])).toBe('accepted');
       expect(await gate(['https://civitai.com/models/123'], 'appBlocksPassThrough')).toBe(
@@ -555,8 +560,12 @@ describe('assertGenerationInputsUsable', () => {
       expect(await opaque(['http://civitai.com/models/123'])).toBe('accepted');
       expect(await opaque(['HTTP://example.com/a.png'])).toBe('accepted');
       expect(await opaque([`HTTP://civitai.com/api/redirect/${KEY}`])).toBe('refused');
+      // Not an external host: a page link passes with the external-host refusal on too.
       holder.refuseExternal = true;
-      expect(await opaque(['https://civitai.com/models/123'])).toBe('refused');
+      expect(await opaque(['https://civitai.com/models/123'])).toBe('accepted');
+      expect(await opaque(['http://civitai.com/models/123'])).toBe('accepted');
+      // Control: the flag is on, so an external host is refused.
+      expect(await opaque(['https://example.com/a.png'])).toBe('refused');
     });
 
     it('refuses a url with a control byte inside, and counts the same url without it', async () => {
@@ -643,6 +652,22 @@ describe('assertGenerationInputsUsable', () => {
       holder.refuseExternal = true;
       expect(await opaque(['http://json-schema.org/draft-07/schema#'])).toBe('refused');
     });
+  });
+
+  it('refuses an external host with its own message, and anything else with the unavailable one', async () => {
+    const message = (urls: string[], entry: 'iterateGenerate' | 'appBlocksPassThrough') =>
+      assertGenerationInputsUsable({ urls, userId: CALLER, entry, isApiCaller: false, now: AFTER })
+        .then(() => 'accepted')
+        .catch((e: TRPCError) => `${e.code}: ${e.message}`);
+    holder.refuseExternal = true;
+    for (const entry of ['iterateGenerate', 'appBlocksPassThrough'] as const) {
+      expect(await message(['https://example.com/a.png'], entry)).toBe(
+        `BAD_REQUEST: ${EXTERNAL_MESSAGE}`
+      );
+      expect(await message(['https://image.civitai.com/x/original=true/a.png'], entry)).toBe(
+        `BAD_REQUEST: ${GENERATION_IMAGE_UNAVAILABLE_MESSAGE}`
+      );
+    }
   });
 
   it('allows an external host on the graph and opaque-input paths until the flag is on', async () => {
@@ -1317,5 +1342,104 @@ describe('a url spelled so the input walk once missed it', () => {
     expect(
       await gateGraph({ images: [{ url: `https:image.civitai.com/x/${KEY}/original=true` }] })
     ).toBe('accepted');
+  });
+});
+
+/**
+ * A chat App Block: the registry `chat-completion` step's params, walked as the router walks them
+ * (`opaqueInputUrlsIn` with the step's own `freeTextParamPaths`, then the gate in opaqueInput
+ * mode), with the external-host refusal ON.
+ */
+describe('a chat App Block step, with the external-host refusal on', () => {
+  const CDN = `https://image.civitai.com/x/${KEY}/original=true`;
+  const run = (
+    inputs: unknown,
+    entry: 'appBlocksStep' | 'appBlocksPassThrough' | 'appBlocksWorkflow',
+    freeTextPaths?: readonly string[]
+  ) => {
+    const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs, freeTextPaths);
+    expect({ tooDeep, tooLarge }).toEqual({ tooDeep: false, tooLarge: false });
+    return assertGenerationInputsUsable({
+      urls,
+      userId: CALLER,
+      entry,
+      isApiCaller: false,
+      opaqueInput: true,
+      now: AFTER,
+    }).then(
+      () => 'accepted',
+      (e: unknown) => {
+        if (e instanceof TRPCError && e.code === 'BAD_REQUEST') return `refused: ${e.message}`;
+        throw e;
+      }
+    );
+  };
+  const chatPaths = () => getStep('chat-completion')?.freeTextParamPaths;
+  const chat = (...contents: string[]) => ({
+    model: 'deepseek/deepseek-chat',
+    messages: contents.map((content) => ({ role: 'user', content })),
+    maxTokens: 128,
+  });
+  const chatStep = (params: unknown) => run(params, 'appBlocksStep', chatPaths());
+
+  beforeEach(() => {
+    holder.refuseExternal = true;
+  });
+
+  it('accepts a message that is only a link to a model page', async () => {
+    expect(await chatStep(chat('https://civitai.com/models/123'))).toBe('accepted');
+  });
+
+  it('accepts an external link on its own line, and a message that is only one', async () => {
+    expect(
+      await chatStep(chat('what do you think of this?\nhttps://example.com/a.png\nthanks'))
+    ).toBe('accepted');
+    expect(await chatStep(chat('https://example.com/a.png'))).toBe('accepted');
+  });
+
+  it('CONTROL: the same text is refused where nothing declares it free text', async () => {
+    const params = chat('https://example.com/a.png');
+    // A pass-through body, a field the step does not declare, and content that is not a string.
+    expect(await run(params, 'appBlocksPassThrough')).toBe(`refused: ${EXTERNAL_MESSAGE}`);
+    expect(await chatStep({ ...params, note: 'https://example.com/a.png' })).toBe(
+      `refused: ${EXTERNAL_MESSAGE}`
+    );
+    expect(
+      await chatStep({
+        ...params,
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'image_url', image_url: { url: 'https://example.com/a.png' } }],
+          },
+        ],
+      })
+    ).toBe(`refused: ${EXTERNAL_MESSAGE}`);
+  });
+
+  it("refuses another user's private image named in message text: a CDN link, a bare key, or among words", async () => {
+    await givenImage();
+    // Control: while the image is public, each passes.
+    for (const content of [CDN, KEY, `what is in this picture?\n${CDN}`, `see ${CDN} please`])
+      expect(await chatStep(chat(content))).toBe('accepted');
+    await holder.db.exec(`UPDATE "Post" SET availability = 'Private'`);
+    for (const content of [CDN, KEY, `what is in this picture?\n${CDN}`, `see ${CDN} please`])
+      expect(await chatStep(chat(content))).toBe(
+        `refused: ${GENERATION_IMAGE_UNAVAILABLE_MESSAGE}`
+      );
+  });
+
+  it('refuses a CDN link in message text naming a key issued to another user, as an image input', async () => {
+    await recordUploadKeyOwner(KEY, OTHER);
+    expect(await chatStep(chat(CDN))).toBe(`refused: ${GENERATION_IMAGE_UNAVAILABLE_MESSAGE}`);
+  });
+
+  it('a workflow: an external link in a text field a $ref wires into an image is still refused', async () => {
+    const steps = [
+      { name: 'gen', $type: 'imageGen', input: { prompt: 'a cat' } },
+      { $type: 'imageUpscaler', input: { image: { $ref: '$arguments', path: 'prompt' } } },
+    ];
+    const inputs = [steps.map((step) => step.input), { prompt: 'https://example.com/a.png' }];
+    expect(await run(inputs, 'appBlocksWorkflow')).toBe(`refused: ${EXTERNAL_MESSAGE}`);
   });
 });
