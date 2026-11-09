@@ -4,6 +4,7 @@ import type * as AccountStanding from '~/server/services/account-standing.servic
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import type * as GiftService from '~/server/services/model-version-gift.service';
+import { throwRateLimited } from '~/server/utils/rate-limit-error';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
 
@@ -41,7 +42,13 @@ vi.mock('~/server/services/model-version-gift.service', async (importOriginal) =
 type Handler = (req: NextApiRequest, res: NextApiResponse, user: SessionUser) => Promise<void>;
 const load = async (path: string) => (await import(path)).default as Handler;
 
-const USER = { id: 7, username: 'u', onboarding: 15, isModerator: false } as SessionUser;
+const USER = {
+  id: 7,
+  username: 'u',
+  onboarding: 15,
+  isModerator: false,
+  tier: 'gold',
+} as SessionUser;
 const actor = { userId: 7, isModerator: false, modelVersionId: 5 };
 // Minting is owner-only, so the mint routes never hand the service a moderator flag.
 const owner = { userId: 7, modelVersionId: 5 };
@@ -63,7 +70,8 @@ const ROUTES: Array<{
     query: {},
     body: { code: 'cvg_abc', userId: 999 },
     service: 'claimGift',
-    args: { userId: 7, code: 'cvg_abc' },
+    // The session user, for the monthly allowance's tier; never an id from the body.
+    args: { user: expect.objectContaining({ id: 7, tier: 'gold' }), code: 'cvg_abc' },
   },
   {
     name: 'GET list',
@@ -125,7 +133,7 @@ async function call(
   context: Record<string, unknown>,
   user: SessionUser = USER
 ) {
-  const out = { status: 0 };
+  const out = { status: 0, headers: {} as Record<string, string>, body: undefined as unknown };
   const req = {
     method: route.method,
     headers: {},
@@ -138,8 +146,14 @@ async function call(
       out.status = code;
       return res;
     },
-    json: () => res,
-    setHeader: () => res,
+    json: (body: unknown) => {
+      out.body = body;
+      return res;
+    },
+    setHeader: (name: string, value: string) => {
+      out.headers[name] = value;
+      return res;
+    },
   } as unknown as NextApiResponse;
   await (
     await load(route.path)
@@ -235,4 +249,43 @@ it.each([
   const route = { ...ROUTES.find((r) => r.name === 'DELETE claim')!, query };
   expect((await call(route, {})).status).toBe(400);
   expect(serviceCalls()).toBe(0);
+});
+
+describe('POST link cap', () => {
+  const link = ROUTES.find((r) => r.name === 'POST link')!;
+
+  it('gives a link with no cap named the default of 10', async () => {
+    expect((await call({ ...link, body: {} }, {})).status).toBe(201);
+    expect(svc.createGiftLink).toHaveBeenCalledWith(
+      expect.objectContaining({ maxRedemptions: 10 })
+    );
+  });
+
+  it.each([null, 0, 101, 2.5])('refuses maxRedemptions %s with 400', async (maxRedemptions) => {
+    expect((await call({ ...link, body: { maxRedemptions } }, {})).status).toBe(400);
+    expect(serviceCalls()).toBe(0);
+  });
+
+  it('takes a cap of 100', async () => {
+    expect((await call({ ...link, body: { maxRedemptions: 100 } }, {})).status).toBe(201);
+  });
+});
+
+it('answers a claim past the monthly allowance with 429, Retry-After and the limit', async () => {
+  const rateLimit = {
+    retryAfterSeconds: 3600,
+    retryAt: '2026-12-01T00:00:00.000Z',
+    id: 'gifts.monthly',
+    kind: 'product' as const,
+    limit: 3,
+    used: 3,
+    remaining: 0,
+    windowSeconds: 2592000,
+    resetAt: '2026-12-01T00:00:00.000Z',
+  };
+  svc.claimGift.mockImplementationOnce(async () => throwRateLimited(rateLimit, 'Monthly limit.'));
+  const out = await call(ROUTES.find((r) => r.name === 'POST claim')!, {});
+  expect(out.status).toBe(429);
+  expect(out.headers['Retry-After']).toBe('3600');
+  expect(out.body).toMatchObject({ message: 'Monthly limit.', rateLimit });
 });
