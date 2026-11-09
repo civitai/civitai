@@ -1369,6 +1369,8 @@ describe('watchOpenDeposits', () => {
     );
     mockDbWrite.cryptoDeposit.updateMany.mockImplementation(async ({ where, data }: any) => {
       const id = Number(where.paymentId);
+      if (typeof where.status === 'string')
+        return { count: rowStatus[id] === where.status ? 1 : 0 };
       if (where.status.notIn.includes(rowStatus[id])) return { count: 0 };
       rowStatus[id] = data.status;
       return { count: 1 };
@@ -1499,12 +1501,12 @@ describe('watchOpenDeposits', () => {
     const lateLogs = () =>
       loggingMock.logToAxiom.mock.calls
         .map(([data]) => data as Record<string, unknown>)
-        .filter((d) => d.name === 'nowpayments-late-finish-credited');
+        .filter((d) => d.name === 'nowpayments-late-finish');
 
     beforeEach(() => {
       ledger = new Map();
       mockGetTransactionByExternalId.mockImplementation(async (id: string) =>
-        ledger.has(id) ? { transactionId: `tx-${id}` } : null
+        ledger.has(id) ? { transactionId: `tx-${id}`, amount: ledger.get(id) } : null
       );
       mockGrantBuzzPurchase.mockImplementation(async ({ externalTransactionId, amount }: any) => {
         // Let a concurrent caller run between the ledger check and the write.
@@ -1532,11 +1534,9 @@ describe('watchOpenDeposits', () => {
           expect.objectContaining({
             paymentId: 831,
             userId: 42,
+            credited: true,
             buzz: 5000,
-            npStatus: 'finished',
             previousStatus: closed,
-            status: 'finished',
-            rowAgeDays: 23,
           }),
         ]);
       }
@@ -1556,8 +1556,11 @@ describe('watchOpenDeposits', () => {
       }
     );
 
+    // Without the np-deposit pre-check the buzz service's duplicate refusal would still stop the
+    // second grant, but only after the hand-grant scan; these pin that the ledger is read first.
     it('settles a failed row already credited by hand under np-deposit-<id> without granting again', async () => {
-      ledger.set('np-deposit-833', 5000);
+      // A hand credit that differs from NP's figure (5.0 × 1000 = 5000).
+      ledger.set('np-deposit-833', 397);
 
       await watch([openRow(833, 'failed', 23)], { 833: 'finished' });
 
@@ -1565,12 +1568,15 @@ describe('watchOpenDeposits', () => {
       expect(ledger.size).toBe(1);
       expect(rowStatus[833]).toBe('finished');
       expect(mockDbWrite.cryptoDeposit.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({ update: expect.objectContaining({ buzzCredited: 5000 }) })
+        expect.objectContaining({
+          update: expect.objectContaining({ buzzCredited: 397, bonusBuzz: null, multiplier: null }),
+        })
       );
       expect(lateLogs()).toEqual([
         expect.objectContaining({
           paymentId: 833,
           transactionId: 'already_granted',
+          buzz: 397,
           status: 'finished',
         }),
       ]);
@@ -1599,15 +1605,107 @@ describe('watchOpenDeposits', () => {
         }
       });
 
-      await Promise.all([
-        watch([openRow(835, 'failed', 23)], { 835: 'finished' }),
-        processDeposit(835, 'finished', eventFromPayment(makePayment({ payment_id: 835 }))),
-      ]);
+      try {
+        await Promise.all([
+          watch([openRow(835, 'failed', 23)], { 835: 'finished' }),
+          processDeposit(835, 'finished', eventFromPayment(makePayment({ payment_id: 835 }))),
+        ]);
+      } finally {
+        mockWithDistributedLock.mockImplementation(async (_o: any, fn: () => Promise<any>) => fn());
+      }
 
       expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledWith(835);
       expect(mockGrantBuzzPurchase).toHaveBeenCalledTimes(1);
       expect([...ledger]).toEqual([['np-deposit-835', 5000]]);
       expect(rowStatus[835]).toBe('finished');
+    });
+
+    const softMatch = {
+      covering: [],
+      possible: [{ strength: 'soft', ref: 'tx-tip', why: 'amount' }],
+      overflowed: [],
+    } as unknown as Awaited<ReturnType<typeof findHandGrantsForDeposit>>;
+    const overflow = {
+      covering: [],
+      possible: [],
+      overflowed: ['Tip'],
+    } as unknown as Awaited<ReturnType<typeof findHandGrantsForDeposit>>;
+
+    it.each([
+      ['a soft hand-grant match', softMatch, 'soft_hand_grant_match'],
+      ['an incomplete hand-grant scan', overflow, 'hand_grant_scan_incomplete'],
+    ])('holds a late finish with %s instead of crediting it', async (_, scan, reason) => {
+      vi.mocked(findHandGrantsForDeposit).mockResolvedValueOnce(scan);
+
+      const result = await watch([openRow(836, 'failed', 23)], { 836: 'finished' });
+
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(rowStatus[836]).toBe('held');
+      expect(result.lateFinished).toBe(0);
+      expect(lateLogs()).toEqual([
+        expect.objectContaining({
+          paymentId: 836,
+          credited: false,
+          held: true,
+          heldReason: reason,
+        }),
+      ]);
+    });
+
+    it('still credits an open row with a soft hand-grant match', async () => {
+      vi.mocked(findHandGrantsForDeposit).mockResolvedValueOnce(softMatch);
+
+      await watch([openRow(837, 'confirming', 5)], { 837: 'finished' });
+
+      expect(mockGrantBuzzPurchase).toHaveBeenCalledTimes(1);
+      expect(rowStatus[837]).toBe('finished');
+    });
+
+    it('hands a late finish whose grant fails back to the retry sweep', async () => {
+      mockGrantBuzzPurchase.mockRejectedValueOnce(new Error('buzz service 503'));
+
+      const result = await watch([{ ...openRow(838, 'failed', 23), retryCount: 72 }], {
+        838: 'finished',
+      });
+
+      expect(rowStatus[838]).toBe('buzz_failed');
+      expect(mockDbWrite.cryptoDeposit.updateMany).toHaveBeenCalledWith({
+        where: { paymentId: BigInt(838), status: 'buzz_failed' },
+        data: { retryCount: 0 },
+      });
+      expect(result.lateFinished).toBe(0);
+      expect(lateLogs()).toEqual([expect.objectContaining({ paymentId: 838, credited: false })]);
+    });
+
+    it('credits nothing when NOWPayments answers with a different payment', async () => {
+      serveDepositTable(() => [{ ...openRow(839, 'failed', 23), status: rowStatus[839] }]);
+      rowStatus[839] = 'failed';
+      mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue(
+        makePayment({ payment_id: 9999, payment_status: 'finished' })
+      );
+
+      const result = await watchOpenDeposits();
+
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(rowStatus[839]).toBe('failed');
+      expect(result.lookupFailed).toBe(1);
+    });
+
+    it('holds back a listed late row that support has not cleared for credit', async () => {
+      mockKvGet.mockImplementation(async (key: string, d?: unknown) =>
+        key === 'nowpayments:watch-payment-ids' ? [840] : d
+      );
+      try {
+        const result = await watch([openRow(840, 'failed', 23)], { 840: 'finished' });
+
+        expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+        expect(rowStatus[840]).toBe('failed');
+        expect(result.listed).toEqual([
+          expect.objectContaining({ paymentId: '840', state: 'awaiting_ok' }),
+        ]);
+      } finally {
+        mockKvGet.mockImplementation(async (_k: string, d?: unknown) => d);
+      }
     });
   });
 
