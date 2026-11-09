@@ -190,7 +190,7 @@ describe('updateGallerySettingsHandler — notifies the author of a newly pinned
     ['a post whose only image awaits review', {}, 213],
     ['a post whose only image was removed for a ToS violation', {}, 214],
   ] as const)('skips %s', async (_case, extra, postId) => {
-    await save({ after: { ...extra, pinnedPosts: { [VERSION]: [postId] } } });
+    await save({ after: { ...(extra as Settings), pinnedPosts: { [VERSION]: [postId] } } });
     expect(sentTo()).toEqual([]);
   });
 
@@ -213,7 +213,9 @@ describe('updateGallerySettingsHandler — notifies the author of a newly pinned
 
   it('sends nothing for a model that is not published', async () => {
     await pg.exec(`UPDATE "Model" SET status = 'Draft' WHERE id = ${MODEL}`);
-    onTestFinished(() => pg.exec(`UPDATE "Model" SET status = 'Published' WHERE id = ${MODEL}`));
+    onTestFinished(async () => {
+      await pg.exec(`UPDATE "Model" SET status = 'Published' WHERE id = ${MODEL}`);
+    });
     await save({ after: { pinnedPosts: { [VERSION]: [100] } } });
     expect(sentTo()).toEqual([]);
   });
