@@ -4,7 +4,7 @@
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
-  import { dateTime } from '$lib/format';
+  import { LINK_CLASS, dateTime } from '$lib/format';
   import { FEEDBACK_STATUSES, handledByLabel, type FeedbackContext } from '$lib/feedback';
   import { feedbackRefusal, type FeedbackFormName } from '$lib/feedback-refusal';
   import { feedbackPanelHasUnsavedDraft, makeFeedbackPromoteDraft } from '$lib/feedback-drafts';
@@ -221,6 +221,13 @@
          site-bug-report and those rows carry the same ids and toast text. -->
     <FeedbackErrorReport {context} />
     <FeedbackAttachments {context} />
+    {#if context.hqTask}
+      <p class="text-sm">
+        <a class={LINK_CLASS} href={context.hqTask.url} target="_blank" rel="noopener noreferrer"
+          >HQ task {context.hqTask.id}</a
+        >
+      </p>
+    {/if}
   </section>
 
   <!-- Chosen by AREA, never by what the context happens to hold. An `apps-platform` row has none of

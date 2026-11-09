@@ -389,6 +389,19 @@ describe('the server stamp', () => {
   });
 });
 
+describe('the HQ task link', () => {
+  it('drops a client-sent `hq` object, so only the server can link a report to a task', () => {
+    const parsed = createFeedbackSchema.parse({
+      area: 'site-bug-report',
+      message: 'broken',
+      context: { path: '/models', hq: { id: 'fake', url: 'https://hq.civitai.com/tasks/fake' } },
+    });
+    // Positive control for the next line: a known key survives the same parse.
+    expect(parsed.context?.path).toBe('/models');
+    expect((parsed.context as Record<string, unknown>).hq).toBeUndefined();
+  });
+});
+
 describe('the client environment fields', () => {
   it('accepts what the client sends and drops an error message from a tRPC entry', () => {
     const parsed = createFeedbackSchema.parse({

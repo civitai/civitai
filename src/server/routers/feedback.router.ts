@@ -6,6 +6,7 @@ import {
   FEEDBACK_AREA_DISABLED_MESSAGE,
   isFeedbackAreaEnabled,
 } from '~/server/services/feedback.service';
+import { fileFeedbackToHq } from '~/server/services/feedback-hq.service';
 import { FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
 import { rateLimit } from '~/server/middleware.trpc';
 import { guardedProcedureAllowUnverifiedEmail, router } from '~/server/trpc';
@@ -43,6 +44,9 @@ export const feedbackRouter = router({
         domain: ctx.domain,
         features: ctx.features,
       });
-      return createFeedback({ ...input, userId: ctx.user.id, server });
+      const saved = await createFeedback({ ...input, userId: ctx.user.id, server });
+      // Not awaited: HQ must never delay or fail the submit.
+      void fileFeedbackToHq({ ...input, feedbackId: saved.id, userId: ctx.user.id, server });
+      return saved;
     }),
 });

@@ -180,6 +180,7 @@ describe('splitContext', () => {
       workflowId: 'wf_1-a',
       jobId: 'job-2',
       toast: { title: 'Failed to submit', message: 'Something broke (ref: 0123456789ab)' },
+      hq: { id: 'task_1', url: 'https://hq.civitai.com/tasks/task_1' },
     });
 
     // 🔴 A WHOLE-OBJECT `toEqual`, which makes this the LEDGER: a key added to `FeedbackContext`
@@ -201,6 +202,7 @@ describe('splitContext', () => {
       toast: { title: 'Failed to submit', message: 'Something broke (ref: 0123456789ab)' },
       trpcErrors: [],
       environment: [],
+      hqTask: { id: 'task_1', url: 'https://hq.civitai.com/tasks/task_1' },
       other: null,
     });
   });
@@ -329,6 +331,7 @@ describe('splitContext', () => {
         networkErrors: [],
         trpcErrors: [],
         environment: [],
+        hqTask: null,
         errorRef: null,
         workflowId: null,
         jobId: null,
@@ -850,5 +853,24 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
     });
     expect(feedbackAttachmentCount(refused)).toBe(feedbackAttachmentItems(refused).length);
     expect(feedbackAttachmentCount(refused)).toBe(1);
+  });
+});
+
+describe('splitContext — the HQ task link', () => {
+  const TASK = { id: 'task_1', url: 'https://hq.civitai.com/tasks/task_1' };
+
+  it('carries the task the server recorded', () => {
+    expect(splitContext({ hq: TASK }).hqTask).toEqual(TASK);
+  });
+
+  it.each([
+    ['another origin', { ...TASK, url: 'https://hq.civitai.com.evil.example/tasks/task_1' }],
+    ['a script URL', { ...TASK, url: 'javascript:alert(1)' }],
+    ['plain http', { ...TASK, url: 'http://hq.civitai.com/tasks/task_1' }],
+    ['an id with markup', { ...TASK, id: '<img src=x>' }],
+  ])('builds no link from %s, and shows the value as text instead', (_, hq) => {
+    const ctx = splitContext({ hq });
+    expect(ctx.hqTask).toBeNull();
+    expect(ctx.other).toEqual({ hq });
   });
 });

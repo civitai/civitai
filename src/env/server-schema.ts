@@ -994,6 +994,10 @@ export const serverSchema = z
     // HQ task.closed -> Known Issues board sync. Standard Webhooks secret (`whsec_…`); unset
     // disables the receiver (503) rather than trusting unsigned deliveries.
     HQ_WEBHOOK_SECRET: z.string().optional(),
+    // Site bug report -> HQ task. The HQ origin (the route is appended) and an intake-scoped
+    // token; if either is unset, reports are saved but not filed.
+    HQ_INTAKE_URL: z.url({ protocol: /^https$/ }).optional(),
+    HQ_INTAKE_TOKEN: z.string().optional(),
 
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),

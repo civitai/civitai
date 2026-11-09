@@ -183,6 +183,9 @@ export type FeedbackContext = {
   /** Build, route, device, and what the server stamped (browser, tier, site, flags), in display
    *  order. Client rows are claims; the `server` rows were written by the submit procedure. */
   environment: FeedbackEnvironmentRow[];
+  /** The HQ task filed for this report. A link off `HQ_ORIGIN` falls through to `other` as text.
+   *  No link does not mean no task: filing is best-effort and may still be in flight. */
+  hqTask: { id: string; url: string } | null;
   /** From a toast's "Report this": the server-fault ref and orchestrator ids it carried, and the
    *  text the reporter was shown. Rendered as text only — reporter-supplied claims. */
   errorRef: string | null;
@@ -347,6 +350,19 @@ const isToast = (value: unknown): value is { title?: string; message: string } =
  */
 const IMAGE_KEY = /^(?!https?|blob)[A-Za-z0-9][A-Za-z0-9_-]{7,99}$/;
 
+const HQ_ORIGIN = 'https://hq.civitai.com';
+const HQ_TASK_ID = /^[\w-]{1,100}$/;
+
+function isHqTask(value: unknown): value is { id: string; url: string } {
+  if (!isPlainObject(value) || !isString(value.id) || !isString(value.url)) return false;
+  if (!HQ_TASK_ID.test(value.id)) return false;
+  try {
+    return new URL(value.url).origin === HQ_ORIGIN;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 🔴 THE "OTHER" BUCKET IS NOT A NICETY. `feedbackContextSchema` already accepts keys no current
  * producer emits, so a panel rendering only the ones it knows about discards the payload of every
@@ -371,6 +387,7 @@ export function splitContext(context: unknown): FeedbackContext {
     networkErrors: [],
     trpcErrors: [],
     environment: [],
+    hqTask: null,
     errorRef: null,
     workflowId: null,
     jobId: null,
@@ -426,6 +443,8 @@ export function splitContext(context: unknown): FeedbackContext {
       FEEDBACK_ORCHESTRATOR_ID_PATTERN.test(value)
     ) {
       out[key] = value;
+    } else if (key === 'hq' && isHqTask(value)) {
+      out.hqTask = { id: value.id, url: value.url };
     } else if (key === 'toast' && isToast(value)) {
       out.toast = { title: value.title ?? null, message: value.message };
     } else {

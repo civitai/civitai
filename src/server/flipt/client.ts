@@ -462,6 +462,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // read here for its main-app endpoints. Evaluate with the user's Flipt context, or a segmented
   // flag matches nobody.
   TRAINING_STUDIO = 'trainingStudio',
+  // Off until the Moderation Lead approves a reporter's page capture leaving the site for HQ.
+  FEEDBACK_HQ_SCREENSHOT = 'feedback-hq-screenshot',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
