@@ -8,7 +8,7 @@ import type { CreateFeedbackInput } from '~/server/schema/feedback.schema';
 import type { FeedbackServerStamp } from '~/server/services/feedback.service';
 import { SITE_BUG_REPORT_AREA } from '~/shared/constants/feedback.constants';
 import { sniffImageFormat } from '~/shared/utils/image-magic-bytes';
-import { deepRedact, redactText } from '~/utils/faro/redact';
+import { redactText } from '~/utils/faro/redact';
 
 const HQ_INTAKE_PATH = '/api/v1/intake/feedback';
 const HQ_REQUEST_TIMEOUT_MS = 10_000;
@@ -186,7 +186,7 @@ function diagnosticsSection(context: FeedbackContextInput | undefined) {
     lines.push(`trpc ${entry.httpStatus ? `${entry.httpStatus} ` : ''}${entry.path} ${entry.code}`);
   if (!lines.length) return '';
   // Redact again: this text leaves the site.
-  return `## Diagnostics\n\n${fenced(inertMentions(deepRedact(lines).join('\n')))}`;
+  return `## Diagnostics\n\n${fenced(inertMentions(lines.map(redactText).join('\n')))}`;
 }
 
 const TRUNCATED_NOTE = '[truncated: full text in the moderator view]';
@@ -353,6 +353,8 @@ export async function fileFeedbackToHq(input: FeedbackHqFilingInput): Promise<vo
     const intakeUrl = new URL(HQ_INTAKE_PATH, baseUrl);
     const res = await fetch(intakeUrl, {
       method: 'POST',
+      // A redirect would replay the whole report to wherever it points.
+      redirect: 'error',
       headers: { Authorization: `Bearer ${token}` },
       body: form,
       signal: AbortSignal.timeout(HQ_REQUEST_TIMEOUT_MS),

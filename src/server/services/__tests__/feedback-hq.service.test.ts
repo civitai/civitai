@@ -70,6 +70,11 @@ describe('when HQ intake is configured', () => {
     expect(sentForm().getAll('labels')).toEqual(['site-bug-report', 'site:red', 'tier:gold']);
   });
 
+  it('refuses to follow a redirect with the report', async () => {
+    await fileFeedbackToHq(report());
+    expect(intakeCalls()[0][1].redirect).toBe('error');
+  });
+
   it('records the returned task on the report', async () => {
     await fileFeedbackToHq(report());
 
@@ -366,6 +371,15 @@ describe('what reaches HQ from the rest of the report', () => {
     expect(body).not.toContain('someone@example.com');
     expect(body).not.toContain(JWT);
     expect(body).not.toMatch(/@justin/);
+  });
+
+  it('scrubs a bare long token from a console message', () => {
+    const token = 'sk_live_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+    const body = buildHqBody(
+      report({ context: { consoleErrors: [{ message: `auth failed ${token}`, count: 1 }] } }),
+      { moderatorUrl: 'https://moderator.example.test/feedback/7', screenshotAttached: false }
+    );
+    expect(body).not.toContain(token);
   });
 });
 
