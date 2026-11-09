@@ -116,7 +116,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Post" (
       "id" integer PRIMARY KEY, "userId" integer NOT NULL, "publishedAt" timestamp,
-      "availability" text NOT NULL DEFAULT 'Public', "collectionId" integer
+      "availability" text NOT NULL DEFAULT 'Public', "collectionId" integer, "metadata" jsonb
     );
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TABLE "CollectionContributor" (
