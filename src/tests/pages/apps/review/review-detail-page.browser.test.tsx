@@ -1,3 +1,4 @@
+import { Notifications } from '@mantine/notifications';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -211,6 +212,43 @@ describe('ReviewDetailPage — route shell', () => {
     await expect.element(page.getByTestId('all-caught-up')).toBeInTheDocument();
     expect(page.getByTestId('review-body').elements()).toHaveLength(0);
     expect(push).not.toHaveBeenCalled();
+  });
+
+  test('🔴 Undo after "Approve & next" on the LAST submission shows that submission again', async () => {
+    // The real queue + toast (only the body is stubbed): "Approve & next" records A's delayed
+    // approval, then calls `onClose` — exactly the bar's order.
+    const { enqueueReviewApproval } = await import('~/components/Apps/reviewApprovalToasts');
+    const { reviewApprovalQueue } = await import('~/components/Apps/pendingApprovalQueue');
+    const id = 'pubreq_last_undo';
+    state.query = {
+      data: { mode: 'pending', request: { ...REQUEST, id } },
+      isLoading: false,
+      isError: false,
+      error: null,
+    };
+    state.pending = { data: { items: [{ id, submittedAt: new Date() }], nextCursor: null } };
+    const commit = vi.fn(async () => undefined);
+    renderWithProviders(
+      <>
+        <Notifications />
+        <ReviewDetailPage publishRequestId={id} />
+      </>
+    );
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    try {
+      expect(enqueueReviewApproval({ id, label: 'my-onsite-block v1.2.0', commit })).toBe(true);
+      state.bodyProps.last?.onClose();
+      await expect.element(page.getByTestId('all-caught-up')).toBeInTheDocument();
+
+      // Undo from the toast. Its push is to /apps/review/<id> — the URL the page is already on,
+      // so Next keeps it mounted with the same prop: only the page's own state can bring A back.
+      await page.getByTestId('apps-review-approve-undo').click();
+      await expect.element(page.getByTestId('review-body')).toHaveTextContent(`body:${id}:pending`);
+      expect(page.getByTestId('all-caught-up').elements()).toHaveLength(0);
+      expect(commit).not.toHaveBeenCalled();
+    } finally {
+      if (reviewApprovalQueue.get(id)?.status === 'pending') reviewApprovalQueue.undo(id);
+    }
   });
 
   test('the queue not loaded: onClose falls back to the queue page', async () => {

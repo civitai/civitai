@@ -69,6 +69,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const inert = { invalidate: vi.fn(async () => undefined) };
   return {
     ...actual,
+    // The delayed approval commits through the keepalive client (it may be sent from
+    // `pagehide`); its fetch-level behaviour is pinned in `ReviewActionBar.browser.test.tsx`.
+    trpcKeepalive: {
+      blocks: { approveRequest: { mutate: (input: unknown) => m.clientApprove(input) } },
+    },
     trpc: makeTrpcProxy(
       {
         'blocks.approveRequest': { useMutation: mutation('approve') },
@@ -176,6 +181,8 @@ beforeEach(async () => {
   m.queueCount = undefined;
   router.query = {};
   router.pathname = '/apps/review/[publishRequestId]';
+  // The moderator is on a review page (a failed commit only re-opens the request from here).
+  (router as unknown as { asPath: string }).asPath = '/apps/review/pubreq_flow_current';
   vi.mocked(router.push).mockClear();
   await page.viewport(1124, 1305);
 });
@@ -248,6 +255,88 @@ describe('"Approve & next" — the delayed commit, wired to the page', () => {
     // Retry sends again — the failed id was released.
     await page.getByTestId('apps-review-approve-retry').click();
     await vi.waitFor(() => expect(m.clientApprove).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe('🔴 a FAILED commit after the moderator LEFT the review area', () => {
+  test('does not yank them back: the persistent toast carries the way back instead', async () => {
+    const req = pendingRequest();
+    m.clientApprove.mockRejectedValueOnce(new Error('listing floor not met'));
+    renderPage(req);
+    await page.getByTestId('apps-review-approve-next').click();
+    // They navigated elsewhere on the site (which is what committed the approval).
+    (router as unknown as { asPath: string }).asPath = '/models';
+    vi.mocked(router.push).mockClear();
+    await reviewApprovalQueue.commitNow(req.id);
+    await expect.element(page.getByTestId('apps-review-approve-failed')).toBeInTheDocument();
+    expect(router.push).not.toHaveBeenCalled();
+    await page.getByRole('button', { name: 'Open request' }).click();
+    expect(router.push).toHaveBeenCalledWith(`/apps/review/${req.id}`);
+  });
+});
+
+describe('🔴 the review page while ITS OWN approval is in the undo window (browser Back)', () => {
+  async function approveNextThenComeBack(req: Record<string, unknown>) {
+    const first = await renderWithProviders(
+      <>
+        <Notifications />
+        <ReviewDetailView
+          selection={{ request: req as never, mode: 'pending' }}
+          onClose={vi.fn()}
+        />
+      </>
+    );
+    await page.getByTestId('apps-review-approve-next').click();
+    // "Approve & next" moved on; browser Back mounts the request's page afresh.
+    await first.unmount();
+    renderPage(req);
+  }
+
+  test('shows the pending approval with Undo — no approve or reject to race the timer', async () => {
+    const req = pendingRequest();
+    await approveNextThenComeBack(req);
+    const queued = page.getByTestId('apps-review-bar-queued');
+    await expect.element(queued).toBeInTheDocument();
+    expect(queued.element().getAttribute('data-queued-status')).toBe('pending');
+    await expect.element(queued).toHaveTextContent('Approval pending — gen-matrix v0.2.0');
+    expect(page.getByTestId('apps-review-approve-next').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-review-approve-now-button').elements()).toHaveLength(0);
+    expect(page.getByRole('button', { name: 'Reject…' }).elements()).toHaveLength(0);
+    expect(m.clientApprove).not.toHaveBeenCalled();
+  });
+
+  test('its Undo cancels the approval (nothing sent) and gives back a working bar', async () => {
+    const req = pendingRequest();
+    await approveNextThenComeBack(req);
+    vi.mocked(router.push).mockClear();
+    await page.getByTestId('apps-review-bar-undo').click();
+    expect(reviewApprovalQueue.get(req.id)).toBeUndefined();
+    // The same undo as the toast's: the countdown toast is gone too.
+    await vi.waitFor(() =>
+      expect(page.getByTestId('apps-review-approve-countdown').elements()).toHaveLength(0)
+    );
+    // Already on the request: no navigation.
+    expect(router.push).not.toHaveBeenCalled();
+    await reviewApprovalQueue.commitAll();
+    expect(m.clientApprove).not.toHaveBeenCalled();
+    // The bar is actionable again, and "Approve & next" is not swallowed by the last click.
+    await expect.element(page.getByTestId('apps-review-approve-next')).toBeEnabled();
+    await page.getByTestId('apps-review-approve-next').click();
+    expect(reviewApprovalQueue.get(req.id)?.status).toBe('pending');
+  });
+
+  test('once the queue has approved it, the page says so and offers nothing to send twice', async () => {
+    const req = pendingRequest();
+    await approveNextThenComeBack(req);
+    await reviewApprovalQueue.commitNow(req.id);
+    const queued = page.getByTestId('apps-review-bar-queued');
+    await vi.waitFor(() =>
+      expect(queued.element().getAttribute('data-queued-status')).toBe('committed')
+    );
+    await expect.element(queued).toHaveTextContent('Approved gen-matrix v0.2.0');
+    expect(page.getByTestId('apps-review-bar-undo').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-review-approve-now-button').elements()).toHaveLength(0);
+    expect(m.clientApprove).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -404,6 +493,21 @@ describe('the Overview renders every AI-review state', () => {
     expect(page.getByTestId('apps-review-overview-ai').element().getAttribute('data-worst')).toBe(
       'high'
     );
+  });
+
+  test('🔴 the justification count is labelled for what it counts ("no" → inaccurate, never "weak")', async () => {
+    m.flags = { appBlocks: true, appReviewPage: true, appBlocksAgenticReview: true };
+    m.agentReview = report('complete', [], {
+      scopes: [
+        { declared: 'ai:write:budgeted', justificationAccurate: 'no' },
+        { declared: 'models:read:self', justificationAccurate: 'weak' },
+        { declared: 'user:read', justificationAccurate: 'yes' },
+      ],
+    });
+    renderPage(pendingRequest());
+    const detail = page.getByTestId('apps-review-overview-ai-detail');
+    await expect.element(detail).toHaveTextContent('Permissions: 1 inaccurate justification.');
+    expect(detail.element().textContent ?? '').not.toMatch(/weak/i);
   });
 
   test('without the agentic flag the Overview shows no AI card at all (the gate is shared)', async () => {

@@ -377,6 +377,22 @@ describe('ReviewQueuePage — Pending tab count', () => {
     await expect.element(page.getByRole('tab', { name: /Pending/ })).toBeInTheDocument();
     expect(page.getByTestId('apps-review-pending-count').elements()).toHaveLength(0);
   });
+
+  test('🔴 approvals in their undo window are not counted (the list hides them too)', async () => {
+    const { reviewApprovalQueue } = await import('~/components/Apps/pendingApprovalQueue');
+    const ids = ['badge-undo-window-1', 'badge-undo-window-2'];
+    for (const id of ids) reviewApprovalQueue.enqueue({ id, label: id, commit: async () => 0 });
+    try {
+      state.reviewQueueTotal = 12;
+      renderWithProviders(<ReviewQueuePage />);
+      await expect.element(page.getByTestId('apps-review-pending-count')).toHaveTextContent(/^10$/);
+      // Undone → waiting again → counted again.
+      reviewApprovalQueue.undo(ids[0]);
+      await expect.element(page.getByTestId('apps-review-pending-count')).toHaveTextContent(/^11$/);
+    } finally {
+      for (const id of ids) reviewApprovalQueue.undo(id);
+    }
+  });
 });
 
 describe('ReviewQueuePage — the tab bar', () => {
