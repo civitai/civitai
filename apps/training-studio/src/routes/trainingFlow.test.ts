@@ -452,12 +452,15 @@ describe('optimizer learning-rate coupling', () => {
     expect(optimizerLrParams(r, params)).toEqual({ unetLr: '1', textEncoderLr: '1' });
   });
 
-  it('leaves a locked text-encoder rate at 0 under Prodigy', () => {
-    const krea = run('krea2');
-    const params = { ...defaultRunParams(krea), optimizer: 'Prodigy' };
-    expect(optimizerLrParams(krea, params)).toMatchObject({ unetLr: '1' });
-    expect(Number(optimizerLrParams(krea, params).textEncoderLr)).toBe(0);
-  });
+  it.each(['krea2', 'anima'])(
+    'leaves a locked text-encoder rate at 0 under Prodigy (%s)',
+    (type) => {
+      const r = run(type);
+      const params = { ...defaultRunParams(r), optimizer: 'Prodigy' };
+      expect(optimizerLrParams(r, params)).toMatchObject({ unetLr: '1' });
+      expect(Number(optimizerLrParams(r, params).textEncoderLr)).toBe(0);
+    }
+  );
 
   it('resets Prodigy-level rates to the model defaults when switching away', () => {
     const r = run('sdxl');

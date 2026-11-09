@@ -33,7 +33,6 @@
     paramBounds,
     seenFor,
     TARGET_STEPS,
-    TE_TRAINING_UNSUPPORTED_REASON,
     typesForMedia,
     type ExtraParamField,
     type LabelType,
@@ -61,6 +60,7 @@
     blockedSelectionMessage,
     filledPrompts,
     teLocked,
+    teLockReason,
     withTrigger,
     type LaunchedRun,
     type NumericInput,
@@ -331,8 +331,8 @@
     isExtra(field) ? capsAt(i)[field].bound : boundsFor(i)[field];
   const helpFor = (i: number, field: ParamField): string => {
     const run = selection.runs[i]!;
-    if (field === 'textEncoderLr' && teLocked(run))
-      return `Not available for ${runCard(run).name} — ${TE_TRAINING_UNSUPPORTED_REASON}`;
+    const teReason = field === 'textEncoderLr' ? teLockReason(run) : undefined;
+    if (teReason) return teReason;
     return paramHelpText(field, run.cardType, defaultsAt(i), paramsAt(i));
   };
 
