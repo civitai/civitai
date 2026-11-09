@@ -31,7 +31,9 @@ export function newlyPinnedPosts(prev: PinnedPosts, next: PinnedPosts) {
  *
  * `pinnedPosts` is client-supplied with free-form version keys, so a pin only counts when the version
  * is one of this published model's and the post shows in that version's gallery; otherwise any owner
- * could message any author once per invented version id.
+ * could message any author once per invented version id. The eligibility rule tracks the gallery
+ * read path (image.controller pinned posts, `filterPinnedImagesToVersion`), but is stricter: a post
+ * with no resource link to the version is not notified. A visibility change there belongs here too.
  */
 export async function notifyNewlyPinnedPosts({
   model,

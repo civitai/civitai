@@ -10,7 +10,8 @@ const { mockCreateNotification, mockCreatorHidden } = vi.hoisted(() => ({
   mockCreateNotification: vi.fn(),
   mockCreatorHidden: vi.fn(),
 }));
-vi.mock('~/server/services/creator-gallery-hidden-users.service', () => ({
+vi.mock('~/server/services/creator-gallery-hidden-users.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   bustModelGallerySettings: vi.fn(async () => undefined),
   getCreatorGalleryHiddenUserIds: mockCreatorHidden,
 }));
@@ -166,7 +167,7 @@ describe('updateGallerySettingsHandler — notifies the author of a newly pinned
     });
   });
 
-  it('an unpin sends nothing; a re-pin carries the first pin’s key, which the worker does not re-deliver', async () => {
+  it('an unpin sends nothing, and the key is stable per version and post', async () => {
     await save({ before: { [VERSION]: [100] }, after: { pinnedPosts: { [VERSION]: [] } } });
     expect(sentTo()).toEqual([]);
     await save({ before: { [VERSION]: [] }, after: { pinnedPosts: { [VERSION]: [100] } } });
