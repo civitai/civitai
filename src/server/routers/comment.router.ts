@@ -20,6 +20,7 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import type { CommentUpsertInput } from '~/server/schema/comment.schema';
 import { reactionRateLimits } from '~/server/schema/reaction.schema';
 import {
+  COMMENT_V3_RATE_LIMIT_KEY,
   commentRateLimits,
   commentUpsertInput,
   getAllCommentsSchema,
@@ -154,7 +155,7 @@ export const commentRouter = router({
     .input(commentUpsertInput)
     .use(isOwnerOrModerator)
     .use(isLocked)
-    .use(rateLimit(commentRateLimits))
+    .use(rateLimit(commentRateLimits, undefined, { sharedKey: COMMENT_V3_RATE_LIMIT_KEY }))
     .mutation(upsertCommentHandler),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
