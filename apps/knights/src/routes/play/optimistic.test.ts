@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   BUFFER_TARGET,
   refillCount,
@@ -6,9 +6,11 @@ import {
   REFILL_AT,
   MAX_EXCLUDED,
   createItemBuffer,
+  createSerialQueue,
   createVoteTracker,
   describeOutcome,
   itemKey,
+  sendWithRetry,
 } from './optimistic';
 import type { PickedItem } from './optimistic';
 
@@ -271,5 +273,106 @@ describe('refillCount', () => {
   it('tops up to the full buffer otherwise, always asking for at least one', () => {
     expect(refillCount(4)).toBe(6);
     expect(refillCount(10)).toBe(1);
+  });
+});
+
+const busy = { type: 'failure', status: 429, data: { message: 'busy', busy: true } };
+const lockout = {
+  type: 'failure',
+  status: 429,
+  data: { message: 'too quick', lockoutSeconds: 600 },
+};
+const ok = { type: 'success' };
+
+describe('createSerialQueue', () => {
+  it('starts a post only after the previous one has settled, and keeps their order', async () => {
+    const queue = createSerialQueue();
+    let running = 0;
+    let mostAtOnce = 0;
+    const started: number[] = [];
+    const post = (n: number, ms: number) =>
+      queue.add(async () => {
+        running += 1;
+        mostAtOnce = Math.max(mostAtOnce, running);
+        started.push(n);
+        await new Promise((done) => setTimeout(done, ms));
+        running -= 1;
+        return n;
+      });
+
+    const results = await Promise.all([post(1, 15), post(2, 1), post(3, 5), post(4, 1)]);
+
+    expect(results).toEqual([1, 2, 3, 4]);
+    expect(started).toEqual([1, 2, 3, 4]);
+    expect(mostAtOnce).toBe(1);
+  });
+
+  it('carries on after a post that failed', async () => {
+    const queue = createSerialQueue();
+    await expect(queue.add(async () => Promise.reject(new Error('x')))).rejects.toThrow('x');
+    await expect(queue.add(async () => 'next')).resolves.toBe('next');
+  });
+});
+
+describe('sendWithRetry', () => {
+  it('sends a busy vote again after a wait, and stops once it succeeds', async () => {
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce(busy)
+      .mockResolvedValueOnce(busy)
+      .mockResolvedValue(ok);
+    const wait = vi.fn(async () => undefined);
+
+    expect(await sendWithRetry(send, wait, [10, 20, 30])).toBe(ok);
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(wait.mock.calls).toEqual([[10], [20]]);
+  });
+
+  it('gives up after its last retry and reports the vote as not recorded, without a lockout', async () => {
+    const send = vi.fn(async () => busy);
+    const result = await sendWithRetry(send, async () => undefined, [1, 1, 1]);
+
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(describeOutcome(result)).toEqual({ ok: false, message: 'busy', resync: false });
+  });
+
+  it('does not resend a real cooldown, which still asks for the lockout screen', async () => {
+    const send = vi.fn(async () => lockout);
+    const wait = vi.fn(async () => undefined);
+    const result = await sendWithRetry(send, wait);
+
+    expect(send).toHaveBeenCalledOnce();
+    expect(wait).not.toHaveBeenCalled();
+    expect(describeOutcome(result)).toMatchObject({ ok: false, resync: true });
+  });
+
+  it('does not resend a vote that never reached the server', async () => {
+    const send = vi.fn(async () => null);
+    expect(await sendWithRetry(send, async () => undefined)).toBeNull();
+    expect(send).toHaveBeenCalledOnce();
+  });
+});
+
+describe('background votes through the queue', () => {
+  it('clears the pending count when a vote fails, and the next vote still goes out', async () => {
+    const tracker = createVoteTracker();
+    const queue = createSerialQueue();
+    const sends = [lockout, ok];
+    const post = async (key: string) => {
+      tracker.claim(key, `t-${key}`);
+      await queue.add(() =>
+        sendWithRetry(
+          async () => sends.shift() ?? null,
+          async () => undefined
+        )
+      );
+      tracker.settle();
+    };
+
+    const both = Promise.all([post('a'), post('b')]);
+    expect(tracker.pending).toBe(2);
+    await both;
+    expect(tracker.pending).toBe(0);
+    expect(sends).toEqual([]);
   });
 });

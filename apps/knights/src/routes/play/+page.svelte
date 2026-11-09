@@ -24,9 +24,11 @@
   import {
     MAX_EXCLUDED,
     createItemBuffer,
+    createSerialQueue,
     createVoteTracker,
     describeOutcome,
     refillCount,
+    sendWithRetry,
     type PickedItem,
   } from './optimistic';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
@@ -338,22 +340,29 @@
     noteTimer = setTimeout(() => (note = null), NOTE_MS);
   }
 
+  // Background votes go one at a time, in the order they were answered, so one player never has more than one in flight.
+  const votes = createSerialQueue();
+  const wait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+
   async function post(action: URL, body: FormData, key: string) {
-    let outcome = describeOutcome(null);
     let reached = false;
-    try {
-      const response = await fetch(action, {
-        method: 'POST',
-        body,
-        headers: { accept: 'application/json', 'x-sveltekit-action': 'true' },
-      });
-      reached = true;
-      const result = deserialize(await response.text());
-      outcome = describeOutcome(result);
-      if (result.type === 'redirect' || result.type === 'error') await applyAction(result);
-    } catch {
-      // Keeps the lost-connection notice.
-    }
+    const attempt = async () => {
+      try {
+        const response = await fetch(action, {
+          method: 'POST',
+          body,
+          headers: { accept: 'application/json', 'x-sveltekit-action': 'true' },
+        });
+        reached = true;
+        const result = deserialize(await response.text());
+        if (result.type === 'redirect' || result.type === 'error') await applyAction(result);
+        return result;
+      } catch {
+        // Keeps the lost-connection notice.
+        return null;
+      }
+    };
+    const outcome = describeOutcome(await votes.add(() => sendWithRetry(attempt, wait)));
     tracker.settle();
     if (!reached) tracker.release(key);
     if (!outcome.ok) {

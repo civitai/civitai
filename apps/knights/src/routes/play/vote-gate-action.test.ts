@@ -82,7 +82,8 @@ describe('vote action Redis limits', () => {
     await vi.waitFor(() => expect(release).toHaveLength(3));
     const over = await submit(kind);
 
-    expect(over).toMatchObject({ status: 429, data: { lockoutSeconds: 1 } });
+    expect(over).toMatchObject({ status: 429, data: { busy: true } });
+    expect(over).not.toHaveProperty('data.lockoutSeconds');
     release.forEach((done) => done());
     await Promise.all(held);
     for (const mock of [castVote, answerHiddenCheck, castYesNoVote])

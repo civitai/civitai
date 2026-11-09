@@ -10,7 +10,7 @@ check and form validation, so only real vote attempts count. Moderators are neve
 - It runs as one atomic Lua `EVAL` per vote. Keys share a `{userId}` hash tag, so it works on a cluster. Counters and the cooldown are Knights-owned
   keys under `knights:vote-limit:{userId}:*` on sys Redis.
 - In flight: at most `IN_FLIGHT_CAP` (3) votes at once per player. The slot is freed in `finally`; one that is never freed (a check that timed
-  out and was abandoned, a crashed request) expires 30 s after it was taken. Over the cap is the usual 429 "judging too quickly" answer.
+  out and was abandoned, a crashed request) expires 30 s after it was taken. Over the cap is a 429 marked `busy` (no lockout): the page sends votes one at a time from a queue (`createSerialQueue`, `routes/play/optimistic.ts`) and resends a busy vote after 0.4 s, 1.2 s and 3 s, so only a script reaches the cap. A reached limit is the 429 "judging too quickly" answer with `lockoutSeconds`.
 - Windows: a counter per minute, hour and day, each with its expiry set inside the script. Tripping one sets the old game's fixed cooldown:
   minute 10 min, hour 1 h, day 24 h. While it runs every vote is refused before a transaction starts.
 - `/play` and `/play/next` read the lock through `lockoutFor` (`runtime.ts`): the later of the cooldown's remaining TTL and the ledger's

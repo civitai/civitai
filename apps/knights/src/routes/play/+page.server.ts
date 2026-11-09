@@ -178,6 +178,9 @@ const limitedFailure = (until: Date) =>
     lockoutSeconds: Math.max(1, Math.ceil((until.getTime() - queueDeps.now().getTime()) / 1000)),
   });
 
+const busyFailure = () =>
+  fail(429, { message: 'The Order is catching up. Try that answer again.', busy: true });
+
 type VoteEvent = { request: Request; locals: App.Locals };
 
 type ParsedVote = {
@@ -283,7 +286,8 @@ export const actions: Actions = {
       () => recordVote(parsed, event),
       { moderator: event.locals.user.isModerator }
     );
-    return 'until' in outcome ? limitedFailure(outcome.until) : outcome;
+    if (!('until' in outcome)) return outcome;
+    return outcome.busy ? busyFailure() : limitedFailure(outcome.until);
   },
 
   // Moves a player past an item without judging it: no vote, pay, accuracy or Watch credit, and it is not served to them

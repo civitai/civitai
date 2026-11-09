@@ -7,11 +7,10 @@ export type GateClient = {
   pTTL: (key: string) => Promise<number>;
 };
 
-export type GateEntry =
-  | { status: 'open'; release: () => Promise<void> }
-  | { status: 'limited'; until: Date };
+/** `busy` marks a refusal for too many votes at once, as opposed to a limit being reached: the vote can simply be sent again. */
+export type Limited = { status: 'limited'; until: Date; busy?: true };
 
-export type Limited = { status: 'limited'; until: Date };
+export type GateEntry = { status: 'open'; release: () => Promise<void> } | Limited;
 
 /** A burst from one player is answered, not queued: this many votes at once, the rest are refused. */
 export const IN_FLIGHT_CAP = 3;
@@ -109,7 +108,9 @@ export function createVoteGate({ client, limits, timeoutMs = REDIS_TIMEOUT_MS }:
       ],
     })) as [number, number];
     if (code === 1) return { status: 'limited', until: new Date(now.getTime() + Number(ms)) };
-    if (code === 2) return { status: 'limited', until: new Date(now.getTime() + BUSY_RETRY_MS) };
+    if (code === 2) {
+      return { status: 'limited', until: new Date(now.getTime() + BUSY_RETRY_MS), busy: true };
+    }
     const release = async () => {
       try {
         await within(redis.eval(RELEASE_SCRIPT, { keys: [slotKey], arguments: [] }), timeoutMs);
