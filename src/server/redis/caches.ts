@@ -25,6 +25,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readImageTagsViaKysely } from '~/server/redis/image-tags.reads';
+import { userImageVideoCountQuery } from '~/server/redis/user-image-video-count.sql';
 import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REDIS_KEYS, redis, type RedisKeyTemplateCache } from '~/server/redis/client';
@@ -951,65 +952,22 @@ export const userModel3DCountPublicCache = createUserContentCountCache<UserModel
 type UserImageVideoCount = { id: number; imageCount: number; videoCount: number };
 export const userImageVideoCountCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount',
-  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
-    SELECT
-      "userId" as id,
-      COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
-      COALESCE(SUM(IIF("type" = 'video', 1, 0)), 0)::INT as "videoCount"
-    FROM "Image"
-    WHERE "userId" IN (${Prisma.join(userIds)})
-      AND "ingestion" = 'Scanned'
-      AND "needsReview" IS NULL
-      AND "postId" NOT IN (
-        SELECT id
-        FROM "Post"
-        WHERE "userId" IN (${Prisma.join(userIds)})
-          AND ("publishedAt" IS NULL OR availability = 'Private' OR "publishedAt" > NOW())
-      )
-    GROUP BY "userId"
-  `
+  async (userIds, fromWrite) =>
+    (fromWrite ? dbWrite : dbRead).$queryRaw(userImageVideoCountQuery(userIds))
 );
 export const userImageVideoCountSfwCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount:sfw',
-  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
-    SELECT
-      "userId" as id,
-      COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
-      COALESCE(SUM(IIF("type" = 'video', 1, 0)), 0)::INT as "videoCount"
-    FROM "Image"
-    WHERE "userId" IN (${Prisma.join(userIds)})
-      AND "ingestion" = 'Scanned'
-      AND "needsReview" IS NULL
-      AND ("nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
-      AND "postId" NOT IN (
-        SELECT id
-        FROM "Post"
-        WHERE "userId" IN (${Prisma.join(userIds)})
-          AND ("publishedAt" IS NULL OR availability = 'Private' OR "publishedAt" > NOW())
-      )
-    GROUP BY "userId"
-  `
+  async (userIds, fromWrite) =>
+    (fromWrite ? dbWrite : dbRead).$queryRaw(
+      userImageVideoCountQuery(userIds, sfwBrowsingLevelsFlag)
+    )
 );
 export const userImageVideoCountPublicCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount:public',
-  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
-    SELECT
-      "userId" as id,
-      COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
-      COALESCE(SUM(IIF("type" = 'video', 1, 0)), 0)::INT as "videoCount"
-    FROM "Image"
-    WHERE "userId" IN (${Prisma.join(userIds)})
-      AND "ingestion" = 'Scanned'
-      AND "needsReview" IS NULL
-      AND ("nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0
-      AND "postId" NOT IN (
-        SELECT id
-        FROM "Post"
-        WHERE "userId" IN (${Prisma.join(userIds)})
-          AND ("publishedAt" IS NULL OR availability = 'Private' OR "publishedAt" > NOW())
-      )
-    GROUP BY "userId"
-  `
+  async (userIds, fromWrite) =>
+    (fromWrite ? dbWrite : dbRead).$queryRaw(
+      userImageVideoCountQuery(userIds, publicBrowsingLevelsFlag)
+    )
 );
 
 const userImageVideoCountVariants = [
