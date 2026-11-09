@@ -748,6 +748,20 @@ describe('an owner editing another Training Data file on a Training Studio versi
     await updateFile({ id: 1, visibility: 'Public', userId: 99, isModerator: true });
     expect(writtenData().visibility).toBe('Public');
   });
+
+  it('cannot make it Public by replacing its content', async () => {
+    studioVersion(true);
+    withFile({ type: 'Training Data', metadata: {} });
+    await updateFile({ id: 1, url: NEW_URL, visibility: 'Public', userId: 7 });
+    expect(createdData().visibility).toBe('Private');
+  });
+
+  it('can make it Public by replacing its content on a version with no Studio dataset', async () => {
+    studioVersion(false);
+    withFile({ type: 'Training Data', metadata: {} });
+    await updateFile({ id: 1, url: NEW_URL, visibility: 'Public', userId: 7 });
+    expect(createdData().visibility).toBe('Public');
+  });
 });
 
 describe('an owner editing a Training Studio dataset directly', () => {

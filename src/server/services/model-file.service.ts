@@ -267,6 +267,15 @@ export async function updateFile({
         modelVersionId: modelFile.modelVersionId,
         op: 'replace',
       });
+    // New content on a Training Studio version follows the same cap as an edit there.
+    if (
+      !isModerator &&
+      (inputData.type ?? modelFile.type) === 'Training Data' &&
+      inputData.visibility !== undefined &&
+      inputData.visibility !== ModelFileVisibility.Private &&
+      (await versionHasStudioDataset(dbWrite, modelFile.modelVersionId))
+    )
+      inputData.visibility = ModelFileVisibility.Private;
     return replaceFileContent({
       file: modelFile,
       input: { ...inputData, url: inputData.url, metadata },
