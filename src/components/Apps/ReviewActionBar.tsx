@@ -396,7 +396,7 @@ export function ReviewActionBar({
         <Button
           size="sm"
           variant="filled"
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
             // 🔴 This view replaces the actions the instant "Approve & next" enqueues, so the
             // SECOND click of a double click on that button lands here. A click with
             // `detail > 1` is that second click, never a deliberate Undo.
