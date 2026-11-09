@@ -189,10 +189,19 @@ function refuse(message: string): never {
  * `assertTrainingSourcePublishable`, so the two cannot disagree about what counts as approved.
  */
 export function assertTrainingModerationApproved(workflow: Workflow): void {
-  const { step } = getTrainingStep(workflow);
-  const output = step.output as TrainingOutput | ImageResourceTrainingOutput | null | undefined;
-  if (output?.moderationStatus !== APPROVED_TRAINING_MODERATION_STATUS)
-    refuse(TRAINING_NOT_APPROVED_MESSAGE);
+  if (!isTrainingModerationApproved(workflow)) refuse(TRAINING_NOT_APPROVED_MESSAGE);
+}
+
+/** The test `assertTrainingModerationApproved` applies, as a boolean: false for a run with no
+ *  readable training step. */
+export function isTrainingModerationApproved(workflow: Workflow): boolean {
+  let output: TrainingOutput | ImageResourceTrainingOutput | null | undefined;
+  try {
+    output = getTrainingStep(workflow).step.output as typeof output;
+  } catch {
+    return false;
+  }
+  return output?.moderationStatus === APPROVED_TRAINING_MODERATION_STATUS;
 }
 
 /**
