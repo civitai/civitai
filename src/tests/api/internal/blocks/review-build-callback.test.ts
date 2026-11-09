@@ -373,20 +373,27 @@ describe('watchReviewApplyJob (reachability gate)', () => {
     [1, true],
     [0, false],
   ])('a live-mark matching %d row(s) settles the build with live=%s', async (matched, live) => {
-    // By state, not Once: a watcher started by an earlier handler test can still be running and
-    // would take a Once value meant for this one.
-    mockMarkPreview.mockImplementation((async (_id: string, state: string) =>
-      state === 'preview-live' ? matched : 0) as never);
+    // Its own request id: a watcher an earlier handler test left running settles PUBREQ, and
+    // must not be mistaken for (or take a mock answer meant for) this one.
+    const OWN = 'pubreq_0123456789ABCDEFGHJKMNPQRZ';
+    mockMarkPreview.mockImplementation((async (id: string, state: string) =>
+      id === OWN && state === 'preview-live' ? matched : 0) as never);
     mockSettled.mockClear();
     await watchReviewApplyJob({
-      publishRequestId: PUBREQ,
+      publishRequestId: OWN,
       sha: SHA,
       jobName: 'review-apply-1',
       baseDetail,
     });
-    await vi.waitFor(() => expect(mockSettled).toHaveBeenCalled());
-    expect(mockSettled).toHaveBeenCalledWith({ publishRequestId: PUBREQ, live });
-    expect(mockSettled).not.toHaveBeenCalledWith({ publishRequestId: PUBREQ, live: !live });
+    await vi.waitFor(() =>
+      expect(
+        mockSettled.mock.calls.some(
+          (c) => (c[0] as { publishRequestId: string }).publishRequestId === OWN
+        )
+      ).toBe(true)
+    );
+    expect(mockSettled).toHaveBeenCalledWith({ publishRequestId: OWN, live });
+    expect(mockSettled).not.toHaveBeenCalledWith({ publishRequestId: OWN, live: !live });
     mockMarkPreview.mockImplementation(async () => undefined);
   });
 
