@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { createFeedbackSchema, getFeedbackAreaSchema } from '~/server/schema/feedback.schema';
 import {
+  buildFeedbackServerStamp,
   createFeedback,
   FEEDBACK_AREA_DISABLED_MESSAGE,
   isFeedbackAreaEnabled,
@@ -36,6 +37,12 @@ export const feedbackRouter = router({
       // Loud rather than dropped: if the area went off mid-typing, say so.
       if (!enabled)
         throw new TRPCError({ code: 'FORBIDDEN', message: FEEDBACK_AREA_DISABLED_MESSAGE });
-      return createFeedback({ ...input, userId: ctx.user.id });
+      const server = buildFeedbackServerStamp({
+        headers: ctx.req?.headers ?? {},
+        tier: ctx.user.tier,
+        domain: ctx.domain,
+        features: ctx.features,
+      });
+      return createFeedback({ ...input, userId: ctx.user.id, server });
     }),
 });
