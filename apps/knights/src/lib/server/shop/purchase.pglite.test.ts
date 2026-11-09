@@ -758,6 +758,17 @@ describe('a creator cosmetic that is still in review', () => {
     ).toHaveLength(0);
   });
 
+  it('takes no rotation slot from approved items', async () => {
+    await pg.exec(`
+      UPDATE "KnightsShopItem" SET "rotating" = true WHERE "id" = ${PENDING_BADGE};
+      INSERT INTO "KnightsShopItem" ("id","kind","name","price","buzz","rotating") VALUES
+        (20,'buzz_pack','A',1000,50,true),(21,'buzz_pack','B',1000,50,true),
+        (22,'buzz_pack','C',1000,50,true),(23,'buzz_pack','D',1000,50,true);`);
+    for (const id of [20, 21, 22, 23]) {
+      expect(await buy(id, { price: 1000 })).toMatchObject({ status: 'granted' });
+    }
+  });
+
   it('sells once the listing is approved', async () => {
     await pg.exec(`UPDATE "CosmeticShopItem" SET "status"='Published' WHERE "id"=1`);
     expect(await buy(PENDING_BADGE, { price: 500 })).toMatchObject({ status: 'granted' });

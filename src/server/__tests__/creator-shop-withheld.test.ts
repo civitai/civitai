@@ -22,6 +22,7 @@ vi.mock('~/server/services/creator-shop-labels.service', async (importOriginal) 
 }));
 
 const { isListingDisplayable } = await import('~/server/services/creator-shop.data');
+const { withheldCosmeticIds } = await import('@civitai/shared/knights-shop');
 const { getWithheldCosmeticIds } = await import('~/server/services/creator-shop-withheld');
 const { equipCosmetic } = await import('~/server/services/user.service');
 const { equipCosmeticToEntity } = await import('~/server/services/cosmetic.service');
@@ -189,6 +190,45 @@ describe('which cosmetics are withheld', () => {
     rejectionReason: listing.rejectionReason ?? null,
     meta: metaOf(listing),
     cosmetic: { createdById: CREATOR },
+  });
+
+  // The Knights shop decides what it may sell with `withheldCosmeticIds`; both must answer alike on the same rows.
+  it.each<[string, Listing, number]>([
+    ['live', LIVE, 0],
+    ['relisted', RELISTED, 0],
+    ['sent back', SENT_BACK, 0],
+    ['never reviewed', { status: 'PendingReview', history: [submitted()] }, 0],
+    [
+      'taken down',
+      { status: 'Archived', history: [submitted(), reviewed('approve', 2)], takedown: true },
+      0,
+    ],
+    [
+      'edited after approval',
+      {
+        status: 'PendingReview',
+        history: [submitted(), reviewed('approve', 2), edited('artwork', 3)],
+      },
+      0,
+    ],
+  ])('agrees with the Knights shop rule: %s', async (_, listing) => {
+    const listings = [row(CREATOR, listing), row(RESELLER, SENT_BACK)];
+    dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValueOnce(listings);
+    const main = await getWithheldCosmeticIds([COSMETIC]);
+    const shop = withheldCosmeticIds(
+      [{ id: COSMETIC, createdById: CREATOR, flags: 0 }],
+      listings.map(({ cosmetic: _c, ...rest }) => rest)
+    );
+    expect(shop).toEqual(main);
+  });
+
+  it('agrees with the Knights shop rule on a pending listing deleted while withheld', async () => {
+    const flags = CosmeticFlag.Withheld;
+    dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValueOnce([]);
+    dbMock.dbRead.cosmetic.findMany.mockResolvedValueOnce([{ id: COSMETIC, flags }]);
+    const main = await getWithheldCosmeticIds([COSMETIC]);
+    expect(withheldCosmeticIds([{ id: COSMETIC, createdById: CREATOR, flags }], [])).toEqual(main);
+    expect(main).toEqual(new Set([COSMETIC]));
   });
 
   it("reads only the creator's own listing, never a reseller's", async () => {

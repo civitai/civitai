@@ -454,16 +454,26 @@ describe('a creator cosmetic that is still in review', () => {
     expect(await setShopItemActive(id, false, MOD)).toEqual({ ok: true, changed: true });
   });
 
-  it('is listed as withheld, and the preview hides it like the shop does', async () => {
+  it('is listed as withheld, and the preview leaves it out of the draw like the shop does', async () => {
     await seedPending();
     await seedItem('Creator badge', { kind: 'cosmetic', cosmeticId: 9, rotating: false });
     const rows = await listShopItems();
     expect(rows[0].cosmeticWithheld).toBe(true);
-    expect(stockView(rows, '2026-12-20').stock[0].hidden).toBe('cosmetic in review');
+    expect(stockView(rows, '2026-12-20').stock).toEqual([]);
 
     await approve();
     const after = await listShopItems();
     expect(after[0].cosmeticWithheld).toBe(false);
-    expect(stockView(after, '2026-12-20').stock[0].hidden).toBeNull();
+    expect(stockView(after, '2026-12-20').stock).toHaveLength(1);
+  });
+
+  it('takes no rotation slot from approved items', async () => {
+    await seedPending();
+    for (let i = 0; i < 4; i++) await seedItem(`Pick ${i}`, { rotating: true });
+    await seedItem('Creator badge', { kind: 'cosmetic', cosmeticId: 9, rotating: true });
+    const names = (await listShopItems().then((rows) => stockView(rows, '2026-12-20').stock)).map(
+      ({ item }) => item.name
+    );
+    expect(names.sort()).toEqual(['Pick 0', 'Pick 1', 'Pick 2', 'Pick 3']);
   });
 });

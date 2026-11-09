@@ -191,7 +191,11 @@ export async function setShopItemActive(
  */
 export function stockView(rows: ShopItemRow[], day: string) {
   const live = rows.filter((row) => row.active);
-  const { stock } = stockFor(live.filter(isSellable), day);
+  // An item still in review is not drawn at all, so it takes no rotation slot or deal, as in the shop.
+  const { stock } = stockFor(
+    live.filter((row) => isSellable(row) && !row.cosmeticWithheld),
+    day
+  );
   const byId = new Map(live.map((row) => [row.id, row]));
   return {
     day,
@@ -199,11 +203,7 @@ export function stockView(rows: ShopItemRow[], day: string) {
       const row = byId.get(item.id);
       if (!row) return [];
       const hidden =
-        row.kind === 'cosmetic' && row.cosmeticType === null
-          ? ('cosmetic missing' as const)
-          : row.cosmeticWithheld
-          ? ('cosmetic in review' as const)
-          : null;
+        row.kind === 'cosmetic' && row.cosmeticType === null ? ('cosmetic missing' as const) : null;
       return [{ item: row, price, deal, hidden }];
     }),
     excluded: live.filter((row) => !isSellable(row)),

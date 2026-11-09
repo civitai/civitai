@@ -8,12 +8,15 @@ const list = (names: string[]) =>
     ? names.join(' and ')
     : `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`;
 
-const todaysStock = (items: Row[], day: string) => stockFor(items.filter(isSellable), day).stock;
+// An item still in review is not drawn at all, as in the shop.
+const todaysStock = (items: Row[], day: string) =>
+  stockFor(
+    items.filter((item) => isSellable(item) && !(item as Row).cosmeticWithheld),
+    day
+  ).stock;
 
-/** Drawn for the day but never shown: its cosmetic is gone or still in review. */
-const hidden = (item: ShopItem) =>
-  item.kind === 'cosmetic' &&
-  ((item as Row).cosmeticType === null || (item as Row).cosmeticWithheld === true);
+/** Drawn for the day but never shown: its cosmetic is gone. */
+const hidden = (item: ShopItem) => item.kind === 'cosmetic' && (item as Row).cosmeticType === null;
 
 type Stock = ReturnType<typeof todaysStock>;
 const shown = (stock: Stock) => stock.filter((entry) => !hidden(entry.item));

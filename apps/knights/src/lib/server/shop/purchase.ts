@@ -119,9 +119,17 @@ export async function buyItem(
       .where('active', '=', true)
       .execute();
     const day = utcDay(now);
-    const catalog: ShopItem[] = items.filter(isSellable);
-    const item = catalog.find((entry) => entry.id === itemId);
+    const sellable: ShopItem[] = items.filter(isSellable);
+    const item = sellable.find((entry) => entry.id === itemId);
     if (!item) return refuse('unknown-item');
+    // A creator cosmetic still in review cannot be worn, so gold spent on it would buy nothing. It also
+    // never took a rotation slot or a deal, as in `loadShop`.
+    const withheld = await withheldCosmetics(
+      trx,
+      sellable.flatMap((s) => (s.cosmeticId === null ? [] : [s.cosmeticId]))
+    );
+    if (item.cosmeticId !== null && withheld.has(item.cosmeticId)) return refuse('not-approved');
+    const catalog = sellable.filter((s) => s.cosmeticId === null || !withheld.has(s.cosmeticId));
     const entry = stockFor(catalog, day).stock.find((s) => s.item.id === itemId);
     if (!entry) return refuse('not-in-stock');
     if (entry.price !== price) return refuse('price-changed');

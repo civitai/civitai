@@ -82,12 +82,20 @@ export function stockFor(
 
 /**
  * Creator cosmetics the main app withholds: nobody may wear them until a moderator approves the creator's
- * listing, so the shop must not sell them. Mirrors `getWithheldCosmeticIds` and `isListingDisplayable` in the
- * main app (`creator-shop-withheld.ts`, `creator-shop.data.ts`); `src/server/services/knights/__tests__/withheld-parity.test.ts` keeps the two in step.
+ * listing, so the shop must not sell them. `isListingDisplayable` and `DISPLAYED_FIELDS` are the main app's own rule (`creator-shop.data.ts` re-exports them);
+ * `getWithheldCosmeticIds` (`creator-shop-withheld.ts`) has a Prisma query shape, so `creator-shop-withheld.test.ts` runs it and
+ * `withheldCosmeticIds` on the same fixtures.
  */
 const COSMETIC_FLAG_WITHHELD = 1 << 2;
-// Fields whose edit sends an approved listing back to review (`DISPLAYED_FIELDS` in the main app).
-const DISPLAYED_FIELDS = new Set(['name', 'description', 'artwork', 'offsets', 'slug']);
+// Allowlist: a newly recorded edit field that changes what holders see must be added here, or editing it after
+// approval leaves the item wearable unreviewed. The main app's `changesDisplay` reads this same set.
+export const DISPLAYED_FIELDS: ReadonlySet<string> = new Set([
+  'name',
+  'description',
+  'artwork',
+  'offsets',
+  'slug',
+]);
 
 type ListingHistory = {
   kind?: string;

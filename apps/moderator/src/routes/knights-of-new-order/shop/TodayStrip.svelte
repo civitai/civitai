@@ -114,7 +114,7 @@
     </div>
     {#if hiddenCount}
       <p class="mt-3 text-xs text-dark-2">
-        {hiddenCount} drawn for today but hidden from players (cosmetic missing or still in review); not shown above.
+        {hiddenCount} drawn for today but hidden from players (cosmetic missing); not shown above.
       </p>
     {/if}
   {/if}

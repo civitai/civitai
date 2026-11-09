@@ -51,14 +51,22 @@ export async function loadShop(
   }: { playerId: number; rank: string; now: Date; buzzPacksOpen: boolean }
 ): Promise<ShopView> {
   const day = utcDay(now);
-  const items: ShopItem[] = (
+  const sellable: ShopItem[] = (
     await db.selectFrom('KnightsShopItem').selectAll().where('active', '=', true).execute()
   ).filter(isSellable);
+  // Not approved yet: nobody can wear it, so it is neither offered nor drawn into the day's rotation or deals.
+  const withheld = await withheldCosmetics(
+    db,
+    sellable.flatMap((item) => (item.cosmeticId === null ? [] : [item.cosmeticId]))
+  );
+  const items = sellable.filter(
+    (item) => item.cosmeticId === null || !withheld.has(item.cosmeticId)
+  );
   const { stock } = stockFor(items, day);
 
   const cosmeticIds = stock.flatMap(({ item }) => (item.cosmeticId ? [item.cosmeticId] : []));
   const sellsMembership = stock.some(({ item }) => item.kind === 'membership');
-  const [cosmetics, withheld, owned, dealsTaken, hasMembership] = await Promise.all([
+  const [cosmetics, owned, dealsTaken, hasMembership] = await Promise.all([
     cosmeticIds.length
       ? db
           .selectFrom('Cosmetic')
@@ -66,7 +74,6 @@ export async function loadShop(
           .where('id', 'in', cosmeticIds)
           .execute()
       : [],
-    withheldCosmetics(db, cosmeticIds),
     cosmeticIds.length
       ? db
           .selectFrom('UserCosmetic')
@@ -90,8 +97,6 @@ export async function loadShop(
     const cosmetic = cosmetics.find((row) => row.id === item.cosmeticId);
     // An item whose cosmetic row is gone cannot be granted, so it is not shown.
     if (item.kind === 'cosmetic' && !cosmetic) return [];
-    // Not approved yet: nobody can wear it, so the shop does not offer it.
-    if (item.cosmeticId !== null && withheld.has(item.cosmeticId)) return [];
     const held = owned.filter((row) => row.cosmeticId === item.cosmeticId);
     const isSticker = cosmetic?.type === 'Sticker';
     const uses = isSticker ? stickerUses(cosmetic?.data) : null;

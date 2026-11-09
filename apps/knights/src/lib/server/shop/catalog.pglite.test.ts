@@ -70,4 +70,16 @@ describe('the shop view of a creator cosmetic', () => {
     await pg.exec(`UPDATE "CosmeticShopItem" SET "status"='Published' WHERE "id"=1`);
     expect((await cards()).map((card) => card.id)).toEqual([1, 3]);
   });
+
+  it('gives its rotation slot to an approved item', async () => {
+    await pg.exec(`INSERT INTO "KnightsShopItem" ("id","kind","name","price","tier","days","rotating") VALUES
+      (10,'membership','Gold wk',90000,'gold',7,true),
+      (11,'membership','Gold wk 2',90000,'gold',7,true),
+      (12,'membership','Gold wk 3',90000,'gold',7,true),
+      (13,'membership','Gold wk 4',90000,'gold',7,true);
+      UPDATE "KnightsShopItem" SET "rotating" = true WHERE "id" = 3;`);
+    const ids = (await cards()).map((card) => card.id);
+    expect(ids).not.toContain(3);
+    expect(ids.filter((id) => id >= 10)).toHaveLength(4);
+  });
 });
