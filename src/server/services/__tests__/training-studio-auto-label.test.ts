@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *  a poll must never hand one user another user's workflow. */
 
 const orch = vi.hoisted(() => ({ submitWorkflow: vi.fn(), getWorkflow: vi.fn() }));
-vi.mock('@civitai/orchestration-client', () => ({
+vi.mock('@civitai/orchestration-client', async () => ({
+  ...(
+    await import('~/server/services/orchestrator/__tests__/civitai-client.stub')
+  ).civitaiClientStub(),
   submitWorkflow: orch.submitWorkflow,
   getWorkflow: orch.getWorkflow,
 }));
