@@ -75,6 +75,7 @@ export function getCollectionByIdRow(db: Kysely<DB>, id: number) {
         'Collection.mode',
         'Collection.metadata',
         'Collection.availability',
+        'Collection.archivedAt',
         'Collection.userId',
         'CoverImage.id as coverId',
         'CoverImage.name as coverName',
