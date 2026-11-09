@@ -8,10 +8,10 @@ An item is never handed to a stage nobody can serve. On every escalation, whatev
 
 Eligible means a `NewOrderPlayer` who voted within the last 14 days (`ACTIVE_PLAYER_DAYS`) and is not waiting on a career reset (three active smites, the same bar `insertVote` refuses at). Idle accounts do not make a rank count. `staffedRanks` reads this once per tick (one query), and once per split vote.
 
-## Rule 2: an item nobody voted on is extended once, not escalated
+## Rule 2: an item nobody voted on is extended, within a bound, not escalated
 
-When the window lapses and the item has no vote at its current stage, it stays at that stage for one more window, as long as someone can serve that stage (rule 1). It is not stamped as escalated (`escalatedAt`, `escalationReason` are untouched), keeps its priority, and stays in the feed. Votes cast at earlier stages do not count; only votes at the current stage do.
+When the window lapses and the item has no vote at its current stage, it stays at that stage for another window, as long as someone can serve that stage (rule 1). It is not stamped as escalated (`escalatedAt`, `escalationReason` are untouched), keeps its priority, and stays in the feed. Votes cast at earlier stages do not count; only votes at the current stage do.
 
-The extension is a one-time grace per stage: an item whose stage entry (`escalatedAt`, else `createdAt`) is more than two windows old is handed up instead. This bounds the case where the only eligible players have already judged the image, so no one can answer it. An item at a stage nobody can serve is handed up at once, and an item with at least one vote at the stage goes on to rule 1 as well.
+Extension lasts until two stage windows after the item entered the stage: an item whose stage entry (`escalatedAt`, else `createdAt`) is more than two windows old is handed up instead. With the default first window that is one extension; an item enqueued with a shorter custom `expiresAt` can be extended twice within the bound. This bounds the case where the only eligible players have already judged the image, so no one can answer it. An item at a stage nobody can serve is handed up at once, and an item with at least one vote at the stage goes on to rule 1 as well.
 
 The tick response carries `escalated`, `toInquisitor` and `extended`.

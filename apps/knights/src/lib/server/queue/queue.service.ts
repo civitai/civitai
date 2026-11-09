@@ -320,33 +320,39 @@ export const ACTIVE_PLAYER_DAYS = 14;
  * only candidates already judged its image; `escalateExpired` bounds that wait.
  */
 export async function staffedRanks(db: Executor, now: Date): Promise<Set<string>> {
-  const rows = await db
-    .selectFrom('NewOrderPlayer as p')
-    .select('p.rankType')
-    .distinct()
-    .where('p.rankType', 'in', ['Knight', 'Templar', 'Paladin'])
-    .where((eb) =>
-      eb.exists(
-        eb
-          .selectFrom('KnightsVote as v')
-          .select(sql<number>`1`.as('one'))
-          .whereRef('v.playerId', '=', 'p.userId')
-          .where('v.createdAt', '>', utc(addHours(now, -24 * ACTIVE_PLAYER_DAYS)))
+  const since = utc(addHours(now, -24 * ACTIVE_PLAYER_DAYS));
+  // Only the highest rank with an eligible player matters, so probe from the top and stop at the first hit.
+  for (const rank of ['Paladin', 'Templar', 'Knight'] as const) {
+    const hit = await db
+      .selectFrom('NewOrderPlayer as p')
+      .select('p.userId')
+      .where('p.rankType', '=', rank)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom('KnightsVote as v')
+            .select(sql<number>`1`.as('one'))
+            .whereRef('v.playerId', '=', 'p.userId')
+            .where('v.createdAt', '>', since)
+        )
       )
-    )
-    .where(
-      (eb) =>
-        eb
-          .selectFrom('NewOrderSmite as s')
-          .select((sb) => sb.fn.countAll().as('n'))
-          .whereRef('s.targetPlayerId', '=', 'p.userId')
-          .where('s.cleansedAt', 'is', null),
-      '<',
-      SMITES.max
-    )
-    .execute();
-  const top = Math.max(-1, ...rows.map((r) => rankIndex(r.rankType)));
-  return new Set(RANKS.filter((rank) => isStageRank(rank) && rankIndex(rank) <= top));
+      .where(
+        (eb) =>
+          eb
+            .selectFrom('NewOrderSmite as s')
+            .select((sb) => sb.fn.countAll().as('n'))
+            .whereRef('s.targetPlayerId', '=', 'p.userId')
+            .where('s.cleansedAt', 'is', null),
+        '<',
+        SMITES.max
+      )
+      .limit(1)
+      .executeTakeFirst();
+    if (hit) {
+      return new Set(RANKS.filter((r) => isStageRank(r) && rankIndex(r) <= rankIndex(rank)));
+    }
+  }
+  return new Set();
 }
 
 async function escalate(
@@ -813,7 +819,7 @@ export async function applyPendingResolutions(
 
 /**
  * Moves items whose stage window lapsed. An item with no vote at its stage may have had no one to answer it, so it gets
- * one more window at the same stage; after that, or when nobody can serve the stage, it is handed up like one with
+ * one more window at the same stage, until two stage windows after it entered the stage; after that, or when nobody can serve the stage, it is handed up like one with
  * votes: to the next stage someone can serve, or to the Inquisitors.
  */
 export async function escalateExpired(
@@ -854,8 +860,9 @@ export async function escalateExpired(
     );
     const staffed = await staffedRanks(trx, now);
 
-    // The first lapse at a stage is the only one that extends: an item that spent a whole extra window with no vote
-    // is not coming back, and must not wait here forever (the one player who could serve it may have judged it already).
+    // An item extends only until two stage windows after it entered the stage (a custom shorter first `expiresAt` can extend
+    // twice within that): one that sat that long with no vote is not coming back, and must not wait here forever (the one
+    // player who could serve it may have judged it already).
     const enteredSince = addHours(now, -2 * KNIGHTS_STAGE_TTL_HOURS);
     const extend = (item: (typeof due)[number]) =>
       !voted.has(item.id) &&
