@@ -2725,8 +2725,13 @@ describe('live restore on relist', () => {
 
   // Icon + cover set and matching the recorded baseline, so the republish takes the IMMEDIATE arm
   // (the same fixture shape as the republish scan-gate tests).
+  // Every mock it reads is re-established here: earlier suites (the rating floor's wire())
+  // leave screenshot and image implementations behind, which would make the live assets
+  // differ from this baseline and route the republish to review.
   function republishImmediately() {
     mockWrite.appListing.findUnique.mockResolvedValue(withAssets(ownerRemovedOnsite()));
+    mockWrite.appListingScreenshot.findMany.mockResolvedValue([]);
+    mockWrite.image.findMany.mockImplementation(injectIngestion({}));
     mockWrite.appListingModerationEvent.findFirst.mockResolvedValue(
       ownerUnpublishEvent(approvedAssets({ iconId: 1, coverId: 2 }))
     );

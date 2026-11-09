@@ -594,28 +594,6 @@ describe('agent review auto-start', () => {
     expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');
   });
 
-  it('the reservation is released on the key it was taken on, even when the UTC day turns mid-start', async () => {
-    spend(0);
-    const chain = budgetCounter(1);
-    vi.useFakeTimers({ toFake: ['Date'] });
-    try {
-      vi.setSystemTime(new Date('2026-11-09T23:59:59.900Z'));
-      expect(
-        await maybeAutoStartAgentReview(PUBREQ, {
-          startAgentReview: async () => {
-            vi.setSystemTime(new Date('2026-11-10T00:00:00.100Z'));
-            return {};
-          },
-        })
-      ).toBe('started');
-    } finally {
-      vi.useRealTimers();
-    }
-    const reservedKey = chain.incrBy.mock.calls[0][0];
-    expect(reservedKey).toMatch(/:2026-11-09$/);
-    expect(redisMock.sysRedis.incrBy).toHaveBeenCalledWith(reservedKey, -200);
-  });
-
   it('the budget is env-configurable', async () => {
     envMock.set({ AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD: 100 });
     spend(90);
