@@ -109,14 +109,14 @@ describe('block CORS exposes Retry-After', () => {
     const res = await call(ALLOWED_ORIGIN);
     expect(res.statusCode).toBe(429);
     expect(res.headers['access-control-allow-origin']).toBe(ALLOWED_ORIGIN);
-    expect(res.headers['access-control-expose-headers']).toBe('Retry-After');
+    expect(res.headers['access-control-expose-headers']).toBe('Retry-After, Deprecation, Link');
   });
 
   it('on the opted-in opaque origin', async () => {
     const res = await call('null');
     expect(res.statusCode).toBe(429);
     expect(res.headers['access-control-allow-origin']).toBe('null');
-    expect(res.headers['access-control-expose-headers']).toBe('Retry-After');
+    expect(res.headers['access-control-expose-headers']).toBe('Retry-After, Deprecation, Link');
   });
 
   it('INVARIANT GUARD: not on an unrecognised origin, which gets no block CORS', async () => {
