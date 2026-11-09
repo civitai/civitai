@@ -3,9 +3,14 @@ export function normalizeModel3DFormat(format: string | null | undefined) {
   return (format ?? '').trim().toLowerCase().replace(/^\./, '');
 }
 
-/** GLB is the only format the inline viewer and the `model3DPreview` render can load. */
+/** GLB is the only format the inline viewer can load. */
 export function isGlbFormat(format: string | null | undefined) {
   return normalizeModel3DFormat(format) === 'glb';
+}
+
+export function supportsModel3DPreview(format: string | null | undefined) {
+  const normalized = normalizeModel3DFormat(format);
+  return normalized === 'glb' || normalized === 'ply';
 }
 
 /**
@@ -26,7 +31,7 @@ type Model3DStepLike = {
 };
 
 /**
- * Whether a 3D workflow delivered its mesh as a non-GLB file (Tripo quad is FBX-only). Its
+ * Whether a 3D workflow delivered a format without preview support (Tripo quad is FBX-only). Its
  * `model3DPreview` step, when one was chained, can never render, so a canceled or expired preview
  * doesn't mean the generation failed.
  */
@@ -36,7 +41,7 @@ export function isFbxOnlyDelivered(steps: Model3DStepLike[]) {
       step.$type === 'polyGen' &&
       step.status === 'succeeded' &&
       step.output.some(
-        (blob) => blob.type === 'model3d' && blob.available && !isGlbFormat(blob.format)
+        (blob) => blob.type === 'model3d' && blob.available && !supportsModel3DPreview(blob.format)
       )
   );
 }

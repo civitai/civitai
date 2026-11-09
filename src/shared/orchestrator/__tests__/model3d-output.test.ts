@@ -21,9 +21,9 @@ describe('isFbxOnlyDelivered', () => {
     expect(isFbxOnlyDelivered([polyGen('succeeded', [mesh('fbx')]), failedPreview])).toBe(true);
   });
 
-  // A GLB result whose preview failed is a real failure and keeps its own status.
-  it('is false for a GLB mesh', () => {
-    expect(isFbxOnlyDelivered([polyGen('succeeded', [mesh('GLB')]), failedPreview])).toBe(false);
+  // A supported result whose preview failed keeps that failure status.
+  it.each(['GLB', 'ply'])('keeps a failed preview visible for %s output', (format) => {
+    expect(isFbxOnlyDelivered([polyGen('succeeded', [mesh(format)]), failedPreview])).toBe(false);
   });
 
   it('is false when the generation step itself did not succeed', () => {
@@ -48,9 +48,9 @@ describe('isUnratedOutput — 3D meshes', () => {
     expect(isUnratedOutput({ ...base, format: 'fbx' })).toBe(true);
   });
 
-  it('never holds a GLB mesh, which is rated through its preview render', async () => {
+  it.each(['glb', 'ply'])('uses the existing preview-rating flow for %s', async (format) => {
     const { isUnratedOutput } = await import('~/shared/orchestrator/workflow-data');
-    expect(isUnratedOutput({ ...base, format: 'glb' })).toBe(false);
+    expect(isUnratedOutput({ ...base, format })).toBe(false);
   });
 });
 
@@ -116,8 +116,9 @@ describe('isInlineViewableModel3DFile', () => {
     expect(isInlineViewableModel3DFile({ format: ' GLB ', variant: null })).toBe(true);
   });
 
-  it('drops FBX files and armature-only meshes', () => {
+  it('drops formats the inline viewer cannot load and armature-only meshes', () => {
     expect(isInlineViewableModel3DFile({ format: 'fbx', variant: 'primary' })).toBe(false);
+    expect(isInlineViewableModel3DFile({ format: 'ply', variant: 'primary' })).toBe(false);
     expect(isInlineViewableModel3DFile({ format: 'glb', variant: 'walking-armature' })).toBe(false);
   });
 });

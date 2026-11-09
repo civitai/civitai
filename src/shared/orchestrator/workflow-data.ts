@@ -1,5 +1,5 @@
 import type { NsfwLevel, WorkflowCost } from '@civitai/orchestration-client';
-import { isGlbFormat } from '~/shared/orchestrator/model3d-output';
+import { supportsModel3DPreview } from '~/shared/orchestrator/model3d-output';
 import type {
   NormalizedWorkflow,
   NormalizedWorkflowMetadata,
@@ -104,8 +104,8 @@ export function isNeverRatedVideoStep(
 }
 
 /**
- * An output reported available before it is rated. Audio is never rated. A GLB mesh takes its
- * rating from its preview render; a non-GLB mesh (Tripo quad FBX) has no preview render, so it
+ * An output reported available before it is rated. Audio is never rated. GLB and PLY take their
+ * rating from preview renders; a Tripo quad FBX has no preview render, so it
  * counts as unrated until its auto-thumbnail's rating reaches it.
  */
 export function isUnratedOutput(
@@ -117,7 +117,7 @@ export function isUnratedOutput(
   },
   neverRatedVideoStep = false
 ) {
-  if (output.type === 'model3d' && isGlbFormat(output.format)) return false;
+  if (output.type === 'model3d' && supportsModel3DPreview(output.format)) return false;
   if (output.type === 'audio') return false;
   if (output.type === 'video' && neverRatedVideoStep) return false;
   if (!output.available || output.nsfwLevel != null) return false;
