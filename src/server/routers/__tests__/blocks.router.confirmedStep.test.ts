@@ -378,6 +378,15 @@ describe('REGRESSION — a ~1040 fixed-price pass-through step above the 1000 bu
     expect(keysWith('system:blocks:step-quote')).toEqual([]);
   });
 
+  it('the account Limits section reads the counter the per-user cap just reserved against', async () => {
+    const quoteId = await confirmedQuote();
+    await submit(body({ quoteId }));
+    const { getMyAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
+    const row = await getMyAppBuzzToday(VIEWER);
+    expect(row.used).toBe(PRICE);
+    expect(row.remaining).toBe(row.limit! - PRICE);
+  });
+
   it('records attribution as step:<$type> and charges NO author fee', async () => {
     const quoteId = await confirmedQuote();
     await submit(body({ quoteId }));
