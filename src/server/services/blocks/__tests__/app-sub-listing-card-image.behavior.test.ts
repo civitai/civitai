@@ -262,6 +262,15 @@ function stagedRow(pendingImageId: number) {
   };
 }
 
+const CLEARED = {
+  pendingTitle: null,
+  pendingTagline: null,
+  pendingImageId: null,
+  pendingSubPath: null,
+  pendingContentRating: null,
+  pendingSubmittedAt: null,
+};
+
 const approveEdit = () =>
   moderateSubListing({
     input: { id: ROW_ID, action: 'approve-edit', version: VERSION },
@@ -310,5 +319,39 @@ describe('approving a staged image edit re-checks the image against the real vis
     expect(dbMock.dbWrite.appSubListing.updateMany.mock.calls[0][0].data).toMatchObject({
       imageId: null,
     });
+  });
+});
+
+describe('approving a new item re-checks its image against the real visibility SQL', () => {
+  const pendingRow = (imageId: number | null) => ({
+    ...stagedRow(IN_PUBLIC_POST),
+    ...CLEARED,
+    imageId,
+    status: 'pending',
+    approvedAt: null,
+  });
+  const approve = () =>
+    moderateSubListing({
+      input: { id: ROW_ID, action: 'approve', version: VERSION },
+      moderatorId: 1,
+    });
+
+  beforeEach(() => {
+    dbMock.dbWrite.appSubListing.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it.each([
+    ['an image that is still public', IN_PUBLIC_POST],
+    ['no image', null],
+  ])('approves an item with %s (control)', async (_name, imageId) => {
+    dbMock.dbWrite.appSubListing.findUnique.mockResolvedValue(pendingRow(imageId));
+    await expect(approve()).resolves.toMatchObject({ status: 'approved' });
+    expect(dbMock.dbWrite.appSubListing.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses an item whose image was blocked by the scan after it was submitted', async () => {
+    dbMock.dbWrite.appSubListing.findUnique.mockResolvedValue(pendingRow(SCAN_BLOCKED));
+    await expect(approve()).rejects.toMatchObject({ status: 409, code: 'image_not_public' });
+    expect(dbMock.dbWrite.appSubListing.updateMany).not.toHaveBeenCalled();
   });
 });

@@ -1538,6 +1538,19 @@ async function isSharedItemLive(row: {
   return item != null && !item.hidden && item.authorUserId === row.authorUserId;
 }
 
+/**
+ * An image passed the card check when it was submitted; it may have been blocked, sent back for
+ * review or unpublished since. A moderator approval must not put it live.
+ */
+async function assertStillPublic(imageId: number | null, remedy: string) {
+  if (imageId == null || (await publicImageOwner(imageId)) != null) return;
+  throw new SubListingError(
+    409,
+    'image_not_public',
+    `The image is no longer public (blocked, unscanned or unpublished); ${remedy}`
+  );
+}
+
 export async function moderateSubListing(args: {
   input: ModerateSubListingInput;
   moderatorId: number;
@@ -1561,6 +1574,7 @@ export async function moderateSubListing(args: {
     switch (action) {
       case 'approve':
         if (status !== 'pending') throw invalid();
+        await assertStillPublic(row.imageId, 'hide the item');
         data = { status: 'approved', approvedAt: now, statusReason: null, ...stamp };
         break;
       case 'hide':
@@ -1589,14 +1603,7 @@ export async function moderateSubListing(args: {
         if (status !== 'approved' || !row.pendingSubmittedAt || row.pendingTitle == null) {
           throw invalid();
         }
-        // The image passed when it was staged; it may have been blocked or pulled since.
-        if (row.pendingImageId != null && (await publicImageOwner(row.pendingImageId)) == null) {
-          throw new SubListingError(
-            409,
-            'image_not_public',
-            'The new image is no longer public (blocked, unscanned or unpublished); reject the edit'
-          );
-        }
+        await assertStillPublic(row.pendingImageId, 'reject the edit');
         data = {
           title: row.pendingTitle,
           tagline: row.pendingTagline,
