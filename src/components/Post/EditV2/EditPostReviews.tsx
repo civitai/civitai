@@ -108,6 +108,7 @@ export function EditPostReviews({ post }: { post: PostDetailEditable }) {
                 modelVersionName={resource.modelVersionName}
                 name={resource.name}
                 thumbsUpCount={resource.modelThumbsUpCount ?? 0}
+                postId={id}
               />
             ))}
             {reviews.previous.length > 0 && (
@@ -127,6 +128,7 @@ export function EditPostReviews({ post }: { post: PostDetailEditable }) {
                     modelVersionName={resource.modelVersionName}
                     name={resource.name}
                     thumbsUpCount={resource.modelThumbsUpCount ?? 0}
+                    postId={id}
                   />
                 ))}
               </>

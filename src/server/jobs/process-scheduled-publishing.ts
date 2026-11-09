@@ -6,7 +6,11 @@ import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/com
 import { constants, POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 import { uniq, uniqBy } from 'lodash-es';
 import { logToAxiom } from '~/server/logging/client';
-import { dataForModelsCache, userImageVideoCountCaches } from '~/server/redis/caches';
+import {
+  dataForModelsCache,
+  refreshHasReceivedReviews,
+  userImageVideoCountCaches,
+} from '~/server/redis/caches';
 import { firstDailyPostReward } from '~/server/rewards';
 import { getFirstDailyPostRewardedIds } from '~/server/rewards/active/firstDailyPost.reward';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
@@ -17,6 +21,10 @@ import {
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
 import { createNotification } from '~/server/services/notification.service';
+import {
+  releasePendingReviewsForPosts,
+  releaseUnreleasedReviewsOfLivePosts,
+} from '~/server/services/resourceReview.visibility';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { markComicProjectsChapterPublished } from '~/server/services/comics/chapter-publish.service';
 import { scanEntitiesInBackground } from '~/server/services/text-scan/submit';
@@ -416,6 +424,20 @@ export const processScheduledPublishing = createJob(
         }).catch(() => undefined)
       );
     }
+
+    // Before the engagements, which are unguarded, and never throws. The flipped posts by id, then the
+    // sweep for every other unreleased review of a live post (`publishedPosts` is the reward window).
+    await releasePendingReviewsForPosts(flippedPosts.map((p) => p.id))
+      .then(async (flipped) => [...flipped, ...(await releaseUnreleasedReviewsOfLivePosts())])
+      .then((reviews) => refreshHasReceivedReviews(reviews))
+      .catch((error) =>
+        logToAxiom({
+          name: 'process-scheduled-publishing',
+          type: 'error',
+          message: 'Failed to release pending resource reviews',
+          error: (error as Error)?.message,
+        }).catch(() => undefined)
+      );
 
     // Process event engagements
     for (const model of scheduledModels) {

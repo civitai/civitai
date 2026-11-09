@@ -49,6 +49,7 @@ import {
 } from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getWithheldCosmeticIds } from '~/server/services/creator-shop-withheld';
+import { visibleReviewSql } from '~/server/services/resourceReview.visibility';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { getImageTagRows } from '~/server/redis/image-tag-rows';
@@ -1214,8 +1215,15 @@ export const userHasReceivedReviewsCache = createUserContentCountCache<UserHasRe
     INNER JOIN "ResourceReview" r ON r."modelId" = m.id
     WHERE m."userId" IN (${Prisma.join(userIds)})
       AND r."userId" != m."userId"
+      AND ${Prisma.raw(visibleReviewSql('r'))}
   `
 );
+
+/** For the model owners of reviews that were just released or hidden again. */
+export async function refreshHasReceivedReviews(reviews: { modelOwnerId: number }[]) {
+  const ownerIds = [...new Set(reviews.map((review) => review.modelOwnerId))];
+  if (ownerIds.length) await userHasReceivedReviewsCache.refresh(ownerIds);
+}
 
 type UserContentOverview = {
   id: number;
