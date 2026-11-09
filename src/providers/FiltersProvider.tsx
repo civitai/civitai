@@ -151,7 +151,6 @@ const collectionFeedFilterSchema = z.object({
   query: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
 });
 
-// The /apps/store sort last chosen, so a bare link back into the store reopens on it.
 export type AppsStoreFilterSchema = z.infer<typeof appsStoreFilterSchema>;
 const appsStoreFilterSchema = z.object({
   sort: listingSortSchema.optional().catch(undefined),

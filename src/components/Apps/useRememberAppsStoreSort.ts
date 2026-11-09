@@ -9,11 +9,9 @@ import {
 } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
- * Keeps the store's sort across visits. The URL is the truth; whenever the store is on an address
- * without a sort (every breadcrumb, back chevron and nav link is a bare `/apps/store`) it takes the
- * remembered one, and a sort in the address is remembered. `popular`, the default, never shows in
- * the URL, so the sort menu hands its picks to the returned function, or choosing Most popular
- * could never undo another sort.
+ * Keeps the store's sort across visits: an address without a sort (every breadcrumb, back chevron
+ * and nav link) takes the remembered one, and a sort in the address is remembered. Most popular
+ * never shows in the URL, so the sort menu must pass its picks through the returned function.
  */
 export function useRememberAppsStoreSort() {
   const router = useRouter();
