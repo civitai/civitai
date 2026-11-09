@@ -517,6 +517,55 @@ describe('createWorkflowStepsFromGraph — workflow key', () => {
   });
 });
 
+// The submit reads `capOutput` to hold the orchestrator to its capped output level.
+describe('createWorkflowStepsFromGraph — licence output cap', () => {
+  const resource = (id: number, baseModel: string, type: string) =>
+    ({
+      id,
+      name: `r-${id}`,
+      baseModel,
+      canGenerate: true,
+      hasAccess: true,
+      trainedWords: [],
+      model: { id: id * 10, name: `M${id}`, type },
+      air: `urn:air:other:${type.toLowerCase()}:civitai:${id * 10}@${id}`,
+    } as never);
+  const build = () =>
+    createWorkflowStepsFromGraph({
+      data: {
+        workflow: 'img2img:edit',
+        ecosystem: 'NanoBanana',
+        prompt: 'test',
+        images: [
+          {
+            url: 'https://orchestration.civitai.com/v2/consumer/blobs/p.jpg',
+            width: 1024,
+            height: 1024,
+          },
+        ],
+        quantity: 1,
+        model: { id: nanoBananaVersionIds.v2, model: { type: 'Checkpoint' } },
+      } as never,
+      user: { id: USER_ID, isModerator: false },
+      orchestratorToken: TOKEN,
+    });
+
+  it('caps when a resource sits on a base model whose licence caps output', async () => {
+    vi.mocked(getResourceData).mockResolvedValueOnce([
+      resource(nanoBananaVersionIds.v2, 'Nano Banana', 'Checkpoint'),
+      resource(801, 'Fibo 2.0', 'LORA'),
+    ]);
+    expect((await build()).capOutput).toBe(true);
+  });
+
+  it('CONTROL: leaves an all-unflagged request uncapped', async () => {
+    vi.mocked(getResourceData).mockResolvedValueOnce([
+      resource(nanoBananaVersionIds.v2, 'Nano Banana', 'Checkpoint'),
+    ]);
+    expect((await build()).capOutput).toBe(false);
+  });
+});
+
 describe('read path: formatGenerationResponse2 weights the hydrated resources', () => {
   const lora = (id: number, strengthDefault: number) =>
     ({
