@@ -407,10 +407,7 @@ import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
-import {
-  assertGenerationInputsUsable,
-  opaqueInputUrlsIn,
-} from '~/server/services/generation-input-urls';
+import { assertOpaqueInputsUsable } from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { sessionClient } from '~/server/auth/session-client';
@@ -10863,26 +10860,25 @@ async function assertStepOrWorkflowInputsUsable(
   if (userId == null) {
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'step requires authenticated viewer' });
   }
-  const [entry, inputs] =
-    body.kind === 'workflow'
-      ? (['appBlocksWorkflow', [body.steps.map((step) => step.input), body.arguments]] as const)
-      : isPassThroughStepBody(body)
-      ? (['appBlocksPassThrough', body.input] as const)
-      : (['appBlocksStep', body.params] as const);
-  const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs);
-  if (tooDeep) {
-    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input nests too deeply' });
+  // Only a registry step names the free text in its params (`freeTextParamPaths`, declared by the
+  // step and pinned against its param schema). A workflow and a pass-through body are read whole:
+  // there any step can `$ref` any field, so a link in a text field may be wired into an image.
+  if (body.kind === 'workflow') {
+    await assertOpaqueInputsUsable({
+      inputs: [body.steps.map((step) => step.input), body.arguments],
+      userId,
+      entry: 'appBlocksWorkflow',
+    });
+  } else if (isPassThroughStepBody(body)) {
+    await assertOpaqueInputsUsable({ inputs: body.input, userId, entry: 'appBlocksPassThrough' });
+  } else {
+    await assertOpaqueInputsUsable({
+      inputs: body.params,
+      freeTextPaths: getStep(body.step)?.freeTextParamPaths,
+      userId,
+      entry: 'appBlocksStep',
+    });
   }
-  if (tooLarge) {
-    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input is too large to check' });
-  }
-  await assertGenerationInputsUsable({
-    urls,
-    userId,
-    entry,
-    isApiCaller: false,
-    opaqueInput: true,
-  });
 }
 
 /**

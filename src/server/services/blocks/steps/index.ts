@@ -777,6 +777,19 @@ interface BlockStepBase<P> {
   /** 🔴 REQUIRED. Drives estimate/submit/settle dispatch. */
   billingMode: StepBillingMode;
   /**
+   * OPTIONAL. Param paths whose STRING values are free text no consumer fetches
+   * (`messages[].content`), so the generation input gate does not read a link in
+   * them as an image input. Upload keys and links naming one of our images found
+   * there are still checked. Default none: every string in the params is read as
+   * a possible input (`opaqueInputUrlsIn`).
+   *
+   * 🔴 SOUND ONLY WHILE THE PARAM SCHEMA ACCEPTS NOTHING BUT A STRING AT EACH
+   * PATH — no content-part array, no `$ref` object. Pinned for every entry by
+   * "free-text param paths" in `chat-completion.step.test.ts`; an entry that
+   * widens such a field goes red there. Applies to the registry arm only.
+   */
+  freeTextParamPaths?: readonly string[];
+  /**
    * 🔴 REQUIRED. See `StepModerationPosture`.
    *
    * 🔴 IT IS ALSO THE OUTPUT-SHAPE DISCRIMINANT. `BlockStep` intersects this

@@ -29,6 +29,13 @@ export const GENERATION_IMAGE_UNAVAILABLE_MESSAGE =
 export const generationImageUnavailableError = () =>
   imageUrlUnavailableError(GENERATION_IMAGE_UNAVAILABLE_MESSAGE);
 
+/** Shown when a generation input links to a host outside Civitai, which the gate refuses. */
+export const GENERATION_EXTERNAL_IMAGE_MESSAGE =
+  'This request includes a link to an image hosted outside Civitai. Please upload the image instead.';
+
+export const generationExternalImageError = () =>
+  imageUrlUnavailableError(GENERATION_EXTERNAL_IMAGE_MESSAGE);
+
 /** An upload key as minted: the whole value, nothing around it. */
 const BARE_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -245,6 +252,14 @@ const refusalCounter = registerCounterWithLabels({
     'Generation input urls refused, or (mode=log) that would be refused, labelled by entry point, ' +
     'url class and caller type.',
   labelNames: ['entry', 'class', 'caller', 'mode'] as const,
+});
+
+const pageLinkCounter = registerCounterWithLabels({
+  name: 'generation_input_page_links_total',
+  help:
+    'Plain links to a Civitai page (no upload key, no url of their own) seen in an ' +
+    'orchestrator-native generation input and accepted, by entry point and caller type.',
+  labelNames: ['entry', 'caller'] as const,
 });
 
 /** Schemes a fetcher may resolve. `urn:` (AIR ids) is not one of them. */
@@ -508,14 +523,61 @@ function isWholeFetchableValue(value: string, budget: DecodeBudget, protocol: st
 }
 
 /**
+ * Where an input holds free text that no consumer reads as a url (a registry step's declared
+ * `freeTextParamPaths`): `a.b` names a nested field, `a[]` every item of the array at `a`.
+ */
+export type FreeTextPaths = readonly string[];
+
+type FreeTextNode = { fields: Map<string, FreeTextNode>; items?: FreeTextNode; text: boolean };
+const freeTextNode = (): FreeTextNode => ({ fields: new Map(), text: false });
+const FREE_TEXT_SEGMENT = /^([A-Za-z_$][\w$]*)((?:\[\])*)$/;
+
+/** `paths` as a tree the walk descends with the input; throws on a path it cannot read. */
+function compileFreeTextPaths(paths: FreeTextPaths = []): FreeTextNode | undefined {
+  if (!paths.length) return undefined;
+  const root = freeTextNode();
+  for (const path of paths) {
+    let node = root;
+    for (const segment of path.split('.')) {
+      const match = FREE_TEXT_SEGMENT.exec(segment);
+      if (!match) throw new Error(`malformed free-text path '${path}'`);
+      let next = node.fields.get(match[1]);
+      if (!next) node.fields.set(match[1], (next = freeTextNode()));
+      node = next;
+      for (let i = 0; i < match[2].length / 2; i++) node = node.items ??= freeTextNode();
+    }
+    node.text = true;
+  }
+  return root;
+}
+
+/** Whether a url names one of our images: on our image CDN or a civitai host, carrying a key. */
+function namesOurImage(url: string, budget: DecodeBudget) {
+  try {
+    const parsed = new URL(url);
+    if (!imageCdnHosts().includes(parsed.host.toLowerCase()) && !isCivitaiHostname(parsed.hostname))
+      return false;
+  } catch {
+    return false;
+  }
+  return keysInWithin(url, budget).length > 0;
+}
+
+/**
  * What an orchestrator-native input may fetch, under any field name (a field name says nothing
  * there: any step can `$ref` any field). A string that is a url is collected whole (trimmed). Any
  * other string is text, which a consumer may still split into urls, so every upload key in it is
  * collected bare, in any spelling `keysIn` reads: the gate's `opaqueInput` mode refuses those
  * only when they name an image that fails. `tooDeep` when the input nests past the walk's bound,
  * so a caller can refuse rather than pass what it did not read.
+ *
+ * `freeTextPaths`: strings at these paths are free text, never a url to fetch, so a url in one is
+ * not collected whole unless it names one of our images; its keys are collected as in any text.
+ * Only a value that IS a string there is text: anything else at the path is walked as usual.
+ * Default none: every string is read as above.
  */
-export function opaqueInputUrlsIn(value: unknown) {
+export function opaqueInputUrlsIn(value: unknown, freeTextPaths?: FreeTextPaths) {
+  const textRoot = compileFreeTextPaths(freeTextPaths);
   // Not `walkJsonValues`: this walk splits strings into lines and budgets depth and characters too.
   const urls: string[] = [];
   let tooDeep = false;
@@ -541,8 +603,20 @@ export function opaqueInputUrlsIn(value: unknown) {
     for (const key of keysInTextWithin(text, decoded)) collect(key);
     if (decoded.left < 0) tooLarge = true;
   };
-  /** `counted`: a line of a string whose characters were already counted whole. */
-  const walk = (item: unknown, depth: number, counted = false) => {
+  /** Whether `item`, reached at `node`, is a declared free-text string. */
+  const isTextAt = (node: FreeTextNode | undefined, item: unknown) =>
+    !!node?.text && typeof item === 'string';
+  /**
+   * `counted`: a line of a string whose characters were already counted whole. `text`: the string
+   * is declared free text. `at`: where the walk is in the declared free-text paths, if anywhere.
+   */
+  const walk = (
+    item: unknown,
+    depth: number,
+    counted = false,
+    text = false,
+    at: FreeTextNode | undefined = undefined
+  ) => {
     if (item == null || tooDeep || tooLarge) return;
     if (depth > OPAQUE_INPUT_MAX_DEPTH) {
       tooDeep = true;
@@ -567,7 +641,7 @@ export function opaqueInputUrlsIn(value: unknown) {
         return;
       }
       if (splitsIntoUrlLines(item)) {
-        for (const line of item.split(/[\r\n]+/)) walk(line, depth + 1, true);
+        for (const line of item.split(/[\r\n]+/)) walk(line, depth + 1, true, text);
         pushKeysInText(item);
         return;
       }
@@ -589,8 +663,20 @@ export function opaqueInputUrlsIn(value: unknown) {
         return;
       }
       const protocol = parsedProtocol(parsed);
+      if (text) {
+        // Free text: a link in it is words, not an input, so only a url naming one of our images
+        // is collected whole (checked as an image input, as anywhere else). Every key in it is
+        // collected as in any text, so another user's private image is still refused.
+        if (
+          !controlInside &&
+          isWholeFetchableValue(parsed, decoded, protocol) &&
+          (!protocol || namesOurImage(parsed, decoded))
+        )
+          collect(parsed);
+        pushKeysInText(item);
+      }
       // A url with a control byte left inside: hand it whole to the classifier, which refuses it.
-      if (controlInside && (protocol === 'https:' || protocol === 'http:')) collect(parsed);
+      else if (controlInside && (protocol === 'https:' || protocol === 'http:')) collect(parsed);
       else if (isWholeFetchableValue(parsed, decoded, protocol)) {
         collect(parsed);
         // A url rejoined across a break or space: a consumer splitting on it reads the keys.
@@ -598,17 +684,19 @@ export function opaqueInputUrlsIn(value: unknown) {
       } else pushKeysInText(item);
       if (decoded.left < 0) tooLarge = true;
     } else if (Array.isArray(item)) {
-      for (const child of item) walk(child, depth + 1);
+      const node = at?.items;
+      for (const child of item) walk(child, depth + 1, false, isTextAt(node, child), node);
     } else if (typeof item === 'object') {
       const record = item as Record<string, unknown>;
       for (const field of Object.keys(record)) {
         if (tooDeep || tooLarge) return;
         walk(field, depth + 1);
-        walk(record[field], depth + 1);
+        const node = at?.fields.get(field);
+        walk(record[field], depth + 1, false, isTextAt(node, record[field]), node);
       }
     }
   };
-  walk(value, 0);
+  walk(value, 0, false, false, textRoot);
   return { urls, tooDeep, tooLarge };
 }
 
@@ -616,8 +704,8 @@ export function opaqueInputUrlsIn(value: unknown) {
  * The one gate on a url a generation reads. Orchestrator blobs pass. A bare key or an image CDN
  * url passes only if every key it carries passes `assertKeysUsable`; a CDN url with no key is
  * refused. Other civitai hosts, non-https and unparseable values are refused. External hosts are
- * refused, except on `EXTERNAL_COUNTED_ENTRIES` while the external-host flag is off, where they
- * are only counted.
+ * refused (with `GENERATION_EXTERNAL_IMAGE_MESSAGE`), except on `EXTERNAL_COUNTED_ENTRIES` while
+ * the external-host flag is off, where they are only counted.
  */
 export async function assertGenerationInputsUsable({
   urls,
@@ -634,7 +722,8 @@ export async function assertGenerationInputsUsable({
   /**
    * Urls from an orchestrator-native input (`opaqueInputUrlsIn`), where a uuid may be any id and
    * an http url may be a schema id: a key-shaped value is refused only when it names an image
-   * that fails, and http to an external host counts as external.
+   * that fails, http to an external host counts as external, and a plain link to one of our
+   * pages (`isPlainPageLink`) passes.
    */
   opaqueInput?: boolean;
   now?: Date;
@@ -644,7 +733,7 @@ export async function assertGenerationInputsUsable({
   const caller = isApiCaller ? 'api' : 'session';
   const refuse = (cls: GenerationInputUrlClass) => {
     refusalCounter.inc({ entry, class: cls, caller, mode: 'refuse' });
-    return generationImageUnavailableError();
+    return cls === 'external' ? generationExternalImageError() : generationImageUnavailableError();
   };
 
   const keys = new Set<string>();
@@ -664,8 +753,13 @@ export async function assertGenerationInputsUsable({
         cls === 'invalid' && /^http:/i.test(url)
           ? classifyGenerationInputUrl(url.replace(/^http:/i, 'https:'))
           : cls;
-      if (asHttps === 'external' || (asHttps === 'civitai_other' && isPlainPageLink(url)))
-        cls = 'external';
+      // A plain link to one of our pages reads what any visitor reads (`isPlainPageLink`): not an
+      // image input to guard, and not an external host either.
+      if (asHttps === 'civitai_other' && isPlainPageLink(url)) {
+        pageLinkCounter.inc({ entry, caller });
+        continue;
+      }
+      if (asHttps === 'external') cls = 'external';
     }
     if (cls === 'orchestrator') continue;
     if (cls === 'key') {
@@ -719,5 +813,38 @@ export async function assertGenerationInputsUsable({
       refusalCounter.inc({ entry, class: 'key', caller, mode: 'refuse' });
     throw error;
   }
+}
+
+/**
+ * The gate on an orchestrator-native input (an App Block step's params or native input, or a
+ * workflow's step inputs and arguments): every url it may fetch (`opaqueInputUrlsIn`, reading
+ * strings at `freeTextPaths` as free text) must pass `assertGenerationInputsUsable`. Refused
+ * whole when it nests or weighs past what the walk reads.
+ */
+export async function assertOpaqueInputsUsable({
+  inputs,
+  freeTextPaths,
+  userId,
+  entry,
+}: {
+  inputs: unknown;
+  freeTextPaths?: FreeTextPaths;
+  userId: number;
+  entry: GenerationInputEntryPoint;
+}) {
+  const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs, freeTextPaths);
+  if (tooDeep) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input nests too deeply' });
+  }
+  if (tooLarge) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input is too large to check' });
+  }
+  await assertGenerationInputsUsable({
+    urls,
+    userId,
+    entry,
+    isApiCaller: false,
+    opaqueInput: true,
+  });
 }
 // #endregion
