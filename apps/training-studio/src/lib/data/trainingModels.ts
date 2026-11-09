@@ -1604,12 +1604,6 @@ export interface ParamBound {
  *  src/components/Training/Form/TrainingParams.tsx. Re-mirror by hand when the trainer's cap changes. */
 export const TARGET_STEPS = { min: 1, max: 10000, step: 1 } as const satisfies ParamBound;
 
-/**
- * Version keys whose backend cannot train the text encoder: AI-Toolkit fails a Krea 2 run with
- * `ValueError: Cannot unload text encoder if training text encoder` after ~20-30 min of looping,
- * with no way to abort (tester-confirmed). The Review step locks the TE learning-rate at 0 for
- * these instead of letting the run burn Buzz and hang. Anima's TE training works — don't add it.
- */
 /** Ecosystems the orchestrator trains on a pasted custom base for. Every other ecosystem ignores a
  *  custom model and trains (and charges) on its official base, so Custom is offered and accepted
  *  only for these. */
@@ -1643,9 +1637,26 @@ export const MAX_NON_PRODIGY_LR = 0.1;
 export const isProdigy = (optimizer: string): boolean =>
   PRODIGY_OPTIMIZERS.includes(optimizer.toLowerCase());
 
-export const TE_TRAINING_UNSUPPORTED = new Set(['krea2']);
-export const TE_TRAINING_UNSUPPORTED_REASON =
-  'its backend cannot train the text encoder, and a run that tries hangs without finishing.';
+/**
+ * Ecosystems whose trainer cannot train the text encoder, with the reason the Review step shows. The
+ * Review step locks the TE rate at 0 and the submit forces it off, so a stale client or a continued
+ * run can't send it. Mirrors the `textEncoderLR` overrides in the main app's TrainingParams.tsx.
+ * - Krea 2: AI-Toolkit fails the run with `Cannot unload text encoder if training text encoder`
+ *   after ~20-30 min of looping, with no way to abort (tester-confirmed).
+ * - Anima: ai-toolkit's anima trainer freezes the TE and reports no TE grad, so the rate did
+ *   nothing and the LoRA shipped without TE layers.
+ */
+const TE_TRAINING_UNSUPPORTED: Readonly<Record<string, string>> = {
+  krea2:
+    "Text encoder training isn't supported for Krea 2: a run that tries hangs without finishing.",
+  anima: "Text encoder training isn't supported for Anima.",
+};
+
+/** Why `ecosystem` can't train the text encoder, or undefined when it can. */
+export const teTrainingUnsupportedReason = (ecosystem: string): string | undefined =>
+  Object.hasOwn(TE_TRAINING_UNSUPPORTED, ecosystem)
+    ? TE_TRAINING_UNSUPPORTED[ecosystem]
+    : undefined;
 
 /** Per-field input bounds for a card — mirrors the ai-toolkit constraints: SDXL-family gets 256-dim nets and
  *  1024–2048 resolution; batch is capped per family; epochs are 1–20; LR is 0–1. */

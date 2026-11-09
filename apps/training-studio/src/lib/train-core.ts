@@ -27,7 +27,12 @@ import {
   resolveCurrencies,
   type OrchestratorClient,
 } from './orchestrator-core';
-import { isProdigy, MAX_NON_PRODIGY_LR, type ExtraParamField } from '$lib/data/trainingModels';
+import {
+  isProdigy,
+  MAX_NON_PRODIGY_LR,
+  teTrainingUnsupportedReason,
+  type ExtraParamField,
+} from '$lib/data/trainingModels';
 import {
   canDeleteRun,
   CIVITAI_TAG,
@@ -208,7 +213,11 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
   // forced here so a stale or saved run can't send a model's normal rate. A 0 TE rate stays 0: TE off.
   const prodigy = isProdigy(run.optimizer);
   const lr = prodigy ? 1 : run.unetLr;
-  const textEncoderLr = prodigy && run.textEncoderLr > 0 ? 1 : run.textEncoderLr;
+  const textEncoderLr = teTrainingUnsupportedReason(run.ecosystem)
+    ? 0
+    : prodigy && run.textEncoderLr > 0
+    ? 1
+    : run.textEncoderLr;
 
   const step = isFlux2(run.engine)
     ? {
@@ -377,7 +386,11 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
     fail(`${field}.lrScheduler`, 'must be a non-empty string.');
   if (!isNonEmptyString(run.optimizer)) fail(`${field}.optimizer`, 'must be a non-empty string.');
   if (!isProdigy(run.optimizer)) {
-    for (const key of ['unetLr', 'textEncoderLr'] as const) {
+    // A locked TE rate is sent as 0 whatever it holds, so a stale one is no reason to refuse.
+    const lrKeys = teTrainingUnsupportedReason(run.ecosystem)
+      ? (['unetLr'] as const)
+      : (['unetLr', 'textEncoderLr'] as const);
+    for (const key of lrKeys) {
       if (run[key] >= MAX_NON_PRODIGY_LR)
         fail(
           `${field}.${key}`,
@@ -761,8 +774,10 @@ async function buildContinuation(
     epochs: addEpochs,
     batchSize: input.batchSize,
     lr: input.lr,
-    textEncoderLr: input.textEncoderLr,
-    trainTextEncoder: input.trainTextEncoder,
+    // A run submitted before its model's TE lock must not continue with the TE on.
+    ...(teTrainingUnsupportedReason(ecosystem)
+      ? { textEncoderLr: 0, trainTextEncoder: false }
+      : { textEncoderLr: input.textEncoderLr, trainTextEncoder: input.trainTextEncoder }),
     lrScheduler: input.lrScheduler,
     optimizerType: input.optimizerType,
     networkDim: input.networkDim,

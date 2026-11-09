@@ -2,12 +2,12 @@ import {
   EXTRA_PARAM_FIELDS,
   LORA_TYPES,
   MODEL_CARDS,
-  TE_TRAINING_UNSUPPORTED,
   allowsCustomBase,
   cardByType,
   extraParamCapabilities,
   extraParamDefaults,
   isProdigy,
+  teTrainingUnsupportedReason,
   MAX_NON_PRODIGY_LR,
   paramsForVersion,
   cardsForMedia,
@@ -569,8 +569,10 @@ export function runExtraCapabilities(run: Run, labelMode: LabelType) {
   return extraParamCapabilities(runCard(run), runVersion(run), labelMode);
 }
 
-/** The text-encoder rate is locked at 0 for models whose backend can't train it. */
-export const teLocked = (run: Run): boolean => TE_TRAINING_UNSUPPORTED.has(run.versionKey);
+/** Why the run's text-encoder rate is locked at 0, or undefined when its model can train it. */
+export const teLockReason = (run: Run): string | undefined =>
+  teTrainingUnsupportedReason(runVersion(run).ecosystem);
+export const teLocked = (run: Run): boolean => teLockReason(run) !== undefined;
 
 /** The learning rates after an optimizer change, as the main trainer couples them: Prodigy runs at
  *  1 (the text encoder too, unless the model can't train it); switching away puts a Prodigy-level
