@@ -203,9 +203,10 @@
       const source = img.sourceLabel?.trim();
       // Current text first — it carries the user's hand-edits; the imported text is only the
       // restore fallback for a cleared field. Source-labeled items survive BOTH choices (the
-      // dialog promises it); 'relabel' wipes only machine/hand labels with no imported source.
+      // dialog promises it); 'relabel' wipes only machine/hand labels with no imported source, and
+      // never on a tile auto-label can't read, which nothing would re-label.
       const kept = labelString(img, prev) || source || '';
-      const text = choice === 'relabel' && !source ? '' : kept;
+      const text = choice === 'relabel' && !source && canAutoLabelImage(img) ? '' : kept;
       const parsed = parseLabel(text, next);
       img.tags = parsed.tags;
       img.caption = parsed.caption;
@@ -1750,7 +1751,8 @@
         {noun}. <strong>Convert</strong> keeps that text and reformats it — nothing is re-labeled.
         {#if canAutoLabel}
           <strong>Re-label</strong> discards it and auto-labels everything from scratch (labels that came
-          with your files are kept either way).
+          with your files{handOnly > 0 ? ", and reused images, which can't be auto-labeled," : ''} are kept
+          either way).
         {/if}
       </Dialog.Description>
     </Dialog.Header>
