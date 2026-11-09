@@ -191,6 +191,8 @@ export async function createExternalCsamReportHandler({
   // No auto soft-delete/ban here: external offenders are typically already
   // banned, and there is no on-Civitai content to remove. The report row is
   // picked up and sent to NCMEC by the hourly send-csam-reports job.
+  if (isFeedbackCaptureOwner(input.userId) || isFeedbackCaptureOwner(input.secondaryUserId))
+    throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   await createExternalCsamReport({ ...input, reportedById: ctx.user.id });
 }
 

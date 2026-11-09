@@ -70,6 +70,17 @@ describe('the feedback capture account', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // A ban from before the refusal can still be lifted.
+  it('can still be unbanned', async () => {
+    captured.length = 0;
+    const result = await setBanned({ userId: -2, ban: false, moderatorId: 7 });
+    expect(result).not.toEqual({
+      ok: false,
+      error: expect.stringMatching(/feedback page captures/),
+    });
+    expect(captured.length).toBeGreaterThan(0);
+  });
+
   it('is never banned, and nothing is written or sent', async () => {
     expect(await setBanned({ userId: -2, ban: true, moderatorId: 7 })).toEqual({
       ok: false,
