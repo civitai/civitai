@@ -194,4 +194,18 @@ describe('the sticker timeline', () => {
     await userEvent.keyboard('{Home}');
     expect(selected().motion?.keys[0].o).toBe(0);
   });
+
+  test('tells the store when the video plays and pauses, and stops claiming it plays once closed', async () => {
+    await page.getByText('Movement').click();
+    await video.play();
+    await expect.poll(() => store.getState().videoPlaying).toBe(true);
+    video.pause();
+    await expect.poll(() => store.getState().videoPlaying).toBe(false);
+
+    await video.play();
+    await expect.poll(() => store.getState().videoPlaying).toBe(true);
+    // Opening the tray closes the timeline while the video is still playing.
+    store.setState({ trayOpen: true });
+    await expect.poll(() => store.getState().videoPlaying).toBe(false);
+  });
 });

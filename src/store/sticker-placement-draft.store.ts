@@ -239,7 +239,7 @@ interface StickerPlacementDraftStore {
   playheadMs: number;
   /** Moves the playhead and draws every sticker in Movement there. Sets no key. */
   setPlayhead: (ms: number) => void;
-  /** The video is playing, so the selected sticker's path and ghosts are put away. */
+  /** Whether the video is playing, kept in step by the sticker timeline while it is open. */
   videoPlaying: boolean;
   setVideoPlaying: (playing: boolean) => void;
   /** Static or Movement. Movement with no keys starts one at the playhead, at the current pose. */
