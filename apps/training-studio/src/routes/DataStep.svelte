@@ -429,43 +429,69 @@
 
   // Import a dataset .zip (round-trips with the detail page's Download): each media file becomes an
   // uploaded + scanned tile; a same-named `.txt` supplies its caption (standard LoRA layout). Captioned
-  // images are pre-labeled and skip auto-label; un-captioned ones still get it.
+  // images are pre-labeled and skip auto-label; un-captioned ones still get it. Several zips (one drop,
+  // a multi-pick, or a drop mid-import) queue and are handled one at a time — each zip's uploads finish
+  // before the next is unpacked, which bounds both upload concurrency and memory to one zip.
   let importing = $state(false);
+  let importNotice = $state('');
   let zipInput: HTMLInputElement;
-  async function importZip(file: File) {
+  const zipQueue: File[] = [];
+  async function importZips(files: File[]) {
+    zipQueue.push(...files);
     if (importing) return;
     importing = true;
+    importNotice = '';
+    const unreadable: string[] = [];
+    const empty: string[] = [];
     try {
-      const zip = await JSZip.loadAsync(file);
-      const captions = new Map<string, string>();
-      const mediaFiles: { name: string; base: string; ext: string; entry: (typeof zip.files)[string] }[] =
-        [];
-      const ordered = Object.values(zip.files).sort((a, b) => compareFileNames(a.name, b.name));
-      for (const entry of ordered) {
-        if (entry.dir) continue;
-        const name = entry.name.split('/').pop() ?? entry.name;
-        if (name.startsWith('.')) continue; // skip __MACOSX / dotfiles
-        const dot = name.lastIndexOf('.');
-        const base = dot >= 0 ? name.slice(0, dot) : name;
-        const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
-        if (ext === 'txt') captions.set(base, (await entry.async('string')).trim());
-        else if (extMedia(ext)) mediaFiles.push({ name, base, ext, entry });
+      for (let file = zipQueue.shift(); file; file = zipQueue.shift()) {
+        let entries: Awaited<ReturnType<typeof readZip>>;
+        try {
+          entries = await readZip(file);
+        } catch {
+          unreadable.push(file.name);
+          continue;
+        }
+        if (entries.length === 0) empty.push(file.name);
+        else await addImported(entries);
       }
-      const entries = await Promise.all(
-        mediaFiles.map(async (m) => ({
-          file: new File([await m.entry.async('blob')], m.name, {
-            type: mimeOfExt(m.ext) ?? `${media}/${m.ext}`,
-          }),
-          caption: captions.get(m.base) ?? '',
-          // The tile shows the in-zip path: the grid is sorted by it, and two `img.png`s in different
-          // folders must be told apart.
-          path: m.entry.name,
-        }))
-      );
-      await addImported(entries);
     } finally {
       importing = false;
+      importNotice = [
+        unreadable.length > 0 && `Couldn't read ${unreadable.join(', ')} — not a valid .zip.`,
+        empty.length > 0 && `No ${acceptedExtsText} files in ${empty.join(', ')}.`,
+      ]
+        .filter(Boolean)
+        .join(' ');
     }
+  }
+  async function readZip(file: File) {
+    const zip = await JSZip.loadAsync(file);
+    const captions = new Map<string, string>();
+    const mediaFiles: { name: string; base: string; ext: string; entry: (typeof zip.files)[string] }[] =
+      [];
+    const ordered = Object.values(zip.files).sort((a, b) => compareFileNames(a.name, b.name));
+    for (const entry of ordered) {
+      if (entry.dir) continue;
+      const name = entry.name.split('/').pop() ?? entry.name;
+      if (name.startsWith('.')) continue; // skip __MACOSX / dotfiles
+      const dot = name.lastIndexOf('.');
+      const base = dot >= 0 ? name.slice(0, dot) : name;
+      const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+      if (ext === 'txt') captions.set(base, (await entry.async('string')).trim());
+      else if (extMedia(ext)) mediaFiles.push({ name, base, ext, entry });
+    }
+    return Promise.all(
+      mediaFiles.map(async (m) => ({
+        file: new File([await m.entry.async('blob')], m.name, {
+          type: mimeOfExt(m.ext) ?? `${media}/${m.ext}`,
+        }),
+        caption: captions.get(m.base) ?? '',
+        // The tile shows the in-zip path: the grid is sorted by it, and two `img.png`s in different
+        // folders must be told apart.
+        path: m.entry.name,
+      }))
+    );
   }
 
   // Exports the current labels so a dataset can be tagged across sessions: nothing in this step
@@ -542,8 +568,7 @@
     void maybeAutoLabel();
   }
   function onPickZip(e: Event) {
-    const [file] = pickedFiles(e);
-    if (file) void importZip(file);
+    void importZips(pickedFiles(e));
   }
 
   function remove(id: number) {
@@ -630,9 +655,9 @@
     (v) => (dragging = v),
     (files) => {
       // A dropped .zip takes the import path — the media-MIME filter in addFiles silently ate it
-      // before. One zip per drop: `find` imports the first and the filter below discards the rest.
-      const zip = files.find(isZip);
-      if (zip) void importZip(zip);
+      // before. Every zip in the drop is imported, as the classic trainer did.
+      const zips = files.filter(isZip);
+      if (zips.length > 0) void importZips(zips);
       void addFiles(files.filter((f) => !isZip(f)));
     }
   );
@@ -843,6 +868,9 @@
   {#if exportNotice}
     <p class="text-sm text-amber-400" role="status">{exportNotice}</p>
   {/if}
+  {#if importNotice}
+    <p class="text-sm text-amber-400" role="status">{importNotice}</p>
+  {/if}
 
   {#if dupNotice.count > 0}
     <Alert.Root class="flex items-start justify-between gap-3 border-dark-4 bg-dark-6 text-dark-2">
@@ -873,6 +901,7 @@
   <input
     bind:this={zipInput}
     type="file"
+    multiple
     accept=".zip,application/zip"
     class="hidden"
     onchange={onPickZip}
