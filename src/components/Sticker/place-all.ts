@@ -25,7 +25,7 @@ export function placeAllPlan({
 }
 
 /**
- * Places each item with today's single-sticker mutation, one after another.
+ * Places each item with `place`, one after another.
  *
  * Inputs are taken before the first call, so the run places what was confirmed and nothing a
  * re-render changed meanwhile. Each placement is its own escrow on the server, so a failure leaves

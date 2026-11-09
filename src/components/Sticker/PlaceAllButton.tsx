@@ -46,7 +46,7 @@ function PlaceAllControl({
 
   const placeAll = async () => {
     // Read fresh: a Buzz purchase can sit between the press and this call, and a draft removed
-    // meanwhile must not be placed. Taken once, so later re-renders cannot change the run.
+    // meanwhile must not be placed.
     const now = useStore.getState();
     const items = placeAllPlan({ drafts: now.drafts, ready: now.readyPlacements, price }).queue.map(
       (draftId) => ({ draftId, input: now.readyPlacements[draftId].input() })
