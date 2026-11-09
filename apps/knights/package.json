@@ -11,7 +11,7 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
-    "dev:enqueue-recent": "tsx --env-file=.env scripts/dev-enqueue-recent.ts",
+    "dev:enqueue-recent": "tsx --env-file=.env scripts/vite-run.ts scripts/dev-enqueue-recent.ts",
     "import:yesno": "tsx --env-file=.env scripts/vite-run.ts scripts/import-yesno.ts",
     "lint": "eslint . --ext .js,.ts,.svelte --cache --cache-strategy metadata"
   },
