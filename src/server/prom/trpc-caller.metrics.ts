@@ -6,9 +6,7 @@ import {
   registerInstrumentationMetric,
 } from '@civitai/telemetry/client';
 
-// ---------------------------------------------------------------------------
-// tRPC caller class: who spends procedure time, by path
-// ---------------------------------------------------------------------------
+// tRPC caller class: who spends procedure time, by path.
 //
 // One counter, recorded once per procedure call beside the duration histogram
 // (`civitai_app_trpc_procedure_duration_seconds`) and with the same `path` value, so the two join
@@ -26,16 +24,11 @@ import {
 // bound on scripted anonymous traffic, never an identification of bots. `session`, `api_key` and
 // `internal` come from the resolved credential and the server-side context, not from a header.
 //
-// OPT-IN: the counter is registered only if TRPC_CALLER_METRICS=true when this module loads
-// (TRPC_CALLER_METRICS_ENABLED), and the tRPC middleware classifies and records only then. Off,
-// the family exports no HELP/TYPE lines and no series.
-//
 // HOT PATH: one anchored regex test on the user agent (anonymous callers only) and one number
 // addition per call. A prom-client `inc` hashes and validates labels on every call, so seconds
 // accumulate in plain per-(path, caller) cells and are folded into the counter by its own
 // `collect`, which prom-client runs on every scrape. A call allocates nothing after
-// the first one for its pair. `caller` must be one of TRPC_CALLER_CLASSES: the type enforces it
-// and `safeClassifyTrpcCaller` is the only producer.
+// the first one for its pair.
 
 export const TRPC_CALLER_SECONDS_METRIC = PROM_PREFIX + 'trpc_caller_seconds_total';
 
@@ -153,8 +146,6 @@ declare global {
 // re-evaluation) of this module records into, not only the one that created them.
 const pending: Pending = (globalThis.__civitaiTrpcCallerPending ??= new Map());
 
-// The counter drains every cell when it is read (prom-client calls `collect` from `get()`, i.e. on
-// every scrape), so a scrape always exports every second recorded before it.
 function drainSeconds(this: Counter<'path' | 'caller'>) {
   for (const byCaller of pending.values()) {
     for (const cell of Object.values(byCaller)) {
@@ -189,11 +180,7 @@ if (TRPC_CALLER_METRICS_ENABLED) {
   }
 }
 
-/**
- * One call: +`seconds` for (path, caller), exported on the next scrape. Never throws. The tRPC
- * middleware calls it only when TRPC_CALLER_METRICS_ENABLED; while off the counter is not registered,
- * so nothing would be exported.
- */
+/** One call: +`seconds` for (path, caller), exported on the next scrape. Never throws. */
 export function recordTrpcCaller(path: string, caller: TrpcCallerClass, seconds: number) {
   try {
     let byCaller = pending.get(path);

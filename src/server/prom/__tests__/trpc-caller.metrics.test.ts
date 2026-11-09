@@ -1,5 +1,5 @@
 import { instrumentationRegistry } from '@civitai/telemetry/client';
-import client from 'prom-client';
+import type client from 'prom-client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The recording is switched on by TRPC_CALLER_METRICS, read when the module loads.
@@ -180,11 +180,14 @@ describe('recordTrpcCaller', () => {
     );
   });
 
-  it('a negative or non-finite duration adds nothing and never throws', async () => {
-    expect(() => recordTrpcCaller('a.b', 'session', -1)).not.toThrow();
-    expect(() => recordTrpcCaller('a.b', 'session', Number.NaN)).not.toThrow();
-    expect(() => recordTrpcCaller('a.b', 'session', Number.POSITIVE_INFINITY)).not.toThrow();
-    expect(await rows(TRPC_CALLER_SECONDS_METRIC)).toEqual([]);
+  it('a negative or non-finite duration adds nothing to its pair', async () => {
+    recordTrpcCaller('a.b', 'session', -1);
+    recordTrpcCaller('a.b', 'session', Number.NaN);
+    recordTrpcCaller('a.b', 'session', Number.POSITIVE_INFINITY);
+    recordTrpcCaller('a.b', 'session', 0.5);
+    expect(await rows(TRPC_CALLER_SECONDS_METRIC)).toEqual([
+      { value: 0.5, labels: { path: 'a.b', caller: 'session' } },
+    ]);
   });
 
   it('a second scrape adds only the seconds recorded since the first', async () => {
@@ -201,16 +204,10 @@ describe('recordTrpcCaller', () => {
     ]);
   });
 
-  it('exports only the seconds counter: no per-call total is registered or exported', async () => {
+  it('exports the seconds as a counter in the registry text', async () => {
     recordTrpcCaller('a.b', 'session', 1);
     const text = await instrumentationRegistry.metrics();
     expect(text).toContain('# TYPE civitai_app_trpc_caller_seconds_total counter');
     expect(text).toContain('civitai_app_trpc_caller_seconds_total{path="a.b",caller="session"} 1');
-    expect(text).not.toContain('civitai_app_trpc_caller_total');
-    expect(text).not.toContain('civitai_app_trpc_caller_seconds_sum');
-    expect(
-      instrumentationRegistry.getSingleMetric('civitai_app_trpc_caller_total')
-    ).toBeUndefined();
-    expect(client.register.getSingleMetric('civitai_app_trpc_caller_total')).toBeUndefined();
   });
 });

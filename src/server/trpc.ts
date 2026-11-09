@@ -235,11 +235,6 @@ const enforceTokenScope = t.middleware(({ ctx, meta, path, next }) =>
 // on SSR/jobs/canary to bound the series count and keep an instant off-switch.
 const TRPC_PROCEDURE_METRICS = process.env.TRPC_PROCEDURE_METRICS === 'true';
 
-// OPT-IN via TRPC_CALLER_METRICS=true, separately from the histogram above: the caller-class
-// seconds counter (`~/server/prom/trpc-caller.metrics`, which owns the switch) emits up to
-// (procedures x 5 caller classes) series per process, so it can be enabled without the histogram.
-const TRPC_CALLER_METRICS = TRPC_CALLER_METRICS_ENABLED;
-
 // The actual procedure-timing logic. Generic over `next`'s return type so it
 // stays transparent to tRPC's MiddlewareResult typing. Kept standalone so the
 // ALS label wrapper can be applied ONLY when the long-task labels tier is armed.
@@ -296,7 +291,7 @@ function runRecordProcedureDuration<T>(
 const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
   const userId = ctx.user?.id;
   recordTrpcCall(ctx.req?.headers, !!ctx.user);
-  const caller = TRPC_CALLER_METRICS
+  const caller = TRPC_CALLER_METRICS_ENABLED
     ? safeClassifyTrpcCaller({
         cache: ctx.cache,
         apiKeyId: ctx.apiKeyId,

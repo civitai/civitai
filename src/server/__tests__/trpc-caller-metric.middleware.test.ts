@@ -5,9 +5,9 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { usePagesManifestFixture } from '~/server/utils/__tests__/pages-manifest.fixture';
 
 // Drives the real `publicProcedure` chain, so the assertions cover the middleware wiring in
-// `~/server/trpc`, not just the helper. The switch is read when the modules load, so each case
-// re-imports them under its own environment. The cases run in order: OFF first, on a registry
-// that is checked to be empty, then ON.
+// `~/server/trpc`, not just the helper. The switch is read at module load, so each case
+// re-imports under its own env. The OFF case must run first: it asserts the registry is still
+// empty.
 
 const NAME = 'civitai_app_trpc_caller_seconds_total';
 
