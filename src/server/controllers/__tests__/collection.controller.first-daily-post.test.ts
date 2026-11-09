@@ -3,6 +3,8 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as PostService from '~/server/services/post.service';
 
+const isAccountMuted = vi.hoisted(() => vi.fn());
+
 // A Daily Challenge entry from the Submit button runs the REAL firstDailyPostReward here; only its
 // edges are faked: the Buzz ledger, the ClickHouse audit insert and Redis (a transcription of the
 // on-demand Lua, as in base.reward.duplicate-award.test.ts). What is under test is that a user who
@@ -51,7 +53,13 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
   deletePost: vi.fn(),
 }));
 
+vi.mock('~/server/services/account-standing.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  isAccountMuted: (...args: unknown[]) => isAccountMuted(...args),
+}));
+
 import { addSimpleImagePostHandler } from '../collection.controller';
+import { OnboardingSteps } from '~/server/common/enums';
 import { firstDailyPostReward } from '~/server/rewards';
 import { ON_DEMAND_REWARD_SCRIPT } from '~/server/rewards/base.reward';
 import { invalidateRewardConfigCache } from '~/server/rewards/reward-config';
@@ -67,7 +75,11 @@ const evalScript = (script: string, { arguments: args }: { arguments: string[] }
   const [field, cacheKey, award, cap] = args;
   const cache = JSON.parse(hashes[field] ?? '{}') as Record<string, string>;
   if (cache[cacheKey] !== undefined) return -1;
-  const awarded = Object.values(cache).reduce((sum, e) => sum + Number(e.slice(2)), 0);
+  // As the script does, an entry without a paid amount counts as a full award.
+  const awarded = Object.values(cache).reduce((sum, e) => {
+    const paid = /^a:(\d+)$/.exec(e);
+    return sum + (paid ? Number(paid[1]) : Number(award));
+  }, 0);
   const toAward = Math.min(Number(award), Math.max(Number(cap) - awarded, 0));
   cache[cacheKey] = `a:${toAward}`;
   hashes[field] = JSON.stringify(cache);
@@ -76,7 +88,7 @@ const evalScript = (script: string, { arguments: args }: { arguments: string[] }
 
 let nextPostId = 500;
 const ctx = {
-  user: { id: USER_ID, isModerator: false },
+  user: { id: USER_ID, isModerator: false, onboarding: OnboardingSteps.Buzz },
   features: { userChallenges: false },
   ip: '203.0.113.9',
 } as never;
@@ -93,6 +105,7 @@ const paidPostIds = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  isAccountMuted.mockResolvedValue(false);
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(DAY));
   invalidateRewardConfigCache();
@@ -136,6 +149,7 @@ describe('first post of the day reward on Daily Challenge Submit entries', () =>
 
   it('does not pay again when the entry post is later published through the editor', async () => {
     const { post } = await enter();
+    expect(h.inserts).toMatchObject([{ forId: post.id, status: 'awarded' }]);
 
     // post.update's call shape on publish.
     await firstDailyPostReward.apply({ postId: post.id, posterId: USER_ID }, { ip: '203.0.113.9' });

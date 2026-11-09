@@ -3,6 +3,10 @@ import { coverageAudience } from '~/server/services/generation/coverage-source';
 import { constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
+import { requiresEmailVerification } from '~/server/common/email-verification-gate';
+import { OnboardingSteps } from '~/server/common/enums';
+import { isAccountMuted } from '~/server/services/account-standing.service';
+import { Flags } from '~/shared/utils/flags';
 import { collectedContentReward, firstDailyPostReward } from '~/server/rewards';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import type {
@@ -626,6 +630,17 @@ export const updateCollectionItemsStatusHandler = async ({
   }
 };
 
+/**
+ * The account checks post.create's procedure (`guardedProcedure`) runs before it pays this reward.
+ * addSimpleImagePost is a plain protected procedure, so an entry can be accepted from an account
+ * post.create would refuse; such an entry stands but earns nothing.
+ */
+async function canEarnPostReward(user: ProtectedContext['user']) {
+  if (!Flags.hasFlag(user.onboarding, OnboardingSteps.Buzz)) return false;
+  if (requiresEmailVerification(user)) return false;
+  return !(user.muted || (await isAccountMuted(user.id, !!user.muted)));
+}
+
 export const addSimpleImagePostHandler = async ({
   input: { collectionId, images },
   ctx,
@@ -729,17 +744,18 @@ export const addSimpleImagePostHandler = async ({
 
     // The entry is saved; a reward error must not surface as a failed entry and invite a resubmit.
     if (post.publishedAt) {
-      await firstDailyPostReward
-        .apply({ postId: post.id, posterId: userId }, { ip: ctx.ip })
-        .catch((error) =>
-          logToAxiom({
-            type: 'error',
-            name: 'add-simple-image-post-reward-failed',
-            message: error instanceof Error ? error.message : String(error),
-            postId: post.id,
-            collectionId,
-          }).catch(() => undefined)
-        );
+      await (async () => {
+        if (!(await canEarnPostReward(ctx.user))) return;
+        await firstDailyPostReward.apply({ postId: post.id, posterId: userId }, { ip: ctx.ip });
+      })().catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'add-simple-image-post-reward-failed',
+          message: error instanceof Error ? error.message : String(error),
+          postId: post.id,
+          collectionId,
+        }).catch(() => undefined)
+      );
     }
 
     return { post, permissions, imageIds };

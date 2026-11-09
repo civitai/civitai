@@ -2,6 +2,8 @@ import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as PostService from '~/server/services/post.service';
+
+const isAccountMuted = vi.hoisted(() => vi.fn());
 import type * as Rewards from '~/server/rewards';
 
 const mocks = vi.hoisted(() => ({
@@ -34,7 +36,13 @@ vi.mock('~/server/rewards', async (importOriginal) => ({
   firstDailyPostReward: { apply: mocks.applyFirstDailyPost },
 }));
 
+vi.mock('~/server/services/account-standing.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  isAccountMuted: (...args: unknown[]) => isAccountMuted(...args),
+}));
+
 import { addSimpleImagePostHandler } from '../collection.controller';
+import { OnboardingSteps } from '~/server/common/enums';
 
 const USER_ID = 7;
 const COLLECTION_ID = 42;
@@ -42,13 +50,14 @@ const NEW_POST_ID = 500;
 const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
 
 const ctx = {
-  user: { id: USER_ID, isModerator: false },
+  user: { id: USER_ID, isModerator: false, onboarding: OnboardingSteps.Buzz },
   features: { userChallenges: false },
   ip: '203.0.113.9',
 } as never;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  isAccountMuted.mockResolvedValue(false);
   Object.values(mocks).forEach((fn) => fn.mockReset());
   mocks.getCollectionById.mockResolvedValue({ id: COLLECTION_ID, name: 'C', read: 'Public' });
   mocks.getUserCollectionPermissionsById.mockResolvedValue({ write: true });
@@ -268,6 +277,27 @@ describe('addSimpleImagePostHandler', () => {
       expect(mocks.applyFirstDailyPost).toHaveBeenCalledTimes(1);
       expect(result.imageIds).toEqual([10]);
       expect(mocks.deletePost).not.toHaveBeenCalled();
+    });
+
+    // post.create's guardedProcedure refuses these accounts; the entry stands but earns nothing.
+    it.each([
+      ['a muted account', { muted: true }],
+      ['an account muted since its session began', {}, true],
+      ['an account that has not finished onboarding', { onboarding: 0 }],
+      [
+        'an account that must verify its email',
+        { emailVerified: null, meta: { emailVerificationRequired: true } },
+      ],
+    ] as const)('does not apply it for %s', async (_, user, mutedNow = false) => {
+      echoPublishedAt();
+      isAccountMuted.mockResolvedValue(mutedNow);
+      const base = ctx as { user: object };
+      const restricted = { ...base, user: { ...base.user, ...user } };
+
+      const result = await addSimpleImagePostHandler({ input, ctx: restricted as never });
+
+      expect(result.imageIds).toEqual([10]);
+      expect(mocks.applyFirstDailyPost).not.toHaveBeenCalled();
     });
 
     it('does not apply it when the entry save is refused', async () => {
