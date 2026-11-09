@@ -1,5 +1,4 @@
 import { createContext, useContext, useMemo, useRef } from 'react';
-import { useFoldedCardBatches } from '~/components/Image/Providers/card-summary-fold';
 import { RemixGalleryBatchProvider } from '~/components/RemixGallery/RemixGalleryBatchProvider';
 import { TurfSummaryProvider } from '~/components/HatTurf/TurfSummaryProvider';
 import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
@@ -106,17 +105,12 @@ export function ImagesProvider({
   // first render happened to see.
   const imageIds = useMemo(() => (images ?? []).map((image) => image.id), [images]);
   const postIds = useMemo(() => uniquePostIds(images), [images]);
-  const folded = useFoldedCardBatches(imageIds, revealStickers);
 
   return (
     <ImagesContext.Provider value={state}>
-      <StickerPlacementBatchProvider
-        imageIds={imageIds}
-        alwaysFetch={revealStickers}
-        folded={folded}
-      >
+      <StickerPlacementBatchProvider imageIds={imageIds} alwaysFetch={revealStickers}>
         <TurfSummaryProvider imageIds={imageIds} gate={hideHatTurf ? null : undefined}>
-          <RemixGalleryBatchProvider imageIds={imageIds} folded={folded?.remix}>
+          <RemixGalleryBatchProvider imageIds={imageIds}>
             <StorylineBatchProvider postIds={postIds}>{children}</StorylineBatchProvider>
           </RemixGalleryBatchProvider>
         </TurfSummaryProvider>
