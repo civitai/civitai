@@ -61,6 +61,12 @@ const retired = sql<SqlBool>`("KnightsQueueItem"."status" = 'Closed' AND "Knight
 /** Closed by a moderator. Unlike other moderated items, the import never reopens it. */
 const moderatorRetired = sql<SqlBool>`("KnightsQueueItem"."reason" IS NOT DISTINCT FROM ${MODERATOR_RETIRED})`;
 
+/** An id longer than the limit is rejected, not cut, so two long ids can never collapse into one. */
+const idOf = (value: string | undefined): string => {
+  const id = (value ?? '').trim();
+  return id.length > MAX_ID ? '' : id;
+};
+
 const clip = (value: string | undefined, max: number) => (value ?? '').trim().slice(0, max);
 
 /** Keeps the active candidates and checks each one; a row that fails is counted by reason, never echoed. */
@@ -80,12 +86,12 @@ export function toYesNoRows(records: Record<string, string>[]): {
 
   for (const r of records) {
     if ((r.active_candidate ?? '').trim().toLowerCase() !== 'true') {
-      const id = clip(r.question_id, MAX_ID);
+      const id = idOf(r.question_id);
       if (id) retire.push(id);
       skip('inactive');
       continue;
     }
-    const externalId = clip(r.question_id, MAX_ID);
+    const externalId = idOf(r.question_id);
     if (!externalId) {
       skip('bad-id');
       continue;

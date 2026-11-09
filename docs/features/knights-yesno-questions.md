@@ -36,10 +36,10 @@ The CSV comes from the question producer (an offline pipeline that proposes the 
 
 | Column | Used as |
 | --- | --- |
-| `question_id` | `externalId`, the idempotency key (max 100 chars); a repeated id in one file is skipped as `duplicate` |
+| `question_id` | `externalId`, the idempotency key (max 200 chars; longer rows are rejected as `bad-id`); a repeated id in one file is skipped as `duplicate` |
 | `active_candidate` | `true` to import; anything else retires the open item with that id |
 | `image_id` | Positive integer id of an existing image |
-| `axis` | Lower-case key, `[a-z][a-z0-9_]{0,39}`; one question per axis is created |
+| `axis` | Key matching `[a-z][a-z0-9_]{0,39}`, lower-cased before it is checked; one question per axis is created |
 | `kind` | `observable` (players) or `policy_preference` (moderators) |
 | `question` | The prompt shown to the voter |
 | `yes_effect`, `no_effect` | Optional short labels for what each answer does |

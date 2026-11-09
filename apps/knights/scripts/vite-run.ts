@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { resolve, sep } from 'node:path';
 import { createServer, createServerModuleRunner } from 'vite';
 
 /**
@@ -24,8 +24,12 @@ async function main() {
         name: 'knights-workspace-resolve',
         enforce: 'pre',
         async resolveId(source, importer, options) {
-          if (!source.startsWith('@civitai/') || !importer || importer.startsWith(appRoot)) return null;
-          return this.resolve(source, resolve(appRoot, 'package.json'), { ...options, skipSelf: true });
+          if (!source.startsWith('@civitai/') || !importer || importer.startsWith(appRoot + sep))
+            return null;
+          return this.resolve(source, resolve(appRoot, 'package.json'), {
+            ...options,
+            skipSelf: true,
+          });
         },
       },
     ],

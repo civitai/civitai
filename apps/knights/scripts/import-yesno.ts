@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import * as dbKysely from '@civitai/db/kysely';
+import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { assertLocalDatabase } from '../src/lib/dev/local-database';
 import { parseCsv } from '../src/lib/server/yesno/csv';
@@ -31,7 +31,6 @@ async function main() {
     return;
   }
 
-  const { createKyselyClients } = (dbKysely as { default?: typeof dbKysely }).default ?? dbKysely;
   const { db } = createKyselyClients<DB>({
     connectionString,
     sslNoVerify: true,
