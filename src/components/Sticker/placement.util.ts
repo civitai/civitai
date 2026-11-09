@@ -2,10 +2,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { useCallback, useMemo } from 'react';
 import type { ImageCardSummaries } from '~/components/Sticker/card-summaries.util';
-import {
-  cardSummaryInput,
-  useDetailCardSummaryFold,
-} from '~/components/Sticker/card-summaries.util';
 import { freeRefusalMessage, freeRefusalOutcome } from '~/components/Sticker/free-offer';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -85,23 +81,10 @@ export function useStickerPlacements(imageIds: number[], enabled = true) {
     [imageIds.join(',')]
   );
 
-  const fold = useDetailCardSummaryFold();
-  const legacy = trpc.placement.getStickerPlacementsAndCounts.useQuery(
+  const { data, isLoading, isError } = trpc.placement.getStickerPlacementsAndCounts.useQuery(
     { imageIds: ids },
-    { enabled: !fold.on && enabled && ids.length > 0, staleTime: 60_000 }
+    { enabled: enabled && ids.length > 0, staleTime: 60_000 }
   );
-  const folded = trpc.placement.getImageCardSummaries.useQuery(
-    cardSummaryInput({
-      imageIds: ids,
-      stickers: 'placements',
-      remix: fold.remix,
-      browsingLevel: fold.browsingLevel,
-    }),
-    { enabled: fold.on && enabled && ids.length > 0, staleTime: 60_000 }
-  );
-  const { data, isLoading, isError } = fold.on
-    ? { data: folded.data?.stickers, isLoading: folded.isLoading, isError: folded.isError }
-    : legacy;
 
   const bundle = data as StickerPlacementBundle | undefined;
   const byImage = useMemo(() => groupPlacementsByImage(bundle?.placements), [bundle]);
@@ -169,23 +152,10 @@ export function useStickerPlacementCounts(imageIds: number[], enabled = true) {
     [imageIds.join(',')]
   );
 
-  const fold = useDetailCardSummaryFold();
-  const legacy = trpc.placement.getStickerPlacementCounts.useQuery(
+  const { data, isLoading, isError } = trpc.placement.getStickerPlacementCounts.useQuery(
     { imageIds: ids },
-    { enabled: !fold.on && enabled && ids.length > 0, staleTime: 60_000 }
+    { enabled: enabled && ids.length > 0, staleTime: 60_000 }
   );
-  const folded = trpc.placement.getImageCardSummaries.useQuery(
-    cardSummaryInput({
-      imageIds: ids,
-      stickers: 'counts',
-      remix: fold.remix,
-      browsingLevel: fold.browsingLevel,
-    }),
-    { enabled: fold.on && enabled && ids.length > 0, staleTime: 60_000 }
-  );
-  const { data, isLoading, isError } = fold.on
-    ? { data: folded.data?.stickers?.counts, isLoading: folded.isLoading, isError: folded.isError }
-    : legacy;
 
   // `isLoading` and `isError` alongside the counts because zero, not-yet-known
   // and never-arriving are three different states with different affordances,

@@ -19,8 +19,9 @@ import { queryClient, trpc } from '~/utils/trpc';
  * providers that are not placement reads are passed through).
  *
  * Off, a surface asks for its sticker data and its remix-gallery summaries as one call each per
- * 100 cards. On, it asks once per 100 cards for both — and every card must read the same values
- * either way. Per-image values are pairwise distinct, and the sticker and remix ranges do not
+ * 100 cards. On, a surface that wants both asks once per 100 cards for both — and every card must
+ * read the same values either way. A surface that wants only one half makes that half's own call,
+ * flag or no flag. Per-image values are pairwise distinct, and the sticker and remix ranges do not
  * overlap, so a value on the wrong card or in the wrong half cannot pass by collision.
  */
 
@@ -168,7 +169,13 @@ async function settle() {
   });
 }
 
-async function renderSurface({ fold }: { fold: boolean }) {
+async function renderSurface({
+  fold,
+  overrides = {},
+}: {
+  fold: boolean;
+  overrides?: Record<string, boolean>;
+}) {
   act(() => root?.unmount());
   queryClient.clear();
   seen.clear();
@@ -178,6 +185,7 @@ async function renderSurface({ fold }: { fold: boolean }) {
     stickerPlacement: true,
     remixGallery: true,
     placementCardFold: fold,
+    ...overrides,
   };
   const Wrapped = trpc.withTRPC(Surface as never) as unknown as ComponentType<{
     pageProps: object;
@@ -294,6 +302,37 @@ describe('an anonymous feed surface with stickers hidden', () => {
       placementIds: [placementOf(1042).id],
       remixCount: remixCountOf(1042),
     });
+  });
+});
+
+describe('a surface that wants only one of the two halves, flag on', () => {
+  it('no remix half wanted: no folded call, the sticker procedure is called as before', async () => {
+    session.user = { id: 7 };
+    await renderSurface({ fold: false, overrides: { remixGallery: false } });
+    expect(byPath()).toEqual({ 'placement.getStickerPlacementsAndCounts': 2 });
+    const unfolded = snapshot();
+
+    await renderSurface({ fold: true, overrides: { remixGallery: false } });
+
+    expect(byPath()).toEqual({ 'placement.getStickerPlacementsAndCounts': 2 });
+    expect(snapshot()).toEqual(unfolded);
+    expect(seen.get(1042)).toEqual({
+      count: countOf(1042),
+      placementIds: [placementOf(1042).id],
+      remixCount: undefined,
+    });
+  });
+
+  it('no sticker half wanted: no folded call, the remix procedure is called as before', async () => {
+    await renderSurface({ fold: false, overrides: { stickerPlacement: false } });
+    expect(byPath()).toEqual({ 'placement.getRemixGalleryCardSummaries': 2 });
+    const unfolded = snapshot();
+
+    await renderSurface({ fold: true, overrides: { stickerPlacement: false } });
+
+    expect(byPath()).toEqual({ 'placement.getRemixGalleryCardSummaries': 2 });
+    expect(snapshot()).toEqual(unfolded);
+    expect(seen.get(1100)?.remixCount).toBe(remixCountOf(1100));
   });
 });
 

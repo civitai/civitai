@@ -9,7 +9,6 @@ import { StickerHistoryButton } from '~/components/Sticker/StickerHistoryPanel';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 import { StickerPreviewToggle } from '~/components/Sticker/StickerPreviewToggle';
 import { barFreeLabel, freeHintText } from '~/components/Sticker/free-offer';
-import { detailStickerMode } from '~/components/Sticker/card-summaries.util';
 import {
   useFreePlacementStanding,
   useImagePlacementSpace,
@@ -79,7 +78,7 @@ export function StickerPlacementBar({
   // page the notification just sent them to. Hence the placements for every
   // signed-in viewer, and for anyone who has revealed (the overlay on this image
   // is already asking for exactly this, so it is the same cached call).
-  const wantPlacements = detailStickerMode({ signedIn: !!currentUser, revealed }) === 'placements';
+  const wantPlacements = !!currentUser || revealed;
   const {
     byImage,
     counts: combinedCounts,

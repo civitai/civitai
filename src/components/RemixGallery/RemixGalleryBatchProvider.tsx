@@ -17,14 +17,19 @@ const RemixGalleryBatchContext = createContext<Record<number, RemixGalleryCardSu
 /**
  * Remix-gallery counts and preview thumbnails for a whole surface.
  *
- * Deliberately a sibling of `StickerPlacementBatchProvider` rather than folded
- * into it. The two read the same table and differ only by `surface`, which makes
- * merging them look obvious — but a sticker count is `status = 'approved'` and
- * nothing else, while a gallery entry has to clear published, scanned, unflagged,
- * within-browsing-level and a minor-host ceiling. Fusing them would weld a strict
- * safety contract onto a query that has none, to save a request that HTTP/2 and
- * HTTP/3 already multiplex. (`placementCardFold` shares the REQUEST between the
- * two, never the query: each half still runs its own service read.)
+ * A sibling of `StickerPlacementBatchProvider` with its own QUERY, never a
+ * merged one. The two read the same table and differ only by `surface`, which
+ * makes merging them look obvious — but a sticker count is `status = 'approved'`
+ * and nothing else, while a gallery entry has to clear published, scanned,
+ * unflagged, within-browsing-level and a minor-host ceiling. One query would weld
+ * a strict safety contract onto a read that has none.
+ *
+ * The REQUEST is a different matter. Behind `placementCardFold`, a feed surface
+ * that wants both this and the sticker data asks for them in one
+ * `getImageCardSummaries` call per chunk (`useFoldedCardBatches`), passed in here
+ * as `folded`: fewer requests per surface, while each half still runs its own
+ * procedure's service read with its own arguments. With the flag off, or the
+ * sticker half not wanted, this provider makes its own call as it always has.
  *
  * Chunked in arrival order for the same reason the sticker batch is: a feed
  * appends lower ids as it pages, so sorting would reshuffle every chunk boundary

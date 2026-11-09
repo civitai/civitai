@@ -7,7 +7,6 @@ import type {
   FoldedCardBatches,
   ImageCardSummaries,
 } from '~/components/Sticker/card-summaries.util';
-import { cardSummaryInput } from '~/components/Sticker/card-summaries.util';
 import type { StickerPlacementBundle } from '~/components/Sticker/placement.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { chunkIds } from '~/utils/array-helpers';
@@ -32,8 +31,9 @@ const chunkOf = <T>(query: FoldQuery | undefined, data: T | undefined): CardSumm
 
 /**
  * A feed surface's sticker and remix-gallery reads as ONE call per 100 cards,
- * for viewers on `placementCardFold`; `undefined` otherwise, which leaves both
- * batch providers making their own calls exactly as before.
+ * for viewers on `placementCardFold`, and only where the surface wants BOTH
+ * halves. `undefined` otherwise — flag off, or either half not wanted — which
+ * leaves both batch providers making their own calls exactly as before.
  *
  * One query set per sticker mode, like the sticker provider's own pair, so the
  * counts answer a viewer already has stays on screen while revealing switches
@@ -46,7 +46,7 @@ export function useFoldedCardBatches(
   const features = useFeatureFlags();
   const sticker = useStickerBatchWants(alwaysFetch);
   const remix = useRemixBatchRequest();
-  const active = !!features.placementCardFold && (sticker.enabled || remix.enabled);
+  const active = !!features.placementCardFold && sticker.enabled && remix.enabled;
 
   const chunks = useMemo(
     () => (active ? chunkIds(imageIds, CARD_SUMMARY_FETCH_CHUNK) : []),
@@ -54,44 +54,27 @@ export function useFoldedCardBatches(
     [imageIds.join(','), active]
   );
 
-  const mode: CardStickerMode | undefined = !sticker.enabled
-    ? undefined
-    : sticker.wantPlacements
-    ? 'placements'
-    : 'counts';
-
-  const modes: [CardStickerMode | undefined, boolean][] = [
-    ['placements', mode === 'placements'],
-    ['counts', mode === 'counts'],
-    [undefined, mode === undefined && remix.enabled],
-  ];
+  const mode: CardStickerMode = sticker.wantPlacements ? 'placements' : 'counts';
+  const modes: CardStickerMode[] = ['placements', 'counts'];
   const queries = trpc.useQueries((t) =>
-    modes.flatMap(([stickers, enabled]) =>
+    modes.flatMap((stickers) =>
       chunks.map((chunk) =>
         t.placement.getImageCardSummaries(
-          cardSummaryInput({
-            imageIds: chunk,
-            stickers,
-            remix: remix.enabled,
-            browsingLevel: remix.browsingLevel,
-          }),
-          { staleTime: 60_000, enabled }
+          { imageIds: chunk, stickers, remix: true, browsingLevel: remix.browsingLevel },
+          { staleTime: 60_000, enabled: stickers === mode }
         )
       )
     )
   ) as unknown as FoldQuery[];
   const placementsQueries = queries.slice(0, chunks.length);
-  const countsQueries = queries.slice(chunks.length, 2 * chunks.length);
-  const remixOnlyQueries = queries.slice(2 * chunks.length);
+  const countsQueries = queries.slice(chunks.length);
 
   if (!active) return undefined;
 
-  const current =
+  const [current, other] =
     mode === 'placements'
-      ? placementsQueries
-      : mode === 'counts'
-      ? countsQueries
-      : remixOnlyQueries;
+      ? [placementsQueries, countsQueries]
+      : [countsQueries, placementsQueries];
 
   return {
     combined: chunks.map((_, index) =>
@@ -103,12 +86,10 @@ export function useFoldedCardBatches(
     countsOnly: chunks.map((_, index) =>
       chunkOf(countsQueries[index], countsQueries[index]?.data?.stickers?.counts)
     ),
-    // The current mode's answer; another mode's cached one for the same chunk
+    // The current mode's answer; the other mode's cached one for the same chunk
     // stands in until it lands, so a reveal does not blank the remix frames.
     remix: chunks.map((_, index) => {
-      const answered = [current[index], placementsQueries[index], countsQueries[index]].find(
-        (query) => query?.data?.remix
-      );
+      const answered = [current[index], other[index]].find((query) => query?.data?.remix);
       return chunkOf(answered ?? current[index], answered?.data?.remix);
     }),
   };
