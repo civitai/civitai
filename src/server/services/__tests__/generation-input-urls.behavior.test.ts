@@ -351,7 +351,8 @@ describe('assertGenerationInputsUsable', () => {
 
   const gate = (
     urls: (string | undefined)[],
-    entry: Parameters<typeof assertGenerationInputsUsable>[0]['entry'] = 'iterateGenerate'
+    entry: Parameters<typeof assertGenerationInputsUsable>[0]['entry'] = 'iterateGenerate',
+    message = GENERATION_IMAGE_UNAVAILABLE_MESSAGE
   ) =>
     assertGenerationInputsUsable({
       urls,
@@ -363,7 +364,7 @@ describe('assertGenerationInputsUsable', () => {
       () => 'accepted',
       (e: unknown) => {
         if (e instanceof TRPCError && e.code === 'BAD_REQUEST') {
-          expect([GENERATION_IMAGE_UNAVAILABLE_MESSAGE, EXTERNAL_MESSAGE]).toContain(e.message);
+          expect(e.message).toBe(message);
           return 'refused';
         }
         throw e;
@@ -469,7 +470,7 @@ describe('assertGenerationInputsUsable', () => {
       'appBlocks',
       'comicPanelJob',
     ] as const)
-      expect(await gate(['https://example.com/a.png'], entry)).toBe('refused');
+      expect(await gate(['https://example.com/a.png'], entry, EXTERNAL_MESSAGE)).toBe('refused');
   });
 
   it('accepts an orchestrator blob whose signature is percent-encoded', async () => {
@@ -681,7 +682,7 @@ describe('assertGenerationInputsUsable', () => {
       holder.refuseExternal = false;
       expect(await gate(['https://example.com/a.png'], entry)).toBe('accepted');
       holder.refuseExternal = true;
-      expect(await gate(['https://example.com/a.png'], entry)).toBe('refused');
+      expect(await gate(['https://example.com/a.png'], entry, EXTERNAL_MESSAGE)).toBe('refused');
     }
   });
 
@@ -707,7 +708,9 @@ describe('assertGenerationInputsUsable', () => {
 
       refusalCounter.inc.mockClear();
       holder.refuseExternal = true;
-      expect(await gate(['https://example.com/a.png'], 'generateFromGraph')).toBe('refused');
+      expect(await gate(['https://example.com/a.png'], 'generateFromGraph', EXTERNAL_MESSAGE)).toBe(
+        'refused'
+      );
       expect(refusalCounter.inc).toHaveBeenCalledExactlyOnceWith({
         entry: 'generateFromGraph',
         class: 'external',
@@ -746,14 +749,18 @@ describe('assertGenerationInputsUsable', () => {
 
       hostCounter.inc.mockClear();
       holder.refuseExternal = true;
-      expect(await gate(['https://i.imgur.com/a.png'], 'generateFromGraph')).toBe('refused');
+      expect(await gate(['https://i.imgur.com/a.png'], 'generateFromGraph', EXTERNAL_MESSAGE)).toBe(
+        'refused'
+      );
       expect(hostCounter.inc).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ mode: 'refuse', host: 'imgur' })
       );
     });
 
     it('is not counted where an external host is refused outright', async () => {
-      expect(await gate(['https://i.imgur.com/a.png'], 'iterateGenerate')).toBe('refused');
+      expect(await gate(['https://i.imgur.com/a.png'], 'iterateGenerate', EXTERNAL_MESSAGE)).toBe(
+        'refused'
+      );
       expect(hostCounter.inc).not.toHaveBeenCalled();
       expect(redisMock.sysRedis.pfAdd).not.toHaveBeenCalled();
     });
@@ -838,13 +845,15 @@ describe('assertGenerationInputsUsable', () => {
     [
       'a subdomain of the proxy host',
       'https://evil.orchestration-proxy.civitai.com/v2/consumer/blobs/x',
+      GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
     ],
     [
       'a host that starts with it',
       'https://orchestration-proxy.civitai.com.evil.example/v2/consumer/blobs/x',
+      EXTERNAL_MESSAGE,
     ],
-  ])('does not trust %s', async (_, url) => {
-    expect(await gate([url], 'iterateGenerate')).toBe('refused');
+  ])('does not trust %s', async (_, url, message) => {
+    expect(await gate([url], 'iterateGenerate', message)).toBe('refused');
   });
 
   it('refuses a key in an allowed external url when neither issue record store can be read', async () => {
@@ -1414,6 +1423,16 @@ describe('a chat App Block step, with the external-host refusal on', () => {
         ],
       })
     ).toBe(`refused: ${EXTERNAL_MESSAGE}`);
+  });
+
+  it('INVARIANT GUARD: a keyed CDN link with a trailing-dot host in message text is collected whole, and checked as an image input', async () => {
+    // Green before this change too (a civitai host is accepted by name); pins that the host
+    // normalisation shared with the classifier keeps it so.
+    const dotted = `https://image.civitai.com./x/${KEY}/original=true`;
+    expect(opaqueInputUrlsIn(chat(`see ${dotted} please`), chatPaths()).urls).toContain(dotted);
+    expect(opaqueInputUrlsIn(chat(dotted), chatPaths()).urls).toContain(dotted);
+    await recordUploadKeyOwner(KEY, OTHER);
+    expect(await chatStep(chat(dotted))).toBe(`refused: ${GENERATION_IMAGE_UNAVAILABLE_MESSAGE}`);
   });
 
   it("refuses another user's private image named in message text: a CDN link, a bare key, or among words", async () => {

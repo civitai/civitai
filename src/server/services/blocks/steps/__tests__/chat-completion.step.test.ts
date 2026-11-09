@@ -1608,12 +1608,8 @@ describe('chat-completion — extractToolCalls', () => {
 });
 
 /**
- * 🔴 THE SOUNDNESS PIN FOR `freeTextParamPaths`. The generation input gate does
- * not read a link in a declared free-text string as an image input. That is
- * sound only while the step's own schema admits NOTHING BUT A STRING at each
- * declared path: a content-part array would carry an `image_url` the
- * orchestrator fetches, and a `{ $ref }` object could wire another step's url
- * in. Widen such a field and these go red.
+ * 🔴 The soundness pin for `freeTextParamPaths`; the claim is stated once, at its
+ * declaration in `steps/index.ts`. Widen a declared field and these go red.
  */
 describe('free-text param paths', () => {
   /** Replace every value at `path` (`a.b`, `a[]` = each item) in a copy of `params`. */
