@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFeedbackSchema } from '~/server/schema/feedback.schema';
 import type { SessionUser } from '~/types/session';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -332,6 +332,8 @@ describe('isFeedbackAreaEnabled — the Flipt evaluation context', () => {
  * boundary that drops it.
  */
 describe('the server stamp', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   const features = new Proxy({} as Record<string, boolean>, {
     get: (_target, key) =>
       key === 'assistant' ? true : key === 'secretRolloutFlag' ? true : false,
@@ -358,7 +360,6 @@ describe('the server stamp', () => {
       host: 'civitai.red',
       build: '5.1.444',
     });
-    vi.unstubAllEnvs();
     expect(Object.keys(stamp.flags).sort()).toEqual([...FEEDBACK_STAMPED_FLAGS].sort());
     expect(stamp.flags.assistant).toBe(true);
     const serialised = JSON.stringify(stamp);

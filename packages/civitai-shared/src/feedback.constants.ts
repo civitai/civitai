@@ -222,7 +222,6 @@ export const FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH = 20;
  * Failed tRPC calls. A batched call fails inside an HTTP 200 response, so the network buffer above
  * never sees it. Each entry is the procedure path, the tRPC error code and status, and a time:
  * never the input, never the error message (a message can echo what the user typed).
- * Adds at most 10 × ~150 B = 1.5 KB to a row.
  */
 export const FEEDBACK_TRPC_ERROR_MAX_COUNT = 10;
 export const FEEDBACK_TRPC_PATH_MAX_LENGTH = 100;

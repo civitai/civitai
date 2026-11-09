@@ -1,9 +1,10 @@
 import { StrictMode } from 'react';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as CaptureModule from '~/components/Feedback/captureScreenshot';
 import type * as TrpcModule from '~/utils/trpc';
 import { constants } from '~/server/common/constants';
+import { recordConsoleError, resetBrowserErrorLog } from '~/utils/feedback/browserErrorLog';
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
@@ -572,9 +573,13 @@ describe('submitting without Faro (the dev/test/preview case)', () => {
 });
 
 describe('what the inline prompt attaches', () => {
-  test('"Details we attach" is shown before sending', async () => {
+  afterEach(() => resetBrowserErrorLog());
+
+  test('"Details we attach" lists the console errors recorded on the page', async () => {
+    recordConsoleError('TypeError: x is undefined');
+    recordConsoleError('TypeError: x is undefined');
     await openPrompt();
     await userEvent.click(page.getByRole('button', { name: 'Details we attach' }));
-    await expect.element(page.getByText('Our server also records')).toBeInTheDocument();
+    await expect.element(page.getByText('×2 TypeError: x is undefined')).toBeInTheDocument();
   });
 });
