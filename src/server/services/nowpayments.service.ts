@@ -645,6 +645,9 @@ export const reprocessDeposit = async (paymentId: number) => {
   if (!payment) {
     throw new Error(`Payment ${paymentId} not found on NowPayments`);
   }
+  if (Number(payment.payment_id) !== paymentId) {
+    throw new Error(`NowPayments returned payment ${payment.payment_id} for ${paymentId}`);
+  }
 
   if (!isDepositComplete(payment.payment_status)) {
     throw new Error(`Payment ${paymentId} is not complete (status: ${payment.payment_status})`);
@@ -1247,6 +1250,7 @@ export const watchOpenDeposits = async () => {
     try {
       const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
       if (!payment) throw new Error('not found on NowPayments');
+      if (Number(payment.payment_id) !== paymentId) throw new Error('different payment returned');
       const complete = isDepositComplete(payment.payment_status);
       if (awaitingOk.has(paymentId) && complete) {
         heldBack.set(paymentId, payment.payment_status);
@@ -1255,7 +1259,6 @@ export const watchOpenDeposits = async () => {
       // A closed row only ever moves to a credit; any other NP status leaves it as it is.
       if (row.late) {
         if (!complete) return { lookupFailed: false, closed: false, lateFinished: false };
-        if (Number(payment.payment_id) !== paymentId) throw new Error('different payment returned');
         const lateFinished = await processLateFinish(paymentId, row, payment);
         return { lookupFailed: false, closed: false, lateFinished };
       }

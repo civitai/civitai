@@ -1725,6 +1725,30 @@ describe('watchOpenDeposits', () => {
       expect(result.lookupFailed).toBe(1);
     });
 
+    it('credits nothing on an open row when NOWPayments answers with a different payment', async () => {
+      serveDepositTable(() => [{ ...openRow(843, 'confirming', 5), status: rowStatus[843] }]);
+      rowStatus[843] = 'confirming';
+      mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue(
+        makePayment({ payment_id: 9999, payment_status: 'finished' })
+      );
+
+      const result = await watchOpenDeposits();
+
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(mockDbWrite.cryptoDeposit.upsert).not.toHaveBeenCalled();
+      expect(result.lookupFailed).toBe(1);
+    });
+
+    it('reprocessDeposit refuses a NOWPayments answer for a different payment', async () => {
+      mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue(
+        makePayment({ payment_id: 9999, payment_status: 'finished' })
+      );
+
+      await expect(reprocessDeposit(844)).rejects.toThrow('returned payment 9999 for 844');
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(mockDbWrite.cryptoDeposit.upsert).not.toHaveBeenCalled();
+    });
+
     it('holds back a listed late row that support has not cleared for credit', async () => {
       mockKvGet.mockImplementation(async (key: string, d?: unknown) =>
         key === 'nowpayments:watch-payment-ids' ? [840] : d
