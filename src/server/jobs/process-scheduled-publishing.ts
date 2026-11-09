@@ -21,7 +21,7 @@ import {
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
 import { createNotification } from '~/server/services/notification.service';
-import { releasePendingReviewsForPosts } from '~/server/services/resourceReview.visibility';
+import { releaseUnreleasedReviewsOfLivePosts } from '~/server/services/resourceReview.visibility';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { markComicProjectsChapterPublished } from '~/server/services/comics/chapter-publish.service';
 import { scanEntitiesInBackground } from '~/server/services/text-scan/submit';
@@ -450,7 +450,8 @@ export const processScheduledPublishing = createJob(
     if (publishedPosts.length)
       void onStorySparkPostsRestored({ postIds: publishedPosts.map((p) => p.id) });
 
-    await releasePendingReviewsForPosts(publishedPosts.map((p) => p.id))
+    // By state, not by `publishedPosts`: that set is the reward window, which misses posts.
+    await releaseUnreleasedReviewsOfLivePosts()
       .then((reviews) => refreshHasReceivedReviews(reviews))
       .catch((error) =>
         logToAxiom({

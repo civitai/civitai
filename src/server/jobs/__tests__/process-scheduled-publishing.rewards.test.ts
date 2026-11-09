@@ -73,7 +73,7 @@ vi.mock('~/server/services/text-scan/submit', () => ({
   scanEntitiesInBackground: mockScanEntitiesInBackground,
 }));
 vi.mock('~/server/services/resourceReview.visibility', () => ({
-  releasePendingReviewsForPosts: mockReleaseReviews,
+  releaseUnreleasedReviewsOfLivePosts: mockReleaseReviews,
 }));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
@@ -347,21 +347,14 @@ describe('processScheduledPublishing :: first daily post reward', () => {
 });
 
 describe('processScheduledPublishing :: pending resource reviews', () => {
-  // A swept post may already have been released by its publish or an earlier run; a repeat
-  // notification is a no-op on its key.
-  it('releases every post it hands over, flipped or swept, and refreshes their owners', async () => {
-    stubReads({
-      scheduled: [{ id: 1, userId: 10 }],
-      newlyLive: [
-        { id: 1, userId: 10 },
-        { id: 2, userId: 20 },
-      ],
-    });
+  // Selected by state in the leaf, not from the posts this run handed over.
+  it('runs the release sweep every run and refreshes the owners of what it released', async () => {
+    stubReads({});
     mockReleaseReviews.mockResolvedValueOnce([{ id: 11, modelOwnerId: 7 }]);
 
     await runJob();
 
-    expect(mockReleaseReviews.mock.calls).toEqual([[[1, 2]]]);
+    expect(mockReleaseReviews).toHaveBeenCalledTimes(1);
     expect(mockRefreshHasReceivedReviews).toHaveBeenCalledExactlyOnceWith([
       { id: 11, modelOwnerId: 7 },
     ]);

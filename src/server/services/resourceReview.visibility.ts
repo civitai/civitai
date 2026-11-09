@@ -96,6 +96,7 @@ export const createResourceReviewNotification = async ({
 
   await createNotification({
     type: 'new-review',
+    // One per reviewer and version, so a release that runs twice notifies once.
     key: `new-review:${modelVersionId}:${userId}`,
     category: NotificationCategory.Update,
     userId: modelVersion.model.userId,
@@ -114,25 +115,32 @@ export async function pendingPostIdFor({ postId, userId }: { postId: number; use
   return postId;
 }
 
+type ReleasedReview = {
+  id: number;
+  modelId: number;
+  modelVersionId: number;
+  recommended: boolean;
+  userId: number;
+  modelOwnerId: number;
+};
+
+async function announceReleased(released: ReleasedReview[]) {
+  if (!released.length) return released;
+  await bustRatingTotalsForRows(released).catch(() => undefined);
+  for (const review of released)
+    await createResourceReviewNotification(review).catch(() => undefined);
+  return released;
+}
+
 /**
- * Makes the reviews written from these posts public once the post is live: touched so the metric
- * jobs recount them, the rating totals busted, the model owner notified. Reviews of a post still
- * scheduled are left for a later call. Safe to repeat: the notification key makes a second one a
- * no-op. The caller refreshes the owners' cached has-received-reviews flag: the cache module
- * imports this one.
+ * Brings the reviews written from these posts in once the post is live: touched so the metric jobs
+ * recount them, the rating totals busted, the model owner notified. Reviews of a post still
+ * scheduled are left for a later call. Safe to repeat. The caller refreshes the owners' cached
+ * has-received-reviews flag: the cache module imports this one.
  */
 export async function releasePendingReviewsForPosts(postIds: number[]) {
   if (!postIds.length) return [];
-  const released = await dbWrite.$queryRaw<
-    {
-      id: number;
-      modelId: number;
-      modelVersionId: number;
-      recommended: boolean;
-      userId: number;
-      modelOwnerId: number;
-    }[]
-  >`
+  const released = await dbWrite.$queryRaw<ReleasedReview[]>`
     UPDATE "ResourceReview" rr
     SET "updatedAt" = now()
     FROM "Post" p, "Model" m
@@ -143,11 +151,34 @@ export async function releasePendingReviewsForPosts(postIds: number[]) {
     RETURNING rr.id, rr."modelId", rr."modelVersionId", rr.recommended, rr."userId",
       m."userId" AS "modelOwnerId"
   `;
-  if (!released.length) return released;
-  await bustRatingTotalsForRows(released).catch(() => undefined);
-  for (const review of released)
-    await createResourceReviewNotification(review).catch(() => undefined);
-  return released;
+  return announceReleased(released);
+}
+
+/**
+ * The scheduled-publishing job's sweep: releases the reviews of posts that went live in the last
+ * week and were never touched since, which covers posts going live by the clock and any release
+ * that failed. A release sets `updatedAt` past the post's date, so a released review drops out.
+ */
+export async function releaseUnreleasedReviewsOfLivePosts({ limit = 1000 } = {}) {
+  const released = await dbWrite.$queryRaw<ReleasedReview[]>`
+    UPDATE "ResourceReview" rr
+    SET "updatedAt" = now()
+    FROM "Model" m
+    WHERE m.id = rr."modelId"
+      AND rr.id IN (
+        SELECT r.id
+        FROM "ResourceReview" r
+        JOIN "Post" p ON p.id = r."postId"
+        WHERE r."postId" IS NOT NULL
+          AND p."publishedAt" <= now()
+          AND p."publishedAt" > now() - interval '7 days'
+          AND r."updatedAt" < p."publishedAt"
+        LIMIT ${limit}
+      )
+    RETURNING rr.id, rr."modelId", rr."modelVersionId", rr.recommended, rr."userId",
+      m."userId" AS "modelOwnerId"
+  `;
+  return announceReleased(released);
 }
 
 /**
@@ -170,8 +201,9 @@ export async function refreshReviewsForUnpublishedPosts(postIds: number[]) {
 }
 
 /**
- * The fire-and-forget form, for a caller whose post write has committed: a failure is logged and
- * leaves only held reviews or stale counts. `onReviews` gets the touched reviews, for the owners'
+ * The fire-and-forget form, for a caller whose post write has committed. A failure is logged: the
+ * reviews are public or hidden regardless, read at request time, but the notification and the
+ * metric recount wait for the scheduled-publishing sweep. `onReviews` gets the touched reviews, for the owners'
  * has-received-reviews refresh, which lives in the cache module that imports this one.
  */
 export function syncReviewsOfMovedPosts({

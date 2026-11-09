@@ -49,6 +49,7 @@ const { createResourceReview, getResourceReview, getUserRatingTotals, upsertReso
 const {
   refreshReviewsForUnpublishedPosts,
   releasePendingReviewsForPosts,
+  releaseUnreleasedReviewsOfLivePosts,
   syncReviewsOfMovedPosts,
   visibleReviewForViewerSql,
 } = await import('~/server/services/resourceReview.visibility');
@@ -353,6 +354,31 @@ describe('against Postgres', () => {
       expect.objectContaining({ modelId: 10, modelVersionId: 21 }),
     ]);
     expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it('the sweep releases reviews of posts that went live by the clock, once, and only recent ones', async () => {
+    const LONG_LIVE = 4;
+    await pg.exec(`INSERT INTO "Post" VALUES (${LONG_LIVE}, now() - interval '30 days')`);
+    await insertReviews([
+      [1, 101, LIVE],
+      [2, 102, LIVE],
+      [3, 103, LONG_LIVE],
+      [4, 104, SCHEDULED],
+      [5, 105, null],
+    ]);
+    // Review 2 was released already; review 3's post went live long before the sweep's window.
+    await pg.exec(`
+      UPDATE "ResourceReview" SET "updatedAt" = now() - interval '1 hour' WHERE id = 2;
+      UPDATE "ResourceReview" SET "updatedAt" = now() - interval '31 days' WHERE id = 3;
+    `);
+
+    const released = await releaseUnreleasedReviewsOfLivePosts();
+
+    expect(released).toEqual([expect.objectContaining({ id: 1, modelOwnerId: MODEL_OWNER })]);
+    expect(createNotification).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ key: 'new-review:21:101' })
+    );
+    expect(await releaseUnreleasedReviewsOfLivePosts()).toEqual([]);
   });
 
   // The fire-and-forget form callers use after their post write commits. The leaves run for real
