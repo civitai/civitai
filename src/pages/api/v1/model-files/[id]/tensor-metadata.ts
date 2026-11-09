@@ -77,6 +77,7 @@ export default MixedAuthEndpoint(async function handler(
     fileId: id,
     user,
     attribution: { caller: 'other', actor: resolveActorFor(user) },
+    redCapable: false,
   });
 
   if (fileResult.status !== 'success') {

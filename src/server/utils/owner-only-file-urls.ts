@@ -1,4 +1,5 @@
 import { middleware } from '~/server/trpc';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 
 /**
  * A model file's `url` is its storage location: only the version's owner (and moderators) need it,
@@ -16,7 +17,10 @@ type OwnerOnlyFileUrlsConfig<TData, TInput> = {
     data: TData;
     input: TInput;
   }) => number | undefined | Promise<number | undefined>;
-  strip: (data: TData) => TData;
+  /** Everyone else's view. `redCapable` is `isRedCapableHost` of the request. */
+  strip: (data: TData, viewer: { redCapable: boolean }) => TData | Promise<TData>;
+  /** The owner's view, when it differs from the stored data. Moderators always get the data. */
+  forOwner?: (data: TData) => TData;
 };
 
 /**
@@ -30,12 +34,19 @@ export async function resolveOwnerOnlyFileUrls<TData, TInput>(
     data,
     input,
     user,
-  }: { data: TData; input: TInput; user?: { id: number; isModerator?: boolean } }
+    redCapable = false,
+  }: {
+    data: TData;
+    input: TInput;
+    user?: { id: number; isModerator?: boolean };
+    redCapable?: boolean;
+  }
 ): Promise<TData> {
   if (data == null) return data;
   if (user?.isModerator) return data;
-  if (user && user.id === (await config.ownerId({ data, input }))) return data;
-  return config.strip(data);
+  if (user && user.id === (await config.ownerId({ data, input })))
+    return config.forOwner ? config.forOwner(data) : data;
+  return config.strip(data, { redCapable });
 }
 
 export function ownerOnlyFileUrls<TData, TInput = unknown>(
@@ -48,6 +59,7 @@ export function ownerOnlyFileUrls<TData, TInput = unknown>(
       data: result.data as TData,
       input: input as TInput,
       user: ctx.user,
+      redCapable: isRedCapableHost(ctx.req?.headers?.host),
     });
     return data === result.data ? result : { ...result, data };
   });

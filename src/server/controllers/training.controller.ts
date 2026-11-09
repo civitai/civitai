@@ -7,6 +7,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { getModel } from '~/server/services/model.service';
+import { trainingDataOwnerView } from '~/server/services/training-data-restricted.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import {
@@ -88,7 +89,14 @@ export const getModelData = async ({ input, ctx }: { input: GetByIdInput; ctx: C
       }
     }
 
-    return modelData;
+    if (ctx.user?.isModerator) return modelData;
+    return {
+      ...modelData,
+      modelVersions: modelData.modelVersions.map((v) => ({
+        ...v,
+        files: trainingDataOwnerView(v.files),
+      })),
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
