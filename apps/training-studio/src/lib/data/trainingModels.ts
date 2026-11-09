@@ -5,6 +5,7 @@ import type {
   Qwen21AiToolkitTrainingInput,
   YuE2AiToolkitTrainingInput,
 } from '@civitai/orchestration-client';
+import { isTextEncoderLockedBase } from '@civitai/shared/training-text-encoder';
 /**
  * Trainable base-model catalog — a VENDORED SNAPSHOT of the in-app trainer's
  * `trainingModelInfo` at `src/utils/training.ts` in this monorepo (mirrored
@@ -1638,24 +1639,41 @@ export const isProdigy = (optimizer: string): boolean =>
   PRODIGY_OPTIMIZERS.includes(optimizer.toLowerCase());
 
 /**
- * Ecosystems whose trainer cannot train the text encoder, with the reason the Review step shows.
- * The main app's TrainingParams.tsx `textEncoderLR` overrides lock these too (plus others).
+ * Ecosystems whose trainer cannot train the text encoder. One lock list serves both trainers
+ * (`@civitai/shared/training-text-encoder`, keyed by version key): an ecosystem is locked when any of
+ * its versions is, which also locks the Flux.2 Klein edit cards (same checkpoints, Studio-only keys).
+ * A version whose default TE rate is merely 0 (MOSS Image, Flux.3 Klein) stays editable.
+ */
+export const TE_LOCKED_ECOSYSTEMS: ReadonlySet<string> = new Set(
+  MODEL_CARDS.flatMap((card) => card.versions)
+    .filter((v) => isTextEncoderLockedBase(v.key))
+    .map((v) => v.ecosystem)
+);
+
+/**
+ * Reasons more specific than the generic one.
  * - Krea 2: AI-Toolkit fails the run with `Cannot unload text encoder if training text encoder`
  *   after ~20-30 min of looping, with no way to abort (tester-confirmed).
  * - Anima: AI-Toolkit's Anima trainer (v1.0.62) freezes the TE and reports no TE grad, so a
  *   nonzero rate did nothing and the LoRA shipped without TE layers.
  */
-const TE_TRAINING_UNSUPPORTED: Readonly<Record<string, string>> = {
+const TE_LOCK_REASONS: Readonly<Record<string, string>> = {
   krea2:
     "Text encoder training isn't supported for Krea 2: a run that tries hangs without finishing.",
   anima: "Text encoder training isn't supported for Anima.",
 };
 
-/** Why `ecosystem` can't train the text encoder, or undefined when it can. */
-export const teTrainingUnsupportedReason = (ecosystem: string): string | undefined =>
-  Object.hasOwn(TE_TRAINING_UNSUPPORTED, ecosystem)
-    ? TE_TRAINING_UNSUPPORTED[ecosystem]
-    : undefined;
+/** Why `ecosystem` can't train the text encoder, or undefined when it can. `modelName` names the
+ *  model in the generic reason. */
+export const teTrainingUnsupportedReason = (
+  ecosystem: string,
+  modelName = 'this model'
+): string | undefined => {
+  if (!TE_LOCKED_ECOSYSTEMS.has(ecosystem)) return undefined;
+  return Object.hasOwn(TE_LOCK_REASONS, ecosystem)
+    ? TE_LOCK_REASONS[ecosystem]
+    : `Text encoder training isn't supported for ${modelName}.`;
+};
 
 /** Per-field input bounds for a card — mirrors the ai-toolkit constraints: SDXL-family gets 256-dim nets and
  *  1024–2048 resolution; batch is capped per family; epochs are 1–20; LR is 0–1. */

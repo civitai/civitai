@@ -36,6 +36,7 @@ import { isStickerKeptOffImage } from '~/shared/constants/cosmetic-flags.constan
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
 import { remainingStickerUses, useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { PlaceAllButton } from '~/components/Sticker/PlaceAllButton';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { trpc } from '~/utils/trpc';
 
@@ -329,6 +330,7 @@ export function StickerPlacementTray({
                   </div>
                 ))}
               </div>
+              <PlaceAllButton price={space?.price ?? null} className="mt-1.5" />
             </div>
             {!isLoading && (worthNarrowing || !!madeByYou.size) && (
               <div className="order-3 flex w-full shrink-0 items-center gap-2 sm:order-2 sm:w-auto">
