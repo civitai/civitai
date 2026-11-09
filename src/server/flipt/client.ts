@@ -134,6 +134,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // Needs its key in flag state (enabled: false) BEFORE this code serves traffic: a missing key
   // makes evaluateBoolean throw and log on every call.
   CONTEST_COLLECTION_ITEMS_REDIS_CACHE = 'contest-collection-items-redis-cache',
+  // Per-pod (L1) cache switches, one per cache, so each can be A/B'd and rolled back alone. Each is
+  // read through `~/server/redis/l1-switches`: a global boolean, evaluated with no entity or
+  // context, at most once per 5s per process. DEFAULT-OFF: `isFliptSync` returns null for an
+  // unknown flag or an uninitialized client, which keeps today's behaviour. Add each key
+  // (enabled: false) to flag state before flipping it; a missing key just reads as off.
+  //
+  // ON raises the `basic-tags` (tagCache) L1 TTL from 30s to 300s.
+  BASIC_TAGS_L1_LONG_TTL = 'basic-tags-l1-long-ttl',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',

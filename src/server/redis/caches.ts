@@ -54,6 +54,7 @@ import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { getImageTagRows } from '~/server/redis/image-tag-rows';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
+import { basicTagsLocalTtl } from '~/server/redis/l1-switches';
 import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
 import { foldUserMultipliers } from '~/server/redis/user-multipliers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
@@ -645,7 +646,14 @@ export const tagCache = createCachedObject<TagLookup>({
   // conservative (30s) given that (minor) mod-adjacent surface; hit ratio is driven by
   // catalog coverage (localMax), not localTtl. Busted per-id on mod tag-level changes
   // (adjust-tag-level.ts) — dropped from THIS pod's L1, ≤30s cross-pod lag accepted.
-  localTtl: 30,
+  //
+  // 30s unless the BASIC_TAGS_L1_LONG_TTL switch is on, then 300s — so a busted tag-level or
+  // unlisted edit can take up to 5 minutes to reach other pods. Re-audited for the longer window
+  // (2026-11): the readers are still the ones listed above, plus the model page's tag list, which
+  // drops `unlisted` tags (a label surface again); `type` also decides, at lookup time, which
+  // Rekognition tag ids tagIdsForImagesCache keeps, a value that cache then holds for hours. The
+  // Redis entry is a day, and only adjust-tag-level busts it, so most edits already wait longer.
+  localTtl: basicTagsLocalTtl,
   localMax: 100000,
   localMaxBytes: L1_CACHE_BYTE_BUDGETS.basicTags,
 });
