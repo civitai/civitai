@@ -122,11 +122,11 @@ export async function fireDeferredBlockEffects(
 ): Promise<void> {
   if (!claimed.length) return;
   const imageIds = claimed.map((c) => c.imageId);
-  let images: { id: number; userId: number; postId: number | null }[];
+  let images: { id: number; userId: number; postId: number | null; blockedFor: string | null }[];
   try {
     images = await dbWrite
       .selectFrom('Image')
-      .select(['id', 'userId', 'postId'])
+      .select(['id', 'userId', 'postId', 'blockedFor'])
       .where('id', 'in', imageIds)
       .execute();
   } catch {
@@ -135,6 +135,8 @@ export async function fireDeferredBlockEffects(
     return;
   }
   const reported = await imagesInCsamReport(images.map((i) => i.id));
+  // Removed for CSAM since the block: as at the block itself, nothing fires.
+  for (const i of images) if (i.blockedFor === 'CSAM') reported.add(i.id);
   for (const id of reported)
     await log({ type: 'warning', name: DEFERRED_NOTICE_LOG.skipped, imageId: id });
   images = images.filter((i) => !reported.has(i.id));

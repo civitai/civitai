@@ -721,6 +721,24 @@ export async function resolveImageAppeal({
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
   }
 
+  // Held after the close: back to Pending, with no refund and no notice, even if the revert fails.
+  if (approved && !restored && (await isHeldImage(imageId))) {
+    await dbWrite
+      .updateTable('Appeal')
+      .set({ status: 'Pending', resolvedBy: null, resolvedAt: null })
+      .where('id', '=', appeal.id)
+      .where('status', '=', 'Approved')
+      .execute()
+      .catch((e: Error) =>
+        console.error('[resolveImageAppeal] revert to Pending failed', {
+          appealId: appeal.id,
+          imageId,
+          error: e.message,
+        })
+      );
+    throw new AppealRestoreRefusedError(imageId);
+  }
+
   const postId = img?.postId ?? null;
   if (restored) await applyAcceptSideEffects({ pHash: img?.pHash ?? null, postId }, imageId);
   else await applyVisibilitySideEffects(imageId, postId);

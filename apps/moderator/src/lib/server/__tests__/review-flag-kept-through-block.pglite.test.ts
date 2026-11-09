@@ -3,7 +3,7 @@ import { freshPglite } from '../../../test/pglite';
 import { DEFERRED_BLOCK_EFFECT_TABLE_SQL } from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { imagesVersion, imageVersion, removedNotDismissed } from '../csam-queue-set-aside';
 import type * as ModActivity from '../mod-activity';
 import type * as ThumbnailCache from '../thumbnail-cache';
@@ -653,5 +653,76 @@ describe('approving the appeal of an image blocked for CSAM', () => {
 
     expect(await appealStatus(CSAM_BLOCKED)).toBe('Rejected');
     expect((await imageRow(CSAM_BLOCKED)).ingestion).toBe('Blocked');
+  });
+});
+
+describe('approving an appeal whose image turns held after the close', () => {
+  const TURNS_HELD = 59;
+  const approve = () =>
+    resolveImageAppeal({ imageId: TURNS_HELD, status: 'Approved', resolvedReason: 'x', userId: 2 });
+  const appealStatus = async () =>
+    (
+      await db.query<{ status: string }>(`SELECT status FROM "Appeal" WHERE "entityId" = $1`, [
+        TURNS_HELD,
+      ])
+    ).rows[0].status;
+
+  beforeEach(async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+       VALUES ($1, 10, 'appeal', 'moderated', 'Blocked', 32)`,
+      [TURNS_HELD]
+    );
+    await seedPendingAppeal(TURNS_HELD);
+    // The flag lands inside the closing statement, after its held check has read the image.
+    await db.exec(`
+      CREATE FUNCTION flag_on_close() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        UPDATE "Image" SET "needsReview" = 'csam' WHERE id = NEW."entityId";
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER flag_on_close AFTER UPDATE OF status ON "Appeal"
+        FOR EACH ROW WHEN (NEW.status = 'Approved') EXECUTE FUNCTION flag_on_close();
+    `);
+    const effects = await import('../image-moderation-effects');
+    vi.mocked(effects.refundAppealFee).mockClear();
+    vi.mocked(effects.notifyAppealResolved).mockClear();
+    vi.mocked(effects.emailAppealResolution).mockClear();
+  });
+
+  afterEach(async () => {
+    await db.exec(`
+      DROP TRIGGER IF EXISTS flag_on_close ON "Appeal"; DROP FUNCTION IF EXISTS flag_on_close();
+      DROP TRIGGER IF EXISTS no_revert ON "Appeal"; DROP FUNCTION IF EXISTS no_revert();
+    `);
+  });
+
+  const nothingPaidOrTold = async () => {
+    const effects = await import('../image-moderation-effects');
+    expect(effects.refundAppealFee).not.toHaveBeenCalled();
+    expect(effects.notifyAppealResolved).not.toHaveBeenCalled();
+    expect(effects.emailAppealResolution).not.toHaveBeenCalled();
+  };
+
+  it('is refused and put back to Pending, with no refund and no notice', async () => {
+    await expect(approve()).rejects.toBeInstanceOf(AppealRestoreRefusedError);
+
+    expect(await imageRow(TURNS_HELD)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+    expect(await appealStatus()).toBe('Pending');
+    await nothingPaidOrTold();
+  });
+
+  it('refunds and tells nothing when putting it back to Pending fails', async () => {
+    await db.exec(`
+      CREATE FUNCTION no_revert() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'connection lost'; END $$;
+      CREATE TRIGGER no_revert BEFORE UPDATE OF status ON "Appeal"
+        FOR EACH ROW WHEN (OLD.status = 'Approved' AND NEW.status = 'Pending') EXECUTE FUNCTION no_revert();
+    `);
+
+    await expect(approve()).rejects.toBeInstanceOf(AppealRestoreRefusedError);
+
+    expect(await appealStatus()).toBe('Approved');
+    await nothingPaidOrTold();
   });
 });

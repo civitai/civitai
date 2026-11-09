@@ -559,6 +559,29 @@ describe('approving an image appeal', () => {
     expect(createNotification).not.toHaveBeenCalled();
     expect(sendEmail).not.toHaveBeenCalled();
   });
+
+  it('reopens, and refunds and tells nothing, when the image write itself fails', async () => {
+    await turnHeldAfterCheck();
+    const fake = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...v: unknown[]
+    ) => {
+      if (/^\s*UPDATE "Image"/.test(Prisma.sql(strings, ...(v as never[])).text))
+        throw new Error('lock timeout');
+      return fake(strings, ...(v as never[]));
+    }) as never);
+
+    await approve();
+
+    expect(await imageRow(APPEALED)).toMatchObject({ ingestion: 'Blocked' });
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.appeal.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'Pending' }) })
+    );
+  });
 });
 
 describe('reportCsamImages and images set aside from the CSAM queue', () => {

@@ -1753,7 +1753,8 @@ export async function settleResolvedAppeals(
   for (const appeal of appeals) {
     let reopened = false;
     switch (appeal.entityType) {
-      case EntityType.Image:
+      case EntityType.Image: {
+        let written = false;
         try {
           // An approval never restores a row removed for CSAM or under the review flag, and a
           // rejection leaves that flag on.
@@ -1773,6 +1774,7 @@ export async function settleResolvedAppeals(
                 WHERE id = ${appeal.entityId}
                 RETURNING "postId", "pHash"
               `;
+          written = true;
           if (!updated) {
             reopened = approved;
             break;
@@ -1802,10 +1804,12 @@ export async function settleResolvedAppeals(
 
           if (updated.postId) await bustCachesForPosts(updated.postId);
         } catch (e) {
-          // Image may have been deleted — log but continue resolving the appeal
+          // An approval whose image write failed restored nothing, so it is reopened like a refused one.
+          if (approved && !written) reopened = true;
           console.error(`Failed to update image ${appeal.entityId} for appeal ${appeal.id}: ${e}`);
         }
         break;
+      }
       default:
         // Do nothing
         break;

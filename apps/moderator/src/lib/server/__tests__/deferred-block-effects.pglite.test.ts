@@ -391,6 +391,18 @@ describe('an image listed in a CSAM report', () => {
     expect(await deferredRows()).toEqual([]);
   });
 
+  it('fires nothing for an image removed for CSAM after its block', async () => {
+    await block(FLAGGED);
+    await block(OTHER);
+    await db.exec(`UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${FLAGGED}`);
+    await dismiss(FLAGGED);
+    await dismiss(OTHER);
+
+    expect(notices().map((n) => n.url)).toEqual([`/images/${OTHER}`]);
+    expect(actioned().map((a) => a.id)).toEqual([report(OTHER)]);
+    expect(logged('deferred-effect-skipped')).toEqual([FLAGGED]);
+  });
+
   it('fires nothing when the check itself fails', async () => {
     await block(FLAGGED);
     await db.exec(`ALTER TABLE "CsamReport" RENAME COLUMN "images" TO "images_gone"`);
