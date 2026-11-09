@@ -128,6 +128,18 @@ const SETTINGS = {
 const FOLLOWING = [11, 12];
 const CHAT_SETTINGS = { muteSounds: true, replaceBadWords: false, acknowledged: true };
 const NAV_BANNERS = [{ id: 'event:fixture', title: 'Fixture event', href: '/events/fixture' }];
+const EVENT_COSMETIC = {
+  available: true,
+  obtained: true,
+  equipped: false,
+  data: {},
+  cosmetic: null,
+};
+const EVENT_SEEDS = [
+  { event: 'fixture', access: 'open', cosmetic: EVENT_COSMETIC },
+  // No cosmetic read: its query is left for the client.
+  { event: 'other', access: 'closed' },
+];
 // The overlay overrides one host flag (`chat`), so a merge in the wrong order shows.
 const FLAGS = { shellImages: true, canViewNsfw: false, chat: true };
 const USER_FLAGS = { chat: false, fixtureToggle: true };
@@ -173,6 +185,7 @@ function payload(over: Record<string, unknown> = {}) {
     following: FOLLOWING,
     liveNow: true,
     navBanners: NAV_BANNERS,
+    eventSeeds: EVENT_SEEDS,
     flags: FLAGS,
     userFeatureFlags: USER_FLAGS,
     chatSettings: CHAT_SETTINGS,
@@ -214,6 +227,7 @@ function fullRenderPageProps(data: ReturnType<typeof payload>) {
     following: data.following,
     chatSettings: data.chatSettings,
     navBanners: data.navBanners,
+    eventSeeds: data.eventSeeds,
     tosMeta: data.tosMeta,
     siteAlerts: data.siteAlerts,
     liveNow: data.liveNow,
@@ -315,6 +329,7 @@ function ShellApp({ pageProps, withAds = false }: { pageProps: PageProps; withAd
     liveNow = false,
     chatSettings,
     navBanners,
+    eventSeeds,
     tosMeta,
     siteAlerts,
     region,
@@ -351,6 +366,7 @@ function ShellApp({ pageProps, withAds = false }: { pageProps: PageProps; withAd
       liveNow,
       chatSettings,
       navBanners,
+      eventSeeds,
       tosMeta,
       siteAlerts,
       region,
@@ -476,6 +492,12 @@ const cached = () => ({
   getNavBanners: queryClient.getQueryData(
     getQueryKey(trpc.event.getNavBanners, undefined, 'query')
   ),
+  eventGetAccess: ['fixture', 'other'].map((event) =>
+    queryClient.getQueryData(getQueryKey(trpc.event.getAccess, { event }, 'query'))
+  ),
+  eventGetCosmetic: ['fixture', 'other'].map((event) =>
+    queryClient.getQueryData(getQueryKey(trpc.event.getCosmetic, { event }, 'query'))
+  ),
   imageGet: queryClient.getQueryData(imageKey),
 });
 
@@ -568,6 +590,8 @@ describe('a shell boot adopts the page data into the state a full render would h
       getFollowingUsers: FOLLOWING,
       chatGetUserSettings: CHAT_SETTINGS,
       getNavBanners: NAV_BANNERS,
+      eventGetAccess: ['open', 'closed'],
+      eventGetCosmetic: [EVENT_COSMETIC, undefined],
       imageGet: IMAGE,
     });
     // Revived by the client transformer, not left as the JSON string.
