@@ -192,9 +192,9 @@ describe('the per-reporter cap', () => {
 describe('the page capture', () => {
   const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
   const withShot = () => report({ context: { screenshotId: SHOT } });
-  const serveImage = (bytes: Uint8Array, headers: Record<string, string> = {}) =>
-    fetchMock.mockImplementation(async (url: string) =>
-      url.startsWith(HQ_ORIGIN) ? created() : new Response(bytes, { status: 200, headers })
+  const serveImage = (bytes: Uint8Array<ArrayBuffer>, headers: Record<string, string> = {}) =>
+    fetchMock.mockImplementation(async (url: string | URL) =>
+      String(url).startsWith(HQ_ORIGIN) ? created() : new Response(bytes, { status: 200, headers })
     );
 
   it('is not fetched or sent while the flag is off', async () => {
@@ -202,6 +202,7 @@ describe('the page capture', () => {
     await fileFeedbackToHq(withShot());
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(loggedStatuses()).toEqual(['filed']);
     expect(sentForm().get('screenshot')).toBeNull();
     expect(sentForm().get('body')).toContain('see the moderator view');
   });
@@ -211,6 +212,7 @@ describe('the page capture', () => {
     serveImage(PNG, { 'content-type': 'text/html' });
     await fileFeedbackToHq(withShot());
 
+    expect(loggedStatuses()).toEqual(['filed']);
     const file = sentForm().get('screenshot') as File;
     expect(file.type).toBe('image/png');
     expect(file.size).toBe(PNG.length);
@@ -232,6 +234,7 @@ describe('the page capture', () => {
     await fileFeedbackToHq(withShot());
 
     expect(intakeCalls()).toHaveLength(1);
+    expect(loggedStatuses()).toEqual(['filed']);
     expect(sentForm().get('screenshot')).toBeNull();
   });
 });
