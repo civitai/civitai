@@ -1419,16 +1419,16 @@ export function consentGatedScopes(scopes: string[]): string[] {
  * thought was revokable gets a suppression entry that `partitionByConsent` never reads,
  * so the UI reports success and the app keeps the permission.
  *
- * Exported as a FUNCTION, not as the Set. The Set is mutable and a caller holding it
- * could add a member — which would consent-exempt a gated scope at mint, the one change
- * in this file that silently widens what a token carries.
+ * Callers ask this predicate rather than hold the Set. The Set lives in the shared
+ * constants as a `ReadonlySet`, which is a compile-time promise only: a runtime `.add()`
+ * would consent-exempt a gated scope at mint, the one change that silently widens what a
+ * token carries, so nothing may mutate it.
  */
 export { isConsentExemptScope };
 
 /**
  * The exempt set, as a sorted array, for tests and for an error message that needs to
- * name what it refused. A COPY — see `isConsentExemptScope` for why the Set itself is
- * never handed out.
+ * name what it refused. A COPY, so a caller cannot mutate the Set.
  */
 export function consentExemptScopeList(): string[] {
   return Array.from(CONSENT_EXEMPT_SCOPES).sort();

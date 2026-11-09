@@ -142,6 +142,7 @@ const m = vi.hoisted(() => ({
   revokeFirstError: null as null | { code: string; message: string },
   /** What `listMyScopeGrants.fetch()` answers, for the one retry a refused batch gets. */
   freshGrants: [] as unknown[],
+  fetchOpts: [] as unknown[],
   invalidateSpy: undefined as unknown as ReturnType<typeof vi.fn>,
   /**
    * 🔴 HOLDS THE MUTATION OPEN so the PENDING state is observable. Without it the promise settles
@@ -286,7 +287,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           blocks: {
             listMyScopeGrants: {
               invalidate: invalidateSpy,
-              fetch: () => Promise.resolve(m.freshGrants),
+              fetch: (_input: unknown, opts?: { staleTime?: number }) => {
+                m.fetchOpts.push(opts);
+                return Promise.resolve(m.freshGrants);
+              },
             },
           },
         }),
@@ -363,6 +367,7 @@ beforeEach(() => {
   m.revokeError = null;
   m.revokeFirstError = null;
   m.freshGrants = [];
+  m.fetchOpts = [];
   m.gated = false;
   m.release = null;
   m.invalidateGated = false;
@@ -1040,6 +1045,24 @@ describe.each(SURFACES)('remove all — $name', ({ name, render }) => {
       name
     ).toEqual([allRemovable(), ['posts:write:self']]);
     expect(m.notify.success, name).toHaveBeenCalledTimes(1);
+    // A real refetch, not the cached list the batch was built from.
+    expect(m.fetchOpts, name).toEqual([{ staleTime: 0 }]);
+  });
+
+  test('🔴 the retry never adds a permission the viewer did not confirm', async () => {
+    m.revokeFirstError = { code: 'BAD_REQUEST', message: 'you do not hold that scope' };
+    m.freshGrants = [
+      {
+        ...GRANT,
+        revokableScopes: [...GRANT.revokableScopes, 'collections:read:private'],
+        grantedScopes: ['posts:write:self', 'collections:read:private'],
+      },
+    ];
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    await page.getByTestId('scope-revoke-all').click();
+    await page.getByTestId('scope-revoke-all-confirm').click();
+    expect(m.revokeCalls[1].scopes, name).toEqual(['posts:write:self']);
   });
 
   test('a second refusal is shown, not retried again', async () => {

@@ -507,8 +507,8 @@ export function useScopeRevoke({
    * every entry again (known, not consent-exempt, currently held).
    *
    * The server refuses the whole batch with BAD_REQUEST when the viewer no longer holds one of the
-   * scopes (a second tab removed it first). That is retried ONCE against the freshly fetched grant
-   * — `revokableScopes ∩ grantedScopes`, the server's live projection — so a stale list costs one
+   * scopes (a second tab removed it first). That is retried ONCE with the confirmed scopes that the
+   * freshly fetched grant still lists as removable and held — never a scope the viewer did not see — so a stale list costs one
    * extra call and not a failed click. A second refusal is shown as the failure it is.
    */
   const requestRevokeAll = (scopes: string[], keptCount: number) => {
@@ -528,15 +528,20 @@ export function useScopeRevoke({
         send(scopes)
           .catch(async (error: { data?: { code?: string } }) => {
             if (error?.data?.code !== 'BAD_REQUEST') throw error;
-            const fresh = (await utils.blocks.listMyScopeGrants.fetch()).find(
-              (g) => g.appBlockId === appBlockId
-            );
+            // `staleTime: 0`: the app-wide default is Infinity, which would hand back the very list
+            // this batch was built from.
+            const fresh = (
+              await utils.blocks.listMyScopeGrants.fetch(undefined, { staleTime: 0 })
+            ).find((g) => g.appBlockId === appBlockId);
             const held = new Set(fresh?.grantedScopes ?? []);
-            const again = (fresh?.revokableScopes ?? []).filter((s) => held.has(s));
-            if (again.length === 0 || again.length > REVOKE_SCOPES_MAX_PER_CALL) throw error;
-            const result = await send(again);
+            const allowed = new Set(fresh?.revokableScopes ?? []);
+            // Only what the viewer confirmed: a permission granted since the dialog was drawn is
+            // not theirs to lose here.
+            const again = scopes.filter((s) => held.has(s) && allowed.has(s));
+            if (again.length === 0) throw error;
+            // Before the call: a 503 on the retry still means THESE were written.
             scopes = again;
-            return result;
+            return send(again);
           })
           .then(
             () => {
