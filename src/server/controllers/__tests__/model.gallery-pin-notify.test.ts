@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { rowChangesBeforeLock } from '~/server/services/__tests__/model-row-lock.fake';
 
@@ -30,38 +30,77 @@ const { modelNotifications } = await import('~/server/notifications/model.notifi
 const MODEL = 1;
 const OWNER = 5;
 const VERSION = 10;
+const VERSION_2 = 11;
 const AUTHOR = 7;
 const pg = new PGlite();
 
+// A post by `userId` with one image per id, each made with VERSION unless `resources` says otherwise.
+async function post(
+  id: number,
+  userId: number,
+  {
+    publishedAt = "now() - interval '1 day'",
+    images = [id + 1000],
+    resources = [VERSION],
+    extra = '',
+  }: { publishedAt?: string; images?: number[]; resources?: number[]; extra?: string } = {}
+) {
+  await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (${id}, ${userId}, ${publishedAt});
+    ${extra}`);
+  for (const image of images) {
+    await pg.exec(`INSERT INTO "Image" (id, "postId") VALUES (${image}, ${id})`);
+    for (const r of resources)
+      await pg.exec(`INSERT INTO "ImageResourceNew" VALUES (${image}, ${r})`);
+  }
+}
+
 beforeAll(async () => {
   await pg.exec(`
-    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp);
-    CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int NOT NULL);
+    CREATE TABLE "Model" (id int PRIMARY KEY, status text NOT NULL);
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+    CREATE TABLE "Post" (
+      id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp, "modelVersionId" int,
+      "tosViolation" boolean NOT NULL DEFAULT false, availability text NOT NULL DEFAULT 'Public'
+    );
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, "postId" int, "tosViolation" boolean NOT NULL DEFAULT false,
+      "needsReview" text
+    );
+    CREATE TABLE "ImageResourceNew" ("imageId" int, "modelVersionId" int);
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type text);
+    INSERT INTO "Model" VALUES (${MODEL}, 'Published'), (2, 'Published'), (3, 'Draft');
+    INSERT INTO "ModelVersion" VALUES (${VERSION}, ${MODEL}), (${VERSION_2}, ${MODEL}), (20, 2), (30, 3);
+    INSERT INTO "UserEngagement" VALUES
+      (8, ${OWNER}, 'Block'), (12, ${OWNER}, 'Hide'), (${OWNER}, 13, 'Block');
   `);
-  // Posts 100-119 by AUTHOR, published, one image each (id = post id + 1000).
-  for (let p = 100; p < 120; p++) {
-    await pg.query(`INSERT INTO "Post" VALUES ($1, $2, now() - interval '1 day')`, [p, AUTHOR]);
-    await pg.query(`INSERT INTO "Image" VALUES ($1, $2)`, [p + 1000, p]);
-  }
-  await pg.exec(`
-    INSERT INTO "Post" VALUES (200, ${OWNER}, now() - interval '1 day'); -- the owner's own post
-    INSERT INTO "Image" VALUES (1200, 200);
-    INSERT INTO "Post" VALUES (201, ${AUTHOR}, NULL);                       -- unpublished
-    INSERT INTO "Image" VALUES (1201, 201);
-    INSERT INTO "Post" VALUES (202, 8, now() - interval '1 day');          -- author 8 blocked the owner
-    INSERT INTO "Image" VALUES (1202, 202);
-    INSERT INTO "UserEngagement" VALUES (8, ${OWNER}, 'Block');
-    INSERT INTO "Post" VALUES (203, 9, now() - interval '1 day');          -- author 9 is hidden creator-wide
-    INSERT INTO "Image" VALUES (1203, 203);
-  `);
+  for (let p = 100; p < 120; p++) await post(p, AUTHOR, { resources: [VERSION, VERSION_2] });
+  await post(200, OWNER);
+  await post(201, AUTHOR, { publishedAt: 'NULL' });
+  await post(202, 8);
+  await post(203, 9); // hidden by the owner across their galleries
+  await post(204, AUTHOR, { publishedAt: "now() + interval '1 day'" });
+  await post(205, 12);
+  await post(206, 13);
+  await post(207, AUTHOR, { images: [1207, 2207] }); // two images, one hidden in a test below
+  await post(208, AUTHOR, { images: [] });
+  await post(209, AUTHOR, { resources: [20] }); // made with another model's version
+  await post(210, AUTHOR, {
+    resources: [],
+    extra: `UPDATE "Post" SET "modelVersionId" = ${VERSION} WHERE id = 210;`,
+  });
+  await post(211, AUTHOR, { extra: `UPDATE "Post" SET "tosViolation" = true WHERE id = 211;` });
+  await post(212, AUTHOR, { extra: `UPDATE "Post" SET availability = 'Private' WHERE id = 212;` });
+  await post(213, AUTHOR, { images: [1213] });
+  await pg.exec(`UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 1213`);
+  await post(214, AUTHOR);
+  await pg.exec(`UPDATE "Image" SET "tosViolation" = true WHERE id = 1214`);
 });
 afterAll(() => pg.close());
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockCreatorHidden.mockResolvedValue([9]);
-  dbMock.dbRead.$queryRaw.mockImplementation((async (
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
   ) => {
@@ -127,7 +166,7 @@ describe('updateGallerySettingsHandler — notifies the author of a newly pinned
     });
   });
 
-  it('an unpin sends nothing; a re-pin carries the first pin’s key, which the worker never re-delivers', async () => {
+  it('an unpin sends nothing; a re-pin carries the first pin’s key, which the worker does not re-deliver', async () => {
     await save({ before: { [VERSION]: [100] }, after: { pinnedPosts: { [VERSION]: [] } } });
     expect(sentTo()).toEqual([]);
     await save({ before: { [VERSION]: [] }, after: { pinnedPosts: { [VERSION]: [100] } } });
@@ -137,13 +176,56 @@ describe('updateGallerySettingsHandler — notifies the author of a newly pinned
   it.each([
     ['the owner’s own post', {}, 200],
     ['an unpublished post', {}, 201],
-    ['an author in a block with the owner', {}, 202],
+    ['a post scheduled for later', {}, 204],
+    ['an author who blocked the owner', {}, 202],
+    ['an author who hid the owner', {}, 205],
+    ['an author the owner blocked', {}, 206],
     ['an author the owner hid across their galleries', {}, 203],
     ['an author hidden in this model’s gallery', { hiddenUsers: [AUTHOR] }, 104],
     ['a post whose images are all hidden here', { hiddenImages: { [VERSION]: [1105] } }, 105],
+    ['a post with no images', {}, 208],
+    ['a post made with another model’s version', {}, 209],
+    ['a post removed for a ToS violation', {}, 211],
+    ['a private post', {}, 212],
+    ['a post whose only image awaits review', {}, 213],
+    ['a post whose only image was removed for a ToS violation', {}, 214],
   ] as const)('skips %s', async (_case, extra, postId) => {
     await save({ after: { ...extra, pinnedPosts: { [VERSION]: [postId] } } });
     expect(sentTo()).toEqual([]);
+  });
+
+  it('still sends when only some of the post’s images are hidden here', async () => {
+    await save({
+      after: { hiddenImages: { [VERSION]: [1207] }, pinnedPosts: { [VERSION]: [207] } },
+    });
+    expect(sentTo()).toEqual([{ userId: AUTHOR, key: `model-gallery-post-pinned:${VERSION}:207` }]);
+  });
+
+  it('counts a post created on the version even when its images name no resource', async () => {
+    await save({ after: { pinnedPosts: { [VERSION]: [210] } } });
+    expect(sentTo()).toEqual([{ userId: AUTHOR, key: `model-gallery-post-pinned:${VERSION}:210` }]);
+  });
+
+  it('ignores version keys that are not this model’s, so invented keys cannot multiply sends', async () => {
+    await save({ after: { pinnedPosts: { 20: [209], 999: [102], [VERSION]: [103] } } });
+    expect(sentTo()).toEqual([{ userId: AUTHOR, key: `model-gallery-post-pinned:${VERSION}:103` }]);
+  });
+
+  it('sends nothing for a model that is not published', async () => {
+    await pg.exec(`UPDATE "Model" SET status = 'Draft' WHERE id = ${MODEL}`);
+    onTestFinished(() => pg.exec(`UPDATE "Model" SET status = 'Published' WHERE id = ${MODEL}`));
+    await save({ after: { pinnedPosts: { [VERSION]: [100] } } });
+    expect(sentTo()).toEqual([]);
+  });
+
+  it('hidden images are scoped to their version', async () => {
+    await save({
+      after: {
+        hiddenImages: { [VERSION_2]: [1106] },
+        pinnedPosts: { [VERSION]: [106], [VERSION_2]: [106] },
+      },
+    });
+    expect(sentTo()).toEqual([{ userId: AUTHOR, key: `model-gallery-post-pinned:${VERSION}:106` }]);
   });
 
   it('a moderator pinning on someone else’s model notifies nobody', async () => {
@@ -151,15 +233,17 @@ describe('updateGallerySettingsHandler — notifies the author of a newly pinned
     expect(sentTo()).toEqual([]);
   });
 
-  it('a save pinning the full 20 sends at most one per post', async () => {
+  it('a save sends at most 20, one per distinct post and version', async () => {
     const twenty = Array.from({ length: 20 }, (_, i) => 100 + i);
-    await save({ after: { pinnedPosts: { [VERSION]: twenty } } });
+    await save({
+      after: { pinnedPosts: { [VERSION]: [100, ...twenty], [VERSION_2]: twenty } },
+    });
     expect(sentTo()).toHaveLength(20);
     expect(new Set(sentTo().map((s) => s.key)).size).toBe(20);
   });
 
   it('a notification failure does not fail the save', async () => {
-    dbMock.dbRead.$queryRaw.mockRejectedValue(new Error('replica down') as never);
+    dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('db down') as never);
     await expect(save({ after: { pinnedPosts: { [VERSION]: [100] } } })).resolves.toMatchObject({
       id: MODEL,
     });

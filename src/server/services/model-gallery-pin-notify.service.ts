@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
+import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
-import { dbRead } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { notBlockedBetween } from '~/server/notifications/base.notifications';
 import { getCreatorGalleryHiddenUserIds } from '~/server/services/creator-gallery-hidden-users.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -24,9 +25,13 @@ export function newlyPinnedPosts(prev: PinnedPosts, next: PinnedPosts) {
 }
 
 /**
- * Tells a post's author that the model's owner pinned it to a version gallery. The key is permanent
- * per version and post: the notifications worker never re-delivers a key a user already has, so an
- * unpin and re-pin stays silent.
+ * Tells a post's author that the model's owner pinned it to a version gallery. The key is per
+ * version and post, and the notifications worker does not re-deliver a key a user still has, so an
+ * unpin and re-pin stays silent until retention cleanup prunes the first one.
+ *
+ * `pinnedPosts` is client-supplied with free-form version keys, so a pin only counts when the version
+ * is one of this published model's and the post shows in that version's gallery; otherwise any owner
+ * could message any author once per invented version id.
  */
 export async function notifyNewlyPinnedPosts({
   model,
@@ -43,7 +48,10 @@ export async function notifyNewlyPinnedPosts({
     hiddenImages: Record<string, number[]> | undefined;
   };
 }) {
-  const added = newlyPinnedPosts(prev, next.pinnedPosts);
+  const added = newlyPinnedPosts(prev, next.pinnedPosts).slice(
+    0,
+    constants.modelGallery.maxPinnedPosts
+  );
   if (!added.length) return 0;
 
   const creatorHiddenUserIds = await getCreatorGalleryHiddenUserIds(owner.id);
@@ -52,18 +60,32 @@ export async function notifyNewlyPinnedPosts({
   let sent = 0;
   for (const { modelVersionId, postId } of added) {
     const hiddenImageIds = next.hiddenImages?.[modelVersionId] ?? [];
-    // A post the owner hid from this gallery, or by an author they hid, was not pinned as credit.
-    const [post] = await dbRead.$queryRaw<{ userId: number }[]>`
+    // Primary: ImageResourceNew can lag on the replica, and this runs once per owner save.
+    const [post] = await dbWrite.$queryRaw<{ userId: number }[]>`
       SELECT p."userId"
       FROM "Post" p
+      JOIN "ModelVersion" mv ON mv.id = ${modelVersionId} AND mv."modelId" = ${model.id}
+      JOIN "Model" m ON m.id = mv."modelId" AND m.status = 'Published'
       WHERE p.id = ${postId}
         AND p."publishedAt" IS NOT NULL
         AND p."publishedAt" <= now()
+        AND NOT p."tosViolation"
+        AND p.availability <> 'Private'
         AND p."userId" <> ${owner.id}
         AND NOT (p."userId" = ANY(${hiddenUserIds}::int[]))
         AND EXISTS (
           SELECT 1 FROM "Image" i
-          WHERE i."postId" = p.id AND NOT (i.id = ANY(${hiddenImageIds}::int[]))
+          WHERE i."postId" = p.id
+            AND NOT (i.id = ANY(${hiddenImageIds}::int[]))
+            AND NOT i."tosViolation"
+            AND i."needsReview" IS NULL
+            AND (
+              p."modelVersionId" = mv.id
+              OR EXISTS (
+                SELECT 1 FROM "ImageResourceNew" ir
+                WHERE ir."imageId" = i.id AND ir."modelVersionId" = mv.id
+              )
+            )
         )
         AND ${Prisma.raw(notBlockedBetween('p."userId"', String(Number(owner.id))))}
     `;
