@@ -20,7 +20,7 @@ type OwnerOnlyFileUrlsConfig<TData, TInput> = {
   /** Everyone else's view. `redCapable` is `isRedCapableHost` of the request. */
   strip: (data: TData, viewer: { redCapable: boolean }) => TData | Promise<TData>;
   /** The owner's view, when it differs from the stored data. Moderators always get the data. */
-  forOwner?: (data: TData) => TData;
+  forOwner?: (data: TData) => TData | Promise<TData>;
 };
 
 /**

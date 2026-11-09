@@ -28,20 +28,17 @@ import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-fi
 import {
   trainingDataOwnerView,
   trainingDataPublicView,
+  withoutEpochUrls,
 } from '~/server/services/training-data-restricted.service';
+import { isModelWithheld } from '~/server/utils/model-withheld';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const fileUrlsForOwner = ownerOnlyFileUrls<
   Awaited<ReturnType<typeof getFilesByVersionIdHandler>>,
   { id: number }
 >({
-  ownerId: async ({ input }) =>
-    (
-      await dbRead.modelVersion.findUnique({
-        where: { id: input.id },
-        select: { model: { select: { userId: true } } },
-      })
-    )?.model.userId,
+  ownerId: async ({ data, input }) => (await versionModel(data, input.id))?.userId,
+  // A deleted or taken-down model's epoch urls are withheld from everyone but moderators.
   strip: async (data, { redCapable }) => {
     if (!data) return data;
     const view = await trainingDataPublicView(
@@ -49,10 +46,42 @@ const fileUrlsForOwner = ownerOnlyFileUrls<
       [{ id: data.modelVersionId, files: data.files }],
       { redCapable }
     );
-    return { ...data, files: withoutFileUrls(view(data.files)) as typeof data.files };
+    const files = withoutFileUrls(view(data.files)) as typeof data.files;
+    return { ...data, files: (await withheld(data)) ? withoutEpochUrls(files) : files };
   },
-  forOwner: (data) => data && { ...data, files: trainingDataOwnerView(data.files) },
+  forOwner: async (data) => {
+    if (!data) return data;
+    const files = trainingDataOwnerView(data.files);
+    return { ...data, files: (await withheld(data)) ? withoutEpochUrls(files) : files };
+  },
 });
+
+type VersionFiles = Awaited<ReturnType<typeof getFilesByVersionIdHandler>>;
+// One read per response: the owner check and the view that follows share it.
+const versionModelByResponse = new WeakMap<object, Promise<VersionModel | undefined>>();
+type VersionModel = { userId: number; status: string; mode: string | null };
+
+function versionModel(data: VersionFiles, modelVersionId: number) {
+  const read = () =>
+    dbRead.modelVersion
+      .findUnique({
+        where: { id: modelVersionId },
+        select: { model: { select: { userId: true, status: true, mode: true } } },
+      })
+      .then((version) => version?.model);
+  if (!data) return read();
+  let pending = versionModelByResponse.get(data);
+  if (!pending) {
+    pending = read();
+    versionModelByResponse.set(data, pending);
+  }
+  return pending;
+}
+
+async function withheld(data: NonNullable<VersionFiles>) {
+  const model = await versionModel(data, data.modelVersionId);
+  return !!model && isModelWithheld(model);
+}
 
 export const modelFileRouter = router({
   getByVersionId: publicProcedure
@@ -88,7 +117,13 @@ export const modelFileRouter = router({
   getRecentTrainingData: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(recentTrainingDataSchema)
-    .query(({ input, ctx }) => getRecentTrainingData({ ...input, userId: ctx.user.id })),
+    .query(({ input, ctx }) =>
+      getRecentTrainingData({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: !!ctx.user.isModerator,
+      })
+    ),
   hasOfficialFileOfSize: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(hasOfficialFileOfSizeSchema)

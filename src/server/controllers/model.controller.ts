@@ -233,7 +233,11 @@ import { logToAxiom } from '~/server/logging/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import { withoutRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
 import { isRemovedWithOwner } from '~/server/utils/legal-hold';
-import { trainingDataOwnerView } from '~/server/services/training-data-restricted.service';
+import {
+  trainingDataOwnerView,
+  withoutEpochUrls,
+} from '~/server/services/training-data-restricted.service';
+import { isModelWithheld } from '~/server/utils/model-withheld';
 import {
   getResourceData,
   resolveCanGenerateForVersions,
@@ -1557,6 +1561,7 @@ export const getMyTrainingModelsHandler = async ({
             id: true,
             name: true,
             status: true,
+            mode: true,
             // `_count: { select: { modelVersions: true } }` intentionally
             // omitted — see getMyDraftModelsHandler: Prisma compiles it to a
             // full-table grouped subquery (~1344ms) instead of pushing the id
@@ -1613,9 +1618,13 @@ export const getMyTrainingModelsHandler = async ({
       ...results,
       items: results.items.map((item) => {
         const version = applyTrainingWorkflowOverlay(item, overlay);
+        const ownerFiles = trainingDataOwnerView(version.files);
         return {
           ...version,
-          files: trainingDataOwnerView(version.files),
+          files:
+            isModelWithheld(item.model) && !ctx.user.isModerator
+              ? withoutEpochUrls(ownerFiles)
+              : ownerFiles,
           model: {
             ...item.model,
             _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },

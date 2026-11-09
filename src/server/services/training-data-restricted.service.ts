@@ -126,6 +126,37 @@ export function trainingDataOwnerView<
   ) as T;
 }
 
+/**
+ * Files without their training epochs' urls, which are the orchestrator's links to the run's
+ * weights; everything else about each epoch is kept. For a model whose weights are withheld
+ * (`isModelWithheld`) from everyone but moderators.
+ */
+export function withoutEpochUrls<T extends { metadata?: unknown }[] | null | undefined>(
+  files: T
+): T {
+  return files?.map((file) => {
+    const metadata = file.metadata as Record<string, unknown> | null | undefined;
+    if (!metadata || typeof metadata !== 'object') return file;
+    const { selectedEpochUrl: _selected, ...kept } = metadata;
+    const trainingResults = kept.trainingResults as { epochs?: unknown } | undefined;
+    if (Array.isArray(trainingResults?.epochs)) {
+      kept.trainingResults = {
+        ...trainingResults,
+        epochs: trainingResults.epochs.map((epoch: unknown) => {
+          if (!epoch || typeof epoch !== 'object') return epoch;
+          const {
+            modelUrl: _url,
+            model_url: _legacyUrl,
+            ...rest
+          } = epoch as Record<string, unknown>;
+          return rest;
+        }),
+      };
+    }
+    return { ...file, metadata: kept };
+  }) as T;
+}
+
 /** A `Training Data` file's metadata as its owner sees it (`trainingDataOwnerView`). */
 export function withoutServerOnlyKeys<M>(metadata: M): M {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return metadata;
