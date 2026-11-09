@@ -36,6 +36,10 @@ export const GENERATION_EXTERNAL_IMAGE_MESSAGE =
 export const generationExternalImageError = () =>
   imageUrlUnavailableError(GENERATION_EXTERNAL_IMAGE_MESSAGE);
 
+/** Shown when an orchestrator-native input carries a plain link to a Civitai page, refused there. */
+export const GENERATION_PAGE_LINK_MESSAGE =
+  'This request includes a link to a Civitai page, not an image. Please upload the image instead.';
+
 /** An upload key as minted: the whole value, nothing around it. */
 const BARE_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -713,8 +717,10 @@ export async function assertGenerationInputsUsable({
   const given = [...new Set(urls.filter((url): url is string => !!url))];
   if (!given.length) return;
   const caller = isApiCaller ? 'api' : 'session';
-  const refuse = (cls: GenerationInputUrlClass) => {
+  /** `pageLink`: a plain link to one of our pages, counted as `external` (`isPlainPageLink`). */
+  const refuse = (cls: GenerationInputUrlClass, pageLink = false) => {
     refusalCounter.inc({ entry, class: cls, caller, mode: 'refuse' });
+    if (pageLink) return imageUrlUnavailableError(GENERATION_PAGE_LINK_MESSAGE);
     return cls === 'external' ? generationExternalImageError() : generationImageUnavailableError();
   };
 
@@ -730,13 +736,14 @@ export async function assertGenerationInputsUsable({
       continue;
     }
     let cls = classifyGenerationInputUrl(url);
+    let pageLink = false;
     if (opaqueInput) {
       const asHttps =
         cls === 'invalid' && /^http:/i.test(url)
           ? classifyGenerationInputUrl(url.replace(/^http:/i, 'https:'))
           : cls;
-      if (asHttps === 'external' || (asHttps === 'civitai_other' && isPlainPageLink(url)))
-        cls = 'external';
+      pageLink = asHttps === 'civitai_other' && isPlainPageLink(url);
+      if (asHttps === 'external' || pageLink) cls = 'external';
     }
     if (cls === 'orchestrator') continue;
     if (cls === 'key') {
@@ -759,13 +766,13 @@ export async function assertGenerationInputsUsable({
         mode: refuseExternal ? 'refuse' : 'log',
         userId,
       });
-      if (refuseExternal) throw refuse(cls);
+      if (refuseExternal) throw refuse(cls, pageLink);
       refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });
       // A proxy or wrapper url may carry one of our image keys.
       keysIn(url).forEach((key) => externalKeys.add(key));
       continue;
     }
-    throw refuse(cls);
+    throw refuse(cls, pageLink);
   }
 
   try {

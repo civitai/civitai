@@ -72,6 +72,9 @@ const { getStep } = await import('~/server/services/blocks/steps');
 /** The external-host refusal, pinned as the literal a caller reads. */
 const EXTERNAL_MESSAGE =
   'This request includes a link to an image hosted outside Civitai. Please upload the image instead.';
+/** The refusal of a plain Civitai page link where it is not free text. */
+const PAGE_LINK_MESSAGE =
+  'This request includes a link to a Civitai page, not an image. Please upload the image instead.';
 
 const CALLER = 7;
 const OTHER = 8;
@@ -1436,11 +1439,37 @@ describe('a chat App Block step, with the external-host refusal on', () => {
       { $type: 'imageUpscaler', input: { image: { $ref: '$arguments', path: 'prompt' } } },
     ];
     expect(await run([steps.map((s) => s.input), { prompt: page }], 'appBlocksWorkflow')).toBe(
-      `refused: ${EXTERNAL_MESSAGE}`
+      `refused: ${PAGE_LINK_MESSAGE}`
     );
-    expect(await run(chat(page), 'appBlocksPassThrough')).toBe(`refused: ${EXTERNAL_MESSAGE}`);
+    expect(await run(chat(page), 'appBlocksPassThrough')).toBe(`refused: ${PAGE_LINK_MESSAGE}`);
     // Control: the same link as chat message text on the registry step passes.
     expect(await chatStep(chat(page))).toBe('accepted');
+  });
+
+  it('CONTROL: only a TOP-LEVEL messages list is free text, not one nested in a tool schema', async () => {
+    const url = 'https://example.com/a.png';
+    const withTool = (parameters: Record<string, unknown>) => ({
+      ...chat('hello'),
+      tools: [{ type: 'function', function: { name: 'f', parameters } }],
+    });
+    expect(await chatStep(withTool({ messages: [{ content: url }] }))).toBe(
+      `refused: ${EXTERNAL_MESSAGE}`
+    );
+    // The same link as the top-level message content passes.
+    expect(await chatStep(chat(url))).toBe('accepted');
+  });
+
+  it("CONTROL: only a message's declared field is free text, not a sibling field", async () => {
+    const url = 'https://example.com/a.png';
+    expect(
+      await chatStep({
+        ...chat('hello'),
+        messages: [{ role: 'user', content: 'hello', name: url }],
+      })
+    ).toBe(`refused: ${EXTERNAL_MESSAGE}`);
+    expect(
+      await chatStep({ ...chat('hello'), messages: [{ role: 'user', content: url, name: 'n' }] })
+    ).toBe('accepted');
   });
 
   it('a workflow: an external link in a text field a $ref wires into an image is still refused', async () => {
