@@ -683,8 +683,6 @@ type LicenseDetails = {
   // When true, mature content is restricted (auto-derives `restrictedNsfwLevels`
   // to MATURE_NSFW_LEVELS). Use this instead of hand-listing levels.
   disableMature?: boolean;
-  // The licence requires moderator review before a model on its base models publishes.
-  prePublishReview?: boolean;
   // The licence requires a capped output level for generations using its base models' resources.
   capGenerationOutput?: boolean;
   // When true, the license forbids commercial use. Drives both the commercial-use
@@ -1023,7 +1021,6 @@ const baseLicenses: Record<string, LicenseDetails> = {
   'bria fibo': {
     ...BRIA_FIBO_LICENSE_PLACEHOLDER,
     disableMature: true,
-    prePublishReview: true,
     capGenerationOutput: true,
   },
 };

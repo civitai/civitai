@@ -216,3 +216,38 @@ describe('submitWorkflow — genuine app/validation faults are NOT converted to 
     expect(data).toEqual({ id: 'wf-1' });
   });
 });
+
+describe('submitWorkflow — mature-content refusal message', () => {
+  const matureRefusal = errorResolve(400, {
+    status: 400,
+    errors: { prompt: ['Prompt requires mature content but workflow does not allow it'] },
+  });
+
+  it('names the resources or workflow when the request was capped to pg13', async () => {
+    mockSubmitWorkflow.mockResolvedValue(matureRefusal);
+
+    const err = await submitWorkflow({
+      token: 'tok',
+      body: { nsfwLevel: 'pg13', allowMatureContent: false, currencies: ['green'] } as any,
+      query: {} as any,
+    }).catch((e) => e);
+
+    expect((err as TRPCError).message).toBe(
+      'The prompt has been blocked due to mature content, which the resources or workflow in this generation cannot produce'
+    );
+  });
+
+  it('keeps the site message when the request was not capped', async () => {
+    mockSubmitWorkflow.mockResolvedValue(matureRefusal);
+
+    const err = await submitWorkflow({
+      token: 'tok',
+      body: { allowMatureContent: false, currencies: ['green'] } as any,
+      query: {} as any,
+    }).catch((e) => e);
+
+    expect((err as TRPCError).message).toBe(
+      'The prompt has been blocked due to mature content, which is not allowed on this site'
+    );
+  });
+});

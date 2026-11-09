@@ -118,8 +118,6 @@ export type LicenseRecord = {
   // several licences use for a liability disclaimer rather than an attribution.
   attribution?: string;
   disableMature?: boolean;
-  // The licence requires moderator review before a model on its base models publishes.
-  prePublishReview?: boolean;
   // The licence requires a capped output level for generations using its base models' resources.
   capGenerationOutput?: boolean;
   // License forbids commercial use (drives commercial-use override + monetization block).
@@ -2890,7 +2888,6 @@ export const licenses: LicenseRecord[] = [
     id: 55,
     ...BRIA_FIBO_LICENSE_PLACEHOLDER,
     disableMature: true,
-    prePublishReview: true,
     capGenerationOutput: true,
   },
 ];
