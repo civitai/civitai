@@ -777,8 +777,8 @@ interface BlockStepBase<P> {
   /** 🔴 REQUIRED. Drives estimate/submit/settle dispatch. */
   billingMode: StepBillingMode;
   /**
-   * OPTIONAL. Param paths whose STRING values are free text no consumer fetches
-   * (`messages[].content`), so the generation input gate does not read a link in
+   * OPTIONAL. Param paths whose STRING values are free text no consumer fetches,
+   * each `list[].field` (`messages[].content`), so the generation input gate does not read a link in
    * them as an image input. Upload keys and links naming one of our images found
    * there are still checked. Default none: every string in the params is read as
    * a possible input (`opaqueInputUrlsIn`).

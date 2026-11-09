@@ -541,7 +541,7 @@ describe('assertGenerationInputsUsable', () => {
       for (const id of SPELLINGS) expect(await opaque([id])).toBe('refused');
     });
 
-    it('accepts a plain link to one of our pages, and refuses one that carries a key or a url', async () => {
+    it('counts a plain link to one of our pages, and refuses one that carries a key or a url', async () => {
       holder.refuseExternal = false;
       expect(await opaque(['https://civitai.com/models/123'])).toBe('accepted');
       expect(await gate(['https://civitai.com/models/123'], 'appBlocksPassThrough')).toBe(
@@ -560,12 +560,8 @@ describe('assertGenerationInputsUsable', () => {
       expect(await opaque(['http://civitai.com/models/123'])).toBe('accepted');
       expect(await opaque(['HTTP://example.com/a.png'])).toBe('accepted');
       expect(await opaque([`HTTP://civitai.com/api/redirect/${KEY}`])).toBe('refused');
-      // Not an external host: a page link passes with the external-host refusal on too.
       holder.refuseExternal = true;
-      expect(await opaque(['https://civitai.com/models/123'])).toBe('accepted');
-      expect(await opaque(['http://civitai.com/models/123'])).toBe('accepted');
-      // Control: the flag is on, so an external host is refused.
-      expect(await opaque(['https://example.com/a.png'])).toBe('refused');
+      expect(await opaque(['https://civitai.com/models/123'])).toBe('refused');
     });
 
     it('refuses a url with a control byte inside, and counts the same url without it', async () => {
@@ -1432,6 +1428,19 @@ describe('a chat App Block step, with the external-host refusal on', () => {
   it('refuses a CDN link in message text naming a key issued to another user, as an image input', async () => {
     await recordUploadKeyOwner(KEY, OTHER);
     expect(await chatStep(chat(CDN))).toBe(`refused: ${GENERATION_IMAGE_UNAVAILABLE_MESSAGE}`);
+  });
+
+  it('a plain page link outside chat message text is still refused: a workflow text field, a pass-through body', async () => {
+    const page = 'https://civitai.com/models/123';
+    const steps = [
+      { $type: 'imageUpscaler', input: { image: { $ref: '$arguments', path: 'prompt' } } },
+    ];
+    expect(await run([steps.map((s) => s.input), { prompt: page }], 'appBlocksWorkflow')).toBe(
+      `refused: ${EXTERNAL_MESSAGE}`
+    );
+    expect(await run(chat(page), 'appBlocksPassThrough')).toBe(`refused: ${EXTERNAL_MESSAGE}`);
+    // Control: the same link as chat message text on the registry step passes.
+    expect(await chatStep(chat(page))).toBe('accepted');
   });
 
   it('a workflow: an external link in a text field a $ref wires into an image is still refused', async () => {

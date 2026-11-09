@@ -254,14 +254,6 @@ const refusalCounter = registerCounterWithLabels({
   labelNames: ['entry', 'class', 'caller', 'mode'] as const,
 });
 
-const pageLinkCounter = registerCounterWithLabels({
-  name: 'generation_input_page_links_total',
-  help:
-    'Plain links to a Civitai page (no upload key, no url of their own) seen in an ' +
-    'orchestrator-native generation input and accepted, by entry point and caller type.',
-  labelNames: ['entry', 'caller'] as const,
-});
-
 /** Schemes a fetcher may resolve. `urn:` (AIR ids) is not one of them. */
 const FETCH_SCHEMES = new Set([
   'http:',
@@ -523,32 +515,19 @@ function isWholeFetchableValue(value: string, budget: DecodeBudget, protocol: st
 }
 
 /**
- * Where an input holds free text that no consumer reads as a url (a registry step's declared
- * `freeTextParamPaths`): `a.b` names a nested field, `a[]` every item of the array at `a`.
+ * Free text a registry step declares in its params (`freeTextParamPaths`), each `list[].field`:
+ * the string `field` of every item of the array `list` at the top of the params.
  */
 export type FreeTextPaths = readonly string[];
 
-type FreeTextNode = { fields: Map<string, FreeTextNode>; items?: FreeTextNode; text: boolean };
-const freeTextNode = (): FreeTextNode => ({ fields: new Map(), text: false });
-const FREE_TEXT_SEGMENT = /^([A-Za-z_$][\w$]*)((?:\[\])*)$/;
-
-/** `paths` as a tree the walk descends with the input; throws on a path it cannot read. */
-function compileFreeTextPaths(paths: FreeTextPaths = []): FreeTextNode | undefined {
-  if (!paths.length) return undefined;
-  const root = freeTextNode();
+/** `paths` as list name -> the item fields that are free text. */
+function freeTextFieldsByList(paths: FreeTextPaths = []) {
+  const byList = new Map<string, Set<string>>();
   for (const path of paths) {
-    let node = root;
-    for (const segment of path.split('.')) {
-      const match = FREE_TEXT_SEGMENT.exec(segment);
-      if (!match) throw new Error(`malformed free-text path '${path}'`);
-      let next = node.fields.get(match[1]);
-      if (!next) node.fields.set(match[1], (next = freeTextNode()));
-      node = next;
-      for (let i = 0; i < match[2].length / 2; i++) node = node.items ??= freeTextNode();
-    }
-    node.text = true;
+    const [list, field] = path.split('[].');
+    byList.set(list, (byList.get(list) ?? new Set<string>()).add(field));
   }
-  return root;
+  return byList;
 }
 
 /** Whether a url names one of our images: on our image CDN or a civitai host, carrying a key. */
@@ -573,11 +552,12 @@ function namesOurImage(url: string, budget: DecodeBudget) {
  *
  * `freeTextPaths`: strings at these paths are free text, never a url to fetch, so a url in one is
  * not collected whole unless it names one of our images; its keys are collected as in any text.
- * Only a value that IS a string there is text: anything else at the path is walked as usual.
+ * Only a value that IS a string there is text (and a list only when it is an array): anything
+ * else at the path is walked as usual.
  * Default none: every string is read as above.
  */
 export function opaqueInputUrlsIn(value: unknown, freeTextPaths?: FreeTextPaths) {
-  const textRoot = compileFreeTextPaths(freeTextPaths);
+  const textFieldsByList = freeTextFieldsByList(freeTextPaths);
   // Not `walkJsonValues`: this walk splits strings into lines and budgets depth and characters too.
   const urls: string[] = [];
   let tooDeep = false;
@@ -603,19 +583,17 @@ export function opaqueInputUrlsIn(value: unknown, freeTextPaths?: FreeTextPaths)
     for (const key of keysInTextWithin(text, decoded)) collect(key);
     if (decoded.left < 0) tooLarge = true;
   };
-  /** Whether `item`, reached at `node`, is a declared free-text string. */
-  const isTextAt = (node: FreeTextNode | undefined, item: unknown) =>
-    !!node?.text && typeof item === 'string';
   /**
    * `counted`: a line of a string whose characters were already counted whole. `text`: the string
-   * is declared free text. `at`: where the walk is in the declared free-text paths, if anywhere.
+   * is declared free text. `scope.list`: the item is a declared list, and these fields of each of
+   * its items are text; `scope.item`: the item is one of those items.
    */
   const walk = (
     item: unknown,
     depth: number,
     counted = false,
     text = false,
-    at: FreeTextNode | undefined = undefined
+    scope?: { list: Set<string> } | { item: Set<string> }
   ) => {
     if (item == null || tooDeep || tooLarge) return;
     if (depth > OPAQUE_INPUT_MAX_DEPTH) {
@@ -684,19 +662,24 @@ export function opaqueInputUrlsIn(value: unknown, freeTextPaths?: FreeTextPaths)
       } else pushKeysInText(item);
       if (decoded.left < 0) tooLarge = true;
     } else if (Array.isArray(item)) {
-      const node = at?.items;
-      for (const child of item) walk(child, depth + 1, false, isTextAt(node, child), node);
+      const fields = scope && 'list' in scope ? scope.list : undefined;
+      for (const child of item)
+        walk(child, depth + 1, false, false, fields ? { item: fields } : undefined);
     } else if (typeof item === 'object') {
       const record = item as Record<string, unknown>;
+      const itemFields = scope && 'item' in scope ? scope.item : undefined;
       for (const field of Object.keys(record)) {
         if (tooDeep || tooLarge) return;
         walk(field, depth + 1);
-        const node = at?.fields.get(field);
-        walk(record[field], depth + 1, false, isTextAt(node, record[field]), node);
+        const value = record[field];
+        const listFields = depth === 0 ? textFieldsByList.get(field) : undefined;
+        if (listFields && Array.isArray(value))
+          walk(value, depth + 1, false, false, { list: listFields });
+        else walk(value, depth + 1, false, !!itemFields?.has(field) && typeof value === 'string');
       }
     }
   };
-  walk(value, 0, false, false, textRoot);
+  walk(value, 0);
   return { urls, tooDeep, tooLarge };
 }
 
@@ -722,8 +705,7 @@ export async function assertGenerationInputsUsable({
   /**
    * Urls from an orchestrator-native input (`opaqueInputUrlsIn`), where a uuid may be any id and
    * an http url may be a schema id: a key-shaped value is refused only when it names an image
-   * that fails, http to an external host counts as external, and a plain link to one of our
-   * pages (`isPlainPageLink`) passes.
+   * that fails, and http to an external host counts as external.
    */
   opaqueInput?: boolean;
   now?: Date;
@@ -753,13 +735,8 @@ export async function assertGenerationInputsUsable({
         cls === 'invalid' && /^http:/i.test(url)
           ? classifyGenerationInputUrl(url.replace(/^http:/i, 'https:'))
           : cls;
-      // A plain link to one of our pages reads what any visitor reads (`isPlainPageLink`): not an
-      // image input to guard, and not an external host either.
-      if (asHttps === 'civitai_other' && isPlainPageLink(url)) {
-        pageLinkCounter.inc({ entry, caller });
-        continue;
-      }
-      if (asHttps === 'external') cls = 'external';
+      if (asHttps === 'external' || (asHttps === 'civitai_other' && isPlainPageLink(url)))
+        cls = 'external';
     }
     if (cls === 'orchestrator') continue;
     if (cls === 'key') {
@@ -813,38 +790,5 @@ export async function assertGenerationInputsUsable({
       refusalCounter.inc({ entry, class: 'key', caller, mode: 'refuse' });
     throw error;
   }
-}
-
-/**
- * The gate on an orchestrator-native input (an App Block step's params or native input, or a
- * workflow's step inputs and arguments): every url it may fetch (`opaqueInputUrlsIn`, reading
- * strings at `freeTextPaths` as free text) must pass `assertGenerationInputsUsable`. Refused
- * whole when it nests or weighs past what the walk reads.
- */
-export async function assertOpaqueInputsUsable({
-  inputs,
-  freeTextPaths,
-  userId,
-  entry,
-}: {
-  inputs: unknown;
-  freeTextPaths?: FreeTextPaths;
-  userId: number;
-  entry: GenerationInputEntryPoint;
-}) {
-  const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs, freeTextPaths);
-  if (tooDeep) {
-    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input nests too deeply' });
-  }
-  if (tooLarge) {
-    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input is too large to check' });
-  }
-  await assertGenerationInputsUsable({
-    urls,
-    userId,
-    entry,
-    isApiCaller: false,
-    opaqueInput: true,
-  });
 }
 // #endregion

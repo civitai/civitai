@@ -533,7 +533,6 @@ vi.mock('~/server/services/subscriptions.service', () => ({
 vi.mock('~/server/services/generation-input-urls', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   assertGenerationInputsUsable: async () => undefined,
-  assertOpaqueInputsUsable: async () => undefined,
 }));
 // W3 flow A — the submit path dynamic-imports recordSpendAttribution from
 // here. Mock the whole module so we drive the spend-write behavior; the
