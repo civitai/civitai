@@ -60,6 +60,7 @@ const loadManifestMod = require('next/dist/server/load-manifest.external');
 const sharedConstants = require('next/dist/shared/lib/constants');
 const localePath = require('next/dist/shared/lib/i18n/normalize-locale-path');
 const trailingSlash = require('next/dist/shared/lib/router/utils/remove-trailing-slash');
+const pathMatch = require('next/dist/shared/lib/router/utils/path-match');
 
 const NEXT = 'next/dist';
 const getTracer = expectExport(
@@ -167,6 +168,13 @@ const removeTrailingSlash = expectExport(
   'function'
 );
 
+const getPathMatch = expectExport(
+  pathMatch,
+  `${NEXT}/shared/lib/router/utils/path-match`,
+  'getPathMatch',
+  'function'
+);
+
 /**
  * Next's pages-API runtimes (`next/dist/compiled/next-server/pages-api{,-turbo}.runtime.prod.js`).
  * The compiled route module loads exactly one of them (which one depends on the bundler that built
@@ -200,14 +208,6 @@ function loadedPagesApiRouteModuleClass(cache = require.cache) {
  */
 function assertPreconditions({ routesManifest, nextConfig, page }) {
   if (routesManifest.basePath) throw new Error('[trpc-server] lean: basePath is not supported');
-  const rewrites = routesManifest.rewrites || {};
-  const rewriteCount = Array.isArray(rewrites)
-    ? rewrites.length
-    : (rewrites.beforeFiles || []).length +
-      (rewrites.afterFiles || []).length +
-      (rewrites.fallback || []).length;
-  // With no rewrite at all, `handleRewrites` returns no params and a copy of the parsed URL.
-  if (rewriteCount > 0) throw new Error('[trpc-server] lean: rewrites are not supported');
   // Domain locales make the default locale depend on the Host header.
   const i18n = routesManifest.i18n;
   if (i18n && Array.isArray(i18n.domains) && i18n.domains.length > 0) {
@@ -298,6 +298,41 @@ function createLeanPageHandler({
     caseSensitive: Boolean(routesManifest.caseSensitive),
   });
   const defaultRouteMatchKeys = Object.keys(serverUtils.defaultRouteMatches || {});
+  const defaultLocale = i18n && i18n.defaultLocale;
+
+  // `handleRewrites` checks every rewrite the manifest lists (beforeFiles, afterFiles, fallback)
+  // against the request path, compiling each one's matcher per request. Unless a rewrite's
+  // source matches the path it is checked against, the path never changes and it returns no
+  // params and a copy of the parsed URL. So the matchers are compiled once here, with the
+  // options `handleRewrites` uses, and a request whose path one of them matches is served by
+  // the route module's own `handler` instead (Next's whole runtime, as in `route` mode). For a
+  // served page none can match (`createRouting` in `./next-compat.cjs` refuses to boot
+  // otherwise), so that fallback is exactness, not a path requests are expected to take.
+  const manifestRewrites = routesManifest.rewrites || {};
+  const rewriteMatchers = [
+    ...(manifestRewrites.beforeFiles || []),
+    ...(manifestRewrites.afterFiles || []),
+    ...(manifestRewrites.fallback || []),
+  ].map((rewrite) =>
+    getPathMatch(rewrite.source + (nextConfig.trailingSlash ? '(/)?' : ''), {
+      removeUnnamedParams: true,
+      strict: true,
+      sensitive: Boolean(routesManifest.caseSensitive),
+    })
+  );
+
+  /** Whether a rewrite could apply to this request in `prepareImpl` (see above). */
+  function rewriteCanApply(parsedUrl) {
+    if (rewriteMatchers.length === 0) return false;
+    let pathname = parsedUrl.pathname || '/';
+    // prepareImpl checks rewrites against the path with the default locale prefixed, unless the
+    // path already starts with a locale.
+    if (i18n && defaultLocale) {
+      const { detectedLocale } = normalizeLocalePath(pathname, i18n.locales);
+      if (!detectedLocale) pathname = `/${defaultLocale}${pathname === '/' ? '' : pathname}`;
+    }
+    return rewriteMatchers.some((match) => Boolean(match(pathname)));
+  }
 
   /**
    * `RouteModule.prepareImpl` (next/dist/server/route-modules/route-module.js) for this page,
@@ -337,13 +372,14 @@ function createLeanPageHandler({
         detectedLocale = localeResult.detectedLocale;
       }
       // prepareImpl prefixes the default locale for the rewrite pass and strips it again after;
-      // with no rewrites (boot check) the pathname it matches the params against is this one.
+      // with no rewrite matching (checked in `leanHandler`) the pathname it matches the params
+      // against is this one.
       matchPathname = localeResult.pathname;
     }
     // Domain locales: refused at boot; `defaultLocale` / `locale` request meta: never set here.
-    const defaultLocale = i18n && i18n.defaultLocale;
     const locale = detectedLocale || defaultLocale;
-    // handleRewrites: no rewrites (boot check), so no rewrite params.
+    // handleRewrites: no rewrite matches this path (checked in `leanHandler`), so no rewrite
+    // params and an unchanged pathname.
 
     // `params` request meta is never set on this server.
     let params;
@@ -519,6 +555,8 @@ function createLeanPageHandler({
 
   /** The template's `handler`. */
   return async function leanHandler(req, res, ctx) {
+    const parsedUrl = parseReqUrl(req.url || '/');
+    if (parsedUrl && rewriteCanApply(parsedUrl)) return mod.handler(req, res, ctx);
     if (ctx && ctx.requestMeta) setRequestMeta(req, ctx.requestMeta);
     const tracer = getTracer();
     return routeModule.traceRequest(

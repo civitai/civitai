@@ -46,7 +46,16 @@ function writeDist(dir: string) {
     basePath: '',
     caseSensitive: false,
     i18n: { locales: ['en'], defaultLocale: 'en' },
-    rewrites: { beforeFiles: [], afterFiles: [], fallback: [] },
+    // The second rewrite matches one tRPC path, which the lean runtime must hand to the route
+    // module (see the delegation tests below); the first, like a real build's, matches none.
+    rewrites: {
+      beforeFiles: [],
+      afterFiles: [
+        { source: '/:nextInternalLocale(en)/_axiom/web-vitals', destination: '/x' },
+        { source: '/:nextInternalLocale(en)/api/trpc/rewritten', destination: '/y' },
+      ],
+      fallback: [],
+    },
     redirects: [],
     headers: [],
     dynamicRoutes: [],
@@ -91,9 +100,14 @@ function request(url: string, headers: Record<string, string> = {}) {
 /** What the route handler saw, and the headers on the response when it ran. */
 type Seen = { query: unknown; url: string | undefined; headers: Record<string, unknown> };
 
-function recordingUserland(sink: { seen?: Seen }) {
+function recordingUserland(sink: { seen?: Seen; delegated?: string }) {
   return {
     config: { api: { bodyParser: { sizeLimit: '17mb' } } },
+    // The compiled module's own handler (Next's whole runtime): recorded, never run here.
+    handler: async (req: any, res: any) => {
+      sink.delegated = req.url;
+      res.end('route module');
+    },
     default: async (req: any, res: any) => {
       sink.seen = { query: req.query, url: req.url, headers: { ...res.getHeaders() } };
       res.end('ok');
@@ -224,25 +238,6 @@ describe('assertPreconditions', () => {
   it.each([
     ['a basePath', { routesManifest: { ...ok.routesManifest, basePath: '/x' } }, /basePath/],
     [
-      'an afterFiles rewrite',
-      {
-        routesManifest: {
-          ...ok.routesManifest,
-          rewrites: {
-            beforeFiles: [],
-            afterFiles: [{ source: '/a', destination: '/b' }],
-            fallback: [],
-          },
-        },
-      },
-      /rewrites/,
-    ],
-    [
-      'an array of rewrites',
-      { routesManifest: { ...ok.routesManifest, rewrites: [{ source: '/a', destination: '/b' }] } },
-      /rewrites/,
-    ],
-    [
       'domain locales',
       {
         routesManifest: {
@@ -260,5 +255,35 @@ describe('assertPreconditions', () => {
     ['a static page', { page: '/api/live' }, /one trailing/],
   ])('refuses %s', (_label, override, message) => {
     expect(() => lean.assertPreconditions({ ...ok, ...override })).toThrow(message);
+  });
+});
+
+describe('a request a rewrite can match', () => {
+  async function run(url: string) {
+    const sink: { seen?: Seen; delegated?: string } = {};
+    const handler = lean.createLeanPageHandler({
+      page: PAGE,
+      mod: recordingUserland(sink),
+      projectDir,
+      distDir,
+      relativeProjectDir,
+      nextConfig: { experimental: {} },
+      PagesAPIRouteModule,
+    });
+    const { req, res } = request(url);
+    await handler(req, res, { requestMeta: { relativeProjectDir, distDir } });
+    return sink;
+  }
+
+  it("is served by the route module's own handler", async () => {
+    const sink = await run('/api/trpc/rewritten?input=1');
+    expect(sink.delegated).toBe('/api/trpc/rewritten?input=1');
+    expect(sink.seen).toBeUndefined();
+  });
+
+  it('every other request is served by the lean runtime', async () => {
+    const sink = await run('/api/trpc/rewritten2?input=1');
+    expect(sink.delegated).toBeUndefined();
+    expect(sink.seen).toBeDefined();
   });
 });
