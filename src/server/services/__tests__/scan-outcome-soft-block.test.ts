@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { blockedNSFW, blockedNSFWOverridable } from '@civitai/mod-utils/prompt-audit/lists';
+import {
+  blockedNSFW,
+  blockedNSFWOverridable,
+  poiWords,
+} from '@civitai/mod-utils/prompt-audit/lists';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as ImageService from '~/server/services/image.service';
 
@@ -22,6 +26,7 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 import { resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { auditImageMeta } from '~/utils/media-preprocessors/image.preprocessor';
+import { auditPromptEnriched } from '~/utils/metadata/audit';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
@@ -37,6 +42,10 @@ const pick = (soft: boolean) => {
   return word;
 };
 const soft = pick(true);
+const person = poiWords.find(
+  (w) => /^[a-z ]+$/.test(w) && auditPromptEnriched(w).triggers[0]?.category === 'poi'
+);
+if (!person) throw new Error('no real-person name to test with');
 const hard = pick(false);
 
 const image = (prompt: string) =>
@@ -75,6 +84,7 @@ describe('the scan of an NSFW image decides a prompt as the post editor does', (
     ['overridable beside hard', `${soft}, ${hard}`, true],
     ['hard alone', hard, true],
     ['overridable beside a minor age', `${soft}, a 10 year old`, true],
+    ['overridable beside a real person', `${soft}, ${person}`, true],
   ])('%s', async (_, prompt, expectBlocked) => {
     const { blockedFor: editorBlocked } = await auditImageMeta({ prompt }, true);
     const outcome = await scan(prompt);

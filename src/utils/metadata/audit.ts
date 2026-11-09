@@ -72,10 +72,18 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean): 
  * The verdict for an image added to a post, on the client and in the server scan alike: a hit
  * whose every word the generator lets through does not block, so a generation the generator
  * allowed can be posted. `auditMetaData` alone stays strict for its other callers.
+ *
+ * The pass also needs the generator's own regex audit to be clean or soft: the generator runs its
+ * hard checks (minor age, real people, minor or real-person content, harmful combinations) before
+ * it ever reaches an overridable word, so the pass must not skip them. It never blocks a prompt
+ * `auditMetaData` passed.
  */
 export const auditPostImageMeta = (meta: ImageMetaProps | undefined, nsfw: boolean) => {
   const audit = auditMetaData(meta, nsfw);
-  if (audit.success || !audit.softBlock) return { ...audit, softBlockedFor: [] as string[] };
+  const strict = { ...audit, softBlockedFor: [] as string[] };
+  if (audit.success || !audit.softBlock) return strict;
+  const generator = auditPromptEnriched(meta?.prompt ?? '', meta?.negativePrompt ?? undefined);
+  if (!generator.success && !isSoftBlock(generator.triggers)) return strict;
   return { blockedFor: [] as string[], success: true, softBlockedFor: audit.blockedFor };
 };
 

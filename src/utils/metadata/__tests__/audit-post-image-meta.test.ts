@@ -3,8 +3,9 @@ import {
   blocked,
   blockedNSFW,
   blockedNSFWOverridable,
+  poiWords,
 } from '@civitai/mod-utils/prompt-audit/lists';
-import { auditPostImageMeta } from '~/utils/metadata/audit';
+import { auditPostImageMeta, auditPromptEnriched } from '~/utils/metadata/audit';
 import { auditImageMeta } from '~/utils/media-preprocessors/image.preprocessor';
 
 /**
@@ -19,6 +20,12 @@ const pick = (list: string[], soft: boolean) => {
   if (!word) throw new Error(`no ${soft ? 'soft' : 'hard'} word on this list`);
   return word;
 };
+
+// A real-person name the generator's own audit refuses outright.
+const person = poiWords.find(
+  (w) => /^[a-z ]+$/.test(w) && auditPromptEnriched(w).triggers[0]?.category === 'poi'
+);
+if (!person) throw new Error('no real-person name to test with');
 
 const lists = [
   { name: 'SFW list', nsfw: false, list: blocked },
@@ -45,8 +52,17 @@ describe.each(lists)('auditPostImageMeta on the $name', ({ nsfw, list }) => {
     expect(audit).toMatchObject({ success: false, blockedFor: [hard] });
   });
 
+  it('blocks an overridable match beside a check the generator treats as hard', () => {
+    const audit = auditPostImageMeta({ prompt: `${soft}, ${person}` }, nsfw);
+    expect(audit).toMatchObject({ success: false, blockedFor: [soft] });
+  });
+
+  it('blocks an overridable match beside a minor age', () => {
+    expect(auditPostImageMeta({ prompt: `${soft}, a 10 year old` }, nsfw).success).toBe(false);
+  });
+
   it('the upload preprocessor reaches the same verdict', async () => {
-    for (const prompt of [soft, `${soft}, ${hard}`, hard, 'a quiet lake']) {
+    for (const prompt of [soft, `${soft}, ${hard}`, hard, `${soft}, ${person}`, 'a quiet lake']) {
       const { blockedFor } = await auditImageMeta({ prompt }, nsfw);
       expect(!!blockedFor, prompt).toBe(!auditPostImageMeta({ prompt }, nsfw).success);
     }
