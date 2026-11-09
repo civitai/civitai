@@ -1,7 +1,6 @@
 -- A feedback page capture (owner -2) that a delete kept stays recorded in "EvidenceHoldImage" exactly
 -- as long as its own state keeps it, the state `captureImageStateHeldSql` in
--- src/server/services/legal-hold.service.ts reads. The capture account is never held as an owner, so
--- without this the sweep would drop the record at once.
+-- src/server/services/legal-hold.service.ts reads.
 --
 -- evidence_hold_purge_unheld and evidence_hold_guard_kept are otherwise unchanged from
 -- 20261019220000_evidence_hold, as applied; feedback-capture-hold-lifetime.behavior.test.ts keeps them

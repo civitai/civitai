@@ -11,7 +11,7 @@
 -- migration's feedback capture clause into evidence_hold_keep_image below and skip owner -2 in the
 -- image legs of evidence_hold_owner_held (as `holdLegsSql` does), or captures lose their keep. Carry
 -- 20261231130100_feedback_capture_hold_lifetime's capture clauses into evidence_hold_purge_unheld and
--- evidence_hold_guard_kept below too, or a kept capture's record is dropped by the next sweep.
+-- evidence_hold_guard_kept below too.
 
 -- Whether owner `uid` is held. The same answer as `ownerHeldSql` in
 -- src/server/services/legal-hold.service.ts (every account hold, the placeholder owner, the marker),

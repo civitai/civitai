@@ -2785,7 +2785,6 @@ export const toggleBan = async ({
   /** Server-only, with `onlyBan`: a `user` ModActivity written in the same transaction as the ban. */
   banActivity?: string;
 }) => {
-  if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   // Get user with username for search index deletion
   const select = { bannedAt: true, meta: true, username: true, email: true } as const;
   const user = onlyBan
@@ -2796,6 +2795,9 @@ export const toggleBan = async ({
 
   const userMeta = (user.meta ?? {}) as UserMeta;
   const bannedAt = force ? null : user.bannedAt;
+  // Never banned; an unban stays open so a ban from before this guard can still be lifted.
+  if (!bannedAt && isFeedbackCaptureOwner(id))
+    throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
 
   const updatedMeta = bannedAt
     ? {

@@ -41,7 +41,7 @@ vi.mock('$app/server', () => ({
   }),
 }));
 
-const { setMuted } = await import('../user-actions.service');
+const { setBanned, setMuted } = await import('../user-actions.service');
 
 // Every test: `setMuted` posts to the main app, and a test must never reach a real host.
 const fetchMock = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
@@ -63,6 +63,15 @@ afterEach(() => {
 describe('the feedback capture account', () => {
   it('is never muted, and nothing is written or sent', async () => {
     expect(await setMuted({ userId: -2, muted: true, moderatorId: 7 })).toEqual({
+      ok: false,
+      error: expect.stringMatching(/feedback page captures/),
+    });
+    expect(captured).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('is never banned, and nothing is written or sent', async () => {
+    expect(await setBanned({ userId: -2, ban: true, moderatorId: 7 })).toEqual({
       ok: false,
       error: expect.stringMatching(/feedback page captures/),
     });

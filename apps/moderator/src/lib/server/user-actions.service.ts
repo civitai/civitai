@@ -858,6 +858,9 @@ export async function setBanned(input: {
   removeComments?: boolean;
   moderatorId: number;
 }): Promise<ActionResult> {
+  // The ban endpoint answers before it bans, so its own refusal would not reach the moderator.
+  if (input.ban && isFeedbackCaptureOwner(input.userId))
+    return { ok: false, error: FEEDBACK_CAPTURE_OWNER_REFUSAL };
   const current = await dbWrite
     .selectFrom('User')
     .select('bannedAt')

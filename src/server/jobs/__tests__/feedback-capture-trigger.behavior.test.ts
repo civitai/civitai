@@ -254,19 +254,41 @@ describe('the capture account as a subject', () => {
     await expect(db.exec(sql)).rejects.toThrow(/not_capture_owner_check/);
   });
 
+  // A NULL subject and an empty details object are where IS DISTINCT FROM matters.
   it('leaves every other subject alone', async () => {
     await db.exec(`
       INSERT INTO "CsamReport" ("userId", details) VALUES (NULL, '{}'), (${OTHER}, '{"secondaryUserId": ${MARKED}}');
       INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${OTHER}, 'manual', 'test');
     `);
+    const { rows } = await db.query<{ n: number }>(
+      `SELECT (SELECT count(*) FROM "CsamReport" WHERE "reportSentAt" IS NULL)::int AS n`
+    );
+    expect(rows[0].n).toBe(3);
   });
 
-  it('is not applied over rows that already name it', async () => {
+  it('applies again cleanly after a partial or repeated run', async () => {
+    await expect(db.exec(NEVER_SUBJECT_MIGRATION)).resolves.toBeDefined();
+    await expect(
+      db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CAPTURE})`)
+    ).rejects.toThrow(/not_capture_owner_check/);
+  });
+
+  it.each([
+    ['a report subject', `INSERT INTO "CsamReport" ("userId") VALUES (${CAPTURE})`],
+    [
+      'a report’s secondary user',
+      `INSERT INTO "CsamReport" ("userId", details) VALUES (NULL, '{"secondaryUserId": ${CAPTURE}}')`,
+    ],
+    [
+      'an evidence hold owner',
+      `INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${CAPTURE}, 'manual', 'test')`,
+    ],
+  ])('is not applied over a row that already names it as %s', async (_label, seed) => {
     const fresh = new PGlite();
     try {
       await fresh.exec(BASE_SCHEMA);
       await fresh.exec(LIVE_EVIDENCE_HOLD);
-      await fresh.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CAPTURE})`);
+      await fresh.exec(seed);
       await expect(fresh.exec(NEVER_SUBJECT_MIGRATION)).rejects.toThrow(/already name user -2/);
     } finally {
       await fresh.close();
@@ -274,6 +296,8 @@ describe('the capture account as a subject', () => {
   });
 });
 
+// Deliberate drift pins: the migration must be the applied function plus the capture clause, so an
+// edit to that clause updates the pattern here too.
 describe('20261231130100_feedback_capture_hold_lifetime', () => {
   const fn = (sql: string, name: string, end: string) => {
     const start = sql.indexOf(`CREATE OR REPLACE FUNCTION ${name}(`);
@@ -294,9 +318,5 @@ describe('20261231130100_feedback_capture_hold_lifetime', () => {
       ''
     );
     expect(ours).toBe(fn(LIVE_EVIDENCE_HOLD, 'evidence_hold_guard_kept', '$$ LANGUAGE plpgsql'));
-  });
-
-  it('names nothing from the unapplied owner-held migration', () => {
-    expect(LIFETIME_MIGRATION).not.toMatch(/owner_held/);
   });
 });

@@ -9,10 +9,10 @@ export const FEEDBACK_CAPTURE_OWNER_USERNAME = 'civitai-feedback-captures';
 
 /**
  * The capture account is never a subject or the target of an account action: a capture can show
- * anyone's content, so acting on its owner acts on nobody. Act on the image, or on the reporter.
+ * any account's content, so acting on its owner acts on nobody.
  */
 export const FEEDBACK_CAPTURE_OWNER_REFUSAL =
-  'This is the system account that holds feedback page captures. Act on the image or the reporter instead.';
+  'This is the system account that holds feedback page captures; it cannot be the subject of this action. A capture shows content from another account: act on the image, or name that account.';
 
 export function isFeedbackCaptureOwner(userId: unknown): boolean {
   return Number(userId) === FEEDBACK_CAPTURE_OWNER_ID;

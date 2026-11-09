@@ -274,8 +274,7 @@ export async function getImagesByIds(
  * spanning 40 accounts must send 40 notifications, not 300 — which is the whole reason Retool had a
  * separate query for it rather than notifying per row.
  *
- * Feedback page captures are left out and counted: their owner is a system account, and the reporter
- * who submitted one is never struck or notified for it automatically.
+ * Feedback page captures are left out and counted: their owner is a system account.
  */
 export async function getBatchOwners(
   imageIds: number[]

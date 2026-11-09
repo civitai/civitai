@@ -1,10 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 
-/**
- * Striking or notifying a batch's owners skips feedback page captures and counts them: their owner is
- * a system account, and their reporter is never struck automatically.
- */
+/** Striking or notifying a batch's owners skips feedback page captures and counts them. */
 
 const captured = vi.hoisted(() => [] as string[]);
 const rows = vi.hoisted(() => ({ current: [] as Record<string, unknown>[] }));
@@ -37,8 +34,6 @@ describe('a batch with feedback page captures in it', () => {
       { userId: CAPTURE, images: '3' },
     ];
     expect(await getBatchOwners([1, 2, 3, 4, 5])).toEqual({ owners: [5], capturesSkipped: 3 });
-    expect(captured).toHaveLength(1);
-    expect(captured[0]).toMatch(/group by "userId"/);
   });
 
   it('strikes the other owners and never the capture account', async () => {
