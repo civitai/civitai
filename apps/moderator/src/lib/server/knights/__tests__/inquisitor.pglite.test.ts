@@ -81,12 +81,13 @@ const insertVote = (
   weight: number,
   verdict = 'pending',
   blockReason: string | null = null,
-  second = playerId
+  second = playerId,
+  stage = 'Knight'
 ) =>
   db.query(
     `INSERT INTO "KnightsVote" ("itemId","playerId","questionKey","imageId","stage","answer","weight","verdict","blockReason","createdAt")
-     VALUES ($1,$2,$3,1,'Knight',$4,$5,$6,$7, TIMESTAMP '2026-12-27 12:00:00' + ($8::int * interval '1 second'))`,
-    [itemId, playerId, Q, answer, weight, verdict, blockReason, second]
+     VALUES ($1,$2,$3,1,$9,$4,$5,$6,$7, TIMESTAMP '2026-12-27 12:00:00' + ($8::int * interval '1 second'))`,
+    [itemId, playerId, Q, answer, weight, verdict, blockReason, second, stage]
   );
 
 const verdicts = async (itemId: number) =>
@@ -164,8 +165,26 @@ describe('getInquisitorQueue', () => {
       prompt: 'How should this image be rated?',
     });
     expect(queue[0].votes).toEqual([
-      { answer: '8', label: 'X', votes: 2, weight: 2.5 },
-      { answer: '2', label: 'PG-13', votes: 1, weight: 2 },
+      { answer: '8', label: 'X', votes: 2, weight: 2.5, stages: [{ stage: 'Knight', votes: 2 }] },
+      { answer: '2', label: 'PG-13', votes: 1, weight: 2, stages: [{ stage: 'Knight', votes: 1 }] },
+    ]);
+  });
+
+  it('breaks each answer down by the stage it was voted at, lowest stage first', async () => {
+    await insertItem(1, 1, 'Inquisitor');
+    await insertVote(1, 11, '8', 1, 'pending', null, 11, 'Paladin');
+    await insertVote(1, 12, '8', 1, 'pending', null, 12, 'Knight');
+    await insertVote(1, 13, '8', 1, 'pending', null, 13, 'Knight');
+    await insertVote(1, 14, '2', 1, 'pending', null, 14, 'Templar');
+
+    const [item] = await getInquisitorQueue();
+
+    expect(item.votes.find((vote) => vote.answer === '8')?.stages).toEqual([
+      { stage: 'Knight', votes: 2 },
+      { stage: 'Paladin', votes: 1 },
+    ]);
+    expect(item.votes.find((vote) => vote.answer === '2')?.stages).toEqual([
+      { stage: 'Templar', votes: 1 },
     ]);
   });
 
