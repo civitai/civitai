@@ -10895,7 +10895,14 @@ async function assertStepOrWorkflowInputsUsable(
       : isPassThroughStepBody(body)
       ? (['appBlocksPassThrough', body.input] as const)
       : (['appBlocksStep', body.params] as const);
-  const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs);
+  // Only a registry step declares free text in its params (`freeTextParamPaths`, pinned against
+  // its param schema). A workflow or pass-through body is read whole: there any step can `$ref`
+  // any field, so a link in a text field may be wired into an image input.
+  const freeTextPaths =
+    body.kind === 'step' && !isPassThroughStepBody(body)
+      ? getStep(body.step)?.freeTextParamPaths
+      : undefined;
+  const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs, freeTextPaths);
   if (tooDeep) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input nests too deeply' });
   }

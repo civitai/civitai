@@ -15,6 +15,7 @@ import {
   estimateStepBuzz,
   getStep,
   getStepByOrchestratorType,
+  listRegisteredSteps,
   planStepSpend,
   REGISTERED_STEP_IDS,
   resolveStepVariant,
@@ -1604,4 +1605,115 @@ describe('chat-completion — extractToolCalls', () => {
       }
     }
   });
+});
+
+/**
+ * 🔴 THE SOUNDNESS PIN FOR `freeTextParamPaths`. The generation input gate does
+ * not read a link in a declared free-text string as an image input. That is
+ * sound only while the step's own schema admits NOTHING BUT A STRING at each
+ * declared path: a content-part array would carry an `image_url` the
+ * orchestrator fetches, and a `{ $ref }` object could wire another step's url
+ * in. Widen such a field and these go red.
+ */
+describe('free-text param paths', () => {
+  /** Replace every value at `path` (`a.b`, `a[]` = each item) in a copy of `params`. */
+  function replaceAt(params: unknown, path: string, value: unknown) {
+    let hits = 0;
+    const copy = structuredClone(params);
+    /** Set `slot` (read with `get`, written with `put`) or descend into it. */
+    const visit = (get: () => unknown, put: (v: unknown) => void, rest: string[]) => {
+      if (rest.length) return descend(get(), rest);
+      if (get() === undefined) return;
+      put(structuredClone(value));
+      hits++;
+    };
+    const descend = (node: unknown, segments: string[]): void => {
+      const [head, ...rest] = segments;
+      if (head === '[]') {
+        if (!Array.isArray(node)) return;
+        const list: unknown[] = node;
+        list.forEach((_, i) =>
+          visit(
+            () => list[i],
+            (v) => (list[i] = v),
+            rest
+          )
+        );
+      } else if (node && typeof node === 'object' && !Array.isArray(node)) {
+        const record = node as Record<string, unknown>;
+        visit(
+          () => record[head],
+          (v) => (record[head] = v),
+          rest
+        );
+      }
+    };
+    descend(copy, path.replace(/\[\]/g, '.[]').split('.'));
+    return { params: copy, hits };
+  }
+
+  const NOT_A_STRING: [string, unknown][] = [
+    [
+      'an image_url content part',
+      [{ type: 'image_url', image_url: { url: 'https://example.com/a.png' } }],
+    ],
+    ['a text content part', [{ type: 'text', text: 'hello' }]],
+    ['an array of strings', ['hello']],
+    ['a $ref object', { $ref: '$arguments', path: 'image' }],
+    ['a plain object', { url: 'https://example.com/a.png' }],
+  ];
+
+  it('the entries that declare free-text paths, and the paths they declare (a ledger)', () => {
+    const declared = Object.fromEntries(
+      listRegisteredSteps()
+        .filter(([, step]) => step.freeTextParamPaths !== undefined)
+        .map(([id, step]): [string, unknown] => [id, step.freeTextParamPaths])
+    );
+    expect(declared).toEqual({ 'chat-completion': ['messages[].content'] });
+  });
+
+  for (const [id, step] of listRegisteredSteps()) {
+    for (const path of step.freeTextParamPaths ?? []) {
+      it.each(NOT_A_STRING)(`${id}: its schema refuses %s at '${path}'`, (_, value) => {
+        for (const variant of step.variants) {
+          const canonical = step.canonicalParamsFor(variant);
+          // Positive control: the canonical params parse, and the path reaches a string.
+          expect(step.paramSchema.safeParse(canonical).success).toBe(true);
+          const asText = replaceAt(canonical, path, 'see https://civitai.com/models/1');
+          expect(asText.hits).toBeGreaterThan(0);
+          expect(step.paramSchema.safeParse(asText.params).success).toBe(true);
+
+          const widened = replaceAt(canonical, path, value);
+          expect(widened.hits).toBe(asText.hits);
+          expect(step.paramSchema.safeParse(widened.params).success).toBe(false);
+        }
+      });
+    }
+  }
+
+  it.each(['system', 'user', 'assistant', 'tool'] as const)(
+    'chat-completion: a %s message refuses any content but a string',
+    (role) => {
+      const messages = [
+        { role: 'system', content: 'be brief' },
+        { role: 'user', content: 'hello' },
+        {
+          role: 'assistant',
+          content: 'calling',
+          tool_calls: [
+            { id: 'call_1', type: 'function', function: { name: 'f', arguments: '{}' } },
+          ],
+        },
+        { role: 'tool', content: 'result', tool_call_id: 'call_1' },
+      ];
+      const at = messages.findIndex((m) => m.role === role);
+      const withContent = (content: unknown) => ({
+        ...VALID_PARAMS,
+        messages: messages.map((m, i) => (i === at ? { ...m, content } : m)),
+      });
+      // Positive control: the same conversation parses with a link as the content.
+      expect(parse(withContent('https://example.com/a.png')).success).toBe(true);
+      for (const [, value] of NOT_A_STRING) expect(parse(withContent(value)).success).toBe(false);
+    }
+  );
 });
