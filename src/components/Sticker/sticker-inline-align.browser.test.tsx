@@ -30,7 +30,6 @@ vi.mock('~/components/Sticker/sticker.util', async (orig) => ({
   useStickerCosmetics: () => ({ sticker: new Map([[7, resolved]]), isLoading: false }),
 }));
 
-// Comment-sized text. Measured against a plain paragraph in the same box.
 const TEXT_STYLE = { width: 300, fontSize: 14, lineHeight: 1.55 } as const;
 const TEXT = 'Lovely image!!';
 
@@ -108,5 +107,24 @@ describe('inline sticker alignment', () => {
     );
     const p = document.querySelector<HTMLElement>('[data-testid="p"]')!;
     expect(p.getBoundingClientRect().height).toBeGreaterThanOrEqual(STICKER_SIZE.jumbo);
+  });
+
+  test('a RenderHtml line of only a sticker renders jumbo and keeps its full box', async () => {
+    await renderWithProviders(
+      <div style={TEXT_STYLE}>
+        <RenderHtml
+          allowStickers
+          html={`<p style="margin:0"><span data-type="sticker" data-id="7"></span></p>`}
+        />
+      </div>
+    );
+    const img = await vi.waitFor(() => {
+      const el = document.querySelector('[data-type="sticker"] img');
+      if (!el) throw new Error('sticker not hydrated yet');
+      return el;
+    });
+    expect(img.closest('p')!.getBoundingClientRect().height).toBeGreaterThanOrEqual(
+      STICKER_SIZE.jumbo
+    );
   });
 });

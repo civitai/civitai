@@ -342,12 +342,7 @@ export function rankStickerMatch(query: string, slug: string, extra?: string): n
   return null;
 }
 
-/**
- * Vertical placement for a sticker `<img>` sitting in a line of text. Below
- * jumbo it is centred on the text, and a negative block margin of half its
- * height zeroes its margin box so it cannot stretch the line it sits in.
- * Jumbo is a line of its own and keeps its full box.
- */
+/** Below jumbo, margins of -size/2 zero the margin box so the sticker can't stretch its line. Jumbo is alone on its line, so it keeps its box. */
 export const stickerInlineStyle = (size: number) =>
   size >= STICKER_SIZE.jumbo
     ? { verticalAlign: 'text-bottom' }
