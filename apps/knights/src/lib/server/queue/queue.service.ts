@@ -308,16 +308,32 @@ export async function enqueueItem(db: Executor, input: NewItem, now: Date): Prom
 }
 
 /**
- * The stages someone can serve: a stage counts when an eligible player holds its rank or a higher one, as `canVote` lets
- * a higher rank judge a lower stage. A player waiting on a career reset is not eligible (see `insertVote`). One read, so
- * a job asks once and not per item.
+ * A player counts as serving only if they voted within this many days. A rank held by idle accounts would otherwise
+ * make an item wait for people who are not there.
  */
-export async function staffedRanks(db: Executor): Promise<Set<string>> {
+export const ACTIVE_PLAYER_DAYS = 14;
+
+/**
+ * The stages someone can serve: a stage counts when an eligible player holds its rank or a higher one, as `canVote` lets
+ * a higher rank judge a lower stage. Eligible means a vote within `ACTIVE_PLAYER_DAYS` and no career reset pending
+ * (see `insertVote`). One read, so a job asks once and not per item. A stage can still be unservable for one item whose
+ * only candidates already judged its image; `escalateExpired` bounds that wait.
+ */
+export async function staffedRanks(db: Executor, now: Date): Promise<Set<string>> {
   const rows = await db
     .selectFrom('NewOrderPlayer as p')
     .select('p.rankType')
     .distinct()
     .where('p.rankType', 'in', ['Knight', 'Templar', 'Paladin'])
+    .where((eb) =>
+      eb.exists(
+        eb
+          .selectFrom('KnightsVote as v')
+          .select(sql<number>`1`.as('one'))
+          .whereRef('v.playerId', '=', 'p.userId')
+          .where('v.createdAt', '>', utc(addHours(now, -24 * ACTIVE_PLAYER_DAYS)))
+      )
+    )
     .where(
       (eb) =>
         eb
@@ -519,7 +535,7 @@ export async function castVote(
         if (decision.kind === 'pending') return { result: { status: 'recorded' }, xp: [voted] };
         if (decision.kind === 'split') {
           return {
-            result: { status: await escalate(trx, item, now, await staffedRanks(trx)) },
+            result: { status: await escalate(trx, item, now, await staffedRanks(trx, now)) },
             xp: [voted],
           };
         }
@@ -796,8 +812,9 @@ export async function applyPendingResolutions(
 }
 
 /**
- * Moves items whose stage window lapsed. An item with no vote at its stage had no one to answer it, so it gets another
- * window at the same stage; one with votes goes to the next rank that has players, or to the Inquisitors.
+ * Moves items whose stage window lapsed. An item with no vote at its stage may have had no one to answer it, so it gets
+ * one more window at the same stage; after that, or when nobody can serve the stage, it is handed up like one with
+ * votes: to the next stage someone can serve, or to the Inquisitors.
  */
 export async function escalateExpired(
   db: Kysely<DB>,
@@ -806,7 +823,7 @@ export async function escalateExpired(
   return db.transaction().execute(async (trx) => {
     const due = await trx
       .selectFrom('KnightsQueueItem')
-      .select(['id', 'minRank'])
+      .select(['id', 'minRank', 'escalatedAt', 'createdAt'])
       .where('status', '=', 'Open')
       .where('expiresAt', '<=', utc(now))
       .orderBy('expiresAt', 'asc')
@@ -835,7 +852,17 @@ export async function escalateExpired(
           .execute()
       ).map((row) => row.itemId)
     );
-    const idle = due.filter((item) => !voted.has(item.id));
+    const staffed = await staffedRanks(trx, now);
+
+    // The first lapse at a stage is the only one that extends: an item that spent a whole extra window with no vote
+    // is not coming back, and must not wait here forever (the one player who could serve it may have judged it already).
+    const enteredSince = addHours(now, -2 * KNIGHTS_STAGE_TTL_HOURS);
+    const extend = (item: (typeof due)[number]) =>
+      !voted.has(item.id) &&
+      staffed.has(item.minRank) &&
+      (item.escalatedAt ?? item.createdAt) > enteredSince;
+
+    const idle = due.filter(extend);
     if (idle.length > 0) {
       await trx
         .updateTable('KnightsQueueItem')
@@ -849,10 +876,8 @@ export async function escalateExpired(
       counts.extended = idle.length;
     }
 
-    const handedUp = due.filter((item) => voted.has(item.id));
-    if (handedUp.length === 0) return counts;
-    const staffed = await staffedRanks(trx);
-    for (const item of handedUp) {
+    for (const item of due) {
+      if (extend(item)) continue;
       const outcome = await escalate(trx, item, now, staffed);
       if (outcome === 'escalated') counts.escalated++;
       else counts.toInquisitor++;
