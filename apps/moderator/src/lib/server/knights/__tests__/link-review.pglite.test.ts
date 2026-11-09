@@ -71,7 +71,23 @@ beforeAll(async () => {
   db = await freshPglite();
   await db.exec(`CREATE TABLE "NewOrderPlayer" ("userId" INTEGER PRIMARY KEY);`);
   await db.exec(readFileSync(MIGRATION, 'utf8'));
-  dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
+  // The production driver sends a Date as its host-local wall time with an offset, which a
+  // `timestamp` (no zone) column keeps as local time. PGlite sends UTC, so mimic the driver or this
+  // suite cannot see a write that skips `utc()`.
+  const asDriverParam = (value: unknown) => {
+    if (!(value instanceof Date)) return value;
+    const pad = (n: number, w = 2) => String(Math.abs(n)).padStart(w, '0');
+    const off = -value.getTimezoneOffset();
+    return (
+      `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}` +
+      `T${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}.${pad(value.getMilliseconds(), 3)}` +
+      `${off < 0 ? '-' : '+'}${pad(Math.trunc(off / 60))}:${pad(off % 60)}`
+    );
+  };
+  const driverLike = {
+    query: (sql: string, params?: unknown[]) => db.query(sql, params?.map(asDriverParam)),
+  } as unknown as PGlite;
+  dbHandle.current = new Kysely({ dialect: pgliteDialect(driverLike) });
 });
 
 afterAll(async () => {
@@ -81,6 +97,43 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.exec(`DELETE FROM "NewOrderLinkReview"; DELETE FROM "NewOrderPlayer";`);
   await db.exec(`INSERT INTO "NewOrderPlayer" ("userId") VALUES (1), (2), (3), (4);`);
+});
+
+describe('timestamps on a non-UTC host', () => {
+  const ORIGINAL_TZ = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = 'America/New_York';
+  });
+  afterAll(() => {
+    if (ORIGINAL_TZ === undefined) delete process.env.TZ;
+    else process.env.TZ = ORIGINAL_TZ;
+  });
+
+  const utcAgeMs = (stamp: string) => Date.now() - Date.parse(`${stamp.replace(' ', 'T')}Z`);
+
+  it('stores the block and review times as UTC', async () => {
+    await insertReview(1, [1], 'Pending');
+
+    await blockLinkReview(1, MOD);
+
+    const { rows } = await db.query<{ blocked: string; reviewed: string }>(
+      `SELECT p."payoutBlockedAt"::text AS blocked, r."reviewedAt"::text AS reviewed
+       FROM "NewOrderPlayer" p, "NewOrderLinkReview" r WHERE p."userId" = 1 AND r."id" = 1`
+    );
+    expect(Math.abs(utcAgeMs(rows[0].blocked))).toBeLessThan(60_000);
+    expect(Math.abs(utcAgeMs(rows[0].reviewed))).toBeLessThan(60_000);
+  });
+
+  it('stores the clear time as UTC', async () => {
+    await insertReview(1, [1], 'Pending');
+
+    await clearLinkReview(1, MOD);
+
+    const { rows } = await db.query<{ reviewed: string }>(
+      `SELECT "reviewedAt"::text AS reviewed FROM "NewOrderLinkReview" WHERE "id" = 1`
+    );
+    expect(Math.abs(utcAgeMs(rows[0].reviewed))).toBeLessThan(60_000);
+  });
 });
 
 describe('blockLinkReview', () => {
