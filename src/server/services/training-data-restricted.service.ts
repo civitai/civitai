@@ -67,12 +67,14 @@ type ListedFile = { id: number; type: string; visibility: string };
  */
 export async function trainingDataListing(
   db: Pick<Prisma.TransactionClient, '$queryRaw'>,
-  versions: { id: number; files: ListedFile[] }[],
+  versions: { id: number; files?: ListedFile[] | null }[],
   { redCapable, viewerManages = false }: { redCapable: boolean; viewerManages?: boolean }
 ): Promise<(file: ListedFile) => boolean> {
   if (viewerManages) return () => true;
   const candidates = versions
-    .filter((v) => v.files.some((f) => f.type === 'Training Data'))
+    // `files` is absent when the read did not select them (model-version getById without
+    // `withFiles`): such a version lists nothing, so it has nothing to check.
+    .filter((v) => v.files?.some((f) => f.type === 'Training Data'))
     .map((v) => v.id);
   if (!candidates.length) return () => true;
   const rows = await db.$queryRaw<
@@ -139,14 +141,17 @@ export function withoutServerOnlyKeys<M>(metadata: M): M {
  */
 export async function trainingDataPublicView<F extends ViewedFile>(
   db: Pick<Prisma.TransactionClient, '$queryRaw'>,
-  versions: { id: number; files: F[] }[],
+  versions: { id: number; files?: F[] | null }[],
   { redCapable }: { redCapable: boolean }
-): Promise<(files: F[]) => F[]> {
+): Promise<<T extends F[] | null | undefined>(files: T) => T> {
   const listed = await trainingDataListing(db, versions, { redCapable });
+  // An absent `files` (not selected by the read) is passed through as it came.
   return (files) =>
-    files
-      .filter((f) => f.type !== 'Training Data' || (f.visibility === 'Public' && listed(f)))
-      .map((f) => (f.type === 'Training Data' ? { ...f, metadata: {} } : f));
+    files == null
+      ? files
+      : (files
+          .filter((f) => f.type !== 'Training Data' || (f.visibility === 'Public' && listed(f)))
+          .map((f) => (f.type === 'Training Data' ? { ...f, metadata: {} } : f)) as typeof files);
 }
 
 /**
