@@ -28,14 +28,22 @@ describe('welcome page load at /', () => {
     );
   });
 
-  it.each(['https://evil.com', '//evil.com', '/\\evil.com', 'judgments', '/', '/?next=%2F'])(
-    'ignores an off-site or malformed next (%s) and goes to /home',
-    (next) => {
-      expect(() => run({ user: { id: 1 } }, next)).toThrowError(
-        expect.objectContaining({ status: 303, location: '/home' })
-      );
-    }
-  );
+  it.each([
+    'https://evil.com',
+    '//evil.com',
+    '/\\evil.com',
+    '/..//evil.com',
+    '/.//evil.com',
+    '/a/..//evil.com',
+    '/%2e%2e//evil.com',
+    'judgments',
+    '/',
+    '/?next=%2F',
+  ])('ignores an off-site or malformed next (%s) and goes to /home', (next) => {
+    expect(() => run({ user: { id: 1 } }, next)).toThrowError(
+      expect.objectContaining({ status: 303, location: '/home' })
+    );
+  });
 
   it('hands a signed-out visitor the hub sign-in URL', () => {
     expect(run({ signInUrl: 'https://auth.civitai.com/login?returnUrl=x' })).toEqual({

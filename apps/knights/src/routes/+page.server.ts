@@ -10,7 +10,9 @@ export const load: PageServerLoad = ({ locals, url }) => {
     if (next.split(/[?#]/)[0] === WELCOME_PATH) redirect(303, HOME_PATH);
     // Through URL so a non-ASCII path leaves percent-encoded: a raw one is not a valid Location header.
     const target = new URL(next, url.origin);
-    redirect(303, target.pathname + target.search + target.hash);
+    // URL resolves dot segments, so `/..//evil.com` comes out as `//evil.com`: check the resolved path again.
+    const resolved = safeNext(target.pathname + target.search + target.hash);
+    redirect(303, target.origin === url.origin && resolved !== WELCOME_PATH ? resolved : HOME_PATH);
   }
   return { signInUrl: locals.signInUrl ?? '/' };
 };
