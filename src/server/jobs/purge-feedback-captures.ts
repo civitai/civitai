@@ -51,6 +51,7 @@ export function keptCapturesSql(cutoff: Date) {
       i.id,
       i."needsReview" IS NOT DISTINCT FROM 'csam' AS review,
       i."blockedFor" IS NOT DISTINCT FROM 'CSAM' AS blocked,
+      i.minor IS TRUE AS minor,
       (i.id)::text IN (
         SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END
         FROM "CsamReport" lr
@@ -71,6 +72,7 @@ type KeptRow = {
   id: number;
   review: boolean;
   blocked: boolean;
+  minor: boolean;
   reported: boolean;
   evidenceHold: boolean;
 };
@@ -81,6 +83,7 @@ export function summarizeKept(rows: KeptRow[]) {
     kept: rows.length,
     keptReview: rows.filter((r) => r.review).length,
     keptBlocked: rows.filter((r) => r.blocked).length,
+    keptMinor: rows.filter((r) => r.minor).length,
     keptReported: rows.filter((r) => r.reported).length,
     keptEvidenceHold: rows.filter((r) => r.evidenceHold).length,
     keptIds: rows.slice(0, KEPT_IDS_LOGGED).map((r) => r.id),

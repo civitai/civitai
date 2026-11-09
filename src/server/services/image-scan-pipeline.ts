@@ -811,8 +811,7 @@ async function auditScanResults(args: {
   const minor = minorTags.length > 0 || !!associatedEntities.minor;
   const poi = poiTags.length > 0 || !!associatedEntities.poi || (!!prompt && !!includesPoi(prompt));
 
-  // A feedback page capture is a picture of the site, not the capture account's content: it is
-  // flagged (minor/poi below) but never queued for image review.
+  // A feedback page capture is a picture of the site, not the capture account's content.
   let reviewKey: string | undefined;
   if (args.userId === FEEDBACK_CAPTURE_OWNER_ID) reviewKey = undefined;
   else if (poiReview) reviewKey = 'poi';

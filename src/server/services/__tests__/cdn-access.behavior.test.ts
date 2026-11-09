@@ -213,6 +213,7 @@ beforeAll(async () => {
       ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
       "blockedFor" text,
       "needsReview" text,
+      minor boolean NOT NULL DEFAULT false,
       name text,
       type text NOT NULL DEFAULT 'image'
     );

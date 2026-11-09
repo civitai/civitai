@@ -536,11 +536,12 @@ export function feedbackAttachmentItems(
   context: FeedbackContext,
   capture: { view: FeedbackCaptureView; revealed: boolean }
 ): LightboxItem[] {
-  const items: LightboxItem[] = context.images.map((id) => ({
-    id,
-    caption: FEEDBACK_ATTACHMENT_CAPTIONS.image,
-  }));
   const shown = capture.view === 'show' || (capture.view === 'blur' && capture.revealed);
+  // The same file attached by hand is the capture too, and is held back with it.
+  const heldBack = shown ? null : context.screenshotId;
+  const items: LightboxItem[] = context.images
+    .filter((id) => id !== heldBack)
+    .map((id) => ({ id, caption: FEEDBACK_ATTACHMENT_CAPTIONS.image }));
   if (context.screenshotId && shown) {
     items.push({
       id: context.screenshotId,

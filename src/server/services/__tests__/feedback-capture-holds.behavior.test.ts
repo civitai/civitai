@@ -48,7 +48,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "createdAt" timestamp(3) NOT NULL,
-      "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned'
+      "needsReview" text, "blockedFor" text, minor boolean NOT NULL DEFAULT false, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned'
     );
   `);
 });
@@ -82,6 +82,13 @@ const CLAUSES: [string, (id: number) => Promise<unknown>][] = [
   ['under review', (id) => seedImage(id, { needsReview: 'csam' })],
   ['blocked', (id) => seedImage(id, { blockedFor: 'CSAM' })],
   [
+    'flagged minor',
+    async (id) => {
+      await seedImage(id);
+      await db.query(`UPDATE "Image" SET minor = true WHERE id = $1`, [id]);
+    },
+  ],
+  [
     'listed on a report',
     async (id) => {
       await seedImage(id);
@@ -99,10 +106,15 @@ const CLAUSES: [string, (id: number) => Promise<unknown>][] = [
   ],
 ];
 
+/** The states the account-hold image legs read (a minor flag is not one of them). */
+const ACCOUNT_LEG_CLAUSES = CLAUSES.filter(([label]) =>
+  ['under review', 'blocked', 'listed on a report'].includes(label)
+);
+
 describe('account holds', () => {
   const held = (userId: number) => value(accountHoldSql(Prisma.sql`${userId}::int`, true));
 
-  it.each(CLAUSES.slice(0, 3))(
+  it.each(ACCOUNT_LEG_CLAUSES)(
     'a capture %s does not hold the capture account',
     async (_label, seed) => {
       await seed(1);
@@ -111,7 +123,7 @@ describe('account holds', () => {
     }
   );
 
-  it.each(CLAUSES.slice(0, 3))(
+  it.each(ACCOUNT_LEG_CLAUSES)(
     'an ordinary account with an image %s is still held',
     async (_label, seed) => {
       await seed(1);
@@ -203,9 +215,10 @@ describe('purge-feedback-captures', () => {
   it('breaks the kept count down by each state', async () => {
     for (const [i, [, seed]] of CLAUSES.entries()) await seed(i + 1);
     expect(summarizeKept(await query(keptCapturesSql(CUTOFF)))).toMatchObject({
-      kept: 4,
+      kept: 5,
       keptReview: 1,
       keptBlocked: 1,
+      keptMinor: 1,
       keptReported: 1,
       keptEvidenceHold: 1,
     });

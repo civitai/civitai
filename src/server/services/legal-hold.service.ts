@@ -121,6 +121,7 @@ export function captureImageHeldSql(image: string): Prisma.Sql {
   return Prisma.sql`(
     ${i}."needsReview" IS NOT DISTINCT FROM 'csam'
     OR ${i}."blockedFor" IS NOT DISTINCT FROM 'CSAM'
+    OR ${i}.minor IS TRUE
     OR (${i}.id)::text IN (
       SELECT listed.id FROM (
         SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id

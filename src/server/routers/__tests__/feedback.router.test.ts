@@ -24,15 +24,21 @@ import {
  * router hands it, captured at import time.
  */
 
-const { rateLimitCalls, createFeedbackMock, isFeedbackAreaEnabledMock, fileFeedbackToHqMock } =
-  vi.hoisted(() => ({
-    fileFeedbackToHqMock: vi.fn(),
-    // A plain array, not a spy: `vi.clearAllMocks()` in `beforeEach` would erase a
-    // spy's record of a call that happened once, at module import.
-    rateLimitCalls: [] as unknown[][],
-    createFeedbackMock: vi.fn(),
-    isFeedbackAreaEnabledMock: vi.fn(),
-  }));
+const {
+  rateLimitCalls,
+  createFeedbackMock,
+  isFeedbackAreaEnabledMock,
+  fileFeedbackToHqMock,
+  captureMock,
+} = vi.hoisted(() => ({
+  captureMock: vi.fn(async () => null),
+  fileFeedbackToHqMock: vi.fn(),
+  // A plain array, not a spy: `vi.clearAllMocks()` in `beforeEach` would erase a
+  // spy's record of a call that happened once, at module import.
+  rateLimitCalls: [] as unknown[][],
+  createFeedbackMock: vi.fn(),
+  isFeedbackAreaEnabledMock: vi.fn(),
+}));
 
 vi.mock('~/server/middleware.trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof MiddlewareTrpc>();
@@ -51,6 +57,9 @@ vi.mock('~/server/services/feedback.service', async (importOriginal) => ({
   isFeedbackAreaEnabled: isFeedbackAreaEnabledMock,
 }));
 
+vi.mock('~/server/services/feedback-capture.service', () => ({
+  captureFeedbackScreenshot: captureMock,
+}));
 vi.mock('~/server/services/feedback-hq.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeedbackHqService>()),
   fileFeedbackToHq: fileFeedbackToHqMock,
@@ -296,6 +305,29 @@ describe('feedback.create — filing to HQ', () => {
       message: submission.message,
       server: expect.objectContaining({ site: 'red' }),
     });
+  }, 2_000);
+
+  it('stores the page capture for the saved report, then files with its outcome', async () => {
+    captureMock.mockResolvedValueOnce({ screenshotImageId: 5 } as never);
+    fileFeedbackToHqMock.mockResolvedValue(undefined);
+
+    await caller().create(submission);
+    await vi.waitFor(() => expect(fileFeedbackToHqMock).toHaveBeenCalledTimes(1));
+
+    expect(captureMock).toHaveBeenCalledWith({
+      feedbackId: 1,
+      reporterId: USER_ID,
+      screenshotId: UUID_SHOT,
+    });
+    expect(fileFeedbackToHqMock.mock.calls[0][0]).toMatchObject({
+      feedbackId: 1,
+      capture: { screenshotImageId: 5 },
+    });
+  });
+
+  it('answers the reporter without waiting for the capture', async () => {
+    captureMock.mockReturnValueOnce(new Promise(() => undefined) as never);
+    await expect(caller().create(submission)).resolves.toEqual({ id: 1 });
   }, 2_000);
 
   it('files nothing when the report could not be saved', async () => {

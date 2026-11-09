@@ -1,3 +1,5 @@
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as Ownership from '~/server/services/image-url-ownership';
@@ -86,6 +88,45 @@ describe('captureFeedbackScreenshot', () => {
   it('records unverified when the image cannot be created, and does not throw', async () => {
     createImageMock.mockRejectedValue(new Error('refused'));
     expect(await capture()).toEqual({ screenshotCheck: 'unverified' });
+    expect(recorded()).toEqual({ screenshotCheck: 'unverified' });
+  });
+
+  it('stores no image for a value that is not exactly one upload key', async () => {
+    expect(await capture(`${SHOT}/${SHOT.replace('9999', '1111')}`)).toEqual({
+      screenshotCheck: 'unverified',
+    });
+    expect(createImageMock).not.toHaveBeenCalled();
+  });
+
+  it('adds the outcome to the report, keeping its context, and touches no other report', async () => {
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TABLE "Feedback" (id int PRIMARY KEY, context jsonb);
+      INSERT INTO "Feedback" VALUES
+        (7, '{"screenshotId":"${SHOT}","path":"/models"}'), (8, '{"path":"/other"}'), (9, NULL);
+    `);
+    dbMock.dbWrite.$executeRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const sql = Prisma.sql(strings, ...(values as never[]));
+      return (await db.query(sql.text, sql.values)).affectedRows ?? 0;
+    }) as never);
+
+    await capture();
+    await captureFeedbackScreenshot({ feedbackId: 9, reporterId: REPORTER, screenshotId: SHOT });
+
+    const rows = (
+      await db.query<{ id: number; context: unknown }>(
+        `SELECT id, context FROM "Feedback" ORDER BY id`
+      )
+    ).rows;
+    expect(rows).toEqual([
+      { id: 7, context: { screenshotId: SHOT, path: '/models', screenshotImageId: 555 } },
+      { id: 8, context: { path: '/other' } },
+      { id: 9, context: { screenshotImageId: 555 } },
+    ]);
+    await db.close();
   });
 
   it('does not throw when the report cannot be updated', async () => {

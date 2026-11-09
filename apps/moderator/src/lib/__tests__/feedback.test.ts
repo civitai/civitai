@@ -9,7 +9,6 @@ import {
   feedbackAreaOptions,
   feedbackAttachmentCount,
   feedbackAttachmentItems,
-  FEEDBACK_CAPTURE_NOTES,
   handledByLabel,
   reconstructFeedbackUrl,
   splitContext,
@@ -872,6 +871,7 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
 
 describe('the page capture by its scan state', () => {
   const UUID_A = '11112222-3333-4444-8555-666677778888';
+  const OTHER = '99999999-8888-4777-8666-555555555555';
   const context = splitContext({ images: [], screenshotId: UUID_A });
   const ids = (view: FeedbackCaptureView, revealed = false) =>
     feedbackAttachmentItems(context, { view, revealed }).map((i) => i.id);
@@ -885,10 +885,22 @@ describe('the page capture by its scan state', () => {
     'never shows a %s capture, revealed or not',
     (view) => expect(ids(view, true)).toEqual([])
   );
+  it.each(['blur', 'hide', 'hide-locked', 'expired'] as const)(
+    'holds back a hand-attached copy of a %s capture',
+    (view) => {
+      const both = splitContext({ images: [UUID_A, OTHER], screenshotId: UUID_A });
+      expect(feedbackAttachmentItems(both, { view, revealed: false }).map((i) => i.id)).toEqual([
+        OTHER,
+      ]);
+    }
+  );
+  it('shows both copies once the capture is shown (control)', () => {
+    const both = splitContext({ images: [UUID_A], screenshotId: UUID_A });
+    expect(feedbackAttachmentItems(both, { view: 'show', revealed: false })).toHaveLength(2);
+  });
+
   it('still counts the capture in the list column', () =>
     expect(feedbackAttachmentCount(context)).toBe(1));
-  it('names the retention window for an expired capture', () =>
-    expect(FEEDBACK_CAPTURE_NOTES.expired).toBe('Page capture expired (30-day retention)'));
 
   it('reads only server-shaped capture fields', () => {
     const parsed = splitContext({

@@ -783,7 +783,10 @@ describe('getFeedbackCaptureView', () => {
         (2, ${CAPTURE_OWNER}, 'Scanned', 1, 'csam', NULL, false, false, false),
         (3, ${CAPTURE_OWNER}, 'Pending', 0, NULL, NULL, NULL, NULL, NULL),
         (4, ${CAPTURE_OWNER}, 'Blocked', 1, NULL, 'Moderated', false, false, false),
-        (5, 7, 'Scanned', 1, NULL, NULL, false, false, false);
+        (5, 7, 'Scanned', 1, NULL, NULL, false, false, false),
+        (6, ${CAPTURE_OWNER}, 'Scanned', 1, NULL, NULL, false, true, false),
+        (7, ${CAPTURE_OWNER}, 'Scanned', 1, NULL, 'CSAM', false, false, false),
+        (8, ${CAPTURE_OWNER}, 'Scanned', 1, NULL, NULL, false, false, true);
     `);
   });
 
@@ -794,6 +797,9 @@ describe('getFeedbackCaptureView', () => {
     ['not the reporter’s upload', { screenshotId: KEY, screenshotCheck: 'not-owner' }, 'hide'],
     ['a clean capture', { screenshotId: KEY, screenshotImageId: 1 }, 'show'],
     ['a capture under review', { screenshotId: KEY, screenshotImageId: 2 }, 'hide-locked'],
+    ['a capture flagged minor', { screenshotId: KEY, screenshotImageId: 6 }, 'hide-locked'],
+    ['a capture with that block', { screenshotId: KEY, screenshotImageId: 7 }, 'hide-locked'],
+    ['a capture flagged for terms', { screenshotId: KEY, screenshotImageId: 8 }, 'blur'],
     ['a capture still scanning', { screenshotId: KEY, screenshotImageId: 3 }, 'blur'],
     ['a blocked capture', { screenshotId: KEY, screenshotImageId: 4 }, 'hide'],
     [
