@@ -80,6 +80,7 @@ import { refreshDocStoreEnabled } from '~/server/services/apps/doc-store.instanc
 // Seeds civitai_app_block_builds_total's reachable series at 0, so "no failed builds" reads
 // as zeros rather than as an absent series on every pod that has not received a callback.
 import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-build.metrics';
+import { ensureRegisterAppReviewAutodeployMetrics } from '~/server/prom/app-review-autodeploy.metrics';
 // Side-effect import: installs the fleet-shared store the image-ingestion gauges refresh through.
 // Without it every process runs those queries itself. Here rather than in ~/server/prom/client so
 // that module's graph never loads the redis client.
@@ -92,6 +93,7 @@ seedGenerationValidationMetrics();
 ensureRegisterImageUploadRelayMetrics();
 ensureRegisterCsamArchiveMetrics();
 ensureRegisterAppBlockBuildMetrics();
+ensureRegisterAppReviewAutodeployMetrics();
 ensureRegisterThreadCpuMetrics();
 
 const labels: Record<string, string> = {};

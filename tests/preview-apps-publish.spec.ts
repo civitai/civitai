@@ -102,8 +102,14 @@ async function buildBundleBase64(): Promise<string> {
     name: 'CI Smoke — publish DX (omits iframe.src)',
     contentRating: 'g',
     scopes: [] as string[],
-    // NOTE: no `src`. minHeight/sandbox stay developer-authored.
-    iframe: { minHeight: 300, sandbox: 'allow-scripts allow-forms' },
+    // NOTE: no `src`. The rest stays developer-authored, and must be approvable: submit runs the
+    // approve-time manifest validator.
+    iframe: {
+      minHeight: 300,
+      maxHeight: null,
+      resizable: true,
+      sandbox: 'allow-scripts allow-forms',
+    },
   };
   const zip = new JSZip();
   zip.file('block.manifest.json', JSON.stringify(manifest, null, 2));

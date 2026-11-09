@@ -2310,6 +2310,16 @@ export const REDIS_SYS_KEYS = {
     // Per-API-key (fallback per-IP) rate-limit counter for the token-authed bundle-submit
     // endpoint (`/api/v1/blocks/submit-version`). On sysRedis like the retool limiter + BUZZ_CAP.
     SUBMIT_RATE_LIMIT: 'system:blocks:submit-rate-limit',
+    // Per-slug counter for git pushes recorded for review, and per-user for the web manifest
+    // editor's commits. Same `SET NX EX` + `INCR` shape as SUBMIT_RATE_LIMIT, on sysRedis.
+    PUSH_REVIEW_RATE_LIMIT: 'system:blocks:push-review-rate-limit',
+    // Review previews started automatically at submit, per submitter per UTC day
+    // (`system:blocks:review-auto-builds:${userId}:${YYYY-MM-DD}`). Past the budget the submit
+    // still succeeds and the preview waits for a moderator to start it.
+    REVIEW_AUTO_BUILDS: 'system:blocks:review-auto-builds',
+    // New-submission moderator alerts per submitter per UTC hour
+    // (`system:blocks:review-submission-alerts:${userId}:${YYYY-MM-DDTHH}`).
+    REVIEW_SUBMISSION_ALERTS: 'system:blocks:review-submission-alerts',
     /**
      * Per-user (fallback per-IP) rate-limit counter for the dev/preview
      * block-token mint (`/api/v1/blocks/dev-token`). Same `SET NX EX` + `INCR`

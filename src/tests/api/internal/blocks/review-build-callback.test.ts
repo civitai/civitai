@@ -356,6 +356,27 @@ describe('watchReviewApplyJob (reachability gate)', () => {
     expect(mockRedisDel).not.toHaveBeenCalled();
   });
 
+  // A watcher whose preview was torn down (or superseded by a newer build) writes nothing: its
+  // guarded live-mark matches no row. It must not report the build live, or an agent review
+  // would start for a preview that no longer exists.
+  it.each([
+    [1, true],
+    [0, false],
+  ])('a live-mark matching %d row(s) settles the build with live=%s', async (matched, live) => {
+    mockMarkPreview.mockImplementation((async (_id: string, state: string) =>
+      state === 'preview-live' ? matched : 0) as never);
+    const onSettled = vi.fn();
+    await watchReviewApplyJob({
+      publishRequestId: PUBREQ,
+      sha: SHA,
+      jobName: 'review-apply-1',
+      baseDetail,
+      onSettled,
+    });
+    expect(onSettled.mock.calls).toEqual([[PUBREQ, live]]);
+    mockMarkPreview.mockImplementation(async () => undefined);
+  });
+
   it('apply succeeded + host NEVER reachable → marks preview-failed with the DNS detail + frees the dedup slot', async () => {
     mockWaitReachable.mockResolvedValueOnce(false);
     await watchReviewApplyJob({

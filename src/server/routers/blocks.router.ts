@@ -2698,7 +2698,7 @@ export const blocksRouter = router({
       try {
         return await previewRequest({
           publishRequestId: input.publishRequestId,
-          modUserId: ctx.user.id,
+          actor: { kind: 'moderator', userId: ctx.user.id },
         });
       } catch (err) {
         throw new TRPCError({
@@ -2920,8 +2920,8 @@ export const blocksRouter = router({
     }),
 
   /**
-   * MOD REVIEW SANDBOX — MANUAL teardown of a single review preview (also the way
-   * to free a slot when the global concurrent-preview cap is hit). Deletes the
+   * MOD REVIEW SANDBOX — MANUAL teardown of a single review preview (also how a
+   * queued automatic preview is dropped from the queue). Deletes the
    * per-request review k8s resources (label-scoped) AND clears the DB preview
    * state so the request reverts to "no preview". Same mod-only flag gate as
    * previewRequest.
@@ -2950,8 +2950,9 @@ export const blocksRouter = router({
     }),
 
   /**
-   * MOD REVIEW SANDBOX — list the currently-active review previews (global across
-   * all mods) + the cap, for the "Active previews (N / cap)" panel. Same mod-only
+   * MOD REVIEW SANDBOX — list the currently-active (and queued) review previews
+   * (global across all mods) + the build cap and slots held, for the "Active
+   * previews" panel. Same mod-only
    * flag gate as previewRequest; no input.
    */
   listActivePreviews: moderatorProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
@@ -9243,6 +9244,18 @@ export const blocksRouter = router({
       // the push webhook regardless of which token committed, so this naturally
       // re-enters the no-trust review path. replaceAllFiles is FALSE: we only
       // touch block.manifest.json, leaving the app's source untouched.
+      // Each edit is a new pending review (and possibly a review build): bound them per user.
+      const { takePushReviewSlot } = await import('~/server/services/blocks/submit-rate-limit');
+      const slot = await takePushReviewSlot(`user:${ctx.user!.id}`);
+      if (!slot.ok) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Too many manifest edits — try again in ${Math.max(
+            Math.ceil(slot.retryAfterSeconds / 60),
+            1
+          )} min`,
+        });
+      }
       const { commitFiles } = await import('~/server/services/blocks/forgejo.service');
       const manifestJson = Buffer.from(JSON.stringify(merged, null, 2) + '\n', 'utf8');
       const { sha } = await commitFiles({
