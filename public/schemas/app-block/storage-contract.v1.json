@@ -1108,7 +1108,7 @@
             "code": "invalid_request",
             "body": {
               "details": {
-                "reason": "not_an_object"
+                "reason": "malformed_operator"
               }
             }
           }
@@ -1183,7 +1183,7 @@
             "code": "invalid_request",
             "body": {
               "details": {
-                "reason": "operator_with_data"
+                "reason": "malformed_operator"
               }
             }
           }
@@ -1201,7 +1201,7 @@
             "code": "invalid_request",
             "body": {
               "details": {
-                "reason": "operator_with_data"
+                "reason": "malformed_operator"
               }
             }
           }
@@ -1238,7 +1238,7 @@
             "code": "invalid_request",
             "body": {
               "details": {
-                "reason": "inc_one_counter"
+                "reason": "malformed_operator"
               }
             }
           }
@@ -1255,7 +1255,7 @@
             "code": "invalid_request",
             "body": {
               "details": {
-                "reason": "inc_one_counter"
+                "reason": "malformed_operator"
               }
             }
           }
@@ -1272,7 +1272,7 @@
             "code": "invalid_request",
             "body": {
               "details": {
-                "reason": "inc_one_counter"
+                "reason": "malformed_operator"
               }
             }
           }
@@ -1289,7 +1289,7 @@
             "code": "invalid_request",
             "body": {
               "details": {
-                "reason": "operator_value"
+                "reason": "malformed_operator"
               }
             }
           }
@@ -1306,7 +1306,7 @@
             "code": "invalid_request",
             "body": {
               "details": {
-                "reason": "operator_value"
+                "reason": "malformed_operator"
               }
             }
           }

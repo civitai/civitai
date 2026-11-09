@@ -431,13 +431,10 @@ type TallyOperator = keyof typeof TALLY_OPERATORS;
  */
 export type TallyPatchRefusal =
   | 'empty_patch'
-  | 'not_an_object'
   | 'unknown_operator'
   | 'multiple_operators'
-  | 'operator_with_data'
   | 'merge_patch_unsupported'
-  | 'inc_one_counter'
-  | 'operator_value';
+  | 'malformed_operator';
 
 const isOperator = (field: string): field is TallyOperator =>
   Object.prototype.hasOwnProperty.call(TALLY_OPERATORS, field);
@@ -454,13 +451,12 @@ const patchRefusal = (
  * withdrawal) is left to the operation, so it is validated by exactly the parser and the store
  * checks the deprecated routes use, in the same order.
  *
- * Refused (`invalid_request`, `details.reason`): no body or `{}` (`empty_patch`); a JSON body that
- * is not an object (`not_an_object`); a `$` key that is not an operator (`unknown_operator`);
- * two operators (`multiple_operators`); an
- * operator beside any other field (`operator_with_data` — a mark carries no payload, `report`
- * included); plain fields only (`merge_patch_unsupported`, reserved for a merge-patch of `data`);
- * `$inc` naming other than exactly one counter (`inc_one_counter`); a `$mark`/`$unmark` name that
- * is not a string (`operator_value`).
+ * Refused (`invalid_request`, `details.reason`): no body or `{}` (`empty_patch`); a `$` key that
+ * is not an operator (`unknown_operator`); two operators (`multiple_operators`); plain fields only
+ * (`merge_patch_unsupported`, reserved for a merge-patch of `data`); and every other shape error
+ * (`malformed_operator`): a JSON body that is not an object, an operator beside any other field (a
+ * mark carries no payload, `report` included), `$inc` naming other than exactly one counter, and a
+ * `$mark`/`$unmark` name that is not a string.
  */
 export function parseTallyPatch(
   route: { collection: string; key: string },
@@ -468,7 +464,10 @@ export function parseTallyPatch(
 ): { route: TallyRoute; body: unknown } {
   if (body === undefined) throw patchRefusal('empty_patch', 'PATCH needs an update operator');
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
-    throw patchRefusal('not_an_object', 'PATCH body must be an object holding one update operator');
+    throw patchRefusal(
+      'malformed_operator',
+      'PATCH body must be an object holding one update operator'
+    );
   }
   const fields = Object.keys(body);
   if (fields.length === 0) throw patchRefusal('empty_patch', 'PATCH needs an update operator');
@@ -492,7 +491,7 @@ export function parseTallyPatch(
   }
   const [operator] = operators;
   if (fields.length > 1) {
-    throw patchRefusal('operator_with_data', `${operator} cannot be combined with other fields`, {
+    throw patchRefusal('malformed_operator', `${operator} cannot be combined with other fields`, {
       operator,
     });
   }
@@ -504,14 +503,14 @@ export function parseTallyPatch(
         ? Object.entries(value)
         : [];
     if (counters.length !== 1) {
-      throw patchRefusal('inc_one_counter', '$inc names exactly one counter: {"<counter>": by}');
+      throw patchRefusal('malformed_operator', '$inc names exactly one counter: {"<counter>": by}');
     }
     const [[name, by]] = counters;
     // The deprecated route's own body, `{ by }`, read by its own parser in the operation.
     return { route: { op: 'increment', ...at, name }, body: { by } };
   }
   if (typeof value !== 'string') {
-    throw patchRefusal('operator_value', `${operator} takes a mark name`, { operator });
+    throw patchRefusal('malformed_operator', `${operator} takes a mark name`, { operator });
   }
   // A mark's body is empty on the deprecated route too.
   return { route: { op: TALLY_OPERATORS[operator], ...at, name: value }, body: undefined };
