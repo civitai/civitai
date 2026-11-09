@@ -14,3 +14,7 @@
 # PLACEHOLDER: the release-followup officer's GitHub App does not exist yet. Once it is
 # created, replace the next comment line with its bot login, uncommented:
 # civitai-officer-release-followup[bot]
+#
+# PLACEHOLDER: the ci-watch officer's GitHub App does not exist yet either. Once it is
+# created, replace the next comment line with its bot login, uncommented:
+# civitai-officer-ci-watch[bot]
