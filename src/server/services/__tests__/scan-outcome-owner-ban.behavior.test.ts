@@ -317,14 +317,18 @@ describe('a feedback page capture', () => {
   });
 
   it('is never given a review key', async () => {
-    vi.mocked(includesInappropriate)
-      .mockReturnValueOnce('poi' as never)
-      .mockReturnValueOnce('poi' as never);
+    // Every scan reads as POI, however many times or in whatever order the pipeline asks.
+    vi.mocked(includesInappropriate).mockImplementation(() => 'poi' as never);
     await insertImage(32, CAPTURE, 'Pending', null);
     await insertImage(33, ACTIVE, 'Pending', null);
 
-    const capture = await scan(loaded(32, CAPTURE, 'Pending', null));
-    const ordinary = await scan(loaded(33, ACTIVE, 'Pending', null));
+    let capture, ordinary;
+    try {
+      capture = await scan(loaded(32, CAPTURE, 'Pending', null));
+      ordinary = await scan(loaded(33, ACTIVE, 'Pending', null));
+    } finally {
+      vi.mocked(includesInappropriate).mockImplementation(() => false);
+    }
 
     expect(ordinary.reviewKey).toBe('poi');
     expect(capture.reviewKey).toBeNull();
