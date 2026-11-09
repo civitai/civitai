@@ -15,7 +15,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
 import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
-import { HatTimeLeft } from '~/components/HatTurf/HatTimeLeft';
 import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
 import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
 import { useReactionNudgeClass } from '~/components/HatTurf/reaction-nudge';
@@ -63,12 +62,6 @@ function ImageCardContent({ data, hideCreator }: Props) {
         <div className="flex w-full items-start justify-between">
           <div className="flex flex-nowrap items-center gap-1">
             <HatTurfBadge imageId={data.id} />
-            {data.turfPlacedAt && (
-              <HatTimeLeft
-                placedAt={data.turfPlacedAt}
-                className="inline-flex h-[26px] items-center rounded-full bg-black/60 px-2 text-xs font-bold text-white"
-              />
-            )}
             {data.type === 'video' && data.metadata && 'duration' in data.metadata && (
               <DurationBadge duration={data.metadata.duration ?? 0} className={cardClasses.chip} />
             )}

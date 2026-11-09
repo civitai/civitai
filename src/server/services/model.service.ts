@@ -83,9 +83,11 @@ import {
   modelTagCache,
   modelVersionPublicDonationGoalsCache,
   modelVotableTagsCache,
+  refreshHasReceivedReviews,
   userBasicCache,
   userModelCountCache,
 } from '~/server/redis/caches';
+import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import {
   bustModelGallerySettings,
@@ -4919,6 +4921,7 @@ export const publishModelById = async ({
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
   else publishedAt = new Date();
 
+  let movedPostIds: number[] = [];
   const model = await dbWrite.$transaction(
     async (tx) => {
       // The caller read the meta before this: a wipe, a moderator or a scan may have written the
@@ -5041,7 +5044,7 @@ export const publishModelById = async ({
         // overwrite every attached post's publishedAt and let an owner repeatedly
         // bump old posts to the top of feeds. Mirrors the unpublish path's
         // `WHERE "publishedAt" IS NOT NULL`.
-        await tx.$executeRaw`
+        const movedPosts = await tx.$queryRaw<{ id: number }[]>`
           UPDATE "Post" p
           SET "publishedAt" = CASE
                                 WHEN p."metadata" ->> 'prevPublishedAt' IS NOT NULL
@@ -5055,7 +5058,9 @@ export const publishModelById = async ({
             AND p."userId" = ${model.userId}
             AND p."modelVersionId" IN (${Prisma.join(versionIds, ',')})
             AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())
+          RETURNING p.id
         `;
+        movedPostIds = movedPosts.map((post) => post.id);
       }
       await updateModelLastVersionAt({ id, tx, onlyForward: republishing });
 
@@ -5105,6 +5110,11 @@ export const publishModelById = async ({
     scanEntitiesInBackground('Post', versionPostIds);
     void onStorySparkPostsRestored({ postIds: versionPostIds });
   }
+  syncReviewsOfMovedPosts({
+    change: 'publish',
+    postIds: movedPostIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 
   // Republish only: a dropped Update on this path has no recovery without an updatedAt bump (both
   // image indexes re-derive a missing Update solely from a delta scan of moved rows, and a
@@ -5332,6 +5342,11 @@ export const unpublishModelById = async ({
       select: { id: true },
     });
     void onStorySparkPostsHidden({ postIds: posts.map((x) => x.id) });
+    syncReviewsOfMovedPosts({
+      change: 'unpublish',
+      postIds: posts.map((x) => x.id),
+      onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+    });
     const images = await dbWrite.image.findMany({
       where: { postId: { in: posts.map((x) => x.id) } },
       select: { id: true },
@@ -7435,6 +7450,7 @@ export const publishPrivateModel = async (
 
   const heldVerdict = await import('~/server/services/text-scan/actions/model-nsfw');
   let heldVerdictApplied = false;
+  let movedPostIds: number[] = [];
   await dbWrite.$transaction(async (tx) => {
     // Everything above ran before this transaction, and a takedown can land in between. Re-read
     // under a lock that the writes below then hold: the model first, then its versions, the order
@@ -7484,7 +7500,7 @@ export const publishPrivateModel = async (
       // then the model went through a Private cycle). Strips the stash on
       // success. Mirrors the CASE pattern used by publishModelVersionById
       // and publishModelById.
-      await tx.$executeRaw`
+      const movedPosts = await tx.$queryRaw<{ id: number }[]>`
         UPDATE "Post"
         SET
           "publishedAt" = CASE
@@ -7496,7 +7512,9 @@ export const publishPrivateModel = async (
         WHERE "modelVersionId" IN (${Prisma.join(versionIds, ',')})
         AND "userId" = ${model.userId}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        RETURNING id
       `;
+      movedPostIds = movedPosts.map((post) => post.id);
     }
 
     await tx.modelVersion.updateMany({
@@ -7548,6 +7566,11 @@ export const publishPrivateModel = async (
     }
   });
   if (heldVerdictApplied) await heldVerdict.finishHeldVerdictApply(modelId);
+  syncReviewsOfMovedPosts({
+    change: 'publish',
+    postIds: movedPostIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {

@@ -1419,10 +1419,12 @@ describe('route faults and CORS', () => {
     }
   );
 
-  it('the preflight from an opaque origin allows PUT and DELETE', async () => {
+  it('the preflight from an opaque origin allows PUT, DELETE and PATCH', async () => {
     const r = await call({ token: null, method: 'OPTIONS', path: '/prefs/k', origin: 'null' });
     expect(r.status).toBe(204);
-    expect(r.headers['access-control-allow-methods']).toBe('GET, POST, PUT, DELETE, OPTIONS');
+    expect(r.headers['access-control-allow-methods']).toBe(
+      'GET, POST, PUT, DELETE, PATCH, OPTIONS'
+    );
   });
 });
 
@@ -1618,7 +1620,7 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
     });
   });
 
-  it('the preflight from an ALLOWLISTED origin allows PUT and DELETE too', async () => {
+  it('the preflight from an ALLOWLISTED origin allows PUT, DELETE and PATCH too', async () => {
     const { _internalsForTests } = await import('~/server/middleware/block-scope.middleware');
     _internalsForTests.resetOriginCache();
     dbMock.dbRead.oauthClient.findMany.mockResolvedValue([
@@ -1632,7 +1634,9 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
     });
     expect(r.status).toBe(204);
     expect(r.headers['access-control-allow-origin']).toBe('https://contract-app.example');
-    expect(r.headers['access-control-allow-methods']).toBe('GET, POST, PUT, DELETE, OPTIONS');
+    expect(r.headers['access-control-allow-methods']).toBe(
+      'GET, POST, PUT, DELETE, PATCH, OPTIONS'
+    );
     _internalsForTests.resetOriginCache();
   });
 
