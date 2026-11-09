@@ -2121,7 +2121,7 @@ export const publishModelVersionById = async ({
     select: { entityId: true },
   });
 
-  let movedPosts: { id: number; restored: boolean }[] = [];
+  let movedPostIds: number[] = [];
   const version = await dbWrite.$transaction(
     async (tx) => {
       // Re-checked here, under a lock, because the caller's check ran before this transaction and
@@ -2184,23 +2184,21 @@ export const publishModelVersionById = async ({
       // overwrite every attached post's publishedAt and let an owner repeatedly
       // bump old posts to the top of feeds. Mirrors the `WHERE "publishedAt" IS
       // NOT NULL` guard in the unpublish path below.
-      // `old` is the row before this write: whether it was put back under its stashed date.
-      movedPosts = await tx.$queryRaw<{ id: number; restored: boolean }[]>`
-        UPDATE "Post" p
+      const movedPosts = await tx.$queryRaw<{ id: number }[]>`
+        UPDATE "Post"
         SET
           "publishedAt" = CASE
-            WHEN p."metadata"->>'prevPublishedAt' IS NOT NULL
-            THEN (p."metadata"->>'prevPublishedAt')::timestamptz
+            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
+            THEN ("metadata"->>'prevPublishedAt')::timestamptz
             ELSE ${publishedAt}
           END,
-          "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
-        FROM "Post" old
-        WHERE old.id = p.id
-        AND p."userId" = ${updatedVersion.model.userId}
-        AND p."modelVersionId" = ${updatedVersion.id}
-        AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())
-        RETURNING p.id, (old."metadata"->>'prevPublishedAt') IS NOT NULL AS restored
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
+        WHERE "userId" = ${updatedVersion.model.userId}
+        AND "modelVersionId" = ${updatedVersion.id}
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        RETURNING id
       `;
+      movedPostIds = movedPosts.map((post) => post.id);
 
       if (!currentVersion.model.publishedAt) {
         // Safeguard to ensure the model is marked as published if it wasn't
@@ -2247,8 +2245,7 @@ export const publishModelVersionById = async ({
   void onStorySparkPostsRestored({ postIds: posts.map((p) => p.id) });
   syncReviewsOfMovedPosts({
     change: 'publish',
-    postIds: movedPosts.map((post) => post.id),
-    restoredPostIds: movedPosts.filter((post) => post.restored).map((post) => post.id),
+    postIds: movedPostIds,
     onReviews: (reviews) => refreshHasReceivedReviews(reviews),
   });
 

@@ -233,13 +233,13 @@ describe('publishModelById and the reviews written from its posts', () => {
     dbMock.dbWrite.post.findMany.mockResolvedValue([{ id: 5 }, { id: 6 }]);
     mockTx.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
       Array.isArray(strings) && strings.join('?').includes('UPDATE "Post"')
-        ? [{ id: 5, restored: true }]
+        ? [{ id: 5 }]
         : []) as never);
 
     await publishModelById({ id: MODEL_ID, versionIds: [OWN_VERSION_ID] });
 
     expect(syncReviewsOfMovedPosts).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ change: 'publish', postIds: [5], restoredPostIds: [5] })
+      expect.objectContaining({ change: 'publish', postIds: [5] })
     );
   });
 });

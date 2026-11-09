@@ -1092,7 +1092,6 @@ export const updatePost = async ({
       : undefined;
 
   let publishedAtWritten = false;
-  let restoredStashedDate = false;
   const post = await dbWrite.$transaction(async (tx) => {
     const [target] =
       publishedAt !== undefined && !user.isModerator
@@ -1167,8 +1166,6 @@ export const updatePost = async ({
       if (writtenRows.length > 0) {
         updated.publishedAt = writtenRows[0].publishedAt;
         publishedAtWritten = true;
-        // Any other date than the submitted one is the stash, put back.
-        restoredStashedDate = writtenRows[0].publishedAt?.getTime() !== publishedAt?.getTime();
       }
     }
     return updated;
@@ -1182,7 +1179,6 @@ export const updatePost = async ({
     syncReviewsOfMovedPosts({
       change: 'publish',
       postIds: [post.id],
-      restoredPostIds: restoredStashedDate ? [post.id] : [],
       onReviews: (reviews) => refreshHasReceivedReviews(reviews),
     });
   const textChanged = data.title !== undefined || data.detail !== undefined;

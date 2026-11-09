@@ -4921,7 +4921,7 @@ export const publishModelById = async ({
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
   else publishedAt = new Date();
 
-  let movedPosts: { id: number; restored: boolean }[] = [];
+  let movedPostIds: number[] = [];
   const model = await dbWrite.$transaction(
     async (tx) => {
       // The caller read the meta before this: a wipe, a moderator or a scan may have written the
@@ -5044,8 +5044,7 @@ export const publishModelById = async ({
         // overwrite every attached post's publishedAt and let an owner repeatedly
         // bump old posts to the top of feeds. Mirrors the unpublish path's
         // `WHERE "publishedAt" IS NOT NULL`.
-        // `old` is the row before this write: whether it was put back under its stashed date.
-        movedPosts = await tx.$queryRaw<{ id: number; restored: boolean }[]>`
+        const movedPosts = await tx.$queryRaw<{ id: number }[]>`
           UPDATE "Post" p
           SET "publishedAt" = CASE
                                 WHEN p."metadata" ->> 'prevPublishedAt' IS NOT NULL
@@ -5053,15 +5052,15 @@ export const publishModelById = async ({
                                 ELSE mv."publishedAt"
             END,
               "metadata"    = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
-          FROM "ModelVersion" mv, "Post" old
+          FROM "ModelVersion" mv
           WHERE mv.id = p."modelVersionId"
             AND mv."modelId" = ${id}
-            AND old.id = p.id
             AND p."userId" = ${model.userId}
             AND p."modelVersionId" IN (${Prisma.join(versionIds, ',')})
             AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())
-          RETURNING p.id, (old."metadata"->>'prevPublishedAt') IS NOT NULL AS restored
+          RETURNING p.id
         `;
+        movedPostIds = movedPosts.map((post) => post.id);
       }
       await updateModelLastVersionAt({ id, tx, onlyForward: republishing });
 
@@ -5113,8 +5112,7 @@ export const publishModelById = async ({
   }
   syncReviewsOfMovedPosts({
     change: 'publish',
-    postIds: movedPosts.map((post) => post.id),
-    restoredPostIds: movedPosts.filter((post) => post.restored).map((post) => post.id),
+    postIds: movedPostIds,
     onReviews: (reviews) => refreshHasReceivedReviews(reviews),
   });
 
@@ -7452,7 +7450,7 @@ export const publishPrivateModel = async (
 
   const heldVerdict = await import('~/server/services/text-scan/actions/model-nsfw');
   let heldVerdictApplied = false;
-  let movedPosts: { id: number; restored: boolean }[] = [];
+  let movedPostIds: number[] = [];
   await dbWrite.$transaction(async (tx) => {
     // Everything above ran before this transaction, and a takedown can land in between. Re-read
     // under a lock that the writes below then hold: the model first, then its versions, the order
@@ -7502,23 +7500,21 @@ export const publishPrivateModel = async (
       // then the model went through a Private cycle). Strips the stash on
       // success. Mirrors the CASE pattern used by publishModelVersionById
       // and publishModelById.
-      // `old` is the row before this write: whether it was put back under its stashed date.
-      movedPosts = await tx.$queryRaw<{ id: number; restored: boolean }[]>`
-        UPDATE "Post" p
+      const movedPosts = await tx.$queryRaw<{ id: number }[]>`
+        UPDATE "Post"
         SET
           "publishedAt" = CASE
-            WHEN p."metadata"->>'prevPublishedAt' IS NOT NULL
-            THEN (p."metadata"->>'prevPublishedAt')::timestamptz
+            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
+            THEN ("metadata"->>'prevPublishedAt')::timestamptz
             ELSE ${now}
           END,
-          "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
-        FROM "Post" old
-        WHERE old.id = p.id
-        AND p."modelVersionId" IN (${Prisma.join(versionIds, ',')})
-        AND p."userId" = ${model.userId}
-        AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())
-        RETURNING p.id, (old."metadata"->>'prevPublishedAt') IS NOT NULL AS restored
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
+        WHERE "modelVersionId" IN (${Prisma.join(versionIds, ',')})
+        AND "userId" = ${model.userId}
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        RETURNING id
       `;
+      movedPostIds = movedPosts.map((post) => post.id);
     }
 
     await tx.modelVersion.updateMany({
@@ -7572,8 +7568,7 @@ export const publishPrivateModel = async (
   if (heldVerdictApplied) await heldVerdict.finishHeldVerdictApply(modelId);
   syncReviewsOfMovedPosts({
     change: 'publish',
-    postIds: movedPosts.map((post) => post.id),
-    restoredPostIds: movedPosts.filter((post) => post.restored).map((post) => post.id),
+    postIds: movedPostIds,
     onReviews: (reviews) => refreshHasReceivedReviews(reviews),
   });
 

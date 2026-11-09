@@ -450,17 +450,7 @@ export const processScheduledPublishing = createJob(
     if (publishedPosts.length)
       void onStorySparkPostsRestored({ postIds: publishedPosts.map((p) => p.id) });
 
-    // The posts this run flipped were not live before it. The sweep can hand over a post already
-    // released, by its publish or an earlier run.
-    const flippedPostIds = new Set(flippedPosts.map((p) => p.id));
-    await releasePendingReviewsForPosts([...flippedPostIds])
-      .then(async (released) => [
-        ...released,
-        ...(await releasePendingReviewsForPosts(
-          newlyLivePosts.map((p) => p.id).filter((id) => !flippedPostIds.has(id)),
-          { onlyUnreleased: true }
-        )),
-      ])
+    await releasePendingReviewsForPosts(publishedPosts.map((p) => p.id))
       .then((reviews) => refreshHasReceivedReviews(reviews))
       .catch((error) =>
         logToAxiom({

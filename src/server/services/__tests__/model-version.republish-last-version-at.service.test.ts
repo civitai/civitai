@@ -192,7 +192,7 @@ describe('story sparks across a version publish lifecycle', () => {
 
 describe('reviews written from the posts of a version', () => {
   // The guarded post UPDATE returns the posts it moved; an already-public post is not among them.
-  const postUpdateMoves = (rows: { id: number; restored: boolean }[]) =>
+  const postUpdateMoves = (rows: { id: number }[]) =>
     dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
       Array.isArray(strings) && /UPDATE "Post"/.test(strings.join('?')) ? rows : []) as never);
 
@@ -201,12 +201,12 @@ describe('reviews written from the posts of a version', () => {
   });
 
   it('releases only the posts the publish moved, flagging the ones put back under their old date', async () => {
-    postUpdateMoves([{ id: 5, restored: true }]);
+    postUpdateMoves([{ id: 5 }]);
 
     await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false, republishing: true });
 
     expect(syncReviewsOfMovedPosts).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ change: 'publish', postIds: [5], restoredPostIds: [5] })
+      expect.objectContaining({ change: 'publish', postIds: [5] })
     );
   });
 

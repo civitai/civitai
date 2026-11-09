@@ -236,7 +236,7 @@ describe('collection privacy toggle and its posts', () => {
 
     await setRead('Private', 'Public');
     expect(syncReviewsOfMovedPosts).toHaveBeenLastCalledWith(
-      expect.objectContaining({ change: 'publish', postIds: [1], restoredPostIds: [1] })
+      expect.objectContaining({ change: 'publish', postIds: [1] })
     );
   });
 

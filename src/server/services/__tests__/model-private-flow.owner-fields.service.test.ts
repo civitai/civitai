@@ -946,13 +946,13 @@ describe('publishPrivateModel', () => {
       ...values: unknown[]
     ) =>
       Array.isArray(strings) && strings.join('?').includes('UPDATE "Post"')
-        ? Promise.resolve([{ id: 5, restored: false }])
+        ? Promise.resolve([{ id: 5 }])
         : base(strings, ...values)) as never);
 
     await publish(false);
 
     expect(syncReviewsOfMovedPosts).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ change: 'publish', postIds: [5], restoredPostIds: [] })
+      expect.objectContaining({ change: 'publish', postIds: [5] })
     );
   });
 

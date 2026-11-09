@@ -347,9 +347,9 @@ describe('processScheduledPublishing :: first daily post reward', () => {
 });
 
 describe('processScheduledPublishing :: pending resource reviews', () => {
-  // A swept post may already have been released by its publish or an earlier run, and a second
-  // release would mark the owner's read notification unread again.
-  it('releases the posts it flipped in full and the swept ones only if not yet released', async () => {
+  // A swept post may already have been released by its publish or an earlier run; a repeat
+  // notification is a no-op on its key.
+  it('releases every post it hands over, flipped or swept, and refreshes their owners', async () => {
     stubReads({
       scheduled: [{ id: 1, userId: 10 }],
       newlyLive: [
@@ -357,27 +357,13 @@ describe('processScheduledPublishing :: pending resource reviews', () => {
         { id: 2, userId: 20 },
       ],
     });
-    await runJob();
-    expect(mockReleaseReviews.mock.calls).toEqual([[[1]], [[2], { onlyUnreleased: true }]]);
-  });
-
-  it('refreshes the owners of every review either release touched', async () => {
-    stubReads({
-      scheduled: [{ id: 1, userId: 10 }],
-      newlyLive: [
-        { id: 1, userId: 10 },
-        { id: 2, userId: 20 },
-      ],
-    });
-    mockReleaseReviews
-      .mockResolvedValueOnce([{ id: 11, modelOwnerId: 7 }])
-      .mockResolvedValueOnce([{ id: 12, modelOwnerId: 8 }]);
+    mockReleaseReviews.mockResolvedValueOnce([{ id: 11, modelOwnerId: 7 }]);
 
     await runJob();
 
+    expect(mockReleaseReviews.mock.calls).toEqual([[[1, 2]]]);
     expect(mockRefreshHasReceivedReviews).toHaveBeenCalledExactlyOnceWith([
       { id: 11, modelOwnerId: 7 },
-      { id: 12, modelOwnerId: 8 },
     ]);
   });
 });

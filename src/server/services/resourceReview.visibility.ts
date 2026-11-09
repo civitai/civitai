@@ -117,29 +117,11 @@ export async function pendingPostIdFor({ postId, userId }: { postId: number; use
 /**
  * Makes the reviews written from these posts public once the post is live: touched so the metric
  * jobs recount them, the rating totals busted, the model owner notified. Reviews of a post still
- * scheduled are left for a later call. The caller refreshes the owners' cached has-received-reviews
- * flag: the cache module imports this one.
- *
- * `onlyUnreleased` skips a review touched since its post's `publishedAt`, which a release does, so a
- * sweep that hands the same post over twice notifies once. It also skips a review created while a
- * post was unpublished and then republished under its earlier date, so the one-off transitions
- * (a publish, a post this run flipped live) call without it.
+ * scheduled are left for a later call. Safe to repeat: the notification key makes a second one a
+ * no-op. The caller refreshes the owners' cached has-received-reviews flag: the cache module
+ * imports this one.
  */
-export async function releasePendingReviewsForPosts(
-  postIds: number[],
-  {
-    onlyUnreleased = false,
-    restoredPostIds = [],
-  }: {
-    onlyUnreleased?: boolean;
-    /**
-     * Posts put back up under the date they had before an unpublish. Their reviews from before
-     * that date were released and notified when it passed, so only the ones written while the post
-     * was down notify now; all of them are touched and recounted.
-     */
-    restoredPostIds?: number[];
-  } = {}
-) {
+export async function releasePendingReviewsForPosts(postIds: number[]) {
   if (!postIds.length) return [];
   const released = await dbWrite.$queryRaw<
     {
@@ -149,7 +131,6 @@ export async function releasePendingReviewsForPosts(
       recommended: boolean;
       userId: number;
       modelOwnerId: number;
-      notify: boolean;
     }[]
   >`
     UPDATE "ResourceReview" rr
@@ -159,15 +140,13 @@ export async function releasePendingReviewsForPosts(
       AND m.id = rr."modelId"
       AND rr."postId" IN (${Prisma.join(postIds)})
       AND p."publishedAt" <= now()
-      ${onlyUnreleased ? Prisma.sql`AND rr."updatedAt" < p."publishedAt"` : Prisma.empty}
     RETURNING rr.id, rr."modelId", rr."modelVersionId", rr.recommended, rr."userId",
-      m."userId" AS "modelOwnerId",
-      (rr."postId" <> ALL(${restoredPostIds}::int[]) OR rr."createdAt" > p."publishedAt") AS notify
+      m."userId" AS "modelOwnerId"
   `;
   if (!released.length) return released;
   await bustRatingTotalsForRows(released).catch(() => undefined);
   for (const review of released)
-    if (review.notify) await createResourceReviewNotification(review).catch(() => undefined);
+    await createResourceReviewNotification(review).catch(() => undefined);
   return released;
 }
 
@@ -198,18 +177,16 @@ export async function refreshReviewsForUnpublishedPosts(postIds: number[]) {
 export function syncReviewsOfMovedPosts({
   change,
   postIds,
-  restoredPostIds,
   onReviews,
 }: {
   change: 'publish' | 'unpublish';
   postIds: number[];
-  restoredPostIds?: number[];
   onReviews: (reviews: { modelOwnerId: number }[]) => Promise<void>;
 }) {
   if (!postIds.length) return;
   const sync =
     change === 'publish'
-      ? releasePendingReviewsForPosts(postIds, { restoredPostIds })
+      ? releasePendingReviewsForPosts(postIds)
       : refreshReviewsForUnpublishedPosts(postIds);
   void sync
     .then((reviews) => onReviews(reviews))

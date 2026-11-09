@@ -54,14 +54,14 @@ const refreshHasReceivedReviews = vi
 const POST_ID = 1;
 const DAY = 24 * 60 * 60 * 1000;
 
-const publishAt = async (publishedAt: Date, written = publishedAt) => {
+const publishAt = async (publishedAt: Date) => {
   dbMock.dbWrite.post.update.mockResolvedValue({
     id: POST_ID,
     userId: 5,
     publishedAt: null,
   } as never);
-  // The guarded publish UPDATE returns the date it wrote: the submitted one, or the stash.
-  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ publishedAt: written }] as never);
+  // The guarded publish UPDATE writes the date it was given.
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ publishedAt }] as never);
   await updatePost({
     id: POST_ID,
     publishedAt,
@@ -78,15 +78,7 @@ describe('updatePost releasing the reviews written from the post', () => {
     await publishAt(new Date(Date.now() - 1000));
 
     expect(sync).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ change: 'publish', postIds: [POST_ID], restoredPostIds: [] })
-    );
-  });
-
-  it('flags a post put back under its stashed date, so only reviews written since notify', async () => {
-    await publishAt(new Date(Date.now() - 1000), new Date(Date.now() - 30 * DAY));
-
-    expect(sync).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ postIds: [POST_ID], restoredPostIds: [POST_ID] })
+      expect.objectContaining({ change: 'publish', postIds: [POST_ID] })
     );
   });
 

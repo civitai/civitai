@@ -1711,12 +1711,9 @@ export const upsertCollection = async ({
           )
         RETURNING p.id
       `;
-      // Every one is back under its stashed date.
-      const restoredIds = restored.map((post) => post.id);
       syncReviewsOfMovedPosts({
         change: 'publish',
-        postIds: restoredIds,
-        restoredPostIds: restoredIds,
+        postIds: restored.map((post) => post.id),
         onReviews: (reviews) => refreshHasReceivedReviews(reviews),
       });
     } else if (!updated.mode && updated.read !== CollectionReadConfiguration.Public) {

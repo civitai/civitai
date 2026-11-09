@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as BlockCheck from '~/server/services/block-check.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as NotificationService from '~/server/services/notification.service';
@@ -48,6 +49,7 @@ const { createResourceReview, getResourceReview, getUserRatingTotals, upsertReso
 const {
   refreshReviewsForUnpublishedPosts,
   releasePendingReviewsForPosts,
+  syncReviewsOfMovedPosts,
   visibleReviewForViewerSql,
 } = await import('~/server/services/resourceReview.visibility');
 
@@ -305,8 +307,8 @@ describe('against Postgres', () => {
     expect(createNotification).not.toHaveBeenCalled();
   });
 
-  it('notifies, on a post put back up under its old date, only the reviews written while it was down', async () => {
-    // Live since a day ago, then unpublished; republished now under that date.
+  it('notifies every review of a post put back up under its old date, written before it or after', async () => {
+    // LIVE carries a date from a day ago, as a republish restoring its stashed date leaves it.
     await insertReviews([
       [1, 101, LIVE],
       [2, 102, LIVE],
@@ -316,21 +318,15 @@ describe('against Postgres', () => {
       UPDATE "ResourceReview" SET "createdAt" = now() - interval '1 hour' WHERE id = 2;
     `);
 
-    const released = await releasePendingReviewsForPosts([LIVE], { restoredPostIds: [LIVE] });
+    await releasePendingReviewsForPosts([LIVE]);
 
-    expect(released.map((review) => review.id).sort()).toEqual([1, 2]);
-    expect(createNotification).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ key: 'new-review:22:102' })
+    expect(createNotification).toHaveBeenCalledTimes(2);
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'new-review:21:101', userId: MODEL_OWNER })
     );
-  });
-
-  it('releases a review only once when the sweep hands its post over again', async () => {
-    await insertReviews([[1, 101, LIVE]]);
-
-    await releasePendingReviewsForPosts([LIVE], { onlyUnreleased: true });
-    await releasePendingReviewsForPosts([LIVE], { onlyUnreleased: true });
-
-    expect(createNotification).toHaveBeenCalledTimes(1);
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'new-review:22:102', userId: MODEL_OWNER })
+    );
   });
 
   it('recounts the reviews of an unpublished post without notifying anyone', async () => {
@@ -357,5 +353,62 @@ describe('against Postgres', () => {
       expect.objectContaining({ modelId: 10, modelVersionId: 21 }),
     ]);
     expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  // The fire-and-forget form callers use after their post write commits. The leaves run for real
+  // here: the helper calls them inside this module, where a mocked export would not reach.
+  describe('syncReviewsOfMovedPosts', () => {
+    const onReviews = vi.fn<(reviews: { modelOwnerId: number }[]) => Promise<void>>(
+      async () => undefined
+    );
+
+    it('hands the owner refresh the reviews a publish released', async () => {
+      await insertReviews([[1, 101, LIVE]]);
+
+      syncReviewsOfMovedPosts({ change: 'publish', postIds: [LIVE], onReviews });
+
+      await vi.waitFor(() =>
+        expect(onReviews).toHaveBeenCalledExactlyOnceWith([
+          expect.objectContaining({ id: 1, modelOwnerId: MODEL_OWNER }),
+        ])
+      );
+      expect(createNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it('recounts on an unpublish and notifies no one', async () => {
+      await pg.exec(`UPDATE "Post" SET "publishedAt" = NULL WHERE id = ${LIVE}`);
+      await insertReviews([[1, 101, LIVE]]);
+
+      syncReviewsOfMovedPosts({ change: 'unpublish', postIds: [LIVE], onReviews });
+
+      await vi.waitFor(() =>
+        expect(onReviews).toHaveBeenCalledExactlyOnceWith([
+          expect.objectContaining({ modelOwnerId: MODEL_OWNER }),
+        ])
+      );
+      expect(createNotification).not.toHaveBeenCalled();
+    });
+
+    it('logs a failed release instead of throwing into the caller', async () => {
+      dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('connection reset'));
+
+      expect(() =>
+        syncReviewsOfMovedPosts({ change: 'publish', postIds: [LIVE], onReviews })
+      ).not.toThrow();
+
+      await vi.waitFor(() =>
+        expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+          expect.objectContaining({ name: 'resource-review', error: 'connection reset' })
+        )
+      );
+      expect(onReviews).not.toHaveBeenCalled();
+    });
+
+    it('queries nothing for no posts', () => {
+      syncReviewsOfMovedPosts({ change: 'publish', postIds: [], onReviews });
+
+      expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+      expect(onReviews).not.toHaveBeenCalled();
+    });
   });
 });
