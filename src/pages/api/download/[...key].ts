@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { DeliveryWorkerError, getDownloadUrl } from '~/utils/delivery-worker';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
+import { dbRead } from '~/server/db/client';
 import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
 import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
 import { isClientAbortError } from '~/server/utils/errorHandling';
@@ -54,6 +55,8 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
     () => undefined
   );
   if (!allowed) return res.status(404).json({ error: 'Not found' });
+  if (!session.user?.isModerator && (await isTakenDownModelFile(userId, key)))
+    return res.status(404).json({ error: 'Not found' });
 
   // This is a catch-all `/api/download/[...key]` route. Clients that hit a
   // non-existent sub-path (e.g. `/api/download/images/:id`, which is NOT a real
@@ -124,4 +127,23 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
   }
 
   res.redirect(url);
+}
+
+/**
+ * Whether `key` is a file of a taken-down model the caller owns: those files are moderators-only.
+ * Walks from the caller's models (indexed on userId), so it never scans every file's url.
+ */
+async function isTakenDownModelFile(userId: number, key: string) {
+  const suffix = `/${key}`;
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT mf.id
+    FROM "Model" m
+    JOIN "ModelVersion" mv ON mv."modelId" = m.id
+    JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id
+    WHERE m."userId" = ${userId}
+      AND m.mode = 'TakenDown'
+      AND right(mf.url, ${suffix.length}) = ${suffix}
+    LIMIT 1
+  `;
+  return rows.length > 0;
 }

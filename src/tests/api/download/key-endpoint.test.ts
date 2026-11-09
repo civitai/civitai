@@ -54,6 +54,11 @@ vi.mock('~/server/logging/client', () => ({
 import handler from '~/pages/api/download/[...key]';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
+// The taken-down-file lookup. No key belongs to a taken-down model unless a test says so.
+const mockQueryRaw = dbMock.dbRead.$queryRaw;
+beforeEach(() => {
+  mockQueryRaw.mockResolvedValue([] as never);
+});
 
 // Default to a key under the authed user's own `<type>/<userId>/` prefix so the branch tests below
 // pass the ownership gate (added below) and still reach the delivery worker. The
@@ -397,5 +402,54 @@ describe('/api/download/[...key] — ownership scope', () => {
     await handler(req, res);
 
     expect(mockGetDownloadUrl).toHaveBeenCalledWith('model/99/any.safetensors');
+  });
+});
+
+describe('/api/download/[...key] — a taken-down model', () => {
+  const KEY = ['model', '42', 'mine.safetensors'];
+  // Rows only for the taken-down file's own key suffix.
+  const takenDown = () =>
+    mockQueryRaw.mockImplementation(((_sql: TemplateStringsArray, ...values: unknown[]) =>
+      Promise.resolve(values.includes('/model/42/mine.safetensors') ? [{ id: 1 }] : [])) as never);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFindUnique.mockResolvedValue({ value: '' });
+    mockGetDownloadUrl.mockResolvedValue({
+      url: 'https://cdn.example.com/signed',
+      urlExpiryDate: new Date(),
+    });
+  });
+
+  it("refuses its owner their own upload key with the same 404 as another user's key", async () => {
+    takenDown();
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+    const { req, res } = createMocks({ key: KEY });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(res._getJSONData()).toEqual({ error: 'Not found' });
+    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('still serves a moderator', async () => {
+    takenDown();
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 1, isModerator: true } });
+    const { req, res } = createMocks({ key: KEY });
+
+    await handler(req, res);
+
+    expect(res._getRedirect()).toBe('https://cdn.example.com/signed');
+  });
+
+  it('serves the owner a key of a model that is not taken down', async () => {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+    const { req, res } = createMocks({ key: ['model', '42', 'other.safetensors'] });
+    takenDown();
+
+    await handler(req, res);
+
+    expect(res._getRedirect()).toBe('https://cdn.example.com/signed');
   });
 });

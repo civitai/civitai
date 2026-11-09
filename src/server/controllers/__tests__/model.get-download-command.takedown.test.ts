@@ -30,8 +30,7 @@ import { EntityAccessPermission } from '~/server/common/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 
 const OWNER = { id: 7, isModerator: false };
-// tRPC resolves an API key (scope ModelsRead) to the key holder's session user.
-const API_KEY_USER = { id: 42, isModerator: false };
+const OTHER_USER = { id: 42, isModerator: false };
 const MODERATOR = { id: 1, isModerator: true };
 
 function call(user: { id: number; isModerator: boolean }) {
@@ -41,14 +40,14 @@ function call(user: { id: number; isModerator: boolean }) {
   } as unknown as Parameters<typeof getDownloadCommandHandler>[0]);
 }
 
-function givenModel(model: { status?: string; mode?: string | null }) {
+function givenModel(model: { status?: string; mode?: string | null }, usageControl = 'Download') {
   dbMock.dbRead.modelVersion.findFirst.mockResolvedValue({
     id: 123,
     status: 'Published',
     name: 'v1',
     trainedWords: [],
     createdAt: new Date('2026-01-01T00:00:00Z'),
-    usageControl: 'Download',
+    usageControl,
     model: {
       id: 1,
       name: 'Model',
@@ -90,13 +89,19 @@ beforeEach(() => {
 describe('model.getDownloadCommand on a taken-down or deleted model', () => {
   it.each([
     ['taken down', 'its owner', { mode: 'TakenDown' }, OWNER],
-    ['taken down', 'an API-key user', { mode: 'TakenDown' }, API_KEY_USER],
+    ['taken down', 'a signed-in non-owner', { mode: 'TakenDown' }, OTHER_USER],
     ['deleted', 'its owner', { status: 'Deleted' }, OWNER],
   ])('is not found when %s, for %s', async (_state, _who, model, user) => {
     givenModel(model);
 
     await expect(call(user)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(resolveDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('is not found, not forbidden, when downloads are also disabled', async () => {
+    givenModel({ mode: 'TakenDown' }, 'Generation');
+
+    await expect(call(OTHER_USER)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
   it.each([
@@ -110,7 +115,7 @@ describe('model.getDownloadCommand on a taken-down or deleted model', () => {
 
   it.each([
     ['its owner', OWNER],
-    ['an API-key user', API_KEY_USER],
+    ['a signed-in non-owner', OTHER_USER],
   ])('gives %s the command for a model that is neither', async (_who, user) => {
     givenModel({});
 

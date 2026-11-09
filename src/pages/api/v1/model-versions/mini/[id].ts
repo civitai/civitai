@@ -28,7 +28,8 @@ import type {
   ModelHashType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { Availability, ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
+import { Availability, ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
@@ -73,7 +74,8 @@ type VersionRow = {
   sfwOnly: boolean;
   usageControl: ModelUsageControl;
   modelUserId: number;
-  modelMode: ModelModifier | null;
+  modelStatus: string;
+  modelMode: string | null;
   poi: boolean;
   licensingFee: number | null;
   licensingFeeType: LicensingFeeType | null;
@@ -135,6 +137,7 @@ export default MixedAuthEndpoint(async function handler(
       m.minor,
       m."sfwOnly",
       m."userId" as "modelUserId",
+      m.status as "modelStatus",
       m.mode as "modelMode",
       m.poi,
       pa."endsAt" AS "earlyAccessEndsAt",
@@ -518,6 +521,15 @@ export default MixedAuthEndpoint(async function handler(
       ownerFlags: modelVersion.userFlags,
     });
 
+  // An epoch url is the orchestrator's own link to the weights, outside the download route's
+  // gates: a deleted or taken-down model's is moderators-only, as its files are.
+  const gated = {
+    status: modelVersion.status,
+    model: { status: modelVersion.modelStatus, mode: modelVersion.modelMode },
+  };
+  const withholdEpochUrl =
+    !!trainingResults && !user?.isModerator && (isModelDeleted(gated) || isModelTakenDown(gated));
+
   const data = {
     air,
     defaultFileId: getGenerationFile(files)?.id ?? null,
@@ -532,12 +544,7 @@ export default MixedAuthEndpoint(async function handler(
     fileName: targetFile.name,
     // nullable - hashes (all available hash types)
     hashes: targetFile.hashes,
-    // An epoch url is the orchestrator's own link to the weights, outside the download route's
-    // gates: a taken-down model's is moderators-only.
-    downloadUrls:
-      trainingResults && modelVersion.modelMode === ModelModifier.TakenDown && !user?.isModerator
-        ? []
-        : [downloadUrl], // nullable
+    downloadUrls: withholdEpochUrl ? [] : [downloadUrl], // nullable
     format, // nullable
     canGenerate,
     isFeatured,

@@ -51,12 +51,15 @@ function run(fileId?: string) {
   return { promise: handler(req, res), res };
 }
 
+// The model's state comes back only when the read includes it, as in prod.
 const givenModel = (model: { status: string; mode: string | null }) =>
-  mockModelVersionFindUnique.mockResolvedValue({
+  mockModelVersionFindUnique.mockImplementation((async (args: {
+    include?: { model?: unknown };
+  }) => ({
     id: 9,
     usageControl: 'Download',
-    model,
-  } as never);
+    ...(args.include?.model ? { model } : {}),
+  })) as never);
 
 describe('/api/download/vault/[vaultItemId] — a taken-down model', () => {
   beforeEach(() => {

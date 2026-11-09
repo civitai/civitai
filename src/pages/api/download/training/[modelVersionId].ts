@@ -14,8 +14,6 @@ import type { TrainingResults } from '~/server/schema/model-file.schema';
 import { normalizeEpochs } from '~/server/services/orchestrator/training/epoch-archive';
 import { resolveTrainingRun } from '~/server/services/orchestrator/training/training-state';
 import { attachmentContentDisposition } from '~/utils/content-disposition';
-import { dbRead } from '~/server/db/client';
-import { isModelTakenDown } from '~/server/utils/model-version-gates';
 
 // Disable body parser size limit and response size limit for large epoch files
 export const config = {
@@ -50,17 +48,6 @@ export default AuthedEndpoint(
       return handleEndpointError(res, error);
     }
     const { state, run } = resolved;
-
-    // Epochs are the model's weights: a taken-down model's are moderators-only, owner included.
-    if (!user.isModerator) {
-      const version = await dbRead.modelVersion.findUnique({
-        where: { id: modelVersionId },
-        select: { status: true, model: { select: { status: true, mode: true } } },
-      });
-      if (version && isModelTakenDown(version)) {
-        return res.status(404).json({ error: `Epoch ${epochNumber} not found` });
-      }
-    }
 
     const trainingResults = state.trainingResults as TrainingResults | null;
     const epoch = trainingResults

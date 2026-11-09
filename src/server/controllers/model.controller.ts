@@ -1301,6 +1301,10 @@ export const getDownloadCommandHandler = async ({
       orderBy: { index: 'asc' },
     });
     if (!modelVersion) throw throwNotFoundError();
+    // Matches the download route: a deleted or taken-down model is moderators-only, and that is
+    // decided before any other refusal.
+    if ((isModelDeleted(modelVersion) || isModelTakenDown(modelVersion)) && !ctx.user?.isModerator)
+      throw throwNotFoundError();
 
     const isOwner = ctx.user?.id === modelVersion.model.userId;
     const isDownloadable =
@@ -1338,10 +1342,6 @@ export const getDownloadCommandHandler = async ({
 
     const isMod = ctx.user?.isModerator;
     const userId = ctx.user?.id;
-    // Matches the download route: a deleted or taken-down model is moderators-only.
-    if ((isModelDeleted(modelVersion) || isModelTakenDown(modelVersion)) && !isMod)
-      throw throwNotFoundError();
-
     const canDownload =
       modelVersion.model.mode !== ModelModifier.Archived &&
       (isMod ||

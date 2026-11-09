@@ -617,19 +617,24 @@ describe('GET /api/v1/model-versions/mini/[id] — the AIR handed to Air.stringi
   });
 });
 
-describe('GET /api/v1/model-versions/mini/[id] — the epoch url of a taken-down model', () => {
+describe('GET /api/v1/model-versions/mini/[id] — the epoch url of a taken-down or deleted model', () => {
   // The epoch url is the orchestrator's own link to the weights, outside the download route, so a
-  // taken-down model's is withheld from everyone but moderators; the rest of the response stays.
-  const takenDown = { availability: 'Private', modelMode: 'TakenDown' } as Partial<
-    typeof versionRow
-  >;
+  // taken-down or deleted model's is withheld from everyone but moderators; the rest stays.
+  type Row = Partial<typeof versionRow>;
+  const takenDown = {
+    availability: 'Private',
+    modelStatus: 'Published',
+    modelMode: 'TakenDown',
+  } as Row;
+  const deleted = { availability: 'Private', modelStatus: 'Deleted', modelMode: null } as Row;
 
   it.each([
-    ['an anonymous caller', undefined],
-    ['its owner', { id: OWNER_ID }],
-  ])('is withheld from %s, and the rest of the response kept', async (_who, user) => {
+    ['an anonymous caller', 'taken down', undefined, takenDown],
+    ['its owner', 'taken down', { id: OWNER_ID }, takenDown],
+    ['its owner', 'deleted', { id: OWNER_ID }, deleted],
+  ])('is withheld from %s when %s, and the rest kept', async (_who, _state, user, row) => {
     currentUser.value = user;
-    const { status, body } = await run([TRAINING_FILE], {}, takenDown);
+    const { status, body } = await run([TRAINING_FILE], {}, row);
 
     expect(status).toBe(200);
     expect(body.downloadUrls).toEqual([]);
@@ -642,6 +647,15 @@ describe('GET /api/v1/model-versions/mini/[id] — the epoch url of a taken-down
     const { body } = await run([TRAINING_FILE], {}, takenDown);
 
     expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+
+  // The rows above are mocked, so this is what ties them to the real query.
+  it('reads the model status and mode in the version query', async () => {
+    await run([TRAINING_FILE], {}, takenDown);
+    const versionSql = (mockQueryRaw.mock.calls[0][0] as TemplateStringsArray).join('?');
+
+    expect(versionSql).toMatch(/\bm\.mode as "modelMode"/);
+    expect(versionSql).toMatch(/\bm\.status as "modelStatus"/);
   });
 });
 
