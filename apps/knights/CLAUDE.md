@@ -38,6 +38,7 @@ SQL on PGlite.
   only, by `STAGE_RULES` (`stage-rules.ts`): Knight 4 unanimous, then 75% (to 10), Templar 3 unanimous, then 75% (to 6), Paladin 2 unanimous, then 75% (to 4). No agreement at the maximum moves `minRank` Knight -> Templar -> Paladin -> Inquisitor
   (`ESCALATION_PATH`, stamps `escalatedAt`, migration `20261210120000_knights_v2_tables`, by hand); `status = 'Inquisitor'` is what the moderator app reads. A rating far below the image's, or a Blocked consensus, also goes
   there. Earlier-stage votes stay `pending`, graded by the final value.
+  Escalation skips stages nobody can serve: the next stage with an eligible player at that rank or higher (voted within `ACTIVE_PLAYER_DAYS` = 14, not reset-pending; `nextStaffedRank`/`staffedRanks`), else the Inquisitors. An item that lapses (`expiresAt`) with no vote at its stage is extended a window at a time at the same stage until two stage windows after it entered the stage (`extended` in the tick response); after that, or at an unserved stage, it is handed up.
 - A settled rating is written by `main-app.ts` via the main app's `/api/mod/image/kono-set-nsfw-level` (activity
   `setNsfwLevelKono`; authenticated with `WEBHOOK_TOKEN` in the `x-webhook-token` header, env in `.env.example`) after the vote commits, with no lock held. That endpoint is the gate: it writes only onto an image
   that exists, has no block marker and is unlocked or Knights-locked, and answers 200 `applied` or `skipped`

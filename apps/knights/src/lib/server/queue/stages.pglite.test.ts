@@ -29,6 +29,15 @@ async function player(userId: number, rankType: string) {
     rankType,
   ]);
 }
+/** A player who voted recently, which is what makes a rank count as served when an item is handed up. */
+async function active(userId: number, rankType: string) {
+  await player(userId, rankType);
+  await pg.query(
+    `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
+     VALUES ($1,$2,$3,$4,0,'Knight','4',1)`,
+    [-userId, userId, NOW, Q]
+  );
+}
 const players = async (rank: string, from: number, count: number) => {
   for (let i = 0; i < count; i++) await player(from + i, rank);
 };
@@ -138,6 +147,7 @@ describe('stage consensus and escalation', () => {
 
   it('keeps collecting past four Knight votes and sends a split at ten to the Templars', async () => {
     await players('Knight', 1, 10);
+    await active(90, 'Templar');
     await image(10);
     const id = await item(10);
 
@@ -175,6 +185,7 @@ describe('stage consensus and escalation', () => {
 
   it('sends a Templar split at six votes to the Paladins', async () => {
     await players('Templar', 1, 6);
+    await active(91, 'Paladin');
     await image(10);
     const id = await item(10, { minRank: 'Templar' });
 
@@ -245,8 +256,8 @@ describe('stage consensus and escalation', () => {
 
   it('walks Knight, Templar, Paladin and out to the moderators one stage at a time', async () => {
     await players('Knight', 1, 10);
-    await players('Templar', 21, 6);
-    await players('Paladin', 41, 4);
+    for (let u = 21; u < 27; u++) await active(u, 'Templar');
+    for (let u = 41; u < 45; u++) await active(u, 'Paladin');
     await image(10);
     const id = await item(10);
 
@@ -262,16 +273,20 @@ describe('stage consensus and escalation', () => {
     ]);
   });
 
-  it('moves an item that sat out its stage up one stage, as an escalation', async () => {
+  it('moves an item that sat out its stage with a vote up one stage, as an escalation', async () => {
+    await player(1, 'Knight');
+    await active(2, 'Templar');
     await image(10);
     const id = await enqueueItem(
       db,
       { questionKey: Q, imageId: 10, source: 'test', expiresAt: NOW },
       NOW
     );
+    await vote(1, id, '4');
     expect(await escalateExpired(db, { now: hoursAfter(1) })).toEqual({
       escalated: 1,
       toInquisitor: 0,
+      extended: 0,
     });
     expect(await itemRow(id)).toMatchObject({
       minRank: 'Templar',
