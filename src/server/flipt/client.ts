@@ -142,6 +142,8 @@ export enum FLIPT_FEATURE_FLAGS {
   //
   // ON raises the `basic-tags` (tagCache) L1 TTL from 30s to 300s.
   BASIC_TAGS_L1_LONG_TTL = 'basic-tags-l1-long-ttl',
+  // ON puts a 60s L1 in front of the `cosmetics2` catalog cache (cosmeticCache), which has none.
+  COSMETICS_L1 = 'cosmetics-l1',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',

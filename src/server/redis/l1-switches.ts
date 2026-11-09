@@ -30,12 +30,15 @@ function readFlag(flag: () => FlagKey) {
 }
 
 const readBasicTagsLong = readFlag(() => FLIPT_FEATURE_FLAGS.BASIC_TAGS_L1_LONG_TTL);
+const readCosmetics = readFlag(() => FLIPT_FEATURE_FLAGS.COSMETICS_L1);
 
 let basicTagsLongGate = createCachedFlagGate(readBasicTagsLong);
+let cosmeticsGate = createCachedFlagGate(readCosmetics);
 
 /** Tests only: forget the cached flag reads so the next fetch re-reads Flipt. */
 export function resetL1SwitchesForTests() {
   basicTagsLongGate = createCachedFlagGate(readBasicTagsLong);
+  cosmeticsGate = createCachedFlagGate(readCosmetics);
 }
 
 /** `basic-tags` L1 TTL in seconds: 30 (as before), or 300 with BASIC_TAGS_L1_LONG_TTL on. */
@@ -43,3 +46,7 @@ export const BASIC_TAGS_L1_TTL = 30;
 export const BASIC_TAGS_L1_TTL_LONG = 300;
 export const basicTagsLocalTtl = () =>
   basicTagsLongGate() ? BASIC_TAGS_L1_TTL_LONG : BASIC_TAGS_L1_TTL;
+
+/** `cosmetics2` L1 TTL in seconds: none (as before), or 60 with COSMETICS_L1 on. */
+export const COSMETICS_L1_TTL = 60;
+export const cosmeticsLocalTtl = () => (cosmeticsGate() ? COSMETICS_L1_TTL : undefined);

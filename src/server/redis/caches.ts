@@ -54,7 +54,7 @@ import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { getImageTagRows } from '~/server/redis/image-tag-rows';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
-import { basicTagsLocalTtl } from '~/server/redis/l1-switches';
+import { basicTagsLocalTtl, cosmeticsLocalTtl } from '~/server/redis/l1-switches';
 import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
 import { foldUserMultipliers } from '~/server/redis/user-multipliers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
@@ -278,6 +278,15 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
     return Object.fromEntries(cosmetics.map((x) => [x.id, x]));
   },
   ttl: CacheTTL.day,
+  // L1 only while the COSMETICS_L1 switch is on (60s); off, every read goes to Redis as before.
+  // Admin edits (cosmetic.service: the sticker placement rating, an event hat's fit) still refresh
+  // the Redis entry at once and drop the id from the editing pod's L1, but there is no cross-pod L1
+  // bust: OTHER pods can serve the previous value for up to 60s. That is accepted for display
+  // (names, images, badges). The one reader that hides content on `flags` — the kept-off sticker
+  // check in sticker-placement.service — reads with `bypassLocal`, so it stays as fresh as today.
+  localTtl: cosmeticsLocalTtl,
+  localMax: 20000,
+  localMaxBytes: L1_CACHE_BYTE_BUDGETS.cosmetics,
 });
 
 /** A user whose profile picture may not be served gets no entry, the same as a user with none. */
