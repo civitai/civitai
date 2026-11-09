@@ -7,7 +7,8 @@ Three groups:
   * GlobGrammar: the ported push-gate grammar, pinned on literal cases.
   * Fixture: throwaway git repos in a temp dir; the checker runs as CI runs it
     (`check <base> <head>`, `arm <base> <ref> <author>`), and each wall must go RED on the
-    change it exists to catch, with its own reason.
+    change it exists to catch, with its own reason (a head adds a regression test unless
+    the test is about that rule, so a refusal is never check 4's by accident).
   * RealList: the committed list parses, forbids each class the policy names, leaves
     ordinary application code alone, and forbids EVERY top-level entry of this checkout
     except src/ and packages/ (the agent's push gate has no allowlist, so the list must
@@ -83,6 +84,7 @@ class Fixture(unittest.TestCase):
         self.write(".github/officer/bot-logins.txt", "# bots\n# placeholder[bot]\nCivitai-Officer-X[bot]   # x\r\n")
         self.write("src/app.ts", "export const a = 1;\n")
         self.write("src/old/keep.ts", "x\n")
+        self.write("src/old/keep.test.ts", "x\n")
         self.write("packages/civitai-ui/src/b.ts", "export const b = 1;\n")
         self.write("packages/civitai-db-schema/prisma/schema.prisma", "model A {}\n")
         self.write("package.json", "{}\n")
@@ -105,7 +107,11 @@ class Fixture(unittest.TestCase):
         with open(p, "w") as f:
             f.write(content)
 
-    def commit(self):
+    def commit(self, with_test=True):
+        # By default the head also adds a regression test, so a refusal is attributable to
+        # the path under test and not to check 4.
+        if with_test:
+            self.write("src/app.test.ts", "test('regression', () => {});\n")
         self.g("add", "-A")
         self.g("commit", "-q", "--allow-empty", "-m", "head")
 
@@ -122,7 +128,32 @@ class Fixture(unittest.TestCase):
         self.commit()
         rc, out = self.check()
         self.assertEqual(rc, 0, out)
-        self.assertIn("2 changed path(s)", out)
+        self.assertIn("3 changed path(s)", out)
+        self.assertIn("1 test file(s) added or modified", out)
+
+    def test_no_regression_test_fails(self):
+        self.write("src/app.ts", "export const a = 2;\n")
+        self.commit(with_test=False)
+        rc, out = self.check()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("ok: every changed path is application code", out)
+        self.assertIn("FAIL: no test file added or modified", out)
+
+    def test_a_deleted_test_does_not_count(self):
+        self.write("src/app.ts", "export const a = 2;\n")
+        self.g("rm", "-q", "src/old/keep.test.ts")
+        self.commit(with_test=False)
+        rc, out = self.check()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("FAIL: no test file added or modified", out)
+
+    def test_modified_test_under___tests___counts(self):
+        self.write("packages/civitai-ui/src/__tests__/b.ts", "test('b', () => {});\n")
+        self.write("packages/civitai-ui/src/b.ts", "export const b = 2;\n")
+        self.commit(with_test=False)
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1 test file(s) added or modified", out)
 
     def assert_refused(self, path, reason):
         rc, out = self.check()
@@ -178,6 +209,7 @@ class Fixture(unittest.TestCase):
         rc, out = self.check()
         self.assertEqual(rc, 1, out)
         self.assertIn("'packages/civitai-db-schema/prisma/schema.prisma' [D]", out)
+        self.assertIn("1 test file(s) added or modified", out)
 
     def test_deleting_a_forbidden_file_fails(self):
         self.g("rm", "-q", "package.json")
@@ -195,7 +227,7 @@ class Fixture(unittest.TestCase):
         self.assert_refused("src/é/.env", "matches forbidden pattern .env*")
 
     def test_empty_diff_fails(self):
-        self.commit()
+        self.commit(with_test=False)
         rc, out = self.check()
         self.assertEqual(rc, 1, out)
         self.assertIn("no changed paths", out)
@@ -298,7 +330,10 @@ class RealList(unittest.TestCase):
         # Positive control: the list must not forbid what an officer PR is FOR.
         for p in ["src/pages/index.tsx", "src/server/services/model.service.ts", "src/components/Image/x.tsx",
                   "src/shared/utils/prisma/enums.ts", "packages/civitai-ui/src/button.tsx",
-                  "packages/civitai-db-schema/src/index.ts", "src/server/routers/image.router.ts"]:
+                  "packages/civitai-db-schema/src/index.ts", "src/server/routers/image.router.ts",
+                  # tests under src/ and packages/ are allowed (operator decision 2026-11-09)
+                  "src/server/services/model.service.test.ts", "src/__tests__/pages/x.test.tsx",
+                  "src/tests/api/x.test.ts", "packages/civitai-ui/src/__tests__/b.test.tsx"]:
             with self.subTest(path=p):
                 self.assertFalse(self.forbidden(p), f"{p} (application code) is forbidden by {REAL_LIST}")
 

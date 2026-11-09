@@ -18,6 +18,10 @@ rename, deletions included):
      .github/officer/forbidden-paths.txt (the grammar of the agent's push gate, ported:
      match_forbidden below).
   3. MODE: no symlink (120000) or gitlink (160000) may be added or changed to.
+  4. REGRESSION TEST: at least one added or modified file is a test (TEST_GLOBS: a
+     `*.test.*` / `*.spec.*` file or anything under a `__tests__/` directory). Every officer
+     PR must carry a regression test for the fault it fixes (operator decision 2026-11-09);
+     a deleted test does not count.
 An empty diff FAILS: an officer PR always changes something, and "nothing changed" more
 often means wrong revisions than a clean PR.
 
@@ -36,6 +40,7 @@ LOGINS = ".github/officer/bot-logins.txt"
 ALLOWED_ROOTS = ("src/", "packages/")
 BRANCH_PREFIX = "officer/"
 BAD_MODES = {"120000": "a symlink", "160000": "a submodule gitlink"}
+TEST_GLOBS = ("*.test.{ts,tsx,mts,cts,js,jsx,mjs,cjs}", "*.spec.{ts,tsx,mts,cts,js,jsx,mjs,cjs}", "__tests__")
 
 
 class Fatal(Exception):
@@ -196,8 +201,10 @@ def cmd_check(base, head):
     if not entries:
         print("FAIL: no changed paths between base and head. Wrong revisions?")
         return 1
-    violations = []
+    violations, tests = [], []
     for old_mode, new_mode, status, path in entries:
+        if status != "D" and any(match_forbidden(g, path) for g in TEST_GLOBS):
+            tests.append(path)
         why = []
         if not path.startswith(ALLOWED_ROOTS):
             why.append("outside the allowed roots")
@@ -208,12 +215,20 @@ def cmd_check(base, head):
             why.append(f"is {BAD_MODES[new_mode]}")
         if why:
             violations.append(f"  {path!r} [{status}]: {'; '.join(why)}")
+    rc = 0
     if violations:
         print(f"FAIL: {len(violations)} path(s) an officer PR may not change:")
         print("\n".join(violations))
-        return 1
-    print("ok: every changed path is application code under an allowed root")
-    return 0
+        rc = 1
+    else:
+        print("ok: every changed path is application code under an allowed root")
+    if tests:
+        print(f"ok: {len(tests)} test file(s) added or modified (the regression test), e.g. {tests[0]!r}")
+    else:
+        print("FAIL: no test file added or modified; an officer PR must include a regression test "
+              f"(a file matching one of {', '.join(TEST_GLOBS)})")
+        rc = 1
+    return rc
 
 
 def main(argv):

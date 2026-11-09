@@ -15,8 +15,10 @@ name: officer-pr-check
 #   1. it is under src/ or packages/ (an allowlist);
 #   2. it matches no glob of the BASE's .github/officer/forbidden-paths.txt, which is also the
 #      list the agent's push gate (the first wall) reads, so the two walls cannot drift;
-#   3. it is not a symlink or a submodule gitlink.
-# An empty diff fails.
+#   3. it is not a symlink or a submodule gitlink;
+#   4. and the PR adds or modifies at least one test file (`*.test.*`, `*.spec.*` or under
+#      `__tests__/`): every officer PR carries a regression test for what it fixes.
+# An empty diff fails. Tests under src/ and packages/ are application code here.
 #
 # The self-test (.github/officer/test_officer_pr_check.py, the PR's own copy) runs on EVERY
 # PR: it shows the walls go red on what they exist to catch, and fails when a new top-level
@@ -105,7 +107,7 @@ jobs:
           fi
           grep -m1 '^armed=' "$RUNNER_TEMP/arm.out" >>"$GITHUB_OUTPUT"
 
-      - name: Officer PR check (allowed roots, forbidden paths, symlinks)
+      - name: Officer PR check (allowed roots, forbidden paths, symlinks, regression test)
         if: steps.arm.outputs.armed == 'true'
         env:
           BASE: ${{ steps.refs.outputs.base }}
