@@ -149,14 +149,25 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
     // The nsfwLevel bound must match the QUEUE's (image-tags.service.ts) — without it, blocked images
     // inflate a badge whose page can never show them, so the count never reaches zero.
-    dbRead
-      .selectFrom('TagsOnImageNew as toi')
-      .innerJoin('Image as i', 'i.id', 'toi.imageId')
-      .select((eb) => eb.fn.count('toi.imageId').distinct().as('count'))
-      .where(sql<boolean>`((toi.attributes >> 9)::integer & 1) = 1`)
-      .where(sql<boolean>`((toi.attributes >> 10)::integer & 1) <> 1`)
-      .where('i.nsfwLevel', '<', NsfwLevel.Blocked)
-      .executeTakeFirst(),
+    // Waited on for 3 seconds at most: this scan can run for minutes on a large TagsOnImageNew, and
+    // every other badge in the fill waits behind it.
+    withLastGood(
+      'image-tags',
+      async () =>
+        Number(
+          (
+            await dbRead
+              .selectFrom('TagsOnImageNew as toi')
+              .innerJoin('Image as i', 'i.id', 'toi.imageId')
+              .select((eb) => eb.fn.count('toi.imageId').distinct().as('count'))
+              .where(sql<boolean>`((toi.attributes >> 9)::integer & 1) = 1`)
+              .where(sql<boolean>`((toi.attributes >> 10)::integer & 1) <> 1`)
+              .where('i.nsfwLevel', '<', NsfwLevel.Blocked)
+              .executeTakeFirst()
+          )?.count ?? 0
+        ),
+      3_000
+    ),
     getImageRatingReviewCount(),
     dbRead
       .selectFrom('Image')
@@ -230,6 +241,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     knightsInquisitor,
     knightsLinkReviews,
     bountyUnpaidAwards,
+    imageTags,
   };
   const unavailable = Object.keys(maybe).filter((key) => maybe[key] == null);
   const known = Object.entries(maybe).filter((e): e is [string, number] => e[1] != null);
@@ -237,7 +249,6 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     counts: {
       ...modes,
       ...reports,
-      imageTags: Number(imageTags?.count ?? 0),
       imageRatings,
       appeals: Number(appeals?.count ?? 0),
       articles,

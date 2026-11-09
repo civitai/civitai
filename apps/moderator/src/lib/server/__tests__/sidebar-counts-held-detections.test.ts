@@ -244,8 +244,8 @@ describe('Needs review badge when a part does not answer', () => {
   });
 
   it('still answers when Redis does not', async () => {
-    redis.set.mockRejectedValueOnce(new Error('redis down'));
-    redis.set.mockRejectedValueOnce(new Error('redis down'));
+    // One write per part kept (image tags, minor queue, held detections).
+    for (let part = 0; part < 3; part++) redis.set.mockRejectedValueOnce(new Error('redis down'));
     expect((await getSidebarCounts()).counts).toMatchObject({ modelFlagsNeedsReview: 12 });
     redis.get.mockRejectedValueOnce(new Error('redis down'));
     getHeldDetectionModelCount.mockReturnValue(hang());
