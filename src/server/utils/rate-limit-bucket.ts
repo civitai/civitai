@@ -112,7 +112,8 @@ export async function claimRateLimitAttempt({
   const refusal = bindingRefusal(usages);
   if (refusal) {
     const message = refusal.rule.errorMessage ?? `You're doing that too much...`;
-    if (refusal.rule.kind === 'product') noteRateLimitUsage(req, usages);
+    // A gate (limit 0) never frees a slot, so no header can describe it.
+    if (refusal.rule.kind === 'product' && refusal.nextAt !== null) noteRateLimitUsage(req, usages);
     else if (user && refusal.nextAt !== null)
       await markActiveLimit({ userId: user.id, keyName, retryAt: refusal.nextAt, now });
     const meta = rateLimitMetaForRefusal(usages, now);

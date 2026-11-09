@@ -130,7 +130,8 @@ const trpcHandler = createNextApiHandler({
 
     const retryAfter = retryAfterHeader({ errors, info, paths });
     if (retryAfter) headers['Retry-After'] = retryAfter;
-    Object.assign(headers, rateLimitHeaders({ ctx, info, paths }));
+    // Per-caller counts must never reach a CDN-shared response.
+    if (!edgeCached) Object.assign(headers, rateLimitHeaders({ ctx, info, paths }));
 
     return Object.keys(headers).length > 0 ? { headers } : {};
   },

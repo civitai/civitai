@@ -170,7 +170,6 @@ export const userRouter = router({
         ids: input?.ids,
       })
     ),
-  /** Coarse area and retry time only; abuse limits publish no counts. */
   getActiveLimits: protectedProcedure
     .meta({ anyOfScopes: USAGE_LIMITS_SCOPES })
     .query(({ ctx }) => getActiveLimits(ctx.user.id)),

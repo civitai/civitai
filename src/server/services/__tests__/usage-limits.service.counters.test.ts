@@ -4,7 +4,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as UsageLimitsModule from '~/shared/constants/usage-limits';
 import type { SessionUser } from '~/types/session';
 
-// The registry has no calendar-window product entry yet (gifts adds one), so add a stand-in.
+// The registry has no calendar-window product entry yet (gifts adds one), so add a stand-in,
+// mid-registry so the sort is what puts it in place.
 const MONTHLY = 'gifts.test-monthly';
 vi.mock('~/shared/constants/usage-limits', async (importOriginal) => {
   const actual = await importOriginal<typeof UsageLimitsModule>();
@@ -16,9 +17,15 @@ vi.mock('~/shared/constants/usage-limits', async (importOriginal) => {
     window: { type: 'utc-month' },
     base: 5,
   } as unknown as (typeof actual.usageLimitDefs)[number];
+  const at = actual.usageLimitDefs.findIndex((d) => d.area === 'comments');
+  if (at < 1) throw new Error('harness broken: no comments entry to insert before');
   return {
     ...actual,
-    usageLimitDefs: [...actual.usageLimitDefs, def],
+    usageLimitDefs: [
+      ...actual.usageLimitDefs.slice(0, at),
+      def,
+      ...actual.usageLimitDefs.slice(at),
+    ],
     getUsageLimitDef: (id: string) => (id === MONTHLY ? def : actual.getUsageLimitDef(id)),
   };
 });
@@ -86,8 +93,11 @@ describe('calendar-window product limits', () => {
     expect((await rowsFor()).map((l) => l.id)).not.toContain(MONTHLY);
     counters[MONTHLY] = async () => 0;
     const ids = (await rowsFor()).map((l) => l.id);
-    expect(ids.at(-1)).toBe(MONTHLY);
-    expect(ids.length).toBeGreaterThan(1);
+    const { usageLimitDefs } = await import('~/shared/constants/usage-limits');
+    const registryOrder = usageLimitDefs.map((d) => d.id).filter((id) => ids.includes(id));
+    expect(ids).toEqual(registryOrder);
+    expect(ids.indexOf(MONTHLY)).toBeGreaterThan(0);
+    expect(ids.indexOf(MONTHLY)).toBeLessThan(ids.length - 1);
   });
 
   it('ids narrow counted rows too', async () => {

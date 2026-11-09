@@ -43,7 +43,7 @@ vi.mock('~/env/client', () => ({
 
 import { rateLimit } from '../middleware.trpc';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { rateLimitHeaders } from '~/server/trpc/rate-limit-headers';
+import { rateLimitHeaders, setRateLimitHeaders } from '~/server/trpc/rate-limit-headers';
 import { getActiveLimits } from '~/server/utils/active-rate-limits';
 import type { RateLimit } from '~/server/utils/rate-limit-window';
 
@@ -156,6 +156,7 @@ describe('active abuse limits', () => {
     mockHSetWithTTL.mockRejectedValueOnce(new Error('down'));
     const { error } = await run({ rules: [abuse], recorded: attempts(3) });
     expect(error).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(mockHSetWithTTL).toHaveBeenCalledTimes(1); // the marker write did fail
   });
 });
 
@@ -214,6 +215,70 @@ describe('X-RateLimit headers', () => {
       next: vi.fn(async () => ({ ok: true })),
     });
     expect(headersFor(req)).toBeUndefined();
+  });
+
+  it('report the product limit with the least left', async () => {
+    const hourly: RateLimit = { id: 'posts.hourly', kind: 'product', limit: 3, period: 3600 };
+    const { req } = await run({
+      rules: [product, hourly],
+      recorded: attempts(2),
+      path: 'post.create',
+    });
+    // 3 of 3 hourly against 3 of 5 daily: the hourly one binds.
+    expect(headersFor(req)).toEqual({
+      'X-RateLimit-Limit': '3',
+      'X-RateLimit-Remaining': '0',
+      'X-RateLimit-Reset': '3598',
+    });
+  });
+
+  it('on equal remaining, report the longer wait', async () => {
+    const hourly: RateLimit = { id: 'posts.hourly', kind: 'product', limit: 5, period: 3600 };
+    const { req } = await run({
+      rules: [hourly, product],
+      recorded: attempts(2),
+      path: 'post.create',
+    });
+    expect(headersFor(req)).toMatchObject({
+      'X-RateLimit-Remaining': '2',
+      'X-RateLimit-Reset': '86398',
+    });
+  });
+
+  it('an abuse rule beside a product rule never shapes them', async () => {
+    const { req } = await run({
+      rules: [abuse, product],
+      recorded: attempts(2),
+      path: 'post.create',
+    });
+    // The abuse rule is at 3 of 3, tighter than the product's 3 of 5, and still not reported.
+    expect(headersFor(req)).toEqual({
+      'X-RateLimit-Limit': '5',
+      'X-RateLimit-Remaining': '2',
+      'X-RateLimit-Reset': '86398',
+    });
+  });
+
+  it('a refusal by a gate (limit 0) gets none: no slot ever frees', async () => {
+    const gate: RateLimit = { id: 'posts.hourly', kind: 'product', limit: 0, period: 3600 };
+    // Attempts on record, so the daily rule beside the gate has a slot freeing to misreport.
+    const { req, error } = await run({
+      rules: [gate, product],
+      recorded: attempts(2),
+      path: 'post.create',
+    });
+    expect(error).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(headersFor(req)).toBeUndefined();
+  });
+
+  it('setRateLimitHeaders writes the same three headers on a REST response', () => {
+    const setHeader = vi.fn();
+    setRateLimitHeaders({ setHeader }, { limit: 5, remaining: 1, resetAt: NOW + 1500 }, NOW);
+    expect(Object.fromEntries(setHeader.mock.calls)).toEqual({
+      'X-RateLimit-Limit': '5',
+      'X-RateLimit-Remaining': '1',
+      'X-RateLimit-Reset': '2',
+    });
   });
 
   it('abuse limits never emit them, admitted or refused', async () => {

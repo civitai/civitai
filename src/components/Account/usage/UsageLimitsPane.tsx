@@ -42,7 +42,6 @@ export type UsageLimitsViewProps = {
   active: { area: string; retryAt: string }[];
 };
 
-/** The pane without its data calls. */
 export function UsageLimitsView({
   now,
   timeZone,

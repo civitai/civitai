@@ -22,10 +22,8 @@ import type { SessionUser } from '~/types/session';
 export const USAGE_LIMITS_SCOPES = [TokenScope.UserRead, TokenScope.MediaWrite] as const;
 
 /**
- * The bucket each area's rows read; a procedure is counted here only if it passes this as its
- * `sharedKey`. Every posts procedure does. For comments only commentv3 create/update do:
- * `comment.upsert` counts the same limits in its own bucket, which these rows do not see.
- * A product area missing here has no rows.
+ * The bucket each area's rows read: a procedure is counted here only if it passes this as its
+ * `sharedKey`. A product area missing here has no rows.
  */
 const SHARED_KEY_BY_AREA: Record<string, string> = {
   posts: POST_CREATE_RATE_LIMIT_KEY,
@@ -55,7 +53,6 @@ export type UsageLimit = {
   remaining: number | null;
   /** A rolling window's length; `null` for a calendar window. */
   windowSeconds: number | null;
-  /** `rateLimit()` windows are rolling; calendar windows (UTC day/month) reset at a boundary. */
   window: UsageLimitWindow | null;
   /** When the caller can next use it, at the limit; `null` while `remaining > 0`. */
   nextAt: string | null;
