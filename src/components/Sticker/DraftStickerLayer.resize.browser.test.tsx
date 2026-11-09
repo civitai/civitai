@@ -105,6 +105,9 @@ beforeEach(() => {
     drafts: [],
     selectedDraftId: null,
     targetImageId: null,
+    videoPlaying: false,
+    previewing: false,
+    trayOpen: false,
   });
 });
 

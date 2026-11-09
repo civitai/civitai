@@ -235,6 +235,7 @@ const choosePaid = async () => {
 
 beforeEach(() => {
   placed.length = 0;
+  useStickerPlacementDraftStore.setState({ placingAll: false, readyPlacements: {} });
 });
 
 describe('what a draft sends when it is placed', () => {
@@ -467,6 +468,54 @@ describe('what a draft sends when it is placed', () => {
       scale: draft.scale,
       rotation: draft.rotation,
     });
+  });
+});
+
+describe('what a draft offers Place all', () => {
+  const offered = () => useStickerPlacementDraftStore.getState().readyPlacements[draft.id];
+
+  test('offers exactly what its own button sends', async () => {
+    await renderDraft(null);
+    await expect.poll(() => offered()?.free).toBe(false);
+
+    await pressPaid();
+
+    expect(offered()!.input()).toEqual(placed[0]);
+  });
+
+  test('offers the free placement as free', async () => {
+    await renderDraft({ instant: true });
+    await expect.poll(() => offered()?.free).toBe(true);
+  });
+
+  test('is not offered when its movement would be refused', async () => {
+    await renderDraft(null, {
+      motion: {
+        on: true,
+        keys: [
+          { t: 0, x: 0.2, y: 0.5, s: 0.2, r: 0, o: 0.1, ease: 'smooth' },
+          { t: 1000, x: 0.6, y: 0.5, s: 0.2, r: 0, o: 0.1, ease: 'smooth' },
+        ],
+      },
+    });
+    await expect.element(page.getByRole('button', { name: 'Place' })).toBeDisabled();
+    expect(offered()).toBeUndefined();
+  });
+
+  test('is not offered when a host supplies its own commit button', async () => {
+    await renderDraft(null, { commit: <button type="button">Wear it</button> });
+    await expect.element(page.getByRole('button', { name: 'Wear it' })).toBeInTheDocument();
+    expect(offered()).toBeUndefined();
+  });
+
+  test('its own Place does nothing while Place all is placing it', async () => {
+    useStickerPlacementDraftStore.setState({ placingAll: true });
+    await renderDraft(null);
+
+    await expect.element(page.getByRole('button', { name: 'Place' })).toBeDisabled();
+    await pressPaid();
+
+    expect(placed).toHaveLength(0);
   });
 });
 
