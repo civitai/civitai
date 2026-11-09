@@ -420,7 +420,10 @@ export async function watchReviewApplyJob(args: {
   sha: string;
   jobName: string;
   baseDetail: ReturnType<typeof parseReviewDetail>;
+  /** What to do once the build stops holding a slot. Injectable for the watcher's tests. */
+  onSettled?: (publishRequestId: string, live: boolean) => void;
 }): Promise<void> {
+  const settled = args.onSettled ?? reviewBuildSettled;
   // Every write below is a WATCHER advancing write — it must only ever touch the
   // preview THIS watcher owns. The reachability wait can keep this watcher alive
   // for a few minutes, so a mod could tear down this preview and re-preview a new
@@ -448,7 +451,7 @@ export async function watchReviewApplyJob(args: {
         );
         // Live only if THIS preview was still the active one: a torn-down or superseded preview
         // (the guard matched no row) must not start an agent review.
-        reviewBuildSettled(args.publishRequestId, marked > 0);
+        settled(args.publishRequestId, marked > 0);
       } else {
         // Deploy is healthy but its host never became publicly reachable within
         // the budget (DNS propagation stall, or a genuinely-broken route). Do
@@ -467,7 +470,7 @@ export async function watchReviewApplyJob(args: {
           },
           guard
         );
-        reviewBuildSettled(args.publishRequestId, false);
+        settled(args.publishRequestId, false);
       }
     } else {
       // On a DEFINITIVE failure free the replay-dedup slot so a same-sha retry
@@ -487,7 +490,7 @@ export async function watchReviewApplyJob(args: {
         },
         guard
       );
-      reviewBuildSettled(args.publishRequestId, false);
+      settled(args.publishRequestId, false);
     }
   } catch (err) {
     // eslint-disable-next-line no-console

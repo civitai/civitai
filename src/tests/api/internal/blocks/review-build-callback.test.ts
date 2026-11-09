@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Readable } from 'node:stream';
 import type * as BuildAttemptsService from '~/server/services/blocks/build-attempts.service';
-import type * as ReviewAutodeployService from '~/server/services/blocks/review-autodeploy.service';
 
 /**
  * MOD REVIEW SANDBOX (#2831) — coverage for POST
@@ -95,15 +94,6 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerApplyReview: mockTriggerApplyReview,
   waitForApplyJob: mockWaitApply,
   waitForReviewHostReachable: mockWaitReachable,
-}));
-// What a settled build does next (drain the queue; maybe start the agent review) is pinned in
-// review-autodeploy.service.test.ts; here only WHETHER the watcher reports the build live.
-const { mockSettled } = vi.hoisted(() => ({
-  mockSettled: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
-}));
-vi.mock('~/server/services/blocks/review-autodeploy.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof ReviewAutodeployService>()),
-  onReviewBuildSettled: (...a: unknown[]) => mockSettled(...a),
 }));
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   markReviewPreviewState: mockMarkPreview,
@@ -373,31 +363,17 @@ describe('watchReviewApplyJob (reachability gate)', () => {
     [1, true],
     [0, false],
   ])('a live-mark matching %d row(s) settles the build with live=%s', async (matched, live) => {
-    // Its own request id: a watcher an earlier handler test left running settles PUBREQ, and
-    // must not be mistaken for (or take a mock answer meant for) this one.
-    const OWN = 'pubreq_0123456789ABCDEFGHJKMNPQRZ';
-    mockMarkPreview.mockImplementation((async (id: string, state: string) =>
-      id === OWN && state === 'preview-live' ? matched : 0) as never);
-    mockSettled.mockClear();
+    mockMarkPreview.mockImplementation((async (_id: string, state: string) =>
+      state === 'preview-live' ? matched : 0) as never);
+    const onSettled = vi.fn();
     await watchReviewApplyJob({
-      publishRequestId: OWN,
+      publishRequestId: PUBREQ,
       sha: SHA,
       jobName: 'review-apply-1',
       baseDetail,
+      onSettled,
     });
-    await vi.waitFor(
-      () =>
-        expect(
-          mockSettled.mock.calls.some(
-            (c) => (c[0] as { publishRequestId: string }).publishRequestId === OWN
-          )
-        ).toBe(true),
-      // The first settle in the file imports the real follow-up module (importOriginal), which
-      // takes longer than waitFor's 1s default on a CI runner.
-      { timeout: 15_000 }
-    );
-    expect(mockSettled).toHaveBeenCalledWith({ publishRequestId: OWN, live });
-    expect(mockSettled).not.toHaveBeenCalledWith({ publishRequestId: OWN, live: !live });
+    expect(onSettled.mock.calls).toEqual([[PUBREQ, live]]);
     mockMarkPreview.mockImplementation(async () => undefined);
   });
 
