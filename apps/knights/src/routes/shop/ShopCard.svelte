@@ -9,6 +9,7 @@
     cosmeticIcon,
     dealPercentOff,
     membershipPerksUrl,
+    packBonusPercent,
     packNote,
     refusalText
   } from '$lib/shop-view';
@@ -44,6 +45,9 @@
   const title = $derived(cardTitle(card));
   const note = $derived(cardBlurb(card));
   const pack = $derived(packNote(card));
+  const bonus = $derived(
+    card.kind === 'buzz_pack' ? packBonusPercent(card.buzz, card.listPrice, page.data.goldPerBuzz) : 0
+  );
 
   const cta = $derived(
     card.state === 'owned'
@@ -82,6 +86,7 @@
   <div class="body">
     {#if variant === 'pack'}
       <p class="pack-amount"><span id="card-{card.id}">{count(card.buzz ?? 0)}</span> <span class="unit">Buzz</span></p>
+      {#if bonus > 0}<p class="bonus">+{bonus}% more Buzz</p>{/if}
     {:else}
       <h3 id="card-{card.id}">{title}</h3>
     {/if}
@@ -207,6 +212,12 @@
     font: 600 0.7rem/1 var(--io-font-ui);
     letter-spacing: 0.2em;
     text-transform: uppercase;
+  }
+  .bonus {
+    margin: 0.15rem 0 0;
+    color: var(--io-gold);
+    font: 600 0.75rem/1.3 var(--io-font-ui);
+    letter-spacing: 0.04em;
   }
   .perks {
     display: inline-flex;
