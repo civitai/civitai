@@ -76,14 +76,14 @@ describe('sticker attribution card anchoring', () => {
     expectCardOnSticker();
   });
 
-  test('follows its sticker when content above grows while the pointer rests on the card', async () => {
+  test('does not stay at the old spot when content above grows while the pointer rests on the card', async () => {
     await renderWithProviders(<Thread above style={{ marginTop: 40, marginLeft: 80 }} />);
     await openCard();
     // Onto the card: the sticker's mouseout no longer closes it.
     await userEvent.hover(dropdown()!);
+    expect(dropdown()).not.toBeNull();
     document.querySelector<HTMLElement>('[data-testid="above"]')!.style.height = '160px';
-    // Moving out from under the pointer may close it, which is fine; hanging where the sticker was is not.
-    await new Promise((r) => setTimeout(r, 300));
-    if (dropdown()) expectCardOnSticker();
+    // The card moves out from under the pointer and closes; left open, it would hang 130px from the sticker.
+    await vi.waitFor(() => expect(dropdown()).toBeNull());
   });
 });
