@@ -1,3 +1,7 @@
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import { z } from 'zod';
 import {
   HOLD_UNKNOWN_REFUSAL,
@@ -621,6 +625,8 @@ export async function setMuted(input: {
       moderatorId: input.moderatorId,
       activity: 'unmute',
     });
+  if (isFeedbackCaptureOwner(input.userId))
+    return { ok: false, error: FEEDBACK_CAPTURE_OWNER_REFUSAL };
 
   const now = new Date();
   // `mutedAt` is what marks this as a moderator's decision rather than an automatic one, and strike

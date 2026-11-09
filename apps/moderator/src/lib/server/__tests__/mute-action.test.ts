@@ -60,6 +60,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('the feedback capture account', () => {
+  it('is never muted, and nothing is written or sent', async () => {
+    expect(await setMuted({ userId: -2, muted: true, moderatorId: 7 })).toEqual({
+      ok: false,
+      error: expect.stringMatching(/feedback page captures/),
+    });
+    expect(captured).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('a moderator-app mute reaches the orchestrator and the cached standing', () => {
   it("drops the cached standing, ends the sessions, then revokes the account's orchestrator tokens", async () => {
     expect(await setMuted({ userId: 42, muted: true, moderatorId: 7 })).toEqual({ ok: true });

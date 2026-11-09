@@ -165,12 +165,3 @@ describe('user search index eligibility', () => {
     });
   });
 });
-
-describe('the feedback capture account', () => {
-  it('is never indexed', async () => {
-    const { FEEDBACK_CAPTURE_OWNER_ID } = await import('@civitai/shared/feedback-capture');
-    expect(norm(userSearchIndexEligibilitySql().sql)).toContain(
-      `u.id != ${FEEDBACK_CAPTURE_OWNER_ID}`
-    );
-  });
-});

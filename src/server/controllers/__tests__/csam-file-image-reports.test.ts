@@ -165,6 +165,16 @@ describe('fileCsamReport with attached text', () => {
     expect(createCsamReport).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['the subject', { userId: -2 }],
+    ['the secondary user', { userId: OWNER, details: { secondaryUserId: -2 } }],
+  ])('refuses the feedback capture account as %s, filing nothing', async (_label, named) => {
+    await expect(
+      fileCsamReport({ imageIds: [], type: 'Image', reportedById: MOD, ...named } as never)
+    ).rejects.toThrow(/feedback page captures/);
+    expect(createCsamReport).not.toHaveBeenCalled();
+  });
+
   it('files a supplemental report with the copied text', async () => {
     const copied = [{ source: 'comment', id: 11, text: 'copied' }];
     snapshotCsamContextText.mockResolvedValueOnce(copied);

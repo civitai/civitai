@@ -1,5 +1,9 @@
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 import type { ProtectedContext } from '~/server/createContext';
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -42,6 +46,11 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   let denyFailed = false;
   let denyBookkeepingFailed = false;
   let strikesReviewFailed = false;
+  if (
+    isFeedbackCaptureOwner(userId) ||
+    isFeedbackCaptureOwner((details as { secondaryUserId?: unknown } | undefined)?.secondaryUserId)
+  )
+    throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   if (contextSources && type !== 'Image')
     throwBadRequestError('Text can be attached to an image report only');
   const contextText = contextSources

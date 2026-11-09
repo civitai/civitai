@@ -1,4 +1,8 @@
 import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
+import {
   heldEntryOnBountySql,
   keepHeldReviewsCte,
   reviewsOnModelsSql,
@@ -506,6 +510,8 @@ export async function setUserMuted(
     if (!result.released) throw new Error(`No user with id ${args.userId}`);
     return { ...result.user, sessionInvalidated: true };
   }
+  if (isFeedbackCaptureOwner(args.userId))
+    throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
 
   // A repeated mute (the REST route's retry) keeps the moderator's original `mutedAt`.
   const current = await dbWrite.user.findUnique({
@@ -1746,6 +1752,7 @@ export const removeAllContent = async ({
   /** The webhook caller's unverified say-so; named on alerts only, never written as an actor. */
   claimedModeratorId?: number | null;
 }) => {
+  if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   const alertedBy = { userId: id, actorUserId: actorUserId ?? claimedModeratorId };
   // Here rather than in each caller (tRPC, the webhook, the moderator app's purge), so every one is
   // held to it. The deletes that destroy evidence check again in their own statements.
@@ -2778,6 +2785,7 @@ export const toggleBan = async ({
   /** Server-only, with `onlyBan`: a `user` ModActivity written in the same transaction as the ban. */
   banActivity?: string;
 }) => {
+  if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   // Get user with username for search index deletion
   const select = { bannedAt: true, meta: true, username: true, email: true } as const;
   const user = onlyBan

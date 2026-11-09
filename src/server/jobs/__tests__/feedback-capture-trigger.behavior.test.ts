@@ -3,12 +3,16 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
-import { captureImageHeldSql } from '~/server/services/legal-hold.service';
+import {
+  captureImageHeldSql,
+  captureImageStateHeldSql,
+} from '~/server/services/legal-hold.service';
 
 /**
  * The image delete trigger as it is applied (20261019220000_evidence_hold and
- * 20261204120000_evidence_hold_image_prior_state), plus 20261231120100_feedback_capture_owner_hold:
- * a feedback page capture its own state keeps is kept, and nothing else about the trigger changes.
+ * 20261204120000_evidence_hold_image_prior_state), plus the feedback capture migrations: a capture
+ * its own state keeps is kept, the record of a kept capture lasts as long as that state, the capture
+ * account is never a report subject or hold owner, and nothing else about the functions changes.
  * Each case runs in a transaction that is rolled back.
  */
 
@@ -21,6 +25,9 @@ const MIGRATIONS = path.resolve(
 const migration = (name: string) => readFileSync(`${MIGRATIONS}/${name}/migration.sql`, 'utf8');
 const CAPTURE_MIGRATION = migration('20261231120100_feedback_capture_owner_hold');
 const LIVE_KEEP_IMAGE = migration('20261204120000_evidence_hold_image_prior_state');
+const LIVE_EVIDENCE_HOLD = migration('20261019220000_evidence_hold');
+const NEVER_SUBJECT_MIGRATION = migration('20261231130000_feedback_capture_never_subject');
+const LIFETIME_MIGRATION = migration('20261231130100_feedback_capture_hold_lifetime');
 
 const CAPTURE = FEEDBACK_CAPTURE_OWNER_ID;
 const OTHER = 7;
@@ -80,9 +87,11 @@ let db: PGlite;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(BASE_SCHEMA);
-  await db.exec(migration('20261019220000_evidence_hold'));
+  await db.exec(LIVE_EVIDENCE_HOLD);
   await db.exec(LIVE_KEEP_IMAGE);
   await db.exec(CAPTURE_MIGRATION);
+  await db.exec(NEVER_SUBJECT_MIGRATION);
+  await db.exec(LIFETIME_MIGRATION);
   await db.exec(`
     INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED}, 'manual', 'test');
     INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor", minor) VALUES
@@ -170,5 +179,124 @@ describe('20261231120100_feedback_capture_owner_hold', () => {
       ''
     );
     expect(ours).toBe(body(LIVE_KEEP_IMAGE));
+  });
+});
+
+describe('the record of a kept capture', () => {
+  const recorded = async (id: number) =>
+    (await db.query(`SELECT 1 FROM "EvidenceHoldImage" WHERE "imageId" = $1`, [id])).rows.length ===
+    1;
+  const sweep = () => db.exec('SELECT evidence_hold_purge_unheld()');
+
+  it('outlives the sweep while the capture’s own state keeps it', async () => {
+    await db.exec(`DELETE FROM "Image" WHERE id = 3`);
+    await sweep();
+    expect(await recorded(3)).toBe(true);
+  });
+
+  it('cannot be deleted directly while that state keeps it', async () => {
+    await db.exec(`DELETE FROM "Image" WHERE id = 3`);
+    await expect(db.exec(`DELETE FROM "EvidenceHoldImage" WHERE "imageId" = 3`)).rejects.toThrow(
+      /while its image is held/
+    );
+  });
+
+  it('goes at the next sweep once that state clears, and the capture can then be deleted', async () => {
+    await db.exec(`DELETE FROM "Image" WHERE id = 3`);
+    await db.exec(`UPDATE "Image" SET minor = false WHERE id = 3`);
+    await sweep();
+    expect(await recorded(3)).toBe(false);
+    await db.exec(`DELETE FROM "Image" WHERE id = 3`);
+    expect(await present(3)).toBe(false);
+  });
+
+  it('goes at the sweep when the capture has no state of its own', async () => {
+    await sweep();
+    expect(await recorded(5)).toBe(false);
+  });
+
+  it('still goes at the sweep for an unheld owner that is not the capture account', async () => {
+    await db.exec(`INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (10, ${OTHER})`);
+    await sweep();
+    expect(await recorded(10)).toBe(false);
+  });
+
+  it('holds exactly what captureImageStateHeldSql holds', async () => {
+    const app = captureImageStateHeldSql('i');
+    expect(app.values).toEqual([]);
+    const { rows } = await db.query<{ id: number; fn: boolean; app: boolean }>(
+      `SELECT i.id, evidence_hold_capture_state_held(i.id, i."needsReview", i."blockedFor", i.minor) AS fn,
+         ${app.text} AS app
+       FROM "Image" i WHERE i."userId" = $1 ORDER BY i.id`,
+      [CAPTURE]
+    );
+    expect(rows.filter((r) => r.fn !== r.app)).toEqual([]);
+    expect(rows.filter((r) => r.fn).map((r) => r.id)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe('the capture account as a subject', () => {
+  it.each([
+    ['a report subject', `INSERT INTO "CsamReport" ("userId") VALUES (${CAPTURE})`],
+    [
+      'a report’s secondary user',
+      `INSERT INTO "CsamReport" ("userId", details) VALUES (${OTHER}, '{"secondaryUserId": ${CAPTURE}}')`,
+    ],
+    [
+      'a report’s secondary user, as text',
+      `INSERT INTO "CsamReport" ("userId", details) VALUES (${OTHER}, '{"secondaryUserId": "${CAPTURE}"}')`,
+    ],
+    [
+      'an evidence hold owner',
+      `INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${CAPTURE}, 'manual', 'test')`,
+    ],
+  ])('is refused as %s', async (_label, sql) => {
+    await expect(db.exec(sql)).rejects.toThrow(/not_capture_owner_check/);
+  });
+
+  it('leaves every other subject alone', async () => {
+    await db.exec(`
+      INSERT INTO "CsamReport" ("userId", details) VALUES (NULL, '{}'), (${OTHER}, '{"secondaryUserId": ${MARKED}}');
+      INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${OTHER}, 'manual', 'test');
+    `);
+  });
+
+  it('is not applied over rows that already name it', async () => {
+    const fresh = new PGlite();
+    try {
+      await fresh.exec(BASE_SCHEMA);
+      await fresh.exec(LIVE_EVIDENCE_HOLD);
+      await fresh.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CAPTURE})`);
+      await expect(fresh.exec(NEVER_SUBJECT_MIGRATION)).rejects.toThrow(/already name user -2/);
+    } finally {
+      await fresh.close();
+    }
+  });
+});
+
+describe('20261231130100_feedback_capture_hold_lifetime', () => {
+  const fn = (sql: string, name: string, end: string) => {
+    const start = sql.indexOf(`CREATE OR REPLACE FUNCTION ${name}(`);
+    return sql.slice(start, sql.indexOf(end, start));
+  };
+
+  it('changes the applied sweep only by the capture clause', () => {
+    const ours = fn(LIFETIME_MIGRATION, 'evidence_hold_purge_unheld', '$$ LANGUAGE sql').replace(
+      /\n\s*AND NOT \(i\."userId" = -2 AND EXISTS \([\s\S]*?\n\s*\)\);/,
+      ';'
+    );
+    expect(ours).toBe(fn(LIVE_EVIDENCE_HOLD, 'evidence_hold_purge_unheld', '$$ LANGUAGE sql'));
+  });
+
+  it('changes the applied record guard only by the capture clause', () => {
+    const ours = fn(LIFETIME_MIGRATION, 'evidence_hold_guard_kept', '$$ LANGUAGE plpgsql').replace(
+      /\n {2}IF TG_TABLE_NAME = 'EvidenceHoldImage' AND OLD\."userId" = -2 THEN[\s\S]*?\n {2}END IF;/,
+      ''
+    );
+    expect(ours).toBe(fn(LIVE_EVIDENCE_HOLD, 'evidence_hold_guard_kept', '$$ LANGUAGE plpgsql'));
+  });
+
+  it('names nothing from the unapplied owner-held migration', () => {
+    expect(LIFETIME_MIGRATION).not.toMatch(/owner_held/);
   });
 });

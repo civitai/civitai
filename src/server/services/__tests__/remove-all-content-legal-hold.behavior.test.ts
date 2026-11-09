@@ -541,17 +541,15 @@ describe('removeAllContent', () => {
     );
   });
 
-  it('wipes the feedback capture account, keeping each capture its own state keeps', async () => {
+  // Its content is every reporter's page captures; each one is acted on as an image instead.
+  it('refuses the feedback capture account, deleting nothing', async () => {
     const CAPTURE = FEEDBACK_CAPTURE_OWNER_ID;
-    await holder.db.exec(`
-      INSERT INTO "Image" (id, "userId", "needsReview", minor) VALUES
-        (9701, ${CAPTURE}, 'csam', false), (9702, ${CAPTURE}, NULL, true), (9703, ${CAPTURE}, NULL, false);
-    `);
-    await removeAllContent({ id: CAPTURE });
+    await holder.db.exec(`INSERT INTO "Image" (id, "userId") VALUES (9703, ${CAPTURE})`);
+    await expect(removeAllContent({ id: CAPTURE })).rejects.toThrow(/feedback page captures/);
     const left = await holder.db.query<{ id: number }>(
       `SELECT id FROM "Image" WHERE "userId" = ${CAPTURE} ORDER BY id`
     );
-    expect(left.rows.map((r) => r.id)).toEqual([9701, 9702]);
+    expect(left.rows.map((r) => r.id)).toEqual([9703]);
   });
 
   describe('comments that exist only in CommentV3', () => {
