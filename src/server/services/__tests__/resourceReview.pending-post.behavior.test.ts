@@ -51,6 +51,8 @@ const {
   releasePendingReviewsForPosts,
   releaseUnreleasedReviewsOfLivePosts,
   syncReviewsOfMovedPosts,
+  unreleasedReviewIdsOfPosts,
+  announceReviews,
   visibleReviewForViewerSql,
 } = await import('~/server/services/resourceReview.visibility');
 
@@ -434,6 +436,48 @@ describe('against Postgres', () => {
       `SELECT "releasedAt" FROM "ResourceReview" WHERE id = 1`
     );
     expect(rows).toEqual([{ releasedAt: null }]);
+  });
+
+  describe('deleting the post a review was written from', () => {
+    // What the foreign key does on delete: the review stays, standalone and public.
+    const deletePostRow = (postId: number) =>
+      pg.exec(`
+        UPDATE "ResourceReview" SET "postId" = NULL WHERE "postId" = ${postId};
+        DELETE FROM "Post" WHERE id = ${postId};
+      `);
+
+    it('announces a review that was still pending, as a standalone review', async () => {
+      await insertReviews([[1, 101, DRAFT]]);
+
+      const ids = await unreleasedReviewIdsOfPosts([DRAFT]);
+      await deletePostRow(DRAFT);
+      const announced = await announceReviews(ids);
+
+      expect(announced).toEqual([expect.objectContaining({ id: 1, modelOwnerId: MODEL_OWNER })]);
+      expect(createNotification).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ key: 'new-review:21:101' }),
+        { throwOnError: true }
+      );
+      expect(bustRatingTotalsForRows).toHaveBeenCalledTimes(1);
+      const { rows } = await pg.query<{ released: boolean; touched: boolean }>(
+        `SELECT "releasedAt" IS NOT NULL AS released, "updatedAt" > now() - interval '1 minute' AS touched
+         FROM "ResourceReview" WHERE id = 1`
+      );
+      expect(rows).toEqual([{ released: true, touched: true }]);
+    });
+
+    it('does not announce again a review its live post already released', async () => {
+      await insertReviews([[1, 101, LIVE]]);
+      await releasePendingReviewsForPosts([LIVE]);
+      createNotification.mockClear();
+
+      const ids = await unreleasedReviewIdsOfPosts([LIVE]);
+      await deletePostRow(LIVE);
+
+      expect(ids).toEqual([]);
+      expect(await announceReviews(ids)).toEqual([]);
+      expect(createNotification).not.toHaveBeenCalled();
+    });
   });
 
   it('announces a review again when its post is unpublished and published again', async () => {

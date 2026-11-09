@@ -131,12 +131,20 @@ type ReleasedReview = {
   modelOwnerId: number;
 };
 
+// A post unpublished since its reviews were selected keeps them unmarked: its next go-live announces them.
+const stillLive = Prisma.sql`AND EXISTS (
+  SELECT 1 FROM "Post" p WHERE p.id = "ResourceReview"."postId" AND p."publishedAt" <= now()
+)`;
+
 /**
  * Notifies first and marks after, so a crash in between repeats a notification (a no-op on its key)
  * rather than losing one. A review whose notification throws stays unmarked for the next sweep.
  * Returns the reviews it marked.
  */
-async function announceAndMark(candidates: ReleasedReview[]) {
+async function announceAndMark(
+  candidates: ReleasedReview[],
+  { requireLivePost = true }: { requireLivePost?: boolean } = {}
+) {
   if (!candidates.length) return candidates;
   await bustRatingTotalsForRows(candidates).catch(() => undefined);
   const notified: ReleasedReview[] = [];
@@ -154,10 +162,7 @@ async function announceAndMark(candidates: ReleasedReview[]) {
     SET "releasedAt" = now(), "updatedAt" = now()
     WHERE id IN (${Prisma.join(notified.map((review) => review.id))})
       AND "releasedAt" IS NULL
-      -- Unpublished since it was selected: the next go-live announces it.
-      AND EXISTS (
-        SELECT 1 FROM "Post" p WHERE p.id = "ResourceReview"."postId" AND p."publishedAt" <= now()
-      )
+      ${requireLivePost ? stillLive : Prisma.empty}
     RETURNING id
   `;
   const markedIds = new Set(marked.map((row) => row.id));
@@ -207,6 +212,37 @@ export async function releaseUnreleasedReviewsOfLivePosts({ limit = 1000 } = {})
 }
 
 /**
+ * The unannounced reviews written from these posts. Read before the posts are deleted: the delete
+ * nulls their `postId`, after which nothing links them to a post.
+ */
+export async function unreleasedReviewIdsOfPosts(
+  postIds: number[],
+  client: Pick<typeof dbWrite, '$queryRaw'> = dbWrite
+) {
+  if (!postIds.length) return [];
+  const rows = await client.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "ResourceReview"
+    WHERE "postId" IN (${Prisma.join(postIds)}) AND "releasedAt" IS NULL
+  `;
+  return rows.map((row) => row.id);
+}
+
+/**
+ * Announces these reviews as standalone ones, whatever became of their post: for the reviews of a
+ * deleted post, which the delete left public with no notification or recount.
+ */
+export async function announceReviews(reviewIds: number[]) {
+  if (!reviewIds.length) return [];
+  const candidates = await dbWrite.$queryRaw<ReleasedReview[]>`
+    SELECT ${releasedReviewColumns}
+    FROM "ResourceReview" rr
+    JOIN "Model" m ON m.id = rr."modelId"
+    WHERE rr.id IN (${Prisma.join(reviewIds)}) AND rr."releasedAt" IS NULL
+  `;
+  return announceAndMark(candidates, { requireLivePost: false });
+}
+
+/**
  * The reviews written from these posts count as pending again once the posts are taken down:
  * unmarked, so the next go-live announces them again, touched so the metric jobs recount them, the
  * rating totals busted. Nobody is notified.
@@ -243,18 +279,47 @@ export function syncReviewsOfMovedPosts({
   onReviews: (reviews: { modelOwnerId: number }[]) => Promise<void>;
 }) {
   if (!postIds.length) return;
-  const sync =
+  inBackground(
+    `Failed to sync the resource reviews of ${change}ed posts`,
+    { postIds },
     change === 'publish'
       ? releasePendingReviewsForPosts(postIds)
-      : refreshReviewsForUnpublishedPosts(postIds);
+      : refreshReviewsForUnpublishedPosts(postIds),
+    onReviews
+  );
+}
+
+/** `announceReviews` in the same fire-and-forget form, for a delete that has committed. */
+export function announceReviewsInBackground({
+  reviewIds,
+  onReviews,
+}: {
+  reviewIds: number[];
+  onReviews: (reviews: { modelOwnerId: number }[]) => Promise<void>;
+}) {
+  if (!reviewIds.length) return;
+  inBackground(
+    'Failed to announce the reviews of a deleted post',
+    { reviewIds },
+    announceReviews(reviewIds),
+    onReviews
+  );
+}
+
+function inBackground(
+  message: string,
+  ids: Record<string, number[]>,
+  sync: Promise<{ modelOwnerId: number }[]>,
+  onReviews: (reviews: { modelOwnerId: number }[]) => Promise<void>
+) {
   void sync
     .then((reviews) => onReviews(reviews))
     .catch((error) =>
       logToAxiom({
         name: 'resource-review',
         type: 'error',
-        message: `Failed to sync the resource reviews of ${change}ed posts`,
-        postIds,
+        message,
+        ...ids,
         error: (error as Error)?.message,
       }).catch(() => undefined)
     );

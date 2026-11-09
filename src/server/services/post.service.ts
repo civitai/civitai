@@ -24,7 +24,11 @@ import {
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
+import {
+  announceReviewsInBackground,
+  syncReviewsOfMovedPosts,
+  unreleasedReviewIdsOfPosts,
+} from '~/server/services/resourceReview.visibility';
 import {
   imageMetaCache,
   imageResourcesCache,
@@ -1300,7 +1304,7 @@ export const deletePost = async ({
     select: { storylineId: true },
   });
 
-  const { post, deletedImages, orphanedImageIds, imageOwnerIds, reported } =
+  const { post, deletedImages, orphanedImageIds, imageOwnerIds, reported, unreleasedReviewIds } =
     await dbWrite.$transaction(
       async (tx) => {
         // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
@@ -1344,6 +1348,9 @@ export const deletePost = async ({
         `;
         }
 
+        // Before the delete, which nulls their `postId` and leaves them public.
+        const unreleasedReviewIds = await unreleasedReviewIdsOfPosts([id], tx);
+
         const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
         DELETE FROM "Post"
         WHERE id = ${id}
@@ -1358,7 +1365,14 @@ export const deletePost = async ({
 
         const imageOwnerIds = uniq(images.map((image) => image.userId));
 
-        return { post, deletedImages, orphanedImageIds, imageOwnerIds, reported };
+        return {
+          post,
+          deletedImages,
+          orphanedImageIds,
+          imageOwnerIds,
+          reported,
+          unreleasedReviewIds,
+        };
       },
       // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
       // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
@@ -1387,6 +1401,10 @@ export const deletePost = async ({
   // remaining record of which documents went stale.
   await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'post-delete' });
   if (sparked) void onStorySparkLost(sparked.storylineId);
+  announceReviewsInBackground({
+    reviewIds: unreleasedReviewIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 
   const deletedImageIds = deletedImages.map((img) => img.id);
 
