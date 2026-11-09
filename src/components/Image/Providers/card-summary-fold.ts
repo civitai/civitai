@@ -72,9 +72,7 @@ export function useFoldedCardBatches(
   if (!active) return undefined;
 
   const [current, other] =
-    mode === 'placements'
-      ? [placementsQueries, countsQueries]
-      : [countsQueries, placementsQueries];
+    mode === 'placements' ? [placementsQueries, countsQueries] : [countsQueries, placementsQueries];
 
   return {
     combined: chunks.map((_, index) =>
