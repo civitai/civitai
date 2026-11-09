@@ -286,7 +286,7 @@ describe('the page capture', () => {
 
 describe('captureAttachGate', () => {
   const capture = { screenshotImageId: 5 };
-  const sleep = vi.fn(async () => undefined);
+  const sleep = vi.fn(async (_ms: number) => undefined);
   const gate = (rows: unknown[], c: Parameters<typeof captureAttachGate>[0] = capture) => {
     const read = vi.fn();
     for (const row of rows)
