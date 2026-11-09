@@ -12,8 +12,15 @@ type Executor = Kysely<DB> | Transaction<DB>;
  */
 export function calculateFervor({ correct, graded }: Ledger): number {
   if (graded <= 0) return 0;
-  const accuracy = Math.max(PROGRESSION.fervorAccuracyFloor, correct / graded);
-  return Math.floor(correct * PROGRESSION.fervorScale * accuracy * accuracy);
+  if (correct / graded < PROGRESSION.fervorAccuracyFloor) {
+    const floor = PROGRESSION.fervorAccuracyFloor;
+    // Rounded before flooring so a product a hair under a whole number is not cut a point short.
+    return Math.floor(Math.round(correct * PROGRESSION.fervorScale * floor * floor * 1e6) / 1e6);
+  }
+  // correct × scale × (correct / graded)², done as one integer division: the float product of the squared ratio can
+  // land just under the exact value and floor to one less. BigInt keeps it exact at any volume.
+  const c = BigInt(correct);
+  return Number((c * c * c * BigInt(PROGRESSION.fervorScale)) / BigInt(graded * graded));
 }
 
 const DAY_MS = 86_400_000;
