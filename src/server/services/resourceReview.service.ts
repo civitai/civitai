@@ -71,7 +71,8 @@ export const getResourceReview = async ({
   isModerator,
 }: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
   const result = await dbRead.resourceReview.findFirst({
-    where: { id, ...visibleReviewWhere(userId) },
+    // A moderator opens a pending review from a report or a notification.
+    where: { id, ...(isModerator ? {} : visibleReviewWhere(userId)) },
     select: {
       ...resourceReviewSelect,
       model: { select: { name: true, id: true, userId: true, status: true } },

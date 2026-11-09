@@ -43,9 +43,8 @@ vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
   onModelReviewsChanged: async () => undefined,
 }));
 
-const { createResourceReview, getUserRatingTotals, upsertResourceReview } = await import(
-  '~/server/services/resourceReview.service'
-);
+const { createResourceReview, getResourceReview, getUserRatingTotals, upsertResourceReview } =
+  await import('~/server/services/resourceReview.service');
 const { releasePendingReviewsForPosts, visibleReviewForViewerSql } = await import(
   '~/server/services/resourceReview.visibility'
 );
@@ -154,6 +153,36 @@ describe('creating a review from a post', () => {
       data: Record<string, unknown>;
     };
     expect(data).not.toHaveProperty('postId');
+  });
+});
+
+describe('opening a pending review by id', () => {
+  // Stands in for Postgres: a pending review matches only a query without the visibility filter.
+  beforeEach(() => {
+    dbMock.dbRead.resourceReview.findFirst.mockImplementation((async ({
+      where,
+    }: {
+      where: Record<string, unknown>;
+    }) =>
+      'OR' in where
+        ? null
+        : {
+            id: 1,
+            user: { id: AUTHOR },
+            model: { name: 'Model', id: 10, userId: MODEL_OWNER, status: 'Published' },
+          }) as never);
+  });
+
+  it('opens it for a moderator', async () => {
+    const result = await getResourceReview({ id: 1, userId: 3, isModerator: true });
+
+    expect(result.id).toBe(1);
+  });
+
+  it('is not found for anyone else', async () => {
+    await expect(getResourceReview({ id: 1, userId: 999 })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
   });
 });
 
