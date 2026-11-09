@@ -7,15 +7,16 @@
 -- src/server/jobs/__tests__/feedback-capture-trigger.behavior.test.ts keeps them so.
 --
 -- Apply AFTER 20261231120100_feedback_capture_owner_hold. Hand-applied, as one transaction
--- (BEGIN; ... COMMIT; or psql --single-transaction) so the refusal below stops the whole file. Dry
--- run: the whole file inside BEGIN; ... ROLLBACK;.
+-- (psql -v ON_ERROR_STOP=1 --single-transaction -f migration.sql) so the refusal below stops the
+-- whole file: run statement by statement, the functions below would still be replaced. Dry run: the
+-- whole file inside BEGIN; ... ROLLBACK;.
 --
 -- Must not be applied after 20261227150000_evidence_hold_owner_held; 20261227150000 supersedes it.
 -- Applied after it, this file would put back the marker-only owner check in both functions below.
 -- The block below refuses in that case: carry this file's capture clauses into 20261227150000 instead.
 DO $$
 BEGIN
-  IF to_regproc('evidence_hold_owner_held') IS NOT NULL THEN
+  IF to_regprocedure('evidence_hold_owner_held(integer)') IS NOT NULL THEN
     RAISE EXCEPTION '20261231130100_feedback_capture_hold_lifetime must not be applied after 20261227150000_evidence_hold_owner_held, which supersedes it: carry its capture clauses into 20261227150000 instead';
   END IF;
 END $$;

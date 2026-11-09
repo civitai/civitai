@@ -313,6 +313,7 @@ describe('20261231130100_feedback_capture_hold_lifetime', () => {
     expect(ours).toBe(fn(LIVE_EVIDENCE_HOLD, 'evidence_hold_purge_unheld', '$$ LANGUAGE sql'));
   });
 
+  // PGlite runs the file as one implicit transaction, so this covers the single-transaction apply only.
   it('refuses to apply over 20261227150000, leaving its functions in place', async () => {
     const fresh = new PGlite();
     const defs = async () =>
