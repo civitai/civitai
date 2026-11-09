@@ -1185,6 +1185,16 @@ describe('content-hash download url (download-hash-urls flag)', () => {
     expect(new URL(body.downloadUrls[1]).pathname).not.toContain('/api/');
   });
 
+  it('flag on: a placeholder all-zero sha256 keeps the id url alone', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+
+    const { body } = await run([{ ...SAFETENSOR, hashes: { SHA256: '0'.repeat(64) } }], {
+      modelFileId: '101',
+    });
+
+    expect(body.downloadUrls).toHaveLength(1);
+  });
+
   it('flag on: a file with no sha256 keeps the id url alone', async () => {
     mockIsFlipt.mockResolvedValue(true);
 

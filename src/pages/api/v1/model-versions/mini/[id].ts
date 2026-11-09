@@ -388,6 +388,8 @@ export default MixedAuthEndpoint(async function handler(
   if (
     !trainingResults &&
     sha256 &&
+    // A scan that never ran writes 64 zeros, which every such file would share.
+    !/^0+$/.test(sha256) &&
     (await isFlipt(FLIPT_FEATURE_FLAGS.DOWNLOAD_HASH_URLS, String(targetFile.id)))
   )
     downloadUrls.unshift(`${baseUrl}/api/download/sha256/${sha256.toLowerCase()}`);
