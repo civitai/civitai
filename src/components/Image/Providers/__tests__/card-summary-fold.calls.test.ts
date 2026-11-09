@@ -79,8 +79,41 @@ type Request = { path: string; input: Input };
 const requests: Request[] = [];
 let hold: ((request: Request) => Promise<void> | undefined) | undefined;
 
+/**
+ * Failures to inject: `halves` fails that half INSIDE a folded answer (the server's `errors`
+ * field, the other half still answered), `paths` fails a whole procedure call with a 500.
+ */
+const failing = {
+  halves: new Set<'stickers' | 'remix'>(),
+  paths: new Set<string>(),
+};
+const HALF_ERROR = {
+  code: 'INTERNAL_SERVER_ERROR',
+  message: 'Something went wrong (ref: 0a1b2c3d4e5f)',
+};
+
 const answer = (path: string, input: Input) => {
   const ids = input.imageIds ?? [];
+  if (path === 'placement.getImageCardSummaries') {
+    const stickersFailed = !!input.stickers && failing.halves.has('stickers');
+    const remixFailed = !!input.remix && failing.halves.has('remix');
+    return {
+      stickers:
+        stickersFailed || !input.stickers
+          ? undefined
+          : input.stickers === 'placements'
+          ? bundle(ids)
+          : { counts: counts(ids) },
+      remix: remixFailed || !input.remix ? undefined : remix(ids),
+      errors:
+        stickersFailed || remixFailed
+          ? {
+              ...(stickersFailed ? { stickers: HALF_ERROR } : {}),
+              ...(remixFailed ? { remix: HALF_ERROR } : {}),
+            }
+          : undefined,
+    };
+  }
   switch (path) {
     case 'placement.getStickerPlacementCounts':
       return counts(ids);
@@ -88,16 +121,6 @@ const answer = (path: string, input: Input) => {
       return bundle(ids);
     case 'placement.getRemixGalleryCardSummaries':
       return remix(ids);
-    case 'placement.getImageCardSummaries':
-      return {
-        stickers:
-          input.stickers === 'placements'
-            ? bundle(ids)
-            : input.stickers === 'counts'
-            ? { counts: counts(ids) }
-            : undefined,
-        remix: input.remix ? remix(ids) : undefined,
-      };
     default:
       return [];
   }
@@ -118,6 +141,19 @@ function stubFetch() {
       const request = { path, input };
       if (path.startsWith('placement.')) requests.push(request);
       await hold?.(request);
+      if (failing.paths.has(path))
+        return new Response(
+          JSON.stringify({
+            error: {
+              json: {
+                message: 'Something went wrong',
+                code: -32603,
+                data: { code: 'INTERNAL_SERVER_ERROR', httpStatus: 500, path },
+              },
+            },
+          }),
+          { status: 500, headers: { 'content-type': 'application/json' } }
+        );
       return new Response(JSON.stringify({ result: { data: { json: answer(path, input) } } }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -163,18 +199,21 @@ function Surface() {
 
 let root: Root | undefined;
 
-async function settle() {
+async function settle(ms = 150) {
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, ms));
   });
 }
 
 async function renderSurface({
   fold,
   overrides = {},
+  wait,
 }: {
   fold: boolean;
   overrides?: Record<string, boolean>;
+  /** How long to let it settle: past a failed query's retry delay where one is expected. */
+  wait?: number;
 }) {
   act(() => root?.unmount());
   queryClient.clear();
@@ -194,7 +233,7 @@ async function renderSurface({
   await act(async () => {
     root?.render(createElement(Wrapped, { pageProps: {} }));
   });
-  await settle();
+  await settle(wait);
 }
 
 const byPath = () =>
@@ -207,6 +246,8 @@ const snapshot = () => new Map(seen);
 
 beforeEach(() => {
   hold = undefined;
+  failing.halves.clear();
+  failing.paths.clear();
   session.user = null;
   useStickerRevealStore.setState({ revealed: false, forced: 0, forcedDismissed: false });
   stubFetch();
@@ -358,6 +399,144 @@ describe('removing a placement with the flag on', () => {
       remixCount: remixCountOf(1121),
     });
     expect(seen.get(1010)?.placementIds).toEqual([placementOf(1010).id]);
+    expect(
+      requests
+        .slice(callsBefore)
+        .filter((request) => request.path !== 'placement.getStickerPlacementDetail')
+    ).toEqual([]);
+  });
+});
+
+describe('one half of a folded answer failing, flag on', () => {
+  /** Past the standalone query's own retry delay, so its final state is what is compared. */
+  const RETRIED = 2_500;
+  const callsTo = (path: string) => requests.filter((request) => request.path === path).length;
+
+  it('remix half failed: sticker counts and placements still render, remix falls back to its own call', async () => {
+    session.user = { id: 7 };
+    await renderSurface({ fold: false });
+    const unfolded = snapshot();
+
+    failing.halves.add('remix');
+    await renderSurface({ fold: true });
+
+    expect(seen.get(1042)).toEqual({
+      count: countOf(1042),
+      placementIds: [placementOf(1042).id],
+      remixCount: remixCountOf(1042),
+    });
+    expect(snapshot()).toEqual(unfolded);
+    expect(byPath()).toEqual({
+      'placement.getImageCardSummaries': 2,
+      'placement.getRemixGalleryCardSummaries': 2,
+    });
+  });
+
+  it('remix half failed and its own call fails too: stickers render, remix shows what its own failed query shows', async () => {
+    session.user = { id: 7 };
+    failing.paths.add('placement.getRemixGalleryCardSummaries');
+    await renderSurface({ fold: false, wait: RETRIED });
+    const unfolded = snapshot();
+    const unfoldedRemixCalls = callsTo('placement.getRemixGalleryCardSummaries');
+    expect(unfolded.get(1042)?.remixCount).toBeUndefined();
+    expect(unfoldedRemixCalls).toBeGreaterThanOrEqual(2);
+
+    failing.halves.add('remix');
+    await renderSurface({ fold: true, wait: RETRIED });
+
+    expect(seen.get(1120)).toEqual({
+      count: countOf(1120),
+      placementIds: [placementOf(1120).id],
+      remixCount: undefined,
+    });
+    expect(snapshot()).toEqual(unfolded);
+    // Retried exactly as the standalone query retries on its own.
+    expect(callsTo('placement.getRemixGalleryCardSummaries')).toBe(unfoldedRemixCalls);
+    expect(callsTo('placement.getImageCardSummaries')).toBe(2);
+  });
+
+  it('sticker half failed: remix frames still render, stickers fall back to their own call', async () => {
+    session.user = { id: 7 };
+    await renderSurface({ fold: false });
+    const unfolded = snapshot();
+
+    failing.halves.add('stickers');
+    await renderSurface({ fold: true });
+
+    expect(seen.get(1100)).toEqual({
+      count: countOf(1100),
+      placementIds: [placementOf(1100).id],
+      remixCount: remixCountOf(1100),
+    });
+    expect(snapshot()).toEqual(unfolded);
+    expect(byPath()).toEqual({
+      'placement.getImageCardSummaries': 2,
+      'placement.getStickerPlacementsAndCounts': 2,
+    });
+  });
+
+  it('sticker half failed and its own call fails too: remix renders, stickers show what their own failed query shows', async () => {
+    session.user = { id: 7 };
+    failing.paths.add('placement.getStickerPlacementsAndCounts');
+    await renderSurface({ fold: false, wait: RETRIED });
+    const unfolded = snapshot();
+    const unfoldedStickerCalls = callsTo('placement.getStickerPlacementsAndCounts');
+    expect(unfolded.get(1042)?.placementIds).toEqual([]);
+    expect(unfoldedStickerCalls).toBeGreaterThanOrEqual(2);
+
+    failing.halves.add('stickers');
+    await renderSurface({ fold: true, wait: RETRIED });
+
+    expect(seen.get(1042)?.remixCount).toBe(remixCountOf(1042));
+    expect(snapshot()).toEqual(unfolded);
+    expect(callsTo('placement.getStickerPlacementsAndCounts')).toBe(unfoldedStickerCalls);
+  });
+
+  it('anonymous, counts mode, sticker half failed: counts fall back to the count-only call', async () => {
+    await renderSurface({ fold: false });
+    const unfolded = snapshot();
+
+    failing.halves.add('stickers');
+    await renderSurface({ fold: true });
+
+    expect(seen.get(1100)).toEqual({
+      count: countOf(1100),
+      placementIds: [],
+      remixCount: remixCountOf(1100),
+    });
+    expect(snapshot()).toEqual(unfolded);
+    expect(byPath()).toEqual({
+      'placement.getImageCardSummaries': 2,
+      'placement.getStickerPlacementCounts': 2,
+    });
+  });
+});
+
+describe('removing a placement with the flag on, signed out, from a counts-mode folded entry', () => {
+  it('drops one from the count the count-only folded entry holds, on that card only', async () => {
+    // Counts mode first (stickers hidden), then a reveal: both folded entries are cached.
+    await renderSurface({ fold: true });
+    await act(async () => {
+      useStickerRevealStore.setState({ revealed: true });
+    });
+    await settle();
+    expect(seen.get(1120)?.placementIds).toEqual([placementOf(1120).id]);
+
+    await act(async () => {
+      await forget?.(placementOf(1120).id);
+    });
+    await settle();
+
+    // Hidden again: the cards read the counts-mode entry, which must agree.
+    const callsBefore = requests.length;
+    await act(async () => {
+      useStickerRevealStore.setState({ revealed: false });
+    });
+    await settle();
+
+    expect(seen.get(1120)?.count).toBe(countOf(1120) - 1);
+    expect(seen.get(1121)?.count).toBe(countOf(1121));
+    expect(seen.get(1010)?.count).toBe(countOf(1010));
     expect(
       requests
         .slice(callsBefore)

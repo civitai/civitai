@@ -56,11 +56,20 @@ vi.mock('~/server/services/remix-gallery.service', async (importOriginal) => ({
   ...(await importOriginal<typeof RemixGalleryService>()),
   getRemixGalleryCardSummaries: services.getRemixGalleryCardSummaries,
 }));
+// The route's `onError` reporter, which a failed half is handed to instead of being thrown.
+const reporter = vi.hoisted(() => ({ reportTrpcError: vi.fn(async () => undefined) }));
+vi.mock('~/server/trpc/report-trpc-error', () => reporter);
 
+import { TRPCError } from '@trpc/server';
 import { placementCaller } from '~/server/routers/__tests__/placement.router.test-utils';
 
 const IDS = [11, 12, 13];
-type Folded = { stickers?: { placements?: unknown; counts: unknown }; remix?: unknown };
+type HalfError = { code: string; message: string };
+type Folded = {
+  stickers?: { placements?: unknown; counts: unknown };
+  remix?: unknown;
+  errors?: { stickers?: HalfError; remix?: HalfError };
+};
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -144,5 +153,125 @@ describe('placement router — the folded card read answers what the separate re
     ).rejects.toThrow();
     expect(services.getStickerPlacementCounts).not.toHaveBeenCalled();
     expect(services.getRemixGalleryCardSummaries).not.toHaveBeenCalled();
+  });
+});
+
+describe('placement router — each half of the folded card read fails on its own', () => {
+  it('a failed remix half still returns the sticker half, and answers the remix half as an error', async () => {
+    const caller = placementCaller();
+    services.getRemixGalleryCardSummaries.mockRejectedValueOnce(
+      new Error('remix read failed: relation does not exist')
+    );
+
+    const folded = (await caller.getImageCardSummaries({
+      imageIds: IDS,
+      stickers: 'placements',
+      remix: true,
+      browsingLevel: 4,
+    })) as Folded;
+
+    expect(folded.stickers).toEqual(await caller.getStickerPlacementsAndCounts({ imageIds: IDS }));
+    expect(folded.remix).toBeUndefined();
+    expect(folded.errors?.stickers).toBeUndefined();
+    expect(folded.errors?.remix?.code).toBe('INTERNAL_SERVER_ERROR');
+    // Masked exactly as the error formatter masks a thrown server fault: the driver's text never
+    // reaches the client, a ref does.
+    expect(folded.errors?.remix?.message).not.toContain('relation does not exist');
+    expect(folded.errors?.remix?.message).toMatch(/\(ref: [0-9a-f]{12}\)/);
+  });
+
+  it('a failed sticker half still returns the remix half, and answers the sticker half as an error', async () => {
+    const caller = placementCaller();
+    services.getStickerPlacementCounts.mockRejectedValueOnce(new Error('counts read failed'));
+
+    const folded = (await caller.getImageCardSummaries({
+      imageIds: IDS,
+      stickers: 'counts',
+      remix: true,
+      browsingLevel: 2,
+    })) as Folded;
+
+    expect(folded.remix).toEqual(
+      await caller.getRemixGalleryCardSummaries({ imageIds: IDS, browsingLevel: 2 })
+    );
+    expect(folded.stickers).toBeUndefined();
+    expect(folded.errors?.remix).toBeUndefined();
+    expect(folded.errors?.stickers?.code).toBe('INTERNAL_SERVER_ERROR');
+  });
+
+  it('reports a failed half the way a thrown procedure error is reported, naming the half', async () => {
+    services.getRemixGalleryCardSummaries.mockRejectedValueOnce(new Error('remix read failed'));
+
+    await placementCaller({ user: { id: 917 } }).getImageCardSummaries({
+      imageIds: IDS,
+      stickers: 'placements',
+      remix: true,
+    });
+
+    expect(reporter.reportTrpcError).toHaveBeenCalledTimes(1);
+    expect(reporter.reportTrpcError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: 'placement.getImageCardSummaries',
+        type: 'query',
+        userId: 917,
+        detail: { half: 'remix' },
+        error: expect.objectContaining({ code: 'INTERNAL_SERVER_ERROR' }),
+      })
+    );
+  });
+
+  it("keeps a client-fault half's own code and message, as the procedure would have shown it", async () => {
+    services.getStickerPlacementsAndCounts.mockRejectedValueOnce(
+      new TRPCError({ code: 'NOT_FOUND', message: 'No such image' })
+    );
+
+    const folded = (await placementCaller().getImageCardSummaries({
+      imageIds: IDS,
+      stickers: 'placements',
+      remix: true,
+    })) as Folded;
+
+    expect(folded.errors?.stickers).toEqual({ code: 'NOT_FOUND', message: 'No such image' });
+    expect(folded.remix).toEqual(
+      await placementCaller().getRemixGalleryCardSummaries({ imageIds: IDS })
+    );
+  });
+
+  it('never lets the edge keep an answer carrying a failed half', async () => {
+    const cache = { edgeTTL: 60, browserTTL: 60 };
+    services.getRemixGalleryCardSummaries.mockRejectedValueOnce(new Error('remix read failed'));
+
+    await placementCaller({ cache }).getImageCardSummaries({
+      imageIds: IDS,
+      stickers: 'counts',
+      remix: true,
+    });
+
+    expect(cache).toEqual({ edgeTTL: 0, browserTTL: 0, canCache: false });
+  });
+
+  it('CONTROL: an answer with both halves keeps its edge cache settings', async () => {
+    const cache = { edgeTTL: 60, browserTTL: 60 };
+
+    await placementCaller({ cache }).getImageCardSummaries({
+      imageIds: IDS,
+      stickers: 'counts',
+      remix: true,
+    });
+
+    expect(cache).toEqual({ edgeTTL: 60, browserTTL: 60 });
+  });
+
+  it('CONTROL: with both halves answered there is no error and nothing is reported', async () => {
+    const folded = (await placementCaller().getImageCardSummaries({
+      imageIds: IDS,
+      stickers: 'placements',
+      remix: true,
+    })) as Folded;
+
+    expect(folded.errors).toBeUndefined();
+    expect(folded.stickers).toBeDefined();
+    expect(folded.remix).toBeDefined();
+    expect(reporter.reportTrpcError).not.toHaveBeenCalled();
   });
 });

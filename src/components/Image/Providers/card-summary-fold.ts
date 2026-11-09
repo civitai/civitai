@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useRemixBatchRequest } from '~/components/RemixGallery/RemixGalleryBatchProvider';
 import { useStickerBatchWants } from '~/components/Sticker/StickerPlacementBatchProvider';
+import { CARD_SUMMARY_FETCH_CHUNK } from '~/components/Sticker/card-summaries.util';
 import type {
   CardStickerMode,
   CardSummaryChunk,
@@ -12,9 +13,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
-/** Matches the `imageIds` cap on `getImageCardSummariesSchema`, and both batch providers' chunk. */
-const CARD_SUMMARY_FETCH_CHUNK = 100;
-
+/** The parts of a folded query a chunk is built from. */
 type FoldQuery = {
   data?: ImageCardSummaries;
   isLoading: boolean;
@@ -22,11 +21,20 @@ type FoldQuery = {
   dataUpdatedAt: number;
 };
 
-const chunkOf = <T>(query: FoldQuery | undefined, data: T | undefined): CardSummaryChunk<T> => ({
-  data,
-  isLoading: !!query?.isLoading,
-  isError: !!query?.isError,
+/**
+ * One half of one chunk. A half the server answered under `errors` is `failed`: the provider then
+ * makes that half's own call for the chunk, which retries and errors as it did before the fold.
+ */
+const chunkOf = <T>(
+  query: FoldQuery | undefined,
+  data: T | undefined,
+  failed = false
+): CardSummaryChunk<T> => ({
+  data: failed ? undefined : data,
+  isLoading: !failed && !!query?.isLoading,
+  isError: failed || !!query?.isError,
   dataUpdatedAt: query?.dataUpdatedAt ?? 0,
+  failed,
 });
 
 /**
@@ -56,7 +64,7 @@ export function useFoldedCardBatches(
 
   const mode: CardStickerMode = sticker.wantPlacements ? 'placements' : 'counts';
   const modes: CardStickerMode[] = ['placements', 'counts'];
-  const queries = trpc.useQueries((t) =>
+  const queries: FoldQuery[] = trpc.useQueries((t) =>
     modes.flatMap((stickers) =>
       chunks.map((chunk) =>
         t.placement.getImageCardSummaries(
@@ -65,7 +73,7 @@ export function useFoldedCardBatches(
         )
       )
     )
-  ) as unknown as FoldQuery[];
+  );
   const placementsQueries = queries.slice(0, chunks.length);
   const countsQueries = queries.slice(chunks.length);
 
@@ -78,17 +86,27 @@ export function useFoldedCardBatches(
     combined: chunks.map((_, index) =>
       chunkOf(
         placementsQueries[index],
-        placementsQueries[index]?.data?.stickers as StickerPlacementBundle | undefined
+        placementsQueries[index]?.data?.stickers as StickerPlacementBundle | undefined,
+        !!placementsQueries[index]?.data?.errors?.stickers
       )
     ),
     countsOnly: chunks.map((_, index) =>
-      chunkOf(countsQueries[index], countsQueries[index]?.data?.stickers?.counts)
+      chunkOf(
+        countsQueries[index],
+        countsQueries[index]?.data?.stickers?.counts,
+        !!countsQueries[index]?.data?.errors?.stickers
+      )
     ),
     // The current mode's answer; the other mode's cached one for the same chunk
-    // stands in until it lands, so a reveal does not blank the remix frames.
+    // stands in until it lands, so a reveal does not blank the remix frames. Failed
+    // only when neither has remix data and the current one answered an error.
     remix: chunks.map((_, index) => {
       const answered = [current[index], other[index]].find((query) => query?.data?.remix);
-      return chunkOf(answered ?? current[index], answered?.data?.remix);
+      return chunkOf(
+        answered ?? current[index],
+        answered?.data?.remix,
+        !answered && !!current[index]?.data?.errors?.remix
+      );
     }),
   };
 }

@@ -37,9 +37,12 @@ type UserOverrides = {
 export const placementCaller = ({
   user = {},
   features = {},
+  cache,
 }: {
   user?: UserOverrides;
   features?: Record<string, boolean>;
+  /** The response's cache settings, for a procedure that changes them. Absent unless given. */
+  cache?: { edgeTTL?: number; browserTTL?: number; canCache?: boolean };
 } = {}) =>
   placementRouter.createCaller({
     user: {
@@ -63,4 +66,5 @@ export const placementCaller = ({
       storylines: true,
       ...features,
     },
+    ...(cache ? { cache } : {}),
   } as never) as unknown as Record<string, (input?: unknown) => Promise<unknown>>;

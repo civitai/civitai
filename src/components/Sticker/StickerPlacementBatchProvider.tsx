@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo } from 'react';
+import { CARD_SUMMARY_FETCH_CHUNK } from '~/components/Sticker/card-summaries.util';
 import type { CardSummaryChunk, FoldedCardBatches } from '~/components/Sticker/card-summaries.util';
 import type { StickerTreatmentKey } from '~/components/Sticker/treatments/sticker-treatments';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
@@ -11,9 +12,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { stickersRevealed, useStickerRevealStore } from '~/store/sticker-reveal.store';
 import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
-
-/** Matches the `imageIds` cap on `getStickerPlacementsSchema`, which both calls take. */
-const PLACEMENT_FETCH_CHUNK = 100;
 
 type StickerPlacementBatch = {
   counts: Record<number, number>;
@@ -74,13 +72,16 @@ export function StickerPlacementBatchProvider({
    * with no stickers on them and no error anywhere.
    */
   alwaysFetch?: boolean;
-  /** This surface's answers from the folded card read, which replace both calls below. */
+  /**
+   * This surface's answers from the folded card read, which replace both calls below — except
+   * for a chunk whose sticker half failed there, which makes its own call as before.
+   */
   folded?: Pick<FoldedCardBatches, 'combined' | 'countsOnly'>;
 }) {
   const { enabled, wantPlacements } = useStickerBatchWants(alwaysFetch);
 
   const chunks = useMemo(
-    () => (enabled ? chunkIds(imageIds, PLACEMENT_FETCH_CHUNK) : []),
+    () => (enabled ? chunkIds(imageIds, CARD_SUMMARY_FETCH_CHUNK) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [imageIds.join(','), enabled]
   );
@@ -90,27 +91,47 @@ export function StickerPlacementBatchProvider({
   // else — an anonymous viewer with stickers hidden — and stays the
   // edge-cacheable request it always was. Before this, a signed-in viewer paid
   // for both calls on every chunk of every surface.
+  //
+  // With `folded`, a chunk makes its own call only where the folded answer's
+  // sticker half failed: that call then retries and errors exactly as it did
+  // before the fold. The folded chunks line up with these by index because both
+  // chunk the same ids in the same order by `CARD_SUMMARY_FETCH_CHUNK`.
   const ownCountQueries = trpc.useQueries((t) =>
-    chunks.map((chunk) =>
+    chunks.map((chunk, index) =>
       t.placement.getStickerPlacementCounts(
         { imageIds: chunk },
-        { staleTime: 60_000, enabled: !folded && !wantPlacements }
+        {
+          staleTime: 60_000,
+          enabled: (!folded || !!folded.countsOnly[index]?.failed) && !wantPlacements,
+        }
       )
     )
   );
 
   const ownCombinedQueries = trpc.useQueries((t) =>
-    chunks.map((chunk) =>
+    chunks.map((chunk, index) =>
       t.placement.getStickerPlacementsAndCounts(
         { imageIds: chunk },
-        { staleTime: 60_000, enabled: !folded && wantPlacements }
+        {
+          staleTime: 60_000,
+          enabled: (!folded || !!folded.combined[index]?.failed) && wantPlacements,
+        }
       )
     )
   );
 
-  const countQueries: CardSummaryChunk<Record<number, number>>[] =
-    folded?.countsOnly ?? ownCountQueries;
-  const combinedQueries: CardSummaryChunk<unknown>[] = folded?.combined ?? ownCombinedQueries;
+  const countQueries: CardSummaryChunk<Record<number, number>>[] = folded
+    ? chunks.map((_, index) => {
+        const answer = folded.countsOnly[index];
+        return !answer || answer.failed ? ownCountQueries[index] : answer;
+      })
+    : ownCountQueries;
+  const combinedQueries: CardSummaryChunk<unknown>[] = folded
+    ? chunks.map((_, index) => {
+        const answer = folded.combined[index];
+        return !answer || answer.failed ? ownCombinedQueries[index] : answer;
+      })
+    : ownCombinedQueries;
 
   // Change stamps rather than the query arrays, which are new on every render.
   const countStamps = countQueries.map((query) => query.dataUpdatedAt).join(',');

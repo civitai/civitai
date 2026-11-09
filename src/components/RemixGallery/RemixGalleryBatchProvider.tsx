@@ -1,14 +1,12 @@
 import { createContext, useContext, useMemo } from 'react';
 import type { RemixGalleryCardSummary } from '~/server/services/remix-gallery.service';
+import { CARD_SUMMARY_FETCH_CHUNK } from '~/components/Sticker/card-summaries.util';
 import type { CardSummaryChunk, FoldedCardBatches } from '~/components/Sticker/card-summaries.util';
 
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
-
-/** Matches the `imageIds` cap on `getRemixGalleryCardSummariesSchema`. */
-const SUMMARY_FETCH_CHUNK = 100;
 
 const RemixGalleryBatchContext = createContext<Record<number, RemixGalleryCardSummary> | null>(
   null
@@ -29,7 +27,9 @@ const RemixGalleryBatchContext = createContext<Record<number, RemixGalleryCardSu
  * `getImageCardSummaries` call per chunk (`useFoldedCardBatches`), passed in here
  * as `folded`: fewer requests per surface, while each half still runs its own
  * procedure's service read with its own arguments. With the flag off, or the
- * sticker half not wanted, this provider makes its own call as it always has.
+ * sticker half not wanted, this provider makes its own call as it always has —
+ * and so does a chunk whose remix half failed in the folded answer, so it
+ * retries and errors exactly as it did before the fold.
  *
  * Chunked in arrival order for the same reason the sticker batch is: a feed
  * appends lower ids as it pages, so sorting would reshuffle every chunk boundary
@@ -42,7 +42,10 @@ export function RemixGalleryBatchProvider({
 }: {
   imageIds: number[];
   children: React.ReactNode;
-  /** This surface's answers from the folded card read, which replace the call below. */
+  /**
+   * This surface's answers from the folded card read, which replace the call below — except for
+   * a chunk whose remix half failed there, which makes its own call as before.
+   */
   folded?: FoldedCardBatches['remix'];
 }) {
   const { enabled, browsingLevel } = useRemixBatchRequest();
@@ -52,20 +55,28 @@ export function RemixGalleryBatchProvider({
   // in ARRIVAL order keeps an earlier chunk's key stable as a feed appends lower
   // ids, where sorting would reshuffle every boundary and refetch the surface.
   const chunks = useMemo(
-    () => (enabled && !folded ? chunkIds(imageIds, SUMMARY_FETCH_CHUNK) : []),
+    () => (enabled ? chunkIds(imageIds, CARD_SUMMARY_FETCH_CHUNK) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [imageIds.join(','), enabled, !folded]
+    [imageIds.join(','), enabled]
   );
 
+  // With `folded`, only a chunk whose folded remix half failed makes its own
+  // call. Lined up by index: both chunk the same ids in the same order by
+  // `CARD_SUMMARY_FETCH_CHUNK`.
   const ownQueries = trpc.useQueries((t) =>
-    chunks.map((chunk) =>
+    chunks.map((chunk, index) =>
       t.placement.getRemixGalleryCardSummaries(
         { imageIds: chunk, browsingLevel },
-        { staleTime: 60_000 }
+        { staleTime: 60_000, enabled: !folded || !!folded[index]?.failed }
       )
     )
   );
-  const queries: CardSummaryChunk<Record<number, RemixGalleryCardSummary>>[] = folded ?? ownQueries;
+  const queries: CardSummaryChunk<Record<number, RemixGalleryCardSummary>>[] = folded
+    ? chunks.map((_, index) => {
+        const answer = folded[index];
+        return !answer || answer.failed ? ownQueries[index] : answer;
+      })
+    : ownQueries;
 
   const summaries = useMemo(
     () => Object.assign({}, ...queries.map((query) => query.data ?? {})),

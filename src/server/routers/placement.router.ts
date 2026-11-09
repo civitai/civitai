@@ -115,6 +115,10 @@ import {
 import { isPromotionSurface } from '~/shared/utils/promotion';
 import { assertPromotionsEnabled } from '~/server/utils/promotion-gate';
 import type { Context } from '~/server/createContext';
+import { getTRPCErrorFromUnknown } from '@trpc/server';
+import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
+import { getClientSafeError } from '~/server/trpc/client-safe-error';
+import { reportTrpcError } from '~/server/trpc/report-trpc-error';
 
 /**
  * Placement is gated separately from stickers.
@@ -197,6 +201,38 @@ function remixCardSummaryArgs(ctx: Context, imageIds: number[], browsingLevel: n
       ctx.features.storylines && ctx.features.remixGallery
         ? { viewer: ctx.user && { id: ctx.user.id, isModerator: ctx.user.isModerator } }
         : undefined,
+  };
+}
+
+/** A half of `getImageCardSummaries` that failed, as the client is told about it. */
+export type CardSummaryHalfError = { code: TRPC_ERROR_CODE_KEY; message: string };
+
+/**
+ * One half of a combined read, settled on its own. A failed half is reported the way a thrown
+ * procedure error is (`reportTrpcError`: the 5xx counter and the log line, with the half named),
+ * and answered as an error with the message the client would have seen had that half been its own
+ * procedure (`getClientSafeError` masks a server fault exactly as the error formatter does), so
+ * the half that succeeded still reaches the client.
+ */
+async function settleCardSummaryHalf<T>(
+  result: PromiseSettledResult<T>,
+  half: 'stickers' | 'remix',
+  ctx: Context,
+  input: unknown
+): Promise<{ data?: T; error?: CardSummaryHalfError }> {
+  if (result.status === 'fulfilled') return { data: result.value };
+  const error = getTRPCErrorFromUnknown(result.reason);
+  await reportTrpcError({
+    error,
+    type: 'query',
+    path: 'placement.getImageCardSummaries',
+    input,
+    userId: ctx.user?.id,
+    userAgent: ctx.req?.headers?.['user-agent'],
+    detail: { half },
+  });
+  return {
+    error: { code: error.code, message: getClientSafeError(error)?.message ?? error.message },
   };
 }
 
@@ -307,10 +343,16 @@ export const placementRouter = router({
   // service call with the same arguments, so only the request is shared, never
   // a query or a safety contract. The procedures it stands in for stay for
   // clients off the flag and for older bundles.
+  //
+  // Each half also FAILS on its own, as it did when it was its own call: a
+  // failed half is answered under `errors` (and reported like a thrown error)
+  // while the other half's data still comes back. The client falls back to that
+  // half's own procedure for the chunk, so it retries and errors exactly as it
+  // did before the fold.
   getImageCardSummaries: publicProcedure
     .input(getImageCardSummariesSchema)
     .query(async ({ input, ctx }) => {
-      const [stickers, remix] = await Promise.all([
+      const [stickersResult, remixResult] = await Promise.allSettled([
         input.stickers === 'placements'
           ? getStickerPlacementsAndCounts(stickerBundleArgs(ctx, input.imageIds))
           : input.stickers === 'counts'
@@ -325,7 +367,28 @@ export const placementRouter = router({
             )
           : undefined,
       ]);
-      return { stickers, remix };
+      const [stickers, remix] = await Promise.all([
+        settleCardSummaryHalf(stickersResult, 'stickers', ctx, input),
+        settleCardSummaryHalf(remixResult, 'remix', ctx, input),
+      ]);
+      const errors: { stickers?: CardSummaryHalfError; remix?: CardSummaryHalfError } = {};
+      if (stickers.error) errors.stickers = stickers.error;
+      if (remix.error) errors.remix = remix.error;
+      // A thrown error is never edge-cached (the response carries an error), so an
+      // answer carrying a failed half is not either: otherwise one failure would be
+      // served to every anonymous viewer of the same URL until it expired.
+      // All three, as `siteAlert.getActive` does: with `canCache` off the TTLs keep
+      // the context defaults.
+      if ((stickers.error || remix.error) && ctx.cache) {
+        ctx.cache.canCache = false;
+        ctx.cache.edgeTTL = 0;
+        ctx.cache.browserTTL = 0;
+      }
+      return {
+        stickers: stickers.data,
+        remix: remix.data,
+        errors: stickers.error || remix.error ? errors : undefined,
+      };
     }),
 
   getStickerTracks: publicProcedure
