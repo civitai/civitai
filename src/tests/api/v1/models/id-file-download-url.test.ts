@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { toApiModelFile } from '~/server/common/model-helpers';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { assertDownloadUrlsResolve } from '~/tests/api/v1/download-url-seam.helper';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -408,5 +409,38 @@ describe('createModelFileDownloadUrl — `fileId` is exclusive', () => {
       'size',
       'type',
     ]);
+  });
+});
+
+describe('GET /api/v1/models/[id] — a Public training dataset', () => {
+  const DATASET = {
+    ...FILES[0],
+    id: 15,
+    type: 'Training Data',
+    sizeKB: 6666,
+    hashes: [],
+    metadata: { format: 'Other' },
+  };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetModelsWithVersions.mockImplementation(async ({ input }: any) => {
+      const item = modelItem(input.ids[0]);
+      // The real narrowing getModelsWithVersions applies to every file.
+      item.modelVersions[0].files = [...FILES, DATASET].map(toApiModelFile) as any;
+      return { items: [item] };
+    });
+  });
+  const file = (res: any, id: number) =>
+    res.body.modelVersions[0].files.find((f: any) => f.id === id);
+
+  it('is listed without its metadata', async () => {
+    const res: any = await invoke('7');
+    expect(file(res, 15)).toBeDefined();
+    expect(file(res, 15).metadata).toEqual({});
+  });
+
+  it('a model file beside it keeps its metadata', async () => {
+    const res: any = await invoke('7');
+    expect(file(res, 11).metadata).toEqual({ format: 'SafeTensor', size: 'pruned', fp: 'fp16' });
   });
 });
