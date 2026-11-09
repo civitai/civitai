@@ -4,9 +4,28 @@ A design-token set and component library for Pencil (`.pen`) files, derived from
 theme sources so mockups and shipped UI stay in step.
 
 Currently lives in `designs/collections.pen` (components at canvas `y 0–830`, screens at `y 1000+`).
-`designs/civitai-audio.pen` (the music section) is seeded from the same tokens and adds music
-components: `App Header`, `Song Card`, `Song Row`, `Mini Player`, `Mini Player Minimized`,
-`Timed Comment Bubble`, `Up Next Panel` and `Song Context Menu`.
+`designs/civitai-audio.pen` (the music section) is seeded from the same tokens. Every screen uses
+the cover-led design ("the cover sets the room", formerly the "Concept" direction): the song's
+artwork colour tints the player and the song page, while system controls stay Civitai blue.
+Sections run top to bottom: `00 Read me`, `01 Components`, `02 Discovery`, `03 Song detail`,
+`04 Global player`, `05 Player across the site`, `06 Profile & playlists`, `07 Publishing`,
+`08 Moderation`, `09 Mobile`, `10 Light mode`. `99 Archive – Main direction`, to the right of the
+stack, keeps the superseded screens and their components; nothing outside it uses them.
+
+| Component | ID | Section |
+| --- | --- | --- |
+| Player Bar | `KZCo9` | 01 Components |
+| Song Card | `AECSM` | 01 Components |
+| Remixes / More From Card | `ThzKc` | 01 Components |
+| Up Next Panel | `hG63C` | 01 Components |
+| Mini Player Minimized / Mini Player Minimized / Hover | `xtQOw` / `wO9tw` | 01 Components |
+| App Header | `mKQoL` | 01 Components |
+| Song Row | `VQ3N0` | 01 Components |
+| Song Context Menu | `rUDmm` | 01 Components |
+| Timed Comment Inline | `oiINd` | 01 Components |
+| Equalizer (now playing indicator) | `VKZHS` | 01 Components |
+| Site Floating Buttons | `ZVcO4` | 01 Components |
+| Mini Player, Song Card, Up Next Panel, Mini Player Minimized (+ Hover), each suffixed "(archived)" | `t1JZl5`, `mwcs8`, `gBKY9`, `CvSq5`, `vZOc1` | 99 Archive (superseded) |
 
 ## Where the values come from
 
