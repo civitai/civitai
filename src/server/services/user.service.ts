@@ -1157,7 +1157,7 @@ export const deleteUser = async ({
   removeImages,
   removeAppData,
 }: DeleteUserInput) => {
-  // Deleting it would let the deleted-account purge take every reporter's captures.
+  // Refused by name; the account scrub below also rejects a non-positive id, but only as a 500.
   if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   const user = await dbWrite.user.findFirst({
     where: { username, id },
