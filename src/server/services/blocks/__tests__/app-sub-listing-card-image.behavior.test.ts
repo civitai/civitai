@@ -63,7 +63,7 @@ vi.mock('~/server/services/image.service', async () => {
   };
 });
 
-const { SubListingError, upsertCatalogSubListing } = await import(
+const { SubListingError, moderateSubListing, upsertCatalogSubListing } = await import(
   '~/server/services/blocks/app-sub-listing.service'
 );
 
@@ -79,6 +79,11 @@ const ON_BOUNTY = 3;
 const ON_BOUNTY_ENTRY = 4;
 const IN_PRIVATE_POST = 5;
 const IN_SCHEDULED_POST = 6;
+/** Images 7–10, the owner's, in the public post, each failing the scan or review gate. */
+const SCAN_BLOCKED = 7;
+const SCAN_PENDING = 8;
+const NEEDS_REVIEW = 9;
+const BLOCKED_FOR = 10;
 
 let db: PGlite;
 
@@ -122,6 +127,11 @@ beforeAll(async () => {
       (${ON_BOUNTY_ENTRY}, ${OWNER}, NULL),
       (${IN_PRIVATE_POST}, ${OWNER}, 5),
       (${IN_SCHEDULED_POST}, ${OWNER}, 6);
+    INSERT INTO "Image" (id, "userId", "postId", ingestion, "needsReview", "blockedFor") VALUES
+      (${SCAN_BLOCKED}, ${OWNER}, 1, 'Blocked', NULL, NULL),
+      (${SCAN_PENDING}, ${OWNER}, 1, 'Pending', NULL, NULL),
+      (${NEEDS_REVIEW}, ${OWNER}, 1, 'Scanned', 'minor', NULL),
+      (${BLOCKED_FOR}, ${OWNER}, 1, 'Scanned', NULL, 'tos');
     INSERT INTO "Article" (id, "coverId", status, "publishedAt", ingestion) VALUES
       (1, ${ARTICLE_COVER}, 'Published', now() - interval '1 day', 'Scanned');
     INSERT INTO "Bounty" (id, "userId") VALUES (1, ${OWNER});
@@ -222,5 +232,83 @@ describe('a store item image, executed against the real visibility SQL', () => {
   ])('refuses an image in a %s post', async (_name, imageId) => {
     expect(await publishError(imageId)).toMatchObject({ status: 400, code: 'image_not_public' });
     expect(dbMock.dbWrite.appSubListing.create).not.toHaveBeenCalled();
+  });
+});
+
+const ROW_ID = 'asl_ROW';
+const VERSION = '2026-10-02T00:00:00.000Z';
+
+/** An approved item whose staged edit swaps its image for `pendingImageId`. */
+function stagedRow(pendingImageId: number) {
+  return {
+    id: ROW_ID,
+    parentListingId: PARENT,
+    itemKey: 'neon-drift',
+    authorUserId: OWNER,
+    title: 'Neon Drift',
+    tagline: 'Arcade racer',
+    imageId: IN_PUBLIC_POST,
+    subPath: 'neon-drift',
+    contentRating: null,
+    pendingTitle: 'Neon Drift',
+    pendingTagline: 'Arcade racer',
+    pendingImageId,
+    pendingSubPath: 'neon-drift',
+    pendingContentRating: null,
+    pendingSubmittedAt: new Date('2026-10-02'),
+    status: 'approved',
+    approvedAt: new Date('2026-10-01'),
+    updatedAt: new Date(VERSION),
+  };
+}
+
+const approveEdit = () =>
+  moderateSubListing({
+    input: { id: ROW_ID, action: 'approve-edit', version: VERSION },
+    moderatorId: 1,
+  });
+
+describe('approving a staged image edit re-checks the image against the real visibility SQL', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.appSubListing.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('applies a staged image that is still public (control)', async () => {
+    dbMock.dbWrite.appSubListing.findUnique.mockResolvedValue(stagedRow(IN_PUBLIC_POST));
+    await expect(approveEdit()).resolves.toMatchObject({ status: 'approved' });
+    expect(dbMock.dbWrite.appSubListing.updateMany.mock.calls[0][0].data).toMatchObject({
+      imageId: IN_PUBLIC_POST,
+      pendingSubmittedAt: null,
+    });
+  });
+
+  it.each([
+    ['blocked by the scan', SCAN_BLOCKED],
+    ['still waiting for its scan', SCAN_PENDING],
+    ['flagged for review', NEEDS_REVIEW],
+    ['blocked by a moderator', BLOCKED_FOR],
+  ])(
+    'refuses a staged image that is now %s, leaving the live image and the staged edit',
+    async (_name, imageId) => {
+      dbMock.dbWrite.appSubListing.findUnique.mockResolvedValue(stagedRow(imageId));
+      const err = await approveEdit().then(
+        () => null,
+        (e: unknown) => e
+      );
+      expect(err).toBeInstanceOf(SubListingError);
+      expect(err).toMatchObject({ status: 409, code: 'image_not_public' });
+      expect(dbMock.dbWrite.appSubListing.updateMany).not.toHaveBeenCalled();
+    }
+  );
+
+  it('approves a staged edit that removes the image without an image check', async () => {
+    dbMock.dbWrite.appSubListing.findUnique.mockResolvedValue({
+      ...stagedRow(IN_PUBLIC_POST),
+      pendingImageId: null,
+    });
+    await expect(approveEdit()).resolves.toMatchObject({ status: 'approved' });
+    expect(dbMock.dbWrite.appSubListing.updateMany.mock.calls[0][0].data).toMatchObject({
+      imageId: null,
+    });
   });
 });

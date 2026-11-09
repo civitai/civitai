@@ -1589,6 +1589,14 @@ export async function moderateSubListing(args: {
         if (status !== 'approved' || !row.pendingSubmittedAt || row.pendingTitle == null) {
           throw invalid();
         }
+        // The image passed when it was staged; it may have been blocked or pulled since.
+        if (row.pendingImageId != null && (await publicImageOwner(row.pendingImageId)) == null) {
+          throw new SubListingError(
+            409,
+            'image_not_public',
+            'The new image is no longer public (blocked, unscanned or unpublished); reject the edit'
+          );
+        }
         data = {
           title: row.pendingTitle,
           tagline: row.pendingTagline,
