@@ -47,6 +47,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
     nextTally: nextTally(now),
     nextTallyAt: nextTallyAt(now).toISOString(),
     serverNow: now.toISOString(),
+    updatedMinutesAgo: Math.max(0, Math.floor((now.getTime() - board.builtAt) / 60_000)),
     helpClosed: cookies.get(HELP_COOKIE) === 'closed',
     copy: fervorCopy(),
     entries: view.entries.map(shown),

@@ -18,7 +18,7 @@ export type RailStanding = {
 
 /**
  * Where the player stands on the board and who is beside them, from the cached board. Null when they are not ranked.
- * The board is a daily snapshot; pass the player's live `fervor` and their own row and place are read from that, the
+ * The board is a snapshot rebuilt every few minutes; pass the player's live `fervor` and their own row and place are read from that, the
  * neighbours staying the cached ones, so the rail never shows a row that disagrees with the big number above it. On a tie
  * the player keeps the side of it the snapshot had them on.
  */

@@ -33,7 +33,7 @@ beforeEach(() => {
   get.mockReset();
   getPlayerStatus.mockReset();
   getPlayerStatus.mockResolvedValue({ rank: 'Knight' });
-  get.mockResolvedValue({ rows: [], badges: {} });
+  get.mockResolvedValue({ rows: [], badges: {}, builtAt: Date.now() });
 });
 
 describe('leaderboard load', () => {
@@ -51,6 +51,7 @@ describe('leaderboard load', () => {
         row(7, 'key-7'),
       ],
       badges: { Knight: 'knight-key', Templar: 'templar-key' },
+      builtAt: Date.now(),
     });
 
     const data = await run();
@@ -74,6 +75,14 @@ describe('leaderboard load', () => {
     expect(data.windowDays).toBe(7);
     expect(new Date(data.nextTallyAt).getTime()).toBeGreaterThan(Date.now());
     expect(new Date(data.nextTallyAt).toISOString().slice(11)).toBe('00:00:00.000Z');
+  });
+
+  it('says how many whole minutes ago the board was built', async () => {
+    get.mockResolvedValue({ rows: [], badges: {}, builtAt: Date.now() - 150_000 });
+    expect((await run()).updatedMinutesAgo).toBe(2);
+
+    get.mockResolvedValue({ rows: [], badges: {}, builtAt: Date.now() + 5_000 });
+    expect((await run()).updatedMinutesAgo).toBe(0);
   });
 
   it('renders the panel closed only when the viewer collapsed it', async () => {

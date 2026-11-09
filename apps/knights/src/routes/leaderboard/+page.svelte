@@ -16,6 +16,9 @@
 
   const podium = $derived(data.entries.length >= 3 ? data.entries.slice(0, 3) : []);
   const stage = $derived(podium.length ? [podium[1], podium[0], podium[2]] : []);
+  const updated = $derived(
+    data.updatedMinutesAgo < 1 ? 'Updated just now' : `Updated ${data.updatedMinutesAgo} min ago`
+  );
   const rows = $derived(podium.length ? data.entries.slice(3) : data.entries);
 
   // The server reads the cookie, so a collapsed panel renders closed from the first paint.
@@ -117,13 +120,13 @@
       <span class="fz"><Icon name="sparkles" size={14} />Fervor from judgments cast in the last {data.windowDays} days</span>
       <span class="tally"
         ><Icon name="hourglass" size={14} />
-        {tally ? `Tallied daily · next tally in ${tally}` : 'New tally ready, refresh'}</span
+        {tally ? `Tallied daily · next tally in ${tally}` : 'New tally ready, refresh'} · {updated}</span
       >
     </p>
     <p class="meta-m">
       Fervor from judgments cast in the last {data.windowDays} days. Tallied daily · {tally
         ? `next tally in ${tally}`
-        : 'new tally ready, refresh'}.
+        : 'new tally ready, refresh'}. {updated}.
     </p>
   </header>
 
