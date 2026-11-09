@@ -291,6 +291,19 @@ describe('textScan.resolveCsamHold', () => {
       });
     });
 
+    // Only a reply orphaned before the backfill has no CommentV3 row, and nothing renders it.
+    it('confirms a pre-flip hold whose comment never reached CommentV3, flagging nothing', async () => {
+      mocks.commentV3IdsByOldId.mockResolvedValue([]);
+      findFirst.mockResolvedValue(pendingHold({ entityType: 'Comment', entityId: 56 }));
+      const { status } = await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
+      expect(status).toBe(200);
+      expect(mocks.commentV3IdsByOldId).toHaveBeenCalledWith([56]);
+      expect(mocks.bulkSetCommentV3TosViolation).toHaveBeenCalledWith(
+        expect.objectContaining({ ids: [] })
+      );
+      expect(updateMany.mock.calls[0][0].data.status).toBe('Confirmed');
+    });
+
     it('clears the profile text of a user profile hold', async () => {
       findFirst.mockResolvedValue(pendingHold({ entityType: 'UserProfile', entityId: 900 }));
       await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });

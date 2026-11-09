@@ -258,28 +258,32 @@ test('the owner query still mentions every commentable surface', async () => {
   }
 });
 
-test.each([['commentV2Handler', commentV2Handler, { userId: 42, threadId: 1 }]])(
-  '%s emits nothing when the owner lookup fails',
-  async (_name, handler, record) => {
-    const { adds, actions } = recorder();
-    const pg = {
-      queryOne: async () => {
-        throw new Error('connection terminated');
-      },
-    };
+test.each([
+  ['commentV2Handler', commentV2Handler, { userId: 42, threadId: 1 }],
+  [
+    'commentV3Handler',
+    commentV3Handler,
+    { id: 1, userId: 42, entityType: 'model', entityId: 7, deletedAt: null },
+  ],
+])('%s emits nothing when the owner lookup fails', async (_name, handler, record) => {
+  const { adds, actions } = recorder();
+  const pg = {
+    queryOne: async () => {
+      throw new Error('connection terminated');
+    },
+  };
 
-    // Both halves matter and neither is visible with a resolving fake. The throw has to propagate or
-    // the Kafka offset commits over a message whose metrics were never queued; and nothing may be
-    // emitted before it, because the batcher and Redis dedupe a replayed metric but
-    // `metricSignals.sendDelta` does not — an emit above the await double-fires the live delta on
-    // every retry. Moving an emit back above the query is otherwise invisible: with a resolving fake
-    // both orderings produce identical output.
-    await expect(
-      handler.process({ operation: 'create', record, actions, pg } as never)
-    ).rejects.toThrow('connection terminated');
-    expect(adds).toEqual([]);
-  }
-);
+  // Both halves matter and neither is visible with a resolving fake. The throw has to propagate or
+  // the Kafka offset commits over a message whose metrics were never queued; and nothing may be
+  // emitted before it, because the batcher and Redis dedupe a replayed metric but
+  // `metricSignals.sendDelta` does not — an emit above the await double-fires the live delta on
+  // every retry. Moving an emit back above the query is otherwise invisible: with a resolving fake
+  // both orderings produce identical output.
+  await expect(
+    handler.process({ operation: 'create', record, actions, pg } as never)
+  ).rejects.toThrow('connection terminated');
+  expect(adds).toEqual([]);
+});
 
 const v3 = (
   operation: string,

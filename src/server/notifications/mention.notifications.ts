@@ -8,6 +8,7 @@ import {
   commentDedupeKeyByShape,
   isModelComment,
   modelPageId,
+  notOnHiddenModel,
   notOnUnpublishedArticle,
   threadTypeLabel,
   threadUrlMap,
@@ -167,6 +168,7 @@ export const mentionNotifications = createNotificationProcessor({
           -- SLUG, the join above supplies it, and only a row the join failed on is dropped.
           AND ${v3AppListingResolved('c')}
           AND ${notOnUnpublishedArticle('c')}
+          AND ${notOnHiddenModel('c')}
 
         UNION
 

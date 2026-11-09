@@ -592,6 +592,15 @@ describe('a model with its comments locked', () => {
     expect(m.insertComment).not.toHaveBeenCalled();
   });
 
+  it('takes no reply and no edit either', async () => {
+    await expect(create(STRANGER, { entityType: 'model', parentId: 400 })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    await expect(update(AUTHOR, 400)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(m.insertComment).not.toHaveBeenCalled();
+    expect(m.updateCommentContent).not.toHaveBeenCalled();
+  });
+
   // The lock closes the conversation, not the owner's moderation of it, as under v1.
   it('still lets its owner hide a comment', async () => {
     await expect(

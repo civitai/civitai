@@ -353,6 +353,22 @@ describe('resolveModelPageCommentId', () => {
   });
 });
 
+describe('a locked comment', () => {
+  it('says so on its item, which is what takes its Reply away, and not on its neighbours', async () => {
+    await pg.exec(`UPDATE "CommentV3" SET locked = true WHERE id = 101`);
+    try {
+      const page = await section(reader);
+      expect(item(page, 101).locked).toBe(true);
+      expect(item(page, 102).locked).toBe(false);
+      const thread = await getCommentThread(db, 101, reader, onArticle);
+      expect(thread!.comment.locked).toBe(true);
+      expect(item(thread!.replies, 107).locked).toBe(false);
+    } finally {
+      await pg.exec(`UPDATE "CommentV3" SET locked = false WHERE id = 101`);
+    }
+  });
+});
+
 describe('getCommentLock', () => {
   it('is locked by the topic, or by the comment or any ancestor', async () => {
     expect(await getCommentLock(db, ARTICLE, 107)).toEqual({ locked: false });

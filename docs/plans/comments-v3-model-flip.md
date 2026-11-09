@@ -7,8 +7,8 @@ the v1 `comment` router is deleted. A read-only adapter (v1-shaped payloads from
 
 ## Decisions (Briant, 2026-11-06)
 
-1. **Hidden comments stay out of the list** (revised after a dev check: a model's discussion can be
-   a wall of hidden spam). The model section leaves hidden top-level comments out
+1. **Hidden comments stay out of the list** (Briant revised "inline" after a dev check, 2026-11-06: a
+   model's discussion can be a wall of hidden spam). The model section leaves hidden top-level comments out
    (`constants.comments.leavesOutHiddenComments`), its first page carries the visible and hidden
    counts, and "See N more hidden comments" opens them in a dialog (`HiddenCommentsModal`, the
    section with `hidden: true`), as the v1 page did. The `commentCountsSingleCall` flag is gone.

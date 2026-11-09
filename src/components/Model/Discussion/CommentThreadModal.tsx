@@ -32,7 +32,11 @@ export default function CommentThreadModal(props: {
   const dialog = useDialogContext();
   const router = useRouter();
   const modelId = Number(router.query.id);
-  const { data: model } = trpc.model.getById.useQuery({ id: modelId }, { enabled: !!modelId });
+  // The model page's own input, so the dialog reads its cached model instead of fetching another.
+  const { data: model } = trpc.model.getById.useQuery(
+    { id: modelId, excludeTrainingData: true },
+    { enabled: !!modelId }
+  );
   const ownerId = model?.user.id;
 
   return (

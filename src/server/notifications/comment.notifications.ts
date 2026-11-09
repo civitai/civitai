@@ -40,6 +40,18 @@ export const notOnUnpublishedArticle = (alias: string, ownerMay?: string) => `NO
               AND da.status <> 'Published'${ownerMay ? ` AND da."userId" <> ${ownerMay}` : ''}
           )`;
 
+/**
+ * The model section shows an unpublished or POI model's comments only to its owner and moderators
+ * (`surfaces.ts`); a notification would carry their snippet to anyone else. `ownerMay` as above.
+ */
+export const notOnHiddenModel = (alias: string, ownerMay?: string) => `NOT EXISTS (
+            SELECT 1 FROM "Model" hm
+            WHERE ${alias}."entityType" = 'model' AND hm.id = ${alias}."entityId"
+              AND (hm.status <> 'Published' OR hm.poi)${
+                ownerMay ? ` AND hm."userId" <> ${ownerMay}` : ''
+              }
+          )`;
+
 /** The comment a reply answers: the depth clamp keeps it in `replyToId` when it is not the parent. */
 export const answeredId = (alias: string) => `COALESCE(${alias}."replyToId", ${alias}."parentId")`;
 
@@ -375,6 +387,7 @@ export const commentNotifications = createNotificationProcessor({
           AND ${liveV3Since(lastSent)}
           AND m."userId" > 0
           AND c."userId" != pa."userId"
+          AND ${notOnHiddenModel('c', 'pa."userId"')}
           AND ${notBlockedBetween('pa."userId"', 'c."userId"')}
           AND ${notCommentMuted('pa."userId"', 'c')}
       )
@@ -527,6 +540,7 @@ export const commentNotifications = createNotificationProcessor({
         WHERE ${liveV3Since(lastSent)}
           AND (NOT ${isModelComment('c')} OR c."parentId" IS NOT NULL)
           AND ${notOnUnpublishedArticle('c')}
+          AND ${notOnHiddenModel('c')}
           AND ${v3AppListingResolved('c')}
       )
       SELECT

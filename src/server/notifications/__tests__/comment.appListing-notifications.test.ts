@@ -597,6 +597,11 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
       AND da.status <> 'Published'
       )
+      AND NOT EXISTS (
+      SELECT 1 FROM "Model" hm
+      WHERE c."entityType" = 'model' AND hm.id = c."entityId"
+      AND (hm.status <> 'Published' OR hm.poi)
+      )
       AND (c."entityType" <> 'appListing' OR al.slug IS NOT NULL)
       )
       SELECT
@@ -670,6 +675,11 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
       AND da.status <> 'Published'
+      )
+      AND NOT EXISTS (
+      SELECT 1 FROM "Model" hm
+      WHERE c."entityType" = 'model' AND hm.id = c."entityId"
+      AND (hm.status <> 'Published' OR hm.poi)
       )
       UNION
       SELECT DISTINCT

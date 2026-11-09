@@ -79,15 +79,17 @@ export const commentV3Handler = createEventHandler<CommentV3Record>({
     const surface = SURFACES[record.entityType];
     if (!surface) return;
 
+    // Before any emit: a throw redelivers the message, and `metricSignals.sendDelta` is not
+    // deduped, so an emit above this await double-fires the live delta on every retry.
+    const owner = await pg.queryOne<{ ownerId: number | null }>(surface.ownerSql, [
+      record.entityId,
+    ]);
+
     if (surface.metric)
       actions
         .forMetric(surface.metric, record.entityId)
         .as(record.userId)
         .add('commentCount', value);
-
-    const owner = await pg.queryOne<{ ownerId: number | null }>(surface.ownerSql, [
-      record.entityId,
-    ]);
     // A creator answering their own commenters is not engagement received (see comment-v2.ts).
     if (owner?.ownerId && owner.ownerId !== record.userId)
       actions.forMetric('User', owner.ownerId).as(record.userId).add('commentCount', value);

@@ -84,7 +84,8 @@ UPDATE "User" SET username = 'u' || id;
 ALTER TABLE "Image" ADD COLUMN "userId" int, ADD COLUMN "postId" int;
 ALTER TABLE "Post" ADD COLUMN "userId" int, ADD COLUMN "modelVersionId" int, ADD COLUMN title text;
 ALTER TABLE "Model" ADD COLUMN name text, ADD COLUMN "userId" int, ADD COLUMN description text,
-  ADD COLUMN "publishedAt" timestamp, ADD COLUMN "updatedAt" timestamp, ADD COLUMN status text;
+  ADD COLUMN "publishedAt" timestamp, ADD COLUMN "updatedAt" timestamp, ADD COLUMN status text,
+  ADD COLUMN poi boolean NOT NULL DEFAULT false;
 ALTER TABLE app_listings ADD COLUMN slug text;
 CREATE TABLE "ModelVersion"(id int PRIMARY KEY, name text, "modelId" int);
 CREATE TABLE "UserEngagement"("userId" int, "targetUserId" int, type text);
@@ -102,7 +103,7 @@ ALTER TABLE "User" ADD COLUMN "bannedAt" timestamp, ADD COLUMN "deletedAt" times
   ADD COLUMN muted boolean NOT NULL DEFAULT false, ADD COLUMN "browsingLevel" int NOT NULL DEFAULT 1;
 INSERT INTO "Article"(id, "userId") VALUES (10, 1);
 UPDATE "Image" SET "userId" = 1, "postId" = 1 WHERE id = 10;
-UPDATE "Model" SET name = 'M', "userId" = 1 WHERE id = 1;
+UPDATE "Model" SET name = 'M', "userId" = 1, status = 'Published' WHERE id = 1;
 UPDATE app_listings SET slug = 'pixel-forge' WHERE serial_id = 9;
 INSERT INTO app_listings(id, serial_id, slug) VALUES ('02ULID', 10, NULL);
 -- User 6 has blocked user 3.
@@ -391,6 +392,23 @@ describe('notification queries on CommentV3', () => {
         );
       }
     );
+  });
+
+  it.each([
+    ['unpublished', `UPDATE "Model" SET status = 'Unpublished' WHERE id = 1`],
+    ['POI', `UPDATE "Model" SET poi = true WHERE id = 1`],
+  ])('replies on a model that is %s reach only its owner', async (_, change) => {
+    const undo = `UPDATE "Model" SET status = 'Published', poi = false WHERE id = 1`;
+    await temporarily(change, undo, async () => {
+      expect(await emitted('new-comment-response')).toEqual([]);
+      expect((await emitted('new-thread-response')).filter((t) => t.details.modelId === 1)).toEqual(
+        []
+      );
+      expect(pairs(await emitted('new-comment-nested'))).toEqual([
+        [57, 1],
+        [101, 1],
+      ]);
+    });
   });
 
   it('the comment reaction milestone keys on the old ids, for live model comments only', async () => {
