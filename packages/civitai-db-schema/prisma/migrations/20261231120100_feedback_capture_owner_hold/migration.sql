@@ -1,11 +1,10 @@
--- Feedback page captures (owner -2, FEEDBACK_CAPTURE_OWNER_ID) are kept one by one on their own
--- state, not as the capture account's content: the image legs of evidence_hold_owner_held skip -2,
--- as `holdLegsSql` in src/server/services/legal-hold.service.ts does, and the image delete trigger
--- keeps a capture that `captureImageHeldSql` keeps. evidence-hold-owner-held.behavior.test.ts keeps
--- the two identical.
+-- The image delete trigger keeps a feedback page capture (owner -2, FEEDBACK_CAPTURE_OWNER_ID) that
+-- `captureImageHeldSql` in src/server/services/legal-hold.service.ts keeps, so a direct delete cannot
+-- remove it. evidence_hold_keep_image is otherwise unchanged from 20261204120000_evidence_hold_image_prior_state.
+-- feedback-capture-trigger.behavior.test.ts keeps the two identical.
 --
--- Apply AFTER 20261227150000_evidence_hold_owner_held and 20261231120000_feedback_capture_owner.
--- Hand-applied. Dry run: the whole file inside BEGIN; ... ROLLBACK;.
+-- Apply AFTER 20261231120000_feedback_capture_owner. Hand-applied. Dry run: the whole file inside
+-- BEGIN; ... ROLLBACK;.
 
 CREATE OR REPLACE FUNCTION evidence_hold_capture_held(
   iid INTEGER, review TEXT, blocked TEXT, is_minor BOOLEAN
@@ -26,50 +25,11 @@ CREATE OR REPLACE FUNCTION evidence_hold_capture_held(
     OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" ehi WHERE ehi."imageId" = iid);
 $$ LANGUAGE sql STABLE SET search_path = public, pg_temp;
 
-CREATE OR REPLACE FUNCTION evidence_hold_owner_held(uid INTEGER) RETURNS boolean AS $$
-  SELECT uid = -1
-    -- An active marker.
-    OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = uid)
-    -- Named on a report that still holds: pending, not yet archived, or sent within the year.
-    OR EXISTS (
-      SELECT 1 FROM "CsamReport" r
-      WHERE (r."userId" = uid OR r.details ->> 'secondaryUserId' = uid::text)
-        AND (r."reportSentAt" IS NULL OR r."archivedAt" IS NULL
-             OR r."reportSentAt" > now() - interval '1 year')
-    )
-    -- An image of theirs awaiting review.
-    OR uid IS DISTINCT FROM -2 AND EXISTS (SELECT 1 FROM "Image" hr WHERE hr."userId" = uid AND hr."needsReview" = 'csam')
-    -- A blocked image of theirs that no sent report naming them lists.
-    OR uid IS DISTINCT FROM -2 AND EXISTS (
-      SELECT 1 FROM "Image" bi
-      WHERE bi."userId" = uid AND bi."blockedFor" = 'CSAM'
-        AND NOT EXISTS (
-          SELECT 1 FROM "CsamReport" sc
-          WHERE (sc."userId" = uid OR sc.details ->> 'secondaryUserId' = uid::text)
-            AND sc."reportSentAt" IS NOT NULL
-            AND sc.images @> jsonb_build_array(jsonb_build_object('id', bi.id))
-        )
-    )
-    -- An image of theirs listed in a report that still holds, whoever the report names.
-    OR uid IS DISTINCT FROM -2 AND EXISTS (
-      SELECT 1
-      FROM "CsamReport" rr
-      CROSS JOIN LATERAL jsonb_array_elements(
-        CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
-      ) re
-      JOIN "Image" ri
-        ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
-      WHERE ri."userId" = uid
-        AND (rr."reportSentAt" IS NULL OR rr."archivedAt" IS NULL
-             OR rr."reportSentAt" > now() - interval '1 year')
-    );
-$$ LANGUAGE sql STABLE SET search_path = public, pg_temp;
-
 CREATE OR REPLACE FUNCTION evidence_hold_keep_image() RETURNS trigger AS $$
 DECLARE
   graced BOOLEAN := (OLD."metadata" -> 'accountDeletionPriorIngestion') IS NOT NULL;
 BEGIN
-  IF evidence_hold_owner_held_memo(OLD."userId")
+  IF EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = OLD."userId")
     OR (OLD."userId" = -2
         AND evidence_hold_capture_held(OLD."id", OLD."needsReview", OLD."blockedFor", OLD."minor")) THEN
     IF pg_trigger_depth() > 1 THEN

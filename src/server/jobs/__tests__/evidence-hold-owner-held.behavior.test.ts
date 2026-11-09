@@ -3,8 +3,7 @@ import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { captureImageHeldSql, ownerHeldSql } from '~/server/services/legal-hold.service';
-import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
+import { ownerHeldSql } from '~/server/services/legal-hold.service';
 
 /**
  * The delete triggers keep an owner's content while any hold on the account stands, not only a hold
@@ -40,11 +39,6 @@ const SENT_RECENT_ARCHIVED = 12; // named on a report sent 30 days ago; its mark
 const LISTED_RECENT_ARCHIVED = 14; // an image listed in a report sent 30 days ago (no marker: names no one)
 const SENT_13M_ARCHIVED = 13; // named on a report sent 13 months ago
 const LISTED_13M_ARCHIVED = 15; // an image listed in a report sent 13 months ago
-// The feedback capture account: its images under review, blocked and listed never hold it.
-const CAPTURE = FEEDBACK_CAPTURE_OWNER_ID;
-const CAPTURE_BLOCKED = 2990;
-const CAPTURE_LISTED = 2991;
-const CAPTURE_MINOR = 2992;
 
 const HELD = [
   SENT_RECENT_ARCHIVED,
@@ -59,14 +53,7 @@ const HELD = [
   PLACEHOLDER,
   MARKER_AND_REPORT,
 ];
-const UNHELD = [
-  SENT_OLD_ARCHIVED,
-  PLAIN,
-  EXPIRED_MARKER,
-  SENT_13M_ARCHIVED,
-  LISTED_13M_ARCHIVED,
-  CAPTURE,
-];
+const UNHELD = [SENT_OLD_ARCHIVED, PLAIN, EXPIRED_MARKER, SENT_13M_ARCHIVED, LISTED_13M_ARCHIVED];
 const OWNERS = [...HELD, ...UNHELD];
 
 // Every owner has a live image in a post; ids are offset from the owner's.
@@ -86,7 +73,6 @@ const BASE_SCHEMA = `
     ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
     "needsReview" text,
     "blockedFor" text,
-    minor boolean NOT NULL DEFAULT false,
     metadata jsonb NOT NULL DEFAULT '{}',
     "updatedAt" timestamp(3),
     "cascadeParentId" int
@@ -137,13 +123,6 @@ const FIXTURE = `
   INSERT INTO "Image" (id, "userId", "needsReview") VALUES (${holdImage(
     REVIEW
   )}, ${REVIEW}, 'csam');
-  INSERT INTO "Image" (id, "userId", "needsReview") VALUES (${holdImage(
-    CAPTURE
-  )}, ${CAPTURE}, 'csam');
-  INSERT INTO "Image" (id, "userId", ingestion, "blockedFor") VALUES
-    (${CAPTURE_BLOCKED}, ${CAPTURE}, 'Blocked', 'CSAM'),
-    (${CAPTURE_LISTED}, ${CAPTURE}, 'Blocked', 'moderated');
-  INSERT INTO "Image" (id, "userId", minor) VALUES (${CAPTURE_MINOR}, ${CAPTURE}, true);
   INSERT INTO "Image" (id, "userId", ingestion, "blockedFor") VALUES
     (${holdImage(BLOCKED)}, ${BLOCKED}, 'Blocked', 'CSAM'),
     (${holdImage(SENT_OLD_ARCHIVED)}, ${SENT_OLD_ARCHIVED}, 'Blocked', 'CSAM'),
@@ -158,7 +137,6 @@ const FIXTURE = `
     (${SENT_OLD_ARCHIVED}, now() - interval '2 years', now() - interval '1 year',
       '[{"id": ${holdImage(SENT_OLD_ARCHIVED)}}]', '{}'),
     (NULL, NULL, NULL, '[{"id": ${holdImage(LISTED)}}]', '{}'),
-    (NULL, NULL, NULL, '[{"id": ${CAPTURE_LISTED}}]', '{}'),
     (${MARKER_AND_REPORT}, NULL, NULL, '[]', '{}'),
     (${SENT_RECENT_ARCHIVED}, now() - interval '30 days', now(), '[]', '{}'),
     (${SENT_13M_ARCHIVED}, now() - interval '13 months', now(), '[]', '{}'),
@@ -181,7 +159,6 @@ beforeAll(async () => {
   await db.exec(migration('20261019220000_evidence_hold'));
   await db.exec(migration('20261204120000_evidence_hold_image_prior_state'));
   await db.exec(migration('20261227150000_evidence_hold_owner_held'));
-  await db.exec(migration('20261231120100_feedback_capture_owner_hold'));
   await db.exec(FIXTURE);
 });
 
@@ -235,43 +212,6 @@ describe('evidence_hold_owner_held', () => {
     expect(await heldBy('evidence_hold_owner_held', PLAIN)).toBe(false);
     await db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${PLAIN})`);
     expect(await heldBy('evidence_hold_owner_held', PLAIN)).toBe(true);
-  });
-});
-
-describe('a feedback page capture', () => {
-  it('is kept on its own state exactly as captureImageHeldSql keeps it', async () => {
-    const app = captureImageHeldSql('i');
-    expect(app.values).toEqual([]);
-    const { rows } = await db.query<{ id: number; fn: boolean; app: boolean }>(
-      `SELECT i.id, evidence_hold_capture_held(i.id, i."needsReview", i."blockedFor", i.minor) AS fn,
-         ${app.text} AS app
-       FROM "Image" i WHERE i."userId" = $1 ORDER BY i.id`,
-      [CAPTURE]
-    );
-    expect(rows.filter((r) => r.fn !== r.app)).toEqual([]);
-    expect(rows.filter((r) => r.fn).map((r) => r.id)).toEqual([
-      CAPTURE_BLOCKED,
-      CAPTURE_LISTED,
-      CAPTURE_MINOR,
-      holdImage(CAPTURE),
-    ]);
-  });
-
-  it.each([
-    ['under review', holdImage(CAPTURE)],
-    ['blocked', CAPTURE_BLOCKED],
-    ['listed on a report', CAPTURE_LISTED],
-    ['flagged minor', CAPTURE_MINOR],
-  ])('is kept when %s and deleted directly', async (_label, id) => {
-    await db.exec(`DELETE FROM "Image" WHERE id = ${id}`);
-    expect(await count('Image', `id = ${id}`)).toBe(1);
-    expect(await count('EvidenceHoldImage', `"imageId" = ${id}`)).toBe(1);
-  });
-
-  it('is deleted when nothing keeps it, though other captures are flagged (control)', async () => {
-    await db.exec(`DELETE FROM "Image" WHERE id = ${liveImage(CAPTURE)}`);
-    expect(await count('Image', `id = ${liveImage(CAPTURE)}`)).toBe(0);
-    expect(await keptImages(CAPTURE)).toBe(0);
   });
 });
 
