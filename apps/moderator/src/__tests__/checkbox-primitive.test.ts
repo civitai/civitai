@@ -121,7 +121,6 @@ describe('bulk form fields have exactly one writer', () => {
   const FIELDS: [file: string, field: string][] = [
     ['routes/retool/user-lookup/ReviewsPanel.svelte', 'reviewIds'],
     ['routes/retool/user-lookup/IdentityPanel.svelte', 'fields'],
-    // Spelled as a prop, not a literal — see the dedicated case below for why that row is not enough.
     ['routes/retool/user-lookup/CommentList.svelte', 'commentIds'],
     ['lib/components/ImageActionBar.svelte', 'strikeOwners'],
     ['routes/retool/bulk-ban/+page.svelte', 'removeMedia'],
