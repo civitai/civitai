@@ -234,6 +234,7 @@ export type Recap = {
   graded: number;
   accuracy: number | null;
   goldEarned: number;
+  /** Votes without a verdict, `cast - graded`; pending or settled inconclusive, so the buckets add up to `cast`. */
   pending: number;
   /** The Watch bonus paid that day, apart from the vote gold in `goldEarned`. */
   streakBonus: number;
@@ -318,7 +319,6 @@ export async function findRecap(
         sql<string>`count(*) filter (where "settledAt" is not null and "verdict" = 'failed')`.as(
           'failed'
         ),
-        sql<string>`count(*) filter (where "settledAt" is null)`.as('pending'),
         sql<string>`coalesce(sum("gold") filter (where "settledAt" is not null and "verdict" = 'correct'), 0)`.as(
           'gold'
         ),
@@ -340,7 +340,8 @@ export async function findRecap(
       graded,
       accuracy: graded > 0 ? confirmed / graded : null,
       goldEarned: Number(totals.gold),
-      pending: Number(totals.pending),
+      // Whatever has no verdict: still pending, or settled without one (a hidden check with no answer).
+      pending: cast - graded,
       streakBonus: watchStands(last.watchCompletedAt, startAt) ? last.bonusGold : 0,
     };
   }

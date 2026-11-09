@@ -76,7 +76,10 @@ refusals, and `insertVote` / `creditVote`. The ledger row is under the item's ow
 and gold held as pending. The item row lock serialises its votes.
 
 A question has a consensus when `votesToResolve` players have answered and one answer has a strict majority (one vote per player, as the
-label store counts). A tie keeps it open until `maxVotes`, when it is closed with no outcome. At the close, in the same transaction:
+label store counts). A tie keeps it open, but answers arrive one at a time under the item row lock, so after a tie at an even
+`votesToResolve` the very next answer decides. A close with no outcome therefore happens only when `maxVotes` equals an even
+`votesToResolve` (including a `maxVotes` below it, which is clamped up to it): the tie is then at the cap. With the defaults (5 to resolve,
+10 at most) it never happens: five yes/no answers cannot tie, so every question resolves at the fifth answer. At the close, in the same transaction:
 
 - The majority answer is graded `correct` and the others `failed`; a close with no outcome leaves every vote `inconclusive`, as for a
   rating item. The item becomes `Consensus`, which counts as final, and the votes are paid by `settleItemVotes`, the rating path.
