@@ -222,6 +222,7 @@ import {
   ModelUploadType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
+import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { failedScanFileWhere } from '~/server/utils/failed-scan';
 import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
@@ -1260,6 +1261,7 @@ export const getDownloadCommandHandler = async ({
       where: { modelId, id: modelVersionId },
       select: {
         id: true,
+        status: true,
         model: {
           select: {
             id: true,
@@ -1336,6 +1338,10 @@ export const getDownloadCommandHandler = async ({
 
     const isMod = ctx.user?.isModerator;
     const userId = ctx.user?.id;
+    // Matches the download route: a deleted or taken-down model is moderators-only.
+    if ((isModelDeleted(modelVersion) || isModelTakenDown(modelVersion)) && !isMod)
+      throw throwNotFoundError();
+
     const canDownload =
       modelVersion.model.mode !== ModelModifier.Archived &&
       (isMod ||

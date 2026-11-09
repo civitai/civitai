@@ -28,7 +28,7 @@ import type {
   ModelHashType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { Availability, ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import { Availability, ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
@@ -73,6 +73,7 @@ type VersionRow = {
   sfwOnly: boolean;
   usageControl: ModelUsageControl;
   modelUserId: number;
+  modelMode: ModelModifier | null;
   poi: boolean;
   licensingFee: number | null;
   licensingFeeType: LicensingFeeType | null;
@@ -134,6 +135,7 @@ export default MixedAuthEndpoint(async function handler(
       m.minor,
       m."sfwOnly",
       m."userId" as "modelUserId",
+      m.mode as "modelMode",
       m.poi,
       pa."endsAt" AS "earlyAccessEndsAt",
       mv."requireAuth",
@@ -530,7 +532,12 @@ export default MixedAuthEndpoint(async function handler(
     fileName: targetFile.name,
     // nullable - hashes (all available hash types)
     hashes: targetFile.hashes,
-    downloadUrls: [downloadUrl], // nullable
+    // An epoch url is the orchestrator's own link to the weights, outside the download route's
+    // gates: a taken-down model's is moderators-only.
+    downloadUrls:
+      trainingResults && modelVersion.modelMode === ModelModifier.TakenDown && !user?.isModerator
+        ? []
+        : [downloadUrl], // nullable
     format, // nullable
     canGenerate,
     isFeatured,

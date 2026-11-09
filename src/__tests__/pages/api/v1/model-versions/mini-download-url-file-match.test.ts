@@ -617,6 +617,34 @@ describe('GET /api/v1/model-versions/mini/[id] — the AIR handed to Air.stringi
   });
 });
 
+describe('GET /api/v1/model-versions/mini/[id] — the epoch url of a taken-down model', () => {
+  // The epoch url is the orchestrator's own link to the weights, outside the download route, so a
+  // taken-down model's is withheld from everyone but moderators; the rest of the response stays.
+  const takenDown = { availability: 'Private', modelMode: 'TakenDown' } as Partial<
+    typeof versionRow
+  >;
+
+  it.each([
+    ['an anonymous caller', undefined],
+    ['its owner', { id: OWNER_ID }],
+  ])('is withheld from %s, and the rest of the response kept', async (_who, user) => {
+    currentUser.value = user;
+    const { status, body } = await run([TRAINING_FILE], {}, takenDown);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([]);
+    expect(body.fileName).toBe(TRAINING_FILE.name);
+    expect(body.air).toEqual(expect.any(String));
+  });
+
+  it('is still given to a moderator', async () => {
+    currentUser.value = { id: 1, isModerator: true };
+    const { body } = await run([TRAINING_FILE], {}, takenDown);
+
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+});
+
 describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch path', () => {
   /**
    * REGRESSION for the visibility gate being applied too early. A Private
