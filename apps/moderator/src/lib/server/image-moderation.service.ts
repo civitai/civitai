@@ -721,8 +721,8 @@ export async function resolveImageAppeal({
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
   }
 
-  // Held after the close: back to Pending, with no refund and no notice, even if the revert fails.
-  if (approved && !restored && (await isHeldImage(imageId))) {
+  // Restored nothing: back to Pending, with no refund and no notice, even if the revert fails.
+  if (approved && !restored) {
     await dbWrite
       .updateTable('Appeal')
       .set({ status: 'Pending', resolvedBy: null, resolvedAt: null })

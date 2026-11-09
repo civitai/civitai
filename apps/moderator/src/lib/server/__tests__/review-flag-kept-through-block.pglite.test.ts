@@ -579,18 +579,30 @@ describe('resolveImageAppeal', () => {
     expect(rows).toEqual([{ status: 'Pending' }]);
   });
 
-  it('approving does not restore an image dismissed from the review queue either', async () => {
+  it('approving does not restore an image dismissed from the review queue either, and pays nothing', async () => {
     await seedPendingAppeal(FLAGGED_REMOVED);
     expect(await dismiss(FLAGGED_REMOVED, 2)).toEqual({ ok: true });
+    const effects = await import('../image-moderation-effects');
+    vi.mocked(effects.refundAppealFee).mockClear();
+    vi.mocked(effects.notifyAppealResolved).mockClear();
 
-    await resolveImageAppeal({
-      imageId: FLAGGED_REMOVED,
-      status: 'Approved',
-      resolvedReason: 'misclassified',
-      userId: 2,
-    });
+    await expect(
+      resolveImageAppeal({
+        imageId: FLAGGED_REMOVED,
+        status: 'Approved',
+        resolvedReason: 'misclassified',
+        userId: 2,
+      })
+    ).rejects.toBeInstanceOf(AppealRestoreRefusedError);
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+    const { rows } = await db.query<{ status: string }>(
+      `SELECT status FROM "Appeal" WHERE "entityId" = $1`,
+      [FLAGGED_REMOVED]
+    );
+    expect(rows).toEqual([{ status: 'Pending' }]);
+    expect(effects.refundAppealFee).not.toHaveBeenCalled();
+    expect(effects.notifyAppealResolved).not.toHaveBeenCalled();
   });
 
   it('rejecting does not clear the review flag', async () => {
