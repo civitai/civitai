@@ -42,7 +42,7 @@ describe('runPlaceAll', () => {
 
     expect(place.mock.calls.map(([sent]) => sent.data.cosmeticId)).toEqual([1, 2, 3]);
     expect(onPlaced.mock.calls.map(([id]) => id)).toEqual(['a', 'b', 'c']);
-    expect(result).toEqual({ placed: 3, pending: 1, failed: null });
+    expect(result).toEqual({ placed: 3, pending: 1, skipped: 0, failed: null });
   });
 
   it('stops at the first refusal: earlier ones stay placed, later ones are never sent', async () => {
@@ -58,7 +58,12 @@ describe('runPlaceAll', () => {
 
     expect(place).toHaveBeenCalledTimes(2);
     expect(onPlaced.mock.calls.map(([id]) => id)).toEqual(['a']);
-    expect(result).toEqual({ placed: 1, pending: 0, failed: { draftId: 'b', error: refusal } });
+    expect(result).toEqual({
+      placed: 1,
+      pending: 0,
+      skipped: 0,
+      failed: { draftId: 'b', error: refusal },
+    });
   });
 
   it('skips a draft removed during the run, and charges nothing for it', async () => {
@@ -68,6 +73,6 @@ describe('runPlaceAll', () => {
     const result = await runPlaceAll(items, place, onPlaced, (id) => id !== 'b');
 
     expect(place.mock.calls.map(([sent]) => sent.data.cosmeticId)).toEqual([1, 3]);
-    expect(result).toEqual({ placed: 2, pending: 0, failed: null });
+    expect(result).toEqual({ placed: 2, pending: 0, skipped: 1, failed: null });
   });
 });

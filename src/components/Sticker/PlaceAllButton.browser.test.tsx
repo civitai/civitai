@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as Trpc from '~/utils/trpc';
+import type * as Notifications from '~/utils/notifications';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
@@ -9,8 +10,10 @@ import type { CreateStickerPlacementInput } from '~/server/schema/placement.sche
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 
-const { sent, handlers, errors } = vi.hoisted(() => ({
+const { sent, handlers, errors, onSend } = vi.hoisted(() => ({
   sent: [] as CreateStickerPlacementInput[],
+  // Runs as each placement is sent, so a test can change the drafts mid-run.
+  onSend: { current: null as null | (() => void) },
   // Every handler the button was rendered with, so a test can press one from an earlier render:
   // the Buzz purchase modal calls the handler it was given, after the drafts may have changed.
   handlers: [] as (() => void)[],
@@ -36,7 +39,8 @@ vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
   },
 }));
 vi.mock('~/components/Buzz/useAvailableBuzz', () => ({ useAvailableBuzz: () => ['yellow'] }));
-vi.mock('~/utils/notifications', () => ({
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof Notifications>()),
   showErrorNotification: ({ title }: { title: string }) => errors.push(title),
   showSuccessNotification: () => undefined,
 }));
@@ -47,6 +51,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       useMutation: () => ({
         mutateAsync: async (input: CreateStickerPlacementInput) => {
           sent.push(input);
+          onSend.current?.();
           return { status: 'approved' };
         },
       }),
@@ -78,6 +83,7 @@ beforeEach(() => {
   sent.length = 0;
   handlers.length = 0;
   errors.length = 0;
+  onSend.current = null;
 });
 
 describe('Place all', () => {
@@ -127,7 +133,7 @@ describe('Place all', () => {
 
     await expect.poll(() => sent.map((s) => s.data.cosmeticId)).toEqual([1, 2]);
     expect(useStickerPlacementDraftStore.getState().drafts.map((d) => d.id)).toEqual(['b']);
-    expect(useStickerPlacementDraftStore.getState().placingAll).toBe(false);
+    await expect.poll(() => useStickerPlacementDraftStore.getState().placingAll).toBe(false);
   });
 
   test('places nothing when the drafts cost more by the time it runs', async () => {
@@ -143,7 +149,36 @@ describe('Place all', () => {
     expect(sent).toHaveLength(0);
   });
 
-  test('does not place a draft removed before it runs', async () => {
+  test('places nothing when only one draft is ready by the time it runs', async () => {
+    seed(['a', 'b']);
+    renderWithProviders(<PlaceAllButton price={PRICE} />);
+    await expect.element(button()).toHaveTextContent('Place all 2');
+    const pressedEarlier = handlers[0];
+
+    seed(['a']);
+    pressedEarlier();
+
+    await expect.poll(() => errors).toEqual(['Your stickers changed']);
+    expect(sent).toHaveLength(0);
+  });
+
+  test('skips a draft removed while the run is going', async () => {
+    seed(['a', 'b', 'c']);
+    onSend.current = () => {
+      onSend.current = null;
+      const { drafts } = useStickerPlacementDraftStore.getState();
+      useStickerPlacementDraftStore.setState({ drafts: drafts.filter((d) => d.id !== 'c') });
+    };
+    renderWithProviders(<PlaceAllButton price={PRICE} />);
+
+    await button().click();
+
+    await expect.poll(() => useStickerPlacementDraftStore.getState().placingAll).toBe(false);
+    expect(sent.map((s) => s.data.cosmeticId)).toEqual([1, 2]);
+    expect(errors).toEqual([]);
+  });
+
+  test('does not place a draft that stopped being ready before it runs', async () => {
     seed(['a', 'b', 'c']);
     renderWithProviders(<PlaceAllButton price={PRICE} />);
     await expect.element(button()).toHaveTextContent('Place all 3');

@@ -27,8 +27,7 @@ export function placeAllPlan({
 /**
  * Places each item with `place`, one after another.
  *
- * Inputs are taken before the first call, so the run places what was confirmed and nothing a
- * re-render changed meanwhile. Each placement is its own escrow on the server, so a failure leaves
+ * Each placement is its own escrow on the server, so a failure leaves
  * the earlier ones placed and stops: the rest keep their drafts and their own buttons.
  * A draft removed mid-run (Remove, or the session ending) before its turn is skipped and never
  * charged; one whose request is already in flight is still placed.
@@ -41,16 +40,20 @@ export async function runPlaceAll(
 ) {
   let placed = 0;
   let pending = 0;
+  let skipped = 0;
   for (const item of items) {
-    if (!stillWanted(item.draftId)) continue;
+    if (!stillWanted(item.draftId)) {
+      skipped++;
+      continue;
+    }
     try {
       const result = await place(item.input);
       placed++;
       if (result.status === 'pending') pending++;
       onPlaced(item.draftId);
     } catch (error) {
-      return { placed, pending, failed: { draftId: item.draftId, error: error as Error } };
+      return { placed, pending, skipped, failed: { draftId: item.draftId, error: error as Error } };
     }
   }
-  return { placed, pending, failed: null };
+  return { placed, pending, skipped, failed: null };
 }

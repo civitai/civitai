@@ -8,8 +8,8 @@ import { trpc } from '~/utils/trpc';
 /**
  * Places every ready draft for one confirmation of the summed price. Each is sent with the input
  * its own Place button would send, so free placement, owned uses and the server's refusals match.
+ * `price` is null while the creator has set none; a price of 0 is a real price.
  */
-/** `price` is null while the creator has set none; a price of 0 is a real price. */
 export function PlaceAllButton(props: { price: number | null; className?: string }) {
   const drafts = useStore((state) => state.drafts);
   const ready = useStore((state) => state.readyPlacements);
@@ -69,7 +69,7 @@ function PlaceAllControl({
       );
       if (result.failed)
         showErrorNotification({
-          title: `Placed ${result.placed} of ${items.length}`,
+          title: `Placed ${result.placed} of ${items.length - result.skipped}`,
           error: new Error(
             `${result.failed.error.message} The rest are still here to place one at a time.`
           ),
