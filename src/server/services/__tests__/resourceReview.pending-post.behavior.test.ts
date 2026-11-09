@@ -286,7 +286,8 @@ describe('against Postgres', () => {
 
     expect(createNotification).toHaveBeenCalledTimes(1);
     expect(createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ key: 'new-review:21:101', userId: MODEL_OWNER })
+      expect.objectContaining({ key: 'new-review:21:101', userId: MODEL_OWNER }),
+      { throwOnError: true }
     );
     const { rows } = await pg.query<{ id: number; touched: boolean }>(
       `SELECT id, "updatedAt" > now() - interval '1 minute' AS touched FROM "ResourceReview" ORDER BY id`
@@ -324,10 +325,12 @@ describe('against Postgres', () => {
 
     expect(createNotification).toHaveBeenCalledTimes(2);
     expect(createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ key: 'new-review:21:101', userId: MODEL_OWNER })
+      expect.objectContaining({ key: 'new-review:21:101', userId: MODEL_OWNER }),
+      { throwOnError: true }
     );
     expect(createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ key: 'new-review:22:102', userId: MODEL_OWNER })
+      expect.objectContaining({ key: 'new-review:22:102', userId: MODEL_OWNER }),
+      { throwOnError: true }
     );
   });
 
@@ -406,6 +409,31 @@ describe('against Postgres', () => {
       `SELECT id FROM "ResourceReview" WHERE "releasedAt" IS NULL`
     );
     expect(rows).toEqual([]);
+  });
+
+  it('leaves a review unmarked when its notification send fails, for the next sweep', async () => {
+    await insertReviews([[1, 101, LIVE]]);
+    createNotification.mockRejectedValueOnce(new Error('notifications down'));
+
+    expect(await releaseUnreleasedReviewsOfLivePosts()).toEqual([]);
+    expect(createNotification).toHaveBeenLastCalledWith(expect.anything(), { throwOnError: true });
+
+    expect(await releaseUnreleasedReviewsOfLivePosts()).toEqual([
+      expect.objectContaining({ id: 1 }),
+    ]);
+  });
+
+  it('leaves a review unmarked when its post is unpublished while it is being announced', async () => {
+    await insertReviews([[1, 101, LIVE]]);
+    createNotification.mockImplementationOnce(async () => {
+      await pg.exec(`UPDATE "Post" SET "publishedAt" = NULL WHERE id = ${LIVE}`);
+    });
+
+    expect(await releaseUnreleasedReviewsOfLivePosts()).toEqual([]);
+    const { rows } = await pg.query<{ releasedAt: Date | null }>(
+      `SELECT "releasedAt" FROM "ResourceReview" WHERE id = 1`
+    );
+    expect(rows).toEqual([{ releasedAt: null }]);
   });
 
   it('announces a review again when its post is unpublished and published again', async () => {

@@ -28,19 +28,23 @@ export const visibleReviewForViewerSql = (alias: string, viewerId?: number) =>
       )}."userId" = ${viewerId})`
     : Prisma.raw(visibleReviewSql(alias));
 
-export const createResourceReviewNotification = async ({
-  id,
-  modelId,
-  modelVersionId,
-  recommended,
-  userId,
-}: {
-  id: number;
-  modelId: number;
-  modelVersionId: number;
-  recommended: boolean;
-  userId: number;
-}) => {
+/** `throwOnSendError` rejects when the send fails, rather than when there is nothing to send. */
+export const createResourceReviewNotification = async (
+  {
+    id,
+    modelId,
+    modelVersionId,
+    recommended,
+    userId,
+  }: {
+    id: number;
+    modelId: number;
+    modelVersionId: number;
+    recommended: boolean;
+    userId: number;
+  },
+  { throwOnSendError = false }: { throwOnSendError?: boolean } = {}
+) => {
   // don't send a notification for bad reviews
   if (!recommended) return;
 
@@ -94,14 +98,17 @@ export const createResourceReviewNotification = async ({
     imageCount,
   };
 
-  await createNotification({
-    type: 'new-review',
-    // One per reviewer and version, so a release that runs twice notifies once.
-    key: `new-review:${modelVersionId}:${userId}`,
-    category: NotificationCategory.Update,
-    userId: modelVersion.model.userId,
-    details: detailsObj,
-  }).catch();
+  await createNotification(
+    {
+      type: 'new-review',
+      // One per reviewer and version, so a release that runs twice notifies once.
+      key: `new-review:${modelVersionId}:${userId}`,
+      category: NotificationCategory.Update,
+      userId: modelVersion.model.userId,
+      details: detailsObj,
+    },
+    { throwOnError: throwOnSendError }
+  );
 };
 
 /** The post id, when the reviewer owns that post and it is not live yet; otherwise nothing. */
@@ -134,7 +141,7 @@ async function announceAndMark(candidates: ReleasedReview[]) {
   await bustRatingTotalsForRows(candidates).catch(() => undefined);
   const notified: ReleasedReview[] = [];
   for (const review of candidates) {
-    const sent = await createResourceReviewNotification(review).then(
+    const sent = await createResourceReviewNotification(review, { throwOnSendError: true }).then(
       () => true,
       () => false
     );
@@ -145,7 +152,12 @@ async function announceAndMark(candidates: ReleasedReview[]) {
   const marked = await dbWrite.$queryRaw<{ id: number }[]>`
     UPDATE "ResourceReview"
     SET "releasedAt" = now(), "updatedAt" = now()
-    WHERE id IN (${Prisma.join(notified.map((review) => review.id))}) AND "releasedAt" IS NULL
+    WHERE id IN (${Prisma.join(notified.map((review) => review.id))})
+      AND "releasedAt" IS NULL
+      -- Unpublished since it was selected: the next go-live announces it.
+      AND EXISTS (
+        SELECT 1 FROM "Post" p WHERE p.id = "ResourceReview"."postId" AND p."publishedAt" <= now()
+      )
     RETURNING id
   `;
   const markedIds = new Set(marked.map((row) => row.id));
