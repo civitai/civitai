@@ -15,8 +15,12 @@
  * for the beacons) and skips the router-server, the proxy and base-server. What it still has to
  * do in their place is in `./next-compat.cjs`.
  *
- * Mode: `TRPC_SERVER_MODE=route` (the default) is the only one implemented. Anything else exits
- * non-zero at boot.
+ * Mode: `TRPC_SERVER_MODE` picks HOW the tRPC page runs (`./served-pages.cjs`). `route` (the
+ * default, unset) calls its route module's `handler` like every other page. `lean` runs
+ * `/api/trpc/[trpc]` through `./lean-trpc.cjs`: the same Next pages-API runtime (request span,
+ * `apiResolver`, the page's own default export) without the per-request `prepare`, whose
+ * request-independent work it does once at boot. Every other page runs as in `route`. Anything else
+ * exits non-zero at boot, and `./lean-trpc.cjs` is not even loaded unless the mode is `lean`.
  *
  * Profile: `STANDALONE_SERVER_PROFILE` picks WHICH pages it serves (`./served-pages.cjs`). `trpc`
  * (the default, unset) is the fixed list above. `api` adds every pages-API route under `/api/v1/`,
@@ -37,6 +41,7 @@
  *      parsers, the log sink, the warmer. Awaited, and run HERE rather than left to the first
  *      request, because the liveness heartbeat must start at boot.
  *   5. load the route modules (Next preloads entries after instrumentation too)
+ *   6. `lean` mode only: build the lean handlers from the loaded route modules
  *
  * Start: `node -- trpc-server/server.cjs` from the image root (`/app`).
  */
@@ -49,16 +54,20 @@ const path = require('node:path');
 
 const dir = path.join(__dirname, '..');
 
-const MODE = process.env.TRPC_SERVER_MODE || 'route';
-if (MODE !== 'route') {
+/** Which pages to serve and how (see that file). Unset is the `trpc` profile, the list this server always served. */
+const served = require('./served-pages.cjs');
+
+/** How the tRPC page runs. Unset is `route`, the only mode before the variable had another value. */
+const MODE = served.resolveMode(process.env.TRPC_SERVER_MODE);
+if (!MODE) {
   console.error(
-    `[trpc-server] TRPC_SERVER_MODE=${JSON.stringify(MODE)} is not implemented; only "route" is.`
+    `[trpc-server] TRPC_SERVER_MODE=${JSON.stringify(
+      process.env.TRPC_SERVER_MODE
+    )} is not a mode; expected one of ${served.SERVER_MODES.join(', ')}.`
   );
   process.exit(1);
 }
 
-/** Which pages to serve (see that file). Unset is the `trpc` profile, the list this server always served. */
-const served = require('./served-pages.cjs');
 const PROFILE = served.resolveProfile(process.env.STANDALONE_SERVER_PROFILE);
 if (!PROFILE) {
   console.error(
@@ -151,6 +160,8 @@ const routeModules = compat.createRouteModuleLoader(
  */
 let applyApiPolicy = null;
 const relativeProjectDir = path.relative(process.cwd(), dir);
+/** page -> lean `handler(req, res, ctx)`, built at boot in `lean` mode only. Empty in `route` mode. */
+const leanHandlers = new Map();
 
 // --- request handling -----------------------------------------------------------------------------
 
@@ -189,12 +200,12 @@ async function handle(req, res) {
     if (applyApiPolicy(req, res)) return;
   }
 
+  const ctx = { waitUntil: undefined, requestMeta: { relativeProjectDir, distDir } };
+  const lean = leanHandlers.get(matched.page);
+  if (lean) return lean(req, res, ctx);
   // Rejects while the page's module fails to load; requestListener answers that with a 500.
   const mod = await routeModules.get(matched.page);
-  await mod.handler(req, res, {
-    waitUntil: undefined,
-    requestMeta: { relativeProjectDir, distDir },
-  });
+  await mod.handler(req, res, ctx);
 }
 
 // --- 3. listen; hold requests until boot has finished (start-server's handlersPromise) ---------
@@ -291,6 +302,29 @@ server.on('listening', async () => {
     if (failedCore.length > 0) {
       throw new Error(`[trpc-server] core page(s) failed to load: ${failedCore.join(', ')}`);
     }
+
+    // --- 6. lean mode: the lean handlers, built from the loaded route modules ---------------------
+    // Only here is `./lean-trpc.cjs` loaded. A failure stops the boot: a server asked to run lean
+    // never quietly runs the route modules instead.
+    if (MODE === 'lean') {
+      const leanRuntime = require('./lean-trpc.cjs');
+      for (const page of SERVED_PAGES.filter((p) => served.servesLean(MODE, p))) {
+        leanHandlers.set(
+          page,
+          leanRuntime.createLeanPageHandler({
+            page,
+            mod: await routeModules.get(page),
+            projectDir: dir,
+            distDir,
+            relativeProjectDir,
+            nextConfig,
+          })
+        );
+      }
+      if (leanHandlers.size === 0) throw new Error('[trpc-server] lean mode serves no lean page');
+      console.log(`[trpc-server] lean runtime for: ${[...leanHandlers.keys()].join(', ')}`);
+    }
+
     console.log(
       `[trpc-server] ready (profile ${PROFILE}, ${SERVED_PAGES.length} pages${
         failed.length ? `, ${failed.length} failed to load: ${failed.join(', ')}` : ''

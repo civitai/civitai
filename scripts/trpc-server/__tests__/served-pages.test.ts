@@ -26,6 +26,47 @@ describe('resolveProfile', () => {
   });
 });
 
+/**
+ * `TRPC_SERVER_MODE` -> mode, and which pages the lean runtime serves. With the switch off (unset,
+ * empty or `route`) no page reaches the lean runtime, whatever the profile serves.
+ */
+describe('resolveMode', () => {
+  it.each([
+    [undefined, 'route'],
+    ['', 'route'],
+    ['route', 'route'],
+    ['lean', 'lean'],
+  ])('%j -> %j', (value, mode) => {
+    expect(served.resolveMode(value)).toBe(mode);
+  });
+
+  it.each(['LEAN', 'Route', ' lean', 'fetch', 'trpc'])('%j is not a mode', (value) => {
+    expect(served.resolveMode(value)).toBeNull();
+  });
+});
+
+describe('servesLean', () => {
+  const manifest = {
+    '/api/trpc/[trpc]': 'a.js',
+    '/api/v1/models': 'b.js',
+    '/api/v1/models/[id]': 'c.js',
+  };
+  const everyPage = [
+    ...new Set([...served.servedPages('trpc', manifest), ...served.servedPages('api', manifest)]),
+  ];
+
+  it.each([undefined, '', 'route'])('switch off (%j): no served page is lean', (value) => {
+    const mode = served.resolveMode(value);
+    expect(everyPage.filter((page: string) => served.servesLean(mode, page))).toEqual([]);
+  });
+
+  it('lean: only the tRPC page, in either profile', () => {
+    expect(everyPage.filter((page: string) => served.servesLean('lean', page))).toEqual([
+      '/api/trpc/[trpc]',
+    ]);
+  });
+});
+
 describe('servedPages', () => {
   const manifest = {
     '/api/trpc/[trpc]': 'a.js',

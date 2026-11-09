@@ -198,11 +198,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # The standalone tRPC server (`node -- trpc-server/server.cjs`): plain CommonJS that serves the
 # tRPC, probe and metrics routes from the compiled route modules above, without the Next router.
-# Only the three runtime files; its tests and parity harness stay out of the image. The default
+# Only the four runtime files; its tests and parity harness stay out of the image. The default
 # CMD below is unchanged — this is only used where something runs that command instead.
 # `served-pages.cjs` is required by server.cjs at module scope, so the boot-graph gate below
-# fails the build if it is missing here.
-COPY --from=builder --chown=nextjs:nodejs /app/scripts/trpc-server/server.cjs /app/scripts/trpc-server/next-compat.cjs /app/scripts/trpc-server/served-pages.cjs ./trpc-server/
+# fails the build if it is missing here. `lean-trpc.cjs` is loaded only with
+# `TRPC_SERVER_MODE=lean`, so the gate below loads it on its own.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/trpc-server/server.cjs /app/scripts/trpc-server/next-compat.cjs /app/scripts/trpc-server/served-pages.cjs /app/scripts/trpc-server/lean-trpc.cjs ./trpc-server/
 # NOTE: server source maps are intentionally NOT copied into the runtime image.
 # They are published as the separate `maps` target above (fetched on-demand by
 # the cpuprofile resolver), keeping the prod pod lean (~761 MB smaller).
@@ -231,9 +232,13 @@ COPY --from=builder --chown=nextjs:nodejs /app/scripts/trpc-server/server.cjs /a
 # The standalone tRPC server's files are checked the same way: they require Next internals by
 # deep path (`next/dist/server/...`), which nothing else here loads at build time, so a trace
 # that dropped one would otherwise surface as a crash-looping container. `served-pages.cjs` is
-# loaded through server.cjs's own require of it.
+# loaded through server.cjs's own require of it. `lean-trpc.cjs`, which server.cjs requires only in
+# lean mode, is scanned as an entry and then loaded once, so the Next exports it checks as it loads
+# (`expectExport`) are checked here too.
 COPY --from=builder /app/scripts/ci/assert-standalone-boot-graph.mjs /tmp/assert-standalone-boot-graph.mjs
-RUN node /tmp/assert-standalone-boot-graph.mjs /app server.js trpc-server/server.cjs trpc-server/next-compat.cjs && rm -f /tmp/assert-standalone-boot-graph.mjs
+RUN node /tmp/assert-standalone-boot-graph.mjs /app server.js trpc-server/server.cjs trpc-server/next-compat.cjs trpc-server/lean-trpc.cjs \
+  && node -e "require('/app/trpc-server/lean-trpc.cjs')" \
+  && rm -f /tmp/assert-standalone-boot-graph.mjs
 
 USER nextjs
 EXPOSE 3000

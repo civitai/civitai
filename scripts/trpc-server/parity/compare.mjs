@@ -19,6 +19,9 @@
  *     [--tracker <url> --tracker-a-ip <ip> --tracker-b-ip <ip>]
  *     [--expect-red <case-id> [--expect-red-diff '<diff line prefix>']]
  *
+ * A case with `abort` closes the connection early (`sendAborting`): its compared answer is
+ * whether the server answered before the client left, then that server's answer to a follow-up.
+ *
  * `--cases` picks the case list (`cases.mjs`): `trpc` (the default), `image-delivery`, `beacons` or
  * `api` (the standalone server's `api` profile: `/api/v1/**` and `/api/auth/**`). A case
  * with `warm: true` is sent once more to the same server, unmeasured, right before its measured
@@ -197,6 +200,83 @@ function send(base, c) {
     if (body !== undefined) req.write(body);
     req.end();
   });
+}
+
+/** The request a server must answer after a client went away, to show it still serves normally. */
+const AFTER_ABORT = { path: '/api/trpc/system.getLiveNow', headers: { 'user-agent': 'parity' } };
+const ABORT_AFTER_MS = 300;
+
+/**
+ * A case with `abort` (`mid-body`: the body is cut short and the socket closed while the server
+ * waits for the rest; `mid-response`: the socket is closed at the first byte of the answer). What
+ * the client saw cannot be compared byte for byte (how much of a streamed answer arrives first
+ * depends on timing), so the case's "answer" is built from what does not: whether the server
+ * answered before the client left (and with which status), then the same server's full answer to
+ * `AFTER_ABORT`. Returned in `send`'s shape so `compare` diffs it like any other answer.
+ */
+function sendAborting(base, c) {
+  const url = new URL(base);
+  const body = typeof c.body === 'function' ? c.body() : c.body;
+  return new Promise((resolve) => {
+    let outcome = null;
+    const settle = (value) => {
+      if (outcome === null) outcome = value;
+    };
+    const req = http.request(
+      {
+        host: url.hostname,
+        port: url.port,
+        method: c.method || 'GET',
+        path: c.path,
+        headers: {
+          host: HOST_HEADER,
+          ...c.headers,
+          ...(body !== undefined ? { 'content-length': Buffer.byteLength(body) } : {}),
+        },
+        agent: false,
+        timeout: 60_000,
+      },
+      (res) => {
+        if (c.abort === 'mid-response') {
+          res.once('data', () => {
+            settle(`answered ${res.statusCode}, closed at the first byte`);
+            req.destroy();
+          });
+          res.once('end', () => settle(`answered ${res.statusCode}, closed at the first byte`));
+        } else {
+          settle(`answered ${res.statusCode} before the body was complete`);
+          req.destroy();
+        }
+        res.on('error', () => {});
+      }
+    );
+    req.on('error', () => {});
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('close', async () => {
+      settle('no answer');
+      // Let the server notice the close before the follow-up request.
+      await sleep(ABORT_AFTER_MS);
+      const after = await send(base, AFTER_ABORT);
+      if (after.error) return resolve({ error: `${outcome}; then ${after.error}` });
+      resolve({
+        ...after,
+        body: Buffer.concat([Buffer.from(`${outcome}\n`), after.body]),
+      });
+    });
+    if (c.abort === 'mid-body') {
+      if (body === undefined) throw new Error(`${c.id}: abort mid-body needs a body`);
+      // Half the body, then the socket closes.
+      req.write(Buffer.from(body).subarray(0, Math.floor(Buffer.byteLength(body) / 2)));
+      setTimeout(() => req.destroy(), ABORT_AFTER_MS);
+    } else {
+      if (body !== undefined) req.write(body);
+      req.end();
+    }
+  });
+}
+
+function sendCase(base, c) {
+  return c.abort ? sendAborting(base, c) : send(base, c);
 }
 
 function headerMultiset(rawHeaders) {
@@ -413,13 +493,13 @@ for (const c of cases) {
   await flushRedis();
   if (c.warm) await send(args.a, c);
   const markA = tracking ? (await readTracker(0)).total : 0;
-  const ra = await send(args.a, c);
+  const ra = await sendCase(args.a, c);
   const ea = tracking ? await trackerEventsSince(markA, args['tracker-a-ip'], want) : [];
   if (!tracking) await sleep(settleMs);
   await flushRedis();
   if (c.warm) await send(args.b, c);
   const markB = tracking ? (await readTracker(0)).total : 0;
-  const rb = await send(args.b, c);
+  const rb = await sendCase(args.b, c);
   const eb = tracking ? await trackerEventsSince(markB, args['tracker-b-ip'], want) : [];
   if (!tracking) await sleep(settleMs);
 

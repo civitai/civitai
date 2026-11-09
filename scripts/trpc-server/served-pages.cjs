@@ -1,6 +1,7 @@
 'use strict';
 /**
- * The pages the standalone server (`./server.cjs`) answers. Anything else is a 404.
+ * The pages the standalone server (`./server.cjs`) answers, and how it runs them (the mode, below).
+ * Anything else is a 404.
  *
  * Which pages depends on the server's PROFILE, read once at boot from `STANDALONE_SERVER_PROFILE`:
  *
@@ -61,6 +62,27 @@ const API_POLICY_GLOBAL_KEY = 'civitai.standalone.applyApiRequestPolicy';
 const PROFILES = Object.freeze(['trpc', 'api']);
 const DEFAULT_PROFILE = 'trpc';
 
+/**
+ * `TRPC_SERVER_MODE`: HOW a page is run. `route` (the default, unset) calls every page's compiled
+ * route module `handler`, Next's whole pages-API runtime. `lean` runs the pages in `LEAN_PAGES`
+ * through `./lean-trpc.cjs` instead (Next's pages-API runtime without its per-request `prepare`)
+ * and every other page as `route` does. In `route` mode `./lean-trpc.cjs` is never loaded.
+ */
+const SERVER_MODES = Object.freeze(['route', 'lean']);
+const DEFAULT_MODE = 'route';
+const LEAN_PAGES = Object.freeze(['/api/trpc/[trpc]']);
+
+/** The mode named by `value` (unset or empty means the default), or null when it is unknown. */
+function resolveMode(value) {
+  const name = value === undefined || value === '' ? DEFAULT_MODE : value;
+  return SERVER_MODES.includes(name) ? name : null;
+}
+
+/** Whether, in `mode`, `page` is served by the lean runtime rather than its route module. */
+function servesLean(mode, page) {
+  return mode === 'lean' && LEAN_PAGES.includes(page);
+}
+
 /** The profile named by `value` (unset or empty means the default), or null when it is unknown. */
 function resolveProfile(value) {
   const name = value === undefined || value === '' ? DEFAULT_PROFILE : value;
@@ -94,6 +116,11 @@ module.exports = Object.freeze({
   API_POLICY_GLOBAL_KEY,
   PROFILES,
   DEFAULT_PROFILE,
+  SERVER_MODES,
+  DEFAULT_MODE,
+  LEAN_PAGES,
+  resolveMode,
+  servesLean,
   resolveProfile,
   needsApiPolicy,
   servedPages,

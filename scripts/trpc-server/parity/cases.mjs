@@ -197,6 +197,102 @@ export function buildCases(ctx) {
       body: () => Buffer.alloc(18 * 1024 * 1024, 0x20),
     },
 
+    // Mutations (POST with a JSON body). Rejected before any database read: signed out, the
+    // procedure's auth middleware; signed in, its input schema.
+    {
+      id: 'mutation-signed-out',
+      method: 'POST',
+      path: '/api/trpc/user.requestEmailChange?batch=1',
+      headers: { ...edge, 'content-type': 'application/json' },
+      body: JSON.stringify({ 0: { json: { newEmail: 'not-an-email' } } }),
+    },
+    {
+      id: 'mutation-signed-in-invalid-input',
+      method: 'POST',
+      path: '/api/trpc/user.requestEmailChange?batch=1',
+      headers: { ...signedIn, 'content-type': 'application/json' },
+      body: JSON.stringify({ 0: { json: { newEmail: 'not-an-email' } } }),
+    },
+    {
+      // A streamed (JSON lines) batch of two mutations.
+      id: 'streamed-mutation-batch',
+      method: 'POST',
+      path: '/api/trpc/user.requestEmailChange,user.requestEmailChange?batch=1',
+      headers: {
+        ...signedIn,
+        'content-type': 'application/json',
+        'trpc-accept': 'application/jsonl',
+      },
+      body: JSON.stringify({
+        0: { json: { newEmail: 'not-an-email' } },
+        1: { json: { newEmail: 'also not one' } },
+      }),
+      expectHeaders: { 'transfer-encoding': 'chunked' },
+    },
+    {
+      id: 'mutation-as-get',
+      path: `/api/trpc/user.requestEmailChange?input=${enc({ json: { newEmail: 'x' } })}`,
+      headers: edge,
+    },
+    {
+      id: 'head-query',
+      method: 'HEAD',
+      path: `/api/trpc/content.get?input=${enc({ json: TOS })}`,
+      headers: edge,
+    },
+
+    // How the route param and the query are worked out (the route module's `prepare`).
+    {
+      // `trpc` in the query string: the path segment still names the procedure.
+      id: 'route-param-also-in-query',
+      path: `/api/trpc/content.get?input=${enc({ json: TOS })}&trpc=system.getLiveNow`,
+      headers: edge,
+    },
+    {
+      id: 'percent-encoded-procedure',
+      path: `/api/trpc/content%2Eget?input=${enc({ json: TOS })}`,
+      headers: edge,
+    },
+    {
+      id: 'repeated-query-key',
+      path: `/api/trpc/content.get?input=${enc({ json: TOS })}&input=${enc({
+        json: { slug: ['x'] },
+      })}`,
+      headers: edge,
+    },
+    {
+      // The segment is the page's own placeholder, which the route module treats specially.
+      id: 'placeholder-segment',
+      path: '/api/trpc/%5Btrpc%5D',
+      headers: edge,
+    },
+    {
+      // One preview cookie without the other: the route module clears both on the response.
+      id: 'stale-preview-cookie',
+      path: '/api/trpc/user.getSelfStatus',
+      headers: { ...edge, cookie: '__prerender_bypass=stale' },
+    },
+
+    // The client goes away. Neither answer can be compared, so each side's outcome and then the
+    // same server's answer to a follow-up request are (see `abort` in compare.mjs).
+    {
+      id: 'abort-mid-body',
+      method: 'POST',
+      path: '/api/trpc/content.get?batch=1',
+      headers: { ...edge, 'content-type': 'application/json' },
+      body: JSON.stringify({ 0: { json: TOS } }),
+      abort: 'mid-body',
+    },
+    {
+      id: 'abort-mid-stream',
+      path: batchUrl([
+        ['content.get', TOS],
+        ['system.getLiveNow', null],
+      ]),
+      headers: { ...edge, 'trpc-accept': 'application/jsonl' },
+      abort: 'mid-response',
+    },
+
     {
       id: 'unauthenticated-protected-query',
       path: '/api/trpc/user.getSelfStatus',

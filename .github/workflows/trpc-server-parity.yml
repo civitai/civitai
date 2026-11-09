@@ -24,7 +24,12 @@ name: tRPC server parity
 #     against it, with a copy whose proxy-policy call is removed as that profile's negative control
 #     (the 451 for a blocked region must go red), and checks an `/api/v1/` request span is emitted;
 #   - boots the api profile once more on an image whose `/api/v1/enums` route module throws at load,
-#     and requires that server to come up, answer that route 500 and serve the others.
+#     and requires that server to come up, answer that route 500 and serve the others;
+#   - boots the standalone server in lean mode (`TRPC_SERVER_MODE=lean`: `/api/trpc/[trpc]` through
+#     `lean-trpc.cjs`) and runs the tRPC cases against it, with a copy whose preview-cookie read is
+#     removed as its negative control (`stale-preview-cookie` must go red), checks its request
+#     spans, and checks that only that server loaded the lean runtime (every other one runs with
+#     the switch off).
 #
 # Runs when anything that can change either server's answers changes: the server itself, the
 # image, Next/tRPC (package.json / lockfile / patches), the route modules it serves, and the
@@ -322,6 +327,7 @@ jobs:
       MUTANT_IMAGE: trpc-server-parity:mutant
       API_MUTANT_IMAGE: trpc-server-parity:api-mutant
       BROKEN_ROUTE_IMAGE: trpc-server-parity:broken-route
+      LEAN_MUTANT_IMAGE: trpc-server-parity:lean-mutant
       CANDIDATE_IMAGE: trpc-server-parity:candidate
       STATUS_CONTEXT: tRPC parity
     steps:
@@ -386,6 +392,7 @@ jobs:
             --watch 'POST /api/internal/ping' --watch 'POST /api/internal/pulse' \
             --watch 'POST /api/track/batch' \
             --watch 'GET /api/v1/enums' \
+            --watch 'GET /api/trpc/[trpc]' --watch 'prepare route module' \
             > "$WORK/otlp-stub.log" 2>&1 &
           echo $! > "$WORK/otlp-stub.pid"
 
@@ -429,26 +436,46 @@ jobs:
           printf 'FROM %s\nCOPY --chown=1001:1001 server.cjs /app/trpc-server/server.cjs\n' "$IMAGE" > "$WORK/api-mutant/Dockerfile"
           docker build -q -t "$API_MUTANT_IMAGE" "$WORK/api-mutant"
           docker run --rm --entrypoint cat "$API_MUTANT_IMAGE" /app/trpc-server/server.cjs | cmp - "$WORK/api-mutant/server.cjs"
-          # The candidate: the image with this checkout's server.cjs. A pull_request or status run
-          # tests its own commit's image, so the copy must already be the image's (the run fails if
-          # not). A dispatch run may test a branch's copy on top of an older image, which is how a
-          # deliberately broken copy is tested without an image build; it says so in the log.
+          # The candidate: the image with this checkout's standalone-server files. A pull_request or
+          # status run tests its own commit's image, so the copies must already be the image's (the
+          # run fails if not). A dispatch run may test a branch's copies on top of an older image,
+          # which is how a deliberately broken copy is tested without an image build; it says so in
+          # the log.
           mkdir -p "$WORK/candidate"
-          cp scripts/trpc-server/server.cjs "$WORK/candidate/server.cjs"
-          if ! docker run --rm --entrypoint cat "$IMAGE" /app/trpc-server/server.cjs | cmp -s - scripts/trpc-server/server.cjs; then
-            if [ "${{ github.event_name }}" != workflow_dispatch ]; then
-              echo "the image is not this commit's: its server.cjs differs from the checkout"; exit 1
+          files="server.cjs next-compat.cjs served-pages.cjs lean-trpc.cjs"
+          overlay=
+          for f in $files; do
+            cp "scripts/trpc-server/$f" "$WORK/candidate/$f"
+            if ! docker run --rm --entrypoint cat "$IMAGE" "/app/trpc-server/$f" 2>/dev/null | cmp -s - "scripts/trpc-server/$f"; then
+              overlay="$overlay $f"
             fi
-            echo "::warning::dispatch: testing this checkout's server.cjs on top of $IMAGE"
-            # Only server.cjs is overlaid (next-compat.cjs, served-pages.cjs and the route modules
-            # are the image's),
-            # so this run is NOT a verdict on the head commit: the verdict step below never posts
-            # success for it.
+          done
+          if [ -n "$overlay" ]; then
+            if [ "${{ github.event_name }}" != workflow_dispatch ]; then
+              echo "the image is not this commit's: its copy of$overlay differs from the checkout"; exit 1
+            fi
+            echo "::warning::dispatch: testing this checkout's$overlay on top of $IMAGE"
+            # Only these files are overlaid (the route modules are the image's), so this run is NOT
+            # a verdict on the head commit: the verdict step below never posts success for it.
             echo "PARITY_OVERLAY=1" >> "$GITHUB_ENV"
           fi
-          printf 'FROM %s\nCOPY --chown=1001:1001 server.cjs /app/trpc-server/server.cjs\n' "$IMAGE" > "$WORK/candidate/Dockerfile"
+          { printf 'FROM %s\n' "$IMAGE"; for f in $files; do printf 'COPY --chown=1001:1001 %s /app/trpc-server/%s\n' "$f" "$f"; done; } > "$WORK/candidate/Dockerfile"
           docker build -q -t "$CANDIDATE_IMAGE" "$WORK/candidate"
-          docker run --rm --entrypoint cat "$CANDIDATE_IMAGE" /app/trpc-server/server.cjs | cmp - scripts/trpc-server/server.cjs
+          for f in $files; do
+            docker run --rm --entrypoint cat "$CANDIDATE_IMAGE" "/app/trpc-server/$f" | cmp - "scripts/trpc-server/$f"
+          done
+          # The lean mode's negative control: the candidate with the lean runtime's preview-cookie
+          # read removed. Built on the candidate, so it differs from it in that one line only.
+          mkdir -p "$WORK/lean-mutant"
+          cp scripts/trpc-server/lean-trpc.cjs "$WORK/lean-mutant/lean-trpc.cjs"
+          anchor='^    tryGetPreviewData(req, res, previewProps, multiZoneDraftMode);$'
+          n=$(grep -c "$anchor" "$WORK/lean-mutant/lean-trpc.cjs" || true)
+          if [ "$n" != 1 ]; then echo "lean mutation anchor matched $n lines, expected 1"; exit 2; fi
+          sed -i "s|$anchor|    // MUTANT: preview cookies not read|" "$WORK/lean-mutant/lean-trpc.cjs"
+          if cmp -s scripts/trpc-server/lean-trpc.cjs "$WORK/lean-mutant/lean-trpc.cjs"; then echo "lean mutant is identical"; exit 2; fi
+          printf 'FROM %s\nCOPY --chown=1001:1001 lean-trpc.cjs /app/trpc-server/lean-trpc.cjs\n' "$CANDIDATE_IMAGE" > "$WORK/lean-mutant/Dockerfile"
+          docker build -q -t "$LEAN_MUTANT_IMAGE" "$WORK/lean-mutant"
+          docker run --rm --entrypoint cat "$LEAN_MUTANT_IMAGE" /app/trpc-server/lean-trpc.cjs | cmp - "$WORK/lean-mutant/lean-trpc.cjs"
           # The candidate with ONE route module that throws at load: /api/v1/enums.
           mkdir -p "$WORK/broken"
           rel=$(docker run --rm --entrypoint node "$CANDIDATE_IMAGE" -e "process.stdout.write(require('/app/.next/server/pages-manifest.json')['/api/v1/enums'] || '')")
@@ -467,6 +494,8 @@ jobs:
           docker run "${common[@]}" -e STANDALONE_SERVER_PROFILE=api --name api -p 3003:3000 "$CANDIDATE_IMAGE" node -- trpc-server/server.cjs
           docker run "${common[@]}" -e STANDALONE_SERVER_PROFILE=api --name api-mutant -p 3004:3000 "$API_MUTANT_IMAGE" node -- trpc-server/server.cjs
           docker run "${common[@]}" -e STANDALONE_SERVER_PROFILE=api --name broken -p 3005:3000 "$BROKEN_ROUTE_IMAGE" node -- trpc-server/server.cjs
+          docker run "${common[@]}" -e TRPC_SERVER_MODE=lean --name lean -p 3006:3000 "$CANDIDATE_IMAGE" node -- trpc-server/server.cjs
+          docker run "${common[@]}" -e TRPC_SERVER_MODE=lean --name lean-mutant -p 3007:3000 "$LEAN_MUTANT_IMAGE" node -- trpc-server/server.cjs
 
       # Instrumentation must have REGISTERED on both servers, or the reference is not a control:
       #   - trpc: before ANY request reaches it (its own boot runs register() and gates requests);
@@ -513,6 +542,22 @@ jobs:
             echo "api: the ready line lists an /api/auth/ page"; exit 1
           fi
 
+          for _ in $(seq 1 180); do
+            docker logs lean 2>&1 | grep -q '\[trpc-server\] ready' && break
+            running lean || { echo "lean exited"; docker logs lean 2>&1 | tail -100; exit 1; }
+            sleep 2
+          done
+          check lean '[trpc-server] instrumentation registered' '(mode lean, profile trpc)' \
+            '[trpc-server] lean runtime for: /api/trpc/[trpc]' '[trpc-server] ready (profile trpc,'
+          # The switch off is the lean runtime unreachable: every other server ran in route mode and
+          # never loaded it. (The lean server's own line above is the positive control.)
+          for c in trpc api; do
+            logs=$(docker logs "$c" 2>&1)
+            grep -qF '(mode route, profile' <<< "$logs" || { echo "$c: not in route mode"; exit 1; }
+            if grep -qF '[trpc-server] lean runtime' <<< "$logs"; then echo "$c: loaded the lean runtime with the switch off"; exit 1; fi
+            echo "$c: route mode, lean runtime not loaded"
+          done
+
           ok=
           for _ in $(seq 1 150); do
             if curl -fsS -o /dev/null "http://127.0.0.1:3000/api/live?token=$token"; then ok=1; break; fi
@@ -526,7 +571,7 @@ jobs:
       - name: Wait for all three to answer
         run: |
           token=$(grep '^WEBHOOK_TOKEN=' "$WORK/parity.env" | cut -d= -f2-)
-          for port in 3000 3001 3002 3003 3004; do
+          for port in 3000 3001 3002 3003 3004 3006 3007; do
             ok=
             for _ in $(seq 1 150); do
               if curl -fsS -o /dev/null "http://127.0.0.1:$port/api/live?token=$token"; then ok=1; break; fi
@@ -608,6 +653,19 @@ jobs:
             --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/api-mutant.json" \
             --cases api --expect-red v1-blocked-region --expect-red-diff 'pinned 451 '
 
+      - name: Lean mode, tRPC cases (Next vs standalone lean mode)
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3006 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/lean.json"
+
+      - name: Lean mode negative control (Next vs lean mutant must be red)
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3007 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/lean-mutant.json" \
+            --expect-red stale-preview-cookie --expect-red-diff 'set-cookie names:'
+
       - name: A route module that fails to load does not take the server down
         if: ${{ !cancelled() }}
         run: |
@@ -653,11 +711,16 @@ jobs:
             --reference-ip "$(ip next)" --candidate-ip "$(ip api)"
           node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
             --reference-ip "$(ip next)" --candidate-ip "$(ip api)" --span 'GET /api/v1/enums'
+          # Lean mode: the alerted span, the tRPC request span and the prepare span, by the same rule.
+          for span in 'executing api route (pages) /api/trpc/[trpc]' 'GET /api/trpc/[trpc]' 'prepare route module'; do
+            node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
+              --reference-ip "$(ip next)" --candidate-ip "$(ip lean)" --span "$span"
+          done
 
       - name: Server logs
         if: always()
         run: |
-          for c in next trpc mutant api api-mutant broken; do echo "::group::$c"; docker logs "$c" 2>&1 | tail -300; echo "::endgroup::"; done
+          for c in next trpc mutant api api-mutant broken lean lean-mutant; do echo "::group::$c"; docker logs "$c" 2>&1 | tail -300; echo "::endgroup::"; done
 
       - uses: actions/upload-artifact@v7
         if: always()
