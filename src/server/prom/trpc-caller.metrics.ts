@@ -8,12 +8,12 @@ import {
 
 // tRPC caller class: who spends procedure time, by path.
 //
-// One counter, recorded once per procedure call beside the duration histogram
-// (`civitai_app_trpc_procedure_duration_seconds`) and with the same `path` value, so the two join
-// on `path`:
+// One counter, recorded once per procedure call with the same `path` value as the duration
+// histogram (`civitai_app_trpc_procedure_duration_seconds`), so the two join on `path` where
+// TRPC_PROCEDURE_METRICS is also on (the histogram has its own switch):
 //   - `civitai_app_trpc_caller_seconds_total{path,caller}`: wall-clock seconds those calls took.
-// No buckets and no per-call count: the histogram already carries the latency shape and the call
-// count by path; this only splits the time by caller class, at one series per (path, caller).
+// No buckets and no per-call count: the histogram carries the latency shape and the call count by
+// path; this only splits the time by caller class, at one series per (path, caller).
 
 // CARDINALITY: `caller` takes exactly the five values in TRPC_CALLER_CLASSES, never anything
 // derived from the request. A user agent is matched against a fixed token list and only the
@@ -163,7 +163,7 @@ function registerCounter() {
     () =>
       new client.Counter({
         name: TRPC_CALLER_SECONDS_METRIC,
-        help: 'Wall-clock seconds spent in tRPC procedures (full chain + resolver) by procedure path and caller class. Divide by civitai_app_trpc_procedure_duration_seconds_count for a path to get its mean per call.',
+        help: 'Wall-clock seconds spent in tRPC procedures (full chain + resolver) by procedure path and caller class. Where TRPC_PROCEDURE_METRICS is also on, divide by civitai_app_trpc_procedure_duration_seconds_count for a path to get its mean per call.',
         labelNames: ['path', 'caller'] as const,
         registers: [instrumentationRegistry],
         collect: drainSeconds,
