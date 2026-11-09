@@ -26,9 +26,8 @@
     createItemBuffer,
     createSerialQueue,
     createVoteTracker,
-    describeOutcome,
+    postVote,
     refillCount,
-    sendWithRetry,
     type PickedItem,
   } from './optimistic';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
@@ -344,38 +343,39 @@
   const votes = createSerialQueue();
   const wait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
-  async function post(action: URL, body: FormData, key: string) {
-    let reached = false;
-    const attempt = async () => {
-      try {
-        const response = await fetch(action, {
-          method: 'POST',
-          body,
-          headers: { accept: 'application/json', 'x-sveltekit-action': 'true' },
-        });
-        reached = true;
-        const result = deserialize(await response.text());
-        if (result.type === 'redirect' || result.type === 'error') await applyAction(result);
-        return result;
-      } catch {
-        // Keeps the lost-connection notice.
-        return null;
-      }
-    };
-    const outcome = describeOutcome(await votes.add(() => sendWithRetry(attempt, wait)));
-    tracker.settle();
-    if (!reached) tracker.release(key);
-    if (!outcome.ok) {
-      tell(outcome.message);
-      dropBuffered(key);
-      if (outcome.resync) {
-        local = null;
-        clearBuffer();
-        refilling = false;
-      }
-    }
-    // The page's own data (status, rewards, level notices) is read again once the vote has landed.
-    await invalidate('app:play').catch(() => {});
+  function post(action: URL, body: FormData, key: string) {
+    return postVote(key, {
+      queue: votes,
+      tracker,
+      wait,
+      send: async (signal) => {
+        try {
+          const response = await fetch(action, {
+            method: 'POST',
+            body,
+            headers: { accept: 'application/json', 'x-sveltekit-action': 'true' },
+            signal,
+          });
+          const result = deserialize(await response.text());
+          if (result.type === 'redirect' || result.type === 'error') await applyAction(result);
+          return { reached: true, result };
+        } catch {
+          // Keeps the lost-connection notice.
+          return { reached: false, result: null };
+        }
+      },
+      onFailure: (outcome) => {
+        tell(outcome.message);
+        dropBuffered(key);
+        if (outcome.resync) {
+          local = null;
+          clearBuffer();
+          refilling = false;
+        }
+      },
+      // The page's own data (status, rewards, level notices) is read again once the vote has landed.
+      onSettled: () => invalidate('app:play').catch(() => {}),
+    });
   }
 
   // The plain form post: once the page has the server's next item, what was on screen ahead of it goes. The item counts
@@ -443,7 +443,13 @@
   <title>Judge · Knights of New Order</title>
 </svelte:head>
 
-<svelte:window {onkeydown} />
+<svelte:window
+  {onkeydown}
+  onbeforeunload={(event) => {
+    // Votes still queued would be dropped silently.
+    if (tracker.pending > 0) event.preventDefault();
+  }}
+/>
 
 {#snippet pill(option: { value: string; label: string }, index: number, locked: boolean, asksReason: boolean)}
   {@const blocked = option.label.toLowerCase() === 'blocked'}

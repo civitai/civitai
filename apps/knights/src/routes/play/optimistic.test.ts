@@ -10,6 +10,7 @@ import {
   createVoteTracker,
   describeOutcome,
   itemKey,
+  postVote,
   sendWithRetry,
 } from './optimistic';
 import type { PickedItem } from './optimistic';
@@ -353,26 +354,105 @@ describe('sendWithRetry', () => {
   });
 });
 
-describe('background votes through the queue', () => {
-  it('clears the pending count when a vote fails, and the next vote still goes out', async () => {
+describe('postVote', () => {
+  const setup = (sends: (signal: AbortSignal) => Promise<{ reached: boolean; result: any }>) => {
     const tracker = createVoteTracker();
+    const failures: unknown[] = [];
+    const onSettled = vi.fn(async () => undefined);
     const queue = createSerialQueue();
-    const sends = [lockout, ok];
-    const post = async (key: string) => {
+    const post = (key: string, send = sends) => {
       tracker.claim(key, `t-${key}`);
-      await queue.add(() =>
-        sendWithRetry(
-          async () => sends.shift() ?? null,
-          async () => undefined
-        )
-      );
-      tracker.settle();
+      return postVote(key, {
+        queue,
+        tracker,
+        send,
+        wait: async () => undefined,
+        onFailure: (outcome) => failures.push(outcome),
+        onSettled,
+        timeoutMs: 20,
+        retryDelays: [1, 1],
+      });
     };
+    return { tracker, failures, onSettled, post };
+  };
+  const hangs = (signal: AbortSignal) =>
+    new Promise<{ reached: boolean; result: null }>((done) =>
+      signal.addEventListener('abort', () => done({ reached: false, result: null }))
+    );
 
-    const both = Promise.all([post('a'), post('b')]);
-    expect(tracker.pending).toBe(2);
-    await both;
+  it('gives up on a hung post, frees its item, and lets the votes queued behind it go out', async () => {
+    const sends = [hangs, async () => ({ reached: true, result: ok })];
+    const { tracker, failures, post } = setup(async (signal) => sends.shift()!(signal));
+
+    await Promise.all([post('a'), post('b')]);
+
+    expect(tracker.has('a')).toBe(false);
+    expect(tracker.has('b')).toBe(true);
     expect(tracker.pending).toBe(0);
-    expect(sends).toEqual([]);
+    expect(failures).toEqual([
+      { ok: false, message: expect.stringMatching(/connection/i), resync: false },
+    ]);
+  });
+
+  it('never has two posts in flight', async () => {
+    let running = 0;
+    let most = 0;
+    const { post } = setup(async () => {
+      running += 1;
+      most = Math.max(most, running);
+      await new Promise((done) => setTimeout(done, 3));
+      running -= 1;
+      return { reached: true, result: ok };
+    });
+    await Promise.all([post('a'), post('b'), post('c')]);
+    expect(most).toBe(1);
+  });
+
+  it('keeps a recorded vote marked sent and clears the pending count when one fails', async () => {
+    const results = [ok, lockout];
+    const { tracker, failures, post } = setup(async () => ({
+      reached: true,
+      result: results.shift(),
+    }));
+
+    await Promise.all([post('a'), post('b')]);
+
+    expect(tracker.pending).toBe(0);
+    expect(tracker.has('a')).toBe(true);
+    expect(failures).toEqual([{ ok: false, message: 'too quick', resync: true }]);
+  });
+
+  it('retries a busy vote and records it', async () => {
+    const results = [busy, ok];
+    const { tracker, failures, post } = setup(async () => ({
+      reached: true,
+      result: results.shift(),
+    }));
+    await post('a');
+    expect(failures).toEqual([]);
+    expect(tracker.has('a')).toBe(true);
+  });
+
+  it('frees the item when the vote is still busy after the last resend', async () => {
+    const { tracker, failures, post } = setup(async () => ({ reached: true, result: busy }));
+    await post('a');
+    expect(tracker.has('a')).toBe(false);
+    expect(failures).toEqual([{ ok: false, message: 'busy', resync: false }]);
+  });
+
+  it('frees the item when a busy vote is followed by a lost connection', async () => {
+    const results = [
+      { reached: true, result: busy },
+      { reached: false, result: null },
+    ];
+    const { tracker, post } = setup(async () => results.shift()!);
+    await post('a');
+    expect(tracker.has('a')).toBe(false);
+  });
+
+  it('reads the page again once the vote has settled, whatever it came to', async () => {
+    const { onSettled, post } = setup(async () => ({ reached: false, result: null }));
+    await post('a');
+    expect(onSettled).toHaveBeenCalledOnce();
   });
 });
