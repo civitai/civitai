@@ -1,0 +1,121 @@
+# forbidden-paths.txt: paths an officer PR may never change, add, delete or rename away from.
+#
+# 🔴 THE ONE SOURCE. As it is on the PR's BASE branch, this file is read by BOTH walls:
+#   1. the officer agent's push gate (first wall), which reads it from the PR's target branch
+#      at every check and refuses the PR if it cannot read or parse it;
+#   2. .github/workflows/officer-pr-check.yml (second wall), which reads it from the base
+#      commit of the PR's merge ref and fails closed if the base lacks it.
+# An officer PR therefore cannot shrink the list it is judged by.
+#
+# The second wall is an ALLOWLIST as well: a path outside src/ and packages/ fails there
+# whether or not it is listed (.github/officer/officer_pr_check.py ALLOWED_ROOTS). The push
+# gate has no allowlist, so every top-level entry other than src/ and packages/ is listed
+# below; the self-test (.github/officer/test_officer_pr_check.py) fails when a top-level
+# entry exists that this list does not forbid. Adding a top-level file or directory to the
+# repository therefore means adding it here.
+#
+# Grammar (the push gate's, ported in officer_pr_check.py match_forbidden):
+#   *        any run of characters except '/'      ?   one such character
+#   {a,b}    either alternative (no nesting)       **  as a whole segment: any segments
+#   dir/     everything under dir (anchored at the repository root)
+#   a pattern WITHOUT '/' is matched against EVERY segment of the path, so `package.json`
+#   forbids the root manifest AND packages/<pkg>/package.json.
+# Character classes and backslashes are refused. One pattern per line; `#` comments.
+
+# ── dependencies: manifests and lockfiles, anywhere ─────────────────────────────
+package.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+package-lock.json
+npm-shrinkwrap.json
+yarn.lock
+bun.lock
+bun.lockb
+.npmrc
+.nvmrc
+patches/
+
+# ── database schema and migrations ──────────────────────────────────────────────
+prisma/
+packages/civitai-db-schema/prisma/
+*.prisma
+**/migrations/**
+
+# ── environment and secrets ─────────────────────────────────────────────────────
+.env*
+*.env
+*.pem
+*.key
+
+# ── containers ──────────────────────────────────────────────────────────────────
+Dockerfile*
+*.Dockerfile
+*.dockerfile
+.dockerignore
+docker-compose*
+containers/
+
+# ── CI, hooks, agent instructions and editor config, anywhere ──────────────────
+.github
+.husky
+.claude
+.devcontainer
+.vscode
+CODEOWNERS
+CLAUDE.md
+AGENTS.md
+opencode.json
+.gitattributes
+.gitmodules
+.gitignore
+*.sh
+scripts
+
+# ── every other top-level entry (the second wall's allowlist, spelled out) ──────
+# Directories (anchored at the root).
+.browser/
+.ladle/
+.prompt-analysis-backups/
+apps/
+claudedocs/
+designs/
+docs/
+media/
+ops/
+public/
+test/
+tests/
+tools/
+# The submodule gitlink.
+event-engine-common
+# Files. A name without '/' matches in any directory, so these are forbidden inside
+# src/ and packages/ too; none of them is application code.
+.bundle-budget.json
+.editorconfig
+.eslintignore
+.eslintrc.js
+.prettierignore
+.prettierrc
+CONTRIBUTING.md
+LICENSE
+Makefile
+README.md
+SECURITY.md
+eslint-local-rules.js
+eslint-no-direct-pg-pool.cjs
+flake.lock
+flake.nix
+lighthouserc.json
+next-boost.js
+next.config.mjs
+playwright.config.ts
+playwright.preview.config.ts
+postcss.config.js
+removedByAuthor
+renovate.json
+tailwind.config.js
+tsconfig.json
+tsconfig.scripts.json
+tsconfig.tests.json
+turbo.json
+vitest.config.mts
