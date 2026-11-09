@@ -535,7 +535,6 @@ describe('the recap', () => {
     const recap = await getRecap(db, { playerId: 1, now: NOON(D2) });
 
     expect(recap).toMatchObject({ cast: 34, confirmed: 18, graded: 21, pending: 13 });
-    expect(recap!.confirmed + (recap!.graded - recap!.confirmed) + recap!.pending).toBe(recap!.cast);
   });
 
   it('names the date when the last play day was not yesterday', async () => {

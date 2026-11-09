@@ -316,7 +316,7 @@ export const ACTIVE_PLAYER_DAYS = 14;
 /**
  * The stages someone can serve: a stage counts when an eligible player holds its rank or a higher one, as `canVote` lets
  * a higher rank judge a lower stage. Eligible means a vote within `ACTIVE_PLAYER_DAYS` and no career reset pending
- * (see `insertVote`). One read, so a job asks once and not per item. A stage can still be unservable for one item whose
+ * (see `insertVote`). At most one query per rank, top down, so a job asks once and not per item. A stage can still be unservable for one item whose
  * only candidates already judged its image; `escalateExpired` bounds that wait.
  */
 export async function staffedRanks(db: Executor, now: Date): Promise<Set<string>> {

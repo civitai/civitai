@@ -255,7 +255,7 @@
   }
 }
 
-/* Phase 2: an XP gauge ring fills in from empty (the ring's path is normalised to length 100). */
+/* An XP gauge ring fills in from empty (the ring's path is normalised to length 100). */
 @keyframes mo-gauge-fill {
   from {
     stroke-dashoffset: 100;
@@ -281,7 +281,7 @@
   }
 }
 
-/* Phase 2: a counter that just went up. The glow is for a bar or ring stroke, the pop for a number. Both are 400ms or less,
+/* A counter that just went up. The glow is for a bar or ring stroke, the pop for a number. Both are 400ms or less,
    and a component applies them only under prefers-reduced-motion: no-preference. */
 @keyframes mo-bump-glow {
   40% {

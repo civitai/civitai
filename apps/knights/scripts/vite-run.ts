@@ -1,13 +1,13 @@
 import { resolve, sep } from 'node:path';
 import { createServer, createServerModuleRunner } from 'vite';
 
+const appRoot = resolve(import.meta.dirname, '..');
+
 /**
  * Runs a script through Vite's SSR module runner: `tsx scripts/vite-run.ts <script.ts> [args...]`.
  * The workspace packages are CommonJS-scoped TypeScript, so plain tsx hands an ES module only their `default` export and
  * named imports fail; Vite transforms them from source the way the build and the tests do.
  */
-const appRoot = resolve(import.meta.dirname, '..');
-
 async function main() {
   const [script, ...args] = process.argv.slice(2);
   if (!script) throw new Error('Usage: tsx scripts/vite-run.ts <script.ts> [args...]');

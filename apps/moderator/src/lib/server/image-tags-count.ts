@@ -9,8 +9,7 @@ export const IMAGE_TAGS_COUNT_TIMEOUT_MS = 120_000;
  * Images with a tag awaiting review, the Image tags badge.
  *
  * The bit-9 test matches TagsOnImageNew_needsReview_idx, but the backlog it selects is large, so the scan is
- * slow even with the index. That is why the caller waits seconds, caps the scan and runs one at a time. The
- * bit tests are bit 9 set, bit 10 clear.
+ * slow even with the index. That is why the caller waits seconds, caps the scan and runs one at a time.
  * The nsfwLevel bound must match the QUEUE's (image-tags.service.ts): without it, blocked images
  * inflate a badge whose page can never show them, so the count never reaches zero.
  *

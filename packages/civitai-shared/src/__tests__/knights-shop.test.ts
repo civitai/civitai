@@ -142,7 +142,7 @@ describe('withheldCosmeticIds', () => {
     expect(withheld([creator(1)], [listing({ meta })])).toEqual([1]);
   });
 
-  it('withholds a rejected or taken-down listing', () => {
+  it('withholds a rejected or unpublished taken-down listing, but not a published one', () => {
     const rejected = { history: [{ kind: 'reviewed', action: 'reject' }] };
     expect(withheld([creator(1)], [listing({ meta: rejected })])).toEqual([1]);
     expect(

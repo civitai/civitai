@@ -156,9 +156,6 @@ export async function buyItem(
         .where('id', '=', item.cosmeticId!)
         .executeTakeFirst();
       if (!cosmetic) return refuse('unknown-item');
-      // A creator cosmetic still in review cannot be worn, so gold spent on it would buy nothing.
-      if ((await withheldCosmetics(trx, [item.cosmeticId!])).size > 0)
-        return refuse('not-approved');
       const owned = await trx
         .selectFrom('UserCosmetic')
         .select('remaining')

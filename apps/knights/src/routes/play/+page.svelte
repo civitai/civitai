@@ -345,7 +345,7 @@
     noteTimer = setTimeout(() => (note = null), NOTE_MS);
   }
 
-  // Background votes go one at a time, in the order they were answered, so one player never has more than one in flight.
+  // Background votes go one at a time, in the order they were answered: this page posts one vote at a time.
   const votes = createSerialQueue();
   const wait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
