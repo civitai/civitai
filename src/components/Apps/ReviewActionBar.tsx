@@ -22,7 +22,8 @@ import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderatio
 import type { ListingMediaSplitDecision } from '~/shared/constants/listing-media-split.constants';
 import { listingFloorApproveRefusal } from '~/shared/utils/listing-publish-floor';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { trpc, trpcKeepalive } from '~/utils/trpc';
+import { trpc } from '~/utils/trpc';
+import { trpcKeepalive } from '~/utils/trpc-keepalive';
 import type { OnsiteReviewSelection } from '~/components/Apps/OnsiteReviewModal';
 
 /**

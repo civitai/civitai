@@ -56,6 +56,13 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   showSuccessNotification: vi.fn(),
   showErrorNotification: vi.fn(),
 }));
+// The delayed approval commits through the keepalive client (it may be sent from `pagehide`);
+// its fetch-level behaviour is pinned in `ReviewActionBar.browser.test.tsx`.
+vi.mock('~/utils/trpc-keepalive', () => ({
+  trpcKeepalive: {
+    blocks: { approveRequest: { mutate: (input: unknown) => m.clientApprove(input) } },
+  },
+}));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
   const mutation = (name: string) => (opts?: { onSuccess?: () => void }) => ({
@@ -69,11 +76,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const inert = { invalidate: vi.fn(async () => undefined) };
   return {
     ...actual,
-    // The delayed approval commits through the keepalive client (it may be sent from
-    // `pagehide`); its fetch-level behaviour is pinned in `ReviewActionBar.browser.test.tsx`.
-    trpcKeepalive: {
-      blocks: { approveRequest: { mutate: (input: unknown) => m.clientApprove(input) } },
-    },
     trpc: makeTrpcProxy(
       {
         'blocks.approveRequest': { useMutation: mutation('approve') },

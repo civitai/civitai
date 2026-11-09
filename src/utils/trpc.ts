@@ -25,6 +25,7 @@ import type { AppRouter } from '~/server/routers';
 import { clientTransformer } from '~/shared/utils/trpc-union-transformer';
 import { isDev } from '~/env/other';
 import { pageRouteHeaders } from '~/utils/page-route-header';
+import { trpcClientHeaders } from '~/utils/trpc-client-headers';
 import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -36,12 +37,6 @@ import {
   getTrpcUnifiedBatchWindowEnabled,
   registerBatchingApplies,
 } from '~/utils/trpc-batch-window';
-
-type RequestHeaders = {
-  'x-client-date': string;
-  'x-client': string;
-  'x-client-version'?: string;
-};
 
 const url = '/api/trpc';
 
@@ -461,11 +456,7 @@ function batchStreamLink({
     maxItems: TRPC_MAX_BATCH_SIZE,
   });
 }
-const headers: RequestHeaders = {
-  'x-client-version': process.env.version,
-  'x-client-date': Date.now().toString(),
-  'x-client': 'web',
-};
+const headers = trpcClientHeaders;
 
 /**
  * Shared QueryClient config. Used by both the per-request server `QueryClient`
@@ -613,30 +604,6 @@ export const trpcVanilla: CreateTRPCClient<AppRouter> = createTRPCClient<AppRout
     feedbackErrorLink,
     batchWindowLink,
     terminatingLink({ url, headers: getHeaders() }),
-  ],
-});
-
-/**
- * A mutation client whose requests SURVIVE THE PAGE UNLOADING: every request is sent with
- * `fetch(…, { keepalive: true })`, so a send started from `pagehide` / `visibilitychange`
- * (closing or leaving the tab) is not cancelled with the document. Same endpoint, headers,
- * transformer and wire format as the main client's unbatched link — it is that link with one
- * extra fetch option — and auth rides the same-origin cookies, as everywhere else.
- *
- * Mutations only: no batching, no edge-cache routing. Keepalive bodies share a ~64 KiB
- * per-page budget, so keep what goes through here small (an approval's input is ~100 bytes).
- * Used by the review page's delayed "Approve & next" (`pendingApprovalQueue`).
- */
-export const trpcKeepalive: CreateTRPCClient<AppRouter> = createTRPCClient<AppRouter>({
-  links: [
-    httpLink({
-      transformer: clientTransformer,
-      url,
-      headers: getHeaders(),
-      // Read `globalThis.fetch` per call (not captured at module init) so a test can stub it.
-      fetch: (input, init) =>
-        globalThis.fetch(input, { ...(init as RequestInit), keepalive: true }),
-    }),
   ],
 });
 

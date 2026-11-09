@@ -1,3 +1,4 @@
+import superjson from 'superjson';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcMod from '~/utils/trpc';
@@ -565,7 +566,10 @@ describe('🔴 "Approve & next" survives the tab closing (keepalive)', () => {
       expect(init?.method).toBe('POST');
       expect(init?.keepalive).toBe(true);
       // The client's superjson wire format (`{ json, meta? }`), carrying the approval's input.
-      expect(JSON.parse(String(init?.body)).json).toEqual({ publishRequestId: 'req-keepalive' });
+      expect(superjson.deserialize(JSON.parse(String(init?.body)))).toEqual({
+        publishRequestId: 'req-keepalive',
+        approvalNotes: undefined,
+      });
       const { reviewApprovalQueue } = await import('./pendingApprovalQueue');
       await vi.waitFor(() =>
         expect(reviewApprovalQueue.get('req-keepalive')?.status).toBe('committed')
