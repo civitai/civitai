@@ -61,6 +61,12 @@ const retired = sql<SqlBool>`("KnightsQueueItem"."status" = 'Closed' AND "Knight
 /** Closed by a moderator. Unlike other moderated items, the import never reopens it. */
 const moderatorRetired = sql<SqlBool>`("KnightsQueueItem"."reason" IS NOT DISTINCT FROM ${MODERATOR_RETIRED})`;
 
+/** An id longer than the limit is rejected, not cut, so two long ids can never collapse into one. */
+const idOf = (value: string | undefined): string => {
+  const id = (value ?? '').trim();
+  return id.length > MAX_ID ? '' : id;
+};
+
 const clip = (value: string | undefined, max: number) => (value ?? '').trim().slice(0, max);
 
 /** Keeps the active candidates and checks each one; a row that fails is counted by reason, never echoed. */
@@ -80,12 +86,12 @@ export function toYesNoRows(records: Record<string, string>[]): {
 
   for (const r of records) {
     if ((r.active_candidate ?? '').trim().toLowerCase() !== 'true') {
-      const id = clip(r.question_id, MAX_ID);
+      const id = idOf(r.question_id);
       if (id) retire.push(id);
       skip('inactive');
       continue;
     }
-    const externalId = clip(r.question_id, MAX_ID);
+    const externalId = idOf(r.question_id);
     if (!externalId) {
       skip('bad-id');
       continue;
@@ -146,6 +152,11 @@ export type ImportResult = {
   revived: number;
   axes: number;
 };
+
+/** One line with every count, so a missing field can never print as a blank. */
+export function formatImportSummary(result: ImportResult): string {
+  return `${result.axes} axes; ${result.inserted} inserted, ${result.updated} updated, ${result.unchanged} unchanged, ${result.refused} refused (changed but already answered), ${result.moderated} skipped (moderated), ${result.retired} retired, ${result.revived} reworded copies reopened.`;
+}
 
 /**
  * Upserts questions by their producer id. An item that already has answers is never touched, so a re-import cannot change

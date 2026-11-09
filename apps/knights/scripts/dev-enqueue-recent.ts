@@ -1,6 +1,7 @@
-import * as dbKysely from '@civitai/db/kysely';
+import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import * as knightsConstants from '@civitai/shared/new-order';
+import { enqueueKnightsItems } from '../../../src/server/services/knights/enqueue.service';
 import { servableImage } from '../src/lib/server/servable-image';
 import { assertLocalDatabase } from '../src/lib/dev/local-database';
 
@@ -8,16 +9,13 @@ const DEFAULT_COUNT = 50;
 const MAX_COUNT = 1000;
 const LEVEL_R = 4;
 
-// tsx loads CommonJS-scoped workspace modules as one `default` object when an ES module imports them.
-const { KNIGHTS_NSFW_LEVEL_QUESTION } =
-  (knightsConstants as { default?: typeof knightsConstants }).default ?? knightsConstants;
-
-async function loadEnqueue() {
-  const service = await import('../../../src/server/services/knights/enqueue.service');
-  return ((service as { default?: typeof service }).default ?? service).enqueueKnightsItems;
-}
+const { KNIGHTS_NSFW_LEVEL_QUESTION } = knightsConstants;
 
 async function main() {
+  if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
+    console.log('Usage: pnpm dev:enqueue-recent [count=50] [--dry-run]');
+    return;
+  }
   const connectionString = process.env.DATABASE_URL;
   assertLocalDatabase(connectionString);
 
@@ -28,7 +26,6 @@ async function main() {
     throw new Error(`Pass a count between 1 and ${MAX_COUNT}.`);
   }
 
-  const { createKyselyClients } = (dbKysely as { default?: typeof dbKysely }).default ?? dbKysely;
   const { db } = createKyselyClients<DB>({
     connectionString,
     sslNoVerify: true,
@@ -48,7 +45,6 @@ async function main() {
       .limit(requested)
       .execute();
 
-    const enqueueKnightsItems = await loadEnqueue();
     if (dryRun) {
       console.log(`Dry run: ${images.length} eligible images, nothing enqueued.`);
       return;

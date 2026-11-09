@@ -11934,7 +11934,7 @@ model KnightsShopItem {
 model KnightsShopItemChange {
   id        Int             @id @default(autoincrement())
   itemId    Int
-  item      KnightsShopItem @relation(fields: [itemId], references: [id])
+  item      KnightsShopItem @relation(fields: [itemId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   userId    Int
   action    String // create | update | retire | restore
   changes   Json
@@ -11950,7 +11950,7 @@ model KnightsShopPurchase {
   requestKey    String
   externalKey   String          @unique
   itemId        Int
-  item          KnightsShopItem @relation(fields: [itemId], references: [id])
+  item          KnightsShopItem @relation(fields: [itemId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   kind          String
   gold          Int
   grant         Json
