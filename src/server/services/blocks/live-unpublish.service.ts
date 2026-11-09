@@ -5,28 +5,35 @@
  * path does) stops the on-site runtime but not that; behind `app-blocks-live-unpublish` the
  * takedown paths also remove the pointer, and a relist writes it back.
  *
+ * The takedown marker records two separate facts:
+ *   - ATTEMPTED: this platform started an unpublish of the app. Set before the Job starts, because
+ *     a Job that fails may still have removed the pointer; it is the evidence a restore runs on.
+ *   - CONFIRMED: an unpublish Job of the app succeeded. Only this stops a later takedown from
+ *     running the unpublish again.
+ *
  * ONE reconciler per app ({@link syncLivePointer}) does both. It never acts on what a caller
  * intended, only on the app's CURRENT state, read each time it decides:
- *   - block suspended, flag on, not yet taken down here, not the readiness app → unpublish, and
- *     record the takedown (the marker is set when the Job starts);
- *   - block approved and taken down here (the marker) → restore: re-publish the approved build,
- *     which uploads nothing (its files and meta are still in the bucket) and writes the pointer
- *     back; the marker is cleared when that succeeds.
- * The marker is the only evidence a restore runs on, whatever the flag says now, so an app taken
- * down while the flag was on comes back after it is turned off, and with the flag off and no
- * marker a relist does exactly what it did before this feature: nothing here.
+ *   - block suspended, flag on, takedown not confirmed, not the readiness app → unpublish;
+ *   - block approved and a takedown attempted or confirmed → restore: re-publish the approved
+ *     build, which uploads nothing (its files and meta are still in the bucket) and writes the
+ *     pointer back; the marker is cleared when that succeeds.
+ * A restore runs on the marker whatever the flag says now, so an app taken down while the flag
+ * was on comes back after it is turned off; with no marker a relist does nothing here.
  *
  * Ordering: the Jobs of one app run one at a time (a per-app lock) under one shared Job name. A
  * caller that finds the lock held asks the holder to look again (DIRTY), and the holder re-reads
  * the app after every Job until nothing is left to do, so the newest state wins however the
- * takedowns and relists interleave. A holder that dies leaves its lock to expire (one Job's budget).
+ * takedowns and relists interleave. The lock is renewed before each Job; a holder that dies leaves
+ * it to expire LOCK_TTL_S after its last renewal.
  *
  * Every Job failure is reported as an `app-blocks-live-pointer` warning, not only logged: the
- * moderator's response returns before the Job ends. A failed step is not retried within a run.
+ * moderator's response returns before the Job ends. A failed step is not retried within a run;
+ * the next takedown, relist or deploy of the app reconciles it again from the app's state.
  *
  * Callers: takedown from the moderator delist, the moderator reset to pending and the owner
- * unpublish, restore from the moderator relist and the owner republish (offsite-moderation.service);
- * the after-deploy check from build-callback.
+ * unpublish, restore from the moderator relist and the owner republish (offsite-moderation.service)
+ * and from the approve that un-suspends the block after a reviewed republish
+ * (offsite-listing.service); the after-deploy check from build-callback.
  */
 import { liveAppImageRef } from '~/server/services/blocks/app-block-image';
 
@@ -35,10 +42,19 @@ type PointerJob =
   | { slug: string; action: 'unpublish' }
   | { slug: string; action: 'restore'; sha: string; imageRef: string };
 
+/** What this platform did to the app's pointer (see the module doc). */
+export type TakedownState = 'none' | 'attempted' | 'confirmed';
+
 /** Per-app state this module keeps (Redis in production). */
 export type LivePointerStore = {
-  hasTakedown: (slug: string) => Promise<boolean>;
-  setTakedown: (slug: string) => Promise<void>;
+  readTakedown: (slug: string) => Promise<TakedownState>;
+  /** Record that an unpublish is starting. */
+  markTakedownAttempted: (slug: string) => Promise<void>;
+  /**
+   * Record that the unpublish succeeded. Only upgrades a recorded attempt: when a deploy cleared
+   * the marker while the Job ran (it wrote the pointer back), the app is not taken down.
+   */
+  markTakedownConfirmed: (slug: string) => Promise<void>;
   clearTakedown: (slug: string) => Promise<void>;
   /** Take the app's lock; false when another run holds it. */
   acquire: (slug: string) => Promise<boolean>;
@@ -67,8 +83,9 @@ export type LiveUnpublishDeps = {
   report: (message: string, details: Record<string, unknown>) => void;
 };
 
-/** One Job's budget: the restore's required publish, with slack. Also the lock's lifetime. */
+/** One Job's budget: the restore's required publish, with slack. */
 const JOB_TIMEOUT_MS = 8 * 60_000;
+/** The lock's lifetime from its last renewal (one per Job): longer than one Job's budget. */
 const LOCK_TTL_S = 10 * 60;
 /** Steps one run may take before it reports that the app did not settle. */
 const MAX_STEPS = 6;
@@ -85,11 +102,18 @@ const sys = async () => (await import('~/server/redis/client')).sysRedis;
 const read = async <T>(p: Promise<T>) =>
   (await import('~/server/redis/client')).withSysReadDeadline(p);
 
+// The takedown key holds 'attempted' or 'confirmed'; any other value present reads as attempted.
 const redisStore: LivePointerStore = {
-  hasTakedown: async (slug) =>
-    (await read((await sys()).exists((await redisKeys()).takedown(slug)))) > 0,
-  setTakedown: async (slug) => {
-    await (await sys()).set((await redisKeys()).takedown(slug), '1');
+  readTakedown: async (slug) => {
+    const value = await read((await sys()).get((await redisKeys()).takedown(slug)));
+    if (value == null) return 'none';
+    return value === 'confirmed' ? 'confirmed' : 'attempted';
+  },
+  markTakedownAttempted: async (slug) => {
+    await (await sys()).set((await redisKeys()).takedown(slug), 'attempted');
+  },
+  markTakedownConfirmed: async (slug) => {
+    await (await sys()).set((await redisKeys()).takedown(slug), 'confirmed', { XX: true });
   },
   clearTakedown: async (slug) => {
     await (await sys()).del((await redisKeys()).takedown(slug));
@@ -209,8 +233,8 @@ export async function takeDownLiveApp(
 
 /**
  * After a relist COMMITS and the block is approved again: put the app back, but ONLY when this
- * platform took it down (the takedown marker), whatever the flag says now. With no marker it does
- * nothing else at all. Fire-and-forget at the call site; never throws.
+ * platform attempted a takedown of it (the takedown marker), whatever the flag says now. With no
+ * marker it does nothing else at all. Fire-and-forget at the call site; never throws.
  */
 export async function restoreLiveApp(
   input: { slug: string; appBlockId: string },
@@ -218,7 +242,7 @@ export async function restoreLiveApp(
 ): Promise<'not-taken-down' | SyncOutcome> {
   const d = { ...defaultDeps, ...opts.deps };
   try {
-    if (!(await d.store.hasTakedown(input.slug))) return 'not-taken-down';
+    if ((await d.store.readTakedown(input.slug)) === 'none') return 'not-taken-down';
   } catch (err) {
     warn(`takedown marker of ${input.slug} unreadable; not restored`, err);
     d.report(`takedown marker of ${input.slug} unreadable; not restored`, {
@@ -241,7 +265,7 @@ export async function afterLiveDeploy(
 ): Promise<'none' | SyncOutcome> {
   const d = { ...defaultDeps, ...opts.deps };
   try {
-    if (await d.store.hasTakedown(slug)) await d.store.clearTakedown(slug);
+    if ((await d.store.readTakedown(slug)) !== 'none') await d.store.clearTakedown(slug);
     if (!(await d.flagOn())) return 'none';
     const block = await d.readBlockBySlug(slug);
     if (block?.status !== 'suspended') return 'none';
@@ -257,12 +281,14 @@ export type SyncOutcome = 'settled' | 'queued' | 'unsettled' | 'failed';
 
 /** What the app needs now, from its CURRENT state. Null: nothing. */
 async function nextStep(slug: string, d: LiveUnpublishDeps): Promise<Step | null> {
-  const [block, takenDown] = await Promise.all([
+  const [block, takedown] = await Promise.all([
     d.readBlockBySlug(slug),
-    d.store.hasTakedown(slug),
+    d.store.readTakedown(slug),
   ]);
-  if (block?.status === 'approved' && takenDown) return { action: 'restore', appBlockId: block.id };
-  if (block?.status === 'suspended' && !takenDown && (await d.flagOn())) {
+  if (block?.status === 'approved' && takedown !== 'none') {
+    return { action: 'restore', appBlockId: block.id };
+  }
+  if (block?.status === 'suspended' && takedown !== 'confirmed' && (await d.flagOn())) {
     if (await readinessListIncludes(slug, d)) return null;
     return { action: 'unpublish' };
   }
@@ -272,7 +298,8 @@ async function nextStep(slug: string, d: LiveUnpublishDeps): Promise<Step | null
 /**
  * Bring the app's pointer in line with its current state, one Job at a time (see the module doc).
  * Returns `queued` when another run holds the app (it will look again), `unsettled` when the app
- * kept changing past {@link MAX_STEPS}, `failed` when a step failed (reported, not retried).
+ * kept changing past {@link MAX_STEPS}, `failed` when a step failed (reported; the next takedown,
+ * relist or deploy reconciles the app again).
  */
 export async function syncLivePointer(slug: string, opts: Opts = {}): Promise<SyncOutcome> {
   const d = { ...defaultDeps, ...opts.deps };
@@ -330,11 +357,15 @@ async function runStep(
   opts: Opts
 ): Promise<boolean> {
   if (step.action === 'unpublish') {
-    // Recorded BEFORE the Job: the evidence a later relist restores on.
-    await d.store.setTakedown(slug);
+    // Recorded BEFORE the Job, which may remove the pointer and still fail: the evidence a later
+    // relist restores on. Confirmed only once the Job succeeded, so a failed one is run again.
+    await d.store.markTakedownAttempted(slug);
     const job = await d.triggerPointerJob({ slug, action: 'unpublish' });
     const jobOutcome = await d.waitForJob(job.name, opts.waitTimeoutMs ?? JOB_TIMEOUT_MS);
-    if (jobOutcome === 'succeeded') return true;
+    if (jobOutcome === 'succeeded') {
+      await d.store.markTakedownConfirmed(slug);
+      return true;
+    }
     const message = `live unpublish Job ${job.name} ended ${jobOutcome}; ${slug} may still be served`;
     warn(message, null);
     d.report(message, { slug, job: job.name, outcome: jobOutcome });

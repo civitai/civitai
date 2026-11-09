@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
   afterLiveDeploy,
   isReadinessProbeApp,
@@ -32,7 +33,7 @@ function world(over: { status?: string; served?: boolean; flag?: boolean; auto?:
     status: over.status ?? 'approved',
     served: over.served ?? true,
     flag: over.flag ?? true,
-    takedown: new Set<string>(),
+    takedown: new Map<string, 'attempted' | 'confirmed'>(),
     lock: false,
     dirty: false,
     jobs: [] as Array<{ action: string; name: string }>,
@@ -40,10 +41,15 @@ function world(over: { status?: string; served?: boolean; flag?: boolean; auto?:
     storeWrites: 0,
   };
   const store: LivePointerStore = {
-    hasTakedown: vi.fn(async (s: string) => w.takedown.has(s)),
-    setTakedown: vi.fn(async (s: string) => {
+    readTakedown: vi.fn(async (s: string) => w.takedown.get(s) ?? 'none'),
+    markTakedownAttempted: vi.fn(async (s: string) => {
       w.storeWrites++;
-      w.takedown.add(s);
+      w.takedown.set(s, 'attempted');
+    }),
+    // SET XX: only an attempt still recorded is upgraded.
+    markTakedownConfirmed: vi.fn(async (s: string) => {
+      w.storeWrites++;
+      if (w.takedown.has(s)) w.takedown.set(s, 'confirmed');
     }),
     clearTakedown: vi.fn(async (s: string) => {
       w.storeWrites++;
@@ -112,15 +118,16 @@ function world(over: { status?: string; served?: boolean; flag?: boolean; auto?:
 const actions = (w: { jobs: Array<{ action: string }> }) => w.jobs.map((j) => j.action);
 
 describe('takeDownLiveApp (after a takedown commits)', () => {
-  it('flag ON: unpublishes the app and records the takedown before the Job starts', async () => {
+  it('flag ON: unpublishes the app, records the attempt before the Job starts, confirms it after', async () => {
     const { w, deps } = world({ status: 'suspended' });
     expect(await takeDownLiveApp(SLUG, { deps })).toEqual({});
     await vi.waitFor(() => expect(actions(w)).toEqual(['unpublish']));
-    expect(vi.mocked(deps.store.setTakedown).mock.invocationCallOrder[0]).toBeLessThan(
+    expect(vi.mocked(deps.store.markTakedownAttempted).mock.invocationCallOrder[0]).toBeLessThan(
       deps.triggerPointerJob.mock.invocationCallOrder[0]
     );
-    await vi.waitFor(() => expect(w.served).toBe(false));
-    expect(w.takedown.has(SLUG)).toBe(true);
+    await vi.waitFor(() => expect(w.lock).toBe(false));
+    expect(w.served).toBe(false);
+    expect(w.takedown.get(SLUG)).toBe('confirmed');
   });
 
   it('the readiness app: nothing started, and the note says it keeps serving', async () => {
@@ -138,11 +145,12 @@ describe('takeDownLiveApp (after a takedown commits)', () => {
     expect(w.storeWrites).toBe(0);
   });
 
-  it('a failed unpublish is reported, not retried', async () => {
+  it('a failed unpublish is reported, not retried within the run, and left unconfirmed', async () => {
     const { w, deps } = world({ status: 'suspended' });
     deps.waitForJob.mockResolvedValue('failed');
-    expect(await syncLivePointer(SLUG, { deps })).toBe('settled');
+    expect(await syncLivePointer(SLUG, { deps })).toBe('failed');
     expect(actions(w)).toEqual(['unpublish']);
+    expect(w.takedown.get(SLUG)).toBe('attempted');
     expect(deps.report).toHaveBeenCalledWith(
       'live unpublish Job cool-app-live-pointer ended failed; cool-app may still be served',
       { slug: SLUG, job: 'cool-app-live-pointer', outcome: 'failed' }
@@ -201,12 +209,28 @@ describe('takeDownLiveApp (after a takedown commits)', () => {
     expect(w.served).toBe(true);
     expect(w.takedown.has(SLUG)).toBe(false);
   });
+
+  // A deploy that writes the pointer back while the unpublish runs clears the marker; the
+  // unpublish ending afterwards must not record the app as taken down, or it would keep serving.
+  it('a deploy that lands while the unpublish runs: the app is unpublished again', async () => {
+    const { w, deps, finish } = world({ status: 'suspended', auto: false });
+    void takeDownLiveApp(SLUG, { deps });
+    await vi.waitFor(() => expect(w.pending).toHaveLength(1));
+    w.served = true; // the deploy wrote the pointer back
+    expect(await afterLiveDeploy(SLUG, { deps })).toBe('queued');
+    await finish();
+    await vi.waitFor(() => expect(actions(w)).toEqual(['unpublish', 'unpublish']));
+    await finish();
+    await vi.waitFor(() => expect(w.lock).toBe(false));
+    expect(w.served).toBe(false);
+    expect(w.takedown.get(SLUG)).toBe('confirmed');
+  });
 });
 
 describe('restoreLiveApp (after a relist commits)', () => {
   it('taken down here: re-publishes the approved build (image, slug, sha) and clears the marker', async () => {
     const { w, deps } = world({ status: 'approved', served: false });
-    w.takedown.add(SLUG);
+    w.takedown.set(SLUG, 'confirmed');
     expect(await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps })).toBe('settled');
     expect(deps.triggerPointerJob).toHaveBeenCalledWith({
       slug: SLUG,
@@ -220,7 +244,7 @@ describe('restoreLiveApp (after a relist commits)', () => {
 
   it('taken down here while the flag was on, flag OFF now: still restored', async () => {
     const { w, deps } = world({ status: 'approved', served: false, flag: false });
-    w.takedown.add(SLUG);
+    w.takedown.set(SLUG, 'confirmed');
     await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps });
     expect(actions(w)).toEqual(['restore']);
     expect(w.served).toBe(true);
@@ -248,7 +272,7 @@ describe('restoreLiveApp (after a relist commits)', () => {
     ['never deployed', { sha: SHA, deployedAt: null }],
   ])('%s: no Job, the marker is cleared', async (_label, build) => {
     const { w, deps } = world({ status: 'approved', served: false });
-    w.takedown.add(SLUG);
+    w.takedown.set(SLUG, 'confirmed');
     deps.readLiveBuild.mockResolvedValue(build);
     await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps });
     expect(w.jobs).toEqual([]);
@@ -257,7 +281,7 @@ describe('restoreLiveApp (after a relist commits)', () => {
 
   it('a failed restore is reported, not retried, and keeps the marker for the next relist', async () => {
     const { w, deps } = world({ status: 'approved', served: false });
-    w.takedown.add(SLUG);
+    w.takedown.set(SLUG, 'confirmed');
     deps.waitForJob.mockResolvedValue('failed');
     expect(await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps })).toBe('failed');
     expect(actions(w)).toEqual(['restore']);
@@ -272,7 +296,7 @@ describe('restoreLiveApp (after a relist commits)', () => {
 describe('afterLiveDeploy (a deploy succeeded)', () => {
   it('the deploy wrote the pointer: the takedown is cleared; on an approved block nothing runs', async () => {
     const { w, deps } = world({ status: 'approved' });
-    w.takedown.add(SLUG);
+    w.takedown.set(SLUG, 'confirmed');
     expect(await afterLiveDeploy(SLUG, { deps })).toBe('none');
     expect(w.takedown.has(SLUG)).toBe(false);
     expect(w.jobs).toEqual([]);
@@ -280,7 +304,7 @@ describe('afterLiveDeploy (a deploy succeeded)', () => {
 
   it('a deploy that landed on a suspended block: taken down again', async () => {
     const { w, deps } = world({ status: 'suspended', served: true });
-    w.takedown.add(SLUG); // taken down before the deploy wrote the pointer back
+    w.takedown.set(SLUG, 'confirmed'); // taken down before the deploy wrote the pointer back
     expect(await afterLiveDeploy(SLUG, { deps })).toBe('settled');
     expect(actions(w)).toEqual(['unpublish']);
     expect(w.served).toBe(false);
@@ -348,6 +372,55 @@ describe('ordering: the newest state wins', () => {
     await vi.waitFor(() => expect(w.pending).toHaveLength(1));
     await finish();
     expect(new Set(w.jobs.map((j) => j.name))).toEqual(new Set(['cool-app-live-pointer']));
+  });
+});
+
+// The production store, on an in-memory Redis with SET NX / XX semantics: the attempt and the
+// confirmation are separate values of one key, and a confirmation never re-creates a key that a
+// deploy cleared while the unpublish ran.
+describe('the Redis store', () => {
+  const KEY = `system:blocks:live-pointer-takedown:${SLUG}`;
+  function redisKv() {
+    const kv = new Map<string, string>();
+    redisMock.sysRedis.get.mockImplementation(async (k: string) => kv.get(k) ?? null);
+    redisMock.sysRedis.set.mockImplementation(
+      async (k: string, v: string, o?: { NX?: boolean; XX?: boolean }) => {
+        if (o?.NX && kv.has(k)) return null;
+        if (o?.XX && !kv.has(k)) return null;
+        kv.set(k, v);
+        return 'OK';
+      }
+    );
+    redisMock.sysRedis.del.mockImplementation(async (k: string) => (kv.delete(k) ? 1 : 0));
+    return kv;
+  }
+  const withoutStore = (deps: LiveUnpublishDeps): Partial<LiveUnpublishDeps> => {
+    const { store: _fake, ...rest } = deps;
+    return rest;
+  };
+
+  it('attempted before the Job, confirmed after it, and never confirmed once a deploy cleared it', async () => {
+    const kv = redisKv();
+    const { w, deps, finish } = world({ status: 'suspended', auto: false });
+    void syncLivePointer(SLUG, { deps: withoutStore(deps) });
+    await vi.waitFor(() => expect(w.pending).toHaveLength(1));
+    expect(kv.get(KEY)).toBe('attempted');
+    kv.delete(KEY); // a deploy wrote the pointer back and cleared the marker
+    await finish();
+    await vi.waitFor(() => expect(actions(w)).toEqual(['unpublish', 'unpublish']));
+    expect(kv.get(KEY)).toBe('attempted');
+    await finish();
+    await vi.waitFor(() => expect(kv.get(KEY)).toBe('confirmed'));
+  });
+
+  it('a value written before the split reads as an attempt: a relist restores on it', async () => {
+    const kv = redisKv();
+    kv.set(KEY, '1');
+    const { w, deps } = world({ status: 'approved', served: false });
+    const d = withoutStore(deps);
+    expect(await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps: d })).toBe('settled');
+    expect(actions(w)).toEqual(['restore']);
+    expect(kv.has(KEY)).toBe(false);
   });
 });
 
