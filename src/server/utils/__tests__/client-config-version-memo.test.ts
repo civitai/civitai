@@ -99,10 +99,13 @@ describe('callsRemovedProcedure', () => {
     ['nope', '5.0.20', removed, false],
     [undefined, '5.0.20', removed, false],
     [['5.0.1', '5.0.2'], '5.0.20', removed, false],
-  ] as const)('header %j against server %j is %s', (header, server, calls, expected) => {
-    expect(callsRemovedProcedure(web(header), calls, server)).toBe(expected);
-    expect(callsRemovedProcedure(web(header), calls, server)).toBe(expected);
-  });
+  ] as const)(
+    'header %j against server %j with calls %j is %s',
+    (header, server, calls, expected) => {
+      expect(callsRemovedProcedure(web(header), calls, server)).toBe(expected);
+      expect(callsRemovedProcedure(web(header), calls, server)).toBe(expected);
+    }
+  );
 
   it('answers each header on its own, whichever was parsed first', () => {
     const order = ['4.9.1', '5.0.41', '4.9.2', '5.0.42'];
