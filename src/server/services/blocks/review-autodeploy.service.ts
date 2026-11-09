@@ -2,7 +2,10 @@ import {
   recordAppReviewAutodeployEvent,
   type AppReviewAutodeployEvent,
 } from '~/server/prom/app-review-autodeploy.metrics';
-import { BUILDING_REVIEW_PREVIEW_STATES } from '~/shared/constants/app-review-preview.constants';
+import {
+  BUILDING_REVIEW_PREVIEW_STATES,
+  STARTED_REVIEW_BUILD_DETAIL_MARK,
+} from '~/shared/constants/app-review-preview.constants';
 
 /**
  * The automatic half of the app review flow. A new pending publish request (ZIP submit or git
@@ -38,12 +41,23 @@ export const SYSTEM_REVIEW_ACTOR: ReviewPreviewActor = { kind: 'system' };
 
 const record = (event: AppReviewAutodeployEvent) => recordAppReviewAutodeployEvent(event);
 
-/** The rows that hold a build slot at `now`. The one definition the cap and the panel share. */
+/**
+ * The rows that hold a build slot at `now`. The one definition the cap and the panel share.
+ *
+ * Deliberately NOT limited to pending requests: a request superseded, withdrawn or decided while
+ * its review build runs still has that build running, and so does a preview torn down mid-build
+ * (no preview any more, its started-build detail kept). Either keeps its slot until the build's
+ * callback settles it (releaseSettledBuildSlot) or the stale window passes. An approved row never
+ * matches the first arm (its deploy_state carries the production values) and a row that never
+ * started a review build never matches the second.
+ */
 export function buildSlotHolderWhere(now: Date) {
   return {
-    status: 'pending',
-    deployState: { in: [...BUILDING_REVIEW_PREVIEW_STATES] },
     deployUpdatedAt: { gt: new Date(now.getTime() - REVIEW_BUILD_SLOT_STALE_MS) },
+    OR: [
+      { deployState: { in: [...BUILDING_REVIEW_PREVIEW_STATES] } },
+      { deployState: null, deployDetail: { contains: STARTED_REVIEW_BUILD_DETAIL_MARK } },
+    ],
   };
 }
 
@@ -115,7 +129,12 @@ export async function claimReviewBuildSlot(
 function claimData(actor: ReviewPreviewActor, now: Date) {
   return {
     deployState: 'preview-building',
-    deployDetail: JSON.stringify(reviewActorDetail(actor)),
+    // buildStartedAt from the claim on: a teardown before startClaimedReviewBuild's first write
+    // must still leave the row holding its slot (STARTED_REVIEW_BUILD_DETAIL_MARK).
+    deployDetail: JSON.stringify({
+      ...reviewActorDetail(actor),
+      buildStartedAt: now.toISOString(),
+    }),
     deployUpdatedAt: now,
   };
 }
@@ -144,7 +163,17 @@ export async function drainReviewPreviewQueue(): Promise<{ started: number; wait
     const { isAppBlocksReviewAutodeployEnabled } = await import(
       '~/server/services/app-blocks-flag'
     );
-    if (!(await isAppBlocksReviewAutodeployEnabled())) return { started: 0, waiting: false };
+    if (!(await isAppBlocksReviewAutodeployEnabled())) {
+      // The flag is the kill switch for automatic builds, so nothing queued is built. Hand the
+      // queued previews back to "waiting for a moderator" (no preview) rather than leave them
+      // queued, where nothing would ever start them and they never expire.
+      const { dbWrite } = await import('~/server/db/client');
+      await dbWrite.appBlockPublishRequest.updateMany({
+        where: { status: 'pending', deployState: 'preview-queued' },
+        data: { deployState: null, deployDetail: null, deployUpdatedAt: new Date() },
+      });
+      return { started: 0, waiting: false };
+    }
 
     const { startClaimedReviewBuild } = await import('./publish-request.service');
     let started = 0;
@@ -452,16 +481,33 @@ function perReviewCapUsd(env: { AGENT_REVIEW_COST_CAP_USD: string }): number {
  * and one more review at its per-review cap fits in today's platform budget. Past the budget it is
  * refused; a moderator can still start one by hand. Never throws.
  */
+export type AgentAutostartDeps = {
+  autostartOn: () => Promise<boolean>;
+  agentReviewOn: () => Promise<boolean>;
+  startAgentReview: (args: { publishRequestId: string; modUserId: null }) => Promise<unknown>;
+};
+
 export async function maybeAutoStartAgentReview(
-  publishRequestId: string
+  publishRequestId: string,
+  /** Injectable for the concurrency test; defaults to the flags and agent-review service. */
+  deps: Partial<AgentAutostartDeps> = {}
 ): Promise<AgentReviewAutostartOutcome> {
   try {
-    const { isAppBlocksAgenticReviewAutostartEnabled, isAppBlocksAgenticReviewEnabled } =
-      await import('~/server/services/app-blocks-flag');
+    const d: AgentAutostartDeps = {
+      autostartOn: async () =>
+        (
+          await import('~/server/services/app-blocks-flag')
+        ).isAppBlocksAgenticReviewAutostartEnabled(),
+      agentReviewOn: async () =>
+        (await import('~/server/services/app-blocks-flag')).isAppBlocksAgenticReviewEnabled(),
+      startAgentReview: async (args) =>
+        (await import('./agent-review.service')).startAgentReview(args),
+      ...deps,
+    };
     // Both: the autostart flag AND the agent-review feature flag's base value. While agent review
     // is dark (base off) no pod is provisioned automatically, whatever the autostart flag says.
-    if (!(await isAppBlocksAgenticReviewAutostartEnabled())) return 'disabled';
-    if (!(await isAppBlocksAgenticReviewEnabled())) return 'disabled';
+    if (!(await d.autostartOn())) return 'disabled';
+    if (!(await d.agentReviewOn())) return 'disabled';
 
     const [{ dbRead }, { env }] = await Promise.all([
       import('~/server/db/client'),
@@ -473,20 +519,78 @@ export async function maybeAutoStartAgentReview(
     });
     if (existing) return 'already-reviewed';
 
-    const spent = await agentReviewSpendTodayUsd();
-    if (spent + perReviewCapUsd(env) > env.AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD) {
+    // Reserve this start's cap BEFORE reading today's spend, so concurrent go-lives cannot each
+    // see room for one more and all start: every start in flight is counted (its reservation)
+    // until its report row exists, after which the spend read counts it instead.
+    const capCents = Math.round(perReviewCapUsd(env) * 100);
+    const reservation = await reserveAgentAutostartBudget(capCents);
+    if (reservation === null) {
+      // The reservation cannot be read: refuse rather than start uncounted.
       record('agent_review_budget_refused');
       return 'budget-refused';
     }
-
-    const { startAgentReview } = await import('./agent-review.service');
-    await startAgentReview({ publishRequestId, modUserId: null });
-    record('agent_review_auto_started');
-    return 'started';
+    try {
+      const spent = await agentReviewSpendTodayUsd();
+      if (spent + reservation.totalCents / 100 > env.AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD) {
+        record('agent_review_budget_refused');
+        return 'budget-refused';
+      }
+      await d.startAgentReview({ publishRequestId, modUserId: null });
+      record('agent_review_auto_started');
+      return 'started';
+    } finally {
+      // Released on the key it was taken on, even when the UTC day turned in between.
+      await releaseAgentAutostartBudget(capCents, reservation.key);
+    }
   } catch (err) {
     record('agent_review_start_failed');
     warn('maybeAutoStartAgentReview', `failed (id=${publishRequestId})`, err);
     return 'error';
+  }
+}
+
+type AgentAutostartReservedKey = Awaited<ReturnType<typeof agentAutostartReservedKey>>;
+
+async function agentAutostartReservedKey() {
+  const { REDIS_SYS_KEYS } = await import('~/server/redis/client');
+  const day = new Date().toISOString().slice(0, 10);
+  return `${REDIS_SYS_KEYS.BLOCKS.AGENT_REVIEW_AUTOSTART_RESERVED}:${day}` as const;
+}
+
+/**
+ * Add `cents` to today's in-flight reservation. Returns the new total and the key it was taken on
+ * (the release must use the same one), or null when unreadable.
+ */
+async function reserveAgentAutostartBudget(
+  cents: number
+): Promise<{ totalCents: number; key: AgentAutostartReservedKey } | null> {
+  try {
+    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
+    const key = await agentAutostartReservedKey();
+    const res = await withSysReadDeadline(
+      sysRedis
+        .multi()
+        .set(key, '0', { NX: true, EX: 26 * 60 * 60 })
+        .incrBy(key, cents)
+        .exec()
+    );
+    const total = Number(res?.[1]);
+    return Number.isFinite(total) ? { totalCents: total, key } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Release a reservation taken by {@link reserveAgentAutostartBudget}. Best-effort. */
+async function releaseAgentAutostartBudget(
+  cents: number,
+  key: AgentAutostartReservedKey
+): Promise<void> {
+  try {
+    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
+    await withSysReadDeadline(sysRedis.incrBy(key, -cents));
+  } catch {
+    // The key expires with the day; a lost release only makes later starts more conservative.
   }
 }
 

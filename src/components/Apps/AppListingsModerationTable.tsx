@@ -55,6 +55,7 @@ import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderatio
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { withLiveNote } from '~/components/Apps/appListingDetailModActions';
 
 /**
  * /apps/review — the unified MODERATOR listings management table (W13 post-approval
@@ -733,11 +734,11 @@ function ListingModActionModal({
   });
   // On-site reset routes through the block-review re-queue proc (#3165).
   const resetOnsiteMut = trpc.appListings.resetOnsiteListingToPending.useMutation({
-    onSuccess: () => afterSuccess('Listing reset to pending.'),
+    onSuccess: (result) => afterSuccess(withLiveNote('Listing reset to pending.', result)),
     onError: onError('Reset failed'),
   });
   const delistMut = trpc.appListings.delistListing.useMutation({
-    onSuccess: () => afterSuccess('Listing hidden.'),
+    onSuccess: (result) => afterSuccess(withLiveNote('Listing hidden.', result)),
     onError: onError('Hide failed'),
   });
   const relistMut = trpc.appListings.relistListing.useMutation({

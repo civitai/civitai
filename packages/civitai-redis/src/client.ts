@@ -2322,6 +2322,18 @@ export const REDIS_SYS_KEYS = {
     // New-submission moderator alerts per submitter per UTC hour
     // (`system:blocks:review-submission-alerts:${userId}:${YYYY-MM-DDTHH}`).
     REVIEW_SUBMISSION_ALERTS: 'system:blocks:review-submission-alerts',
+    // Agent-review auto-start budget reserved by starts in flight, in US cents, per UTC day
+    // (`system:blocks:agent-review-autostart-reserved:${YYYY-MM-DD}`): the per-review cap is
+    // reserved before the start and released once its report row exists (or the start failed).
+    AGENT_REVIEW_AUTOSTART_RESERVED: 'system:blocks:agent-review-autostart-reserved',
+    // Live app pointer on the shared static server, per app slug. TAKEDOWN
+    // (`...:${slug}`, no TTL) is set when this platform starts a live unpublish for the app and
+    // cleared when its pointer is written back (a restore or a deploy): it is the evidence a relist
+    // restores on. LOCK (`...:${slug}`, SET NX EX) serialises the pointer Jobs of one app; DIRTY
+    // (`...:${slug}`) asks the lock holder to look at the app again before it lets go.
+    LIVE_POINTER_TAKEDOWN: 'system:blocks:live-pointer-takedown',
+    LIVE_POINTER_LOCK: 'system:blocks:live-pointer-lock',
+    LIVE_POINTER_DIRTY: 'system:blocks:live-pointer-dirty',
     /**
      * Per-user (fallback per-IP) rate-limit counter for the dev/preview
      * block-token mint (`/api/v1/blocks/dev-token`). Same `SET NX EX` + `INCR`

@@ -1,0 +1,321 @@
+import { describe, expect, it, vi } from 'vitest';
+import {
+  afterLiveDeploy,
+  isReadinessProbeApp,
+  readinessAppNote,
+  restoreLiveApp,
+  syncLivePointer,
+  takeDownLiveApp,
+  type LivePointerStore,
+  type LiveUnpublishDeps,
+} from '~/server/services/blocks/live-unpublish.service';
+
+/**
+ * LIVE POINTER (`app-blocks-live-unpublish`): a delisted on-site app's live pointer is removed
+ * from the shared static server, and a relist writes it back ONLY when this platform took it
+ * down. One reconciler per app decides from the app's CURRENT state, one Job at a time.
+ */
+
+const SHA = 'a'.repeat(39) + 'b';
+const BLOCK = 'apb_01TESTBLOCK0000000000000000';
+const SLUG = 'cool-app';
+
+type Outcome = 'succeeded' | 'failed' | 'timeout';
+
+/**
+ * A fake world: the block's status, the store, and the pointer the shared server serves. A Job's
+ * effect lands when it ENDS, and the test decides when each one ends (`finish`), so takedowns and
+ * relists can be interleaved the way they race in production.
+ */
+function world(over: { status?: string; served?: boolean; flag?: boolean; auto?: boolean } = {}) {
+  const w = {
+    status: over.status ?? 'approved',
+    served: over.served ?? true,
+    flag: over.flag ?? true,
+    takedown: new Set<string>(),
+    lock: false,
+    dirty: false,
+    jobs: [] as Array<{ action: string; name: string }>,
+    pending: [] as Array<{ action: string; resolve: (o: Outcome) => void }>,
+    storeWrites: 0,
+  };
+  const store: LivePointerStore = {
+    hasTakedown: vi.fn(async (s: string) => w.takedown.has(s)),
+    setTakedown: vi.fn(async (s: string) => {
+      w.storeWrites++;
+      w.takedown.add(s);
+    }),
+    clearTakedown: vi.fn(async (s: string) => {
+      w.storeWrites++;
+      w.takedown.delete(s);
+    }),
+    acquire: vi.fn(async () => {
+      w.storeWrites++;
+      if (w.lock) return false;
+      w.lock = true;
+      return true;
+    }),
+    refresh: vi.fn(async () => undefined),
+    release: vi.fn(async () => {
+      w.lock = false;
+    }),
+    markDirty: vi.fn(async () => {
+      w.storeWrites++;
+      w.dirty = true;
+    }),
+    takeDirty: vi.fn(async () => {
+      const was = w.dirty;
+      w.dirty = false;
+      return was;
+    }),
+  };
+  const deps = {
+    flagOn: vi.fn(async () => w.flag),
+    readReadinessProbeSlugs: vi.fn(async () => ['readiness-probe-app']),
+    readBlockBySlug: vi.fn(async () => ({ id: BLOCK, status: w.status })),
+    readLiveBuild: vi.fn(
+      async (): Promise<{ sha: string | null; deployedAt: Date | null } | null> => ({
+        sha: SHA,
+        deployedAt: new Date(0),
+      })
+    ),
+    triggerPointerJob: vi.fn(
+      async (job: { slug: string; action: string; sha?: string; imageRef?: string }) => {
+        const name = `${job.slug}-live-pointer`;
+        w.jobs.push({ action: job.action, name });
+        return { name };
+      }
+    ),
+    waitForJob: vi.fn(async (): Promise<Outcome> => {
+      const action = w.jobs[w.jobs.length - 1].action;
+      const outcome: Outcome =
+        over.auto === false
+          ? await new Promise<Outcome>((resolve) => w.pending.push({ action, resolve }))
+          : 'succeeded';
+      if (outcome === 'succeeded') w.served = action === 'restore';
+      return outcome;
+    }),
+    store,
+    report: vi.fn(),
+  } satisfies LiveUnpublishDeps;
+  /** End the oldest running Job, then let the reconciler run on. */
+  const finish = async (outcome: Outcome = 'succeeded') => {
+    const job = w.pending.shift();
+    if (!job) throw new Error('no Job is running');
+    job.resolve(outcome);
+    await vi.waitFor(() => undefined);
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  return { w, deps, finish };
+}
+
+const actions = (w: { jobs: Array<{ action: string }> }) => w.jobs.map((j) => j.action);
+
+describe('takeDownLiveApp (after a takedown commits)', () => {
+  it('flag ON: unpublishes the app and records the takedown before the Job starts', async () => {
+    const { w, deps } = world({ status: 'suspended' });
+    expect(await takeDownLiveApp(SLUG, { deps })).toEqual({});
+    await vi.waitFor(() => expect(actions(w)).toEqual(['unpublish']));
+    expect(vi.mocked(deps.store.setTakedown).mock.invocationCallOrder[0]).toBeLessThan(
+      deps.triggerPointerJob.mock.invocationCallOrder[0]
+    );
+    await vi.waitFor(() => expect(w.served).toBe(false));
+    expect(w.takedown.has(SLUG)).toBe(true);
+  });
+
+  it('the readiness app: nothing started, and the note says it keeps serving', async () => {
+    const { w, deps } = world({ status: 'suspended' });
+    expect(await takeDownLiveApp('readiness-probe-app', { deps })).toEqual({
+      liveNote: "readiness-probe-app keeps serving: it is the static server's readiness app",
+    });
+    expect(w.jobs).toEqual([]);
+  });
+
+  it('flag OFF: nothing, and no note', async () => {
+    const { w, deps } = world({ status: 'suspended', flag: false });
+    expect(await takeDownLiveApp(SLUG, { deps })).toEqual({});
+    expect(w.jobs).toEqual([]);
+    expect(w.storeWrites).toBe(0);
+  });
+
+  it('a failed unpublish is reported, not retried', async () => {
+    const { w, deps } = world({ status: 'suspended' });
+    deps.waitForJob.mockResolvedValue('failed');
+    expect(await syncLivePointer(SLUG, { deps })).toBe('settled');
+    expect(actions(w)).toEqual(['unpublish']);
+    expect(deps.report).toHaveBeenCalledWith(
+      'live unpublish Job cool-app-live-pointer ended failed; cool-app may still be served',
+      { slug: SLUG, job: 'cool-app-live-pointer', outcome: 'failed' }
+    );
+  });
+});
+
+describe('restoreLiveApp (after a relist commits)', () => {
+  it('taken down here: re-publishes the approved build (image, slug, sha) and clears the marker', async () => {
+    const { w, deps } = world({ status: 'approved', served: false });
+    w.takedown.add(SLUG);
+    expect(await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps })).toBe('settled');
+    expect(deps.triggerPointerJob).toHaveBeenCalledWith({
+      slug: SLUG,
+      action: 'restore',
+      sha: SHA,
+      imageRef: `ghcr.io/civitai/app-block-cool-app:${SHA}`,
+    });
+    expect(w.served).toBe(true);
+    expect(w.takedown.has(SLUG)).toBe(false);
+  });
+
+  it('taken down here while the flag was on, flag OFF now: still restored', async () => {
+    const { w, deps } = world({ status: 'approved', served: false, flag: false });
+    w.takedown.add(SLUG);
+    await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps });
+    expect(actions(w)).toEqual(['restore']);
+    expect(w.served).toBe(true);
+  });
+
+  // With the flag off and no takedown recorded, a relist does what it did before this feature:
+  // nothing here. No Job, no write, not even a read of the block.
+  it.each([false, true])(
+    'never taken down here (flag %s): nothing at all, no Job, no write',
+    async (flag) => {
+      const { w, deps } = world({ status: 'approved', flag });
+      expect(await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps })).toBe(
+        'not-taken-down'
+      );
+      expect(w.jobs).toEqual([]);
+      expect(w.storeWrites).toBe(0);
+      expect(deps.readBlockBySlug).not.toHaveBeenCalled();
+      expect(deps.readLiveBuild).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['no approved sha', { sha: null, deployedAt: new Date(0) }],
+    ['a sha that is not a commit sha', { sha: 'c'.repeat(64), deployedAt: new Date(0) }],
+    ['never deployed', { sha: SHA, deployedAt: null }],
+  ])('%s: no Job, the marker is cleared', async (_label, build) => {
+    const { w, deps } = world({ status: 'approved', served: false });
+    w.takedown.add(SLUG);
+    deps.readLiveBuild.mockResolvedValue(build);
+    await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps });
+    expect(w.jobs).toEqual([]);
+    expect(w.takedown.has(SLUG)).toBe(false);
+  });
+
+  it('a failed restore is reported, not retried, and keeps the marker for the next relist', async () => {
+    const { w, deps } = world({ status: 'approved', served: false });
+    w.takedown.add(SLUG);
+    deps.waitForJob.mockResolvedValue('failed');
+    expect(await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps })).toBe('failed');
+    expect(actions(w)).toEqual(['restore']);
+    expect(w.takedown.has(SLUG)).toBe(true);
+    expect(deps.report).toHaveBeenCalledWith(
+      expect.stringContaining('live restore Job cool-app-live-pointer ended failed'),
+      expect.objectContaining({ slug: SLUG, outcome: 'failed' })
+    );
+  });
+});
+
+describe('afterLiveDeploy (a deploy succeeded)', () => {
+  it('the deploy wrote the pointer: the takedown is cleared; on an approved block nothing runs', async () => {
+    const { w, deps } = world({ status: 'approved' });
+    w.takedown.add(SLUG);
+    expect(await afterLiveDeploy(SLUG, { deps })).toBe('none');
+    expect(w.takedown.has(SLUG)).toBe(false);
+    expect(w.jobs).toEqual([]);
+  });
+
+  it('a deploy that landed on a suspended block: taken down again', async () => {
+    const { w, deps } = world({ status: 'suspended', served: true });
+    w.takedown.add(SLUG); // taken down before the deploy wrote the pointer back
+    expect(await afterLiveDeploy(SLUG, { deps })).toBe('settled');
+    expect(actions(w)).toEqual(['unpublish']);
+    expect(w.served).toBe(false);
+  });
+
+  it('flag OFF: no Job', async () => {
+    const { w, deps } = world({ status: 'suspended', flag: false });
+    expect(await afterLiveDeploy(SLUG, { deps })).toBe('none');
+    expect(w.jobs).toEqual([]);
+  });
+});
+
+// Takedowns and relists commit in one order and their Jobs finish in another. Whatever the
+// interleaving, the app ends served exactly when its block is approved.
+describe('ordering: the newest state wins', () => {
+  it('delist, relist, then delist again while the first unpublish runs: ends suspended and NOT served', async () => {
+    const { w, deps, finish } = world({ status: 'approved', served: true, auto: false });
+    w.status = 'suspended';
+    void takeDownLiveApp(SLUG, { deps }); // U1
+    await vi.waitFor(() => expect(w.pending).toHaveLength(1));
+    w.status = 'approved';
+    expect(await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps })).toBe('queued'); // R1
+    await finish(); // U1 ends: approved + taken down -> restore R2 starts
+    await vi.waitFor(() => expect(actions(w)).toEqual(['unpublish', 'restore']));
+    w.status = 'suspended';
+    void takeDownLiveApp(SLUG, { deps }); // U2 arrives while R2 runs: queued
+    await finish(); // R2 ends: suspended, not taken down -> unpublish U3
+    await vi.waitFor(() => expect(actions(w)).toEqual(['unpublish', 'restore', 'unpublish']));
+    await finish();
+    await vi.waitFor(() => expect(w.lock).toBe(false));
+    expect(w.served).toBe(false);
+    expect(w.takedown.has(SLUG)).toBe(true);
+    expect(w.pending).toEqual([]);
+  });
+
+  it('the mirror: delist, relist, delist, relist: ends approved and served', async () => {
+    const { w, deps, finish } = world({ status: 'approved', served: true, auto: false });
+    w.status = 'suspended';
+    void takeDownLiveApp(SLUG, { deps });
+    await vi.waitFor(() => expect(w.pending).toHaveLength(1));
+    w.status = 'approved';
+    void restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps });
+    w.status = 'suspended';
+    void takeDownLiveApp(SLUG, { deps });
+    w.status = 'approved';
+    await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps });
+    await finish(); // U1 ends: approved + taken down -> restore
+    await vi.waitFor(() => expect(w.pending).toHaveLength(1));
+    await finish();
+    await vi.waitFor(() => expect(w.lock).toBe(false));
+    expect(actions(w)).toEqual(['unpublish', 'restore']);
+    expect(w.served).toBe(true);
+    expect(w.takedown.has(SLUG)).toBe(false);
+  });
+
+  it('only one Job runs at a time per app, under one shared name', async () => {
+    const { w, deps, finish } = world({ status: 'suspended', auto: false });
+    void takeDownLiveApp(SLUG, { deps });
+    await vi.waitFor(() => expect(w.pending).toHaveLength(1));
+    w.status = 'approved';
+    void restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(w.pending).toHaveLength(1);
+    await finish();
+    await vi.waitFor(() => expect(w.pending).toHaveLength(1));
+    await finish();
+    expect(new Set(w.jobs.map((j) => j.name))).toEqual(new Set(['cool-app-live-pointer']));
+  });
+});
+
+describe('isReadinessProbeApp', () => {
+  it('true only for a slug on the ConfigMap readiness list, with the flag on', async () => {
+    const { deps } = world();
+    expect(await isReadinessProbeApp('readiness-probe-app', deps)).toBe(true);
+    expect(await isReadinessProbeApp(SLUG, deps)).toBe(false);
+    const off = world({ flag: false });
+    expect(await isReadinessProbeApp('readiness-probe-app', off.deps)).toBe(false);
+  });
+
+  it('an unreadable list returns false (the script stays the backstop)', async () => {
+    const { deps } = world();
+    deps.readReadinessProbeSlugs.mockRejectedValue(new Error('forbidden'));
+    expect(await isReadinessProbeApp('readiness-probe-app', deps)).toBe(false);
+  });
+});
+
+it('readinessAppNote is the line the moderator gets back', () => {
+  expect(readinessAppNote('some-app')).toBe(
+    "some-app keeps serving: it is the static server's readiness app"
+  );
+});

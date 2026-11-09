@@ -148,6 +148,7 @@ import {
   markReviewPreviewState,
   withdrawRequest,
   parseReviewDetail,
+  releaseSettledBuildSlot,
 } from '~/server/services/blocks/publish-request.service';
 import { MAX_CONCURRENT_REVIEW_BUILDS } from '~/server/services/blocks/review-autodeploy.service';
 import { REVIEW_PREVIEW_MAX_AGE_MS } from '~/shared/constants/app-review-preview.constants';
@@ -566,6 +567,19 @@ describe('previewRequest repeat preview (push origin, unchanged tree)', () => {
 describe('getReviewStatus', () => {
   beforeEach(() => mockDbRead.appBlockPublishRequest.findUnique.mockReset());
 
+  it('a preview torn down mid-build (build detail kept) reads as no preview', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: null,
+      deployDetail: JSON.stringify({ sha: SHA, buildStartedAt: new Date().toISOString() }),
+      deployUpdatedAt: new Date(),
+    });
+    const r = await getReviewStatus({ publishRequestId: PUBREQ });
+    expect(r.state).toBeNull();
+    expect(r.detail).toEqual({});
+  });
+
   it('returns the preview state + parsed detail', async () => {
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
       id: PUBREQ,
@@ -726,6 +740,25 @@ describe('teardownReviewForRequest', () => {
     mockDeleteReviewResources.mockClear();
     mockDeprovisionReviewPreview.mockReset();
     mockDeprovisionReviewPreview.mockResolvedValue(undefined);
+  });
+
+  // approveRequest clears the row's detail (markRequestDeployState) before it tears down, so it
+  // hands over the detail it read first; without its sha the preview is never unpublished.
+  it('uses the detail the caller read before changing the row (sha and serving mode)', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      slug: 'my-app',
+      deployState: 'building',
+      deployDetail: null,
+    });
+    await teardownReviewForRequest(PUBREQ, {
+      reviewDetail: JSON.stringify({ sha: SHA, sharedServer: true }),
+    });
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'my-app',
+      sha: SHA,
+      publishRequestId: PUBREQ,
+      sharedServer: true,
+    });
   });
 
   it('deletes review resources by publish request (label selector is the boundary)', async () => {
@@ -954,7 +987,11 @@ describe('previewRequest and the build cap', () => {
     const claim = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls.find(
       ([arg]: any[]) => arg.data.deployState === 'preview-building'
     );
-    expect(JSON.parse(claim![0].data.deployDetail)).toEqual({ actor: 'moderator', modUserId: 5 });
+    expect(JSON.parse(claim![0].data.deployDetail)).toEqual({
+      actor: 'moderator',
+      modUserId: 5,
+      buildStartedAt: expect.any(String),
+    });
     // The build's own mark (with the sha) carries the build start the expiry clock counts from.
     const built = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls
       .map(([arg]: any[]) => arg.data)
@@ -1004,6 +1041,60 @@ describe('teardownPreview', () => {
     expect(updateArg.data.deployState).toBeNull();
     expect(updateArg.data.deployDetail).toBeNull();
     expect(updateArg.data.deployUpdatedAt).toBeInstanceOf(Date);
+  });
+
+  // Its build is still running: the row is no preview any more (deploy_state null) but keeps its
+  // started-build detail, so it holds the build slot until the build's callback settles it; the
+  // stale window still counts from its last state change, so deployUpdatedAt is not touched.
+  it('preview-building pending: torn down to no preview, keeping its build detail (and so its build slot)', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-building',
+      deployDetail: JSON.stringify({ sha: SHA }),
+      slug: 'my-app',
+    });
+    const res = await teardownPreview({ publishRequestId: PUBREQ });
+    expect(res).toEqual({ publishRequestId: PUBREQ, tornDown: true });
+    const updateArg = mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0];
+    expect(updateArg.data).toEqual({ deployState: null });
+  });
+
+  // In preview-deploying the build's callback has already run, so nothing would release a slot
+  // kept here before the stale window: the row is cleared and frees its slot now.
+  it('preview-deploying pending: cleared outright (its build is over), freeing its slot', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-deploying',
+      deployDetail: JSON.stringify({ sha: SHA, buildStartedAt: new Date().toISOString() }),
+      slug: 'my-app',
+    });
+    const res = await teardownPreview({ publishRequestId: PUBREQ });
+    expect(res).toEqual({ publishRequestId: PUBREQ, tornDown: true });
+    const updateArg = mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0];
+    expect(updateArg.data).toEqual({
+      deployState: null,
+      deployDetail: null,
+      deployUpdatedAt: expect.any(Date),
+    });
+  });
+
+  it('teardown passes the serving mode recorded on the preview detail', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-live',
+      deployDetail: JSON.stringify({ sha: SHA, sharedServer: true }),
+      slug: 'my-app',
+    });
+    await teardownPreview({ publishRequestId: PUBREQ });
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'my-app',
+      sha: SHA,
+      publishRequestId: PUBREQ,
+      sharedServer: true,
+    });
   });
 
   it('non-pending / non-preview state: no-op, tornDown:false (no delete, no DB clear)', async () => {
@@ -1283,8 +1374,8 @@ describe('markReviewPreviewState requireActivePreview guard', () => {
     const arg = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls[0][0];
     expect(arg.where.id).toBe(PUBREQ);
     expect(arg.where.status).toBe('pending');
-    // The load-bearing guard: a torn-down row (deployState=null) won't match
-    // startsWith 'preview-', so a late build callback can't resurrect it.
+    // The load-bearing guard: a torn-down row (deployState=null, even while its build still runs
+    // and its detail is kept) is not a preview-* state, so a late build callback can't resurrect it.
     expect(arg.where.deployState).toEqual({ startsWith: 'preview-' });
   });
 
@@ -1296,5 +1387,48 @@ describe('markReviewPreviewState requireActivePreview guard', () => {
     // Initial mark transitions from null / preview-failed → preview-building, so
     // it must NOT require an existing preview-* state.
     expect(arg.where.deployState).toBeUndefined();
+  });
+});
+
+describe('releaseSettledBuildSlot', () => {
+  const STARTED = '2026-11-09T10:00:00.000Z';
+  const slotHolder = [
+    // superseded, withdrawn or decided while its build ran
+    {
+      deployState: { in: ['preview-building', 'preview-deploying'] },
+      status: { not: 'pending' },
+    },
+    // torn down mid-build: no preview, started-build detail kept
+    { deployState: null, deployDetail: { contains: '"buildStartedAt":' } },
+  ];
+
+  it("clears only a slot-holding row that is not an active pending preview, and only THAT build's", async () => {
+    mockDbWrite.appBlockPublishRequest.updateMany.mockClear();
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA, buildStartedAt: STARTED });
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: PUBREQ,
+        OR: slotHolder,
+        AND: [
+          { deployDetail: { contains: `"sha":"${SHA}"` } },
+          { deployDetail: { contains: `"buildStartedAt":"${STARTED}"` } },
+        ],
+      },
+      data: { deployState: null, deployDetail: null, deployUpdatedAt: expect.any(Date) },
+    });
+  });
+
+  it('with only the sha known (the build callback), matches on the sha', async () => {
+    mockDbWrite.appBlockPublishRequest.updateMany.mockClear();
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA });
+    expect(mockDbWrite.appBlockPublishRequest.updateMany.mock.calls[0][0].where.AND).toEqual([
+      { deployDetail: { contains: `"sha":"${SHA}"` } },
+    ]);
+  });
+
+  it('no valid sha: releases nothing', async () => {
+    mockDbWrite.appBlockPublishRequest.updateMany.mockClear();
+    await releaseSettledBuildSlot(PUBREQ, { sha: '' });
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
   });
 });
