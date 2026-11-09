@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react';
 import { create } from 'zustand';
 import { mintPurchaseKey } from '~/utils/purchase-key';
 import type { StickerTrackKey } from '~/shared/utils/sticker-track';
+import type { CreateStickerPlacementInput } from '~/server/schema/placement.schema';
 import { keyMinShown, poseAt, upsertKey } from '~/shared/utils/sticker-track-edit';
 import {
   STICKER_PLACEMENT_DEFAULT_OPACITY,
@@ -249,7 +250,18 @@ interface StickerPlacementDraftStore {
   /** Each draft's own pay button, by its label, for the floating Place that presses it. */
   primaryLabels: Record<string, string>;
   setPrimaryLabel: (id: string, label: string | null) => void;
+  /** Drafts whose own button would place them now (no purchase first), with what it would send. */
+  readyPlacements: Record<string, ReadyPlacement>;
+  setReadyPlacement: (id: string, ready: ReadyPlacement | null) => void;
+  /** Place all is running; each draft's own Place waits so nothing is placed twice. */
+  placingAll: boolean;
+  setPlacingAll: (placingAll: boolean) => void;
 }
+
+export type ReadyPlacement = {
+  free: boolean;
+  input: () => CreateStickerPlacementInput;
+};
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
@@ -324,6 +336,8 @@ const createDraftStore = () =>
     playheadMs: 0,
     videoPlaying: false,
     primaryLabels: {},
+    readyPlacements: {},
+    placingAll: false,
 
     // Reopening on the image you are already placing on keeps the drafts — that is
     // the way back to the panel after putting it away, so taking them would punish
@@ -567,6 +581,18 @@ const createDraftStore = () =>
         else primaryLabels[id] = label;
         return { primaryLabels };
       }),
+
+    setReadyPlacement: (id, ready) =>
+      set((state) => {
+        const current = state.readyPlacements[id] ?? null;
+        if (current === ready) return state;
+        const readyPlacements = { ...state.readyPlacements };
+        if (ready == null) delete readyPlacements[id];
+        else readyPlacements[id] = ready;
+        return { readyPlacements };
+      }),
+
+    setPlacingAll: (placingAll) => set({ placingAll }),
 
     setKeys: (id, keys) =>
       set((state) => ({

@@ -657,6 +657,21 @@ export function DraftSticker({
     };
   };
 
+  // Must mirror when this draft's own Place button would place it.
+  const latestInput = useRef(placementInput);
+  latestInput.current = placementInput;
+  // Not while its own placement is in flight, or Place all would place it a second time.
+  const readyToPlace = !commit && !purchase && !motionRefused && !place.isPending;
+  const setReadyPlacement = useStore((state) => state.setReadyPlacement);
+  const placingAll = useStore((state) => state.placingAll);
+  useEffect(() => {
+    setReadyPlacement(
+      draft.id,
+      readyToPlace ? { free: placingFree, input: () => latestInput.current() } : null
+    );
+    return () => setReadyPlacement(draft.id, null);
+  }, [draft.id, readyToPlace, placingFree, setReadyPlacement]);
+
   /**
    * A second copy of this sticker, already arranged.
    *
@@ -1063,7 +1078,7 @@ export function DraftSticker({
                 color="yellow"
                 style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
                 loading={place.isPending}
-                disabled={motionRefused}
+                disabled={motionRefused || placingAll}
                 onClick={() => place.mutate(placementInput())}
                 data-draft-primary={draft.id}
               >
@@ -1078,7 +1093,7 @@ export function DraftSticker({
                 label="Place"
                 data-draft-primary={draft.id}
                 loading={place.isPending}
-                disabled={motionRefused}
+                disabled={motionRefused || placingAll}
                 onPerformTransaction={() => place.mutate(placementInput())}
               />
             )}
