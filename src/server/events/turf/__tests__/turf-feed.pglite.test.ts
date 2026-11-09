@@ -412,6 +412,20 @@ describe("reading the viewer's own hats", () => {
     expect((await getTurfStock('e', VIEWER, later())).liveHats).toBe(1);
   });
 
+  // Own hats share drawnStickers with getTurfStickersForImages: a hat the feed draws nowhere is not live.
+  it("a banned viewer's hats are drawn nowhere, so none is live", async () => {
+    const image = await newImage();
+    await sticker(image, VIEWER);
+    expect(await readMine(10)).toEqual([image]);
+    await db.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [VIEWER]);
+    try {
+      expect(await readMine(10)).toEqual([]);
+      expect((await getTurfStock('e', VIEWER, later())).liveHats).toBe(0);
+    } finally {
+      await db.query(`UPDATE "User" SET "bannedAt" = NULL WHERE id = $1`, [VIEWER]);
+    }
+  });
+
   it('a viewer with no live hats gets an empty page and no cursor', async () => {
     await sticker(await newImage(), 2);
     const page = await readMyTurfPage({ event: await event(), userId: VIEWER, limit: 5 });
