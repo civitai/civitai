@@ -148,6 +148,59 @@ describe('takeDownLiveApp (after a takedown commits)', () => {
       { slug: SLUG, job: 'cool-app-live-pointer', outcome: 'failed' }
     );
   });
+
+  // An unpublish that did not go through leaves the app served: the next takedown call must run
+  // it again, not read the earlier attempt as done.
+  it.each(['failed', 'timeout'] as const)(
+    'an unpublish Job that ended %s is run again by the next takedown call',
+    async (outcome) => {
+      const { w, deps } = world({ status: 'suspended' });
+      deps.waitForJob.mockResolvedValueOnce(outcome);
+      await syncLivePointer(SLUG, { deps });
+      expect(w.served).toBe(true);
+      void takeDownLiveApp(SLUG, { deps });
+      await vi.waitFor(() => expect(actions(w)).toEqual(['unpublish', 'unpublish']));
+      await vi.waitFor(() => expect(w.lock).toBe(false));
+      expect(w.served).toBe(false);
+    }
+  );
+
+  it('an unpublish whose Job could not be started is run again by the next takedown call', async () => {
+    const { w, deps } = world({ status: 'suspended' });
+    deps.triggerPointerJob.mockRejectedValueOnce(new Error('k8s API down'));
+    expect(await syncLivePointer(SLUG, { deps })).toBe('failed');
+    expect(w.jobs).toEqual([]);
+    void takeDownLiveApp(SLUG, { deps });
+    await vi.waitFor(() => expect(actions(w)).toEqual(['unpublish']));
+    await vi.waitFor(() => expect(w.lock).toBe(false));
+    expect(w.served).toBe(false);
+  });
+
+  it('a relist after a failed then retried takedown restores the app', async () => {
+    const { w, deps } = world({ status: 'suspended' });
+    deps.waitForJob.mockResolvedValueOnce('failed');
+    await syncLivePointer(SLUG, { deps });
+    await syncLivePointer(SLUG, { deps });
+    expect(w.served).toBe(false);
+    w.status = 'approved';
+    expect(await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps })).toBe('settled');
+    expect(actions(w)).toEqual(['unpublish', 'unpublish', 'restore']);
+    expect(w.served).toBe(true);
+    expect(w.takedown.has(SLUG)).toBe(false);
+  });
+
+  // The Job may have removed the pointer before it failed, so the attempt alone is enough for a
+  // relist to put the app back.
+  it('a relist after an unpublish that failed (not retried) still restores the app', async () => {
+    const { w, deps } = world({ status: 'suspended' });
+    deps.waitForJob.mockResolvedValueOnce('failed');
+    await syncLivePointer(SLUG, { deps });
+    w.status = 'approved';
+    expect(await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps })).toBe('settled');
+    expect(actions(w)).toEqual(['unpublish', 'restore']);
+    expect(w.served).toBe(true);
+    expect(w.takedown.has(SLUG)).toBe(false);
+  });
 });
 
 describe('restoreLiveApp (after a relist commits)', () => {
@@ -173,8 +226,8 @@ describe('restoreLiveApp (after a relist commits)', () => {
     expect(w.served).toBe(true);
   });
 
-  // With the flag off and no takedown recorded, a relist does what it did before this feature:
-  // nothing here. No Job, no write, not even a read of the block.
+  // With no takedown attempt recorded, a relist does nothing here, flag on or off: no Job, no
+  // write, not even a read of the block.
   it.each([false, true])(
     'never taken down here (flag %s): nothing at all, no Job, no write',
     async (flag) => {

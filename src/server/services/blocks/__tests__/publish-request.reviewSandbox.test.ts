@@ -151,6 +151,7 @@ import {
   releaseSettledBuildSlot,
 } from '~/server/services/blocks/publish-request.service';
 import { MAX_CONCURRENT_REVIEW_BUILDS } from '~/server/services/blocks/review-autodeploy.service';
+import { matches, type Where } from './prisma-where.fixture';
 import { REVIEW_PREVIEW_MAX_AGE_MS } from '~/shared/constants/app-review-preview.constants';
 
 const PUBREQ = 'pubreq_0123456789ABCDEFGHJKMNPQRS';
@@ -1392,43 +1393,94 @@ describe('markReviewPreviewState requireActivePreview guard', () => {
 
 describe('releaseSettledBuildSlot', () => {
   const STARTED = '2026-11-09T10:00:00.000Z';
-  const slotHolder = [
-    // superseded, withdrawn or decided while its build ran
-    {
-      deployState: { in: ['preview-building', 'preview-deploying'] },
-      status: { not: 'pending' },
-    },
-    // torn down mid-build: no preview, started-build detail kept
-    { deployState: null, deployDetail: { contains: '"buildStartedAt":' } },
-  ];
+  const LATER = '2026-11-09T10:05:00.000Z';
+  const NEWER_SHA = 'c'.repeat(40);
+  const detail = (sha: string, buildStartedAt: string) =>
+    JSON.stringify({ modUserId: 7, sha, buildStartedAt });
+  type Row = {
+    id: string;
+    status: string;
+    deployState: string | null;
+    deployDetail: string | null;
+    deployUpdatedAt: Date | null;
+  };
+  let rows: Row[] = [];
+  const row = (over: Partial<Row>): Row => ({
+    id: PUBREQ,
+    status: 'withdrawn',
+    deployState: 'preview-building',
+    deployDetail: detail(SHA, STARTED),
+    deployUpdatedAt: null,
+    ...over,
+  });
+  const released = (r: Row) => r.deployState === null && r.deployDetail === null;
 
-  it("clears only a slot-holding row that is not an active pending preview, and only THAT build's", async () => {
-    mockDbWrite.appBlockPublishRequest.updateMany.mockClear();
+  // The real `where` runs against rows (the same reading of it the review-autodeploy tests use),
+  // so these pin which rows it hits, not how the object is spelled.
+  beforeEach(() => {
+    rows = [];
+    mockDbWrite.appBlockPublishRequest.updateMany
+      .mockReset()
+      .mockImplementation(async ({ where, data }: { where: Where; data: Partial<Row> }) => {
+        const hit = rows.filter((r) => matches(r, where));
+        for (const r of hit) Object.assign(r, data);
+        return { count: hit.length };
+      });
+  });
+  afterEach(() => {
+    mockDbWrite.appBlockPublishRequest.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  });
+
+  it.each([
+    ['superseded, withdrawn or decided while its build ran', {}],
+    [
+      'torn down mid-build (no preview, started-build detail kept)',
+      { status: 'pending', deployState: null },
+    ],
+  ])('releases the slot of THAT build: %s', async (_label, over) => {
+    rows = [row(over)];
     await releaseSettledBuildSlot(PUBREQ, { sha: SHA, buildStartedAt: STARTED });
-    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith({
-      where: {
-        id: PUBREQ,
-        OR: slotHolder,
-        AND: [
-          { deployDetail: { contains: `"sha":"${SHA}"` } },
-          { deployDetail: { contains: `"buildStartedAt":"${STARTED}"` } },
-        ],
-      },
-      data: { deployState: null, deployDetail: null, deployUpdatedAt: expect.any(Date) },
-    });
+    expect(released(rows[0])).toBe(true);
+    expect(rows[0].deployUpdatedAt).toBeInstanceOf(Date);
+  });
+
+  it('never touches an active pending preview', async () => {
+    rows = [row({ status: 'pending' })];
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA, buildStartedAt: STARTED });
+    expect(rows[0]).toEqual(row({ status: 'pending' }));
+  });
+
+  it("an old build's watcher leaves the slot a NEWER build of the same request holds", async () => {
+    rows = [row({ deployDetail: detail(NEWER_SHA, LATER) })];
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA, buildStartedAt: STARTED });
+    expect(rows[0]).toEqual(row({ deployDetail: detail(NEWER_SHA, LATER) }));
+  });
+
+  it('a rebuild of the same sha started later is left alone when the start time is known', async () => {
+    rows = [row({ deployDetail: detail(SHA, LATER) })];
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA, buildStartedAt: STARTED });
+    expect(rows[0]).toEqual(row({ deployDetail: detail(SHA, LATER) }));
+  });
+
+  it('another request is never touched', async () => {
+    rows = [row({ id: 'pubreq_OTHER' })];
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA, buildStartedAt: STARTED });
+    expect(rows[0]).toEqual(row({ id: 'pubreq_OTHER' }));
   });
 
   it('with only the sha known (the build callback), matches on the sha', async () => {
-    mockDbWrite.appBlockPublishRequest.updateMany.mockClear();
+    rows = [row({ deployDetail: detail(SHA, LATER) })];
     await releaseSettledBuildSlot(PUBREQ, { sha: SHA });
-    expect(mockDbWrite.appBlockPublishRequest.updateMany.mock.calls[0][0].where.AND).toEqual([
-      { deployDetail: { contains: `"sha":"${SHA}"` } },
-    ]);
+    expect(released(rows[0])).toBe(true);
+    rows = [row({ deployDetail: detail(NEWER_SHA, LATER) })];
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA });
+    expect(released(rows[0])).toBe(false);
   });
 
   it('no valid sha: releases nothing', async () => {
-    mockDbWrite.appBlockPublishRequest.updateMany.mockClear();
+    rows = [row({})];
     await releaseSettledBuildSlot(PUBREQ, { sha: '' });
     expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
+    expect(released(rows[0])).toBe(false);
   });
 });
