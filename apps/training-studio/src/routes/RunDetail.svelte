@@ -625,6 +625,9 @@
     archiveParts = [];
     showLineage = false;
     furtherAckedFor = null;
+    ownRights = false;
+    shareDataset = false;
+    shareTouched = false;
   });
 </script>
 
