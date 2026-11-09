@@ -3,7 +3,7 @@ import { coverageAudience } from '~/server/services/generation/coverage-source';
 import { constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
-import { requiresEmailVerification } from '~/server/common/email-verification-gate';
+import { contentRestriction } from '~/server/common/content-restriction';
 import { OnboardingSteps } from '~/server/common/enums';
 import { isAccountMuted } from '~/server/services/account-standing.service';
 import { Flags } from '~/shared/utils/flags';
@@ -637,8 +637,8 @@ export const updateCollectionItemsStatusHandler = async ({
  */
 async function canEarnPostReward(user: ProtectedContext['user']) {
   if (!Flags.hasFlag(user.onboarding, OnboardingSteps.Buzz)) return false;
-  if (requiresEmailVerification(user)) return false;
-  return !(user.muted || (await isAccountMuted(user.id, !!user.muted)));
+  if (contentRestriction(user)) return false;
+  return !(await isAccountMuted(user.id, !!user.muted));
 }
 
 export const addSimpleImagePostHandler = async ({

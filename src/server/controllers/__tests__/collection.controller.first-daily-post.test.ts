@@ -5,11 +5,9 @@ import type * as PostService from '~/server/services/post.service';
 
 const isAccountMuted = vi.hoisted(() => vi.fn());
 
-// A Daily Challenge entry from the Submit button runs the REAL firstDailyPostReward here; only its
-// edges are faked: the Buzz ledger, the ClickHouse audit insert and Redis (a transcription of the
-// on-demand Lua, as in base.reward.duplicate-award.test.ts). What is under test is that a user who
-// enters several times in a day, or whose entry post is later published again through the editor,
-// is paid once.
+// Runs the REAL firstDailyPostReward; only its edges are faked: the Buzz ledger, the ClickHouse
+// audit insert and Redis (a transcription of the on-demand Lua, as in
+// base.reward.duplicate-award.test.ts).
 
 const h = vi.hoisted(() => ({
   inserts: [] as { status: string; forId: number }[],

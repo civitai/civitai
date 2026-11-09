@@ -280,7 +280,7 @@ describe('addSimpleImagePostHandler', () => {
     });
 
     // post.create's guardedProcedure refuses these accounts; the entry stands but earns nothing.
-    it.each([
+    it.each<[string, Record<string, unknown>, boolean?]>([
       ['a muted account', { muted: true }],
       ['an account muted since its session began', {}, true],
       ['an account that has not finished onboarding', { onboarding: 0 }],
@@ -288,7 +288,7 @@ describe('addSimpleImagePostHandler', () => {
         'an account that must verify its email',
         { emailVerified: null, meta: { emailVerificationRequired: true } },
       ],
-    ] as const)('does not apply it for %s', async (_, user, mutedNow = false) => {
+    ])('does not apply it for %s', async (_, user, mutedNow = false) => {
       echoPublishedAt();
       isAccountMuted.mockResolvedValue(mutedNow);
       const base = ctx as { user: object };
