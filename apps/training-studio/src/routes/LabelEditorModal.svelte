@@ -5,7 +5,7 @@
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { portalProps } from '$lib/host';
   import type { LabelType } from '$lib/data/trainingModels';
-  import { captionTriggerHit, withTags, type Img } from './trainingFlow';
+  import { canAutoLabelImage, captionTriggerHit, withTags, type Img } from './trainingFlow';
   import TagEditor from './TagEditor.svelte';
 
   // `editing` is the flow's own image proxy, so mutating its tags/caption here applies live to the grid.
@@ -133,7 +133,7 @@
                 <div class="mb-2 flex items-center justify-between gap-2">
                   <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Tags</span>
                   <div class="flex items-center gap-1">
-                    {#if onRelabel}
+                    {#if onRelabel && canAutoLabelImage(editing)}
                     <Button variant="ghost" size="xs" onclick={() => onRelabel(editing.id)} disabled={editing.labeling}>
                       <IconSparkles size={12} stroke={2} class="mr-1 inline" />{editing.labeling
                         ? 'labeling…'
@@ -181,7 +181,7 @@
               <div>
                 <div class="mb-2 flex items-center justify-between gap-2">
                   <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Caption</span>
-                  {#if onRelabel}
+                  {#if onRelabel && canAutoLabelImage(editing)}
                   <Button variant="ghost" size="xs" onclick={() => onRelabel(editing.id)} disabled={editing.labeling}>
                     <IconSparkles size={12} stroke={2} class="mr-1 inline" />{editing.labeling
                       ? 'labeling…'

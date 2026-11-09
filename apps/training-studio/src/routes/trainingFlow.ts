@@ -305,6 +305,34 @@ export function isTrainable(img: Img): boolean {
   return img.status === 'uploaded';
 }
 
+export const isLabeled = (img: Img) => img.tags.length > 0 || img.caption.trim().length > 0;
+
+/** Whether auto-label can read this image's media. A reused run's items (Train again, Reuse a dataset)
+ *  only hold a browser-local `blob:` preview URL, which the labeler can't fetch and the submit refuses. */
+export const canAutoLabelImage = (img: Pick<Img, 'blobUrl'>) =>
+  !!img.blobUrl?.startsWith('https://');
+
+/** Trainable images an auto-label pass may send. `skipTried` leaves out images auto-label already
+ *  attempted (the drain); `focusId` is the card whose inline editor is open. */
+export function autoLabelTargets(
+  images: Img[],
+  opts: { skipLabeled: boolean; skipTried: boolean; focusId: number | null }
+): Img[] {
+  return images.filter(
+    (i) =>
+      isTrainable(i) &&
+      canAutoLabelImage(i) &&
+      !i.labeling &&
+      i.id !== opts.focusId &&
+      !(opts.skipTried && i.labelTried) &&
+      !(opts.skipLabeled && isLabeled(i))
+  );
+}
+
+/** Trainable images auto-label can't read, which keep the manual editor. */
+export const handLabelOnlyCount = (images: Img[]) =>
+  images.filter((i) => isTrainable(i) && !canAutoLabelImage(i)).length;
+
 export function isFailed(img: Img): boolean {
   return img.status === 'blocked' || img.status === 'error';
 }

@@ -30,6 +30,8 @@ import {
   sampleImagesProblem,
   seedPrompts,
   startLabelPass,
+  autoLabelTargets,
+  handLabelOnlyCount,
   withTags,
   withTrigger,
   versionOptions,
@@ -300,6 +302,33 @@ describe('auto-label pass', () => {
     expect(items.map((i) => byKey.get(i.key))).toEqual([a, b]);
     expect(items.map((i) => i.mediaUrl)).toEqual([a.blobUrl, b.blobUrl]);
     for (const t of [a, b]) expect(t).toMatchObject({ labeling: true, labelTried: true });
+  });
+});
+
+describe('auto-label targets', () => {
+  // A fresh upload carries the orchestrator's https URL; a Train again / Reuse a dataset tile carries
+  // the object URL its preview hydrated to, which the submit refuses with a 400.
+  const fresh = {
+    ...image(1, []),
+    blobUrl: 'https://orchestration.civitai.com/v2/consumer/blobs/a.jpeg?sig=1',
+  };
+  const reused = {
+    ...image(2, []),
+    blobUrl: 'blob:https://training.civitai.com/3f9a1c2e-7b1d-4e0a',
+  };
+  const reusedCaptioned = {
+    ...image(3, [], 'a woman, portrait'),
+    blobUrl: reused.blobUrl,
+    labelTried: true,
+  };
+  const all = [fresh, reused, reusedCaptioned];
+
+  it('sends fresh uploads and leaves reused tiles out of the drain and Label all', () => {
+    const drain = autoLabelTargets(all, { skipLabeled: true, skipTried: true, focusId: null });
+    const labelAll = autoLabelTargets(all, { skipLabeled: false, skipTried: false, focusId: null });
+    expect(drain.map((i) => i.id)).toEqual([1]);
+    expect(labelAll.map((i) => i.id)).toEqual([1]);
+    expect(handLabelOnlyCount(all)).toBe(2);
   });
 });
 
