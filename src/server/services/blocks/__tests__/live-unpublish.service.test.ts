@@ -424,6 +424,81 @@ describe('the Redis store', () => {
   });
 });
 
+// Interleavings around a restore and around the lock, where what the reconciler last read and
+// what the app now needs can disagree.
+describe('a restore or a request that races the holder', () => {
+  // A restore Job that fails or times out may still write the pointer later, so it must not leave
+  // the takedown recorded as confirmed: a later takedown runs the unpublish again.
+  it('a restore that did not succeed never blocks a later unpublish', async () => {
+    const { w, deps } = world({ status: 'approved', served: false });
+    w.takedown.set(SLUG, 'confirmed');
+    deps.waitForJob.mockResolvedValueOnce('failed');
+    expect(await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps })).toBe('failed');
+    w.served = true; // the failed restore wrote the pointer after all
+    w.status = 'suspended';
+    void takeDownLiveApp(SLUG, { deps });
+    await vi.waitFor(() => expect(actions(w)).toEqual(['restore', 'unpublish']));
+    await vi.waitFor(() => expect(w.lock).toBe(false));
+    expect(w.served).toBe(false);
+  });
+
+  // A caller that finds the lock held asks the holder to look again. Its request must be visible
+  // to the holder's last check after the release, however late the caller's own lock read returns.
+  it('a request whose lock read returns after the holder let go is not lost', async () => {
+    const { w, deps, finish } = world({ status: 'suspended', auto: false });
+    void takeDownLiveApp(SLUG, { deps });
+    await vi.waitFor(() => expect(w.pending).toHaveLength(1));
+    let openRelease: () => void = () => undefined;
+    const releaseGate = new Promise<void>((r) => (openRelease = r));
+    let openAcquire: () => void = () => undefined;
+    const acquireGate = new Promise<void>((r) => (openAcquire = r));
+    vi.mocked(deps.store.release).mockImplementationOnce(async () => {
+      await releaseGate;
+      w.lock = false;
+    });
+    vi.mocked(deps.store.acquire).mockImplementationOnce(async () => {
+      const got = !w.lock;
+      if (got) w.lock = true;
+      await acquireGate;
+      return got;
+    });
+    await finish(); // the unpublish ends; the holder reads the app (nothing to do) and lets go
+    await vi.waitFor(() => expect(deps.store.release).toHaveBeenCalled());
+    w.status = 'approved'; // a relist commits after the holder's last read
+    const relist = restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps });
+    await vi.waitFor(() => expect(deps.store.acquire).toHaveBeenCalledTimes(2));
+    openRelease(); // the holder releases and checks for a request
+    await new Promise((r) => setTimeout(r, 0));
+    openAcquire(); // only now does the relist learn the lock was held
+    expect(await relist).toBe('queued');
+    await vi.waitFor(() => expect(actions(w)).toEqual(['unpublish', 'restore']));
+    await finish();
+    await vi.waitFor(() => expect(w.lock).toBe(false));
+    expect(w.served).toBe(true);
+  });
+
+  // A deploy that lands while the unpublish runs clears the marker; the Job may still remove the
+  // pointer after the deploy wrote it. A relist in that window reads no marker, so the holder must
+  // keep the evidence itself, or the approved app stays dark.
+  it('a relist while a deploy cleared the marker mid-unpublish: the app is served again', async () => {
+    const { w, deps, finish } = world({ status: 'suspended', auto: false });
+    void takeDownLiveApp(SLUG, { deps });
+    await vi.waitFor(() => expect(w.pending).toHaveLength(1));
+    w.served = true; // the deploy wrote the pointer back
+    expect(await afterLiveDeploy(SLUG, { deps })).toBe('queued');
+    w.status = 'approved';
+    expect(await restoreLiveApp({ slug: SLUG, appBlockId: BLOCK }, { deps })).toBe(
+      'not-taken-down'
+    );
+    await finish(); // the unpublish ends after the deploy's write: the app is dark
+    await vi.waitFor(() => expect(actions(w)).toEqual(['unpublish', 'restore']));
+    await finish();
+    await vi.waitFor(() => expect(w.lock).toBe(false));
+    expect(w.served).toBe(true);
+    expect(w.takedown.has(SLUG)).toBe(false);
+  });
+});
+
 describe('isReadinessProbeApp', () => {
   it('true only for a slug on the ConfigMap readiness list, with the flag on', async () => {
     const { deps } = world();
