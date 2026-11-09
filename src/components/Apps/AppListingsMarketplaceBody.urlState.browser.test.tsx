@@ -117,14 +117,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
 const { AppsStoreFeedFilters } = await import('./AppsStoreFeedFilters');
+const { FiltersProvider } = await import('~/providers/FiltersProvider');
 
 /** Sort + Filters render in the site sub-nav in the app, so the store is mounted beside them. */
 function StoreWithControls() {
   return (
-    <>
+    <FiltersProvider>
       <AppsStoreFeedFilters />
       <AppListingsMarketplaceBody />
-    </>
+    </FiltersProvider>
   );
 }
 
@@ -217,6 +218,7 @@ function navigateTo(next: Record<string, string>) {
 const currentQuery = () => router.query as Record<string, string>;
 
 beforeEach(() => {
+  localStorage.removeItem('apps-store-filters');
   mocks.items = [makeCard('a', 'Alpha App'), makeCard('b', 'Bravo App', 'offsite')];
   mocks.lastArgs = null;
   // The store lives at `/apps/store` (`/apps` became the viewer's "My apps" home), so every
