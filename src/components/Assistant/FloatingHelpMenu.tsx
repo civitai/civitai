@@ -15,7 +15,7 @@ const HEIGHT = 500;
 /**
  * The floating button in the footer's corner cluster. It opens a menu with CivBot (when the
  * assistant is available) and "Report a problem"; while the CivBot chat is open it becomes the
- * chat's close button, as the CivBot button it replaced was.
+ * chat's close button.
  *
  * "Report a problem" is `useReportBugItem`, the same entry as the Support menus: the in-product
  * report when the bug-report area is collecting for this user, the ticket portal otherwise.
