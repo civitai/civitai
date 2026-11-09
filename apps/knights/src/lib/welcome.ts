@@ -46,3 +46,20 @@ export function signedOutLocation({
   const next = safeNext(wantedPath(url));
   return next === WELCOME_PATH ? WELCOME_PATH : `${WELCOME_PATH}?next=${encodeURIComponent(next)}`;
 }
+
+/**
+ * Whether a signed-out request is a page load for a URL no route answers, which gets the 404 rather than the sign-in
+ * redirect (there is nothing behind it to protect). `routeId` is SvelteKit's `event.route.id`, null when nothing matched.
+ */
+export function showsNotFound({
+  url,
+  navigation,
+  routeId,
+}: {
+  url: URL;
+  navigation: boolean;
+  routeId: string | null;
+}): boolean {
+  if (routeId !== null || !navigation) return false;
+  return !(url.pathname === '/api' || url.pathname.startsWith('/api/'));
+}

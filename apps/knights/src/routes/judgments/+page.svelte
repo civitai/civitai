@@ -166,6 +166,9 @@
     font: 400 0.95rem/1.4 var(--io-font-ui);
   }
   .when a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
     color: var(--io-parchment-muted);
   }
   .reward {

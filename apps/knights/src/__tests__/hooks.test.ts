@@ -18,11 +18,12 @@ const { handle } = await import('../hooks.server');
 
 const page = (url: URL) => new Request(url, { headers: { 'sec-fetch-mode': 'navigate' } });
 
-async function run(path = '/') {
+// `routeId` is SvelteKit's `event.route.id`: the path stands in for a real route, null is a URL no route answers.
+async function run(path = '/', routeId: string | null = path.split('?')[0]) {
   const url = new URL(`https://knights.civitai.com${path}`);
   const resolve = vi.fn(async () => new Response('game', { status: 200 }));
   const response = await (handle as unknown as (arg: unknown) => Promise<Response>)({
-    event: { url, request: page(url), locals: {}, route: { id: null } },
+    event: { url, request: page(url), locals: {}, route: { id: routeId } },
     resolve,
   });
   return { response, resolve };
@@ -123,6 +124,19 @@ describe('welcome screen', () => {
     expect(response.status).toBe(302);
     expect(response.headers.get('location')).toBe('/?next=%2Fplay');
     expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('serves the 404 for a signed-out page load no route answers, instead of a sign-in detour', async () => {
+    guardCheck.mockResolvedValue(login);
+    const { response, resolve } = await run('/no-such-page', null);
+    expect(resolve).toHaveBeenCalled();
+    expect(response.status).toBe(200);
+  });
+
+  it('keeps an unknown API path on the hub redirect', async () => {
+    guardCheck.mockResolvedValue(login);
+    const { response } = await run('/api/nothing-here', null);
+    expect(response.headers.get('location')).toBe(login.redirect);
   });
 
   it('keeps an API request on the hub redirect', async () => {
