@@ -339,7 +339,7 @@ export function MediaFiltersDropdown({
               </Tooltip>
             </FilterChip>
           )}
-          {/* A Hat Turf sort hydrates through the database, which has no remix filter. */}
+          {/* A Hat Turf sort and My live hats hydrate through the database, which has no remix filter. */}
           {shows('nonRemixesOnly') && !turfHydrated && (
             <FilterChip
               checked={mergedFilters.nonRemixesOnly}
