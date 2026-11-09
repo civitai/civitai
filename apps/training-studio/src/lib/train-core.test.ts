@@ -586,7 +586,18 @@ describe('text encoder on a model that cannot train it', () => {
   });
   const continueOpts = { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 };
 
-  describe.each(['anima', 'krea2'])('%s', (ecosystem) => {
+  // One ecosystem per class the in-app trainer locks; flux2klein also carries the Studio-only edit cards.
+  describe.each([
+    'anima',
+    'krea2',
+    'flux1',
+    'flux2klein',
+    'qwen',
+    'zimageturbo',
+    'boogu',
+    'wan',
+    'ltx2',
+  ])('%s', (ecosystem) => {
     it('sends the text encoder off, whatever rate the run carries', async () => {
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-locked' } });
       await submitTraining(client, { ...baseRun(), ecosystem, textEncoderLr: 1e-4 });
@@ -614,6 +625,15 @@ describe('text encoder on a model that cannot train it', () => {
       expect(lastInput()).toMatchObject({ textEncoderLr: 0, trainTextEncoder: false });
     });
   });
+
+  it.each(['mossImage', 'flux3klein'])(
+    'leaves a default-off ecosystem the user turned on alone (%s)',
+    async (ecosystem) => {
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-default-off' } });
+      await submitTraining(client, { ...baseRun(), ecosystem, textEncoderLr: 1e-4 });
+      expect(lastInput()).toMatchObject({ textEncoderLr: 1e-4, trainTextEncoder: true });
+    }
+  );
 
   it('still trains the text encoder on a model that supports it', async () => {
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-sdxl-te' } });

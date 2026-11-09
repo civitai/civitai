@@ -1,4 +1,5 @@
 import React from 'react';
+import { TEXT_ENCODER_LOCKED_BASES } from '@civitai/shared/training-text-encoder';
 import type {
   TrainingDetailsBaseModel,
   TrainingDetailsParams,
@@ -70,6 +71,9 @@ type BaseTrainingSettingsType = {
 
 // nb: could allow the other for either allowing custom or being strict
 type TypeTrainingBaseModel = TrainingDetailsBaseModel; // TrainingDetailsBaseModelList
+
+// Typed so a key the trainer doesn't know fails typecheck instead of silently locking nothing.
+const textEncoderLockedBases: readonly TypeTrainingBaseModel[] = TEXT_ENCODER_LOCKED_BASES;
 
 type SelectTrainingSettingsType = {
   type: 'select';
@@ -639,37 +643,12 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1e-5,
     overrides: {
       anime: { all: { default: 1e-4 } },
-      flux_dev: { all: { disabled: true, default: 0, max: 0 } },
-      flux2_dev: { all: { disabled: true, default: 0, max: 0 } },
-      // flux2_dev_edit: { all: { disabled: true, default: 0, max: 0 } }, // Disabled for now
-      chroma: { all: { disabled: true, default: 0, max: 0 } },
-      qwen_image: { all: { disabled: true, default: 0, max: 0 } },
-      zimageturbo: { all: { disabled: true, default: 0, max: 0 } },
-      zimagebase: { all: { disabled: true, default: 0, max: 0 } },
-      flux2klein_4b: { all: { disabled: true, default: 0, max: 0 } },
-      flux2klein_9b: { all: { disabled: true, default: 0, max: 0 } },
-      ltx2: { all: { disabled: true, default: 0, max: 0 } },
-      ltx23: { all: { disabled: true, default: 0, max: 0 } },
-      ltx25: { all: { disabled: true, default: 0, max: 0 } },
-      minimaxh3: { all: { disabled: true, default: 0, max: 0 } },
-      // sd3_medium: { all: { disabled: true, default: 0, max: 0 } },
-      // sd3_large: { all: { disabled: true, default: 0, max: 0 } },
-      hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
-      wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, max: 0 } },
-      wan_2_1_t2v_14b: { all: { disabled: true, default: 0, max: 0 } },
-      wan_2_2_t2v_a14b: { all: { disabled: true, default: 0, max: 0 } },
-      hidream_o1: { all: { disabled: true, default: 0, max: 0 } },
-      anima: { all: { disabled: true, default: 0, max: 0 } },
-      boogu: { all: { disabled: true, default: 0, max: 0 } },
-      ming: { all: { disabled: true, default: 0, max: 0 } },
-      qwen21: { all: { disabled: true, default: 0, max: 0 } },
-      krea2: { all: { disabled: true, default: 0, max: 0 } },
-      mageflow: { all: { disabled: true, default: 0, max: 0 } },
-      ideogram4: { all: { disabled: true, default: 0, max: 0 } },
-      acestep_15: { all: { disabled: true, default: 0, max: 0 } },
-      yue2: { all: { disabled: true, default: 0, max: 0 } },
-      acestep_15_xl_base: { all: { disabled: true, default: 0, max: 0 } },
-      acestep_15_xl_sft: { all: { disabled: true, default: 0, max: 0 } },
+      ...Object.fromEntries(
+        textEncoderLockedBases.map((base) => [
+          base,
+          { all: { disabled: true, default: 0, max: 0 } },
+        ])
+      ),
     },
   },
   {
