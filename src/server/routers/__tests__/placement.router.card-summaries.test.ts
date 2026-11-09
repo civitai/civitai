@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RemixGalleryService from '~/server/services/remix-gallery.service';
 import type * as StickerPlacementService from '~/server/services/sticker-placement.service';
 import type * as HttpErrors from '~/server/prom/http-errors';
-import type * as LoggingClient from '~/server/logging/client';
 
 /**
  * `getImageCardSummaries` stands in for three procedures on clients with `placementCardFold`, so
@@ -58,21 +57,16 @@ vi.mock('~/server/services/remix-gallery.service', async (importOriginal) => ({
   ...(await importOriginal<typeof RemixGalleryService>()),
   getRemixGalleryCardSummaries: services.getRemixGalleryCardSummaries,
 }));
-// What a failed half is reported through instead of being thrown: 5xx counter and log line.
-const reporter = vi.hoisted(() => ({
-  recordTrpcError: vi.fn(),
-  logToAxiom: vi.fn((_data: unknown, _datastream?: string): Promise<void> => Promise.resolve()),
-}));
+// What a failed half is reported through instead of being thrown: the 5xx counter, and the log
+// line (`logToAxiom`, through the canonical logging mock registered in setup.ts).
+const reporter = vi.hoisted(() => ({ recordTrpcError: vi.fn() }));
 vi.mock('~/server/prom/http-errors', async (importOriginal) => ({
   ...(await importOriginal<typeof HttpErrors>()),
   recordTrpcError: reporter.recordTrpcError,
 }));
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof LoggingClient>()),
-  logToAxiom: reporter.logToAxiom,
-}));
 
 import { TRPCError } from '@trpc/server';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { placementCaller } from '~/server/routers/__tests__/placement.router.test-utils';
 
 const IDS = [11, 12, 13];
@@ -225,8 +219,8 @@ describe('placement router — each half of the folded card read fails on its ow
       expect.objectContaining({ code: 'INTERNAL_SERVER_ERROR' }),
       'placement.getImageCardSummaries'
     );
-    expect(reporter.logToAxiom).toHaveBeenCalledTimes(1);
-    const [line, datastream] = reporter.logToAxiom.mock.calls[0];
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
+    const [line, datastream] = loggingMock.logToAxiom.mock.calls[0];
     expect(datastream).toBe('civitai-prod');
     // The ref the client was shown is the one logged, so a user's report can be found.
     const shownRef = folded.errors?.remix?.message.match(/\(ref: ([0-9a-f]{12})\)/)?.[1];
@@ -244,7 +238,7 @@ describe('placement router — each half of the folded card read fails on its ow
   });
 
   it('answers without waiting for the log write, even one that never finishes', async () => {
-    reporter.logToAxiom.mockReturnValueOnce(new Promise<void>(() => undefined));
+    loggingMock.logToAxiom.mockReturnValueOnce(new Promise<void>(() => undefined));
     services.getRemixGalleryCardSummaries.mockRejectedValueOnce(new Error('remix read failed'));
 
     const answer = placementCaller().getImageCardSummaries({
@@ -259,12 +253,12 @@ describe('placement router — each half of the folded card read fails on its ow
     ]);
 
     expect(settled).not.toBe(timedOut);
-    expect(reporter.logToAxiom).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
     expect((settled as Folded).errors?.remix?.code).toBe('INTERNAL_SERVER_ERROR');
   });
 
   it('answers even when the log write rejects or throws', async () => {
-    reporter.logToAxiom
+    loggingMock.logToAxiom
       .mockImplementationOnce(() => Promise.reject(new Error('ingest down')))
       .mockImplementationOnce(() => {
         throw new Error('logger broke');
@@ -278,7 +272,7 @@ describe('placement router — each half of the folded card read fails on its ow
       remix: true,
     })) as Folded;
 
-    expect(reporter.logToAxiom).toHaveBeenCalledTimes(2);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(2);
     expect(folded.errors?.stickers?.code).toBe('INTERNAL_SERVER_ERROR');
     expect(folded.errors?.remix?.code).toBe('INTERNAL_SERVER_ERROR');
   });
@@ -336,6 +330,6 @@ describe('placement router — each half of the folded card read fails on its ow
     expect(folded.stickers).toBeDefined();
     expect(folded.remix).toBeDefined();
     expect(reporter.recordTrpcError).not.toHaveBeenCalled();
-    expect(reporter.logToAxiom).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 });
