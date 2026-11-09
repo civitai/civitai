@@ -153,6 +153,8 @@ import {
   withSysReadDeadline,
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
+import { modelVersionImagesLocalTtl } from '~/server/redis/l1-switches';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
 import { createLruCache } from '~/server/utils/lru-cache';
 import {
@@ -6657,6 +6659,34 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
       }
     }
   },
+  // L1 only while the MODEL_VERSION_IMAGES_L1 switch is on (30s); off, every read goes to Redis as
+  // before. The L1 holds the value AFTER appendFn, so a hit also skips the per-image tag read.
+  //
+  // What makes this safe to share: the value is built with no viewer — `getImagesForModelVersion`
+  // runs here without a user, so only viewer-independent conditions shape it (published, reviewed,
+  // blocked images dropped) — and each consumer applies its own viewer filtering (browsing level,
+  // hidden or blocked content, moderator views) to what it reads, after the read.
+  // Nothing viewer-specific may be written into an entry. `localClone` copies the images array
+  // and each image (and its tag ids), so a consumer that filters or edits in place cannot reach the
+  // next request through the L1; deeper fields (`metadata`) are still shared, read-only.
+  //
+  // Staleness: a write that refreshes or busts the Redis entry also drops it from that pod's L1, but
+  // there is no cross-pod L1 bust, so other pods can serve the previous images — including a
+  // re-rated or replaced image's old `nsfwLevel`, which preview pickers filter on — for up to 30s
+  // on top of whatever the Redis entry already lags.
+  //
+  // Its own LRU and byte budget, so it cannot evict another cache's L1 entries; an entry larger than
+  // the budget is not held.
+  localTtl: modelVersionImagesLocalTtl,
+  localMax: 5000,
+  localMaxBytes: L1_CACHE_BYTE_BUDGETS.modelVersionImages,
+  localClone: (entry) => ({
+    ...entry,
+    images: entry.images.map((image) => ({
+      ...image,
+      ...(image.tags ? { tags: [...image.tags] } : {}),
+    })),
+  }),
 });
 
 export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
