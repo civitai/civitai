@@ -114,7 +114,7 @@ beforeEach(async () => {
       "userId" INTEGER, "modelVersionId" INTEGER);
     CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "status" TEXT NOT NULL,
       "userId" INTEGER);
-    CREATE TABLE "Comment" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL);
+    CREATE TABLE "CommentV3" ("id" INTEGER PRIMARY KEY, "legacyV1Id" INTEGER);
     CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, "index" INTEGER);
     CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "type" TEXT NOT NULL,
       "postId" INTEGER, "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1,
@@ -222,12 +222,14 @@ describe('listCsamHolds', () => {
     expect(items.find((h) => h.id === 1)?.messageIds).toEqual([]);
   });
 
-  it('carries the model of a held legacy comment, and nothing for other types', async () => {
-    await db.exec(`INSERT INTO "Comment" VALUES (300, 70)`);
+  it('carries the CommentV3 id of a comment a hold names by its old id, and nothing for other types', async () => {
     await seed([{ id: 30, createdAt: '2026-10-08', entityType: 'Comment' }]);
+    const entityId = (await listCsamHolds(OLDEST_PENDING)).items.find((h) => h.id === 30)?.entityId;
+    // Another row whose own id is the hold's entity id: the join is on the old id, not the id.
+    await db.query(`INSERT INTO "CommentV3" VALUES ($1, NULL), (9300, $1)`, [entityId]);
     const { items } = await listCsamHolds(OLDEST_PENDING);
-    expect(items.find((h) => h.id === 30)?.commentModelId).toBe(70);
-    expect(items.find((h) => h.id === 1)?.commentModelId).toBeNull();
+    expect(items.find((h) => h.id === 30)?.commentV3Id).toBe(9300);
+    expect(items.find((h) => h.id === 1)?.commentV3Id).toBeNull();
   });
 
   it('carries the chat id of a held chat message', async () => {

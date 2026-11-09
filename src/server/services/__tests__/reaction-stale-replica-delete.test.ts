@@ -26,7 +26,6 @@ function makeTable(rows: Row[]) {
 }
 
 const REACTION_MODELS = [
-  ['commentOld', 'commentReaction', 'commentId'],
   ['comment', 'commentV2Reaction', 'commentId'],
   ['image', 'imageReaction', 'imageId'],
   ['post', 'postReaction', 'postId'],

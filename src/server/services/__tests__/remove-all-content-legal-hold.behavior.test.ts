@@ -260,7 +260,8 @@ beforeAll(async () => {
       ADD COLUMN "buzzTransactionId" text[] NOT NULL DEFAULT '{}';
     ALTER TABLE "Comment" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE,
       ADD COLUMN "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
-      ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false, ADD COLUMN "updatedAt" timestamp(3);
+      ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false, ADD COLUMN "updatedAt" timestamp(3),
+      ADD COLUMN content text NOT NULL DEFAULT '';
     -- A parent's comment thread, and the comments on it, go with the parent; reply threads with
     -- their root.
     CREATE TABLE "Thread" (
@@ -288,7 +289,8 @@ beforeAll(async () => {
     CREATE TABLE "CommentV3" (
       id int PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL, "parentId" int,
       "replyToId" int, path ltree NOT NULL, "rootId" int GENERATED ALWAYS AS (ltree2text(subpath(path, 0, 1))::int) STORED, "userId" int NOT NULL, content text NOT NULL,
-      "tosViolation" boolean NOT NULL DEFAULT false, "deletedAt" timestamptz, "updatedAt" timestamptz
+      "tosViolation" boolean NOT NULL DEFAULT false, "deletedAt" timestamptz, "updatedAt" timestamptz,
+      "legacyV1Id" int
     );
     CREATE TABLE "CommentV3Report" (
       "reportId" int PRIMARY KEY, "commentId" int NOT NULL REFERENCES "CommentV3"(id) ON DELETE CASCADE
@@ -561,7 +563,7 @@ describe('removeAllContent', () => {
           (91, 'article', 1, NULL, '91', ${CLEAN}, 'gone'),
           (92, 'article', 1, NULL, '92', ${CLEAN}, 'kept as a placeholder'),
           (93, 'article', 1, 92, '92.93', ${BYSTANDER}, 'a reply by someone else'),
-          (94, 'model', 1, NULL, '94', ${CLEAN}, 'a model comment, wiped through CommentV2'),
+          (94, 'model3dReview', 1, NULL, '94', ${CLEAN}, 'a 3D model review comment, wiped through CommentV2'),
           (95, 'article', 1, NULL, '95', ${CLEAN}, 'above a held author''s reply'),
           (96, 'article', 1, 95, '95.96', ${HELD}, 'a held author''s reply');
         INSERT INTO "CommentV3Reaction" ("commentId", "userId") VALUES (93, ${CLEAN}), (93, ${BYSTANDER});
@@ -584,7 +586,7 @@ describe('removeAllContent', () => {
         { id: 93, content: 'a reply by someone else', deleted: false, tos: false },
         {
           id: 94,
-          content: 'a model comment, wiped through CommentV2',
+          content: 'a 3D model review comment, wiped through CommentV2',
           deleted: false,
           tos: false,
         },
@@ -1510,6 +1512,25 @@ describe('removeAllContent and other people’s comments on its content', () => 
 
     expect(await rows(`SELECT id FROM "Model" WHERE id = ${MODEL}`)).toEqual([]);
     expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([]);
+  });
+
+  // The CommentV3 pass keeps it as a placeholder; deleting its v1 row would cascade to the reply's, and
+  // through the mirror to the reply's live CommentV3 row.
+  it('leaves the v1 rows of a pre-flip model comment the CommentV3 pass kept, and of its reply', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId", "parentId") VALUES
+        (5000, ${CLEAN}, NULL, NULL), (5001, ${BYSTANDER}, NULL, 5000);
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "parentId", path, "userId", content, "legacyV1Id") VALUES
+        (6000, 'model', 1, NULL, '6000', ${CLEAN}, 'pre-flip', 5000),
+        (6001, 'model', 1, 6000, '6000.6001', ${BYSTANDER}, 'a reply', 5001);
+    `);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(await rows(`SELECT id FROM "Comment" WHERE id >= 5000 ORDER BY id`)).toEqual([
+      { id: 5000 },
+      { id: 5001 },
+    ]);
   });
 
   it('deletes its own legacy comment with a held author’s reply under it', async () => {

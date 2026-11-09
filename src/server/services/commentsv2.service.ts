@@ -1,12 +1,14 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { kyselyRead } from '~/server/db/kyselyDb';
 import { onCommentsRemoved } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import type { CommentTargetType } from '~/server/schema/commentv3.schema';
 import {
+  afterCommentsV3Deleted,
   bulkClearCommentV3TosViolation,
   bulkSetCommentV3TosViolation,
+  deleteCommentsV3,
   v3WriteCommentIds,
 } from '~/server/services/commentv3/moderation.service';
 import { getV3WriteComment, prismaRunner } from '~/server/services/commentv3/write.service';
@@ -174,6 +176,25 @@ export function afterCommentsV2Deleted(deleted: Awaited<ReturnType<typeof delete
 }
 
 /**
+ * The moderator bulk delete, in one transaction. A comment on a surface that writes CommentV3 is
+ * deleted there, CommentV3 first as every write on those surfaces locks it.
+ */
+export async function bulkDeleteCommentsV2({ ids }: { ids: number[] }) {
+  const { v2, v3 } = await dbWrite.$transaction(async (tx) => {
+    const v3Ids = await v3WriteCommentIds(ids, tx);
+    const v3 = await deleteCommentsV3(tx, v3Ids);
+    const v2 = await deleteCommentsV2(
+      tx,
+      ids.filter((id) => !v3Ids.includes(id))
+    );
+    return { v2, v3 };
+  });
+  afterCommentsV2Deleted(v2);
+  afterCommentsV3Deleted(v3);
+  return { deleted: v2.length + v3.length };
+}
+
+/**
  * Mirror of the legacy `setTosViolationHandler` flow for CommentV2:
  * 1) Set `tosViolation = true` — the reads here filter it for non-moderators, which is what takes the
  *    comment off the page. `hidden` does not: it only swaps the comment for a placeholder any
@@ -293,7 +314,7 @@ export async function bulkClearCommentV2TosViolation({ ids: requested }: { ids: 
   let failed = v3.failed;
 
   for (const id of ids) {
-    const outcome = await clearTosOrFail('CommentV2', id);
+    const outcome = await clearTosOrFail(id);
     if (outcome?.failed) failed += 1;
     if (!outcome?.cleared) continue;
     count += 1;
@@ -303,31 +324,25 @@ export async function bulkClearCommentV2TosViolation({ ids: requested }: { ids: 
   return { count, reopenedReports, failed };
 }
 
-const reportLinkOf = {
-  Comment: { table: Prisma.raw('"CommentReport"'), key: Prisma.raw('"commentId"') },
-  CommentV2: { table: Prisma.raw('"CommentV2Report"'), key: Prisma.raw('"commentV2Id"') },
-};
-
 /**
  * Clears the ToS flag on the flagged comment `id`, and reopens the reports the flag actioned in the
  * same statement, so a clear never lands without them. Null when there is no such flagged comment.
  */
-export async function clearTos(table: 'Comment' | 'CommentV2', id: number) {
+export async function clearTos(id: number) {
   const { ReportReason, ReportStatus } = await import('~/shared/utils/prisma/enums');
-  const link = reportLinkOf[table];
   const [row] = await dbWrite.$queryRaw<{ cleared: boolean; reopened: number }[]>`
     WITH target AS (
-      SELECT c.id FROM ${Prisma.raw(`"${table}"`)} c WHERE c.id = ${id} AND c."tosViolation"
+      SELECT c.id FROM "CommentV2" c WHERE c.id = ${id} AND c."tosViolation"
     ), cleared AS (
-      UPDATE ${Prisma.raw(`"${table}"`)} c SET "tosViolation" = false, "updatedAt" = now()
+      UPDATE "CommentV2" c SET "tosViolation" = false, "updatedAt" = now()
       FROM target t WHERE c.id = t.id AND c."tosViolation"
       RETURNING c.id
     ), reopened AS (
       -- Only Actioned: a report someone Dismissed was not closed by this flag.
       UPDATE "Report" r SET status = ${ReportStatus.Pending}::"ReportStatus"
-      FROM ${link.table} link
+      FROM "CommentV2Report" link
       WHERE link."reportId" = r.id
-        AND link.${link.key} IN (SELECT id FROM cleared)
+        AND link."commentV2Id" IN (SELECT id FROM cleared)
         AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
         AND r.status = ${ReportStatus.Actioned}::"ReportStatus"
       RETURNING r.id
@@ -343,16 +358,16 @@ export async function clearTos(table: 'Comment' | 'CommentV2', id: number) {
  * `clearTos`, where a statement that fails leaves the comment hidden and is reported as `failed`:
  * the rest of the batch still runs and reports what it did.
  */
-export async function clearTosOrFail(table: 'Comment' | 'CommentV2', id: number) {
+export async function clearTosOrFail(id: number) {
   try {
-    const row = await clearTos(table, id);
+    const row = await clearTos(id);
     return row && { ...row, failed: false };
   } catch (e) {
     logToAxiom({
       type: 'error',
       name: 'comment-tos-restore',
       message: 'Clearing a ToS flag failed; the comment stays hidden',
-      details: { table, id, error: (e as Error)?.message },
+      details: { table: 'CommentV2', id, error: (e as Error)?.message },
     }).catch(() => undefined);
     return { cleared: false, reopened: 0, failed: true };
   }

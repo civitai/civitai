@@ -1,6 +1,7 @@
 import { fail, type RequestEvent } from '@sveltejs/kit';
 import { z } from 'zod';
 import { dbRead } from './db';
+import { sql } from '@civitai/db/kysely';
 import { convertHtml } from './html-to-text';
 import { mapBounded } from './bounded';
 import { parseQuery } from './query';
@@ -69,11 +70,12 @@ async function loadScannedText(rows: RestrictionRow[]): Promise<Map<number, Scan
           .where('id', 'in', ids('User'))
           .execute()
       : [],
+    // A scan from before the model flip names the comment by its old id.
     ids('Comment').length
       ? dbRead
-          .selectFrom('Comment')
-          .select(['id', 'content'])
-          .where('id', 'in', ids('Comment'))
+          .selectFrom('CommentV3')
+          .select([sql<number>`"legacyV1Id"`.as('id'), 'content'])
+          .where('legacyV1Id', 'in', ids('Comment'))
           .execute()
       : [],
     ids('CommentV2').length

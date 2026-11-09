@@ -122,20 +122,6 @@ async function getTrackerEvent(
         };
       }
       break;
-    case 'commentOld':
-      const commentOld = await dbRead.comment.findFirst({
-        where: { id: input.entityId },
-        select: { userId: true },
-      });
-      if (commentOld) {
-        return {
-          type: `Comment_${action}`,
-          nsfw: NsfwLevelDeprecated.None,
-          ownerId: commentOld.userId,
-          ...shared,
-        };
-      }
-      break;
     case 'comment':
       // A comment on a surface that writes CommentV3 may have no CommentV2 row. The event type stays
       // `CommentV2_*` either way: the id is the same in both tables.
@@ -206,8 +192,6 @@ async function holdsReaction({
   // The return annotation makes a missing entity type a compile error rather than a refusal.
   const count = await ((): Promise<number> => {
     switch (entityType) {
-      case 'commentOld':
-        return dbWrite.commentReaction.count({ where: { ...where, commentId: entityId } });
       case 'comment':
         return dbWrite.commentV2Reaction.count({ where: { ...where, commentId: entityId } });
       case 'image':

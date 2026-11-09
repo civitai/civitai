@@ -19,14 +19,13 @@ vi.mock('~/server/middleware.trpc', async (importOriginal) => {
   };
 });
 
-import '../comment.router';
 import '../commentv3.router';
 import { COMMENT_V3_RATE_LIMIT_KEY, commentRateLimits } from '~/server/schema/comment.schema';
 
 describe('comment limits share one bucket', () => {
-  it('comment.upsert and commentv3 create/update all count into the bucket the Comments rows read', () => {
+  it('commentv3 create and update count into the bucket the Comments rows read', () => {
     const commentLimited = h.calls.filter((c) => c.limits === commentRateLimits);
-    expect(commentLimited).toHaveLength(3);
+    expect(commentLimited).toHaveLength(2);
     for (const call of commentLimited)
       expect(call.options).toEqual({ sharedKey: COMMENT_V3_RATE_LIMIT_KEY });
   });

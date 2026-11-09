@@ -63,7 +63,7 @@ section that holds the detail.
   and resource-review counts (were `Thread.commentCount`), the collection judged check and the
   metrics jobs (were root-thread CommentV2 joins) count live top-level `CommentV3` rows, not `CommentTopic.commentCount`, which counts
   replies and tombstones; model-comment notifications keep the v1 detail shape and `comment:v1:`
-  dedupe key and address comments by `legacyV1Id` until the model surface flips (_Notifications
+  dedupe key and address comments by `legacyV1Id` (since the model flip, `modelPageId`) (_Notifications
   impact_); the mute filter is `notCommentMuted` over `path`, and `thread-chain.ts` stays for the
   block guard, the block hide sweep and the v2 lock check (_Thread mute_; the v2 lock check went
   2026-11-05, release 2 of the write flip, not deployed); the moderator
@@ -869,7 +869,8 @@ the child thread and quietly orphans them. Neither survives into the new model. 
   tombstoned or not (verified 2026-10-20, both orders). It fails closed, and nothing in the app
   hard-deletes a `User` row: erasure is `deleteUser` (soft delete, PII nulled) plus
   `removeAllContent`, whose comment deletes the mirror turns into tombstones with blank content
-  and hard-deletes. If a hard User delete is ever wanted, tombstones need an owner that survives
+  and hard-deletes (v1 `Comment` rows that have a CommentV3 twin are skipped, so the mirror's
+  cascade never reaches their replies). If a hard User delete is ever wanted, tombstones need an owner that survives
   it (a sentinel user, or `userId` nullable with `SET NULL`) — a schema decision, not a recipe.
 
 ## Moderation, blocking, and comment-gating — preserve-behavior checklist
@@ -880,8 +881,11 @@ must be explicitly re-verified on the new service, because they're what a naive 
 **Moderator actions** (all live in the services being rewritten):
 
 - **Hide** (`toggleHideComment`, both systems): `hidden` column carries over. Since #5076 a hidden
-  v2 comment renders in place as a placeholder with its replies visible, so there is no hidden-count
-  query to port; the v1 "See N hidden" modal retires with the model flip.
+  v2 comment renders in place as a placeholder with its replies visible, so no other surface has a
+  hidden-count query to port. The model page is the exception: it leaves hidden top-level comments
+  out (`constants.comments.leavesOutHiddenComments`), its first page returns `counts: { visible,
+  hidden }`, and "See N more hidden comments" opens `HiddenCommentsModal` (the section with
+  `hidden: true`), rebuilt on CommentV3 in the model flip.
 - **Block-hide** (`block-hide-comments.service.ts`, #5082): blocking a user can bulk-hide their
   comments on the blocker's content — a v2-only hidden writer today, which becomes one
   `UPDATE … WHERE userId AND entityType/entityId` on the new table.
@@ -931,7 +935,8 @@ parentId = id`) → per-comment `locked` is now **subtree-scoped**: the write pa
   the Phase 5 cron-jobs section.
 - `throwOnBlockedCommentContent` (content blocklist) runs on create **and** edit in all three
   write paths (`commentsv2.service.ts`, `comment.controller.ts`, `comics.router.ts`); carries over
-  with the service. (The v2 and comics write paths are deleted, 2026-11-05, release 2 of the write flip, not deployed.)
+  with the service. (The v2 and comics write paths are deleted, 2026-11-05, release 2 of the write flip, and the v1
+  model write path on 2026-11-06, the model flip; neither deployed.)
 - Every write also calls `queueScamScan` (text-scan pipeline, 2026-10); the new write path must
   keep that call, and `text-scan` needs a `CommentV3` profile and entity type.
 - Comment **reads** are entity-gated too: each surface's `assertVisible` in `commentv3/surfaces.ts`
@@ -1314,7 +1319,7 @@ just implementation — the model discussion UI moves onto the unified provider)
 includes its reactions and reports: reads of reactions come from `CommentV3Reaction`, and the model
 surface's client switches its reaction entityType from `commentOld` to `comment` (its comment ids
 are new ids from that point). After each surface's reads and writes are flipped and stable, its old
-write path is removed; `commentOld` is removed once the model surface is flipped. The first write
+write path is removed; `commentOld` was removed with the model flip (built 2026-11-07). The first write
 flip also carries the Clavata trigger, its consumer, the text-scan profile and
 `ReportEntity.CommentV3` (the Clavata bullet under Phase 1 above). A surface that writes
 `CommentV3` directly must also delete through the v3 service. The mirror's delete is safe against
@@ -1353,7 +1358,7 @@ Per-surface cutover checklist additions from the residue sweep:
 (notification queries, moderator app reads, creator-studio, metrics jobs, the challenge gate) move
 once the Phase 3 backfill converges, _before_ the first Phase 4 write flip — see the Phase 4
 prerequisite. What lands after the flips is the cleanup that requires old write paths to be gone
-(enum/endpoint collapses, `commentOld` removal, handler retirement). Notifications and the
+(enum/endpoint collapses, handler retirement). Notifications and the
 moderator app are the two largest consumers and get their own sections below. The rest:
 
 - event-engine: one CDC handler on `CommentV3` replaces `comments.ts` + `comment-v2.ts`; owner
@@ -1395,18 +1400,18 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
     and ClickHouse `entityMetricEvents` (`metricType='commentCount'`), both downstream of the
     metrics/CDC work above; no direct change, but its inputs must not gap during the CDC handler
     swap — include comment-count continuity in the Phase 5 event-engine verification.
-- Reaction/report consumers: `reaction.service.ts` drops the `commentOld` branch;
+- Reaction/report consumers (the `commentOld` reaction type, its service branch, enum value and
+  client key went with the model flip, built 2026-11-07):
   `goodContent.reward.ts`'s `typeToTable` and the buzz-tip labels in `src/utils/buzz.ts` collapse to
   one mapping; `ReportEntity.Comment`/`ReportEntity.CommentV2` collapse to one value in
   `report-helpers.ts` + `report.service.ts` (accept both from clients for one release), and
   `ReportModal.tsx` lists one comment entity. The reaction entity enum
-  (`src/server/schema/reaction.schema.ts` — contains both `'comment'` and `'commentOld'`) and its
+  (`src/server/schema/reaction.schema.ts`) and its
   twin switch in `reaction.controller.ts` (which also emits `Comment_*` vs `CommentV2_*` ClickHouse
   events) collapse too; keep both input values accepted for a release since it's a breaking tRPC
   input change, and note ClickHouse history keeps the old event-type literals forever — readers
   (`apps/creator-studio/src/lib/server/analytics.ts:329`, `analytics-detail.ts`) must match old
-  literals alongside `CommentV3_*`. Client twin: the `commentOld` key in
-  `src/components/Reaction/Reactions.tsx`.
+  literals alongside `CommentV3_*`.
 - Raw-SQL stragglers found in the full sweep, each a contained rewrite:
   `src/server/services/resourceReview.service.ts` (**owns** its Thread: creates one eagerly on
   review create, dropped in Phase 5; its two `thread.commentCount` reads count live top-level
@@ -1442,11 +1447,11 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
 they fell into three shapes:
 
 - **Pure-v1** (`new-comment`, `new-comment-response`, `new-comment-nested`, plus the model arm of
-  `reaction.notifications.ts`): read v1-shaped model rows of CommentV3 (with a `legacyV1Id`) since Phase 3. Until the
-  model surface flips, its dialog reads the v1 `Comment` table, so they keep the v1 detail shape and
-  `comment:v1:` dedupe namespace and address comments by their old id in `legacyV1Id` (a v1 row from
-  the shared sequence carries its own id there). They switch to the v3 id with the
-  model flip.
+  `reaction.notifications.ts`): read model rows of CommentV3. They keep the `comment:v1:` dedupe
+  namespace and address a comment by `modelPageId` (`COALESCE(legacyV1Id, id)`), so keys and links
+  sent before the model flip still match; the model flip (built 2026-11-06) made them filter
+  `notCommentMuted` and stamp `version: 4`, and the detail fetcher resolves a version-4 row's id
+  as the comment's own id too (`docs/plans/comments-v3-model-flip.md`).
 - **Per-entity v2** (`new-image-comment`, `new-post-comment`, `new-article-comment`,
   `new-bounty-comment`, `new-bounty-entry-comment`, `new-challenge-comment`, `new-crucible-comment`, `new-storyline-comment`,
   `new-app-listing-comment`, `new-review-response`, the three `model3d` types, `new-comment-reply`): each was a `CommentV2 → Thread` join on one entity FK; since
@@ -1582,11 +1587,10 @@ deletes about half of each:
   then the `commentV3` entry lists only reports with no old link, so the mirror's copies are not
   listed twice.
 - `entity-url.ts` + `retool/user-lookup/CommentsPanel.svelte`: `modelCommentUrl()`/`commentV2Url()`
-  collapse to one builder; the "Model comments"/"Other comments" panels and the separate
-  `commentIds`/`commentV2Ids` checkbox groups become one list. The backing mod endpoints
-  (`src/pages/api/mod/comment/bulk-delete.ts`, `remove-as-tos.ts`, `restore-from-tos.ts`) accept
-  a single `commentIds` list; keep the old dual-list shape as an accepted alias for one release so
-  the moderator app and main app can deploy independently.
+  collapse to one builder; the "Model comments"/"Other comments" panels become one list. The
+  backing mod endpoints (`src/pages/api/mod/comment/bulk-delete.ts`, `remove-as-tos.ts`,
+  `restore-from-tos.ts`) take only `commentV2Ids` (CommentV3 ids) since the model flip; the v1
+  `commentIds` list is gone, and renaming the field to `commentIds` is the only step left.
 
 Sequencing: the moderator app's read rewrite lands **during the dual-write window, before the
 first write flip** (CommentV3 is complete then, and dual-write is one-directional — waiting until
@@ -1625,8 +1629,7 @@ Also:
 `Thread` entirely; the recursive CTE in `getReplyThreads`; the dynamic
 `as unknown as Prisma.ThreadWhereUniqueInput` casts (7 sites); the entity COALESCE chain (9 sites
 plus the four added since); the v1/v2 UNIONs in notifications; one CDC handler; the duplicate
-reaction and report join tables (four tables become two); the `commentOld` reaction type and one
-`ReportEntity` value; the `{ commentIds, commentV2Ids }` dual-id API shape; the duplicated
+reaction and report join tables (four tables become two); one `ReportEntity` value; the `{ commentIds, commentV2Ids }` dual-id API shape; the duplicated
 exclusion logic; `src/server/common/thread-chain.ts` (its 100-deep ancestor walk,
 `seededThreadChainCte` and `threadIsRooted`), which `path @>` replaces for the lock check, the
 mute check and block-hide alike.

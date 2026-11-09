@@ -2,7 +2,7 @@ import { createEventHandler } from './base';
 
 /**
 ## Metrics driven by the CommentV3 table, for the surfaces in COMMENT_V3_SURFACES:
-- Article, Image, Post and BountyMetric.commentCount (create, delete, tombstone)
+- Article, Image, Post, Bounty and ModelMetric.commentCount (create, delete, tombstone)
 - UserMetric.commentCount (same) — comments received by the owner of the commented-on entity
 
 The surfaces are the ones the main app reads from CommentV3 (`constants.comments.v3ReadSurfaces`
@@ -28,6 +28,7 @@ export const COMMENT_V3_SURFACES = [
   'model3d',
   'appListing',
   'comicChapter',
+  'model',
 ];
 
 interface CommentV3Record {
@@ -51,6 +52,7 @@ const SURFACES: Record<string, { metric?: string; ownerSql: string }> = {
   image: { metric: 'Image', ownerSql: ownedBy('"Image"') },
   post: { metric: 'Post', ownerSql: ownedBy('"Post"') },
   bounty: { metric: 'Bounty', ownerSql: ownedBy('"Bounty"') },
+  model: { metric: 'Model', ownerSql: ownedBy('"Model"') },
   review: { ownerSql: ownedBy('"ResourceReview"') },
   bountyEntry: { ownerSql: ownedBy('"BountyEntry"') },
   challenge: { ownerSql: ownedBy('"Challenge"', '"createdById"') },
@@ -77,15 +79,17 @@ export const commentV3Handler = createEventHandler<CommentV3Record>({
     const surface = SURFACES[record.entityType];
     if (!surface) return;
 
+    // Before any emit: a throw redelivers the message, and `metricSignals.sendDelta` is not
+    // deduped, so an emit above this await double-fires the live delta on every retry.
+    const owner = await pg.queryOne<{ ownerId: number | null }>(surface.ownerSql, [
+      record.entityId,
+    ]);
+
     if (surface.metric)
       actions
         .forMetric(surface.metric, record.entityId)
         .as(record.userId)
         .add('commentCount', value);
-
-    const owner = await pg.queryOne<{ ownerId: number | null }>(surface.ownerSql, [
-      record.entityId,
-    ]);
     // A creator answering their own commenters is not engagement received (see comment-v2.ts).
     if (owner?.ownerId && owner.ownerId !== record.userId)
       actions.forMetric('User', owner.ownerId).as(record.userId).add('commentCount', value);

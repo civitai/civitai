@@ -59,6 +59,13 @@ const RESIDUE = [
   'v1_no_topic',
   'tombstones_childless',
   'topic_mutes_orphaned',
+  // Rows written on CommentV3 have no old twin.
+  'v2_ghosts',
+  'thread_count_mismatch',
+  'v2_reactions_extra',
+  'v1_reactions_extra',
+  'reports_extra',
+  'mutes_extra',
 ];
 
 describe('parityVerdict', () => {

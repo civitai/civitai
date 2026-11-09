@@ -42,7 +42,7 @@ vi.mock('~/server/events/points/award', async (importOriginal) => ({
     hatted.has(`${entityType}:${entityId}`),
 }));
 
-import { bulkDeleteComments } from '~/server/services/comment.service';
+import { bulkDeleteCommentsV2 } from '~/server/services/commentsv2.service';
 
 const db = dbMock.dbWrite;
 const USER = 5;
@@ -71,10 +71,7 @@ describe('CommentV2 event points', () => {
           ]
         : []) as never);
 
-    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [1, 2, 3] })).resolves.toEqual({
-      commentDeleted: 0,
-      commentV2Deleted: 2,
-    });
+    await expect(bulkDeleteCommentsV2({ ids: [1, 2, 3] })).resolves.toEqual({ deleted: 2 });
     await settle();
 
     expect(removeEventPoints.mock.calls.map(([[removal]]) => removal.sourceId)).toEqual([

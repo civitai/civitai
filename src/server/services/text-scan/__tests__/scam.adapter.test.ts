@@ -42,7 +42,7 @@ beforeEach(() => vi.clearAllMocks());
 describe('applyScamVerdict', () => {
   it.each([
     ['ChatMessage', 'chatMessages', false],
-    ['Comment', 'comments', false],
+    ['Comment', 'commentsV2', false],
     ['CommentV2', 'commentsV2', false],
     ['ResourceReview', 'none', false],
     ['User', 'none', true],
@@ -117,7 +117,7 @@ describe('registration', () => {
   it('routes a verdict through the registered adapter', async () => {
     await getModerationAdapter('Comment')!.applyTextScan!(args() as never);
     expect(autoMuteScamAccount).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 5, cleanup: 'comments' })
+      expect.objectContaining({ userId: 5, cleanup: 'commentsV2' })
     );
   });
 });

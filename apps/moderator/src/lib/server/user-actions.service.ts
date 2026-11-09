@@ -448,17 +448,14 @@ export async function voteOnImageTags(
 const countOf = (body: Record<string, unknown>, keys: string[]) =>
   keys.reduce((sum, k) => sum + (typeof body[k] === 'number' ? (body[k] as number) : 0), 0);
 
-// BULK COMMENT ACTIONS (Retool's DeleteComments / ToSComments). Both tables in one call, matching the
-// endpoint's contract and Retool's Model Comments / Other Comments split.
+// BULK COMMENT ACTIONS (Retool's DeleteComments / ToSComments), by CommentV3 id.
 export async function bulkCommentAction(input: {
   action: 'bulkDelete' | 'removeAsTos' | 'restoreFromTos';
   commentIds: number[];
-  commentV2Ids: number[];
   userId: number;
   moderatorId: number;
 }): Promise<ActionResult & { affected?: number }> {
-  if (!input.commentIds.length && !input.commentV2Ids.length)
-    return { ok: false, error: 'Select at least one comment.' };
+  if (!input.commentIds.length) return { ok: false, error: 'Select at least one comment.' };
 
   const ENDPOINTS = {
     bulkDelete: ['comment/bulk-delete', 'Comment delete'],
@@ -469,7 +466,8 @@ export async function bulkCommentAction(input: {
 
   const result = await callModEndpoint(
     path,
-    { commentIds: input.commentIds, commentV2Ids: input.commentV2Ids },
+    // CommentV3 shares its ids with CommentV2, whose name the endpoint's field keeps.
+    { commentV2Ids: input.commentIds },
     label
   );
   if (!result.ok) return result;
@@ -481,16 +479,13 @@ export async function bulkCommentAction(input: {
       ? countOf(section as Record<string, unknown>, [field])
       : 0;
   };
-  // `restoreFromTos` nests per table exactly like `removeAsTos`; only `bulkDelete` is flat.
+  // `restoreFromTos` nests like `removeAsTos`; only `bulkDelete` is flat.
   const affected =
     input.action === 'bulkDelete'
-      ? countOf(result.body, ['commentDeleted', 'commentV2Deleted'])
-      : nested('comment') + nested('commentV2');
+      ? countOf(result.body, ['commentV2Deleted'])
+      : nested('commentV2');
 
-  const failed =
-    input.action === 'restoreFromTos'
-      ? nested('comment', 'failed') + nested('commentV2', 'failed')
-      : 0;
+  const failed = input.action === 'restoreFromTos' ? nested('commentV2', 'failed') : 0;
 
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
   if (affected === 0 && failed === 0)

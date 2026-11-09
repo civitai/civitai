@@ -54,22 +54,23 @@ const OTHER = 6;
 
 // Article 1. 41-44 are the scammer's: 41 written to CommentV3 only, 42 written to CommentV2 before
 // the flip (mirrored), 43 already hidden, 44 deleted. 45 is someone else's. 50 is the scammer's
-// model comment, on CommentV2 (mirrored; model is the one surface not written to CommentV3); 51 a
-// model comment with no CommentV2 row, which only the CommentV2 arm could reach, so it stays.
+// 3D model review comment, on CommentV2 (mirrored; 3D model reviews are not written to CommentV3);
+// 51 one with no CommentV2 row, which only the CommentV2 arm could reach, so it stays.
 beforeEach(async () => {
   await pg.exec(`
     DELETE FROM "CommentV2"; DELETE FROM "CommentV3"; DELETE FROM "Thread"; DELETE FROM "CommentTopic";
-    INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 1), ('model', 1);
+    INSERT INTO "Model3DReview" VALUES (1) ON CONFLICT DO NOTHING;
+    INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 1), ('model3dReview', 1);
     INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, hidden, "deletedAt") VALUES
       (41, 'article', 1, ${SCAMMER}, 'v3 only', false, NULL),
       (43, 'article', 1, ${SCAMMER}, 'hidden already', true, NULL),
       (44, 'article', 1, ${SCAMMER}, '', false, now()),
       (45, 'article', 1, ${OTHER}, 'someone else', false, NULL),
-      (51, 'model', 1, ${SCAMMER}, 'not a CommentV3-write surface', false, NULL);
+      (51, 'model3dReview', 1, ${SCAMMER}, 'not a CommentV3-write surface', false, NULL);
     INSERT INTO "Thread"(id, "articleId") VALUES (900, 1);
-    INSERT INTO "Thread"(id, "modelId") VALUES (901, 1);
+    INSERT INTO "Thread"(id, "model3dReviewId") VALUES (901, 1);
     INSERT INTO "CommentV2"(id, content, "userId", "threadId") VALUES
-      (42, 'from v2', ${SCAMMER}, 900), (50, 'model', ${SCAMMER}, 901);
+      (42, 'from v2', ${SCAMMER}, 900), (50, '3D model review', ${SCAMMER}, 901);
   `);
 });
 
@@ -111,5 +112,34 @@ describe('scam cleanup of comments', () => {
     expect(await hidden('CommentV2')).toEqual([]);
     // 43 was hidden before the cleanup and is not in the record.
     expect(await hidden('CommentV3')).toEqual([43, 45]);
+  });
+
+  it('restores a record from before the model flip, which lists old `Comment` ids', async () => {
+    // 60 is the scammer's model comment whose v1 row was 31, hidden by that cleanup; 61 is someone
+    // else's, whose old id 32 is in the record too.
+    await pg.exec(`
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('model', 1) ON CONFLICT DO NOTHING;
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, hidden, "legacyV1Id") VALUES
+        (60, 'model', 1, ${SCAMMER}, 'pre-flip', true, 31),
+        (61, 'model', 1, ${OTHER}, 'someone else', true, 32);
+    `);
+    dbMock.dbWrite.userRestriction.findUnique.mockResolvedValueOnce({
+      userId: SCAMMER,
+      type: 'scam',
+      triggers: [
+        {
+          cleanup: {
+            kind: 'comments',
+            at: new Date().toISOString(),
+            count: 2,
+            ids: [31, 32],
+            truncated: false,
+          },
+        },
+      ],
+    } as never);
+
+    expect(await restoreScamCase(1)).toEqual({ restored: 1 });
+    expect(await hidden('CommentV3')).toEqual([43, 61]);
   });
 });

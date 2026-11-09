@@ -26,8 +26,8 @@ const hold = (
   id: number,
   entityType: string,
   entityId: number,
-  commentModelId: number | null = null
-) => ({ id, entityType, entityId, commentModelId });
+  commentV3Id: number | null = null
+) => ({ id, entityType, entityId, commentV3Id });
 
 beforeEach(async () => {
   db = await freshPglite();
@@ -122,11 +122,14 @@ describe('getHoldContexts: profiles', () => {
 });
 
 describe('getHoldContexts: comment parents', () => {
-  const parentOf = async (entityType: string, entityId: number, modelId: number | null = null) =>
-    (await getHoldContexts([hold(1, entityType, entityId, modelId)])).get(1)?.parent;
+  const parentOf = async (
+    entityType: string,
+    entityId: number,
+    commentV3Id: number | null = null
+  ) => (await getHoldContexts([hold(1, entityType, entityId, commentV3Id)])).get(1)?.parent;
 
-  it('resolves a legacy comment to its model, with the title and media', async () => {
-    const parent = await parentOf('Comment', 5, 70);
+  it('resolves a comment a hold names by its old id to its model, through its CommentV3 row', async () => {
+    const parent = await parentOf('Comment', 5, 102);
     expect(parent).toMatchObject({ type: 'model', id: 70, title: 'A model name' });
     expect(parent?.images).toEqual([]);
   });
@@ -171,7 +174,7 @@ describe('getHoldContexts: comment parents', () => {
     expect(await parentOf('CommentV2', 105)).toMatchObject({ type: 'post', id: 90 });
   });
 
-  it('has no parent for a comment that is gone or a legacy comment without a model', async () => {
+  it('has no parent for a comment that is gone, by either id', async () => {
     expect(await parentOf('CommentV2', 106)).toBeNull();
     expect(await parentOf('Comment', 5, null)).toBeNull();
   });

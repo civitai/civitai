@@ -91,7 +91,7 @@ describe('toggleReaction on a CommentV3 comment', () => {
   });
 
   it('leaves a comment on any other surface on the CommentV2 table', async () => {
-    comment({ entityType: 'model', deletedAt: null });
+    comment({ entityType: 'model3dReview', deletedAt: null });
     expect(await react(2)).toBe('created');
     expect(dbMock.dbWrite.commentV2Reaction.create).toHaveBeenCalled();
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
