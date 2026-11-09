@@ -12,7 +12,7 @@ import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp
 import { settleAndMirror, settleItemVotes } from '../progression/progression';
 import { servableImage } from '@civitai/db/knights';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
-import { RANKS, type Rank } from '../ranks';
+import { RANKS, rankIndex, type Rank } from '../ranks';
 import { creditVote, insertVote, lockPlayerVoting } from './vote-record';
 import { FEED_STRETCH_SIZE, isStageRank, nextStaffedRank, stagesWorkedBy } from './ranks';
 import { SMITES } from '../smites/config';
@@ -308,8 +308,9 @@ export async function enqueueItem(db: Executor, input: NewItem, now: Date): Prom
 }
 
 /**
- * The stage ranks that have a player who can vote: a player waiting on a career reset cannot (see `insertVote`).
- * One read, so a job asks once and not per item.
+ * The stages someone can serve: a stage counts when an eligible player holds its rank or a higher one, as `canVote` lets
+ * a higher rank judge a lower stage. A player waiting on a career reset is not eligible (see `insertVote`). One read, so
+ * a job asks once and not per item.
  */
 export async function staffedRanks(db: Executor): Promise<Set<string>> {
   const rows = await db
@@ -328,7 +329,8 @@ export async function staffedRanks(db: Executor): Promise<Set<string>> {
       SMITES.max
     )
     .execute();
-  return new Set(rows.map((r) => r.rankType));
+  const top = Math.max(-1, ...rows.map((r) => rankIndex(r.rankType)));
+  return new Set(RANKS.filter((rank) => isStageRank(rank) && rankIndex(rank) <= top));
 }
 
 async function escalate(

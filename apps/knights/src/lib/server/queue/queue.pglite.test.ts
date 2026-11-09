@@ -1022,7 +1022,7 @@ describe('escalation with empty ranks', () => {
     });
   });
 
-  it('skips an empty Templar rank and lands on the Paladins', async () => {
+  it('hands a voted item to the Templar stage when only Paladins play, as they can serve it', async () => {
     const id = await votedAndLapsed();
     await player(2, 'Paladin');
     expect(await escalateExpired(db, { now: NOW })).toEqual({
@@ -1030,7 +1030,7 @@ describe('escalation with empty ranks', () => {
       toInquisitor: 0,
       extended: 0,
     });
-    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Paladin', votesNeeded: 2 });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar', votesNeeded: 3 });
   });
 
   it('still goes to the Templars when they play', async () => {
@@ -1051,13 +1051,12 @@ describe('escalation with empty ranks', () => {
     expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor' });
   });
 
-  it('skips an empty rank when a split vote hands the item up', async () => {
+  it('sends a split item to the Inquisitors when no Templar or Paladin plays', async () => {
     for (let i = 1; i <= 10; i++) await player(i, 'Knight');
-    await player(20, 'Paladin');
     await image(10);
     const id = await item(10);
     for (let i = 1; i <= 10; i++) await vote(i, id, i % 2 ? '4' : '8');
-    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Paladin' });
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor' });
   });
 
   it('extends an item nobody voted on instead of escalating it', async () => {
