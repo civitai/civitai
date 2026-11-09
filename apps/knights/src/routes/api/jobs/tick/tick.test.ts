@@ -71,7 +71,7 @@ beforeEach(() => {
 
 describe('POST /api/jobs/tick', () => {
   it('reports both steps when both succeed', async () => {
-    escalateExpired.mockResolvedValue({ escalated: 2 });
+    escalateExpired.mockResolvedValue({ escalated: 2, toInquisitor: 1, extended: 3 });
     applyPendingResolutions.mockResolvedValue({ applied: 1 });
 
     const response = await run();
@@ -79,6 +79,8 @@ describe('POST /api/jobs/tick', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       escalated: 2,
+      toInquisitor: 1,
+      extended: 3,
       applied: 1,
       settledVotes: 0,
       hiddenChecksGraded: 0,

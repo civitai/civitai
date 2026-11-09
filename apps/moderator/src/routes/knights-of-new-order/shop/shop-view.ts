@@ -21,6 +21,8 @@ export const KIND_ONE: Record<Kind, string> = {
 
 export const NOT_SOLD_REASON = 'The shop sells memberships one week at a time.';
 export const HIDDEN_REASON = 'The cosmetic no longer exists, so players do not see this item.';
+export const IN_REVIEW_REASON =
+  'The cosmetic is still in review, so players cannot wear it and do not see this item.';
 export const DEAL_LABEL = `-${DEAL_PERCENT}%`;
 
 const PREVIEWABLE = new Set(['Badge', 'ProfileDecoration', 'ProfileBackground', 'Sticker']);
@@ -126,6 +128,13 @@ export function availability(item: ShopItemRow, today: Today): Availability {
     return { kind: 'not-sold', label: 'Not sold', tip: NOT_SOLD_REASON, deal: null };
   if (item.kind === 'cosmetic' && item.cosmeticType === null)
     return { kind: 'hidden', label: 'Hidden: cosmetic missing', tip: HIDDEN_REASON, deal: null };
+  if (item.kind === 'cosmetic' && item.cosmeticWithheld)
+    return {
+      kind: 'hidden',
+      label: 'Hidden: cosmetic in review',
+      tip: IN_REVIEW_REASON,
+      deal: null,
+    };
   const entry = today.get(item.id);
   const deal = entry?.deal ? entry.price : null;
   if (!item.rotating) return { kind: 'always', label: 'Always on sale', tip: null, deal };

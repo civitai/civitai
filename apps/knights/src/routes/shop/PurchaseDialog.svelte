@@ -4,7 +4,7 @@
   import { count } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
   import { modal } from '$lib/modal';
-  import { cardBlurb, cardTitle, cosmeticIcon } from '$lib/shop-view';
+  import { cardBlurb, cardTitle, cosmeticIcon, packNote } from '$lib/shop-view';
   import '$lib/overlay.css';
   import type { PageData } from './$types';
 
@@ -56,7 +56,7 @@
     <p class="blurb">{blurb}</p>
 
     <dl>
-      <div><dt>Price</dt><dd class="gold"><Icon name="coins" size={16} />{count(card.price)}</dd></div>
+      <div><dt>Price</dt><dd class="gold"><Icon name="coins" size={16} />{count(card.price)}{#if packNote(card)} · {packNote(card)}{/if}</dd></div>
       <div><dt>Your gold</dt><dd><Icon name="coins" size={16} />{count(spendable)}</dd></div>
       <div><dt>After purchase</dt><dd><Icon name="coins" size={16} />{count(Math.max(0, spendable - card.price))}</dd></div>
     </dl>

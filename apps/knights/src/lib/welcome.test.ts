@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { isWelcomeRequest, safeNext, signedOutLocation, WELCOME_PATH } from './welcome';
+import {
+  isWelcomeRequest,
+  safeNext,
+  showsNotFound,
+  signedOutLocation,
+  WELCOME_PATH,
+} from './welcome';
 
 describe('safeNext', () => {
   it.each(['/play', '/judgments?tab=mine', '/ranks#top', '/'])(
@@ -76,5 +82,25 @@ describe('isWelcomeRequest', () => {
     expect(is('/home')).toBe(false);
     expect(is('/play')).toBe(false);
     expect(is('/home/__data.json')).toBe(false);
+  });
+});
+
+describe('showsNotFound', () => {
+  const at = (path: string, routeId: string | null, navigation = true) =>
+    showsNotFound({ url: new URL(`https://knights.civitai.com${path}`), navigation, routeId });
+
+  it('is true for a signed-out page load that matches no route', () => {
+    expect(at('/no-such-page', null)).toBe(true);
+    expect(at('/no-such-page/__data.json?x-sveltekit-invalidated=1', null)).toBe(true);
+  });
+
+  it('is false for a real route, which keeps the sign-in redirect', () => {
+    expect(at('/play', '/play')).toBe(false);
+    expect(at('/', '/')).toBe(false);
+  });
+
+  it('is false for API and non-page requests, which keep the hub redirect', () => {
+    expect(at('/api/nothing', null)).toBe(false);
+    expect(at('/no-such-page', null, false)).toBe(false);
   });
 });

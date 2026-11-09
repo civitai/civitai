@@ -83,6 +83,21 @@ describe('toYesNoRows', () => {
       'bad-question': 1,
     });
   });
+
+  it('rejects an id over 200 characters instead of cutting it, so two long ids never collide', () => {
+    const base = 'x'.repeat(200);
+    const { rows, skipped, retire } = toYesNoRows(
+      records(
+        line({ id: `${base}1` }),
+        line({ id: `${base}2` }),
+        line({ id: base }),
+        line({ id: `${base}3`, active: 'false' })
+      )
+    );
+    expect(rows.map((r) => r.externalId)).toEqual([base]);
+    expect(skipped).toEqual({ 'bad-id': 2, inactive: 1 });
+    expect(retire).toEqual([]);
+  });
 });
 
 const MIGRATION = fileURLToPath(

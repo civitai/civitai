@@ -3,7 +3,15 @@
   import { count } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
   import { page } from '$app/state';
-  import { cardBlurb, cardTitle, cosmeticIcon, dealPercentOff, membershipPerksUrl } from '$lib/shop-view';
+  import {
+    cardBlurb,
+    cardTitle,
+    cosmeticIcon,
+    dealPercentOff,
+    membershipPerksUrl,
+    packNote,
+    refusalText
+  } from '$lib/shop-view';
   import type { PageData } from './$types';
 
   type Card = NonNullable<PageData['shop']>['cards'][number];
@@ -35,6 +43,7 @@
   const icon = $derived<IconName>(cosmeticIcon(card.kind, card.cosmeticType));
   const title = $derived(cardTitle(card));
   const note = $derived(cardBlurb(card));
+  const pack = $derived(packNote(card));
 
   const cta = $derived(
     card.state === 'owned'
@@ -89,7 +98,9 @@
     <p class="price">
       <Icon name="coins" size={16} /><b>{count(card.price)}</b>
       {#if card.deal}<s>{count(card.listPrice)}</s>{/if}
+      {#if pack}<span class="per">· {pack}</span>{/if}
     </p>
+    {#if card.state === 'closed'}<p class="why">{refusalText('closed')}</p>{/if}
   </div>
   {#if card.deal}
     <span class="tag">{card.state === 'rank' ? `${card.minRank} only` : `-${dealPercentOff(card.price, card.listPrice)}% today`}</span>
@@ -198,6 +209,9 @@
     text-transform: uppercase;
   }
   .perks {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
     color: var(--io-gold);
     font: 500 12px/1.4 var(--io-font-ui);
     text-decoration: underline;
@@ -220,6 +234,14 @@
   }
   .price b {
     font: 700 1.15rem/1 var(--io-font-display);
+  }
+  .price .per,
+  .why {
+    color: var(--io-parchment-muted);
+    font: 400 0.82rem/1.4 var(--io-font-ui);
+  }
+  .why {
+    margin: 0.35rem 0 0;
   }
   .price s {
     color: var(--io-parchment-muted);

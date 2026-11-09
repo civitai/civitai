@@ -59,6 +59,18 @@ describe('createVoteTracker', () => {
     expect(tracker.excluded('tb')).toEqual(['ta', 'tb']);
   });
 
+  it('lists as voting only the votes still in flight: not skips, not settled votes, not avoided items', () => {
+    const tracker = createVoteTracker();
+    tracker.claim('a', 'ta', false); // a skip
+    tracker.claim('b', 'tb');
+    tracker.claim('c', 'tc');
+    tracker.avoid('td');
+    tracker.settle('b');
+    expect(tracker.voting()).toEqual(['tc']);
+    tracker.settle('c');
+    expect(tracker.voting()).toEqual([]);
+  });
+
   it('keeps only the most recent items, so the query stays small', () => {
     const tracker = createVoteTracker();
     for (let i = 0; i < MAX_EXCLUDED + 3; i += 1) tracker.claim(`k${i}`, `t${i}`);
@@ -392,6 +404,22 @@ describe('postVote', () => {
     expect(failures).toEqual([
       { ok: false, message: expect.stringMatching(/connection/i), resync: false },
     ]);
+  });
+
+  it('marks its own vote settled, so the next stretch stops counting it as in flight', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((done) => (release = done));
+    const { tracker, post } = setup(async () => {
+      await gate;
+      return { reached: true, result: ok };
+    });
+    const first = post('a');
+    const second = post('b');
+    expect(tracker.voting()).toEqual(['t-a', 't-b']);
+    release();
+    await Promise.all([first, second]);
+    expect(tracker.voting()).toEqual([]);
+    expect(tracker.has('a')).toBe(true);
   });
 
   it('never has two posts in flight', async () => {

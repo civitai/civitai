@@ -480,7 +480,13 @@ describe('the recap', () => {
   async function ledger(
     userId: number,
     day: string,
-    rows: { correct?: number; failed?: number; pending?: number; goldEach?: number }
+    rows: {
+      correct?: number;
+      failed?: number;
+      pending?: number;
+      inconclusive?: number;
+      goldEach?: number;
+    }
   ) {
     const insert = (
       verdict: string,
@@ -497,11 +503,12 @@ describe('the recap', () => {
          FROM generate_series(1, $6::int) AS n`,
         [70000 + offset + userId * 1000, userId, `${day} 08:00:00`, verdict, gold, count]
       );
-    const { correct = 0, failed = 0, pending = 0, goldEach = 100 } = rows;
+    const { correct = 0, failed = 0, pending = 0, inconclusive = 0, goldEach = 100 } = rows;
     await insert('correct', true, correct, goldEach, 0);
     await insert('failed', true, failed, 0, 100);
     await insert('pending', false, pending, goldEach, 200);
-    await seedDay(userId, day, { votes: correct + failed + pending });
+    await insert('inconclusive', true, inconclusive, 0, 300);
+    await seedDay(userId, day, { votes: correct + failed + pending + inconclusive });
   }
 
   it('summarises the last play day: confirmed of cast, accuracy among settled, gold, pending', async () => {
@@ -519,6 +526,16 @@ describe('the recap', () => {
       pending: 9,
       streakBonus: 0,
     });
+  });
+
+  it('counts a vote that settled without a verdict as undecided, so the buckets add up to the total', async () => {
+    await seedPlayer(pg, 1);
+    await ledger(1, D1, { correct: 18, failed: 3, pending: 9, inconclusive: 4 });
+
+    const recap = await getRecap(db, { playerId: 1, now: NOON(D2) });
+
+    expect(recap).toMatchObject({ cast: 34, confirmed: 18, graded: 21, pending: 13 });
+    expect(recap!.confirmed + (recap!.graded - recap!.confirmed) + recap!.pending).toBe(recap!.cast);
   });
 
   it('names the date when the last play day was not yesterday', async () => {

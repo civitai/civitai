@@ -63,6 +63,15 @@ describe('availability', () => {
     });
   });
 
+  it('flags a cosmetic still in review, with the reason', () => {
+    const result = availability(
+      row(1, { kind: 'cosmetic', cosmeticId: 9, cosmeticType: 'Badge', cosmeticWithheld: true }),
+      today
+    );
+    expect(result).toMatchObject({ kind: 'hidden', label: 'Hidden: cosmetic in review' });
+    expect(result.tip).toMatch(/in review/);
+  });
+
   it('tells a fixed item, a rotating pick and a rotating miss apart', () => {
     expect(availability(row(1), today).label).toBe('Always on sale');
     expect(availability(row(3, { rotating: true }), today).label).toBe('Rotating · in today');

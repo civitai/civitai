@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
-import * as dbKysely from '@civitai/db/kysely';
+import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { assertLocalDatabase } from '../src/lib/dev/local-database';
 import { parseCsv } from '../src/lib/server/yesno/csv';
-import { importYesNo, toYesNoRows } from '../src/lib/server/yesno/import';
+import { formatImportSummary, importYesNo, toYesNoRows } from '../src/lib/server/yesno/import';
 
 /**
  * Imports yes/no questions from a CSV by hand: `pnpm run import:yesno <file.csv> [--dry-run]`.
@@ -31,7 +31,6 @@ async function main() {
     return;
   }
 
-  const { createKyselyClients } = (dbKysely as { default?: typeof dbKysely }).default ?? dbKysely;
   const { db } = createKyselyClients<DB>({
     connectionString,
     sslNoVerify: true,
@@ -40,9 +39,7 @@ async function main() {
   });
   try {
     const result = await importYesNo(db, rows, { retire });
-    console.log(
-      `${result.axes} axes; ${result.inserted} inserted, ${result.updated} updated, ${result.unchanged} unchanged, ${result.refused} refused (changed but already answered), ${result.moderated} skipped (moderated),  retired,  reworded copies reopened.`
-    );
+    console.log(formatImportSummary(result));
   } finally {
     await db.destroy();
   }

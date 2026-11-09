@@ -66,11 +66,12 @@
     {#if item.votes.length === 0}
       <p class="text-sm text-dark-2">No votes were cast.</p>
     {:else}
-      <Table class="max-w-sm">
+      <Table class="max-w-md">
         <TableHeader>
           <TableRow>
             <TableHead>Knights voted</TableHead>
             <TableHead class="text-right">Votes</TableHead>
+            <TableHead>By stage</TableHead>
             <TableHead class="text-right">Weight</TableHead>
           </TableRow>
         </TableHeader>
@@ -79,6 +80,9 @@
             <TableRow>
               <TableCell>{vote.label}</TableCell>
               <TableCell class="text-right">{num(vote.votes)}</TableCell>
+              <TableCell class="text-dark-2"
+                >{vote.stages.map((s) => `${s.stage} ${num(s.votes)}`).join(' · ')}</TableCell
+              >
               <TableCell class="text-right"
                 >{vote.weight.toLocaleString(undefined, { maximumFractionDigits: 1 })}</TableCell
               >

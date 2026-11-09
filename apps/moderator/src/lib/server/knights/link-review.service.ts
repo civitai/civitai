@@ -1,4 +1,4 @@
-import { sql } from '@civitai/db/kysely';
+import { sql, utc } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from '../db';
 import { describeEvidence, parseLinkEvidence } from './evidence';
 
@@ -97,7 +97,7 @@ export async function blockLinkReview(id: number, moderatorId: number): Promise<
   return dbWrite.transaction().execute(async (tx) => {
     const review = await tx
       .updateTable('NewOrderLinkReview')
-      .set({ status: 'Blocked', reviewedBy: moderatorId, reviewedAt: new Date() })
+      .set({ status: 'Blocked', reviewedBy: moderatorId, reviewedAt: utc(new Date()) })
       .where('id', '=', id)
       .where('status', '=', 'Pending')
       .returning('userIds')
@@ -107,7 +107,7 @@ export async function blockLinkReview(id: number, moderatorId: number): Promise<
     await tx
       .updateTable('NewOrderPlayer')
       .set({
-        payoutBlockedAt: new Date(),
+        payoutBlockedAt: utc(new Date()),
         payoutBlockReason: BLOCK_REASON,
         payoutBlockedBy: moderatorId,
       })
@@ -140,7 +140,7 @@ export async function clearLinkReview(id: number, moderatorId: number): Promise<
 
     const review = await tx
       .updateTable('NewOrderLinkReview')
-      .set({ status: 'Cleared', reviewedBy: moderatorId, reviewedAt: new Date() })
+      .set({ status: 'Cleared', reviewedBy: moderatorId, reviewedAt: utc(new Date()) })
       .where('id', '=', id)
       .where('status', 'in', ['Pending', 'Blocked'])
       .returning(['userIds', 'status'])

@@ -1,5 +1,12 @@
 <script lang="ts" module>
-  export type Cosmetic = { id: number; name: string; type: string; data: unknown };
+  export type Cosmetic = {
+    id: number;
+    name: string;
+    type: string;
+    data: unknown;
+    /** The creator's listing is awaiting approval: the shop cannot sell it yet. */
+    inReview?: boolean;
+  };
 </script>
 
 <script lang="ts">
@@ -99,11 +106,14 @@
           <button
             type="button"
             aria-pressed={selected?.id === cosmetic.id}
+            disabled={cosmetic.inReview}
+            title={cosmetic.inReview ? 'Still in review: players could not wear it yet.' : undefined}
             class={cn(
               'flex w-full flex-col items-center gap-1 rounded-lg border p-2 text-center hover:bg-dark-5',
               selected?.id === cosmetic.id
                 ? 'border-blue-5 bg-blue-5/10 ring-1 ring-blue-5'
-                : 'border-dark-4 bg-dark-7'
+                : 'border-dark-4 bg-dark-7',
+              cosmetic.inReview && 'cursor-not-allowed opacity-50 hover:bg-dark-7'
             )}
             onclick={() => pick(cosmetic)}
           >
@@ -116,7 +126,9 @@
               class="w-full"
             />
             <span class="w-full truncate text-xs text-white">{cosmetic.name}</span>
-            <span class="w-full truncate text-[11px] text-dark-2">{humanize(cosmetic.type)}</span>
+            <span class="w-full truncate text-[11px] text-dark-2">
+              {cosmetic.inReview ? 'In review' : humanize(cosmetic.type)}
+            </span>
           </button>
         </li>
       {/each}

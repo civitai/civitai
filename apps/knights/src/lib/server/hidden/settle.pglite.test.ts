@@ -130,6 +130,17 @@ describe('grading hidden checks', () => {
     expect(await readHiddenNotices(db, 1)).toEqual([WARNING_NOTICE]);
   });
 
+  it('does not show a notice from before a career reset to the new career', async () => {
+    await seedPlayer(pg, 1);
+    await answer(1, await reference(10, '4'), '8');
+    await settle(minutes(31));
+    expect(await readHiddenNotices(db, 1)).toEqual([WARNING_NOTICE]);
+    await pg.query(
+      `UPDATE "NewOrderPlayer" SET "startAt" = '2026-12-16T00:00:00Z' WHERE "userId" = 1`
+    );
+    expect(await readHiddenNotices(db, 1)).toEqual([]);
+  });
+
   it('smites on a repeat failure inside the window, with the original sizing and a neutral reason', async () => {
     await seedPlayer(pg, 1);
     await answer(1, await reference(10, '4'), '8');

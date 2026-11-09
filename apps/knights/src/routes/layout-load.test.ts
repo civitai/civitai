@@ -21,7 +21,8 @@ vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/standing', () => ({ getStanding }));
 const feedbackEnabled = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/feedback/enabled', () => ({ feedbackEnabled }));
-vi.mock('$lib/server/rank-badges', () => ({ rankBadgeUrls: async () => BADGES }));
+const rankBadgeUrls = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/rank-badges', () => ({ rankBadgeUrls }));
 
 const { load } = await import('./+layout.server');
 
@@ -41,6 +42,8 @@ const run = (user: unknown = { id: 7, username: 'ana' }) =>
   load(eventFor(user)) as Promise<Record<string, any>>;
 
 beforeEach(() => {
+  rankBadgeUrls.mockReset();
+  rankBadgeUrls.mockResolvedValue(BADGES);
   feedbackEnabled.mockReset();
   feedbackEnabled.mockResolvedValue(false);
   getStanding.mockReset();
@@ -196,6 +199,13 @@ describe('layout load: the recap dot', () => {
   ])('is off when %s', async (_name, over) => {
     getRecapState.mockResolvedValue(state(over));
     expect((await run()).recapUnseen).toBe(false);
+  });
+
+  it('reads no rank badges for a signed-out visitor, and hands the signed-in their badges', async () => {
+    rankBadgeUrls.mockResolvedValue(BADGES);
+    expect((await run(null)).badges).toEqual({ small: {}, large: {} });
+    expect(rankBadgeUrls).not.toHaveBeenCalled();
+    expect((await run()).badges).toBe(BADGES);
   });
 
   it('is off, without a lookup, when nobody is signed in', async () => {

@@ -1,6 +1,7 @@
 import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import * as shared from '@civitai/shared';
+import { withheldCosmeticIds } from '@civitai/shared/knights-shop';
 
 // tsx loads CommonJS-scoped workspace packages as one `default` object when an ES module imports them.
 const { NsfwLevel } = (shared as { default?: typeof shared }).default ?? shared;
@@ -103,4 +104,23 @@ export async function closeYesNoItemRow(
     .where('itemId', '=', itemId)
     .where('verdict', '=', 'pending')
     .execute();
+}
+
+/** The cosmetics among `ids` that the main app would refuse to equip because they are still in review; the shop neither sells nor lists them. */
+export async function withheldCosmetics(db: Kysely<DB>, ids: number[]): Promise<Set<number>> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return new Set();
+  const [cosmetics, listings] = await Promise.all([
+    db
+      .selectFrom('Cosmetic')
+      .select(['id', 'createdById', 'flags'])
+      .where('id', 'in', unique)
+      .execute(),
+    db
+      .selectFrom('CosmeticShopItem')
+      .select(['cosmeticId', 'addedById', 'status', 'meta', 'rejectionReason'])
+      .where('cosmeticId', 'in', unique)
+      .execute(),
+  ]);
+  return withheldCosmeticIds(cosmetics, listings);
 }

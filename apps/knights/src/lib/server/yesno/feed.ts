@@ -69,8 +69,36 @@ function unanswered(
   );
 }
 
-/** The player's latest yes/no axis and how many in a row they have answered on it. */
-async function currentStretch(db: Executor, userId: number, stretch: number) {
+/**
+ * The axes of yes/no questions already handed out ahead of the player (oldest first) that they have not answered yet, so
+ * the stretch counts them as if they were judged. One already on the ledger is left out: its vote counts there.
+ */
+async function aheadAxes(db: Executor, userId: number, ahead: number[]): Promise<string[]> {
+  if (ahead.length === 0) return [];
+  const rows = await db
+    .selectFrom('KnightsQueueItem as i')
+    .select(['i.id', 'i.questionKey'])
+    .where('i.id', 'in', ahead)
+    .where('i.audience', 'is not', null)
+    .where((eb) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('KnightsVote as v')
+            .select(sql<number>`1`.as('one'))
+            .whereRef('v.itemId', '=', 'i.id')
+            .where('v.playerId', '=', userId)
+        )
+      )
+    )
+    .execute();
+  const axisOf = new Map(rows.map((r) => [r.id, r.questionKey]));
+  return ahead.flatMap((id) => axisOf.get(id) ?? []);
+}
+
+/** The player's latest yes/no axis and how many in a row they have answered (or been handed ahead) on it. */
+async function currentStretch(db: Executor, userId: number, stretch: number, ahead: number[]) {
+  const pending = (await aheadAxes(db, userId, ahead)).reverse();
   const recent = await db
     .selectFrom('KnightsVote as v')
     .innerJoin('KnightsQueueItem as i', 'i.id', 'v.itemId')
@@ -80,9 +108,10 @@ async function currentStretch(db: Executor, userId: number, stretch: number) {
     .orderBy('v.createdAt', 'desc')
     .limit(stretch)
     .execute();
-  const axis = recent[0]?.questionKey ?? null;
+  const latest = [...pending, ...recent.map((r) => r.questionKey)];
+  const axis = latest[0] ?? null;
   let run = 0;
-  while (run < recent.length && recent[run].questionKey === axis) run++;
+  while (run < latest.length && latest[run] === axis) run++;
   return { axis, run };
 }
 
@@ -102,6 +131,8 @@ export async function pickYesNo(
     force?: boolean;
     /** Question ids the player has skipped. */
     exclude?: number[];
+    /** Yes/no question ids already handed out ahead of the player, oldest first, which the stretch counts as judged. */
+    ahead?: number[];
     /** Rolls for an item the player has not reached yet; unset, the roll is fixed by their last vote. */
     slot?: number;
   }
@@ -132,7 +163,12 @@ export async function pickYesNo(
   ).map((q) => q.key);
   if (axes.length === 0) return null;
 
-  const { axis: current, run } = await currentStretch(db, input.userId, input.stretch);
+  const { axis: current, run } = await currentStretch(
+    db,
+    input.userId,
+    input.stretch,
+    input.ahead ?? []
+  );
   const at = current ? axes.indexOf(current) : -1;
   // Stay on the axis for the rest of its stretch, then try the others in turn, wrapping back to it last.
   const order = [

@@ -1,12 +1,13 @@
 import { imageUrl } from '$lib/server/image-url';
 import { APPRENTICE } from '$lib/server/apprenticeship/config';
+import { ratingGuide } from '$lib/server/rules';
 import type {
   ApprenticeProgress,
   ApprenticeView,
 } from '$lib/server/apprenticeship/apprenticeship.service';
 
 /** The player's standing as the page receives it. */
-function progressPayload(progress: ApprenticeProgress) {
+export function progressPayload(progress: ApprenticeProgress) {
   return {
     answered: progress.answered,
     graded: progress.graded,
@@ -15,6 +16,23 @@ function progressPayload(progress: ApprenticeProgress) {
     knightLevel: APPRENTICE.knightLevel,
     window: APPRENTICE.window,
   };
+}
+
+/**
+ * What a missed item says when it has no explanation of its own (only the curated core set carries one): the correct
+ * rating's own definition from the rating guide, or for a yes/no question that the moderators' answer stands.
+ */
+export function explanationOf(miss: {
+  kind: 'rating' | 'yesno';
+  correctLabel: string;
+  explanation: string | null;
+}): string {
+  if (miss.explanation) return miss.explanation;
+  if (miss.kind === 'yesno') return `Moderators answered ${miss.correctLabel} for this one.`;
+  const level = ratingGuide().find((entry) => entry.label === miss.correctLabel);
+  return level
+    ? `${level.label}: ${level.description}`
+    : `Moderators rated this one ${miss.correctLabel}.`;
 }
 
 /** The apprenticeship as the page receives it: pictures as URLs, and never an answer the player has not given. */
@@ -50,7 +68,7 @@ export function apprenticePayload(view: Exclude<ApprenticeView, { kind: 'not-aco
           height: miss.height,
           answerLabel: miss.answerLabel,
           correctLabel: miss.correctLabel,
-          explanation: miss.explanation,
+          explanation: explanationOf(miss),
         })),
       };
     case 'exhausted':

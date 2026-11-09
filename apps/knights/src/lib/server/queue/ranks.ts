@@ -15,6 +15,16 @@ export function nextRank(rank: string): Rank | null {
   return ESCALATION_PATH[at + 1] ?? null;
 }
 
+/**
+ * The next rank an item can be served at: the first one after `rank` that has players, else the Inquisitors. An item
+ * never waits at a rank nobody holds.
+ */
+export function nextStaffedRank(rank: string, staffed: ReadonlySet<string>): Rank | null {
+  let next = nextRank(rank);
+  while (next && next !== 'Inquisitor' && !staffed.has(next)) next = nextRank(next);
+  return next;
+}
+
 export const canVote = (playerRank: string, itemMinRank: string): boolean =>
   playerRank !== 'Acolyte' &&
   playerRank !== 'Inquisitor' &&
