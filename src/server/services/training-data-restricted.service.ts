@@ -114,7 +114,9 @@ const SERVER_ONLY_KEYS = ['datasetArchive', 'nsfwLevel', 'fullyRated'];
  * The owner's view of their files: a share stored Private reads the same whatever kept it there,
  * with no reason attached.
  */
-export function trainingDataOwnerView<T extends ViewedFile[] | null | undefined>(files: T): T {
+export function trainingDataOwnerView<
+  T extends Pick<ViewedFile, 'type' | 'metadata'>[] | null | undefined
+>(files: T): T {
   return files?.map((file) =>
     file.type === 'Training Data'
       ? { ...file, metadata: withoutServerOnlyKeys(file.metadata) }

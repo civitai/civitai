@@ -231,7 +231,7 @@ import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidd
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import { withoutRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
 import { isRemovedWithOwner } from '~/server/utils/legal-hold';
-import { withoutServerOnlyKeys } from '~/server/services/training-data-restricted.service';
+import { trainingDataOwnerView } from '~/server/services/training-data-restricted.service';
 import {
   getResourceData,
   resolveCanGenerateForVersions,
@@ -1609,28 +1609,22 @@ export const getMyTrainingModelsHandler = async ({
 
     return {
       ...results,
-      items: results.items.map((item) => ({
-        ...withOwnerDatasetView(applyTrainingWorkflowOverlay(item, overlay)),
-        model: {
-          ...item.model,
-          _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },
-        },
-      })),
+      items: results.items.map((item) => {
+        const version = applyTrainingWorkflowOverlay(item, overlay);
+        return {
+          ...version,
+          files: trainingDataOwnerView(version.files),
+          model: {
+            ...item.model,
+            _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },
+          },
+        };
+      }),
     };
   } catch (error) {
     throw throwDbError(error);
   }
 };
-
-function withOwnerDatasetView<T extends { files: { metadata: unknown }[] }>(version: T): T {
-  return {
-    ...version,
-    files: version.files.map((file) => ({
-      ...file,
-      metadata: withoutServerOnlyKeys(file.metadata),
-    })),
-  };
-}
 
 export const getAvailableTrainingModelsHandler = async ({
   input: { take },

@@ -367,7 +367,6 @@ export const getFileForModelVersion = async ({
     )
   )
     return { status: 'not-found' };
-  // A shared dataset is served to others only while neither its owner nor its content is restricted.
   if (
     file.type === 'Training Data' &&
     !isOwner &&
