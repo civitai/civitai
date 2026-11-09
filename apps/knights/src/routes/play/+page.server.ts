@@ -290,7 +290,6 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
 export const actions: Actions = {
   // Every kind of vote (rating, yes/no, hidden check) passes the Redis vote limits here, before any database work.
   vote: async (event) => {
-    // Only a real vote attempt counts against the limits: the muted check and the form come first.
     if ((await getStanding(db, event.locals.user.id)).muted) return mutedFailure();
     const parsed = await readVote(event);
     if ('failure' in parsed) return parsed.failure;

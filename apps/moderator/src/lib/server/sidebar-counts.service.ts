@@ -74,8 +74,6 @@ const RELEASE_LOCK = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis
  * only when there is none. Kept in Redis, not in this process: every server fills the shared counts,
  * so a per-process value made consecutive refreshes disagree (see `cache.ts`).
  *
- * A failed fill is logged with the part and the error message, whatever the part.
- *
  * `lockSeconds`: a fill that outlives its wait keeps running (nothing cancels the query), and the
  * counts refill every minute, so a slow part would stack scans. With it, one server at a time runs the
  * fill, holding a Redis lock (set `lockSeconds` longer than the query can run). The lock is released
@@ -191,11 +189,6 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bountyUnpaidAwards,
   ] = await Promise.all([
     getImageReviewCounts(),
-    // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
-    // The nsfwLevel bound must match the QUEUE's (image-tags.service.ts) — without it, blocked images
-    // inflate a badge whose page can never show them, so the count never reaches zero.
-    // Waited on for 3 seconds at most: this scan can run for minutes on a large TagsOnImageNew, and
-    // every other badge in the fill waits behind it.
     // Waited on for 3 seconds at most, and at most one scan runs across all servers: it can take
     // minutes on a large TagsOnImageNew, and every other badge in the fill waits behind it.
     withLastGood('image-tags', countImageTagsNeedingReview, 3_000, {

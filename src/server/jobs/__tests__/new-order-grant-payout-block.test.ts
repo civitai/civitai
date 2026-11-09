@@ -126,6 +126,57 @@ describe('runGrantBlessedBuzz release catch-up', () => {
     );
   });
 
+  it('a released player reset mid-hold is paid only judgments at or after startAt', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 17, 12));
+    const local = (d: number, h = 0) => new Date(2026, 9, d, h);
+    const startAt = local(11, 12);
+    const ratings = [
+      { createdAt: local(9, 10), exp: 900 },
+      { createdAt: local(11, 6), exp: 1100 },
+      { createdAt: local(11, 18), exp: 1300 },
+      { createdAt: local(12, 9), exp: 1700 },
+    ];
+    // Honours the catch-up query's time bounds and any per-user lower bound.
+    mockClickhouseQuery.mockImplementation(
+      (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const sql = strings.reduce(
+          (acc, s, i) => acc + s + (i < values.length ? String(values[i]) : ''),
+          ''
+        );
+        if (!sql.includes('dayMs')) return Promise.resolve([]);
+        const [from, to] = values.filter((v): v is Date => v instanceof Date);
+        const minByUser = new Map(
+          [
+            ...sql.matchAll(
+              /userId = (\d+) AND createdAt >= parseDateTimeBestEffort\('([^']+)'\)/g
+            ),
+          ].map(([, id, iso]) => [Number(id), new Date(iso)])
+        );
+        const min = minByUser.get(7);
+        const byDay = new Map<number, number>();
+        for (const r of ratings) {
+          if (r.createdAt < from || r.createdAt >= to || (min && r.createdAt < min)) continue;
+          const dayMs = new Date(r.createdAt).setHours(0, 0, 0, 0);
+          byDay.set(dayMs, (byDay.get(dayMs) ?? 0) + r.exp);
+        }
+        return Promise.resolve(
+          [...byDay].map(([dayMs, totalExp]) => ({ userId: 7, dayMs, totalExp, balance: totalExp }))
+        );
+      }
+    );
+    stubPlayers([], [player(7, { payoutReleaseFrom: local(8), startAt })]);
+
+    try {
+      await runGrantBlessedBuzz();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const txs = mockCreateBuzzMany.mock.calls.flatMap(([t]) => t as Array<{ amount: number }>);
+    expect(txs.map((t) => t.amount)).toEqual([1300, 1700]);
+  });
+
   it('does not pay a released player who has since been blocked again or banned', async () => {
     mockClickhouseQuery.mockResolvedValue([]);
     stubPlayers(

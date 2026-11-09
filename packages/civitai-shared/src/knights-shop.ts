@@ -82,9 +82,7 @@ export function stockFor(
 
 /**
  * Creator cosmetics the main app withholds: nobody may wear them until a moderator approves the creator's
- * listing, so the shop must not sell them. `isListingDisplayable` and `DISPLAYED_FIELDS` are the main app's own rule (`creator-shop.data.ts` re-exports them);
- * `getWithheldCosmeticIds` (`creator-shop-withheld.ts`) has a Prisma query shape, so `creator-shop-withheld.test.ts` runs it and
- * `withheldCosmeticIds` on the same fixtures.
+ * listing, so the shop must not sell them. `isListingDisplayable` and `DISPLAYED_FIELDS` are the main app's own rule (`creator-shop.data.ts` re-exports them).
  */
 const COSMETIC_FLAG_WITHHELD = 1 << 2;
 // Allowlist: a newly recorded edit field that changes what holders see must be added here, or editing it after
@@ -136,7 +134,8 @@ export function isListingDisplayable(
   const approved =
     index >= 0
       ? history[index].action === 'approve'
-      : meta?.lastApprovedAmount != null && !listing.rejectionReason;
+      : // Pre-history items: approval left lastApprovedAmount and no reason; every other verdict left a reason.
+        meta?.lastApprovedAmount != null && !listing.rejectionReason;
   return (
     approved &&
     !history
