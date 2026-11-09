@@ -255,6 +255,35 @@ export async function readInputs(pools: Sources) {
   };
 }
 
+/** The documents a plan creates, as (coll, scope_uid, key): private docs are scoped to their owner. */
+function plannedDocs(plan: Plan) {
+  return [
+    ...plan.privateWrites.map((w) => ({ coll: PRIVATE_COLL, scope: w.userId, key: w.key })),
+    ...plan.sharedWrites.map((w) => ({ coll: SHARED_COLL, scope: 0, key: w.key })),
+  ];
+}
+
+/**
+ * Every document of this app in every collection, split into the ones this plan creates and the
+ * rest. The rest must not move across an execute: the control that holds even when no shared
+ * document existed before the run.
+ */
+export async function countAppDocs(pool: DocStoreDb, appId: string, plan: Plan) {
+  const docs = plannedDocs(plan);
+  return appdataRead(pool, appId, async (c) => {
+    const r = await c.query(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE (coll, scope_uid, key) IN (
+                SELECT * FROM unnest($3::text[], $4::int[], $5::text[])))::int AS planned
+         FROM appdata.doc WHERE app_id = $1 AND ns = $2`,
+      [appId, NS, docs.map((d) => d.coll), docs.map((d) => d.scope), docs.map((d) => d.key)]
+    );
+    const total = Number(r.rows[0].total);
+    const planned = Number(r.rows[0].planned);
+    return { total, planned, outside: total - planned };
+  });
+}
+
 /** The executor's only entry check: a plan with any abort reason writes nothing. */
 export function assertExecutable(plan: Plan): void {
   if (plan.aborts.length > 0) {
@@ -411,6 +440,8 @@ export async function runCutover(
     pendingWrites: pendingWrites(plan),
     positiveControl: control,
   };
+  const docsBefore = await countAppDocs(sources.appdata, before.app.id, plan);
+  report.appDocsBefore = docsBefore;
   if (!opts.execute) return { report, mapping: plan.mapping };
 
   assertExecutable(plan);
@@ -435,14 +466,27 @@ export async function runCutover(
   const resumed = new Set(plan.hideWrites.map((h) => `0\u0000${h.key}`));
   const controls = [...before.sharedSnapshot].filter(([k]) => !resumed.has(k));
   const changed = controls.filter(([k, fp]) => after.sharedSnapshot.get(k) !== fp).length;
+  // Counted against the original plan's documents, which now exist.
+  const docsAfter = await countAppDocs(sources.appdata, before.app.id, plan);
+  const expectedNew = plannedDocs(plan).length;
   report.readback = {
     pendingWrites: pendingWrites(again),
     aborts: again.aborts,
     preExistingSharedDocsControls: controls.length,
     preExistingSharedDocsChanged: changed,
+    appDocsBefore: docsBefore,
+    appDocsAfter: docsAfter,
+    expectedNewDocs: expectedNew,
     counts: again.counts,
   };
-  if (pendingWrites(again) !== 0 || again.aborts.length > 0 || changed !== 0) {
+  if (
+    pendingWrites(again) !== 0 ||
+    again.aborts.length > 0 ||
+    changed !== 0 ||
+    docsBefore.planned !== 0 ||
+    docsAfter.planned !== expectedNew ||
+    docsAfter.outside !== docsBefore.outside
+  ) {
     throw Object.assign(new Error('readback failed'), { report });
   }
   return { report, mapping: plan.mapping };

@@ -130,6 +130,9 @@ describe('strength-finder cutover copy (PGlite, RLS on)', () => {
       pendingWrites: 0,
       preExistingSharedDocsChanged: 0,
       preExistingSharedDocsControls: 1,
+      appDocsBefore: { total: 1, planned: 0, outside: 1 },
+      appDocsAfter: { total: 6, planned: 5, outside: 1 },
+      expectedNewDocs: 5,
     });
 
     expect(
@@ -178,6 +181,57 @@ describe('strength-finder cutover copy (PGlite, RLS on)', () => {
     expect(
       await h.raw(`SELECT key, seq, version FROM appdata.doc ORDER BY key, scope_uid`)
     ).toEqual(before);
+  });
+
+  it('fails the readback when a document outside the plan disappears during the run, even with no shared controls', async () => {
+    await seed([['p1', 11, null]]);
+    const store = createDocStore({ db: h.db });
+    const sweeps = {
+      name: 'sweeps',
+      config: {
+        visibility: 'private',
+        write: 'own',
+        marks: [],
+        counters: [],
+        indexes: new Map(),
+        showAuthor: false,
+        kind: 'document',
+      },
+    } as never;
+    await store.put({ appId: APP, ns: 'prod', viewerUid: 99 }, sweeps, 'other', { n: 1 });
+
+    // appdata read-only transactions, in order: plan read, count before, readback read, count
+    // after. Delete the foreign private doc just before the readback read opens.
+    let readOnlyBegins = 0;
+    const real = h.db;
+    sources.appdata = {
+      ...real,
+      connect: async () => {
+        const c = await real.connect();
+        return new Proxy(c, {
+          get(target, prop, recv) {
+            if (prop !== 'query') return Reflect.get(target, prop, recv);
+            return async (sql: string, params?: unknown[]) => {
+              if (sql === 'BEGIN READ ONLY' && ++readOnlyBegins === 3) {
+                await h.raw(`DELETE FROM appdata.doc WHERE key = 'other'`);
+              }
+              return target.query(sql, params);
+            };
+          },
+        });
+      },
+    } as Sources['appdata'];
+
+    const err = await runCutover(sources, { execute: true, ...OPTS }).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe('readback failed');
+    expect(err.report.readback).toMatchObject({
+      pendingWrites: 0,
+      preExistingSharedDocsControls: 0,
+      preExistingSharedDocsChanged: 0,
+      appDocsBefore: { planned: 0, outside: 1 },
+      appDocsAfter: { planned: 4, outside: 0 },
+    });
   });
 
   it('writes nothing at all when one shared row cannot keep its author', async () => {
