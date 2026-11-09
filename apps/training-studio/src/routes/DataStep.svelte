@@ -57,6 +57,11 @@
     imgBytes,
     selectionFromTotal,
     isFailed,
+    autoLabelTargets,
+    canAutoLabelImage,
+    handLabelOnlyCount,
+    isLabeled,
+    labelTextAfterSwitch,
     isTrainable,
     isTriggerTag,
     labelOptions,
@@ -196,12 +201,7 @@
     labelController = null;
     labelMode = next;
     for (const img of images) {
-      const source = img.sourceLabel?.trim();
-      // Current text first — it carries the user's hand-edits; the imported text is only the
-      // restore fallback for a cleared field. Source-labeled items survive BOTH choices (the
-      // dialog promises it); 'relabel' wipes only machine/hand labels with no imported source.
-      const kept = labelString(img, prev) || source || '';
-      const text = choice === 'relabel' && !source ? '' : kept;
+      const text = labelTextAfterSwitch(img, prev, choice);
       const parsed = parseLabel(text, next);
       img.tags = parsed.tags;
       img.caption = parsed.caption;
@@ -228,9 +228,8 @@
   const blockedCount = $derived(images.filter((i) => i.status === 'blocked').length);
   const errorCount = $derived(images.filter((i) => i.status === 'error').length);
   const failedTotal = $derived(blockedCount + errorCount);
-  // A trainable image needs a label — tags or a caption (a global trigger word isn't a per-image label).
-  // Auto-labeling fills these for the whole set; an unlabeled dataset must not reach Review.
-  const isLabeled = (i: Img) => i.tags.length > 0 || i.caption.trim().length > 0;
+  // A trainable image needs a label (tags or a caption); an unlabeled dataset must not reach Review.
+  // Reused images can only be hand-labeled.
   const labeledCount = $derived(images.filter((i) => isTrainable(i) && isLabeled(i)).length);
   const allLabeled = $derived(uploadedCount > 0 && labeledCount === uploadedCount);
   const labelingActive = $derived(images.some((i) => i.labeling));
@@ -241,15 +240,13 @@
   // what an auto-label run targets. Excluding attempted ones stops the button re-offering a model that
   // returned nothing (failed steps go to the editor's Re-run).
   const unlabeled = $derived(
-    images.filter(
-      (i) =>
-        isTrainable(i) &&
-        !isLabeled(i) &&
-        !i.labeling &&
-        !i.labelTried &&
-        !!i.blobUrl &&
-        i.id !== inlineFocusId
-    )
+    autoLabelTargets(images, { skipLabeled: true, skipTried: true, focusId: inlineFocusId })
+  );
+  const handOnly = $derived(handLabelOnlyCount(images));
+  const handOnlyNotice = $derived(
+    handOnly > 0
+      ? `${plural(handOnly, 'reused image')} can't be auto-labeled; edit ${handOnly === 1 ? 'its label' : 'their labels'} by hand.`
+      : null
   );
   const canContinue = $derived(uploadedCount > 0 && !busy && !labelingActive && allLabeled);
   const enough = $derived(uploadedCount >= type.minImg);
@@ -433,8 +430,7 @@
 
   // Fetch reused-blob previews after the tiles exist. A failed preview stays a placeholder — the
   // `air` is what trains. `blobUrl` gets the same local object URL the eager path used to set;
-  // note it is browser-local, so an un-captioned reuse item still can't auto-label (pre-existing —
-  // the orchestrator can't fetch a blob: URL).
+  // it is browser-local, so `canAutoLabelImage` keeps these tiles out of auto-label.
   async function hydrateBlobPreviews(targets: { id: number; air: string; workflowId: string }[]) {
     if (targets.length === 0) return;
     await pool(targets, 4, async (t) => {
@@ -449,9 +445,8 @@
       }
       patch(t.id, { previewUrl: url, blobUrl: url });
     });
-    // Un-captioned reuse items only become labelable once `blobUrl` exists — the add-time drain
-    // saw nothing to do, so run it again now (a failed hydration leaves the manual-label editor
-    // as the fallback, same as before).
+    // A directly fetchable (https) item only becomes labelable once `blobUrl` exists — the add-time
+    // drain saw nothing to do, so run it again now.
     void maybeAutoLabel();
   }
 
@@ -711,14 +706,11 @@
   let labelAllPolicy = $state<LabelAllPolicy>('after');
   let labelAllNotice = $state<string | null>(null);
   const labelAllTargets = $derived(
-    images.filter(
-      (i) =>
-        isTrainable(i) &&
-        !!i.blobUrl &&
-        !i.labeling &&
-        i.id !== inlineFocusId &&
-        (labelAllPolicy !== 'skip' || !isLabeled(i))
-    )
+    autoLabelTargets(images, {
+      skipLabeled: labelAllPolicy === 'skip',
+      skipTried: false,
+      focusId: inlineFocusId,
+    })
   );
 
   async function labelAll() {
@@ -893,7 +885,7 @@
   // image (labelTried) gets a fresh pass.
   async function relabelOne(id: number) {
     const img = images.find((x) => x.id === id);
-    if (!canAutoLabel || !img || !img.blobUrl || img.labeling) return;
+    if (!canAutoLabel || !img || !img.blobUrl || !canAutoLabelImage(img) || img.labeling) return;
     patch(id, { labeling: true, labelTried: false, labelError: undefined, tags: [], caption: '' });
     try {
       // Not a drain-pass index, so the drain's progress counter never counts it.
@@ -1203,7 +1195,11 @@
         {/if}
       {/if}
     </div>
-    {#if canAutoLabel && uploadedCount > 0}
+    {#if canAutoLabel && uploadedCount > 0 && handOnly === uploadedCount}
+      <p class="mt-3 border-t border-dark-4 pt-3 font-mono text-xs text-dark-2" role="status">
+        {handOnlyNotice}
+      </p>
+    {:else if canAutoLabel && uploadedCount > 0}
       <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-dark-4 pt-3">
         <div class="flex items-center gap-2">
           <span class="font-mono text-xs text-dark-2">Label all with</span>
@@ -1265,6 +1261,9 @@
         </Button>
         {#if labelAllNotice}
           <p class="w-full font-mono text-xs text-buzz" role="status">{labelAllNotice}</p>
+        {/if}
+        {#if handOnlyNotice}
+          <p class="w-full font-mono text-xs text-dark-2" role="status">{handOnlyNotice}</p>
         {/if}
       </div>
     {/if}
@@ -1747,7 +1746,8 @@
         {noun}. <strong>Convert</strong> keeps that text and reformats it — nothing is re-labeled.
         {#if canAutoLabel}
           <strong>Re-label</strong> discards it and auto-labels everything from scratch (labels that came
-          with your files are kept either way).
+          with your files{handOnly > 0 ? ", and reused images, which can't be auto-labeled," : ''} are kept
+          either way).
         {/if}
       </Dialog.Description>
     </Dialog.Header>
