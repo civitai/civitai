@@ -4,10 +4,10 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
-// The /search tabs: the Images tab must disappear when `imageSearchEntry` is off. Only the
+// The /search tabs: the Images tab must disappear when `imageSearch` is off. Only the
 // InstantSearch hooks, the search store/layout, the router and the flags are stubbed.
 
-const state = vi.hoisted(() => ({ imageSearchEntry: true }));
+const state = vi.hoisted(() => ({ imageSearch: true }));
 
 vi.mock('react-instantsearch', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -32,26 +32,23 @@ vi.mock('~/components/Search/SearchLayout', () => ({
 vi.mock('next/router', () => ({ useRouter: () => ({ replace: () => undefined, query: {} }) }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
-  // Every flag on except `imageSearchEntry`, which each test sets.
+  // Every flag on except `imageSearch`, which each test sets.
   return {
     ...actual,
     useFeatureFlags: () =>
-      new Proxy(
-        {},
-        { get: (_, key) => (key === 'imageSearchEntry' ? state.imageSearchEntry : true) }
-      ),
+      new Proxy({}, { get: (_, key) => (key === 'imageSearch' ? state.imageSearch : true) }),
   };
 });
 
 const { SearchHeader } = await import('~/components/Search/SearchHeader');
 
 beforeEach(() => {
-  state.imageSearchEntry = true;
+  state.imageSearch = true;
 });
 
 describe('SearchHeader — Images tab', () => {
-  test('is hidden while imageSearchEntry is off', async () => {
-    state.imageSearchEntry = false;
+  test('is hidden while imageSearch is off', async () => {
+    state.imageSearch = false;
     renderWithProviders(<SearchHeader />);
 
     await expect.element(page.getByText('Models', { exact: true })).toBeInTheDocument();
@@ -59,7 +56,7 @@ describe('SearchHeader — Images tab', () => {
   });
 
   // The control: if Images were missing here too, the query above would be wired to nothing.
-  test('is shown while imageSearchEntry is on', async () => {
+  test('is shown while imageSearch is on', async () => {
     renderWithProviders(<SearchHeader />);
 
     await expect.element(page.getByText('Models', { exact: true })).toBeInTheDocument();

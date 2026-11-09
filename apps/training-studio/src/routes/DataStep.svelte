@@ -34,6 +34,7 @@
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { autoLabelAvailable, browser, hostConfig, hostLink, portalProps } from '$lib/host';
   import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
+  import StickySummary from '$lib/components/StickySummary.svelte';
   import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { playOnHover, resetOnLeave } from '$lib/video-preview';
   import { extOfAir, extsOfMedia, mediaOfExt, mimeOfExt } from '$lib/media';
@@ -1654,7 +1655,7 @@
       </div>
 
       <!-- Below lg the trigger word comes before the image grid, not after an arbitrarily long one. -->
-      <aside class="order-first h-fit rounded-xl lg:sticky lg:top-4 lg:order-none lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto border border-dark-4 bg-dark-6 p-5">
+      <StickySummary class="order-first lg:order-none">
         <div class="flex items-center gap-1.5">
           <h3 class="m-0 font-mono text-xs uppercase tracking-widest text-dark-2">Trigger word</h3>
           <Tooltip.Provider>
@@ -1677,7 +1678,7 @@
           Prepended to each label when missing, and <span class="text-buzz">highlighted</span> where
           it already appears. Leave blank to skip.
         </p>
-      </aside>
+      </StickySummary>
     </div>
   {/if}
 

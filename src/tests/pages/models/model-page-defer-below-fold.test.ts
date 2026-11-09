@@ -289,7 +289,13 @@ describe.each([false, true])(
       expect(head).toContain(
         `<title>${F.MODEL_NAME} - v3.0 | Stable Diffusion XL LoRA | Civitai</title>`
       );
-      expect(head).toMatch(/<meta name="description" content="About lantern-description-marker/);
+      // The built snippet leads with name, ecosystem, type and creator, then the counts, then the
+      // model's own text.
+      expect(head).toMatch(
+        new RegExp(
+          `<meta name="description" content="${F.MODEL_NAME} is a Stable Diffusion XL LoRA by ${F.CREATOR_USERNAME}\\. [^"]*downloads, [^"]*likes\\. About ${F.MODEL_DESCRIPTION_MARKER}`
+        )
+      );
       expect(head).toContain(
         '<link rel="canonical" href="/models/4201/lantern-glow-portrait-lora"/>'
       );
