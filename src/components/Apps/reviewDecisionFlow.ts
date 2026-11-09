@@ -50,7 +50,7 @@ export type RejectReasonChipKey = (typeof REJECT_REASON_CHIPS)[number]['key'];
  * decided and not already waiting on a delayed approval. `pending` is expected oldest-first
  * (the queue's order), but the sort here does not rely on it.
  *
- * Returns `null` when nothing is left — the "All caught up" state.
+ * Returns `null` when nothing is left — the "No more app submissions waiting" state.
  */
 export function nextPendingRequestId(
   pending: ReadonlyArray<{ id: string; submittedAt: string | Date }>,

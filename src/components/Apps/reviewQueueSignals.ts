@@ -3,7 +3,7 @@ import type { ReviewPreviewState } from '~/server/services/blocks/publish-reques
 
 /**
  * The DECISION SIGNALS a pending review row and the review page's Overview show: the review
- * preview's state, the agentic review's verdict (see `~/shared/utils/agent-review-verdict`) and
+ * preview's state, the agentic review's finding counts (see `~/shared/utils/agent-review-findings`) and
  * the count of sensitive permissions requested. Pure and React-free so the node tier pins the
  * mapping.
  *

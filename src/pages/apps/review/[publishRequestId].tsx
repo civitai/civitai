@@ -26,7 +26,7 @@ import { trpc } from '~/utils/trpc';
  * 🔴 IT NO LONGER RE-HOSTS `OnsiteReviewModalBody` VERBATIM. The page composes the SAME
  * exported sub-sections into six tabs — Overview (default) · Code · Permissions · Manifest ·
  * AI report · Preview — with the approve/reject bar pinned OUTSIDE them. After a decision it
- * opens the next oldest pending submission ("Approve & next"), or "All caught up". The
+ * opens the next oldest pending submission ("Approve & next"), or "No more app submissions waiting". The
  * panels are shared with the queue modal, so only the arrangement differs; see
  * `ReviewDetailTabsView` and `OnsiteReviewModalBody`'s docstring.
  *
@@ -92,7 +92,7 @@ export const getServerSideProps = createServerSideProps<ReviewDetailPageProps>({
 
 export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageProps) {
   const features = useFeatureFlags();
-  // After a decision: the next oldest pending submission, or "All caught up".
+  // After a decision: the next oldest pending submission, or "No more app submissions waiting".
   const { openNext, caughtUp } = useNextPendingReview(publishRequestId);
 
   const query = trpc.blocks.getPublishRequest.useQuery(
@@ -194,7 +194,7 @@ export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageP
               key={selection.request.id}
               selection={selection}
               // After a decision, open the next OLDEST pending submission — or show
-              // "All caught up" when none is left. (Was: back to the queue, which cost a
+              // "No more app submissions waiting" when none is left. (Was: back to the queue, which cost a
               // click and a scan per review.)
               onClose={openNext}
             />

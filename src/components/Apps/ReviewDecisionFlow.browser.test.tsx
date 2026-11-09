@@ -21,7 +21,7 @@ import type * as TrpcModule from '~/utils/trpc';
  *  - the reason counter reads "3+ characters", ticked when met;
  *  - the header names what is under review;
  *  - the Overview renders every AI-review and preview state;
- *  - "next" is the oldest pending request, and the end of the queue is "All caught up".
+ *  - "next" is the oldest pending request, and the end of the queue is "No more app submissions waiting".
  *
  * The 10-second CLOCK is not driven here: the engine's timing (fires at the deadline and not
  * before, undo inside the window, navigation keeps the timer, leaving commits) is pinned with
@@ -36,6 +36,7 @@ const m = vi.hoisted(() => ({
   agentReview: undefined as unknown,
   reviewStatus: undefined as unknown,
   pendingItems: undefined as unknown,
+  queueCount: undefined as unknown,
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -77,6 +78,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         },
         'blocks.getReviewStatus': {
           useQuery: () => ({ data: m.reviewStatus, isLoading: false, error: null }),
+        },
+        'blocks.countReviewQueue': {
+          useQuery: () => ({ data: m.queueCount, isLoading: false, error: null }),
         },
         'blocks.listPendingRequests': {
           useQuery: () => ({ data: m.pendingItems, isLoading: false, error: null }),
@@ -169,6 +173,7 @@ beforeEach(async () => {
   m.agentReview = undefined;
   m.reviewStatus = undefined;
   m.pendingItems = undefined;
+  m.queueCount = undefined;
   router.query = {};
   router.pathname = '/apps/review/[publishRequestId]';
   vi.mocked(router.push).mockClear();
@@ -246,6 +251,50 @@ describe('"Approve & next" — the delayed commit, wired to the page', () => {
   });
 });
 
+describe('🔴 opening the full-page preview COMMITS pending approvals (stated behaviour)', () => {
+  /**
+   * "Open full-page preview" is a `target="_blank"` link, so following it hides this tab, and a
+   * hidden tab commits every pending approval at once (`bindPendingApprovalLifecycle`). That is
+   * the SAFE direction — an approval is never lost to a tab the browser may throttle or close —
+   * so it is kept and pinned here rather than left as an accident: Undo is not available after
+   * opening the full-page preview.
+   */
+  test('the link opens a new tab, and the tab going hidden sends the pending approval once', async () => {
+    m.reviewStatus = {
+      state: 'preview-live',
+      detail: {},
+      previewUrl: 'https://review.example/app?mr=t',
+      updatedAt: new Date(),
+    };
+    const req = pendingRequest();
+    renderPage(req);
+    const link = page.getByRole('link', { name: /Open full-page preview/ });
+    await expect.element(link).toBeInTheDocument();
+    expect(link.element().getAttribute('target')).toBe('_blank');
+
+    await page.getByTestId('apps-review-approve-next').click();
+    expect(reviewApprovalQueue.get(req.id)?.status).toBe('pending');
+    expect(m.clientApprove).not.toHaveBeenCalled();
+
+    // What following the link does to THIS tab.
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'hidden',
+    });
+    try {
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.waitFor(() => expect(m.clientApprove).toHaveBeenCalledTimes(1));
+      expect(m.clientApprove).toHaveBeenCalledWith({
+        publishRequestId: req.id,
+        approvalNotes: undefined,
+      });
+    } finally {
+      // The own property shadows the prototype getter; deleting it restores the real one.
+      delete (document as unknown as { visibilityState?: unknown }).visibilityState;
+    }
+  });
+});
+
 describe('reject — Reject… → reason chip → Reject', () => {
   test('🔴 a chip PREFILLS the editable reason, and the third click sends it', async () => {
     const req = pendingRequest();
@@ -317,27 +366,44 @@ describe('the Overview renders every AI-review state', () => {
   test.each([
     ['no report', null, 'not-run', 'not run'],
     ['running', report('running'), 'running', 'running'],
-    ['run failed', report('failed'), 'error', 'run failed'],
-    ['high finding', report('complete', [{ severity: 'high' }]), 'fail', 'fail'],
-    ['medium finding', report('complete', [{ severity: 'medium' }]), 'concerns', 'concerns'],
+    ['run failed', report('failed'), 'failed', 'run failed'],
     [
-      'over-broad scope',
-      report('complete', [], { overBroad: ['ai:write:budgeted'] }),
-      'concerns',
-      'concerns',
+      '1 high + 2 medium',
+      report('complete', [{ severity: 'medium' }, { severity: 'high' }, { severity: 'medium' }]),
+      'reported',
+      '1 high · 2 medium',
     ],
-    ['clean', report('complete', [{ severity: 'low' }]), 'pass', 'pass'],
-    ['cost-capped clean', report('cost-capped'), 'pass', 'pass'],
-  ] as const)('%s → %s', async (_name, data, verdict, label) => {
+    [
+      'over-broad scope only',
+      report('complete', [], { overBroad: ['ai:write:budgeted'] }),
+      'reported',
+      '1 scope flag',
+    ],
+    ['one low finding', report('complete', [{ severity: 'low' }]), 'reported', '1 low'],
+    ['cost-capped, nothing found', report('cost-capped'), 'reported', 'no findings'],
+  ] as const)('%s → %s "%s"', async (_name, data, state, label) => {
     m.flags = { appBlocks: true, appReviewPage: true, appBlocksAgenticReview: true };
     m.agentReview = data;
     renderPage(pendingRequest());
     const card = page.getByTestId('apps-review-overview-ai');
     await expect.element(card).toBeInTheDocument();
-    expect(card.element().getAttribute('data-verdict')).toBe(verdict);
-    await expect
-      .element(page.getByTestId('apps-review-overview-ai-verdict'))
-      .toHaveTextContent(label);
+    expect(card.element().getAttribute('data-ai-state')).toBe(state);
+    const counts = page.getByTestId('apps-review-overview-ai-counts');
+    await expect.element(counts).toHaveTextContent(label);
+    // 🔴 No verdict, ever.
+    expect(card.element().textContent ?? '').not.toMatch(/\bpass\b/i);
+  });
+
+  test('🔴 1 high + 2 medium is RED (the worst finding), zero findings is not green', async () => {
+    m.flags = { appBlocks: true, appReviewPage: true, appBlocksAgenticReview: true };
+    m.agentReview = report('complete', [{ severity: 'high' }, { severity: 'medium' }]);
+    renderPage(pendingRequest());
+    const counts = page.getByTestId('apps-review-overview-ai-counts');
+    await expect.element(counts).toBeInTheDocument();
+    expect(counts.element().getAttribute('style') ?? '').toContain('red');
+    expect(page.getByTestId('apps-review-overview-ai').element().getAttribute('data-worst')).toBe(
+      'high'
+    );
   });
 
   test('without the agentic flag the Overview shows no AI card at all (the gate is shared)', async () => {
@@ -429,18 +495,35 @@ describe('what opens next', () => {
     reviewApprovalQueue.undo(inUndoWindow.id);
   });
 
-  test('🔴 nothing left → "All caught up"', async () => {
+  test('🔴 nothing left → "No more app submissions waiting" (not "nothing else is waiting")', async () => {
     const decided = pendingRequest();
     m.pendingItems = { items: [{ id: decided.id, submittedAt: new Date() }], nextCursor: null };
     const api: { current: ReturnType<typeof useNextPendingReview> | null } = { current: null };
     renderWithProviders(<Harness id={decided.id} onReady={(v) => (api.current = v)} />);
     await vi.waitFor(() => expect(api.current).not.toBeNull());
     api.current?.openNext();
-    await expect.element(page.getByTestId('apps-review-all-caught-up')).toBeInTheDocument();
-    await expect
-      .element(page.getByTestId('apps-review-all-caught-up'))
-      .toHaveTextContent('All caught up');
+    const done = page.getByTestId('apps-review-all-caught-up');
+    await expect.element(done).toBeInTheDocument();
+    await expect.element(done).toHaveTextContent('No more app submissions waiting');
+    expect(done.element().textContent ?? '').not.toMatch(/nothing else is waiting/i);
+    // No listing requests pending → no pointer to them.
+    expect(page.getByTestId('apps-review-other-queues').elements()).toHaveLength(0);
     expect(router.push).not.toHaveBeenCalled();
+  });
+
+  test('🔴 listing requests still pending are COUNTED and linked, not hidden', async () => {
+    const decided = pendingRequest();
+    m.pendingItems = { items: [{ id: decided.id, submittedAt: new Date() }], nextCursor: null };
+    m.queueCount = { onsite: 1, offsite: 3, total: 4 };
+    const api: { current: ReturnType<typeof useNextPendingReview> | null } = { current: null };
+    renderWithProviders(<Harness id={decided.id} onReady={(v) => (api.current = v)} />);
+    await vi.waitFor(() => expect(api.current).not.toBeNull());
+    api.current?.openNext();
+    const others = page.getByTestId('apps-review-other-queues');
+    await expect.element(others).toHaveTextContent('3 listing requests still pending');
+    expect(others.element().querySelector('a')?.getAttribute('href')).toBe(
+      '/apps/review?tab=pending'
+    );
   });
 
   test('the queue not loaded → back to the queue page, never a guessed "caught up"', async () => {

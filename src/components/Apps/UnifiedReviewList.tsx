@@ -40,11 +40,7 @@ import {
   PREVIEW_CHIP_LABELS,
   sensitiveChipLabel,
 } from '~/components/Apps/reviewQueueSignals';
-import {
-  agentReviewVerdict,
-  AGENT_REVIEW_VERDICT_COLORS,
-  AGENT_REVIEW_VERDICT_LABELS,
-} from '~/shared/utils/agent-review-verdict';
+import { agentReviewDisplay } from '~/shared/utils/agent-review-findings';
 import classes from './UnifiedReviewList.module.scss';
 import {
   failedBuildSummary,
@@ -176,7 +172,7 @@ export function UnifiedReviewList({
   retriggeringId?: string | null;
   /**
    * PENDING tab only: the column that would hold Plays holds the row's DECISION SIGNALS
-   * instead — the review preview's state, the AI review's verdict and the sensitive-permission
+   * instead — the review preview's state, the AI review's finding counts and the sensitive-permission
    * count. Plays is a store metric; on a submission nobody has approved yet it is noise.
    * The column count is unchanged, so the ledger is the same.
    */
@@ -394,7 +390,7 @@ export const FULL_LABEL_BADGE_STYLES = {
 } as const;
 
 /**
- * The PENDING row's decision signals: the review preview, the AI review's verdict, and how
+ * The PENDING row's decision signals: the review preview, the AI review's finding counts, and how
  * many sensitive permissions it asks for. Listing-only rows (no code) have none and show `—`.
  * The AI chip is absent — not "not run" — when the viewer has no agentic surface.
  */
@@ -408,8 +404,8 @@ function RowSignals({ row }: { row: UnifiedReviewRow }) {
     );
   }
   const preview = previewChipState(signals.previewState);
-  const verdict =
-    signals.agentReview === undefined ? null : agentReviewVerdict(signals.agentReview);
+  // Finding COUNTS, never a verdict ("AI: 1 high · 2 medium" / "AI: no findings").
+  const ai = signals.agentReview === undefined ? null : agentReviewDisplay(signals.agentReview);
   return (
     <Group gap={4} wrap="wrap" data-testid={`apps-unified-review-signals-${row.key}`}>
       <Badge
@@ -422,16 +418,17 @@ function RowSignals({ row }: { row: UnifiedReviewRow }) {
       >
         {PREVIEW_CHIP_LABELS[preview]}
       </Badge>
-      {verdict && (
+      {ai && (
         <Badge
           size="sm"
           variant="light"
-          color={AGENT_REVIEW_VERDICT_COLORS[verdict]}
+          color={ai.color}
           styles={FULL_LABEL_BADGE_STYLES}
           data-signal="ai"
-          data-state={verdict}
+          data-state={ai.state}
+          data-worst={ai.worst ?? 'none'}
         >
-          {AGENT_REVIEW_VERDICT_LABELS[verdict]}
+          {ai.label}
         </Badge>
       )}
       <Badge

@@ -19,7 +19,7 @@ import { parseReportHash } from '~/components/Apps/agentReviewReport';
  * Every tab the page renders, in RENDER ORDER.
  *
  * 🔴 `overview` LEADS AND IS THE DEFAULT. It composes the decision signals a moderator needs
- * for most submissions on ONE screen — the agentic review's verdict, the requested permissions
+ * for most submissions on ONE screen — the agentic review's finding counts, the requested permissions
  * with their justifications, the running app and its store art — so a routine approve needs no
  * tab at all. The other tabs are the evidence behind each signal, in the order a moderator
  * digs: the code, then the permissions in full, the manifest, the AI report, the preview.

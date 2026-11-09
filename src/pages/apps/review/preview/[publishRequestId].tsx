@@ -5,6 +5,7 @@ import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import type { AnyRequest, OnsiteReviewMode } from '~/components/Apps/OnsiteReviewModal';
 import { ReviewActionBar } from '~/components/Apps/ReviewActionBar';
+import { AllCaughtUp } from '~/components/Apps/ReviewDetailView';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
 import { useNextPendingReview } from '~/components/Apps/useNextPendingReview';
 import { trpc } from '~/utils/trpc';
@@ -146,15 +147,9 @@ export default function ReviewPreviewPage({ publishRequestId, slug }: ReviewPrev
           </Text>
         </Group>
         {caughtUp ? (
-          <Stack align="center" justify="center" gap="sm" p="xl" style={{ flex: 1 }}>
-            <Text fw={600}>All caught up</Text>
-            <Text size="sm" c="dimmed">
-              Nothing else is waiting for review.
-            </Text>
-            <Button component={Link} href="/apps/review" variant="default" size="xs">
-              Back to the queue
-            </Button>
-          </Stack>
+          <Box p="xl" style={{ flex: 1 }}>
+            <AllCaughtUp />
+          </Box>
         ) : isLive && stableIframeSrc ? (
           <ReviewBlockPreviewHost
             publishRequestId={publishRequestId}

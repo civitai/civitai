@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Code, Group, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Badge, Button, Card, Code, Group, Stack, Text, Title } from '@mantine/core';
 import { IconArrowLeft, IconConfetti } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -10,6 +10,7 @@ import {
   type OnsiteReviewSelection,
 } from '~/components/Apps/OnsiteReviewModal';
 import { appDisplayName } from '~/shared/utils/app-display-name';
+import { trpc } from '~/utils/trpc';
 import { ReviewActionBar, type ReviewActionStatus } from '~/components/Apps/ReviewActionBar';
 import { ReviewDetailTabsView } from '~/components/Apps/ReviewDetailTabsView';
 import { useNowTick } from '~/components/Apps/reviewRelativeTime';
@@ -60,7 +61,7 @@ export function ReviewDetailView({
   onClose,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
-  /** After a decision — the page opens the next pending submission (or "All caught up"). */
+  /** After a decision — the page opens the next pending submission (or "No more app submissions waiting"). */
   onClose: () => void;
 }) {
   const mainRef = useRef<HTMLDivElement>(null);
@@ -206,16 +207,33 @@ export function ReviewDetailHeader({
   );
 }
 
-/** The end of the queue: nothing left to review after the last decision. */
+/**
+ * The end of the APP SUBMISSION queue: no on-site submission is left after the last decision.
+ *
+ * 🔴 IT DOES NOT SAY "NOTHING ELSE IS WAITING", because "next" only walks on-site app
+ * submissions — listing requests (store media revisions, standalone listings) can still be
+ * pending. Those are counted here, from the same count proc as the Pending tab's badge, and
+ * linked to the queue.
+ */
 export function AllCaughtUp() {
+  const { data } = trpc.blocks.countReviewQueue.useQuery(undefined, { retry: false });
+  const listingRequests = data?.offsite ?? 0;
   return (
     <Card withBorder p="xl" data-testid="apps-review-all-caught-up">
       <Stack align="center" gap="sm">
         <IconConfetti size={40} color="var(--mantine-color-green-6)" />
-        <Title order={3}>All caught up</Title>
+        <Title order={3}>No more app submissions waiting</Title>
         <Text c="dimmed" ta="center">
-          Nothing else is waiting for review. Pending approvals finish in the background.
+          Pending approvals finish in the background.
         </Text>
+        {listingRequests > 0 && (
+          <Text ta="center" data-testid="apps-review-other-queues">
+            {listingRequests} listing request{listingRequests === 1 ? '' : 's'} still pending —{' '}
+            <Anchor component={Link} href="/apps/review?tab=pending">
+              open the queue
+            </Anchor>
+          </Text>
+        )}
         <Button
           component={Link}
           href="/apps/review"

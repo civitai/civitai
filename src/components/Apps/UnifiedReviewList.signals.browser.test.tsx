@@ -122,10 +122,9 @@ describe('pending rows carry the decision signals', () => {
   test.each([
     [null, 'not-run', 'AI: not run'],
     [summary('running'), 'running', 'AI: running'],
-    [summary('failed'), 'error', 'AI: run failed'],
-    [summary('complete', ['high']), 'fail', 'AI: fail'],
-    [summary('complete', ['medium']), 'concerns', 'AI: concerns'],
-    [summary('complete', ['low']), 'pass', 'AI: pass'],
+    [summary('failed'), 'failed', 'AI: run failed'],
+    [summary('complete', ['low']), 'reported', 'AI: 1 low'],
+    [summary('complete', []), 'reported', 'AI: no findings'],
   ])('AI %o → %s', async (agentReview, state, label) => {
     renderPending([onsite('a', { agentReview })]);
     await expect
@@ -133,6 +132,28 @@ describe('pending rows carry the decision signals', () => {
       .toBeInTheDocument();
     expect(chip('onsite:a', 'ai')?.getAttribute('data-state')).toBe(state);
     expect(chip('onsite:a', 'ai')?.textContent).toBe(label);
+  });
+
+  test('🔴 1 high + 2 medium: the chip COUNTS them, worst first, in red — no verdict', async () => {
+    renderPending([
+      onsite('a', { agentReview: summary('complete', ['medium', 'high', 'medium']) }),
+    ]);
+    await expect
+      .element(page.getByTestId('apps-unified-review-signals-onsite:a'))
+      .toBeInTheDocument();
+    const ai = chip('onsite:a', 'ai')!;
+    expect(ai.textContent).toBe('AI: 1 high · 2 medium');
+    expect(ai.getAttribute('data-worst')).toBe('high');
+    expect(ai.getAttribute('style') ?? '').toContain('red');
+  });
+
+  test('🔴 zero findings reads "no findings" — the word "pass" never appears in the queue', async () => {
+    renderPending([onsite('a', { agentReview: summary('complete', []) })]);
+    await expect
+      .element(page.getByTestId('apps-unified-review-signals-onsite:a'))
+      .toBeInTheDocument();
+    expect(chip('onsite:a', 'ai')?.textContent).toBe('AI: no findings');
+    expect(document.body.textContent ?? '').not.toMatch(/\bpass\b/i);
   });
 
   test('🔴 no agentic surface (field ABSENT) → no AI chip at all, not "not run"', async () => {

@@ -66,25 +66,17 @@ function PendingApprovalCountdown({
         <Text size="sm">
           {committing ? `Approving ${label}…` : `Approving ${label} in ${seconds}s`}
         </Text>
+        {/* Undo only. The toast offers no "approve now": the immediate approve is the bar's
+            own "Approve" button, and a third approve path here was not asked for. */}
         {!committing && (
-          <Group gap={4} wrap="nowrap">
-            <Button
-              size="compact-xs"
-              variant="filled"
-              onClick={onUndo}
-              data-testid="apps-review-approve-undo"
-            >
-              Undo
-            </Button>
-            <Button
-              size="compact-xs"
-              variant="subtle"
-              onClick={() => void queue.commitNow(id)}
-              data-testid="apps-review-approve-now"
-            >
-              Approve now
-            </Button>
-          </Group>
+          <Button
+            size="compact-xs"
+            variant="filled"
+            onClick={onUndo}
+            data-testid="apps-review-approve-undo"
+          >
+            Undo
+          </Button>
         )}
       </Group>
       <Progress

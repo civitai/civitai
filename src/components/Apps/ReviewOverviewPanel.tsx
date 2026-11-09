@@ -14,24 +14,24 @@ import { appDisplayName } from '~/shared/utils/app-display-name';
 
 /**
  * The review page's OVERVIEW tab — the default — composing the decision signals for one
- * submission on ONE screen: the agentic review's verdict, the requested permissions (sensitive
+ * submission on ONE screen: the agentic review's finding counts, the requested permissions (sensitive
  * ones with the developer's justification), the running app, and the store art.
  *
- * 🔴 EVERY PIECE IS THE SHARED ONE. The verdict is `ReviewAgentSection variant="summary"` (its
+ * 🔴 EVERY PIECE IS THE SHARED ONE. The AI finding counts are `ReviewAgentSection variant="summary"` (its
  * gate included), the sensitive rows are `ManifestScopeRow`, the preview is
  * `ReviewPreviewSection`, the art is `ReviewListingMedia`. The other tabs are the evidence
  * behind each signal; nothing here is a second implementation of them.
  *
  * Layout: two columns from `md` — signals left, the app right — so at a 1124×1305 window the
- * verdict, the permissions, the art and the live app all sit above the fold with the action
- * bar. One column below `md`, app first after the verdict.
+ * AI findings, the permissions, the art and the live app all sit above the fold with the action
+ * bar. One column below `md`, app first after the AI findings.
  */
 export function ReviewOverviewPanel({
   selection,
   onOpenTab,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
-  /** Switch the page to another tab (the verdict card's "Full report", "All permissions"). */
+  /** Switch the page to another tab (the AI findings card's "Full report", "All permissions"). */
   onOpenTab?: (tab: 'agent' | 'permissions') => void;
 }) {
   const { request } = selection;

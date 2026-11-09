@@ -6,7 +6,7 @@ import {
   sensitiveScopeCount,
 } from '~/components/Apps/reviewQueueSignals';
 import { nextPendingRequestId, REJECT_REASON_CHIPS } from '~/components/Apps/reviewDecisionFlow';
-import { agentReviewVerdict, type AgentReviewSummary } from '~/shared/utils/agent-review-verdict';
+import { agentReviewDisplay, type AgentReviewSummary } from '~/shared/utils/agent-review-findings';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 
 describe('previewChipState — every lifecycle value, including the two not written yet', () => {
@@ -53,7 +53,7 @@ describe('sensitiveScopeCount', () => {
   });
 });
 
-describe('agentReviewVerdict', () => {
+describe('agentReviewDisplay — finding COUNTS, never a verdict', () => {
   const s = (over: Partial<AgentReviewSummary>): AgentReviewSummary => ({
     status: 'complete',
     severities: [],
@@ -62,22 +62,62 @@ describe('agentReviewVerdict', () => {
     inaccurate: 0,
     ...over,
   });
+
+  it('🔴 1 high + 2 medium reads "1 high · 2 medium", worst first, and is RED', () => {
+    const d = agentReviewDisplay(s({ severities: ['medium', 'high', 'Medium'] }));
+    expect(d.label).toBe('AI: 1 high · 2 medium');
+    expect(d.shortLabel).toBe('1 high · 2 medium');
+    expect(d.color).toBe('red');
+    expect(d.worst).toBe('high');
+    expect(d.state).toBe('reported');
+  });
+
+  it('🔴 zero findings reads "no findings" — never "pass" — and is not green', () => {
+    const d = agentReviewDisplay(s({}));
+    expect(d.label).toBe('AI: no findings');
+    expect(d.color).toBe('gray');
+    expect(d.label).not.toMatch(/pass/i);
+  });
+
   it.each([
-    [null, 'not-run'],
-    [s({ status: 'torn-down' }), 'not-run'],
-    [s({ status: 'running', severities: ['critical'] }), 'running'],
-    [s({ status: 'failed' }), 'error'],
-    [s({}), 'pass'],
-    [s({ severities: ['low', 'info'] }), 'pass'],
-    [s({ severities: ['low', 'Medium'] }), 'concerns'],
-    [s({ severities: ['moderate'] }), 'concerns'],
-    [s({ overBroad: 1 }), 'concerns'],
-    [s({ underDeclared: 2 }), 'concerns'],
-    [s({ inaccurate: 1 }), 'concerns'],
-    [s({ severities: ['low', 'HIGH'], overBroad: 1 }), 'fail'],
-    [s({ status: 'cost-capped', severities: ['critical'] }), 'fail'],
-  ] as const)('%o → %s', (summary, verdict) => {
-    expect(agentReviewVerdict(summary)).toBe(verdict);
+    [null, 'not-run', 'AI: not run', 'gray'],
+    [s({ status: 'torn-down' }), 'not-run', 'AI: not run', 'gray'],
+    [s({ status: 'running', severities: ['critical'] }), 'running', 'AI: running', 'blue'],
+    [s({ status: 'failed' }), 'failed', 'AI: run failed', 'orange'],
+    [s({ severities: ['low', 'info'] }), 'reported', 'AI: 1 low · 1 info', 'yellow'],
+    [s({ severities: ['info'] }), 'reported', 'AI: 1 info', 'gray'],
+    [s({ severities: ['moderate'] }), 'reported', 'AI: 1 medium', 'orange'],
+    [s({ severities: ['weird'] }), 'reported', 'AI: 1 unrated', 'gray'],
+    [s({ overBroad: 1, inaccurate: 1 }), 'reported', 'AI: 2 scope flags', 'orange'],
+    [
+      s({ severities: ['low'], underDeclared: 1 }),
+      'reported',
+      'AI: 1 low · 1 scope flag',
+      'orange',
+    ],
+    [
+      s({ status: 'cost-capped', severities: ['critical', 'low'] }),
+      'reported',
+      'AI: 1 critical · 1 low',
+      'red',
+    ],
+  ] as const)('%o → %s "%s" (%s)', (summary, state, label, color) => {
+    const d = agentReviewDisplay(summary);
+    expect(d.state).toBe(state);
+    expect(d.label).toBe(label);
+    expect(d.color).toBe(color);
+  });
+
+  it('no input ever produces the word "pass"', () => {
+    const inputs = [
+      null,
+      s({}),
+      s({ status: 'cost-capped' }),
+      s({ severities: ['low'] }),
+      s({ status: 'running' }),
+      s({ status: 'failed' }),
+    ];
+    for (const i of inputs) expect(agentReviewDisplay(i).label).not.toMatch(/pass/i);
   });
 });
 

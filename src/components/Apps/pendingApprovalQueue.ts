@@ -151,7 +151,7 @@ export function createPendingApprovalQueue(
       return Promise.all(ids.map((id) => run(id))).then(() => undefined);
     },
 
-    /** Commit one pending approval now (the toast's "Approve now"). */
+    /** Commit one pending approval now (a failed approval's Retry). */
     commitNow(id: string): Promise<void> {
       return run(id);
     },

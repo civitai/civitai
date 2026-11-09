@@ -1,26 +1,22 @@
 import { Badge, Button, Card, Group, Loader, Stack, Text } from '@mantine/core';
 import { IconArrowRight, IconRobot } from '@tabler/icons-react';
 import { computeAgentReviewPollInterval } from '~/components/Apps/AgentReviewPanel';
-import { parseAgentReport, severityBreakdown } from '~/components/Apps/agentReviewReport';
-import {
-  agentReviewVerdict,
-  AGENT_REVIEW_VERDICT_COLORS,
-  AGENT_REVIEW_VERDICT_LABELS,
-  type AgentReviewSummary,
-} from '~/shared/utils/agent-review-verdict';
+import { parseAgentReport } from '~/components/Apps/agentReviewReport';
+import { agentReviewDisplay, type AgentReviewSummary } from '~/shared/utils/agent-review-findings';
 import { trpc } from '~/utils/trpc';
 
 /**
- * The agentic review's VERDICT, as the review page's Overview leads with it: one badge (pass /
- * concerns / fail, or not run / running / run failed), the counts behind it, and the way into
- * the full report. The full report — findings, scope trace, re-run controls, chat — stays on
+ * The agentic review's FINDING COUNTS, as the review page's Overview leads with it: one badge
+ * ("1 high · 2 medium", "no findings", or not run / running / run failed) coloured by the worst
+ * severity, the scope-trace detail, and the way into the full report. 🔴 NO VERDICT: the agent
+ * emits findings, not a judgement, so this never says "pass" — see `agent-review-findings`. The full report — findings, scope trace, re-run controls, chat — stays on
  * the AI report tab; this card is the summary a routine approve needs.
  *
  * 🔴 MOUNTED ONLY THROUGH `ReviewAgentSection variant="summary"`, which owns the gate (pending,
  * on-site, the mod-only agentic flag). It reads the SAME `blocks.getAgentReview` query as the
  * full panel, so the two share one cache entry and never disagree about the report.
  *
- * The verdict is `agentReviewVerdict` — the same rule the queue's AI chip uses server-side.
+ * The label is `agentReviewDisplay` — the same rule the queue's AI chip uses.
  */
 export function agentReportSummary(report: {
   status: string;
@@ -42,7 +38,7 @@ export function agentReportSummary(report: {
   };
 }
 
-export function AgentVerdictCard({
+export function AgentFindingsCard({
   publishRequestId,
   onOpenReport,
 }: {
@@ -64,14 +60,16 @@ export function AgentVerdictCard({
   );
   const report = query.data ?? null;
   const summary = report ? agentReportSummary(report) : null;
-  const verdict = agentReviewVerdict(summary);
-  const findings = summary
-    ? severityBreakdown(summary.severities.map((severity) => ({ severity, evidence: [] })))
-    : null;
-  const finished = verdict === 'pass' || verdict === 'concerns' || verdict === 'fail';
+  const display = agentReviewDisplay(summary);
 
   return (
-    <Card withBorder p="sm" data-testid="apps-review-overview-ai" data-verdict={verdict}>
+    <Card
+      withBorder
+      p="sm"
+      data-testid="apps-review-overview-ai"
+      data-ai-state={display.state}
+      data-worst={display.worst ?? 'none'}
+    >
       <Stack gap={6}>
         <Group justify="space-between" wrap="nowrap">
           <Group gap={6} wrap="nowrap">
@@ -84,10 +82,10 @@ export function AgentVerdictCard({
             ) : (
               <Badge
                 variant="light"
-                color={AGENT_REVIEW_VERDICT_COLORS[verdict]}
-                data-testid="apps-review-overview-ai-verdict"
+                color={display.color}
+                data-testid="apps-review-overview-ai-counts"
               >
-                {AGENT_REVIEW_VERDICT_LABELS[verdict].replace(/^AI: /, '')}
+                {display.shortLabel}
               </Badge>
             )}
             {report?.status === 'cost-capped' && (
@@ -109,14 +107,14 @@ export function AgentVerdictCard({
         </Group>
         {!query.isLoading && (
           <Text size="xs" c="dimmed" data-testid="apps-review-overview-ai-detail">
-            {verdict === 'not-run'
+            {display.state === 'not-run'
               ? 'No AI review has run on this version yet. Start one from the AI report tab.'
-              : verdict === 'running'
+              : display.state === 'running'
               ? 'The AI review is running — this updates on its own.'
-              : verdict === 'error'
+              : display.state === 'failed'
               ? 'The AI review did not finish. The AI report tab says why and can run it again.'
-              : finished && findings && summary
-              ? verdictDetail(findings, summary)
+              : summary
+              ? findingsDetail(summary)
               : ''}
           </Text>
         )}
@@ -125,18 +123,13 @@ export function AgentVerdictCard({
   );
 }
 
-function verdictDetail(f: ReturnType<typeof severityBreakdown>, s: AgentReviewSummary): string {
-  const parts: string[] = [];
-  if (f.critical) parts.push(`${f.critical} critical`);
-  if (f.high) parts.push(`${f.high} high`);
-  if (f.medium) parts.push(`${f.medium} medium`);
-  if (f.low + f.info) parts.push(`${f.low + f.info} low/info`);
+/** The scope-trace breakdown behind the badge's "scope flags", plus the advisory note. */
+function findingsDetail(s: AgentReviewSummary): string {
   const scope: string[] = [];
   if (s.overBroad) scope.push(`${s.overBroad} over-broad`);
   if (s.underDeclared) scope.push(`${s.underDeclared} under-declared`);
   if (s.inaccurate)
     scope.push(`${s.inaccurate} weak justification${s.inaccurate === 1 ? '' : 's'}`);
-  const findingsText = parts.length ? `Findings: ${parts.join(', ')}.` : 'No findings.';
-  const scopeText = scope.length ? ` Permissions: ${scope.join(', ')}.` : '';
-  return `${findingsText}${scopeText} Advisory — your judgement decides.`;
+  const scopeText = scope.length ? `Permissions: ${scope.join(', ')}. ` : '';
+  return `${scopeText}Advisory — counts what the agent found; your judgement decides.`;
 }

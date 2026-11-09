@@ -12,7 +12,7 @@ import { trpc } from '~/utils/trpc';
  * Next = the OLDEST pending on-site request that is neither the one just decided nor waiting on
  * a delayed approval (`nextPendingRequestId`). One page of the queue is enough: the oldest is
  * always on the first page. When nothing is left, `caughtUp` turns true and the caller shows
- * "All caught up"; when the queue has not loaded (or failed), it goes to the queue page rather
+ * "No more app submissions waiting"; when the queue has not loaded (or failed), it goes to the queue page rather
  * than guess that nothing is left.
  */
 export function useNextPendingReview(publishRequestId: string) {
@@ -21,7 +21,7 @@ export function useNextPendingReview(publishRequestId: string) {
   /*
     Keyed on the id it was reached FROM, not a bare boolean: "Approve & next" pushes this same
     dynamic route with a new id and Next keeps the page mounted, so a plain flag would carry
-    "All caught up" over to a submission opened afterwards.
+    "No more app submissions waiting" over to a submission opened afterwards.
   */
   const [caughtUpFrom, setCaughtUpFrom] = useState<string | null>(null);
   const caughtUp = caughtUpFrom === publishRequestId;

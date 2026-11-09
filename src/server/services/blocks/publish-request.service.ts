@@ -1,5 +1,5 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
-import type { AgentReviewSummary } from '~/shared/utils/agent-review-verdict';
+import type { AgentReviewSummary } from '~/shared/utils/agent-review-findings';
 import { sniffImageFormat } from '~/shared/utils/image-magic-bytes';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -2764,7 +2764,7 @@ export function projectQueuePreviewState(
  * 🔴 ONE QUERY FOR THE WHOLE PAGE, AND NONE OF THE REPORT BODIES. The report's JSON columns
  * hold the agent's full findings (tens of KB per row); the queue polls every 15 s, so selecting
  * them for 50 rows to count severities would ship megabytes per tick. `jsonb` is reduced to the
- * handful of fields `agentReviewVerdict` reads, and every path tolerates a malformed body (an
+ * handful of fields `agentReviewDisplay` reads, and every path tolerates a malformed body (an
  * `{ error }` section, a non-array `findings`), since these columns hold untrusted model output.
  *
  * FAIL-SOFT: a failed read returns an empty map, and the rows then carry no summary, which the

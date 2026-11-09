@@ -46,7 +46,7 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 // covered by its own tests); stub it so this shell test doesn't pull that live
 // trpc-backed action bar. The title still comes from `OnsiteReviewModal`.
 vi.mock('~/components/Apps/ReviewDetailView', () => ({
-  AllCaughtUp: () => <div data-testid="all-caught-up">All caught up</div>,
+  AllCaughtUp: () => <div data-testid="all-caught-up">No more app submissions waiting</div>,
   ReviewDetailView: (props: { selection: any; onClose: () => void }) => {
     state.bodyProps.last = props;
     state.selections.push(props.selection);
@@ -193,7 +193,7 @@ describe('ReviewDetailPage — route shell', () => {
     expect(push).toHaveBeenCalledWith('/apps/review/pubreq_older');
   });
 
-  test('🔴 …and when nothing is left it shows "All caught up" instead of navigating', async () => {
+  test('🔴 …and when nothing is left it shows "No more app submissions waiting" instead of navigating', async () => {
     state.query = {
       data: { mode: 'pending', request: REQUEST },
       isLoading: false,

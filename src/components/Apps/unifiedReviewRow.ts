@@ -3,7 +3,7 @@ import { appDisplayName } from '~/shared/utils/app-display-name';
 import type { AnyRequest, ManifestDiffSummary } from '~/components/Apps/OnsiteReviewModal';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import type { ListingReviewMedia } from '~/server/services/blocks/app-listing.service';
-import type { AgentReviewSummary } from '~/shared/utils/agent-review-verdict';
+import type { AgentReviewSummary } from '~/shared/utils/agent-review-findings';
 import { sensitiveScopeCount } from '~/components/Apps/reviewQueueSignals';
 import {
   BUILD_STEP_LABELS,

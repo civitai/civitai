@@ -40,7 +40,7 @@ import {
 } from '@tabler/icons-react';
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { AgentReviewPanel, isOnsiteReviewRequest } from '~/components/Apps/AgentReviewPanel';
-import { AgentVerdictCard } from '~/components/Apps/AgentVerdictCard';
+import { AgentFindingsCard } from '~/components/Apps/AgentFindingsCard';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
 import { groupBlockScopes, PERMISSION_GROUP_LABELS } from '~/components/Apps/listingPermissions';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
@@ -522,8 +522,8 @@ export function ReviewAgentSection({
   selection: NonNullable<OnsiteReviewSelection>;
   /**
    * `full` — the whole report panel (the AI report tab, the modal).
-   * `summary` — the verdict card the Overview leads with. Same gate, so the Overview cannot
-   * show an AI verdict to a reviewer the report itself is hidden from.
+   * `summary` — the finding-counts card the Overview leads with. Same gate, so the Overview cannot
+   * show AI findings to a reviewer the report itself is hidden from.
    */
   variant?: 'full' | 'summary';
   /** `summary` only: opens the full report (the page switches to its AI report tab). */
@@ -549,7 +549,7 @@ export function ReviewAgentSection({
   if (!isOnsiteReviewRequest(request)) return <>{fallback}</>;
   if (variant === 'summary') {
     return (
-      <AgentVerdictCard
+      <AgentFindingsCard
         publishRequestId={request.id}
         slug={request.slug}
         onOpenReport={onOpenReport}
@@ -790,7 +790,7 @@ export function ReviewPreviewSection({
 /** The review page's Preview-tab height: most of the viewport, capped where more stops helping. */
 export const REVIEW_PREVIEW_TALL_HEIGHT = 'min(75vh, 900px)';
 
-/** The Overview's height: bounded so the app, the verdict and the actions share one fold. */
+/** The Overview's height: bounded so the app, the AI findings and the actions share one fold. */
 export const REVIEW_PREVIEW_OVERVIEW_HEIGHT = 'min(60vh, 720px)';
 
 function ReviewPreviewPanel({
