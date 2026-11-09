@@ -431,7 +431,6 @@ describe('fitJson', () => {
     expect(out.trimmedForSize).toEqual([{ at: 'rows', kept: out.result.rows.length, of: 1000 }]);
   });
 
-  // Without where the cut fell, the model re-asked for the same offset and saw page one twice.
   it('moves a paged list on to just after the last item kept', () => {
     const accounts = Array.from({ length: 100 }, (_, i) => ({ userId: i, note: 'x'.repeat(150) }));
     const { json, cuts } = fitJson(

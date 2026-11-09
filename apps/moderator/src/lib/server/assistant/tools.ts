@@ -634,9 +634,9 @@ export const TOOLS = [
   tool({
     name: 'reactors_page',
     description:
-      `Every reactor on this creator over the floor, a page at a time, ranked exactly as reactors_of ranks them (by concentration), with user id breaking ties. Use it when reactors_of's top 20 is not enough: to read the whole list, or to find an account past the top. \`rank\` is each account's place in the full list; \`overFloor\` is how many there are in all; \`nextOffset\` is where the next page starts, null at the end. Ranks past ${REACTOR_PAGE_CAP.toLocaleString(
+      `Every reactor on this creator over the floor, a page at a time, ranked exactly as reactors_of ranks them (by concentration), with user id breaking ties. Use it when reactors_of's top 20 is not enough: to read the whole list, or to find an account past the top. \`rank\` is each account's place in the full list; \`overFloor\` is how many there are in all. ${PAGE_NOTE} Ranks past ${REACTOR_PAGE_CAP.toLocaleString(
         'en-US'
-      )} are not paged: the page reaching that rank comes back short with nextOffset null, and a call starting there is refused. When overFloor is higher, say the list was cut off there rather than that it ends there. The window is the last \`days\` days counted back from each call, so it slides: between two calls a reactor can move, enter or leave, and a page can repeat or skip an account. Keep days and minCount the same across the pages of one list. No address check; use reactors_of for clusters. ` +
+      )} are not paged: the page reaching that rank comes back short with page.nextOffset null, and a call starting there is refused. When overFloor is higher, say the list was cut off there rather than that it ends there. The window is the last \`days\` days counted back from each call, so it slides: between two calls a reactor can move, enter or leave, and a page can repeat or skip an account. Keep days and minCount the same across the pages of one list. No address check; use reactors_of for clusters. ` +
       EMAILS_NOTE,
     input: z.object({
       userId,
@@ -680,13 +680,16 @@ export const TOOLS = [
           minCount,
           overFloor: page.overFloor,
           belowFloor: page.belowFloor,
-          offset,
           ...(pastCap
             ? {
                 refused: `Only the first ${REACTOR_PAGE_CAP} ranks are paged; offset was ${offset}.`,
               }
             : {}),
-          nextOffset: !pastCap && end < page.overFloor && end < REACTOR_PAGE_CAP ? end : null,
+          page: {
+            list: 'actors',
+            offset,
+            nextOffset: !pastCap && end < page.overFloor && end < REACTOR_PAGE_CAP ? end : null,
+          } satisfies Page,
           actors,
         },
         rows: actors.length,
