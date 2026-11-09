@@ -96,6 +96,10 @@ const answersOf = (db: Executor, playerId: number) =>
       sql<SqlBool>`a."createdAt" >= COALESCE((SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = a."playerId"), 'epoch')`
     );
 
+export async function getApprenticeProgress(db: Executor, playerId: number) {
+  return progressOf(db, playerId);
+}
+
 async function progressOf(db: Executor, playerId: number): Promise<ApprenticeProgress> {
   const answered = Number(
     (

@@ -6,7 +6,7 @@ import { closedPageHtml } from '$lib/server/closed-page';
 import { db } from '$lib/server/db';
 import { JOB_PATHS } from '$lib/server/jobs-auth';
 import { getStanding } from '$lib/server/standing';
-import { isWelcomeRequest, safeNext, signedOutLocation } from '$lib/welcome';
+import { isWelcomeRequest, safeNext, showsNotFound, signedOutLocation } from '$lib/welcome';
 
 const PUBLIC_PATHS = new Set([
   '/favicon.svg',
@@ -55,6 +55,10 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   if (result.status === 'login') {
+    // A URL no route answers has nothing to protect: the 404 page, not a sign-in detour.
+    if (showsNotFound({ url: event.url, navigation, routeId: event.route.id })) {
+      return resolve(event);
+    }
     const location = signedOutLocation({
       url: event.url,
       navigation,

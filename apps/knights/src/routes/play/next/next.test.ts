@@ -35,10 +35,16 @@ const { MAX_EXCLUDED } = await import('../optimistic');
 const token = (kind: 'queue' | 'hidden' | 'yesno', id: number) =>
   sealItem('secret', 7, { kind, id });
 
-const ask = async (after: string[], user: Record<string, unknown> = {}, count?: number) => {
+const ask = async (
+  after: string[],
+  user: Record<string, unknown> = {},
+  count?: number,
+  ahead: string[] = []
+) => {
   const url = new URL('http://knights.test/play/next');
   if (count !== undefined) url.searchParams.set('count', String(count));
   for (const value of after) url.searchParams.append('after', value);
+  for (const value of ahead) url.searchParams.append('ahead', value);
   const response = await GET({ url, locals: { user: { id: 7, ...user } } } as never);
   return { response, body: (await response.json()) as Record<string, any> };
 };
@@ -102,6 +108,18 @@ describe('GET /play/next', () => {
     expect(pickYesNo.mock.calls[0][1].exclude).toEqual([3]);
     expect(typeof hidden.slot).toBe('number');
     expect(pickYesNo.mock.calls[0][1].slot).toBe(hidden.slot);
+  });
+
+  it('tells the yes/no picker only the yes/no questions named as ahead, so the stretch counts them', async () => {
+    await ask([], {}, undefined, [token('yesno', 3), token('queue', 9), token('yesno', 4)]);
+    expect(pickYesNo.mock.calls[0][1].ahead).toEqual([3, 4]);
+  });
+
+  it('does not count a skipped or unloadable yes/no item named in after as ahead: it never gets a vote', async () => {
+    skipList.list.mockResolvedValue([{ kind: 'yesno', id: 5 }]);
+    await ask([token('yesno', 5), token('yesno', 6)], {}, undefined, [token('yesno', 5)]);
+    expect(pickYesNo.mock.calls[0][1].ahead).toEqual([]);
+    expect(pickYesNo.mock.calls[0][1].exclude).toEqual([5, 5, 6]);
   });
 
   it('rolls the same for the same items, so asking again cannot reroll', async () => {

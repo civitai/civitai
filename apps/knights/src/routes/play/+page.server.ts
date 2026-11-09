@@ -26,15 +26,16 @@ import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.se
 import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { castYesNoVote } from '$lib/server/yesno/vote';
 import { apprenticeDeps } from '$lib/server/apprenticeship/runtime';
-import { crossedMilestone } from '$lib/server/apprenticeship/standing';
+import { crossedMilestone, previousMilestone } from '$lib/server/apprenticeship/standing';
 import { acolyteLevelGoldSince } from '$lib/server/apprenticeship/level-gold';
 import {
   acknowledgeCheckpoint,
   answerApprentice,
   getApprentice,
+  getApprenticeProgress,
 } from '$lib/server/apprenticeship/apprenticeship.service';
 import { pickItem } from './next-item.server';
-import { apprenticePayload } from './apprentice';
+import { apprenticePayload, progressPayload } from './apprentice';
 import type { Actions, PageServerLoad } from './$types';
 
 const BLOCK_REASON_TEXT = 'Choose a reason from the list when you block an image.';
@@ -104,7 +105,14 @@ async function acolyteMilestone(
   if (progress?.kind !== 'level') return progress;
   const milestone = crossedMilestone(progress.from, progress.level);
   if (milestone) {
-    const levelGold = await acolyteLevelGoldSince(db, userId, progress.from, progress.level);
+    // The card celebrates this milestone: its gold is the levels since the one before it (not since the level last seen,
+    // which a quiet load moves up every level), and stops here, so it does not grow with the levels the player reaches while the card is open.
+    const levelGold = await acolyteLevelGoldSince(
+      db,
+      userId,
+      previousMilestone(milestone.level),
+      milestone.level
+    );
     return { ...progress, milestone: milestone.copy, milestoneLevel: milestone.level, levelGold };
   }
   await dismissProgress(seenStore, userId, status);
@@ -152,10 +160,15 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
       : null;
   const skipped = lockedUntil || muted ? null : await skippedFor(skipStore, locals.user.id);
   const resetPending = status.smites >= status.maxSmites;
-  const [picked, daily, rail] = await Promise.all([
+  // A muted Acolyte keeps the apprentice meter (read only: the apprenticeship serves them nothing to answer).
+  const mutedApprentice = muted && status.rank === 'Acolyte';
+  const [picked, daily, rail, apprenticeMeter] = await Promise.all([
     lockedUntil || muted || resetPending ? null : pickItem(locals.user.id, status.rank, skipped),
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
     railFor(locals.user.id, now, status.fervor),
+    mutedApprentice
+      ? getApprenticeProgress(db, locals.user.id).then(progressPayload)
+      : Promise.resolve(null),
   ]);
   const lockoutSeconds = lockedUntil
     ? Math.max(1, Math.ceil((lockedUntil.getTime() - now.getTime()) / 1000))
@@ -168,6 +181,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     daily,
     rail,
     resetPending,
+    apprenticeMeter,
     lockoutSeconds,
     question: picked?.question ?? null,
     item: picked?.item ?? null,

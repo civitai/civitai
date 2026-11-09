@@ -78,7 +78,8 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
     // For the header's gold popover, the rank gauge popover and the rank badge on the avatar.
     goldPerBuzz: CONVERSION.goldPerBuzz,
     ladder: ladderRows(),
-    badges: await rankBadgeUrls(db),
+    // A signed-out visitor (the welcome page, a 404) wears no badge, so the cosmetics are not read for them.
+    badges: locals.user ? await rankBadgeUrls(db) : { small: {}, large: {} },
     recapUnseen: await recapUnseen(locals.user?.id),
     headerStats: player !== undefined && locals.user ? await headerStats(locals.user.id) : null,
   };

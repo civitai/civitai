@@ -85,7 +85,7 @@ votes, never player rows.
 - Each feed slot rolls once, per player, against `KNIGHTS_YESNO_SHARE` (default above one half; 0 switches questions off). The roll is
   fixed until the player answers, so a reload does not change it. With no rating to show, a question is shown whenever there is one.
 - A stretch is `KNIGHTS_YESNO_STRETCH` questions of one axis in a row (default 8); the next axis starts with a banner. The player's
-  latest yes/no answers in the ledger say where they are in a stretch, so no state is kept.
+  latest yes/no answers in the ledger say where they are in a stretch, so no state is kept. `GET /play/next` hands out up to 10 items at once, so each pick also counts the yes/no questions already handed out ahead of it and not yet on the ledger (`ahead` in `pickYesNo`): the stretch cap and the new-category banner hold across the buffer, and the banner is on the first question of a stretch only.
 - A question is offered only to a rank that may judge Knight items, on an image `servableImage` accepts, if it is `Open`, if the
   player has not answered it, and if they have not answered the same words about the same image under another id. Questions under
   way come first, so they reach their consensus.

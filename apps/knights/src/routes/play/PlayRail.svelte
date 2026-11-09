@@ -1,7 +1,7 @@
 <script lang="ts">
   import HeartsRow from '$lib/HeartsRow.svelte';
   import Icon from '$lib/Icon.svelte';
-  import { watchStrip } from '$lib/chrome';
+  import { belowBarCue, watchStrip, withArticle } from '$lib/chrome';
   import { count, percent } from '$lib/format';
   import { nextRankRequirements, pendingSegment } from '$lib/gauge';
   import { bump } from '$lib/motion';
@@ -18,6 +18,7 @@
   }: { status: PlayerStatus; daily: DailyStatus; rail: Rail; ladder: LadderRow[] } = $props();
 
   const strip = $derived(watchStrip(daily));
+  const belowBar = $derived(belowBarCue(status));
   const hearts = $derived(Math.max(0, status.maxSmites - status.smites));
   const standing = $derived(rail.standing);
   const next = $derived(status.nextRank);
@@ -104,6 +105,9 @@
 
   <section aria-labelledby="rail-next">
     <h2 id="rail-next">{next ? `Next rank · ${next.rank}` : 'Rank'}</h2>
+    {#if belowBar}
+      <p class="below" role="status">{belowBar} <a href="/codex#ranks">Why?</a></p>
+    {/if}
     {#if next}
       <div class="meter">
         <p class="row"><span>Level {status.level} / {next.fromLevel}</span><span>{next.levelMet ? 'Reached' : `${next.levelsToGo} to go`}</span></p>
@@ -126,7 +130,7 @@
       </div>
       {#if days}<p class="sub">{days.text}</p>{/if}
     {:else}
-      <p class="sub">{status.rank === 'Paladin' ? 'You hold the highest rank.' : `You are a ${status.rank}.`}</p>
+      <p class="sub">{status.rank === 'Paladin' ? 'You hold the highest rank.' : `You are ${withArticle(status.rank)}.`}</p>
     {/if}
   </section>
 
@@ -189,6 +193,15 @@
   b {
     color: var(--io-parchment);
     font-weight: 600;
+  }
+  .below {
+    margin-bottom: 12px;
+    color: var(--io-crimson-text);
+    font: 500 12px/1.4 var(--io-font-ui);
+  }
+  .below a {
+    color: inherit;
+    text-decoration: underline;
   }
   .sub {
     margin-top: 2px;

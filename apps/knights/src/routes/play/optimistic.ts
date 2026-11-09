@@ -41,22 +41,24 @@ const FAILED_NOTICE = 'Your judgment could not be recorded.';
  * served), and the next stretch is asked for without the items whose votes may not have landed yet or that would not load.
  */
 export function createVoteTracker() {
-  const sent: { key: string; token: string }[] = [];
+  const sent: { key: string; token: string; vote: boolean; live: boolean }[] = [];
   let avoided: string[] = [];
   let inFlight = 0;
   return {
     /** False when this item was already sent; the caller must not post it again. */
-    claim(key: string, token: string): boolean {
+    claim(key: string, token: string, vote = true): boolean {
       if (sent.some((entry) => entry.key === key)) return false;
-      sent.push({ key, token });
+      sent.push({ key, token, vote, live: true });
       inFlight += 1;
       return true;
     },
     has(key: string): boolean {
       return sent.some((entry) => entry.key === key);
     },
-    settle() {
+    settle(key?: string) {
       inFlight = Math.max(0, inFlight - 1);
+      const entry = sent.find((it) => it.key === key);
+      if (entry) entry.live = false;
     },
     /** A vote that never reached the server: the item may be served again, and must be votable when it is. */
     release(key: string) {
@@ -70,6 +72,13 @@ export function createVoteTracker() {
     },
     get pending() {
       return inFlight;
+    },
+    /**
+     * Tokens of the votes still in flight, not yet on the server's ledger: what the picker counts as already judged. A skip
+     * or an item that would not load is not one (it never gets a vote), so neither is in here.
+     */
+    voting(): string[] {
+      return sent.filter((entry) => entry.vote && entry.live).map((entry) => entry.token);
     },
     excluded(current: string): string[] {
       const tokens = [...avoided, ...sent.map((entry) => entry.token)];

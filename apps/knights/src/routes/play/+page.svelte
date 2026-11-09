@@ -17,7 +17,7 @@
   import { sound } from '$lib/sound';
   import WatchHairline from '$lib/WatchHairline.svelte';
   import WatchMeta from '$lib/WatchMeta.svelte';
-  import { heartsLeft, watchStrip } from '$lib/chrome';
+  import { heartsLeft, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress } from './keys';
@@ -300,8 +300,14 @@
       const after = [...tracker.excluded(shown), ...buffer.tokens()]
         .slice(-MAX_EXCLUDED)
         .map((token) => `after=${encodeURIComponent(token)}`);
+      // What the yes/no stretch counts as already judged: votes in flight, the item on screen, then the buffer. Skipped and
+      // unloadable items are in `after` (left out) but never here, since they never get a vote.
+      const ahead = [...tracker.voting().filter((token) => token !== shown), shown, ...buffer.tokens()]
+        .filter(Boolean)
+        .slice(-MAX_EXCLUDED)
+        .map((token) => `ahead=${encodeURIComponent(token)}`);
       const count = refillCount(buffer.size);
-      const response = await fetch(`/play/next?count=${count}&${after.join('&')}`, {
+      const response = await fetch(`/play/next?count=${count}&${after.join('&')}&${ahead.join('&')}`, {
         headers: { accept: 'application/json' },
       });
       const body: { items?: PickedItem[] } | null = response.ok ? await response.json() : null;
@@ -338,7 +344,7 @@
     noteTimer = setTimeout(() => (note = null), NOTE_MS);
   }
 
-  async function post(action: URL, body: FormData, key: string) {
+  async function post(action: URL, body: FormData, key: string, counted: boolean) {
     let outcome = describeOutcome(null);
     let reached = false;
     try {
@@ -354,9 +360,11 @@
     } catch {
       // Keeps the lost-connection notice.
     }
-    tracker.settle();
+    tracker.settle(key);
     if (!reached) tracker.release(key);
     if (!outcome.ok) {
+      if (counted) sentVotes = Math.max(0, sentVotes - 1);
+      counted = false;
       tell(outcome.message);
       dropBuffered(key);
       if (outcome.resync) {
@@ -367,17 +375,19 @@
     }
     // The page's own data (status, rewards, level notices) is read again once the vote has landed.
     await invalidate('app:play').catch(() => {});
+    // The page's data now holds the vote, so it stops being counted on top.
+    if (counted) sentVotes = Math.max(0, sentVotes - 1);
   }
 
   // The plain form post: once the page has the server's next item, what was on screen ahead of it goes. The item counts
   // as sent from here on, so a reload that serves it again (its vote still in flight) is not posted a second time.
   const submitAndResync = (input: Parameters<SubmitFunction>[0], key: string, token: string): ReturnType<SubmitFunction> => {
-    tracker.claim(key, token);
+    tracker.claim(key, token, input.action.search.startsWith('?/vote'));
     const finish = submit(input) as (options: FinishOptions) => Promise<void>;
     return async (options) => {
       await finish(options);
       local = null;
-      tracker.settle();
+      tracker.settle(key);
       const { result } = options;
       const settled = result.type === 'success' || (result.type === 'failure' && result.status === 409);
       if (!settled) tracker.release(key);
@@ -401,7 +411,7 @@
     const next = buffer.peek();
     if (!next) return submitAndResync(input, key, token);
     input.cancel();
-    if (cooling || !tracker.claim(key, token)) return;
+    if (cooling || !tracker.claim(key, token, input.action.search.startsWith('?/vote'))) return;
     const answer = answerOf(input.submitter);
     if (answer === BLOCKED_ANSWER && blockReason) input.formData.set('blockReason', blockReason);
     blockReason = null;
@@ -411,10 +421,14 @@
     syncBuffer();
     cooling = true;
     setTimeout(() => (cooling = false), SETTLE_MS);
-    void post(input.action, input.formData, key);
+    const isVote = input.action.search.startsWith('?/vote');
+    if (isVote) sentVotes += 1;
+    void post(input.action, input.formData, key, isVote);
   };
 
-  let strip = $derived(data.mode === 'queue' ? watchStrip(data.daily) : null);
+  // Votes posted in the background that the page's data does not hold yet; the Watch counts them at once.
+  let sentVotes = $state(0);
+  let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, sentVotes)) : null);
   let watching = $derived(data.mode === 'queue' && !paused && Boolean(view) && watchInProgress(data.daily));
 
   beforeNavigate(({ cancel, type, to }) => {
@@ -500,7 +514,16 @@
       {submit}
     />
   {:else}
-  {#if strip && data.mode === 'queue'}
+  {#if data.mode === 'queue' && data.apprenticeMeter}
+    <ApprenticeMeter
+      level={data.status.level}
+      levelFraction={data.status.progressPercent / 100}
+      accuracy={data.apprenticeMeter.accuracy}
+      bar={data.apprenticeMeter.bar}
+      knightLevel={data.apprenticeMeter.knightLevel}
+      answerWindow={data.apprenticeMeter.window}
+    />
+  {:else if strip && data.mode === 'queue'}
     <WatchHairline label={strip.label} value={strip.value} max={strip.max} />
     <WatchMeta
       value={strip.value}
@@ -678,8 +701,8 @@
     <QueueClear daily={data.daily} />
   {/if}
   </div>
-  {#if data.mode === 'queue'}
-    <PlayRail status={data.status} daily={data.daily} rail={data.rail} ladder={data.ladder} />
+  {#if data.mode === 'queue' && !data.apprenticeMeter}
+    <PlayRail status={data.status} daily={withVotesSent(data.daily, sentVotes)} rail={data.rail} ladder={data.ladder} />
   {/if}
   </div>
   {/if}

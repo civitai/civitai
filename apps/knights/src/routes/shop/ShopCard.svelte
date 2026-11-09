@@ -209,6 +209,9 @@
     text-transform: uppercase;
   }
   .perks {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
     color: var(--io-gold);
     font: 500 12px/1.4 var(--io-font-ui);
     text-decoration: underline;

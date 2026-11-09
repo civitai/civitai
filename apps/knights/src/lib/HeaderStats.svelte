@@ -34,8 +34,8 @@
   const requirements = $derived(nextRankRequirements(status, ladder));
   const toNext = $derived(status.xpForNextLevel - status.xpIntoLevel);
 
-  // What a vote just earned floats up from its chip and the gold counter ticks to its new value. The counter is spendable plus
-  // pending, so it moves as soon as a vote earns pending gold. Ambient only: nothing here waits on, or blocks, the next answer.
+  // What a vote just earned floats up from its chip and the gold counter ticks to its new value. The counter is spendable gold
+  // (as in the shop; pending is in its title), so it moves when votes settle. Ambient only: nothing here waits on, or blocks, the next answer.
   let shownGold = $state(untrack(() => goldView(status, goldPerBuzz).pill));
   let floater = $state<{ id: number; xp: number; gold: number } | null>(null);
   let previous: PlayerStatus | null = null;
@@ -74,8 +74,8 @@
     </li>
   {/if}
 
-  <li>
-    <StatPopover id="gold-popover" label="Gold: {count(shownGold)}, details">
+  <li title={gold.title}>
+    <StatPopover id="gold-popover" label="Gold: {gold.title}, details">
       {#snippet trigger()}
         <span class="icon"><Icon name="coins" /></span>
         {count(shownGold)}
