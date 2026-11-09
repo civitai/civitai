@@ -34,21 +34,49 @@ export function getPossibleBlockedNsfwWords(value?: string | null) {
   return blockedNSFW.filter((word) => regex.test(word));
 }
 
-export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) => {
+export interface MetaAuditResult {
+  blockedFor: string[];
+  success: boolean;
+  /** Set when every match is one the generator lets a user click through. */
+  softBlock?: boolean;
+}
+
+export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean): MetaAuditResult => {
   if (!meta) return { blockedFor: [], success: true };
   const prompt = normalizeText(meta.prompt);
 
   // Add minor check
   if (nsfw) {
     const { found, age } = includesMinorAge(prompt);
-    if (found && age != null) return { blockedFor: [`${age} year old`], success: false };
+    if (found && age != null)
+      return { blockedFor: [`${age} year old`], success: false, softBlock: false };
   }
 
   const blockList = nsfw ? blockedNSFWRegexLazy() : blockedRegexLazy();
   const blockedFor = blockList
     .filter(({ regex }) => meta?.prompt && regex.test(prompt))
     .map((x) => x.word);
-  return { blockedFor, success: !blockedFor.length };
+  return {
+    blockedFor,
+    success: !blockedFor.length,
+    // Severity is the generator's per-word rule. Every overridable word on the SFW list is also on
+    // the NSFW list (pinned by a test), so labelling an SFW-list hit `nsfw_blocklist` looks it up
+    // in the same overridable set the generator uses.
+    softBlock: isSoftBlock(
+      blockedFor.map((word) => ({ category: 'nsfw_blocklist', message: word, matchedWord: word }))
+    ),
+  };
+};
+
+/**
+ * The verdict for an image added to a post, on the client and in the server scan alike: a hit
+ * whose every word the generator lets through does not block, so a generation the generator
+ * allowed can be posted. `auditMetaData` alone stays strict for its other callers.
+ */
+export const auditPostImageMeta = (meta: ImageMetaProps | undefined, nsfw: boolean) => {
+  const audit = auditMetaData(meta, nsfw);
+  if (audit.success || !audit.softBlock) return { ...audit, softBlockedFor: [] as string[] };
+  return { blockedFor: [] as string[], success: true, softBlockedFor: audit.blockedFor };
 };
 
 // #region [enriched audit]
