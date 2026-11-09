@@ -51,6 +51,7 @@ import { modelFileRouter } from '~/server/routers/model-file.router';
 import { modelVersionRouter } from '~/server/routers/model-version.router';
 import { modelRouter } from '~/server/routers/model.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { withoutEpochUrls } from '~/server/services/training-data-restricted.service';
 
 const OWNER = 7;
 const OTHER = 8;
@@ -192,9 +193,11 @@ describe.each(SURFACES)('%s and a deleted or taken-down model', (_, read) => {
     expect(epochsOf(weightsFile)[0]).not.toHaveProperty('modelUrl');
   });
 
-  it('gives a moderator the stored epoch urls', async () => {
+  it('gives a moderator the stored metadata', async () => {
     const files = await read(TAKEN_DOWN, { id: 1, isModerator: true });
 
+    expect(files.find((f) => f.id === 1)?.metadata).toEqual(weights().metadata);
+    expect(files.find((f) => f.id === 2)?.metadata.selectedEpochUrl).toBe(EPOCH_URL);
     expect(epochsOf(files.find((f) => f.id === 2))[0].modelUrl).toBe(EPOCH_URL);
   });
 
@@ -202,5 +205,65 @@ describe.each(SURFACES)('%s and a deleted or taken-down model', (_, read) => {
     const files = await read(PUBLISHED, { id: OWNER, isModerator: false });
 
     for (const file of files) expect(epochsOf(file)[0].modelUrl).toBe(EPOCH_URL);
+  });
+});
+
+describe('modelVersion.getByIdForEdit and a taken-down model', () => {
+  async function readForEdit(user: { id: number; isModerator: boolean }) {
+    // The ownership check, from either client.
+    for (const db of [dbMock.dbRead, dbMock.dbWrite]) {
+      db.modelVersion.findUnique.mockResolvedValue({
+        modelId: 1,
+        model: { userId: OWNER },
+      } as never);
+      db.model.findUnique.mockResolvedValue({ userId: OWNER } as never);
+      db.model.findFirst.mockResolvedValue({ userId: OWNER } as never);
+    }
+    getModelVersionForEditHandler.mockResolvedValue({
+      id: VERSION,
+      model: { user: { id: OWNER }, ...TAKEN_DOWN },
+      files: [weights(), dataset()],
+    });
+    const res = await modelVersionRouter.createCaller(ctx(user)).getByIdForEdit({ id: VERSION });
+    return res.files as unknown as File[];
+  }
+
+  it('withholds the epoch urls from its owner', async () => {
+    for (const file of await readForEdit({ id: OWNER, isModerator: false })) {
+      expect(file.metadata.selectedEpochUrl).toBeUndefined();
+      expect(epochsOf(file)[0]).not.toHaveProperty('modelUrl');
+    }
+  });
+
+  it('gives a moderator the epoch urls', async () => {
+    const files = await readForEdit({ id: OTHER, isModerator: true });
+
+    expect(epochsOf(files.find((f) => f.id === 2))[0].modelUrl).toBe(EPOCH_URL);
+  });
+});
+
+describe('withoutEpochUrls', () => {
+  it('removes a legacy run epoch url and keeps the rest of the epoch', () => {
+    const legacy = {
+      metadata: {
+        trainingResults: {
+          epochs: [{ epoch_number: 2, model_url: EPOCH_URL, sample_images: [{ image_url: 'x' }] }],
+        },
+      },
+    };
+
+    expect(withoutEpochUrls([legacy])[0].metadata.trainingResults.epochs).toEqual([
+      { epoch_number: 2, sample_images: [{ image_url: 'x' }] },
+    ]);
+  });
+
+  // The files can come from a shared cache, so stripping in place would reach the next viewer.
+  it('leaves the files it was given untouched', () => {
+    const files = [weights(), dataset()];
+    const before = structuredClone(files);
+
+    withoutEpochUrls(files);
+
+    expect(files).toEqual(before);
   });
 });
