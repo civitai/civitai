@@ -1219,6 +1219,12 @@ export const userHasReceivedReviewsCache = createUserContentCountCache<UserHasRe
   `
 );
 
+/** For the model owners of reviews that were just released or hidden again. */
+export async function refreshHasReceivedReviews(reviews: { modelOwnerId: number }[]) {
+  const ownerIds = [...new Set(reviews.map((review) => review.modelOwnerId))];
+  if (ownerIds.length) await userHasReceivedReviewsCache.refresh(ownerIds);
+}
+
 type UserContentOverview = {
   id: number;
   modelCount: number;

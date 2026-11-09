@@ -46,6 +46,10 @@ vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
 }));
 
 const { updatePost } = await import('~/server/services/post.service');
+const { userHasReceivedReviewsCache } = await import('~/server/redis/caches');
+const refreshHasReceivedReviews = vi
+  .spyOn(userHasReceivedReviewsCache, 'refresh')
+  .mockResolvedValue(undefined as never);
 
 const POST_ID = 1;
 const DAY = 24 * 60 * 60 * 1000;
@@ -74,6 +78,20 @@ describe('updatePost releasing the reviews written from the post', () => {
     await publishAt(new Date(Date.now() - 1000));
 
     expect(release).toHaveBeenCalledExactlyOnceWith([POST_ID]);
+  });
+
+  it("refreshes the model owners' has-received-reviews flag once per owner", async () => {
+    release.mockResolvedValueOnce([
+      { id: 1, modelOwnerId: 7 },
+      { id: 2, modelOwnerId: 7 },
+      { id: 3, modelOwnerId: 8 },
+    ]);
+
+    await publishAt(new Date(Date.now() - 1000));
+
+    await vi.waitFor(() =>
+      expect(refreshHasReceivedReviews).toHaveBeenCalledExactlyOnceWith([7, 8])
+    );
   });
 
   it('leaves them for the scheduled-publishing job when the post is scheduled', async () => {

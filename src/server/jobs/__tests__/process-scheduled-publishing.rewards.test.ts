@@ -48,6 +48,7 @@ vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: mockProces
 vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: vi.fn() },
   userImageVideoCountCaches: { refresh: mockRefreshImageVideoCounts },
+  refreshHasReceivedReviews: vi.fn(),
 }));
 vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,

@@ -117,7 +117,8 @@ export async function pendingPostIdFor({ postId, userId }: { postId: number; use
 /**
  * Makes the reviews written from these posts public once the post is live: touched so the metric
  * jobs recount them, the rating totals busted, the model owner notified. Reviews of a post still
- * scheduled are left for a later call.
+ * scheduled are left for a later call. The caller refreshes the owners' cached has-received-reviews
+ * flag: the cache module imports this one.
  *
  * `onlyUnreleased` skips a review touched since its post's `publishedAt`, which a release does, so a
  * sweep that hands the same post over twice notifies once. It also skips a review created while a
@@ -130,16 +131,24 @@ export async function releasePendingReviewsForPosts(
 ) {
   if (!postIds.length) return [];
   const released = await dbWrite.$queryRaw<
-    { id: number; modelId: number; modelVersionId: number; recommended: boolean; userId: number }[]
+    {
+      id: number;
+      modelId: number;
+      modelVersionId: number;
+      recommended: boolean;
+      userId: number;
+      modelOwnerId: number;
+    }[]
   >`
     UPDATE "ResourceReview" rr
     SET "updatedAt" = now()
-    FROM "Post" p
+    FROM "Post" p, "Model" m
     WHERE p.id = rr."postId"
+      AND m.id = rr."modelId"
       AND rr."postId" IN (${Prisma.join(postIds)})
       AND p."publishedAt" <= now()
       ${onlyUnreleased ? Prisma.sql`AND rr."updatedAt" < p."publishedAt"` : Prisma.empty}
-    RETURNING rr.id, rr."modelId", rr."modelVersionId", rr.recommended, rr."userId"
+    RETURNING rr.id, rr."modelId", rr."modelVersionId", rr.recommended, rr."userId", m."userId" AS "modelOwnerId"
   `;
   if (!released.length) return released;
   await bustRatingTotalsForRows(released).catch(() => undefined);
@@ -154,11 +163,14 @@ export async function releasePendingReviewsForPosts(
  */
 export async function refreshReviewsForUnpublishedPosts(postIds: number[]) {
   if (!postIds.length) return [];
-  const refreshed = await dbWrite.$queryRaw<{ modelId: number; modelVersionId: number }[]>`
-    UPDATE "ResourceReview"
+  const refreshed = await dbWrite.$queryRaw<
+    { modelId: number; modelVersionId: number; modelOwnerId: number }[]
+  >`
+    UPDATE "ResourceReview" rr
     SET "updatedAt" = now()
-    WHERE "postId" IN (${Prisma.join(postIds)})
-    RETURNING "modelId", "modelVersionId"
+    FROM "Model" m
+    WHERE m.id = rr."modelId" AND rr."postId" IN (${Prisma.join(postIds)})
+    RETURNING rr."modelId", rr."modelVersionId", m."userId" AS "modelOwnerId"
   `;
   if (refreshed.length) await bustRatingTotalsForRows(refreshed).catch(() => undefined);
   return refreshed;

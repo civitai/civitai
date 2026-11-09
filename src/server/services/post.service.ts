@@ -38,6 +38,7 @@ import {
   userBasicCache,
   userImageVideoCountCaches,
   userPostCountCache,
+  refreshHasReceivedReviews,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
@@ -1259,15 +1260,17 @@ export async function afterPostsPublish(posts: { postId: number; userId: number 
  */
 export function releasePostReviews(postIds: number[]) {
   if (!postIds.length) return;
-  void releasePendingReviewsForPosts(postIds).catch((error) =>
-    logToAxiom({
-      name: 'post-service',
-      type: 'error',
-      message: 'Failed to release pending resource reviews',
-      postIds,
-      error: (error as Error)?.message,
-    }).catch(() => undefined)
-  );
+  void releasePendingReviewsForPosts(postIds)
+    .then((reviews) => refreshHasReceivedReviews(reviews))
+    .catch((error) =>
+      logToAxiom({
+        name: 'post-service',
+        type: 'error',
+        message: 'Failed to release pending resource reviews',
+        postIds,
+        error: (error as Error)?.message,
+      }).catch(() => undefined)
+    );
 }
 
 /**
@@ -1276,15 +1279,17 @@ export function releasePostReviews(postIds: number[]) {
  */
 export function refreshUnpublishedPostReviews(postIds: number[]) {
   if (!postIds.length) return;
-  void refreshReviewsForUnpublishedPosts(postIds).catch((error) =>
-    logToAxiom({
-      name: 'post-service',
-      type: 'error',
-      message: 'Failed to recount the resource reviews of unpublished posts',
-      postIds,
-      error: (error as Error)?.message,
-    }).catch(() => undefined)
-  );
+  void refreshReviewsForUnpublishedPosts(postIds)
+    .then((reviews) => refreshHasReceivedReviews(reviews))
+    .catch((error) =>
+      logToAxiom({
+        name: 'post-service',
+        type: 'error',
+        message: 'Failed to recount the resource reviews of unpublished posts',
+        postIds,
+        error: (error as Error)?.message,
+      }).catch(() => undefined)
+    );
 }
 
 /** Everything an unpublish needs besides the write: the images leave search, the counts drop. */

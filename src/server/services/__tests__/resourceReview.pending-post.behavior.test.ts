@@ -274,7 +274,10 @@ describe('against Postgres', () => {
       [2, 102, SCHEDULED],
     ]);
 
-    await releasePendingReviewsForPosts([LIVE, SCHEDULED]);
+    const released = await releasePendingReviewsForPosts([LIVE, SCHEDULED]);
+
+    // The model owner, whose "has received reviews" flag the caller refreshes.
+    expect(released).toEqual([expect.objectContaining({ id: 1, modelOwnerId: MODEL_OWNER })]);
 
     expect(createNotification).toHaveBeenCalledTimes(1);
     expect(createNotification).toHaveBeenCalledWith(
@@ -318,7 +321,9 @@ describe('against Postgres', () => {
       [3, 103, null],
     ]);
 
-    await refreshReviewsForUnpublishedPosts([LIVE]);
+    const refreshed = await refreshReviewsForUnpublishedPosts([LIVE]);
+
+    expect(refreshed).toEqual([expect.objectContaining({ modelOwnerId: MODEL_OWNER })]);
 
     const { rows } = await pg.query<{ id: number; touched: boolean }>(
       `SELECT id, "updatedAt" > now() - interval '1 minute' AS touched FROM "ResourceReview" ORDER BY id`

@@ -6,7 +6,11 @@ import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/com
 import { constants, POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 import { uniq, uniqBy } from 'lodash-es';
 import { logToAxiom } from '~/server/logging/client';
-import { dataForModelsCache, userImageVideoCountCaches } from '~/server/redis/caches';
+import {
+  dataForModelsCache,
+  refreshHasReceivedReviews,
+  userImageVideoCountCaches,
+} from '~/server/redis/caches';
 import { firstDailyPostReward } from '~/server/rewards';
 import { getFirstDailyPostRewardedIds } from '~/server/rewards/active/firstDailyPost.reward';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
@@ -450,12 +454,14 @@ export const processScheduledPublishing = createJob(
     // released, by its publish or an earlier run.
     const flippedPostIds = new Set(flippedPosts.map((p) => p.id));
     await releasePendingReviewsForPosts([...flippedPostIds])
-      .then(() =>
-        releasePendingReviewsForPosts(
+      .then(async (released) => [
+        ...released,
+        ...(await releasePendingReviewsForPosts(
           newlyLivePosts.map((p) => p.id).filter((id) => !flippedPostIds.has(id)),
           { onlyUnreleased: true }
-        )
-      )
+        )),
+      ])
+      .then((reviews) => refreshHasReceivedReviews(reviews))
       .catch((error) =>
         logToAxiom({
           name: 'process-scheduled-publishing',
