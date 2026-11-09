@@ -21,12 +21,14 @@
     FeedbackSibling,
     KnownIssueOption,
   } from '$lib/server/feedback.service';
+  import type { FeedbackCaptureView } from '@civitai/shared/feedback-capture';
 
   let {
     row,
     context,
     siblings,
     knownIssues,
+    captureView = 'blur',
     grafanaUrl,
     civitaiUrl,
     canTriage,
@@ -39,6 +41,8 @@
     siblings: FeedbackSibling[];
     /** Passed straight through to `FeedbackPromote`'s issue picker. */
     knownIssues: KnownIssueOption[];
+    /** How to show the page capture (`feedbackPanelExtras`). */
+    captureView?: FeedbackCaptureView;
     grafanaUrl: string | null;
     civitaiUrl: string;
     canTriage: boolean;
@@ -220,7 +224,7 @@
     <!-- Not gated on area: with the orchestration area's flag off, "Report this" files under
          site-bug-report and those rows carry the same ids and toast text. -->
     <FeedbackErrorReport {context} />
-    <FeedbackAttachments {context} />
+    <FeedbackAttachments {context} {captureView} />
     {#if context.hqTask}
       <p class="text-sm">
         <a class={LINK_CLASS} href={context.hqTask.url} target="_blank" rel="noopener noreferrer"

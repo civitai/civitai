@@ -6,6 +6,8 @@ import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { CreateFeedbackInput } from '~/server/schema/feedback.schema';
 import type { FeedbackServerStamp } from '~/server/services/feedback.service';
+import type { FeedbackCaptureResult } from '~/server/services/feedback-capture.service';
+import { classifyBlockImageUploadScan } from '~/server/services/blocks/block-image-upload.logic';
 import { SITE_BUG_REPORT_AREA } from '~/shared/constants/feedback.constants';
 import { sniffImageFormat } from '~/shared/utils/image-magic-bytes';
 import { redactText } from '~/utils/faro/redact';
@@ -33,6 +35,8 @@ export type FeedbackHqFilingInput = {
   message: string;
   context?: FeedbackContextInput;
   server?: FeedbackServerStamp;
+  /** What became of the page capture; null or absent when it was not checked. */
+  capture?: FeedbackCaptureResult | null;
 };
 
 type HqLogStatus =
@@ -197,12 +201,23 @@ const TRUNCATED_NOTE = '[truncated: full text in the moderator view]';
  */
 export function buildHqBody(
   input: FeedbackHqFilingInput,
-  { moderatorUrl, screenshotAttached }: { moderatorUrl: string; screenshotAttached: boolean }
+  {
+    moderatorUrl,
+    screenshotAttached,
+    screenshotWithheld,
+  }: {
+    moderatorUrl: string;
+    screenshotAttached: boolean;
+    /** Why the capture was not attached, when it was considered for attaching. */
+    screenshotWithheld?: CaptureWithheldReason | null;
+  }
 ) {
   const header = headerSection(input, moderatorUrl);
   const screenshotNote = input.context?.screenshotId
     ? screenshotAttached
       ? '\n\nThe reporter attached a page capture (below).'
+      : screenshotWithheld
+      ? `\n\nThe reporter attached a page capture, not attached here: ${CAPTURE_WITHHELD_TEXT[screenshotWithheld]}. See the moderator view.`
       : '\n\nThe reporter attached a page capture: see the moderator view.'
     : '';
   const message = inertMentions(redactText(input.message));
@@ -291,6 +306,75 @@ async function loadScreenshot(screenshotId: string): Promise<Blob | null> {
   }
 }
 
+export type CaptureWithheldReason =
+  | 'not-checked'
+  | 'not-owner'
+  | 'scanning'
+  | 'flagged'
+  | 'blocked'
+  | 'gone'
+  | 'unreadable';
+
+const CAPTURE_WITHHELD_TEXT: Record<CaptureWithheldReason, string> = {
+  'not-checked': 'it was not checked',
+  'not-owner': "it is not the reporter's upload",
+  scanning: 'its scan had not finished',
+  flagged: 'its scan flagged it',
+  blocked: 'its scan blocked it',
+  gone: 'it no longer exists',
+  unreadable: 'it could not be read',
+};
+
+/** Waits between reads of a capture's scan state: 5 s, backing off, about 2 minutes in all. */
+export const CAPTURE_POLL_DELAYS_MS = [5, 5, 10, 10, 15, 15, 20, 20, 20].map((s) => s * 1000);
+
+type CaptureScanRow = Parameters<typeof classifyBlockImageUploadScan>[0];
+
+async function readCaptureScan(imageId: number): Promise<CaptureScanRow | null> {
+  return dbWrite.image.findUnique({
+    where: { id: imageId },
+    select: {
+      ingestion: true,
+      nsfwLevel: true,
+      needsReview: true,
+      poi: true,
+      minor: true,
+      tosViolation: true,
+    },
+  });
+}
+
+/**
+ * Whether the capture may go to HQ: only once its scan says SFW with no flags. Polls while it is
+ * still scanning. Returns null when it may, else why not.
+ */
+export async function captureAttachGate(
+  capture: FeedbackCaptureResult | null | undefined,
+  {
+    delays = CAPTURE_POLL_DELAYS_MS,
+    sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+    read = readCaptureScan,
+  }: {
+    delays?: number[];
+    sleep?: (ms: number) => Promise<void>;
+    read?: (imageId: number) => Promise<CaptureScanRow | null>;
+  } = {}
+): Promise<CaptureWithheldReason | null> {
+  if (!capture) return 'not-checked';
+  if ('screenshotCheck' in capture)
+    return capture.screenshotCheck === 'not-owner' ? 'not-owner' : 'not-checked';
+  for (let attempt = 0; ; attempt++) {
+    const row = await read(capture.screenshotImageId).catch(() => undefined);
+    if (row === undefined) return 'unreadable';
+    if (!row) return 'gone';
+    const { status } = classifyBlockImageUploadScan(row);
+    if (status === 'ready') return null;
+    if (status !== 'pending') return status === 'blocked-flagged' ? 'flagged' : 'blocked';
+    if (attempt >= delays.length) return 'scanning';
+    await sleep(delays[attempt]);
+  }
+}
+
 const HQ_TASK_ID_PATTERN = /^[\w-]{1,100}$/;
 
 /** The task HQ returned, or null unless its link is on the same origin we posted to. */
@@ -332,11 +416,13 @@ export async function fileFeedbackToHq(input: FeedbackHqFilingInput): Promise<vo
       return void (await log(input.feedbackId, 'user-cap'));
 
     const screenshotId = input.context?.screenshotId;
+    const considered =
+      !!screenshotId &&
+      (await isFlipt(FLIPT_FEATURE_FLAGS.FEEDBACK_HQ_SCREENSHOT, String(input.userId)));
+    let screenshotWithheld = considered ? await captureAttachGate(input.capture) : null;
     const screenshot =
-      screenshotId &&
-      (await isFlipt(FLIPT_FEATURE_FLAGS.FEEDBACK_HQ_SCREENSHOT, String(input.userId)))
-        ? await loadScreenshot(screenshotId)
-        : null;
+      considered && !screenshotWithheld ? await loadScreenshot(screenshotId) : null;
+    if (considered && !screenshotWithheld && !screenshot) screenshotWithheld = 'unreadable';
 
     const form = new FormData();
     form.set('title', buildHqTitle(input));
@@ -345,6 +431,7 @@ export async function fileFeedbackToHq(input: FeedbackHqFilingInput): Promise<vo
       buildHqBody(input, {
         moderatorUrl: `${env.MODERATOR_APP_URL.replace(/\/+$/, '')}/feedback/${input.feedbackId}`,
         screenshotAttached: !!screenshot,
+        screenshotWithheld,
       })
     );
     for (const label of buildHqLabels(input)) form.append('labels', label);

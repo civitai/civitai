@@ -213,6 +213,7 @@ beforeAll(async () => {
       ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
       "blockedFor" text,
       "needsReview" text,
+      minor boolean NOT NULL DEFAULT false,
       name text,
       type text NOT NULL DEFAULT 'image'
     );
@@ -232,6 +233,7 @@ beforeAll(async () => {
       details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]'
     );
+    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     CREATE TABLE "Cosmetic" (id int PRIMARY KEY, "createdById" int, data jsonb);
     CREATE TABLE "CosmeticShopItem" (
       id int PRIMARY KEY,

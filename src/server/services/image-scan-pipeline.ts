@@ -27,7 +27,7 @@ import {
 import { getComputedTags, getConditionalTagsForReview } from '~/server/utils/tag-rules';
 import { getTagRules } from '~/server/services/system-cache';
 import { Prisma } from '@prisma/client';
-import { ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
+import { captureImageKeptSql, ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
 import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { isDefined } from '~/utils/type-guards';
 import { normalizeText } from '~/utils/normalize-text';
@@ -68,6 +68,7 @@ import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { decreaseDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 
 // Ingestion stages shared by the legacy (wdTagging + mediaRating) and imageScanning result handlers.
 
@@ -522,7 +523,8 @@ function isBlockKeptByHold(imageId: number) {
     dbWrite,
     Prisma.sql`FROM "Image" m WHERE m.id = ${imageId}`,
     Prisma.sql`(${ownerHeldSql(Prisma.raw('m."userId"'))}
-      OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" k WHERE k."imageId" = m.id))`
+      OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" k WHERE k."imageId" = m.id)
+      OR ${captureImageKeptSql('m')})`
   );
 }
 
@@ -809,8 +811,10 @@ async function auditScanResults(args: {
   const minor = minorTags.length > 0 || !!associatedEntities.minor;
   const poi = poiTags.length > 0 || !!associatedEntities.poi || (!!prompt && !!includesPoi(prompt));
 
+  // A feedback page capture is a picture of the site, not the capture account's content.
   let reviewKey: string | undefined;
-  if (poiReview) reviewKey = 'poi';
+  if (args.userId === FEEDBACK_CAPTURE_OWNER_ID) reviewKey = undefined;
+  else if (poiReview) reviewKey = 'poi';
   else if (minorReview) reviewKey = 'minor';
   else if (tagReview) reviewKey = 'tag';
   else if (newUserReview) reviewKey = 'newUser';
@@ -1063,7 +1067,7 @@ export async function applyIngestionSideEffects({
         });
       }
 
-      if (!reviewKey && image.type === 'image') {
+      if (!reviewKey && image.type === 'image' && image.userId !== FEEDBACK_CAPTURE_OWNER_ID) {
         await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
       }
     }

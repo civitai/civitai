@@ -14,6 +14,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 const {
   buildHqBody,
   buildHqTitle,
+  captureAttachGate,
+  CAPTURE_POLL_DELAYS_MS,
   fileFeedbackToHq,
   HQ_BODY_MAX_BYTES,
   HQ_SCREENSHOT_MAX_BYTES,
@@ -194,9 +196,25 @@ describe('the per-reporter cap', () => {
   });
 });
 
+const READY = {
+  ingestion: 'Scanned',
+  nsfwLevel: 1,
+  needsReview: null,
+  poi: false,
+  minor: false,
+  tosViolation: false,
+};
+
 describe('the page capture', () => {
   const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
-  const withShot = () => report({ context: { screenshotId: SHOT } });
+  const withShot = (
+    capture: Parameters<typeof fileFeedbackToHq>[0]['capture'] = {
+      screenshotImageId: 5,
+    }
+  ) => report({ context: { screenshotId: SHOT }, capture });
+  beforeEach(() => {
+    dbMock.dbWrite.image.findUnique.mockResolvedValue(READY as never);
+  });
   const serveImage = (bytes: Uint8Array<ArrayBuffer>, headers: Record<string, string> = {}) =>
     fetchMock.mockImplementation(async (url: string | URL) =>
       String(url).startsWith(HQ_ORIGIN) ? created() : new Response(bytes, { status: 200, headers })
@@ -241,6 +259,71 @@ describe('the page capture', () => {
     expect(intakeCalls()).toHaveLength(1);
     expect(loggedStatuses()).toEqual(['filed']);
     expect(sentForm().get('screenshot')).toBeNull();
+    expect(sentForm().get('body')).toContain('not attached here: it could not be read');
+  });
+
+  it.each([
+    ['no capture row', null, undefined, 'it was not checked'],
+    [
+      'not the reporter’s upload',
+      { screenshotCheck: 'not-owner' as const },
+      undefined,
+      "it is not the reporter's upload",
+    ],
+    ['a flagged capture', undefined, { ...READY, minor: true }, 'its scan flagged it'],
+    ['an NSFW capture', undefined, { ...READY, nsfwLevel: 4 }, 'its scan blocked it'],
+  ])('is never fetched for %s, and the body says why', async (_, capture, row, reason) => {
+    isFliptMock.mockResolvedValue(true);
+    if (row) dbMock.dbWrite.image.findUnique.mockResolvedValue(row as never);
+    serveImage(PNG);
+    await fileFeedbackToHq(withShot(capture === undefined ? undefined : capture));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sentForm().get('screenshot')).toBeNull();
+    expect(sentForm().get('body')).toContain(`not attached here: ${reason}`);
+  });
+});
+
+describe('captureAttachGate', () => {
+  const capture = { screenshotImageId: 5 };
+  const sleep = vi.fn(async (_ms: number) => undefined);
+  const gate = (rows: unknown[], c: Parameters<typeof captureAttachGate>[0] = capture) => {
+    const read = vi.fn();
+    for (const row of rows)
+      if (row instanceof Error) read.mockRejectedValueOnce(row);
+      else read.mockResolvedValueOnce(row);
+    return captureAttachGate(c, { sleep, read });
+  };
+  const PENDING = { ...READY, ingestion: 'Pending' };
+
+  it('lets a scanned, SFW, unflagged capture through', async () =>
+    expect(await gate([READY])).toBeNull());
+  it('waits out the scan, backing off', async () => {
+    expect(await gate([PENDING, PENDING, READY])).toBeNull();
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual(CAPTURE_POLL_DELAYS_MS.slice(0, 2));
+  });
+  it('gives up after about two minutes', async () => {
+    expect(await gate(Array(CAPTURE_POLL_DELAYS_MS.length + 1).fill(PENDING))).toBe('scanning');
+    const waited = CAPTURE_POLL_DELAYS_MS.reduce((a, b) => a + b, 0);
+    expect(waited).toBe(120_000);
+    expect(sleep).toHaveBeenCalledTimes(CAPTURE_POLL_DELAYS_MS.length);
+  });
+  it.each([
+    ['poi', { ...READY, poi: true }, 'flagged'],
+    ['minor', { ...READY, minor: true }, 'flagged'],
+    ['needsReview', { ...READY, needsReview: 'poi' }, 'flagged'],
+    ['tosViolation', { ...READY, tosViolation: true }, 'flagged'],
+    ['an R rating', { ...READY, nsfwLevel: 4 }, 'blocked'],
+    ['a Blocked scan', { ...READY, ingestion: 'Blocked' }, 'blocked'],
+    ['a deleted row', null, 'gone'],
+    ['a failed read', new Error('db down'), 'unreadable'],
+  ])('withholds a capture with %s', async (_, row, reason) =>
+    expect(await gate([row])).toBe(reason)
+  );
+  it('reads nothing without a capture row', async () => {
+    expect(await gate([], null)).toBe('not-checked');
+    expect(await gate([], { screenshotCheck: 'unverified' })).toBe('not-checked');
+    expect(await gate([], { screenshotCheck: 'not-owner' })).toBe('not-owner');
   });
 });
 
@@ -329,6 +412,27 @@ describe('what reaches HQ from the reporter', () => {
     expect(text).toContain('[truncated: full text in the moderator view]');
     expect(text).not.toContain('## Diagnostics');
     expect(text).toContain('Moderator view: <https://moderator.example.test/feedback/7>');
+  });
+
+  it('drops only the diagnostics when the words alone fit', () => {
+    const consoleErrors = Array.from({ length: 50 }, (_, i) => ({
+      message: `Error in widget ${i}: ${'cannot read properties of undefined, '.repeat(10)}`,
+      count: 1,
+    }));
+    const message = 'blank page '.repeat(2_000);
+    const args = {
+      moderatorUrl: 'https://moderator.example.test/feedback/7',
+      screenshotAttached: false,
+    };
+    // The control: with the diagnostics this report is over the limit.
+    expect(
+      Buffer.byteLength(buildHqBody(report({ message: 'x', context: { consoleErrors } }), args))
+    ).toBeGreaterThan(HQ_BODY_MAX_BYTES - Buffer.byteLength(message));
+    const text = buildHqBody(report({ message, context: { consoleErrors } }), args);
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(HQ_BODY_MAX_BYTES);
+    expect(text).not.toContain('## Diagnostics');
+    expect(text).not.toContain('[truncated');
+    expect(text).toContain(message.trim());
   });
 });
 

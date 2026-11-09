@@ -1,3 +1,4 @@
+import type { FeedbackCaptureView } from '@civitai/shared/feedback-capture';
 import { describe, expect, it } from 'vitest';
 import {
   FARO_LOKI_RETENTION_HOURS,
@@ -191,6 +192,8 @@ describe('splitContext', () => {
       filters: { kind: 'onsite' },
       images,
       screenshotId,
+      screenshotImageId: null,
+      screenshotCheck: null,
       sessionId: 'v913JNcgDs',
       consoleErrors: [{ message: 'TypeError: x is not a function', count: 3 }],
       networkErrors: [
@@ -326,6 +329,8 @@ describe('splitContext', () => {
         filters: null,
         images: [],
         screenshotId: null,
+        screenshotImageId: null,
+        screenshotCheck: null,
         sessionId: null,
         consoleErrors: [],
         networkErrors: [],
@@ -765,16 +770,20 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
    * something is "the clean id survived AND the hostile one did not", in the same call.
    */
   const SECOND_UUID = '99999999-8888-4777-8666-555555555555';
+  const SHOWN = { view: 'show', revealed: false } as const;
 
   it.each(hostile)('cannot route %s into a lightbox frame', (_label, value) => {
-    const items = feedbackAttachmentItems(splitContext({ images: [UUID, value] }));
+    const items = feedbackAttachmentItems(splitContext({ images: [UUID, value] }), SHOWN);
 
     expect(items.map((i) => i.id)).toEqual([UUID]);
     expect(items).toHaveLength(1);
   });
 
   it.each(hostile)('cannot route %s into a lightbox frame as the screenshot', (_label, value) => {
-    const items = feedbackAttachmentItems(splitContext({ images: [UUID], screenshotId: value }));
+    const items = feedbackAttachmentItems(
+      splitContext({ images: [UUID], screenshotId: value }),
+      SHOWN
+    );
 
     expect(items.map((i) => i.id)).toEqual([UUID]);
     expect(items.some((i) => i.caption === FEEDBACK_ATTACHMENT_CAPTIONS.screenshot)).toBe(false);
@@ -785,7 +794,7 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
       images: ['https://attacker.example/x.png'],
       screenshotId: 'blob:https://civitai.com/abcd',
     });
-    expect(feedbackAttachmentItems(context)).toEqual([]);
+    expect(feedbackAttachmentItems(context, SHOWN)).toEqual([]);
   });
 
   /**
@@ -798,7 +807,10 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
    * same file, and the captions are what say so.
    */
   it('keeps both frames when the capture repeats an attached id — ids here are NOT unique', () => {
-    const items = feedbackAttachmentItems(splitContext({ images: [UUID], screenshotId: UUID }));
+    const items = feedbackAttachmentItems(
+      splitContext({ images: [UUID], screenshotId: UUID }),
+      SHOWN
+    );
 
     expect(items).toHaveLength(2);
     expect(items.map((i) => i.id)).toEqual([UUID, UUID]);
@@ -819,7 +831,8 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
       splitContext({
         images: [UUID, SECOND_UUID],
         screenshotId: '11112222-3333-4444-8555-666677778888',
-      })
+      }),
+      SHOWN
     );
 
     expect(items).toEqual([
@@ -844,15 +857,62 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
    */
   it('counts exactly the frames the lightbox will show, refusals included', () => {
     const clean = splitContext({ images: [UUID, SECOND_UUID], screenshotId: UUID });
-    expect(feedbackAttachmentCount(clean)).toBe(feedbackAttachmentItems(clean).length);
+    expect(feedbackAttachmentCount(clean)).toBe(feedbackAttachmentItems(clean, SHOWN).length);
     expect(feedbackAttachmentCount(clean)).toBe(3);
 
     const refused = splitContext({
       images: [UUID],
       screenshotId: 'https://attacker.example/x.png',
     });
-    expect(feedbackAttachmentCount(refused)).toBe(feedbackAttachmentItems(refused).length);
+    expect(feedbackAttachmentCount(refused)).toBe(feedbackAttachmentItems(refused, SHOWN).length);
     expect(feedbackAttachmentCount(refused)).toBe(1);
+  });
+});
+
+describe('the page capture by its scan state', () => {
+  const UUID_A = '11112222-3333-4444-8555-666677778888';
+  const OTHER = '99999999-8888-4777-8666-555555555555';
+  const context = splitContext({ images: [], screenshotId: UUID_A });
+  const ids = (view: FeedbackCaptureView, revealed = false) =>
+    feedbackAttachmentItems(context, { view, revealed }).map((i) => i.id);
+
+  it('shows a capture the scan cleared', () => expect(ids('show')).toEqual([UUID_A]));
+  it('keeps a blurred capture out of the lightbox until revealed', () => {
+    expect(ids('blur')).toEqual([]);
+    expect(ids('blur', true)).toEqual([UUID_A]);
+  });
+  it.each(['hide', 'hide-locked', 'expired', 'none'] as const)(
+    'never shows a %s capture, revealed or not',
+    (view) => expect(ids(view, true)).toEqual([])
+  );
+  it.each(['blur', 'hide', 'hide-locked', 'expired'] as const)(
+    'holds back a hand-attached copy of a %s capture',
+    (view) => {
+      const both = splitContext({ images: [UUID_A, OTHER], screenshotId: UUID_A });
+      expect(feedbackAttachmentItems(both, { view, revealed: false }).map((i) => i.id)).toEqual([
+        OTHER,
+      ]);
+    }
+  );
+  it('shows both copies once the capture is shown (control)', () => {
+    const both = splitContext({ images: [UUID_A], screenshotId: UUID_A });
+    expect(feedbackAttachmentItems(both, { view: 'show', revealed: false })).toHaveLength(2);
+  });
+
+  it('still counts the capture in the list column', () =>
+    expect(feedbackAttachmentCount(context)).toBe(1));
+
+  it('reads only server-shaped capture fields', () => {
+    const parsed = splitContext({
+      screenshotId: UUID_A,
+      screenshotImageId: 42,
+      screenshotCheck: 'not-owner',
+    });
+    expect(parsed.screenshotImageId).toBe(42);
+    expect(parsed.screenshotCheck).toBe('not-owner');
+    const junk = splitContext({ screenshotImageId: '42', screenshotCheck: 'owner' });
+    expect(junk.screenshotImageId).toBeNull();
+    expect(junk.screenshotCheck).toBeNull();
   });
 });
 

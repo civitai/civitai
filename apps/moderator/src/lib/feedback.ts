@@ -7,6 +7,12 @@ import {
   FEEDBACK_TOAST_TEXT_MAX_LENGTH,
   ORCHESTRATION_FEEDBACK_AREA,
 } from '@civitai/shared/feedback.constants';
+import {
+  FEEDBACK_CAPTURE_RETENTION_DAYS,
+  FEEDBACK_SCREENSHOT_CHECKS,
+  type FeedbackCaptureView,
+  type FeedbackScreenshotCheck,
+} from '@civitai/shared/feedback-capture';
 import type { LightboxItem } from './lightbox';
 
 export const FEEDBACK_STATUSES = ['new', 'reviewed', 'actioned', 'dismissed'] as const;
@@ -172,6 +178,10 @@ export type FeedbackContext = {
   filters: FeedbackFilters | null;
   images: string[];
   screenshotId: string | null;
+  /** The capture's `Image` row, written by the submit, never by the client. */
+  screenshotImageId: number | null;
+  /** Why the submit stored no capture row (`FEEDBACK_SCREENSHOT_CHECKS`). */
+  screenshotCheck: FeedbackScreenshotCheck | null;
   sessionId: string | null;
   /** Console errors the reporter's browser recorded. Empty when absent, empty, OR malformed —
    *  a malformed array is routed to `other` and shown there, not silently dropped. */
@@ -382,6 +392,8 @@ export function splitContext(context: unknown): FeedbackContext {
     filters: null,
     images: [],
     screenshotId: null,
+    screenshotImageId: null,
+    screenshotCheck: null,
     sessionId: null,
     consoleErrors: [],
     networkErrors: [],
@@ -407,6 +419,18 @@ export function splitContext(context: unknown): FeedbackContext {
       out.sessionId = value;
     } else if (key === 'screenshotId' && typeof value === 'string' && IMAGE_KEY.test(value)) {
       out.screenshotId = value;
+    } else if (
+      key === 'screenshotImageId' &&
+      typeof value === 'number' &&
+      Number.isSafeInteger(value)
+    ) {
+      out.screenshotImageId = value;
+    } else if (
+      key === 'screenshotCheck' &&
+      typeof value === 'string' &&
+      (FEEDBACK_SCREENSHOT_CHECKS as readonly string[]).includes(value)
+    ) {
+      out.screenshotCheck = value as FeedbackScreenshotCheck;
     } else if (key === 'images' && Array.isArray(value) && value.every(isString)) {
       // Deduplicated as well as filtered: `{#each … (id)}` THROWS on a duplicate key in production
       // as well as in dev, and the array is client-supplied with no uniqueness constraint anywhere
@@ -508,12 +532,17 @@ export const FEEDBACK_ATTACHMENT_CAPTIONS = {
  * opened their report and when. The type is the structural half of that guard; the behavioural half
  * is pinned in `src/lib/__tests__/feedback.test.ts`.
  */
-export function feedbackAttachmentItems(context: FeedbackContext): LightboxItem[] {
-  const items: LightboxItem[] = context.images.map((id) => ({
-    id,
-    caption: FEEDBACK_ATTACHMENT_CAPTIONS.image,
-  }));
-  if (context.screenshotId) {
+export function feedbackAttachmentItems(
+  context: FeedbackContext,
+  capture: { view: FeedbackCaptureView; revealed: boolean }
+): LightboxItem[] {
+  const shown = capture.view === 'show' || (capture.view === 'blur' && capture.revealed);
+  // The same file attached by hand is the capture too, and is held back with it.
+  const heldBack = shown ? null : context.screenshotId;
+  const items: LightboxItem[] = context.images
+    .filter((id) => id !== heldBack)
+    .map((id) => ({ id, caption: FEEDBACK_ATTACHMENT_CAPTIONS.image }));
+  if (context.screenshotId && shown) {
     items.push({
       id: context.screenshotId,
       caption: FEEDBACK_ATTACHMENT_CAPTIONS.screenshot,
@@ -530,7 +559,16 @@ export function feedbackAttachmentItems(context: FeedbackContext): LightboxItem[
  * is exactly how they would.
  */
 export const feedbackAttachmentCount = (context: FeedbackContext): number =>
-  feedbackAttachmentItems(context).length;
+  // Counts the capture whatever its scan says: the column says what the reporter sent.
+  feedbackAttachmentItems(context, { view: 'show', revealed: true }).length;
+
+/** What the panel says in place of a page capture it does not show. */
+export const FEEDBACK_CAPTURE_NOTES: Partial<Record<FeedbackCaptureView, string>> = {
+  blur: 'Page capture not checked or flagged by the scan.',
+  hide: "Page capture hidden: not the reporter's upload, or blocked by the scan.",
+  'hide-locked': 'Page capture hidden.',
+  expired: `Page capture expired (${FEEDBACK_CAPTURE_RETENTION_DAYS}-day retention)`,
+};
 
 /**
  * Loki's global `retention_period`, which `{source="faro-rum"}` sits on — it declares no

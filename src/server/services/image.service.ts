@@ -288,6 +288,10 @@ import {
   stripBlockProvenanceMetadata,
   type BlockProvenanceMetadataKey,
 } from '~/shared/utils/block-provenance-metadata';
+import {
+  FEEDBACK_CAPTURE_METADATA_KEY,
+  type FeedbackCaptureMetadata,
+} from '@civitai/shared/feedback-capture';
 import type {
   DomainColor,
   ModelType,
@@ -7094,6 +7098,7 @@ export async function createImage({
   skipIngestion,
   verifiedSourceImageIds,
   blockProvenance,
+  feedbackCapture,
   assertPostOwnedBy = createPostOwnerCheck(),
   clientUrl,
   ...image
@@ -7111,6 +7116,11 @@ export async function createImage({
    * row gets a `BLOCK_PROVENANCE_METADATA_KEYS` entry: any copy in `metadata` is dropped.
    */
   blockProvenance?: { key: BlockProvenanceMetadataKey; appId: string } | null;
+  /**
+   * The feedback report this page capture belongs to, verified by the caller. The only way a row
+   * gets `FEEDBACK_CAPTURE_METADATA_KEY`: any copy in `metadata` is dropped.
+   */
+  feedbackCapture?: FeedbackCaptureMetadata | null;
   /**
    * The request's post-owner check, from {@link createPostOwnerCheck}. A caller adding several
    * images to one post passes one so the post is looked up once; without it, each call checks.
@@ -7316,6 +7326,8 @@ export async function createImage({
       index: image.index,
       metadata: blockProvenance
         ? { ...metadata, [blockProvenance.key]: blockProvenance.appId }
+        : feedbackCapture
+        ? { ...metadata, [FEEDBACK_CAPTURE_METADATA_KEY]: feedbackCapture }
         : metadata,
       meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
       generationProcess: meta ? getImageGenerationProcess(meta as ImageMetaProps) : null,
