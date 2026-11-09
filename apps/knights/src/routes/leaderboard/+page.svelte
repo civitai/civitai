@@ -5,7 +5,7 @@
   import { compact, count } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
   import RankEmblem from '$lib/RankEmblem.svelte';
-  import { formatTally } from '$lib/tally';
+  import { updatedAgo } from '$lib/updated-ago';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -16,6 +16,15 @@
 
   const podium = $derived(data.entries.length >= 3 ? data.entries.slice(0, 3) : []);
   const stage = $derived(podium.length ? [podium[1], podium[0], podium[2]] : []);
+  // Measured once against the server's clock, so a viewer whose clock is off still sees the true age.
+  let now = $state(untrack(() => Date.parse(data.serverNow)));
+  onMount(() => {
+    const skew = Date.parse(data.serverNow) - Date.now();
+    const tick = () => (now = Date.now() + skew);
+    const timer = setInterval(tick, 30_000);
+    return () => clearInterval(timer);
+  });
+  const updated = $derived(updatedAgo(data.builtAt, now));
   const rows = $derived(podium.length ? data.entries.slice(3) : data.entries);
 
   // The server reads the cookie, so a collapsed panel renders closed from the first paint.
@@ -25,17 +34,6 @@
     document.cookie = helpCookie(!open);
   }
 
-  // The server renders the first value; the page then keeps it current until the next UTC midnight.
-  let tally = $state(untrack(() => data.nextTally));
-  onMount(() => {
-    // Measured once against the server's clock, so a viewer whose clock runs fast isn't told to refresh early.
-    const skew = Date.parse(data.serverNow) - Date.now();
-    const tick = () => {
-      tally = formatTally(Date.parse(data.nextTallyAt) - (Date.now() + skew));
-    };
-    const timer = setInterval(tick, 30_000);
-    return () => clearInterval(timer);
-  });
 </script>
 
 <svelte:head>
@@ -115,15 +113,10 @@
     </div>
     <p class="meta">
       <span class="fz"><Icon name="sparkles" size={14} />Fervor from judgments cast in the last {data.windowDays} days</span>
-      <span class="tally"
-        ><Icon name="hourglass" size={14} />
-        {tally ? `Tallied daily · next tally in ${tally}` : 'New tally ready, refresh'}</span
-      >
+      <span class="tally"><Icon name="hourglass" size={14} />{updated}</span>
     </p>
     <p class="meta-m">
-      Fervor from judgments cast in the last {data.windowDays} days. Tallied daily · {tally
-        ? `next tally in ${tally}`
-        : 'new tally ready, refresh'}.
+      Fervor from judgments cast in the last {data.windowDays} days. {updated}.
     </p>
   </header>
 

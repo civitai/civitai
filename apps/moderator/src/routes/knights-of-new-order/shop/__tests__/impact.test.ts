@@ -79,6 +79,13 @@ describe('impactOfChange with a hidden cosmetic', () => {
     ).toEqual([]);
   });
 
+  it('draws an item still in review into no slot, so it never displaces a visible one', () => {
+    const pending = { ...item(32, { rotating: true }), cosmeticWithheld: true };
+    const rotating = [31, 33, 34, 35, 36].map((id) => item(id, { rotating: true }));
+    const stock = (rows: typeof rotating) => impactOfChange(rows, DAY, 31, { rotating: false });
+    expect(stock([...rotating, pending])).toEqual(stock(rotating));
+  });
+
   it('still announces a visible item dropping out when it is retired', () => {
     expect(impactOfChange(items, DAY, 31, { active: false }).join(' ')).toContain(
       'item-31 drops out'

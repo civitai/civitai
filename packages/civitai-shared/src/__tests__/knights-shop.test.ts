@@ -6,6 +6,8 @@ import {
   msUntilNextDay,
   stockFor,
   utcDay,
+  withheldCosmeticIds,
+  type CosmeticListing,
   type ShopItem,
 } from '../knights-shop';
 
@@ -103,5 +105,62 @@ describe('the daily rotation', () => {
 
   it('counts down to the next UTC midnight', () => {
     expect(msUntilNextDay(new Date('2026-12-20T22:00:00Z'))).toBe(2 * 3_600_000);
+  });
+});
+
+describe('withheldCosmeticIds', () => {
+  const creator = (id: number, flags = 0) => ({ id, createdById: 9, flags });
+  const listing = (over: Partial<CosmeticListing> = {}): CosmeticListing => ({
+    cosmeticId: 1,
+    addedById: 9,
+    status: 'PendingReview',
+    meta: {},
+    rejectionReason: null,
+    ...over,
+  });
+  const withheld = (cosmetics = [creator(1)], listings: CosmeticListing[] = []) => [
+    ...withheldCosmeticIds(cosmetics, listings),
+  ];
+
+  it('withholds a creator cosmetic whose listing is waiting for review', () => {
+    expect(withheld([creator(1)], [listing()])).toEqual([1]);
+  });
+
+  it('lets a published listing, or one a moderator approved, through', () => {
+    expect(withheld([creator(1)], [listing({ status: 'Published' })])).toEqual([]);
+    const approved = { history: [{ kind: 'reviewed', action: 'approve' }] };
+    expect(withheld([creator(1)], [listing({ status: 'Archived', meta: approved })])).toEqual([]);
+  });
+
+  it('withholds an approved listing again once something people see was edited', () => {
+    const meta = {
+      history: [
+        { kind: 'reviewed', action: 'approve' },
+        { kind: 'edited', changes: [{ field: 'artwork' }] },
+      ],
+    };
+    expect(withheld([creator(1)], [listing({ meta })])).toEqual([1]);
+  });
+
+  it('withholds a rejected or taken-down listing', () => {
+    const rejected = { history: [{ kind: 'reviewed', action: 'reject' }] };
+    expect(withheld([creator(1)], [listing({ meta: rejected })])).toEqual([1]);
+    expect(
+      withheld([creator(1)], [listing({ status: 'Published', meta: { takedown: {} } })])
+    ).toEqual([]);
+    expect(
+      withheld([creator(1)], [listing({ meta: { takedown: {}, displayApproved: true } })])
+    ).toEqual([1]);
+  });
+
+  it("ignores system cosmetics and other creators' cross-listings", () => {
+    expect(withheld([{ id: 1, createdById: null, flags: 0 }], [listing()])).toEqual([]);
+    expect(withheld([creator(1)], [listing({ addedById: 7 })])).toEqual([]);
+  });
+
+  it('keeps a cosmetic withheld after its pending listing was deleted (Withheld flag)', () => {
+    expect(withheld([creator(1, 4)], [])).toEqual([1]);
+    expect(withheld([creator(1, 0)], [])).toEqual([]);
+    expect(withheld([creator(1, 4)], [listing({ status: 'Published' })])).toEqual([]);
   });
 });

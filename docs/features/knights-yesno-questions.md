@@ -32,6 +32,30 @@ open rating item per question and image exempts yes/no items, which share an axi
 
 ## Import
 
+The CSV comes from the question producer (an offline pipeline that proposes the questions); it is not in this repository, and no real file is ever committed. Save it anywhere and pass its path. The header row names the columns; order does not matter and extra columns are ignored.
+
+| Column | Used as |
+| --- | --- |
+| `question_id` | `externalId`, the idempotency key (max 200 chars; longer rows are rejected as `bad-id`); a repeated id in one file is skipped as `duplicate` |
+| `active_candidate` | `true` to import; anything else retires the open item with that id |
+| `image_id` | Positive integer id of an existing image |
+| `axis` | Key matching `[a-z][a-z0-9_]{0,39}`, lower-cased before it is checked; one question per axis is created |
+| `kind` | `observable` (players) or `policy_preference` (moderators) |
+| `question` | The prompt shown to the voter |
+| `yes_effect`, `no_effect` | Optional short labels for what each answer does |
+| `case_id`, `source_purpose`, `source_batch_id`, `promotion_status`, `policy_sha256` | Optional; stored in the item's `meta` |
+
+A sample, with placeholder ids (use ids of images that exist in your local database):
+
+```csv
+question_id,active_candidate,image_id,axis,kind,question,yes_effect,no_effect
+sample-0001,true,1001,sample_axis,observable,Is there a person in this image?,,
+sample-0002,true,1002,sample_axis,policy_preference,Should this image be restricted?,restrict,allow
+sample-0003,false,1003,sample_axis,observable,Withdrawn question.,,
+```
+
+`--dry-run` parses the file and prints the counts without touching the database.
+
 `cd apps/knights && pnpm run import:yesno <file.csv> [--dry-run]` reads `DATABASE_URL` from `.env` and refuses any host other than
 localhost, 127.0.0.1 or ::1 (for a dev database, forward the port first). It keeps rows marked active, maps `observable` to `players`
 and `policy_preference` to `moderators`, creates the axis questions once, and upserts items by `externalId` in batches. It never
@@ -76,7 +100,10 @@ refusals, and `insertVote` / `creditVote`. The ledger row is under the item's ow
 and gold held as pending. The item row lock serialises its votes.
 
 A question has a consensus when `votesToResolve` players have answered and one answer has a strict majority (one vote per player, as the
-label store counts). A tie keeps it open until `maxVotes`, when it is closed with no outcome. At the close, in the same transaction:
+label store counts). A tie keeps it open, but answers arrive one at a time under the item row lock, so after a tie at an even
+`votesToResolve` the very next answer decides. A close with no outcome therefore happens only when `maxVotes` equals an even
+`votesToResolve` (including a `maxVotes` below it, which is clamped up to it): the tie is then at the cap. With the defaults (5 to resolve,
+10 at most) it never happens: five yes/no answers cannot tie, so every question resolves at the fifth answer. At the close, in the same transaction:
 
 - The majority answer is graded `correct` and the others `failed`; a close with no outcome leaves every vote `inconclusive`, as for a
   rating item. The item becomes `Consensus`, which counts as final, and the votes are paid by `settleItemVotes`, the rating path.

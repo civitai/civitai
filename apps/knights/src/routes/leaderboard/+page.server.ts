@@ -7,12 +7,11 @@ import {
   viewBoard,
   type LeaderboardEntry,
 } from '$lib/server/leaderboard';
-import { fervorCopy, nextTally } from '$lib/server/leaderboard-view';
+import { fervorCopy } from '$lib/server/leaderboard-view';
 import { boardCache } from '$lib/server/leaderboard-runtime';
 import { requireMember } from '$lib/server/membership';
 import { PROGRESSION } from '$lib/server/progression/config';
 import { HELP_COOKIE } from '$lib/fervor-help';
-import { nextTallyAt } from '$lib/tally';
 import { playerBadge } from '$lib/player-badge';
 import type { PageServerLoad } from './$types';
 
@@ -44,9 +43,8 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
     status,
     size: LEADERBOARD_SIZE,
     windowDays: PROGRESSION.fervorWindowDays,
-    nextTally: nextTally(now),
-    nextTallyAt: nextTallyAt(now).toISOString(),
     serverNow: now.toISOString(),
+    builtAt: board.builtAt,
     helpClosed: cookies.get(HELP_COOKIE) === 'closed',
     copy: fervorCopy(),
     entries: view.entries.map(shown),

@@ -18,6 +18,6 @@ export const streakBonusGold = (streak: number): number =>
 export const dailyGoldCapOf = (rank: string): number =>
   isRank(rank) ? RANK_RULES[rank].dailyGoldCap : 0;
 
-/** The part of `gold` that still fits under the rank's daily cap. */
+/** The part of `gold` that still fits under the rank's daily cap. `recorded` counts gold at vote time, so gold later forfeited by a wrong vote still counts against the day. */
 export const goldWithinCap = (rank: string, recorded: number, gold: number): number =>
   Math.max(0, Math.min(gold, dailyGoldCapOf(rank) - recorded));

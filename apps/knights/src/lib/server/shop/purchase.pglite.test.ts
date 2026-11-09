@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
+import { addCreatorShopStandIns } from './creator-cosmetic.fixture';
 import { seedPlayer, setGold } from '../../../test/seed';
 import { getGoldBalance } from '../conversion/balance';
 import { BuzzRejectedError, type BuzzGrant, type BuzzPort } from '../conversion/buzz';
@@ -146,6 +147,7 @@ const purchases = async () =>
 
 beforeAll(async () => {
   ({ pg, db } = await createQueueDb({ serialize: true }));
+  await addCreatorShopStandIns(pg);
 });
 afterAll(async () => {
   await pg.close();
@@ -725,5 +727,59 @@ describe('a membership week', () => {
     expect(
       await retryPendingPurchases(db, mainApp.port, { now: new Date(NOW.getTime() + 5 * 60_000) })
     ).toMatchObject({ retried: 0 });
+  });
+});
+
+describe('a creator cosmetic that is still in review', () => {
+  const PENDING_BADGE = 8;
+  beforeEach(async () => {
+    await pg.exec(`
+      INSERT INTO "User" ("id") VALUES (50);
+      INSERT INTO "Cosmetic" ("id","name","type","source","data","createdById") VALUES
+        (105,'Pending badge','Badge','Purchase','{}',50);
+      INSERT INTO "CosmeticShopItem" ("id","cosmeticId","unitAmount","addedById","title","status") VALUES
+        (1,105,100,50,'Pending badge','PendingReview');
+      INSERT INTO "KnightsShopItem" ("id","kind","name","price","cosmeticId","rotating") VALUES
+        (${PENDING_BADGE},'cosmetic','Pending badge',500,105,false);`);
+  });
+
+  it('is refused at purchase, with no gold taken and nothing granted', async () => {
+    const mainApp = fakeMainApp();
+    const result = await buy(PENDING_BADGE, {
+      price: 500,
+      deps: defaultDeps({ mainApp: mainApp.port }),
+    });
+
+    expect(result).toEqual({ status: 'refused', reason: 'not-approved' });
+    expect(await player()).toMatchObject({ goldConverted: 0 });
+    expect(await purchases()).toEqual([]);
+    expect(
+      (await pg.query(`SELECT 1 FROM "UserCosmetic" WHERE "cosmeticId"=105`)).rows
+    ).toHaveLength(0);
+  });
+
+  it('takes no rotation slot from approved items', async () => {
+    await pg.exec(`
+      UPDATE "KnightsShopItem" SET "rotating" = true WHERE "id" = ${PENDING_BADGE};
+      INSERT INTO "KnightsShopItem" ("id","kind","name","price","buzz","rotating") VALUES
+        (20,'buzz_pack','A',1000,50,true),(21,'buzz_pack','B',1000,50,true),
+        (22,'buzz_pack','C',1000,50,true),(23,'buzz_pack','D',1000,50,true);`);
+    for (const id of [20, 21, 22, 23]) {
+      expect(await buy(id, { price: 1000 })).toMatchObject({ status: 'granted' });
+    }
+  });
+
+  it('sells once the listing is approved', async () => {
+    await pg.exec(`UPDATE "CosmeticShopItem" SET "status"='Published' WHERE "id"=1`);
+    expect(await buy(PENDING_BADGE, { price: 500 })).toMatchObject({ status: 'granted' });
+    expect(await player()).toMatchObject({ goldConverted: 500 });
+  });
+});
+
+describe('the purchase ledger clock', () => {
+  it('stamps a cosmetic purchase with one time for createdAt and grantedAt', async () => {
+    await buy('badge-seal');
+    const [row] = await purchases();
+    expect(row.grantedAt).toEqual(row.createdAt);
   });
 });

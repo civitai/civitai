@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PROGRESSION } from './progression/config';
-import { fervorCopy, nextTally } from './leaderboard-view';
-import { formatTally, nextTallyAt } from '../tally';
+import { fervorCopy } from './leaderboard-view';
 import { standingGap, viewBoard } from './leaderboard';
 
 const rows = (...fervors: number[]) =>
@@ -42,18 +41,6 @@ describe('standingGap', () => {
   });
 });
 
-describe('nextTally', () => {
-  it.each([
-    ['2026-12-15T17:48:00Z', '6h 12m'],
-    ['2026-12-15T00:00:00Z', '24h 0m'],
-    ['2026-12-15T23:59:30Z', '0h 0m'],
-    ['2026-12-15T23:00:00Z', '1h 0m'],
-    ['2026-12-31T12:30:00Z', '11h 30m'],
-  ])('from %s it is %s to the next UTC midnight', (at, text) => {
-    expect(nextTally(new Date(at))).toBe(text);
-  });
-});
-
 describe('fervorCopy', () => {
   it('builds the formula and the example from the config', () => {
     const copy = fervorCopy();
@@ -64,22 +51,5 @@ describe('fervorCopy', () => {
     expect(copy.example).toBe(
       'Example: 400 right of 500 judged is 400 × 100 × 80% × 80% = 25,600 fervor.'
     );
-  });
-});
-
-describe('tally helpers', () => {
-  it('finds the next UTC midnight, a full day ahead when exactly at one', () => {
-    expect(nextTallyAt(new Date('2026-12-15T17:48:00Z')).toISOString()).toBe(
-      '2026-12-16T00:00:00.000Z'
-    );
-    expect(nextTallyAt(new Date('2026-12-15T00:00:00Z')).toISOString()).toBe(
-      '2026-12-16T00:00:00.000Z'
-    );
-  });
-
-  it('is empty at or past the instant, so the page can say the tally is ready', () => {
-    expect(formatTally(0)).toBe('');
-    expect(formatTally(-5)).toBe('');
-    expect(formatTally(61_000)).toBe('0h 1m');
   });
 });

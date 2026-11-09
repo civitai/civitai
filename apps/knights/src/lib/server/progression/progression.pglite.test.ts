@@ -268,6 +268,13 @@ describe('calculateFervor', () => {
     );
   });
 
+  it('keeps the exact value where a float product lands just under it', () => {
+    // 7 × 100 × 0.7² is exactly 343; as a float it is 342.99999999999994.
+    expect(calculateFervor({ correct: 7, graded: 10 })).toBe(343);
+    expect(calculateFervor({ correct: 14, graded: 20 })).toBe(686);
+    expect(calculateFervor({ correct: 28, graded: 40 })).toBe(1372);
+  });
+
   it('counts accuracy twice, with no cap on volume', () => {
     expect(calculateFervor({ correct: 400, graded: 500 })).toBe(25600);
     expect(calculateFervor({ correct: 2000, graded: 2000 })).toBe(200000);

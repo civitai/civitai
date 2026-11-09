@@ -16,7 +16,7 @@ export type RecapView = {
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
-/** Everything the recap popup prints, from the ledger figures alone. Missed is what settled and went against the player; Undecided is what has not settled. */
+/** Everything the recap popup prints, from the ledger figures alone. Missed is what settled and went against the player; Undecided is what has no verdict: not settled, or settled with no consensus. */
 export function recapView(recap: Recap): RecapView {
   const judgments = plural(recap.cast, 'judgment', 'judgments');
   const were = plural(recap.cast, 'was', 'were');
@@ -48,7 +48,7 @@ export function recapView(recap: Recap): RecapView {
         key: 'undecided',
         label: 'Undecided',
         value: count(recap.pending),
-        note: 'no consensus yet',
+        note: 'no consensus',
       },
       {
         key: 'accuracy',

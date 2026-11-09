@@ -33,7 +33,7 @@ beforeEach(() => {
   get.mockReset();
   getPlayerStatus.mockReset();
   getPlayerStatus.mockResolvedValue({ rank: 'Knight' });
-  get.mockResolvedValue({ rows: [], badges: {} });
+  get.mockResolvedValue({ rows: [], badges: {}, builtAt: Date.now() });
 });
 
 describe('leaderboard load', () => {
@@ -51,6 +51,7 @@ describe('leaderboard load', () => {
         row(7, 'key-7'),
       ],
       badges: { Knight: 'knight-key', Templar: 'templar-key' },
+      builtAt: Date.now(),
     });
 
     const data = await run();
@@ -68,12 +69,17 @@ describe('leaderboard load', () => {
       'cdn/knight-key@48',
     ]);
     expect(data.self).toMatchObject({ userId: 7, position: 4, behind: { place: 3, gap: 0 } });
-    expect(data.nextTally).toMatch(/^\d+h \d+m$/);
     expect(data.copy.formula).toContain('accuracy × your accuracy');
     expect(data.entries[0]).not.toHaveProperty('image');
     expect(data.windowDays).toBe(7);
-    expect(new Date(data.nextTallyAt).getTime()).toBeGreaterThan(Date.now());
-    expect(new Date(data.nextTallyAt).toISOString().slice(11)).toBe('00:00:00.000Z');
+  });
+
+  it('sends when the board was built, and the server clock to measure it against', async () => {
+    const builtAt = Date.now() - 150_000;
+    get.mockResolvedValue({ rows: [], badges: {}, builtAt });
+    const data = await run();
+    expect(data.builtAt).toBe(builtAt);
+    expect(Math.abs(Date.parse(data.serverNow) - Date.now())).toBeLessThan(5_000);
   });
 
   it('renders the panel closed only when the viewer collapsed it', async () => {
