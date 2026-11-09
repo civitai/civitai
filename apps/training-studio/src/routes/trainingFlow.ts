@@ -390,6 +390,12 @@ export interface RunParams {
  *  decimal being typed (`0.0`) collapses to `0` before the next digit lands. */
 export type NumericInput = string | number;
 
+/** A `NumericInput` as a `type="number"` binding's getter: blank reads as `null`, which is what Svelte
+ *  reads back from the element while it holds text that isn't a number yet (`1e`, `1e-` on the way to
+ *  `1e-4`). Returning `''` there makes Svelte think the value changed and clear what is being typed. */
+export const numberInputValue = (value: NumericInput): number | string | null =>
+  value === '' ? null : value;
+
 /** Human label per param — typed against `RunParams` so a new field without one fails typecheck
  *  instead of rendering its key. */
 export const PARAM_LABELS: Record<keyof RunParams, string> = {

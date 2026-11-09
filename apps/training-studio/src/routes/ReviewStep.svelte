@@ -44,6 +44,7 @@
     defaultRunParams,
     isCustom,
     MAX_SAMPLE_PROMPTS,
+    numberInputValue,
     PARAM_LABELS,
     optimizerLrParams,
     paramDeviations,
@@ -606,7 +607,8 @@
         max={bound?.max}
         step={bound?.step}
         aria-label={PARAM_LABELS[f.field]}
-        bind:value={() => paramsAt(i)[f.field] as NumericInput, (v) => setField(i, f.field, v ?? '')}
+        bind:value={() => numberInputValue(paramsAt(i)[f.field] as NumericInput),
+          (v) => setField(i, f.field, v ?? '')}
         onblur={() => bound && clampField(i, f.field, bound)}
         disabled={locked || unacknowledged}
         class="h-7 font-mono"

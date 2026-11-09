@@ -24,6 +24,7 @@ import {
   networkDimSizeHint,
   newRun,
   nextImgId,
+  numberInputValue,
   optimizerLrParams,
   teLocked,
   paramDeviations,
@@ -245,6 +246,15 @@ describe('buildTrainingRuns extra fields', () => {
     });
     expect(video.noiseOffset).toBe(0);
     expect(video.flipAugmentation).toBe(false);
+  });
+});
+
+describe('numberInputValue', () => {
+  // A blank field must read back as null, or Svelte clears a half-typed `1e` on the way to `1e-4`.
+  it('reads a blank field as null and passes values through', () => {
+    expect(numberInputValue('')).toBeNull();
+    expect(numberInputValue(0.0001)).toBe(0.0001);
+    expect(numberInputValue(0)).toBe(0);
   });
 });
 
