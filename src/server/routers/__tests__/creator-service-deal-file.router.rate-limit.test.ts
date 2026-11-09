@@ -6,9 +6,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 /**
- * Asking to attach a file goes through the per-user rate limit before the service runs. The real
- * limiter is bypassed under test (`claimRateLimitAttempt`), so it is stood in for by one that
- * records what it was handed and refuses.
+ * The real limiter is bypassed under test (`claimRateLimitAttempt`), so it is stood in for by one
+ * that records what it was handed and refuses.
  */
 
 const h = vi.hoisted(() => ({

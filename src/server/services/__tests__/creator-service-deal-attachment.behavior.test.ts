@@ -881,6 +881,20 @@ describe('a moderator', () => {
       expect(await download(fileId, STRANGER, true)).toBeNull();
     }
     expect((await fileRow(refused)).status).toBe('Failed');
+
+    // Its uploader is still served it: the seller's own Final, not yet completed.
+    const { fileId: sellerUpload } = await files.requestServiceDealUpload({
+      dealId,
+      userId: SELLER,
+      kind: 'Final',
+      fileName: 'result.txt',
+      mimeType: 'text/plain',
+      size: TEXT.byteLength,
+    });
+    const uploaderKey = (await fileRow(sellerUpload)).s3Key;
+    expect(uploaderKey).toMatch(/^service-deals\/uploads\//);
+    expect((await download(sellerUpload, SELLER))?.key).toBe(uploaderKey);
+    expect(await download(sellerUpload, STRANGER, true)).toBeNull();
   });
 
   it("reads the buyer's attachments apart from the delivery in the dispute evidence", async () => {
