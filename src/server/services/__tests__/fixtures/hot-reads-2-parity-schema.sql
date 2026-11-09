@@ -325,8 +325,8 @@ CREATE TABLE "hot_reads_2_parity"."TagsOnImageVote" (
 );
 
 -- The four VIEWS the reads touch, copied from their latest migration with every relation, enum and
--- function qualified to this schema and nothing else changed, so their column types (sums are
--- BIGINT or NUMERIC, not INTEGER) and their plans are the production ones:
+-- function qualified to this schema and nothing else changed except where noted, so their column
+-- types (sums are BIGINT or NUMERIC, not INTEGER) and their plans are the production ones:
 --   "UserStat"           migrations/20251123233705_userstats_shrink
 --   "ModelReportStat"    migrations/20230209225221_rename_inaction_unaction
 --   "GenerationCoverage" migrations/20261231160000_generation_coverage_trained_files_need_epoch,

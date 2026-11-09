@@ -19,14 +19,17 @@
 --   1. Snapshot the view BEFORE applying, and diff it after: the rows that lost `covered` or
 --      `coveredNext` are the affected ids —
 --      CREATE TEMP TABLE gc_before AS SELECT * FROM "GenerationCoverage";
---      -- dry run this file inside BEGIN; ... ROLLBACK; then apply, then:
+--      -- dry run this file inside BEGIN; ... ROLLBACK; then apply, then (all in the SAME session:
+--      -- a temp table does not outlive it):
 --      SELECT b."modelId", b."modelVersionId" FROM gc_before b
 --        LEFT JOIN "GenerationCoverage" a USING ("modelVersionId")
 --      WHERE (b.covered AND a.covered IS NOT TRUE) OR (b."coveredNext" AND a."coveredNext" IS NOT TRUE);
 --   2. PURGE BY KEY (not wholesale) the two caches that store coverage for those models:
 --      packed:generation:resource-data-*   (resourceDataCache, TTL 1h)
 --      packed:caches:data-for-model*       (dataForModelsCache, TTL 1d)
---   3. Re-queue those models into the models search index.
+--   3. Bust the orchestrator's cached copy of those versions (bustOrchestratorModelCache), or it
+--      keeps resolving them until its own cache expires.
+--   4. Re-queue those models into the models search index.
 --
 -- Cost: one jsonb containment test per file row, on the `metadata` value the old test already read.
 
