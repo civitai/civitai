@@ -33,3 +33,7 @@ SET lock_timeout = 0;
 
 -- Serves the post-delete SET NULL and the release lookup by post.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "ResourceReview_postId_idx" ON "ResourceReview" ("postId");
+
+-- Without fresh stats on the new column the per-minute review release sweep seq-scans the table until
+-- autovacuum analyzes it. Run after the index; safe to repeat.
+ANALYZE "ResourceReview" ("postId");
