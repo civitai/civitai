@@ -20254,7 +20254,7 @@ snapshots:
 
   happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10):
     dependencies:
-      '@types/node': 24.13.3
+      '@types/node': 20.19.9
       '@types/whatwg-mimetype': 3.0.2
       '@types/ws': 8.18.2
       buffer-image-size: 0.6.4
