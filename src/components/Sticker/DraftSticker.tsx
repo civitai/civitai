@@ -44,7 +44,7 @@ import {
   STICKER_PLACEMENT_MIN_OPACITY,
   snapScaleOvershoot,
 } from '~/shared/utils/sticker-placement';
-import { stickerKeysTrack } from '~/shared/utils/sticker-track-edit';
+import { stickerKeysRefusal, stickerKeysTrack } from '~/shared/utils/sticker-track-edit';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -614,6 +614,12 @@ export function DraftSticker({
     return () => setPrimaryLabel(draft.id, null);
   }, [draft.id, primaryLabel, setPrimaryLabel]);
 
+  // The timeline says why; here it only keeps a press from reaching a refusal.
+  const motionRefused =
+    !!draft.motion?.on &&
+    draft.motion.keys.length > 0 &&
+    stickerKeysRefusal(draft.motion.keys, draft.opacity) != null;
+
   const placementInput = () => {
     const scale = snapScaleOvershoot(draft.scale, creatorMaxScale);
     const track =
@@ -1057,6 +1063,7 @@ export function DraftSticker({
                 color="yellow"
                 style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
                 loading={place.isPending}
+                disabled={motionRefused}
                 onClick={() => place.mutate(placementInput())}
                 data-draft-primary={draft.id}
               >
@@ -1071,6 +1078,7 @@ export function DraftSticker({
                 label="Place"
                 data-draft-primary={draft.id}
                 loading={place.isPending}
+                disabled={motionRefused}
                 onPerformTransaction={() => place.mutate(placementInput())}
               />
             )}

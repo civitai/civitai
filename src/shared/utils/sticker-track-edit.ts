@@ -5,6 +5,8 @@ import {
   STICKER_TRACK_KEYS_VERSION,
   STICKER_TRACK_MAX_DURATION_MS,
   STICKER_TRACK_MAX_FADE_MS,
+  stickerTrackFaintestShown,
+  stickerTrackRefusal,
 } from '~/shared/utils/sticker-track';
 
 /** The pose a key holds, in the draft's own field names. */
@@ -117,6 +119,21 @@ export function capFades(keys: StickerTrackKey[]): StickerTrackKey[] {
 
 export const stickerKeysTrack = (keys: StickerTrackKey[]): StickerTrackV2 =>
   trackOf(capFades(keys));
+
+export const STICKER_KEYS_TOO_FAINT = 'too faint for the sticker opacity';
+
+/**
+ * Why the server would refuse these keys on a sticker of `stickerOpacity`, or null. Changing the
+ * sticker's own opacity sets no key, so the floor on key times sticker opacity is checked here
+ * rather than when a key was set.
+ */
+export function stickerKeysRefusal(keys: StickerTrackKey[], stickerOpacity: number) {
+  const track = stickerKeysTrack(keys);
+  const faintest = stickerTrackFaintestShown(track);
+  if (faintest != null && faintest * stickerOpacity < STICKER_PLACEMENT_MIN_OPACITY - 1e-9)
+    return STICKER_KEYS_TOO_FAINT;
+  return stickerTrackRefusal(track);
+}
 
 const trackOf = (keys: StickerTrackKey[]): StickerTrackV2 => ({
   v: STICKER_TRACK_KEYS_VERSION,
