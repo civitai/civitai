@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
     | { available: number; optedIn: boolean; mode: string }
     | undefined,
   mutate: vi.fn(),
+  player: null as { event: string; teams: string[] } | null,
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
@@ -27,6 +28,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
 });
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => h.user }));
+vi.mock('~/components/HatTurf/useHatTurfFeedPlayer', () => ({
+  useHatTurfFeedPlayer: () => h.player,
+}));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => h.flags,
@@ -39,6 +43,7 @@ vi.mock('~/components/Decorations/usePlayableEventDecoration', () => ({
 import { cleanup } from 'vitest-browser-react';
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { HatTurfEventSection } from './HatTurfEventSection';
+import { FiltersProvider } from '~/providers/FiltersProvider';
 import { renderWithProviders } from '../../../../test/component-setup';
 
 const section = () => document.body.querySelector('[data-testid="hat-turf-event-section"]');
@@ -61,6 +66,7 @@ beforeEach(() => {
   h.playable = 'birthday2026';
   h.stock = { available: 3, optedIn: false, mode: 'live' };
   h.mutate.mockReset();
+  h.player = null;
 });
 afterEach(() => cleanup());
 
@@ -207,5 +213,43 @@ describe('Hat Turf on the event page', () => {
     await render(team);
     await settle();
     expect(section()).toBeNull();
+  });
+});
+
+describe('the link to your live hats', () => {
+  const link = () => document.body.querySelector('[data-testid="hat-turf-my-hats"]');
+  const renderInFeed = () =>
+    renderWithProviders(
+      <FiltersProvider>
+        <HatTurfEventSection event="birthday2026" team="blue" />
+      </FiltersProvider>
+    );
+  const joined = (liveHats: number) =>
+    (h.stock = { available: 3, optedIn: true, mode: 'live', liveHats } as typeof h.stock);
+
+  test('a feed player with live hats gets it, with the count', async () => {
+    joined(4);
+    h.player = { event: 'birthday2026', teams: ['Blue'] };
+    await renderInFeed();
+    await vi.waitFor(() => expect(link()).not.toBeNull());
+    expect(link()!.textContent).toBe('My live hats (4)');
+    expect(link()!.getAttribute('href')).toBe('/images');
+  });
+
+  test.each([
+    ['no live hats', () => joined(0)],
+    // Without the feed sorts flag (or cosmetics off) the feed would ignore the filter.
+    ['not a feed player', () => ((h.player = null), joined(4))],
+    [
+      'a feed player of another event',
+      () => ((h.player = { event: 'other', teams: [] }), joined(4)),
+    ],
+  ])('%s: no link', async (_name, arrange) => {
+    h.player = { event: 'birthday2026', teams: ['Blue'] };
+    arrange();
+    await renderInFeed();
+    await vi.waitFor(() => expect(section()).not.toBeNull());
+    await settle();
+    expect(link()).toBeNull();
   });
 });

@@ -103,6 +103,19 @@ const contestEntry = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
   WHERE ci."imageId" = ${imageId} AND c.mode = 'Contest'
 )`;
 
+/**
+ * FROM and WHERE for `userId`'s own stickers drawn on the feed: live, on an image anyone may see whose
+ * owner allows turf, not a contest entry, as getTurfStickersForImages draws them. Aliases s, i and p.
+ */
+export function ownDrawnStickers(event: TurfEvent, userId: number, now: Date) {
+  return Prisma.sql`FROM "EventTurfSticker" s
+    JOIN "Image" i ON i.id = s."imageId"
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE s.event = ${event.name} AND s."userId" = ${userId}
+      AND s."removedAt" IS NULL ${unexpired(event, now)} AND ${imageVisible}
+      AND NOT ${contestEntry(Prisma.sql`s."imageId"`)} AND ${ownerAllowsTurf(event.name)}`;
+}
+
 /** The images among `imageIds` that are entries in a contest (see contestEntry). */
 async function contestImageIds(imageIds: number[], db: typeof dbRead | typeof dbWrite) {
   if (!imageIds.length) return new Set<number>();
@@ -238,10 +251,18 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
       where: { event_userId: { event: event.name, userId } },
       select: { stock: true, refilledAt: true },
     }),
-    dbRead.$queryRaw<{ optedIn: boolean | null; left: boolean | null; ownerOff: boolean | null }[]>`
+    dbRead.$queryRaw<
+      {
+        optedIn: boolean | null;
+        left: boolean | null;
+        ownerOff: boolean | null;
+        liveHats: number | null;
+      }[]
+    >`
       SELECT ${inTurf('u', event.name)} AS "optedIn",
         (u.settings -> ${TURF_SETTING} ->> ${event.name}) = 'false' AS "left",
-        (u.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event.name}) = 'true' AS "ownerOff"
+        (u.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event.name}) = 'true' AS "ownerOff",
+        (SELECT count(*)::int ${ownDrawnStickers(event, userId, now)}) AS "liveHats"
       FROM "User" u WHERE u.id = ${userId}
     `,
     catchUp,
@@ -267,6 +288,8 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
     /** Joined once and then left: they rejoin from the button, unprompted. */
     left: !!user?.left,
     ownerOff: !!user?.ownerOff,
+    /** The viewer's hats still drawn (ownDrawnStickers): the event page links to them in the feed. */
+    liveHats: user?.liveHats ?? 0,
   };
 }
 // #endregion

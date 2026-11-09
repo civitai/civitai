@@ -8,7 +8,14 @@ import { trpc } from '~/utils/trpc';
 const TICK_MS = 60_000;
 
 /** How long the viewer's own hat keeps counting. Nothing while hats do not expire. */
-export function HatTimeLeft({ placedAt }: { placedAt: Date | string | null | undefined }) {
+export function HatTimeLeft({
+  placedAt,
+  className = classes.timeLeft,
+}: {
+  placedAt: Date | string | null | undefined;
+  /** Replaces the label under a hat. */
+  className?: string;
+}) {
   const stock = useHatStock();
   const utils = trpc.useUtils();
   const expiresAt =
@@ -30,7 +37,7 @@ export function HatTimeLeft({ placedAt }: { placedAt: Date | string | null | und
   if (expiresMs === null || expired) return null;
   return (
     <span
-      className={classes.timeLeft}
+      className={className}
       data-testid="hat-turf-time-left"
       title={`Your hat counts until ${new Date(expiresMs).toLocaleString()}`}
     >
