@@ -2,7 +2,8 @@ import { Anchor, Group, Skeleton, Text } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
 import { IconSticker } from '@tabler/icons-react';
 import type { RefObject } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   CREATOR_HOVER_DROPDOWN_CLASS,
@@ -165,7 +166,7 @@ function StickerAttributionCard({
       offset={4}
     >
       <Popover.Target>
-        <div
+        <ViewportAnchor
           className="pointer-events-none fixed"
           style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}
         />
@@ -209,3 +210,15 @@ function StickerAttributionCard({
     </Popover>
   );
 }
+
+/**
+ * Portaled so `fixed` is measured from the viewport: left in place, a transformed
+ * ancestor of the comment re-bases it and the card lands that far from its sticker.
+ * `Popover.Target` clones its child, so the portal has to sit behind a component
+ * that forwards the props and ref it injects.
+ */
+const ViewportAnchor = forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+  function ViewportAnchor(props, ref) {
+    return createPortal(<div ref={ref} {...props} />, document.body);
+  }
+);
