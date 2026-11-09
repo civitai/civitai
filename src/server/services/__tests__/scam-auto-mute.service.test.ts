@@ -67,7 +67,7 @@ const { autoMuteScamAccount } = await import('~/server/services/scam-auto-mute.s
 const DAY = 86_400_000;
 const UNMUTED_AT = new Date(Date.now() - DAY);
 const RECORD = {
-  kind: 'comments',
+  kind: 'commentsV2',
   at: new Date().toISOString(),
   count: 2,
   ids: [3, 4],
@@ -94,7 +94,7 @@ const evidence = (over: Record<string, unknown> = {}) => ({
   contentAt: new Date(),
   ...over,
 });
-const base = { userId: 42, cleanup: 'comments' as const, evidence: evidence() };
+const base = { userId: 42, cleanup: 'commentsV2' as const, evidence: evidence() };
 
 const nothingActed = () => {
   expect(m.claimPendingReviewMute).not.toHaveBeenCalled();
@@ -161,7 +161,7 @@ describe('autoMuteScamAccount', () => {
       entityId: 42,
       activity: 'autoMuteScam',
     });
-    expect(m.runScamCleanup).toHaveBeenCalledWith('comments', 42);
+    expect(m.runScamCleanup).toHaveBeenCalledWith('commentsV2', 42);
     expect(m.recordScamCleanup).toHaveBeenCalledWith(5, 0, 'wf-1', RECORD);
     expect(m.userActivity).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
