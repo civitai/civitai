@@ -1173,6 +1173,9 @@ function resetDepositMocks() {
   mockGetTransactionByExternalId.mockReset().mockResolvedValue(null);
   mockGetMultipliersForUser.mockReset().mockResolvedValue({ purchasesMultiplier: 1 });
   mockGrantBuzzPurchase.mockReset().mockResolvedValue('tx_123');
+  vi.mocked(findHandGrantsForDeposit)
+    .mockReset()
+    .mockResolvedValue({ covering: [], possible: [], overflowed: [] });
 }
 
 type DepositRow = Record<string, unknown>;
@@ -1542,6 +1545,20 @@ describe('watchOpenDeposits', () => {
       }
     );
 
+    it('credits a failed row NOWPayments reports partially_paid at its outcome amount', async () => {
+      serveDepositTable(() => [{ ...openRow(841, 'failed', 23), status: rowStatus[841] }]);
+      rowStatus[841] = 'failed';
+      mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue(
+        makePayment({ payment_id: 841, payment_status: 'partially_paid', outcome_amount: 2.5 })
+      );
+
+      const result = await watchOpenDeposits();
+
+      expect([...ledger]).toEqual([['np-deposit-841', 2500]]);
+      expect(rowStatus[841]).toBe('finished');
+      expect(result.lateFinished).toBe(1);
+    });
+
     it.each(['failed', 'expired', 'waiting', 'refunded'])(
       'leaves a failed row alone while NOWPayments reports %s',
       async (npStatus) => {
@@ -1561,6 +1578,8 @@ describe('watchOpenDeposits', () => {
     it('settles a failed row already credited by hand under np-deposit-<id> without granting again', async () => {
       // A hand credit that differs from NP's figure (5.0 × 1000 = 5000).
       ledger.set('np-deposit-833', 397);
+      // A bonus multiplier today must not be recorded against a credit made without it.
+      mockGetMultipliersForUser.mockResolvedValue({ purchasesMultiplier: 1.5 });
 
       await watch([openRow(833, 'failed', 23)], { 833: 'finished' });
 
@@ -1664,7 +1683,7 @@ describe('watchOpenDeposits', () => {
     it('hands a late finish whose grant fails back to the retry sweep', async () => {
       mockGrantBuzzPurchase.mockRejectedValueOnce(new Error('buzz service 503'));
 
-      const result = await watch([{ ...openRow(838, 'failed', 23), retryCount: 72 }], {
+      const result = await watch([openRow(838, 'failed', 23)], {
         838: 'finished',
       });
 
@@ -1700,6 +1719,7 @@ describe('watchOpenDeposits', () => {
 
         expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
         expect(rowStatus[840]).toBe('failed');
+        expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledTimes(1);
         expect(result.listed).toEqual([
           expect.objectContaining({ paymentId: '840', state: 'awaiting_ok' }),
         ]);
