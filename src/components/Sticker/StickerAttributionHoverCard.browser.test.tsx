@@ -19,10 +19,11 @@ vi.mock('~/components/Sticker/sticker-attribution.util', () => ({
   }),
 }));
 
-function Thread({ style }: { style?: CSSProperties }) {
+function Thread({ style, above }: { style?: CSSProperties; above?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   return (
     <div style={style}>
+      {above && <div data-testid="above" style={{ height: 20 }} />}
       <div ref={ref}>
         <p style={{ margin: 0 }}>
           Lovely image{' '}
@@ -73,5 +74,16 @@ describe('sticker attribution card anchoring', () => {
     );
     await openCard();
     expectCardOnSticker();
+  });
+
+  test('follows its sticker when content above grows while the pointer rests on the card', async () => {
+    await renderWithProviders(<Thread above style={{ marginTop: 40, marginLeft: 80 }} />);
+    await openCard();
+    // Onto the card: the sticker's mouseout no longer closes it.
+    await userEvent.hover(dropdown()!);
+    document.querySelector<HTMLElement>('[data-testid="above"]')!.style.height = '160px';
+    // Moving out from under the pointer may close it, which is fine; hanging where the sticker was is not.
+    await new Promise((r) => setTimeout(r, 300));
+    if (dropdown()) expectCardOnSticker();
   });
 });

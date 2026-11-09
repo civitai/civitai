@@ -18,7 +18,7 @@ import {
 } from '~/components/UserAvatar/UserHoverCard';
 import { useStickerAttribution } from '~/components/Sticker/sticker-attribution.util';
 
-type Hovered = { cosmeticId: number; rect: DOMRect };
+type Hovered = { cosmeticId: number; rect: DOMRect; el: HTMLElement };
 
 /**
  * Who made the sticker in a comment, and where to buy it.
@@ -84,7 +84,7 @@ export function StickerAttributionHoverCard({
         // an element captured a delay ago may be detached — and a detached
         // element measures as all zeros, pinning the card to the viewport corner.
         if (!el.isConnected) return;
-        setHovered({ cosmeticId, rect: el.getBoundingClientRect() });
+        setHovered({ cosmeticId, rect: el.getBoundingClientRect(), el });
       }, HOVER_DELAY_MS);
     };
 
@@ -124,6 +124,20 @@ export function StickerAttributionHoverCard({
     window.addEventListener('scroll', onScroll, true);
     return () => window.removeEventListener('scroll', onScroll, true);
   }, [hovered]);
+
+  // The rect was read once at hover; content above the sticker can move it while the card is held open.
+  const openEl = hovered?.el;
+  useEffect(() => {
+    if (!openEl) return;
+    const follow = () => {
+      if (!openEl.isConnected) return setHovered(null);
+      setHovered((h) => (h ? { ...h, rect: openEl.getBoundingClientRect() } : h));
+    };
+    const observer = new ResizeObserver(follow);
+    // Anything above the sticker that grows resizes one of its ancestors.
+    for (let n: HTMLElement | null = openEl; n; n = n.parentElement) observer.observe(n);
+    return () => observer.disconnect();
+  }, [openEl]);
 
   if (!hovered) return null;
 
