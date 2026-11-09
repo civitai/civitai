@@ -95,12 +95,21 @@ interface TrainingStudioHost {
    *  new-tab for an absolute one. */
   generateUrl?(req: { air: string; workflowId: string; name: string }): string;
 
-  /** URL for the main app's publish entry (`/models/train/from-orchestrator?workflowId=…&epoch=…`),
+  /** URL for the main app's publish entry
+   *  (`/models/train/from-orchestrator?workflowId=…&epoch=…&ownRights=0|1&shareDataset=0|1`),
    *  which builds a Draft model from the run's checkpoint and drops the user into the model wizard.
    *  Ownership is enforced there by re-fetching the workflow with the caller's own orchestrator
-   *  token. Optional — omit to hide the Publish affordance. Same URL semantics as `generateUrl`:
-   *  relative navigates same-tab, absolute opens a new tab. */
-  publishUrl?(req: { workflowId: string; epoch: number }): string;
+   *  token. The dataset-sharing pair can only lower the stored choice on its own; a share the owner
+   *  has not yet confirmed shows a confirm step on the main app first. Build the query with
+   *  `publishSearchParams` (`src/lib/publish-url-core.ts`). Optional — omit to hide the Publish
+   *  affordance. Same URL semantics as `generateUrl`: relative navigates same-tab, absolute opens a
+   *  new tab. */
+  publishUrl?(req: {
+    workflowId: string;
+    epoch: number;
+    ownRights?: boolean;
+    shareDataset?: boolean;
+  }): string;
 
   /** URL for the run's model page, draft or published. The main app stamps
    *  `{ modelId, modelVersionId }` into the workflow's metadata when the publish entry creates the

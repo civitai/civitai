@@ -4,6 +4,7 @@
   import { goto, invalidate } from '$app/navigation';
   import { env } from '$env/dynamic/public';
   import { setHostContext, type StudioLocation } from '$lib/host';
+  import { PUBLISH_PATH, publishSearchParams } from '$lib/publish-url-core';
   import { shellBackend } from '$lib/shell-backend';
   import { connectSignals, onSignal } from '$lib/signals';
   import { BUZZ_UPDATE_SIGNAL } from '$lib/signal-events';
@@ -39,6 +40,9 @@
       // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
       // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
       supportUrl: `${data.civitaiUrl}/support-portal`,
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
+      // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
+      dataPolicyUrl: `${data.civitaiUrl}/content/training/data-policy`,
     },
     hrefFor,
     navigate: (loc, opts) => goto(hrefFor(loc), opts?.refreshAll ? { invalidateAll: true } : undefined),
@@ -48,11 +52,7 @@
     // the link goes live per-user as the flag widens.
     generateUrl: ({ air, workflowId, name }) =>
       `${data.civitaiUrl}/generate?${new URLSearchParams({ air, workflowId, name })}`,
-    publishUrl: ({ workflowId, epoch }) =>
-      `${data.civitaiUrl}/models/train/from-orchestrator?${new URLSearchParams({
-        workflowId,
-        epoch: String(epoch),
-      })}`,
+    publishUrl: (req) => `${data.civitaiUrl}${PUBLISH_PATH}?${publishSearchParams(req)}`,
     modelPageUrl: ({ modelId }) => `${data.civitaiUrl}/models/${modelId}`,
   });
 
