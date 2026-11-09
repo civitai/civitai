@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedPlayer } from '../../../test/seed';
+import { isSellable, stockFor, utcDay } from '@civitai/shared/knights-shop';
 import { loadShop } from './catalog';
 import { addCreatorShopStandIns } from './creator-cosmetic.fixture';
 
@@ -73,13 +74,18 @@ describe('the shop view of a creator cosmetic', () => {
 
   it('gives its rotation slot to an approved item', async () => {
     await pg.exec(`INSERT INTO "KnightsShopItem" ("id","kind","name","price","tier","days","rotating") VALUES
-      (10,'membership','Gold wk',90000,'gold',7,true),
-      (11,'membership','Gold wk 2',90000,'gold',7,true),
-      (12,'membership','Gold wk 3',90000,'gold',7,true),
-      (13,'membership','Gold wk 4',90000,'gold',7,true);
+      (20,'membership','Gold wk',90000,'gold',7,true),
+      (21,'membership','Gold wk 2',90000,'gold',7,true),
+      (22,'membership','Gold wk 3',90000,'gold',7,true),
+      (23,'membership','Gold wk 4',90000,'gold',7,true);
       UPDATE "KnightsShopItem" SET "rotating" = true WHERE "id" = 3;`);
+    // Guard: with these ids the in-review item wins a slot if it is left in the draw, so the check below can fail.
+    const pool = (await db.selectFrom('KnightsShopItem').selectAll().execute()).filter(isSellable);
+    const unfiltered = stockFor(pool, utcDay(NOW)).stock.map(({ item }) => item.id);
+    expect(unfiltered).toContain(3);
+
     const ids = (await cards()).map((card) => card.id);
     expect(ids).not.toContain(3);
-    expect(ids.filter((id) => id >= 10)).toHaveLength(4);
+    expect(ids.filter((id) => id >= 20).sort()).toEqual([20, 21, 22, 23]);
   });
 });

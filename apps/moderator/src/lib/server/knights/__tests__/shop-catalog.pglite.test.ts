@@ -469,11 +469,16 @@ describe('a creator cosmetic that is still in review', () => {
 
   it('takes no rotation slot from approved items', async () => {
     await seedPending();
-    for (let i = 0; i < 4; i++) await seedItem(`Pick ${i}`, { rotating: true });
+    // Seeded first so it gets id 1, which wins a slot on this day when it is left in the draw.
     await seedItem('Creator badge', { kind: 'cosmetic', cosmeticId: 9, rotating: true });
-    const names = (await listShopItems().then((rows) => stockView(rows, '2026-12-20').stock)).map(
+    for (let i = 0; i < 4; i++) await seedItem(`Pick ${i}`, { rotating: true });
+    const rows = await listShopItems();
+    const unfiltered = stockFor(rows.filter(isSellable), '2026-12-20').stock.map(
       ({ item }) => item.name
     );
+    expect(unfiltered).toContain('Creator badge');
+
+    const names = stockView(rows, '2026-12-20').stock.map(({ item }) => item.name);
     expect(names.sort()).toEqual(['Pick 0', 'Pick 1', 'Pick 2', 'Pick 3']);
   });
 });

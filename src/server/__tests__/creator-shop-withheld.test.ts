@@ -193,15 +193,14 @@ describe('which cosmetics are withheld', () => {
   });
 
   // The Knights shop decides what it may sell with `withheldCosmeticIds`; both must answer alike on the same rows.
-  it.each<[string, Listing, number]>([
-    ['live', LIVE, 0],
-    ['relisted', RELISTED, 0],
-    ['sent back', SENT_BACK, 0],
-    ['never reviewed', { status: 'PendingReview', history: [submitted()] }, 0],
+  it.each<[string, Listing]>([
+    ['live', LIVE],
+    ['relisted', RELISTED],
+    ['sent back', SENT_BACK],
+    ['never reviewed', { status: 'PendingReview', history: [submitted()] }],
     [
       'taken down',
       { status: 'Archived', history: [submitted(), reviewed('approve', 2)], takedown: true },
-      0,
     ],
     [
       'edited after approval',
@@ -209,7 +208,6 @@ describe('which cosmetics are withheld', () => {
         status: 'PendingReview',
         history: [submitted(), reviewed('approve', 2), edited('artwork', 3)],
       },
-      0,
     ],
   ])('agrees with the Knights shop rule: %s', async (_, listing) => {
     const listings = [row(CREATOR, listing), row(RESELLER, SENT_BACK)];
@@ -219,6 +217,19 @@ describe('which cosmetics are withheld', () => {
       [{ id: COSMETIC, createdById: CREATOR, flags: 0 }],
       listings.map(({ cosmetic: _c, ...rest }) => rest)
     );
+    expect(shop).toEqual(main);
+  });
+
+  it("withholds a pending creator listing even when a reseller's listing is live", async () => {
+    const pending: Listing = { status: 'PendingReview', history: [submitted()] };
+    const listings = [row(CREATOR, pending), row(RESELLER, LIVE)];
+    dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValueOnce(listings);
+    const main = await getWithheldCosmeticIds([COSMETIC]);
+    const shop = withheldCosmeticIds(
+      [{ id: COSMETIC, createdById: CREATOR, flags: 0 }],
+      listings.map(({ cosmetic: _c, ...rest }) => rest)
+    );
+    expect(main).toEqual(new Set([COSMETIC]));
     expect(shop).toEqual(main);
   });
 
