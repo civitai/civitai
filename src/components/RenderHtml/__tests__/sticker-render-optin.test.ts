@@ -37,6 +37,8 @@ const relative = (file: string) => path.relative(SRC, file).split(path.sep).join
 
 describe('sticker rendering is opt-in', () => {
   const files = walk(SRC).filter((file) => {
+    // Tests don't ship; they render RenderHtml with the opt-in to exercise it.
+    if (/\.test\.tsx?$/.test(file)) return false;
     const source = fs.readFileSync(file, 'utf8');
     return source.includes('<RenderHtml');
   });
