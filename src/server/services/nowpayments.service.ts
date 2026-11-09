@@ -225,8 +225,11 @@ export const processDeposit = async (
   event: NOWPayments.WebhookEvent,
   /** A moderator crediting by hand; recorded on the ledger row. */
   actor?: { modUserId: number; ticketId?: string },
-  /** Hold, rather than credit, when the hand-grant scan is unsure (a soft match or an overflow). */
-  opts?: { holdOnUncertainHandGrant?: boolean }
+  /**
+   * A deposit NowPayments finished after its row closed unpaid: hold, rather than credit, when the
+   * hand-grant scan is unsure, and record what the ledger already holds as buzzCredited.
+   */
+  opts?: { lateFinish?: boolean }
 ) => {
   const userId = userIdFromOrderId(event.order_id);
   if (!userId) {
@@ -338,7 +341,7 @@ export const processDeposit = async (
               : overflowed.length
               ? 'hand_grant_scan_incomplete'
               : undefined;
-            if (opts?.holdOnUncertainHandGrant && uncertain) {
+            if (opts?.lateFinish && uncertain) {
               heldReason = uncertain;
               await log({
                 type: 'warning',
@@ -384,9 +387,9 @@ export const processDeposit = async (
         } else {
           transactionId = result?.settled;
         }
-        // Support reconciles buzzCredited against the ledger, and a hand credit need not match NP's
-        // figure; the ledger amount already includes any bonus.
-        if (transactionId === 'already_granted' && ledgerAmount != null) {
+        // A late finish is often one support already paid by hand, for an amount that need not match
+        // NP's figure; support reconciles buzzCredited against the ledger, which includes any bonus.
+        if (opts?.lateFinish && transactionId === 'already_granted' && ledgerAmount != null) {
           buzzAmount = ledgerAmount;
           bonusBuzz = null;
           multiplierInt = null;
@@ -1176,7 +1179,7 @@ const processLateFinish = async (
     payment.payment_status,
     eventFromPayment(payment),
     undefined,
-    { holdOnUncertainHandGrant: true }
+    { lateFinish: true }
   );
   const after = await dbWrite.cryptoDeposit.findUnique({
     where: { paymentId: BigInt(paymentId) },

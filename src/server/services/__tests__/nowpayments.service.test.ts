@@ -1601,6 +1601,21 @@ describe('watchOpenDeposits', () => {
       ]);
     });
 
+    it("keeps NP's figure and the bonus on an already-credited deposit outside the late path", async () => {
+      ledger.set('np-deposit-842', 397);
+      mockGetMultipliersForUser.mockResolvedValue({ purchasesMultiplier: 1.5 });
+      rowStatus[842] = 'buzz_failed';
+
+      await processDeposit(842, 'finished', eventFromPayment(makePayment({ payment_id: 842 })));
+
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(mockDbWrite.cryptoDeposit.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ buzzCredited: 5000, bonusBuzz: 2500, multiplier: 150 }),
+        })
+      );
+    });
+
     it('does not credit again when the finished webhook is replayed after the sweep credited it', async () => {
       await watch([openRow(834, 'failed', 23)], { 834: 'finished' });
       const event = eventFromPayment(makePayment({ payment_id: 834 }));
