@@ -83,9 +83,14 @@ import {
   modelTagCache,
   modelVersionPublicDonationGoalsCache,
   modelVotableTagsCache,
+  refreshHasReceivedReviews,
   userBasicCache,
   userModelCountCache,
 } from '~/server/redis/caches';
+import {
+  refreshReviewsForUnpublishedPosts,
+  releasePendingReviewsForPosts,
+} from '~/server/services/resourceReview.visibility';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import {
   bustModelGallerySettings,
@@ -4851,18 +4856,17 @@ async function tryHoldModelForLiteralRules(args: Parameters<typeof holdModelForL
 }
 
 /**
- * Releases or recounts the reviews written from posts a publish or unpublish moved. post.service is
- * loaded on use: model.service has never imported it, and a static import would load it, with its
- * module-scope caches, everywhere model.service loads.
+ * Releases or recounts the reviews written from posts a publish or unpublish moved, after the write
+ * has committed. Never throws: a failure leaves only held reviews or stale counts.
  */
 function syncPostReviews(change: 'release' | 'unpublish', postIds: number[]) {
   if (!postIds.length) return;
-  void import('~/server/services/post.service')
-    .then((posts) =>
-      change === 'release'
-        ? posts.releasePostReviews(postIds)
-        : posts.refreshUnpublishedPostReviews(postIds)
-    )
+  const sync =
+    change === 'release'
+      ? releasePendingReviewsForPosts(postIds)
+      : refreshReviewsForUnpublishedPosts(postIds);
+  void sync
+    .then((reviews) => refreshHasReceivedReviews(reviews))
     .catch((error) =>
       logToAxiom({
         name: 'model-service',
