@@ -185,6 +185,9 @@ export type FeedbackContext = {
   environment: FeedbackEnvironmentRow[];
   /** From a toast's "Report this": the server-fault ref and orchestrator ids it carried, and the
    *  text the reporter was shown. Rendered as text only — reporter-supplied claims. */
+  /** The HQ task the submit filed for this report, written by the server after HQ answered. Only
+   *  an `https://hq.civitai.com` link is accepted; anything else lands in `other` as text. */
+  hqTask: { id: string; url: string } | null;
   errorRef: string | null;
   workflowId: string | null;
   jobId: string | null;
@@ -360,6 +363,19 @@ const IMAGE_KEY = /^(?!https?|blob)[A-Za-z0-9][A-Za-z0-9_-]{7,99}$/;
  * producer HAS declared and this app has not yet learned to render degrade to a visible JSON dump
  * instead of vanishing.
  */
+const HQ_ORIGIN = 'https://hq.civitai.com';
+const HQ_TASK_ID = /^[\w-]{1,100}$/;
+
+function isHqTask(value: unknown): value is { id: string; url: string } {
+  if (!isPlainObject(value) || !isString(value.id) || !isString(value.url)) return false;
+  if (!HQ_TASK_ID.test(value.id)) return false;
+  try {
+    return new URL(value.url).origin === HQ_ORIGIN;
+  } catch {
+    return false;
+  }
+}
+
 export function splitContext(context: unknown): FeedbackContext {
   const out: FeedbackContext = {
     path: null,
@@ -371,6 +387,7 @@ export function splitContext(context: unknown): FeedbackContext {
     networkErrors: [],
     trpcErrors: [],
     environment: [],
+    hqTask: null,
     errorRef: null,
     workflowId: null,
     jobId: null,
@@ -426,6 +443,8 @@ export function splitContext(context: unknown): FeedbackContext {
       FEEDBACK_ORCHESTRATOR_ID_PATTERN.test(value)
     ) {
       out[key] = value;
+    } else if (key === 'hq' && isHqTask(value)) {
+      out.hqTask = { id: value.id, url: value.url };
     } else if (key === 'toast' && isToast(value)) {
       out.toast = { title: value.title ?? null, message: value.message };
     } else {

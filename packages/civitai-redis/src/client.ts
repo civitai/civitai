@@ -2214,6 +2214,8 @@ export const REDIS_SYS_KEYS = {
   FEEDBACK: {
     // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
     RATE_LIMIT: 'system:feedback:rate-limit',
+    // Fixed-window count of HQ tasks filed per reporter — `system:feedback:hq-filing:${userId}`.
+    HQ_FILING: 'system:feedback:hq-filing',
   },
   PRICING: {
     // Hash of userId → extra licensing-fee slots (see FEE_ALLOWANCE_BOOST_* in @civitai/buzz).
