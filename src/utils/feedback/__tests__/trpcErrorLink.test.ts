@@ -1,5 +1,6 @@
 import { observable } from '@trpc/server/observable';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'fs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   readTrpcErrors,
   recordTrpcError,
@@ -39,6 +40,7 @@ beforeEach(() => {
   // The link records only in a browser; this suite runs in node.
   vi.stubGlobal('window', {});
 });
+afterEach(() => vi.unstubAllGlobals());
 
 describe('feedbackErrorLink', () => {
   it('records the path, code and status of a failed call and passes the error on', () => {
@@ -60,6 +62,19 @@ describe('feedbackErrorLink', () => {
     expect(stored).not.toContain(SECRET_INPUT);
   });
 
+  it('records nothing outside a browser', () => {
+    vi.unstubAllGlobals();
+    runFailingCall('image.create', trpcError('boom'));
+    expect(readTrpcErrors()).toEqual([]);
+  });
+
+  it('is installed in both tRPC clients', () => {
+    // A source pin: the link's own tests construct it directly, so they would stay green with it
+    // removed from the client link chains.
+    const source = readFileSync('src/utils/trpc.ts', 'utf8');
+    expect(source.match(/^\s+feedbackErrorLink,$/gm)).toHaveLength(2);
+  });
+
   it('records a call whose error carries no tRPC data as UNKNOWN', () => {
     runFailingCall('user.getById', new Error('Failed to fetch'));
     expect(readTrpcErrors()).toEqual([
@@ -78,7 +93,17 @@ describe('recordTrpcError', () => {
 
   it('replaces a code that is not SCREAMING_SNAKE, and drops an out-of-range status', () => {
     recordTrpcError({ path: 'a.b', code: 'free text from the server', httpStatus: 200 });
-    expect(readTrpcErrors()).toEqual([{ path: 'a.b', code: 'UNKNOWN', at: expect.any(String) }]);
+    recordTrpcError({ path: 'a.c', code: 'NOT_FOUND', httpStatus: 600 });
+    recordTrpcError({ path: 'a.d', code: 'NOT_FOUND', httpStatus: 404.5 });
+    recordTrpcError({ path: 'a.e', code: 'NOT_FOUND', httpStatus: 599 });
+    expect(
+      readTrpcErrors().map(({ path, code, httpStatus }) => ({ path, code, httpStatus }))
+    ).toEqual([
+      { path: 'a.b', code: 'UNKNOWN', httpStatus: undefined },
+      { path: 'a.c', code: 'NOT_FOUND', httpStatus: undefined },
+      { path: 'a.d', code: 'NOT_FOUND', httpStatus: undefined },
+      { path: 'a.e', code: 'NOT_FOUND', httpStatus: 599 },
+    ]);
   });
 
   it('keeps the last ten', () => {

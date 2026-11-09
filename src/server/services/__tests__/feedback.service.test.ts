@@ -338,6 +338,7 @@ describe('the server stamp', () => {
   });
 
   it('records the user agent, tier, site, build and the allow-listed flags, and no other header', () => {
+    vi.stubEnv('version', '5.1.444');
     const stamp = buildFeedbackServerStamp({
       headers: {
         'user-agent': 'Mozilla/5.0 (iPhone)',
@@ -355,7 +356,9 @@ describe('the server stamp', () => {
       tier: 'gold',
       site: 'red',
       host: 'civitai.red',
+      build: '5.1.444',
     });
+    vi.unstubAllEnvs();
     expect(Object.keys(stamp.flags).sort()).toEqual([...FEEDBACK_STAMPED_FLAGS].sort());
     expect(stamp.flags.assistant).toBe(true);
     const serialised = JSON.stringify(stamp);
@@ -382,7 +385,6 @@ describe('the server stamp', () => {
     await createFeedback({ ...parsed, userId: 7, server });
 
     expect(writtenContext().server).toEqual(server);
-    expect(writtenContext().server.tier).toBe('free');
   });
 });
 

@@ -2,6 +2,7 @@ import { ActionIcon, Button, Divider, Group, Paper, Text, Textarea } from '@mant
 import { IconAlertTriangle, IconX } from '@tabler/icons-react';
 import type { CSSProperties } from 'react';
 import { useState } from 'react';
+import { FeedbackAttachedDetails } from '~/components/Feedback/FeedbackAttachedDetails';
 import { FeedbackAttachments } from '~/components/Feedback/FeedbackAttachments';
 import { useFeedbackSubmission } from '~/components/Feedback/useFeedbackSubmission';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -132,6 +133,9 @@ export function FeedbackPrompt({
             </Button>
           </Group>
           <FeedbackAttachments feedback={feedback} px="sm" pb="sm" />
+          <div className="px-3 pb-3">
+            <FeedbackAttachedDetails path={context?.path} />
+          </div>
         </>
       )}
     </Paper>

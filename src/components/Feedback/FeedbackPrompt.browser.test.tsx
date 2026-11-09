@@ -5,6 +5,7 @@ import type * as CaptureModule from '~/components/Feedback/captureScreenshot';
 import type * as TrpcModule from '~/utils/trpc';
 import { constants } from '~/server/common/constants';
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * FeedbackPrompt — the real click path for image attachments and the opt-in page
@@ -54,20 +55,18 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
   return {
     ...actual,
-    trpc: {
-      feedback: {
-        getArea: { useQuery: () => ({ data: { enabled: true } }) },
-        create: {
-          useMutation: (opts?: { onSuccess?: () => void }) => ({
-            mutate: (input: unknown) => {
-              mocks.createMutate(input);
-              opts?.onSuccess?.();
-            },
-            isPending: false,
-          }),
-        },
+    trpc: makeTrpcProxy({
+      'feedback.getArea': { useQuery: () => ({ data: { enabled: true } }) },
+      'feedback.create': {
+        useMutation: (opts?: { onSuccess?: () => void }) => ({
+          mutate: (input: unknown) => {
+            mocks.createMutate(input);
+            opts?.onSuccess?.();
+          },
+          isPending: false,
+        }),
       },
-    },
+    }),
   };
 });
 
@@ -569,5 +568,13 @@ describe('submitting without Faro (the dev/test/preview case)', () => {
 
     expect(submittedContext()).not.toHaveProperty('sessionId');
     await expect.element(page.getByText(/Got it, thanks/)).toBeInTheDocument();
+  });
+});
+
+describe('what the inline prompt attaches', () => {
+  test('"Details we attach" is shown before sending', async () => {
+    await openPrompt();
+    await userEvent.click(page.getByRole('button', { name: 'Details we attach' }));
+    await expect.element(page.getByText('Our server also records')).toBeInTheDocument();
   });
 });

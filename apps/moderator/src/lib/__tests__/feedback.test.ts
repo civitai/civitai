@@ -251,6 +251,13 @@ describe('splitContext', () => {
     expect(ctx.other).toBeNull();
   });
 
+  it('leaves a malformed trpcErrors array under other', () => {
+    const bad = [{ code: 'BAD_REQUEST', at: '2026-11-08T23:39:00.000Z' }];
+    const ctx = splitContext({ trpcErrors: bad });
+    expect(ctx.trpcErrors).toEqual([]);
+    expect(ctx.other).toEqual({ trpcErrors: bad });
+  });
+
   it('leaves a `server` object of another shape, and a malformed device, under other', () => {
     const ctx = splitContext({ server: { fingerprint: 'abc' }, device: { viewport: 'big' } });
     expect(ctx.environment).toEqual([]);

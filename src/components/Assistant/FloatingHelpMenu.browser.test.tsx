@@ -31,6 +31,9 @@ vi.mock('~/components/IsClient/IsClient', () => ({
 vi.mock('~/components/Assistant/AssistantChat', () => ({
   AssistantChat: () => <div data-testid="assistant-chat">chat</div>,
 }));
+vi.mock('~/components/Feedback/FeedbackDrawer', () => ({
+  default: () => <div data-testid="feedback-drawer">drawer</div>,
+}));
 vi.mock('~/components/Dialog/dialogStore', () => ({
   dialogStore: { trigger: mocks.trigger, toggle: vi.fn(), closeById: vi.fn() },
 }));
@@ -108,6 +111,12 @@ describe('the menu', () => {
     await openMenu();
     await userEvent.click(reportItem());
     expect(mocks.trigger).toHaveBeenCalledTimes(1);
+    // The dialog it opens is the bug-report drawer (stubbed to a marker below).
+    const { component: Dialog } = mocks.trigger.mock.calls[0][0] as {
+      component: React.ComponentType;
+    };
+    renderWithProviders(<Dialog />);
+    await expect.element(page.getByTestId('feedback-drawer')).toBeInTheDocument();
   });
 
   test('Report a problem is the ticket link when the area is off', async () => {

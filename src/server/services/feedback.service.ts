@@ -85,8 +85,10 @@ const clipText = (value: unknown, max: number) =>
 
 /**
  * What the server knows about the reporter at the moment they submit. Written into
- * `context.server`, which the input schema does not accept, so a client cannot supply or
- * overwrite any of it. Tier and flags are snapshotted because both change after the report.
+ * `context.server`, which the input schema does not accept, so a client cannot write it through
+ * the report body. Tier, site, build and flags are the server's own; `userAgent` and `host` are
+ * request headers, so they are still the client's word and are for display, never for a decision.
+ * Tier and flags are snapshotted because both change after the report.
  */
 export function buildFeedbackServerStamp({
   headers,
