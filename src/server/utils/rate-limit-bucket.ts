@@ -6,6 +6,8 @@ import { CacheTTL } from '~/server/common/constants';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { noteRateLimitUsage } from '~/server/trpc/rate-limit-headers';
+import { markActiveLimit } from '~/server/utils/active-rate-limits';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import { throwRateLimited } from '~/server/utils/rate-limit-error';
 import {
@@ -16,6 +18,8 @@ import {
   type RateLimit,
   type RuleUsage,
 } from '~/server/utils/rate-limit-window';
+import { resolveUsageLimitRules } from '~/server/services/usage-limit-config.service';
+import { isUsageLimitRef, type UsageLimitRef } from '~/shared/constants/usage-limits';
 import type { SessionUser } from '~/types/session';
 
 /**
@@ -74,10 +78,11 @@ export async function peekRateLimit({
 }
 
 /**
- * One attempt against `keyName`'s rules for this caller, counted as the tRPC `rateLimit()` middleware
- * counts it, so a REST endpoint can draw from a procedure's bucket (`keyName` = its path with `:`).
- * Throws TOO_MANY_REQUESTS past a limit; otherwise returns the write that records the attempt.
- * Moderators and non-prod envs are exempt, as in the middleware.
+ * One attempt against `keyName`'s rules for this caller: the body of the tRPC `rateLimit()`
+ * middleware, and how a REST endpoint draws from a procedure's bucket (`keyName` = its path with
+ * `:`). `rules` is a fixed list or `usageLimits(...ids)`, resolved per call from the usage-limit
+ * config. Throws TOO_MANY_REQUESTS past a limit; otherwise returns the write that records the
+ * attempt. Moderators and non-prod envs are exempt.
  */
 export async function claimRateLimitAttempt({
   rules,
@@ -85,7 +90,7 @@ export async function claimRateLimitAttempt({
   user,
   req,
 }: {
-  rules: RateLimit[];
+  rules: RateLimit[] | UsageLimitRef;
   keyName: string;
   user: SessionUser | undefined;
   req: NextApiRequest;
@@ -93,7 +98,11 @@ export async function claimRateLimitAttempt({
   // Preview shares a dev DB with a few CI smoke accounts; daily quotas exhaust across PR runs (civitai#2592).
   if (user?.isModerator || isDev || isTest || isPreview) return async () => undefined;
 
-  const validLimits = selectRateLimitRules(rules, user);
+  const validLimits = isUsageLimitRef(rules)
+    ? await resolveUsageLimitRules(rules.usageLimitIds, user)
+    : selectRateLimitRules(rules, user);
+  // Nothing applies (every entry disabled or out of scope): count nothing, and keep the history.
+  if (validLimits.length === 0) return async () => undefined;
   const bucket = rateLimitBucket(keyName, user, req);
   const { cacheKey, hashKey } = bucket;
   const attempts = await readRateLimitAttempts(bucket);
@@ -103,6 +112,10 @@ export async function claimRateLimitAttempt({
   const refusal = bindingRefusal(usages);
   if (refusal) {
     const message = refusal.rule.errorMessage ?? `You're doing that too much...`;
+    // A gate (limit 0) never frees a slot, so no header can describe it.
+    if (refusal.rule.kind === 'product' && refusal.nextAt !== null) noteRateLimitUsage(req, usages);
+    else if (user && refusal.nextAt !== null)
+      await markActiveLimit({ userId: user.id, keyName, retryAt: refusal.nextAt, now });
     const meta = rateLimitMetaForRefusal(usages, now);
     if (meta) throwRateLimited(meta, message);
     throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message });
@@ -110,6 +123,7 @@ export async function claimRateLimitAttempt({
 
   return async () => {
     attempts.push(Date.now());
+    noteRateLimitUsage(req, evaluateRateLimitWindow(validLimits, attempts, Date.now()));
     const longestPeriod = Math.max(...validLimits.map((x) => x.period!));
     const updatedAttempts = attempts.filter((x) => x > Date.now() - longestPeriod * 1000);
     // Fail-open: a sysRedis failover would otherwise 500 every rate-limited call; the window

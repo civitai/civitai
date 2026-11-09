@@ -1,5 +1,8 @@
 import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
-import type { ReviewPreviewState } from '~/server/services/blocks/publish-request.service';
+import {
+  isReviewPreviewBuilding,
+  type ReviewPreviewState,
+} from '~/shared/constants/app-review-preview.constants';
 
 /**
  * The DECISION SIGNALS a pending review row and the review page's Overview show: the review
@@ -7,10 +10,9 @@ import type { ReviewPreviewState } from '~/server/services/blocks/publish-reques
  * the count of sensitive permissions requested. Pure and React-free so the node tier pins the
  * mapping.
  *
- * 🔴 EVERY STATE RENDERS NOW, INCLUDING ONES NOTHING WRITES YET. `preview-queued` and
- * `preview-expired` are emitted by the auto-deploy work that lands separately; until it does,
- * a row simply never reaches them (and `expired` is also derived from a stale `preview-live`
- * server-side). Mapping them here means the chip is right the day they start arriving.
+ * The states are the shared ones (`~/shared/constants/app-review-preview.constants`): the
+ * server stores `preview-queued` … `preview-failed` and REPORTS `preview-expired` past the
+ * preview's maximum age (`reportedReviewPreviewState`, the same rule the review page reads).
  */
 
 export type PreviewChipState = 'none' | 'queued' | 'building' | 'live' | 'failed' | 'expired';
@@ -19,12 +21,10 @@ export type PreviewChipState = 'none' | 'queued' | 'building' | 'live' | 'failed
 export function previewChipState(
   state: ReviewPreviewState | string | null | undefined
 ): PreviewChipState {
+  if (isReviewPreviewBuilding(state)) return 'building';
   switch (state) {
     case 'preview-queued':
       return 'queued';
-    case 'preview-building':
-    case 'preview-deploying':
-      return 'building';
     case 'preview-live':
       return 'live';
     case 'preview-failed':

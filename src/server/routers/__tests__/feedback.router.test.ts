@@ -59,13 +59,16 @@ const caller = () =>
       isModerator: false,
       muted: false,
       onboarding: OnboardingSteps.Buzz,
+      tier: 'gold',
     },
+    req: { headers: { 'user-agent': 'TestAgent/1.0', host: 'civitai.red' } },
+    domain: 'red',
     acceptableOrigin: true,
     // Without a full token scope the procedure throws FORBIDDEN for a SCOPE reason.
     // That matters: the "disabled area" test below also expects FORBIDDEN, so an
     // under-specified ctx would make it pass for entirely the wrong reason.
     tokenScope: TokenScope.Full,
-    features: {},
+    features: { assistant: true },
   } as never);
 
 beforeEach(() => {
@@ -112,6 +115,13 @@ describe('feedback.create — extended context reaches the service', () => {
         screenshotId: UUID_SHOT,
         sessionId: 'faro-abc',
       },
+      server: expect.objectContaining({
+        userAgent: 'TestAgent/1.0',
+        tier: 'gold',
+        site: 'red',
+        host: 'civitai.red',
+        flags: expect.objectContaining({ assistant: true }),
+      }),
     });
   });
 

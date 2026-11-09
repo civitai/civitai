@@ -610,10 +610,13 @@ describe('the advisory locks have exactly one call site', () => {
   // Article row lock; the ingestion recompute takes article.service.ts's bare id lock first, then it.
   // apps/storage-migration-run takes one per app block (0x41534d01, hashtext of the id) around the
   // approve gate's open-run check and the plan reservation. The only lock in its transaction.
+  // blocks/review-autodeploy takes one platform-wide (0x72657631, 0) around the review build-slot
+  // count and claim. The only lock in its transaction.
   const ALLOWED = [
     'services/access-token.service.ts',
     'services/apps/storage-migration-run.service.ts',
     'services/article.service.ts',
+    'services/blocks/review-autodeploy.service.ts',
     'services/creator-announcement.service.ts',
     'services/creator-gallery-hidden-users.service.ts',
     'services/creator-mystery-pack.service.ts',

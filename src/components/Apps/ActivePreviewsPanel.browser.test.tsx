@@ -4,7 +4,7 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 
 /**
- * Global "Active previews (N / cap)" panel — browser-mode render test
+ * Global "Active previews" panel — browser-mode render test
  * (`Component tests` in CI). The panel was extracted from `src/pages/apps/review.tsx`
  * to `ActivePreviewsPanel.tsx` (mirrors the #3163 `OnsiteReviewModal` extraction)
  * so it is importable WITHOUT the page's `getServerSideProps` server graph — this
@@ -206,12 +206,12 @@ describe('ActivePreviewsPanel — the age cell uses the SHARED ladder, not a loc
 });
 
 describe('ActivePreviewsPanel — zero is SAID, not silence', () => {
-  test('🔴 no active previews → "0 active previews (of N slots)", not an empty render', async () => {
-    mocks.data = { cap: 3, active: [] };
+  test('🔴 no active previews → "0 active previews · 0 / N building", not an empty render', async () => {
+    mocks.data = { cap: 3, building: 0, active: [] };
     renderWithProviders(<ActivePreviewsPanel />);
     await expect
       .element(page.getByTestId('apps-active-previews-empty'))
-      .toHaveTextContent('0 active previews (of 3 slots)');
+      .toHaveTextContent('0 active previews · 0 / 3 building');
     // …as one quiet line, not the full panel.
     expect(page.getByRole('table').elements()).toHaveLength(0);
   });

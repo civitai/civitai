@@ -1,5 +1,14 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
 import type { AgentReviewSummary } from '~/shared/utils/agent-review-findings';
+import {
+  REVIEW_PREVIEW_MAX_AGE_MS,
+  type ReviewPreviewState,
+  type StoredReviewPreviewState,
+} from '~/shared/constants/app-review-preview.constants';
+import type {
+  NewPendingSubmission,
+  ReviewPreviewActor,
+} from '~/server/services/blocks/review-autodeploy.service';
 import { sniffImageFormat } from '~/shared/utils/image-magic-bytes';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -22,12 +31,10 @@ import {
 } from '~/server/schema/blocks/publish-request.schema';
 // Pure shared module (only depends on token-scope.constants) — safe to import
 // statically without coupling to env/Prisma, so the pure-helper tests still run.
-import {
-  assertSensitiveScopesJustified,
-  deriveOauthBitmaskFromBlockScopes,
-} from '~/shared/constants/block-scope.constants';
+import { assertSensitiveScopesJustified } from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
+import { manifestValidationContext } from '~/server/services/blocks/manifest-submit-validation';
 import type { RegistryExportDiff } from '~/shared/constants/block-storage.constants';
 import { registryExportDiff } from '~/shared/constants/block-storage.constants';
 // Zero-runtime-graph helper (its ONLY static import is a type; it DYNAMICALLY imports
@@ -103,8 +110,9 @@ import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-run
  * Deferred to Phase 3+:
  *   - Cross-bundle dedup (the bundleSha256 index already supports this
  *     read-side; deferring the dedup write-path until we see the volume).
- *   - Discord notification on new pending request (Phase 6).
- *   - Rate limit per submitter (Phase 6).
+ *
+ * The moderator alert, the automatic review preview and the submit/push rate limits that Phase 6
+ * named live in review-autodeploy.service and submit-rate-limit.
  */
 
 /**
@@ -1138,7 +1146,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // the targeted rule here via the SAME single-sourced helper the validator
   // uses (DRY; identical message). `assertSensitiveScopesJustified` throws a
   // plain Error, which the CLI route surfaces as a 400 and the web session
-  // route surfaces likewise. Deep validation stays deferred to approve.
+  // route surfaces likewise. The deep validation further down runs this rule too; this call
+  // keeps its message first.
   assertSensitiveScopesJustified(manifest);
 
   // F-E E5 — validate publisher screenshots NOW (fail-fast) so a bundle with a
@@ -1165,7 +1174,12 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // read: the row gated here is the row the request links to below (`appBlockId`).
   const existingApp = await dbRead.appBlock.findFirst({
     where: { blockId: slug },
-    select: { id: true, appId: true, app: { select: { userId: true } } },
+    select: {
+      id: true,
+      appId: true,
+      trustTier: true,
+      app: { select: { userId: true, allowedOrigins: true } },
+    },
   });
   if (existingApp && !submitterIsModerator) {
     const { mayShipAppVersion } = await import('./app-access.service');
@@ -1309,11 +1323,20 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     // for this slug → reuse it (idempotent re-submit), so createDraftListing stays false.
   }
 
-  // Deep manifest validation (contentRating / scopes / iframe.sandbox /
-  // targets / scope subset / iframe.src origin) happens at the
-  // BlockManifestValidator step in the approve flow, when the
-  // OauthClient with allowedOrigins is known. The basic blockId /
-  // version / name shape checks above are the only submit-time gate.
+  // Deep manifest validation (contentRating / scopes / iframe.sandbox / targets / scope subset /
+  // iframe.src origin) — the same check, against the same context, that approve runs, so a
+  // manifest a moderator could never approve is refused to its author now instead of after review.
+  // Approve still runs it again.
+  {
+    const { assertManifestValidAtSubmit } = await import('./manifest-submit-validation');
+    await assertManifestValidAtSubmit({
+      slug,
+      manifest,
+      trustTier: existingApp?.trustTier ?? null,
+      existingAllowedOrigins: existingApp ? existingApp.app?.allowedOrigins ?? [] : null,
+      appsDomain: env.APPS_DOMAIN,
+    });
+  }
 
   // Diff against the previous approved version (if any).
   const previous = await getPreviousApprovedState(slug);
@@ -1519,6 +1542,15 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     submittedByUserId,
     existingAppBlockId: existingApp?.id ?? null,
     manifest,
+  });
+
+  announceNewPendingRequest({
+    publishRequestId,
+    slug,
+    version,
+    appName: appDisplayName(manifest, slug),
+    submittedByUserId,
+    origin: 'upload',
   });
 
   return {
@@ -2330,10 +2362,21 @@ export async function recordPendingFromPush(args: {
   // Supersede any OTHER still-pending request for this slug (older sha or a
   // dev submitVersion) so the partial unique index (one pending per slug)
   // doesn't reject the insert and the queue shows the newest unreviewed sha.
+  // The superseded request's review preview and agent go with it, as on a withdraw.
+  const superseded = await dbWrite.appBlockPublishRequest.findMany({
+    where: { slug: args.slug, status: 'pending' },
+    select: { id: true, deployState: true },
+  });
   await dbWrite.appBlockPublishRequest.updateMany({
     where: { slug: args.slug, status: 'pending' },
     data: { status: 'withdrawn' },
   });
+  for (const old of superseded) {
+    if (typeof old.deployState === 'string' && old.deployState.startsWith('preview-')) {
+      void teardownReviewForRequest(old.id);
+    }
+    void teardownAgentReviewForRequest(old.id);
+  }
 
   const publishRequestId = `pubreq_${newUlid()}`;
 
@@ -2416,6 +2459,15 @@ export async function recordPendingFromPush(args: {
   // has its own try/catch + is scoped to status='pending', so it never gates the
   // park and can't clobber a row that was approved/rejected/superseded.
   void enrichPushRequestRow(publishRequestId, args.slug, args.sha).catch(() => undefined);
+
+  announceNewPendingRequest({
+    publishRequestId,
+    slug: args.slug,
+    version: args.version,
+    appName: appDisplayName(args.manifest, args.slug),
+    submittedByUserId: ownerUserId,
+    origin: 'push',
+  });
 
   return { publishRequestId };
 }
@@ -2733,31 +2785,6 @@ async function listingFactsForRequests(
 }
 
 /**
- * The review preview state a PENDING row's queue chip shows, from its `deploy_state`.
- *
- * Only `preview-*` values are previews (`deploy_state` is shared with the production build
- * lifecycle). An ACTIVE preview whose last transition is older than the janitor's reap TTL is
- * reported as `preview-expired`: the janitor deletes the deployment but cannot write this row,
- * so the stored value still reads live while nothing is serving it.
- */
-export function projectQueuePreviewState(
-  deployState: string | null | undefined,
-  deployUpdatedAt: Date | null | undefined,
-  now: number = Date.now()
-): ReviewPreviewState | null {
-  if (typeof deployState !== 'string' || !deployState.startsWith('preview-')) return null;
-  const state = deployState as ReviewPreviewState;
-  if (
-    (ACTIVE_REVIEW_PREVIEW_STATES as string[]).includes(state) &&
-    deployUpdatedAt != null &&
-    now - deployUpdatedAt.getTime() > REVIEW_PREVIEW_TTL_MS
-  ) {
-    return 'preview-expired';
-  }
-  return state;
-}
-
-/**
  * The compact agentic-review summary for a PAGE of requests, for the queue's AI chip — the
  * latest report per request, reduced IN SQL to its finding severities and scope-trace counts.
  *
@@ -2880,7 +2907,11 @@ export async function listPendingRequests(
       forgejoCommitSha: true,
       // The review preview lifecycle (`preview-*`) — projected to `previewState` below and
       // NOT spread as `deployState`, which the queue reads as the APPROVED-row deploy shape.
+      // `deployDetail` is read ONLY for the preview's build-start time (the expiry rule) and
+      // never returned: on a pending row it is the preview detail, which carries no log, but
+      // nothing here needs the rest of it.
       deployState: true,
+      deployDetail: true,
       deployUpdatedAt: true,
       submittedBy: { select: reviewUserChipSelect },
     },
@@ -2895,29 +2926,33 @@ export async function listPendingRequests(
   ]);
   const now = Date.now();
   return {
-    items: items.map(({ deployState, deployUpdatedAt, ...r }: (typeof rows)[number]) => ({
-      ...r,
-      ...listingFacts(r.id),
-      previewState: projectQueuePreviewState(deployState, deployUpdatedAt, now),
-      // Absent (not null) when the viewer has no agentic surface: the chip is hidden, not
-      // "not run". `null` = the surface is on and this request has no report.
-      ...(agentSummaries ? { agentReview: agentSummaries.get(r.id) ?? null } : {}),
-      // BigInt isn't JSON-serializable through tRPC's default transformer;
-      // surface as a string. UI can format with Intl.NumberFormat.
-      bundleSizeBytes: r.bundleSizeBytes.toString(),
-      // Deep-link into the per-slug Forgejo review repo so mods can
-      // browse the actual code from the review modal.
-      reviewRepoUrl: reviewRepoUrl(r.slug),
-      // PUSH-ORIGINATED requests have no review-org snapshot — link mods to the
-      // CANONICAL repo at the exact pushed sha instead, so they can review the
-      // real code rather than approve blind. Push rows are marked by empty
-      // bundle pointers (recordPendingFromPush writes bundleKey='' AND
-      // bundleSha256=''); bundleSha256 is already in this payload + NOT NULL, so
-      // it's the discriminator here (the fetch paths key off the equivalent
-      // bundleKey since they need the S3 path).
-      pushCommitUrl:
-        !r.bundleSha256 && r.forgejoCommitSha ? repoCommitUrl(r.slug, r.forgejoCommitSha) : null,
-    })),
+    items: items.map(
+      ({ deployState, deployDetail, deployUpdatedAt, ...r }: (typeof rows)[number]) => ({
+        ...r,
+        ...listingFacts(r.id),
+        // The SAME reported state `getReviewStatus` gives the review page (one rule, including
+        // #8240's expiry from the build's start), so the queue chip and the page agree.
+        previewState: reportedReviewPreviewState(deployState, deployDetail, deployUpdatedAt, now),
+        // Absent (not null) when the viewer has no agentic surface: the chip is hidden, not
+        // "not run". `null` = the surface is on and this request has no report.
+        ...(agentSummaries ? { agentReview: agentSummaries.get(r.id) ?? null } : {}),
+        // BigInt isn't JSON-serializable through tRPC's default transformer;
+        // surface as a string. UI can format with Intl.NumberFormat.
+        bundleSizeBytes: r.bundleSizeBytes.toString(),
+        // Deep-link into the per-slug Forgejo review repo so mods can
+        // browse the actual code from the review modal.
+        reviewRepoUrl: reviewRepoUrl(r.slug),
+        // PUSH-ORIGINATED requests have no review-org snapshot — link mods to the
+        // CANONICAL repo at the exact pushed sha instead, so they can review the
+        // real code rather than approve blind. Push rows are marked by empty
+        // bundle pointers (recordPendingFromPush writes bundleKey='' AND
+        // bundleSha256=''); bundleSha256 is already in this payload + NOT NULL, so
+        // it's the discriminator here (the fetch paths key off the equivalent
+        // bundleKey since they need the S3 path).
+        pushCommitUrl:
+          !r.bundleSha256 && r.forgejoCommitSha ? repoCommitUrl(r.slug, r.forgejoCommitSha) : null,
+      })
+    ),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
 }
@@ -3275,32 +3310,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   const { BlockManifestValidator } = await import(
     '~/server/services/block-manifest-validator.service'
   );
-  // A1/A3/A4 fix: the OAuth ceiling for an app-block client is the bitmask
-  // DERIVED from the manifest's declared scopes (intersection with the
-  // OAuth-eligible bit set), NOT TokenScope.Full (33554431). Previously the
-  // auto-provisioned client defaulted to all 25 bits, which (a) made it a
-  // Full-scope authorization_code client → account-takeover primitive, and
-  // (b) rendered this very manifest scope gate inert (every manifest scope is
-  // trivially within an all-bits ceiling). Feeding the derived ceiling here
-  // means the validator below enforces a real subset check, and it matches
-  // exactly what we write to OauthClient.allowedScopes in the create.
-  const derivedOauthCeiling = deriveOauthBitmaskFromBlockScopes(manifestScopes);
-  const validationCtx = isFirstVersion
-    ? {
-        allowedScopes: derivedOauthCeiling,
-        allowedOrigins: [`https://${request.slug}.${env.APPS_DOMAIN}`],
-      }
-    : {
-        // On a subsequent version the live client still carries whatever
-        // ceiling the previous approve set. Re-derive from THIS manifest and
-        // union with the existing ceiling so the validator validates against
-        // the ceiling we'll actually persist below (we re-cap allowedScopes to
-        // the derived value on every approve — see the appBlock.update path).
-        allowedScopes: derivedOauthCeiling,
-        allowedOrigins: (existingAppBlock!.app.allowedOrigins ?? []).map((o: string) =>
-          o.toLowerCase()
-        ),
-      };
+  // The derived OAuth ceiling (see manifestValidationContext) is also what the create below writes
+  // to OauthClient.allowedScopes, so the validator enforces the ceiling that is persisted.
+  const validationCtx = manifestValidationContext({
+    slug: request.slug,
+    manifest,
+    existingAllowedOrigins: existingAppBlock ? existingAppBlock.app.allowedOrigins ?? [] : null,
+    appsDomain: env.APPS_DOMAIN,
+  });
+  const derivedOauthCeiling = validationCtx.allowedScopes;
   // APPROVE is a re-validation of the ALREADY-SUBMITTED manifest, not a new
   // submit — exempt ONLY the new sensitive-scope-justification enforcement so a
   // LEGACY pending request (submitted before that rule shipped, sensitive scope
@@ -4937,38 +4955,15 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
 // nullable, and a pending request never uses them otherwise.
 // ---------------------------------------------------------------------------
 
-/** Preview lifecycle states (PENDING request's deploy_state). Distinct prefix
- *  from the production DeployState values so the two never collide. */
-export type ReviewPreviewState =
-  | 'preview-building'
-  | 'preview-deploying'
-  | 'preview-live'
-  | 'preview-failed'
-  // Auto-deploy states. NOTHING WRITES THESE YET: they are declared here, the one shared
-  // preview-state type, so the review UI can render them before the auto-deploy build queue
-  // (which owns writing them) lands. Neither is an ACTIVE state for the concurrency cap below.
-  | 'preview-queued'
-  | 'preview-expired';
-
-/**
- * Global cap on concurrently-active review previews across ALL moderators. Each
- * active preview holds a review Deployment + Service + IngressRoute in the apps
- * namespace, so this bounds the review sandbox's cluster footprint.
- */
-export const MAX_CONCURRENT_REVIEW_PREVIEWS = 5;
-
-/**
- * Active-preview TTL window (ms). Mirrors the `review-sandbox-janitor` CronJob's
- * 6h reap TTL: a preview the janitor has already deleted in k8s — but whose DB
- * row still reads `preview-live`, because the janitor can't write the civitai DB
- * — naturally ages OUT of the active count once its `deployUpdatedAt` is older
- * than this. No k8s call and no janitor coupling needed.
- */
-export const REVIEW_PREVIEW_TTL_MS = 6 * 60 * 60 * 1000;
+/** Preview lifecycle states (PENDING request's deploy_state). Single-sourced with the review UI
+ *  in `app-review-preview.constants`; the `preview-` prefix keeps them apart from the production
+ *  DeployState values. */
+export type { ReviewPreviewState, StoredReviewPreviewState };
 
 /** deploy_state values that count as an ACTIVE review preview. Excludes
  *  `preview-failed` (dead) and `null` (never started). */
-const ACTIVE_REVIEW_PREVIEW_STATES: ReviewPreviewState[] = [
+const ACTIVE_REVIEW_PREVIEW_STATES: StoredReviewPreviewState[] = [
+  'preview-queued',
   'preview-building',
   'preview-deploying',
   'preview-live',
@@ -4984,25 +4979,28 @@ type ActiveReviewPreviewRow = {
 };
 
 /**
- * Fetch the currently-active review-preview rows, oldest-first. The predicate —
- * `status='pending'` AND `deployState IN (building|deploying|live)` AND
- * `deployUpdatedAt > now() - REVIEW_PREVIEW_TTL_MS` — is the SINGLE source of
- * truth shared by the concurrency-cap count and the listActivePreviews query.
+ * Fetch the currently-active review-preview rows, oldest-first: `status='pending'` AND
+ * `deployState IN (queued|building|deploying|live)` AND `deployUpdatedAt` within the preview max
+ * age (`REVIEW_PREVIEW_MAX_AGE_MS`; the exact expiry is {@link isReviewPreviewExpired}). (The
+ * BUILD cap counts a narrower set: `buildSlotHolderWhere` in review-autodeploy.service.)
  * The `status='pending'` + `preview-` prefix filter is load-bearing: deploy_state
  * is SHARED with the production build lifecycle, so an approved row's `building`/
  * `live` value must never be counted here.
  */
-async function findActiveReviewPreviewRows(opts?: {
-  excludePublishRequestId?: string;
-}): Promise<ActiveReviewPreviewRow[]> {
+async function findActiveReviewPreviewRows(): Promise<ActiveReviewPreviewRow[]> {
   const { dbRead } = await import('~/server/db/client');
-  const cutoff = new Date(Date.now() - REVIEW_PREVIEW_TTL_MS);
-  return dbRead.appBlockPublishRequest.findMany({
+  const now = Date.now();
+  const rows = await dbRead.appBlockPublishRequest.findMany({
     where: {
       status: 'pending',
-      deployState: { in: ACTIVE_REVIEW_PREVIEW_STATES },
-      deployUpdatedAt: { gt: cutoff },
-      ...(opts?.excludePublishRequestId ? { id: { not: opts.excludePublishRequestId } } : {}),
+      OR: [
+        // A queued preview holds no resources and never expires (isReviewPreviewExpired).
+        { deployState: 'preview-queued' },
+        {
+          deployState: { in: ACTIVE_REVIEW_PREVIEW_STATES.filter((st) => st !== 'preview-queued') },
+          deployUpdatedAt: { gt: new Date(now - REVIEW_PREVIEW_MAX_AGE_MS) },
+        },
+      ],
     },
     orderBy: { deployUpdatedAt: 'asc' }, // oldest first — the natural teardown-candidate order
     select: {
@@ -5014,19 +5012,16 @@ async function findActiveReviewPreviewRows(opts?: {
       deployUpdatedAt: true,
     },
   });
-}
-
-/**
- * Count active review previews (see {@link findActiveReviewPreviewRows} for the
- * predicate). Global across all mods; drives the concurrency cap. Pass
- * `excludePublishRequestId` to omit a specific request (so a REBUILD of an
- * already-active preview never counts itself against the cap).
- */
-export async function countActiveReviewPreviews(opts?: {
-  excludePublishRequestId?: string;
-}): Promise<number> {
-  const rows = await findActiveReviewPreviewRows(opts);
-  return rows.length;
+  // The DB cutoff is the coarse filter; a preview whose BUILD started past the max age is gone too.
+  return rows.filter(
+    (r) =>
+      !isReviewPreviewExpired(
+        r.deployState as StoredReviewPreviewState,
+        parseReviewDetail(r.deployDetail),
+        r.deployUpdatedAt,
+        now
+      )
+  );
 }
 
 export type ActiveReviewPreview = {
@@ -5039,18 +5034,29 @@ export type ActiveReviewPreview = {
 };
 
 /**
- * List the currently-active review previews (same predicate as the cap count),
- * oldest-first, for the global "Active previews (N / cap)" mod panel. Does NOT
- * mint mr access tokens — per-row token minting on a list poll is wasteful;
+ * List the currently-active review previews, oldest-first, for the global "Active
+ * previews" mod panel, with the platform BUILD cap and how many slots are held now.
+ * Does NOT mint mr access tokens — per-row token minting on a list poll is wasteful;
  * opening a live preview stays in the per-request panel via getReviewStatus.
  */
 export async function listActiveReviewPreviews(): Promise<{
+  /** Concurrent review builds allowed (automatic starts queue past it). */
   cap: number;
+  /** Build slots held right now. */
+  building: number;
   active: ActiveReviewPreview[];
 }> {
-  const rows = await findActiveReviewPreviewRows();
+  const [{ dbRead }, { buildSlotHolderWhere, MAX_CONCURRENT_REVIEW_BUILDS }] = await Promise.all([
+    import('~/server/db/client'),
+    import('./review-autodeploy.service'),
+  ]);
+  const [rows, building] = await Promise.all([
+    findActiveReviewPreviewRows(),
+    dbRead.appBlockPublishRequest.count({ where: buildSlotHolderWhere(new Date()) }),
+  ]);
   return {
-    cap: MAX_CONCURRENT_REVIEW_PREVIEWS,
+    cap: MAX_CONCURRENT_REVIEW_BUILDS,
+    building,
     active: rows.map((r) => ({
       publishRequestId: r.id,
       slug: r.slug,
@@ -5071,8 +5077,18 @@ export type ReviewPreviewDetail = {
   url?: string;
   /** Human-readable failure detail when state is preview-failed. */
   error?: string;
-  /** Mod who started the preview (audit). */
+  /** Who started the preview (audit): `system` for an automatic start at submit. */
+  actor?: 'moderator' | 'system';
+  /** Mod who started the preview (audit), when `actor` is `moderator`. */
   modUserId?: number;
+  /** When an automatic start was queued for a build slot (ISO). */
+  queuedAt?: string;
+  /**
+   * When this build started (ISO), stamped by startClaimedReviewBuild and carried through the
+   * callback's later writes. The preview's resources are created after it (a re-apply recreates
+   * them), so a 14-day expiry counted from here is never later than the janitor's reap.
+   */
+  buildStartedAt?: string;
 };
 
 /** Pack a ReviewPreviewDetail into the deploy_detail string column. */
@@ -5125,10 +5141,10 @@ export function parseReviewDetail(raw: string | null | undefined): ReviewPreview
  */
 export async function markReviewPreviewState(
   publishRequestId: string,
-  state: ReviewPreviewState,
+  state: StoredReviewPreviewState,
   detail: ReviewPreviewDetail,
   opts?: { requireActivePreview?: boolean; expectedSha?: string }
-): Promise<void> {
+): Promise<number> {
   try {
     const { dbWrite } = await import('~/server/db/client');
     const res = await dbWrite.appBlockPublishRequest.updateMany({
@@ -5154,6 +5170,7 @@ export async function markReviewPreviewState(
         `[markReviewPreviewState] no pending request matched (id=${publishRequestId}, state=${state})`
       );
     }
+    return res.count;
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(
@@ -5161,12 +5178,14 @@ export async function markReviewPreviewState(
         err instanceof Error ? err.message : String(err)
       }`
     );
+    return 0;
   }
 }
 
 export type PreviewRequestParams = {
   publishRequestId: string;
-  modUserId: number;
+  /** Who is starting it, recorded on the preview detail: a moderator, or `system` (automatic). */
+  actor: ReviewPreviewActor;
 };
 
 export type PreviewRequestResult = {
@@ -5306,65 +5325,81 @@ async function resolveReviewSourceSha(request: {
 }
 
 /**
- * Start a review preview for a PENDING publish request. Resolves the pending
- * version's source tree (see {@link resolveReviewSourceSha} — the in-review repo
- * HEAD for a ZIP submission, the mirrored push commit for a git-push one),
- * triggers a REVIEW build (separate image + host from production), stamps state
- * `preview-building`, and returns the review URL the UI polls toward. The
- * build-callback (review-build-callback) advances deploying → live, or flips to
- * failed.
+ * A MODERATOR's start of a review preview for a PENDING publish request (the "Start preview" /
+ * "Rebuild preview" button). Claims a build slot — a moderator's start is admitted even when every
+ * slot is held, so it jumps any automatic queue — then starts the build
+ * ({@link startClaimedReviewBuild}). Automatic starts never come through here: they are queued at
+ * submit and claimed by the queue drain in review-autodeploy.service.
  *
- * Throws (BAD_REQUEST upstream) if the request isn't pending or the trigger
- * fails — the router maps it. The whole feature is dark behind the mod-only
- * review-sandbox flag (gated in the router), so this never runs in prod until
- * enabled.
+ * Throws (BAD_REQUEST upstream) if the request isn't pending or the trigger fails — the router
+ * maps it. Gated in the router behind the mod-only review-sandbox flag.
  */
 export async function previewRequest(params: PreviewRequestParams): Promise<PreviewRequestResult> {
-  const [{ dbRead }, { env }] = await Promise.all([
-    import('~/server/db/client'),
-    import('~/env/server'),
-  ]);
-  const { triggerReviewBuild, reviewHost } = await import('./apps-pipeline.service');
-
+  const { dbRead } = await import('~/server/db/client');
   const request = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: params.publishRequestId },
-    // bundleKey + forgejoCommitSha are the ORIGIN discriminator (ZIP upload vs
-    // git push). Without them this cannot tell which repo holds the pending
-    // version's source — see resolveReviewSourceSha.
-    select: { id: true, status: true, slug: true, bundleKey: true, forgejoCommitSha: true },
+    select: { id: true, status: true },
   });
   if (!request) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (request.status !== 'pending') {
     throw new Error(`can only preview a pending request (status is ${request.status})`);
   }
 
-  // Global concurrent-preview cap. Count OTHER active previews (exclude THIS
-  // request) so a REBUILD of an already-active preview is never blocked, and a
-  // fresh request is blocked only when MAX others are already active. SOFT cap:
-  // two simultaneous clicks can both pass the count and land at cap+1 — accepted
-  // (no DB lock), same fail-open posture as the block-catalog checkpoint cache
-  // rate limit (checkpoint.service). One extra review env is harmless.
-  const activeOthers = await findActiveReviewPreviewRows({
-    excludePublishRequestId: request.id,
+  const { claimReviewBuildSlot } = await import('./review-autodeploy.service');
+  const claim = await claimReviewBuildSlot({
+    kind: 'request',
+    publishRequestId: request.id,
+    actor: params.actor,
   });
-  if (activeOthers.length >= MAX_CONCURRENT_REVIEW_PREVIEWS) {
-    const slugs = activeOthers.slice(0, 8).map((r) => r.slug);
-    const more =
-      activeOthers.length > slugs.length ? `, +${activeOthers.length - slugs.length} more` : '';
-    throw new Error(
-      `Review preview cap reached (${
-        activeOthers.length
-      }/${MAX_CONCURRENT_REVIEW_PREVIEWS} active): ${slugs.join(
-        ', '
-      )}${more}. Tear down a preview to free a slot.`
-    );
+  if (!claim.claimed) {
+    throw new Error(`can only preview a pending request (${params.publishRequestId} changed)`);
   }
+  return startClaimedReviewBuild(claim.claimed, params.actor);
+}
+
+/**
+ * Build a review preview for a request that already holds a build slot (its row reads
+ * `preview-building`). Resolves the pending version's source tree (see
+ * {@link resolveReviewSourceSha} — the in-review repo HEAD for a ZIP submission, the mirrored
+ * push commit for a git-push one), triggers a REVIEW build (separate image + host from
+ * production), stamps the sha/host/url onto the row, and returns the review URL the UI polls
+ * toward. The build-callback (review-build-callback) advances deploying → live, or flips to failed.
+ *
+ * Any failure flips the row to `preview-failed` (freeing the slot) and throws.
+ */
+export async function startClaimedReviewBuild(
+  request: { id: string; slug: string; bundleKey: string; forgejoCommitSha: string | null },
+  actor: ReviewPreviewActor
+): Promise<PreviewRequestResult> {
+  const { env } = await import('~/env/server');
+  const [{ triggerReviewBuild, reviewHost }, { reviewActorDetail }] = await Promise.all([
+    import('./apps-pipeline.service'),
+    import('./review-autodeploy.service'),
+  ]);
+  const actorDetail = { ...reviewActorDetail(actor), buildStartedAt: new Date().toISOString() };
+  // Every write after the claim requires the row to still be an active preview, so a moderator's
+  // teardown mid-start is not resurrected.
+  const guard = { requireActivePreview: true };
 
   // Resolve the pending version's source tree. ZIP submissions read the
   // in-review repo HEAD (submitVersion pushed it there; one pending per slug);
   // git-push submissions mirror the reviewed commit in first. Build clones +
   // tags at this sha.
-  const sha = await resolveReviewSourceSha(request);
+  let sha: string;
+  try {
+    sha = await resolveReviewSourceSha(request);
+  } catch (err) {
+    await markReviewPreviewState(
+      request.id,
+      'preview-failed',
+      {
+        ...actorDetail,
+        error: `could not resolve the review source: ${(err as Error).message}`.slice(0, 240),
+      },
+      guard
+    );
+    throw err;
+  }
   const host = reviewHost(sha, env.APPS_DOMAIN);
   const url = `https://${host}/${request.slug}`;
 
@@ -5373,14 +5408,14 @@ export async function previewRequest(params: PreviewRequestParams): Promise<Prev
     ''
   )}/api/internal/blocks/review-build-callback`;
 
-  // Mark building BEFORE the trigger so the UI sees state immediately even if the
-  // trigger response is slow; a trigger failure flips it back to failed below.
-  await markReviewPreviewState(request.id, 'preview-building', {
-    sha,
-    host,
-    url,
-    modUserId: params.modUserId,
-  });
+  // Stamp the sha/host/url BEFORE the trigger so the UI sees them immediately even if the
+  // trigger response is slow; a trigger failure flips it to failed below.
+  await markReviewPreviewState(
+    request.id,
+    'preview-building',
+    { sha, host, url, ...actorDetail },
+    guard
+  );
 
   let run: { name: string };
   try {
@@ -5388,17 +5423,22 @@ export async function previewRequest(params: PreviewRequestParams): Promise<Prev
       slug: request.slug,
       sha,
       publishRequestId: request.id,
-      modUserId: params.modUserId,
+      modUserId: actor.kind === 'moderator' ? actor.userId : 'system',
       callbackUrl,
     });
   } catch (err) {
-    await markReviewPreviewState(request.id, 'preview-failed', {
-      sha,
-      host,
-      url,
-      modUserId: params.modUserId,
-      error: `review build trigger failed: ${(err as Error).message}`.slice(0, 240),
-    });
+    await markReviewPreviewState(
+      request.id,
+      'preview-failed',
+      {
+        sha,
+        host,
+        url,
+        ...actorDetail,
+        error: `review build trigger failed: ${(err as Error).message}`.slice(0, 240),
+      },
+      guard
+    );
     throw new Error(`could not start review build: ${(err as Error).message}`);
   }
   await recordRunTriggered('review', request.id, request.slug, sha, run.name);
@@ -5429,6 +5469,45 @@ export type ReviewStatusResult = {
    */
   previewUrl?: string;
 };
+
+/**
+ * Past its maximum age the cluster janitor has reaped the preview's resources, so it is reported
+ * `preview-expired` (the UI offers a rebuild). Counted from the build's start
+ * (`detail.buildStartedAt`), which precedes the resources' creation, so it never reads live after
+ * the janitor's reap; a row written before that field existed falls back to its last state change.
+ * A queued preview holds no resources and never expires.
+ */
+export function isReviewPreviewExpired(
+  state: StoredReviewPreviewState,
+  detail: ReviewPreviewDetail,
+  updatedAt: Date | null,
+  now: number = Date.now()
+): boolean {
+  if (state === 'preview-queued') return false;
+  const started = detail.buildStartedAt ? Date.parse(detail.buildStartedAt) : NaN;
+  const from = Number.isFinite(started) ? started : updatedAt?.getTime();
+  if (from === undefined) return false;
+  return now - from > REVIEW_PREVIEW_MAX_AGE_MS;
+}
+
+/**
+ * The preview state a moderator is SHOWN for a pending request: its stored `preview-*` value, or
+ * `preview-expired` past {@link isReviewPreviewExpired}. `null` when it has no preview. Shared
+ * by `getReviewStatus` (the review page) and `listPendingRequests` (the queue chip), so the two
+ * surfaces cannot disagree about one request.
+ */
+export function reportedReviewPreviewState(
+  deployState: string | null | undefined,
+  deployDetail: string | null | undefined,
+  updatedAt: Date | null,
+  now: number = Date.now()
+): ReviewPreviewState | null {
+  if (typeof deployState !== 'string' || !deployState.startsWith('preview-')) return null;
+  const stored = deployState as StoredReviewPreviewState;
+  return isReviewPreviewExpired(stored, parseReviewDetail(deployDetail), updatedAt, now)
+    ? 'preview-expired'
+    : stored;
+}
 
 /**
  * Poll target for the mod-review UI: returns the current preview lifecycle state
@@ -5464,8 +5543,8 @@ export async function getReviewStatus(opts: {
   if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
   const isPreviewState =
     typeof row.deployState === 'string' && row.deployState.startsWith('preview-');
-  const state = isPreviewState ? (row.deployState as ReviewPreviewState) : null;
   const detail = isPreviewState ? parseReviewDetail(row.deployDetail) : {};
+  const state = reportedReviewPreviewState(row.deployState, row.deployDetail, row.deployUpdatedAt);
 
   let previewUrl: string | undefined;
   if (state === 'preview-live' && opts.modUserId != null && detail.host && detail.url) {
@@ -6018,6 +6097,24 @@ export async function teardownReviewStorageForRequest(publishRequestId: string):
   }
 }
 
+/** Fire-and-forget queue drain (review-autodeploy.service). Never rejects. */
+function drainReviewQueueSoon(): Promise<unknown> {
+  return import('./review-autodeploy.service')
+    .then((m) => m.drainReviewPreviewQueue())
+    .catch(() => undefined);
+}
+
+/**
+ * Everything that follows a NEW pending request — the moderator alert and the automatic review
+ * preview (review-autodeploy.service). Fire-and-forget: nothing it does can fail or delay the
+ * submit that created the row.
+ */
+function announceNewPendingRequest(sub: NewPendingSubmission): void {
+  void import('./review-autodeploy.service')
+    .then((m) => m.onNewPendingSubmission(sub))
+    .catch(() => undefined);
+}
+
 /**
  * MANUAL teardown of a single review preview (the mod-facing "Tear down"
  * action + the way to free a slot when the concurrency cap is hit). Distinct
@@ -6075,6 +6172,8 @@ export async function teardownPreview(opts: {
     where: { id: opts.publishRequestId },
     data: { deployState: null, deployDetail: null, deployUpdatedAt: new Date() },
   });
+  // A torn-down build frees its slot for the next queued preview.
+  void drainReviewQueueSoon();
 
   return { publishRequestId: row.id, tornDown: true };
 }

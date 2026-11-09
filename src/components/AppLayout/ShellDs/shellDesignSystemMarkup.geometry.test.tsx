@@ -123,7 +123,7 @@ vi.mock('~/components/Alerts/YellowBuzzMigrationNotice', () => ({
   YellowBuzzMigrationNotice: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 vi.mock('~/components/Support/SupportMenu', () => ({ SupportMenu: stub('support-menu') }));
-vi.mock('~/components/Assistant/AssistantButton', () => ({ AssistantButton: () => null }));
+vi.mock('~/components/Assistant/FloatingHelpMenu', () => ({ FloatingHelpMenu: () => null }));
 
 const { AppHeader } = await import('~/components/AppLayout/AppHeader/AppHeader');
 const { AppFooter } = await import('~/components/AppLayout/AppFooter');

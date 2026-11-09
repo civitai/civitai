@@ -7,6 +7,7 @@ import { useStickerPlacements } from '~/components/Sticker/placement.util';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
 import { useTrackPlayback } from '~/components/Sticker/useTrackPlayback';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { StickerMotionEditor } from '~/components/Sticker/StickerMotionEditor';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { stickersRevealed, useStickerRevealStore } from '~/store/sticker-reveal.store';
@@ -170,9 +171,10 @@ export function ImageStickerOverlay({
               bindPose={bindPose}
             />
           )}
-          {isPlacing && <DraftStickerLayer video={video} />}
+          {isPlacing && <DraftStickerLayer />}
         </div>
       )}
+      {isPlacing && video && <StickerMotionEditor video={video} />}
     </div>
   );
 }

@@ -29,6 +29,12 @@ vi.mock('~/server/services/account-standing.service', async (importOriginal) => 
   ...(await importOriginal<Record<string, unknown>>()),
   isAccountMuted: vi.fn(async () => false),
 }));
+vi.mock('~/server/services/training.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getAutoLabelUploadUrl: vi.fn(async () => ({ url: 'u' })),
+  submitAutoLabelWorkflow: vi.fn(async () => ({ workflowId: 'wf-1' })),
+  getAutoLabelWorkflow: vi.fn(async () => ({ done: true })),
+}));
 vi.mock('~/server/services/training-studio-auto-label.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   submitStudioAutoLabel: h.submit,
@@ -38,6 +44,7 @@ vi.mock('~/server/services/training-studio-auto-label.service', async (importOri
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { trainingRouter } from '~/server/routers/training.router';
+import { resolveUsageLimitRules } from '~/server/services/usage-limit-config.service';
 import { STUDIO_AUTO_LABEL_RATE_LIMITS } from '~/server/services/training-studio-auto-label.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -55,7 +62,12 @@ function caller() {
     req: { headers: {}, socket: { remoteAddress: '10.0.0.1' } },
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
-    features: { trpcFlagGuardPerRequest: true, trainingStudioUi: true },
+    features: {
+      trpcFlagGuardPerRequest: true,
+      trainingStudioUi: true,
+      imageTraining: true,
+      trainingAutoLabelOrchestrator: true,
+    },
     track: undefined,
   } as never);
 }
@@ -91,10 +103,45 @@ describe("the embed's auto-label procedures draw from the shared bucket", () => 
   });
 
   it.each(['submit', 'poll'] as const)('a %s is refused at the shared limit', async (which) => {
-    const [{ limit }] = STUDIO_AUTO_LABEL_RATE_LIMITS[which].rules;
+    const [{ limit }] = await resolveUsageLimitRules(
+      STUDIO_AUTO_LABEL_RATE_LIMITS[which].rules.usageLimitIds,
+      undefined
+    );
     redisMock.redis.packed.hGet.mockResolvedValue(Array(limit).fill(Date.now()));
     await expect(call[which]()).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
     redisMock.redis.packed.hGet.mockResolvedValue(Array(limit - 1).fill(Date.now()));
     await expect(call[which]()).resolves.toBeDefined();
+  });
+});
+
+// The wizard's limits, as literals: the registry supplies them, so reading the expected number from
+// it would pass a wrong number or a cross-wired id.
+describe("the wizard's auto-label procedures", () => {
+  beforeEach(() => {
+    h.hSetWithTTL.mockClear();
+  });
+
+  const wizard = {
+    upload: () => caller().getAutoLabelUploadUrl({ modelId: 1 }),
+    submit: () =>
+      caller().submitAutoLabelWorkflow({
+        modelId: 1,
+        images: [{ mediaUrl, filename: 'a.png' }],
+        params: { type: 'tag' },
+      } as never),
+    poll: () => caller().getAutoLabelWorkflow({ workflowId: 'wf-1' }),
+  };
+
+  it.each([
+    ['upload', 1000, 'getAutoLabelUploadUrl'],
+    ['submit', 100, 'submitAutoLabelWorkflow'],
+    ['poll', 1500, 'getAutoLabelWorkflow'],
+  ] as const)('caps %s at %i a minute in its own bucket', async (which, limit, path) => {
+    redisMock.redis.packed.hGet.mockResolvedValue(Array(limit).fill(Date.now()));
+    await expect(wizard[which]()).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    redisMock.redis.packed.hGet.mockResolvedValue(Array(limit - 1).fill(Date.now()));
+    await expect(wizard[which]()).resolves.toBeDefined();
+    const [, cacheKey] = h.hSetWithTTL.mock.calls.at(-1) as unknown as [unknown, string];
+    expect(cacheKey).toBe(`${REDIS_KEYS.TRPC.LIMIT.BASE}:${path}`);
   });
 });

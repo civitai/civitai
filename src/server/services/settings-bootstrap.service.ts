@@ -4,6 +4,8 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getTosMeta } from '~/server/services/content.service';
 import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import { getNavBanners } from '~/server/services/nav-banner.service';
+import { getEventSeeds } from '~/server/services/event-seeds.service';
+import type { EventCosmeticReads } from '~/server/services/event-cosmetic-reads';
 import { getActiveSiteAlerts } from '~/server/services/site-alert.service';
 import { getUserFollows } from '~/server/redis/caches';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
@@ -84,6 +86,9 @@ export async function resolveSettingsBootstrapSeeds(
   // session seed and the browsing-settings addons too.
   const domainColor = getRequestDomainColor(req);
   const announcementsDomainColor = getRequestDomainColor({ headers: { host: viewerHost(req) } });
+  // The nav banners and the event seeds both read the viewer's event cosmetic: one read each
+  // per request, not one per member (event-cosmetic-reads.ts).
+  const eventCosmeticReads: EventCosmeticReads = new Map();
   const [
     settings,
     tosMeta,
@@ -93,6 +98,7 @@ export async function resolveSettingsBootstrapSeeds(
     liveNow,
     navBanners,
     siteAlerts,
+    eventSeeds,
   ] = await Promise.all([
     // Content-settings view so SSR initialData matches the tRPC getSettings response
     // shape. `undefined` — NOT `{}` — because AppProvider passes this straight to
@@ -149,8 +155,20 @@ export async function resolveSettingsBootstrapSeeds(
     // Seeds `event.getNavBanners` so the nav strip is in the first paint and never shifts
     // the page. Session-only (no cookies), so the anonymous answer is the same for every
     // anonymous caller, as the route's public cache header requires.
-    settle(getNavBanners({ viewer: session?.user }), undefined, 'getNavBanners'),
+    settle(
+      getNavBanners({ viewer: session?.user, reads: eventCosmeticReads }),
+      undefined,
+      'getNavBanners'
+    ),
     settle(getActiveSiteAlerts(), undefined, 'getActiveSiteAlerts'),
+    // Seeds `event.getAccess` and `event.getCosmetic` for the released event decorations, which
+    // every page otherwise asks for once (see event-seeds.service.ts). Session-only, like the
+    // nav banners above.
+    settle(
+      getEventSeeds({ user: session?.user, reads: eventCosmeticReads }),
+      undefined,
+      'getEventSeeds'
+    ),
   ]);
   return {
     settings,
@@ -161,6 +179,7 @@ export async function resolveSettingsBootstrapSeeds(
     liveNow,
     navBanners,
     siteAlerts,
+    eventSeeds,
     session: bootstrapSession(session),
   };
 }
