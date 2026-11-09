@@ -338,6 +338,26 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
   });
 
   it.each([true, false])(
+    'the serving mode (shared server = %s) is recorded on the preview detail from the deploying write on',
+    async (on) => {
+      mockFlag.sharedServer = on;
+      mockMarkPreview.mockClear();
+      try {
+        const { req, res } = makeReqRes(goodBody());
+        await handler(req, res);
+        expect(mockMarkPreview).toHaveBeenCalledWith(
+          PUBREQ,
+          'preview-deploying',
+          expect.objectContaining({ sha: SHA, sharedServer: on }),
+          { requireActivePreview: true }
+        );
+      } finally {
+        mockFlag.sharedServer = false;
+      }
+    }
+  );
+
+  it.each([true, false])(
     'the review apply Job is told shared server = %s, from the flag read once per build',
     async (on) => {
       mockFlag.sharedServer = on;
@@ -441,6 +461,34 @@ describe('watchReviewApplyJob (reachability gate)', () => {
     expect(onSettled.mock.calls).toEqual([[PUBREQ, live]]);
     mockMarkPreview.mockImplementation(async () => undefined);
   });
+
+  // A row torn down, withdrawn, superseded or decided while its apply ran still holds its build
+  // slot, and its build callback has already run: the watcher is what releases it.
+  it.each([
+    ['succeeded', true],
+    ['failed', true],
+    ['succeeded', false],
+  ] as const)(
+    'apply %s (reachable=%s): the settled row releases its build slot before the queue moves',
+    async (outcome, reachable) => {
+      mockWaitApply.mockResolvedValueOnce(outcome);
+      mockWaitReachable.mockResolvedValueOnce(reachable);
+      mockRelease.mockClear();
+      const order: string[] = [];
+      mockRelease.mockImplementationOnce(async () => {
+        order.push('release');
+      });
+      await watchReviewApplyJob({
+        publishRequestId: PUBREQ,
+        sha: SHA,
+        jobName: 'review-apply-1',
+        baseDetail,
+        onSettled: () => order.push('settled'),
+      });
+      expect(mockRelease).toHaveBeenCalledWith(PUBREQ);
+      expect(order).toEqual(['release', 'settled']);
+    }
+  );
 
   it('apply succeeded + host NEVER reachable → marks preview-failed with the DNS detail + frees the dedup slot', async () => {
     mockWaitReachable.mockResolvedValueOnce(false);

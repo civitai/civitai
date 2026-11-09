@@ -726,7 +726,15 @@ export async function triggerApplyReview(
  * `app-templates` ConfigMap at /templates. The script itself starts the pod that holds the one
  * scoped credential it needs, waits for it and exits 0/1. Pre-deletes a same-name Job (404 is
  * fine) so a repeat run starts fresh.
+ *
+ * Its pod is always `civitai.com/role: apply-job`, set here and not by the callers: the
+ * namespace denies all traffic by default, and the network policy for that role is the one
+ * that lets a pod reach DNS and the kube API, which the script needs to start its pod. Any
+ * other role leaves the Job unable to do anything.
  */
+const TEMPLATES_JOB_ROLE_LABEL = 'civitai.com/role';
+const TEMPLATES_JOB_ROLE = 'apply-job';
+
 async function runTemplatesScriptJob(args: {
   name: string;
   labels: Record<string, string>;
@@ -735,15 +743,16 @@ async function runTemplatesScriptJob(args: {
 }): Promise<{ name: string }> {
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
+  const labels = { ...args.labels, [TEMPLATES_JOB_ROLE_LABEL]: TEMPLATES_JOB_ROLE };
   const job = {
     apiVersion: 'batch/v1',
     kind: 'Job',
-    metadata: { name: args.name, namespace: ns, labels: { app: args.name, ...args.labels } },
+    metadata: { name: args.name, namespace: ns, labels: { app: args.name, ...labels } },
     spec: {
       backoffLimit: 0,
       ttlSecondsAfterFinished: 86400,
       template: {
-        metadata: { labels: args.labels },
+        metadata: { labels },
         spec: {
           serviceAccountName: 'apps-applier',
           restartPolicy: 'Never',
@@ -819,7 +828,6 @@ export async function triggerReviewUnpublish(args: {
   return runTemplatesScriptJob({
     name: `${args.slug}-review-unpub-${host.slice(0, 8)}`.slice(0, 63),
     labels: {
-      'civitai.com/role': 'publish-job',
       'civitai.com/review-mode': 'true',
       'civitai.com/app-slug': args.slug,
       'civitai.com/publish-request-id': args.publishRequestId,
@@ -847,7 +855,7 @@ export const READINESS_APP_REFUSAL = "is the shared static server's readiness pr
 export async function triggerLiveUnpublish(slug: string): Promise<{ name: string }> {
   return runTemplatesScriptJob({
     name: `${slug}-live-unpub`.slice(0, 63),
-    labels: { 'civitai.com/role': 'publish-job', 'civitai.com/app-slug': slug },
+    labels: { 'civitai.com/app-slug': slug },
     env: [{ name: 'SLUG', value: slug }],
     script: LIVE_UNPUBLISH_SCRIPT,
   });
@@ -891,6 +899,13 @@ export async function deleteReviewResources(args: {
   slug: string;
   sha: string;
   publishRequestId: string;
+  /**
+   * How the preview was served, as recorded on its detail when it was built. It decides the
+   * teardown, not the flag's current value: a preview published to the shared server while the
+   * flag was on must still be unpublished after the flag goes off. Unrecorded (torn down before
+   * its build reached the apply step, or built before this was recorded): the flag decides.
+   */
+  sharedServer?: boolean;
 }): Promise<void> {
   // Shared static server: the preview is a published meta, not objects. Unpublish it with a Job
   // (the web pod holds no storage credential). The label sweep below still runs: it removes any
@@ -899,7 +914,8 @@ export async function deleteReviewResources(args: {
     const { isAppBlocksReviewSharedServerEnabled } = await import(
       '~/server/services/app-blocks-flag'
     );
-    if (await isAppBlocksReviewSharedServerEnabled()) {
+    const servedShared = args.sharedServer ?? (await isAppBlocksReviewSharedServerEnabled());
+    if (servedShared) {
       if (/^[0-9a-f]{40}$/.test(args.sha)) {
         await triggerReviewUnpublish(args);
       } else {

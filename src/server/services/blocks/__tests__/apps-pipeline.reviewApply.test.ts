@@ -250,6 +250,50 @@ describe('triggerApplyReview / deleteReviewResources', () => {
     expect(job.metadata.name).toBe('my-app-live-unpub');
   });
 
+  // The apps namespace denies all traffic by default; only the `apply-job` role's network policy
+  // lets a pod reach DNS and the kube API, which both scripts need to start their pod.
+  it('both new Jobs run as role apply-job (Job and pod labels)', async () => {
+    await deleteReviewResources({
+      slug: 'my-app',
+      sha: SHA,
+      publishRequestId: PUBREQ,
+      sharedServer: true,
+    });
+    await triggerLiveUnpublish('my-app');
+    const jobs = jobPosts();
+    expect(jobs.map((j) => j.metadata.name)).toEqual([
+      'my-app-review-unpub-aaaaaaaa',
+      'my-app-live-unpub',
+    ]);
+    for (const job of jobs) {
+      expect(job.metadata.labels['civitai.com/role']).toBe('apply-job');
+      expect(job.spec.template.metadata.labels['civitai.com/role']).toBe('apply-job');
+    }
+  });
+
+  it('teardown follows the RECORDED serving mode, not the current flag', async () => {
+    // Built on the shared server, torn down after the flag went off: still unpublished.
+    await deleteReviewResources({
+      slug: 'my-app',
+      sha: SHA,
+      publishRequestId: PUBREQ,
+      sharedServer: true,
+    });
+    expect(jobPosts()).toHaveLength(1);
+    // Built per-preview, torn down after the flag went on: no unpublish Job.
+    calls = [];
+    flags.on.add('app-blocks-review-shared-server');
+    await deleteReviewResources({
+      slug: 'my-app',
+      sha: SHA,
+      publishRequestId: PUBREQ,
+      sharedServer: false,
+    });
+    expect(jobPosts()).toHaveLength(0);
+    // Both still sweep the per-preview objects.
+    expect(calls.filter((c) => c.method === 'GET')).toHaveLength(4);
+  });
+
   it('parses the readiness-probe app list: one per line, comments and blanks ignored', () => {
     expect(parseReadinessProbeSlugs('# probe apps\nreadiness-probe-app\n\n  other-app  # x\n')).toEqual([
       'readiness-probe-app',

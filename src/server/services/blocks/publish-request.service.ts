@@ -1,7 +1,6 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
 import {
   BUILDING_REVIEW_PREVIEW_STATES,
-  isReviewPreviewBuilding,
   REVIEW_PREVIEW_MAX_AGE_MS,
   STARTED_REVIEW_BUILD_DETAIL_MARK,
   type ReviewPreviewState,
@@ -3090,6 +3089,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       // the teardown at the end. (deploy_state is null for the common no-preview
       // case, so teardown — and its k8s calls — are skipped entirely.)
       deployState: true,
+      // The preview's detail (its sha and serving mode) for that teardown, read here because
+      // markRequestDeployState below clears it before the teardown runs.
+      deployDetail: true,
     },
   });
   if (!request) throw new Error(`publish request ${params.publishRequestId} not found`);
@@ -4318,7 +4320,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // never affect the approve outcome. Gated on `hadReviewPreview` (captured from
   // deploy_state BEFORE markRequestDeployState flipped it to production
   // 'building'), so the common no-preview approve does zero extra DB/k8s work.
-  if (hadReviewPreview) void teardownReviewForRequest(request.id);
+  if (hadReviewPreview) {
+    void teardownReviewForRequest(request.id, { reviewDetail: request.deployDetail });
+  }
   // AGENTIC REVIEW (P1, audit #1) — tear down any review AGENT UNCONDITIONALLY
   // (an agent can run without a sandbox preview). Idempotent no-op otherwise.
   void teardownAgentReviewForRequest(request.id);
@@ -4976,6 +4980,12 @@ export type ReviewPreviewDetail = {
    * them), so a 14-day expiry counted from here is never later than the janitor's reap.
    */
   buildStartedAt?: string;
+  /**
+   * Whether this build's preview was published to the shared static server, recorded by the
+   * build callback when it starts the apply step. The teardown follows it, not the flag's current
+   * value.
+   */
+  sharedServer?: boolean;
 };
 
 /** Pack a ReviewPreviewDetail into the deploy_detail string column. */
@@ -5819,7 +5829,15 @@ export async function mintReviewBlockToken(opts: {
  * the decision path: it reads the stored review sha (if any) + deletes the
  * review k8s resources by label selector, swallowing every error.
  */
-export async function teardownReviewForRequest(publishRequestId: string): Promise<void> {
+export async function teardownReviewForRequest(
+  publishRequestId: string,
+  /**
+   * The preview's detail as read before the caller changed the row. approveRequest passes it:
+   * by the time it tears down, markRequestDeployState has cleared the row's detail, and without
+   * the sha the shared-server preview would never be unpublished.
+   */
+  opts: { reviewDetail?: string | null } = {}
+): Promise<void> {
   // MOD REVIEW SANDBOX "run for real" (#2831) — drop the DISPOSABLE preview
   // storage schema (`apprev_<pubreq>`) a mod may have created by running the app
   // for real. Runs FIRST, in its OWN try/catch, so a downstream failure (the
@@ -5857,12 +5875,15 @@ export async function teardownReviewForRequest(publishRequestId: string): Promis
     // has already flipped the (now approved) row's deploy_state to a production
     // 'building' value, so a deploy_state guard would skip the teardown and leak
     // the review env. The label selector is the real safety boundary.
-    const detail = parseReviewDetail(row.deployDetail);
+    const detail = parseReviewDetail(
+      opts.reviewDetail !== undefined ? opts.reviewDetail : row.deployDetail
+    );
     const { deleteReviewResources } = await import('./apps-pipeline.service');
     await deleteReviewResources({
       slug: row.slug,
       sha: detail.sha ?? '',
       publishRequestId,
+      sharedServer: detail.sharedServer,
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -6056,6 +6077,7 @@ export async function teardownPreview(opts: {
       slug: row.slug,
       sha: detail.sha ?? '',
       publishRequestId: opts.publishRequestId,
+      sharedServer: detail.sharedServer,
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -6069,9 +6091,11 @@ export async function teardownPreview(opts: {
   // Clear the DB regardless of the k8s outcome. Only ever runs when the row was
   // a preview-* state (guarded above), so it can't clobber a production
   // building/live deploy_state.
-  if (isReviewPreviewBuilding(row.deployState)) {
+  if (row.deployState === 'preview-building') {
     // No preview any more (deploy_state null: the UI shows none, and the callback's
     // requireActivePreview writes cannot publish or deploy it), but its build is still running.
+    // Only `preview-building`: in `preview-deploying` the build's callback has already run, so
+    // nothing would ever release a slot kept here before the stale window.
     // The started-build detail is kept, so the row keeps holding its build slot until the build's
     // callback clears it (releaseSettledBuildSlot) or the stale window passes. deployUpdatedAt is
     // kept, so that window still counts from the build's last state change.

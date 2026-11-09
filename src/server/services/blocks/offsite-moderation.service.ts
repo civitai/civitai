@@ -565,9 +565,10 @@ async function takeDownLiveAppAfterCommit(slug: string): Promise<{ liveNote?: st
 }
 
 /**
- * LIVE UNPUBLISH (`app-blocks-live-unpublish`), after a relist COMMITS and the block is approved
- * again: re-publish the app's approved build so the shared static server serves it again.
- * Fire-and-forget, logged, never retried.
+ * LIVE RESTORE, after a relist COMMITS and the block is approved again: re-publish the app's
+ * approved build so the shared static server serves it again. Runs whatever the
+ * `app-blocks-live-unpublish` flag says now (an app taken down while it was on must come back).
+ * Fire-and-forget, reported on failure, never retried.
  */
 function restoreLiveAppSoon(slug: string, appBlockId: string): void {
   void restoreLiveApp({ slug, appBlockId }).catch(() => undefined);

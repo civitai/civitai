@@ -364,6 +364,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
+  // Read once per build, so the apply Job and the reachability probe agree on the serving path.
+  // Recorded on the detail from here on, so a later teardown unpublishes the way it was served.
+  const sharedServer = await isAppBlocksReviewSharedServerEnabled().catch(() => false);
+  baseDetail = { ...baseDetail, sharedServer };
+
   await markReviewPreviewState(body.publishRequestId, 'preview-deploying', baseDetail, {
     requireActivePreview: true,
   });
@@ -382,9 +387,6 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     failedStep: 'none',
     failureClass: 'none',
   });
-
-  // Read once per build, so the apply Job and the reachability probe agree on the serving path.
-  const sharedServer = await isAppBlocksReviewSharedServerEnabled().catch(() => false);
 
   let applyJob: { name: string };
   try {
@@ -438,7 +440,18 @@ export async function watchReviewApplyJob(args: {
   /** The preview was published to the shared static server (probe it there). */
   sharedServer?: boolean;
 }): Promise<void> {
-  const settled = args.onSettled ?? reviewBuildSettled;
+  // A row torn down, withdrawn, superseded or decided while this apply ran still holds its build
+  // slot (its build callback already ran, so nothing else would release it before the stale
+  // window): release it before the queue moves on. A no-op for the active preview just marked.
+  const onSettled = args.onSettled ?? reviewBuildSettled;
+  const settled = async (id: string, live: boolean) => {
+    try {
+      await releaseSettledBuildSlot(id);
+    } catch {
+      /* never throws; the stale window is the backstop */
+    }
+    onSettled(id, live);
+  };
   // Every write below is a WATCHER advancing write — it must only ever touch the
   // preview THIS watcher owns. The reachability wait can keep this watcher alive
   // for a few minutes, so a mod could tear down this preview and re-preview a new
@@ -468,7 +481,7 @@ export async function watchReviewApplyJob(args: {
         );
         // Live only if THIS preview was still the active one: a torn-down or superseded preview
         // (the guard matched no row) must not start an agent review.
-        settled(args.publishRequestId, marked > 0);
+        await settled(args.publishRequestId, marked > 0);
       } else {
         // Deploy is healthy but its host never became publicly reachable within
         // the budget (DNS propagation stall, or a genuinely-broken route). Do
@@ -487,7 +500,7 @@ export async function watchReviewApplyJob(args: {
           },
           guard
         );
-        settled(args.publishRequestId, false);
+        await settled(args.publishRequestId, false);
       }
     } else {
       // On a DEFINITIVE failure free the replay-dedup slot so a same-sha retry
@@ -507,7 +520,7 @@ export async function watchReviewApplyJob(args: {
         },
         guard
       );
-      settled(args.publishRequestId, false);
+      await settled(args.publishRequestId, false);
     }
   } catch (err) {
     // eslint-disable-next-line no-console

@@ -523,15 +523,15 @@ export async function maybeAutoStartAgentReview(
     // see room for one more and all start: every start in flight is counted (its reservation)
     // until its report row exists, after which the spend read counts it instead.
     const capCents = Math.round(perReviewCapUsd(env) * 100);
-    const reservedCents = await reserveAgentAutostartBudget(capCents);
-    if (reservedCents === null) {
+    const reservation = await reserveAgentAutostartBudget(capCents);
+    if (reservation === null) {
       // The reservation cannot be read: refuse rather than start uncounted.
       record('agent_review_budget_refused');
       return 'budget-refused';
     }
     try {
       const spent = await agentReviewSpendTodayUsd();
-      if (spent + reservedCents / 100 > env.AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD) {
+      if (spent + reservation.totalCents / 100 > env.AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD) {
         record('agent_review_budget_refused');
         return 'budget-refused';
       }
@@ -539,7 +539,8 @@ export async function maybeAutoStartAgentReview(
       record('agent_review_auto_started');
       return 'started';
     } finally {
-      await releaseAgentAutostartBudget(capCents);
+      // Released on the key it was taken on, even when the UTC day turned in between.
+      await releaseAgentAutostartBudget(capCents, reservation.key);
     }
   } catch (err) {
     record('agent_review_start_failed');
@@ -548,14 +549,21 @@ export async function maybeAutoStartAgentReview(
   }
 }
 
+type AgentAutostartReservedKey = Awaited<ReturnType<typeof agentAutostartReservedKey>>;
+
 async function agentAutostartReservedKey() {
   const { REDIS_SYS_KEYS } = await import('~/server/redis/client');
   const day = new Date().toISOString().slice(0, 10);
   return `${REDIS_SYS_KEYS.BLOCKS.AGENT_REVIEW_AUTOSTART_RESERVED}:${day}` as const;
 }
 
-/** Add `cents` to today's in-flight reservation; the new total, or null when unreadable. */
-async function reserveAgentAutostartBudget(cents: number): Promise<number | null> {
+/**
+ * Add `cents` to today's in-flight reservation. Returns the new total and the key it was taken on
+ * (the release must use the same one), or null when unreadable.
+ */
+async function reserveAgentAutostartBudget(
+  cents: number
+): Promise<{ totalCents: number; key: AgentAutostartReservedKey } | null> {
   try {
     const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
     const key = await agentAutostartReservedKey();
@@ -567,17 +575,20 @@ async function reserveAgentAutostartBudget(cents: number): Promise<number | null
         .exec()
     );
     const total = Number(res?.[1]);
-    return Number.isFinite(total) ? total : null;
+    return Number.isFinite(total) ? { totalCents: total, key } : null;
   } catch {
     return null;
   }
 }
 
 /** Release a reservation taken by {@link reserveAgentAutostartBudget}. Best-effort. */
-async function releaseAgentAutostartBudget(cents: number): Promise<void> {
+async function releaseAgentAutostartBudget(
+  cents: number,
+  key: AgentAutostartReservedKey
+): Promise<void> {
   try {
     const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
-    await withSysReadDeadline(sysRedis.incrBy(await agentAutostartReservedKey(), -cents));
+    await withSysReadDeadline(sysRedis.incrBy(key, -cents));
   } catch {
     // The key expires with the day; a lost release only makes later starts more conservative.
   }

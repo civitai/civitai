@@ -3,6 +3,7 @@ import {
   isReadinessProbeApp,
   readinessAppNote,
   restoreLiveApp,
+  takeDownIfSuspendedAfterDeploy,
   takeDownLiveApp,
   unpublishLiveApp,
   type LiveUnpublishDeps,
@@ -29,6 +30,10 @@ function deps(over: Partial<LiveUnpublishDeps> = {}) {
     triggerLivePublish: vi.fn(async (a: { slug: string; sha: string }) => ({
       name: `${a.slug}-apply-${a.sha.slice(0, 8)}`,
     })),
+    // The block when a Job ends: by default it stayed where the action put it (the reconcile
+    // tests override it). Unknown: nothing to correct.
+    readBlockBySlug: vi.fn(async (): Promise<{ id: string; status: string } | null> => null),
+    report: vi.fn(),
     ...over,
   };
 }
@@ -57,6 +62,11 @@ describe('unpublishLiveApp', () => {
     const d = deps({ waitForJob: vi.fn(async () => 'failed' as const) });
     expect(await unpublishLiveApp('cool-app', { deps: d })).toBe('failed');
     expect(d.triggerLiveUnpublish).toHaveBeenCalledTimes(1);
+    // Reported, not only logged: the moderator's response returned before the Job ended.
+    expect(d.report).toHaveBeenCalledWith(
+      'live unpublish Job cool-app-live-unpub ended failed; cool-app may still be served',
+      { slug: 'cool-app', job: 'cool-app-live-unpub', outcome: 'failed' }
+    );
     const boom = deps({
       triggerLiveUnpublish: vi.fn(async () => {
         throw new Error('k8s down');
@@ -127,13 +137,22 @@ describe('restoreLiveApp (after a relist commits)', () => {
     );
   });
 
-  it('flag OFF: nothing', async () => {
+  // The block went suspended -> approved, which only a takedown causes; an app taken down while
+  // the flag was on must come back after it is turned off.
+  it('flag OFF: still restores (the takedown may have run while it was on)', async () => {
     const d = deps({ flagOn: vi.fn(async () => false) });
     expect(await restoreLiveApp({ slug: 'cool-app', appBlockId: BLOCK }, { deps: d })).toBe(
-      'disabled'
+      'restored'
     );
+    expect(d.triggerLivePublish).toHaveBeenCalledTimes(1);
+  });
+
+  it('flag OFF: still never for the readiness app', async () => {
+    const d = deps({ flagOn: vi.fn(async () => false) });
+    expect(
+      await restoreLiveApp({ slug: 'readiness-probe-app', appBlockId: BLOCK }, { deps: d })
+    ).toBe('readiness-app');
     expect(d.triggerLivePublish).not.toHaveBeenCalled();
-    expect(d.readLiveBuild).not.toHaveBeenCalled();
   });
 
   it('the readiness app: nothing', async () => {
@@ -162,6 +181,10 @@ describe('restoreLiveApp (after a relist commits)', () => {
       'failed'
     );
     expect(d.triggerLivePublish).toHaveBeenCalledTimes(1);
+    expect(d.report).toHaveBeenCalledWith(
+      expect.stringContaining('live restore Job cool-app-apply-'),
+      expect.objectContaining({ slug: 'cool-app', outcome: 'failed' })
+    );
     const boom = deps({
       triggerLivePublish: vi.fn(async () => {
         throw new Error('k8s down');
@@ -196,4 +219,63 @@ it('readinessAppNote is the line the moderator gets back', () => {
   expect(readinessAppNote('some-app')).toBe(
     "some-app keeps serving: it is the static server's readiness app"
   );
+});
+
+// The Jobs run after the action commits and race each other and the app's own deploys. Each
+// re-reads the block when it ends and corrects the pointer once.
+describe('ordering: a Job that ends after the block moved corrects the pointer once', () => {
+  it('an unpublish that ends after a relist approved the block again restores it', async () => {
+    const d = deps({ readBlockBySlug: vi.fn(async () => ({ id: BLOCK, status: 'approved' })) });
+    expect(await unpublishLiveApp('cool-app', { deps: d })).toBe('unpublished');
+    expect(d.triggerLivePublish).toHaveBeenCalledTimes(1);
+    expect(d.triggerLivePublish).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'cool-app', sha: SHA, appBlockId: BLOCK })
+    );
+    // Once: the restore it starts does not loop back.
+    expect(d.triggerLiveUnpublish).toHaveBeenCalledTimes(1);
+  });
+
+  it('CONTROL: an unpublish whose block is still suspended restores nothing', async () => {
+    const d = deps({ readBlockBySlug: vi.fn(async () => ({ id: BLOCK, status: 'suspended' })) });
+    expect(await unpublishLiveApp('cool-app', { deps: d })).toBe('unpublished');
+    expect(d.triggerLivePublish).not.toHaveBeenCalled();
+  });
+
+  it('a restore that ends after a new delist suspended the block takes it down', async () => {
+    const d = deps({ readBlockBySlug: vi.fn(async () => ({ id: BLOCK, status: 'suspended' })) });
+    expect(await restoreLiveApp({ slug: 'cool-app', appBlockId: BLOCK }, { deps: d })).toBe(
+      'restored'
+    );
+    expect(d.triggerLiveUnpublish).toHaveBeenCalledTimes(1);
+    expect(d.triggerLivePublish).toHaveBeenCalledTimes(1);
+  });
+
+  it('CONTROL: a restore whose block is still approved takes nothing down', async () => {
+    const d = deps({ readBlockBySlug: vi.fn(async () => ({ id: BLOCK, status: 'approved' })) });
+    await restoreLiveApp({ slug: 'cool-app', appBlockId: BLOCK }, { deps: d });
+    expect(d.triggerLiveUnpublish).not.toHaveBeenCalled();
+  });
+
+  it('a deploy that ends while the block is suspended takes it down again', async () => {
+    const d = deps({ readBlockBySlug: vi.fn(async () => ({ id: BLOCK, status: 'suspended' })) });
+    expect(await takeDownIfSuspendedAfterDeploy('cool-app', { deps: d })).toBe('unpublished-again');
+    expect(d.triggerLiveUnpublish).toHaveBeenCalledWith('cool-app');
+    expect(d.triggerLivePublish).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: a deploy of an approved block, or with the flag off, takes nothing down', async () => {
+    const approved = deps({
+      readBlockBySlug: vi.fn(async () => ({ id: BLOCK, status: 'approved' })),
+    });
+    expect(await takeDownIfSuspendedAfterDeploy('cool-app', { deps: approved })).toBe(
+      'not-suspended'
+    );
+    expect(approved.triggerLiveUnpublish).not.toHaveBeenCalled();
+    const off = deps({
+      flagOn: vi.fn(async () => false),
+      readBlockBySlug: vi.fn(async () => ({ id: BLOCK, status: 'suspended' })),
+    });
+    expect(await takeDownIfSuspendedAfterDeploy('cool-app', { deps: off })).toBe('disabled');
+    expect(off.triggerLiveUnpublish).not.toHaveBeenCalled();
+  });
 });

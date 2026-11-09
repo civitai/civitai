@@ -742,6 +742,25 @@ describe('teardownReviewForRequest', () => {
     mockDeprovisionReviewPreview.mockResolvedValue(undefined);
   });
 
+  // approveRequest clears the row's detail (markRequestDeployState) before it tears down, so it
+  // hands over the detail it read first; without its sha the preview is never unpublished.
+  it('uses the detail the caller read before changing the row (sha and serving mode)', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      slug: 'my-app',
+      deployState: 'building',
+      deployDetail: null,
+    });
+    await teardownReviewForRequest(PUBREQ, {
+      reviewDetail: JSON.stringify({ sha: SHA, sharedServer: true }),
+    });
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'my-app',
+      sha: SHA,
+      publishRequestId: PUBREQ,
+      sharedServer: true,
+    });
+  });
+
   it('deletes review resources by publish request (label selector is the boundary)', async () => {
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
       slug: 'my-app',
@@ -1027,22 +1046,56 @@ describe('teardownPreview', () => {
   // Its build is still running: the row is no preview any more (deploy_state null) but keeps its
   // started-build detail, so it holds the build slot until the build's callback settles it; the
   // stale window still counts from its last state change, so deployUpdatedAt is not touched.
-  it.each(['preview-building', 'preview-deploying'])(
-    '%s pending: torn down to no preview, keeping its build detail (and so its build slot)',
-    async (state) => {
-      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
-        id: PUBREQ,
-        status: 'pending',
-        deployState: state,
-        deployDetail: JSON.stringify({ sha: SHA }),
-        slug: 'my-app',
-      });
-      const res = await teardownPreview({ publishRequestId: PUBREQ });
-      expect(res).toEqual({ publishRequestId: PUBREQ, tornDown: true });
-      const updateArg = mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0];
-      expect(updateArg.data).toEqual({ deployState: null });
-    }
-  );
+  it('preview-building pending: torn down to no preview, keeping its build detail (and so its build slot)', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-building',
+      deployDetail: JSON.stringify({ sha: SHA }),
+      slug: 'my-app',
+    });
+    const res = await teardownPreview({ publishRequestId: PUBREQ });
+    expect(res).toEqual({ publishRequestId: PUBREQ, tornDown: true });
+    const updateArg = mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0];
+    expect(updateArg.data).toEqual({ deployState: null });
+  });
+
+  // In preview-deploying the build's callback has already run, so nothing would release a slot
+  // kept here before the stale window: the row is cleared and frees its slot now.
+  it('preview-deploying pending: cleared outright (its build is over), freeing its slot', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-deploying',
+      deployDetail: JSON.stringify({ sha: SHA, buildStartedAt: new Date().toISOString() }),
+      slug: 'my-app',
+    });
+    const res = await teardownPreview({ publishRequestId: PUBREQ });
+    expect(res).toEqual({ publishRequestId: PUBREQ, tornDown: true });
+    const updateArg = mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0];
+    expect(updateArg.data).toEqual({
+      deployState: null,
+      deployDetail: null,
+      deployUpdatedAt: expect.any(Date),
+    });
+  });
+
+  it('teardown passes the serving mode recorded on the preview detail', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-live',
+      deployDetail: JSON.stringify({ sha: SHA, sharedServer: true }),
+      slug: 'my-app',
+    });
+    await teardownPreview({ publishRequestId: PUBREQ });
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'my-app',
+      sha: SHA,
+      publishRequestId: PUBREQ,
+      sharedServer: true,
+    });
+  });
 
   it('non-pending / non-preview state: no-op, tornDown:false (no delete, no DB clear)', async () => {
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
