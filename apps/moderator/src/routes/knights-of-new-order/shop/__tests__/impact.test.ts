@@ -79,6 +79,11 @@ describe('impactOfChange with a hidden cosmetic', () => {
     ).toEqual([]);
   });
 
+  it('treats a cosmetic still in review like a missing one', () => {
+    const pending = { ...ghost, cosmeticType: 'Badge', cosmeticWithheld: true };
+    expect(impactOfChange([pending, item(31)], DAY, pending.id, { active: false })).toEqual([]);
+  });
+
   it('still announces a visible item dropping out when it is retired', () => {
     expect(impactOfChange(items, DAY, 31, { active: false }).join(' ')).toContain(
       'item-31 drops out'

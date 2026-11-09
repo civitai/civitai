@@ -9,6 +9,7 @@ import {
   dealPercentOff,
   membershipPerksUrl,
   durationLabel,
+  packNote,
   refusalText,
   tierName,
 } from './shop-view';
@@ -24,6 +25,7 @@ const REFUSALS = [
   'sold-out',
   'owned',
   'unlimited',
+  'not-approved',
   'insufficient',
   'has-membership',
   'bad-key',
@@ -123,6 +125,12 @@ describe('card wording', () => {
     ['any other cosmetic, by its type', card({ cosmeticType: 'NamePlate' }), 'Nameplate'],
   ])('blurbs %s', (_, input, blurb) => {
     expect(cardBlurb(input)).toEqual(blurb);
+  });
+
+  it('says a limited sticker is priced as the whole pack of uses, never per use', () => {
+    expect(packNote(card({ cosmeticType: 'Sticker', uses: 100 }))).toBe('100 uses');
+    expect(packNote(card({ cosmeticType: 'Sticker' }))).toBeNull();
+    expect(packNote(card({ cosmeticType: 'Badge', uses: null }))).toBeNull();
   });
 
   it('leaves the duration empty when there are none to name', () => {

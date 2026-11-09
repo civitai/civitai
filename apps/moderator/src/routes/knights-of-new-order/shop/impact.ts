@@ -1,6 +1,6 @@
 import { isSellable, stockFor, type ShopItem } from '@civitai/shared/knights-shop';
 
-type Row = ShopItem & { cosmeticType?: string | null };
+type Row = ShopItem & { cosmeticType?: string | null; cosmeticWithheld?: boolean };
 type Patch = Partial<Pick<ShopItem, 'price' | 'rotating' | 'active'>>;
 
 const list = (names: string[]) =>
@@ -10,8 +10,10 @@ const list = (names: string[]) =>
 
 const todaysStock = (items: Row[], day: string) => stockFor(items.filter(isSellable), day).stock;
 
-/** Drawn for the day but never shown: its cosmetic is gone. */
-const hidden = (item: ShopItem) => item.kind === 'cosmetic' && (item as Row).cosmeticType === null;
+/** Drawn for the day but never shown: its cosmetic is gone or still in review. */
+const hidden = (item: ShopItem) =>
+  item.kind === 'cosmetic' &&
+  ((item as Row).cosmeticType === null || (item as Row).cosmeticWithheld === true);
 
 type Stock = ReturnType<typeof todaysStock>;
 const shown = (stock: Stock) => stock.filter((entry) => !hidden(entry.item));

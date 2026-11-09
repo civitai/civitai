@@ -1,5 +1,6 @@
 import type { Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { withheldCosmetics } from '@civitai/db/knights';
 import { isSellable, stockFor } from '@civitai/shared/knights-shop';
 import { withModerators } from '../mod-activity';
 import { dbWrite } from '../db';
@@ -17,7 +18,25 @@ type Action = 'create' | 'update' | 'retire' | 'restore';
 /** The primary, not the replica: an edit locks and diffs the row, and the operator who just saved must see it. */
 const db = () => dbWrite;
 
+/** Shown wherever a cosmetic is refused for not being approved yet. */
+export const IN_REVIEW_ERROR =
+  'That cosmetic is still in review, so players could not wear it. Add it once a moderator has approved it.';
+
+/** The ids among `ids` that the main app would refuse to equip because the creator's listing is still in review. */
+export const inReviewCosmetics = (ids: number[]) => withheldCosmetics(db(), ids);
+
 export async function listShopItems() {
+  const rows = await listShopRows();
+  const inReview = await inReviewCosmetics(
+    rows.flatMap((row) => (row.cosmeticId ? [row.cosmeticId] : []))
+  );
+  return rows.map((row) => ({
+    ...row,
+    cosmeticWithheld: row.cosmeticId !== null && inReview.has(row.cosmeticId),
+  }));
+}
+
+async function listShopRows() {
   return db()
     .selectFrom('KnightsShopItem as i')
     .leftJoin('Cosmetic as c', 'c.id', 'i.cosmeticId')
@@ -87,6 +106,9 @@ export async function createShopItem(
           .where('id', '=', row.cosmeticId)
           .executeTakeFirst();
         if (!cosmetic) return { ok: false, error: 'That cosmetic does not exist.' };
+        if ((await withheldCosmetics(trx, [row.cosmeticId])).size > 0) {
+          return { ok: false, error: IN_REVIEW_ERROR };
+        }
       }
       const { id } = await trx
         .insertInto('KnightsShopItem')
@@ -149,6 +171,12 @@ export async function setShopItemActive(
       const before = await lockItem(trx, id);
       if (!before) return NOT_FOUND;
       if (before.active === active) return { ok: true, changed: false };
+      // Retiring is always allowed; putting a cosmetic back on sale needs it approved.
+      if (active && before.cosmeticId !== null) {
+        if ((await withheldCosmetics(trx, [before.cosmeticId])).size > 0) {
+          return { ok: false, error: IN_REVIEW_ERROR };
+        }
+      }
       await trx.updateTable('KnightsShopItem').set({ active }).where('id', '=', id).execute();
       await record(trx, id, userId, active ? 'restore' : 'retire', {
         active: { from: before.active, to: active },
@@ -171,7 +199,11 @@ export function stockView(rows: ShopItemRow[], day: string) {
       const row = byId.get(item.id);
       if (!row) return [];
       const hidden =
-        row.kind === 'cosmetic' && row.cosmeticType === null ? ('cosmetic missing' as const) : null;
+        row.kind === 'cosmetic' && row.cosmeticType === null
+          ? ('cosmetic missing' as const)
+          : row.cosmeticWithheld
+          ? ('cosmetic in review' as const)
+          : null;
       return [{ item: row, price, deal, hidden }];
     }),
     excluded: live.filter((row) => !isSellable(row)),

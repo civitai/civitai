@@ -102,7 +102,10 @@ beforeAll(async () => {
     CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "name" TEXT, "type" TEXT NOT NULL DEFAULT 'image',
       "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
       "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER);
-    CREATE TABLE "Cosmetic" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "type" TEXT NOT NULL, "data" JSONB);`);
+    CREATE TABLE "Cosmetic" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "type" TEXT NOT NULL, "data" JSONB,
+      "createdById" INTEGER, "flags" INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE "CosmeticShopItem" ("id" INTEGER PRIMARY KEY, "cosmeticId" INTEGER REFERENCES "Cosmetic"("id") ON DELETE CASCADE,
+      "addedById" INTEGER, "status" TEXT NOT NULL DEFAULT 'Published', "meta" JSONB NOT NULL DEFAULT '{}', "rejectionReason" TEXT);`);
   await db.exec(
     readFileSync(path.join(MIGRATIONS, '20261210120000_knights_v2_tables', 'migration.sql'), 'utf8')
   );
@@ -412,5 +415,55 @@ describe('listShopChanges', () => {
     });
     expect(rest.changes).toHaveLength(1);
     expect(rest.nextBefore).toBeNull();
+  });
+});
+
+describe('a creator cosmetic that is still in review', () => {
+  const seedPending = async () => {
+    await db.query(
+      `INSERT INTO "Cosmetic" ("id","name","type","createdById") VALUES (9,'Creator badge','Badge',50)`
+    );
+    await db.query(
+      `INSERT INTO "CosmeticShopItem" ("id","cosmeticId","addedById","status") VALUES (1,9,50,'PendingReview')`
+    );
+  };
+  const approve = () => db.query(`UPDATE "CosmeticShopItem" SET "status"='Published' WHERE "id"=1`);
+  const asNewItem = () => newShopItemSchema.parse({ ...valid, kind: 'cosmetic', cosmeticId: '9' });
+
+  it('cannot be added to the catalog until it is approved', async () => {
+    await seedPending();
+    const refused = await createShopItem(asNewItem(), MOD);
+    expect(refused).toEqual({ ok: false, error: expect.stringContaining('still in review') });
+    expect((await db.query(`SELECT 1 FROM "KnightsShopItem"`)).rows).toHaveLength(0);
+
+    await approve();
+    expect(await createShopItem(asNewItem(), MOD)).toMatchObject({ ok: true });
+  });
+
+  it('cannot be put back on sale, but can still be retired', async () => {
+    await seedPending();
+    const id = await seedItem('Creator badge', { kind: 'cosmetic', cosmeticId: 9, active: false });
+    expect(await setShopItemActive(id, true, MOD)).toEqual({
+      ok: false,
+      error: expect.stringContaining('still in review'),
+    });
+
+    await approve();
+    expect(await setShopItemActive(id, true, MOD)).toEqual({ ok: true, changed: true });
+    await db.query(`UPDATE "CosmeticShopItem" SET "status"='PendingReview' WHERE "id"=1`);
+    expect(await setShopItemActive(id, false, MOD)).toEqual({ ok: true, changed: true });
+  });
+
+  it('is listed as withheld, and the preview hides it like the shop does', async () => {
+    await seedPending();
+    await seedItem('Creator badge', { kind: 'cosmetic', cosmeticId: 9, rotating: false });
+    const rows = await listShopItems();
+    expect(rows[0].cosmeticWithheld).toBe(true);
+    expect(stockView(rows, '2026-12-20').stock[0].hidden).toBe('cosmetic in review');
+
+    await approve();
+    const after = await listShopItems();
+    expect(after[0].cosmeticWithheld).toBe(false);
+    expect(stockView(after, '2026-12-20').stock[0].hidden).toBeNull();
   });
 });
