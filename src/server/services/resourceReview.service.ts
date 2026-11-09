@@ -15,7 +15,6 @@ import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readUserReviewsViaKysely } from '~/server/services/hot-reads-6.reads';
 import { onModelReviewsChanged } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
-import { refreshHasReceivedReviews } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
 import {
@@ -63,7 +62,6 @@ import {
   visibleReviewForViewerSql,
   visibleReviewSql,
   visibleReviewWhere,
-  releaseReviewIfUnreleased,
 } from '~/server/services/resourceReview.visibility';
 
 export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
@@ -321,20 +319,6 @@ async function throwIfBlockedByModelOwners({
   await throwIfBlockedByOwners({ userId, ownerIds, isModerator });
 }
 
-/** Never fails the edit: a review it misses waits only for its notification and recount. */
-const releaseBeforeEdit = (reviewId: number) =>
-  releaseReviewIfUnreleased(reviewId)
-    .then((reviews) => refreshHasReceivedReviews(reviews))
-    .catch((error) =>
-      logToAxiom({
-        name: 'resource-review',
-        type: 'error',
-        message: 'Failed to release a review before its edit',
-        reviewId,
-        error: (error as Error)?.message,
-      }).catch(() => undefined)
-    );
-
 export const upsertResourceReview = async ({
   userId,
   isModerator,
@@ -382,7 +366,6 @@ export const upsertResourceReview = async ({
     void onModelReviewsChanged([{ modelId: data.modelId, userId }]);
     return ret;
   } else {
-    await releaseBeforeEdit(data.id);
     const ret = await dbWrite.resourceReview.update({
       where: { id: data.id },
       data,
@@ -509,7 +492,6 @@ export const updateResourceReview = async ({
     isModerator,
     modelIds: [await storedReviewModelId(id)],
   });
-  await releaseBeforeEdit(id);
   const ret = await dbWrite.resourceReview.update({
     where: { id },
     data,

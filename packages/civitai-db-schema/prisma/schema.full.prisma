@@ -1952,6 +1952,9 @@ model ResourceReview {
   /// The unpublished post the review was written from. The review stays hidden until that post is live.
   postId         Int?
   post           Post?                    @relation(fields: [postId], references: [id], onDelete: SetNull)
+  /// When a review linked to a post was announced: notified and recounted. Cleared when the post is
+  /// unpublished, so the next go-live announces it again.
+  releasedAt     DateTime?
 
   @@unique([modelVersionId, userId])
   @@index([modelVersionId], type: Hash)

@@ -1559,6 +1559,7 @@ export interface ResourceReview {
   reports?: ResourceReviewReport[];
   postId: number | null;
   post?: Post | null;
+  releasedAt: Date | null;
 }
 
 export interface ResourceReviewReaction {

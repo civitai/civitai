@@ -1,5 +1,7 @@
 -- ResourceReview.postId: the unpublished post a review was written from. The review stays hidden, and
 -- the model owner is not notified, until that post is live. Deleting the post nulls the link.
+-- ResourceReview.releasedAt: when such a review was announced (notified, recounted) after its post
+-- went live; cleared when the post is unpublished.
 --
 -- MANUAL APPLY ONLY, in each environment, BEFORE the deploy that reads it (every review read joins on
 -- the column). Run it with psql in autocommit mode, one statement at a time, NOT inside a transaction:
@@ -13,8 +15,9 @@
 
 SET lock_timeout = '3s';
 
--- Nullable with no default: a metadata-only change.
+-- Nullable with no default: metadata-only changes. No backfill: no existing review has a post.
 ALTER TABLE "ResourceReview" ADD COLUMN IF NOT EXISTS "postId" INTEGER;
+ALTER TABLE "ResourceReview" ADD COLUMN IF NOT EXISTS "releasedAt" TIMESTAMP(3);
 
 -- Added without scanning (NOT VALID), then validated separately: VALIDATE takes a lock that does not
 -- block reads or writes. Every existing row is NULL, so the validation finds nothing to check.
@@ -36,4 +39,4 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS "ResourceReview_postId_idx" ON "Resource
 
 -- Without fresh stats on the new column the per-minute review release sweep seq-scans the table until
 -- autovacuum analyzes it. Run after the index; safe to repeat.
-ANALYZE "ResourceReview" ("postId");
+ANALYZE "ResourceReview" ("postId", "releasedAt");

@@ -14,6 +14,7 @@ const {
   mockScanEntitiesInBackground,
   mockReleaseReviews,
   mockRefreshHasReceivedReviews,
+  mockReleaseFlipped,
   jobDate,
 } = vi.hoisted(() => ({
   mockApply: vi.fn(),
@@ -32,6 +33,7 @@ const {
   mockScanEntitiesInBackground: vi.fn(),
   mockReleaseReviews: vi.fn(async (): Promise<unknown[]> => []),
   mockRefreshHasReceivedReviews: vi.fn(),
+  mockReleaseFlipped: vi.fn(async (): Promise<unknown[]> => []),
   jobDate: { lastRun: new Date(0) },
 }));
 
@@ -74,6 +76,7 @@ vi.mock('~/server/services/text-scan/submit', () => ({
 }));
 vi.mock('~/server/services/resourceReview.visibility', () => ({
   releaseUnreleasedReviewsOfLivePosts: mockReleaseReviews,
+  releasePendingReviewsForPosts: mockReleaseFlipped,
 }));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
@@ -347,16 +350,25 @@ describe('processScheduledPublishing :: first daily post reward', () => {
 });
 
 describe('processScheduledPublishing :: pending resource reviews', () => {
-  // Selected by state in the leaf, not from the posts this run handed over.
-  it('runs the release sweep every run and refreshes the owners of what it released', async () => {
-    stubReads({});
-    mockReleaseReviews.mockResolvedValueOnce([{ id: 11, modelOwnerId: 7 }]);
+  // The flipped posts by id (a restored date can predate the sweep's window), the rest by the sweep.
+  it('releases the posts it flipped, runs the sweep, and refreshes the owners of both', async () => {
+    stubReads({
+      scheduled: [{ id: 1, userId: 10 }],
+      newlyLive: [
+        { id: 1, userId: 10 },
+        { id: 2, userId: 20 },
+      ],
+    });
+    mockReleaseFlipped.mockResolvedValueOnce([{ id: 11, modelOwnerId: 7 }]);
+    mockReleaseReviews.mockResolvedValueOnce([{ id: 12, modelOwnerId: 8 }]);
 
     await runJob();
 
+    expect(mockReleaseFlipped).toHaveBeenCalledExactlyOnceWith([1]);
     expect(mockReleaseReviews).toHaveBeenCalledTimes(1);
     expect(mockRefreshHasReceivedReviews).toHaveBeenCalledExactlyOnceWith([
       { id: 11, modelOwnerId: 7 },
+      { id: 12, modelOwnerId: 8 },
     ]);
   });
 });

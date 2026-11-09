@@ -133,20 +133,21 @@ async function announceReleased(released: ReleasedReview[]) {
 }
 
 /**
- * Brings the reviews written from these posts in once the post is live: touched so the metric jobs
- * recount them, the rating totals busted, the model owner notified. Reviews of a post still
- * scheduled are left for a later call. Safe to repeat. The caller refreshes the owners' cached
- * has-received-reviews flag: the cache module imports this one.
+ * Announces the reviews written from these posts once the post is live: marked released, touched so
+ * the metric jobs recount them, the rating totals busted, the model owner notified. Reviews of a
+ * post still scheduled, or already released, are left alone. The caller refreshes the owners'
+ * cached has-received-reviews flag: the cache module imports this one.
  */
 export async function releasePendingReviewsForPosts(postIds: number[]) {
   if (!postIds.length) return [];
   const released = await dbWrite.$queryRaw<ReleasedReview[]>`
     UPDATE "ResourceReview" rr
-    SET "updatedAt" = now()
+    SET "releasedAt" = now(), "updatedAt" = now()
     FROM "Post" p, "Model" m
     WHERE p.id = rr."postId"
       AND m.id = rr."modelId"
       AND rr."postId" IN (${Prisma.join(postIds)})
+      AND rr."releasedAt" IS NULL
       AND p."publishedAt" <= now()
     RETURNING rr.id, rr."modelId", rr."modelVersionId", rr.recommended, rr."userId",
       m."userId" AS "modelOwnerId"
@@ -155,14 +156,13 @@ export async function releasePendingReviewsForPosts(postIds: number[]) {
 }
 
 /**
- * The scheduled-publishing job's sweep: releases the reviews of posts that went live in the last
- * week and were never touched since, which covers posts going live by the clock and any release
- * that failed. A release sets `updatedAt` past the post's date, so a released review drops out.
+ * The scheduled-publishing job's sweep: releases the unreleased reviews of posts that went live in
+ * the last week, which covers posts going live by the clock and a release that failed.
  */
 export async function releaseUnreleasedReviewsOfLivePosts({ limit = 1000 } = {}) {
   const released = await dbWrite.$queryRaw<ReleasedReview[]>`
     UPDATE "ResourceReview" rr
-    SET "updatedAt" = now()
+    SET "releasedAt" = now(), "updatedAt" = now()
     FROM "Model" m
     WHERE m.id = rr."modelId"
       AND rr.id IN (
@@ -172,7 +172,7 @@ export async function releaseUnreleasedReviewsOfLivePosts({ limit = 1000 } = {})
         WHERE r."postId" IS NOT NULL
           AND p."publishedAt" <= now()
           AND p."publishedAt" > now() - interval '7 days'
-          AND r."updatedAt" < p."publishedAt"
+          AND r."releasedAt" IS NULL
         LIMIT ${limit}
       )
     RETURNING rr.id, rr."modelId", rr."modelVersionId", rr.recommended, rr."userId",
@@ -182,28 +182,9 @@ export async function releaseUnreleasedReviewsOfLivePosts({ limit = 1000 } = {})
 }
 
 /**
- * Releases this review if its post is live and it was never released. Run before an edit: the edit
- * moves `updatedAt` past the post's date, where the sweep no longer finds it.
- */
-export async function releaseReviewIfUnreleased(reviewId: number) {
-  const released = await dbWrite.$queryRaw<ReleasedReview[]>`
-    UPDATE "ResourceReview" rr
-    SET "updatedAt" = now()
-    FROM "Post" p, "Model" m
-    WHERE rr.id = ${reviewId}
-      AND p.id = rr."postId"
-      AND m.id = rr."modelId"
-      AND p."publishedAt" <= now()
-      AND rr."updatedAt" < p."publishedAt"
-    RETURNING rr.id, rr."modelId", rr."modelVersionId", rr.recommended, rr."userId",
-      m."userId" AS "modelOwnerId"
-  `;
-  return announceReleased(released);
-}
-
-/**
  * The reviews written from these posts count as pending again once the posts are taken down:
- * touched so the metric jobs recount them, the rating totals busted. Nobody is notified.
+ * unmarked, so the next go-live announces them again, touched so the metric jobs recount them, the
+ * rating totals busted. Nobody is notified.
  */
 export async function refreshReviewsForUnpublishedPosts(postIds: number[]) {
   if (!postIds.length) return [];
@@ -211,7 +192,7 @@ export async function refreshReviewsForUnpublishedPosts(postIds: number[]) {
     { modelId: number; modelVersionId: number; modelOwnerId: number }[]
   >`
     UPDATE "ResourceReview" rr
-    SET "updatedAt" = now()
+    SET "releasedAt" = NULL, "updatedAt" = now()
     FROM "Model" m
     WHERE m.id = rr."modelId" AND rr."postId" IN (${Prisma.join(postIds)})
     RETURNING rr."modelId", rr."modelVersionId", m."userId" AS "modelOwnerId"
@@ -223,8 +204,9 @@ export async function refreshReviewsForUnpublishedPosts(postIds: number[]) {
 /**
  * The fire-and-forget form, for a caller whose post write has committed. A failure is logged: the
  * reviews are public or hidden regardless, read at request time, but the notification and the
- * metric recount wait for the scheduled-publishing sweep. `onReviews` gets the touched reviews, for the owners'
- * has-received-reviews refresh, which lives in the cache module that imports this one.
+ * metric recount wait for the scheduled-publishing sweep, which looks back a week. `onReviews` gets
+ * the touched reviews, for the owners' has-received-reviews refresh, which lives in the cache
+ * module that imports this one.
  */
 export function syncReviewsOfMovedPosts({
   change,

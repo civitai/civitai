@@ -44,13 +44,8 @@ vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
   onModelReviewsChanged: async () => undefined,
 }));
 
-const {
-  createResourceReview,
-  getResourceReview,
-  getUserRatingTotals,
-  updateResourceReview,
-  upsertResourceReview,
-} = await import('~/server/services/resourceReview.service');
+const { createResourceReview, getResourceReview, getUserRatingTotals, upsertResourceReview } =
+  await import('~/server/services/resourceReview.service');
 const {
   refreshReviewsForUnpublishedPosts,
   releasePendingReviewsForPosts,
@@ -212,7 +207,8 @@ describe('against Postgres', () => {
         "userId" int NOT NULL, rating int NOT NULL DEFAULT 5, recommended boolean NOT NULL DEFAULT true,
         exclude boolean NOT NULL DEFAULT false, "postId" int,
         "updatedAt" timestamp(3) NOT NULL DEFAULT now() - interval '2 days',
-        "createdAt" timestamp(3) NOT NULL DEFAULT now() - interval '2 days'
+        "createdAt" timestamp(3) NOT NULL DEFAULT now() - interval '2 days',
+        "releasedAt" timestamp(3)
       );
       INSERT INTO "Model" VALUES (10, ${MODEL_OWNER});
     `);
@@ -372,10 +368,9 @@ describe('against Postgres', () => {
       [5, 105, null],
     ]);
     // Review 2 was released already; review 3's post went live long before the sweep's window.
-    await pg.exec(`
-      UPDATE "ResourceReview" SET "updatedAt" = now() - interval '1 hour' WHERE id = 2;
-      UPDATE "ResourceReview" SET "updatedAt" = now() - interval '31 days' WHERE id = 3;
-    `);
+    await pg.exec(
+      `UPDATE "ResourceReview" SET "releasedAt" = now() - interval '1 hour' WHERE id = 2`
+    );
 
     const released = await releaseUnreleasedReviewsOfLivePosts();
 
@@ -386,40 +381,31 @@ describe('against Postgres', () => {
     expect(await releaseUnreleasedReviewsOfLivePosts()).toEqual([]);
   });
 
-  // An edit moves `updatedAt` past the post's date, where the sweep no longer finds the review.
-  describe('editing a review whose post went live before the sweep released it', () => {
-    beforeEach(() => {
-      dbMock.dbWrite.resourceReview.findUnique.mockResolvedValue({ modelId: 10 } as never);
-    });
+  it('the sweep still releases a review touched after its post went live, as an edit or a thumbs toggle does', async () => {
+    await insertReviews([[1, 101, LIVE]]);
+    await pg.exec(`UPDATE "ResourceReview" SET "updatedAt" = now() WHERE id = 1`);
 
-    it.each([
-      [
-        'updateResourceReview',
-        () => updateResourceReview({ id: 1, userId: 101, details: 'edited' }),
-      ],
-      [
-        'upsertResourceReview',
-        () => upsertResourceReview({ ...review, id: 1, userId: 101, details: 'edited' }),
-      ],
-    ])('releases and notifies it once (%s)', async (_label, edit) => {
-      await insertReviews([[1, 101, LIVE]]);
+    const released = await releaseUnreleasedReviewsOfLivePosts();
 
-      await edit();
-      await edit();
+    expect(released).toEqual([expect.objectContaining({ id: 1 })]);
+    expect(createNotification).toHaveBeenCalledTimes(1);
+  });
 
-      expect(createNotification).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({ key: 'new-review:21:101' })
-      );
-    });
+  it('announces a review again when its post is unpublished and published again', async () => {
+    await insertReviews([[1, 101, LIVE]]);
+    await releasePendingReviewsForPosts([LIVE]);
+    expect(await releasePendingReviewsForPosts([LIVE])).toEqual([]);
 
-    it('leaves a review of a post still scheduled pending', async () => {
-      await insertReviews([[1, 101, SCHEDULED]]);
+    await pg.exec(`UPDATE "Post" SET "publishedAt" = NULL WHERE id = ${LIVE}`);
+    await refreshReviewsForUnpublishedPosts([LIVE]);
+    await pg.exec(
+      `UPDATE "Post" SET "publishedAt" = now() - interval '30 days' WHERE id = ${LIVE}`
+    );
+    const again = await releasePendingReviewsForPosts([LIVE]);
 
-      await updateResourceReview({ id: 1, userId: 101, details: 'edited' });
-
-      expect(createNotification).not.toHaveBeenCalled();
-      expect(bustRatingTotalsForRows).not.toHaveBeenCalled();
-    });
+    expect(again).toEqual([expect.objectContaining({ id: 1 })]);
+    // The notification service turns the repeat into a no-op on its key.
+    expect(createNotification).toHaveBeenCalledTimes(2);
   });
 
   // The fire-and-forget form callers use after their post write commits. The leaves run for real

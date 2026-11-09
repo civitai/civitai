@@ -277,7 +277,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `ServiceDealFile.attestedAt`: `20261224150100_service_deal_file_attachment`
     //   `Article.bannerId`: `20261225120100_article_banner_image`
     //   `UserProfile.showcaseSections`: `20261106005437_user_profile_showcase_sections`
-    //   `ResourceReview.postId`: `20261231130000_resource_review_post_id`
+    //   `ResourceReview.postId` / `.releasedAt`: `20261231130000_resource_review_post_id`
     //   `BoxOpening.guaranteed`: `20261231000000_box_opening_guaranteed`
     const inFlightColumns = new Set([
       'BoxOpening.guaranteed',
@@ -321,6 +321,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ServiceDealFile.attestedAt',
       'Article.bannerId',
       'ResourceReview.postId',
+      'ResourceReview.releasedAt',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.
