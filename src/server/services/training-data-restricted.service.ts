@@ -147,9 +147,11 @@ export async function trainingDataPublicView<F extends ViewedFile>(
   const listed = await trainingDataListing(db, versions, { redCapable });
   // An absent `files` (not selected by the read) is passed through as it came.
   return (files) =>
-    files
-      ?.filter((f) => f.type !== 'Training Data' || (f.visibility === 'Public' && listed(f)))
-      .map((f) => (f.type === 'Training Data' ? { ...f, metadata: {} } : f)) as typeof files;
+    files == null
+      ? files
+      : (files
+          .filter((f) => f.type !== 'Training Data' || (f.visibility === 'Public' && listed(f)))
+          .map((f) => (f.type === 'Training Data' ? { ...f, metadata: {} } : f)) as typeof files);
 }
 
 /**
