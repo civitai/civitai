@@ -1498,14 +1498,41 @@ describe('previewRequest — rebuild unpublishes the replaced shared-server prev
     }
   );
 
-  it('a SAME-sha rebuild still unpublishes the review-lane meta (a per-preview route, if one is built, is a different backend)', async () => {
+  it('a SAME-sha rebuild does NOT unpublish: it would delete the meta the new build is about to republish', async () => {
+    // With the flag on, the new build republishes review/<sha16>/ for this same sha. An unpublish
+    // Job that lands after that publish leaves the preview marked live but 404ing, and the
+    // callback's replay guard means nothing republishes it.
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
       pendingRow('preview-failed', { sha: SHA, sharedServer: true })
     );
     await previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 99 } });
+    expect(mockTriggerReviewUnpublish).not.toHaveBeenCalled();
+    // Positive control: the rebuild ran and resolved the same sha.
+    expect(mockTriggerReviewBuild).toHaveBeenCalledWith(expect.objectContaining({ sha: SHA }));
+  });
+
+  it('the different-sha decision is made AFTER the new sha is resolved', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRow('preview-failed', { sha: OLD_SHA, sharedServer: true })
+    );
+    await previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 99 } });
+    expect(mockTriggerReviewUnpublish).toHaveBeenCalledTimes(1);
+    expect(mockGetReviewHead.mock.invocationCallOrder[0]).toBeLessThan(
+      mockTriggerReviewUnpublish.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('a rebuild whose source cannot be resolved still unpublishes the replaced preview (its detail is gone)', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRow('preview-failed', { sha: OLD_SHA, sharedServer: true })
+    );
+    mockGetReviewHead.mockRejectedValueOnce(new Error('forgejo down'));
+    await expect(
+      previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 99 } })
+    ).rejects.toThrow(/forgejo down/);
     expect(mockTriggerReviewUnpublish).toHaveBeenCalledWith({
       slug: 'my-app',
-      sha: SHA,
+      sha: OLD_SHA,
       publishRequestId: PUBREQ,
     });
   });
