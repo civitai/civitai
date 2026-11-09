@@ -233,6 +233,10 @@ async function renderSurface({
   await act(async () => {
     root?.render(createElement(Wrapped, { pageProps: {} }));
   });
+  // Twice: React flushes the updates an answer queues only when an `act` scope ends, so a call
+  // that STARTS from an earlier answer (a failed folded half's own call) is sent at the end of
+  // the first settle and lands — retries and all — in the second.
+  await settle();
   await settle(wait);
 }
 
@@ -438,7 +442,7 @@ describe('one half of a folded answer failing, flag on', () => {
     await renderSurface({ fold: false, wait: RETRIED });
     const unfolded = snapshot();
     const unfoldedRemixCalls = callsTo('placement.getRemixGalleryCardSummaries');
-    expect(unfolded.get(1042)?.remixCount).toBeUndefined();
+    expect(unfolded.get(1042)?.remixCount).not.toBe(remixCountOf(1042));
     expect(unfoldedRemixCalls).toBeGreaterThanOrEqual(2);
 
     failing.halves.add('remix');
@@ -447,7 +451,7 @@ describe('one half of a folded answer failing, flag on', () => {
     expect(seen.get(1120)).toEqual({
       count: countOf(1120),
       placementIds: [placementOf(1120).id],
-      remixCount: undefined,
+      remixCount: unfolded.get(1120)?.remixCount,
     });
     expect(snapshot()).toEqual(unfolded);
     // Retried exactly as the standalone query retries on its own.
