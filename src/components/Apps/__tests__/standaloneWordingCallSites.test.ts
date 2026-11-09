@@ -224,7 +224,6 @@ const ENROLLED: Record<string, string> = {
   // workbench branch of the body component. The WORDING and the reason for enrolling it
   // are unchanged — only the file is.
   'components/Apps/AppsBuildBody.tsx': '/apps/build workbench subtitle naming both kinds',
-  'pages/apps/review.tsx': '/apps/review page subtitle naming both kinds',
 };
 
 /**
@@ -248,6 +247,10 @@ const DELIBERATELY_UNENROLLED: Record<string, string> = {
   'components/Apps/MyAppsBody.tsx':
     "/apps/build's workbench renders no kind label per row — badge deleted",
   'components/Apps/myAppsView.ts': 'the shadowing listingKindLabel was deleted, not re-pointed',
+  // Was ENROLLED for its subtitle, which named both kinds. The subtitle is now the plain
+  // "Review new apps, listings and reports. Oldest first." — the kinds are on every row's
+  // badge (via `unifiedReviewRow.ts`, still enrolled), so the page itself renders none.
+  'pages/apps/review.tsx': '/apps/review subtitle no longer names the kinds — plain copy now',
 };
 
 /** The one module allowed to spell the word as a literal. */
