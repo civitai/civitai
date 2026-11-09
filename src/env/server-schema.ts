@@ -557,9 +557,9 @@ export const serverSchema = z
     SEARCH_TOKEN_API_KEY_UID: z.string().optional(),
     METRICS_SEARCH_HOST: z.url().optional(),
     METRICS_SEARCH_API_KEY: z.string().optional(),
-    // Semantic image search (docs/features/semantic-image-search.md). Unset = the search page errors.
-    QDRANT_URL: z.url().optional(),
-    QDRANT_API_KEY: z.string().optional(),
+    // The search service in front of Qdrant, behind semantic image search. Unset = the search page errors.
+    SEARCH_SERVICE_URL: z.url().optional(),
+    SEARCH_SERVICE_TOKEN: z.string().optional(),
     // Candidate image-feed service for shadow comparisons; unset = shadow mode inert.
     FEED_SERVICE_URL: z.url().optional(),
     // Debounce window (ms) for flushing model-metric-affected ids into the
@@ -994,6 +994,10 @@ export const serverSchema = z
     // HQ task.closed -> Known Issues board sync. Standard Webhooks secret (`whsec_…`); unset
     // disables the receiver (503) rather than trusting unsigned deliveries.
     HQ_WEBHOOK_SECRET: z.string().optional(),
+    // Site bug report -> HQ task. The HQ origin (the route is appended) and an intake-scoped
+    // token; if either is unset, reports are saved but not filed.
+    HQ_INTAKE_URL: z.url({ protocol: /^https$/ }).optional(),
+    HQ_INTAKE_TOKEN: z.string().optional(),
 
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),

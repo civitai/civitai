@@ -2,12 +2,12 @@ import {
   EXTRA_PARAM_FIELDS,
   LORA_TYPES,
   MODEL_CARDS,
-  TE_TRAINING_UNSUPPORTED,
   allowsCustomBase,
   cardByType,
   extraParamCapabilities,
   extraParamDefaults,
   isProdigy,
+  teTrainingUnsupportedReason,
   MAX_NON_PRODIGY_LR,
   paramsForVersion,
   cardsForMedia,
@@ -569,19 +569,25 @@ export function runExtraCapabilities(run: Run, labelMode: LabelType) {
   return extraParamCapabilities(runCard(run), runVersion(run), labelMode);
 }
 
-/** The text-encoder rate is locked at 0 for models whose backend can't train it. */
-export const teLocked = (run: Run): boolean => TE_TRAINING_UNSUPPORTED.has(run.versionKey);
+/** Why the run's text-encoder rate is locked at 0, or undefined when its model can train it. */
+export const teLockReason = (run: Run): string | undefined =>
+  teTrainingUnsupportedReason(runVersion(run).ecosystem, runCard(run).name);
+export const teLocked = (run: Run): boolean => teLockReason(run) !== undefined;
 
 /** The learning rates after an optimizer change, as the main trainer couples them: Prodigy runs at
- *  1 (the text encoder too, unless the model can't train it); switching away puts a Prodigy-level
- *  rate back to the model's recommendation and leaves a rate the user picked alone. */
+ *  1, and so does a text encoder rate that is on; a locked one goes to 0 and an off (0) one stays off,
+ *  so a model that defaults TE off doesn't start training it. Switching away puts a Prodigy-level rate back to the
+ *  model's recommendation and leaves a rate the user picked alone. */
 export function optimizerLrParams(
   run: Run,
   params: RunParams
 ): Pick<RunParams, 'unetLr' | 'textEncoderLr'> {
   const { unetLr, textEncoderLr } = params;
   if (isProdigy(params.optimizer))
-    return { unetLr: '1', textEncoderLr: teLocked(run) ? textEncoderLr : '1' };
+    return {
+      unetLr: '1',
+      textEncoderLr: teLocked(run) ? '0' : Number(textEncoderLr) > 0 ? '1' : textEncoderLr,
+    };
   const defaults = defaultRunParams(run);
   const reset = (v: NumericInput, d: NumericInput) => (Number(v) >= MAX_NON_PRODIGY_LR ? d : v);
   return {
@@ -889,8 +895,8 @@ export function buildTrainingRuns(
     const version = runVersion(run);
     const caps = runExtraCapabilities(run, labelMode);
     // Fields the run can't use — a locked TE rate, tag-only fields on a caption dataset, image-only
-    // ones on video — go out as 0/off whatever the form holds: a value edited before a model or
-    // label-mode switch must not ride into a run that hangs on it or misreads it.
+    // ones on video — go out as 0/off whatever the form holds, so a value edited before a model or
+    // label-mode switch can't ride into a run that hangs or misreads it.
     const tags = caps.shuffleTokens.supported;
     return {
       ecosystem: version.ecosystem,

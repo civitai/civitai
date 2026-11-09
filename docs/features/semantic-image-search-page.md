@@ -3,36 +3,42 @@
 `/search/semantic` searches images by meaning: a text query, or "more like this" from an image
 (an item in the image card menu, shown with the flag). It
 reads the vector index described in [semantic-image-search.md](semantic-image-search.md). It is a
-test surface for now, shown only to those with the `semanticImageSearch` feature flag.
+test surface for now, shown only to those with the `imageSearch` feature flag.
 
 ## Access
 
-- Flag `semanticImageSearch`: moderators only. It has no Flipt key (no flag was ever created); to
-  open it to testers, create the flag and add `fliptKey: 'semantic-image-search'`. Flipt then
-  overrides the static list in both directions, so add moderators to the Flipt rule too.
+- One flag, `imageSearch`, gates all of image search: this page, /search/images and the Images
+  entry, "more like this", and both procedures. Its Flipt key is `semantic-image-search`; until that
+  flag exists it falls back to moderators only. Once it exists, Flipt overrides the static list in
+  both directions, so keep moderators in its rule.
 - The page's `getServerSideProps` and both procedures (`semanticImageSearch.search`, `.feedback`)
-  check the same flag, and both procedures require a signed-in user.
-- Env: `QDRANT_URL`, `QDRANT_API_KEY`. A read-only key is enough. When the variables are unset,
-  the procedure fails with a clear error.
+  check that flag. Search is open to signed-out visitors (rate-limited per IP at 20 a minute,
+  60 for signed-in users); feedback requires a signed-in user.
+- Env: `SEARCH_SERVICE_URL`, `SEARCH_SERVICE_TOKEN`, pointing at the search service, a read-only
+  layer over Qdrant that runs in the cluster outside this repository (ask an infra owner for access).
+  When the URL is unset, the procedure fails with a clear error.
 
 ## How a search runs
 
-Code: `src/server/services/semantic-image-search.service.ts`.
+Code: `src/server/services/semantic-image-search.service.ts` decides the viewer's filters, builds
+the Qdrant filter, asks the search service for ranked ids and hydrates them. The site only ever
+asks for ids, never payload.
 
-1. **Query vector.** The text is trimmed and its whitespace collapsed. Case is kept. It is embedded
-   with `wemm-2b` at 256 dimensions through the orchestrator's synchronous `multimodalEmbedding`
-   recipe, using the system orchestrator client. The vector is cached in Redis for 7 days, keyed on
-   model, dimensions, the index's model revision and profile, and a hash of the text. A response
-   whose model revision or profile differs from the one recorded on the collection is refused.
-   "More like this" queries by point id and makes no embedding call.
-2. **Candidates.** One Qdrant query runs on the `images_semantic` alias (`rescore`,
-   `oversampling: 2`). It filters on:
+1. **Query.** Text goes to the service's `POST /v1/search` (collection `images`). The service
+   corrects its spelling (SymSpell) and embeds it with `wemm-2b`; when it corrected the text, the
+   page shows "Showing results for …". "More like this" goes through the service's read-only Qdrant
+   pass-through (`/qdrant/collections/images/points/query`) by point id, with `rescore` and
+   `oversampling: 2`, and makes no embedding call.
+2. **Candidates.** The Qdrant filter the site sends covers:
    - the viewer's browsing level (`nsfwLevel`)
    - the chosen tags: every chosen tag must be present
    - excluded tags
    - base models
-   - media type
+   - media type (the page offers images only until videos are embedded)
+   - the chosen users, by username (none found returns nothing)
+   - a posted-date range on `sortAt`
    - the viewer's hidden and blocked users
+   - never an NSFW image on a base model whose license forbids NSFW, as on the image search index
 3. **Hydration.** The candidate ids go through `getAllImages` with `ids`, the same database path
    the image feed uses. The page is returned in Qdrant's order. Qdrant's payload can lag Postgres,
    so it only proposes candidates: whatever hydration drops never reaches the page.
@@ -42,11 +48,32 @@ Code: `src/server/services/semantic-image-search.service.ts`.
 
 Tags that cannot be browsed are dropped from the tag filter, as on the image feed, and a filter
 made only of such tags returns nothing. "More like this" refuses an image the viewer cannot see.
+A signed-out visitor gets the site defaults for hidden tags and browsing add-ons.
 The search applies the viewer's hidden images, tags and users, and the browsing-settings add-ons
 (person-of-interest, minor and excluded tags), on the server. The image feed applies those in the
 browser.
 
 Moderators get the image feed's moderator view, which is wider than a regular viewer's.
+
+## On /search/images, the header and the quick search
+
+The original image search surfaces answer from the same search. `withSemanticImageSearch`
+(`src/components/Search/semanticImageSearchClient.ts`) wraps their InstantSearch clients: a request
+for the images index becomes a `semanticImageSearch.search` call, answered in Meilisearch's response
+shape, and every other index passes through to Meilisearch.
+
+- The browsing level comes from the `nsfwLevel=…` clauses `BrowsingLevelFilter` writes; base model,
+  tags (by name), users (by username) and the posted-date range come from the widgets' refinements.
+- InstantSearch pages by number, the search by an offset into its ranking, so the client remembers
+  the offset each page starts at.
+- There are no facet counts in a vector search. The widgets get choices only: every base model, and
+  the tags and users already chosen; typing in the Tags or Users picker searches `tag.getAll` and
+  `user.getAll`.
+- An empty query shows a prompt instead of results, and a request refined by a filter the index
+  cannot apply yet (aspect ratio, tools, techniques) returns nothing. The sidebar offers browsing
+  level, posted date, users, tags and base model.
+- `imageSearch` gates these surfaces too: without it the Images entry is not offered and
+  /search/images redirects to /search/models.
 
 ## Feedback and logging
 

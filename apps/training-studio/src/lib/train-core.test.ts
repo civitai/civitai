@@ -564,6 +564,91 @@ describe('Prodigy learning rate', () => {
   });
 });
 
+describe('text encoder on a model that cannot train it', () => {
+  const lastInput = () => submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+  const sourceRun = (ecosystem: string) => ({
+    data: {
+      steps: [
+        {
+          $type: 'training',
+          input: {
+            engine: 'ai-toolkit',
+            ecosystem,
+            epochs: 10,
+            steps: 1500,
+            textEncoderLr: 1e-4,
+            trainTextEncoder: true,
+          },
+          output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+        },
+      ],
+    },
+  });
+  const continueOpts = { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 };
+
+  // One ecosystem per class the in-app trainer locks; flux2klein also carries the Studio-only edit cards.
+  describe.each([
+    'anima',
+    'krea2',
+    'flux1',
+    'flux2klein',
+    'qwen',
+    'zimageturbo',
+    'boogu',
+    'wan',
+    'ltx2',
+  ])('%s', (ecosystem) => {
+    it('sends the text encoder off, whatever rate the run carries', async () => {
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-locked' } });
+      await submitTraining(client, { ...baseRun(), ecosystem, textEncoderLr: 1e-4 });
+      expect(lastInput()).toMatchObject({ textEncoderLr: 0, trainTextEncoder: false });
+    });
+
+    it('keeps it off under Prodigy', async () => {
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-locked-prodigy' } });
+      await submitTraining(client, { ...baseRun(), ecosystem, optimizer: 'Prodigy' });
+      expect(lastInput()).toMatchObject({ lr: 1, textEncoderLr: 0, trainTextEncoder: false });
+    });
+
+    it('accepts a stale Prodigy-level rate rather than refusing it', async () => {
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-locked-stale' } });
+      await submitTrainingBatch(client, [{ ...baseRun(), ecosystem, textEncoderLr: 1 }], {
+        checkText,
+      });
+      expect(lastInput()).toMatchObject({ textEncoderLr: 0, trainTextEncoder: false });
+    });
+
+    it('turns it off when continuing a run submitted with it on', async () => {
+      getWorkflow.mockResolvedValueOnce(sourceRun(ecosystem));
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-locked-next' } });
+      await continueTraining(client, continueOpts, { checkText });
+      expect(lastInput()).toMatchObject({ textEncoderLr: 0, trainTextEncoder: false });
+    });
+  });
+
+  it.each(['mossImage', 'flux3klein'])(
+    'leaves a default-off ecosystem the user turned on alone (%s)',
+    async (ecosystem) => {
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-default-off' } });
+      await submitTraining(client, { ...baseRun(), ecosystem, textEncoderLr: 1e-4 });
+      expect(lastInput()).toMatchObject({ textEncoderLr: 1e-4, trainTextEncoder: true });
+    }
+  );
+
+  it('still trains the text encoder on a model that supports it', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-sdxl-te' } });
+    await submitTraining(client, { ...baseRun(), textEncoderLr: 1e-4 });
+    expect(lastInput()).toMatchObject({ textEncoderLr: 1e-4, trainTextEncoder: true });
+  });
+
+  it('keeps the text encoder on when continuing a model that supports it', async () => {
+    getWorkflow.mockResolvedValueOnce(sourceRun('sdxl'));
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-sdxl-next' } });
+    await continueTraining(client, continueOpts, { checkText });
+    expect(lastInput()).toMatchObject({ textEncoderLr: 1e-4, trainTextEncoder: true });
+  });
+});
+
 // Mature training data is charged in Yellow only after the user confirms: every body is `manual`, and only a
 // confirmed mature run carries the unlock.
 describe('mature charge: Yellow only after the user confirms', () => {

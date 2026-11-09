@@ -1,11 +1,13 @@
 import { sql } from '@civitai/db/kysely';
 import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
+import { feedbackCaptureView, type FeedbackCaptureView } from '@civitai/shared/feedback-capture';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity, recordModActivityBatch } from './mod-activity';
 // Relative, not `$lib`: imported by the main app's moderator-seam test.
 import {
   FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT,
   FEEDBACK_PAGE_SIZE,
+  splitContext,
   type FeedbackStatus,
 } from '../feedback';
 import { isFeedbackSortState, type FeedbackSort, type FeedbackSortColumn } from '../feedback-sort';
@@ -833,7 +835,7 @@ export async function getKnownIssues(limit = 200): Promise<KnownIssueOption[]> {
  * mirror image: only a LINKED row has any.
  */
 export async function feedbackPanelExtras(
-  row: Pick<FeedbackRow, 'id' | 'bugId'>,
+  row: Pick<FeedbackRow, 'id' | 'bugId' | 'context'>,
   /**
    * 🔴 `PermissionSet`, NOT A LOOSE STRING RECORD — this is the ONE site that gates the issue picker
    * on both routes, so a widened key type retires the invariant `apps/moderator/CLAUDE.md` states in
@@ -843,12 +845,45 @@ export async function feedbackPanelExtras(
    * which reads as an empty `Bug` table rather than a defect — on both routes at once.
    */
   grants: PermissionSet
-): Promise<{ siblings: FeedbackSibling[]; knownIssues: KnownIssueOption[] }> {
+): Promise<{
+  siblings: FeedbackSibling[];
+  knownIssues: KnownIssueOption[];
+  captureView: FeedbackCaptureView;
+}> {
   const siblings =
     row.bugId != null ? await getSiblingFeedback({ bugId: row.bugId, excludeId: row.id }) : [];
   const knownIssues =
     row.bugId === null && grants['feedback.bug.promote'] ? await getKnownIssues() : [];
-  return { siblings, knownIssues };
+  const captureView = await getFeedbackCaptureView(row.context);
+  return { siblings, knownIssues, captureView };
+}
+
+/** How the panel shows the report's page capture, from its `Image` row (read on the primary). */
+export async function getFeedbackCaptureView(context: unknown): Promise<FeedbackCaptureView> {
+  const { screenshotId, screenshotImageId, screenshotCheck } = splitContext(context);
+  const image =
+    screenshotId && screenshotImageId != null
+      ? await dbWrite
+          .selectFrom('Image')
+          .select([
+            'userId',
+            'ingestion',
+            'nsfwLevel',
+            'needsReview',
+            'blockedFor',
+            'poi',
+            'minor',
+            'tosViolation',
+          ])
+          .where('id', '=', screenshotImageId)
+          .executeTakeFirst()
+      : undefined;
+  return feedbackCaptureView({
+    screenshotId,
+    screenshotImageId,
+    screenshotCheck,
+    image: image ?? null,
+  });
 }
 
 /**

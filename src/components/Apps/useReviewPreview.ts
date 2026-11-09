@@ -78,8 +78,14 @@ export function useReviewPreview(publishRequestId: string) {
   // not the latest poll's. Clear when the preview leaves the live state.
   iframeSrcRef.current = stableIframeSrc || undefined;
 
+  // When the row last changed preview state — the "elapsed" anchor for the building copy.
+  const updatedAtRaw = (statusQuery.data as { updatedAt?: Date | string | null } | undefined)
+    ?.updatedAt;
+  const updatedAt = updatedAtRaw ? new Date(updatedAtRaw) : null;
+
   return {
     state,
+    updatedAt,
     detail,
     isLive,
     inProgress,

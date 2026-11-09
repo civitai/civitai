@@ -255,6 +255,25 @@ export const usageLimitDefs = [
     window: rolling(60),
     base: 1500,
   },
+  {
+    // Counted by the gift claim itself (a calendar window), not by rateLimit().
+    id: 'gifts.monthly',
+    area: 'gifts',
+    kind: 'product',
+    label: 'Gift claims per month',
+    window: { type: 'utc-month' },
+    base: 3,
+    byTier: {
+      founder: { limit: 15 },
+      bronze: { limit: 15 },
+      silver: { limit: 30 },
+      gold: { limit: 60 },
+    },
+    message: ({ limit }) =>
+      `You've claimed your ${numberWithCommas(limit)} ${
+        limit === 1 ? 'gift' : 'gifts'
+      } for this month. To get this one, reach out to the person who gave you the link.`,
+  },
 ] as const satisfies readonly UsageLimitDef[];
 
 export type UsageLimitId = (typeof usageLimitDefs)[number]['id'];

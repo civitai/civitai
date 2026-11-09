@@ -44,7 +44,7 @@ import {
   STICKER_PLACEMENT_MIN_OPACITY,
   snapScaleOvershoot,
 } from '~/shared/utils/sticker-placement';
-import { stickerKeysTrack } from '~/shared/utils/sticker-track-edit';
+import { stickerKeysRefusal, stickerKeysTrack } from '~/shared/utils/sticker-track-edit';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -614,6 +614,12 @@ export function DraftSticker({
     return () => setPrimaryLabel(draft.id, null);
   }, [draft.id, primaryLabel, setPrimaryLabel]);
 
+  // Disabled only; StickerMotionEditor shows the reason.
+  const motionRefused =
+    !!draft.motion?.on &&
+    draft.motion.keys.length > 0 &&
+    stickerKeysRefusal(draft.motion.keys, draft.opacity) != null;
+
   const placementInput = () => {
     const scale = snapScaleOvershoot(draft.scale, creatorMaxScale);
     const track =
@@ -650,6 +656,21 @@ export function DraftSticker({
       },
     };
   };
+
+  // Must mirror when this draft's own Place button would place it.
+  const latestInput = useRef(placementInput);
+  latestInput.current = placementInput;
+  // Not while its own placement is in flight, or Place all would place it a second time.
+  const readyToPlace = !commit && !purchase && !motionRefused && !place.isPending;
+  const setReadyPlacement = useStore((state) => state.setReadyPlacement);
+  const placingAll = useStore((state) => state.placingAll);
+  useEffect(() => {
+    setReadyPlacement(
+      draft.id,
+      readyToPlace ? { free: placingFree, input: () => latestInput.current() } : null
+    );
+    return () => setReadyPlacement(draft.id, null);
+  }, [draft.id, readyToPlace, placingFree, setReadyPlacement]);
 
   /**
    * A second copy of this sticker, already arranged.
@@ -1057,6 +1078,7 @@ export function DraftSticker({
                 color="yellow"
                 style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
                 loading={place.isPending}
+                disabled={motionRefused || placingAll}
                 onClick={() => place.mutate(placementInput())}
                 data-draft-primary={draft.id}
               >
@@ -1071,6 +1093,7 @@ export function DraftSticker({
                 label="Place"
                 data-draft-primary={draft.id}
                 loading={place.isPending}
+                disabled={motionRefused || placingAll}
                 onPerformTransaction={() => place.mutate(placementInput())}
               />
             )}

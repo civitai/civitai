@@ -5,6 +5,7 @@ import type {
   Qwen21AiToolkitTrainingInput,
   YuE2AiToolkitTrainingInput,
 } from '@civitai/orchestration-client';
+import { isTextEncoderLockedBase } from '@civitai/shared/training-text-encoder';
 /**
  * Trainable base-model catalog — a VENDORED SNAPSHOT of the in-app trainer's
  * `trainingModelInfo` at `src/utils/training.ts` in this monorepo (mirrored
@@ -1604,12 +1605,6 @@ export interface ParamBound {
  *  src/components/Training/Form/TrainingParams.tsx. Re-mirror by hand when the trainer's cap changes. */
 export const TARGET_STEPS = { min: 1, max: 10000, step: 1 } as const satisfies ParamBound;
 
-/**
- * Version keys whose backend cannot train the text encoder: AI-Toolkit fails a Krea 2 run with
- * `ValueError: Cannot unload text encoder if training text encoder` after ~20-30 min of looping,
- * with no way to abort (tester-confirmed). The Review step locks the TE learning-rate at 0 for
- * these instead of letting the run burn Buzz and hang. Anima's TE training works — don't add it.
- */
 /** Ecosystems the orchestrator trains on a pasted custom base for. Every other ecosystem ignores a
  *  custom model and trains (and charges) on its official base, so Custom is offered and accepted
  *  only for these. */
@@ -1643,9 +1638,42 @@ export const MAX_NON_PRODIGY_LR = 0.1;
 export const isProdigy = (optimizer: string): boolean =>
   PRODIGY_OPTIMIZERS.includes(optimizer.toLowerCase());
 
-export const TE_TRAINING_UNSUPPORTED = new Set(['krea2']);
-export const TE_TRAINING_UNSUPPORTED_REASON =
-  'its backend cannot train the text encoder, and a run that tries hangs without finishing.';
+/**
+ * Ecosystems whose trainer cannot train the text encoder. One lock list serves both trainers
+ * (`@civitai/shared/training-text-encoder`, keyed by version key): an ecosystem is locked when any of
+ * its versions is, which also locks the Flux.2 Klein edit cards (same checkpoints, Studio-only keys).
+ * A version whose default TE rate is merely 0 (MOSS Image, Flux.3 Klein) stays editable.
+ */
+export const TE_LOCKED_ECOSYSTEMS: ReadonlySet<string> = new Set(
+  MODEL_CARDS.flatMap((card) => card.versions)
+    .filter((v) => isTextEncoderLockedBase(v.key))
+    .map((v) => v.ecosystem)
+);
+
+/**
+ * Reasons more specific than the generic one.
+ * - Krea 2: AI-Toolkit fails the run with `Cannot unload text encoder if training text encoder`
+ *   after ~20-30 min of looping, with no way to abort (tester-confirmed).
+ * - Anima: AI-Toolkit's Anima trainer (v1.0.62) freezes the TE and reports no TE grad, so a
+ *   nonzero rate did nothing and the LoRA shipped without TE layers.
+ */
+const TE_LOCK_REASONS: Readonly<Record<string, string>> = {
+  krea2:
+    "Text encoder training isn't supported for Krea 2: a run that tries hangs without finishing.",
+  anima: "Text encoder training isn't supported for Anima.",
+};
+
+/** Why `ecosystem` can't train the text encoder, or undefined when it can. `modelName` names the
+ *  model in the generic reason. */
+export const teTrainingUnsupportedReason = (
+  ecosystem: string,
+  modelName = 'this model'
+): string | undefined => {
+  if (!TE_LOCKED_ECOSYSTEMS.has(ecosystem)) return undefined;
+  return Object.hasOwn(TE_LOCK_REASONS, ecosystem)
+    ? TE_LOCK_REASONS[ecosystem]
+    : `Text encoder training isn't supported for ${modelName}.`;
+};
 
 /** Per-field input bounds for a card — mirrors the ai-toolkit constraints: SDXL-family gets 256-dim nets and
  *  1024–2048 resolution; batch is capped per family; epochs are 1–20; LR is 0–1. */

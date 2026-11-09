@@ -462,6 +462,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // read here for its main-app endpoints. Evaluate with the user's Flipt context, or a segmented
   // flag matches nobody.
   TRAINING_STUDIO = 'trainingStudio',
+  // Gates sending the reporter's page capture to HQ.
+  FEEDBACK_HQ_SCREENSHOT = 'feedback-hq-screenshot',
+  // Gates storing a feedback report's page capture as a scanned image owned by the capture account.
+  // Evaluated with the reporter's id.
+  FEEDBACK_CAPTURE_SCAN = 'feedback-capture-scan',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

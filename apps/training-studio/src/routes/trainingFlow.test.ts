@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { isTextEncoderLockedBase } from '@civitai/shared/training-text-encoder';
 import { parseServiceStatus } from '$lib/service-status-core';
 import {
   LORA_TYPES,
   MODEL_CARDS,
+  PARAM_DEFAULTS,
+  TE_LOCKED_ECOSYSTEMS,
   cardByType,
   catalogFlagKeys,
   cardsForMedia,
@@ -22,6 +25,7 @@ import {
   newRun,
   nextImgId,
   optimizerLrParams,
+  teLocked,
   paramDeviations,
   paramHelpText,
   promptHasTrigger,
@@ -446,17 +450,75 @@ describe('sample input images', () => {
 });
 
 describe('optimizer learning-rate coupling', () => {
-  it('puts both rates at 1 when Prodigy is picked', () => {
-    const r = run('sdxl');
+  it.each(['sdxl', 'sd15', 'ernie'])('puts both rates at 1 when Prodigy is picked (%s)', (type) => {
+    const r = run(type);
     const params = { ...defaultRunParams(r), optimizer: 'Prodigy' };
     expect(optimizerLrParams(r, params)).toEqual({ unetLr: '1', textEncoderLr: '1' });
+    expect(teLocked(r)).toBe(false);
   });
 
-  it('leaves a locked text-encoder rate at 0 under Prodigy', () => {
-    const krea = run('krea2');
-    const params = { ...defaultRunParams(krea), optimizer: 'Prodigy' };
-    expect(optimizerLrParams(krea, params)).toMatchObject({ unetLr: '1' });
-    expect(Number(optimizerLrParams(krea, params).textEncoderLr)).toBe(0);
+  // One per class the in-app trainer locks, the Klein edit cards included through their ecosystem.
+  it.each([
+    'flux',
+    'flux2klein',
+    'flux2klein-edit',
+    'chroma',
+    'qwen',
+    'zimage',
+    'hidream-o1',
+    'anima',
+    'boogu',
+    'krea2',
+    'mageflow',
+    'ideogram4',
+    'wan',
+    'hunyuan',
+    'ltx',
+    'minimaxh3',
+    'ming',
+    'qwen21',
+    'yue2',
+    'acestep',
+  ])('locks the text-encoder rate at 0, Prodigy included (%s)', (type) => {
+    const r = run(type);
+    // A stale nonzero rate (a saved run, a model switch) must not become 1.
+    const params = { ...defaultRunParams(r), optimizer: 'Prodigy', textEncoderLr: '0.0001' };
+    expect(teLocked(r)).toBe(true);
+    expect(optimizerLrParams(r, params)).toEqual({ unetLr: '1', textEncoderLr: '0' });
+  });
+
+  it.each(['mossimage', 'flux3klein'])(
+    'keeps a default-off text encoder off under Prodigy, but editable (%s)',
+    (type) => {
+      const r = run(type);
+      const params = { ...defaultRunParams(r), optimizer: 'Prodigy' };
+      expect(teLocked(r)).toBe(false);
+      expect(optimizerLrParams(r, params)).toEqual({ unetLr: '1', textEncoderLr: '0' });
+      expect(optimizerLrParams(r, { ...params, textEncoderLr: '0.0001' }).textEncoderLr).toBe('1');
+    }
+  );
+
+  it('locks every version the in-app trainer locks', () => {
+    const locked = MODEL_CARDS.flatMap((card) =>
+      card.versions.filter((v) => isTextEncoderLockedBase(v.key)).map((v) => run(card.type, v.key))
+    );
+    expect(locked.length).toBeGreaterThan(20);
+    for (const r of locked) expect(teLocked(r)).toBe(true);
+  });
+
+  // The server locks by ecosystem; one that mixed a locked version with a trainable one would lock both.
+  it('locks no ecosystem that holds a version recommending a text encoder rate', () => {
+    const trainable = MODEL_CARDS.flatMap((c) => c.versions).filter(
+      (v) =>
+        TE_LOCKED_ECOSYSTEMS.has(v.ecosystem) && (PARAM_DEFAULTS[v.key]?.textEncoderLr ?? 0) > 0
+    );
+    expect(trainable.map((v) => v.key)).toEqual([]);
+  });
+
+  it('leaves a text encoder the user turned off at 0 under Prodigy', () => {
+    const r = run('sdxl');
+    const params = { ...defaultRunParams(r), optimizer: 'Prodigy', textEncoderLr: '0' };
+    expect(optimizerLrParams(r, params).textEncoderLr).toBe('0');
   });
 
   it('resets Prodigy-level rates to the model defaults when switching away', () => {

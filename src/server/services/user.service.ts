@@ -18,6 +18,7 @@ import { hasV3SurfaceTwinSql, v3WriteSurfaceSql } from '~/server/services/commen
 
 import {
   accountHoldSql,
+  captureImageKeptSql,
   assertAccountNotUnderLegalHold,
   guardedAccountScrubSql,
   holdMarkerViewExists,
@@ -1935,9 +1936,11 @@ export const removeAllContent = async ({
     await deleteImages(
       images.map((i) => i.id),
       true,
-      { onlyWhere: unlessHeld }
+      { onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}` }
     );
-    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id IN (${owned('Image')})`;
+    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id IN (
+      ${owned('Image')} AND NOT ${captureImageKeptSql('o')}
+    )`;
     await refreshProfilePicturesForUsers([id]);
 
     // A hold that landed mid-wipe stopped the deletes above without an error.

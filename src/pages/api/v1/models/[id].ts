@@ -1,9 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import * as z from 'zod';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import { dbRead } from '~/server/db/client';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import { ModelSort } from '~/server/common/enums';
 import {
   createModelFileDownloadUrl,
@@ -231,11 +234,29 @@ const baseHandler = PublicEndpoint(async function handler(
     // stored.
     if (body === null) return res.status(404).json({ error: `No model with id ${id}` });
 
-    return res.status(200).json(body);
+    return res
+      .status(200)
+      .json(await withListableTrainingData(body, isRedCapableHost(req.headers.host)));
   } catch (error) {
     return handleEndpointError(res, error);
   }
 });
+
+type BodyFile = { id: number; type: string; visibility: string };
+
+/** Applied after the origin cache, which keys on neither the host nor a restriction placed since. */
+async function withListableTrainingData(body: Record<string, unknown>, redCapable: boolean) {
+  const versions = (body.modelVersions ?? []) as { id: number; files?: BodyFile[] }[];
+  const listed = await trainingDataListing(
+    dbRead,
+    versions.map((v) => ({ id: v.id, files: v.files ?? [] })),
+    { redCapable }
+  );
+  return {
+    ...body,
+    modelVersions: versions.map((v) => (v.files ? { ...v, files: v.files.filter(listed) } : v)),
+  };
+}
 
 // Positive-only origin cache for the public body.
 //

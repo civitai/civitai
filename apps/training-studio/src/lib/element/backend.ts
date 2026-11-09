@@ -77,6 +77,8 @@ export interface StudioElementHost {
     /** The host's support ticket portal, offered on a run held for review past the raise
      *  threshold. Opens in a new tab. Omit to render the panel without a link. */
     supportUrl?: string;
+    /** The host's dataset storage policy, linked beside the dataset-sharing choice. */
+    dataPolicyUrl?: string;
     /** The per-model catalog gates (`ModelCard.flagKey`) this user may see — the embed's stand-in
      *  for the shell's server-side `allowedModelFlags`. Omitted => every gated model stays hidden. */
     enabledModelFlags?: string[];

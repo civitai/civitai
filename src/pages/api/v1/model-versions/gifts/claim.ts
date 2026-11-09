@@ -7,7 +7,7 @@ export default GiftEndpoint(
   async (req, res, user) => {
     const parsed = claimGiftSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: z.prettifyError(parsed.error) });
-    return res.status(200).json(await claimGift({ userId: user.id, code: parsed.data.code }));
+    return res.status(200).json(await claimGift({ user, code: parsed.data.code }));
   },
   ['POST']
 );

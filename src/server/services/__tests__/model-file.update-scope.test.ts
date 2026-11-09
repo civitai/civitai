@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import type * as StorageResolver from '~/utils/storage-resolver';
+import type * as TrainingDataRestricted from '~/server/services/training-data-restricted.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -54,6 +55,18 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
   createCachedObject: () => ({ bust: mockFileListBust, fetch: vi.fn() }),
 }));
+
+const { mockVersionHasStudioDataset } = vi.hoisted(() => ({
+  mockVersionHasStudioDataset: vi.fn(async (_db: unknown, _versionId: number) => false),
+}));
+// "Is a Training Studio version" has its own PGlite coverage (training-data-share.behavior.test.ts).
+vi.mock('~/server/services/training-data-restricted.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrainingDataRestricted>()),
+  versionHasStudioDataset: mockVersionHasStudioDataset,
+}));
+beforeEach(() => {
+  mockVersionHasStudioDataset.mockImplementation(async () => false);
+});
 
 import { updateFile } from '~/server/services/model-file.service';
 
@@ -636,6 +649,36 @@ describe('the upload domain on a new dataset', () => {
   });
 });
 
+// The rating decides which hosts serve a dataset; it describes the zip it was taken from.
+describe('the rating on a new dataset', () => {
+  it('a dataset replaced with new content is unrated', async () => {
+    withFile({ type: 'Training Data', metadata: { nsfwLevel: 1, numImages: 3 } });
+
+    await updateFile({ id: 1, url: NEW_URL, userId: 7, uploadDomain: 'green' });
+
+    expect(createdData().metadata).toMatchObject({ numImages: 3 });
+    expect(createdData().metadata).not.toHaveProperty('nsfwLevel');
+  });
+
+  it("a Studio dataset replaced with new content loses the old zip's archive state", async () => {
+    withFile({
+      type: 'Training Data',
+      metadata: {
+        selectedEpochUrl: 'https://orch.test/epoch-1',
+        datasetArchive: { status: 'archived', complete: true },
+        nsfwLevel: 1,
+        fullyRated: true,
+      },
+    });
+
+    await updateFile({ id: 1, url: NEW_URL, userId: 7 });
+
+    expect(createdData().metadata).toMatchObject({ selectedEpochUrl: 'https://orch.test/epoch-1' });
+    expect(createdData().metadata).not.toHaveProperty('datasetArchive');
+    expect(createdData().metadata).not.toHaveProperty('fullyRated');
+  });
+});
+
 // Other versions can link a file as a component by its id; they follow it to the new record.
 describe('linked components', () => {
   it('repoints links to the old record at the new one, and only those', async () => {
@@ -692,5 +735,126 @@ describe('a new url from a client', () => {
     await expect(
       updateFile({ id: 1, url: NEW_URL, userId: 99, isModerator: true, urlFromClient: true })
     ).resolves.toMatchObject({ id: NEW_ID });
+  });
+});
+
+describe('an owner editing another Training Data file on a Training Studio version', () => {
+  const studioVersion = (has: boolean) =>
+    mockVersionHasStudioDataset.mockImplementation(
+      async (_db, versionId) => has && versionId === FILE.modelVersionId
+    );
+
+  beforeEach(() => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...FILE,
+      type: 'Training Data',
+      visibility: 'Private',
+      metadata: {},
+    });
+  });
+
+  it('cannot make it Public', async () => {
+    studioVersion(true);
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Private');
+  });
+
+  it('can make it Public on a version with no Studio dataset', async () => {
+    studioVersion(false);
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Public');
+  });
+
+  it("leaves a moderator's edit unchanged", async () => {
+    studioVersion(true);
+    await updateFile({ id: 1, visibility: 'Public', userId: 99, isModerator: true });
+    expect(writtenData().visibility).toBe('Public');
+  });
+
+  it('cannot make it Public by replacing its content', async () => {
+    studioVersion(true);
+    withFile({ type: 'Training Data', metadata: {} });
+    await updateFile({ id: 1, url: NEW_URL, visibility: 'Public', userId: 7 });
+    expect(createdData().visibility).toBe('Private');
+  });
+
+  it('a stored Public file whose content is replaced without a visibility comes out Private', async () => {
+    studioVersion(true);
+    withFile({ type: 'Training Data', metadata: {} });
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...(await dbMock.dbWrite.modelFile.findUnique()),
+      visibility: 'Public',
+    } as never);
+    await updateFile({ id: 1, url: NEW_URL, userId: 7 });
+    expect(createdData().visibility).toBe('Private');
+  });
+
+  it('can make it Public by replacing its content on a version with no Studio dataset', async () => {
+    studioVersion(false);
+    withFile({ type: 'Training Data', metadata: {} });
+    await updateFile({ id: 1, url: NEW_URL, visibility: 'Public', userId: 7 });
+    expect(createdData().visibility).toBe('Public');
+  });
+});
+
+describe('an owner editing a Training Studio dataset directly', () => {
+  const studio = (
+    archive: Record<string, unknown>,
+    extra: Record<string, unknown> = {},
+    visibility = 'Private'
+  ) =>
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...FILE,
+      type: 'Training Data',
+      visibility,
+      sizeKB: 2048,
+      metadata: {
+        selectedEpochUrl: 'https://orch.test/epoch-1',
+        ownRights: true,
+        shareDataset: true,
+        datasetArchive: { status: 'archived', ...archive },
+        fullyRated: true,
+        ...extra,
+      },
+    });
+
+  beforeEach(() => {
+    // The share's restriction check: nothing restricted.
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ held: false }]);
+  });
+
+  it('can share a complete, fully rated zip', async () => {
+    studio({ complete: true });
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Public');
+  });
+
+  it.each([
+    ['an incomplete zip', { complete: false }, {}],
+    ['a zip with an unrated item', { complete: true }, { fullyRated: false }],
+    ['a placeholder', { status: 'pending', complete: true }, {}],
+  ])('cannot share %s', async (_, archive, extra) => {
+    studio(archive, extra);
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Private');
+  });
+
+  it('cannot share a zip whose owner or content is restricted', async () => {
+    studio({ complete: true });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ held: true }]);
+    await updateFile({ id: 1, visibility: 'Public', userId: 7 });
+    expect(writtenData().visibility).toBe('Private');
+  });
+
+  it('can always make it less visible', async () => {
+    studio({ complete: true }, {}, 'Public');
+    await updateFile({ id: 1, visibility: 'Private', userId: 7 });
+    expect(writtenData().visibility).toBe('Private');
+  });
+
+  it("leaves a moderator's edit as sent", async () => {
+    studio({ complete: false });
+    await updateFile({ id: 1, visibility: 'Public', userId: 1, isModerator: true });
+    expect(writtenData().visibility).toBe('Public');
   });
 });

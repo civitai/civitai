@@ -2,6 +2,8 @@ import type { SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import { dbRead } from '~/server/db/client';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { publicFileMetadata } from '~/server/utils/public-file-metadata';
@@ -95,6 +97,9 @@ export type RunModelSearchContext = {
   user?: SessionUser;
   /** Absolute origin used to build download URLs (from getNextPage's baseUrl). */
   baseUrlOrigin: string;
+  /** `isRedCapableHost` of the request: decides which training datasets are offered. Absent =>
+   *  not red-capable. */
+  redCapable?: boolean;
   /**
    * Restrict to models owned by this user id. Set only by the block catalog's `owner=mine`, from
    * the verified token subject — a ctx field, so it cannot arrive in parsed query input. Pair it
@@ -224,6 +229,7 @@ export async function runModelSearch(
     nsfwImagePassthrough,
     user,
     baseUrlOrigin,
+    redCapable = false,
     ownerUserId,
     publicVersionsOnly,
   } = ctx;
@@ -317,6 +323,11 @@ export async function runModelSearch(
 
   const preferredFormat = { metadata: user?.filePreferences };
 
+  const listed = await trainingDataListing(
+    dbRead,
+    orderedItems.flatMap((m) => m.modelVersions),
+    { redCapable }
+  );
   const shaped = orderedItems.map(({ modelVersions, tagsOnModels, user: modelUser, ...model }) => ({
     ...model,
     mode: model.mode == null ? undefined : model.mode,
@@ -353,7 +364,7 @@ export async function runModelSearch(
           supportsGeneration: covered,
           files: includeDownloadUrl
             ? castedFiles
-                .filter((file) => file.visibility === ModelFileVisibility.Public)
+                .filter((file) => file.visibility === ModelFileVisibility.Public && listed(file))
                 // `modelVersionId` is stripped, not used: getModelsWithVersions
                 // now preserves it (a spliced VAE file belongs to the LINKED
                 // version, not this one), and the `...file` spread would

@@ -1,4 +1,5 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
+import type { AgentReviewSummary } from '~/shared/utils/agent-review-findings';
 import {
   BUILDING_REVIEW_PREVIEW_STATES,
   REVIEW_PREVIEW_MAX_AGE_MS,
@@ -2786,18 +2787,111 @@ async function listingFactsForRequests(
 }
 
 /**
+ * The compact agentic-review summary for a PAGE of requests, for the queue's AI chip — the
+ * latest report per request, reduced IN SQL to its finding severities and scope-trace counts.
+ *
+ * 🔴 ONE QUERY FOR THE WHOLE PAGE, AND NONE OF THE REPORT BODIES. The report's JSON columns
+ * hold the agent's full findings (tens of KB per row); the queue polls every 15 s, so selecting
+ * them for 50 rows to count severities would ship megabytes per tick. `jsonb` is reduced to the
+ * handful of fields `agentReviewDisplay` reads, and every path tolerates a malformed body (an
+ * `{ error }` section, a non-array `findings`), since these columns hold untrusted model output.
+ *
+ * FAIL-SOFT: a failed read returns an empty map, and the rows then carry no summary, which the
+ * queue renders as "AI: not run". A broken chip must never take the queue down with it.
+ */
+async function agentReviewSummariesForRequests(
+  ids: string[]
+): Promise<Map<string, AgentReviewSummary>> {
+  const out = new Map<string, AgentReviewSummary>();
+  if (ids.length === 0) return out;
+  try {
+    const { dbRead } = await import('~/server/db/client');
+    const rows = (await dbRead.$queryRaw`
+      SELECT DISTINCT ON (r.publish_request_id)
+        r.publish_request_id AS "publishRequestId",
+        r.status AS "status",
+        ARRAY(
+          SELECT lower(f->>'severity')
+          FROM jsonb_array_elements(
+            (CASE WHEN jsonb_typeof(r.code_review->'findings') = 'array'
+                  THEN r.code_review->'findings' ELSE '[]'::jsonb END)
+            || (CASE WHEN jsonb_typeof(r.security_audit->'findings') = 'array'
+                  THEN r.security_audit->'findings' ELSE '[]'::jsonb END)
+          ) AS f
+          WHERE jsonb_typeof(f) = 'object'
+        ) AS "severities",
+        (CASE WHEN jsonb_typeof(r.scope_verdicts->'overBroad') = 'array'
+              THEN jsonb_array_length(r.scope_verdicts->'overBroad') ELSE 0 END)::int AS "overBroad",
+        (CASE WHEN jsonb_typeof(r.scope_verdicts->'underDeclared') = 'array'
+              THEN jsonb_array_length(r.scope_verdicts->'underDeclared') ELSE 0 END)::int AS "underDeclared",
+        (SELECT count(*)::int
+           FROM jsonb_array_elements(
+             CASE WHEN jsonb_typeof(r.scope_verdicts->'scopes') = 'array'
+                  THEN r.scope_verdicts->'scopes' ELSE '[]'::jsonb END
+           ) AS sv
+          WHERE jsonb_typeof(sv) = 'object'
+            AND lower(sv->>'justificationAccurate') = 'no') AS "inaccurate"
+      FROM app_review_agent_reports r
+      WHERE r.publish_request_id = ANY(${ids}::text[])
+      ORDER BY r.publish_request_id, r.started_at DESC
+    `) as Array<{
+      publishRequestId: string;
+      status: string;
+      severities: (string | null)[] | null;
+      overBroad: number | null;
+      underDeclared: number | null;
+      inaccurate: number | null;
+    }>;
+    for (const r of rows) {
+      out.set(r.publishRequestId, {
+        status: r.status,
+        severities: (r.severities ?? []).filter((x): x is string => typeof x === 'string'),
+        overBroad: r.overBroad ?? 0,
+        underDeclared: r.underDeclared ?? 0,
+        inaccurate: r.inaccurate ?? 0,
+      });
+    }
+  } catch (err) {
+    console.error(
+      `[agentReviewSummariesForRequests] summary read failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+  return out;
+}
+
+/** The `where` for the on-site PENDING queue — shared by the list and its count. */
+const PENDING_REQUEST_WHERE = { status: 'pending' } as const;
+
+/** How many on-site publish requests are waiting for review (the Pending tab's badge). */
+export async function countPendingRequests(): Promise<number> {
+  const { dbRead } = await import('~/server/db/client');
+  return dbRead.appBlockPublishRequest.count({ where: PENDING_REQUEST_WHERE });
+}
+
+/**
  * Mod queue: paginated list of publish requests in status='pending',
  * oldest first (FIFO). Includes the submitter's basic profile so the
  * review UI doesn't round-trip per row.
  */
-export async function listPendingRequests(opts: ListPendingRequestsOptions = {}) {
+export async function listPendingRequests(
+  opts: ListPendingRequestsOptions & {
+    /**
+     * Attach each row's agentic-review summary (`agentReview`). The router passes the
+     * viewer's `app-blocks-agentic-review` flag here, so a reviewer without the agentic
+     * surface never receives the field and the queue shows no AI chip for them.
+     */
+    includeAgentReview?: boolean;
+  } = {}
+) {
   const [{ dbRead }, { reviewRepoUrl, repoCommitUrl }] = await Promise.all([
     import('~/server/db/client'),
     import('./forgejo.service'),
   ]);
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appBlockPublishRequest.findMany({
-    where: { status: 'pending' },
+    where: PENDING_REQUEST_WHERE,
     orderBy: { submittedAt: 'asc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
@@ -2813,32 +2907,54 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       fileSummary: true,
       manifestDiffSummary: true,
       forgejoCommitSha: true,
+      // The review preview lifecycle (`preview-*`) — projected to `previewState` below and
+      // NOT spread as `deployState`, which the queue reads as the APPROVED-row deploy shape.
+      // `deployDetail` is read ONLY for the preview's build-start time (the expiry rule) and
+      // never returned: on a pending row it is the preview detail, which carries no log, but
+      // nothing here needs the rest of it.
+      deployState: true,
+      deployDetail: true,
+      deployUpdatedAt: true,
       submittedBy: { select: reviewUserChipSelect },
     },
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
-  const listingFacts = await listingFactsForRequests(items as ListingJoinSubject[]);
+  const [listingFacts, agentSummaries] = await Promise.all([
+    listingFactsForRequests(items as ListingJoinSubject[]),
+    opts.includeAgentReview
+      ? agentReviewSummariesForRequests(items.map((r) => r.id))
+      : Promise.resolve(null),
+  ]);
+  const now = Date.now();
   return {
-    items: items.map((r: (typeof rows)[number]) => ({
-      ...r,
-      ...listingFacts(r.id),
-      // BigInt isn't JSON-serializable through tRPC's default transformer;
-      // surface as a string. UI can format with Intl.NumberFormat.
-      bundleSizeBytes: r.bundleSizeBytes.toString(),
-      // Deep-link into the per-slug Forgejo review repo so mods can
-      // browse the actual code from the review modal.
-      reviewRepoUrl: reviewRepoUrl(r.slug),
-      // PUSH-ORIGINATED requests have no review-org snapshot — link mods to the
-      // CANONICAL repo at the exact pushed sha instead, so they can review the
-      // real code rather than approve blind. Push rows are marked by empty
-      // bundle pointers (recordPendingFromPush writes bundleKey='' AND
-      // bundleSha256=''); bundleSha256 is already in this payload + NOT NULL, so
-      // it's the discriminator here (the fetch paths key off the equivalent
-      // bundleKey since they need the S3 path).
-      pushCommitUrl:
-        !r.bundleSha256 && r.forgejoCommitSha ? repoCommitUrl(r.slug, r.forgejoCommitSha) : null,
-    })),
+    items: items.map(
+      ({ deployState, deployDetail, deployUpdatedAt, ...r }: (typeof rows)[number]) => ({
+        ...r,
+        ...listingFacts(r.id),
+        // The SAME reported state `getReviewStatus` gives the review page (one rule, including
+        // #8240's expiry from the build's start), so the queue chip and the page agree.
+        previewState: reportedReviewPreviewState(deployState, deployDetail, deployUpdatedAt, now),
+        // Absent (not null) when the viewer has no agentic surface: the chip is hidden, not
+        // "not run". `null` = the surface is on and this request has no report.
+        ...(agentSummaries ? { agentReview: agentSummaries.get(r.id) ?? null } : {}),
+        // BigInt isn't JSON-serializable through tRPC's default transformer;
+        // surface as a string. UI can format with Intl.NumberFormat.
+        bundleSizeBytes: r.bundleSizeBytes.toString(),
+        // Deep-link into the per-slug Forgejo review repo so mods can
+        // browse the actual code from the review modal.
+        reviewRepoUrl: reviewRepoUrl(r.slug),
+        // PUSH-ORIGINATED requests have no review-org snapshot — link mods to the
+        // CANONICAL repo at the exact pushed sha instead, so they can review the
+        // real code rather than approve blind. Push rows are marked by empty
+        // bundle pointers (recordPendingFromPush writes bundleKey='' AND
+        // bundleSha256=''); bundleSha256 is already in this payload + NOT NULL, so
+        // it's the discriminator here (the fetch paths key off the equivalent
+        // bundleKey since they need the S3 path).
+        pushCommitUrl:
+          !r.bundleSha256 && r.forgejoCommitSha ? repoCommitUrl(r.slug, r.forgejoCommitSha) : null,
+      })
+    ),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
 }
@@ -5388,6 +5504,25 @@ export function isReviewPreviewExpired(
 }
 
 /**
+ * The preview state a moderator is SHOWN for a pending request: its stored `preview-*` value, or
+ * `preview-expired` past {@link isReviewPreviewExpired}. `null` when it has no preview. Shared
+ * by `getReviewStatus` (the review page) and `listPendingRequests` (the queue chip), so the two
+ * surfaces cannot disagree about one request.
+ */
+export function reportedReviewPreviewState(
+  deployState: string | null | undefined,
+  deployDetail: string | null | undefined,
+  updatedAt: Date | null,
+  now: number = Date.now()
+): ReviewPreviewState | null {
+  if (typeof deployState !== 'string' || !deployState.startsWith('preview-')) return null;
+  const stored = deployState as StoredReviewPreviewState;
+  return isReviewPreviewExpired(stored, parseReviewDetail(deployDetail), updatedAt, now)
+    ? 'preview-expired'
+    : stored;
+}
+
+/**
  * Poll target for the mod-review UI: returns the current preview lifecycle state
  * + detail (sha / host / url / error) for a publish request. Reads the same
  * deploy_state / deploy_detail columns previewRequest + the review-build-callback
@@ -5421,12 +5556,8 @@ export async function getReviewStatus(opts: {
   if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
   const isPreviewState =
     typeof row.deployState === 'string' && row.deployState.startsWith('preview-');
-  const stored = isPreviewState ? (row.deployState as StoredReviewPreviewState) : null;
   const detail = isPreviewState ? parseReviewDetail(row.deployDetail) : {};
-  const state: ReviewPreviewState | null =
-    stored && isReviewPreviewExpired(stored, detail, row.deployUpdatedAt)
-      ? 'preview-expired'
-      : stored;
+  const state = reportedReviewPreviewState(row.deployState, row.deployDetail, row.deployUpdatedAt);
 
   let previewUrl: string | undefined;
   if (state === 'preview-live' && opts.modUserId != null && detail.host && detail.url) {

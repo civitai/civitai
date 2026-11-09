@@ -124,6 +124,10 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-file-urls';
+import {
+  trainingDataOwnerView,
+  trainingDataPublicView,
+} from '~/server/services/training-data-restricted.service';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readModelPoiAndOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
@@ -231,11 +235,21 @@ const creatorGalleryHiddenUsersRateLimit = rateLimit(
 
 const modelFileUrlsForOwner = ownerOnlyFileUrls<Awaited<ReturnType<typeof getModelHandler>>>({
   ownerId: ({ data }) => data.user.id,
-  strip: (data) => ({
+  strip: async (data, { redCapable }) => {
+    const view = await trainingDataPublicView(dbRead, data.modelVersions, { redCapable });
+    return {
+      ...data,
+      modelVersions: data.modelVersions.map((version) => ({
+        ...version,
+        files: withoutFileUrls(view(version.files)) as typeof version.files,
+      })),
+    };
+  },
+  forOwner: (data) => ({
     ...data,
     modelVersions: data.modelVersions.map((version) => ({
       ...version,
-      files: withoutFileUrls(version.files) as typeof version.files,
+      files: trainingDataOwnerView(version.files),
     })),
   }),
 });

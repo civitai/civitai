@@ -12,12 +12,7 @@ import clsx from 'clsx';
 import { Menu } from '~/components/MantineOverlays';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { StickerTrackEase, StickerTrackKey } from '~/shared/utils/sticker-track';
-import { STICKER_PLACEMENT_MIN_OPACITY } from '~/shared/utils/sticker-placement';
-import {
-  STICKER_TRACK_EASES,
-  stickerTrackFaintestShown,
-  stickerTrackRefusal,
-} from '~/shared/utils/sticker-track';
+import { STICKER_TRACK_EASES } from '~/shared/utils/sticker-track';
 import {
   editKey,
   keyIndexAt,
@@ -25,7 +20,8 @@ import {
   removeKey,
   snapKeyOpacity,
   STICKER_KEY_STEP_MS,
-  stickerKeysTrack,
+  STICKER_KEYS_TOO_FAINT,
+  stickerKeysRefusal,
   upsertKey,
 } from '~/shared/utils/sticker-track-edit';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
@@ -104,13 +100,14 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
   const open = !!selected && !trayOpen;
   const moving = open && !!selected.motion?.on;
 
-  const [playing, setPlaying] = useState(!video.paused);
+  const playing = useStore((state) => state.videoPlaying);
   const [durationMs, setDurationMs] = useState(() => videoDurationMs(video));
 
   useEffect(() => {
     if (!open) return;
     let frame = 0;
-    const sync = () => useStore.getState().setPlayhead(Math.round(video.currentTime * 1000));
+    const { setPlayhead, setVideoPlaying: setPlaying } = useStore.getState();
+    const sync = () => setPlayhead(Math.round(video.currentTime * 1000));
     const tick = () => {
       sync();
       frame = requestAnimationFrame(tick);
@@ -129,12 +126,14 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
     sync();
     onMeta();
     if (!video.paused) onPlay();
+    else setPlaying(false);
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
     video.addEventListener('seeked', sync);
     video.addEventListener('loadedmetadata', onMeta);
     return () => {
       cancelAnimationFrame(frame);
+      setPlaying(false);
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
       video.removeEventListener('seeked', sync);
@@ -165,9 +164,7 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
 
   const keys = selected?.motion?.keys ?? [];
   const at = keyIndexAt(keys, playheadMs);
-  // Changing the sticker's own opacity sets no key, so the floor on key times sticker opacity is
-  // rechecked here rather than when the key was set.
-  const refusal = moving && keys.length ? motionRefusal(keys, selected.opacity) : null;
+  const refusal = moving && keys.length ? stickerKeysRefusal(keys, selected.opacity) : null;
   const setKeys = (next: StickerTrackKey[]) =>
     selected && useStore.getState().setKeys(selected.id, next);
 
@@ -287,7 +284,7 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
             <Text size="xs" c="red.4" mt={4} role="alert">
               {refusal === 'keys: too much fading'
                 ? 'Too much fading to place: shorten or remove a fade.'
-                : refusal === TOO_FAINT
+                : refusal === STICKER_KEYS_TOO_FAINT
                 ? 'A key is too faint for this sticker’s opacity: raise the key or the sticker.'
                 : `This movement can't be placed (${refusal}).`}
             </Text>
@@ -532,16 +529,6 @@ function KeyInspector({
       </ActionIcon>
     </div>
   );
-}
-
-const TOO_FAINT = 'too faint for the sticker opacity';
-
-function motionRefusal(keys: StickerTrackKey[], stickerOpacity: number) {
-  const track = stickerKeysTrack(keys);
-  const faintest = stickerTrackFaintestShown(track);
-  if (faintest != null && faintest * stickerOpacity < STICKER_PLACEMENT_MIN_OPACITY - 1e-9)
-    return TOO_FAINT;
-  return stickerTrackRefusal(track);
 }
 
 function pressPrimary(draftId: string) {

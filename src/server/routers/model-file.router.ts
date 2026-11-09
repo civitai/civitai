@@ -25,6 +25,10 @@ import { edgeCacheIt } from '~/server/middleware.trpc';
 import { dbRead } from '~/server/db/client';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-file-urls';
+import {
+  trainingDataOwnerView,
+  trainingDataPublicView,
+} from '~/server/services/training-data-restricted.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const fileUrlsForOwner = ownerOnlyFileUrls<
@@ -38,7 +42,16 @@ const fileUrlsForOwner = ownerOnlyFileUrls<
         select: { model: { select: { userId: true } } },
       })
     )?.model.userId,
-  strip: (data) => data && { ...data, files: withoutFileUrls(data.files) as typeof data.files },
+  strip: async (data, { redCapable }) => {
+    if (!data) return data;
+    const view = await trainingDataPublicView(
+      dbRead,
+      [{ id: data.modelVersionId, files: data.files }],
+      { redCapable }
+    );
+    return { ...data, files: withoutFileUrls(view(data.files)) as typeof data.files };
+  },
+  forOwner: (data) => data && { ...data, files: trainingDataOwnerView(data.files) },
 });
 
 export const modelFileRouter = router({
