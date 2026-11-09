@@ -745,7 +745,14 @@ describe('agent review auto-start needs the agent-review feature on', () => {
 describe('agent review auto-start: concurrent go-lives share the budget', () => {
   /** Runs started today with no cost yet; each start adds one after its I/O. */
   let running = 0;
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Resolve every module the start imports BEFORE the two concurrent calls: CI showed one of two
+    // concurrent first imports of a mocked module getting the real one (its flags read off).
+    await import('~/server/services/app-blocks-flag');
+    await import('~/server/services/blocks/agent-review.service');
+    await import('~/server/redis/client');
+    await import('~/server/db/client');
+    await import('~/env/server');
     running = 0;
     dbMock.dbRead.appReviewAgentReport.findFirst.mockResolvedValue(null);
     // $38 already reported today: room for exactly one more $2 review under the $40 budget.
