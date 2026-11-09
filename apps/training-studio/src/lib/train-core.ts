@@ -210,7 +210,8 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
   const trainingData = { type: 'blobs', items };
   const optimizerType = run.optimizer.toLowerCase();
   // Prodigy finds its own step size and expects lr 1 (the main trainer forces it the same way);
-  // forced here so a stale or saved run can't send a model's normal rate. A 0 TE rate stays 0: TE off.
+  // forced here so a stale or saved run can't send a model's normal rate. A 0 TE rate stays 0 (TE off), and an ecosystem
+  // that can't train the TE is forced to 0 before Prodigy is considered.
   const prodigy = isProdigy(run.optimizer);
   const lr = prodigy ? 1 : run.unetLr;
   const textEncoderLr = teTrainingUnsupportedReason(run.ecosystem)
@@ -774,7 +775,7 @@ async function buildContinuation(
     epochs: addEpochs,
     batchSize: input.batchSize,
     lr: input.lr,
-    // A run submitted before its model's TE lock must not continue with the TE on.
+    // Runs submitted before the lock still carry TE on; don't continue them with it.
     ...(teTrainingUnsupportedReason(ecosystem)
       ? { textEncoderLr: 0, trainTextEncoder: false }
       : { textEncoderLr: input.textEncoderLr, trainTextEncoder: input.trainTextEncoder }),

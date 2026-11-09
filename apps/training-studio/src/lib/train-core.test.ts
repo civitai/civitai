@@ -566,25 +566,53 @@ describe('Prodigy learning rate', () => {
 
 describe('text encoder on a model that cannot train it', () => {
   const lastInput = () => submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
-
-  it('sends an Anima run with the text encoder off, whatever rate it carries', async () => {
-    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-anima' } });
-    await submitTraining(client, { ...baseRun(), ecosystem: 'anima', textEncoderLr: 1e-4 });
-    expect(lastInput()).toMatchObject({ textEncoderLr: 0, trainTextEncoder: false });
+  const sourceRun = (ecosystem: string) => ({
+    data: {
+      steps: [
+        {
+          $type: 'training',
+          input: {
+            engine: 'ai-toolkit',
+            ecosystem,
+            epochs: 10,
+            steps: 1500,
+            textEncoderLr: 1e-4,
+            trainTextEncoder: true,
+          },
+          output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+        },
+      ],
+    },
   });
+  const continueOpts = { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 };
 
-  it('keeps it off for a Prodigy Anima run', async () => {
-    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-anima-prodigy' } });
-    await submitTraining(client, { ...baseRun(), ecosystem: 'anima', optimizer: 'Prodigy' });
-    expect(lastInput()).toMatchObject({ lr: 1, textEncoderLr: 0, trainTextEncoder: false });
-  });
-
-  it('accepts a stale Prodigy-level rate on Anima rather than refusing it', async () => {
-    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-anima-stale' } });
-    await submitTrainingBatch(client, [{ ...baseRun(), ecosystem: 'anima', textEncoderLr: 1 }], {
-      checkText,
+  describe.each(['anima', 'krea2'])('%s', (ecosystem) => {
+    it('sends the text encoder off, whatever rate the run carries', async () => {
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-locked' } });
+      await submitTraining(client, { ...baseRun(), ecosystem, textEncoderLr: 1e-4 });
+      expect(lastInput()).toMatchObject({ textEncoderLr: 0, trainTextEncoder: false });
     });
-    expect(lastInput()).toMatchObject({ textEncoderLr: 0, trainTextEncoder: false });
+
+    it('keeps it off under Prodigy', async () => {
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-locked-prodigy' } });
+      await submitTraining(client, { ...baseRun(), ecosystem, optimizer: 'Prodigy' });
+      expect(lastInput()).toMatchObject({ lr: 1, textEncoderLr: 0, trainTextEncoder: false });
+    });
+
+    it('accepts a stale Prodigy-level rate rather than refusing it', async () => {
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-locked-stale' } });
+      await submitTrainingBatch(client, [{ ...baseRun(), ecosystem, textEncoderLr: 1 }], {
+        checkText,
+      });
+      expect(lastInput()).toMatchObject({ textEncoderLr: 0, trainTextEncoder: false });
+    });
+
+    it('turns it off when continuing a run submitted with it on', async () => {
+      getWorkflow.mockResolvedValueOnce(sourceRun(ecosystem));
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-locked-next' } });
+      await continueTraining(client, continueOpts, { checkText });
+      expect(lastInput()).toMatchObject({ textEncoderLr: 0, trainTextEncoder: false });
+    });
   });
 
   it('still trains the text encoder on a model that supports it', async () => {
@@ -593,34 +621,11 @@ describe('text encoder on a model that cannot train it', () => {
     expect(lastInput()).toMatchObject({ textEncoderLr: 1e-4, trainTextEncoder: true });
   });
 
-  it('turns it off when continuing an Anima run that was submitted with it on', async () => {
-    getWorkflow.mockResolvedValue({
-      data: {
-        steps: [
-          {
-            $type: 'training',
-            input: {
-              engine: 'ai-toolkit',
-              ecosystem: 'anima',
-              epochs: 10,
-              steps: 1500,
-              textEncoderLr: 1e-4,
-              trainTextEncoder: true,
-            },
-            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
-          },
-        ],
-      },
-    });
-    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-anima-next' } });
-    await continueTraining(
-      client,
-      { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 },
-      {
-        checkText,
-      }
-    );
-    expect(lastInput()).toMatchObject({ textEncoderLr: 0, trainTextEncoder: false });
+  it('keeps the text encoder on when continuing a model that supports it', async () => {
+    getWorkflow.mockResolvedValueOnce(sourceRun('sdxl'));
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-sdxl-next' } });
+    await continueTraining(client, continueOpts, { checkText });
+    expect(lastInput()).toMatchObject({ textEncoderLr: 1e-4, trainTextEncoder: true });
   });
 });
 

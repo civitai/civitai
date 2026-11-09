@@ -1638,13 +1638,12 @@ export const isProdigy = (optimizer: string): boolean =>
   PRODIGY_OPTIMIZERS.includes(optimizer.toLowerCase());
 
 /**
- * Ecosystems whose trainer cannot train the text encoder, with the reason the Review step shows. The
- * Review step locks the TE rate at 0 and the submit forces it off, so a stale client or a continued
- * run can't send it. Mirrors the `textEncoderLR` overrides in the main app's TrainingParams.tsx.
+ * Ecosystems whose trainer cannot train the text encoder, with the reason the Review step shows.
+ * The main app's TrainingParams.tsx `textEncoderLR` overrides lock these too (plus others).
  * - Krea 2: AI-Toolkit fails the run with `Cannot unload text encoder if training text encoder`
  *   after ~20-30 min of looping, with no way to abort (tester-confirmed).
- * - Anima: ai-toolkit's anima trainer freezes the TE and reports no TE grad, so the rate did
- *   nothing and the LoRA shipped without TE layers.
+ * - Anima: AI-Toolkit's Anima trainer (v1.0.62) freezes the TE and reports no TE grad, so a
+ *   nonzero rate did nothing and the LoRA shipped without TE layers.
  */
 const TE_TRAINING_UNSUPPORTED: Readonly<Record<string, string>> = {
   krea2:

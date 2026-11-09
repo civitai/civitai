@@ -891,8 +891,8 @@ export function buildTrainingRuns(
     const version = runVersion(run);
     const caps = runExtraCapabilities(run, labelMode);
     // Fields the run can't use — a locked TE rate, tag-only fields on a caption dataset, image-only
-    // ones on video — go out as 0/off whatever the form holds: a value edited before a model or
-    // label-mode switch must not ride into a run that hangs on it or misreads it.
+    // ones on video — go out as 0/off whatever the form holds, so a value edited before a model or
+    // label-mode switch can't ride into a run that hangs or misreads it.
     const tags = caps.shuffleTokens.supported;
     return {
       ecosystem: version.ecosystem,
