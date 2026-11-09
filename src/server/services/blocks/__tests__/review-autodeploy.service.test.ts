@@ -745,8 +745,9 @@ describe('agent review auto-start needs the agent-review feature on', () => {
 describe('agent review auto-start: concurrent go-lives share the budget', () => {
   /** Runs started today with no cost yet; each start adds one after its I/O. */
   let running = 0;
-  // Flags and the start are INJECTED here: under CI's module sharing, a concurrent call could
-  // resolve the real flags module instead of this file's mock and read the flags as off.
+  // Flags and the start are INJECTED here, and the two calls do not import modules at the same
+  // instant: under the suite's module sharing, one of two CONCURRENT first-time dynamic imports
+  // of a mocked module was measured resolving the real module (its env failed to validate).
   const deps = {
     autostartOn: async () => true,
     agentReviewOn: async () => true,
@@ -765,12 +766,22 @@ describe('agent review auto-start: concurrent go-lives share the budget', () => 
     });
   });
 
-  it('two at budget-minus-one-cap at once: exactly one starts', async () => {
-    const outcomes = await Promise.all([
-      maybeAutoStartAgentReview('pubreq_a', deps),
-      maybeAutoStartAgentReview('pubreq_b', deps),
-    ]);
-    expect(outcomes.sort()).toEqual(['budget-refused', 'started']);
+  // The race the reservation closes: B decides while A is INSIDE its start — A has passed the
+  // budget check, but its running row does not exist yet, so a spend read alone sees room.
+  it('a second go-live while the first is mid-start (no row yet): exactly one starts', async () => {
+    let releaseA: () => void = () => undefined;
+    const aGate = new Promise<void>((r) => (releaseA = r));
+    m.startAgentReview.mockImplementationOnce(async () => {
+      await aGate; // A is mid-start until B has decided
+      running++;
+      return {};
+    });
+    const a = maybeAutoStartAgentReview('pubreq_a', deps);
+    await vi.waitFor(() => expect(m.startAgentReview).toHaveBeenCalledTimes(1));
+    expect(running).toBe(0);
+    const b = await maybeAutoStartAgentReview('pubreq_b', deps);
+    releaseA();
+    expect([await a, b]).toEqual(['started', 'budget-refused']);
     expect(m.startAgentReview).toHaveBeenCalledTimes(1);
     // Every reservation is released once its start is over.
     expect(reservation.cents).toBe(0);
