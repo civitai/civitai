@@ -42,7 +42,7 @@ import { createVideoPreprocessStep } from './handlers/video-preprocess.handler';
 import { collectStepWarnings } from './step-warnings';
 import type { GenerationData, LooseGenerationData } from './form-graph/types';
 import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
-import { workflowOutputRestrictions } from './form-graph/output-restrictions';
+import { capsGenerationOutput, workflowOutputRestrictions } from './form-graph/output-restrictions';
 import {
   getInputTypeForWorkflow,
   isWorkflowAvailable,
@@ -1355,6 +1355,8 @@ export async function createWorkflowStepsFromGraph({
   tags: string[];
   hasTipEligibleResource: boolean;
   boostRequired: boolean;
+  /** A licence on one of the submit's base models requires the capped output level. */
+  capOutput: boolean;
 }> {
   data = expandAvatarData(data);
 
@@ -1380,6 +1382,15 @@ export async function createWorkflowStepsFromGraph({
       acceptBoostRequired
     )
   );
+  // Computed here, not in validateAndEnrichResources: that returns early for a submit with no
+  // resources, and a Fibo 2.0 edit has none. The raw-AIR and request-ecosystem checks cap a whole
+  // ecosystem, which is only right while every licence carrying the flag covers a single ecosystem.
+  // Re-check that before setting the flag on any other licence.
+  const capOutput = capsGenerationOutput({
+    baseModels: enrichedResources.map((r) => r.baseModel),
+    rawAirs: rawAirResources.map((r) => r.air),
+    requestEcosystem: 'ecosystem' in data ? data.ecosystem : undefined,
+  });
 
   // Check for POI in prompt
   const prompt = 'prompt' in data ? (data.prompt as string) : undefined;
@@ -1603,6 +1614,7 @@ export async function createWorkflowStepsFromGraph({
       tags: extraTags,
       hasTipEligibleResource,
       boostRequired,
+      capOutput,
     };
   });
 }
@@ -2017,6 +2029,7 @@ export async function generateFromGraph({
     tags: assemblyTags,
     hasTipEligibleResource,
     boostRequired,
+    capOutput,
   } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
@@ -2150,6 +2163,7 @@ export async function generateFromGraph({
       ...workflowOutputRestrictions({
         workflow: data.workflow,
         isPrivateGeneration,
+        capOutput,
         allowMatureContent,
       }),
       // @ts-ignore - BuzzSpendType is properly supported
