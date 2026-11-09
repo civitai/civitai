@@ -141,12 +141,14 @@ const renderDraft = async (
     scale,
     commit,
     motion,
+    opacity,
   }: {
     ownerShare?: number;
     maxScale?: number;
     scale?: number;
     commit?: ReactNode;
     motion?: StickerDraft['motion'];
+    opacity?: number;
   } = {}
 ) => {
   renderWithProviders(
@@ -156,7 +158,12 @@ const renderDraft = async (
     // box: the cluster has to be reachable, and none of this asserts geometry.
     <div style={{ position: 'relative', width: 380, height: 600 }}>
       <DraftSticker
-        draft={{ ...draft, ...(scale == null ? null : { scale }), motion }}
+        draft={{
+          ...draft,
+          ...(scale == null ? null : { scale }),
+          ...(opacity == null ? null : { opacity }),
+          motion,
+        }}
         art={art}
         selected
         dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
@@ -297,6 +304,19 @@ describe('what a draft sends when it is placed', () => {
     ((await button.element()) as HTMLElement).click();
 
     expect(placed).toHaveLength(0);
+  });
+
+  // 0.5 × 0.5 is under the 0.3 floor; 0.5 × 1 is not. Nothing fades, so only the floor decides.
+  const halfShown = () => [key(0, { o: 0.5 }), key(1000, { o: 0.5, x: 0.6 })];
+
+  test('a key too faint for the sticker’s own opacity cannot be placed', async () => {
+    await renderDraft({ instant: true }, { motion: { on: true, keys: halfShown() }, opacity: 0.5 });
+    await expect.element(page.getByRole('button', { name: 'Place free' })).toBeDisabled();
+  });
+
+  test('the same keys on a fully opaque sticker can be placed', async () => {
+    await renderDraft({ instant: true }, { motion: { on: true, keys: halfShown() }, opacity: 1 });
+    await expect.element(page.getByRole('button', { name: 'Place free' })).toBeEnabled();
   });
 
   test('a movement the server would refuse cannot be placed paid', async () => {

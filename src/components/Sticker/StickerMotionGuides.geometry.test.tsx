@@ -64,12 +64,13 @@ const renderGuides = (keys: StickerTrackKey[], playheadMs: number) =>
   );
 
 describe('the selected sticker’s movement drawn on a 400×200 media box', () => {
-  const keys = [key(0, { x: 0.25, y: 0.25 }), key(2000, { x: 0.75, y: 0.75, s: 0.5, r: 90 })];
+  const keys = [key(0, { x: 0.25, y: 0.25 }), key(2000, { x: 0.75, y: 0.75, s: 0.5, r: 45 })];
 
-  test('the dotted path runs from the first key’s point to the last', async () => {
-    await renderGuides(keys, 0);
+  test('the dotted path runs through every key, the middle one included', async () => {
+    // The middle key sits above and right of both ends, so dropping it shrinks the box.
+    await renderGuides([keys[0], key(1000, { x: 0.9, y: 0.1 }), keys[1]], 0);
     const path = document.querySelector('[data-motion-path]')!;
-    expect(box(path)).toMatchObject({ left: 100, top: 50, right: 300, bottom: 150 });
+    expect(box(path)).toMatchObject({ left: 100, top: 20, right: 360, bottom: 150 });
   });
 
   test('each key’s dot is centred on its point, in pixels of the box', async () => {
@@ -86,8 +87,9 @@ describe('the selected sticker’s movement drawn on a 400×200 media box', () =
     const ghosts = [...document.querySelectorAll('[data-motion-ghost]')];
     expect(ghosts.map((ghost) => ghost.getAttribute('data-motion-ghost'))).toEqual(['1']);
     expect(center(ghosts[0])).toEqual({ x: 300, y: 150 });
-    // Half the box wide, as a scale of 0.5 is; square art, turned a quarter, stays 200 square.
-    expect(box(ghosts[0])).toMatchObject({ width: 200, height: 200 });
+    // Half the box wide, as a scale of 0.5 is: square art 200 wide, turned 45°, spans 200√2.
+    expect(box(ghosts[0]).width).toBeCloseTo(282.84, 0);
+    expect(box(ghosts[0]).height).toBeCloseTo(282.84, 0);
   });
 
   test('on the last key the ghost moves to the first', async () => {
