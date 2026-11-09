@@ -368,3 +368,37 @@ describe('what reaches HQ from the rest of the report', () => {
     expect(body).not.toMatch(/@justin/);
   });
 });
+
+describe('what HQ gets of the session and the failed requests', () => {
+  const body = () =>
+    buildHqBody(
+      report({
+        context: {
+          sessionId: 'faro-session-abc123',
+          networkErrors: [
+            { url: 'https://cdn.example.net/a/b.js', status: 404, initiatorType: 'script' },
+          ],
+          trpcErrors: [
+            {
+              path: 'image.create',
+              code: 'BAD_REQUEST',
+              httpStatus: 400,
+              at: '2026-11-09T00:00:00.000Z',
+            },
+          ],
+        },
+      }),
+      { moderatorUrl: 'https://moderator.example.test/feedback/7', screenshotAttached: false }
+    );
+
+  it('leaves out the session id', () => {
+    expect(body()).not.toContain('faro-session-abc123');
+  });
+
+  it('lists a failed request as status and path only', () => {
+    const text = body();
+    expect(text).toContain('request 404 /a/b.js');
+    expect(text).not.toContain('cdn.example.net');
+    expect(text).toContain('trpc 400 image.create BAD_REQUEST');
+  });
+});

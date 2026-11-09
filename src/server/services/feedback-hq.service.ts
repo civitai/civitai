@@ -153,7 +153,6 @@ function headerSection(input: FeedbackHqFilingInput, moderatorUrl: string) {
     ['Error ref', context?.errorRef],
     ['Workflow', context?.workflowId],
     ['Job', context?.jobId],
-    ['Session', context?.sessionId],
   ];
   const flagsOn = Object.entries(server?.flags ?? {})
     .filter(([, on]) => on)
@@ -167,13 +166,22 @@ function headerSection(input: FeedbackHqFilingInput, moderatorUrl: string) {
   return lines.join('\n');
 }
 
+/** Path only: no origin, query or fragment. The browser recorder does not capture the method. */
+function pathOf(url: string) {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return '(unparseable)';
+  }
+}
+
 function diagnosticsSection(context: FeedbackContextInput | undefined) {
   if (!context) return '';
   const lines: string[] = [];
   for (const entry of context.consoleErrors ?? [])
     lines.push(`console ${entry.count > 1 ? `×${entry.count} ` : ''}${entry.message}`);
   for (const entry of context.networkErrors ?? [])
-    lines.push(`request ${entry.status} ${entry.url} (${entry.initiatorType})`);
+    lines.push(`request ${entry.status} ${pathOf(entry.url)}`);
   for (const entry of context.trpcErrors ?? [])
     lines.push(`trpc ${entry.httpStatus ? `${entry.httpStatus} ` : ''}${entry.path} ${entry.code}`);
   if (!lines.length) return '';
