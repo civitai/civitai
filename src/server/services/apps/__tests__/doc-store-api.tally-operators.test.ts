@@ -985,12 +985,12 @@ describe('deprecation: the old routes say so, the PATCH does not', () => {
       const v2 = await send(app, 'v2', 'v2', op, 'posts', 'd', name);
       expect(legacy.status).toBe(200);
       expect(v2.status).toBe(200);
-      expect(legacy.headers.deprecation).toBe('true');
+      expect(legacy.headers.deprecation).toBe('@1794182400');
       expect(legacy.headers.link).toBe(
         '<https://developer.civitai.com/apps/guide/storage>; rel="deprecation"'
       );
       expect(LEGACY_TALLY_HEADERS).toEqual({
-        Deprecation: 'true',
+        Deprecation: '@1794182400',
         Link: '<https://developer.civitai.com/apps/guide/storage>; rel="deprecation"',
       });
       expect(v2.headers.deprecation).toBeUndefined();
@@ -999,11 +999,33 @@ describe('deprecation: the old routes say so, the PATCH does not', () => {
     }
   );
 
+  it('a wrong method on a legacy path is a 405 that carries the headers too', async () => {
+    const app = freshApp();
+    const token = await mint(app, UID.v1);
+    for (const [method, p, allow] of [
+      ['GET', '/posts/k/counters/views', 'POST'],
+      ['POST', '/posts/k/marks/vote', 'PUT, DELETE'],
+    ] as const) {
+      const r = await call({ token, method, path: p });
+      expect({ status: r.status, code: r.body.code, allow: r.headers.allow }).toEqual({
+        status: 405,
+        code: 'method_not_allowed',
+        allow,
+      });
+      expect(r.headers.deprecation, `${method} ${p}`).toBe('@1794182400');
+      expect(r.headers.link, `${method} ${p}`).toBe(LEGACY_TALLY_HEADERS.Link);
+    }
+    // A 405 on a document path is not deprecated.
+    const doc = await call({ token, method: 'POST', path: '/posts/k' });
+    expect(doc.status).toBe(405);
+    expect(doc.headers.deprecation).toBeUndefined();
+  });
+
   it('a refusal from a legacy route carries the headers too; other routes never do', async () => {
     const app = freshApp();
     const refused = await send(app, 'anon', 'legacy', 'mark', 'posts', 'nope', 'vote');
     expect(refused.status).toBe(401);
-    expect(refused.headers.deprecation).toBe('true');
+    expect(refused.headers.deprecation).toBe('@1794182400');
     const token = await mint(app, UID.v1);
     for (const [method, p] of [
       ['GET', '/posts/nope'],
@@ -1200,7 +1222,7 @@ describe('?from= imports: a tally through an import is the same on both routes',
         ...tally(route, 'mark', 'board', 'b1', 'vote'),
         query: from,
       });
-      expect(last.headers.deprecation).toBe(route === 'legacy' ? 'true' : undefined);
+      expect(last.headers.deprecation).toBe(route === 'legacy' ? '@1794182400' : undefined);
       outcomes[route] = {
         refused: refused.map((r) => ({
           ...r,

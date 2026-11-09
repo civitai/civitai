@@ -516,12 +516,17 @@ export function parseTallyPatch(
   return { route: { op: TALLY_OPERATORS[operator], ...at, name: value }, body: undefined };
 }
 
+// The per-tally routes are deprecated as of 2026-11-09T00:00:00Z (RFC 9745 `@<unix-seconds>`).
+export const LEGACY_TALLY_DEPRECATED_AT = '@1794182400';
+
 /**
- * Sent on every response of a deprecated per-tally route. No `Sunset`: removal waits for the
- * usage `civitai_app_block_doc_store_tally_ops_total{route="legacy"}` shows.
+ * Sent on every response this handler gives for a deprecated per-tally PATH, whatever the method
+ * (a 405 included). Not on the token middleware's own refusals (401/403/429), which are sent
+ * before the handler runs. No `Sunset`: removal waits for the usage
+ * `civitai_app_block_doc_store_tally_ops_total{route="legacy"}` shows.
  */
 export const LEGACY_TALLY_HEADERS = {
-  Deprecation: 'true',
+  Deprecation: LEGACY_TALLY_DEPRECATED_AT,
   Link: '<https://developer.civitai.com/apps/guide/storage>; rel="deprecation"',
 } as const;
 
@@ -530,6 +535,13 @@ const TALLY_METRIC_OP: Record<TallyRoute['op'], StorageTallyOp> = {
   mark: 'mark',
   unmark: 'unmark',
 };
+
+/** A path the deprecated per-tally routes own: `[c, key, 'counters' | 'marks', name]`. */
+function isLegacyTallyPath(segments: readonly string[]): boolean {
+  return (
+    segments.length === 4 && (segments[2] === COUNTERS_SEGMENT || segments[2] === MARKS_SEGMENT)
+  );
+}
 
 function isTallyRoute(route: StorageRoute): route is TallyRoute {
   return route.op === 'increment' || route.op === 'mark' || route.op === 'unmark';
@@ -1159,8 +1171,9 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
     try {
       const match = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
       if (!match) throw new DocStoreError('not_found', 'no such storage route');
-      // A deprecated per-tally route says so on every response it gives, a refusal included.
-      if ('route' in match && isTallyRoute(match.route)) {
+      // A deprecated per-tally path says so on every response the handler gives, a refusal and a
+      // wrong method's 405 included.
+      if (isLegacyTallyPath(pathSegments(req))) {
         for (const [name, value] of Object.entries(LEGACY_TALLY_HEADERS)) {
           res.setHeader(name, value);
         }

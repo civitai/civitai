@@ -1304,9 +1304,12 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
 
   // One increment per tally operation (a counter increment, a mark, an unmark) the storage route
   // dispatched (apps/doc-store-api.ts), by operator and by the route that carried it: the
-  // deprecated per-tally routes (`legacy`) or the document PATCH (`v2`). Counted once the operator
-  // is known and before the operation runs, whatever its outcome: the question it answers is "who
-  // still calls the old routes", so a refused call is still a caller. Both labels are closed sets;
+  // deprecated per-tally routes (`legacy`) or the document PATCH (`v2`). Counted once the caller's
+  // access (and any `?from=` import) has resolved and the operator is known, before the operation
+  // runs: a refusal BY the operation (validation, trust, budget, store) is still counted, since the
+  // question is "who still calls the old routes". NOT counted: the token middleware's refusals, a
+  // stray query parameter, an access or import refusal, and a PATCH whose body shape is refused.
+  // Both labels are closed sets;
   // no app label (the per-app split is `civitai_app_block_requests_total`).
   // 🔴 NOT `civitai_app_block_storage_ops_total`: that name is the legacy KV datastore's counter
   // (`appStorageOpsCounter` in @civitai/telemetry, labels op/outcome). Sharing it would make
@@ -1314,7 +1317,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const storageOpsTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_doc_store_tally_ops_total',
-    'App Blocks storage tally operations dispatched, by op (inc|mark|unmark) and route (legacy = the deprecated POST …/counters/:name and PUT|DELETE …/marks/:name, v2 = PATCH /:coll/:key with an update operator). Counted before the operation runs, whatever its outcome; every series is published at 0 from the first scrape',
+    'App Blocks storage tally operations dispatched, by op (inc|mark|unmark) and route (legacy = the deprecated POST …/counters/:name and PUT|DELETE …/marks/:name, v2 = PATCH /:coll/:key with an update operator). Counted once access has resolved and the operator is known, before the operation runs (refusals by the operation count; token, access and import refusals and malformed PATCH bodies do not); every series is published at 0 from the first scrape',
     ['op', 'route']
   );
 
