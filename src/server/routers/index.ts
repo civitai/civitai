@@ -52,6 +52,8 @@ const routers = {
   model3d: () => import('./model3d.router').then((m) => m.model3dRouter),
   modelFile: () => import('./model-file.router').then((m) => m.modelFileRouter),
   modelVersion: () => import('./model-version.router').then((m) => m.modelVersionRouter),
+  modelVersionGift: () =>
+    import('./model-version-gift.router').then((m) => m.modelVersionGiftRouter),
   notification: () => import('./notification.router').then((m) => m.notificationRouter),
   partner: () => import('./partner.router').then((m) => m.partnerRouter),
   placement: () => import('./placement.router').then((m) => m.placementRouter),

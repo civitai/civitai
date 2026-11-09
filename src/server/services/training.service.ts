@@ -62,6 +62,7 @@ import {
 import { generateToken } from '~/utils/string-helpers';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import type { Orchestrator } from '../http/orchestrator/orchestrator.types';
+import { isBaseModelKey, mergeBlockedModels } from '~/utils/training-blocked-models';
 
 export type TrainingRequest = {
   trainingDetails: TrainingDetailsObj;
@@ -252,6 +253,9 @@ export async function getTrainingServiceStatus() {
 export async function setTrainingServiceStatus(input: {
   available: boolean;
   message?: string | null;
+  /** The blocked base-model keys (`trainingModelInfo`); omitted leaves the list as it is. */
+  blockedModels?: string[];
+  blockedModelReasons?: Record<string, string> | null;
 }) {
   // Read raw and throw on sysRedis error. We MUST NOT use the fail-open
   // getTrainingServiceStatus() here: if its read failed open and the
@@ -265,6 +269,13 @@ export async function setTrainingServiceStatus(input: {
     ...current,
     available: input.available,
     message: input.message ?? null,
+    ...(input.blockedModels
+      ? mergeBlockedModels(
+          current.blockedModels,
+          { blockedModels: input.blockedModels, blockedModelReasons: input.blockedModelReasons },
+          isBaseModelKey
+        )
+      : {}),
   };
   await sysRedis.hSet(
     REDIS_SYS_KEYS.SYSTEM.FEATURES,
@@ -544,6 +555,8 @@ export async function updateTrainingWorkflowRecords(
     history,
     sampleImagesPrompts: derived.sampleImagesPrompts,
     transactionData: derived.transactionData ?? trainingResults.transactionData ?? [],
+    // Rewritten on every sync, so it clears once the hold ends.
+    heldForReview: derived.underReview || undefined,
   };
 
   const newMetadata: FileMetadata = {

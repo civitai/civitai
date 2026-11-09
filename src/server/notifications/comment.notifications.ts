@@ -30,6 +30,16 @@ export const modelPageId = (alias: string) => `COALESCE(${alias}."legacyV1Id", $
 /** A comment the model page's thread dialog opens, rather than a thread-addressed section. */
 export const isModelComment = (alias: string) => `(${alias}."entityType" = 'model')`;
 
+/**
+ * A comment on an unpublished article is shared only with its owner and link holders; a notification
+ * can reach someone who never held the link. `ownerMay` is the recipient, when the owner may still hear.
+ */
+export const notOnUnpublishedArticle = (alias: string, ownerMay?: string) => `NOT EXISTS (
+            SELECT 1 FROM "Article" da
+            WHERE ${alias}."entityType" = 'article' AND da.id = ${alias}."entityId"
+              AND da.status <> 'Published'${ownerMay ? ` AND da."userId" <> ${ownerMay}` : ''}
+          )`;
+
 /** The comment a reply answers: the depth clamp keeps it in `replyToId` when it is not the parent. */
 export const answeredId = (alias: string) => `COALESCE(${alias}."replyToId", ${alias}."parentId")`;
 
@@ -448,6 +458,7 @@ export const commentNotifications = createNotificationProcessor({
         WHERE NOT ${isModelComment('c')}
           AND ${liveV3Since(lastSent)}
           AND c."userId" != pc."userId"
+          AND ${notOnUnpublishedArticle('c', 'pc."userId"')}
           AND ${notBlockedBetween('pc."userId"', 'c."userId"')}
           AND ${notCommentMuted('pc."userId"', 'c')}
           AND ${v3AppListingResolved('c')}
@@ -515,6 +526,7 @@ export const commentNotifications = createNotificationProcessor({
         ${v3EntityJoins('c')}
         WHERE ${liveV3Since(lastSent)}
           AND (NOT ${isModelComment('c')} OR c."parentId" IS NOT NULL)
+          AND ${notOnUnpublishedArticle('c')}
           AND ${v3AppListingResolved('c')}
       )
       SELECT

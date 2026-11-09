@@ -53,7 +53,7 @@ type VideoProps = Omit<
   imageId?: number;
   /** Play after a second of hover when not autoplaying. */
   hoverPlay?: boolean;
-  /** Mounted for preloading, not on screen: never plays, whatever the viewport says. */
+  /** Never autoplays, whatever the viewport says: mounted for preloading, or another control owns playback. */
   standby?: boolean;
 };
 
@@ -98,6 +98,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       imageId,
       hoverPlay = true,
       standby = false,
+      autoPlay,
       onLoad,
       onError,
       onLoadedData,
@@ -308,7 +309,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const [canPlay, setCanPlay] = useState(false);
     useEffect(() => {
       const videoElem = ref.current;
-      if (!videoElem || !options?.anim || props.autoPlay) return;
+      if (!videoElem || !options?.anim || autoPlay) return;
       const observer = new IntersectionObserver(
         ([{ intersectionRatio }]) => {
           setCanPlay(intersectionRatio >= threshold);
@@ -320,12 +321,12 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         observer.unobserve(videoElem);
         observer.disconnect();
       };
-    }, [threshold, options?.anim, loaded, props.autoPlay]);
+    }, [threshold, options?.anim, loaded, autoPlay]);
 
     useEffect(() => {
       const videoElem = ref.current;
       if (!videoElem) return;
-      if (!standby && isCurrentStack && (canPlay || props.autoPlay)) {
+      if (!standby && isCurrentStack && (canPlay || autoPlay)) {
         // Coming back from the detail dialog, this element is still paused where it was left;
         // the other player kept the position moving.
         const resumeAt = resumeId ? getVideoPosition(resumeId) : undefined;
@@ -337,13 +338,13 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           // Autoplay failed, user interaction required
           setAutoplayFailed(true);
         });
-      } else if (!isSelfFullscreen) {
+      } else if (standby || !isCurrentStack || !isSelfFullscreen) {
         // Fullscreen moves the element to the top layer, so it stops intersecting the
         // observer's scroll-area root and canPlay goes false. Pausing on that would stop
         // the video the moment it is maximized.
         videoElem.pause();
       }
-    }, [canPlay, isCurrentStack, standby, props.autoPlay, isSelfFullscreen, resumeId]);
+    }, [canPlay, isCurrentStack, standby, autoPlay, isSelfFullscreen, resumeId, videoUrl]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
@@ -452,7 +453,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           playsInline
           onMouseOver={!options?.anim && hoverPlay ? handleMouseEnter : undefined}
           onMouseLeave={!options?.anim && hoverPlay ? handleMouseLeave : undefined}
-          autoPlay={!!(options?.anim && disablePoster)}
+          // Not the caller's `autoPlay`: React creates this element during render, and the browser
+          // autoplays the element of a discarded render, detached and audible. Only the play effect
+          // (committed players) may start it.
+          autoPlay={autoPlay === undefined && !!(options?.anim && disablePoster)}
           loop
           poster={!disablePoster ? coverUrl : undefined}
           disablePictureInPicture

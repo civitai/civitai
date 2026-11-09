@@ -1,19 +1,7 @@
-import { CacheTTL } from '~/server/common/constants';
-import type { RateLimit } from '~/server/middleware.trpc';
+import { usageLimits } from '~/shared/constants/usage-limits';
 
-export const COMMENT_RATE_LIMIT_MIN_CREATOR_SCORE = 1000;
+export { COMMENT_RATE_LIMIT_MIN_CREATOR_SCORE } from '~/shared/constants/usage-limits';
 
-export const commentRateLimits: RateLimit[] = [
-  { limit: 10, period: CacheTTL.hour },
-  { limit: 4 * 10, period: CacheTTL.day },
-  {
-    limit: 60,
-    period: CacheTTL.hour,
-    userReq: (user) => (user.meta?.scores?.total ?? 0) >= COMMENT_RATE_LIMIT_MIN_CREATOR_SCORE,
-  },
-  {
-    limit: 8 * 60,
-    period: CacheTTL.day,
-    userReq: (user) => (user.meta?.scores?.total ?? 0) >= COMMENT_RATE_LIMIT_MIN_CREATOR_SCORE,
-  },
-];
+export const commentRateLimits = usageLimits('comments.hourly', 'comments.daily');
+/** The bucket every comment surface counts against, and the usage-limits read reads. */
+export const COMMENT_V3_RATE_LIMIT_KEY = 'commentv3:write';

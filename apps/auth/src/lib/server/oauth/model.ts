@@ -186,6 +186,8 @@ export const oauthModel = {
     const data = {
       clientId: client.id,
       userId: user.id,
+      // On the code itself, so the hand-off knows an impersonation even when its context is lost.
+      ...((user as { impersonation?: boolean }).impersonation && { impersonation: true }),
       scope: scopeValue,
       redirectUri: code.redirectUri,
       codeChallenge: code.codeChallenge,
@@ -221,6 +223,7 @@ export const oauthModel = {
       codeChallenge?: string;
       codeChallengeMethod?: string;
       expiresAt: string;
+      impersonation?: boolean;
     }>(REDIS_KEYS.OAUTH.AUTHORIZATION_CODES, hashedCode);
 
     if (!data) return false;
@@ -237,7 +240,7 @@ export const oauthModel = {
       codeChallenge: data.codeChallenge,
       codeChallengeMethod: data.codeChallengeMethod,
       client: client as Client,
-      user: { id: data.userId },
+      user: { id: data.userId, ...(data.impersonation && { impersonation: true }) },
     } as unknown as AuthorizationCode;
   },
 

@@ -316,8 +316,14 @@ import {
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
-import { queueComFaceRecheck } from '~/server/services/model-com-face-recheck.service';
-import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
+import {
+  queueComFaceRecheck,
+  queueComFaceRestore,
+} from '~/server/services/model-com-face-recheck.service';
+import {
+  isGenerationDisabled,
+  toPublicApiVersionFlags,
+} from '~/shared/constants/model-version-flags.constants';
 import {
   isModelNameTooLong,
   MODEL_NAME_TOO_LONG_MESSAGE,
@@ -1421,11 +1427,16 @@ export const getModelsRaw = async ({
           const data = modelData[model.id.toString()];
           if (!data) return null;
 
+          // Every public model read (browse feed, associated resources, /api/v1/models) starts here.
+          const publicVersions = data.versions.map((version) => ({
+            ...version,
+            flags: toPublicApiVersionFlags(version.flags),
+          }));
           // A .com face has no per-version description; the .red one is not shown in its place.
           let modelVersions =
             showSfwFace && rawModel.sfwName != null
-              ? data.versions.map((version) => ({ ...version, description: '' }))
-              : data.versions;
+              ? publicVersions.map((version) => ({ ...version, description: '' }))
+              : publicVersions;
 
           // Visibility filters first, so the badge's base-model list reflects only
           // versions the viewer can actually see (no Private/license-restricted leaks).
@@ -4266,8 +4277,9 @@ export const upsertModel = async (
           throw throwConflictError(
             'This model’s civitai.com card changed while you were editing. Reload and save again.'
           );
-        // A .com cover this save changed (through the gate, for an owner) ends the re-check's removal.
-        if (coverChanged && data.sfwCoverImageId) {
+        // A .com cover this save changed (through the gate, for an owner) ends the re-check's
+        // removal, and so does turning the face off: there is no face left to have removed.
+        if ((coverChanged && data.sfwCoverImageId) || data.sfwName === null) {
           const { comFaceRemoved: _removed, ...rest } = mergedMeta;
           mergedMeta = rest;
         }
@@ -4492,6 +4504,7 @@ export const upsertModel = async (
     const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
     if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
       await queueComFaceRecheck(id);
+    if (!isModerator && listingChanged) await queueComFaceRestore(id);
     if (heldVerdictApplied) {
       const { finishHeldVerdictApply } = await import(
         '~/server/services/text-scan/actions/model-nsfw'
@@ -4755,7 +4768,10 @@ export async function applyModelContentChange({
     if (expectedDescription !== undefined && !affected) return false;
     await preventReplicationLag('model', id);
     // A changed description is part of the listing the .com face re-check reads.
-    if (affected) await queueComFaceRecheck(id);
+    if (affected) {
+      await queueComFaceRecheck(id);
+      await queueComFaceRestore(id);
+    }
 
     // A caller passing `context` has already written the body AND already run this gate on it.
     // This branch is the fan-out, which has neither — and the text it just wrote is text the

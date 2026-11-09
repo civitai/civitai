@@ -4760,10 +4760,20 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
  * oldest-first (FIFO), keyset-paginated. Each row carries `kind` so the unified
  * /apps/review queue (PR-2) can badge an onsite media revision vs an offsite submission.
  */
+/** The `where` for the listing PENDING queue — shared by the list and its count. */
+function pendingOffsiteRequestWhere() {
+  return { status: 'pending', kind: { in: [...REVIEWABLE_LISTING_KINDS] } };
+}
+
+/** How many listing requests are waiting for review (the Pending tab's badge). */
+export async function countPendingOffsiteRequests(): Promise<number> {
+  return dbRead.appListingPublishRequest.count({ where: pendingOffsiteRequestWhere() });
+}
+
 export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOptions = {}) {
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appListingPublishRequest.findMany({
-    where: { status: 'pending', kind: { in: [...REVIEWABLE_LISTING_KINDS] } },
+    where: pendingOffsiteRequestWhere(),
     orderBy: { submittedAt: 'asc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),

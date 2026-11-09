@@ -62,19 +62,30 @@ const {
   // withSysReadDeadline must reject it within the deadline → fail closed (503).
   const mockMultiIncr = {
     value: 1,
+    // When set, the count for the counter key the MULTI touched (per-subject buckets).
+    valueForKey: null as ((key: string) => number) | null,
     malformedExec: null as unknown[] | null | false,
     hangExec: false,
   };
-  const multiFactory = () => ({
-    set: vi.fn().mockReturnThis(),
-    incr: vi.fn().mockReturnThis(),
-    exec: vi.fn().mockImplementation(async () => {
-      if (mockMultiIncr.hangExec) return new Promise(() => {}); // never settles
-      return mockMultiIncr.malformedExec !== false
-        ? mockMultiIncr.malformedExec
-        : ['OK', mockMultiIncr.value];
-    }),
-  });
+  const multiFactory = () => {
+    let key = '';
+    const chain = {
+      set: vi.fn((k: string) => {
+        key = k;
+        return chain;
+      }),
+      incr: vi.fn().mockReturnThis(),
+      exec: vi.fn().mockImplementation(async () => {
+        if (mockMultiIncr.hangExec) return new Promise(() => {}); // never settles
+        if (mockMultiIncr.malformedExec !== false) return mockMultiIncr.malformedExec;
+        return [
+          'OK',
+          mockMultiIncr.valueForKey ? mockMultiIncr.valueForKey(key) : mockMultiIncr.value,
+        ];
+      }),
+    };
+    return chain;
+  };
   // Faithful stand-in for the real withSysReadDeadline (sys-read-deadline.ts): race
   // the wrapped promise against a rejecting timer; `<= 0` disables (no-op). A tiny
   // default ms keeps the never-settles tests fast without fake timers.
@@ -178,6 +189,7 @@ const goodBody = { bundleBase64: Buffer.from('zipbytes').toString('base64') };
 beforeEach(() => {
   vi.clearAllMocks();
   mockMultiIncr.value = 1;
+  mockMultiIncr.valueForKey = null;
   mockMultiIncr.malformedExec = false;
   mockMultiIncr.hangExec = false;
   sysDeadline.ms = 50;
@@ -339,6 +351,33 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeaders()['Retry-After']).toBeDefined();
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('F2: 429 when the per-USER limit is spent, even on a fresh key (no widening by minting keys)', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    // The user's bucket is over the limit; this API key's own bucket is fresh.
+    mockMultiIncr.valueForKey = (key) =>
+      key === `system:blocks:submit-rate-limit:user:${MOD_SESSION.user.id}` ? 11 : 1;
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(429);
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('F2: the per-KEY limit still applies alongside the per-user one', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockMultiIncr.valueForKey = (key) =>
+      key === `system:blocks:submit-rate-limit:key:${MOD_SESSION.apiKeyId}` ? 11 : 1;
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(429);
     expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 
@@ -507,6 +546,45 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(400);
     expect((res._getJSONData() as { message: string }).message).toContain('50 MiB');
+  });
+
+  it('a deep manifest-validation refusal returns 400 with every validator error', async () => {
+    const { ManifestValidationRefusal } = await import(
+      '~/server/services/blocks/manifest-submit-validation'
+    );
+    const errors = ['iframe.sandbox must be a non-empty string', 'contentRating must be one of g'];
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockSubmitVersion.mockRejectedValueOnce(new ManifestValidationRefusal(errors));
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(400);
+    expect((res._getJSONData() as { manifestErrors: string[] }).manifestErrors).toEqual(errors);
+  });
+
+  it('🔴 a permission-hook refusal also returns the structured storageHookErrors', async () => {
+    const { StorageHookRefusal } = await import('~/server/services/apps/storage-hooks');
+    const problems = [
+      {
+        collection: 'cards',
+        file: 'hooks/cards.js',
+        reason: 'sha_mismatch' as const,
+        expected: 'a'.repeat(64),
+        actual: 'b'.repeat(64),
+      },
+    ];
+    const refusal = new StorageHookRefusal(problems);
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockSubmitVersion.mockRejectedValueOnce(refusal);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(400);
+    expect(res._getJSONData()).toEqual({ message: refusal.message, storageHookErrors: problems });
   });
 
   // ---------------------------------------------------------------------------

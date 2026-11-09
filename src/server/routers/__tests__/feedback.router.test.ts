@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as MiddlewareTrpc from '~/server/middleware.trpc';
 import type * as FeedbackService from '~/server/services/feedback.service';
+import type * as FeedbackHqService from '~/server/services/feedback-hq.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
@@ -23,7 +24,15 @@ import {
  * router hands it, captured at import time.
  */
 
-const { rateLimitCalls, createFeedbackMock, isFeedbackAreaEnabledMock } = vi.hoisted(() => ({
+const {
+  rateLimitCalls,
+  createFeedbackMock,
+  isFeedbackAreaEnabledMock,
+  fileFeedbackToHqMock,
+  captureMock,
+} = vi.hoisted(() => ({
+  captureMock: vi.fn(async () => null),
+  fileFeedbackToHqMock: vi.fn(),
   // A plain array, not a spy: `vi.clearAllMocks()` in `beforeEach` would erase a
   // spy's record of a call that happened once, at module import.
   rateLimitCalls: [] as unknown[][],
@@ -48,6 +57,14 @@ vi.mock('~/server/services/feedback.service', async (importOriginal) => ({
   isFeedbackAreaEnabled: isFeedbackAreaEnabledMock,
 }));
 
+vi.mock('~/server/services/feedback-capture.service', () => ({
+  captureFeedbackScreenshot: captureMock,
+}));
+vi.mock('~/server/services/feedback-hq.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeedbackHqService>()),
+  fileFeedbackToHq: fileFeedbackToHqMock,
+}));
+
 const { feedbackRouter } = await import('~/server/routers/feedback.router');
 
 const USER_ID = 42;
@@ -59,19 +76,23 @@ const caller = () =>
       isModerator: false,
       muted: false,
       onboarding: OnboardingSteps.Buzz,
+      tier: 'gold',
     },
+    req: { headers: { 'user-agent': 'TestAgent/1.0', host: 'civitai.red' } },
+    domain: 'red',
     acceptableOrigin: true,
     // Without a full token scope the procedure throws FORBIDDEN for a SCOPE reason.
     // That matters: the "disabled area" test below also expects FORBIDDEN, so an
     // under-specified ctx would make it pass for entirely the wrong reason.
     tokenScope: TokenScope.Full,
-    features: {},
+    features: { assistant: true },
   } as never);
 
 beforeEach(() => {
   vi.clearAllMocks();
   createFeedbackMock.mockResolvedValue({ id: 1 });
   isFeedbackAreaEnabledMock.mockResolvedValue(true);
+  fileFeedbackToHqMock.mockResolvedValue(undefined);
 });
 
 /**
@@ -112,6 +133,13 @@ describe('feedback.create — extended context reaches the service', () => {
         screenshotId: UUID_SHOT,
         sessionId: 'faro-abc',
       },
+      server: expect.objectContaining({
+        userAgent: 'TestAgent/1.0',
+        tier: 'gold',
+        site: 'red',
+        host: 'civitai.red',
+        flags: expect.objectContaining({ assistant: true }),
+      }),
     });
   });
 
@@ -259,5 +287,53 @@ describe('feedback.create — the submission quota is not widened by uploads', (
     // change to either constant makes the resulting budget visible in the diff.
     const perSubmission = 3 + 1;
     expect(FEEDBACK_RATE_LIMIT.max * perSubmission).toBe(20);
+  });
+});
+
+describe('feedback.create — filing to HQ', () => {
+  it('answers the reporter without waiting for the filing, after the row is saved', async () => {
+    // A filing that never settles: an awaited call would hang the submit and time this test out.
+    fileFeedbackToHqMock.mockReturnValue(new Promise(() => undefined));
+
+    await expect(caller().create(submission)).resolves.toEqual({ id: 1 });
+
+    expect(fileFeedbackToHqMock).toHaveBeenCalledTimes(1);
+    expect(fileFeedbackToHqMock.mock.calls[0][0]).toMatchObject({
+      feedbackId: 1,
+      userId: USER_ID,
+      area: submission.area,
+      message: submission.message,
+      server: expect.objectContaining({ site: 'red' }),
+    });
+  }, 2_000);
+
+  it('stores the page capture for the saved report, then files with its outcome', async () => {
+    captureMock.mockResolvedValueOnce({ screenshotImageId: 5 } as never);
+    fileFeedbackToHqMock.mockResolvedValue(undefined);
+
+    await caller().create(submission);
+    await vi.waitFor(() => expect(fileFeedbackToHqMock).toHaveBeenCalledTimes(1));
+
+    expect(captureMock).toHaveBeenCalledWith({
+      feedbackId: 1,
+      reporterId: USER_ID,
+      screenshotId: UUID_SHOT,
+    });
+    expect(fileFeedbackToHqMock.mock.calls[0][0]).toMatchObject({
+      feedbackId: 1,
+      capture: { screenshotImageId: 5 },
+    });
+  });
+
+  it('answers the reporter without waiting for the capture', async () => {
+    captureMock.mockReturnValueOnce(new Promise(() => undefined) as never);
+    await expect(caller().create(submission)).resolves.toEqual({ id: 1 });
+  }, 2_000);
+
+  it('files nothing when the report could not be saved', async () => {
+    createFeedbackMock.mockRejectedValue(new Error('db down'));
+
+    await expect(caller().create(submission)).rejects.toThrow();
+    expect(fileFeedbackToHqMock).not.toHaveBeenCalled();
   });
 });

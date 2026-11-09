@@ -1,14 +1,22 @@
 /**
- * The gRPC binding of the source protocol (spec/registry.md @ 4166f34, "Bindings" → "gRPC"):
+ * The gRPC binding of the source protocol (spec/registry.md @ 2709083, "Bindings" → "gRPC"):
  * `service Source { rpc Subscribe(SubscribeRequest) returns (stream Event); }`, with the spec's
  * messages verbatim ({@link SOURCE_PROTO}). The subscription itself is the shared core
  * (`subscription.ts`), as for HTTP; this file maps the request in and events and errors out.
  *
  *   - The spec's proto block declares no `package`, so the method is `/Source/Subscribe`, the
  *     path a stub generated from that block calls.
+ *   - `Entity.body` is the body's JSON text as UTF-8 bytes, the text the HTTP binding sends for
+ *     it ({@link jsonBytes}), so a relay can pass it on byte for byte. `Entity.meta` and
+ *     `Event.meta` are bytes too (a JSON object; empty is none): this source sets no `meta`, so it
+ *     sends them empty, which is absent on the wire.
  *   - An error is its gRPC status (spec "Errors") with a `google.rpc.ErrorInfo` whose `reason` is
- *     the error's name, in `grpc-status-details-bin`.
+ *     the error's name, and no `domain` (the spec defines none), in `grpc-status-details-bin`.
  *   - An idle stream is kept open by HTTP/2 pings ({@link GRPC_KEEPALIVE_MS}).
+ *   - Auth (`auth.ts`): the token is the `authorization` metadata (`Bearer {token}`); without one
+ *     the call is anonymous. `invalid_token` is UNAUTHENTICATED with an `ErrorInfo` reason
+ *     `invalid_token`, before the stream or at the token's expiry / revocation after it; a user
+ *     whose ratings changed mid-stream gets OUT_OF_RANGE / `cursor_expired`.
  *   - A consumer that leaves the call's buffer full for `SLOW_CONSUMER_MS` is ended at once with
  *     an RST_STREAM that clients read as `RESOURCE_EXHAUSTED`, the status of `slow_consumer`
  *     (a status in trailers would queue behind what it never reads; `resetSlowConsumer`).
@@ -27,6 +35,14 @@ import * as grpc from '@grpc/grpc-js';
 import type { ServerHttp2Stream } from 'node:http2';
 import { constants as http2Constants } from 'node:http2';
 import * as protobuf from 'protobufjs';
+import type { ResourceConfig, VerifyToken } from '~/server/registry-adapter/auth';
+import {
+  authenticate,
+  isAuthError,
+  resourceMetadataUrl,
+  watchPrincipal,
+  wwwAuthenticate,
+} from '~/server/registry-adapter/auth';
 import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
 import { ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
 import type { EventSink } from '~/server/registry-adapter/subscription';
@@ -36,10 +52,9 @@ import {
   drained,
 } from '~/server/registry-adapter/subscription';
 
-/** The spec's proto block, unchanged but for the `syntax` and `import` lines it needs to parse. */
+/** The spec's proto block, unchanged but for the `syntax` line it needs to parse. */
 export const SOURCE_PROTO = `
 syntax = "proto3";
-import "google/protobuf/struct.proto";
 
 service Source {
   rpc Subscribe(SubscribeRequest) returns (stream Event);
@@ -56,8 +71,8 @@ message Entity {
   string urn = 1;
   repeated string schemas = 2;
   string rev = 3;
-  google.protobuf.Value body = 4;
-  google.protobuf.Struct meta = 5;
+  bytes body = 4;             // the JSON value, as UTF-8
+  bytes meta = 5;             // a JSON object, as UTF-8; empty: none
 }
 
 message Event {
@@ -68,7 +83,7 @@ message Event {
     End end = 4;
     Progress progress = 6;
   }
-  google.protobuf.Struct meta = 5;
+  bytes meta = 5;             // a JSON object, as UTF-8; empty: none
 }
 
 message Upsert   { Entity entity = 1; string cursor = 2; }
@@ -98,8 +113,6 @@ message ErrorInfo {
 `;
 
 export const SUBSCRIBE_PATH = '/Source/Subscribe';
-/** `ErrorInfo.domain`: the names are the registry protocol's, not this source's. */
-export const ERROR_DOMAIN = 'registry';
 const ERROR_INFO_TYPE_URL = 'type.googleapis.com/google.rpc.ErrorInfo';
 export const GRPC_KEEPALIVE_MS = 15_000;
 const GRPC_KEEPALIVE_TIMEOUT_MS = 10_000;
@@ -117,7 +130,7 @@ export const GRPC_STATUS: Record<ErrorCode, grpc.status> = {
 
 function loadTypes() {
   const root = new protobuf.Root();
-  for (const file of ['google/protobuf/struct.proto', 'google/protobuf/any.proto']) {
+  for (const file of ['google/protobuf/any.proto']) {
     const json = protobuf.common.get(file);
     if (!json?.nested) throw new Error(`registry-adapter: protobufjs has no ${file}`);
     root.addJSON(json.nested);
@@ -135,44 +148,19 @@ function loadTypes() {
 const types = loadTypes();
 
 /**
- * A `google.protobuf.Value` as protobufjs takes and gives it. Its built-in well-known types name
- * their fields in camelCase whatever `keepCase` says (only the field numbers reach the wire).
+ * A body as `Entity.body` carries it: its JSON text, UTF-8. `JSON.stringify`'s, the same text the
+ * HTTP binding sends for it (`serve.ts`), so what JSON cannot hold (a non-finite number, an
+ * `undefined` property) is dropped or `null` alike on both bindings. A body with no JSON at all
+ * (`undefined`) is `null`.
  */
-type PbValue = {
-  nullValue?: number;
-  numberValue?: number;
-  stringValue?: string;
-  boolValue?: boolean;
-  structValue?: { fields?: Record<string, PbValue> };
-  listValue?: { values?: PbValue[] };
-};
-
-/** JSON as a `google.protobuf.Value`, with `JSON.stringify`'s rules for what JSON cannot hold. */
-export function toValue(v: unknown): PbValue {
-  if (typeof v === 'string') return { stringValue: v };
-  if (typeof v === 'boolean') return { boolValue: v };
-  if (typeof v === 'number') return Number.isFinite(v) ? { numberValue: v } : { nullValue: 0 };
-  if (Array.isArray(v)) return { listValue: { values: v.map(toValue) } };
-  if (v !== null && typeof v === 'object') {
-    const fields: Record<string, PbValue> = {};
-    for (const [k, x] of Object.entries(v)) if (x !== undefined) fields[k] = toValue(x);
-    return { structValue: { fields } };
-  }
-  return { nullValue: 0 };
+export function jsonBytes(body: unknown): Buffer {
+  return Buffer.from(JSON.stringify(body) ?? 'null', 'utf8');
 }
 
-export function fromValue(v: PbValue | undefined): unknown {
-  if (!v) return null;
-  if (v.stringValue !== undefined) return v.stringValue;
-  if (v.boolValue !== undefined) return v.boolValue;
-  if (v.numberValue !== undefined) return v.numberValue;
-  if (v.listValue !== undefined) return (v.listValue.values ?? []).map(fromValue);
-  if (v.structValue !== undefined) {
-    return Object.fromEntries(
-      Object.entries(v.structValue.fields ?? {}).map(([k, x]) => [k, fromValue(x)])
-    );
-  }
-  return null;
+/** `Entity.body` as a consumer reads it: the JSON value its bytes hold; `null` when empty. */
+export function fromJsonBytes(bytes: Uint8Array | undefined): unknown {
+  if (!bytes || bytes.length === 0) return null;
+  return JSON.parse(Buffer.from(bytes).toString('utf8'));
 }
 
 /** The wire form of one event. */
@@ -186,7 +174,7 @@ export function encodeEvent(e: StreamEvent): Buffer {
             urn: e.entity.urn,
             schemas: e.entity.schemas,
             rev: e.entity.rev,
-            body: toValue(e.entity.body),
+            body: jsonBytes(e.entity.body),
           },
           cursor: e.cursor,
         },
@@ -211,7 +199,7 @@ export function encodeEvent(e: StreamEvent): Buffer {
 type WireEvent = {
   kind?: 'upsert' | 'delete' | 'live' | 'end' | 'progress';
   upsert?: {
-    entity?: { urn?: string; schemas?: string[]; rev?: string; body?: PbValue };
+    entity?: { urn?: string; schemas?: string[]; rev?: string; body?: Uint8Array };
     cursor?: string;
   };
   delete?: { urn?: string; cursor?: string };
@@ -234,7 +222,7 @@ export function decodeEvent(buf: Uint8Array): StreamEvent | null {
           urn: entity.urn ?? '',
           schemas: entity.schemas ?? [],
           rev: entity.rev ?? '',
-          body: fromValue(entity.body),
+          body: fromJsonBytes(entity.body),
         },
         cursor: w.upsert?.cursor ?? '',
       };
@@ -271,10 +259,20 @@ export const SOURCE_SERVICE: grpc.ServiceDefinition = {
   },
 };
 
-/** The trailers of an error: its status, and `ErrorInfo` naming it. */
-export function errorStatus(code: ErrorCode, message: string): Partial<grpc.StatusObject> {
+/**
+ * The trailers of an error: its status, and `ErrorInfo` naming it. An auth error also carries
+ * `www-authenticate`, as over HTTP, naming the metadata document when one is configured.
+ */
+export function errorStatus(
+  code: ErrorCode,
+  message: string,
+  resourceMetadata?: string
+): Partial<grpc.StatusObject> {
   const info = types.errorInfo
-    .encode(types.errorInfo.fromObject({ reason: code, domain: ERROR_DOMAIN }))
+    // No `domain`: the spec names an error by the `ErrorInfo`'s `reason` alone ("Errors") and
+    // defines no domain for the protocol's names, so none is invented for a consumer to match on.
+    // Left out, not set to '', which protobufjs would still put on the wire.
+    .encode(types.errorInfo.fromObject({ reason: code }))
     .finish();
   const status = types.status
     .encode(
@@ -287,6 +285,9 @@ export function errorStatus(code: ErrorCode, message: string): Partial<grpc.Stat
     .finish();
   const metadata = new grpc.Metadata();
   metadata.set('grpc-status-details-bin', Buffer.from(status));
+  if (isAuthError(code)) {
+    metadata.set('www-authenticate', wwwAuthenticate(code, message, resourceMetadata));
+  }
   return { code: GRPC_STATUS[code], details: message, metadata };
 }
 
@@ -301,10 +302,12 @@ export function errorInfoOf(
   };
   const detail = status.details.find((d) => d.type_url === ERROR_INFO_TYPE_URL);
   if (!detail) return null;
-  return types.errorInfo.toObject(types.errorInfo.decode(detail.value)) as {
-    reason: string;
-    domain: string;
+  const info = types.errorInfo.toObject(types.errorInfo.decode(detail.value)) as {
+    reason?: string;
+    domain?: string;
   };
+  // An empty field is absent on the wire: this source's `domain` always is.
+  return { reason: info.reason ?? '', domain: info.domain ?? '' };
 }
 
 type Call = grpc.ServerWritableStream<WireRequest, StreamEvent>;
@@ -343,13 +346,23 @@ function resetSlowConsumer(call: Call): boolean {
   return true;
 }
 
-function openCall(call: Call, slowConsumerMs: number): EventSink & { ended(): boolean } {
+function openCall(
+  call: Call,
+  slowConsumerMs: number
+): EventSink & { ended(): boolean; fail(status: Partial<grpc.StatusObject>): void } {
   const abort = new AbortController();
   let ended = false;
   call.on('cancelled', () => abort.abort());
   return {
     signal: abort.signal,
     ended: () => ended,
+    /** Ends the call now with `status`, stopping the subscription behind it. */
+    fail(status) {
+      if (ended || abort.signal.aborted) return;
+      ended = true;
+      abort.abort();
+      call.emit('error', status);
+    },
     async send(event) {
       if (abort.signal.aborted || ended) return;
       const flushed = call.write(event);
@@ -363,11 +376,27 @@ function openCall(call: Call, slowConsumerMs: number): EventSink & { ended(): bo
   };
 }
 
+/** The `authorization` metadata of a call: its last string value. */
+function authorizationOf(call: Call): string | undefined {
+  const values = call.metadata
+    .get('authorization')
+    .filter((v): v is string => typeof v === 'string');
+  return values[values.length - 1];
+}
+
 export function createGrpcServer(
   adapter: Adapter,
-  opts: { onError?: (err: unknown) => void; slowConsumerMs?: number } = {}
+  opts: {
+    onError?: (err: unknown) => void;
+    slowConsumerMs?: number;
+    /** As for HTTP (`serve.ts`): without it, any token is `invalid_token`. */
+    verifyToken?: VerifyToken;
+    resource?: ResourceConfig;
+    tokenRecheckMs?: number;
+  } = {}
 ): grpc.Server {
   const subscribe = createSubscriber(adapter);
+  const metadataUrl = resourceMetadataUrl(opts.resource);
   const server = new grpc.Server({
     'grpc.keepalive_time_ms': GRPC_KEEPALIVE_MS,
     'grpc.keepalive_timeout_ms': GRPC_KEEPALIVE_TIMEOUT_MS,
@@ -376,17 +405,22 @@ export function createGrpcServer(
     Subscribe: (call: Call) => {
       const sink = openCall(call, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       const run = async () => {
+        let unwatch: (() => void) | undefined;
         try {
           const r = call.request;
-          await subscribe(
-            subscribeRequest({
-              schema: r.schema,
-              cursor: r.cursor,
-              urns: r.urns,
-              filter: r.filter,
-            }),
-            sink
+          const request = subscribeRequest({
+            schema: r.schema,
+            cursor: r.cursor,
+            urns: r.urns,
+            filter: r.filter,
+          });
+          const principal = await authenticate(authorizationOf(call), opts.verifyToken);
+          unwatch = watchPrincipal(
+            principal,
+            (err) => sink.fail(errorStatus(err.code, err.message, metadataUrl)),
+            { recheckMs: opts.tokenRecheckMs }
           );
+          await subscribe(request, sink, principal);
         } catch (err) {
           if (sink.ended() || sink.signal.aborted) return;
           if (
@@ -400,12 +434,14 @@ export function createGrpcServer(
           // a fixed message, since its own text can name a database or a host.
           let status: Partial<grpc.StatusObject>;
           if (err instanceof ProtocolError) {
-            status = errorStatus(err.code, err.message);
+            status = errorStatus(err.code, err.message, metadataUrl);
           } else {
             opts.onError?.(err);
             status = errorStatus('unavailable', 'unavailable');
           }
           call.emit('error', status);
+        } finally {
+          unwatch?.();
         }
       };
       void run();

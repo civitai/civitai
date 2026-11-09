@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useRef } from 'react';
+import { HAT_SORTS } from '~/shared/constants/hat-turf-feed.constants';
 import * as z from 'zod';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
@@ -53,6 +54,7 @@ const modelFilterSchema = z.object({
   earlyAccess: z.boolean().optional(),
   paidAccess: z.boolean().optional(),
   hidePaid: z.boolean().optional(),
+  onSale: z.boolean().optional(),
   supportsGeneration: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
   followed: z.boolean().optional(),
@@ -102,6 +104,11 @@ const imageFilterSchema = z.object({
   // Green-domain only: opt-in to PG-13 content on image/video feeds.
   // Default off — feeds show PG only until user toggles this on.
   includePG13: z.boolean().optional(),
+  // Hat Turf players only; the server ignores these from anyone else.
+  hatSort: z.enum(HAT_SORTS).optional(),
+  hatTeams: z.string().array().optional(),
+  hideTurfHats: z.boolean().optional(),
+  hideWornHats: z.boolean().optional(),
 });
 
 type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;

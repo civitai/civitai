@@ -8,6 +8,7 @@ import {
   commentDedupeKeyByShape,
   isModelComment,
   modelPageId,
+  notOnUnpublishedArticle,
   threadTypeLabel,
   threadUrlMap,
   v3AppListingResolved,
@@ -24,6 +25,70 @@ const liveCommentCreatedOrEditedSince = (lastSent: string) =>
           AND (c."createdAt" > '${lastSent}' OR c."updatedAt" > '${lastSent}')
           AND c."tosViolation" = false
           AND c.hidden IS NOT TRUE`;
+
+export const ARTICLE_MENTION_CAP = 10;
+export const ARTICLE_MENTION_EDIT_WINDOW = '30 days';
+// GREATEST skips NULLs, so a never-scanned article still counts its publish and edit times.
+const ARTICLE_TOUCHED_AT = `GREATEST(a."publishedAt", a."updatedAt", a."contentScannedAt")`;
+
+/**
+ * People named in a live article, each once: the first `ARTICLE_MENTION_CAP` who would be notified,
+ * in document order. Recipient filters run before the cap, so names that can't be told don't use it
+ * up. The cap is per run, not per article lifetime: nothing outside the notification rows records who
+ * was told.
+ *
+ * Re-read when the article goes live or is edited since the last run. Like comment edits, it
+ * re-emits the article's key and relies on UserNotification's unique (notificationId, userId) to
+ * skip people already told. Those rows are deleted by the admin cleanup with a caller-chosen cutoff,
+ * so the window after publish only holds while that cutoff is older than the window.
+ * `contentScannedAt` is a trigger too: the scan that clears an edit marks the article Scanned with
+ * raw SQL that leaves `updatedAt` alone, and until then `ingestion` keeps it from notifying.
+ *
+ * Unlisted and Private articles are skipped: the notification would hand out a link the author kept
+ * off the feed. The ingestion and browsingLevel gates match the article feed's.
+ */
+export const articleMentionsSql = (lastSent: string) => `
+        SELECT
+          am."ownerId",
+          a."userId" "actorId",
+          JSONB_BUILD_OBJECT(
+            'mentionedIn', 'article',
+            'articleId', a.id,
+            'articleTitle', a.title,
+            'username', u.username
+          ) "details"
+        FROM "Article" a
+        JOIN "User" u ON u.id = a."userId"
+        CROSS JOIN LATERAL (
+          SELECT x.id "ownerId"
+          FROM (
+            SELECT CAST(r.m[1] AS INT) id, MIN(r.ord) first_at
+            FROM regexp_matches(a.content, '"mention:(\\d+)"', 'g') WITH ORDINALITY r(m, ord)
+            GROUP BY 1
+          ) x
+          JOIN "User" ru ON ru.id = x.id
+          WHERE x.id <> a."userId"
+            AND ru."bannedAt" IS NULL
+            AND ru."deletedAt" IS NULL
+            AND (a."nsfwLevel" & ru."browsingLevel") <> 0
+            AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = ru.id AND type = 'new-mention')
+            AND ${notBlockedBetween('ru.id', 'a."userId"')}
+          ORDER BY x.first_at
+          LIMIT ${ARTICLE_MENTION_CAP}
+        ) am
+        -- Matches "Article_mention_scan_idx" exactly (expression and partial predicate), or this is
+        -- a seq scan of every article each run.
+        WHERE ${ARTICLE_TOUCHED_AT} > '${lastSent}'
+          AND a.status = 'Published'
+          AND a.ingestion = 'Scanned'
+          AND a."publishedAt" > now() - interval '${ARTICLE_MENTION_EDIT_WINDOW}'
+          AND a."publishedAt" <= now()
+          AND NOT a."tosViolation"
+          AND NOT a.unlisted
+          AND a.availability <> 'Private'
+          AND a.content LIKE '%"mention:%'
+          AND u."bannedAt" IS NULL
+          AND NOT u.muted`;
 
 // Moveable (possibly)
 
@@ -59,6 +124,11 @@ export const mentionNotifications = createNotificationProcessor({
         return {
           message: `${details.username} mentioned you in a ${details.parentType} on ${details.modelName}`,
           url: `/models/${details.modelId}?dialog=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
+        };
+      } else if (details.mentionedIn === 'article') {
+        return {
+          message: `${details.username} mentioned you in the article "${details.articleTitle}"`,
+          url: `/articles/${details.articleId}`,
         };
       }
       return {
@@ -96,6 +166,7 @@ export const mentionNotifications = createNotificationProcessor({
           -- Same slug-resolution guard the reply processors carry: those threads are addressed by
           -- SLUG, the join above supplies it, and only a row the join failed on is dropped.
           AND ${v3AppListingResolved('c')}
+          AND ${notOnUnpublishedArticle('c')}
 
         UNION
 
@@ -114,9 +185,12 @@ export const mentionNotifications = createNotificationProcessor({
           AND (m."publishedAt" > '${lastSent}' OR m."updatedAt" > '${lastSent}')
           AND m.description LIKE '%"mention:%'
           AND m.status = 'Published'
+
+        UNION
+${articleMentionsSql(lastSent)}
       )
       SELECT
-        concat('new-mention:user:', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'threadType' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId')) "key",
+        concat('new-mention:user:', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'mentionedIn' = 'article' then 'article:' when details->>'threadType' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId', details->>'articleId')) "key",
         -- Claiming the dedupe key SUPPRESSES every other notification for this comment, so only claim it
         -- when this mention is a worthy replacement — i.e. prepareMessage above yields a message AND a
         -- working URL. Three ways it doesn't:

@@ -60,6 +60,8 @@ export type PlatformFeedbackContext = {
   reporterIdCount: number | null;
   firstSeenAt: string | null;
   lastSeenAt: string | null;
+  /** When a moderator triage write last touched the row (the change feed's stamp; not displayed). */
+  changedAt: string | null;
   reopenOf: number | null;
   regressionOf: number | null;
   resolution: PlatformResolution | null;
@@ -172,6 +174,7 @@ export function splitPlatformContext(context: unknown): PlatformFeedbackContext 
     reporterIdCount: null,
     firstSeenAt: null,
     lastSeenAt: null,
+    changedAt: null,
     reopenOf: null,
     regressionOf: null,
     resolution: null,
@@ -234,6 +237,7 @@ export function splitPlatformContext(context: unknown): PlatformFeedbackContext 
       else if (key === 'reporterIds' && Array.isArray(value)) out.reporterIdCount = value.length;
       else if (key === 'firstSeenAt' && isString(value)) out.firstSeenAt = value;
       else if (key === 'lastSeenAt' && isString(value)) out.lastSeenAt = value;
+      else if (key === 'changedAt' && isString(value)) out.changedAt = value;
       else if (key === 'reopenOf' && isId(value)) out.reopenOf = value;
       else if (key === 'regressionOf' && isId(value)) out.regressionOf = value;
       else if (key === 'samples' && Array.isArray(value) && value.every(isSample))

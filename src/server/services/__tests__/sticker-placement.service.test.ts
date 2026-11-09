@@ -21,6 +21,7 @@ import {
   STICKER_REMOVAL_LOCK_HOURS,
 } from '~/shared/utils/sticker-placement';
 import type { CreateStickerPlacement } from '~/server/services/sticker-placement.service';
+import type { StickerTrack } from '~/shared/utils/sticker-track';
 import { encodeStickerTrack } from '~/shared/utils/sticker-track';
 
 /**
@@ -54,13 +55,15 @@ const settlePlacement = vi.fn<PrismaStub<{ settled: boolean }>>(async () => ({ s
 // `getStickerPlacements` / `getStickerPlacementsAndCounts`, `listApprovedPlacementRows` for
 // `getStickerPlacementCounts`). Which rows they return for which viewer, against a real database,
 // is pinned in placement-reads.kysely-parity.test.ts; here they hand back the rows a test names.
-const { stickerRows, approvedRows } = vi.hoisted(() => ({
+const { stickerRows, approvedRows, trackRows } = vi.hoisted(() => ({
   stickerRows: vi.fn(),
   approvedRows: vi.fn(),
+  trackRows: vi.fn(),
 }));
 vi.mock('@civitai/db-queries/placement', () => ({
   listStickerPlacementRows: stickerRows,
   listApprovedPlacementRows: approvedRows,
+  listPlacementTrackRows: trackRows,
 }));
 vi.mock('~/server/services/placement-escrow.service', () => ({
   holdPlacementEscrow,
@@ -192,6 +195,7 @@ const {
   getMyStickerPlacements,
   getStickerPlacementCounts,
   getStickerPlacementsAndCounts,
+  getStickerPlacementTracks,
 } = await import('~/server/services/sticker-placement.service');
 
 /**
@@ -2462,6 +2466,54 @@ describe('a sticker flagged NSFW placements only', () => {
   });
 });
 
+describe('the tracks for a video', () => {
+  const OTHER_COSMETIC = 225;
+  const row = (id: number, cosmeticId: number) => ({
+    id,
+    targetId: IMAGE,
+    data: { cosmeticId, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
+    track: { v: 2, keys: [{ t: id, x: 0.5, y: 0.5, s: 0.2, r: 0, o: 1, ease: 'linear' }] },
+  });
+
+  beforeEach(() => {
+    cosmeticCacheFetch.mockResolvedValue({
+      [COSMETIC]: { flags: CosmeticFlag.SfwPlacementsOnly },
+      [OTHER_COSMETIC]: { flags: CosmeticFlag.None },
+    });
+    imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.XXX }]);
+    trackRows.mockResolvedValue([row(1, COSMETIC), row(2, OTHER_COSMETIC)]);
+  });
+
+  it('reads the sticker surface of that image, and withholds what the listing keeps off', async () => {
+    const tracks = await getStickerPlacementTracks({ imageId: IMAGE });
+
+    expect(trackRows).toHaveBeenCalledWith(expect.anything(), {
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: IMAGE,
+    });
+    expect(tracks.map(({ id }) => id)).toEqual([2]);
+  });
+
+  it('gives a moderator what the listing would show them', async () => {
+    const tracks = await getStickerPlacementTracks({ imageId: IMAGE, isModerator: true });
+
+    expect(tracks.map(({ id }) => id)).toEqual([1, 2]);
+  });
+
+  it('drops a stored track that breaks the rules, so it cannot break the player', async () => {
+    trackRows.mockResolvedValue([
+      row(2, OTHER_COSMETIC),
+      { ...row(3, OTHER_COSMETIC), track: { v: 2, keys: [] } },
+      { ...row(4, OTHER_COSMETIC), track: { v: 2 } },
+    ]);
+
+    const tracks = await getStickerPlacementTracks({ imageId: IMAGE, isModerator: true });
+
+    expect(tracks.map(({ id }) => id)).toEqual([2]);
+  });
+});
+
 /**
  * The combined listing-and-count call is what every current surface asks for, so it has to say
  * EXACTLY what the two separate calls say — including the two places the listing and the count
@@ -2658,6 +2710,50 @@ describe('a moving sticker on a video', () => {
       /up to 20%/
     );
     expect(placementCreate).not.toHaveBeenCalled();
+  });
+
+  describe('set with keys', () => {
+    const key = (t: number, x: number, s: number) =>
+      ({ t, x, y: 0.5, s, r: 10, o: 1, ease: 'smooth' } as const);
+    // The first key is a second in, so the start pose is that key held from time zero.
+    const keyed: StickerTrack = {
+      v: 2,
+      keys: [key(1000, 0.2, 0.1), key(2000, 0.4, 0.22), key(3000, 0.5, 0.1)],
+    };
+
+    it('stores the keys, with `data` holding the first key’s pose', async () => {
+      resolvePlacementSpaceFor.mockResolvedValue(VIDEO_SPACE);
+
+      await createStickerPlacement({ ...placeInput, data, track: keyed });
+
+      expect(placementCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            track: keyed,
+            data: expect.objectContaining({ x: 0.2, y: 0.5, scale: 0.1, rotation: 10 }),
+          }),
+        })
+      );
+    });
+
+    it('refuses a shown key that the placer’s own opacity takes under the floor', async () => {
+      resolvePlacementSpaceFor.mockResolvedValue(VIDEO_SPACE);
+      const faint: StickerTrack = { v: 2, keys: [{ ...key(0, 0.2, 0.1), o: 0.5 }] };
+
+      await expect(
+        createStickerPlacement({ ...placeInput, data: { ...data, opacity: 0.4 }, track: faint })
+      ).rejects.toThrow(/at least 30% opaque/);
+      expect(placementCreate).not.toHaveBeenCalled();
+    });
+
+    it('refuses keys that pass the creator’s limit between a first and last key inside it', async () => {
+      resolvePlacementSpaceFor.mockResolvedValue({ ...VIDEO_SPACE, settings: { maxScale: 0.2 } });
+
+      await expect(createStickerPlacement({ ...placeInput, data, track: keyed })).rejects.toThrow(
+        /up to 20%/
+      );
+      expect(placementCreate).not.toHaveBeenCalled();
+    });
   });
 });
 

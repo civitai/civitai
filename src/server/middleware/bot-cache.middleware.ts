@@ -52,7 +52,12 @@ export const botCacheMiddleware = createMiddleware({
 
       origin = await import('~/server/bot-cache/bot-cache-origin');
       const { pathname, search } = request.nextUrl;
-      const key = origin.botCacheKey(req.headers.host ?? '', pathname, search);
+      const key = origin.botCacheKey(
+        req.headers.host ?? '',
+        pathname,
+        search,
+        req.headers['user-agent']
+      );
       if (!key) return;
       let entry: BotCacheOrigin.BotCacheEntry | null;
       try {

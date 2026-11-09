@@ -27,6 +27,9 @@ import { PreferencesPane } from '~/components/Account/PreferencesPane';
 import { SettingsStack } from '~/components/Account/SettingsLayout';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
+const UsageLimitsPane = dynamic(() =>
+  import('~/components/Account/usage/UsageLimitsPane').then((mod) => mod.UsageLimitsPane)
+);
 const NotificationsPane = dynamic(() =>
   import('~/components/Account/NotificationsPane').then((mod) => mod.NotificationsPane)
 );
@@ -39,6 +42,7 @@ export const accountPaneCopy: Record<string, { title: string }> = {
   content: { title: 'Content & Browsing' },
   creator: { title: 'Creator' },
   billing: { title: 'Membership & Billing' },
+  usage: { title: 'Usage limits' },
   security: { title: 'Security & Apps' },
 };
 
@@ -92,6 +96,9 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
           <MembershipGiftsCard pointer />
         </SettingsStack>
       );
+
+    case 'usage':
+      return <UsageLimitsPane />;
 
     case 'security':
       return (

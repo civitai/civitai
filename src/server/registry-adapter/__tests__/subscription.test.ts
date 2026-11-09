@@ -251,7 +251,7 @@ describe('🔴 a cursor is tied to the request that issued it: schema, urns and 
     urn: `urn:apps.civitai.com:app/${slug}`,
     schemas: [APPS],
     rev,
-    body: { slug, kind: 'onsite' },
+    body: { slug, kind: 'onsite', contentRating: 'g' },
   });
   const catalog = () =>
     createPollingAdapter({
@@ -320,7 +320,7 @@ describe('🔴 progress after changes the filter excluded (rule 9)', () => {
     urn: `urn:apps.civitai.com:app/${slug}`,
     schemas: [APPS],
     rev,
-    body: { slug, kind },
+    body: { slug, kind, contentRating: 'g' },
   });
   const ONSITE = filterParam('{"properties":{"kind":{"const":"onsite"}}}');
   const catalog = (states: Entity[][], store = createMemorySnapshotStore()) => {
@@ -369,7 +369,7 @@ describe('🔴 progress (rule 9)', () => {
     urn: `urn:apps.civitai.com:app/${slug}`,
     schemas: [APPS],
     rev,
-    body: { slug },
+    body: { slug, contentRating: 'g' },
   });
 
   it('a stream narrowed by urns gets progress when another entity moves the cursor, and it resumes', async () => {

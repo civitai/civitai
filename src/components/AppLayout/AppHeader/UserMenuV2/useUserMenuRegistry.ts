@@ -52,7 +52,7 @@ export function useUserMenuRegistry({ opened }: { opened: boolean }): UserMenuRe
     label: 'Crucibles',
   };
   registry['civitai-link'] = {
-    visible: !!currentUser && features.buzzSpendPop,
+    visible: !!currentUser,
     icon: IconScreenShare,
     label: 'Civitai Link',
     onClick: () => openCivitaiLinkDialog(),

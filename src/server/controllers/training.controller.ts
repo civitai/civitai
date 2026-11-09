@@ -7,6 +7,8 @@ import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { getModel } from '~/server/services/model.service';
+import { trainingDataOwnerView } from '~/server/services/training-data-restricted.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import {
   throwBadRequestError,
@@ -87,7 +89,14 @@ export const getModelData = async ({ input, ctx }: { input: GetByIdInput; ctx: C
       }
     }
 
-    return modelData;
+    if (ctx.user?.isModerator) return modelData;
+    return {
+      ...modelData,
+      modelVersions: modelData.modelVersions.map((v) => ({
+        ...v,
+        files: trainingDataOwnerView(v.files),
+      })),
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -175,11 +184,13 @@ const moderateTrainingData = async ({
   approve,
   workflowId,
   status,
+  moderatorId,
 }: {
   modelVersionId: number;
   approve: boolean;
   workflowId: string;
   status?: WorkflowStatus;
+  moderatorId: number;
 }) => {
   if (!env.ORCHESTRATOR_ENDPOINT) throw throwInternalServerError('No orchestrator endpoint');
 
@@ -204,6 +215,20 @@ const moderateTrainingData = async ({
       // own database is the half that can still fail, and `webhookFailed` is how the caller hears.
       let webhookFailed = false;
 
+      // Same row the moderator app writes for a ruling there.
+      try {
+        await trackModActivity(moderatorId, {
+          entityType: 'modelVersion',
+          entityId: modelVersionId,
+          activity: approve ? 'trainingData:approve' : 'trainingData:deny',
+        });
+      } catch (e) {
+        logWebhook({
+          message: 'Gate released but the moderator activity was not recorded',
+          data: { modelVersionId, workflowId, important: true, error: (e as Error)?.message },
+        });
+      }
+
       if (!status) {
         webhookFailed = true;
         logWebhook({
@@ -212,7 +237,7 @@ const moderateTrainingData = async ({
         });
       } else {
         // The orchestrator does not reliably fire this itself, and without it an approved or denied
-        // run stays Paused in our database.
+        // run stays Paused in our database. A thrown fetch is the same half-done state as a refusal.
         const hook = await fetch(
           `https://api.civitai.com/webhooks/resource-training-v2/${modelVersionId}?token=${env.WEBHOOK_TOKEN}`,
           {
@@ -222,12 +247,17 @@ const moderateTrainingData = async ({
               'Content-Type': 'application/json',
             },
           }
-        );
-        if (!hook.ok) {
+        ).catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))));
+        if (hook instanceof Error || !hook.ok) {
           webhookFailed = true;
           logWebhook({
             message: 'Gate released but the training webhook was refused; version is still Paused',
-            data: { modelVersionId, workflowId, important: true, status: hook.status },
+            data: {
+              modelVersionId,
+              workflowId,
+              important: true,
+              ...(hook instanceof Error ? { error: hook.message } : { status: hook.status }),
+            },
           });
         }
       }
@@ -269,8 +299,20 @@ const moderateTrainingData = async ({
   }
 };
 
-export async function handleDenyTrainingData({ input }: { input: GetByIdInput }) {
+export async function handleDenyTrainingData({
+  input,
+  moderatorId,
+}: {
+  input: GetByIdInput;
+  moderatorId: number;
+}) {
   const modelVersionId = input.id;
   const { workflowId, status } = await getWorkflowFromVersion(modelVersionId);
-  return await moderateTrainingData({ modelVersionId, workflowId, status, approve: false });
+  return await moderateTrainingData({
+    modelVersionId,
+    workflowId,
+    status,
+    approve: false,
+    moderatorId,
+  });
 }

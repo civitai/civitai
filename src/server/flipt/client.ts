@@ -120,13 +120,19 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
   // key makes `evaluateBoolean` throw and log on every call.
   MODEL_GETBYID_SKIP_OWNER_POSTS = 'model-getbyid-skip-owner-posts',
-  // ON serves `getImageContestCollectionDetails` (an image's contest entries) from a shared Redis
-  // cache, busted on entry writes, instead of the per-pod LRU, which nothing busts. The shared
-  // value holds no rejection reason; a viewer allowed to read one gets it from a live read. Output
-  // is identical either way. Boolean, evaluated with no entityId, once per call.
+  // ON caches "this entity wears no frame" in the per-entity frame caches (`cosmeticEntityCaches`
+  // in ~/server/redis/caches) for an hour, instead of re-querying the primary for every frameless
+  // id on every page. OFF reads them uncached, as before, and ignores any marker
+  // written while it was on. Boolean, evaluated with no entity id, once per frame-cache fetch.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
-  // key makes `evaluateBoolean` throw and log on every call.
+  // key makes `evaluateBoolean` throw and log on every call, on every feed page.
+  FRAME_CACHE_NEGATIVE = 'frame-cache-negative',
+  // ON serves `getImageContestCollectionDetails` from the shared Redis cache instead of the per-pod
+  // LRU. Boolean, evaluated with no entityId, so a per-user or percentage rollout is all-or-nothing.
+  //
+  // Needs its key in flag state (enabled: false) BEFORE this code serves traffic: a missing key
+  // makes evaluateBoolean throw and log on every call.
   CONTEST_COLLECTION_ITEMS_REDIS_CACHE = 'contest-collection-items-redis-cache',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
@@ -269,6 +275,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // segment. DEFAULT-OFF — absent or Flipt unreachable holds nothing. See
   // `storage-migration-run.service.ts`.
   APP_BLOCKS_STORAGE_MIGRATION_HOLD = 'app-blocks-storage-migration-hold',
+  // Who may DECLARE an App Storage permission hook (`storage.collections.<c>.hook`): checked at
+  // submit, on the git-push path and at approve, for a hook that is new or changed against the
+  // approved manifest, on the actor who introduced it (the submitter, or the pusher on the git-push
+  // path). EVALUATED PER AUTHOR — entityId = the user id, context = `buildFliptContext(user)` — so
+  // ramp it with a cohort segment. DEFAULT-OFF: absent or Flipt unreachable refuses every hook
+  // declaration. 🔴 It gates declaring a hook and nothing else: no flag may skip a hook an approved
+  // version declares (that would fail open). See `storage-hooks.ts`.
+  APP_BLOCKS_STORAGE_HOOKS = 'app-blocks-storage-hooks',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
   // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
   TEXT_SCAN = 'text-scan',
@@ -288,8 +302,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
-  // Serves the public `placement.getSpace` read from a Redis cache of its two row reads (the
-  // target and the per-level space rows), read from the replica on a miss. DEFAULT-OFF:
+  // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
+  // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
+  // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
   // uncached primary read. Global boolean, evaluated with no entity or context. Every other
   // caller of the space (anything that decides or charges) stays on the primary regardless. See
@@ -409,6 +424,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // through `coverageAudience`, which is where it meets the tier.
   // docs/features/paid-model-loading-members-gate.md
   GENERATION_LOADING_OPEN_TO_ALL = 'generation-loading-open-to-all',
+  // On: a non-member may load a cold checkpoint by paying for a Download Boost, if the generator
+  // opts in (`acceptBoostRequired`). Off, unknown or unreachable: the members gate holds. Entity is
+  // the user id; read through `coverageAudience`.
+  GENERATION_LOADING_BOOST_FOR_FREE = 'generation-loading-boost-for-free',
   // On: generateFromGraph / whatIfFromGraph refuse input urls on external hosts. Off (and unknown
   // or unreachable): they are allowed and counted in generation_input_url_refusals_total{mode="log"}.
   GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS = 'generation-input-refuse-external-hosts',
@@ -432,6 +451,22 @@ export enum FLIPT_FEATURE_FLAGS {
   // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
   // serves traffic.
   BOT_HTML_EDGE_CACHE = 'bot-html-edge-cache',
+
+  // Download links (`/api/download/l/<id>` and the mint at `/api/v1/download-links`). Off, unknown
+  // or unreachable: every link answers 404 and no link is minted.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every mint and every link fetch. The key
+  // must exist in flag state (enabled: false) before this code serves traffic.
+  DOWNLOAD_LINKS_ENABLED = 'download-links-enabled',
+  // The standalone Training Studio's closed-beta gate (apps/training-studio/src/lib/server/flipt.ts),
+  // read here for its main-app endpoints. Evaluate with the user's Flipt context, or a segmented
+  // flag matches nobody.
+  TRAINING_STUDIO = 'trainingStudio',
+  // Gates sending the reporter's page capture to HQ.
+  FEEDBACK_HQ_SCREENSHOT = 'feedback-hq-screenshot',
+  // Gates storing a feedback report's page capture as a scanned image owned by the capture account.
+  // Evaluated with the reporter's id.
+  FEEDBACK_CAPTURE_SCAN = 'feedback-capture-scan',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

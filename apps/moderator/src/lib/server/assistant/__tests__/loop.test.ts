@@ -108,6 +108,23 @@ describe('runTurn', () => {
     expect((await run).toolCalls.map((c) => c.round)).toEqual([1, 1, 2]);
   });
 
+  it('records whether a lookup sent emails on its audit row, and not to the model', async () => {
+    lookup.mockImplementationOnce(async () => ({
+      data: { ok: 1 },
+      rows: 1,
+      truncated: false,
+      sources: [],
+      emailsShown: true,
+    }));
+    const { run, complete } = turn([reply(null, [call('lookup', { userId: 5 })]), reply('done')]);
+    const out = await run;
+    expect(out.toolCalls[0]).toMatchObject({ args: { userId: 5 }, emailsShown: true });
+    const second = (
+      complete.mock.calls[1] as unknown as [{ messages: { role: string; content: string }[] }]
+    )[0];
+    expect(second.messages.at(-1)?.content).not.toContain('emailsShown');
+  });
+
   describe('a tool with its own timeout', () => {
     const slow = (ms: number, timeoutMs?: number): AnyTool => ({
       name: 'slow',

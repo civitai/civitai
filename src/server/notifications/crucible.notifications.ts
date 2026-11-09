@@ -40,14 +40,18 @@ export const crucibleNotifications = createNotificationProcessor({
       };
     },
   },
-  // Sent to the entrant when a moderator, or the crucible's owner (with a reason), removes their entry
+  // Sent to the entrant when a moderator, the crucible's owner or the theme review removes their entry
   'crucible-entry-removed': {
     displayName: 'Crucible Entry Removed',
     category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `${
-        details.removedBy === 'owner' ? "The crucible's owner" : 'A moderator'
+        details.removedBy === 'owner'
+          ? "The crucible's owner"
+          : details.removedBy === 'review'
+          ? "The crucible's theme review"
+          : 'A moderator'
       } removed your entry from the crucible${quotedName(details.crucibleName)}.${
         details.reason ? ` Reason: ${details.reason}.` : ''
       }${

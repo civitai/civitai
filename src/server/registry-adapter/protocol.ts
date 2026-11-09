@@ -1,12 +1,13 @@
 /**
  * The registry source protocol, `Subscribe`, as `civitai/civitai-registry` defines it in
- * `spec/registry.md` @ 4166f34. It has two bindings, served from one core
+ * `spec/registry.md` @ 2709083. It has two bindings, served from one core
  * (`subscription.ts`): HTTP with server-sent events (`serve.ts`) and gRPC (`grpc.ts`).
  *
  * A subscription streams `upsert`* `live`, then `upsert`/`delete` with cursors, and `progress`
  * when the position moves with nothing to send; `end` answers a schema this source does not
  * serve.
  */
+import type { Audience } from '~/server/registry-adapter/audience';
 
 export type JsonSchema = Record<string, unknown> | boolean;
 
@@ -80,6 +81,12 @@ export const cursorExpired = (why?: string) => new ProtocolError('cursor_expired
 
 export interface AdapterContext {
   signal: AbortSignal;
+  /**
+   * What the subscription's token may read (`audience.ts`). Absent is anonymous, the narrowest.
+   * The document, app, app-release and schema streams narrow by it (`audience.ts`); the
+   * `service` stream is the same for every audience.
+   */
+  audience?: Audience;
 }
 
 export interface Adapter {

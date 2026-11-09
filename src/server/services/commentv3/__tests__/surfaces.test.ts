@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as FeatureFlags from '~/server/services/feature-flags.service';
 
 // Each surface's entry wires an entity type to its own rule; the rules themselves are tested where
 // they live. What is pinned here is the wiring: which rule, with which argument.
@@ -21,7 +22,8 @@ vi.mock('~/server/services/storyline.service', () => ({
 }));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: m.access }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: m.notify }));
-vi.mock('~/server/services/feature-flags.service', () => ({
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlags>()),
   getFeatureFlags: () => m.flags,
 }));
 vi.mock('~/server/services/user-preferences.service', () => ({

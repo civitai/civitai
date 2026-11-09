@@ -33,7 +33,10 @@ import type {
   SubListingModAction,
 } from '~/server/schema/blocks/app-sub-listing.schema';
 import type { RouterOutput } from '~/types/router';
-import { APP_SUB_LISTING_REASON_MAX } from '~/shared/constants/app-sub-listing.constants';
+import {
+  APP_SUB_LISTING_REASON_MAX,
+  subListingRunHref,
+} from '~/shared/constants/app-sub-listing.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -137,39 +140,56 @@ function FieldValue({
 
 function RowContent({ row }: { row: QueueRow }) {
   if (!row.pending) {
+    // 🔴 THE ITEM IS OPENABLE FROM THE QUEUE. An on-site item's path used to render as plain
+    // text ("/g/…"), so judging it meant copying the path into the app by hand. It now links
+    // to where it actually runs — the same `subListingRunHref` the store card uses — in a new
+    // tab, so the queue stays put. An off-site item already linked to its platform.
+    const href = row.externalHref ?? subListingRunHref(row.parent.slug, row.live.subPath, row.id);
     return (
-      <Stack gap={2}>
-        <Text fw={600}>{row.live.title}</Text>
-        {row.live.tagline && (
-          <Text size="sm" c="dimmed">
-            {row.live.tagline}
-          </Text>
-        )}
-        <Text size="xs" c="dimmed">
-          {row.externalHref ? (
-            <Anchor
-              href={row.externalHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              size="xs"
-              data-testid="sub-listing-external-link"
-            >
-              {row.externalHref}
-            </Anchor>
-          ) : (
-            `/${row.live.subPath}`
-          )}
-          {row.live.contentRating ? ` · ${row.live.contentRating}` : ''}
-        </Text>
-        {row.live.imageUrl && (
+      <Group gap="sm" wrap="nowrap" align="flex-start">
+        {/* A thumbnail on EVERY row — a placeholder when the item has no image — so the
+            column reads as a gallery rather than a list of titles. */}
+        {row.live.imageUrl ? (
           <FieldValue
             field="imageUrl"
             value={row.live.imageUrl}
             content={row.live}
             testId={`sub-listing-image-reveal-${row.id}`}
           />
+        ) : (
+          <div
+            aria-hidden
+            data-testid={`sub-listing-thumb-placeholder-${row.id}`}
+            style={{
+              width: 96,
+              height: 54,
+              flexShrink: 0,
+              borderRadius: 'var(--mantine-radius-sm)',
+              background: 'var(--mantine-color-default-hover)',
+            }}
+          />
         )}
-      </Stack>
+        <Stack gap={2} style={{ minWidth: 0 }}>
+          <Text fw={600}>{row.live.title}</Text>
+          {row.live.tagline && (
+            <Text size="sm" c="dimmed">
+              {row.live.tagline}
+            </Text>
+          )}
+          <Text size="xs" c="dimmed">
+            <Anchor
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              size="xs"
+              data-testid={row.externalHref ? 'sub-listing-external-link' : 'sub-listing-open-link'}
+            >
+              {row.externalHref ?? `/${row.live.subPath}`}
+            </Anchor>
+            {row.live.contentRating ? ` · ${row.live.contentRating}` : ''}
+          </Text>
+        </Stack>
+      </Group>
     );
   }
   const diff = subListingEditDiff(row.live, row.pending);

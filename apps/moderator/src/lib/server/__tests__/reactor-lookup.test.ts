@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const chQueries = vi.hoisted(() => [] as string[]);
 const chRows = vi.hoisted(() => [] as unknown[][]);
+const chParamQueries = vi.hoisted(() => [] as { query: string; params: Record<string, number> }[]);
 
 // 🔴 The fake HONOURS `LIMIT`. Ignoring it makes every assertion about a row budget vacuous — the
 // caller gets all the canned rows however small the budget is, so shrinking `CLUSTER_SCAN` from 1000
@@ -28,6 +29,17 @@ vi.mock('$lib/server/clickhouse', () => ({
       const rows = chRows.shift() ?? [];
       const limit = Number(sql.match(/LIMIT\s+(\d+)\s*$/m)?.[1]);
       return Promise.resolve(Number.isInteger(limit) ? rows.slice(0, limit) : rows);
+    },
+    // The parameterized page read. Like `LIMIT` above, the fake honours the rank window the query
+    // asks for, row 1 included, so an offset that never reaches the query shows.
+    query: ({ query, query_params }: { query: string; query_params: Record<string, number> }) => {
+      chParamQueries.push({ query, params: query_params });
+      const { offset, limit } = query_params;
+      const rows = (chRows.shift() ?? []) as { rn: string }[];
+      const inWindow = rows.filter(
+        (r) => Number(r.rn) === 1 || (Number(r.rn) > offset && Number(r.rn) <= offset + limit)
+      );
+      return Promise.resolve({ json: () => Promise.resolve(inWindow) });
     },
   }),
 }));
@@ -56,13 +68,14 @@ vi.mock('$lib/server/moderation-memory.service', () => ({
   strikeCountsByUserIds: () => Promise.resolve(new Map()),
 }));
 
-const { getInflationActors, getSharedIps, getSharedIpCoverage } = await import(
+const { getInflationActors, getReactorsPage, getSharedIps, getSharedIpCoverage } = await import(
   '../reactor-lookup.service'
 );
 const { OWN_ACTIVITY_ONLY } = await import('../clickhouse-filters');
 
 beforeEach(() => {
   chQueries.length = 0;
+  chParamQueries.length = 0;
   chRows.length = 0;
   pgQueries.length = 0;
 });
@@ -203,6 +216,75 @@ describe('getReactors', () => {
 
     // `.length` here would render the cap as the answer — "100 reactors" on a creator with 1,340.
     expect(report?.total).toBe(1340);
+  });
+});
+
+describe('getReactorsPage', () => {
+  const OWNER = 1000001;
+  // Ranked rows as the query returns them: every reactor over a floor of 5 first, then one under it.
+  const ranked = (overFloor: number, under = 1) =>
+    Array.from({ length: overFloor + under }, (_, i) => ({
+      userId: String(5000 + i),
+      count: String(i < overFloor ? 50 - (i % 40) : 1),
+      entities: '3',
+      total: '60',
+      owners: '2',
+      matched: String(overFloor),
+      reactors: String(overFloor + under),
+      rn: String(i + 1),
+    }));
+  const page = (offset: number, limit: number, minCount = 5) =>
+    getReactorsPage(OWNER, { days: 3, minCount, offset, limit });
+
+  it("ranks in reactors_of's order, then by user id, so equal ranks never straddle a page", async () => {
+    await runReactors(3, 5);
+    chRows.push(ranked(3));
+    await page(0, 10, 5);
+    const [{ query, params }] = chParamQueries;
+    const ofOrder = chQueries[0].match(/ORDER BY ([^\n]+)/)![1].trim();
+    const pageOrder = query
+      .match(/row_number\(\) OVER \(ORDER BY ([^)]+)\)/)![1]
+      .replace('{floor:UInt32}', String(params.floor));
+    expect(pageOrder).toBe(`${ofOrder}, userId ASC`);
+  });
+
+  it('binds every caller value as a parameter', async () => {
+    chRows.push(ranked(3));
+    await page(20, 40, 7);
+    const [{ query, params }] = chParamQueries;
+    expect(params).toEqual({ ownerId: OWNER, floor: 7, days: 3, offset: 20, limit: 40 });
+    expect(query).not.toContain(String(OWNER));
+    expect(query).toContain('rn > {offset:UInt32} AND rn <= {offset:UInt32} + {limit:UInt32}');
+  });
+
+  it('returns the page asked for, past the first 20', async () => {
+    chRows.push(ranked(60));
+    const out = await page(20, 20);
+    expect(out.actors.map((a) => a.userId)).toEqual(Array.from({ length: 20 }, (_, i) => 5020 + i));
+    expect(out.actors[0]).toMatchObject({ username: 'u5020', count: 30, concentration: 0.5 });
+  });
+
+  it('reports the true count on a page past the end, and on a counts-only read', async () => {
+    chRows.push(ranked(291, 174));
+    expect(await page(4000, 100)).toEqual({ actors: [], overFloor: 291, belowFloor: 174 });
+    chRows.push(ranked(291, 174));
+    expect(await page(0, 0)).toEqual({ actors: [], overFloor: 291, belowFloor: 174 });
+  });
+
+  it('drops a reactor under the floor that falls inside the page', async () => {
+    chRows.push(ranked(4, 3));
+    const out = await page(0, 10);
+    expect(out.actors.map((a) => a.userId)).toEqual([5000, 5001, 5002, 5003]);
+    expect(out).toMatchObject({ overFloor: 4, belowFloor: 3 });
+  });
+
+  it('reads nothing for an id outside int4', async () => {
+    expect(await getReactorsPage(2 ** 31, { days: 3, minCount: 5, offset: 0, limit: 10 })).toEqual({
+      actors: [],
+      overFloor: 0,
+      belowFloor: 0,
+    });
+    expect(chParamQueries).toHaveLength(0);
   });
 });
 

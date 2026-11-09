@@ -49,6 +49,7 @@ import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { bustCacheTag, fetchThroughCache, queryCache } from '~/server/utils/cache-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 
 const alwaysIncludeTags = [...styleTags, ...subjectTags];
 
@@ -590,6 +591,8 @@ export const getVotableTags = async ({
     }
     results = await stripUnlistedTags(results, isModerator);
   } else if (type === 'image') {
+    // imageTagsCache is keyed by image id alone, so the viewer check runs first.
+    await assertImageVisibleToViewer({ id, userId, isModerator });
     const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
 
     // Fetch from cache

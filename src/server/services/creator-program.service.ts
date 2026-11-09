@@ -28,6 +28,7 @@ import {
   createBuzzTransaction,
   getCounterPartyBuzzTransactions,
   getTopContributors,
+  getTransactionByExternalId,
   getUserBuzzAccount,
 } from '~/server/services/buzz.service';
 import {
@@ -54,8 +55,9 @@ import {
   getCurrentValue,
   getExtractionFee,
   getPhases,
+  generateWithdrawalRefCode,
   getWithdrawalFee,
-  getWithdrawalRefCode,
+  parseRefCodeToWithdrawalId,
 } from '~/server/utils/creator-program.utils';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { handleLogError, throwBadRequestError } from '~/server/utils/errorHandling';
@@ -798,6 +800,98 @@ export async function getWithdrawalHistory(userId: number) {
   return transactions;
 }
 
+const MAX_REF_CODE_ATTEMPTS = 5;
+
+/**
+ * The refCode this withdrawal is (or will be) sent to Tipalti under, stored before any send.
+ * Tipalti relies on the refCode to refuse a duplicate payment, so a withdrawal that already has
+ * one must always reuse it: generating a fresh code on a re-send would defeat that guard.
+ */
+export async function ensureWithdrawalRefCode(withdrawalId: string, userId: number) {
+  const stored = async () => {
+    const { metadata } = await dbWrite.cashWithdrawal.findUniqueOrThrow({
+      where: { id: withdrawalId },
+      select: { metadata: true },
+    });
+    return (metadata as CashWithdrawalMetadataSchema | null)?.paymentRefCode || undefined;
+  };
+
+  const existing = await stored();
+  if (existing) return existing;
+
+  for (let attempt = 0; attempt < MAX_REF_CODE_ATTEMPTS; attempt++) {
+    const candidate = generateWithdrawalRefCode(userId);
+    // FailedFee rows carry a copy of their parent's code, so this covers them too.
+    const taken = await dbWrite.cashWithdrawal.count({
+      where: { userId, metadata: { path: ['paymentRefCode'], equals: candidate } },
+    });
+    if (taken) continue;
+
+    // Conditional on no code yet: a concurrent caller that stored one first wins, and we reuse it.
+    // shortcut: two concurrent withdrawals by one user drawing the same candidate between the
+    // count and this write is not locked against (odds ~1 in 36^random-length).
+    const updated = await dbWrite.$executeRaw`
+      UPDATE "CashWithdrawal"
+      SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('paymentRefCode', ${candidate}::text)
+      WHERE id = ${withdrawalId} AND (metadata->>'paymentRefCode') IS NULL;
+    `;
+    if (updated) return candidate;
+
+    const winner = await stored();
+    if (winner) return winner;
+    throw new Error(`Could not store a refCode for withdrawal ${withdrawalId}`);
+  }
+
+  throw new Error(`Could not generate a unique refCode for withdrawal ${withdrawalId}`);
+}
+
+/**
+ * The cash withdrawal a Tipalti event's refCode belongs to. Matches the exact refCode we stored
+ * when sending; rows from before codes were stored fall back to the cuid prefix the old code
+ * embedded. Refuses (throws) when more than one row matches, rather than guessing.
+ */
+export async function findCashWithdrawalByRefCode(refCode: string) {
+  // Only the userId is needed for the exact match, so legacy codes the strict parser rejects
+  // (e.g. `CW<uid>:<id>`) still match the code stored for them.
+  const userId = Number(/^CW(\d+)/.exec(refCode)?.[1]);
+  if (!userId) throw new Error(`Invalid withdrawal ref code: ${refCode}`);
+  // FailedFee rows copy their parent's metadata, refCode included, and Reclaimed rows are
+  // moderator adjustments; neither was ever sent to Tipalti, and both refund if updated.
+  const scope = {
+    userId,
+    status: { notIn: [CashWithdrawalStatus.FailedFee, CashWithdrawalStatus.Reclaimed] },
+  };
+
+  let candidates = await dbWrite.cashWithdrawal.findMany({
+    where: { ...scope, metadata: { path: ['paymentRefCode'], equals: refCode } },
+  });
+
+  if (!candidates.length) {
+    const { idPart } = parseRefCodeToWithdrawalId(refCode);
+    // A row that stored a different code was sent under that code, so it cannot be this payment.
+    candidates = (
+      await dbWrite.cashWithdrawal.findMany({ where: { ...scope, id: { startsWith: idPart } } })
+    ).filter((row) => !(row.metadata as CashWithdrawalMetadataSchema | null)?.paymentRefCode);
+  }
+
+  if (candidates.length > 1) {
+    await logToAxiom(
+      {
+        type: 'error',
+        name: 'tipalti-refcode-ambiguous',
+        refCode,
+        candidateIds: candidates.map((row) => row.id),
+      },
+      'webhooks'
+    ).catch(() => null);
+    throw new Error(`Ambiguous Tipalti refCode ${refCode}: ${candidates.length} withdrawals match`);
+  }
+
+  if (!candidates.length)
+    throw new Error(`Withdrawal request not found for transferId: ${refCode}`);
+  return candidates[0];
+}
+
 export async function withdrawCash(userId: number, amount: number) {
   // Check setup for withdrawal
   const user = await dbWrite.user.findFirstOrThrow({
@@ -892,7 +986,7 @@ export async function withdrawCash(userId: number, amount: number) {
     `;
 
     // Create tipalti payment
-    const refCode = getWithdrawalRefCode(id, userId);
+    const refCode = await ensureWithdrawalRefCode(id, userId);
 
     const { paymentBatchId, paymentRefCode } = await payToTipaltiAccount({
       requestId: refCode,
@@ -1067,6 +1161,57 @@ export async function getPoolParticipantsV2(month?: Date, includeNegativeAmounts
     .filter((p) => includeNegativeAmounts || p.amount > 0);
 }
 
+const REFUNDED_WITHDRAWAL_STATUSES: CashWithdrawalStatus[] = [
+  CashWithdrawalStatus.Rejected,
+  CashWithdrawalStatus.Canceled,
+];
+
+/**
+ * The one external id a withdrawal's burn is refunded under. withdrawCash's failure path refunds
+ * through Buzz's refund endpoint, which records `refund-<transactionId>`; using the same id here
+ * makes a second refund of the same burn a duplicate to Buzz as well.
+ */
+const getWithdrawalRefundExternalId = (transactionId: string) => `refund-${transactionId}`;
+
+/**
+ * Whether the burn behind a withdrawal has already been refunded: a refund this path recorded on
+ * the row (it always stores metadata.refundTransactionId, under either key it has used), or one on
+ * the Buzz ledger under `refund-<transactionId>`, which is how withdrawCash's failure path refunds.
+ * The old bare `<transactionId>` key is deliberately not looked up on the ledger: that route may
+ * also resolve the burn itself by its id, which would read every burn as refunded.
+ */
+async function isWithdrawalBurnRefunded(
+  transactionId: string,
+  metadata: CashWithdrawalMetadataSchema
+) {
+  if (metadata.refundTransactionId) return true;
+  return !!(await getTransactionByExternalId(getWithdrawalRefundExternalId(transactionId)));
+}
+
+// A claim older than this belongs to a caller that died mid-refund. Taking it over is safe because
+// the refund's external id is the same for every caller, and Buzz refuses a duplicate.
+const REFUND_CLAIM_TTL = '15 minutes';
+
+/** Takes the right to refund this withdrawal; only one caller at a time gets it. */
+async function claimWithdrawalRefund(withdrawalId: string) {
+  const claimed = await dbWrite.$executeRaw`
+    UPDATE "CashWithdrawal"
+    SET metadata = metadata || jsonb_build_object('refundClaimedAt', now())
+    WHERE id = ${withdrawalId}
+      AND (
+        (metadata->>'refundClaimedAt') IS NULL
+        OR (metadata->>'refundClaimedAt')::timestamptz < now() - ${REFUND_CLAIM_TTL}::interval
+      );
+  `;
+  return claimed > 0;
+}
+
+async function releaseWithdrawalRefundClaim(withdrawalId: string) {
+  await dbWrite.$executeRaw`
+    UPDATE "CashWithdrawal" SET metadata = metadata - 'refundClaimedAt' WHERE id = ${withdrawalId};
+  `;
+}
+
 export const updateCashWithdrawal = async ({
   withdrawalId,
   status,
@@ -1074,64 +1219,92 @@ export const updateCashWithdrawal = async ({
   metadata: updatedMetadata,
   fees,
 }: UpdateCashWithdrawalSchema) => {
-  // Check if the user has  a pending withdrawal request:
   const withdrawal = await dbWrite.cashWithdrawal.findUniqueOrThrow({
     where: { id: withdrawalId },
   });
 
   const userId = withdrawal.userId;
 
-  // We'll be deducting funds before the transaction mainly to avoid the tx taking too long. In the case of a tx failure, we'll  refund the user.
-  let metadata: CashWithdrawalMetadataSchema = (withdrawal.metadata ??
+  // Refund state comes from the stored row only: a caller's refundTransactionId would otherwise
+  // skip the refund.
+  const storedMetadata = (withdrawal.metadata ?? {}) as CashWithdrawalMetadataSchema;
+  const { refundTransactionId: _callerRefund, ...callerMetadata } = (updatedMetadata ??
     {}) as CashWithdrawalMetadataSchema;
-
-  metadata = {
-    ...metadata,
-    ...(updatedMetadata ?? {}),
+  // No claim is carried forward, the caller's or the stored one: writing back a claim its holder
+  // has since released would block every later refund until the claim expires.
+  const { refundClaimedAt: _storedClaim, ...metadata }: CashWithdrawalMetadataSchema = {
+    ...storedMetadata,
+    ...callerMetadata,
   };
 
-  if (status === CashWithdrawalStatus.Rejected || status === CashWithdrawalStatus.Canceled) {
-    if (withdrawal.transactionId) {
-      await withRetries(async () => {
-        const transaction = await createBuzzTransaction({
-          type: TransactionType.Refund,
-          toAccountType: 'cashSettled',
-          toAccountId: userId,
-          fromAccountId: 0, // central bank
-          amount: withdrawal.amount - (fees ?? 0),
-          description: `Refund for failed withdrawal. Fees: ${fees ?? 0}`,
-          externalTransactionId: withdrawal.transactionId as string,
-        });
+  if (REFUNDED_WITHDRAWAL_STATUSES.includes(status) && withdrawal.transactionId) {
+    const transactionId = withdrawal.transactionId;
+    if (!(await isWithdrawalBurnRefunded(transactionId, storedMetadata))) {
+      // Another caller is refunding it now. Refuse rather than record a terminal status with no
+      // refund behind it: a retry either finds the refund or takes over a claim left by a crash.
+      if (!(await claimWithdrawalRefund(withdrawalId)))
+        throw new Error(
+          `Refund for withdrawal ${withdrawalId} is already in progress; retry later`
+        );
 
-        metadata.refundTransactionId = transaction.transactionId;
-
-        if (fees) {
-          await dbWrite.cashWithdrawal.create({
-            data: {
-              userId,
-              transactionId: transaction.transactionId,
-              amount: fees,
-              status: CashWithdrawalStatus.FailedFee,
-              metadata: metadata as any,
-              fee: 0,
-              method: CashWithdrawalMethod.Custom,
-            },
+      try {
+        await withRetries(async () => {
+          const transaction = await createBuzzTransaction({
+            type: TransactionType.Refund,
+            toAccountType: 'cashSettled',
+            toAccountId: userId,
+            fromAccountId: 0, // central bank
+            amount: withdrawal.amount - (fees ?? 0),
+            description: `Refund for failed withdrawal. Fees: ${fees ?? 0}`,
+            externalTransactionId: getWithdrawalRefundExternalId(transactionId),
           });
-        }
-      });
+
+          metadata.refundTransactionId = transaction.transactionId;
+
+          if (fees) {
+            await dbWrite.cashWithdrawal.create({
+              data: {
+                userId,
+                transactionId: transaction.transactionId,
+                amount: fees,
+                status: CashWithdrawalStatus.FailedFee,
+                metadata: metadata as any,
+                fee: 0,
+                method: CashWithdrawalMethod.Custom,
+              },
+            });
+          }
+        });
+      } catch (e) {
+        await releaseWithdrawalRefundClaim(withdrawalId);
+        throw e;
+      }
     }
   }
 
+  // No claw-back: the user keeps both, and this is how someone finds out.
+  if (
+    status === CashWithdrawalStatus.Paid &&
+    withdrawal.transactionId &&
+    (await isWithdrawalBurnRefunded(withdrawal.transactionId, storedMetadata).catch(() => false))
+  )
+    await logToAxiom({
+      name: 'cash-withdrawal-paid-after-refund',
+      type: 'error',
+      withdrawalId,
+      userId,
+      previousStatus: withdrawal.status,
+    }).catch(() => null);
+
   try {
-    // Ensure we update the main request details:
-    await dbWrite.cashWithdrawal.update({
-      where: { id: withdrawalId },
-      data: {
-        status,
-        note,
-        metadata: metadata as any,
-      },
-    });
+    // Merged in SQL so a refund claim another caller stored meanwhile is not overwritten.
+    await dbWrite.$executeRaw`
+      UPDATE "CashWithdrawal"
+      SET status = ${status}::"CashWithdrawalStatus", note = COALESCE(${note ?? null}, note),
+        "updatedAt" = now(),
+        metadata = metadata || ${JSON.stringify(metadata)}::jsonb
+      WHERE id = ${withdrawalId};
+    `;
 
     switch (status) {
       case CashWithdrawalStatus.Scheduled:

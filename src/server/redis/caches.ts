@@ -25,6 +25,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readImageTagsViaKysely } from '~/server/redis/image-tags.reads';
+import { userImageVideoCountQuery } from '~/server/redis/user-image-video-count.sql';
 import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REDIS_KEYS, redis, type RedisKeyTemplateCache } from '~/server/redis/client';
@@ -40,6 +41,7 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
+import { servableProfilePictureSql } from '~/server/services/profile-picture.sql';
 import {
   type ImageTagComposite,
   type ModelTagComposite,
@@ -276,33 +278,37 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
   ttl: CacheTTL.day,
 });
 
+/** A user whose profile picture may not be served gets no entry, the same as a user with none. */
+export async function lookupProfilePictures(ids: (number | undefined)[], fromWrite?: boolean) {
+  const goodIds = ids.filter(isDefined);
+  if (!goodIds.length) return {};
+  const db = fromWrite ? dbWrite : dbRead;
+  const profilePictures = await db.$queryRaw<ProfileImage[]>`
+    SELECT
+      i.id,
+      i.name,
+      i.url,
+      i."nsfwLevel",
+      i.hash,
+      i."userId",
+      i.ingestion,
+      i.type,
+      i.width,
+      i.height,
+      i.metadata
+    FROM "User" u
+    JOIN "Image" i ON i.id = u."profilePictureId"
+    WHERE u.id IN (${Prisma.join(goodIds)})
+      AND ${servableProfilePictureSql}
+  `;
+  return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
+}
+
 export const profilePictureCache = createCachedObject<ProfileImage>({
   key: REDIS_KEYS.CACHES.PROFILE_PICTURES,
   idKey: 'userId',
   staleWhileRevalidate: false, // To avoid delay in creator seeing their new profile picture
-  lookupFn: async (ids, fromWrite) => {
-    const goodIds = (ids as (number | undefined)[]).filter(isDefined);
-    if (!goodIds.length) return {};
-    const db = fromWrite ? dbWrite : dbRead;
-    const profilePictures = await db.$queryRaw<ProfileImage[]>`
-      SELECT
-        i.id,
-        i.name,
-        i.url,
-        i."nsfwLevel",
-        i.hash,
-        i."userId",
-        i.ingestion,
-        i.type,
-        i.width,
-        i.height,
-        i.metadata
-      FROM "User" u
-      JOIN "Image" i ON i.id = u."profilePictureId"
-      WHERE u.id IN (${Prisma.join(goodIds)})
-    `;
-    return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
-  },
+  lookupFn: (ids, fromWrite) => lookupProfilePictures(ids as (number | undefined)[], fromWrite),
   ttl: CacheTTL.day,
 });
 
@@ -318,7 +324,9 @@ export const cosmeticEntityCaches = Object.fromEntries(
     createCachedObject<ContentDecorationCosmetic>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
-      cacheNotFound: false,
+      // Caches "no frame" for an hour while FRAME_CACHE_NEGATIVE is on. Every writer that puts a frame on content must call refresh(), which overwrites or removes the marker; one that does not stays hidden up to an hour.
+      cacheNotFound: () => isFlipt(FLIPT_FEATURE_FLAGS.FRAME_CACHE_NEGATIVE),
+      notFoundTtl: CacheTTL.hour,
       staleWhileRevalidate: false,
       // Lookup reads the primary, so the bust window guards no replica read; keep it minimal.
       debounceTime: 1,
@@ -944,65 +952,22 @@ export const userModel3DCountPublicCache = createUserContentCountCache<UserModel
 type UserImageVideoCount = { id: number; imageCount: number; videoCount: number };
 export const userImageVideoCountCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount',
-  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
-    SELECT
-      "userId" as id,
-      COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
-      COALESCE(SUM(IIF("type" = 'video', 1, 0)), 0)::INT as "videoCount"
-    FROM "Image"
-    WHERE "userId" IN (${Prisma.join(userIds)})
-      AND "ingestion" = 'Scanned'
-      AND "needsReview" IS NULL
-      AND "postId" NOT IN (
-        SELECT id
-        FROM "Post"
-        WHERE "userId" IN (${Prisma.join(userIds)})
-          AND ("publishedAt" IS NULL OR availability = 'Private' OR "publishedAt" > NOW())
-      )
-    GROUP BY "userId"
-  `
+  async (userIds, fromWrite) =>
+    (fromWrite ? dbWrite : dbRead).$queryRaw(userImageVideoCountQuery(userIds))
 );
 export const userImageVideoCountSfwCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount:sfw',
-  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
-    SELECT
-      "userId" as id,
-      COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
-      COALESCE(SUM(IIF("type" = 'video', 1, 0)), 0)::INT as "videoCount"
-    FROM "Image"
-    WHERE "userId" IN (${Prisma.join(userIds)})
-      AND "ingestion" = 'Scanned'
-      AND "needsReview" IS NULL
-      AND ("nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
-      AND "postId" NOT IN (
-        SELECT id
-        FROM "Post"
-        WHERE "userId" IN (${Prisma.join(userIds)})
-          AND ("publishedAt" IS NULL OR availability = 'Private' OR "publishedAt" > NOW())
-      )
-    GROUP BY "userId"
-  `
+  async (userIds, fromWrite) =>
+    (fromWrite ? dbWrite : dbRead).$queryRaw(
+      userImageVideoCountQuery(userIds, sfwBrowsingLevelsFlag)
+    )
 );
 export const userImageVideoCountPublicCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount:public',
-  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
-    SELECT
-      "userId" as id,
-      COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
-      COALESCE(SUM(IIF("type" = 'video', 1, 0)), 0)::INT as "videoCount"
-    FROM "Image"
-    WHERE "userId" IN (${Prisma.join(userIds)})
-      AND "ingestion" = 'Scanned'
-      AND "needsReview" IS NULL
-      AND ("nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0
-      AND "postId" NOT IN (
-        SELECT id
-        FROM "Post"
-        WHERE "userId" IN (${Prisma.join(userIds)})
-          AND ("publishedAt" IS NULL OR availability = 'Private' OR "publishedAt" > NOW())
-      )
-    GROUP BY "userId"
-  `
+  async (userIds, fromWrite) =>
+    (fromWrite ? dbWrite : dbRead).$queryRaw(
+      userImageVideoCountQuery(userIds, publicBrowsingLevelsFlag)
+    )
 );
 
 const userImageVideoCountVariants = [

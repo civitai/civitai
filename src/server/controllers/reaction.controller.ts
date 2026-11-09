@@ -9,7 +9,10 @@ import {
   imageReactionMilestones,
 } from '~/server/notifications/reaction.notifications';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
-import type { ToggleReactionInput } from '~/server/schema/reaction.schema';
+import type {
+  ToggleReactionInput,
+  ToggleReactionWithPointsInput,
+} from '~/server/schema/reaction.schema';
 import { isReactionAllowedForEntity } from '~/server/schema/reaction.schema';
 import { getContestsFromEntity } from '~/server/services/collection.service';
 import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
@@ -31,6 +34,8 @@ import {
   readImagePostIdViaPrisma,
 } from '~/server/services/hot-reads-5.reads';
 import { toggleReaction } from './../services/reaction.service';
+import type { EventPointGrant } from '~/server/events/points/award';
+import { loadEvents } from '~/server/events/load-events';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { assertCommentActionable } from '~/server/controllers/commentv3.controller';
 
@@ -214,9 +219,11 @@ const reactionMetricMap: { [p in ReviewReactions]?: EntityMetric_MetricType_Type
 export const toggleReactionHandler = async ({
   ctx,
   input,
+  onEventPoints,
 }: {
   ctx: ProtectedContext;
   input: ToggleReactionInput;
+  onEventPoints?: (grants: Promise<EventPointGrant[]>) => void;
 }) => {
   try {
     // A value no longer allowed is still accepted when the user holds it, so it can be removed.
@@ -283,6 +290,7 @@ export const toggleReactionHandler = async ({
       ...input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      onEventPoints,
     });
     // Positive checks: 'noop' and 'ignored' wrote nothing, so they emit nothing.
     const changed = result === 'created' || result === 'removed';
@@ -342,6 +350,68 @@ export const toggleReactionHandler = async ({
     throw throwDbError(error);
   }
 };
+
+// How long a toggle waits for its event points. Past it the toggle answers without them and the
+// award carries on, so a slow Redis costs the pop, never the reaction.
+export const EVENT_POINTS_WAIT_MS = 300;
+
+/**
+ * The site's own reaction button: the toggle, plus what it earned the viewer's own team if that is
+ * known in time. The reactor never earns themself, so the points are always the team's.
+ */
+export const toggleReactionWithPointsHandler = async ({
+  ctx,
+  input: { waitForPoints = true, ...input },
+}: {
+  ctx: ProtectedContext;
+  input: ToggleReactionWithPointsInput;
+}): Promise<{ result: ToggleReactionResult; eventPoints?: EventPointGrant[] }> => {
+  let pending: Promise<EventPointGrant[]> | undefined;
+  const result = await toggleReactionHandler({
+    ctx,
+    input,
+    onEventPoints: waitForPoints ? (grants) => (pending = grants) : undefined,
+  });
+  if (!pending) return { result };
+  const userId = ctx.user.id;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const grants = await Promise.race([
+    pending.then((all) => viewerTeamGrants(all, userId)).catch(() => undefined),
+    new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), EVENT_POINTS_WAIT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
+  return grants?.length ? { result, eventPoints: grants } : { result };
+};
+type ToggleReactionResult = Awaited<ReturnType<typeof toggleReactionHandler>>;
+
+// Grants for the viewer's own team, summed per event. Another team's are dropped: the pop is for
+// points that help the viewer's side, so a viewer who holds none of an event's team hats (joined
+// or bought) has none there. getUserTeam alone would not say so: it seeds a team for anyone.
+async function viewerTeamGrants(grants: EventPointGrant[], userId: number) {
+  const byEvent = new Map<string, EventPointGrant>();
+  if (!grants.length) return [];
+  const names = [...new Set(grants.map((g) => g.event))];
+  const held = await dbRead.$queryRaw<{ event: string }[]>`
+    SELECT DISTINCT c.data->>'event' AS event FROM "UserCosmetic" uc
+    JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+    WHERE uc."userId" = ${userId}
+      AND c.data->>'event' IN (${Prisma.join(names)})
+      AND c.data->>'team' IS NOT NULL
+  `;
+  const joined = new Set(held.map((h) => h.event));
+  const events = await loadEvents();
+  for (const name of names) {
+    if (!joined.has(name)) continue;
+    const team = await events.find((e) => e.name === name)?.getUserTeam(userId);
+    if (!team) continue;
+    const points = grants
+      .filter((g) => g.event === name && g.team === team)
+      .reduce((n, g) => n + g.points, 0);
+    if (points > 0) byEvent.set(name, { event: name, team, points });
+  }
+  return [...byEvent.values()];
+}
 
 // Exported for tests: the property that matters is that an unavailable exclusion
 // list still produces a notification, and that is only observable here.

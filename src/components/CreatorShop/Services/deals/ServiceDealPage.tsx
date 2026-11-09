@@ -18,6 +18,7 @@ import { useChatStore } from '~/components/Chat/ChatProvider';
 import { DealAccountabilitySheet } from '~/components/CreatorShop/Services/deals/DealAccountabilitySheet';
 import { DealActionsPanel } from '~/components/CreatorShop/Services/deals/DealActionsPanel';
 import { DealEscrowPanel } from '~/components/CreatorShop/Services/deals/DealEscrowPanel';
+import { DealAttachmentsPanel } from '~/components/CreatorShop/Services/deals/DealAttachmentsPanel';
 import { DealFilesPanel } from '~/components/CreatorShop/Services/deals/DealFilesPanel';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
 import { ReportServiceButton } from '~/components/CreatorShop/Services/ReportServiceButton';
@@ -212,6 +213,7 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
               )}
               <DealActionsPanel deal={deal} />
               <DealFilesPanel deal={deal} />
+              <DealAttachmentsPanel deal={deal} />
               <Paper withBorder radius="md" p="md">
                 <Stack gap={6}>
                   <Text fw={600}>The request</Text>

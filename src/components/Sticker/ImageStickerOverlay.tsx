@@ -5,7 +5,10 @@ import { EVENT_HAT_CORNERS } from '~/components/Sticker/peek-toggle-corner';
 import { StickerPlacementOverlay } from '~/components/Sticker/StickerPlacementOverlay';
 import { useStickerPlacements } from '~/components/Sticker/placement.util';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
+import { useTrackPlayback } from '~/components/Sticker/useTrackPlayback';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { StickerMotionEditor } from '~/components/Sticker/StickerMotionEditor';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { stickersRevealed, useStickerRevealStore } from '~/store/sticker-reveal.store';
 import { useStickerHistoryStep } from '~/store/sticker-history.store';
@@ -35,6 +38,7 @@ export function ImageStickerOverlay({
   wearsHat?: boolean;
 }) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const treatment = useStickerTreatment();
   const revealed = useStickerRevealStore(stickersRevealed);
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
@@ -119,7 +123,11 @@ export function ImageStickerOverlay({
 
   const active = placements.length > 0 || isPlacing;
 
-  const { hostRef, box } = useDrawnMediaBox(active);
+  const { hostRef, box, media } = useDrawnMediaBox(active);
+  // `tagName`, not `instanceof`: this renders on the server, which has no HTMLVideoElement.
+  const video =
+    features.stickerVideoTracks && media?.tagName === 'VIDEO' ? (media as HTMLVideoElement) : null;
+  const { hiddenIds, bindPose } = useTrackPlayback(imageId, video);
 
   if (!active) return null;
 
@@ -158,11 +166,15 @@ export function ImageStickerOverlay({
               // pressing the plus is often what mounts this in the first place.
               paced={!isPlacing}
               step={historyStep}
+              // A replay shows every sticker it steps through, whatever the video's time.
+              hiddenIds={historyStep == null ? hiddenIds : undefined}
+              bindPose={bindPose}
             />
           )}
           {isPlacing && <DraftStickerLayer />}
         </div>
       )}
+      {isPlacing && video && <StickerMotionEditor video={video} />}
     </div>
   );
 }

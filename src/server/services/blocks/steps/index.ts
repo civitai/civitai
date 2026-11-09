@@ -537,29 +537,42 @@ export function containsAirReference(value: unknown, depth = 0): boolean {
 // The extraction primitives live in the leaf module `./output` (see its header
 // for why). Re-exported here so `~/server/services/blocks/steps` stays the one
 // import site for consumers that aren't registry entries.
-export type { StepOutputMedia, TrainedEpoch, TrainingStepType } from './output';
+export type {
+  OrchestratorBlobLike,
+  StepOutputMedia,
+  TrainedEpoch,
+  TrainingStepType,
+} from './output';
 export {
   isTrainingStepType,
   mediaFromBlobs,
   splitPassThroughStep,
   splitPassThroughStepOutput,
+  withEveryBlobSurfaceable,
 } from './output';
 
 /**
- * The `$type` values `workflow.service`'s two extractors handle NATIVELY, with
- * their own long-standing inline branches.
- *
- * 🔴 A registered step MUST NOT claim one of these (enforced, clause 9). That
- * invariant is what makes the registry branch safe to place BEFORE the native
- * `$type` filter: it cannot shadow an existing branch, so `textToImage` /
- * `imageGen` / `comfy` / `customComfy` extraction stays byte-identical.
+ * The `$type` values `workflow.service`'s two extractors handle natively, via
+ * `nativeStepOutputMedia`. A registered step MUST NOT claim one of these
+ * (enforced, clause 9); that is what lets the registry branch run before the
+ * native filter without shadowing it.
  */
-export const NATIVELY_EXTRACTED_STEP_TYPES: readonly string[] = [
-  'customComfy',
-  'textToImage',
-  'imageGen',
-  'comfy',
-] as const;
+const NATIVE_STEP_TYPES = ['customComfy', 'textToImage', 'imageGen', 'comfy'] as const;
+export const NATIVELY_EXTRACTED_STEP_TYPES: readonly string[] = NATIVE_STEP_TYPES;
+
+/**
+ * Which `output` key each NATIVELY extracted `$type` carries its media on.
+ *
+ * `textToImage` / `imageGen` carry `output.images`; `comfy` / `customComfy` carry
+ * `output.blobs`. Reading the wrong key silently yields no media. A type added to
+ * `NATIVELY_EXTRACTED_STEP_TYPES` without an entry here is a type error.
+ */
+export const NATIVE_STEP_OUTPUT_KEY = {
+  customComfy: 'blobs',
+  textToImage: 'images',
+  imageGen: 'images',
+  comfy: 'blobs',
+} as const satisfies Record<(typeof NATIVE_STEP_TYPES)[number], 'images' | 'blobs'>;
 
 /**
  * ORCHESTRATOR `$type` → the moderation postures ACCEPTABLE for that type.

@@ -36,6 +36,8 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 
 import { resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
+import { includesInappropriate } from '~/utils/metadata/audit';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite, holdReadFails: false }));
 
@@ -43,6 +45,7 @@ const BANNED = 7;
 const ACTIVE = 8;
 const HELD = 12;
 const REPORTED = 13;
+const CAPTURE = FEEDBACK_CAPTURE_OWNER_ID;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -109,7 +112,8 @@ beforeEach(async () => {
   await holder.db.exec(`
     TRUNCATE "Image", "User", "EvidenceHeldUser", "EvidenceHoldImage", "CsamReport";
     INSERT INTO "User" (id, "bannedAt")
-      VALUES (${BANNED}, now()), (${ACTIVE}, NULL), (${HELD}, NULL), (${REPORTED}, NULL);
+      VALUES (${BANNED}, now()), (${ACTIVE}, NULL), (${HELD}, NULL), (${REPORTED}, NULL),
+        (${CAPTURE}, NULL);
     INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${HELD});
     INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED});
   `);
@@ -295,5 +299,40 @@ describe('a clean scan that should still lift or leave the image visible', () =>
 
     expect(outcome.ingestion).toBe('Scanned');
     expect(await imageRow(5)).toEqual({ ingestion: 'Scanned', blockedFor: null, nsfwLevel: 1 });
+  });
+});
+
+describe('a feedback page capture', () => {
+  it('keeps a prior block its own state holds across a clean scan', async () => {
+    await insertImage(30, CAPTURE, 'Blocked', 'CSAM');
+    const outcome = await scan(loaded(30, CAPTURE, 'Blocked', 'CSAM'));
+    expect(outcome.ingestion).toBe('Blocked');
+    expect((await imageRow(30)).ingestion).toBe('Blocked');
+  });
+
+  it('lets a clean scan lift a prior block nothing holds (control)', async () => {
+    await insertImage(31, CAPTURE, 'Blocked', 'moderated');
+    const outcome = await scan(loaded(31, CAPTURE, 'Blocked', 'moderated'));
+    expect(outcome.ingestion).toBe('Scanned');
+  });
+
+  it('is never given a review key', async () => {
+    vi.mocked(includesInappropriate)
+      .mockReturnValueOnce('poi' as never)
+      .mockReturnValueOnce('poi' as never);
+    await insertImage(32, CAPTURE, 'Pending', null);
+    await insertImage(33, ACTIVE, 'Pending', null);
+
+    const capture = await scan(loaded(32, CAPTURE, 'Pending', null));
+    const ordinary = await scan(loaded(33, ACTIVE, 'Pending', null));
+
+    expect(ordinary.reviewKey).toBe('poi');
+    expect(capture.reviewKey).toBeNull();
+    const row = (
+      await holder.db.query<{ needsReview: string | null }>(
+        `SELECT "needsReview" FROM "Image" WHERE id = 32`
+      )
+    ).rows[0];
+    expect(row).toEqual({ needsReview: null });
   });
 });

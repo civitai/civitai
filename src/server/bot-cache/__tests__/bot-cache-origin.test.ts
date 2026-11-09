@@ -80,8 +80,8 @@ const STORED_HEADERS = {
 const store = new Map<string, unknown>();
 
 /** The key under the current build id; throws when there is none. */
-function keyFor(host: string, pathname: string, search = '') {
-  const key = botCacheKey(host, pathname, search);
+function keyFor(host: string, pathname: string, search = '', userAgent?: string) {
+  const key = botCacheKey(host, pathname, search, userAgent);
   if (!key) throw new Error('no key: the build id is the fallback');
   return key;
 }
@@ -142,12 +142,20 @@ beforeEach(() => {
 });
 
 describe('botCacheKey', () => {
-  it('is build, host, path and the sorted query', () => {
-    expect(botCacheKey('civitai.com', '/images/1', '?b=2&a=1&a=0')).toBe(
-      'botcache:v1:build-a:civitai.com:/images/1?a=0&a=1&b=2'
+  it('is build, device class, host, path and the sorted query', () => {
+    expect(botCacheKey('civitai.com', '/images/1', '?b=2&a=1&a=0', undefined)).toBe(
+      'botcache:v1:build-a:d:civitai.com:/images/1?a=0&a=1&b=2'
     );
-    expect(botCacheKey('Civitai.COM', '/images/1', '', 'build-b')).toBe(
-      'botcache:v1:build-b:civitai.com:/images/1?'
+    expect(botCacheKey('Civitai.COM', '/images/1', '', undefined, 'build-b')).toBe(
+      'botcache:v1:build-b:d:civitai.com:/images/1?'
+    );
+  });
+
+  it('keeps the smartphone crawler apart from the desktop one', () => {
+    const phone =
+      'Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X) Chrome/142.0 Mobile Safari/537.36 (compatible; Googlebot/2.1)';
+    expect(botCacheKey('civitai.com', '/models/1', '', phone)).toBe(
+      'botcache:v1:build-a:m:civitai.com:/models/1?'
     );
   });
 });
@@ -296,7 +304,7 @@ describe('storing', () => {
   it('stores for 300 s', async () => {
     await seed();
     expect(redisMock.redis.packed.set).toHaveBeenCalledWith(
-      'botcache:v1:build-a:civitai.com:/images/1?',
+      'botcache:v1:build-a:d:civitai.com:/images/1?',
       expect.objectContaining({ pattern: IMAGE_ROUTE }),
       { EX: 300 }
     );
@@ -407,13 +415,13 @@ describe('the middleware never rejects', () => {
 describe('without a real build id (the `unknown` fallback)', () => {
   it('there is no key', () => {
     h.buildId = 'unknown';
-    expect(botCacheKey('civitai.com', '/images/1', '')).toBeNull();
-    expect(botCacheKey('civitai.com', '/images/1', '', '')).toBeNull();
+    expect(botCacheKey('civitai.com', '/images/1', '', undefined)).toBeNull();
+    expect(botCacheKey('civitai.com', '/images/1', '', undefined, '')).toBeNull();
   });
 
   it('nothing is served, though an entry exists under the fallback id', async () => {
     await seed();
-    store.set('botcache:v1:unknown:civitai.com:/images/1?', [...store.values()][0]);
+    store.set('botcache:v1:unknown:d:civitai.com:/images/1?', [...store.values()][0]);
     h.buildId = 'unknown';
     const response = await serve(crawler());
     expectRendered(response);

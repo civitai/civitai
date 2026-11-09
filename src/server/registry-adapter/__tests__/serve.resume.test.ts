@@ -28,7 +28,8 @@ const app = (slug: string, rev: string): Entity => ({
   urn: `urn:apps.civitai.com:app/${slug}`,
   schemas: [APPS],
   rev,
-  body: { slug },
+  // A known rating, so anonymous is sent it (`audience.ts`).
+  body: { slug, contentRating: 'g' },
 });
 
 let server: Server | undefined;
@@ -172,7 +173,13 @@ describe('🔴 a resume checks the cursor before live: the document streams', ()
       source: fixtureDocSource(() => world.cat),
       resolve: async (schema) =>
         schema === NOTES
-          ? { appId: world.appId, slug: 'orbit-notes', collection: 'notes', family }
+          ? {
+              appId: world.appId,
+              slug: 'orbit-notes',
+              collection: 'notes',
+              contentRating: 'pg',
+              family,
+            }
           : null,
       store,
       pollMs: 5,
