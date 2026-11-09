@@ -575,8 +575,8 @@ export const teLockReason = (run: Run): string | undefined =>
 export const teLocked = (run: Run): boolean => teLockReason(run) !== undefined;
 
 /** The learning rates after an optimizer change, as the main trainer couples them: Prodigy runs at
- *  1, and so does a text encoder rate that is on; an off (0) or locked one stays as it is, so a model
- *  that defaults TE off doesn't start training it. Switching away puts a Prodigy-level rate back to the
+ *  1, and so does a text encoder rate that is on; a locked one goes to 0 and an off (0) one stays off,
+ *  so a model that defaults TE off doesn't start training it. Switching away puts a Prodigy-level rate back to the
  *  model's recommendation and leaves a rate the user picked alone. */
 export function optimizerLrParams(
   run: Run,
@@ -586,7 +586,7 @@ export function optimizerLrParams(
   if (isProdigy(params.optimizer))
     return {
       unetLr: '1',
-      textEncoderLr: !teLocked(run) && Number(textEncoderLr) > 0 ? '1' : textEncoderLr,
+      textEncoderLr: teLocked(run) ? '0' : Number(textEncoderLr) > 0 ? '1' : textEncoderLr,
     };
   const defaults = defaultRunParams(run);
   const reset = (v: NumericInput, d: NumericInput) => (Number(v) >= MAX_NON_PRODIGY_LR ? d : v);

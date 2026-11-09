@@ -6,16 +6,17 @@ type ScrollBox = Pick<HTMLElement, 'scrollTop' | 'scrollHeight' | 'clientHeight'
 export const atBottom = (el: ScrollBox): boolean =>
   el.scrollHeight - el.scrollTop - el.clientHeight <= TAIL_SLACK_PX;
 
-/** Keeps a growing log scrolled to its newest line only while the reader is at the bottom: scrolling
- *  up stops the follow, and scrolling back to the bottom resumes it. */
+/** Keeps a growing log scrolled to its newest line only while the reader is at the bottom. Where the
+ *  reader is gets read just before each DOM update (not from scroll events, which land a frame late),
+ *  so a scroll up a moment before a line arrives isn't undone. */
 export function createTailFollower() {
-  let pinned = true;
+  let stick = true;
   return {
-    onScroll(el: ScrollBox) {
-      pinned = atBottom(el);
+    beforeUpdate(el: ScrollBox | undefined) {
+      stick = !el || atBottom(el);
     },
-    follow(el: ScrollBox) {
-      if (pinned) el.scrollTop = el.scrollHeight;
+    afterUpdate(el: ScrollBox | undefined) {
+      if (el && stick) el.scrollTop = el.scrollHeight;
     },
   };
 }

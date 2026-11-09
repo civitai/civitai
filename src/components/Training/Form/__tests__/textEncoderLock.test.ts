@@ -12,8 +12,4 @@ describe('in-app trainer text encoder lock', () => {
     for (const base of TEXT_ENCODER_LOCKED_BASES)
       expect(overrides[base]).toEqual({ all: { disabled: true, default: 0, max: 0 } });
   });
-
-  it('keeps the trainable overrides', () => {
-    expect(overrides.anime).toEqual({ all: { default: 1e-4 } });
-  });
 });

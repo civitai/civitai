@@ -141,9 +141,13 @@
   // Follow the raw tail as lines arrive, unless the reader has scrolled up to read.
   let logEl: HTMLDivElement | undefined;
   const tail = createTailFollower();
+  $effect.pre(() => {
+    raw.length;
+    tail.beforeUpdate(logEl);
+  });
   $effect(() => {
     raw.length;
-    if (logEl) tail.follow(logEl);
+    tail.afterUpdate(logEl);
   });
 </script>
 
@@ -201,7 +205,6 @@
       </summary>
       <div
         bind:this={logEl}
-        onscroll={(e) => tail.onScroll(e.currentTarget)}
         role="log"
         aria-live="off"
         class="mt-2 max-h-64 overflow-y-auto rounded border border-dark-5 bg-dark-8 px-3 py-2 font-mono text-xs leading-relaxed"

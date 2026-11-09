@@ -481,7 +481,8 @@ describe('optimizer learning-rate coupling', () => {
     'acestep',
   ])('locks the text-encoder rate at 0, Prodigy included (%s)', (type) => {
     const r = run(type);
-    const params = { ...defaultRunParams(r), optimizer: 'Prodigy', textEncoderLr: '0' };
+    // A stale nonzero rate (a saved run, a model switch) must not become 1.
+    const params = { ...defaultRunParams(r), optimizer: 'Prodigy', textEncoderLr: '0.0001' };
     expect(teLocked(r)).toBe(true);
     expect(optimizerLrParams(r, params)).toEqual({ unetLr: '1', textEncoderLr: '0' });
   });
@@ -498,9 +499,11 @@ describe('optimizer learning-rate coupling', () => {
   );
 
   it('locks every version the in-app trainer locks', () => {
-    for (const card of MODEL_CARDS)
-      for (const v of card.versions)
-        if (isTextEncoderLockedBase(v.key)) expect(teLocked(run(card.type, v.key))).toBe(true);
+    const locked = MODEL_CARDS.flatMap((card) =>
+      card.versions.filter((v) => isTextEncoderLockedBase(v.key)).map((v) => run(card.type, v.key))
+    );
+    expect(locked.length).toBeGreaterThan(20);
+    for (const r of locked) expect(teLocked(r)).toBe(true);
   });
 
   // The server locks by ecosystem; one that mixed a locked version with a trainable one would lock both.
