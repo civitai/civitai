@@ -28,6 +28,7 @@ const LIVE_KEEP_IMAGE = migration('20261204120000_evidence_hold_image_prior_stat
 const LIVE_EVIDENCE_HOLD = migration('20261019220000_evidence_hold');
 const NEVER_SUBJECT_MIGRATION = migration('20261231130000_feedback_capture_never_subject');
 const LIFETIME_MIGRATION = migration('20261231130100_feedback_capture_hold_lifetime');
+const OWNER_HELD_MIGRATION = migration('20261227150000_evidence_hold_owner_held');
 
 const CAPTURE = FEEDBACK_CAPTURE_OWNER_ID;
 const OTHER = 7;
@@ -310,6 +311,31 @@ describe('20261231130100_feedback_capture_hold_lifetime', () => {
       ';'
     );
     expect(ours).toBe(fn(LIVE_EVIDENCE_HOLD, 'evidence_hold_purge_unheld', '$$ LANGUAGE sql'));
+  });
+
+  it('refuses to apply over 20261227150000, leaving its functions in place', async () => {
+    const fresh = new PGlite();
+    const defs = async () =>
+      (
+        await fresh.query<{ def: string }>(
+          `SELECT pg_get_functiondef(p.oid) AS def FROM pg_proc p
+           WHERE p.proname IN ('evidence_hold_purge_unheld', 'evidence_hold_guard_kept')
+           ORDER BY p.proname`
+        )
+      ).rows.map((r) => r.def);
+    try {
+      await fresh.exec(BASE_SCHEMA);
+      await fresh.exec(LIVE_EVIDENCE_HOLD);
+      await fresh.exec(LIVE_KEEP_IMAGE);
+      await fresh.exec(CAPTURE_MIGRATION);
+      await fresh.exec(OWNER_HELD_MIGRATION);
+      const before = await defs();
+      expect(before.join()).toContain('evidence_hold_owner_held(');
+      await expect(fresh.exec(LIFETIME_MIGRATION)).rejects.toThrow(/supersedes it/);
+      expect(await defs()).toEqual(before);
+    } finally {
+      await fresh.close();
+    }
   });
 
   it('changes the applied record guard only by the capture clause', () => {
