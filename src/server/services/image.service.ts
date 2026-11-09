@@ -2021,7 +2021,10 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
 // `Omit<..., IMAGE_INFINITE_DROPPED_FIELDS>`. Any consumer that reads a dropped field
 // (client component or internal server caller) is a compile error. See
 // `~/server/utils/image-infinite-wire.ts`.
-export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
+export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0] & {
+  /** Only in the Hat Turf feed of the viewer's own hats: when their hat on it was placed. */
+  turfPlacedAt?: Date;
+};
 
 // Per-call ceiling for the image-feed raw query. The `civitai` postgres role
 // has statement_timeout=0 (overriding the cluster's 300s), so a single slow

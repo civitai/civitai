@@ -77,6 +77,11 @@ beforeAll(async () => {
     );
     CREATE TABLE "Collection" (id int PRIMARY KEY, mode text);
     CREATE TABLE "CollectionItem" (id serial PRIMARY KEY, "collectionId" int, "imageId" int);
+    -- Read by getTurfStock's count of the player's live hats; empty here.
+    CREATE TABLE "EventTurfSticker" (
+      id bigserial PRIMARY KEY, event text, "imageId" int, "userId" int, team text,
+      "cosmeticId" int, data jsonb, "createdAt" timestamptz DEFAULT now(), "removedAt" timestamptz
+    );
     CREATE TABLE "Cosmetic" (id int PRIMARY KEY, type text, data jsonb);
     CREATE TABLE "UserCosmetic" ("userId" int, "cosmeticId" int);
     CREATE TABLE "EventTurfStock" (

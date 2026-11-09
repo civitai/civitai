@@ -16,6 +16,9 @@ import { filmLength } from '~/components/Events/ScoredEvent/scored-event.utils';
 import { HatTurfSectionStats } from '~/components/Events/ScoredEvent/HatTurfSectionStats';
 import { HeroBulbs } from '~/components/Events/ScoredEvent/HeroBulbs';
 import { useJoin, useTurfGate } from '~/components/HatTurf/useHatTurf';
+import { useHatTurfFeedPlayer } from '~/components/HatTurf/useHatTurfFeedPlayer';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { useSetFilters } from '~/providers/FiltersProvider';
 
 /** The page anchor articles link to: /events/<event>#hat-turf. */
 export const HAT_TURF_ANCHOR = 'hat-turf';
@@ -99,6 +102,9 @@ export function HatTurfEventSection({
             >
               {joined ? 'Leave Hat Turf' : 'Join Hat Turf'}
             </Button>
+            {joined && stock.liveHats > 0 && (
+              <MyLiveHatsLink event={event} count={stock.liveHats} />
+            )}
           </div>
         </div>
         <div className="relative order-first h-[130px] @sm:order-none @sm:h-auto">
@@ -142,5 +148,27 @@ export function HatTurfEventSection({
         )}
       </div>
     </div>
+  );
+}
+
+/** Opens the image feed on the viewer's own live hats, for feed players only, as the feed serves it. */
+function MyLiveHatsLink({ event, count }: { event: string; count: number }) {
+  const player = useHatTurfFeedPlayer();
+  const setImageFilters = useSetFilters('images');
+  if (player?.event !== event) return null;
+  return (
+    <Button
+      component={NextLink}
+      href="/images"
+      size="sm"
+      radius="xl"
+      color="yellow"
+      variant="light"
+      ml="xs"
+      onClick={() => setImageFilters({ hatTurfMine: true })}
+      data-testid="hat-turf-my-hats"
+    >
+      My live hats ({count})
+    </Button>
   );
 }
