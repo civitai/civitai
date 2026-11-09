@@ -45,7 +45,7 @@ export const feedbackRouter = router({
         features: ctx.features,
       });
       const saved = await createFeedback({ ...input, userId: ctx.user.id, server });
-      // Not awaited: filing never delays or fails the submit, and it never throws.
+      // Not awaited: HQ must never delay or fail the submit.
       void fileFeedbackToHq({ ...input, feedbackId: saved.id, userId: ctx.user.id, server });
       return saved;
     }),

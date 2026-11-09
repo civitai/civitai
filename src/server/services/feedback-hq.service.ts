@@ -7,6 +7,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { CreateFeedbackInput } from '~/server/schema/feedback.schema';
 import type { FeedbackServerStamp } from '~/server/services/feedback.service';
 import { SITE_BUG_REPORT_AREA } from '~/shared/constants/feedback.constants';
+import { sniffImageFormat } from '~/shared/utils/image-magic-bytes';
 import { deepRedact, redactText } from '~/utils/faro/redact';
 
 const HQ_INTAKE_PATH = '/api/v1/intake/feedback';
@@ -20,10 +21,7 @@ export const HQ_SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024;
 
 const TITLE_EXCERPT_MAX_LENGTH = 80;
 
-/**
- * Per reporter, on top of `FEEDBACK_RATE_LIMIT` on the submit itself. Over it the report is still
- * saved; it is just not filed.
- */
+/** Filing attempts per reporter, on top of `FEEDBACK_RATE_LIMIT` on the submit itself. */
 export const HQ_FILING_USER_CAP = { max: 10, windowSeconds: 24 * 60 * 60 };
 
 type FeedbackContextInput = NonNullable<CreateFeedbackInput['context']>;
@@ -46,7 +44,7 @@ type HqLogStatus =
   | 'bad-response'
   | 'filed';
 
-// Only the id and an outcome: a log line must never carry the token, the report or HQ's reply.
+// Id and outcome only — never the token, the report or HQ's reply.
 const log = (feedbackId: number, status: HqLogStatus) =>
   logToAxiom({
     name: 'feedback-hq-intake',
@@ -55,30 +53,32 @@ const log = (feedbackId: number, status: HqLogStatus) =>
     status,
   }).catch(() => undefined);
 
-// Control, format (bidi overrides, zero-width) and line/paragraph separators.
 const INVISIBLE_RE = /[\p{Cc}\p{Cf}\u2028\u2029]/gu;
-// Characters that start markdown or HTML syntax in a single-line context.
 const INLINE_MARKUP_RE = /[[\]()<>*_`#|!~\\]/g;
 
-/** `@name` would notify someone in HQ. A zero-width space after the `@` keeps it readable and inert. */
+/** A zero-width space after `@` keeps the text readable but stops HQ notifying anyone. */
 const inertMentions = (text: string) => text.replace(/@/g, '@\u200b');
 
-/** One line of user text safe to show outside a code block: no markup, no mentions, no secrets. */
+/** A zero-width space after `:` and between dotted words, so no autolinker sees a URL or domain. */
+const inertLinks = (text: string) =>
+  text.replace(/:/g, ':\u200b').replace(/(\w)\.(?=\w)/g, '$1.\u200b');
+
+/**
+ * Stripped before redaction, so removing a character cannot rejoin an email or token after it; the
+ * second strip takes the brackets off the redaction markers.
+ */
 export function neutralizeInline(text: string): string {
-  return inertMentions(
-    redactText(text)
-      .replace(INVISIBLE_RE, ' ')
-      .replace(INLINE_MARKUP_RE, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-  );
+  const stripped = text
+    .replace(INVISIBLE_RE, ' ')
+    .replace(INLINE_MARKUP_RE, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return inertLinks(inertMentions(redactText(stripped).replace(INLINE_MARKUP_RE, '')));
 }
 
-/** A server-known value as an inline code span. Backticks and newlines would end the span. */
 const codeSpan = (value: string | number | boolean) =>
   `\`${inertMentions(String(value).replace(/[`\r\n]/g, ' '))}\``;
 
-/** A fenced block that no content can close: the fence is longer than any backtick run inside. */
 function fenced(text: string): string {
   const longestRun = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
   const fence = '`'.repeat(Math.max(3, longestRun + 1));
@@ -87,7 +87,6 @@ function fenced(text: string): string {
 
 const byteLength = (text: string) => Buffer.byteLength(text, 'utf8');
 
-/** Cuts to at most `maxBytes` of UTF-8 without splitting a character. */
 function clipBytes(text: string, maxBytes: number): string {
   if (byteLength(text) <= maxBytes) return text;
   let out = '';
@@ -178,16 +177,15 @@ function diagnosticsSection(context: FeedbackContextInput | undefined) {
   for (const entry of context.trpcErrors ?? [])
     lines.push(`trpc ${entry.httpStatus ? `${entry.httpStatus} ` : ''}${entry.path} ${entry.code}`);
   if (!lines.length) return '';
-  // Already redacted by the browser recorders; scrubbed again because this leaves the site.
+  // Redact again: this text leaves the site.
   return `## Diagnostics\n\n${fenced(inertMentions(deepRedact(lines).join('\n')))}`;
 }
 
 const TRUNCATED_NOTE = '[truncated: full text in the moderator view]';
 
 /**
- * The task body. Everything the reporter typed sits inside a fence it cannot close, so none of it
- * renders as HTML, a link, an image or a heading; `@` is made inert everywhere. Over HQ's limit the
- * diagnostics go first, then the message is clipped.
+ * The task body. Reporter text sits in a fence it cannot close, so none of it renders as HTML, a
+ * link, an image or a heading; `@` is made inert everywhere.
  */
 export function buildHqBody(
   input: FeedbackHqFilingInput,
@@ -221,7 +219,6 @@ export function buildHqBody(
   return compose(`${clipped}\n${TRUNCATED_NOTE}`, false);
 }
 
-/** Fixed window per reporter. Fails closed: if Redis cannot count, nothing is filed. */
 async function claimHqFilingSlot(userId: number): Promise<boolean> {
   const key = `${REDIS_SYS_KEYS.FEEDBACK.HQ_FILING}:${userId}` as const;
   try {
@@ -235,27 +232,36 @@ async function claimHqFilingSlot(userId: number): Promise<boolean> {
   }
 }
 
-/** The image type from its first bytes. A `Content-Type` header is the server's claim, not this. */
-export function sniffImageType(
-  bytes: Uint8Array
-): 'image/png' | 'image/jpeg' | 'image/webp' | null {
-  if (
-    bytes.length >= 8 &&
-    [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((b, i) => bytes[i] === b)
-  )
-    return 'image/png';
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)
-    return 'image/jpeg';
-  if (
-    bytes.length >= 12 &&
-    String.fromCharCode(...bytes.subarray(0, 4)) === 'RIFF' &&
-    String.fromCharCode(...bytes.subarray(8, 12)) === 'WEBP'
-  )
-    return 'image/webp';
-  return null;
+const IMAGE_MIME = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' } as const;
+
+/** Reads at most `maxBytes`, or null past it, so an undeclared length cannot buffer an unbounded body. */
+async function readCapped(
+  res: Response,
+  maxBytes: number
+): Promise<Uint8Array<ArrayBuffer> | null> {
+  if (!res.body) return null;
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
 }
 
-/** The opt-in page capture as an attachable file, or null when it is missing, too big or not an image. */
 async function loadScreenshot(screenshotId: string): Promise<Blob | null> {
   try {
     const res = await fetch(getEdgeUrl(screenshotId, { original: true }), {
@@ -264,10 +270,14 @@ async function loadScreenshot(screenshotId: string): Promise<Blob | null> {
     if (!res.ok) return null;
     const declared = Number(res.headers.get('content-length'));
     if (Number.isFinite(declared) && declared > HQ_SCREENSHOT_MAX_BYTES) return null;
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    if (bytes.length === 0 || bytes.length > HQ_SCREENSHOT_MAX_BYTES) return null;
-    const type = sniffImageType(bytes);
-    return type ? new Blob([bytes], { type }) : null;
+    const bytes = await readCapped(res, HQ_SCREENSHOT_MAX_BYTES);
+    if (!bytes?.length) return null;
+    // Typed by its bytes: a Content-Type header is the server's claim.
+    const format = sniffImageFormat(bytes, {
+      formats: ['png', 'jpeg', 'webp'],
+      pngSignature: 'full',
+    });
+    return format ? new Blob([bytes], { type: IMAGE_MIME[format] }) : null;
   } catch {
     return null;
   }
@@ -275,22 +285,19 @@ async function loadScreenshot(screenshotId: string): Promise<Blob | null> {
 
 const HQ_TASK_ID_PATTERN = /^[\w-]{1,100}$/;
 
-function parseHqReply(reply: unknown): { id: string; url: string } | null {
+/** The task HQ returned, or null unless its link is on the same origin we posted to. */
+function parseHqReply(reply: unknown, hqOrigin: string): { id: string; url: string } | null {
   if (!reply || typeof reply !== 'object') return null;
   const { id, url } = reply as Record<string, unknown>;
   if (typeof id !== 'string' || !HQ_TASK_ID_PATTERN.test(id) || typeof url !== 'string')
     return null;
   try {
-    return new URL(url).protocol === 'https:' ? { id, url } : null;
+    return new URL(url).origin === hqOrigin ? { id, url } : null;
   } catch {
     return null;
   }
 }
 
-/**
- * Writes ONLY `context.hq` on that one row. `jsonb_set` keeps every other key, the server stamp
- * included, exactly as it was saved.
- */
 export async function recordHqTask(
   feedbackId: number,
   task: { id: string; url: string },
@@ -304,9 +311,8 @@ export async function recordHqTask(
 }
 
 /**
- * Files one HQ task for a saved site bug report. Called without `await` after the row is written:
- * it never throws, and every outcome other than a filing is one log line. A process that dies
- * mid-call loses this filing; the report itself is already saved.
+ * Not awaited by the caller, so it must never throw: the submit has already succeeded. A process
+ * that dies mid-call loses this filing; the report itself is saved.
  */
 export async function fileFeedbackToHq(input: FeedbackHqFilingInput): Promise<void> {
   try {
@@ -336,7 +342,8 @@ export async function fileFeedbackToHq(input: FeedbackHqFilingInput): Promise<vo
     for (const label of buildHqLabels(input)) form.append('labels', label);
     if (screenshot) form.set('screenshot', screenshot, `feedback-${input.feedbackId}`);
 
-    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}${HQ_INTAKE_PATH}`, {
+    const intakeUrl = new URL(HQ_INTAKE_PATH, baseUrl);
+    const res = await fetch(intakeUrl, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: form,
@@ -344,12 +351,12 @@ export async function fileFeedbackToHq(input: FeedbackHqFilingInput): Promise<vo
     });
     if (res.status !== 201) return void (await log(input.feedbackId, res.status));
 
-    const task = parseHqReply(await res.json().catch(() => null));
+    const task = parseHqReply(await res.json().catch(() => null), intakeUrl.origin);
     if (!task) return void (await log(input.feedbackId, 'bad-response'));
     await recordHqTask(input.feedbackId, task);
     await log(input.feedbackId, 'filed');
   } catch (error) {
-    const timedOut = error instanceof Error && error.name === 'TimeoutError';
+    const timedOut = (error as { name?: unknown } | null)?.name === 'TimeoutError';
     await log(input.feedbackId, timedOut ? 'timeout' : 'error').catch(() => undefined);
   }
 }

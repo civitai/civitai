@@ -183,11 +183,11 @@ export type FeedbackContext = {
   /** Build, route, device, and what the server stamped (browser, tier, site, flags), in display
    *  order. Client rows are claims; the `server` rows were written by the submit procedure. */
   environment: FeedbackEnvironmentRow[];
+  /** The HQ task filed for this report. A link off `HQ_ORIGIN` falls through to `other` as text.
+   *  No link does not mean no task: filing is best-effort and may still be in flight. */
+  hqTask: { id: string; url: string } | null;
   /** From a toast's "Report this": the server-fault ref and orchestrator ids it carried, and the
    *  text the reporter was shown. Rendered as text only — reporter-supplied claims. */
-  /** The HQ task the submit filed for this report, written by the server after HQ answered. Only
-   *  an `https://hq.civitai.com` link is accepted; anything else lands in `other` as text. */
-  hqTask: { id: string; url: string } | null;
   errorRef: string | null;
   workflowId: string | null;
   jobId: string | null;
@@ -350,19 +350,6 @@ const isToast = (value: unknown): value is { title?: string; message: string } =
  */
 const IMAGE_KEY = /^(?!https?|blob)[A-Za-z0-9][A-Za-z0-9_-]{7,99}$/;
 
-/**
- * 🔴 THE "OTHER" BUCKET IS NOT A NICETY. `feedbackContextSchema` already accepts keys no current
- * producer emits, so a panel rendering only the ones it knows about discards the payload of every
- * area added after it, silently. A known key holding an unexpected TYPE or an unusable VALUE lands
- * there too — `context` is JSONB with no schema at rest, so its shape is a claim.
- *
- * ⚠ THAT SENTENCE IS ABOUT DECLARED-BUT-UNRENDERED OPTIONALS (`reportedSource`,
- * `reportedPageSources`, `pagesLoaded`) — NOT about arbitrary keys surviving the wire. The
- * producer's `feedbackContextSchema` is a `z.object`, which STRIPS what it does not declare, so a
- * key it never heard of does not reach this column at all. The bucket is what makes a key the
- * producer HAS declared and this app has not yet learned to render degrade to a visible JSON dump
- * instead of vanishing.
- */
 const HQ_ORIGIN = 'https://hq.civitai.com';
 const HQ_TASK_ID = /^[\w-]{1,100}$/;
 
@@ -376,6 +363,19 @@ function isHqTask(value: unknown): value is { id: string; url: string } {
   }
 }
 
+/**
+ * 🔴 THE "OTHER" BUCKET IS NOT A NICETY. `feedbackContextSchema` already accepts keys no current
+ * producer emits, so a panel rendering only the ones it knows about discards the payload of every
+ * area added after it, silently. A known key holding an unexpected TYPE or an unusable VALUE lands
+ * there too — `context` is JSONB with no schema at rest, so its shape is a claim.
+ *
+ * ⚠ THAT SENTENCE IS ABOUT DECLARED-BUT-UNRENDERED OPTIONALS (`reportedSource`,
+ * `reportedPageSources`, `pagesLoaded`) — NOT about arbitrary keys surviving the wire. The
+ * producer's `feedbackContextSchema` is a `z.object`, which STRIPS what it does not declare, so a
+ * key it never heard of does not reach this column at all. The bucket is what makes a key the
+ * producer HAS declared and this app has not yet learned to render degrade to a visible JSON dump
+ * instead of vanishing.
+ */
 export function splitContext(context: unknown): FeedbackContext {
   const out: FeedbackContext = {
     path: null,

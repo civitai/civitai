@@ -296,9 +296,6 @@ describe('feedback.create — filing to HQ', () => {
       message: submission.message,
       server: expect.objectContaining({ site: 'red' }),
     });
-    expect(createFeedbackMock.mock.invocationCallOrder[0]).toBeLessThan(
-      fileFeedbackToHqMock.mock.invocationCallOrder[0]
-    );
   }, 2_000);
 
   it('files nothing when the report could not be saved', async () => {

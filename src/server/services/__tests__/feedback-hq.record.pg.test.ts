@@ -2,12 +2,8 @@ import { PrismaClient } from '@prisma/client';
 import { Client } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-/**
- * The HQ task is written into a report's `context` after the report was saved, by a raw UPDATE.
- * Against a real Postgres, because what has to hold is a property of the SQL: the server stamp and
- * every other key the submit wrote are still there afterwards, and no other row is touched.
- * Runs in CI on the `unit` job's throwaway Postgres; skips locally without the URL.
- */
+/** Against real Postgres: what must hold is a property of the SQL (the server stamp and other keys
+ * survive, no other row is touched). */
 const URL_BASE = process.env.APPDATA_TEST_DATABASE_URL;
 const DB_NAME = 'feedback_hq_record_test';
 
@@ -41,7 +37,6 @@ describe.skipIf(!URL_BASE)('recording the HQ task on Postgres', () => {
     url.pathname = `/${DB_NAME}`;
     sql = new Client({ connectionString: url.toString() });
     await sql.connect();
-    // The column as the feedback migration declares it.
     await sql.query(
       `CREATE TABLE "Feedback" (id SERIAL PRIMARY KEY, "context" JSONB NOT NULL DEFAULT '{}')`
     );

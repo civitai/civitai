@@ -34,8 +34,8 @@ const report = (overrides: Partial<Parameters<typeof fileFeedbackToHq>[0]> = {})
   ...overrides,
 });
 
-const created = (body: unknown = { id: 'task_1', url: 'https://hq.civitai.com/tasks/task_1' }) =>
-  new Response(JSON.stringify(body), { status: 201 });
+const TASK = { id: 'task_1', url: `${HQ_ORIGIN}/tasks/task_1` };
+const created = (body: unknown = TASK) => new Response(JSON.stringify(body), { status: 201 });
 
 const fetchMock = vi.fn();
 const intakeCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).startsWith(HQ_ORIGIN));
@@ -64,7 +64,7 @@ describe('when HQ intake is configured', () => {
 
     expect(intakeCalls()).toHaveLength(1);
     const [url, init] = intakeCalls()[0];
-    expect(url).toBe(`${HQ_ORIGIN}/api/v1/intake/feedback`);
+    expect(String(url)).toBe(`${HQ_ORIGIN}/api/v1/intake/feedback`);
     expect(init.headers).toEqual({ Authorization: `Bearer ${TOKEN}` });
     expect(sentForm().get('title')).toBe('Bug report #7: The page went blank');
     expect(sentForm().getAll('labels')).toEqual(['site-bug-report', 'site:red', 'tier:gold']);
@@ -74,17 +74,20 @@ describe('when HQ intake is configured', () => {
     await fileFeedbackToHq(report());
 
     const [, ...values] = dbMock.dbWrite.$executeRaw.mock.calls[0];
-    expect(values).toEqual([
-      JSON.stringify({ id: 'task_1', url: 'https://hq.civitai.com/tasks/task_1' }),
-      7,
-    ]);
+    expect(values).toEqual([JSON.stringify(TASK), 7]);
   });
 
-  it('records nothing when HQ answers 201 with a link that is not https', async () => {
-    fetchMock.mockResolvedValue(created({ id: 'task_1', url: 'javascript:alert(1)' }));
+  it.each([
+    ['a link on another origin', { ...TASK, url: 'https://evil.example/tasks/task_1' }],
+    ['a script link', { ...TASK, url: 'javascript:alert(1)' }],
+    ['an id with markup', { ...TASK, id: '<img src=x>' }],
+    ['an over-long id', { ...TASK, id: 'x'.repeat(101) }],
+  ])('records nothing when HQ answers 201 with %s', async (_, reply) => {
+    fetchMock.mockResolvedValue(created(reply));
     await fileFeedbackToHq(report());
 
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(loggedStatuses()).toEqual(['bad-response']);
   });
 });
 
@@ -107,7 +110,7 @@ it('files only site bug reports', async () => {
 });
 
 describe('a failed filing never reaches the caller', () => {
-  const timeout = Object.assign(new Error('aborted'), { name: 'TimeoutError' });
+  const timeout = AbortSignal.abort(new DOMException('timed out', 'TimeoutError')).reason;
   it.each([
     ['403', () => fetchMock.mockResolvedValue(new Response('no scope', { status: 403 })), 403],
     ['429', () => fetchMock.mockResolvedValue(new Response('slow down', { status: 429 })), 429],
@@ -150,12 +153,32 @@ it('never writes the token, the report or HQ’s reply to a log line', async () 
 });
 
 describe('the per-reporter cap', () => {
-  it('stops filing past the cap', async () => {
-    redisMock.sysRedis.incrBy.mockResolvedValue(11);
+  const KEY = 'system:feedback:hq-filing:42';
+
+  it('files the tenth attempt in a window and refuses the eleventh', async () => {
+    redisMock.sysRedis.incrBy.mockResolvedValueOnce(10).mockResolvedValueOnce(11);
+    await fileFeedbackToHq(report());
     await fileFeedbackToHq(report());
 
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(loggedStatuses()).toEqual(['user-cap']);
+    expect(intakeCalls()).toHaveLength(1);
+    expect(loggedStatuses()).toEqual(['filed', 'user-cap']);
+    expect(redisMock.sysRedis.incrBy).toHaveBeenCalledWith(KEY, 1);
+  });
+
+  it('starts a 24-hour window on the first attempt', async () => {
+    await fileFeedbackToHq(report());
+
+    expect(redisMock.sysRedis.expire).toHaveBeenCalledWith(KEY, 24 * 60 * 60);
+  });
+
+  it('re-arms a window that lost its expiry, and leaves a live one alone', async () => {
+    redisMock.sysRedis.incrBy.mockResolvedValue(5);
+    redisMock.sysRedis.ttl.mockResolvedValueOnce(-1).mockResolvedValueOnce(100);
+    await fileFeedbackToHq(report());
+    await fileFeedbackToHq(report());
+
+    expect(redisMock.sysRedis.expire).toHaveBeenCalledTimes(1);
+    expect(redisMock.sysRedis.expire).toHaveBeenCalledWith(KEY, 24 * 60 * 60);
   });
 
   it('files nothing when the count cannot be read', async () => {
@@ -267,6 +290,20 @@ describe('what reaches HQ from the reporter', () => {
     expect(title.length).toBeLessThanOrEqual(HQ_TITLE_MAX_LENGTH);
   });
 
+  it('leaves no link or domain an autolinker would pick up in the title', () => {
+    const title = buildHqTitle(
+      report({ message: 'see https://evil.example/x and www.evil.example' })
+    );
+    expect(title).not.toMatch(/https?:\/\//);
+    expect(title).not.toMatch(/\w\.\w/);
+  });
+
+  it('redacts an email that markup characters were splitting', () => {
+    const title = buildHqTitle(report({ message: 'mail some*one@exa_mple.com please' }));
+    expect(title).not.toMatch(/someone@\u200b?example/);
+    expect(title).toContain('redacted-email');
+  });
+
   it('falls back to the route when the first line has nothing left', () => {
     expect(buildHqTitle(report({ message: '<>[]()' }))).toBe('Bug report #7 on /models/id');
   });
@@ -284,5 +321,47 @@ describe('what reaches HQ from the reporter', () => {
     expect(text).toContain('[truncated: full text in the moderator view]');
     expect(text).not.toContain('## Diagnostics');
     expect(text).toContain('Moderator view: <https://moderator.example.test/feedback/7>');
+  });
+});
+
+describe('what reaches HQ from the rest of the report', () => {
+  const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlLXNpZ25hdHVyZQ';
+  const text = () =>
+    buildHqBody(
+      report({
+        context: {
+          route: '/x`\n# heading @justin',
+          errorRef: '0123456789ab',
+          consoleErrors: [
+            { message: `boom \`\`\`\`\` @justin someone@example.com ${JWT}`, count: 2 },
+          ],
+          trpcErrors: [
+            { path: 'image.create', code: 'BAD_REQUEST', at: '2026-11-09T00:00:00.000Z' },
+          ],
+        },
+        server: { site: 'red', userAgent: 'Agent`\n## injected @justin', flags: {} },
+      }),
+      { moderatorUrl: 'https://moderator.example.test/feedback/7', screenshotAttached: false }
+    );
+
+  it('keeps reporter-supplied header values inside their code spans', () => {
+    const header = text().split("## Reporter's words")[0];
+    expect(header).not.toMatch(/^#/m);
+    for (const line of header.trim().split('\n')) expect(line.startsWith('- ')).toBe(true);
+  });
+
+  it('fences the diagnostics so their own backticks cannot close the fence', () => {
+    const [, diagnostics] = text().split('## Diagnostics\n\n');
+    const fence = diagnostics.match(/^`+/)![0];
+    expect(fence.length).toBeGreaterThan(5);
+    expect(diagnostics.trimEnd().endsWith(fence)).toBe(true);
+    expect(diagnostics).toContain('trpc image.create BAD_REQUEST');
+  });
+
+  it('scrubs secrets and makes mentions inert outside the reporter’s words too', () => {
+    const body = text();
+    expect(body).not.toContain('someone@example.com');
+    expect(body).not.toContain(JWT);
+    expect(body).not.toMatch(/@justin/);
   });
 });
