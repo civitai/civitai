@@ -659,6 +659,24 @@ describe('the rating on a new dataset', () => {
     expect(createdData().metadata).toMatchObject({ numImages: 3 });
     expect(createdData().metadata).not.toHaveProperty('nsfwLevel');
   });
+
+  it("a Studio dataset replaced with new content loses the old zip's archive state", async () => {
+    withFile({
+      type: 'Training Data',
+      metadata: {
+        selectedEpochUrl: 'https://orch.test/epoch-1',
+        datasetArchive: { status: 'archived', complete: true },
+        nsfwLevel: 1,
+        fullyRated: true,
+      },
+    });
+
+    await updateFile({ id: 1, url: NEW_URL, userId: 7 });
+
+    expect(createdData().metadata).toMatchObject({ selectedEpochUrl: 'https://orch.test/epoch-1' });
+    expect(createdData().metadata).not.toHaveProperty('datasetArchive');
+    expect(createdData().metadata).not.toHaveProperty('fullyRated');
+  });
 });
 
 // Other versions can link a file as a component by its id; they follow it to the new record.

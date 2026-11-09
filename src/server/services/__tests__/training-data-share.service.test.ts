@@ -100,6 +100,13 @@ describe('setStudioDatasetShare', () => {
     expect(written().data.visibility).toBe('Private');
   });
 
+  it('the owner’s click cannot share a replaced dataset, which carries no archive state', async () => {
+    // What a content replace leaves on a Studio row: real size, the choice, no archive or rating.
+    row(2048, shared);
+    await setStudioDatasetShare(70, shared, owner);
+    expect(written().data).not.toHaveProperty('visibility');
+  });
+
   it('a link un-sharing an archived zip takes it back from Public', async () => {
     row(1024, { ...archived(true), ...shared });
     await setStudioDatasetShare(70, { ownRights: true, shareDataset: false });
