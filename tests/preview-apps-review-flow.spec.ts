@@ -9,26 +9,29 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  * `reactRemoveProperties`) and the preview is a production build. Everything is located by
  * role, accessible name or visible text.
  *
- * Preview-e2e: the moderator REVIEW PAGE flow (`/apps/review/<id>`), run as `mod`.
+ * Preview-e2e: the moderator REVIEW PAGE (`/apps/review/<id>`) and queue, run as `mod`, asserting
+ * what only a real PRODUCTION build on a real page can show:
  *
- *  1. A bare review URL opens on the OVERVIEW tab.
- *  2. With the Code tab's diff EXPANDED and the page scrolled to the bottom at 1124×1305, the
- *     sticky action bar's "Approve & next" and "Reject…" are fully on screen and are the
- *     top-most element at their own centre (not covered by the site footer or the floating
- *     buttons).
- *  3. "Approve & next" lands on ANOTHER pending submission at once; Undo returns to the first
- *     one, which is still pending.
- *  4. At an iPhone-sized viewport the queue's tab bar is ONE row, and every queue row's Review
+ *  1. A bare review URL opens on the OVERVIEW tab, with the submission's header.
+ *  2. The real approve gate: a fresh submission's listing has no icon or cover, so Approve &
+ *     next and Approve are disabled with the reason shown, and Reject… is enabled.
+ *  3. With the Code tab's diff EXPANDED and the page scrolled to the bottom at 1124×1305, the
+ *     sticky bar's Approve & next, Approve and Reject… are fully on screen and top-most at
+ *     their own centre (not covered by the site footer or its floating buttons).
+ *  4. No MODAL dialog is open over the review page.
+ *  5. At an iPhone-sized viewport the queue's tab bar is ONE row, and every queue row's Review
  *     button is on screen without scrolling sideways.
- *  Screenshots of the review page (1124×1305) and the queue (iPhone size) are attached to the
- *  report.
+ *  Screenshots are attached to the run's report.
  *
- * 🔴 SAFE ON THE SHARED DEV DB — NOTHING IS EVER APPROVED. Every `blocks.approveRequest` call is
- * intercepted and ABORTED at the network layer (`page.route`), so even a run slow enough to let
- * the 10-second undo window lapse cannot approve (which would create a canonical repo and fire
- * a real build — see `preview-apps-publish.spec.ts`). The interception doubles as the
- * assertion that Undo sent nothing: the count of approve requests is checked to be zero.
- * Both submissions use per-preview slugs and are withdrawn in `finally`.
+ * 🔴 THE APPROVE & NEXT → NEXT REQUEST → UNDO FLOW IS NOT DRIVEN HERE, deliberately. A fresh
+ * submission is not approvable (no store media), and making it so would mean uploading media
+ * through the CDN and scan pipeline on the shared dev database. That flow is pinned instead by
+ * `src/components/Apps/__tests__/pendingApprovalQueue.test.ts` (the engine, hand-driven clock)
+ * and `src/components/Apps/ReviewDecisionFlow.browser.test.tsx` (the page wiring).
+ *
+ * 🔴 SAFE ON THE SHARED DEV DB. Nothing here clicks an approve, and every `blocks.approveRequest`
+ * is aborted at the network layer anyway (belt). The submission uses a per-preview slug and is
+ * withdrawn in `finally`.
  */
 
 const ROLE = 'mod' as const;
@@ -102,59 +105,15 @@ async function withdrawForSlug(request: APIRequestContext, slug: string) {
   }
 }
 
-/**
- * The spec's network layer for the review pages:
- *  - every `blocks.approveRequest` is ABORTED and counted (nothing is ever approved);
- *  - once `liftFloorFor` is set, the publish-request payloads of OUR OWN submissions are
- *    served with an empty `approveFloorMissing`, so the client offers Approve & next.
- *
- * 🔴 WHY THE FLOOR IS LIFTED IN THE RESPONSE AND NOT BY UPLOADING MEDIA. A fresh submission's
- * store listing has no icon and no cover, so the UI correctly disables Approve with "Cannot
- * approve yet…" (the cheap check below pins exactly that). Making the fixture genuinely
- * approvable would mean uploading two images to the image CDN, creating `Image` rows on the
- * shared dev database and waiting for the scan pipeline to mark them Scanned (`setIcon` /
- * `setCover` refuse anything else). No preview spec does that today, and nothing here is
- * about media. The server-side gate is untouched (and approve never reaches it anyway): only
- * the CLIENT's copy of the floor is rewritten, for our two ids only.
- */
-async function routeReviewTraffic(
-  page: Page
-): Promise<{ approvals: () => number; liftFloorFor: (ids: string[]) => void }> {
-  let n = 0;
-  let lifted = new Set<string>();
+/** Belt: abort any `blocks.approveRequest` the page might send. Nothing in this spec clicks one. */
+async function abortApprovals(page: Page) {
   await page.route('**/api/trpc/**', async (route) => {
-    const url = route.request().url();
-    if (url.includes('blocks.approveRequest')) {
-      n += 1;
+    if (route.request().url().includes('blocks.approveRequest')) {
       await route.abort();
-      return;
-    }
-    if (lifted.size > 0 && url.includes('blocks.getPublishRequest')) {
-      const response = await route.fetch();
-      let body: unknown;
-      try {
-        body = await response.json();
-      } catch {
-        await route.fulfill({ response });
-        return;
-      }
-      for (const entry of Array.isArray(body) ? body : [body]) {
-        const req = (
-          entry as { result?: { data?: { json?: { request?: Record<string, unknown> } } } }
-        )?.result?.data?.json?.request;
-        if (req && typeof req.id === 'string' && lifted.has(req.id)) req.approveFloorMissing = [];
-      }
-      await route.fulfill({ response, json: body });
       return;
     }
     await route.continue();
   });
-  return {
-    approvals: () => n,
-    liftFloorFor: (ids) => {
-      lifted = new Set(ids);
-    },
-  };
 }
 
 /** Fully inside the viewport AND the top-most element at its own centre. */
@@ -170,7 +129,13 @@ async function expectUncovered(page: Page, name: string | RegExp) {
   const onTop = await btn.evaluate((el) => {
     const r = el.getBoundingClientRect();
     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-    return !!hit && (hit === el || el.contains(hit));
+    if (!hit) return false;
+    if (hit === el || el.contains(hit)) return true;
+    // A DISABLED button may not be hit-testable (pointer-events), so the point then lands on
+    // the bar behind it. That still proves nothing else is on top: the hit must be inside the
+    // same "Review actions" bar, never the footer or a floating button.
+    const bar = el.closest('[role="group"][aria-label="Review actions"]');
+    return !!bar && bar.contains(hit);
   });
   expect(onTop, `${String(name)} is covered by another element`).toBe(true);
 }
@@ -337,40 +302,37 @@ test.describe('App review page: overview, sticky actions, approve & next (mod, n
     await acceptTermsForThisDomain(page);
     const request = page.request;
     await withdrawForSlug(request, SLUG_A);
+    // Pre-clean only: earlier revisions of this spec submitted a second fixture.
     await withdrawForSlug(request, SLUG_B);
-    const traffic = await routeReviewTraffic(page);
+    await abortApprovals(page);
     try {
       const idA = await submit(request, SLUG_A);
-      const idB = await submit(request, SLUG_B);
 
-      // 0. The real gate, as shipped: a listing with no icon or cover cannot be approved, and
-      //    the bar says why rather than offering a button the server would refuse.
-      await page.goto(`/apps/review/${idA}`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByText(/Cannot approve yet:.*no icon or cover/)).toBeVisible();
-      await expect(
-        page.getByRole('button', { name: 'Approve & next', exact: true })
-      ).toBeDisabled();
-      await expect(page.getByRole('button', { name: 'Reject…', exact: true })).toBeEnabled();
-
-      // From here on, our two submissions read as approvable (see `routeReviewTraffic`).
-      traffic.liftFloorFor([idA, idB]);
-
-      // 1. Overview is the default.
+      // 1. Overview is the default, under the submission's header.
       await page.goto(`/apps/review/${idA}`, { waitUntil: 'domcontentloaded' });
       await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
         'aria-selected',
         'true'
       );
       await expect(page.getByRole('region', { name: 'Submission overview' })).toBeVisible();
-      // The page's main region is named for the submission under review.
       await expect(
         page.getByRole('region', { name: new RegExp(`^Review of ${SLUG_A} v`) })
       ).toBeVisible();
+      await expect(page.getByRole('heading', { name: /^CI review flow / })).toBeVisible();
+
+      // 2. The real gate: no icon or cover → no approve, and the bar says why.
+      await expect(page.getByText(/Cannot approve yet:.*no icon or cover/)).toBeVisible();
+      await expect(
+        page.getByRole('button', { name: 'Approve & next', exact: true })
+      ).toBeDisabled();
+      await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeDisabled();
+      await expect(page.getByRole('button', { name: 'Reject…', exact: true })).toBeEnabled();
+
+      // 4. No modal over the page.
+      await expectNoOpenDialog(page, 'review page');
       await attachShot(page, testInfo, 'review-overview-1124x1305');
 
-      await expectNoOpenDialog(page, 'before clicking tabs');
-
-      // 2. Code tab, diff expanded, scrolled to the bottom: the bar is still uncovered.
+      // 3. Code tab, diff expanded, scrolled to the bottom: the bar is still uncovered.
       await page.getByRole('tab', { name: 'Code' }).click();
       // The diff file header is a real button named "Expand <path>" / "Collapse <path>".
       const codePanel = page.getByRole('tabpanel', { name: 'Code' });
@@ -384,25 +346,11 @@ test.describe('App review page: overview, sticky actions, approve & next (mod, n
       await page.keyboard.press('End');
       await page.mouse.wheel(0, 20_000);
       await expectUncovered(page, 'Approve & next');
+      await expectUncovered(page, 'Approve');
       await expectUncovered(page, 'Reject…');
       await attachShot(page, testInfo, 'review-code-expanded-1124x1305');
-
-      // 3. Approve & next → another pending submission, at once. Undo → back, nothing sent.
-      await page.getByRole('button', { name: 'Approve & next', exact: true }).click();
-      await expect(page).not.toHaveURL(new RegExp(`/apps/review/${idA}(\\?|$)`));
-      await expect(page).toHaveURL(/\/apps\/review\/[^/?]+/);
-      await page.getByRole('button', { name: 'Undo', exact: true }).click();
-      await expect(page).toHaveURL(new RegExp(`/apps/review/${idA}`));
-      expect(traffic.approvals(), 'Undo inside the window must send nothing').toBe(0);
-      const still = await trpcQuery<{ pending: { id: string } | null }>(
-        request,
-        'blocks.getMyPendingForSlug',
-        { slug: SLUG_A }
-      );
-      expect(still.pending?.id, 'the undone submission is still pending').toBe(idA);
     } finally {
       await withdrawForSlug(request, SLUG_A);
-      await withdrawForSlug(request, SLUG_B);
     }
   });
 
