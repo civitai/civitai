@@ -8,10 +8,9 @@ export const IMAGE_TAGS_COUNT_TIMEOUT_MS = 120_000;
 /**
  * Images with a tag awaiting review, the Image tags badge.
  *
- * No index serves this scan: it reads the whole of TagsOnImageNew. (The partial index
- * TagsOnImageNew_needsReview_idx is declared on `attributes & 1 << 09`, which Postgres parses as
- * `(attributes & 1) << 9`, so its predicate never matches the bit-9 test below.) That is why the caller
- * waits seconds, caps the scan and runs one at a time. The bit tests are bit 9 set, bit 10 clear.
+ * The bit-9 test matches TagsOnImageNew_needsReview_idx, but the backlog it selects is large, so the scan is
+ * slow even with the index. That is why the caller waits seconds, caps the scan and runs one at a time. The
+ * bit tests are bit 9 set, bit 10 clear.
  * The nsfwLevel bound must match the QUEUE's (image-tags.service.ts): without it, blocked images
  * inflate a badge whose page can never show them, so the count never reaches zero.
  *
