@@ -625,6 +625,8 @@ describe('createWorkflowStepsFromGraph — licence output cap', () => {
       userId: USER_ID,
       isModerator: false,
       allowMatureContent: true,
+      // The image url is a fixture; the input gate is not what these tests pin.
+      inputGate: 'checked-by-caller',
     }).catch(() => undefined);
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
     return mockSubmitWorkflow.mock.calls[0][0].body;
