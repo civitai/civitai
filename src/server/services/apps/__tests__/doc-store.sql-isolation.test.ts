@@ -382,6 +382,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/__tests__/user-remove-all-content.doc-store.test.ts',
     // The route suite reads the rows a request wrote, to assert the namespace it landed in.
     'server/services/apps/__tests__/doc-store-api.contract.test.ts',
+    // The tally-operator suite compares the rows the old routes and the PATCH operators write.
+    'server/services/apps/__tests__/doc-store-api.tally-operators.test.ts',
     // Seeds report times and counts the rows a moderator delete must remove.
     'server/services/apps/__tests__/doc-store-moderation.pglite.test.ts',
     // Reads every column that can hold a user id, to prove an account wipe left none.

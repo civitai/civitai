@@ -107,8 +107,8 @@ const rankKeys = (event: TurfEvent, picked: string[]) => {
 };
 
 // shortcut: under a sort a player's drawn hats are read whole, oldest first, up to this many, and
-// past it the newest are not ranked. At 48 h hats and a 5/h supply a player holds under 300. Rank in
-// Redis (a per-player set) if hats stop expiring or the supply grows.
+// past it the newest are not ranked. A player's live hats are bounded by hat lifetime x supply. Rank
+// in Redis (a per-player set) if hats stop expiring or the supply grows.
 const MY_HATS_RANKED_MAX = 1000;
 
 type OwnHat = { id: number; key: number };
