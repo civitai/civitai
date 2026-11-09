@@ -1382,6 +1382,10 @@ export async function createWorkflowStepsFromGraph({
       acceptBoostRequired
     )
   );
+  // Computed here, not in validateAndEnrichResources: that returns early for a submit with no
+  // resources, and a Fibo 2.0 edit has none. The raw-AIR and request-ecosystem checks cap a whole
+  // ecosystem, which is only right while every licence carrying the flag covers a single ecosystem.
+  // Re-check that before setting the flag on any other licence.
   const capOutput = capsGenerationOutput({
     baseModels: enrichedResources.map((r) => r.baseModel),
     rawAirs: rawAirResources.map((r) => r.air),

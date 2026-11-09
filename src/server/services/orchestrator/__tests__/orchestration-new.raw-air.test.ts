@@ -18,7 +18,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * and the raw-AIR validation is the first resource gate that can throw.
  */
 
-const { mockGetWorkflow, mockGetHighestTierSubscription } = vi.hoisted(() => ({
+const { mockGetWorkflow, mockGetHighestTierSubscription, mockSubmitWorkflow } = vi.hoisted(() => ({
+  mockSubmitWorkflow: vi.fn(),
   mockGetWorkflow: vi.fn(),
   mockGetHighestTierSubscription: vi.fn(),
 }));
@@ -26,6 +27,7 @@ const { mockGetWorkflow, mockGetHighestTierSubscription } = vi.hoisted(() => ({
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   ...(await importOriginal<typeof WorkflowsMod>()),
   getWorkflow: mockGetWorkflow,
+  submitWorkflow: mockSubmitWorkflow,
 }));
 // Only the token-threading tests reach the audit (they enter through
 // `generateFromGraph`); it is a redis/DB/external-moderation read this fixture
@@ -57,6 +59,19 @@ vi.mock('~/server/services/generation/generation.service', () => ({
   getSelfHostedDisabledEcosystems: vi.fn(() => [] as string[]),
   getResourceData: vi.fn(async () => []),
 }));
+// Records each cap decision, so a test can read it on a submit that fails later in step assembly.
+const capDecisions = vi.hoisted(() => [] as boolean[]);
+vi.mock('~/server/services/orchestrator/form-graph/output-restrictions', async (importOriginal) => {
+  const actual = await importOriginal<typeof OutputRestrictionsMod>();
+  return {
+    ...actual,
+    capsGenerationOutput: (...args: Parameters<typeof actual.capsGenerationOutput>) => {
+      const capped = actual.capsGenerationOutput(...args);
+      capDecisions.push(capped);
+      return capped;
+    },
+  };
+});
 vi.mock('~/server/services/image.service', () => ({
   getAllImages: vi.fn(),
   enqueueImageIngestion: vi.fn(),
@@ -64,6 +79,7 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 
 import type * as WorkflowsMod from '~/server/services/orchestrator/workflows';
+import type * as OutputRestrictionsMod from '~/server/services/orchestrator/form-graph/output-restrictions';
 import type * as PromptAuditingMod from '~/server/services/orchestrator/promptAuditing';
 import type { GenerationCtx } from '~/shared/generation/context';
 import { resetHybridNodes } from '~/__tests__/mocks/hybrid';
@@ -563,6 +579,71 @@ describe('createWorkflowStepsFromGraph — licence output cap', () => {
       resource(nanoBananaVersionIds.v2, 'Nano Banana', 'Checkpoint'),
     ]);
     expect((await build()).capOutput).toBe(false);
+  });
+
+  // An edit sends no checkpoint and no resources, so validateAndEnrichResources returns early.
+  // Fibo 2.0 has no registered handler yet, so step assembly throws after the decision is made.
+  it('caps a Fibo 2.0 edit that carries no resources', async () => {
+    capDecisions.length = 0;
+    await createWorkflowStepsFromGraph({
+      data: { workflow: 'img2img:edit', ecosystem: 'Fibo2', prompt: 'test', quantity: 1 } as never,
+      user: { id: USER_ID, isModerator: false },
+      orchestratorToken: TOKEN,
+    }).catch(() => undefined);
+    expect(capDecisions).toEqual([true]);
+  });
+
+  // The last hop: the decision must reach the body the orchestrator receives.
+  const submittedBody = async (resources: unknown[]) => {
+    vi.mocked(getResourceData).mockResolvedValueOnce(resources as never);
+    mockSubmitWorkflow.mockReset();
+    // Fails after the submit (the mock returns no workflow); only the request matters here.
+    await generateFromGraph({
+      input: {
+        workflow: 'img2img:edit',
+        ecosystem: 'NanoBanana',
+        prompt: 'a cat',
+        quantity: 1,
+        images: [
+          {
+            url: 'https://orchestration.civitai.com/v2/consumer/blobs/p.jpg',
+            width: 1024,
+            height: 1024,
+          },
+        ],
+        model: { id: nanoBananaVersionIds.v2 },
+      },
+      externalCtx: {
+        limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
+        user: { isMember: true, tier: 'bronze' },
+        flags: {},
+        selfHostedDisabledEcosystems: [],
+        selfHostedMode: 'enabled',
+        gateRules: [],
+      },
+      token: TOKEN,
+      userId: USER_ID,
+      isModerator: false,
+      allowMatureContent: true,
+    }).catch(() => undefined);
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    return mockSubmitWorkflow.mock.calls[0][0].body;
+  };
+
+  it('submits a capped request at PG-13 with mature content refused', async () => {
+    const body = await submittedBody([
+      resource(nanoBananaVersionIds.v2, 'Nano Banana', 'Checkpoint'),
+      resource(801, 'Fibo 2.0', 'LORA'),
+    ]);
+    expect(body).toMatchObject({ nsfwLevel: 'pg13', allowMatureContent: false });
+  });
+
+  it("CONTROL: submits an unflagged request with the caller's mature choice", async () => {
+    const body = await submittedBody([
+      resource(nanoBananaVersionIds.v2, 'Nano Banana', 'Checkpoint'),
+    ]);
+    expect(body.allowMatureContent).toBe(true);
+    expect(body.nsfwLevel).toBeUndefined();
   });
 });
 
