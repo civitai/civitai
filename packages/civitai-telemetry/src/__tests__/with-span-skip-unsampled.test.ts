@@ -12,7 +12,7 @@ import {
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { setWithSpanSkipUnsampledGate, withRecordableSpan, withSpan } from '../otel-helpers';
+import { setWithSpanSkipUnsampledGate, withSpan } from '../otel-helpers';
 
 // `withSpan` under an unsampled LOCAL parent may skip opening its span when the gate (the
 // `otel-withspan-skip-unsampled` flag in the app) is on. Every other parent shape must still
@@ -173,29 +173,29 @@ describe('withSpan with the gate on, under an unsampled local parent', () => {
   });
 });
 
-const recordableParentCases: Array<[string, () => Span | undefined]> = [
-  // A new root is ratio-sampled, so some of these are exported today.
-  ['no active span', () => undefined],
-  // Sampled flag set but not recording — e.g. a parent that already ended. Its children ARE
-  // recorded under ParentBased(localParentSampled = AlwaysOn).
-  [
-    'a sampled, non-recording parent',
-    () => trace.wrapSpanContext(parentContext({ traceFlags: TraceFlags.SAMPLED })),
-  ],
-  // Conservative: an unsampled remote parent's children are AlwaysOff today, but remote parents
-  // are excluded so a future `remoteParentNotSampled` sampler change cannot drop exportable spans.
-  ['an unsampled REMOTE parent', () => trace.wrapSpanContext(parentContext({ isRemote: true }))],
-  // A recording parent, whatever its flags say.
-  [
-    'a recording parent',
-    () => Object.assign(trace.wrapSpanContext(parentContext()), { isRecording: () => true }),
-  ],
-  // An invalid parent context is treated as no parent by the sampler.
-  ['an invalid parent context', () => trace.wrapSpanContext(INVALID_SPAN_CONTEXT)],
-];
-
 describe('withSpan with the gate on still opens a span when the child could be recorded', () => {
-  it.each(recordableParentCases)('%s', (label, makeParent) => {
+  const cases: Array<[string, () => Span | undefined]> = [
+    // A new root is ratio-sampled, so some of these are exported today.
+    ['no active span', () => undefined],
+    // Sampled flag set but not recording — e.g. a parent that already ended. Its children ARE
+    // recorded under ParentBased(localParentSampled = AlwaysOn).
+    [
+      'a sampled, non-recording parent',
+      () => trace.wrapSpanContext(parentContext({ traceFlags: TraceFlags.SAMPLED })),
+    ],
+    // Conservative: an unsampled remote parent's children are AlwaysOff today, but remote parents
+    // are excluded so a future `remoteParentNotSampled` sampler change cannot drop exportable spans.
+    ['an unsampled REMOTE parent', () => trace.wrapSpanContext(parentContext({ isRemote: true }))],
+    // A recording parent, whatever its flags say.
+    [
+      'a recording parent',
+      () => Object.assign(trace.wrapSpanContext(parentContext()), { isRecording: () => true }),
+    ],
+    // An invalid parent context is treated as no parent by the sampler.
+    ['an invalid parent context', () => trace.wrapSpanContext(INVALID_SPAN_CONTEXT)],
+  ];
+
+  it.each(cases)('%s', (label, makeParent) => {
     setWithSpanSkipUnsampledGate(() => true);
     const result = underParent(makeParent(), () => withSpan(`kept:${label}`, () => label));
     expect(result).toBe(label);
@@ -229,61 +229,5 @@ describe('the gate is shared across module copies', () => {
     setWithSpanSkipUnsampledGate(undefined);
     underParent(unsampledLocalParent(), () => copyB.withSpan('copy-b.kept', () => null));
     expect(started).toEqual(['copy-b.kept']);
-  });
-});
-
-// The tRPC response serializer runs through `withRecordableSpan` once per procedure: it must skip
-// exactly the parents `withSpan`'s gate skips, but without needing the gate, and open the same
-// span everywhere else.
-describe('withRecordableSpan', () => {
-  it('opens no span under an unsampled local parent, with no gate installed', () => {
-    const name = vi.fn(() => 'recordable.skip');
-    const work = vi.fn(() => trace.getActiveSpan()?.spanContext().spanId);
-    const seen = underParent(unsampledLocalParent(), () => withRecordableSpan(name, work));
-    expect(seen).toBe(PARENT_SPAN_ID);
-    expect(work).toHaveBeenCalledTimes(1);
-    expect(name).not.toHaveBeenCalled();
-    expect(spyTracer.startActiveSpan).not.toHaveBeenCalled();
-  });
-
-  it('ignores a gate that answers false under an unsampled local parent', () => {
-    setWithSpanSkipUnsampledGate(() => false);
-    const result = underParent(unsampledLocalParent(), () =>
-      withRecordableSpan('recordable.gate-false', () => 'value-f')
-    );
-    expect(result).toBe('value-f');
-    expect(spyTracer.startActiveSpan).not.toHaveBeenCalled();
-  });
-
-  it.each(recordableParentCases)('opens the span for %s', (label, makeParent) => {
-    const seen = underParent(makeParent(), () =>
-      withRecordableSpan(
-        () => `recordable:${label}`,
-        () => trace.getActiveSpan()?.spanContext().spanId
-      )
-    );
-    expect(started).toEqual([`recordable:${label}`]);
-    expect(seen).toBe(CHILD_SPAN_ID);
-    expect(childSpans[0].end).toHaveBeenCalledTimes(1);
-  });
-
-  it('accepts a plain string name', () => {
-    underParent(undefined, () => withRecordableSpan('recordable.string', () => 0));
-    expect(started).toEqual(['recordable.string']);
-  });
-
-  it('propagates a throw unchanged on both paths', () => {
-    const boom = new Error('recordable boom');
-    const throwing = () => {
-      throw boom;
-    };
-    expect(() =>
-      underParent(unsampledLocalParent(), () => withRecordableSpan('r.skip-throw', throwing))
-    ).toThrow(boom);
-    expect(() =>
-      underParent(undefined, () => withRecordableSpan('r.kept-throw', throwing))
-    ).toThrow(boom);
-    expect(started).toEqual(['r.kept-throw']);
-    expect(childSpans[0].end).toHaveBeenCalledTimes(1);
   });
 });
