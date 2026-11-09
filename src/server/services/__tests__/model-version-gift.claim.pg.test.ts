@@ -3,6 +3,7 @@ import path from 'path';
 import { PrismaClient } from '@prisma/client';
 import { Client } from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * The gift cap under real concurrency. A mock cannot race, so this runs the claim's own SQL
@@ -24,6 +25,7 @@ const { GIFT_CLAIM_LOCK_CLASS, GIFT_LIVE_CODES_MAX_PER_VERSION: CAP } = await im
   '~/server/services/model-version-gift.constants'
 );
 const { grantModelVersionAccess } = await import('~/server/services/model-version-access.service');
+const { usageLimitCounters } = await import('~/server/services/usage-limit-counters');
 
 describe.runIf(!!process.env.CI)('CI provides a real Postgres', () => {
   it('APPDATA_TEST_DATABASE_URL is set', () => {
@@ -585,6 +587,24 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
 
       expect(await claimWithin(await newLink(null), 2)).toBe('granted');
       await expect(claimWithin(await newLink(null), 2)).rejects.toMatchObject({ used: 2 });
+    });
+
+    it('reports on /me/limits the same count the claim enforces', async () => {
+      await pastClaim(at(-1));
+      await pastClaim(at(END.getTime() - START.getTime()));
+      await pastClaim(at(0), true);
+      await pastClaim(at(DAY_MS));
+      await sql.query(
+        `INSERT INTO "ModelVersionGiftRedemption" ("giftLinkId", "userId", "claimedAt") VALUES ($1, 3, $2)`,
+        [await newLink(null), at(DAY_MS)]
+      );
+
+      // The `/me/limits` counter reads through dbRead: point it at the throwaway database.
+      vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation(
+        (...args: Parameters<typeof prisma.$queryRaw>) => prisma.$queryRaw(...args)
+      );
+      const counter = usageLimitCounters['gifts.monthly']!;
+      expect(await counter({ userId: CLAIMER, start: START, end: END })).toBe(2);
     });
 
     it('lets a repeat claim of the same link through, even past a since-lowered limit', async () => {

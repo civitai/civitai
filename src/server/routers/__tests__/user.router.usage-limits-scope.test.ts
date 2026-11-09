@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as UsageLimitsService from '~/server/services/usage-limits.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -33,6 +34,8 @@ const caller = (tokenScope: number, user: object = USER) =>
 
 beforeEach(() => {
   getUsageLimits.mockReset();
+  // The gifts.monthly counter reads claims through dbRead: this user has none.
+  vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([{ used: 0 }] as never);
   getUsageLimits.mockImplementation(real.getUsageLimits);
 });
 
@@ -67,6 +70,7 @@ describe('user.getUsageLimits token scope', () => {
       ['posts.daily', null],
       ['comments.hourly', null],
       ['comments.daily', null],
+      ['gifts.monthly', 3],
     ]);
 
     const media = await caller(TokenScope.MediaWrite, MODERATOR).getUsageLimits();

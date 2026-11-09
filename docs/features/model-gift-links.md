@@ -31,7 +31,8 @@ surfaces.
   that records nothing (the claimer already had the access, or claimed the same link before) costs
   nothing. Past the allowance the claim gets a 429 that tells the claimer to reach out to the person
   who gave them the link, with product rate-limit metadata (`id`, `limit`, `used`, `remaining`, and
-  `resetAt` at the start of the next UTC month).
+  `resetAt` at the start of the next UTC month). `/api/v1/me/limits` lists the same count as a
+  `gifts.monthly` row.
 - **Revoke:** done by the creator or a moderator, for a link or a whole batch. Revoking stops new claims
   immediately, including a claim already in flight. **People who already claimed keep their access.**
   Who claimed which link is `ModelVersionGiftRedemption`; a grant's `meta.giftLinkId` holds only the most
@@ -192,7 +193,8 @@ path segment, which a client-side navigation still puts in the Next data fetch.
     deterministic.
   - Monthly allowance: a claim past it takes no slot or grant; only claims in the month count,
     removed ones included; a repeat claim is free; one user's 10 racing claims grant exactly the
-    limit; a new claim waits for one in flight and counts it.
+    limit; a new claim waits for one in flight and counts it; the `/me/limits` counter reports the
+    same count.
 - `src/server/__tests__/api-v1-model-version-gifts.test.ts` checks every REST route: a token without
   `ModelsWrite` gets 403 before the service runs, and the flag gates every route. It also covers the
   link cap and default, and the claim's 429 with `Retry-After` and `rateLimit`.

@@ -4,8 +4,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as UsageLimitsModule from '~/shared/constants/usage-limits';
 import type { SessionUser } from '~/types/session';
 
-// The registry has no calendar-window product entry yet (gifts adds one), so add a stand-in,
-// mid-registry so the sort is what puts it in place.
+// A stand-in calendar-window entry, mid-registry so the sort is what puts it in place.
 const MONTHLY = 'gifts.test-monthly';
 vi.mock('~/shared/constants/usage-limits', async (importOriginal) => {
   const actual = await importOriginal<typeof UsageLimitsModule>();
@@ -44,9 +43,15 @@ const counters = usageLimitCounters as Record<string, unknown>;
 const rowsFor = async (ids?: string[], who: SessionUser = user) =>
   (await getUsageLimits({ tokenScope: TokenScope.Full, user: who, req, ids })).limits;
 
-beforeEach(() => vi.useFakeTimers({ now: NOW, toFake: ['Date'] }));
+// The real gifts counter reads the database; this suite has none.
+const giftsCounter = counters['gifts.monthly'];
+beforeEach(() => {
+  vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+  counters['gifts.monthly'] = async () => 0;
+});
 afterEach(() => {
   delete counters[MONTHLY];
+  counters['gifts.monthly'] = giftsCounter;
   vi.useRealTimers();
 });
 

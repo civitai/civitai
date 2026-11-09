@@ -32,6 +32,8 @@ import {
 } from '~/server/services/model-version-gift.constants';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
 import { throwRateLimited } from '~/server/utils/rate-limit-error';
+import { countGiftClaims } from '~/server/services/gift-claim-count';
+import { calendarWindow } from '~/server/services/usage-limit-counters';
 import { resolveUsageLimit } from '~/server/services/usage-limit-config.service';
 import { type UsageLimitSubject, usageLimitMessage } from '~/shared/constants/usage-limits';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
@@ -810,39 +812,11 @@ export async function redeemGiftLink(
 
 class GiftUnavailable extends Error {}
 
-// @ai: replace with calendarWindow('utc-month', now) from usage-limit-counters once ST4 merges.
-function calendarMonth(now: number) {
-  const d = new Date(now);
-  const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
-  const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
-  return { start, end };
-}
-
 /** A new claim past the claimer's monthly allowance; rolls the claim back. */
 class GiftAllowanceUsed extends Error {
   constructor(readonly used: number) {
     super('Gift allowance used');
   }
-}
-
-/**
- * The claimer's recorded claims in [start, end): what the monthly allowance counts. A removed claim
- * still counts, so removal cannot free allowance.
- */
-export async function countGiftClaims(
-  client: Pick<Prisma.TransactionClient, '$queryRaw'>,
-  userId: number,
-  start: Date,
-  end: Date
-) {
-  const [{ used }] = await client.$queryRaw<{ used: number }[]>`
-    SELECT count(*)::int AS used
-      FROM "ModelVersionGiftRedemption"
-     WHERE "userId" = ${userId}
-       AND "claimedAt" >= ${start}::timestamp(3)
-       AND "claimedAt" < ${end}::timestamp(3)
-  `;
-  return used;
 }
 
 export async function claimGift({
@@ -881,7 +855,7 @@ export async function claimGift({
 
   const resolved = await resolveUsageLimit('gifts.monthly', user);
   const now = Date.now();
-  const window = calendarMonth(now);
+  const window = calendarWindow('utc-month', now);
   let outcome: GiftRedemptionOutcome;
   try {
     outcome = await redeemGiftLink(dbWrite, {

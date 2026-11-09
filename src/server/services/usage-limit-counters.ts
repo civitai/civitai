@@ -1,3 +1,5 @@
+import { dbRead } from '~/server/db/client';
+import { countGiftClaims } from '~/server/services/gift-claim-count';
 import type { UsageLimitId } from '~/shared/constants/usage-limits';
 
 /**
@@ -14,7 +16,9 @@ export type UsageLimitCounter = (args: {
  * The counters `/me/limits` uses for calendar-window product limits. A `utc-day` or `utc-month`
  * product entry gets a row only once its enforcing service registers its counter here.
  */
-export const usageLimitCounters: Partial<Record<UsageLimitId, UsageLimitCounter>> = {};
+export const usageLimitCounters: Partial<Record<UsageLimitId, UsageLimitCounter>> = {
+  'gifts.monthly': ({ userId, start, end }) => countGiftClaims(dbRead, userId, start, end),
+};
 
 /** The UTC day or month containing `now`. */
 export function calendarWindow(type: 'utc-day' | 'utc-month', now: number) {

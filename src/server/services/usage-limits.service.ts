@@ -23,7 +23,7 @@ export const USAGE_LIMITS_SCOPES = [TokenScope.UserRead, TokenScope.MediaWrite] 
 
 /**
  * The bucket each area's rows read: a procedure is counted here only if it passes this as its
- * `sharedKey`. A product area missing here has no rows.
+ * `sharedKey`. A calendar-window limit is listed through `usageLimitCounters` instead.
  */
 const SHARED_KEY_BY_AREA: Record<string, string> = {
   posts: POST_CREATE_RATE_LIMIT_KEY,
