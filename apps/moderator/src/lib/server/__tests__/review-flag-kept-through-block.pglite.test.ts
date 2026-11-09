@@ -712,7 +712,7 @@ describe('approving an appeal whose image turns held after the close', () => {
     await nothingPaidOrTold();
   });
 
-  it('refunds and tells nothing when putting it back to Pending fails', async () => {
+  it('neither refunds nor tells when putting it back to Pending fails', async () => {
     await db.exec(`
       CREATE FUNCTION no_revert() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN RAISE EXCEPTION 'connection lost'; END $$;

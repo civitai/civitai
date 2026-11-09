@@ -548,7 +548,7 @@ describe('approving an image appeal', () => {
     expect(sendEmail).not.toHaveBeenCalled();
   });
 
-  it('refunds and tells nothing when putting it back to Pending fails', async () => {
+  it('neither refunds nor tells when putting it back to Pending fails', async () => {
     await turnHeldAfterCheck();
     dbMock.dbWrite.appeal.updateMany.mockRejectedValueOnce(new Error('connection lost'));
 
@@ -560,7 +560,7 @@ describe('approving an image appeal', () => {
     expect(sendEmail).not.toHaveBeenCalled();
   });
 
-  it('reopens, and refunds and tells nothing, when the image write itself fails', async () => {
+  it('reopens, and neither refunds nor tells, when the image write itself fails', async () => {
     await turnHeldAfterCheck();
     const fake = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
     dbMock.dbWrite.$queryRaw.mockImplementation((async (

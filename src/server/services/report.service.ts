@@ -1343,10 +1343,11 @@ function closeUnreviewedAppeals(limit: number) {
 
 /**
  * A Pending appeal on an image dismissed from the CSAM review queue: the review flag stays on, so no
- * appeals queue lists it. Closed `ROUTED_APPEAL_REVIEW_DAYS` after it was filed, as an unreviewed one.
+ * appeals queue lists it. Closed `ROUTED_APPEAL_REVIEW_DAYS` after it was filed, as an unreviewed one;
+ * one `closedSilently` gets no refund and no notice, and one whose owner is deleted no notice.
  */
 function closeDismissedReviewAppeals(limit: number) {
-  return dbWrite.$queryRaw<ClaimedOrphan[]>`
+  return dbWrite.$queryRaw<(ClaimedOrphan & { closedSilently: boolean; ownerDeleted: boolean })[]>`
     UPDATE "Appeal"
     SET status = 'Void'::"AppealStatus", "resolvedReason" = ${
       OrphanedAppealReason.RemovedBeforeReview
@@ -1366,7 +1367,19 @@ function closeDismissedReviewAppeals(limit: number) {
         )
       LIMIT ${limit}
     ) AND status = 'Pending'::"AppealStatus"
-    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
+    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId",
+      (
+        EXISTS (
+          SELECT 1 FROM "Image" o WHERE o."userId" = "Appeal"."userId" AND o."blockedFor" = 'CSAM'
+        )
+        OR EXISTS (
+          SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
+          WHERE ur."userId" = "Appeal"."userId" AND r.reason = 'CSAM'
+        )
+      ) AS "closedSilently",
+      EXISTS (
+        SELECT 1 FROM "User" u WHERE u.id = "Appeal"."userId" AND u."deletedAt" IS NOT NULL
+      ) AS "ownerDeleted"
   `;
 }
 
@@ -1611,11 +1624,11 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
   const closedDismissed = await closeDismissedReviewAppeals(limit);
   // Every refund before anything that can throw: these are Void already, so nothing retries them.
   const refundedDismissed = new Map<number, boolean>();
-  for (const appeal of closedDismissed) refundedDismissed.set(appeal.id, await refund(appeal));
-  const withheld = await usersWithNoticeWithheld([
-    ...new Set(closedDismissed.map((a) => a.userId)),
-  ]);
-  for (const appeal of closedDismissed) {
+  for (const appeal of closedDismissed)
+    if (!appeal.closedSilently) refundedDismissed.set(appeal.id, await refund(appeal));
+  const told = closedDismissed.filter((a) => !a.closedSilently && !a.ownerDeleted);
+  const withheld = await usersWithNoticeWithheld([...new Set(told.map((a) => a.userId))]);
+  for (const appeal of told) {
     if (!withheld.has(appeal.userId)) {
       await notifyOrphanedAppeal(appeal, 'closed-unreviewed', refundedDismissed.get(appeal.id));
       continue;

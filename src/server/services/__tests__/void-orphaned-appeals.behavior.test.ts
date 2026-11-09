@@ -569,6 +569,59 @@ describe('voidOrphanedAppeals against Postgres', () => {
       );
     });
 
+    describe('whose appellant was removed since the dismissal', () => {
+      // 46's image was removed for CSAM; 47's owner has another image removed for CSAM; 48's owner
+      // has a CSAM-reason user report; 49's owner is deleted.
+      beforeEach(async () => {
+        await holder.db.exec(`
+          INSERT INTO "User" (id, "deletedAt") VALUES (19, now()) ON CONFLICT (id) DO UPDATE SET "deletedAt" = now();
+          INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor") VALUES
+            (1046, 16, 'csam', 'CSAM'), (1047, 17, 'csam', 'moderated'), (2047, 17, NULL, 'CSAM'),
+            (1048, 18, 'csam', 'moderated'), (1049, 19, 'csam', 'moderated');
+          INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES
+            (1046, 'Dismissed'), (1047, 'Dismissed'), (1048, 'Dismissed'), (1049, 'Dismissed');
+          INSERT INTO "Report" (id, reason) VALUES (9048, 'CSAM');
+          INSERT INTO "UserReport" ("userId", "reportId") VALUES (18, 9048);
+        `);
+        await holder.db.query(
+          `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, "createdAt", "updatedAt",
+             "buzzTransactionId") VALUES
+             (46, 16, 'Image', 1046, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-16-46'),
+             (47, 17, 'Image', 1047, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-17-47'),
+             (48, 18, 'Image', 1048, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-18-48'),
+             (49, 19, 'Image', 1049, 'Pending', now() - make_interval(days => $1, mins => 1), now(), 'appeal-19-49')`,
+          [ROUTED_APPEAL_REVIEW_DAYS]
+        );
+      });
+
+      it('closes the appeal with no refund and no notice', async () => {
+        await voidOrphanedAppeals();
+
+        for (const [id, fee] of [
+          [46, 'appeal-16-46'],
+          [47, 'appeal-17-47'],
+          [48, 'appeal-18-48'],
+        ] as const)
+          expect(await seenBy(id, fee)).toMatchObject({
+            status: 'Void',
+            notices: [],
+            refunded: false,
+          });
+        expect((await withheldRows()).map((r) => r.entityId)).not.toContain(1046);
+        expect(await seenBy(41, 'appeal-12-41')).toMatchObject({ refunded: true });
+      });
+
+      it('refunds a deleted appellant without a notice', async () => {
+        await voidOrphanedAppeals();
+
+        expect(await seenBy(49, 'appeal-19-49')).toMatchObject({
+          status: 'Void',
+          notices: [],
+          refunded: true,
+        });
+      });
+    });
+
     it('holds every notice when the check itself fails', async () => {
       await holder.db.exec(`ALTER TABLE "EvidenceHold" RENAME TO "EvidenceHold_gone"`);
       try {

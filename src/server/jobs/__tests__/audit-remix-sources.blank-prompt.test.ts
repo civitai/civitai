@@ -31,7 +31,8 @@ vi.mock('~/server/services/post.service', () => ({ bustCachesForPosts: vi.fn() }
 
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import '~/__tests__/mocks/logging.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { bustCachesForPosts } from '~/server/services/post.service';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const findUnique = dbMock.dbRead.image.findUnique;
@@ -67,6 +68,19 @@ beforeEach(() => {
 });
 
 describe('audit-remix-sources — empty prompt with a non-empty negative prompt', () => {
+  it('counts nothing and fails nothing when a flag set since the read keeps the write from landing', async () => {
+    findUnique.mockResolvedValue(imageWith({ prompt: '', negativePrompt: 'tom cruise portrait' }));
+    update.mockResolvedValue([] as never);
+    loggingMock.logToAxiom.mockClear();
+
+    const { result } = auditRemixSourcesJob.run({} as never);
+    expect(await result).toMatchObject({ flagged: 0 });
+    expect(bustCachesForPosts).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'audit-remix-sources', type: 'error' })
+    );
+  });
+
   it('control: a celebrity name in the negative prompt is flagged beside a non-empty prompt', async () => {
     findUnique.mockResolvedValue(
       imageWith({ prompt: 'a landscape', negativePrompt: 'tom cruise portrait' })
