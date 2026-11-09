@@ -3,8 +3,8 @@ import { json } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { openItem, type ItemRef } from '$lib/server/feed-token';
 import { getPlayerStatus } from '$lib/server/player-status';
-import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
+import { lockoutFor } from '$lib/server/vote-limits/runtime';
 import { feedSecret } from '$lib/server/smites/runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { skippedFor } from '$lib/server/skips';
@@ -35,9 +35,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
     return NOTHING();
 
   const now = queueDeps.now();
-  if (queueDeps.voteLimits && !locals.user.isModerator) {
-    if (await voteLockUntil(db, userId, now, queueDeps.voteLimits)) return NOTHING();
-  }
+  if (!locals.user.isModerator && (await lockoutFor(db, userId, now))) return NOTHING();
 
   const secret = feedSecret();
   const named = url.searchParams
