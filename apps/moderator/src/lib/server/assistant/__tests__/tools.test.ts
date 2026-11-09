@@ -313,6 +313,25 @@ describe('accounts_on_address', () => {
     expect(getAccountsOnAddresses.mock.lastCall![1]).toEqual({ days: 7, offset: 100, limit: 50 });
   });
 
+  it('says where the next page starts, and when there is none', async () => {
+    getAccountsOnAddresses.mockResolvedValueOnce({
+      linked: { ...linked, matched: 195 } as never,
+      invalid: [],
+    });
+    expect((await ask({ address: '192.0.2.1', offset: 40, limit: 1 })).page).toEqual({
+      list: 'accounts',
+      offset: 40,
+      nextOffset: 41,
+    });
+    getAccountsOnAddresses.mockResolvedValueOnce({
+      linked: { ...linked, matched: 41 } as never,
+      invalid: [],
+    });
+    expect((await ask({ address: '192.0.2.1', offset: 40, limit: 1 })).page).toMatchObject({
+      nextOffset: null,
+    });
+  });
+
   it('names every address it was given when it times out', () => {
     const tool = TOOLS.find((t) => t.name === 'accounts_on_address')!;
     expect(tool.timeoutMs).toBeGreaterThan(45_000);

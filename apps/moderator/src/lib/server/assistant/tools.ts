@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { TurnSource } from '$lib/assistant/types';
 import type { PermissionId } from '$lib/permissions';
+import type { Page } from './loop';
 import { imageLookupUrl, userLookupUrl, userReportUrl } from '$lib/entity-url';
 import { DEFAULT_REPORT_STATUSES } from '$lib/reports';
 import { getDossier } from '../dossier.service';
@@ -144,6 +145,9 @@ const ACCOUNTS_ON_ADDRESS_TIMEOUT_MS = 90_000;
 const EMAILS_NOTE =
   'With the registration-email grant each account also carries `email` and `normalizedEmail` (Gmail dots and +tags removed, lower-cased). Several accounts on one normalizedEmail are one inbox; many accounts on one rare or throwaway domain, or rotating through a few such domains, is a mass-registration tell. Quote an email only as evidence; playbooks and tool requests drop them.';
 
+const PAGE_NOTE =
+  'For the next page, call again with offset = page.nextOffset (null: no more). A result cut for size still sets page.nextOffset to just after the last account shown, so follow it and do not repeat the same offset.';
+
 const userSource = (id: number, username: string | null = null): TurnSource => ({
   ref: `user:${id}`,
   href: userLookupUrl(id),
@@ -204,14 +208,18 @@ const reactionDays = z
 async function linkedOut(
   linked: LinkedAccounts,
   ctx: ToolContext,
-  subject: number | null
+  subject: number | null,
+  offset: number
 ): Promise<ToolResult> {
   const shown = showAddresses(ctx) ? linked : maskLinkedAddresses(linked, ctx.mask);
+  const end = offset + shown.accounts.length;
+  const page: Page = { list: 'accounts', offset, nextOffset: end < shown.matched ? end : null };
   return {
     data: {
       days: shown.days,
       totals: shown.totals,
       matched: shown.matched,
+      page,
       truncated: shown.truncated,
       addresses: shown.addresses.filter((a) => a.accounts > 0),
       accounts: (await withEmails(ctx, shown.accounts)).map((a) => ({
@@ -450,7 +458,9 @@ export const TOOLS = [
   tool({
     name: 'find_linked_accounts',
     description:
-      'Every account that shares an address with this one, by LOGIN (all time) or by REACTION (the window). Sorted strongest link first: an address only these two accounts use beats one hundreds use (a VPN or carrier exit). No cap on how many accounts exist; page with offset. ' +
+      'Every account that shares an address with this one, by LOGIN (all time) or by REACTION (the window). Sorted strongest link first: an address only these two accounts use beats one hundreds use (a VPN or carrier exit). No cap on how many accounts exist: ' +
+      PAGE_NOTE +
+      ' ' +
       EMAILS_NOTE,
     input: z.object({
       userId,
@@ -460,13 +470,13 @@ export const TOOLS = [
     }),
     requires: [LOOKUP, USER_REPORTS],
     run: async ({ userId: id, days, offset, limit }, ctx) =>
-      linkedOut(await getLinkedAccounts(id, { days, offset, limit }), ctx, id),
+      linkedOut(await getLinkedAccounts(id, { days, offset, limit }), ctx, id, offset),
   }),
 
   tool({
     name: 'accounts_on_address',
     description:
-      `Every account seen on IP addresses (an IPv6 address covers its /64), by login (all time) and by reaction (the window), with ban state. Give one \`address\`, or up to ${MAX_BATCH_ADDRESSES} as \`addresses\` to check a list in one call: an account on several of them is listed once, with each address it was seen on, and \`addresses\` in the result gives the count per address. Page with offset; totals are exact. ` +
+      `Every account seen on IP addresses (an IPv6 address covers its /64), by login (all time) and by reaction (the window), with ban state. Give one \`address\`, or up to ${MAX_BATCH_ADDRESSES} as \`addresses\` to check a list in one call: an account on several of them is listed once, with each address it was seen on, and \`addresses\` in the result gives the count per address. Totals are exact. ${PAGE_NOTE} ` +
       EMAILS_NOTE,
     input: z.object({
       address: z.string().min(3).max(60).optional(),
@@ -497,7 +507,7 @@ export const TOOLS = [
         return refuse(
           asked.length === 1 ? 'Not an IP address.' : 'None of these is an IP address.'
         );
-      const out = await linkedOut(linked, ctx, null);
+      const out = await linkedOut(linked, ctx, null, offset);
       // Named back, so a skipped entry is never read as an address with no accounts on it.
       return invalid.length
         ? { ...out, data: { ...(out.data as object), notAddresses: invalid } }

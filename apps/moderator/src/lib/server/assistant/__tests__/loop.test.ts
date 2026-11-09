@@ -427,10 +427,54 @@ describe('fitJson', () => {
     );
     expect(trimmed).toBe(true);
     expect(json.length).toBeLessThanOrEqual(2000);
-    expect(JSON.parse(json)).toMatchObject({ trimmedForSize: true });
+    const out = JSON.parse(json) as { trimmedForSize: unknown; result: { rows: unknown[] } };
+    expect(out.trimmedForSize).toEqual([{ at: 'rows', kept: out.result.rows.length, of: 1000 }]);
+  });
+
+  // Without where the cut fell, the model re-asked for the same offset and saw page one twice.
+  it('moves a paged list on to just after the last item kept', () => {
+    const accounts = Array.from({ length: 100 }, (_, i) => ({ userId: i, note: 'x'.repeat(150) }));
+    const { json, cuts } = fitJson(
+      {
+        data: {
+          matched: 195,
+          page: { list: 'accounts', offset: 40, nextOffset: 140 },
+          addresses: [{ cluster: 'a', accounts: 195 }],
+          accounts,
+        },
+      },
+      10_000
+    );
+    const out = JSON.parse(json) as {
+      result: { data: { page: { nextOffset: number }; accounts: { userId: number }[] } };
+    };
+    const kept = out.result.data.accounts.length;
+    expect(kept).toBeLessThan(100);
+    expect(cuts).toEqual([{ at: 'data.accounts', kept, of: 100 }]);
+    expect(out.result.data.page).toEqual({ list: 'accounts', offset: 40, nextOffset: 40 + kept });
+  });
+
+  it('leaves nextOffset alone when a different list is cut', () => {
+    const { json } = fitJson(
+      {
+        page: { list: 'accounts', offset: 0, nextOffset: null },
+        accounts: [{ userId: 1 }],
+        notes: Array.from({ length: 200 }, () => 'y'.repeat(40)),
+      },
+      2000
+    );
+    expect((JSON.parse(json) as { result: { page: unknown } }).result.page).toEqual({
+      list: 'accounts',
+      offset: 0,
+      nextOffset: null,
+    });
   });
 
   it('leaves a result that fits alone', () => {
-    expect(fitJson({ a: [1, 2] }, 100)).toEqual({ json: '{"a":[1,2]}', trimmed: false });
+    expect(fitJson({ a: [1, 2] }, 100)).toEqual({
+      json: '{"a":[1,2]}',
+      trimmed: false,
+      cuts: [],
+    });
   });
 });
