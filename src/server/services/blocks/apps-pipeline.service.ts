@@ -727,10 +727,9 @@ export async function triggerApplyReview(
  * scoped credential it needs, waits for it and exits 0/1. Pre-deletes a same-name Job (404 is
  * fine) so a repeat run starts fresh.
  *
- * Its pod is always `civitai.com/role: apply-job`, set here and not by the callers: the
- * namespace denies all traffic by default, and the network policy for that role is the one
- * that lets a pod reach DNS and the kube API, which the script needs to start its pod. Any
- * other role leaves the Job unable to do anything.
+ * Its pod is always `civitai.com/role: apply-job`, set here and not by the callers: that is the
+ * role the cluster grants the access these scripts need to start their pod, the same one every
+ * other apply Job here uses. Any other role leaves the Job unable to do anything.
  */
 const TEMPLATES_JOB_ROLE_LABEL = 'civitai.com/role';
 const TEMPLATES_JOB_ROLE = 'apply-job';

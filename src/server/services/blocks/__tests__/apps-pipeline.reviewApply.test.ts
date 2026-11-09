@@ -250,8 +250,8 @@ describe('triggerApplyReview / deleteReviewResources', () => {
     expect(job.metadata.name).toBe('my-app-live-unpub');
   });
 
-  // The apps namespace denies all traffic by default; only the `apply-job` role's network policy
-  // lets a pod reach DNS and the kube API, which both scripts need to start their pod.
+  // `apply-job` is the role the cluster grants the access both scripts need to start their pod
+  // (the role every apply Job uses); any other role leaves the Job unable to do anything.
   it('both new Jobs run as role apply-job (Job and pod labels)', async () => {
     await deleteReviewResources({
       slug: 'my-app',
