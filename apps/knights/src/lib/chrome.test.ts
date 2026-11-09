@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   accuracyLine,
+  belowBarCue,
+  withVotesSent,
+  withArticle,
   heartsLeft,
   nextRankLine,
   rankPill,
@@ -155,5 +158,55 @@ describe('smiteHeading', () => {
     expect(smiteHeading(1)).toBe('One smite weighs on you.');
     expect(smiteHeading(2)).toBe('Two smites weigh on you.');
     expect(smiteHeading(7)).toBe('7 smites weigh on you.');
+  });
+});
+
+describe('belowBarCue', () => {
+  const rating = (o: object) => ({
+    accuracy: 0.77,
+    bar: 0.8,
+    belowBar: true,
+    graded: 500,
+    minGraded: 20,
+    ...o,
+  });
+
+  it('says how far under their own rank bar a player is, and what it costs', () => {
+    expect(belowBarCue({ rank: 'Templar', rating: rating({}) })).toBe(
+      'Below the Templar bar (77% / 80%): votes and gold count half'
+    );
+  });
+
+  it('is silent on the bar, unrated, or with no bar for the rank', () => {
+    expect(
+      belowBarCue({ rank: 'Templar', rating: rating({ belowBar: false, accuracy: 0.9 }) })
+    ).toBeNull();
+    expect(
+      belowBarCue({ rank: 'Templar', rating: rating({ accuracy: null, belowBar: false }) })
+    ).toBeNull();
+    expect(
+      belowBarCue({ rank: 'Acolyte', rating: rating({ bar: null, belowBar: false }) })
+    ).toBeNull();
+  });
+});
+
+describe('withArticle', () => {
+  it('uses an before a vowel', () => {
+    expect(withArticle('Acolyte')).toBe('an Acolyte');
+    expect(withArticle('Inquisitor')).toBe('an Inquisitor');
+    expect(withArticle('Knight')).toBe('a Knight');
+    expect(withArticle('Templar')).toBe('a Templar');
+  });
+});
+
+describe('withVotesSent', () => {
+  it('counts votes still on their way, and completes the Watch when they reach it', () => {
+    expect(withVotesSent(daily, 2)).toMatchObject({ votes: 7, watchDone: false });
+    expect(withVotesSent(daily, 5)).toMatchObject({ votes: 10, watchDone: true });
+    expect(watchStrip(withVotesSent(daily, 2)).value).toBe(7);
+  });
+
+  it('leaves the status alone with nothing in flight', () => {
+    expect(withVotesSent(daily, 0)).toBe(daily);
   });
 });

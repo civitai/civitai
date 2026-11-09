@@ -31,6 +31,16 @@ export function watchStrip(daily: Watch) {
   };
 }
 
+/**
+ * The Watch as it will read once `sent` votes still on their way to the server land, so the strip and rail move the
+ * moment a vote is cast rather than when the page's data is next read.
+ */
+export function withVotesSent<T extends Watch>(daily: T, sent: number): T {
+  if (sent <= 0) return daily;
+  const votes = daily.votes + sent;
+  return { ...daily, votes, watchDone: daily.watchDone || votes >= daily.watchSize };
+}
+
 type Standing = {
   rank: string;
   level: number;
@@ -67,6 +77,18 @@ export function accuracyLine({ rank, rating }: Pick<Standing, 'rank' | 'rating'>
     rating.bar
   )}`;
   return rating.belowBar ? `${line} · below it: reduced weight and gold` : line;
+}
+
+/** "a Knight", "an Acolyte". */
+export const withArticle = (word: string): string =>
+  `${/^[aeiou]/i.test(word) ? 'an' : 'a'} ${word}`;
+
+/** The short cue for a player under their own rank's accuracy bar, whose votes and gold are cut (see the Codex); null otherwise. */
+export function belowBarCue({ rank, rating }: Pick<Standing, 'rank' | 'rating'>): string | null {
+  if (!rating.belowBar || rating.accuracy === null || rating.bar === null) return null;
+  return `Below the ${rank} bar (${percent(rating.accuracy)} / ${percent(
+    rating.bar
+  )}): votes and gold count half`;
 }
 
 export function nextRankLine({ nextRank }: Pick<Standing, 'nextRank'>): string | null {

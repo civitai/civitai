@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getPlayerStatus = vi.hoisted(() => vi.fn());
 const getApprentice = vi.hoisted(() => vi.fn());
+const getApprenticeProgress = vi.hoisted(() => vi.fn());
 const getFeed = vi.hoisted(() => vi.fn());
 const getDailyStatus = vi.hoisted(() => vi.fn());
 const railFor = vi.hoisted(() => vi.fn());
@@ -49,6 +50,7 @@ vi.mock('$lib/server/apprenticeship/apprenticeship.service', () => ({
   answerApprentice: vi.fn(),
   acknowledgeCheckpoint: vi.fn(),
   getApprentice,
+  getApprenticeProgress,
 }));
 
 const acolyteLevelGoldSince = vi.hoisted(() => vi.fn());
@@ -77,6 +79,7 @@ beforeEach(() => {
   getStanding.mockResolvedValue({ banned: false, muted: false });
   getPlayerStatus.mockReset();
   getApprentice.mockReset();
+  getApprenticeProgress.mockReset();
   getFeed.mockReset();
   getFeed.mockResolvedValue(null);
   skipList.list.mockReset();
@@ -210,6 +213,16 @@ describe('play load', () => {
       milestone: expect.stringMatching(/halfway/),
     });
     expect(seenStore.set).not.toHaveBeenCalled();
+    // The card's gold stops at the milestone it celebrates, not the level the player has since reached.
+    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 9, 10);
+  });
+
+  it('prices a milestone card for the levels since the previous milestone, however long ago the player last looked', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 15 });
+    getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
+    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 2, guide: true });
+    await run();
+    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 10, 15);
   });
 
   it('tells a newly knighted player about the rank, not a summary', async () => {
@@ -601,6 +614,7 @@ describe('play load for a muted player', () => {
     for (const rank of ['Knight', 'Acolyte']) {
       getPlayerStatus.mockResolvedValue({ rank, level: 5, smites: 0, maxSmites: 3 });
       getApprentice.mockResolvedValue({ kind: 'exhausted', progress: {} });
+      getApprenticeProgress.mockResolvedValue({ answered: 4, graded: 4, accuracy: 0.75 });
       const page = await run();
       expect(page).toMatchObject({ mode: 'queue', muted: true, item: null, question: null });
       expect(page.status).toMatchObject({ rank });
@@ -609,6 +623,14 @@ describe('play load for a muted player', () => {
     expect(getApprentice).not.toHaveBeenCalled();
     expect(pickHiddenCheck).not.toHaveBeenCalled();
     expect(pickYesNo).not.toHaveBeenCalled();
+  });
+
+  it('gives a muted Acolyte the apprentice meter, and a muted Knight none', async () => {
+    getApprenticeProgress.mockResolvedValue({ answered: 4, graded: 4, accuracy: 0.75 });
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 5, smites: 0, maxSmites: 3 });
+    expect((await run()).apprenticeMeter).toMatchObject({ accuracy: 0.75, answered: 4 });
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 25, smites: 0, maxSmites: 3 });
+    expect((await run()).apprenticeMeter).toBeNull();
   });
 
   it('marks an unmuted player as not muted', async () => {

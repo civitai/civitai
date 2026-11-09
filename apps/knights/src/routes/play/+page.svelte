@@ -17,7 +17,7 @@
   import { sound } from '$lib/sound';
   import WatchHairline from '$lib/WatchHairline.svelte';
   import WatchMeta from '$lib/WatchMeta.svelte';
-  import { heartsLeft, watchStrip } from '$lib/chrome';
+  import { heartsLeft, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress } from './keys';
@@ -338,7 +338,7 @@
     noteTimer = setTimeout(() => (note = null), NOTE_MS);
   }
 
-  async function post(action: URL, body: FormData, key: string) {
+  async function post(action: URL, body: FormData, key: string, counted: boolean) {
     let outcome = describeOutcome(null);
     let reached = false;
     try {
@@ -357,6 +357,8 @@
     tracker.settle();
     if (!reached) tracker.release(key);
     if (!outcome.ok) {
+      if (counted) sentVotes = Math.max(0, sentVotes - 1);
+      counted = false;
       tell(outcome.message);
       dropBuffered(key);
       if (outcome.resync) {
@@ -367,6 +369,8 @@
     }
     // The page's own data (status, rewards, level notices) is read again once the vote has landed.
     await invalidate('app:play').catch(() => {});
+    // The page's data now holds the vote, so it stops being counted on top.
+    if (counted) sentVotes = Math.max(0, sentVotes - 1);
   }
 
   // The plain form post: once the page has the server's next item, what was on screen ahead of it goes. The item counts
@@ -411,10 +415,14 @@
     syncBuffer();
     cooling = true;
     setTimeout(() => (cooling = false), SETTLE_MS);
-    void post(input.action, input.formData, key);
+    const isVote = input.action.search.startsWith('?/vote');
+    if (isVote) sentVotes += 1;
+    void post(input.action, input.formData, key, isVote);
   };
 
-  let strip = $derived(data.mode === 'queue' ? watchStrip(data.daily) : null);
+  // Votes posted in the background that the page's data does not hold yet; the Watch counts them at once.
+  let sentVotes = $state(0);
+  let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, sentVotes)) : null);
   let watching = $derived(data.mode === 'queue' && !paused && Boolean(view) && watchInProgress(data.daily));
 
   beforeNavigate(({ cancel, type, to }) => {
@@ -500,7 +508,16 @@
       {submit}
     />
   {:else}
-  {#if strip && data.mode === 'queue'}
+  {#if data.mode === 'queue' && data.apprenticeMeter}
+    <ApprenticeMeter
+      level={data.status.level}
+      levelFraction={data.status.progressPercent / 100}
+      accuracy={data.apprenticeMeter.accuracy}
+      bar={data.apprenticeMeter.bar}
+      knightLevel={data.apprenticeMeter.knightLevel}
+      answerWindow={data.apprenticeMeter.window}
+    />
+  {:else if strip && data.mode === 'queue'}
     <WatchHairline label={strip.label} value={strip.value} max={strip.max} />
     <WatchMeta
       value={strip.value}
@@ -678,8 +695,8 @@
     <QueueClear daily={data.daily} />
   {/if}
   </div>
-  {#if data.mode === 'queue'}
-    <PlayRail status={data.status} daily={data.daily} rail={data.rail} ladder={data.ladder} />
+  {#if data.mode === 'queue' && !data.apprenticeMeter}
+    <PlayRail status={data.status} daily={withVotesSent(data.daily, sentVotes)} rail={data.rail} ladder={data.ladder} />
   {/if}
   </div>
   {/if}

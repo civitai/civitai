@@ -55,3 +55,12 @@ export function crossedMilestone(from: number, to: number): { level: number; cop
   }
   return null;
 }
+
+/** The milestone before `level`, or 1 (the start) when there is none. */
+export function previousMilestone(level: number): number {
+  let previous = 1;
+  for (const key of Object.keys(MILESTONE_COPY).map(Number)) {
+    if (key < level && key > previous) previous = key;
+  }
+  return previous;
+}
