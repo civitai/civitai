@@ -22,6 +22,12 @@ describe('welcome page load at /', () => {
     );
   });
 
+  it('percent-encodes a non-ASCII next path, so the Location header stays valid', () => {
+    expect(() => run({ user: { id: 1 } }, '/\u2603?q=\u00e9')).toThrowError(
+      expect.objectContaining({ status: 303, location: '/%E2%98%83?q=%C3%A9' })
+    );
+  });
+
   it.each(['https://evil.com', '//evil.com', '/\\evil.com', 'judgments', '/', '/?next=%2F'])(
     'ignores an off-site or malformed next (%s) and goes to /home',
     (next) => {

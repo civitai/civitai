@@ -105,12 +105,12 @@ async function acolyteMilestone(
   if (progress?.kind !== 'level') return progress;
   const milestone = crossedMilestone(progress.from, progress.level);
   if (milestone) {
-    // The card celebrates this milestone: its gold is the levels since the one before it, and stops here, so it does not
-    // grow with the levels the player reaches while the card is open.
+    // The card celebrates this milestone: its gold is the levels since the one before it (not since the level last seen,
+    // which a quiet load moves up every level), and stops here, so it does not grow with the levels the player reaches while the card is open.
     const levelGold = await acolyteLevelGoldSince(
       db,
       userId,
-      Math.max(progress.from, previousMilestone(milestone.level)),
+      previousMilestone(milestone.level),
       milestone.level
     );
     return { ...progress, milestone: milestone.copy, milestoneLevel: milestone.level, levelGold };

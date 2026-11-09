@@ -300,8 +300,14 @@
       const after = [...tracker.excluded(shown), ...buffer.tokens()]
         .slice(-MAX_EXCLUDED)
         .map((token) => `after=${encodeURIComponent(token)}`);
+      // What the yes/no stretch counts as already judged: votes in flight, the item on screen, then the buffer. Skipped and
+      // unloadable items are in `after` (left out) but never here, since they never get a vote.
+      const ahead = [...tracker.voting().filter((token) => token !== shown), shown, ...buffer.tokens()]
+        .filter(Boolean)
+        .slice(-MAX_EXCLUDED)
+        .map((token) => `ahead=${encodeURIComponent(token)}`);
       const count = refillCount(buffer.size);
-      const response = await fetch(`/play/next?count=${count}&${after.join('&')}`, {
+      const response = await fetch(`/play/next?count=${count}&${after.join('&')}&${ahead.join('&')}`, {
         headers: { accept: 'application/json' },
       });
       const body: { items?: PickedItem[] } | null = response.ok ? await response.json() : null;
@@ -354,7 +360,7 @@
     } catch {
       // Keeps the lost-connection notice.
     }
-    tracker.settle();
+    tracker.settle(key);
     if (!reached) tracker.release(key);
     if (!outcome.ok) {
       if (counted) sentVotes = Math.max(0, sentVotes - 1);
@@ -376,12 +382,12 @@
   // The plain form post: once the page has the server's next item, what was on screen ahead of it goes. The item counts
   // as sent from here on, so a reload that serves it again (its vote still in flight) is not posted a second time.
   const submitAndResync = (input: Parameters<SubmitFunction>[0], key: string, token: string): ReturnType<SubmitFunction> => {
-    tracker.claim(key, token);
+    tracker.claim(key, token, input.action.search.startsWith('?/vote'));
     const finish = submit(input) as (options: FinishOptions) => Promise<void>;
     return async (options) => {
       await finish(options);
       local = null;
-      tracker.settle();
+      tracker.settle(key);
       const { result } = options;
       const settled = result.type === 'success' || (result.type === 'failure' && result.status === 409);
       if (!settled) tracker.release(key);
@@ -405,7 +411,7 @@
     const next = buffer.peek();
     if (!next) return submitAndResync(input, key, token);
     input.cancel();
-    if (cooling || !tracker.claim(key, token)) return;
+    if (cooling || !tracker.claim(key, token, input.action.search.startsWith('?/vote'))) return;
     const answer = answerOf(input.submitter);
     if (answer === BLOCKED_ANSWER && blockReason) input.formData.set('blockReason', blockReason);
     blockReason = null;

@@ -191,7 +191,7 @@ describe('play load', () => {
       milestone: expect.stringMatching(/halfway/),
       levelGold: 100,
     });
-    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 9, 10);
+    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 5, 10);
     expect(seenStore.set).not.toHaveBeenCalled();
 
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 11 });
@@ -214,7 +214,7 @@ describe('play load', () => {
     });
     expect(seenStore.set).not.toHaveBeenCalled();
     // The card's gold stops at the milestone it celebrates, not the level the player has since reached.
-    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 9, 10);
+    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 5, 10);
   });
 
   it('prices a milestone card for the levels since the previous milestone, however long ago the player last looked', async () => {

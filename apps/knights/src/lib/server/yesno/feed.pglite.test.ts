@@ -256,6 +256,22 @@ describe('stretches', () => {
     ]);
   });
 
+  it('keeps a stretch going past a skipped question of another axis, since a skip never reaches the ledger', async () => {
+    const ids = await seed([
+      row('l1', 10, { axis: 'language' }),
+      row('v1', 11, { axis: 'violence' }),
+      row('v2', 12, { axis: 'violence' }),
+      row('v3', 13, { axis: 'violence' }),
+    ]);
+    await seedPlayer(pg, 1);
+    await answer(1, ids.v1);
+    await answer(1, ids.v2);
+    // l1 was skipped: excluded, and (as the server sends it) not ahead.
+    const offer = (await pick(1, { stretch: 3, exclude: [ids.l1], ahead: [] }))!;
+    expect(offer.prompt).toBe('Question v3?');
+    expect(offer.banner).toBeNull();
+  });
+
   it('does not count a handed-out question twice once its vote is recorded', async () => {
     const ids = await seed([
       row('v1', 10, { axis: 'violence' }),

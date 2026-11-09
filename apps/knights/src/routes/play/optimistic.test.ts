@@ -56,6 +56,18 @@ describe('createVoteTracker', () => {
     expect(tracker.excluded('tb')).toEqual(['ta', 'tb']);
   });
 
+  it('lists as voting only the votes still in flight: not skips, not settled votes, not avoided items', () => {
+    const tracker = createVoteTracker();
+    tracker.claim('a', 'ta', false); // a skip
+    tracker.claim('b', 'tb');
+    tracker.claim('c', 'tc');
+    tracker.avoid('td');
+    tracker.settle('b');
+    expect(tracker.voting()).toEqual(['tc']);
+    tracker.settle('c');
+    expect(tracker.voting()).toEqual([]);
+  });
+
   it('keeps only the most recent items, so the query stays small', () => {
     const tracker = createVoteTracker();
     for (let i = 0; i < MAX_EXCLUDED + 3; i += 1) tracker.claim(`k${i}`, `t${i}`);
