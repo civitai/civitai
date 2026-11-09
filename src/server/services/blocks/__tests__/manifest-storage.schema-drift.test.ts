@@ -7,6 +7,12 @@ import {
   APP_STORAGE_BUILTIN_MARKS,
   APP_STORAGE_COLLECTION_NAME_RE,
   APP_STORAGE_ENABLED_FEATURES,
+  APP_STORAGE_HOOK_FILE_FORBIDDEN_SEGMENT_PATTERN,
+  APP_STORAGE_HOOK_FILE_MAX_LENGTH,
+  APP_STORAGE_HOOK_FILE_PATTERN,
+  APP_STORAGE_HOOK_SHA256_PATTERN,
+  APP_STORAGE_HOOK_TIMEOUT_MAX_MS,
+  APP_STORAGE_HOOK_TIMEOUT_MIN_MS,
   APP_STORAGE_IMPORT_ACCESS,
   APP_STORAGE_IMPORT_FROM_RE,
   APP_STORAGE_INDEX_PATH_RE,
@@ -108,6 +114,10 @@ const CARD = {
     extra: { type: ['object', 'null'], additionalProperties: { type: 'boolean' } },
   },
 };
+const SHA = 'd'.repeat(64);
+const hook = (extra: Record<string, unknown> = {}) => ({
+  hook: { file: 'hooks/cards.js', sha256: SHA, ...extra },
+});
 
 /**
  * [label, storage, accepted with every phased feature ON, phased]. `phased` marks the cases
@@ -217,6 +227,14 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['ttlSeconds 31536000', priv({ ttlSeconds: 31536000 }), true, true],
   ['registry public on shared', shared({ registry: 'public' }), true, true],
   ['write owner', shared({ write: 'owner', counters: ['plays'] }), true, true],
+  // accept, but phased — permission hooks
+  ['hook on a private collection', priv(hook()), true, true],
+  ['hook on shared own, with a schema', shared({ schema: CARD, ...hook() }), true, true],
+  ['hook on write none', shared({ write: 'none', counters: ['plays'], ...hook() }), true, true],
+  ['hook .mjs, timeoutMs 1', priv(hook({ file: 'a.mjs', timeoutMs: 1 })), true, true],
+  ['hook timeoutMs 500', priv(hook({ timeoutMs: 500 })), true, true],
+  ['hook file of 200 chars', priv(hook({ file: `${'a'.repeat(197)}.js` })), true, true],
+  ['hook file with dots and dashes', priv(hook({ file: 'src/a.b/c-d_e.js' })), true, true],
   // reject — containers
   ['storage null', null, false],
   ['storage array', [], false],
@@ -396,6 +414,25 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
     false,
   ],
   ['retiredCollections (no such key)', { ...priv(), retiredCollections: ['old_notes'] }, false],
+  // reject — permission hooks
+  ['hook not an object', priv({ hook: 'hooks/cards.js' }), false],
+  ['hook without sha256', priv({ hook: { file: 'h.js' } }), false],
+  ['hook without file', priv({ hook: { sha256: SHA } }), false],
+  ['hook sha256 uppercase', priv(hook({ sha256: 'D'.repeat(64) })), false],
+  ['hook sha256 of 65 chars', priv(hook({ sha256: 'd'.repeat(65) })), false],
+  ['hook file with a leading slash', priv(hook({ file: '/hooks/cards.js' })), false],
+  ['hook file with a ".." segment', priv(hook({ file: 'a/../cards.js' })), false],
+  ['hook file with a "." segment', priv(hook({ file: './cards.js' })), false],
+  ['hook file hidden', priv(hook({ file: '.cards.js' })), false],
+  ['hook file .ts', priv(hook({ file: 'cards.ts' })), false],
+  ['hook file of 201 chars', priv(hook({ file: `${'a'.repeat(198)}.js` })), false],
+  ['hook file in node_modules', priv(hook({ file: 'node_modules/x/i.js' })), false],
+  ['hook file in a nested node_modules', priv(hook({ file: 'a/node_modules/i.js' })), false],
+  ['hook timeoutMs 0', priv(hook({ timeoutMs: 0 })), false],
+  ['hook timeoutMs 501', priv(hook({ timeoutMs: 501 })), false],
+  ['hook timeoutMs fractional', priv(hook({ timeoutMs: 1.5 })), false],
+  ['hook decide (v2)', priv(hook({ decide: { allow: true } })), false],
+  ['hook unknown key', priv(hook({ source: 'x' })), false],
   // reject — ownedModelVersions
   ['ownedModelVersions not an array', shared({ ownedModelVersions: '/v' }), false],
   ['ownedModelVersions empty', shared({ ownedModelVersions: [] }), false],
@@ -503,6 +540,25 @@ const PARSER_ONLY: Array<[string, unknown]> = [
     'a default value over 4096 bytes',
     priv({ migrations: [{ op: 'default', path: '/a', value: 'v'.repeat(4096) }] }),
   ],
+  // Hooks: one file is compared across collections.
+  [
+    'one hook file pinned with two sha256s',
+    {
+      collections: {
+        a: { visibility: 'private', ...hook() },
+        b: { visibility: 'private', ...hook({ sha256: 'e'.repeat(64) }) },
+      },
+    },
+  ],
+];
+
+/**
+ * Rules that span `storage` and a manifest field OUTSIDE it (`outputDir`): the storage schema
+ * cannot see that field, so these are evaluated against whole manifests.
+ */
+const PARSER_ONLY_MANIFESTS: Array<[string, Record<string, unknown>]> = [
+  ['hook file inside outputDir', { outputDir: 'dist', storage: priv(hook({ file: 'dist/h.js' })) }],
+  ['hook file with outputDir "."', { outputDir: '.', storage: priv(hook()) }],
 ];
 
 describe('app-block v1 schema ⇄ storage parser drift guard', () => {
@@ -659,6 +715,35 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     expect(ack.keyword.enum).not.toContain('required');
   });
 
+  it('pins the permission-hook declaration to the exported constants', () => {
+    const collections = (storageSchema.properties as Record<string, SchemaObject>).collections;
+    const collection = Object.values(
+      collections.patternProperties as Record<string, SchemaObject>
+    )[0];
+    const declared = (collection.properties as Record<string, SchemaObject>).hook;
+    expect(declared.$ref).toBe('#/$defs/storageCollectionHook');
+    const def = schema.$defs.storageCollectionHook;
+    expect(def.type).toBe('object');
+    expect(def.additionalProperties).toBe(false);
+    expect(def.required).toEqual(['file', 'sha256']);
+    const p = def.properties as Record<string, SchemaObject>;
+    expect(Object.keys(p)).toEqual(['file', 'sha256', 'timeoutMs']);
+    expect([p.file.type, p.file.pattern, p.file.maxLength]).toEqual([
+      'string',
+      APP_STORAGE_HOOK_FILE_PATTERN,
+      APP_STORAGE_HOOK_FILE_MAX_LENGTH,
+    ]);
+    expect((p.file.not as SchemaObject).pattern).toBe(
+      APP_STORAGE_HOOK_FILE_FORBIDDEN_SEGMENT_PATTERN
+    );
+    expect([p.sha256.type, p.sha256.pattern]).toEqual(['string', APP_STORAGE_HOOK_SHA256_PATTERN]);
+    expect([p.timeoutMs.type, p.timeoutMs.minimum, p.timeoutMs.maximum]).toEqual([
+      'integer',
+      APP_STORAGE_HOOK_TIMEOUT_MIN_MS,
+      APP_STORAGE_HOOK_TIMEOUT_MAX_MS,
+    ]);
+  });
+
   it('the evaluator resolves a local $ref and refuses one it cannot resolve', () => {
     const doc = { $defs: { s: { type: 'string' } }, properties: { a: { $ref: '#/$defs/s' } } };
     expect(schemaAccepts(doc, { a: 'x' })).toBe(true);
@@ -689,4 +774,14 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     expect(schemaAccepts(storageSchema, storage, schema)).toBe(true);
     expect(parserAccepts(storage)).toBe(false);
   });
+
+  it.each(PARSER_ONLY_MANIFESTS)(
+    '%s → schema accepts, parser refuses (rule across storage and the manifest)',
+    (_l, manifest) => {
+      expect(schemaAccepts(storageSchema, manifest.storage, schema)).toBe(true);
+      expect(parseManifestStorage(manifest, ALL_ON).errors.length).toBeGreaterThan(0);
+      // Positive control: the same storage with no outputDir is accepted.
+      expect(parserAccepts(manifest.storage)).toBe(true);
+    }
+  );
 });

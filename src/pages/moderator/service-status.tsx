@@ -6,10 +6,12 @@ import {
   Container,
   Group,
   Loader,
+  MultiSelect,
   Stack,
   Switch,
   Text,
   Textarea,
+  TextInput,
   Title,
 } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
@@ -19,7 +21,16 @@ import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { GenerationStatusCard } from '~/components/Moderation/GenerationStatusCard';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { trainingModelInfo } from '~/utils/training';
+import { isBaseModelKey } from '~/utils/training-blocked-models';
 import { trpc } from '~/utils/trpc';
+
+const baseModelOptions = Object.entries(trainingModelInfo)
+  .filter(([, info]) => !info.disabled)
+  .map(([key, info]) => ({
+    value: key,
+    label: info.label === 'Base' ? info.pretty : `${info.pretty} · ${info.label}`,
+  }));
 
 function ServiceStatusPage() {
   return (
@@ -51,18 +62,26 @@ function TrainingStatusCard() {
   const { data, isLoading } = trpc.training.getStatusModerator.useQuery();
   const [available, setAvailable] = useState(true);
   const [message, setMessage] = useState('');
+  const [blocked, setBlocked] = useState<string[]>([]);
+  const [reasons, setReasons] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
+  // Sent only when edited, so an on/off toggle never overwrites a block set elsewhere meanwhile.
+  const [blockedDirty, setBlockedDirty] = useState(false);
 
   useEffect(() => {
     if (!data || dirty) return;
     setAvailable(data.available);
     setMessage(data.message ?? '');
+    // Only base models are edited here; blocked custom-model AIRs are kept server-side.
+    setBlocked(data.blockedModels.filter(isBaseModelKey));
+    setReasons(data.blockedModelReasons ?? {});
   }, [data, dirty]);
 
   const setStatus = trpc.training.setStatus.useMutation({
     onSuccess: async () => {
       await utils.training.getStatusModerator.invalidate();
       setDirty(false);
+      setBlockedDirty(false);
       showNotification({
         title: 'Saved',
         message: 'Training status updated',
@@ -75,7 +94,11 @@ function TrainingStatusCard() {
   });
 
   const handleSave = () => {
-    setStatus.mutate({ available, message: message.trim() ? message : null });
+    setStatus.mutate({
+      available,
+      message: message.trim() ? message : null,
+      ...(blockedDirty ? { blockedModels: blocked, blockedModelReasons: reasons } : {}),
+    });
   };
 
   return (
@@ -122,6 +145,38 @@ function TrainingStatusCard() {
               autosize
               maxLength={2000}
             />
+            <MultiSelect
+              label="Unavailable models"
+              description="Shown as temporarily unavailable in both trainers and refused on submit. A model whose rollout flag is off stays hidden."
+              placeholder="Pick a base model"
+              data={baseModelOptions}
+              value={blocked}
+              onChange={(value) => {
+                setBlocked(value);
+                setDirty(true);
+                setBlockedDirty(true);
+              }}
+              searchable
+              clearable
+            />
+            {blocked.map((key) => (
+              <TextInput
+                key={key}
+                label={`Note for ${
+                  baseModelOptions.find((option) => option.value === key)?.label ?? key
+                }`}
+                description="Optional. Shown under “Temporarily unavailable”."
+                placeholder="e.g. Our training provider is having an outage."
+                maxLength={300}
+                value={reasons[key] ?? ''}
+                onChange={(e) => {
+                  const value = e.currentTarget.value;
+                  setReasons((current) => ({ ...current, [key]: value }));
+                  setDirty(true);
+                  setBlockedDirty(true);
+                }}
+              />
+            ))}
             {!available && !message.trim() && (
               <Alert color="yellow" variant="light">
                 Training is disabled but no message is set. Consider adding a message so users know

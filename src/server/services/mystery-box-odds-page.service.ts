@@ -139,7 +139,11 @@ export async function getMysteryBoxOddsPage({
   if (event === null) return null;
 
   const now = new Date();
-  const { listings, onSale: listingOnSale } = await readBoxListings([box.id]);
+  const {
+    listings,
+    onSale: listingOnSale,
+    packOnSale: packListingOnSale,
+  } = await readBoxListings([box.id]);
   const started = listings.some((l) => !l.availableFrom || l.availableFrom <= now);
   // A grant skips the sale, so holding proves none: a holder sees an unsold box's page only for a
   // box of their own.
@@ -166,6 +170,8 @@ export async function getMysteryBoxOddsPage({
   ]);
   const onSale =
     box.status === ITEM_DEFINITION_STATUS.published ? listingOnSale(box.id) : undefined;
+  const packOnSale =
+    box.status === ITEM_DEFINITION_STATUS.published ? packListingOnSale(box.id) : undefined;
 
   const noun = rewardNoun(contents);
   const history: BoxOddsHistoryEntry[] = [];
@@ -215,6 +221,14 @@ export async function getMysteryBoxOddsPage({
     event: event ? { title: event.title } : null,
     teams,
     price: onSale?.unitAmount ?? null,
+    /** The pack on sale now: its first box draws only from `guaranteedTierIds` while any is left. */
+    pack: packOnSale
+      ? {
+          price: packOnSale.unitAmount,
+          size: packOnSale.pack.size,
+          guaranteedTierIds: packOnSale.pack.guaranteedTierIds,
+        }
+      : null,
     tiers,
     contents: contents.map(({ contentId, tierId, cosmeticId, name, url, fit, team }) => ({
       contentId,

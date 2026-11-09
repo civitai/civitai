@@ -69,9 +69,9 @@ const RELEASE: ApprovedRelease = {
 const body = () =>
   releaseBody({
     release: RELEASE,
-    runtimeUrn: 'urn:app-blocks:runtime/test-runtime@9',
+    runtimeUrn: 'urn:apps.civitai.com:runtime/test-runtime@9',
     sourceRepoUrl: 'https://git.example/listing-repo-77',
-    collections: { cards: 'urn:schema:app-blocks:lumen-forge/cards@v2' },
+    collections: { cards: 'urn:schema:apps.civitai.com:lumen-forge/cards@v2' },
   });
 
 describe('release body — the manifest allowlist', () => {
@@ -101,7 +101,7 @@ describe('release body — the manifest allowlist', () => {
 
   it('the whole body, with provenance', () => {
     expect(body()).toEqual({
-      app: 'urn:app-blocks:app/lumen-forge',
+      app: 'urn:apps.civitai.com:app/lumen-forge',
       version: '3.4.1',
       manifest: PUBLISHED,
       manifestHash: createHash('sha256')
@@ -109,7 +109,7 @@ describe('release body — the manifest allowlist', () => {
           '{"blockId":"lumen-forge","category":"tools-cat-4","contentRating":"pg13","minApiVersion":"1.7","name":"Lumen Forge","renderMode":"iframe","repository":"https://git.example/lumen-forge-src","scopes":["apps:storage","ai:write:budgeted"],"tagline":"Forge lumens nightly","version":"3.4.1"}'
         )
         .digest('hex'),
-      runtime: 'urn:app-blocks:runtime/test-runtime@9',
+      runtime: 'urn:apps.civitai.com:runtime/test-runtime@9',
       contentRating: 'pg13',
       bundleSha256: '5e1f0b7a9c3d2e4f6a8b0c1d3e5f7a9b1c3d5e7f9a1b3c5d7e9f1a3b5c7d9e1f',
       source: {
@@ -117,7 +117,7 @@ describe('release body — the manifest allowlist', () => {
         commit: '7c4a1e9b2d8f3a6c5e0b9d4f2a7c1e8b3d6f9a2c',
         claimedCommit: '0d3b8f1a6c9e2d5b7f4a1c8e3b6d9f2a5c7e1b4d',
       },
-      collections: { cards: 'urn:schema:app-blocks:lumen-forge/cards@v2' },
+      collections: { cards: 'urn:schema:apps.civitai.com:lumen-forge/cards@v2' },
       releasedAt: '2026-10-02T03:04:05.000Z',
     });
   });
@@ -131,7 +131,7 @@ describe('release body — the manifest allowlist', () => {
         sourceCommit: null,
         reviewedAt: null,
       },
-      runtimeUrn: 'urn:app-blocks:runtime/test-runtime@9',
+      runtimeUrn: 'urn:apps.civitai.com:runtime/test-runtime@9',
       sourceRepoUrl: null,
       collections: {},
     });

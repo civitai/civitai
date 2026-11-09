@@ -97,6 +97,7 @@ const view = (overrides: Partial<HeldMysteryBox> = {}): HeldMysteryBox => ({
   team: undefined,
   art: null,
   listing: null,
+  packListing: null,
   tiers: [{ id: 7, key: 'common', name: 'Common', color: null, weight: 1, sortOrder: 0 }],
   contents: [
     { contentId: 1, tierId: 7, cosmeticId: 1001, name: 'A', url: null, fit: null, left: true },

@@ -156,6 +156,27 @@ describe('orchestrator generation inputs', () => {
       ]);
     }
   );
+
+  // Boost-to-load lets a free account past the members gate; API callers must never opt in to it.
+  it.each([
+    ['a session', null, true],
+    ['an API key', 42, false],
+  ])(
+    'generateFromGraph and whatIfFromGraph pass the boost-to-load opt-in only for %s',
+    async (_, key, accepted) => {
+      await caller(key)
+        .generateFromGraph({ input: { prompt: 'x' }, acceptBoostRequired: true })
+        .catch(() => undefined);
+      await caller(key)
+        .whatIfFromGraph({ prompt: 'x', acceptBoostRequired: true })
+        .catch(() => undefined);
+      const optIns = [h.generateFromGraph, h.whatIfFromGraph].map(
+        (fn) =>
+          (fn.mock.calls[0] as unknown as [{ acceptBoostRequired: unknown }])[0].acceptBoostRequired
+      );
+      expect(optIns).toEqual([accepted, accepted]);
+    }
+  );
 });
 
 describe('orchestrator.enhancePrompt images', () => {

@@ -301,6 +301,8 @@ export type EventBannerCopy = {
   accent?: string;
   text?: string;
   cta?: string;
+  /** The cta for a viewer already on a team, in place of `cta` (which may ask them to join). */
+  joinedCta?: string;
   image?: string;
   background?: string;
   dismissible?: boolean;

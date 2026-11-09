@@ -3,6 +3,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { chunk, uniq } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import {
   collectionsSearchIndex,
   imagesMetricsSearchIndex,
@@ -243,6 +244,7 @@ const handleJobQueueCleanup = createJob('job-queue-cleanup', '*/1 * * * *', asyn
     chunk(jobQueueIds.imageIds, batchSize).map((ids) => async () => {
       await dbWrite.imageConnection.deleteMany({ where: { imageId: { in: ids } } });
       await dbWrite.collectionItem.deleteMany({ where: { imageId: { in: ids } } });
+      await bustContestCollectionItemsCache(ids);
     });
   const cleanupPosts = () =>
     chunk(jobQueueIds.postIds, batchSize).map((ids) => async () => {

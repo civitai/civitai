@@ -74,6 +74,8 @@ const NON_CREDENTIAL_MODULES: Record<string, string> = {
   'server/auth/session-metrics.ts': 'counters only — takes no request',
   'server/auth/moderation-account.ts': 'compares a resolved user id with config; takes no request',
   'server/utils/url-helpers.ts': 'builds a base URL from config; reads nothing off the request',
+  'server/utils/webhook-token.ts':
+    'compares a value the entry point already read with config; takes no request',
   'env/server.ts': 'environment config; reads nothing off the request',
   'env/other.ts': 'environment config; reads nothing off the request',
 };

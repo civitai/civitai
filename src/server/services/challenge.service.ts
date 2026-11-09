@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -2584,6 +2585,7 @@ export async function requestReview(
       WHERE "collectionId" = ${challenge.collectionId}
         AND "imageId" = ANY(ARRAY[${Prisma.join(eligibleImageIds)}])
     `;
+    await bustContestCollectionItemsCache(eligibleImageIds);
   }
 
   recordChallengeReviewRequested({ source: challenge.source });

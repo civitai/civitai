@@ -360,6 +360,8 @@ export function OffsiteReviewModal({
       <Modal
         stackId="offsite-review"
         returnFocus={false}
+        // The × had no accessible name — a screen reader announced "button".
+        closeButtonProps={{ 'aria-label': 'Close review' }}
         opened={!!request}
         onClose={() => {
           if (busyRef.current) return;
@@ -1470,7 +1472,14 @@ export function OffsiteReportsQueue() {
             <Text size="sm" fw={600}>
               {STANDALONE_KIND_LABEL} listing reports
             </Text>
-            <Badge size="sm" variant="light" color={items.length > 0 ? 'red' : 'gray'}>
+            {/* Red only for PENDING reports — the ones waiting on a moderator. A count of
+                resolved or dismissed history is not an alarm. */}
+            <Badge
+              size="sm"
+              variant="light"
+              color={statusFilter === 'pending' && items.length > 0 ? 'red' : 'gray'}
+              data-testid="apps-reports-count"
+            >
               {items.length}
             </Badge>
           </Group>

@@ -20,10 +20,15 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 
 import { hashAccessToken } from '~/server/services/access-token.service';
-import { sharedArticleTextHash } from '~/server/services/article-share.helpers';
+import {
+  articleShareCookieName,
+  sharedArticleTextHash,
+} from '~/server/services/article-share.helpers';
+import { commentSurface } from '~/server/services/commentv3/surfaces';
 import {
   createArticleShareLink,
   getArticleByShareToken,
+  getArticleShareLinks,
   revokeArticleShareLink,
 } from '~/server/services/article-share.service';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
@@ -334,6 +339,24 @@ describe('getArticleByShareToken: cover and viewer', () => {
     expect(result.status === 'ok' && !!result.article.coverImage).toBe(shown);
   });
 
+  // The banner stands in for a missing cover, under the same servable rule.
+  it.each([
+    ['not scanned', { ingestion: 'Pending' }, undefined],
+    ['awaiting review', { needsReview: 'minor' }, undefined],
+    ['scanned and clear', {}, 6],
+  ])('with no cover, shows a banner that is %s', async (_, over, shownId) => {
+    articles({ coverImage: null, bannerImage: cover({ id: 6, ...over }) });
+    const result = await read();
+    expect(result.status).toBe('ok');
+    expect(result.status === 'ok' && result.article.coverImage?.id).toBe(shownId);
+  });
+
+  it('shows the cover over the banner', async () => {
+    articles({ coverImage: cover({}), bannerImage: cover({ id: 6 }) });
+    const result = await read();
+    expect(result.status === 'ok' && result.article.coverImage?.id).toBe(5);
+  });
+
   it('refuses a signed-in viewer the author has blocked', async () => {
     vi.mocked(amIBlockedByUser).mockResolvedValueOnce(true);
     expect(await read(STRANGER)).toEqual({ status: 'unavailable' });
@@ -473,5 +496,117 @@ describe('share-link lock key', () => {
     const main = key(read('../access-token.service.ts'));
     expect(main).toBeDefined();
     expect(key(read('../../../../apps/moderator/src/lib/server/article-moderation.ts'))).toBe(main);
+  });
+});
+
+describe('comments on a shared draft', () => {
+  const MODERATOR = 30;
+  const as = (
+    userId: number | undefined,
+    { cookie = true, isModerator = false }: { cookie?: boolean; isModerator?: boolean } = {}
+  ) => ({
+    user: userId ? { id: userId, isModerator } : undefined,
+    req: { cookies: cookie ? { [articleShareCookieName(ARTICLE)]: TOKEN } : {} },
+    cache: { skip: false, canCache: true, edgeTTL: 60, browserTTL: 60 },
+  });
+  // The controller runs this gate on every read and write (commentv3.write.test.ts pins create's call).
+  const gate = async (ctx: ReturnType<typeof as>) =>
+    commentSurface('article').assertVisible?.(ARTICLE, ctx as never);
+  const status = (value: ArticleStatus) =>
+    dbMock.dbRead.article.findUnique.mockResolvedValue({ userId: AUTHOR, status: value } as never);
+
+  beforeEach(() => {
+    status(ArticleStatus.Draft);
+    // The token row as the database holds it, so a revoke is seen by the next resolve.
+    let row = tokenRow();
+    dbMock.dbWrite.accessToken.findUnique.mockImplementation((async () => row) as never);
+    dbMock.dbWrite.accessToken.updateMany.mockImplementation((async () => {
+      row = { ...row, revokedAt: new Date() } as never;
+      return { count: 1 };
+    }) as never);
+  });
+
+  it('lets a signed-in holder of a live link comment, and refuses the same session once it is revoked', async () => {
+    await expect(gate(as(STRANGER))).resolves.toBeUndefined();
+    await revokeArticleShareLink({ id: 7, userId: AUTHOR });
+    await expect(gate(as(STRANGER))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('refuses a holder whose link has expired', async () => {
+    dbMock.dbWrite.accessToken.findUnique.mockResolvedValue(
+      tokenRow({ expiresAt: new Date(Date.now() - 1000) }) as never
+    );
+    await expect(gate(as(STRANGER))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('lets a signed-out holder read, and refuses a signed-out visitor with no link', async () => {
+    await expect(gate(as(undefined))).resolves.toBeUndefined();
+    await expect(gate(as(undefined, { cookie: false }))).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it("refuses another article's token under this article's cookie", async () => {
+    dbMock.dbWrite.accessToken.findUnique.mockResolvedValue(
+      tokenRow({ resourceId: OTHER_ARTICLE }) as never
+    );
+    await expect(gate(as(STRANGER))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('refuses a signed-in user who never opened a link', async () => {
+    await expect(gate(as(STRANGER, { cookie: false }))).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('never lets a shared edge cache keep a draft section, served or refused', async () => {
+    const served = as(undefined);
+    await expect(gate(served)).resolves.toBeUndefined();
+    expect(served.cache).toMatchObject({ edgeTTL: 0, browserTTL: 0, canCache: false });
+    const refused = as(undefined, { cookie: false });
+    await expect(gate(refused)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(refused.cache).toMatchObject({ edgeTTL: 0, browserTTL: 0, canCache: false });
+  });
+
+  // Today's behaviour change: an unpublished article's comments were readable by anyone.
+  it('hides an unpublished article from a stranger but not from its owner or a moderator', async () => {
+    status(ArticleStatus.Unpublished);
+    await expect(gate(as(STRANGER, { cookie: false }))).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    await expect(gate(as(AUTHOR, { cookie: false }))).resolves.toBeUndefined();
+    await expect(
+      gate(as(MODERATOR, { cookie: false, isModerator: true }))
+    ).resolves.toBeUndefined();
+  });
+
+  it('leaves a published article open to everyone', async () => {
+    status(ArticleStatus.Published);
+    const ctx = as(undefined, { cookie: false });
+    await expect(gate(ctx)).resolves.toBeUndefined();
+    expect(dbMock.dbWrite.accessToken.findUnique).not.toHaveBeenCalled();
+    expect(ctx.cache.edgeTTL).toBe(60);
+  });
+});
+
+describe('moderators and share links', () => {
+  it('lets a moderator list and revoke a link on an article they do not own', async () => {
+    const MODERATOR = 30;
+    dbMock.dbWrite.accessToken.findUnique.mockResolvedValue(tokenRow() as never);
+    const listed = [{ id: 7, createdAt: new Date(), expiresAt: new Date() }];
+    dbMock.dbWrite.accessToken.findMany.mockResolvedValue(listed as never);
+    expect(
+      await getArticleShareLinks({ articleId: ARTICLE, userId: MODERATOR, isModerator: true })
+    ).toEqual(listed);
+    await revokeArticleShareLink({ id: 7, userId: MODERATOR, isModerator: true });
+    expect(dbMock.dbWrite.accessToken.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 7, revokedAt: null } })
+    );
+  });
+
+  it('still refuses a member who is not the author', async () => {
+    await expect(
+      getArticleShareLinks({ articleId: ARTICLE, userId: STRANGER, isModerator: false })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });

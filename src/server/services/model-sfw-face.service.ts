@@ -15,7 +15,10 @@ import type { TextScanField } from '~/server/services/text-scan/types';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { truncateModelName } from '~/shared/constants/model-name.constants';
-import { COM_FACE_REFUSED_MESSAGE } from '~/shared/utils/model-sfw-face';
+import {
+  COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
+  COM_FACE_REFUSED_MESSAGE,
+} from '~/shared/utils/model-sfw-face';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { removeTags } from '~/utils/string-helpers';
 
@@ -112,14 +115,27 @@ const fieldLabels: Record<SfwFaceCheckField, string> = {
   versions: 'version names and trigger words',
 };
 
-export { COM_FACE_REFUSED_MESSAGE };
-export const COM_FACE_CHECK_UNAVAILABLE_MESSAGE = "We couldn't check this right now, try again.";
+export { COM_FACE_CHECK_UNAVAILABLE_MESSAGE, COM_FACE_REFUSED_MESSAGE };
+
+/** The intent check's verdict. `reason` is for moderators and logs only; never send it to the owner. */
+export type ComFaceIntentVerdict =
+  | { status: 'allowed' | 'unavailable' }
+  | { status: 'detected'; reason?: string };
 
 /**
  * The intent check on a model's own listing: its .red title, description and trigger words.
  * `unavailable` when no verdict came back.
  */
-export async function checkComFaceIntent({
+export async function checkComFaceIntent(args: {
+  name: string;
+  description?: string | null;
+  triggerWords: string[];
+}): Promise<'allowed' | 'detected' | 'unavailable'> {
+  return (await checkComFaceIntentVerdict(args)).status;
+}
+
+/** {@link checkComFaceIntent}, keeping the classifier's reason for a detection. */
+export async function checkComFaceIntentVerdict({
   name,
   description,
   triggerWords,
@@ -127,7 +143,7 @@ export async function checkComFaceIntent({
   name: string;
   description?: string | null;
   triggerWords: string[];
-}): Promise<'allowed' | 'detected' | 'unavailable'> {
+}): Promise<ComFaceIntentVerdict> {
   const text = removeTags(description ?? '').trim();
   const fields: TextScanField[] = [
     { heading: 'Name', text: name },
@@ -145,8 +161,10 @@ export async function checkComFaceIntent({
     });
     return { status: 'unavailable' as const };
   });
-  if (verdict.status !== 'ok') return 'unavailable';
-  return verdict.output.detected ? 'detected' : 'allowed';
+  if (verdict.status !== 'ok') return { status: 'unavailable' };
+  return verdict.output.detected
+    ? { status: 'detected', reason: verdict.output.reason }
+    : { status: 'allowed' };
 }
 
 /**
@@ -154,14 +172,29 @@ export async function checkComFaceIntent({
  * verdict is a refusal. The check also re-runs after a listing edit on a model that keeps a face
  * (`recheckComFace`).
  */
-export async function assertComFaceAllowed(args: {
+export async function assertComFaceAllowed({
+  modelId,
+  ...args
+}: {
   name: string;
   description?: string | null;
   triggerWords: string[];
+  modelId?: number;
 }) {
-  const result = await checkComFaceIntent(args);
-  if (result === 'unavailable') throw throwBadRequestError(COM_FACE_CHECK_UNAVAILABLE_MESSAGE);
-  if (result === 'detected') throw throwBadRequestError(COM_FACE_REFUSED_MESSAGE);
+  const verdict = await checkComFaceIntentVerdict(args);
+  if (verdict.status === 'unavailable')
+    throw throwBadRequestError(COM_FACE_CHECK_UNAVAILABLE_MESSAGE);
+  if (verdict.status === 'detected') {
+    // For moderators: the owner is told which fields were read, never why.
+    logToAxiom({
+      type: 'info',
+      name: 'model-com-face-intent',
+      message: 'refused at save',
+      modelId,
+      reason: verdict.reason,
+    }).catch(() => undefined);
+    throw throwBadRequestError(COM_FACE_REFUSED_MESSAGE);
+  }
 }
 
 /**
@@ -186,7 +219,7 @@ export async function assertSfwFaceSafe({
   // Both checks wait on the orchestrator, so they run together; the listing refusal still wins.
   const triggerWords = modelId ? await getOwnTriggerWords({ modelId, userId }) : [];
   const [allowed, verdicts] = await Promise.allSettled([
-    assertComFaceAllowed({ name, description, triggerWords }),
+    assertComFaceAllowed({ name, description, triggerWords, modelId }),
     checkSfwFace({ sfwName, sfwDescription, userId }),
   ]);
   if (allowed.status === 'rejected') throw allowed.reason;
@@ -247,7 +280,7 @@ export async function draftSfwFace({
   userId: number;
 }) {
   const triggerWords = modelId ? await getOwnTriggerWords({ modelId, userId }) : [];
-  await assertComFaceAllowed({ name, description, triggerWords });
+  await assertComFaceAllowed({ name, description, triggerWords, modelId });
   const source = JSON.stringify({ title: name, description: description ?? '', triggerWords });
   let draft = await requestDraft([{ role: 'user', content: source }], userId);
 

@@ -250,6 +250,11 @@ export async function removeSystemPermission(
     (x) => !(userIds as number[]).includes(x)
   );
   await sysRedis.set(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS, JSON.stringify(permissions));
+
+  if (permission === 'impersonation') {
+    const { invalidateImpersonationsBy } = await import('~/server/auth/session-invalidation');
+    for (const userId of userIds) await invalidateImpersonationsBy(userId);
+  }
 }
 
 const colorPriority = [

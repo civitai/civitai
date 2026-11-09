@@ -4,10 +4,12 @@ import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { servableBanner } from '~/shared/utils/article-card-image';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { articlesFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { articlesSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { removeTags } from '~/utils/string-helpers';
+import { removeSpoilers } from '~/utils/html-sanitize-helpers';
 import { isDefined } from '~/utils/type-guards';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -67,7 +69,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
-const transformData = async ({
+export const transformData = async ({
   articles,
   cosmetics,
 }: {
@@ -75,16 +77,18 @@ const transformData = async ({
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
 }) => {
   const records = articles
-    .map(({ tags, stats, ...articleRecord }) => {
-      const coverImage = articleRecord.coverImage;
+    .map(({ tags, stats, bannerImage, ...articleRecord }) => {
+      // A banner stands in for a missing cover on the card, once it is servable.
+      const coverImage = articleRecord.coverImage ?? servableBanner(bannerImage);
       if (!coverImage) return null;
       return {
         ...articleRecord,
         // `content` is a searchable attribute and is stored as HTML, so tag and
         // attribute names were indexed as prose — a query for `iframe` could
         // match on markup. Regex-strip rather than a full HTML-to-text pass:
-        // this runs over every article on a reindex.
-        content: removeTags(articleRecord.content),
+        // this runs over every article on a reindex. Spoilers are dropped first so
+        // a search hit cannot show them; only bodies naming "spoiler" pay a parse.
+        content: removeTags(removeSpoilers(articleRecord.content)),
         nsfwLevel: parseBitwiseBrowsingLevel(articleRecord.nsfwLevel),
         stats: stats
           ? {
@@ -124,6 +128,7 @@ export type ArticleSearchIndexRecord = Awaited<ReturnType<typeof transformData>>
 
 const articleSelect = {
   ...articleDetailSelect,
+  bannerImage: articleDetailSelect.coverImage,
   stats: {
     select: {
       favoriteCountAllTime: true,

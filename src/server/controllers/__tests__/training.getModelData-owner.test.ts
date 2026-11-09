@@ -85,3 +85,32 @@ describe('training.getModelData owner gate', () => {
     expect((err as TRPCError).code).toBe('NOT_FOUND');
   });
 });
+
+describe('training.getModelData and a Training Studio dataset', () => {
+  const stored = {
+    ownRights: true,
+    shareDataset: true,
+    selectedEpochUrl: 'https://example.test/epoch',
+    datasetArchive: { status: 'archived', complete: true },
+    nsfwLevel: 1,
+    fullyRated: true,
+  };
+
+  beforeEach(() => {
+    dbMock.dbWrite.modelFile.findMany.mockResolvedValue([{ id: 100, metadata: stored }] as never);
+  });
+
+  it('gives the owner the sharing choice without the server-only keys', async () => {
+    const result = await call({ id: OWNER, isModerator: false });
+    expect(result.modelVersions[0].files[0].metadata).toEqual({
+      ownRights: true,
+      shareDataset: true,
+      selectedEpochUrl: 'https://example.test/epoch',
+    });
+  });
+
+  it('gives a moderator the stored metadata', async () => {
+    const result = await call({ id: 999, isModerator: true });
+    expect(result.modelVersions[0].files[0].metadata).toEqual(stored);
+  });
+});

@@ -16,12 +16,14 @@ import {
   dismissFromCsamQueue,
   dismissUserFromCsamQueue,
   FlagOnlyRemovedError,
+  AppealRestoreRefusedError,
+  APPEAL_RESTORE_REFUSED,
   resolveImageAppeal,
   sendBulkAppealEmails,
 } from '$lib/server/image-moderation.service';
 import { setReportStatus } from '$lib/server/reports.service';
 import { getActorMeta } from '$lib/server/request-meta';
-import { dbRead } from '$lib/server/db';
+import { dbRead, dbWrite } from '$lib/server/db';
 import { approvedAppealOf } from '$lib/server/removal-hold';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
 import { heldRemovalMessage, type HeldRemoval } from '$lib/server/removal-hold';
@@ -47,8 +49,9 @@ const querySchema = z.object({
 
 const parseIds = (v: unknown): number[] => parseIdList(String(v ?? ''));
 
-const FLAG_ONLY_REASON = 'removed with only the review flag left';
-const FLAG_ONLY_REMEDY = 'Dismiss the flag from its review queue, or restore the image. Reload.';
+const FLAG_ONLY_REASON = 'removed, and a review queue cannot put it back';
+const FLAG_ONLY_REMEDY =
+  'Dismiss a flagged image from its review queue, or restore the image explicitly. Reload.';
 
 /** `string`, not the union: `blockImage` takes the ClickHouse column's type, and the schema is what
  *  guarantees the value is one of the enum's. Returns the refusal message on a bad value, like the
@@ -193,11 +196,12 @@ export async function loadCsamQueueByUser(url: URL) {
 }
 
 // accept/block also resolve a coupled report when a `reportId` is posted: accept → Unactioned, block → Actioned.
-/** Which of the given reports is on which image. */
+/** Which of the given reports is on which image. On the primary: a report mapped to no image is
+ *  actioned whatever its image. */
 async function reportIdsByImage(reportIds: number[]): Promise<Map<number, number[]>> {
   const byImage = new Map<number, number[]>();
   if (!reportIds.length) return byImage;
-  const rows = await dbRead
+  const rows = await dbWrite
     .selectFrom('ImageReport')
     .select(['imageId', 'reportId'])
     .where('reportId', 'in', reportIds)
@@ -249,7 +253,7 @@ export const imageQueueActions = {
     const violation = parseViolation(form);
     if (typeof violation === 'string') return fail(400, { error: violation });
 
-    const { held } = await blockImage({
+    const { held, skipped } = await blockImage({
       imageId,
       userId: locals.user.id,
       ...violation,
@@ -259,7 +263,7 @@ export const imageQueueActions = {
     });
     // Not removed, so the report stays open; confirming the hold actions it.
     if (held) return { success: true, imageId, held: heldRemovalMessage([held]) };
-    if (reportId)
+    if (reportId && !skipped)
       await setReportStatus({
         id: reportId,
         status: ReportStatus.Actioned,
@@ -331,13 +335,20 @@ export const imageQueueActions = {
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason, imageId });
 
-    const closed = await resolveImageAppeal({
-      imageId,
-      status,
-      resolvedMessage,
-      ...reason,
-      userId: locals.user.id,
-    });
+    let closed;
+    try {
+      closed = await resolveImageAppeal({
+        imageId,
+        status,
+        resolvedMessage,
+        ...reason,
+        userId: locals.user.id,
+      });
+    } catch (e) {
+      if (e instanceof AppealRestoreRefusedError)
+        return fail(409, { error: APPEAL_RESTORE_REFUSED, imageId });
+      throw e;
+    }
     if (!closed)
       return fail(409, {
         error: 'Another moderator already resolved this appeal. Reload.',
@@ -474,8 +485,14 @@ export const imageQueueActions = {
       )
     );
     const held = results.flatMap((r): HeldRemoval[] => (r.held ? [r.held] : []));
-    // A held image's reports stay open: it is still up, and confirming the hold actions them.
-    const heldReports = new Set(held.flatMap((h) => reportsByImage.get(h.imageId) ?? []));
+    // A held removal's reports stay open: the image is still up, and confirming the hold actions
+    // them. A skipped block's reports stay open too.
+    const heldReports = new Set([
+      ...held.flatMap((h) => reportsByImage.get(h.imageId) ?? []),
+      ...imageIds.flatMap((imageId, i) =>
+        results[i].skipped ? reportsByImage.get(imageId) ?? [] : []
+      ),
+    ]);
     await Promise.all(
       reportIds
         .filter((id) => !heldReports.has(id))
@@ -496,6 +513,7 @@ export const imageQueueActions = {
     const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason });
+    const refused: number[] = [];
     const closed = await Promise.all(
       imageIds.map((imageId) =>
         resolveImageAppeal({
@@ -504,10 +522,18 @@ export const imageQueueActions = {
           ...reason,
           userId: locals.user.id,
           deferAppealEmail: true,
+        }).catch((e) => {
+          if (!(e instanceof AppealRestoreRefusedError)) throw e;
+          refused.push(imageId);
+          return undefined;
         })
       )
     );
     await sendBulkAppealEmails(closedAppellants(imageIds, closed), status === 'Approved');
+    if (refused.length)
+      return fail(409, {
+        error: `${APPEAL_RESTORE_REFUSED} Not approved: ${refused.join(', ')}.`,
+      });
     return { success: true };
   },
 } satisfies Actions;

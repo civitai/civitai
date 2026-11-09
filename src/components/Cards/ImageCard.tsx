@@ -17,6 +17,7 @@ import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
 import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
 import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
 import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
+import { useReactionNudgeClass } from '~/components/HatTurf/reaction-nudge';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { ThemeIcon } from '@mantine/core';
@@ -96,13 +97,18 @@ function ImageCardContent({ data, hideCreator }: Props) {
 
 function ImageCardActionRow({ data }: { data: ImagesInfiniteModel }) {
   const features = useFeatureFlags();
+  const nudge = useReactionNudgeClass({
+    imageId: data.id,
+    ownerId: data.user.id,
+    reactions: data.reactions,
+  });
   const hasMetaButton = features.imageCardInfoButton && data.hasMeta;
 
   return (
     <div className={cardClasses.actions}>
       <div className={cardClasses.actionRow}>
         <Reactions
-          className={cardClasses.reactions}
+          className={clsx(cardClasses.reactions, nudge)}
           entityId={data.id}
           entityType="image"
           reactions={data.reactions}

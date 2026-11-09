@@ -10,6 +10,7 @@ import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { logToAxiom } from '~/server/logging/client';
 import { recordImageScan } from '~/server/services/scanner-audit.service';
 import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
+import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import {
   readJobFailureReason,
   sendIngestionSignal,
@@ -232,6 +233,7 @@ export async function processImageScanWorkflow({
         },
         'webhooks'
       ).catch(() => null);
+      await refreshProfilePicturesForImagesLazy([imageId]);
       if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
       return;
     }

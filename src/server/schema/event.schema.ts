@@ -26,11 +26,15 @@ export const eventCosmeticScoresSchema = eventSchema.extend({
 });
 
 // Live topics a client has on screen: hat topic ids (16 hex) or 'teams'. Anything else is dropped
-// by the service; the bounds here only keep an oversized request out.
+// by the service; the bounds here only keep an oversized request out. `self` marks the signed-in
+// caller's own total.
 export type WatchEventPointsInput = z.infer<typeof watchEventPointsSchema>;
-export const watchEventPointsSchema = eventSchema.extend({
-  topics: z.array(z.string().max(32)).min(1).max(50),
-});
+export const watchEventPointsSchema = eventSchema
+  .extend({
+    topics: z.array(z.string().max(32)).max(50),
+    self: z.boolean().optional(),
+  })
+  .refine((input) => input.topics.length > 0 || input.self, { message: 'Nothing to watch' });
 
 export type WornEventHatInput = z.infer<typeof wornEventHatSchema>;
 export const wornEventHatSchema = eventSchema.extend({

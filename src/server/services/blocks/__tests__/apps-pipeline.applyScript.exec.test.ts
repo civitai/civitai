@@ -12,7 +12,10 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve, sep } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { buildApplyScript } from '~/server/services/blocks/apps-pipeline.service';
+import {
+  buildApplyReviewScript,
+  buildApplyScript,
+} from '~/server/services/blocks/apps-pipeline.service';
 
 /**
  * RUNS the generated apply-Job script under bash, with `kubectl` and `curl` replaced by stubs
@@ -207,5 +210,69 @@ describe('apply script, per-app objects ON (rollback)', () => {
     expect(r.status).not.toBe(0);
     expect(r.idx(PUBLISH)).toBeGreaterThan(-1);
     expect(r.calls.filter((c) => APPLY.test(c) || ROLLOUT.test(c))).toEqual([]);
+  });
+});
+
+/** Runs the mod-review apply script the same way: stubbed kubectl/curl, fixture template. */
+function runReview() {
+  const dir = mkdtempSync(join(tmpdir(), 'apply-review-script-'));
+  dirs.push(dir);
+  const bin = join(dir, 'bin');
+  const templates = join(dir, 'templates');
+  mkdirSync(bin);
+  mkdirSync(templates);
+  const callLog = join(dir, 'calls.log');
+  writeFileSync(callLog, '');
+  for (const [name, body] of [
+    ['kubectl', KUBECTL_STUB],
+    ['curl', CURL_STUB],
+  ] as const) {
+    writeFileSync(join(bin, name), body);
+    chmodSync(join(bin, name), 0o755);
+  }
+  writeFileSync(
+    join(templates, 'review.yaml.tmpl'),
+    'kind: Deployment\nmetadata:\n  name: ${REVIEW_NAME}\n'
+  );
+  const script = buildApplyReviewScript(NS);
+  expect(script).toContain('/templates/review.yaml.tmpl');
+  const local = script
+    .replaceAll('/templates/', `${forBash(templates)}/`)
+    .replaceAll('/tmp/rendered.yaml', forBash(join(dir, 'rendered.yaml')));
+  const scriptPath = join(dir, 'apply-review.sh');
+  writeFileSync(scriptPath, local);
+  const res = spawnSync(BASH.bash, [forBash(scriptPath)], {
+    encoding: 'utf8',
+    env: {
+      PATH: [bin, ...BASH.tools, process.env.PATH ?? '/usr/bin:/bin'].join(delimiter),
+      CALL_LOG: forBash(callLog),
+      SLUG: NEW_SLUG,
+      SHA,
+      REVIEW_HOST_SHA: SHA.slice(0, 16),
+      IMAGE: `ghcr.io/civitai/app-block-review-${NEW_SLUG}:${SHA}`,
+      PUBLISH_REQUEST_ID: 'pubreq_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      APPS_DOMAIN: 'example.test',
+      // The app's ProcessEnv type requires NODE_ENV; a child bash does not need it.
+    } as unknown as NodeJS.ProcessEnv,
+    timeout: 30_000,
+  });
+  const calls = readFileSync(callLog, 'utf8').split('\n').filter(Boolean);
+  const idx = (re: RegExp) => calls.findIndex((c) => re.test(c));
+  return { status: res.status, stderr: res.stderr, calls, idx };
+}
+
+describe('review apply script', () => {
+  // The janitor reaps review resources 14 days after creationTimestamp and civitai reports the
+  // preview expired 14 days after the build started. A same-sha rebuild renders the same names,
+  // so unless the apply recreates them, creation keeps the FIRST build's time and the janitor
+  // reaps a preview civitai still reports live.
+  it('deletes the rendered review objects before applying them, after the smoke test', () => {
+    const r = runReview();
+    expect(r.stderr).not.toMatch(/ERROR/);
+    expect(r.status).toBe(0);
+    const del = r.idx(/^kubectl delete -f \S*rendered\.yaml --ignore-not-found=true --wait=true$/);
+    expect(del).toBeGreaterThan(r.idx(SMOKE_RUN));
+    expect(r.idx(APPLY)).toBeGreaterThan(del);
+    expect(r.idx(ROLLOUT)).toBeGreaterThan(r.idx(APPLY));
   });
 });

@@ -28,7 +28,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
 import type { RemixAnswer } from '~/shared/remix-apps/define';
 import {
-  REMIX_SLOT_IDS,
+  REMIX_SAVABLE_SLOT_IDS,
   remixAppInputSchema,
   type RemixAppInput,
 } from '~/shared/remix-apps/row.schema';
@@ -319,7 +319,7 @@ function RemixAppEditor({
           <TextInput label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} />
           <Select
             label="Shows on"
-            data={[...REMIX_SLOT_IDS]}
+            data={[...REMIX_SAVABLE_SLOT_IDS]}
             value={target}
             onChange={(value) => value && setTarget(value)}
           />

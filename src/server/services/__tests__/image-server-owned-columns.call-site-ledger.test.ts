@@ -98,7 +98,7 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/schema/generation.schema.ts': { imageSchema: 2 },
   // Client form schemas. Their payloads go to `article.upsert` and to a report flow that keeps
   // only `url`, so the server parses them again with its own input schema.
-  'src/components/Article/ArticleUpsertForm.tsx': { imageSchema: 3 },
+  'src/components/Article/article-form.schema.ts': { imageSchema: 3 },
   'src/components/Report/OwnershipForm.tsx': { imageSchema: 2 },
 };
 
@@ -121,8 +121,9 @@ const INSERT_SITE_LEDGER: Record<string, InsertSite> = {
   // re-checks here so no other path can write into someone else's post.
   'src/server/services/image.service.ts#createImage': {
     sites: 1,
-    // `metadata`: the stripped client metadata, plus the caller-verified App Blocks stamp.
-    spreads: ['pickClientImageColumns(image)', 'metadata'],
+    // `metadata`: the stripped client metadata, plus the caller-verified App Blocks stamp or the
+    // feedback capture stamp (one spread each).
+    spreads: ['pickClientImageColumns(image)', 'metadata', 'metadata'],
     serverColumns: ['postId: image.postId', 'index: image.index'],
     guards: [
       'if (image.postId != null) await assertPostOwnedBy({ postId: image.postId, userId: image.userId });',
@@ -234,6 +235,11 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     serverColumns: [],
   },
   'src/server/services/creator-service-deal-file.service.ts#createScanImage': {
+    calls: 1,
+    spreads: [],
+    serverColumns: [],
+  },
+  'src/server/services/feedback-capture.service.ts#createCapture': {
     calls: 1,
     spreads: [],
     serverColumns: [],

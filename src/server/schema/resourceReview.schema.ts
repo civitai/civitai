@@ -94,4 +94,5 @@ export const getResourceReviewPagedSchema = paginationSchema.extend({
   modelId: numericString(),
   modelVersionId: numericString().optional(),
   username: z.string().optional(),
+  writtenOnly: z.boolean().optional(),
 });

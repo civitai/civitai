@@ -132,6 +132,11 @@ import {
 } from './mediaUploadLogic';
 import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
 import { createBlockEventRecorder } from './blockEventBeacon';
+import {
+  reportAppSubmitError,
+  reportAppSubmitResult,
+  useAppSessionTelemetry,
+} from './appInAppTelemetry';
 import { sendBlockRender } from './sendBlockRender';
 import {
   computeLaunchTimings,
@@ -1384,12 +1389,21 @@ export function PageBlockHost({
     [effectiveSandbox]
   );
 
+  // App_Session: one row per host session. Off on a review mount, whose app id is a synthetic
+  // request id.
+  const { countSubmit: countAppSubmit, countMessage: countAppMessage } = useAppSessionTelemetry({
+    appBlockId,
+    host: 'page',
+    enabled: !reviewMode,
+  });
+
   const { send, onMessage, nack, reportNoToken } = usePostMessage({
     iframeRef,
     expectedOrigin,
     opaqueOrigin,
     host: 'PageBlockHost',
     appBlockId,
+    onInbound: countAppMessage,
   });
 
   // App Blocks Analytics Phase 2 — fire-and-forget block render/impression.
@@ -2528,6 +2542,7 @@ export function PageBlockHost({
         typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
           ? raw.idempotencyKey
           : undefined;
+      if (!reviewMode) countAppSubmit();
       try {
         const { snapshot } = await submitWorkflowMutation.mutateAsync({
           blockToken: token,
@@ -2535,13 +2550,25 @@ export function PageBlockHost({
           body: raw.body as never,
           ...(idempotencyKey ? { idempotencyKey } : {}),
         });
+        if (!reviewMode) reportAppSubmitResult(appBlockId, 'submit', { snapshot });
         send('WORKFLOW_SUBMITTED', { requestId, snapshot });
       } catch (err) {
+        if (!reviewMode) reportAppSubmitError(appBlockId, 'submit', err);
         send('WORKFLOW_SUBMITTED', { requestId, snapshot: failureSnapshot(err) });
       }
     });
     return off;
-  }, [onMessage, send, token, submitWorkflowMutation, reviewNack, nack]);
+  }, [
+    onMessage,
+    send,
+    token,
+    submitWorkflowMutation,
+    reviewNack,
+    nack,
+    reviewMode,
+    appBlockId,
+    countAppSubmit,
+  ]);
 
   // ESTIMATE_WORKFLOW → blocks.estimateWorkflow → ESTIMATE_RESULT.
   useEffect(() => {
@@ -5333,10 +5360,12 @@ export function PageBlockHost({
                     body: body as never,
                   });
                 } catch (err) {
+                  if (!reviewMode) reportAppSubmitError(appBlockId, 'training_submit', err);
                   // Never resent: the quote is spent once. See runTrainingGate.ts.
                   settlement.reply(trainingSubmitReplyFromError(err));
                   return;
                 }
+                if (!reviewMode) reportAppSubmitResult(appBlockId, 'training_submit', result);
                 settlement.reply(trainingSubmitReplyFromResult(result));
               } catch (err) {
                 settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
@@ -5359,6 +5388,8 @@ export function PageBlockHost({
     trpcUtils,
     submitWorkflowMutation,
     reportNoToken,
+    reviewMode,
+    appBlockId,
   ]);
 
   // ── RUN_CONFIRMED_STEP → CONFIRMED_STEP_RESULT ────────────────────────────
@@ -5488,6 +5519,7 @@ export function PageBlockHost({
                     body: body as never,
                   });
                 } catch (err) {
+                  if (!reviewMode) reportAppSubmitError(appBlockId, 'confirmed_step_submit', err);
                   // Never resent: the quote is spent once.
                   const failed = trainingSubmitReplyFromError(err);
                   settlement.reply(failed);
@@ -5495,6 +5527,9 @@ export function PageBlockHost({
                     showUnconfirmedNotice(requestId);
                   }
                   return;
+                }
+                if (!reviewMode) {
+                  reportAppSubmitResult(appBlockId, 'confirmed_step_submit', result);
                 }
                 const reply = confirmedStepReplyFromResult(result);
                 settlement.reply(reply);
@@ -5529,6 +5564,8 @@ export function PageBlockHost({
     trpcUtils,
     submitWorkflowMutation,
     reportNoToken,
+    reviewMode,
+    appBlockId,
   ]);
 
   // ── PREPARE_TRAINING_DATASET → TRAINING_DATASET_RESULT ─────────────────────

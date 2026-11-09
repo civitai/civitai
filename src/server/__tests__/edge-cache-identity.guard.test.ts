@@ -672,6 +672,23 @@ type LedgerEntry = {
 );
 
 const LEDGER: Record<string, LedgerEntry> = {
+  'image.getResources': {
+    status: 'gate-refuses-then-skips',
+    why:
+      'getImageResourcesHandler forwards `viewer: ctx.user` into getImageResources, which reads ' +
+      'it only in assertImageVisibleToViewer, BEFORE the resource query: the viewer gets the ' +
+      'same rows or not-found. An image a signed-out viewer may also open answers the same for ' +
+      'everyone and stays edge-cached; any other image answers 200 only to its owner or a ' +
+      'moderator, so the handler sets ctx.cache.skip when the same read says it is not ' +
+      'visibleSignedOut. ' +
+      'Behaviour is pinned by image-resources-visibility.behavior.test.ts.',
+    gate: 'assertImageVisibleToViewer(',
+    sharedRead: 'dbRead.$queryRaw',
+    skipWhen: '!visibleSignedOut',
+    identity: ['ctx.user'],
+    forwards: ['getImageResources|viewer|uses'],
+    directUses: 0,
+  },
   'homeBlock.getHomeBlock': {
     status: 'gate-refuses-then-skips',
     why:

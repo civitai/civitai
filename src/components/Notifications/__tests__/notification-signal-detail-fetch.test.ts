@@ -2,6 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  handleNotificationSignal,
   hasLoadedNotificationList,
   insertSignalledNotification,
   notificationListFilters,
@@ -175,5 +176,118 @@ describe('insertSignalledNotification', () => {
     expect(firstItems(queryClient, undefined)).toHaveLength(2);
     expect(firstItems(queryClient, 'Comment')).toHaveLength(2);
     expect(firstItems(queryClient, 'Buzz')).toEqual([{ id: 4 }]);
+  });
+});
+
+/** A debounced notification (a collection gaining items) is re-surfaced under its existing id. */
+const COLLECTION_UPDATE = {
+  id: 88123,
+  type: 'contest-collection-item-status-change',
+  category: 'Update',
+  details: {},
+  createdAt: '2026-11-08T08:30:00.000Z',
+  read: false,
+} as unknown as NotificationGetAllItem;
+
+const detailFetch = () =>
+  vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ details: { collectionId: 9 } })));
+
+const listOf = (items: Array<{ id: number; read: boolean }>) => [{ items, nextCursor: undefined }];
+const ids = (queryClient: QueryClient, category?: string) =>
+  (firstItems(queryClient, category) as Array<{ id: number }>).map((item) => item.id);
+
+describe('a re-signalled notification', () => {
+  it('is written into All and Updates only, never Comments', async () => {
+    const queryClient = new QueryClient();
+    for (const category of [undefined, 'Update', 'Comment'])
+      loaded(queryClient, category, listOf([{ id: 4, read: true }]));
+
+    await insertSignalledNotification(queryClient, LIST_KEY, COLLECTION_UPDATE, detailFetch());
+
+    expect(ids(queryClient, undefined)).toEqual([88123, 4]);
+    expect(ids(queryClient, 'Update')).toEqual([88123, 4]);
+    expect(ids(queryClient, 'Comment')).toEqual([4]);
+  });
+
+  it('leaves one row, moved to the top, when the list already holds that id', async () => {
+    const queryClient = new QueryClient();
+    const pages = listOf([
+      { id: 4, read: true },
+      { id: 88123, read: true },
+    ]);
+    loaded(queryClient, undefined, pages);
+    loaded(queryClient, 'Update', pages);
+
+    await insertSignalledNotification(queryClient, LIST_KEY, COLLECTION_UPDATE, detailFetch());
+    await insertSignalledNotification(queryClient, LIST_KEY, COLLECTION_UPDATE, detailFetch());
+
+    expect(ids(queryClient, undefined)).toEqual([88123, 4]);
+    expect(ids(queryClient, 'Update')).toEqual([88123, 4]);
+    expect(firstItems(queryClient, 'Update')[0]).toMatchObject({ read: false });
+  });
+
+  it('finds the existing row on a later page too', async () => {
+    const queryClient = new QueryClient();
+    const pages = [
+      { items: [{ id: 4, read: true }], nextCursor: 'c' },
+      { items: [{ id: 88123, read: true }], nextCursor: undefined },
+    ];
+    queryClient.setQueryData(panelKey('Update'), { pages, pageParams: [undefined, 'c'] });
+
+    await insertSignalledNotification(queryClient, LIST_KEY, COLLECTION_UPDATE, detailFetch());
+
+    const data = queryClient.getQueryData(panelKey('Update')) as {
+      pages: { items: Array<{ id: number }> }[];
+    };
+    expect(data.pages.map((p) => p.items.map((item) => item.id))).toEqual([[88123, 4], []]);
+  });
+
+  it('matches a string id from the signal against a numeric id in the list', async () => {
+    const queryClient = new QueryClient();
+    loaded(queryClient, 'Update', listOf([{ id: 88123, read: true }]));
+    const signal = { ...COLLECTION_UPDATE, id: '88123' } as unknown as NotificationGetAllItem;
+
+    await insertSignalledNotification(queryClient, LIST_KEY, signal, detailFetch());
+
+    expect(firstItems(queryClient, 'Update')).toHaveLength(1);
+  });
+});
+
+describe('badge counts on a signal', () => {
+  const run = async (queryClient: QueryClient) => {
+    let counts: Record<string, number> = { all: 3, update: 2, comment: 1 };
+    await handleNotificationSignal(
+      queryClient,
+      LIST_KEY,
+      COLLECTION_UPDATE,
+      (updater) => (counts = updater(counts)),
+      detailFetch()
+    );
+    return counts;
+  };
+
+  it('are unchanged when a loaded list already holds that id unread', async () => {
+    const queryClient = new QueryClient();
+    loaded(queryClient, 'Update', listOf([{ id: 88123, read: false }]));
+
+    expect(await run(queryClient)).toEqual({ all: 3, update: 2, comment: 1 });
+  });
+
+  it('are unchanged when only the All list holds that id unread', async () => {
+    const queryClient = new QueryClient();
+    loaded(queryClient, undefined, listOf([{ id: 88123, read: false }]));
+
+    expect(await run(queryClient)).toEqual({ all: 3, update: 2, comment: 1 });
+  });
+
+  it('go up by one when the held row was read', async () => {
+    const queryClient = new QueryClient();
+    loaded(queryClient, 'Update', listOf([{ id: 88123, read: true }]));
+
+    expect(await run(queryClient)).toEqual({ all: 4, update: 3, comment: 1 });
+  });
+
+  it('go up by one for a notification no loaded list holds', async () => {
+    expect(await run(new QueryClient())).toEqual({ all: 4, update: 3, comment: 1 });
   });
 });

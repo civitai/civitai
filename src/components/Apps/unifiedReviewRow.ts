@@ -3,6 +3,8 @@ import { appDisplayName } from '~/shared/utils/app-display-name';
 import type { AnyRequest, ManifestDiffSummary } from '~/components/Apps/OnsiteReviewModal';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import type { ListingReviewMedia } from '~/server/services/blocks/app-listing.service';
+import type { AgentReviewSummary } from '~/shared/utils/agent-review-findings';
+import { sensitiveScopeCount } from '~/components/Apps/reviewQueueSignals';
 import {
   BUILD_STEP_LABELS,
   isBuildFailureClassSignal,
@@ -166,6 +168,20 @@ export type UnifiedReviewRow = {
   coverUrl: string | null;
   /** The listing media with levels (moderator-only), so the row can blur an above-SFW icon. */
   reviewMedia: ListingReviewMedia | null;
+  /**
+   * PENDING decision signals (on-site CODE rows only; `undefined` elsewhere):
+   *  - `previewState` — the review preview's `preview-*` lifecycle value, or null for none;
+   *  - `agentReview` — the agentic review summary; `null` = none ran, and ABSENT (undefined)
+   *    when the viewer has no agentic surface, in which case no AI chip renders at all;
+   *  - `sensitiveCount` — sensitive permissions the manifest requests.
+   */
+  signals?: ReviewRowSignals;
+};
+
+export type ReviewRowSignals = {
+  previewState: string | null;
+  agentReview?: AgentReviewSummary | null;
+  sensitiveCount: number;
 };
 
 /** The deploy lifecycle projection carried on an on-site approved review row. */
@@ -240,6 +256,20 @@ export function onsiteRequestToUnifiedRow(
         }
       : undefined;
   const mds = (req.manifestDiffSummary ?? {}) as ManifestDiffSummary;
+  // Only PENDING rows carry the signals (`listPendingRequests` projects `previewState`, and
+  // `agentReview` when the viewer has the agentic surface); history rows never do.
+  const pendingSignals = req as {
+    previewState?: string | null;
+    agentReview?: AgentReviewSummary | null;
+  };
+  const signals: ReviewRowSignals | undefined =
+    'previewState' in pendingSignals
+      ? {
+          previewState: pendingSignals.previewState ?? null,
+          ...('agentReview' in pendingSignals ? { agentReview: pendingSignals.agentReview } : {}),
+          sensitiveCount: sensitiveScopeCount(req.manifest),
+        }
+      : undefined;
   return {
     key: `onsite:${req.id}`,
     kind: 'onsite',
@@ -261,6 +291,7 @@ export function onsiteRequestToUnifiedRow(
     iconUrl: req.iconUrl ?? null,
     coverUrl: req.coverUrl ?? null,
     reviewMedia: req.reviewMedia ?? null,
+    signals,
   };
 }
 
@@ -438,6 +469,8 @@ function combineCodeAndMediaRows(
         redIcon: code.reviewMedia?.redIcon ?? media.reviewMedia?.redIcon ?? null,
         redCover: code.reviewMedia?.redCover ?? media.reviewMedia?.redCover ?? null,
       },
+      // The CODE half owns the preview, the AI review and the permissions.
+      signals: code.signals,
     });
   }
 

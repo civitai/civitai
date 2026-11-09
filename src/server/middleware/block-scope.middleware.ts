@@ -2,12 +2,12 @@ import { decodeProtectedHeader, jwtVerify } from 'jose';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import {
+  blockRequestResult,
   ensureRegisterAppBlockRuntimeMetrics,
   recordBlockConsentMarkerUnavailable,
   recordBlockRestApprovalVerdict,
   recordConsentStrip,
   recordBlockRevocationRefusal,
-  statusToRequestResult,
   type AppBlockEndpoint,
 } from '~/server/metrics/app-block-runtime.metrics';
 import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
@@ -1656,7 +1656,9 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         const labels = { app_block_id: appBlockIdLabel, endpoint: resolveEndpointLabel() };
         const elapsedSeconds = Number(process.hrtime.bigint() - metricStart) / 1e9;
         requestDurationSeconds.observe(labels, elapsedSeconds);
-        requestsTotal.inc({ ...labels, result: statusToRequestResult(res.statusCode) });
+        // `blockRequestResult`, not the bare status: a document-store read miss the handler
+        // marked is `not_found`, not `client_error` (see `AppBlockRequestResult`).
+        requestsTotal.inc({ ...labels, result: blockRequestResult(res) });
       } catch {
         // never let observability break the request
       }

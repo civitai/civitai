@@ -18,6 +18,7 @@ import {
   getRemixGalleryCardSummariesSchema,
   getStickerPlacementDetailSchema,
   getStickerPlacementsSchema,
+  getStickerTracksSchema,
   placementPriceRangeSchema,
   placementSpaceSchema,
   placerSchema,
@@ -45,8 +46,10 @@ import {
   getPlacementSpaceRow,
   getPlacementSpaces,
   resolvePlacementSpaceFor,
+  resolvePlacementSpaceForDisplay,
   setPlacementSpace,
 } from '~/server/services/placement-space.service';
+import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import {
   countPendingPlacementsFrom,
   isPlacementSuspended,
@@ -65,6 +68,7 @@ import {
   getStickerPlacementCounts,
   getStickerPlacements,
   getStickerPlacementsAndCounts,
+  getStickerPlacementTracks,
   setStickerCommentHidden,
 } from '~/server/services/sticker-placement.service';
 import {
@@ -181,7 +185,9 @@ function assertStorylinesEnabled(ctx: Context) {
 export const placementRouter = router({
   getSpace: publicProcedure.input(getPlacementSpaceSchema).query(({ input, ctx }) => {
     assertPromotionSurfaceReadable(ctx, input.surface);
-    return resolvePlacementSpaceFor(input);
+    return isFliptSync(FLIPT_FEATURE_FLAGS.PLACEMENT_SPACE_READ_CACHE) === true
+      ? resolvePlacementSpaceForDisplay(input)
+      : resolvePlacementSpaceFor(input);
   }),
 
   // The row for one level, so a toggle shows what that level is set to rather
@@ -277,6 +283,14 @@ export const placementRouter = router({
         viewerId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
       })
+    ),
+
+  getStickerTracks: publicProcedure
+    .input(getStickerTracksSchema)
+    .query(({ input, ctx }) =>
+      ctx.features.stickerVideoTracks
+        ? getStickerPlacementTracks({ imageId: input.imageId, isModerator: ctx.user?.isModerator })
+        : []
     ),
 
   // Derived from the ledger, never from `Placement.status` — that column says a

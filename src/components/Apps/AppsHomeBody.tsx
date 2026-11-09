@@ -6,7 +6,6 @@ import {
   CloseButton,
   Group,
   Paper,
-  SimpleGrid,
   Skeleton,
   Stack,
   Text,
@@ -56,12 +55,6 @@ import { trpc } from '~/utils/trpc';
  * not re-check it.
  */
 
-/**
- * Columns per breakpoint, so a tile stays icon-sized rather than stretching: 4 on a phone, up
- * to 8 on a wide screen. Each column is `minmax(0, 1fr)`, and the name truncates, so nothing
- * can push the grid wider than its container (no horizontal scroll at 390px).
- */
-export const APPS_HOME_GRID_COLS = { base: 4, xs: 5, sm: 6, md: 7, lg: 8 } as const;
 const APPS_HOME_SKELETON_TILES = 8;
 export const APPS_HOME_ICON_PX = 60;
 /** A launcher-icon corner radius. */
@@ -74,16 +67,19 @@ export const APPS_HOME_PERMISSIONS_HREF = {
   query: activityTabQuery('permissions'),
 };
 
+/**
+ * Fixed-width tiles packed from the left, so two apps sit side by side instead of stretching
+ * across the page. 96px tiles with a 16px gap on a phone (three fit at 360px wide), 104px with
+ * a 20px gap from `sm`. The name truncates, so a long one cannot widen its column.
+ */
 function TileGrid({ children, testId }: { children: ReactNode; testId: string }) {
   return (
-    <SimpleGrid
+    <div
       data-testid={testId}
-      cols={APPS_HOME_GRID_COLS}
-      spacing={{ base: 'xs', sm: 'md' }}
-      verticalSpacing="lg"
+      className="grid grid-cols-[repeat(auto-fill,96px)] justify-start gap-x-4 gap-y-6 sm:grid-cols-[repeat(auto-fill,104px)] sm:gap-x-5"
     >
       {children}
-    </SimpleGrid>
+    </div>
   );
 }
 

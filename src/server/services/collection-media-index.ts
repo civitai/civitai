@@ -223,6 +223,9 @@ function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean) {
         WHERE ci."articleId" IN (SELECT a.id FROM "Article" a WHERE a."coverId" IN (${ids}))
       UNION
       SELECT ci."collectionId" FROM "CollectionItem" ci
+        WHERE ci."articleId" IN (SELECT a.id FROM "Article" a WHERE a."bannerId" IN (${ids}))
+      UNION
+      SELECT ci."collectionId" FROM "CollectionItem" ci
         WHERE ci."model3dId" IN (
           SELECT m3.id FROM "Model3D" m3 WHERE m3."thumbnailImageId" IN (${ids}))
       UNION

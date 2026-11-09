@@ -18,6 +18,7 @@ import type {
   GetCollectionPermissionDetails,
   GetUserCollectionItemsByItemSchema,
   RemoveCollectionItemInput,
+  SetCollectionArchivedInput,
   SetCollectionItemNsfwLevelInput,
   SetItemScoreInput,
   UpdateCollectionCoverImageInput,
@@ -48,6 +49,7 @@ import {
   removeCollectionItem,
   removeContributorFromCollection,
   saveItemInCollections,
+  setCollectionArchived,
   setCollectionItemNsfwLevel,
   setItemScore,
   updateCollectionCoverImage,
@@ -517,6 +519,26 @@ export const deleteUserCollectionHandler = async ({
   try {
     const { user } = ctx;
     await deleteCollectionById({ id: input.id, userId: user.id, isModerator: user.isModerator });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const setCollectionArchivedHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetCollectionArchivedInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    const { user } = ctx;
+    return await setCollectionArchived({
+      ...input,
+      userId: user.id,
+      isModerator: user.isModerator,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
