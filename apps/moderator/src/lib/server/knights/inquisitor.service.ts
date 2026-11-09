@@ -6,6 +6,7 @@ import { NsfwLevel } from '@civitai/shared';
 import {
   KNIGHTS_ESCALATION_REASONS,
   KNIGHTS_NSFW_LEVEL_QUESTION,
+  KNIGHTS_STAGE_RANKS,
   KNIGHTS_WRITEBACK_REASONS,
   type KnightsEscalationReason,
   type KnightsWritebackReason,
@@ -18,7 +19,14 @@ import { consensusBlockReason, type ConsensusBlockReason } from './block-reason'
 
 export const INQUISITOR_QUEUE_LIMIT = 100;
 
-export type InquisitorVote = { answer: string; label: string; votes: number; weight: number };
+export type InquisitorVote = {
+  answer: string;
+  label: string;
+  votes: number;
+  weight: number;
+  /** Votes for this answer by the rank that cast them, lowest rank first; ranks with none are left out. */
+  stages: { stage: string; votes: number }[];
+};
 
 export type InquisitorItem = {
   id: number;
@@ -97,6 +105,36 @@ export async function countInquisitorQueue(): Promise<number> {
   return Number(row?.count ?? 0);
 }
 
+type StageTally = { answer: string; stage: string; votes: string; weight: number };
+
+const stageOrder = (stage: string) => {
+  const index = (KNIGHTS_STAGE_RANKS as readonly string[]).indexOf(stage);
+  return index === -1 ? KNIGHTS_STAGE_RANKS.length : index;
+};
+
+function tallyByAnswer(tallies: StageTally[], labels: Map<string, string>): InquisitorVote[] {
+  const byAnswer = new Map<string, InquisitorVote>();
+  for (const tally of tallies) {
+    const vote = byAnswer.get(tally.answer) ?? {
+      answer: tally.answer,
+      label: labels.get(tally.answer) ?? tally.answer,
+      votes: 0,
+      weight: 0,
+      stages: [],
+    };
+    vote.votes += Number(tally.votes);
+    vote.weight += Number(tally.weight);
+    vote.stages.push({ stage: tally.stage, votes: Number(tally.votes) });
+    byAnswer.set(tally.answer, vote);
+  }
+  return [...byAnswer.values()]
+    .map((vote) => ({
+      ...vote,
+      stages: vote.stages.sort((a, b) => stageOrder(a.stage) - stageOrder(b.stage)),
+    }))
+    .sort((a, b) => b.weight - a.weight || a.answer.localeCompare(b.answer));
+}
+
 export async function getInquisitorQueue(
   filter: InquisitorFilter = 'all'
 ): Promise<InquisitorItem[]> {
@@ -131,6 +169,7 @@ export async function getInquisitorQueue(
     .select([
       'itemId',
       'answer',
+      'stage',
       sql<string>`count(*)`.as('votes'),
       sql<number>`sum("weight")`.as('weight'),
     ])
@@ -139,7 +178,7 @@ export async function getInquisitorQueue(
       'in',
       items.map((item) => item.id)
     )
-    .groupBy(['itemId', 'answer'])
+    .groupBy(['itemId', 'answer', 'stage'])
     .execute();
 
   const blockedVotes = await dbWrite
@@ -161,15 +200,10 @@ export async function getInquisitorQueue(
       escalationReason: narrow(KNIGHTS_ESCALATION_REASONS, escalationReason),
       hasBlockMarker: hasBlockMarker({ ingestion, blockedFor: item.blockedFor }),
       blockReason: consensusBlockReason(blockedVotes.filter((vote) => vote.itemId === item.id)),
-      votes: tallies
-        .filter((tally) => tally.itemId === item.id)
-        .map((tally) => ({
-          answer: tally.answer,
-          label: labels.get(tally.answer) ?? tally.answer,
-          votes: Number(tally.votes),
-          weight: Number(tally.weight),
-        }))
-        .sort((a, b) => b.weight - a.weight || a.answer.localeCompare(b.answer)),
+      votes: tallyByAnswer(
+        tallies.filter((tally) => tally.itemId === item.id),
+        labels
+      ),
     };
   });
 }
