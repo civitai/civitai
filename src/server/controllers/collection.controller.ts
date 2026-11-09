@@ -3,7 +3,7 @@ import { coverageAudience } from '~/server/services/generation/coverage-source';
 import { constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
-import { collectedContentReward } from '~/server/rewards';
+import { collectedContentReward, firstDailyPostReward } from '~/server/rewards';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import type {
   AddCollectionItemInput,
@@ -726,6 +726,21 @@ export const addSimpleImagePostHandler = async ({
       },
       permissions,
     });
+
+    // The entry is saved; a reward error must not surface as a failed entry and invite a resubmit.
+    if (post.publishedAt) {
+      await firstDailyPostReward
+        .apply({ postId: post.id, posterId: userId }, { ip: ctx.ip })
+        .catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'add-simple-image-post-reward-failed',
+            message: error instanceof Error ? error.message : String(error),
+            postId: post.id,
+            collectionId,
+          }).catch(() => undefined)
+        );
+    }
 
     return { post, permissions, imageIds };
   } catch (error) {

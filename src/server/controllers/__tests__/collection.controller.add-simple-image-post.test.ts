@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as PostService from '~/server/services/post.service';
+import type * as Rewards from '~/server/rewards';
 
 const mocks = vi.hoisted(() => ({
   getCollectionById: vi.fn(),
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   addPostImage: vi.fn(),
   deletePost: vi.fn(),
   validateContestCollectionEntry: vi.fn(),
+  applyFirstDailyPost: vi.fn(),
 }));
 
 vi.mock('~/server/services/collection.service', async (importOriginal) => ({
@@ -27,6 +29,11 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
   deletePost: mocks.deletePost,
 }));
 
+vi.mock('~/server/rewards', async (importOriginal) => ({
+  ...(await importOriginal<typeof Rewards>()),
+  firstDailyPostReward: { apply: mocks.applyFirstDailyPost },
+}));
+
 import { addSimpleImagePostHandler } from '../collection.controller';
 
 const USER_ID = 7;
@@ -37,6 +44,7 @@ const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
 const ctx = {
   user: { id: USER_ID, isModerator: false },
   features: { userChallenges: false },
+  ip: '203.0.113.9',
 } as never;
 
 beforeEach(() => {
@@ -51,7 +59,15 @@ beforeEach(() => {
   mocks.bulkSaveItems.mockResolvedValue(undefined);
   mocks.validateContestCollectionEntry.mockResolvedValue(undefined);
   mocks.deletePost.mockResolvedValue({ id: NEW_POST_ID });
+  mocks.applyFirstDailyPost.mockResolvedValue(undefined);
 });
+
+/** createPost returns the publishedAt it was given, as the real one does. */
+const echoPublishedAt = () =>
+  mocks.createPost.mockImplementation(async ({ publishedAt }: { publishedAt?: Date }) => ({
+    id: NEW_POST_ID,
+    publishedAt: publishedAt ?? null,
+  }));
 
 const input = {
   collectionId: COLLECTION_ID,
@@ -212,5 +228,58 @@ describe('addSimpleImagePostHandler', () => {
 
     expect(result.post).toEqual({ id: NEW_POST_ID });
     expect(mocks.deletePost).not.toHaveBeenCalled();
+  });
+
+  describe('first post of the day reward', () => {
+    it('applies it to a published entry, once the entry is saved', async () => {
+      echoPublishedAt();
+      mocks.getCollectionById.mockResolvedValue(contest);
+
+      await addSimpleImagePostHandler({ input, ctx });
+
+      expect(mocks.applyFirstDailyPost).toHaveBeenCalledTimes(1);
+      expect(mocks.applyFirstDailyPost).toHaveBeenCalledWith(
+        { postId: NEW_POST_ID, posterId: USER_ID },
+        { ip: '203.0.113.9' }
+      );
+      expect(mocks.bulkSaveItems.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.applyFirstDailyPost.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('does not apply it to a draft post', async () => {
+      echoPublishedAt();
+      mocks.getCollectionById.mockResolvedValue({ ...contest, read: 'Private' });
+
+      await addSimpleImagePostHandler({ input, ctx });
+
+      expect(mocks.createPost).toHaveBeenCalledWith(
+        expect.objectContaining({ publishedAt: undefined })
+      );
+      expect(mocks.applyFirstDailyPost).not.toHaveBeenCalled();
+    });
+
+    it('keeps the entry when the reward throws', async () => {
+      echoPublishedAt();
+      mocks.applyFirstDailyPost.mockRejectedValue(new Error('Code: 60. UNKNOWN_TABLE'));
+
+      const result = await addSimpleImagePostHandler({ input, ctx });
+
+      expect(mocks.applyFirstDailyPost).toHaveBeenCalledTimes(1);
+      expect(result.imageIds).toEqual([10]);
+      expect(mocks.deletePost).not.toHaveBeenCalled();
+    });
+
+    it('does not apply it when the entry save is refused', async () => {
+      echoPublishedAt();
+      mocks.getCollectionById.mockResolvedValue(contest);
+      mocks.bulkSaveItems.mockRejectedValue(
+        new TRPCError({ code: 'PAYMENT_REQUIRED', message: 'only 1 entry submitted' })
+      );
+
+      await expect(addSimpleImagePostHandler({ input, ctx })).rejects.toThrow(/only 1 entry/);
+
+      expect(mocks.applyFirstDailyPost).not.toHaveBeenCalled();
+    });
   });
 });
