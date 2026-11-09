@@ -12,7 +12,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // Percentage rollout keyed on the image id: the share of scanned images sampled.
   SHADOW_SEXUAL_PROMPT = 'shadow-sexual-prompt',
   // Percentage rollout keyed on the file id: the share of files whose mini response leads with
-  // the content-hash download url. Each file's url changes once over the ramp.
+  // the content-hash download url. Each file's url changes once over the ramp. Create the key in
+  // Flipt (disabled is fine) before this deploys: a missing key throws on every mini request.
   DOWNLOAD_HASH_URLS = 'download-hash-urls',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',

@@ -1165,6 +1165,17 @@ describe('content-hash download url (download-hash-urls flag)', () => {
     expect(mockIsFlipt).toHaveBeenCalledWith('download-hash-urls', '202');
   });
 
+  it("flag on, no file named: hashes the file the response describes, chosen by the caller's preferences", async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    currentUser.value = { id: OTHER_USER_ID, filePreferences: GGUF_PREFERENCES };
+
+    const { body } = await run([SAFETENSOR, GGUF]);
+
+    expect(body.fileName).toBe(GGUF.name);
+    expect(firstPath(body)).toBe(hashPath('b'));
+    expect(mockIsFlipt).toHaveBeenCalledWith('download-hash-urls', String(GGUF.id));
+  });
+
   it('flag on, api host: both urls drop /api/ for the api host', async () => {
     mockIsFlipt.mockResolvedValue(true);
 
