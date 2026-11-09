@@ -59,7 +59,13 @@ export function ModelCarousel(props: Props) {
   );
 }
 
-function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10 }: Props) {
+function ModelCarouselContent({
+  modelId,
+  modelVersionId,
+  modelUserId,
+  limit = 10,
+  initialMobile,
+}: Props) {
   const features = useFeatureFlags();
   const showEventCosmetics = useShowEventCosmetics();
   const { running, helpers } = useTourContext();
@@ -80,7 +86,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
   });
 
   const hiddenExplained = useExplainHiddenImages(flatData);
-  const mobile = useContainerSmallerThan('md');
+  const mobile = useContainerSmallerThan('md', initialMobile);
 
   if (isLoading)
     return (
@@ -271,4 +277,5 @@ type Props = {
   modelUserId: number;
   limit?: number;
   minor?: boolean;
+  initialMobile?: boolean;
 };

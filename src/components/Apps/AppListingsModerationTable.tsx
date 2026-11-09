@@ -418,7 +418,24 @@ export function AppListingsModerationTable({
                       // testid so the display-label assertion can select this badge
                       // STRUCTURALLY — a text search for a category word would also
                       // match the app's name or a status chip.
-                      <Badge size="sm" variant="light" data-testid="apps-listing-mod-category">
+                      <Badge
+                        size="sm"
+                        variant="light"
+                        data-testid="apps-listing-mod-category"
+                        title={marketplaceCategoryLabel(row.category)}
+                        // The category column is narrow by design; the label WRAPS onto a
+                        // second line rather than being cut to "GENER…" by the badge's
+                        // ellipsis.
+                        styles={{
+                          root: { height: 'auto', maxWidth: '100%' },
+                          label: {
+                            whiteSpace: 'normal',
+                            overflow: 'visible',
+                            textOverflow: 'clip',
+                            lineHeight: 1.3,
+                          },
+                        }}
+                      >
                         {marketplaceCategoryLabel(row.category)}
                       </Badge>
                     ) : (
