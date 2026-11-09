@@ -571,19 +571,23 @@ export function runExtraCapabilities(run: Run, labelMode: LabelType) {
 
 /** Why the run's text-encoder rate is locked at 0, or undefined when its model can train it. */
 export const teLockReason = (run: Run): string | undefined =>
-  teTrainingUnsupportedReason(runVersion(run).ecosystem);
+  teTrainingUnsupportedReason(runVersion(run).ecosystem, runCard(run).name);
 export const teLocked = (run: Run): boolean => teLockReason(run) !== undefined;
 
 /** The learning rates after an optimizer change, as the main trainer couples them: Prodigy runs at
- *  1 (the text encoder too, unless the model can't train it); switching away puts a Prodigy-level
- *  rate back to the model's recommendation and leaves a rate the user picked alone. */
+ *  1, and so does a text encoder rate that is on; a locked one goes to 0 and an off (0) one stays off,
+ *  so a model that defaults TE off doesn't start training it. Switching away puts a Prodigy-level rate back to the
+ *  model's recommendation and leaves a rate the user picked alone. */
 export function optimizerLrParams(
   run: Run,
   params: RunParams
 ): Pick<RunParams, 'unetLr' | 'textEncoderLr'> {
   const { unetLr, textEncoderLr } = params;
   if (isProdigy(params.optimizer))
-    return { unetLr: '1', textEncoderLr: teLocked(run) ? textEncoderLr : '1' };
+    return {
+      unetLr: '1',
+      textEncoderLr: teLocked(run) ? '0' : Number(textEncoderLr) > 0 ? '1' : textEncoderLr,
+    };
   const defaults = defaultRunParams(run);
   const reset = (v: NumericInput, d: NumericInput) => (Number(v) >= MAX_NON_PRODIGY_LR ? d : v);
   return {
