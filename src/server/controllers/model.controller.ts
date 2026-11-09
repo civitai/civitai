@@ -228,6 +228,8 @@ import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribu
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
+import { notifyNewlyPinnedPosts } from '~/server/services/model-gallery-pin-notify.service';
+import { logToAxiom } from '~/server/logging/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import { withoutRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
 import { isRemovedWithOwner } from '~/server/utils/legal-hold';
@@ -2349,6 +2351,7 @@ export const updateGallerySettingsHandler = async ({
   try {
     const { id, gallerySettings } = input;
     const { user: sessionUser } = ctx;
+    let prevPinnedPosts: ModelGallerySettingsSchema['pinnedPosts'];
 
     const updatedModel = await updateModelById({
       id,
@@ -2356,6 +2359,7 @@ export const updateGallerySettingsHandler = async ({
       data: (model) => {
         if (!model || (model.userId !== sessionUser.id && !sessionUser.isModerator))
           throw throwNotFoundError(`No model with id ${id}`);
+        prevPinnedPosts = (model.gallerySettings as ModelGallerySettingsSchema | null)?.pinnedPosts;
 
         // A minor/sfwOnly flag is a moderator decision; an owner must not be able to raise the
         // gallery back above SFW from here. Moderators keep full control.
@@ -2376,6 +2380,27 @@ export const updateGallerySettingsHandler = async ({
       },
     });
     await bustModelGallerySettings([id]);
+
+    // A moderator's pin on someone else's model is curation, not the creator's credit.
+    if (gallerySettings && updatedModel.userId === sessionUser.id) {
+      await notifyNewlyPinnedPosts({
+        model: { id, name: updatedModel.name },
+        owner: { id: sessionUser.id, username: sessionUser.username },
+        prev: prevPinnedPosts,
+        next: {
+          pinnedPosts: gallerySettings.pinnedPosts,
+          hiddenUserIds: gallerySettings.hiddenUsers.map(({ id }) => id),
+          hiddenImages: gallerySettings.hiddenImages,
+        },
+      }).catch((e) =>
+        logToAxiom({
+          type: 'warning',
+          name: 'model-gallery-post-pinned',
+          message: (e as Error).message,
+          details: { modelId: id },
+        }).catch()
+      );
+    }
 
     return { ...updatedModel, gallerySettings };
   } catch (error) {
