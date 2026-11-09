@@ -267,12 +267,11 @@ export async function updateFile({
         modelVersionId: modelFile.modelVersionId,
         op: 'replace',
       });
-    // New content on a Training Studio version follows the same cap as an edit there.
+    // New content on a Training Studio version is unrated, so it is Private whatever was stored or sent.
     if (
       !isModerator &&
       (inputData.type ?? modelFile.type) === 'Training Data' &&
-      inputData.visibility !== undefined &&
-      inputData.visibility !== ModelFileVisibility.Private &&
+      (inputData.visibility ?? modelFile.visibility) !== ModelFileVisibility.Private &&
       (await versionHasStudioDataset(dbWrite, modelFile.modelVersionId))
     )
       inputData.visibility = ModelFileVisibility.Private;

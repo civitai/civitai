@@ -760,6 +760,17 @@ describe('an owner editing another Training Data file on a Training Studio versi
     expect(createdData().visibility).toBe('Private');
   });
 
+  it('a stored Public file whose content is replaced without a visibility comes out Private', async () => {
+    studioVersion(true);
+    withFile({ type: 'Training Data', metadata: {} });
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...(await dbMock.dbWrite.modelFile.findUnique()),
+      visibility: 'Public',
+    } as never);
+    await updateFile({ id: 1, url: NEW_URL, userId: 7 });
+    expect(createdData().visibility).toBe('Private');
+  });
+
   it('can make it Public by replacing its content on a version with no Studio dataset', async () => {
     studioVersion(false);
     withFile({ type: 'Training Data', metadata: {} });
