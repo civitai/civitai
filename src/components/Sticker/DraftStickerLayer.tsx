@@ -41,8 +41,7 @@ export function DraftStickerLayer() {
   const selectedDraftId = useStickerPlacementDraftStore((state) => state.selectedDraftId);
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const playheadMs = useStickerPlacementDraftStore((state) => state.playheadMs);
-  // The path and ghosts are for arranging, so they go while the video plays and while
-  // previewing, which shows the stickers as viewers will see them.
+  // Previewing shows the stickers as viewers see them, so no guides.
   const showGuides = useStickerPlacementDraftStore(
     (state) => !state.videoPlaying && !state.previewing && !state.trayOpen
   );

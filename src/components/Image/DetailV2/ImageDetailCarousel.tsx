@@ -381,8 +381,9 @@ function ImageContent({
               videoProps={{
                 autoPlay: active,
                 // A slide mid-transition is still in view, which the player's own in-view check
-                // reads as a reason to play.
-                standby: !active,
+                // reads as a reason to play. The sticker timeline owns play and pause: dropping
+                // the controls for it would otherwise re-run the player's autoplay.
+                standby: !active || timelineOpen,
               }}
             />
           )}

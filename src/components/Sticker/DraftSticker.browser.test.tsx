@@ -292,7 +292,7 @@ describe('what a draft sends when it is placed', () => {
     expect(placed[0]).not.toHaveProperty('track');
   });
 
-  // Nine one-second fades: each is short, together they pass the server's total.
+  // Each fade is under the per-fade cap; together they pass STICKER_TRACK_MAX_FAINT_MS.
   const tooMuchFading = () =>
     Array.from({ length: 10 }, (_, i) => key(i * 1000, { o: i % 2 ? 1 : 0 }));
 
@@ -306,7 +306,7 @@ describe('what a draft sends when it is placed', () => {
     expect(placed).toHaveLength(0);
   });
 
-  // 0.5 × 0.5 is under the 0.3 floor; 0.5 × 1 is not. Nothing fades, so only the floor decides.
+  // Nothing fades, so only the opacity floor (key × sticker opacity) can refuse these.
   const halfShown = () => [key(0, { o: 0.5 }), key(1000, { o: 0.5, x: 0.6 })];
 
   test('a key too faint for the sticker’s own opacity cannot be placed', async () => {

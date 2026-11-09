@@ -614,7 +614,7 @@ export function DraftSticker({
     return () => setPrimaryLabel(draft.id, null);
   }, [draft.id, primaryLabel, setPrimaryLabel]);
 
-  // The timeline says why; here it only keeps a press from reaching a refusal.
+  // Disabled only; StickerMotionEditor shows the reason.
   const motionRefused =
     !!draft.motion?.on &&
     draft.motion.keys.length > 0 &&

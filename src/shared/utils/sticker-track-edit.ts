@@ -123,9 +123,10 @@ export const stickerKeysTrack = (keys: StickerTrackKey[]): StickerTrackV2 =>
 export const STICKER_KEYS_TOO_FAINT = 'too faint for the sticker opacity';
 
 /**
- * Why the server would refuse these keys on a sticker of `stickerOpacity`, or null. Changing the
- * sticker's own opacity sets no key, so the floor on key times sticker opacity is checked here
- * rather than when a key was set.
+ * Why the server's track rules or its opacity floor (key opacity times `stickerOpacity`) would
+ * refuse these keys, or null. Null is not a promise of acceptance: the server also checks the
+ * creator's size limit and the media type. Run on every render, not when a key is set: changing
+ * the sticker's own opacity sets no key.
  */
 export function stickerKeysRefusal(keys: StickerTrackKey[], stickerOpacity: number) {
   const track = stickerKeysTrack(keys);

@@ -6,7 +6,6 @@ import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import type { StickerTrackKey } from '~/shared/utils/sticker-track';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 
-// A square artwork box, so the geometry does not depend on an image loading.
 vi.mock('~/components/EdgeMedia/EdgeImage', () => ({
   EdgeImage: ({ style }: { style?: React.CSSProperties }) => (
     <div style={{ ...style, aspectRatio: '1' }} />
@@ -67,7 +66,6 @@ describe('the selected sticker’s movement drawn on a 400×200 media box', () =
   const keys = [key(0, { x: 0.25, y: 0.25 }), key(2000, { x: 0.75, y: 0.75, s: 0.5, r: 45 })];
 
   test('the dotted path runs through every key, the middle one included', async () => {
-    // The middle key sits above and right of both ends, so dropping it shrinks the box.
     await renderGuides([keys[0], key(1000, { x: 0.9, y: 0.1 }), keys[1]], 0);
     const path = document.querySelector('[data-motion-path]')!;
     expect(box(path)).toMatchObject({ left: 100, top: 20, right: 360, bottom: 150 });

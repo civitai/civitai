@@ -8,13 +8,9 @@ import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 const GHOST_OPACITY = 0.25;
 
 /**
- * The selected sticker's movement drawn on the media while paused: a dotted path through its
- * keys, a dot at each key filled to that key's opacity, and a faint copy of the sticker at every
- * key but the one under the playhead. Put away while the video plays, so playback shows only
- * the movement itself.
- *
- * Positions are fractions of the media box, as the keys are, so nothing here is measured. The
- * path's viewBox is stretched to the box; `non-scaling-stroke` keeps its line and dashes even.
+ * The selected sticker's path, key dots (filled to key opacity) and faint ghosts, drawn on the media.
+ * Positions are fractions of the media box, as the keys are. The path's viewBox is stretched to the
+ * box, so `non-scaling-stroke` is what keeps its line and dashes even.
  */
 export function StickerMotionGuides({
   draft,
