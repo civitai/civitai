@@ -22,6 +22,13 @@ describe('decideYesNo', () => {
     expect(decideYesNo(votes(4, 4), { needed: 4, max: 8 })).toEqual({ kind: 'exhausted' });
   });
 
+  it('never reaches the cap with the default 5 to resolve and 10 at most: five answers cannot tie', () => {
+    const defaults = { needed: 5, max: 10 };
+    for (let yes = 0; yes <= 5; yes++) {
+      expect(decideYesNo(votes(yes, 5 - yes), defaults).kind).toBe('consensus');
+    }
+  });
+
   it('prefers a majority over the cap', () => {
     expect(decideYesNo(votes(5, 3), { needed: 4, max: 8 })).toEqual({
       kind: 'consensus',
