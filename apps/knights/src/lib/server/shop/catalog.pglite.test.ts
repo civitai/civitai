@@ -4,7 +4,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedPlayer } from '../../../test/seed';
+import { isSellable, stockFor, utcDay } from '@civitai/shared/knights-shop';
 import { loadShop } from './catalog';
+import { addCreatorShopStandIns } from './creator-cosmetic.fixture';
 
 const NOW = new Date('2026-12-20T12:00:00Z');
 
@@ -13,6 +15,7 @@ let db: Kysely<DB>;
 
 beforeAll(async () => {
   ({ pg, db } = await createQueueDb());
+  await addCreatorShopStandIns(pg);
 });
 afterAll(async () => {
   await pg.close();
@@ -47,5 +50,42 @@ describe('the shop view of a membership', () => {
     await pg.exec(`INSERT INTO "CustomerSubscription" ("id","userId","productId","status","currentPeriodEnd")
       VALUES ('s1', 1, 'p-bronze', 'active', '2026-12-01')`);
     expect((await cards())[0].state).toBe('available');
+  });
+});
+
+describe('the shop view of a creator cosmetic', () => {
+  beforeEach(async () => {
+    await pg.exec(`
+      TRUNCATE "Cosmetic","CosmeticShopItem","User" RESTART IDENTITY CASCADE;
+      INSERT INTO "User" ("id") VALUES (50);
+      INSERT INTO "Cosmetic" ("id","name","type","source","data","createdById") VALUES
+        (105,'Creator badge','Badge','Purchase','{}',50);
+      INSERT INTO "CosmeticShopItem" ("id","cosmeticId","unitAmount","addedById","title","status") VALUES
+        (1,105,100,50,'Creator badge','PendingReview');
+      INSERT INTO "KnightsShopItem" ("id","kind","name","price","cosmeticId") VALUES
+        (3,'cosmetic','Creator badge',500,105);`);
+  });
+
+  it('does not list it while the creator listing is in review, and lists it once approved', async () => {
+    expect((await cards()).map((card) => card.id)).toEqual([1]);
+    await pg.exec(`UPDATE "CosmeticShopItem" SET "status"='Published' WHERE "id"=1`);
+    expect((await cards()).map((card) => card.id)).toEqual([1, 3]);
+  });
+
+  it('gives its rotation slot to an approved item', async () => {
+    await pg.exec(`INSERT INTO "KnightsShopItem" ("id","kind","name","price","tier","days","rotating") VALUES
+      (20,'membership','Gold wk',90000,'gold',7,true),
+      (21,'membership','Gold wk 2',90000,'gold',7,true),
+      (22,'membership','Gold wk 3',90000,'gold',7,true),
+      (23,'membership','Gold wk 4',90000,'gold',7,true);
+      UPDATE "KnightsShopItem" SET "rotating" = true WHERE "id" = 3;`);
+    // Guard: with these ids the in-review item wins a slot if it is left in the draw, so the check below can fail.
+    const pool = (await db.selectFrom('KnightsShopItem').selectAll().execute()).filter(isSellable);
+    const unfiltered = stockFor(pool, utcDay(NOW)).stock.map(({ item }) => item.id);
+    expect(unfiltered).toContain(3);
+
+    const ids = (await cards()).map((card) => card.id);
+    expect(ids).not.toContain(3);
+    expect(ids.filter((id) => id >= 20).sort()).toEqual([20, 21, 22, 23]);
   });
 });

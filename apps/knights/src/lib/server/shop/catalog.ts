@@ -1,4 +1,5 @@
 import { sql, type Kysely } from 'kysely';
+import { withheldCosmetics } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { rankIndex } from '../ranks';
 import { cosmeticImageKey, holdingBlocksPurchase, stickerUses } from './cosmetics';
@@ -50,9 +51,17 @@ export async function loadShop(
   }: { playerId: number; rank: string; now: Date; buzzPacksOpen: boolean }
 ): Promise<ShopView> {
   const day = utcDay(now);
-  const items: ShopItem[] = (
+  const sellable: ShopItem[] = (
     await db.selectFrom('KnightsShopItem').selectAll().where('active', '=', true).execute()
   ).filter(isSellable);
+  // Not approved yet: nobody can wear it, so it is neither offered nor drawn into the day's rotation or deals.
+  const withheld = await withheldCosmetics(
+    db,
+    sellable.flatMap((item) => (item.cosmeticId === null ? [] : [item.cosmeticId]))
+  );
+  const items = sellable.filter(
+    (item) => item.cosmeticId === null || !withheld.has(item.cosmeticId)
+  );
   const { stock } = stockFor(items, day);
 
   const cosmeticIds = stock.flatMap(({ item }) => (item.cosmeticId ? [item.cosmeticId] : []));

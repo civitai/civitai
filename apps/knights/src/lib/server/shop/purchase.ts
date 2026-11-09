@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Kysely, type Selectable, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
+import { withheldCosmetics } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import type { BuzzPort } from '../conversion/buzz';
 import { spendableOf } from '../conversion/balance';
@@ -49,6 +50,7 @@ export type Refusal =
   | 'sold-out'
   | 'owned'
   | 'unlimited'
+  | 'not-approved'
   | 'insufficient'
   | 'has-membership'
   | 'bad-key';
@@ -117,9 +119,17 @@ export async function buyItem(
       .where('active', '=', true)
       .execute();
     const day = utcDay(now);
-    const catalog: ShopItem[] = items.filter(isSellable);
-    const item = catalog.find((entry) => entry.id === itemId);
+    const sellable: ShopItem[] = items.filter(isSellable);
+    const item = sellable.find((entry) => entry.id === itemId);
     if (!item) return refuse('unknown-item');
+    // A creator cosmetic still in review cannot be worn, so gold spent on it would buy nothing. It also
+    // never took a rotation slot or a deal, as in `loadShop`.
+    const withheld = await withheldCosmetics(
+      trx,
+      sellable.flatMap((s) => (s.cosmeticId === null ? [] : [s.cosmeticId]))
+    );
+    if (item.cosmeticId !== null && withheld.has(item.cosmeticId)) return refuse('not-approved');
+    const catalog = sellable.filter((s) => s.cosmeticId === null || !withheld.has(s.cosmeticId));
     const entry = stockFor(catalog, day).stock.find((s) => s.item.id === itemId);
     if (!entry) return refuse('not-in-stock');
     if (entry.price !== price) return refuse('price-changed');
@@ -146,6 +156,9 @@ export async function buyItem(
         .where('id', '=', item.cosmeticId!)
         .executeTakeFirst();
       if (!cosmetic) return refuse('unknown-item');
+      // A creator cosmetic still in review cannot be worn, so gold spent on it would buy nothing.
+      if ((await withheldCosmetics(trx, [item.cosmeticId!])).size > 0)
+        return refuse('not-approved');
       const owned = await trx
         .selectFrom('UserCosmetic')
         .select('remaining')
@@ -189,7 +202,7 @@ export async function buyItem(
       conversionId = conversion.id;
     }
 
-    const purchase = await trx
+    let purchase = await trx
       .insertInto('KnightsShopPurchase')
       .values({
         playerId,
@@ -203,10 +216,18 @@ export async function buyItem(
         conversionId,
         dealDay: entry.deal ? sql<Date>`${day}::date` : null,
         createdAt: sql<Date>`clock_timestamp()`,
-        grantedAt: item.kind === 'cosmetic' ? utc(now) : null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
+    // One clock for both stamps: a cosmetic is granted in the instant it is bought.
+    if (item.kind === 'cosmetic') {
+      purchase = await trx
+        .updateTable('KnightsShopPurchase')
+        .set({ grantedAt: sql<Date>`"createdAt"` })
+        .where('id', '=', purchase.id)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+    }
 
     await trx
       .updateTable('NewOrderPlayer')

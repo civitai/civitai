@@ -26,6 +26,8 @@ export function refusalText(
       return 'You already own this.';
     case 'unlimited':
       return 'You already have unlimited uses of this sticker.';
+    case 'not-approved':
+      return 'This item is still being reviewed, so it is not on sale yet. Your gold is untouched.';
     case 'insufficient':
       return `${count(shortfall ?? 0)} gold short.`;
     case 'has-membership':
@@ -46,6 +48,7 @@ export const REFUSAL_STATUS: Record<Refusal, number> = {
   'sold-out': 409,
   owned: 409,
   unlimited: 409,
+  'not-approved': 409,
   insufficient: 409,
   'has-membership': 409,
   'bad-key': 400,
@@ -103,6 +106,10 @@ export const cardBlurb = (card: CardLike) =>
     : card.cosmeticType === 'Sticker'
     ? `Sticker${card.uses ? ` · ${card.uses} uses` : ''}`
     : cosmeticTypeLabel(card.cosmeticType));
+
+/** What a limited sticker's price buys: the price is for the whole pack, not per use. */
+export const packNote = (card: Pick<CardLike, 'cosmeticType' | 'uses'>) =>
+  card.cosmeticType === 'Sticker' && card.uses ? `${count(card.uses)} uses` : null;
 
 export const cosmeticIcon = (
   kind: string | null,

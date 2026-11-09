@@ -79,3 +79,90 @@ export function stockFor(
     deals: stock.filter((entry) => entry.deal).map(({ item, price }) => ({ item, price })),
   };
 }
+
+/**
+ * Creator cosmetics the main app withholds: nobody may wear them until a moderator approves the creator's
+ * listing, so the shop must not sell them. `isListingDisplayable` and `DISPLAYED_FIELDS` are the main app's own rule (`creator-shop.data.ts` re-exports them);
+ * `getWithheldCosmeticIds` (`creator-shop-withheld.ts`) has a Prisma query shape, so `creator-shop-withheld.test.ts` runs it and
+ * `withheldCosmeticIds` on the same fixtures.
+ */
+const COSMETIC_FLAG_WITHHELD = 1 << 2;
+// Allowlist: a newly recorded edit field that changes what holders see must be added here, or editing it after
+// approval leaves the item wearable unreviewed. The main app's `changesDisplay` reads this same set.
+export const DISPLAYED_FIELDS: ReadonlySet<string> = new Set([
+  'name',
+  'description',
+  'artwork',
+  'offsets',
+  'slug',
+]);
+
+type ListingHistory = {
+  kind?: string;
+  action?: string;
+  changes?: { field: string }[];
+};
+type ListingMeta = {
+  takedown?: unknown;
+  displayApproved?: boolean;
+  lastApprovedAmount?: number | null;
+  history?: ListingHistory[];
+} | null;
+
+export type CosmeticListing = {
+  cosmeticId: number | null;
+  addedById: number | null;
+  status: string;
+  meta: unknown;
+  rejectionReason: string | null;
+};
+export type CosmeticOwnerRow = { id: number; createdById: number | null; flags: number };
+
+export function isListingDisplayable(
+  listing: Pick<CosmeticListing, 'status' | 'rejectionReason'> & { meta: unknown }
+) {
+  if (listing.status === 'Published') return true;
+  const meta = listing.meta as ListingMeta;
+  if (meta?.takedown) return false;
+  if (meta?.displayApproved !== undefined) return meta.displayApproved;
+  const history = meta?.history ?? [];
+  let index = -1;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].kind === 'reviewed') {
+      index = i;
+      break;
+    }
+  }
+  const approved =
+    index >= 0
+      ? history[index].action === 'approve'
+      : meta?.lastApprovedAmount != null && !listing.rejectionReason;
+  return (
+    approved &&
+    !history
+      .slice(index + 1)
+      .some((entry) => entry.changes?.some((change) => DISPLAYED_FIELDS.has(change.field)))
+  );
+}
+
+/** The ids among `cosmetics` that cannot be worn yet; `listings` are the shop listings of those cosmetics. */
+export function withheldCosmeticIds(
+  cosmetics: CosmeticOwnerRow[],
+  listings: CosmeticListing[]
+): Set<number> {
+  const owner = new Map(cosmetics.map((row) => [row.id, row]));
+  const withheld = new Set<number>();
+  const displayable = new Set<number>();
+  for (const listing of listings) {
+    const cosmetic = listing.cosmeticId === null ? undefined : owner.get(listing.cosmeticId);
+    if (!cosmetic || cosmetic.createdById === null || listing.addedById !== cosmetic.createdById)
+      continue;
+    (isListingDisplayable(listing) ? displayable : withheld).add(cosmetic.id);
+  }
+  for (const id of displayable) withheld.delete(id);
+  for (const { id, createdById, flags } of cosmetics) {
+    if (createdById === null || displayable.has(id) || withheld.has(id)) continue;
+    if ((flags & COSMETIC_FLAG_WITHHELD) !== 0) withheld.add(id);
+  }
+  return withheld;
+}
