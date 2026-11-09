@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { QUARANTINED_COMPONENT_FILES } from '../ci/component-quarantine.mjs';
@@ -357,7 +357,7 @@ describe('the on-disk ledger — a file that stops being COLLECTED', () => {
         q
       );
       expect(missing.out).toContain('B.browser.test.tsx');
-      expect(missing.out).not.toContain('AppAssistantWorkspace');
+      expect(missing.out).not.toContain(basename(quarantined));
       expect(missing.code).toBe(1);
     } finally {
       rmSync(q, { recursive: true, force: true });
