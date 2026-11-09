@@ -48,16 +48,18 @@ vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
   BuzzTransactionButton: ({
     label,
     onPerformTransaction,
+    disabled,
   }: {
     label: string;
     onPerformTransaction: () => void;
+    disabled?: boolean;
   }) => (
     // `data-buzz-button` is load-bearing. Without it the stub is
     // indistinguishable from a plain Mantine `Button` by name alone, so swapping
     // the free option TO a BuzzTransactionButton left all ten tests green — the
     // component's own docstring argues at length that it must not be one, and
     // nothing held that argument.
-    <button type="button" data-buzz-button onClick={onPerformTransaction}>
+    <button type="button" data-buzz-button disabled={disabled} onClick={onPerformTransaction}>
       {label}
     </button>
   ),
@@ -139,12 +141,14 @@ const renderDraft = async (
     scale,
     commit,
     motion,
+    opacity,
   }: {
     ownerShare?: number;
     maxScale?: number;
     scale?: number;
     commit?: ReactNode;
     motion?: StickerDraft['motion'];
+    opacity?: number;
   } = {}
 ) => {
   renderWithProviders(
@@ -154,7 +158,12 @@ const renderDraft = async (
     // box: the cluster has to be reachable, and none of this asserts geometry.
     <div style={{ position: 'relative', width: 380, height: 600 }}>
       <DraftSticker
-        draft={{ ...draft, ...(scale == null ? null : { scale }), motion }}
+        draft={{
+          ...draft,
+          ...(scale == null ? null : { scale }),
+          ...(opacity == null ? null : { opacity }),
+          motion,
+        }}
         art={art}
         selected
         dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
@@ -281,6 +290,42 @@ describe('what a draft sends when it is placed', () => {
     await page.getByRole('button', { name: 'Place free' }).click();
 
     expect(placed[0]).not.toHaveProperty('track');
+  });
+
+  // Each fade is under the per-fade cap; together they pass STICKER_TRACK_MAX_FAINT_MS.
+  const tooMuchFading = () =>
+    Array.from({ length: 10 }, (_, i) => key(i * 1000, { o: i % 2 ? 1 : 0 }));
+
+  test('a movement the server would refuse cannot be placed free', async () => {
+    await renderDraft({ instant: true }, { motion: { on: true, keys: tooMuchFading() } });
+
+    const button = page.getByRole('button', { name: 'Place free' });
+    await expect.element(button).toBeDisabled();
+    ((await button.element()) as HTMLElement).click();
+
+    expect(placed).toHaveLength(0);
+  });
+
+  // Nothing fades, so only the opacity floor (key × sticker opacity) can refuse these.
+  const halfShown = () => [key(0, { o: 0.5 }), key(1000, { o: 0.5, x: 0.6 })];
+
+  test('a key too faint for the sticker’s own opacity cannot be placed', async () => {
+    await renderDraft({ instant: true }, { motion: { on: true, keys: halfShown() }, opacity: 0.5 });
+    await expect.element(page.getByRole('button', { name: 'Place free' })).toBeDisabled();
+  });
+
+  test('the same keys on a fully opaque sticker can be placed', async () => {
+    await renderDraft({ instant: true }, { motion: { on: true, keys: halfShown() }, opacity: 1 });
+    await expect.element(page.getByRole('button', { name: 'Place free' })).toBeEnabled();
+  });
+
+  test('a movement the server would refuse cannot be placed paid', async () => {
+    await renderDraft(null, { motion: { on: true, keys: tooMuchFading() } });
+
+    await expect.element(page.getByRole('button', { name: 'Place' })).toBeDisabled();
+    await pressPaid();
+
+    expect(placed).toHaveLength(0);
   });
 
   test('the floating Place presses the selected draft’s own button', async () => {

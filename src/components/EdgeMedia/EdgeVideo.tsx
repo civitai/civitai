@@ -53,7 +53,7 @@ type VideoProps = Omit<
   imageId?: number;
   /** Play after a second of hover when not autoplaying. */
   hoverPlay?: boolean;
-  /** Mounted for preloading, not on screen: never plays, whatever the viewport says. */
+  /** Never autoplays, whatever the viewport says: mounted for preloading, or another control owns playback. */
   standby?: boolean;
 };
 

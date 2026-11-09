@@ -239,6 +239,9 @@ interface StickerPlacementDraftStore {
   playheadMs: number;
   /** Moves the playhead and draws every sticker in Movement there. Sets no key. */
   setPlayhead: (ms: number) => void;
+  /** Whether the video is playing, kept in step by the sticker timeline while it is open. */
+  videoPlaying: boolean;
+  setVideoPlaying: (playing: boolean) => void;
   /** Static or Movement. Movement with no keys starts one at the playhead, at the current pose. */
   setMotion: (id: string, on: boolean) => void;
   /** Replaces a draft's keys (the timeline's edits) and redraws it at the playhead. */
@@ -302,6 +305,7 @@ const ENDED = {
   // purchases made against THESE drafts.
   paidDraftIds: [] as string[],
   playheadMs: 0,
+  videoPlaying: false,
 };
 
 const createDraftStore = () =>
@@ -318,6 +322,7 @@ const createDraftStore = () =>
     interaction: null,
     interactionPointerId: null,
     playheadMs: 0,
+    videoPlaying: false,
     primaryLabels: {},
 
     // Reopening on the image you are already placing on keeps the drafts — that is
@@ -538,6 +543,8 @@ const createDraftStore = () =>
         playheadMs: ms,
         drafts: state.drafts.map((draft) => (moving(draft) ? drawnAt(draft, ms) : draft)),
       })),
+
+    setVideoPlaying: (videoPlaying) => set({ videoPlaying }),
 
     setMotion: (id, on) =>
       set((state) => ({

@@ -127,3 +127,43 @@ describe('resizing a draft to the floor', () => {
     expect(resized.scale).toBeCloseTo(STICKER_PLACEMENT_MIN_SCALE, 10);
   });
 });
+
+describe('the movement path and ghosts', () => {
+  const guides = () => document.querySelector('[data-motion-guides]');
+
+  beforeEach(() => {
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 400, height: 300 }}>
+        <DraftStickerLayer />
+      </div>
+    );
+    const store = useStickerPlacementDraftStore.getState();
+    useStickerPlacementDraftStore.setState({ targetImageId: IMAGE_ID });
+    store.begin(COSMETIC_ID, { x: 0.3, y: 0.5 });
+    const { selectedDraftId } = useStickerPlacementDraftStore.getState();
+    store.setMotion(selectedDraftId!, true);
+    store.setKeys(selectedDraftId!, [
+      { t: 0, x: 0.3, y: 0.5, s: 0.2, r: 0, o: 1, ease: 'smooth' },
+      { t: 1000, x: 0.7, y: 0.5, s: 0.2, r: 0, o: 1, ease: 'smooth' },
+    ]);
+    useStickerPlacementDraftStore.setState({ trayOpen: false });
+  });
+
+  test.each(['videoPlaying', 'previewing', 'trayOpen'] as const)(
+    'are put away while %s, and come back after',
+    async (flag) => {
+      await expect.poll(guides).not.toBeNull();
+      useStickerPlacementDraftStore.setState({ [flag]: true });
+      await expect.poll(guides).toBeNull();
+      useStickerPlacementDraftStore.setState({ [flag]: false });
+      await expect.poll(guides).not.toBeNull();
+    }
+  );
+
+  test('are not drawn for a sticker in Static', async () => {
+    await expect.poll(guides).not.toBeNull();
+    const { selectedDraftId, setMotion } = useStickerPlacementDraftStore.getState();
+    setMotion(selectedDraftId!, false);
+    await expect.poll(guides).toBeNull();
+  });
+});

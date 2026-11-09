@@ -20,7 +20,7 @@ const guard = vi.hoisted(() => {
     },
   };
 });
-const mediaRenders = vi.hoisted(() => [] as { autoPlay?: boolean }[]);
+const mediaRenders = vi.hoisted(() => [] as { autoPlay?: boolean; standby?: boolean }[]);
 
 vi.mock('~/components/ImageGuard/ImageGuard2', async (o) => ({
   ...(await o<object>()),
@@ -29,8 +29,8 @@ vi.mock('~/components/ImageGuard/ImageGuard2', async (o) => ({
 }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', async (o) => ({
   ...(await o<object>()),
-  EdgeMedia: ({ videoProps }: { videoProps?: { autoPlay?: boolean } }) => {
-    mediaRenders.push({ autoPlay: videoProps?.autoPlay });
+  EdgeMedia: ({ videoProps }: { videoProps?: { autoPlay?: boolean; standby?: boolean } }) => {
+    mediaRenders.push({ autoPlay: videoProps?.autoPlay, standby: videoProps?.standby });
     return <div data-testid="media" />;
   },
 }));
@@ -52,6 +52,7 @@ vi.mock('~/providers/FeatureFlagsProvider', async (o) => ({
 }));
 
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
+import { useStickerPlacementDraftStore as stickers } from '~/store/sticker-placement-draft.store';
 
 const video = {
   id: 1,
@@ -89,5 +90,39 @@ test('a hidden video slide builds no player until it is revealed, then autoplays
 
   await expect.element(page.getByTestId('media')).toBeInTheDocument();
   expect(page.getByTestId('hash').query()).toBeNull();
-  expect(mediaRenders.at(-1)).toEqual({ autoPlay: true });
+  expect(mediaRenders.at(-1)).toEqual({ autoPlay: true, standby: false });
+});
+
+// Opening the timeline drops the player's controls, which re-ran its autoplay: Movement paused the
+// video and it started again at once. Standby is what keeps the player from playing on its own.
+test('the player holds still while the sticker timeline is open, and autoplays again after', async () => {
+  act(() => guard.set(true));
+  mediaRenders.length = 0;
+  renderWithProviders(
+    <div style={{ width: 400, height: 300, display: 'flex' }}>
+      <ImageDetailCarousel
+        images={[video]}
+        index={0}
+        next={noop}
+        previous={noop}
+        canNavigate={false}
+      />
+    </div>
+  );
+  await expect.element(page.getByTestId('media')).toBeInTheDocument();
+  expect(mediaRenders.at(-1)).toEqual({ autoPlay: true, standby: false });
+
+  act(() => {
+    const store = stickers.getState();
+    store.close();
+    store.open(video.id);
+    store.begin(9, { x: 0.5, y: 0.5 });
+    store.closeTray();
+    store.setMotion(stickers.getState().selectedDraftId!, true);
+  });
+  await vi.waitFor(() => expect(mediaRenders.at(-1)?.standby).toBe(true));
+
+  act(() => stickers.getState().setMotion(stickers.getState().selectedDraftId!, false));
+  await vi.waitFor(() => expect(mediaRenders.at(-1)?.standby).toBe(false));
+  act(() => stickers.getState().close());
 });
