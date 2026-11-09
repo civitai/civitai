@@ -184,6 +184,10 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
         internalNotes: 'Closed by CSAM report',
       },
     });
+    // Every filed image's deferred block effects, whether or not its flag comes off below.
+    await dbWrite.$executeRaw`
+      DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${imageIds}::int[])
+    `;
     // Last, so the images are already blocked and the report row committed when the flag comes off.
     await releaseReviewFlagsToReportHold(imageIds);
   }

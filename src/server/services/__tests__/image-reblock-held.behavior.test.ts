@@ -314,6 +314,23 @@ describe('setTosViolationHandler on an image removed with its block reason kept'
   });
 });
 
+describe('blocking an image under the review flag again', () => {
+  it('never replaces its CSAM blocklist entry with a TOS one', async () => {
+    await tosBlock(FLAGGED_LIVE);
+    await tosBlock(FLAGGED_LIVE);
+    await handleBlockImages({ ids: [FLAGGED_LIVE], include: ['phash-block'] });
+
+    const reasons = clickhouseInsert.mock.calls
+      .map(([a]) => a as unknown as { table: string; values: { hash: string; reason: string }[] })
+      .filter((a) => a.table === 'blocked_images')
+      .flatMap((a) =>
+        a.values.filter((v) => String(v.hash) === '202').map((v) => String(v.reason))
+      );
+    expect(reasons).toHaveLength(3);
+    expect(new Set(reasons)).toEqual(new Set(['CSAM']));
+  });
+});
+
 describe('setTosViolationHandler on any other image', () => {
   it('notifies the owner, actions the report, pays the reward and adds a TOS blocklist entry', async () => {
     await tosBlock(OTHER_REASON);

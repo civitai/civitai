@@ -492,8 +492,8 @@ describe('approving an image appeal', () => {
     expect(await imageRow(APPEALED)).toMatchObject({ ingestion: 'Scanned' });
   });
 
-  it('reopens, rather than approves, an appeal whose image turned held after its check', async () => {
-    // The held check reads an image not yet held; the CSAM block lands before the ruling's write.
+  /** The held check reads an image not yet held; the CSAM block lands before the ruling's write. */
+  const turnHeldAfterCheck = async () => {
     dbMock.dbWrite.$executeRaw.mockClear();
     loggingMock.logToAxiom.mockClear();
     // The shared claim fake returns every row now in the target status; here it must return only
@@ -503,8 +503,8 @@ describe('approving an image appeal', () => {
         (
           await holder.db.query(
             `UPDATE "Appeal" SET status = $3 WHERE "entityId" = ANY($1) AND "entityType" = $2
-           AND status = 'Pending'
-           RETURNING id, "entityId", "entityType", "resolvedAt", "buzzTransactionId", status, "userId", "createdAt"`,
+             AND status = 'Pending'
+             RETURNING id, "entityId", "entityType", "resolvedAt", "buzzTransactionId", status, "userId", "createdAt"`,
             [where.entityId.in, where.entityType, data.status]
           )
         ).rows) as never
@@ -528,7 +528,10 @@ describe('approving an image appeal', () => {
       }
       return fake(strings, ...(v as never[]));
     }) as never);
+  };
 
+  it('reopens, rather than approves, an appeal whose image turned held after its check', async () => {
+    await turnHeldAfterCheck();
     await approve();
 
     expect(await imageRow(APPEALED)).toMatchObject({ ingestion: 'Blocked' });
@@ -540,6 +543,18 @@ describe('approving an image appeal', () => {
       'appeal-approval-not-restored'
     );
     expect(await pendingAppeals()).toBe(1);
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('refunds and tells nothing when putting it back to Pending fails', async () => {
+    await turnHeldAfterCheck();
+    dbMock.dbWrite.appeal.updateMany.mockRejectedValueOnce(new Error('connection lost'));
+
+    await approve();
+
+    expect(await imageRow(APPEALED)).toMatchObject({ ingestion: 'Blocked' });
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
     expect(createNotification).not.toHaveBeenCalled();
     expect(sendEmail).not.toHaveBeenCalled();

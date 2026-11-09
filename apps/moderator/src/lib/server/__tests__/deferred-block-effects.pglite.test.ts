@@ -66,6 +66,7 @@ vi.mock('../axiom', () => ({ logAxiomError: vi.fn(async () => undefined), logToA
 const { acceptImage, blockImage, dismissFromCsamQueue, dismissUserFromCsamQueue } = await import(
   '../image-moderation.service'
 );
+const { clearUserCsamFlags } = await import('../csam-flag-clear');
 
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
@@ -109,8 +110,11 @@ CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "activity" TEXT NOT NULL, "entityType" TEXT,
   "entityId" INTEGER, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
 );
-CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}');
+CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}', "images" JSONB NOT NULL DEFAULT '[]', "reportSentAt" TIMESTAMP(3));
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "bannedAt" TIMESTAMP(3), "meta" JSONB);
 CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "releaseAt" TIMESTAMP(3));
+CREATE VIEW "EvidenceHeldUser" AS
+  SELECT "userId" FROM "EvidenceHold" WHERE "releaseAt" IS NULL OR "releaseAt" > now() GROUP BY "userId";
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
 
@@ -325,6 +329,18 @@ describe('dismissing it from the review queue', () => {
     expect(notices()).toHaveLength(1);
   });
 
+  it('fires once when a dismissed review is closed again by a flag clear', async () => {
+    await db.exec(`INSERT INTO "User" ("id") VALUES (${OWNER}) ON CONFLICT DO NOTHING`);
+    await block(FLAGGED);
+    await dismiss(FLAGGED);
+    expect(
+      await clearUserCsamFlags({ userId: OWNER, expectedCount: 1, moderatorId: 3 })
+    ).toMatchObject({ ok: true, cleared: 1 });
+
+    expect(notices()).toHaveLength(1);
+    expect(actioned()).toHaveLength(1);
+  });
+
   it('fires nothing for an image blocked before deferred rows existed', async () => {
     await db.exec(
       `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = ${FLAGGED}`
@@ -356,6 +372,37 @@ describe('dismissing it from the review queue', () => {
         .map((n) => n.url)
         .sort()
     ).toEqual([`/images/${FLAGGED}`, `/images/${OTHER}`]);
+  });
+});
+
+describe('an image listed in a CSAM report', () => {
+  it('fires nothing for it, and still fires for an image no report lists', async () => {
+    await block(FLAGGED);
+    await block(OTHER);
+    await db.exec(
+      `INSERT INTO "CsamReport" ("userId", "images") VALUES (999, '[{"id": ${FLAGGED}}]')`
+    );
+    await dismiss(FLAGGED);
+    await dismiss(OTHER);
+
+    expect(notices().map((n) => n.url)).toEqual([`/images/${OTHER}`]);
+    expect(actioned().map((a) => a.id)).toEqual([report(OTHER)]);
+    expect(logged('deferred-effect-skipped')).toEqual([FLAGGED]);
+    expect(await deferredRows()).toEqual([]);
+  });
+
+  it('fires nothing when the check itself fails', async () => {
+    await block(FLAGGED);
+    await db.exec(`ALTER TABLE "CsamReport" RENAME COLUMN "images" TO "images_gone"`);
+    try {
+      await dismiss(FLAGGED);
+    } finally {
+      await db.exec(`ALTER TABLE "CsamReport" RENAME COLUMN "images_gone" TO "images"`);
+    }
+
+    expect(notices()).toEqual([]);
+    expect(actioned()).toEqual([]);
+    expect(logged('deferred-effect-skipped')).toEqual([FLAGGED]);
   });
 });
 

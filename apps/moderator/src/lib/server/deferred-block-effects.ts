@@ -17,6 +17,7 @@ export const DEFERRED_NOTICE_LOG = {
   withheld: 'deferred-notice-withheld',
   checkFailed: 'deferred-notice-check-failed',
   effectFailed: 'deferred-effect-failed',
+  skipped: 'deferred-effect-skipped',
 } as const;
 
 /** ModActivity row for a notice not sent. Ids only. */
@@ -88,6 +89,28 @@ async function ownersWithNoticeWithheld(ownerIds: number[]): Promise<Set<number>
   }
 }
 
+/** Images whose deferred effects are dropped unfired. Read on the primary; a failed read returns all. */
+async function imagesInCsamReport(imageIds: number[]): Promise<Set<number>> {
+  try {
+    const { rows } = await sql<{ id: number }>`
+      SELECT DISTINCT (e ->> 'id')::int AS id
+      FROM "CsamReport" c
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(c.images) = 'array' THEN c.images ELSE '[]'::jsonb END
+      ) e
+      WHERE e ->> 'id' = ANY(${imageIds.map(String)}::text[])
+    `.execute(dbWrite);
+    return new Set(rows.map((r) => r.id));
+  } catch (e) {
+    await log({
+      type: 'error',
+      name: DEFERRED_NOTICE_LOG.checkFailed,
+      message: (e as Error).message,
+    });
+    return new Set(imageIds);
+  }
+}
+
 /**
  * Runs what a block deferred: the owner notice (subject to `ownersWithNoticeWithheld`) and the reports
  * in the block's scope still open now, actioned without paying the owner. Never throws: the close
@@ -111,6 +134,10 @@ export async function fireDeferredBlockEffects(
       await log({ type: 'error', name: DEFERRED_NOTICE_LOG.effectFailed, imageId });
     return;
   }
+  const reported = await imagesInCsamReport(images.map((i) => i.id));
+  for (const id of reported)
+    await log({ type: 'warning', name: DEFERRED_NOTICE_LOG.skipped, imageId: id });
+  images = images.filter((i) => !reported.has(i.id));
   if (!images.length) return;
   const byId = new Map(images.map((i) => [i.id, i]));
   const withheld = await ownersWithNoticeWithheld([...new Set(images.map((i) => i.userId))]);

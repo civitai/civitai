@@ -104,7 +104,7 @@ beforeEach(async () => {
   softDeleteUser.mockClear();
   createSupplementalCsamReport.mockClear();
   await pg.exec(`
-    TRUNCATE "Image", "CsamReport";
+    TRUNCATE "Image", "CsamReport", "ImageDeferredBlockEffect";
     INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
       (${OWNED}, ${OWNER}, 'Scanned', 'csam'),
       (${OTHER_OWNERS}, ${OTHER_OWNER}, 'Blocked', 'csam'),
@@ -189,6 +189,17 @@ describe('fileCsamReport', () => {
     await report(EXPIRED_HOLD_OWNER, [EXPIRED_HOLD]);
 
     expect(await flag(EXPIRED_HOLD)).toBe('csam');
+  });
+
+  it('drops the deferred block effects of every filed image, whether or not its flag comes off', async () => {
+    await pg.exec(`
+      INSERT INTO "ImageDeferredBlockEffect" ("imageId") VALUES (${EXPIRED_HOLD}), (${PAST_MARGIN});
+    `);
+    await report(EXPIRED_HOLD_OWNER, [EXPIRED_HOLD]);
+
+    expect(await flag(EXPIRED_HOLD)).toBe('csam');
+    const { rows } = await pg.query(`SELECT "imageId" FROM "ImageDeferredBlockEffect"`);
+    expect(rows).toEqual([{ imageId: PAST_MARGIN }]);
   });
 
   it('keeps the flag when the report updates an open report past the release cutoff', async () => {

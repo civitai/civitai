@@ -1774,20 +1774,7 @@ export async function settleResolvedAppeals(
                 RETURNING "postId", "pHash"
               `;
           if (!updated) {
-            if (approved) {
-              // Back to Pending, with no refund and no notice: nothing was approved.
-              await dbWrite.appeal.updateMany({
-                where: { id: appeal.id, status: AppealStatus.Approved },
-                data: { status: AppealStatus.Pending, resolvedBy: null, resolvedAt: null },
-              });
-              logToAxiom({
-                type: 'error',
-                name: 'appeal-approval-not-restored',
-                appealId: appeal.id,
-                imageId: appeal.entityId,
-              }).catch(() => undefined);
-              reopened = true;
-            }
+            reopened = approved;
             break;
           }
 
@@ -1824,7 +1811,25 @@ export async function settleResolvedAppeals(
         break;
     }
     if (reopened) {
+      // Back to Pending, with no refund and no notice: nothing was approved. Skipped even when the
+      // revert fails, which leaves it Approved and logged.
       reopenedIds.add(appeal.id);
+      const failure = await dbWrite.appeal
+        .updateMany({
+          where: { id: appeal.id, status: AppealStatus.Approved },
+          data: { status: AppealStatus.Pending, resolvedBy: null, resolvedAt: null },
+        })
+        .then(
+          () => undefined,
+          (e: Error) => e.message
+        );
+      logToAxiom({
+        type: 'error',
+        name: 'appeal-approval-not-restored',
+        appealId: appeal.id,
+        imageId: appeal.entityId,
+        ...(failure ? { revertFailed: failure } : {}),
+      }).catch(() => undefined);
       continue;
     }
 
