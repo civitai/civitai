@@ -127,7 +127,18 @@ export async function pendingPostIdFor({ postId, userId }: { postId: number; use
  */
 export async function releasePendingReviewsForPosts(
   postIds: number[],
-  { onlyUnreleased = false }: { onlyUnreleased?: boolean } = {}
+  {
+    onlyUnreleased = false,
+    restoredPostIds = [],
+  }: {
+    onlyUnreleased?: boolean;
+    /**
+     * Posts put back up under the date they had before an unpublish. Their reviews from before
+     * that date were released and notified when it passed, so only the ones written while the post
+     * was down notify now; all of them are touched and recounted.
+     */
+    restoredPostIds?: number[];
+  } = {}
 ) {
   if (!postIds.length) return [];
   const released = await dbWrite.$queryRaw<
@@ -138,6 +149,7 @@ export async function releasePendingReviewsForPosts(
       recommended: boolean;
       userId: number;
       modelOwnerId: number;
+      notify: boolean;
     }[]
   >`
     UPDATE "ResourceReview" rr
@@ -148,12 +160,14 @@ export async function releasePendingReviewsForPosts(
       AND rr."postId" IN (${Prisma.join(postIds)})
       AND p."publishedAt" <= now()
       ${onlyUnreleased ? Prisma.sql`AND rr."updatedAt" < p."publishedAt"` : Prisma.empty}
-    RETURNING rr.id, rr."modelId", rr."modelVersionId", rr.recommended, rr."userId", m."userId" AS "modelOwnerId"
+    RETURNING rr.id, rr."modelId", rr."modelVersionId", rr.recommended, rr."userId",
+      m."userId" AS "modelOwnerId",
+      (rr."postId" <> ALL(${restoredPostIds}::int[]) OR rr."createdAt" > p."publishedAt") AS notify
   `;
   if (!released.length) return released;
   await bustRatingTotalsForRows(released).catch(() => undefined);
   for (const review of released)
-    await createResourceReviewNotification(review).catch(() => undefined);
+    if (review.notify) await createResourceReviewNotification(review).catch(() => undefined);
   return released;
 }
 
@@ -174,4 +188,38 @@ export async function refreshReviewsForUnpublishedPosts(postIds: number[]) {
   `;
   if (refreshed.length) await bustRatingTotalsForRows(refreshed).catch(() => undefined);
   return refreshed;
+}
+
+/**
+ * The fire-and-forget form, for a caller whose post write has committed: a failure is logged and
+ * leaves only held reviews or stale counts. `onReviews` gets the touched reviews, for the owners'
+ * has-received-reviews refresh, which lives in the cache module that imports this one.
+ */
+export function syncReviewsOfMovedPosts({
+  change,
+  postIds,
+  restoredPostIds,
+  onReviews,
+}: {
+  change: 'publish' | 'unpublish';
+  postIds: number[];
+  restoredPostIds?: number[];
+  onReviews: (reviews: { modelOwnerId: number }[]) => Promise<void>;
+}) {
+  if (!postIds.length) return;
+  const sync =
+    change === 'publish'
+      ? releasePendingReviewsForPosts(postIds, { restoredPostIds })
+      : refreshReviewsForUnpublishedPosts(postIds);
+  void sync
+    .then((reviews) => onReviews(reviews))
+    .catch((error) =>
+      logToAxiom({
+        name: 'resource-review',
+        type: 'error',
+        message: `Failed to sync the resource reviews of ${change}ed posts`,
+        postIds,
+        error: (error as Error)?.message,
+      }).catch(() => undefined)
+    );
 }

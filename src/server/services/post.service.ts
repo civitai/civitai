@@ -24,10 +24,7 @@ import {
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import {
-  refreshReviewsForUnpublishedPosts,
-  releasePendingReviewsForPosts,
-} from '~/server/services/resourceReview.visibility';
+import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import {
   imageMetaCache,
   imageResourcesCache,
@@ -1095,6 +1092,7 @@ export const updatePost = async ({
       : undefined;
 
   let publishedAtWritten = false;
+  let restoredStashedDate = false;
   const post = await dbWrite.$transaction(async (tx) => {
     const [target] =
       publishedAt !== undefined && !user.isModerator
@@ -1169,6 +1167,8 @@ export const updatePost = async ({
       if (writtenRows.length > 0) {
         updated.publishedAt = writtenRows[0].publishedAt;
         publishedAtWritten = true;
+        // Any other date than the submitted one is the stash, put back.
+        restoredStashedDate = writtenRows[0].publishedAt?.getTime() !== publishedAt?.getTime();
       }
     }
     return updated;
@@ -1179,7 +1179,12 @@ export const updatePost = async ({
   else await userPostCountCache.refresh(post.userId);
   // A scheduled date writes publishedAt too; the scheduled-publishing job releases those reviews.
   if (publishedAtWritten && post.publishedAt && post.publishedAt <= new Date())
-    releasePostReviews([post.id]);
+    syncReviewsOfMovedPosts({
+      change: 'publish',
+      postIds: [post.id],
+      restoredPostIds: restoredStashedDate ? [post.id] : [],
+      onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+    });
   const textChanged = data.title !== undefined || data.detail !== undefined;
   if (publishedAtWritten || (textChanged && post.publishedAt))
     scanEntityInBackground({ entityType: 'Post', entityId: post.id });
@@ -1253,49 +1258,14 @@ export async function afterPostsPublish(posts: { postId: number; userId: number 
   await userImageVideoCountCaches.refresh(userIds);
 }
 
-/**
- * After a publish has committed, the reviews written from those posts go public; posts still
- * scheduled are skipped. Pass only the posts this write moved: a repeat would notify again. Never
- * throws: the posts are already up, and a failure leaves only held reviews.
- */
-export function releasePostReviews(postIds: number[]) {
-  if (!postIds.length) return;
-  void releasePendingReviewsForPosts(postIds)
-    .then((reviews) => refreshHasReceivedReviews(reviews))
-    .catch((error) =>
-      logToAxiom({
-        name: 'post-service',
-        type: 'error',
-        message: 'Failed to release pending resource reviews',
-        postIds,
-        error: (error as Error)?.message,
-      }).catch(() => undefined)
-    );
-}
-
-/**
- * After an unpublish has committed, the reviews written from those posts stop counting. Never
- * throws: the posts are already down, and a failure leaves only stale counts.
- */
-export function refreshUnpublishedPostReviews(postIds: number[]) {
-  if (!postIds.length) return;
-  void refreshReviewsForUnpublishedPosts(postIds)
-    .then((reviews) => refreshHasReceivedReviews(reviews))
-    .catch((error) =>
-      logToAxiom({
-        name: 'post-service',
-        type: 'error',
-        message: 'Failed to recount the resource reviews of unpublished posts',
-        postIds,
-        error: (error as Error)?.message,
-      }).catch(() => undefined)
-    );
-}
-
 /** Everything an unpublish needs besides the write: the images leave search, the counts drop. */
 export async function afterPostsUnpublish(posts: { postId: number; userId: number }[]) {
   if (!posts.length) return;
-  refreshUnpublishedPostReviews(posts.map((post) => post.postId));
+  syncReviewsOfMovedPosts({
+    change: 'unpublish',
+    postIds: posts.map((post) => post.postId),
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
   void onStorySparkPostsHidden({ postIds: posts.map((post) => post.postId) });
   const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((post) => post.postId) } },

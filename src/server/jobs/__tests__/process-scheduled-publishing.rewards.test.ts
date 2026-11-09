@@ -13,6 +13,7 @@ const {
   mockPublishDueArticles,
   mockScanEntitiesInBackground,
   mockReleaseReviews,
+  mockRefreshHasReceivedReviews,
   jobDate,
 } = vi.hoisted(() => ({
   mockApply: vi.fn(),
@@ -30,6 +31,7 @@ const {
   ),
   mockScanEntitiesInBackground: vi.fn(),
   mockReleaseReviews: vi.fn(async (): Promise<unknown[]> => []),
+  mockRefreshHasReceivedReviews: vi.fn(),
   jobDate: { lastRun: new Date(0) },
 }));
 
@@ -48,7 +50,7 @@ vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: mockProces
 vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: vi.fn() },
   userImageVideoCountCaches: { refresh: mockRefreshImageVideoCounts },
-  refreshHasReceivedReviews: vi.fn(),
+  refreshHasReceivedReviews: mockRefreshHasReceivedReviews,
 }));
 vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
@@ -357,6 +359,26 @@ describe('processScheduledPublishing :: pending resource reviews', () => {
     });
     await runJob();
     expect(mockReleaseReviews.mock.calls).toEqual([[[1]], [[2], { onlyUnreleased: true }]]);
+  });
+
+  it('refreshes the owners of every review either release touched', async () => {
+    stubReads({
+      scheduled: [{ id: 1, userId: 10 }],
+      newlyLive: [
+        { id: 1, userId: 10 },
+        { id: 2, userId: 20 },
+      ],
+    });
+    mockReleaseReviews
+      .mockResolvedValueOnce([{ id: 11, modelOwnerId: 7 }])
+      .mockResolvedValueOnce([{ id: 12, modelOwnerId: 8 }]);
+
+    await runJob();
+
+    expect(mockRefreshHasReceivedReviews).toHaveBeenCalledExactlyOnceWith([
+      { id: 11, modelOwnerId: 7 },
+      { id: 12, modelOwnerId: 8 },
+    ]);
   });
 });
 

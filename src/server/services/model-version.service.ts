@@ -59,7 +59,11 @@ import {
 } from '~/server/services/hot-reads-8.reads';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
-import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
+import {
+  dataForModelsCache,
+  modelVersionAccessCache,
+  refreshHasReceivedReviews,
+} from '~/server/redis/caches';
 import type { DonationGoalWithTotal } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -168,12 +172,8 @@ import {
   getOrchestratorVersionAirs,
 } from '~/server/services/orchestrator/models';
 import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
-import {
-  addPostImage,
-  createPost,
-  refreshUnpublishedPostReviews,
-  releasePostReviews,
-} from '~/server/services/post.service';
+import { addPostImage, createPost } from '~/server/services/post.service';
+import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
   runClickHouseRead,
@@ -2121,7 +2121,7 @@ export const publishModelVersionById = async ({
     select: { entityId: true },
   });
 
-  let movedPostIds: number[] = [];
+  let movedPosts: { id: number; restored: boolean }[] = [];
   const version = await dbWrite.$transaction(
     async (tx) => {
       // Re-checked here, under a lock, because the caller's check ran before this transaction and
@@ -2184,21 +2184,23 @@ export const publishModelVersionById = async ({
       // overwrite every attached post's publishedAt and let an owner repeatedly
       // bump old posts to the top of feeds. Mirrors the `WHERE "publishedAt" IS
       // NOT NULL` guard in the unpublish path below.
-      const movedPosts = await tx.$queryRaw<{ id: number }[]>`
-        UPDATE "Post"
+      // `old` is the row before this write: whether it was put back under its stashed date.
+      movedPosts = await tx.$queryRaw<{ id: number; restored: boolean }[]>`
+        UPDATE "Post" p
         SET
           "publishedAt" = CASE
-            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
-            THEN ("metadata"->>'prevPublishedAt')::timestamptz
+            WHEN p."metadata"->>'prevPublishedAt' IS NOT NULL
+            THEN (p."metadata"->>'prevPublishedAt')::timestamptz
             ELSE ${publishedAt}
           END,
-          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
-        WHERE "userId" = ${updatedVersion.model.userId}
-        AND "modelVersionId" = ${updatedVersion.id}
-        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
-        RETURNING id
+          "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
+        FROM "Post" old
+        WHERE old.id = p.id
+        AND p."userId" = ${updatedVersion.model.userId}
+        AND p."modelVersionId" = ${updatedVersion.id}
+        AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())
+        RETURNING p.id, (old."metadata"->>'prevPublishedAt') IS NOT NULL AS restored
       `;
-      movedPostIds = movedPosts.map((post) => post.id);
 
       if (!currentVersion.model.publishedAt) {
         // Safeguard to ensure the model is marked as published if it wasn't
@@ -2243,7 +2245,12 @@ export const publishModelVersionById = async ({
     posts.map((p) => p.id)
   );
   void onStorySparkPostsRestored({ postIds: posts.map((p) => p.id) });
-  releasePostReviews(movedPostIds);
+  syncReviewsOfMovedPosts({
+    change: 'publish',
+    postIds: movedPosts.map((post) => post.id),
+    restoredPostIds: movedPosts.filter((post) => post.restored).map((post) => post.id),
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 
   await updateModelLastVersionAt({ id: version.modelId, onlyForward: republishing });
   await bustMvCache(version.id, version.modelId);
@@ -2433,7 +2440,11 @@ export const unpublishModelVersionById = async ({
     select: { id: true },
   });
   void onStorySparkPostsHidden({ postIds: posts.map((x) => x.id) });
-  refreshUnpublishedPostReviews(posts.map((x) => x.id));
+  syncReviewsOfMovedPosts({
+    change: 'unpublish',
+    postIds: posts.map((x) => x.id),
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
   const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },

@@ -56,12 +56,7 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
-vi.mock('~/server/services/post.service', () => ({
-  addPostImage: vi.fn(),
-  createPost: vi.fn(),
-  releasePostReviews: vi.fn(),
-  refreshUnpublishedPostReviews: vi.fn(),
-}));
+vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
   updateModelLastVersionAt: vi.fn(),
 }));

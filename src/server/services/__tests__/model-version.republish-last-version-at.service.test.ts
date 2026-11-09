@@ -55,12 +55,11 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
-const { releasePostReviews } = vi.hoisted(() => ({ releasePostReviews: vi.fn() }));
-vi.mock('~/server/services/post.service', () => ({
-  addPostImage: vi.fn(),
-  createPost: vi.fn(),
-  releasePostReviews,
-  refreshUnpublishedPostReviews: vi.fn(),
+vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
+const { syncReviewsOfMovedPosts } = vi.hoisted(() => ({ syncReviewsOfMovedPosts: vi.fn() }));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  syncReviewsOfMovedPosts,
 }));
 vi.mock('~/server/services/model.service', () => ({
   updateModelLastVersionAt: mockUpdateModelLastVersionAt,
@@ -193,16 +192,22 @@ describe('story sparks across a version publish lifecycle', () => {
 
 describe('reviews written from the posts of a version', () => {
   // The guarded post UPDATE returns the posts it moved; an already-public post is not among them.
-  const postUpdateMoves = (ids: number[]) =>
+  const postUpdateMoves = (rows: { id: number; restored: boolean }[]) =>
     dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
-      /UPDATE "Post"/.test(strings.join('?')) ? ids.map((id) => ({ id })) : []) as never);
+      Array.isArray(strings) && /UPDATE "Post"/.test(strings.join('?')) ? rows : []) as never);
 
-  it('releases the reviews of the posts the publish put back up', async () => {
-    postUpdateMoves([5]);
+  beforeEach(() => {
+    dbMock.dbWrite.post.findMany.mockResolvedValue([{ id: 5 }, { id: 6 }]);
+  });
+
+  it('releases only the posts the publish moved, flagging the ones put back under their old date', async () => {
+    postUpdateMoves([{ id: 5, restored: true }]);
 
     await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false, republishing: true });
 
-    expect(releasePostReviews).toHaveBeenCalledExactlyOnceWith([5]);
+    expect(syncReviewsOfMovedPosts).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ change: 'publish', postIds: [5], restoredPostIds: [5] })
+    );
   });
 
   it('releases nothing again when every post was already public', async () => {
@@ -210,6 +215,21 @@ describe('reviews written from the posts of a version', () => {
 
     await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false, republishing: true });
 
-    expect(releasePostReviews.mock.calls.flatMap(([ids]) => ids)).toEqual([]);
+    expect(syncReviewsOfMovedPosts.mock.calls.flatMap(([arg]) => arg.postIds)).toEqual([]);
+  });
+
+  it("recounts the reviews of the version's posts when it is unpublished", async () => {
+    dbMock.dbWrite.modelVersion.update.mockResolvedValue({
+      id: VERSION_ID,
+      model: { id: MODEL_ID, userId: OWNER_ID, nsfw: false },
+    });
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: VERSION_ID, meta: null }]);
+    dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({ status: 'Published' });
+
+    await unpublishModelVersionById({ id: VERSION_ID, user: { id: OWNER_ID } as never });
+
+    expect(syncReviewsOfMovedPosts).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ change: 'unpublish', postIds: [5, 6] })
+    );
   });
 });

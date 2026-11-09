@@ -203,7 +203,8 @@ describe('against Postgres', () => {
         id int PRIMARY KEY, "modelId" int NOT NULL, "modelVersionId" int NOT NULL,
         "userId" int NOT NULL, rating int NOT NULL DEFAULT 5, recommended boolean NOT NULL DEFAULT true,
         exclude boolean NOT NULL DEFAULT false, "postId" int,
-        "updatedAt" timestamp(3) NOT NULL DEFAULT now() - interval '2 days'
+        "updatedAt" timestamp(3) NOT NULL DEFAULT now() - interval '2 days',
+        "createdAt" timestamp(3) NOT NULL DEFAULT now() - interval '2 days'
       );
       INSERT INTO "Model" VALUES (10, ${MODEL_OWNER});
     `);
@@ -302,6 +303,25 @@ describe('against Postgres', () => {
 
     expect(bustRatingTotalsForRows).not.toHaveBeenCalled();
     expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it('notifies, on a post put back up under its old date, only the reviews written while it was down', async () => {
+    // Live since a day ago, then unpublished; republished now under that date.
+    await insertReviews([
+      [1, 101, LIVE],
+      [2, 102, LIVE],
+    ]);
+    await pg.exec(`
+      UPDATE "ResourceReview" SET "createdAt" = now() - interval '2 days' WHERE id = 1;
+      UPDATE "ResourceReview" SET "createdAt" = now() - interval '1 hour' WHERE id = 2;
+    `);
+
+    const released = await releasePendingReviewsForPosts([LIVE], { restoredPostIds: [LIVE] });
+
+    expect(released.map((review) => review.id).sort()).toEqual([1, 2]);
+    expect(createNotification).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ key: 'new-review:22:102' })
+    );
   });
 
   it('releases a review only once when the sweep hands its post over again', async () => {

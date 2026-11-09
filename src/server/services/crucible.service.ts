@@ -133,10 +133,10 @@ import {
   afterPostPublish,
   afterPostsPublish,
   afterPostsUnpublish,
-  releasePostReviews,
 } from '~/server/services/post.service';
+import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import { NotificationCategory } from '~/server/common/enums';
-import { imageResourcesCache } from '~/server/redis/caches';
+import { imageResourcesCache, refreshHasReceivedReviews } from '~/server/redis/caches';
 import {
   areCrucibleEntriesClosed,
   getCrucibleLiveMinVotes,
@@ -4467,7 +4467,11 @@ async function revealCrucibleEntryPosts(entries: { crucibleId: number } | { imag
       SELECT id, "userId", hidden FROM entry_posts
     `;
     await afterPostsPublish(posts.map((post) => ({ postId: post.id, userId: post.userId })));
-    releasePostReviews(posts.filter((post) => post.hidden).map((post) => post.id));
+    syncReviewsOfMovedPosts({
+      change: 'publish',
+      postIds: posts.filter((post) => post.hidden).map((post) => post.id),
+      onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+    });
   } catch (error) {
     logToAxiom({
       type: 'error',

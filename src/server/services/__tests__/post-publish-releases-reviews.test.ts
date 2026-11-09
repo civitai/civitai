@@ -9,13 +9,13 @@ import type * as Submit from '~/server/services/text-scan/submit';
 
 /** Reviews written from a post wait for it; a publish now releases them, a scheduled date does not. */
 
-const { release } = vi.hoisted(() => ({
-  release: vi.fn<(postIds: number[]) => Promise<unknown[]>>(async () => []),
+const { sync } = vi.hoisted(() => ({
+  sync: vi.fn<ReviewVisibility['syncReviewsOfMovedPosts']>(),
 }));
 
 vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
   ...(await importOriginal<typeof ReviewVisibility>()),
-  releasePendingReviewsForPosts: release,
+  syncReviewsOfMovedPosts: sync,
 }));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
@@ -54,14 +54,14 @@ const refreshHasReceivedReviews = vi
 const POST_ID = 1;
 const DAY = 24 * 60 * 60 * 1000;
 
-const publishAt = async (publishedAt: Date) => {
+const publishAt = async (publishedAt: Date, written = publishedAt) => {
   dbMock.dbWrite.post.update.mockResolvedValue({
     id: POST_ID,
     userId: 5,
     publishedAt: null,
   } as never);
-  // The guarded publish UPDATE writes the date it was given.
-  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ publishedAt }] as never);
+  // The guarded publish UPDATE returns the date it wrote: the submitted one, or the stash.
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ publishedAt: written }] as never);
   await updatePost({
     id: POST_ID,
     publishedAt,
@@ -77,26 +77,31 @@ describe('updatePost releasing the reviews written from the post', () => {
   it('releases them when the post is published now', async () => {
     await publishAt(new Date(Date.now() - 1000));
 
-    expect(release).toHaveBeenCalledExactlyOnceWith([POST_ID]);
+    expect(sync).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ change: 'publish', postIds: [POST_ID], restoredPostIds: [] })
+    );
+  });
+
+  it('flags a post put back under its stashed date, so only reviews written since notify', async () => {
+    await publishAt(new Date(Date.now() - 1000), new Date(Date.now() - 30 * DAY));
+
+    expect(sync).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ postIds: [POST_ID], restoredPostIds: [POST_ID] })
+    );
   });
 
   it("refreshes the model owners' has-received-reviews flag once per owner", async () => {
-    release.mockResolvedValueOnce([
-      { id: 1, modelOwnerId: 7 },
-      { id: 2, modelOwnerId: 7 },
-      { id: 3, modelOwnerId: 8 },
-    ]);
-
     await publishAt(new Date(Date.now() - 1000));
+    const { onReviews } = sync.mock.calls[0][0];
 
-    await vi.waitFor(() =>
-      expect(refreshHasReceivedReviews).toHaveBeenCalledExactlyOnceWith([7, 8])
-    );
+    await onReviews([{ modelOwnerId: 7 }, { modelOwnerId: 7 }, { modelOwnerId: 8 }]);
+
+    expect(refreshHasReceivedReviews).toHaveBeenCalledExactlyOnceWith([7, 8]);
   });
 
   it('leaves them for the scheduled-publishing job when the post is scheduled', async () => {
     await publishAt(new Date(Date.now() + DAY));
 
-    expect(release).not.toHaveBeenCalled();
+    expect(sync).not.toHaveBeenCalled();
   });
 });
