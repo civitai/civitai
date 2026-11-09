@@ -32,6 +32,7 @@ import {
   startLabelPass,
   autoLabelTargets,
   handLabelOnlyCount,
+  labelTextAfterSwitch,
   withTags,
   withTrigger,
   versionOptions,
@@ -321,14 +322,23 @@ describe('auto-label targets', () => {
     blobUrl: reused.blobUrl,
     labelTried: true,
   };
-  const all = [fresh, reused, reusedCaptioned];
+  const freshLabeled = { ...image(4, ['1girl']), blobUrl: fresh.blobUrl };
+  const freshTried = { ...image(5, []), blobUrl: fresh.blobUrl, labelTried: true };
+  const all = [fresh, reused, reusedCaptioned, freshLabeled, freshTried];
 
   it('sends fresh uploads and leaves reused tiles out of the drain and Label all', () => {
     const drain = autoLabelTargets(all, { skipLabeled: true, skipTried: true, focusId: null });
     const labelAll = autoLabelTargets(all, { skipLabeled: false, skipTried: false, focusId: null });
     expect(drain.map((i) => i.id)).toEqual([1]);
-    expect(labelAll.map((i) => i.id)).toEqual([1]);
+    expect(labelAll.map((i) => i.id)).toEqual([1, 4, 5]);
     expect(handLabelOnlyCount(all)).toBe(2);
+  });
+
+  it("a format-switch Re-label clears a fresh tile's text and keeps a reused tile's", () => {
+    const freshCaptioned = { ...image(6, [], 'a man, outdoors'), blobUrl: fresh.blobUrl };
+    expect(labelTextAfterSwitch(freshCaptioned, 'caption', 'relabel')).toBe('');
+    expect(labelTextAfterSwitch(reusedCaptioned, 'caption', 'relabel')).toBe('a woman, portrait');
+    expect(labelTextAfterSwitch(freshCaptioned, 'caption', 'convert')).toBe('a man, outdoors');
   });
 });
 

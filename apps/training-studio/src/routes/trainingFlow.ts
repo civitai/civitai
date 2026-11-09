@@ -764,6 +764,20 @@ export function labelString(img: Img, mode: LabelType): string {
   return mode === 'tag' ? img.tags.join(', ') : img.caption.trim();
 }
 
+/** The label text a format switch leaves on an image. The current text comes first (it carries
+ *  hand-edits); the imported source label is only the fallback for a cleared field. 'relabel' clears
+ *  the text for auto-label to refill, except on source-labeled items (the dialog promises they survive)
+ *  and on tiles auto-label can't read, which nothing would re-label. */
+export function labelTextAfterSwitch(
+  img: Img,
+  prev: LabelType,
+  choice: 'convert' | 'relabel'
+): string {
+  const source = img.sourceLabel?.trim();
+  const kept = labelString(img, prev) || source || '';
+  return choice === 'relabel' && !source && canAutoLabelImage(img) ? '' : kept;
+}
+
 /** Tag-text splitting, shared by every tag-entry path (parseLabel, the label editor, the exclude
  *  list, mass rename) — one definition so a comma/newline paste can't split differently per path.
  *  Dedupe stays at the call sites; their policies genuinely differ. */

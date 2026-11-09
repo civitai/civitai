@@ -61,6 +61,7 @@
     canAutoLabelImage,
     handLabelOnlyCount,
     isLabeled,
+    labelTextAfterSwitch,
     isTrainable,
     isTriggerTag,
     labelOptions,
@@ -200,13 +201,7 @@
     labelController = null;
     labelMode = next;
     for (const img of images) {
-      const source = img.sourceLabel?.trim();
-      // Current text first — it carries the user's hand-edits; the imported text is only the
-      // restore fallback for a cleared field. Source-labeled items survive BOTH choices (the
-      // dialog promises it); 'relabel' wipes only machine/hand labels with no imported source, and
-      // never on a tile auto-label can't read, which nothing would re-label.
-      const kept = labelString(img, prev) || source || '';
-      const text = choice === 'relabel' && !source && canAutoLabelImage(img) ? '' : kept;
+      const text = labelTextAfterSwitch(img, prev, choice);
       const parsed = parseLabel(text, next);
       img.tags = parsed.tags;
       img.caption = parsed.caption;
@@ -233,8 +228,8 @@
   const blockedCount = $derived(images.filter((i) => i.status === 'blocked').length);
   const errorCount = $derived(images.filter((i) => i.status === 'error').length);
   const failedTotal = $derived(blockedCount + errorCount);
-  // A trainable image needs a label — tags or a caption (a global trigger word isn't a per-image label).
-  // Auto-labeling fills these for the whole set; an unlabeled dataset must not reach Review.
+  // A trainable image needs a label (tags or a caption); an unlabeled dataset must not reach Review.
+  // Reused images can only be hand-labeled.
   const labeledCount = $derived(images.filter((i) => isTrainable(i) && isLabeled(i)).length);
   const allLabeled = $derived(uploadedCount > 0 && labeledCount === uploadedCount);
   const labelingActive = $derived(images.some((i) => i.labeling));

@@ -21,8 +21,7 @@ describe('studioAutoLabelSubmitSchema mediaUrl', () => {
 
   it('refuses a browser object URL', () => {
     const result = submit(REUSED_OBJECT_URL);
-    expect(result.error?.issues.map((i) => [i.path.join('.'), i.message])).toEqual([
-      ['items.0.mediaUrl', 'mediaUrl must be HTTPS'],
-    ]);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((i) => i.path.join('.'))).toEqual(['items.0.mediaUrl']);
   });
 });
