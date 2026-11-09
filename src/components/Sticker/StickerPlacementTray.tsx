@@ -330,7 +330,7 @@ export function StickerPlacementTray({
                   </div>
                 ))}
               </div>
-              <PlaceAllButton price={price} className="mt-1.5" />
+              <PlaceAllButton price={space?.price ?? null} className="mt-1.5" />
             </div>
             {!isLoading && (worthNarrowing || !!madeByYou.size) && (
               <div className="order-3 flex w-full shrink-0 items-center gap-2 sm:order-2 sm:w-auto">

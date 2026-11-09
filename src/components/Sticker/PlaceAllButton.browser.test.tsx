@@ -106,11 +106,17 @@ describe('Place all', () => {
     renderWithProviders(
       <>
         <span>rendered</span>
-        <PlaceAllButton price={0} />
+        <PlaceAllButton price={null} />
       </>
     );
     await expect.element(page.getByText('rendered')).toBeInTheDocument();
     expect(button().elements()).toHaveLength(0);
+  });
+
+  test('is offered on a space priced at 0, for nothing', async () => {
+    seed(['a', 'b']);
+    renderWithProviders(<PlaceAllButton price={0} />);
+    await expect.element(button()).toHaveAttribute('data-amount', '0');
   });
 
   test('places each ready draft in creation order with what it registered', async () => {

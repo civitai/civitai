@@ -6,20 +6,25 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 
 /**
- * Places every draft that is ready, for one confirmation of the summed price.
- *
- * Not a new purchase: it presses each draft's own placement in turn, so free placement, owned uses
- * and the server's refusals are exactly what each draft's button would get.
+ * Places every ready draft for one confirmation of the summed price. Each is sent with the input
+ * its own Place button would send, so free placement, owned uses and the server's refusals match.
  */
-export function PlaceAllButton(props: { price: number; className?: string }) {
+/** `price` is null while the creator has set none; a price of 0 is a real price. */
+export function PlaceAllButton(props: { price: number | null; className?: string }) {
   const drafts = useStore((state) => state.drafts);
   const ready = useStore((state) => state.readyPlacements);
   const running = useStore((state) => state.placingAll);
-  const plan = placeAllPlan({ drafts, ready, price: props.price });
+  const plan = placeAllPlan({ drafts, ready, price: props.price ?? 0 });
   // Kept while running: placing shrinks the queue, and unmounting mid-run would drop the spinner.
-  // No price set: every paid placement would be refused, so the batch could not work.
-  if (!running && (plan.queue.length < 2 || (plan.paid > 0 && props.price <= 0))) return null;
-  return <PlaceAllControl {...props} plan={plan} running={running} />;
+  if (!running && (plan.queue.length < 2 || (plan.paid > 0 && props.price == null))) return null;
+  return (
+    <PlaceAllControl
+      className={props.className}
+      price={props.price ?? 0}
+      plan={plan}
+      running={running}
+    />
+  );
 }
 
 function PlaceAllControl({
@@ -46,7 +51,8 @@ function PlaceAllControl({
     const items = placeAllPlan({ drafts: now.drafts, ready: now.readyPlacements, price }).queue.map(
       (draftId) => ({ draftId, input: now.readyPlacements[draftId].input() })
     );
-    // Priced from what will be sent, so the amount checked bounds the amount charged.
+    // Priced from what will be sent, so the check covers the same placements that will be charged,
+    // at the price the tray last loaded. The server charges the space's current price on each call.
     const charged = items.filter((item) => !item.input.free).length * price;
     if (charged > plan.total || items.length < 2)
       return showErrorNotification({

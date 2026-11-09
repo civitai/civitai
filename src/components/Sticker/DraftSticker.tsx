@@ -657,8 +657,7 @@ export function DraftSticker({
     };
   };
 
-  // Offered to Place all only when this draft's own button would place it. A host's own commit
-  // button (hats) and a purchase still to make keep it out.
+  // Must mirror when this draft's own Place button would place it.
   const latestInput = useRef(placementInput);
   latestInput.current = placementInput;
   // Not while its own placement is in flight, or Place all would place it a second time.

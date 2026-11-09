@@ -250,10 +250,7 @@ interface StickerPlacementDraftStore {
   /** Each draft's own pay button, by its label, for the floating Place that presses it. */
   primaryLabels: Record<string, string>;
   setPrimaryLabel: (id: string, label: string | null) => void;
-  /**
-   * Drafts whose own button would place them now (no purchase first), with what it would send.
-   * Place all reads these; each draft registers and clears its own.
-   */
+  /** Drafts whose own button would place them now (no purchase first), with what it would send. */
   readyPlacements: Record<string, ReadyPlacement>;
   setReadyPlacement: (id: string, ready: ReadyPlacement | null) => void;
   /** Place all is running; each draft's own Place waits so nothing is placed twice. */

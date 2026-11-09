@@ -7,7 +7,8 @@ export type PlaceAllItem = { draftId: string; input: CreateStickerPlacementInput
  * What one Place all press would place and what it costs.
  *
  * Only drafts whose own button would place them now: a draft that still needs a pack or a use
- * bought keeps its own button. Creation order, the order entitlements are given out in.
+ * bought keeps its own button. Draft (creation) order; owned uses are interchangeable per sticker on
+ * the server, so the order of the calls does not change what is charged.
  */
 export function placeAllPlan({
   drafts,
@@ -29,7 +30,8 @@ export function placeAllPlan({
  * Inputs are taken before the first call, so the run places what was confirmed and nothing a
  * re-render changed meanwhile. Each placement is its own escrow on the server, so a failure leaves
  * the earlier ones placed and stops: the rest keep their drafts and their own buttons.
- * A draft removed mid-run (Remove, or the session ending) is skipped, never charged.
+ * A draft removed mid-run (Remove, or the session ending) before its turn is skipped and never
+ * charged; one whose request is already in flight is still placed.
  */
 export async function runPlaceAll(
   items: PlaceAllItem[],
