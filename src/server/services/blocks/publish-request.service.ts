@@ -1,11 +1,9 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
 import {
-  BUILD_SLOT_HOLDING_STATES,
-  CANCELLING_REVIEW_PREVIEW_STATE,
+  BUILDING_REVIEW_PREVIEW_STATES,
   isReviewPreviewBuilding,
-  isStoredReviewPreviewState,
   REVIEW_PREVIEW_MAX_AGE_MS,
-  STORED_REVIEW_PREVIEW_STATES,
+  STARTED_REVIEW_BUILD_DETAIL_MARK,
   type ReviewPreviewState,
   type StoredReviewPreviewState,
 } from '~/shared/constants/app-review-preview.constants';
@@ -5042,9 +5040,7 @@ export async function markReviewPreviewState(
         status: 'pending',
         // Only advance a row that is STILL an active preview (torn-down rows have
         // deployState=null → excluded → no resurrection).
-        ...(opts?.requireActivePreview
-          ? { deployState: { in: [...STORED_REVIEW_PREVIEW_STATES] } }
-          : {}),
+        ...(opts?.requireActivePreview ? { deployState: { startsWith: 'preview-' } } : {}),
         // Stale-watcher guard: only advance if the row's current detail still
         // belongs to this build's sha (the serialized `"sha":"<sha>"` fragment).
         ...(opts?.expectedSha ? { deployDetail: { contains: `"sha":"${opts.expectedSha}"` } } : {}),
@@ -5413,8 +5409,8 @@ export async function getReviewStatus(opts: {
     },
   });
   if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
-  // `preview-cancelling` is not a preview: the moderator tore it down; only its build runs on.
-  const isPreviewState = isStoredReviewPreviewState(row.deployState);
+  const isPreviewState =
+    typeof row.deployState === 'string' && row.deployState.startsWith('preview-');
   const stored = isPreviewState ? (row.deployState as StoredReviewPreviewState) : null;
   const detail = isPreviewState ? parseReviewDetail(row.deployDetail) : {};
   const state: ReviewPreviewState | null =
@@ -5974,9 +5970,10 @@ export async function teardownReviewStorageForRequest(publishRequestId: string):
 }
 
 /**
- * A review build finished for a row that is no longer an active preview (torn down mid-build,
- * superseded, withdrawn or decided): release the build slot it still holds. Only a slot-holding
- * row that is NOT an active pending preview is touched. Never throws.
+ * A review build finished for a row that is no longer an active preview: release the build slot
+ * it still holds. Two shapes hold one (see buildSlotHolderWhere): a superseded, withdrawn or
+ * decided row still in a building state, and a preview torn down mid-build (no preview, its
+ * started-build detail kept). An active pending preview is never touched. Never throws.
  */
 export async function releaseSettledBuildSlot(publishRequestId: string): Promise<void> {
   try {
@@ -5984,8 +5981,10 @@ export async function releaseSettledBuildSlot(publishRequestId: string): Promise
     await dbWrite.appBlockPublishRequest.updateMany({
       where: {
         id: publishRequestId,
-        deployState: { in: [...BUILD_SLOT_HOLDING_STATES] },
-        OR: [{ status: { not: 'pending' } }, { deployState: CANCELLING_REVIEW_PREVIEW_STATE }],
+        OR: [
+          { deployState: { in: [...BUILDING_REVIEW_PREVIEW_STATES] }, status: { not: 'pending' } },
+          { deployState: null, deployDetail: { contains: STARTED_REVIEW_BUILD_DETAIL_MARK } },
+        ],
       },
       data: { deployState: null, deployDetail: null, deployUpdatedAt: new Date() },
     });
@@ -6071,13 +6070,14 @@ export async function teardownPreview(opts: {
   // a preview-* state (guarded above), so it can't clobber a production
   // building/live deploy_state.
   if (isReviewPreviewBuilding(row.deployState)) {
-    // Its build is still running and keeps its build slot until its callback settles it
-    // (releaseSettledBuildSlot) or the stale window passes. Not a preview any more: the UI shows
-    // none and the callback will not publish or deploy it. deployUpdatedAt is kept, so the stale
-    // window still counts from the build's last state change.
+    // No preview any more (deploy_state null: the UI shows none, and the callback's
+    // requireActivePreview writes cannot publish or deploy it), but its build is still running.
+    // The started-build detail is kept, so the row keeps holding its build slot until the build's
+    // callback clears it (releaseSettledBuildSlot) or the stale window passes. deployUpdatedAt is
+    // kept, so that window still counts from the build's last state change.
     await dbWrite.appBlockPublishRequest.update({
       where: { id: opts.publishRequestId },
-      data: { deployState: CANCELLING_REVIEW_PREVIEW_STATE, deployDetail: null },
+      data: { deployState: null },
     });
   } else {
     await dbWrite.appBlockPublishRequest.update({

@@ -8,7 +8,6 @@ import {
   isAppBlocksPipelineEnabled,
   isAppBlocksReviewSharedServerEnabled,
 } from '~/server/services/app-blocks-flag';
-import { isStoredReviewPreviewState } from '~/shared/constants/app-review-preview.constants';
 import {
   triggerApplyReview,
   waitForApplyJob,
@@ -268,7 +267,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       select: { deployDetail: true, status: true, deployState: true },
     });
     baseDetail = { ...parseReviewDetail(row?.deployDetail), sha: body.sha };
-    if (row && !(row.status === 'pending' && isStoredReviewPreviewState(row.deployState))) {
+    if (row && !(row.status === 'pending' && (row.deployState ?? '').startsWith('preview-'))) {
       previewNoLongerActive = true;
     }
   } catch {

@@ -77,10 +77,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 type Where = Record<string, unknown>;
 function matches(row: Row, where: Where): boolean {
   return Object.entries(where).every(([key, cond]) => {
+    if (key === 'OR') return (cond as Where[]).some((w) => matches(row, w));
     const value = (row as unknown as Record<string, unknown>)[key];
     if (cond && typeof cond === 'object' && !(cond instanceof Date)) {
-      const c = cond as { in?: unknown[]; gt?: Date; gte?: Date; not?: unknown };
+      const c = cond as { in?: unknown[]; gt?: Date; gte?: Date; not?: unknown; contains?: string };
       if (c.in) return c.in.includes(value);
+      if (c.contains !== undefined) return typeof value === 'string' && value.includes(c.contains);
       if (c.gt) return value instanceof Date && value.getTime() > c.gt.getTime();
       if (c.gte) return value instanceof Date && value.getTime() >= c.gte.getTime();
       if ('not' in c) return value !== c.not;
@@ -254,7 +256,12 @@ describe('autoStartReviewPreview', () => {
     expect(startedIds()).toEqual([r.id]);
     expect(m.startClaimedReviewBuild.mock.calls[0][1]).toEqual({ kind: 'system' });
     expect(r.deployState).toBe('preview-building');
-    expect(JSON.parse(r.deployDetail!)).toEqual({ actor: 'system' });
+    // The claim stamps the build start, so a teardown before the build's first write still
+    // leaves the row holding its slot.
+    expect(JSON.parse(r.deployDetail!)).toEqual({
+      actor: 'system',
+      buildStartedAt: expect.any(String),
+    });
   });
 
   it('never queues over a preview a moderator already started', async () => {
@@ -422,11 +429,45 @@ describe('the platform build cap', () => {
     expect(q.deployState).toBe('preview-queued');
   });
 
-  it('a preview torn down mid-build (preview-cancelling) keeps its slot', async () => {
-    rows = [row({ deployState: 'preview-cancelling' }), building(), building()];
+  // Torn down mid-build: no preview (deploy_state null), its started-build detail kept.
+  const tornDownMidBuild = () =>
+    row({
+      deployState: null,
+      deployDetail: JSON.stringify({ actor: 'system', buildStartedAt: new Date().toISOString() }),
+    });
+
+  it('a preview torn down mid-build (no preview, build detail kept) keeps its slot', async () => {
+    rows = [tornDownMidBuild(), building(), building()];
     const q = queued();
     rows.push(q);
     expect(await drainReviewPreviewQueue()).toEqual({ started: 0, waiting: true });
+    expect(q.deployState).toBe('preview-queued');
+  });
+
+  it('CONTROL: a torn-down row whose build settled (detail cleared) holds no slot', async () => {
+    const torn = tornDownMidBuild();
+    rows = [torn, building(), building()];
+    const q = queued();
+    rows.push(q);
+    torn.deployDetail = null;
+    expect(await drainReviewPreviewQueue()).toEqual({ started: 1, waiting: false });
+    expect(startedIds()).toEqual([q.id]);
+  });
+
+  it('a torn-down row past the stale window holds no slot', async () => {
+    const torn = tornDownMidBuild();
+    torn.deployUpdatedAt = new Date(Date.now() - 46 * 60_000);
+    rows = [torn, building(), building()];
+    const q = queued();
+    rows.push(q);
+    expect(await drainReviewPreviewQueue()).toEqual({ started: 1, waiting: false });
+  });
+
+  it('a pending row that never started a review build holds no slot', async () => {
+    rows = [row({ deployState: null, deployDetail: null }), building(), building()];
+    const q = queued();
+    rows.push(q);
+    expect(await drainReviewPreviewQueue()).toEqual({ started: 1, waiting: false });
   });
 
   it('CONTROL: once that build settles (row cleared), the queued preview starts', async () => {

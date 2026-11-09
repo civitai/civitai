@@ -567,16 +567,17 @@ describe('previewRequest repeat preview (push origin, unchanged tree)', () => {
 describe('getReviewStatus', () => {
   beforeEach(() => mockDbRead.appBlockPublishRequest.findUnique.mockReset());
 
-  it('a preview torn down mid-build (preview-cancelling) reads as no preview', async () => {
+  it('a preview torn down mid-build (build detail kept) reads as no preview', async () => {
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
       id: PUBREQ,
       status: 'pending',
-      deployState: 'preview-cancelling',
-      deployDetail: null,
+      deployState: null,
+      deployDetail: JSON.stringify({ sha: SHA, buildStartedAt: new Date().toISOString() }),
       deployUpdatedAt: new Date(),
     });
     const r = await getReviewStatus({ publishRequestId: PUBREQ });
     expect(r.state).toBeNull();
+    expect(r.detail).toEqual({});
   });
 
   it('returns the preview state + parsed detail', async () => {
@@ -1019,11 +1020,11 @@ describe('teardownPreview', () => {
     expect(updateArg.data.deployUpdatedAt).toBeInstanceOf(Date);
   });
 
-  // Its build is still running: the row keeps holding the build slot (preview-cancelling, not a
-  // preview) until the build's callback settles it; the stale window still counts from its last
-  // state change, so deployUpdatedAt is not touched.
+  // Its build is still running: the row is no preview any more (deploy_state null) but keeps its
+  // started-build detail, so it holds the build slot until the build's callback settles it; the
+  // stale window still counts from its last state change, so deployUpdatedAt is not touched.
   it.each(['preview-building', 'preview-deploying'])(
-    '%s pending: torn down to preview-cancelling, keeping its build slot',
+    '%s pending: torn down to no preview, keeping its build detail (and so its build slot)',
     async (state) => {
       mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
         id: PUBREQ,
@@ -1035,7 +1036,7 @@ describe('teardownPreview', () => {
       const res = await teardownPreview({ publishRequestId: PUBREQ });
       expect(res).toEqual({ publishRequestId: PUBREQ, tornDown: true });
       const updateArg = mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0];
-      expect(updateArg.data).toEqual({ deployState: 'preview-cancelling', deployDetail: null });
+      expect(updateArg.data).toEqual({ deployState: null });
     }
   );
 
@@ -1324,17 +1325,9 @@ describe('markReviewPreviewState requireActivePreview guard', () => {
     const arg = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls[0][0];
     expect(arg.where.id).toBe(PUBREQ);
     expect(arg.where.status).toBe('pending');
-    // The load-bearing guard: a torn-down row (deployState=null, or preview-cancelling while
-    // its build still runs) is not a preview state, so a late build callback can't resurrect it.
-    expect(arg.where.deployState).toEqual({
-      in: [
-        'preview-queued',
-        'preview-building',
-        'preview-deploying',
-        'preview-live',
-        'preview-failed',
-      ],
-    });
+    // The load-bearing guard: a torn-down row (deployState=null, even while its build still runs
+    // and its detail is kept) is not a preview-* state, so a late build callback can't resurrect it.
+    expect(arg.where.deployState).toEqual({ startsWith: 'preview-' });
   });
 
   it('without the opt (initial preview-building mark) does NOT constrain deployState', async () => {
@@ -1355,8 +1348,15 @@ describe('releaseSettledBuildSlot', () => {
     expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith({
       where: {
         id: PUBREQ,
-        deployState: { in: ['preview-building', 'preview-deploying', 'preview-cancelling'] },
-        OR: [{ status: { not: 'pending' } }, { deployState: 'preview-cancelling' }],
+        OR: [
+          // superseded, withdrawn or decided while its build ran
+          {
+            deployState: { in: ['preview-building', 'preview-deploying'] },
+            status: { not: 'pending' },
+          },
+          // torn down mid-build: no preview, started-build detail kept
+          { deployState: null, deployDetail: { contains: '"buildStartedAt":' } },
+        ],
       },
       data: { deployState: null, deployDetail: null, deployUpdatedAt: expect.any(Date) },
     });

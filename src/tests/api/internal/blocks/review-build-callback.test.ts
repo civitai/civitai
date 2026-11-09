@@ -323,12 +323,12 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     expect(mockRelease).toHaveBeenCalledWith(PUBREQ);
   });
 
-  it('a torn-down-mid-build preview (preview-cancelling) is not resurrected by its build', async () => {
+  it('a torn-down-mid-build preview (no preview, build detail kept) is not resurrected by its build', async () => {
     mockRelease.mockClear();
     mockFindUnique.mockResolvedValueOnce({
-      deployDetail: null,
+      deployDetail: JSON.stringify({ actor: 'system', buildStartedAt: '2026-11-09T00:00:00.000Z' }),
       status: 'pending',
-      deployState: 'preview-cancelling',
+      deployState: null,
     });
     const { req, res } = makeReqRes(goodBody());
     await handler(req, res);

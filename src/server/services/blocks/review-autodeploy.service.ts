@@ -2,7 +2,10 @@ import {
   recordAppReviewAutodeployEvent,
   type AppReviewAutodeployEvent,
 } from '~/server/prom/app-review-autodeploy.metrics';
-import { BUILD_SLOT_HOLDING_STATES } from '~/shared/constants/app-review-preview.constants';
+import {
+  BUILDING_REVIEW_PREVIEW_STATES,
+  STARTED_REVIEW_BUILD_DETAIL_MARK,
+} from '~/shared/constants/app-review-preview.constants';
 
 /**
  * The automatic half of the app review flow. A new pending publish request (ZIP submit or git
@@ -42,15 +45,19 @@ const record = (event: AppReviewAutodeployEvent) => recordAppReviewAutodeployEve
  * The rows that hold a build slot at `now`. The one definition the cap and the panel share.
  *
  * Deliberately NOT limited to pending requests: a request superseded, withdrawn or decided while
- * its review build runs, or a preview torn down mid-build (`preview-cancelling`), still has that
- * build running. It keeps its slot until the build's callback settles it
- * (releaseSettledBuildSlot) or the stale window passes. An approved row never matches: its
- * deploy_state carries the production values.
+ * its review build runs still has that build running, and so does a preview torn down mid-build
+ * (no preview any more, its started-build detail kept). Either keeps its slot until the build's
+ * callback settles it (releaseSettledBuildSlot) or the stale window passes. An approved row never
+ * matches the first arm (its deploy_state carries the production values) and a row that never
+ * started a review build never matches the second.
  */
 export function buildSlotHolderWhere(now: Date) {
   return {
-    deployState: { in: [...BUILD_SLOT_HOLDING_STATES] },
     deployUpdatedAt: { gt: new Date(now.getTime() - REVIEW_BUILD_SLOT_STALE_MS) },
+    OR: [
+      { deployState: { in: [...BUILDING_REVIEW_PREVIEW_STATES] } },
+      { deployState: null, deployDetail: { contains: STARTED_REVIEW_BUILD_DETAIL_MARK } },
+    ],
   };
 }
 
@@ -122,7 +129,12 @@ export async function claimReviewBuildSlot(
 function claimData(actor: ReviewPreviewActor, now: Date) {
   return {
     deployState: 'preview-building',
-    deployDetail: JSON.stringify(reviewActorDetail(actor)),
+    // buildStartedAt from the claim on: a teardown before startClaimedReviewBuild's first write
+    // must still leave the row holding its slot (STARTED_REVIEW_BUILD_DETAIL_MARK).
+    deployDetail: JSON.stringify({
+      ...reviewActorDetail(actor),
+      buildStartedAt: now.toISOString(),
+    }),
     deployUpdatedAt: now,
   };
 }
