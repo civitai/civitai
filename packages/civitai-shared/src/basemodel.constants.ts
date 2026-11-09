@@ -1787,7 +1787,6 @@ export const ecosystemSettings: EcosystemSettings[] = [
       // The comfy variant, not the hosted API one: it is the version the model
       // page publishes, and the only one that takes LoRAs.
       model: { id: 3216500 },
-      modelLocked: true,
     },
   },
   {
