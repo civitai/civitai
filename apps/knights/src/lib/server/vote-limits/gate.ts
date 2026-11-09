@@ -38,6 +38,7 @@ const keyOf = (userId: number, part: string) => `knights:vote-limit:{${userId}}:
  * without its expiry or shorten a cooldown. KEYS: cooldown, in-flight slot, then one counter per window. ARGV: slot cap,
  * slot ttl, then per window its length, its max and the cooldown a trip sets (all ms). Returns {0, 0} entered, {1, ms}
  * limited for `ms`, {2, 0} too many in flight.
+ * Keep both scripts Lua 5.1-compatible: Redis runs 5.1 but the wasmoon test engine is 5.4, so tests cannot catch a 5.4-only construct.
  */
 export const ENTER_SCRIPT = `
 local cooldown = redis.call('PTTL', KEYS[1])
