@@ -9,6 +9,8 @@ import { join } from 'node:path';
 import { fileRunState, type RunLimits, type RunState } from '@/vector-sync/cursor';
 import { imageIdFromEvent, VectorSyncQueue } from '@/vector-sync/consumer';
 import { ModelMismatchError, VectorStore } from '@/vector-sync/qdrant';
+import { MODEL_COLLECTION } from '@/vector-sync/models/collection';
+import { ARTICLE_COLLECTION } from '@/vector-sync/articles/collection';
 import type { QdrantClient } from '@qdrant/js-client-rest';
 import { parseRateLimitHeader, parseRetryAfter, RateLimiter } from '@/vector-sync/ratelimit';
 import {
@@ -1415,6 +1417,30 @@ describe('collection layout', () => {
       (c) => (c.field_schema as { enable_hnsw?: boolean }).enable_hnsw === false
     );
     expect(noHnsw.map((c) => c.field_name).sort()).toEqual(['postId', 'userId']);
+  });
+
+  // Decision: the site-search Qdrant runs 3 nodes and its collections keep 2 copies of each shard,
+  // acknowledging a write on 1. The image instance is a single node, so images keep the default.
+  // Qdrant only applies these at creation; changing them later means a new collection.
+  test('site collections are created replicated, images are not', async () => {
+    const created = async (spec?: typeof MODEL_COLLECTION | typeof ARTICLE_COLLECTION) => {
+      let args: { replication_factor?: number; write_consistency_factor?: number } = {};
+      const client = {
+        collectionExists: async () => ({ exists: false }),
+        createCollection: async (_c: string, a: typeof args) => void (args = a),
+        getCollection: async () => ({ payload_schema: {}, config: {} }),
+        createPayloadIndex: async () => undefined,
+        getAliases: async () => ({ aliases: [{ alias_name: 'a', collection_name: 'c' }] }),
+      };
+      const qc = client as unknown as QdrantClient;
+      await (spec ? new VectorStore(qc, 'c', spec as never) : new VectorStore(qc, 'c')).bootstrap({
+        alias: 'a',
+      });
+      return [args.replication_factor, args.write_consistency_factor];
+    };
+    expect(await created(MODEL_COLLECTION)).toEqual([2, 1]);
+    expect(await created(ARTICLE_COLLECTION)).toEqual([2, 1]);
+    expect(await created()).toEqual([undefined, undefined]);
   });
 });
 

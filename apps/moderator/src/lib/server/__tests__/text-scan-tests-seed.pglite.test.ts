@@ -40,25 +40,25 @@ const LAB_SEED = {
 const BENCH = [
   {
     key: 'k-1',
-    entityType: 'CommentV2',
+    entityType: 'CommentV3',
     fields: [{ heading: 'Comment', text: `${SECRET} e` }],
     truth: 'bad',
   },
   {
     key: 'k-2',
-    entityType: 'CommentV2',
+    entityType: 'CommentV3',
     fields: [{ heading: 'Comment', text: `${SECRET} f` }],
     truth: 'fine',
   },
   {
     key: 'k-3',
-    entityType: 'CommentV2',
+    entityType: 'CommentV3',
     fields: [{ heading: 'Comment', text: `${SECRET} g` }],
     truth: 'unsure',
   },
   {
     key: 'k-4',
-    entityType: 'CommentV2',
+    entityType: 'CommentV3',
     fields: [{ heading: 'Comment', text: `${SECRET} h` }],
     truth: 'other',
   },
@@ -141,7 +141,7 @@ describe('importSeed', () => {
     const summary = await importSeed(db, BENCH, { ...opts, write: false });
     expect(summary).toMatchObject({
       rows: 3,
-      byEntityType: { CommentV2: 3 },
+      byEntityType: { CommentV3: 3 },
       byLabel: { scam: 2 },
       written: null,
     });

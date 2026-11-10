@@ -57,8 +57,6 @@ export const CLAVATA_TARGETS: Readonly<Record<CutoverEntityType, ClavataTarget>>
   Post: standard('Post', async () => ids(await dbRead.post.findMany(recent))),
   Bounty: standard('Bounty', async () => ids(await dbRead.bounty.findMany(recent))),
   BountyEntry: standard('BountyEntry', async () => ids(await dbRead.bountyEntry.findMany(recent))),
-  Comment: standard('Comment', async () => ids(await dbRead.comment.findMany(recent))),
-  CommentV2: standard('CommentV2', async () => ids(await dbRead.commentV2.findMany(recent))),
   CommentV3: standard('CommentV3', async () =>
     ids(
       await dbRead.$queryRaw<
