@@ -6,8 +6,6 @@ import type * as TrpcModule from '~/utils/trpc';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 
-/** A thumbs-down review must still be able to save its comment. */
-
 const upsert = vi.hoisted(() => vi.fn());
 
 vi.mock('~/libs/form', async (importOriginal) => ({
