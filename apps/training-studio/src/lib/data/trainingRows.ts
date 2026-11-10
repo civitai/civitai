@@ -205,6 +205,8 @@ type TrainingStepInput = Partial<AiToolkitTrainingInput> & {
   isEditTraining?: boolean;
   /** Legacy `imageResourceTraining` runs: the zip dataset's image count. */
   trainingDataImagesCount?: number;
+  /** Legacy `imageResourceTraining` runs: the sample prompts as submitted. */
+  samplePrompts?: string[];
 };
 /** The weights-blob half of an epoch entry in the training step's output. `id` is the blob's
  *  orchestrator key — the handle continue/generate reference the checkpoint by (as a blob AIR);
@@ -259,7 +261,7 @@ interface TrainingStepOutput {
   epochs?: TrainingEpochOutput[];
   /** The review gate's state; the workflow stays `processing` while it holds the run. */
   moderationStatus?: string;
-  /** Legacy `imageResourceTraining` runs carry the sample prompts here, not on the input. */
+  /** Legacy `imageResourceTraining` runs echo the input's `samplePrompts` here. */
   sampleImagesPrompts?: string[];
 }
 
@@ -474,12 +476,13 @@ export interface DatasetItem {
 }
 
 /** Training-step input keys the settings export leaves out: the dataset (signed blob URLs), the
- *  sample block (exported as `samplePrompts` + `training.samples`), the trace transport mode and the
- *  orchestrator's pricing readouts. Everything else on the input is exported as-is, so engine-specific
+ *  sample block and a legacy run's `samplePrompts` (exported as `samplePrompts` + `training.samples`),
+ *  the trace transport mode and the orchestrator's pricing readouts. Everything else on the input is exported as-is, so engine-specific
  *  keys (a main-app kohya run's `unetLR`, `maxTrainEpochs`, `clipSkip`, …) aren't dropped. */
 const SETTINGS_EXCLUDED_INPUT_KEYS = new Set([
   'trainingData',
   'samples',
+  'samplePrompts',
   'trace',
   'storageBuzzPerEpoch',
   'usesStepPricing',
@@ -495,7 +498,8 @@ export interface TrainingSettingsExport {
   workflowId: string;
   name: string;
   createdAt: string;
-  /** The base model the run trained on, as the Studio names it (e.g. `Illustrious`). */
+  /** The base model the run trained on, as the Studio labels it: the card name plus any version
+   *  suffix (e.g. `SDXL · Standard`). */
   base: string;
   media: Media;
   /** Our own Select-step choices, when the run was started here (absent on main-app runs). */
@@ -589,7 +593,10 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     resolveWorkflow(w);
   if (!state) return null;
 
-  const prompts = input.samples?.prompts ?? output.sampleImagesPrompts ?? [];
+  const prompts =
+    [input.samples?.prompts, output.sampleImagesPrompts, input.samplePrompts].find(
+      (p) => p?.length
+    ) ?? [];
   // Number of image slots per epoch = the prompt count (each prompt yields one image). Fall back to the
   // widest observed sample array when a run carries no prompt list.
   const slots =
@@ -662,7 +669,11 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
   const samples = Object.fromEntries(
     Object.entries(input.samples ?? {}).filter(
       ([key, value]) =>
-        value !== undefined && value !== null && key !== 'prompts' && key !== 'sourceImages'
+        value !== undefined &&
+        value !== null &&
+        key !== 'prompts' &&
+        key !== 'sourceImages' &&
+        !SIGNED_URL.test(JSON.stringify(value))
     )
   );
   if (Object.keys(samples).length) training.samples = samples;

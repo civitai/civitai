@@ -299,6 +299,40 @@ describe('workflowToDetail settings export', () => {
     expect(JSON.stringify(detail.settings)).not.toContain('sig=1');
   });
 
+  it("reads a legacy run's prompts off its input when the output carries none", () => {
+    const detail = workflowToDetail(
+      workflow({
+        metadata: {},
+        steps: [
+          {
+            $type: 'imageResourceTraining',
+            input: { engine: 'kohya', samplePrompts: ['ohwx, a photo', 'ohwx, a sketch'] },
+            output: { epochs: [] },
+          },
+        ],
+      })
+    )!;
+    expect(detail.prompts).toEqual(['ohwx, a photo', 'ohwx, a sketch']);
+    expect(detail.settings.samplePrompts).toEqual(['ohwx, a photo', 'ohwx, a sketch']);
+    expect(detail.settings.training).not.toHaveProperty('samplePrompts');
+  });
+
+  it("skips an empty output prompt list for a legacy run's input prompts", () => {
+    const detail = workflowToDetail(
+      workflow({
+        metadata: {},
+        steps: [
+          {
+            $type: 'imageResourceTraining',
+            input: { engine: 'kohya', samplePrompts: ['ohwx, a photo'] },
+            output: { epochs: [], sampleImagesPrompts: [] },
+          },
+        ],
+      })
+    )!;
+    expect(detail.prompts).toEqual(['ohwx, a photo']);
+  });
+
   it('keeps the sample generation settings but not the sample media, and records lineage', () => {
     const w = workflow({
       metadata: { name: 'Again', sourceWorkflowId: 'wf-0', sourceEpoch: 4 },
@@ -324,6 +358,14 @@ describe('workflowToDetail settings export', () => {
     const { training } = workflowToDetail(w)!.settings;
     expect(training).not.toHaveProperty('referenceImages');
     expect(training.loraName).toBe('see https://civitai.com');
+  });
+
+  it('leaves out a sample setting it does not know that carries a signed URL', () => {
+    const w = workflow();
+    const input = (w.steps![0] as unknown as { input: Record<string, unknown> }).input;
+    input.samples = { prompts: ['ohwx'], cfgScale: 4, referenceImage: 'https://x/r.png?sig=3' };
+    const { training } = workflowToDetail(w)!.settings;
+    expect(training.samples).toEqual({ cfgScale: 4 });
   });
 });
 
