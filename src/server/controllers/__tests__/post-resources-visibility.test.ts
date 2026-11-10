@@ -74,6 +74,11 @@ describe('post.getResources visibility', () => {
     expect(await resourcesFor(STRANGER)).toEqual([ROWS[0]]);
   });
 
+  it('carries no cover image: covers are served only to the post owner by post.getResourceCovers', async () => {
+    postIs({});
+    expect(await resourcesFor(ANON)).toEqual([ROWS[0]]);
+  });
+
   it.each([
     ['unpublished', { published: false }],
     ['Private', { private: true }],

@@ -74,7 +74,6 @@ const reports = [
     Element: TosViolationForm,
     availableFor: [
       ReportEntity.Model,
-      ReportEntity.CommentV2,
       ReportEntity.CommentV3,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
@@ -101,7 +100,6 @@ const reports = [
     Element: AdminAttentionForm,
     availableFor: [
       ReportEntity.Model,
-      ReportEntity.CommentV2,
       ReportEntity.CommentV3,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
@@ -161,7 +159,6 @@ const reports = [
     Element: SpamForm,
     availableFor: [
       ReportEntity.Model,
-      ReportEntity.CommentV2,
       ReportEntity.CommentV3,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
@@ -346,7 +343,6 @@ export default function ReportModal({
             await queryUtils.model3d.reviews.getInfinite.invalidate();
             break;
           // Nothing changes here so nothing to invalidate...
-          case ReportEntity.CommentV2:
           case ReportEntity.CommentV3:
           default:
             break;

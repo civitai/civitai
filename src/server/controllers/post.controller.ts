@@ -14,6 +14,7 @@ import type {
   CreatePostWithImagesInput,
   PostCreateInput,
   RemoveResourceFromPostImageInput,
+  GetPostResourceCoversInput,
 } from '~/server/schema/post.schema';
 import {
   bulkSaveItems,
@@ -23,7 +24,11 @@ import {
 } from '~/server/services/collection.service';
 import { sendMessagesToCollaborators } from '~/server/services/entity-collaborator.service';
 import { readPostAppChip } from '~/server/services/blocks/post-app-chip.service';
-import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import {
+  getRequestBrowsingLevel,
+  resolveRequestBrowsingLevels,
+  viewerBrowsingLevel,
+} from '~/server/utils/browsing-level';
 import { publishModel3D } from '~/server/services/model3d.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { createPostOwnerCheck } from '~/server/services/image.service';
@@ -67,6 +72,7 @@ import {
   getPostContestCollectionDetails,
   getPostDetail,
   getPostResources,
+  getPostResourceCovers,
   getPostsInfinite,
   getPostTags,
   removePostTag,
@@ -857,6 +863,28 @@ export const getPostResourcesHandler = async ({
     const resources = await getPostResources({ ...input });
 
     return resources.filter((x) => x.name !== 'vae');
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getPostResourceCoversHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetPostResourceCoversInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    // The level comes from the client: without this clamp it could ask for covers above its domain's cap.
+    const levels = { browsingLevel: input.browsingLevel };
+    resolveRequestBrowsingLevels(levels, ctx);
+    return await getPostResourceCovers({
+      id: input.id,
+      user: ctx.user,
+      browsingLevel: viewerBrowsingLevel(ctx, levels.browsingLevel ?? input.browsingLevel),
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
