@@ -8,7 +8,7 @@ import { articleDocument } from './document';
  * when they keep different articles, so a change to either has to change both.
  */
 export const ARTICLE_ELIGIBLE_SQL = `a."publishedAt" IS NOT NULL AND a.status = 'Published'
-  AND a.ingestion = 'Scanned' AND NOT a."tosViolation" AND a.availability != 'Unsearchable'
+  AND a.ingestion = 'Scanned' AND NOT a."tosViolation" AND a.availability = 'Public'
   AND NOT a.unlisted AND u."bannedAt" IS NULL`;
 
 /** Characters of content read; the document keeps far fewer, after spoilers and tags go. */

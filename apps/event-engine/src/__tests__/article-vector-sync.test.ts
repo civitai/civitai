@@ -12,6 +12,8 @@ describe('article eligibility and payload, against the real query', () => {
     unscanned: `ingestion = 'Pending'`,
     tosViolation: `"tosViolation" = true`,
     unsearchable: `availability = 'Unsearchable'`,
+    private: `availability = 'Private'`,
+    earlyAccess: `availability = 'EarlyAccess'`,
     unlisted: `unlisted = true`,
     bannedOwner: `"userId" = 8`,
   };
@@ -109,5 +111,25 @@ describe('article change signals', () => {
       ['article', { id: 1 }],
       ['article', { id: 1 }],
     ]);
+  });
+});
+
+describe('article embedding switch', () => {
+  // VECTOR_CONTENT_DOMAINS=article starts the consumer; embedding also needs its own switch.
+  test('stays off until VECTOR_ARTICLE_EMBED_ENABLED is true, even with the global switch on', async () => {
+    const { config, domainEmbedEnabled } = await import('@/config');
+    const global = config.vectorSync.embedEnabled;
+    const own = process.env.VECTOR_ARTICLE_EMBED_ENABLED;
+    try {
+      config.vectorSync.embedEnabled = true;
+      delete process.env.VECTOR_ARTICLE_EMBED_ENABLED;
+      expect(domainEmbedEnabled(articleDomain.name, articleDomain.embedByDefault)).toBe(false);
+      process.env.VECTOR_ARTICLE_EMBED_ENABLED = 'true';
+      expect(domainEmbedEnabled(articleDomain.name, articleDomain.embedByDefault)).toBe(true);
+    } finally {
+      config.vectorSync.embedEnabled = global;
+      if (own === undefined) delete process.env.VECTOR_ARTICLE_EMBED_ENABLED;
+      else process.env.VECTOR_ARTICLE_EMBED_ENABLED = own;
+    }
   });
 });

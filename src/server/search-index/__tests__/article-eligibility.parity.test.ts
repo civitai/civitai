@@ -66,11 +66,9 @@ const spec: ParitySpec = {
     article(10, 'ingestion:Blocked', { ingestion: `'Blocked'` }),
     article(11, 'ingestion:Error', { ingestion: `'Error'` }),
     article(12, 'ingestion:Rescan', { ingestion: `'Rescan'` }),
-    { ...article(13, 'availability:Private', { availability: `'Private'` }), include: true },
-    {
-      ...article(14, 'availability:EarlyAccess', { availability: `'EarlyAccess'` }),
-      include: true,
-    },
+    // Neither is readable by every viewer, so neither may reach the index.
+    article(13, 'availability:Private', { availability: `'Private'` }),
+    article(14, 'availability:EarlyAccess', { availability: `'EarlyAccess'` }),
   ],
   clauses: [
     'publishedAt',
@@ -113,7 +111,10 @@ describe('the parity harness', () => {
           await prisma.article.findMany({ where: withoutAvailability, select: { id: true } })
         ).map((a) => a.id),
     });
-    expect(result.site).toEqual({ missing: [], extra: ['availability'] });
+    expect(result.site).toEqual({
+      missing: [],
+      extra: ['availability', 'availability:Private', 'availability:EarlyAccess'],
+    });
   });
 
   it('refuses a clause with no row to exclude', async () => {
