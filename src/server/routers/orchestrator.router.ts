@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { acceptGenerationLicense } from '~/server/services/generation-license.service';
 import { generatorAcceptsBoostRequired } from '~/server/services/generation/coverage-source';
 import { assertSourceMetadataWithinCap } from '~/server/services/orchestrator/source-metadata-cap';
 import { assertGenerationInputsUsable } from '~/server/services/generation-input-urls';
@@ -395,6 +396,12 @@ export const orchestratorRouter = router({
   /**
    * Generate from graph - unified endpoint for all generation types
    */
+  acceptGenerationLicense: protectedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesWrite })
+    .input(z.object({ ecosystem: z.string() }))
+    .mutation(({ ctx, input }) =>
+      acceptGenerationLicense({ userId: ctx.user.id, ecosystem: input.ecosystem })
+    ),
   generateFromGraph: orchestratorGuardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(z.any())
