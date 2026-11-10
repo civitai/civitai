@@ -407,7 +407,9 @@ export const processScheduledPublishing = createJob(
         }
 
         // Only a version whose date came due since the last run: one put back to Scheduled with an
-        // old date it already went live on is published again at once, not on a schedule.
+        // old date it already went live on is published again at once, not on a schedule. This also
+        // holds back a version published late (its file landed after its date); its model waits for
+        // its own date, as before.
         const releasedWithVersionIds = uniq(
           versionModels
             .filter(

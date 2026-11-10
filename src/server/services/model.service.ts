@@ -5076,11 +5076,8 @@ export const publishModelById = async ({
         movedPostIds = movedPosts.map((post) => post.id);
       }
 
-      // Anti-bump guard: publishedAt is set only while NULL (Draft) or future (Scheduled); once
-      // public it never moves. Never later than the earliest scheduled version, the one the model
-      // goes live with; a live version may have been published at once, ahead of the model's date,
-      // and a Scheduled one already past its date went live before, so neither counts. Must run
-      // after the version writes.
+      // Never later than the earliest still-future scheduled version: a live version may have been
+      // published at once, ahead of the model's date. Must run after the version writes.
       await tx.$executeRaw`
         UPDATE "Model" m
         SET "publishedAt" = LEAST(
