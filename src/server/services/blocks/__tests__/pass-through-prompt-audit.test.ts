@@ -94,6 +94,39 @@ describe('collectPassThroughAuditText', () => {
     expect(got).toMatchObject({ prompt: 'animate it', promptRefs: [] });
   });
 
+  it('audits exactly these step types', () => {
+    expect([...PROMPT_AUDITED_STEP_TYPES].sort()).toEqual(
+      [
+        'aceStepAudio',
+        'comfy',
+        'customComfy',
+        'imageGen',
+        'imageToSvg',
+        'liveTextToSpeech',
+        'miniMaxMusic3',
+        'polyGen',
+        'soniloAudioGen',
+        'textToImage',
+        'textToSpeech',
+        'videoGen',
+        'yuE2',
+      ].sort()
+    );
+  });
+
+  it('flags input nested past the walk bound', () => {
+    let deep: unknown = 'words';
+    for (let i = 0; i < 70; i++) deep = { a: deep };
+    expect(collectPassThroughAuditText([{ $type: 'videoGen', input: deep }]).tooLarge).toBe(true);
+  });
+
+  it('control: text of exactly the moderation limit is not flagged', () => {
+    const got = collectPassThroughAuditText([
+      { $type: 'videoGen', input: { prompt: 'a'.repeat(PASS_THROUGH_AUDIT_TEXT_MAX) } },
+    ]);
+    expect(got.tooLarge).toBe(false);
+  });
+
   it('flags text over the moderation limit', () => {
     const got = collectPassThroughAuditText([
       { $type: 'videoGen', input: { prompt: 'a'.repeat(PASS_THROUGH_AUDIT_TEXT_MAX + 1) } },

@@ -19,12 +19,24 @@ const h = vi.hoisted(() => ({
   confirmedStepFlag: vi.fn(async () => true),
   getOrchestratorToken: vi.fn(async () => 'orch-token'),
   submitWorkflow: vi.fn(),
-  audit: vi.fn(async (_input: { prompt: string; negativePrompt?: string }) => undefined),
-  classify: vi.fn(async (_input: { prompt: string }) => ({
-    outcome: 'pass' as 'pass' | 'soft' | 'hard',
-    source: null as string | null,
-    externalError: null,
-  })),
+  audit: vi.fn(
+    async (_input: {
+      prompt: string;
+      negativePrompt?: string;
+      userId: number;
+      isGreen: boolean;
+      isModerator?: boolean;
+    }) => undefined
+  ),
+  classify: vi.fn(
+    async (_input: {
+      prompt: string;
+    }): Promise<{
+      outcome: 'pass' | 'soft' | 'hard';
+      source: string | null;
+      externalError: null;
+    }> => ({ outcome: 'pass', source: null, externalError: null })
+  ),
   variant: vi.fn(async (): Promise<string | null> => null),
   getUserById: vi.fn(async () => ({ id: 42, isModerator: false })),
   catalogRate: vi.fn(async () => ({ allowed: true })),
@@ -200,6 +212,7 @@ beforeEach(() => {
       : undefined) as never);
   store.clear();
   for (const fn of Object.values(h)) fn.mockClear();
+  loggingMock.logToAxiom.mockClear();
   installRedis();
   h.authorize.mockImplementation(async () => claims());
   // The audit refuses exactly one word, so a mixed body shows which text reached it.
@@ -360,5 +373,92 @@ describe('an unreadable flag', () => {
     await submit(stepBody({ prompt: 'a calm lake' })).catch(() => undefined);
     h.variant.mockImplementation(async () => null);
     await expect(submit(stepBody({ prompt: 'badword' }))).rejects.toThrow(REFUSED);
+  });
+});
+
+describe('enforce: what reaches the audit', () => {
+  it('sends the negative prompt, the viewer, and their moderator status', async () => {
+    await submit(stepBody({ prompt: 'a calm lake', negativePrompt: 'blurry' })).catch(
+      () => undefined
+    );
+    expect(h.audit).toHaveBeenCalledTimes(1);
+    expect(h.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ negativePrompt: 'blurry', userId: 42, isModerator: false })
+    );
+  });
+
+  it('reads moderator status from the viewer', async () => {
+    h.getUserById.mockImplementation(async () => ({ id: 42, isModerator: true }));
+    await submit(stepBody({ prompt: 'a calm lake' })).catch(() => undefined);
+    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ isModerator: true }));
+    h.getUserById.mockImplementation(async () => ({ id: 42, isModerator: false }));
+  });
+
+  it('refuses a prompt over the moderation limit, before the audit or the orchestrator', async () => {
+    await expect(submit(stepBody({ prompt: 'a calm lake '.repeat(2_000) }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('moderation limit'),
+    });
+    expect(h.audit).not.toHaveBeenCalled();
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('log mode, what it records', () => {
+  beforeEach(() => {
+    h.variant.mockImplementation(async () => 'log');
+    h.classify.mockImplementation(async () => ({
+      outcome: 'pass',
+      source: null,
+      externalError: null,
+    }));
+  });
+
+  it('does not hold the submit for the classifier', async () => {
+    let release: () => void = () => undefined;
+    h.classify.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ outcome: 'pass', source: null, externalError: null });
+        })
+    );
+    await submit(stepBody({ prompt: 'a calm lake' })).catch(() => undefined);
+    expect(whatIfCalls()).toHaveLength(1);
+    release();
+  });
+
+  it('logs a clean prompt as one enforce would pass', async () => {
+    await submit(stepBody({ prompt: 'a calm lake' })).catch(() => undefined);
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'pass', literal: true, wouldRefuse: false })
+      )
+    );
+  });
+
+  it('logs a referenced prompt as not literal and as one enforce would refuse', async () => {
+    await submit(
+      workflowBody([{ $type: 'videoGen', input: { prompt: { $ref: '$arguments', path: 'p' } } }], {
+        p: 'x',
+      })
+    ).catch(() => undefined);
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ literal: false, argumentRefs: 1, wouldRefuse: true })
+      )
+    );
+  });
+
+  it('a classifier failure logs an error and never fails the submit', async () => {
+    h.classify.mockImplementation(async () => {
+      throw new Error('classifier down');
+    });
+    await submit(stepBody({ prompt: 'a calm lake' })).catch(() => undefined);
+    expect(whatIfCalls()).toHaveLength(1);
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'app-block-pass-through-prompt-audit', type: 'error' })
+      )
+    );
   });
 });
