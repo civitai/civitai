@@ -14,7 +14,12 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { createImage, ingestImage } from '~/server/services/image.service';
+import {
+  createEntityImages,
+  createImage,
+  ingestImage,
+  updateEntityImages,
+} from '~/server/services/image.service';
 
 const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
 
@@ -53,5 +58,24 @@ describe('ingestImage — audio', () => {
     expect(sent).toBe(false);
     expect(mockCreateImageIngestionRequest).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('entity image writes — audio', () => {
+  const song = { url: KEY, type: 'audio' } as never;
+
+  it('createEntityImages refuses a song without writing it', async () => {
+    await expect(createEntityImages({ images: [song], userId: 1 })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(dbMock.dbWrite.image.createMany).not.toHaveBeenCalled();
+  });
+
+  it('updateEntityImages refuses a new song without writing it', async () => {
+    dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([] as never);
+    await expect(
+      updateEntityImages({ entityId: 1, entityType: 'Bounty', images: [song], userId: 1 })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(dbMock.dbWrite.image.createMany).not.toHaveBeenCalled();
   });
 });

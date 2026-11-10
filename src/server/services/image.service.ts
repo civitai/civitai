@@ -7468,6 +7468,12 @@ export async function checkEntityImageKeys({
   return urls;
 }
 
+/** Entity writes insert rows without `createImage`, so they refuse songs themselves. */
+function assertNoNewAudio(images: ImageReferenceInput[]) {
+  if (images.some((i) => !i.id && i.type === MediaType.audio))
+    throw throwAuthorizationError('Songs are not available yet.');
+}
+
 export const createEntityImages = async ({
   tx,
   entityId,
@@ -7490,6 +7496,7 @@ export const createEntityImages = async ({
     return [];
   }
 
+  assertNoNewAudio(images);
   await assertClientImageUrlsUsable({ urls: images.map((i) => i.url), userId, db: dbClient });
   await assertClientKeysIssuedToCaller({
     urls: uncheckedUrls(images, keysCheckedFor),
@@ -7970,6 +7977,7 @@ export const updateEntityImages = async ({
   keysCheckedFor?: string[];
 }) => {
   const dbClient = tx ?? dbWrite;
+  assertNoNewAudio(images);
   const connections = await dbClient.imageConnection.findMany({
     select: { imageId: true },
     where: {
