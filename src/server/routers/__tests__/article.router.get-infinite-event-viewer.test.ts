@@ -28,6 +28,7 @@ const scopedKey = {
   subject: { type: 'apiKey' as const, id: 5 },
   tokenScope: TokenScope.ArticlesRead,
 };
+const fullKey = { ...scopedKey, tokenScope: TokenScope.Full };
 const oauthToken = {
   apiKeyId: 6,
   apiKeyType: ApiKeyType.Access,
@@ -73,6 +74,10 @@ describe('article.getInfinite event decoration viewer', () => {
 
   it('a moderator on a session is', async () => {
     expect(await viewerFor(moderator, session)).toEqual({ id: 1, isModerator: true });
+  });
+
+  it('a moderator on a full-access personal key is', async () => {
+    expect(await viewerFor(moderator, fullKey)).toEqual({ id: 1, isModerator: true });
   });
 
   it('a member reads as the member, and the feed comes back unchanged', async () => {
