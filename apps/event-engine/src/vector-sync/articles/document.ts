@@ -14,14 +14,17 @@ export type ArticleSource = {
 };
 
 /**
- * Drops every element marked `data-type="spoiler"` with its contents, as the site's
- * `removeSpoilers` does for the Meilisearch index, so a search never matches on hidden text.
+ * Drops every element marked `data-type="spoiler"` with its contents, so a search never matches on
+ * hidden text. A copy of the site's `removeSpoilers` (src/utils/html-sanitize-helpers.ts), which
+ * the event-engine cannot import.
  */
 export function removeSpoilers(html: string) {
   if (!html || !/spoiler/i.test(html)) return html;
   return sanitize(html, {
     allowedTags: false,
     allowedAttributes: false,
+    // Nothing here is rendered (cleanHtml drops script and style next); silences a warning per call.
+    allowVulnerableTags: true,
     exclusiveFilter: (frame) => frame.attribs['data-type']?.trim().toLowerCase() === 'spoiler',
   });
 }

@@ -7,7 +7,7 @@ export const ARTICLE_TOPICS = ['postgres.Article', 'postgres.TagsOnArticle'];
 
 /**
  * The article a CDC message touches. A ban changes no article row, so a banned owner's points
- * stay until the article next changes; the site's hydration re-check hides them meanwhile.
+ * stay until the article next changes: the site has to re-check eligibility on what it shows.
  */
 export function articleRefFromEvent(topic: string, value: unknown): DomainRef | null {
   const event = value as {

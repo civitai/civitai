@@ -3,9 +3,9 @@ import { normalizeTitle, nsfwLevels } from '../models/document';
 import { articleDocument } from './document';
 
 /**
- * Which articles get a point: the site's Meilisearch rule (`articleSearchEligibleWhere`), minus
- * unlisted articles and those whose owner is banned. The site's parity test runs this against the
- * site's Prisma rule, so a change to either has to change both.
+ * Which articles get a point: the site's `articleSemanticEligibleWhere` (articles.search-index.ts)
+ * as SQL. The site's article-eligibility parity test runs both against one database and fails
+ * when they keep different articles, so a change to either has to change both.
  */
 export const ARTICLE_ELIGIBLE_SQL = `a."publishedAt" IS NOT NULL AND a.status = 'Published'
   AND a.ingestion = 'Scanned' AND NOT a."tosViolation" AND a.availability != 'Unsearchable'

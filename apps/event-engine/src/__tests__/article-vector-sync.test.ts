@@ -71,7 +71,8 @@ describe('article document', () => {
   });
 
   test('passes a body without spoilers through untouched', () => {
-    const html = '<p>No secrets <i>here</i></p>';
+    // sanitize-html would rewrite the bare `&` and the unquoted attribute.
+    const html = '<p class=x>No secrets & <i>here</i></p>';
     expect(removeSpoilers(html)).toBe(html);
   });
 });

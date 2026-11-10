@@ -158,6 +158,17 @@ export const articleSearchEligibleWhere = {
   availability: { not: Availability.Unsearchable },
 } satisfies Prisma.ArticleWhereInput;
 
+/**
+ * Which articles the semantic search may return: the Meilisearch rule, minus unlisted articles and
+ * those whose owner is banned. The event-engine's ARTICLE_ELIGIBLE_SQL is its copy, held to it by
+ * article-eligibility.parity.test.ts.
+ */
+export const articleSemanticEligibleWhere = {
+  ...articleSearchEligibleWhere,
+  unlisted: false,
+  user: { bannedAt: null },
+} satisfies Prisma.ArticleWhereInput;
+
 export const articlesSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
   outboxEntity: 'Article',
