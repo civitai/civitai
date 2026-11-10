@@ -358,6 +358,72 @@ export async function getCollectionIdsForModelCascade({
 }
 
 /**
+ * Collections whose document shows a model's images: its own item, and the items and covers drawn
+ * from any post on its versions, whoever posted it. A taken-down model's images leave every
+ * collection cover, and a restored model's come back, so a change of mode rebuilds these.
+ *
+ * UNIONed legs, as in `getCollectionIdsForModelCascade`. Never throws: it runs after the mode
+ * change has committed, and a failure here can only leave covers stale.
+ */
+export async function getCollectionIdsForModelImages({
+  modelId,
+  source = 'model-mode-change',
+  cap = DEFAULT_COLLECTION_CAP,
+}: {
+  modelId: number;
+  source?: string;
+  cap?: number;
+}): Promise<CollectionsToRebuild> {
+  let withCover = false;
+  try {
+    withCover = await coverIndexExists();
+  } catch (error) {
+    logFailure(
+      'collection-media-index-cover-probe-failed',
+      source,
+      `could not determine whether "${COVER_INDEX_NAME}" is usable; continuing without the cover leg`,
+      error
+    );
+  }
+  const modelImagesSql = Prisma.sql`
+    SELECT i.id FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+    WHERE mv."modelId" = ${modelId}`;
+  const coverLeg = withCover
+    ? Prisma.sql`
+        UNION
+        SELECT c.id AS "collectionId" FROM "Collection" c WHERE c."imageId" IN (${modelImagesSql})`
+    : Prisma.empty;
+  try {
+    const rows = await dbWrite.$queryRaw<{ collectionId: number }[]>`
+      SELECT DISTINCT x."collectionId" FROM (
+        SELECT ci."collectionId" FROM "CollectionItem" ci WHERE ci."modelId" = ${modelId}
+        UNION
+        SELECT ci."collectionId" FROM "CollectionItem" ci
+          WHERE ci."postId" IN (
+            SELECT p.id FROM "Post" p
+            JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+            WHERE mv."modelId" = ${modelId})
+        UNION
+        SELECT ci."collectionId" FROM "CollectionItem" ci WHERE ci."imageId" IN (${modelImagesSql})
+        ${coverLeg}
+      ) x
+      LIMIT ${cap + 1}
+    `;
+    return applyCap(rows, cap);
+  } catch (error) {
+    logFailure(
+      'collection-media-index-resolve-failed',
+      source,
+      `failed to resolve collections for model ${modelId}`,
+      error
+    );
+    return EMPTY;
+  }
+}
+
+/**
  * Queue a rebuild of the given collections.
  *
  * Never throws: every caller runs this AFTER its delete has committed, so an exception

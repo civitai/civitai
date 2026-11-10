@@ -9,11 +9,12 @@ vi.mock('~/server/utils/moderator-endpoint', async (importOriginal) => ({
 }));
 
 /**
- * A taken-down model's search document carries no images, so every change of mode queues the
- * model's document to be rebuilt; an edit that leaves the mode alone does not.
+ * A taken-down model's search document carries no images, nor do the collection covers drawn from
+ * them, so every change of mode queues the model's document and those collections' to be rebuilt;
+ * an edit that leaves the mode alone does not.
  */
 
-const { modelsSearchIndex } = await import('~/server/search-index');
+const { modelsSearchIndex, collectionsSearchIndex } = await import('~/server/search-index');
 const { changeModelModifierHandler } = await import('../model.controller');
 type ModHandler = { handler: (input: { modelId: number }, ctx: unknown) => Promise<unknown> };
 const takeDown = (await import('~/pages/api/mod/model/take-down')).default as unknown as ModHandler;
@@ -23,20 +24,29 @@ const { setModelShowcaseCollection } = await import('~/server/services/model.ser
 
 const MODEL = 1;
 const OWNER = 5;
+const COLLECTION = 9;
 let mode: string | null;
 
 const queued = vi.spyOn(modelsSearchIndex, 'queueUpdate');
+const collectionsQueued = vi.spyOn(collectionsSearchIndex, 'queueUpdate');
 
 beforeEach(() => {
   vi.clearAllMocks();
   queued.mockResolvedValue(undefined as never);
+  collectionsQueued.mockResolvedValue(undefined as never);
   mode = null;
   const row = () => ({ id: MODEL, userId: OWNER, status: 'Published', mode, meta: {} });
   for (const db of [dbMock.dbRead, dbMock.dbWrite]) {
     db.model.findUnique.mockImplementation((async () => row()) as never);
     db.model.findFirst.mockImplementation((async () => row()) as never);
   }
-  dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+  // The collections showing the model's images, by item or cover; nothing else is read raw here.
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+    const sql = strings.join('?');
+    if (sql.includes('pg_class')) return [{ present: true }];
+    if (sql.includes('"CollectionItem"')) return [{ collectionId: COLLECTION }];
+    return [];
+  }) as never);
   dbMock.dbWrite.model.update.mockImplementation((async ({ data }: { data: object }) => ({
     id: MODEL,
     userId: OWNER,
@@ -56,25 +66,38 @@ const reindexed = () =>
     )
   );
 
+const collectionRebuilt = () =>
+  collectionsQueued.mock.calls.some(([items]) =>
+    items.some(
+      (item) =>
+        (item as { id: number }).id === COLLECTION &&
+        (item as { action?: string }).action === SearchIndexUpdateQueueAction.Update
+    )
+  );
+
 describe("a change of a model's mode", () => {
   it('reindexes the model when a moderator takes it down', async () => {
     await changeModelModifierHandler({ input: { id: MODEL, mode: 'TakenDown' }, ctx: ctx(true) });
     expect(reindexed()).toBe(true);
+    expect(collectionRebuilt()).toBe(true);
   });
 
   it('reindexes the model when it is taken down in the moderator app', async () => {
     await takeDown.handler({ modelId: MODEL }, actor);
     expect(reindexed()).toBe(true);
+    expect(collectionRebuilt()).toBe(true);
   });
 
   it('reindexes the model when it is brought back', async () => {
     mode = 'TakenDown';
     await bringBack.handler({ modelId: MODEL }, actor);
     expect(reindexed()).toBe(true);
+    expect(collectionRebuilt()).toBe(true);
   });
 
   it('does not reindex on an edit that leaves the mode alone', async () => {
     await setModelShowcaseCollection({ id: MODEL, collectionId: null, userId: OWNER });
     expect(reindexed()).toBe(false);
+    expect(collectionRebuilt()).toBe(false);
   });
 });

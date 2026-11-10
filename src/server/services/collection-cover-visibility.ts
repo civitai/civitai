@@ -10,10 +10,18 @@ const servableImageSql = Prisma.sql`(
   AND i."nsfwLevel" != ${NsfwLevel.Blocked}
 )`;
 
+/** The post `"Post" p` is on no taken-down model; true for no post or a post on no model. */
+const notOnTakenDownModelSql = Prisma.sql`NOT EXISTS (
+  SELECT 1 FROM "ModelVersion" mv
+  JOIN "Model" m ON m.id = mv."modelId"
+  WHERE mv.id = p."modelVersionId" AND m.mode = 'TakenDown'
+)`;
+
 /**
  * Whether an image may be shown as a collection's cover to someone who doesn't own it, as SQL over
  * `"Image" i` with `"Post" p` LEFT JOINed on `i."postId"`. The image must be scanned, not awaiting
- * review and not removed. A posted image needs its post published and not Private. A postless
+ * review and not removed. A posted image needs its post published, not Private and on no
+ * taken-down model. A postless
  * image needs `postlessAllowed`: `coverUploadSql` for a collection's own cover, `itemUploadSql` for
  * a cover taken from an item.
  */
@@ -21,7 +29,12 @@ export function servableCollectionCoverSql({ postlessAllowed }: { postlessAllowe
   return Prisma.sql`(
     ${servableImageSql}
     AND (
-      (i."postId" IS NOT NULL AND p."publishedAt" < now() AND p."availability" != 'Private')
+      (
+        i."postId" IS NOT NULL
+        AND p."publishedAt" < now()
+        AND p."availability" != 'Private'
+        AND ${notOnTakenDownModelSql}
+      )
       OR (i."postId" IS NULL AND ${postlessAllowed})
     )
   )`;
@@ -111,6 +124,7 @@ export function collectionItemCoversSql({
             AND ${servableImageSql}
             AND p."publishedAt" < now()
             AND p."availability" != 'Private'
+            AND ${notOnTakenDownModelSql}
       ) t
       WHERE t.rn = 1
     ), modelItemImage AS MATERIALIZED (

@@ -1339,12 +1339,15 @@ export async function resolveHubSources({
   userId,
   isModerator,
   holdExempt,
+  galleryOwnerId,
   excludedSources,
 }: {
   hubId: number;
   excludedSources?: HubSourceExclusionInput[];
   /** Not held by the hub's held models: a moderator on a session or a full-access key. */
   holdExempt?: boolean;
+  /** The viewer a taken-down model's images still show to when it is theirs, on the same credentials. */
+  galleryOwnerId?: number;
 } & HubViewer): Promise<ResolvedHubSources | null> {
   const hub = await dbRead.userHub.findFirst({
     where: { id: hubId, ...hubViewerWhere({ userId, isModerator }) },
@@ -1462,10 +1465,17 @@ export async function resolveHubSources({
 
   const excluded = await excludedPromise;
   const allVersionIds = [...new Set([...explicitVersionIds, ...versionIdsOfModels])];
-  const modelVersionIds = allVersionIds.slice(0, hubLimits.resolvedVersionIds);
-  if (allVersionIds.length > modelVersionIds.length) truncated = true;
+  const cappedVersionIds = allVersionIds.slice(0, hubLimits.resolvedVersionIds);
+  if (allVersionIds.length > cappedVersionIds.length) truncated = true;
   // Loaded on demand: the model service imports the image service, which imports this one.
-  const { getHeldGalleryLevel } = await import('~/server/services/model.service');
+  const { getHeldGalleryLevel, getWithheldVersionIds } = await import(
+    '~/server/services/model.service'
+  );
+  // A taken-down model's versions leave the hub, except for its owner and moderators.
+  const withheldVersionIds = holdExempt
+    ? new Set<number>()
+    : await getWithheldVersionIds(cappedVersionIds, galleryOwnerId);
+  const modelVersionIds = cappedVersionIds.filter((id) => !withheldVersionIds.has(id));
   // Versions expanded from a Model source already carry their model; only the rest need looking up.
   // Moderators are not held, when the caller says so: they must see what they may need to remove.
   const heldBrowsingLevel =
