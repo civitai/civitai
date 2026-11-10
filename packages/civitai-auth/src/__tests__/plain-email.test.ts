@@ -10,6 +10,10 @@ describe('parsePlainEmailAddress', () => {
     expect(parsePlainEmailAddress('  user@ok.test  ', echo)).toBe('user@ok.test');
   });
 
+  it('accepts a trailing root dot', () => {
+    expect(parsePlainEmailAddress('user@ok.test.', echo)).toBe('user@ok.test.');
+  });
+
   it('accepts an internationalised domain in punycode form', () => {
     expect(parsePlainEmailAddress('user@xn--bcher-kva.de', echo)).toBe('user@xn--bcher-kva.de');
   });
@@ -27,6 +31,12 @@ describe('parsePlainEmailAddress', () => {
     'user@b\u00FCcher.de',
     'user@ok.test\u0000x',
     'user@ok\u3002test',
+    'a@other.test@ok.test',
+    'a@@ok.test',
+    '@ok.test',
+    'a@',
+    'a@.ok.test',
+    'a@ok..test',
     '',
   ])('refuses %j before parsing', (input) => {
     expect(parsePlainEmailAddress(input, echo)).toBeNull();
