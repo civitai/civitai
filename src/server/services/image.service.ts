@@ -312,6 +312,7 @@ import {
   ImageIngestionStatus,
   JobQueueType,
   MediaType,
+  ModelModifier,
   NewOrderRankType,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
@@ -7597,6 +7598,13 @@ export const getEntityCoverImage = async ({
     i."acceptableMinor" = FALSE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean
   )`;
 
+  // A taken-down model's images are its owner's and moderators' alone. Also true with no model
+  // (a NULL mode), so the image and post arms keep images on no model version.
+  const modelNotWithheld = Prisma.sql`(
+    m.mode IS DISTINCT FROM ${ModelModifier.TakenDown}::"ModelModifier"
+    OR (${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean
+  )`;
+
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.
   const imagesRaw = await dbRead.$queryRaw<GetEntityImageRaw[]>`
@@ -7664,6 +7672,7 @@ export const getEntityCoverImage = async ({
           JOIN "Post" p ON mv.id = p."modelVersionId" AND p."userId" = m."userId"
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'Model'
+          AND ${modelNotWithheld}
           -- The version and post rules sit before DISTINCT ON so a hidden first version or post
           -- falls back to the next visible one rather than leaving the model without a cover.
           AND (
@@ -7704,6 +7713,7 @@ export const getEntityCoverImage = async ({
           JOIN "Post" p ON mv.id = p."modelVersionId" AND (p."userId" = m."userId" OR m."userId" = -1)
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'ModelVersion'
+          AND ${modelNotWithheld}
           -- canViewModelVersionStatus plus the private-version rule; access grantees are not resolved here.
           AND (
             (
@@ -7737,8 +7747,11 @@ export const getEntityCoverImage = async ({
         FROM entities e
         JOIN "Image" i ON i.id = e."entityId"
         LEFT JOIN "Post" p ON p.id = i."postId"
+        LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+        LEFT JOIN "Model" m ON m.id = mv."modelId"
         WHERE e."entityType" = 'Image'
           AND ${imageVisible}
+          AND ${modelNotWithheld}
 
         UNION
         -- ARTICLES
@@ -7778,8 +7791,10 @@ export const getEntityCoverImage = async ({
           FROM entities e
           JOIN "Post" p ON p.id = e."entityId"
           LEFT JOIN "ModelVersion" mv ON p."modelVersionId" = mv.id
+          LEFT JOIN "Model" m ON m.id = mv."modelId"
           JOIN "Image" i ON i."postId" = p.id
           WHERE e."entityType" = 'Post'
+            AND ${modelNotWithheld}
             AND (
               (p."publishedAt" < now() AND p.availability <> 'Private')
               OR (${signedIn}::boolean AND p."userId" = ${viewerId}) OR ${isModerator}::boolean
