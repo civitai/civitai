@@ -1,4 +1,5 @@
 import { QueryClient, useQuery } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import { useFormContext } from 'react-hook-form';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
@@ -17,6 +18,19 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
 }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: ({ src }: { src: string }) => <img alt="" src={src} />,
+}));
+// Stands in for the viewer's browsing level: anything rated above PG is blurred.
+vi.mock('~/components/ImageGuard/ImageGuard2', () => ({
+  ImageGuard2: ({
+    image,
+    children,
+  }: {
+    image: { nsfwLevel: number };
+    children: (safe: boolean) => ReactNode;
+  }) => <>{children(image.nsfwLevel <= 1)}</>,
+}));
+vi.mock('~/components/ImageHash/ImageHash', () => ({
+  MediaHash: () => <canvas data-testid="blurred-cover" />,
 }));
 vi.mock('~/components/Post/EditV2/PostEditProvider', () => ({
   usePostEditStore: () => {
@@ -44,6 +58,19 @@ const resourceRow = (modelVersionId: number, modelName: string) => ({
   reviewRecommended: null,
   reviewDetails: null,
   reviewCreatedAt: null,
+  coverImage: null as null | Record<string, unknown>,
+});
+const cover = (nsfwLevel: number) => ({
+  id: 1,
+  userId: 3,
+  url: 'cover-url',
+  type: 'image',
+  nsfwLevel,
+  width: 512,
+  height: 512,
+  hash: 'LEHV6nWB2yk8pyo0adR*.7kCMdnj',
+  poi: false,
+  minor: false,
 });
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -97,6 +124,41 @@ beforeEach(() => {
 
 const manyResources = (count: number) =>
   Array.from({ length: count }, (_, i) => resourceRow(100 + i, `Model ${i + 1}`));
+
+describe('ResourceReviewStepper cover', () => {
+  test('the header shows the current resource cover and the rail a thumbnail for each cover', async () => {
+    client.setQueryData(key, [
+      { ...resourceRow(5, 'Cool LoRA'), coverImage: cover(1) },
+      resourceRow(6, 'Other Model'),
+    ]);
+    await open();
+
+    await expect.element(page.getByTestId('resource-cover').first()).toBeVisible();
+    // Header + rail item for the one resource that has a cover.
+    expect(page.getByTestId('resource-cover').elements()).toHaveLength(2);
+    expect(document.querySelector('[data-testid="resource-cover"] img')?.getAttribute('src')).toBe(
+      'cover-url'
+    );
+    // The other resource keeps its rail slot as a placeholder.
+    expect(page.getByTestId('resource-cover-placeholder').elements()).toHaveLength(1);
+  });
+
+  test('a resource without a cover shows placeholders in the header and rail, not an image', async () => {
+    await open();
+
+    expect(page.getByTestId('resource-cover').elements()).toHaveLength(0);
+    // Header + two rail items.
+    expect(page.getByTestId('resource-cover-placeholder').elements()).toHaveLength(3);
+  });
+
+  test("a cover above the viewer's level renders blurred instead of the image", async () => {
+    client.setQueryData(key, [{ ...resourceRow(5, 'Cool LoRA'), coverImage: cover(8) }]);
+    await open();
+
+    await expect.element(page.getByTestId('blurred-cover').first()).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="resource-cover"] img')).toBeNull();
+  });
+});
 
 describe('ResourceReviewStepper', () => {
   test('a post with few resources shows one segment each and no rated bar', async () => {

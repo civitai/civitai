@@ -2057,6 +2057,37 @@ export const getPostResources = async ({ id }: GetByIdInput) => {
   });
 };
 
+/**
+ * Each row gets its version's first showcase image from the shared version-image cache, one read
+ * for all versions. The cache already drops unpublished, blocked and unreviewed images; it is not
+ * viewer-aware, so the client blurs by the viewer's browsing level (ImageGuard2), as model cards do.
+ */
+export const attachPostResourceCovers = async <T extends { modelVersionId: number | null }>(
+  rows: T[]
+) => {
+  const versionIds = [...new Set(rows.map((row) => row.modelVersionId).filter(isDefined))];
+  const byVersion = versionIds.length ? await imagesForModelVersionsCache.fetch(versionIds) : {};
+
+  return rows.map((row) => {
+    const cover = row.modelVersionId ? byVersion[row.modelVersionId]?.images[0] : undefined;
+    const coverImage = cover
+      ? {
+          id: cover.id,
+          userId: cover.userId,
+          url: cover.url,
+          type: cover.type,
+          nsfwLevel: cover.nsfwLevel,
+          width: cover.width,
+          height: cover.height,
+          hash: cover.hash,
+          poi: cover.poi,
+          minor: cover.minor,
+        }
+      : null;
+    return { ...row, coverImage };
+  });
+};
+
 export const updatePostNsfwLevel = async (ids: number | number[]) => {
   if (!Array.isArray(ids)) ids = [ids];
   ids = [...new Set(ids)].filter(isDefined); // dedupe

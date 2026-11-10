@@ -22,6 +22,7 @@ import {
   normalizeComment,
   shouldNudgeForComment,
 } from '~/components/Post/EditV2/PostResourceReviews/postResourceReviews.utils';
+import { ResourceCover } from '~/components/Post/EditV2/PostResourceReviews/ResourceCover';
 import { usePostResourceReviews } from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -166,6 +167,7 @@ export function ResourceReviewStepper({
           className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-gray-1 hover:dark:bg-dark-5"
         >
           <StateIcon review={review} current={i === index} />
+          {!isMobile && <ResourceCover image={review.coverImage} size={24} />}
           <div className="min-w-0">
             <Text size="sm" lineClamp={1} fw={i === index ? 600 : undefined}>
               {review.modelName}
@@ -213,12 +215,15 @@ export function ResourceReviewStepper({
         </Group>
       )}
 
-      <div>
-        <Title order={3}>{current.modelName}</Title>
-        <Text size="sm" c="dimmed">
-          {getDisplayName(current.modelType ?? 'unknown')} · {current.modelVersionName}
-        </Text>
-      </div>
+      <Group gap="sm" wrap="nowrap">
+        <ResourceCover image={current.coverImage} size={64} />
+        <div className="min-w-0">
+          <Title order={3}>{current.modelName}</Title>
+          <Text size="sm" c="dimmed">
+            {getDisplayName(current.modelType ?? 'unknown')} · {current.modelVersionName}
+          </Text>
+        </div>
+      </Group>
 
       {images.length > 1 && (
         <Stack gap={6}>

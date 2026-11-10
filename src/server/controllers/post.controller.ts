@@ -67,6 +67,7 @@ import {
   getPostContestCollectionDetails,
   getPostDetail,
   getPostResources,
+  attachPostResourceCovers,
   getPostsInfinite,
   getPostTags,
   removePostTag,
@@ -849,7 +850,7 @@ export const getPostResourcesHandler = async ({
     await assertPostVisibleToViewer({ ...input, user: ctx.user });
     const resources = await getPostResources({ ...input });
 
-    return resources.filter((x) => x.name !== 'vae');
+    return await attachPostResourceCovers(resources.filter((x) => x.name !== 'vae'));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
