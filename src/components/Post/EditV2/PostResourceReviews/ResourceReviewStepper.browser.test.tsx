@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { useFormContext } from 'react-hook-form';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+import type * as BrowsingLevelModule from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as FormModule from '~/libs/form';
 import type * as TrpcModule from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
@@ -58,7 +59,6 @@ const resourceRow = (modelVersionId: number, modelName: string) => ({
   reviewRecommended: null,
   reviewDetails: null,
   reviewCreatedAt: null,
-  coverImage: null as null | Record<string, unknown>,
 });
 const cover = (nsfwLevel: number) => ({
   id: 1,
@@ -73,6 +73,14 @@ const cover = (nsfwLevel: number) => ({
   minor: false,
 });
 
+const covers = vi.hoisted(() => ({
+  current: {} as Record<number, Record<string, unknown> | null>,
+}));
+vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowsingLevelModule>()),
+  useBrowsingLevelDebounced: () => 1,
+}));
+
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: makeTrpcProxy(
@@ -80,6 +88,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       'post.getResources': {
         useQuery: (_input: unknown, opts: object) =>
           useQuery({ queryKey: key, queryFn: async () => [], ...opts }, client),
+      },
+      'post.getResourceCovers': {
+        useQuery: (_input: unknown, opts: { enabled?: boolean }) => ({
+          data: opts.enabled === false ? undefined : covers.current,
+        }),
       },
       'resourceReview.upsert': { useMutation: () => ({ mutateAsync: upsert }) },
     },
@@ -117,6 +130,7 @@ const button = (name: string) => page.getByRole('button', { name, exact: true })
 
 beforeEach(() => {
   resetPendingForTests();
+  covers.current = {};
   client.setQueryData(key, [resourceRow(5, 'Cool LoRA'), resourceRow(6, 'Other Model')]);
   upsert.mockReset();
   upsert.mockImplementation(async (input: object) => ({ id: 99, details: null, ...input }));
@@ -127,10 +141,7 @@ const manyResources = (count: number) =>
 
 describe('ResourceReviewStepper cover', () => {
   test('the header shows the current resource cover and the rail a thumbnail for each cover', async () => {
-    client.setQueryData(key, [
-      { ...resourceRow(5, 'Cool LoRA'), coverImage: cover(1) },
-      resourceRow(6, 'Other Model'),
-    ]);
+    covers.current = { 5: cover(1), 6: null };
     await open();
 
     await expect.element(page.getByTestId('resource-cover').first()).toBeVisible();
@@ -152,7 +163,7 @@ describe('ResourceReviewStepper cover', () => {
   });
 
   test("a cover above the viewer's level renders blurred instead of the image", async () => {
-    client.setQueryData(key, [{ ...resourceRow(5, 'Cool LoRA'), coverImage: cover(8) }]);
+    covers.current = { 5: cover(8) };
     await open();
 
     await expect.element(page.getByTestId('blurred-cover').first()).toBeInTheDocument();

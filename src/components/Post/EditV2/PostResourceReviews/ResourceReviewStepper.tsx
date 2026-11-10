@@ -16,6 +16,7 @@ import {
 import { IconCircleDashed, IconPencil, IconX } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import {
@@ -28,6 +29,7 @@ import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { Form, InputRTE, useForm } from '~/libs/form';
 import { getDisplayName } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
 /** What the dialog needs from a post image; it renders outside `PostEditProvider`. */
 export type StepperImage = { id: number; url: string; type: string; modelVersionIds: number[] };
@@ -83,6 +85,12 @@ export function ResourceReviewStepper({
     postId,
     ownerId,
   });
+  const browsingLevel = useBrowsingLevelDebounced();
+  // Covers come from an owner-only query that filters by the viewer's browsing level server-side.
+  const { data: covers } = trpc.post.getResourceCovers.useQuery(
+    { id: postId, browsingLevel },
+    { enabled: canReview }
+  );
   const [index, setIndex] = useState(() => startIndex(reviews, modelVersionId));
   const [saving, setSaving] = useState(false);
   const drafts = useRef(new Map<number, string>());
@@ -167,7 +175,9 @@ export function ResourceReviewStepper({
           className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-gray-1 hover:dark:bg-dark-5"
         >
           <StateIcon review={review} current={i === index} />
-          {!isMobile && <ResourceCover image={review.coverImage} size={24} />}
+          {!isMobile && (
+            <ResourceCover image={covers?.[review.modelVersionId as number]} size={24} />
+          )}
           <div className="min-w-0">
             <Text size="sm" lineClamp={1} fw={i === index ? 600 : undefined}>
               {review.modelName}
@@ -216,7 +226,7 @@ export function ResourceReviewStepper({
       )}
 
       <Group gap="sm" wrap="nowrap">
-        <ResourceCover image={current.coverImage} size={64} />
+        <ResourceCover image={covers?.[currentId]} size={64} />
         <div className="min-w-0">
           <Title order={3}>{current.modelName}</Title>
           <Text size="sm" c="dimmed">

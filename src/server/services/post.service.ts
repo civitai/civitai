@@ -90,7 +90,9 @@ import {
   isPlainOwnerDelete,
   imagesWithOpenReports,
 } from '~/server/services/image.service';
-import type { AssertPostOwnedBy } from '~/server/services/image.service';
+import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/services/image.service';
+import { Flags } from '~/shared/utils/flags';
+import { hasCompleteSfwFace, imagesForFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { invalidateHiddenImageMetadata } from '~/server/services/hidden-meta-invalidation.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
@@ -120,6 +122,7 @@ import {
   MediaType,
   Model3DStatus,
   ModelHashType,
+  ModelModifier,
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
@@ -2057,31 +2060,81 @@ export const getPostResources = async ({ id }: GetByIdInput) => {
   });
 };
 
-/**
- * Each row gets its version's first showcase image from the shared version-image cache, one read
- * for all versions. The cache already drops unpublished, blocked and unreviewed images; it is not
- * viewer-aware, so the client blurs by the viewer's browsing level (ImageGuard2), as model cards do.
- */
-export const attachPostResourceCovers = async <T extends { modelVersionId: number | null }>(
-  rows: T[]
-) => {
-  const versionIds = [...new Set(rows.map((row) => row.modelVersionId).filter(isDefined))];
-  // Covers are decoration: a cache failure must not take the review list down with it.
-  const byVersion = versionIds.length
-    ? await imagesForModelVersionsCache.fetch(versionIds).catch((error: Error) => {
-        logToAxiom({
-          name: 'post-service',
-          type: 'error',
-          message: 'post resource covers unavailable',
-          error: error.message,
-        }).catch();
-        return {} as Awaited<ReturnType<typeof imagesForModelVersionsCache.fetch>>;
-      })
-    : {};
+type PostResourceCover = Pick<
+  ImagesForModelVersions,
+  'id' | 'userId' | 'url' | 'type' | 'nsfwLevel' | 'width' | 'height' | 'hash' | 'poi' | 'minor'
+>;
 
-  return rows.map((row) => {
-    const cover = row.modelVersionId ? byVersion[row.modelVersionId]?.images[0] : undefined;
-    const coverImage = cover
+/**
+ * The covers of a post's resources for its owner (or a moderator), keyed by model version. The
+ * cover is the first image of the shared version-image cache that the viewer's browsing level
+ * allows; a mature model listed on .com through its face sends only its PG/PG-13 images there.
+ * A version of a taken-down model, or of another user's private model, has none. Covers are
+ * decoration, so a cache failure yields none rather than an error.
+ */
+export const getPostResourceCovers = async ({
+  id,
+  user,
+  browsingLevel,
+}: GetByIdInput & { user: SessionUser; browsingLevel: number }) => {
+  const post = await dbRead.post.findUnique({ where: { id }, select: { userId: true } });
+  if (!post || (post.userId !== user.id && !user.isModerator)) throw throwAuthorizationError();
+
+  const resources = await getPostResources({ id });
+  const versionIds = [
+    ...new Set(resources.filter((x) => x.name !== 'vae').map((x) => x.modelVersionId)),
+  ].filter(isDefined);
+  const covers: Record<number, PostResourceCover | null> = Object.fromEntries(
+    versionIds.map((versionId) => [versionId, null])
+  );
+  if (!versionIds.length) return covers;
+
+  const versions = await dbRead.modelVersion.findMany({
+    where: { id: { in: versionIds } },
+    select: {
+      id: true,
+      model: {
+        select: {
+          mode: true,
+          nsfw: true,
+          nsfwLevel: true,
+          sfwName: true,
+          sfwCoverImageId: true,
+          availability: true,
+          userId: true,
+        },
+      },
+    },
+  });
+  const servable = versions.filter(
+    ({ model }) =>
+      model.mode !== ModelModifier.TakenDown &&
+      (model.availability !== Availability.Private || model.userId === user.id)
+  );
+  if (!servable.length) return covers;
+
+  const byVersion = await imagesForModelVersionsCache
+    .fetch(servable.map((version) => version.id))
+    .catch((error: Error) => {
+      logToAxiom({
+        name: 'post-service',
+        type: 'error',
+        message: 'post resource covers unavailable',
+        error: error.message,
+      }).catch();
+      return undefined;
+    });
+  if (!byVersion) return covers;
+
+  const showSfwFace = showsSfwFace(browsingLevel);
+  for (const { id: versionId, model } of servable) {
+    const images = imagesForFace(
+      byVersion[versionId]?.images ?? [],
+      { nsfw: model.nsfw, hasSfwFace: hasCompleteSfwFace(model) },
+      showSfwFace
+    ).filter((image) => Flags.intersects(image.nsfwLevel, browsingLevel));
+    const cover = images[0];
+    covers[versionId] = cover
       ? {
           id: cover.id,
           userId: cover.userId,
@@ -2095,8 +2148,8 @@ export const attachPostResourceCovers = async <T extends { modelVersionId: numbe
           minor: cover.minor,
         }
       : null;
-    return { ...row, coverImage };
-  });
+  }
+  return covers;
 };
 
 export const updatePostNsfwLevel = async (ids: number | number[]) => {

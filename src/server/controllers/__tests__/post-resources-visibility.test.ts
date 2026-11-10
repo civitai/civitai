@@ -8,19 +8,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * moderates); its predicate against a real database is pinned in hot-reads-6.kysely-parity.test.ts.
  */
 
-const { mockGetPostDetail, mockGetPostResources, mockAmIBlockedByUser, mockAttachCovers } =
-  vi.hoisted(() => ({
-    mockGetPostDetail: vi.fn(),
-    mockGetPostResources: vi.fn(),
-    mockAmIBlockedByUser: vi.fn(),
-    mockAttachCovers: vi.fn(),
-  }));
+const { mockGetPostDetail, mockGetPostResources, mockAmIBlockedByUser } = vi.hoisted(() => ({
+  mockGetPostDetail: vi.fn(),
+  mockGetPostResources: vi.fn(),
+  mockAmIBlockedByUser: vi.fn(),
+}));
 
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getPostDetail: mockGetPostDetail,
   getPostResources: mockGetPostResources,
-  attachPostResourceCovers: mockAttachCovers,
 }));
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -68,7 +65,6 @@ beforeEach(() => {
   mockGetPostDetail.mockReset();
   mockGetPostResources.mockReset().mockResolvedValue(ROWS);
   mockAmIBlockedByUser.mockReset().mockResolvedValue(false);
-  mockAttachCovers.mockReset().mockImplementation(async (rows: unknown[]) => rows);
 });
 
 describe('post.getResources visibility', () => {
@@ -78,16 +74,12 @@ describe('post.getResources visibility', () => {
     expect(await resourcesFor(STRANGER)).toEqual([ROWS[0]]);
   });
 
-  it('looks covers up only for the rows it returns, so a vae costs no cover read', async () => {
+  it('carries no cover image: covers are served only to the post owner by post.getResourceCovers', async () => {
     postIs({});
-    await resourcesFor(ANON);
-    expect(mockAttachCovers).toHaveBeenCalledWith([ROWS[0]]);
-  });
-
-  it('does not look covers up for a post the viewer cannot see', async () => {
-    postIs({ private: true });
-    await resourcesFor(STRANGER);
-    expect(mockAttachCovers).not.toHaveBeenCalled();
+    expect(await resourcesFor(ANON)).toEqual([ROWS[0]]);
+    expect(await resourcesFor(ANON)).not.toContainEqual(
+      expect.objectContaining({ coverImage: expect.anything() })
+    );
   });
 
   it.each([
