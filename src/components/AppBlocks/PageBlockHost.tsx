@@ -183,6 +183,7 @@ import {
   downloadUrlAsBlob,
   isAllowedSaveImageUrl,
   processSaveBytes,
+  verifySaveBytesContent,
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
   SAVE_IMAGE_MAX_CONCURRENT,
@@ -3944,8 +3945,10 @@ export function PageBlockHost({
   // the first await is atomic per message), mirroring wildcardInFlightRef.
   const saveImageInFlightRef = useRef<number>(0);
   // `bytes` saves are limited separately, over a rolling window (processSaveBytes):
-  // they never await, so the in-flight count above would be released before the
-  // next message and bound nothing. Same ref-not-state reasoning.
+  // most never await, so the in-flight count above would be released before the
+  // next message and bound nothing. A zip does await (its inflate check), but it is
+  // recorded in the window synchronously BEFORE that await, so a burst of zips is
+  // still bounded by the window. Same ref-not-state reasoning.
   const saveBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
   // Separate from saveBytesWindowRef: uploads have their own, longer window (imageUploadBytes.ts).
   const uploadBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
@@ -3974,9 +3977,13 @@ export function PageBlockHost({
   //            can NEVER be saved.
   //   • bytes — a file the block produced in its tab. Nothing is fetched; the type
   //            is classified from the content (processSaveBytes) and only
-  //            image/JSON/text can be saved, under the classified extension.
+  //            image/JSON/text — or a validated .zip (saveZipValidate.ts: structure,
+  //            local headers, entry names/types, declared sizes, then an inflate
+  //            check before the download) — can be saved, under the classified
+  //            extension.
   //            Limited per host to SAVE_BYTES_MAX_PER_WINDOW saves and
-  //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes per rolling window; past
+  //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes (a zip:
+  //            SAVE_BYTES_ZIP_MAX_BYTES_PER_WINDOW) per rolling window; past
   //            either it replies `busy`.
   // A NON-download UI affordance, so NO reviewMode NACK (it saves what the viewer
   // already sees). REQUEST-style ⇒ every path replies (ok:false on any refusal)
@@ -3999,6 +4006,13 @@ export function PageBlockHost({
           saveBytesWindowRef.current = recent;
           if (!result.ok) {
             send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: result.error });
+            return;
+          }
+          // A zip's deflated entries must inflate to their declared sizes BEFORE the download
+          // (a no-op for every other type). The window already counted this save.
+          const contentError = await verifySaveBytesContent(req.bytes, result);
+          if (contentError) {
+            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: contentError });
             return;
           }
           downloadBytesAsBlob(req.bytes, result.type, result.filename);
