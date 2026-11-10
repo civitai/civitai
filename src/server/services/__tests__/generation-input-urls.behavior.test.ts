@@ -488,6 +488,30 @@ describe('an App Blocks generation source', () => {
     expect(logged).not.toContain(own.replace(/-/g, ''));
   });
 
+  it('refuses a row-less key from an app while either issue store is unreadable, and logs it', async () => {
+    const own = '11111111-2222-4333-8444-555555555555';
+    await recordUploadKeyOwner(own, CALLER);
+    const unusable = `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`;
+
+    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+    loggingMock.logToAxiom.mockClear();
+    expect(await check([own], 'appBlocksPassThrough', true)).toBe(unusable);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'app-block-source-refusal', reason: 'store-unreadable' })
+    );
+    const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls).toLowerCase();
+    expect(logged).not.toContain(own);
+    expect(logged).not.toContain(own.replace(/-/g, ''));
+
+    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+    expect(await check([CDN(own)], 'appBlocksPassThrough')).toMatch(/^refused: /);
+
+    holder.clickhouseDown = true;
+    expect(await check([KEY], 'appBlocksPassThrough', true)).toBe(unusable);
+    // Off the app paths one unreadable store still is not enough to refuse.
+    expect(await check([KEY], 'generateFromGraph', true)).toBe('accepted');
+  });
+
   it('logs an external url refusal with mode refuse when the app refusal is on', async () => {
     loggingMock.logToAxiom.mockClear();
     await check(['https://example.com/a.png'], 'appBlocksPassThrough');

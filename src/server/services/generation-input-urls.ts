@@ -58,7 +58,7 @@ export async function assertStoredImageUrlsUnblocked(urls: string[]) {
   if (blocked.length) throw generationImageUnavailableError();
 }
 
-type AppSourceRefusal = 'held' | 'unscannable' | 'pending' | 'unrowed';
+type AppSourceRefusal = 'held' | 'unscannable' | 'pending' | 'unrowed' | 'store-unreadable';
 
 type InputImageRow = {
   url: string;
@@ -173,8 +173,13 @@ async function assertKeysUsable({
     // Only an issue record to someone else marks it as ours; an unrecorded uuid may be anyone's id.
     // One issue-record and request-log read over every unrowed key.
     const issuers = await keyIssuers({ urls: unrowed, userId, maxKeys });
-    const unreadable = issuers.recordReadFailed && issuers.requestLogReadFailed;
-    if (issuers.tooMany || issuers.issuedToOthers.length || unreadable)
+    if (issuers.tooMany || issuers.issuedToOthers.length) throw generationImageUnavailableError();
+    // With either store unreadable, an app's unscanned upload could pass as an opaque key.
+    if (appBlock && (issuers.recordReadFailed || issuers.requestLogReadFailed)) {
+      appBlock.refusing('store-unreadable');
+      throw appSourceUnusableError();
+    }
+    if (issuers.recordReadFailed && issuers.requestLogReadFailed)
       throw generationImageUnavailableError();
     // A key issued to the caller with no row is an upload that never reached the scan.
     const unrecorded = new Set(issuers.unrecorded);
@@ -242,7 +247,6 @@ export type GenerationInputEntryPoint =
   | 'remixAppQuote'
   | 'articleReframe';
 
-/** Entry points where an external host is only counted while the external-host flag is off. */
 /** App Blocks entries: their sources must be scanned, unflagged images stored on Civitai. */
 const APP_BLOCK_ENTRIES = new Set<GenerationInputEntryPoint>([
   'appBlocks',
@@ -251,6 +255,7 @@ const APP_BLOCK_ENTRIES = new Set<GenerationInputEntryPoint>([
   'appBlocksWorkflow',
 ]);
 
+/** Entry points where an external host is only counted while the external-host flag is off. */
 const EXTERNAL_COUNTED_ENTRIES = new Set<GenerationInputEntryPoint>([
   'generateFromGraph',
   'whatIfFromGraph',
