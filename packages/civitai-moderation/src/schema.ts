@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
 
 // The wire contract for each moderator action the spoke exposes at `/api/mod/[action]`. Shared so the
 // spoke endpoint validates against the exact shape the main-app client sends — producer and consumer
@@ -85,7 +86,7 @@ export const MAX_FINDINGS_PER_REPORT = 1_000;
 export const MAX_REASON_LENGTH = 2_000;
 
 /** Declared once and used by both timestamp fields, so neither can regress without the other. */
-const isoWithOffset = z.iso.datetime({ offset: true });
+const isoWithOffset = isoDatetimeCompat({ offset: true });
 
 /**
  * 🔴 Every cross-field rule below exists because the receiving table has a CHECK constraint, and a

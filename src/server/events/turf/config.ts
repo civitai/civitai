@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
 import { REDIS_SUB_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { scoreTierKey } from '~/shared/constants/creator-journey.constants';
 import type { CatchUpStep, CreditStep, SupplyStep } from '~/server/events/turf/schedule';
@@ -69,7 +70,7 @@ const overrideSchema = z
     ttlHours: z.number().positive(),
     // An ISO datetime only: coercing null, 0 or "0" reads as 1970 or 2000, and expires every old
     // sticker at once.
-    rolloutAt: z.iso.datetime({ offset: true }).pipe(z.coerce.date()),
+    rolloutAt: isoDatetimeCompat({ offset: true }).pipe(z.coerce.date()),
     creditedPlayers: z
       .array(z.object({ from: stepDate, players: z.number().int().positive() }))
       .min(1),

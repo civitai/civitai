@@ -216,6 +216,21 @@ describe('getMyAppCustomEvents — gate and delegation', () => {
     });
   });
 
+  it('takes a minute-precision range, read as :00', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await caller.getMyAppCustomEvents({
+      appBlockId: 'apb_1',
+      from: '2026-06-01T00:00Z',
+      to: '2026-06-21T00:00Z',
+    });
+    expect(mockGetMyAppCustomEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: new Date('2026-06-01T00:00:00Z'),
+        to: new Date('2026-06-21T00:00:00Z'),
+      })
+    );
+  });
+
   it('non-moderator: rejected before the service runs', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(normalUser) as never);
     await expect(caller.getMyAppCustomEvents({ appBlockId: 'apb_1' })).rejects.toBeInstanceOf(

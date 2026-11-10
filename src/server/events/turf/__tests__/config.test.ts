@@ -76,6 +76,13 @@ describe('applyTurfOverride: sticker lifetime and team-relative credit', () => {
     });
   });
 
+  it('reads a hand-written minute-precision rollout as :00 instead of dropping the override', () => {
+    const raw = JSON.stringify({ ...ENABLE, rolloutAt: '2026-11-08T12:00Z' });
+    const { config, invalid } = applyTurfOverride(BASE, raw);
+    expect(invalid).toBe(false);
+    expect(config.rolloutAt).toEqual(new Date('2026-11-08T12:00:00Z'));
+  });
+
   it.each([
     ['a zero lifetime', { ttlHours: 0 }],
     ['a lifetime as a string', { ttlHours: '48' }],

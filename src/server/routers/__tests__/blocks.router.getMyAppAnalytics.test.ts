@@ -184,6 +184,18 @@ beforeEach(() => {
 });
 
 describe('getMyAppAnalytics — gate', () => {
+  it('takes a minute-precision range, read as :00', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await caller.getMyAppAnalytics({
+      appBlockId: 'apb_1',
+      from: '2026-09-01T00:00Z',
+      to: '2026-09-30T00:00Z',
+    });
+    const args = mockGetMyAppAnalytics.mock.calls[0][0] as { from?: Date; to?: Date };
+    expect(args.from).toEqual(new Date('2026-09-01T00:00:00Z'));
+    expect(args.to).toEqual(new Date('2026-09-30T00:00:00Z'));
+  });
+
   it('moderator: gate passes, service called with the session user id', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const result = await caller.getMyAppAnalytics({ appBlockId: 'apb_1' });
@@ -373,6 +385,14 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     const revenueArgs = mockGetRevenueForOwner.mock.calls[0]?.[0] as { from?: Date; to?: Date };
     expect(revenueArgs.from).toEqual(from);
     expect(revenueArgs.to).toEqual(to);
+  });
+
+  it('takes a minute-precision range, read as :00', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await caller.getMyRevenue({ from: '2026-09-01T00:00Z', to: '2026-09-30T00:00Z' });
+    const revenueArgs = mockGetRevenueForOwner.mock.calls[0]?.[0] as { from?: Date; to?: Date };
+    expect(revenueArgs.from).toEqual(new Date('2026-09-01T00:00:00Z'));
+    expect(revenueArgs.to).toEqual(new Date('2026-09-30T00:00:00Z'));
   });
 
   it('UNREADABLE goods table: the rail is flagged, the rest of the payload survives', async () => {
