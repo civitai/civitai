@@ -11,6 +11,12 @@ const stylesheet = document.createElement('style');
 stylesheet.textContent = `.fixed { position: fixed; } .mantine-Popover-dropdown { position: absolute; }`;
 document.head.append(stylesheet);
 
+// The real hook reads `(hover: hover)`, which an earlier file's touch emulation can leave false.
+vi.mock('~/components/UserAvatar/UserHoverCard', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useHoverCapable: () => true,
+}));
+
 vi.mock('~/components/Sticker/sticker-attribution.util', () => ({
   useStickerAttribution: () => ({
     sticker: { name: 'Wave', shopHref: null, creatorId: null },
