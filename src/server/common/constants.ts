@@ -925,6 +925,11 @@ const baseLicenses: Record<string, LicenseDetails> = {
     poweredBy: 'MiniMax H3',
     requiresSameLicense: true,
   },
+  'minimax tos': {
+    // The hosted API's terms; same text as licence 33 in basemodel.constants.
+    url: 'https://hailuoai.video/doc/terms-of-service.html',
+    name: 'MiniMax Hailuo AI Terms of Service',
+  },
   'minimax music 3': {
     // Permalinked for the same reason as H3 above: section 5.2 lets MiniMax amend
     // the published text.
@@ -1111,6 +1116,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Ideogram 4.5': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
+  'MiniMax H3 Image': baseLicenses['minimax tos'],
   'Krea 2': baseLicenses['krea 2 community'],
   'Krea 2 Turbo': baseLicenses['krea 2 community'],
   Ernie: baseLicenses['apache 2.0'],

@@ -236,6 +236,9 @@ export const ECO = {
   Flux3Klein: 94,
   Flux3Klein_base: 95,
   MossImage: 96,
+  // MiniMax's hosted image model. Its own ecosystem, not a MiniMaxH3 version: H3 is video
+  // on our own weights, with LoRAs and training, none of which apply here.
+  MiniMaxH3Image: 97,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -872,6 +875,13 @@ export const ecosystems: EcosystemRecord[] = [
     // txt2vid + img2vid (no vid2vid support currently)
   },
   {
+    id: ECO.MiniMaxH3Image,
+    key: 'MiniMaxH3Image',
+    displayName: 'MiniMax H3 Image',
+    familyId: 26,
+    sortOrder: 165,
+  },
+  {
     id: ECO.Kling,
     key: 'Kling',
     displayName: 'Kling',
@@ -1289,6 +1299,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // build takes no resources); LORA training is AI Toolkit only
   { ecosystemId: ECO.MiniMaxH3, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.MiniMaxH3, supportType: 'training', modelTypes: loraOnly },
+  // MiniMax H3 Image - the hosted API only: checkpoint only, no training row.
+  { ecosystemId: ECO.MiniMaxH3Image, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Kling - checkpoint only
   { ecosystemId: ECO.Kling, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1787,6 +1799,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
       // The comfy variant, not the hosted API one: it is the version the model
       // page publishes, and the only one that takes LoRAs.
       model: { id: 3216500 },
+    },
+  },
+  {
+    ecosystemId: ECO.MiniMaxH3Image,
+    defaults: {
+      // PENDING: the Draft model version does not exist yet. 0 matches no version.
+      model: { id: 0 },
+      modelLocked: true,
     },
   },
   {
@@ -2441,6 +2461,7 @@ export const BM = {
   Flux3Klein: 115,
   Flux3Klein_base: 116,
   MossImage: 117,
+  MiniMaxH3Image: 118,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -4010,6 +4031,17 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'video',
     ecosystemId: ECO.MiniMaxH3,
     licenseId: 41,
+  },
+
+  // MiniMax H3 Image
+  {
+    id: BM.MiniMaxH3Image,
+    name: 'MiniMax H3 Image',
+    description: "MiniMax's image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.MiniMaxH3Image,
+    hidden: true,
+    licenseId: 33,
   },
 
   // Kling

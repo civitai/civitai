@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
+import { getEcosystemStates } from '~/shared/form-graph/generation/ecosystem-gates';
 import type { GenerationCtx } from '~/shared/generation/context';
 import type { GenerationHandlerCtx, GenerationData } from '../../orchestration-new.service';
 import type * as FliptClient from '~/server/flipt/client';
@@ -359,6 +360,112 @@ describe('krea3.handler', () => {
       expectFlags: { krea3Ultra: true },
     });
     expect(firstInput(at1k)).toMatchObject({ resolution: '1k', thinkingMode: 'instant' });
+  });
+});
+
+describe('minimax-h3-image.handler', () => {
+  const MOD = { minimaxH3ImageGenerator: true };
+
+  it('create sends resolution and ratio, no images, and leaves enhancement on', async () => {
+    const create = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MiniMaxH3Image',
+      expectFlags: MOD,
+      prompt: 'a cat',
+      resolution: '4K',
+      aspectRatio: '16:9',
+      quantity: 3,
+      images: [IMAGE],
+    });
+    expect(firstInput(create)).toEqual({
+      engine: 'minimax-h3-image',
+      prompt: 'a cat',
+      quantity: 3,
+      resolution: '4K',
+      aspectRatio: '16:9',
+    });
+  });
+
+  it('turning enhancement off on create sends disablePromptEnhancement', async () => {
+    const create = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MiniMaxH3Image',
+      expectFlags: MOD,
+      prompt: 'a cat',
+      enablePromptExpansion: false,
+    });
+    expect(firstInput(create)).toMatchObject({
+      resolution: '1K',
+      aspectRatio: '1:1',
+      disablePromptEnhancement: true,
+    });
+  });
+
+  it('edit sends the references in order with aspectRatio auto, and never disables enhancement', async () => {
+    const edit = await dispatch({
+      workflow: 'img2img:edit',
+      ecosystem: 'MiniMaxH3Image',
+      expectFlags: MOD,
+      prompt: 'a cat',
+      aspectRatio: '16:9',
+      enablePromptExpansion: false,
+      images: [IMAGE, IMAGE2],
+    });
+    expect(firstInput(edit)).toEqual({
+      engine: 'minimax-h3-image',
+      prompt: 'a cat',
+      quantity: 1,
+      resolution: '1K',
+      aspectRatio: 'auto',
+      images: [IMAGE.url, IMAGE2.url],
+    });
+  });
+
+  it('caps quantity at 10 even when the tier allows more', () => {
+    const parsed = generationHub.parse(
+      { workflow: 'txt2img', ecosystem: 'MiniMaxH3Image', prompt: 'a cat', quantity: 12 },
+      { ...BASE, limits: { ...BASE.limits, maxQuantity: 12 }, flags: MOD }
+    );
+    expect(parsed.success && (parsed.data as { quantity: number }).quantity).toBe(10);
+  });
+
+  it('accepts sixteen references and no more', () => {
+    const images = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ ...IMAGE, url: `https://example.com/${i}.png` }));
+    const parse = (n: number) =>
+      generationHub.parse(
+        {
+          workflow: 'img2img:edit',
+          ecosystem: 'MiniMaxH3Image',
+          prompt: 'a cat',
+          images: images(n),
+        },
+        { ...BASE, flags: MOD }
+      );
+    const sixteen = parse(16);
+    expect(sixteen.success && (sixteen.data as { images: unknown[] }).images).toHaveLength(16);
+    const seventeen = parse(17);
+    expect(seventeen.success && (seventeen.data as { images: unknown[] }).images).not.toHaveLength(
+      17
+    );
+  });
+
+  // The flag is the only thing keeping it from everyone before whatIf prices it.
+  it('without the flag it is not offered, and a submission naming it never reaches it', () => {
+    const input = { workflow: 'txt2img', ecosystem: 'MiniMaxH3Image', prompt: 'a cat' };
+    const ecosystemOf = (ext: GenerationCtx) => {
+      const parsed = generationHub.parse(input, ext);
+      return parsed.success ? (parsed.data as { ecosystem: string }).ecosystem : undefined;
+    };
+    expect(ecosystemOf({ ...BASE, flags: MOD })).toBe('MiniMaxH3Image');
+    expect(ecosystemOf(BASE)).not.toBe('MiniMaxH3Image');
+
+    expect(getEcosystemStates('txt2img', { ...BASE, flags: MOD }).compatibleEcosystems).toContain(
+      'MiniMaxH3Image'
+    );
+    const off = getEcosystemStates('txt2img', BASE);
+    expect(off.compatibleEcosystems).not.toContain('MiniMaxH3Image');
+    expect(off.hiddenEcosystems).toContain('MiniMaxH3Image');
   });
 });
 
