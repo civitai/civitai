@@ -1,4 +1,4 @@
-import { ActionIcon, Group, Text } from '@mantine/core';
+import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
 import { usePostResourceReviews } from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
@@ -27,30 +27,34 @@ export function ResourceReviewThumbs({
 
   return (
     <Group gap={4} wrap="nowrap" data-tour="post:rate-resource">
-      <ActionIcon
-        size={size}
-        radius="md"
-        variant={recommended === true ? 'light' : 'subtle'}
-        color={recommended === true ? 'success' : 'gray'}
-        aria-label={`Recommend ${name}`}
-        aria-pressed={recommended === true}
-        disabled={disabled}
-        onClick={() => (recommended !== true ? rate(modelVersionId, true) : undefined)}
-      >
-        <ThumbsUpIcon size={18} filled={recommended === true} />
-      </ActionIcon>
-      <ActionIcon
-        size={size}
-        radius="md"
-        variant={recommended === false ? 'light' : 'subtle'}
-        color={recommended === false ? 'red' : 'gray'}
-        aria-label={`Not for me: ${name}`}
-        aria-pressed={recommended === false}
-        disabled={disabled}
-        onClick={() => (recommended !== false ? rate(modelVersionId, false) : undefined)}
-      >
-        <ThumbsDownIcon size={18} filled={recommended === false} />
-      </ActionIcon>
+      <Tooltip label={recommended === true ? 'Recommended' : 'Recommend'}>
+        <ActionIcon
+          size={size}
+          radius="md"
+          variant={recommended === true ? 'light' : 'subtle'}
+          color={recommended === true ? 'success' : 'gray'}
+          aria-label={`Recommend ${name}`}
+          aria-pressed={recommended === true}
+          disabled={disabled}
+          onClick={() => (recommended !== true ? rate(modelVersionId, true) : undefined)}
+        >
+          <ThumbsUpIcon size={18} filled={recommended === true} />
+        </ActionIcon>
+      </Tooltip>
+      <Tooltip label="Not for me">
+        <ActionIcon
+          size={size}
+          radius="md"
+          variant={recommended === false ? 'light' : 'subtle'}
+          color={recommended === false ? 'red' : 'gray'}
+          aria-label={`Not for me: ${name}`}
+          aria-pressed={recommended === false}
+          disabled={disabled}
+          onClick={() => (recommended !== false ? rate(modelVersionId, false) : undefined)}
+        >
+          <ThumbsDownIcon size={18} filled={recommended === false} />
+        </ActionIcon>
+      </Tooltip>
     </Group>
   );
 }

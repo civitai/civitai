@@ -1,4 +1,4 @@
-import { ActionIcon } from '@mantine/core';
+import { ActionIcon, Tooltip } from '@mantine/core';
 import { IconMessageCircle } from '@tabler/icons-react';
 import { openResourceReviewStepper } from '~/components/Post/EditV2/PostResourceReviews/openResourceReviewStepper';
 import { useStepperImagesGetter } from '~/components/Post/EditV2/PostResourceReviews/useStepperImages';
@@ -23,17 +23,19 @@ export function ResourceReviewEditButton({
   const hasComment = !!review.reviewDetails?.trim();
   const name = modelName ?? 'this resource';
   return (
-    <ActionIcon
-      size="input-sm"
-      radius="md"
-      variant="subtle"
-      color={hasComment ? 'success' : 'gray'}
-      aria-label={hasComment ? `Edit review of ${name}` : `Write a review of ${name}`}
-      onClick={() =>
-        openResourceReviewStepper({ postId, ownerId, modelVersionId, images: getImages() })
-      }
-    >
-      <IconMessageCircle size={18} />
-    </ActionIcon>
+    <Tooltip label={hasComment ? 'Edit review' : 'Write a review'}>
+      <ActionIcon
+        size="input-sm"
+        radius="md"
+        variant="subtle"
+        color={hasComment ? 'success' : 'gray'}
+        aria-label={hasComment ? `Edit review of ${name}` : `Write a review of ${name}`}
+        onClick={() =>
+          openResourceReviewStepper({ postId, ownerId, modelVersionId, images: getImages() })
+        }
+      >
+        <IconMessageCircle size={18} />
+      </ActionIcon>
+    </Tooltip>
   );
 }
