@@ -63,7 +63,7 @@ async function grant(entry: CrucibleEntryRef & { acceptedAt: Date }) {
         AND c.data->>'event' = ${event.name}
         AND c.data->>'design' = ${join.design}
         AND c.data->>'team' IS NOT NULL
-      ORDER BY uc."createdAt", c.id
+      ORDER BY uc."obtainedAt", c.id
       LIMIT 1
     `;
     if (!player?.eligible || !event.teams.includes(player.team)) continue;
