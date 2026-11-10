@@ -272,6 +272,13 @@ describe('createSessionClient — resolveSessionUser (why a token did not resolv
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('a non-numeric subject → invalid, no fetch', async () => {
+    h.verifyToken.mockImplementation(async () => ({ sub: 'abc', iss: 'https://auth.test' }));
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    expect(await createSessionClient().resolveSessionUser('7')).toEqual(INVALID);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('an untrusted issuer → invalid, no fetch', async () => {
     h.verifyToken.mockImplementation(async (t: string) => ({ sub: t, iss: 'https://evil.test' }));
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
