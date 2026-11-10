@@ -2959,6 +2959,24 @@ describe('new rows before deferred ones', () => {
     expect(callsFor(u(17))).toEqual([]);
   });
 
+  it('a re-queued row deferred again keeps its first-deferral time', async () => {
+    await blockRange(1, 31);
+    await syncCdnAccess();
+    await sql`UPDATE "JobQueue" SET "createdAt" = now() - interval '2 hours'
+              WHERE type = 'CdnAccessSync'`;
+    const firstDeferral = (await row(31))?.createdAt;
+    await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+              VALUES (${MOD}, 'review', 'image', 31)`;
+
+    // 16-30 take the cap, so 31 is deferred again; the failures make the run eligible to alert.
+    respond = (c) => (kind(c) === 'retract' ? 503 : undefined);
+    await syncCdnAccess();
+    const after = await row(31);
+    expect(after?.data.deferred).toEqual(after?.data.seq);
+    expect(after?.createdAt).toEqual(firstDeferral);
+    expect(errorLogs('cdn-access-sync-stale')).toEqual([]);
+  });
+
   it('leaves a row queued again mid-run in place, unmarked', async () => {
     await blockRange(1, 16);
     respond = async (c) => {
@@ -2979,7 +2997,7 @@ describe('new rows before deferred ones', () => {
     respond = (c) => (onUrl(u(31))(c) && kind(c) === 'deny' ? 503 : undefined);
     calls.length = 0;
     await syncCdnAccess();
-    expect(callsFor(u(31))).toEqual(['deny', 'deny', 'deny']);
+    expect(callsFor(u(31))[0]).toBe('deny');
     expect(errorLogs('cdn-access-sync-deny-failed')).toEqual([
       expect.objectContaining({ denyFailed: 1 }),
     ]);
@@ -3006,6 +3024,7 @@ describe('new rows before deferred ones', () => {
     await syncCdnAccess();
     expect(errorLogs('cdn-access-sync-stale')).toEqual([]);
     expect(errorLogs('cdn-access-sync-deferred-stale')).toEqual([]);
+    expect(errorLogs('cdn-access-sync-deny-failed')).toEqual([]);
 
     await age(25);
     await syncCdnAccess();

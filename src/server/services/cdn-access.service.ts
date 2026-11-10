@@ -1410,7 +1410,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
 
   const settled = (url: string) => !pending.has(url) && !deferred.has(url);
   const done = queue.filter((_, i) => urlsByRow[i].every(settled));
-  // Already-deferred rows keep their place, so the oldest deferral is retracted first.
+  // A row keeps its first-deferral time, even after a re-queue, so the oldest deferral goes first.
   const rotate = queue.filter(
     (q, i) =>
       !q.deferred && !urlsByRow[i].every(settled) && urlsByRow[i].every((url) => !pending.has(url))
@@ -1418,7 +1418,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   for (const q of rotate) {
     await dbWrite.$executeRaw`
       UPDATE "JobQueue"
-      SET "createdAt" = now(),
+      SET "createdAt" = CASE WHEN data ? 'deferred' THEN "createdAt" ELSE now() END,
           data = COALESCE(data, '{}'::jsonb) || jsonb_build_object('deferred', data->'seq')
       WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
         AND "entityType" = ${q.entityType}::"EntityType"
@@ -1437,8 +1437,8 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     `;
   }
 
-  // Deferred rows keep their first-deferral time and are already denied, so they have their own bound.
-  const oldest = queue.find((q) => !q.deferred)?.createdAt;
+  // A row deferred before carries its first-deferral time and has the 24h bound below instead.
+  const oldest = queue.find((q) => !q.data || !('deferred' in q.data))?.createdAt;
   if (failed && oldest && Date.now() - oldest.getTime() > QUEUE_AGE_ALERT_MS)
     logToAxiom({
       type: 'error',
