@@ -29,6 +29,7 @@ import {
   orderRemixApps,
   saveRemixApp,
   setRemixAppEnabled,
+  deleteRemixApp,
 } from '~/server/services/remix-app-registry.service';
 import { remixAppInputSchema, remixAppSlugSchema } from '~/shared/remix-apps/row.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -89,6 +90,9 @@ const remixAppAdminRouter = router({
   setEnabled: remixAppAdminProcedure
     .input(z.object({ slug: remixAppSlugSchema, enabled: z.boolean() }))
     .mutation(({ input }) => setRemixAppEnabled(input)),
+  delete: remixAppAdminProcedure
+    .input(z.object({ slug: remixAppSlugSchema }))
+    .mutation(({ input }) => deleteRemixApp(input)),
   order: remixAppAdminProcedure
     .input(z.object({ slugs: remixAppSlugSchema.array().max(100) }))
     .mutation(({ input }) => orderRemixApps(input.slugs)),

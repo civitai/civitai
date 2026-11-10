@@ -97,7 +97,7 @@ function RemixAppItem({
   imageId: number;
   price?: RemixAppPrice;
   loading: boolean;
-  /** Present on a pinned row: the menu unpins, the picker pins. */
+  /** Set on a pinned row: unpins it. */
   onTogglePin?: () => void;
   onRun?: () => void;
 }) {

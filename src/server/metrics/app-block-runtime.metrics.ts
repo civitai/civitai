@@ -765,6 +765,7 @@ type Bundle = {
   reviewStorageCleanupTotal: Counter<string>;
   reviewStorageSweepTotal: Counter<string>;
   docStoreErrorsTotal: Counter<string>;
+  storageOpsTotal: Counter<string>;
   docStoreEnabled: Gauge<string>;
   bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
@@ -1301,6 +1302,25 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['endpoint', 'code']
   );
 
+  // One increment per tally operation (a counter increment, a mark, an unmark) the storage route
+  // dispatched (apps/doc-store-api.ts), by operator and by the route that carried it: the
+  // deprecated per-tally routes (`legacy`) or the document PATCH (`v2`). Counted once the caller's
+  // access (and any `?from=` import) has resolved and the operator is known, before the operation
+  // runs: a refusal BY the operation (validation, trust, budget, store) is still counted, since the
+  // question is "who still calls the old routes". NOT counted: the token middleware's refusals, a
+  // stray query parameter, an access or import refusal, and a PATCH whose body shape is refused.
+  // Both labels are closed sets;
+  // no app label (the per-app split is `civitai_app_block_requests_total`).
+  // 🔴 NOT `civitai_app_block_storage_ops_total`: that name is the legacy KV datastore's counter
+  // (`appStorageOpsCounter` in @civitai/telemetry, labels op/outcome). Sharing it would make
+  // whichever registers second inherit the other's labels and silently drop every increment.
+  const storageOpsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_doc_store_tally_ops_total',
+    'App Blocks storage tally operations dispatched, by op (inc|mark|unmark) and route (legacy = the deprecated POST …/counters/:name and PUT|DELETE …/marks/:name, v2 = PATCH /:coll/:key with an update operator). Counted once access has resolved and the operator is known, before the operation runs (refusals by the operation count; token, access and import refusals and malformed PATCH bodies do not); every series is published at 0 from the first scrape',
+    ['op', 'route']
+  );
+
   // 1 once this process has confirmed the store's connection is usable (configured, and its role
   // is bound by row-level security); 0 otherwise. Labelless, so it reads 0 from the moment the
   // registry is built, and /api/metrics evaluates it on every scrape (apps/doc-store.instance.ts
@@ -1573,6 +1593,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     reviewStorageCleanupTotal,
     reviewStorageSweepTotal,
     docStoreErrorsTotal,
+    storageOpsTotal,
     docStoreEnabled,
     bridgeRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
@@ -1989,6 +2010,22 @@ export function recordDocStoreError(endpoint: DocStoreEndpoint, code: StorageApi
   }
 }
 
+/** The update operators a storage tally can be (`civitai_app_block_doc_store_tally_ops_total{op}`). */
+export const STORAGE_TALLY_OPS = ['inc', 'mark', 'unmark'] as const;
+export type StorageTallyOp = (typeof STORAGE_TALLY_OPS)[number];
+/** The routes a storage tally can arrive on (`civitai_app_block_doc_store_tally_ops_total{route}`). */
+export const STORAGE_TALLY_ROUTES = ['legacy', 'v2'] as const;
+export type StorageTallyRoute = (typeof STORAGE_TALLY_ROUTES)[number];
+
+/** One tally operation dispatched by the document-store route. Total. */
+export function recordStorageTallyOp(op: StorageTallyOp, route: StorageTallyRoute): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().storageOpsTotal.inc({ op, route });
+  } catch {
+    /* instrument-only — never let a metrics error change a tally's reply */
+  }
+}
+
 /** Set the per-process document-store enabled gauge. Total. */
 export function setDocStoreEnabled(enabled: boolean, reg: Registry = client.register): void {
   try {
@@ -2005,8 +2042,12 @@ export function setDocStoreEnabled(enabled: boolean, reg: Registry = client.regi
  */
 export function seedAppBlockDocStoreMetrics(reg: Registry = client.register): void {
   try {
-    const { reviewStorageCleanupTotal, reviewStorageSweepTotal, docStoreErrorsTotal } =
-      ensureRegisterAppBlockRuntimeMetrics(reg);
+    const {
+      reviewStorageCleanupTotal,
+      reviewStorageSweepTotal,
+      docStoreErrorsTotal,
+      storageOpsTotal,
+    } = ensureRegisterAppBlockRuntimeMetrics(reg);
     for (const outcome of REVIEW_STORAGE_CLEANUP_OUTCOMES) {
       reviewStorageCleanupTotal.inc({ outcome }, 0);
     }
@@ -2015,6 +2056,9 @@ export function seedAppBlockDocStoreMetrics(reg: Registry = client.register): vo
     }
     for (const [code, endpoints] of Object.entries(DOC_STORE_SEEDED_ERROR_CODES)) {
       for (const endpoint of endpoints ?? []) docStoreErrorsTotal.inc({ endpoint, code }, 0);
+    }
+    for (const op of STORAGE_TALLY_OPS) {
+      for (const route of STORAGE_TALLY_ROUTES) storageOpsTotal.inc({ op, route }, 0);
     }
   } catch {
     // Seeding is a readability nicety; losing it must not cost the scrape.

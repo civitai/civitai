@@ -37,6 +37,17 @@ import { imageResourcesCache, imageTagsCache } from '~/server/redis/caches';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
+// assertImageVisibleToViewer reads through Kysely, not Prisma's `$queryRaw`. Its statements get the
+// answers this file's `$queryRaw` fakes give, without counting as `$queryRaw` calls (answerLike).
+vi.mock('~/server/db/kyselyDb.lazy', async () => {
+  const { fakeKyselyDbLazy, answerLike } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock } = await import('~/__tests__/mocks/db.mock');
+  return fakeKyselyDbLazy(
+    answerLike(dbMock.dbRead.$queryRaw),
+    answerLike(dbMock.dbWrite.$queryRaw)
+  );
+});
+
 const OWNER = 10;
 const VIEWER = 20;
 

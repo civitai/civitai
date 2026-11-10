@@ -483,6 +483,8 @@ Everything here is the deploying engineer's, before this branch merges.
       offering them until those models are rebuilt. The full re-queue below covers it if that runs
       first. Why, and the per-base-model table:
       [paid-model-loading-coverage.md](paid-model-loading-coverage.md), "Model-locked ecosystems".
+      MiniMax H3 was unlocked after that measurement (2026-11): its stored answer is now stale-false,
+      so the same re-queue must include it, and the closing check excludes it.
       *Closes when:* a search filtered to generatable returns no community checkpoint on a locked base
       model.
 - [ ] **Re-queue EVERY model before turning `generation-coverage-next` on** — not only the ~12,900

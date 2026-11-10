@@ -537,6 +537,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     hatSort: z.enum(HAT_SORTS).optional(),
     // Whose hats a Hat Turf sort counts; none, every team's.
     hatTeams: z.string().max(32).array().max(8).optional(),
+    // Only the images the viewer has a live Turf hat on.
+    hatTurfMine: z.boolean().optional(),
     hideTurfHats: z.boolean().optional(),
     hideWornHats: z.boolean().optional(),
     // Client-only on green: opt-in PG-13 on public feeds. Passes through the

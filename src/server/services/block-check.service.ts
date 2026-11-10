@@ -1,15 +1,8 @@
-import { Prisma } from '@prisma/client';
-import {
-  threadAncestorsCte,
-  threadIsRooted,
-  UNRESOLVED_THREAD_CHAIN_MESSAGE,
-} from '~/server/common/thread-chain';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { CommentTargetType } from '~/server/schema/commentv3.schema';
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
-import { isV3WriteSurface } from '~/server/services/commentv3/write.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 
 /**
  * Every entity type any write path can hand the owner resolver: comment surfaces
@@ -27,288 +20,27 @@ async function readGuardRow<T>(read: (db: typeof guardDb) => Promise<T | null>):
   return (await read(dbRead)) ?? (await read(guardDb));
 }
 
-// Must list EVERY owner-bearing FK on `Thread`. A column missing here resolves no
-// root owner for replies in that kind of thread, silently skipping the block.
-export const threadContentSelect = {
-  imageId: true,
-  postId: true,
-  articleId: true,
-  modelId: true,
-  reviewId: true,
-  bountyId: true,
-  bountyEntryId: true,
-  model3dId: true,
-  model3dReviewId: true,
-  comicProjectId: true,
-  comicChapterPosition: true,
-  challengeId: true,
-  appListingId: true,
-  crucibleId: true,
-  storylineId: true,
-} as const;
-
-type ThreadContent = {
-  imageId: number | null;
-  postId: number | null;
-  articleId: number | null;
-  modelId: number | null;
-  reviewId: number | null;
-  bountyId: number | null;
-  bountyEntryId: number | null;
-  model3dId: number | null;
-  model3dReviewId: number | null;
-  comicProjectId: number | null;
-  comicChapterPosition: number | null;
-  challengeId: number | null;
-  appListingId: number | null;
-  crucibleId: number | null;
-  storylineId: number | null;
-};
-
-async function ownerOfThreadContent(thread: ThreadContent | null): Promise<number | undefined> {
-  if (!thread) return undefined;
-  if (thread.imageId)
-    return (
-      await guardDb.image.findUnique({ where: { id: thread.imageId }, select: { userId: true } })
-    )?.userId;
-  if (thread.postId)
-    return (
-      await guardDb.post.findUnique({ where: { id: thread.postId }, select: { userId: true } })
-    )?.userId;
-  if (thread.articleId)
-    return (
-      await guardDb.article.findUnique({
-        where: { id: thread.articleId },
-        select: { userId: true },
-      })
-    )?.userId;
-  if (thread.modelId)
-    return (
-      await guardDb.model.findUnique({ where: { id: thread.modelId }, select: { userId: true } })
-    )?.userId;
-  if (thread.reviewId)
-    return (
-      await guardDb.resourceReview.findUnique({
-        where: { id: thread.reviewId },
-        select: { userId: true },
-      })
-    )?.userId;
-  if (thread.bountyId)
-    return (
-      (
-        await guardDb.bounty.findUnique({
-          where: { id: thread.bountyId },
-          select: { userId: true },
-        })
-      )?.userId ?? undefined
-    );
-  if (thread.bountyEntryId)
-    return (
-      (
-        await guardDb.bountyEntry.findUnique({
-          where: { id: thread.bountyEntryId },
-          select: { userId: true },
-        })
-      )?.userId ?? undefined
-    );
-  if (thread.model3dId)
-    return (
-      await guardDb.model3D.findUnique({
-        where: { id: thread.model3dId },
-        select: { userId: true },
-      })
-    )?.userId;
-  if (thread.model3dReviewId)
-    return (
-      await guardDb.model3DReview.findUnique({
-        where: { id: thread.model3dReviewId },
-        select: { userId: true },
-      })
-    )?.userId;
-  if (thread.comicProjectId)
-    return (
-      await guardDb.comicProject.findUnique({
-        where: { id: thread.comicProjectId },
-        select: { userId: true },
-      })
-    )?.userId;
-  if (thread.challengeId)
-    return (
-      (
-        await guardDb.challenge.findUnique({
-          where: { id: thread.challengeId },
-          select: { createdById: true },
-        })
-      )?.createdById ?? undefined
-    );
-  if (thread.appListingId)
-    return (
-      await guardDb.appListing.findUnique({
-        where: { serialId: thread.appListingId },
-        select: { userId: true },
-      })
-    )?.userId;
-  if (thread.crucibleId)
-    return (
-      await guardDb.crucible.findUnique({
-        where: { id: thread.crucibleId },
-        select: { userId: true },
-      })
-    )?.userId;
-  if (thread.storylineId)
-    return (
-      await guardDb.storyline.findUnique({
-        where: { id: thread.storylineId },
-        select: { userId: true },
-      })
-    )?.userId;
-  return undefined;
-}
-
-type RootOwner = { resolved: false } | { resolved: true; ownerId: number | undefined };
-
-/**
- * The owner of the content at the top of a thread's stored `Thread.commentId -> CommentV2.threadId`
- * chain, never `Thread.rootThreadId`, which the first replier writes from client input.
- *
- * Unresolved when the chain ends anywhere but a content thread: an orphan left by a deleted
- * comment, or the depth cap. What that means is the caller's decision.
- */
-async function rootOwnerOfThread(threadId: number): Promise<RootOwner> {
-  const [top] = await guardDb.$queryRaw<{ id: number; rooted: boolean }[]>`
-    ${Prisma.raw(threadAncestorsCte(String(Number(threadId))))}
-    SELECT top."id", ${threadIsRooted('th')} "rooted"
-    FROM (SELECT mt."id" FROM thread_ancestors mt ORDER BY mt."depth" DESC LIMIT 1) top
-    JOIN "Thread" th ON th.id = top."id"
-  `;
-  if (!top?.rooted) return { resolved: false };
-  const rootThread = await guardDb.thread.findUnique({
-    where: { id: top.id },
-    select: threadContentSelect,
-  });
-  return { resolved: true, ownerId: await ownerOfThreadContent(rootThread) };
-}
-
-/**
- * A live comment on a surface that writes CommentV3, resolved from its CommentV3 row: its author, the
- * authors of the comments it answers and its section. Asked when the CommentV2 row is missing (the
- * comment was written after the flip) or its chain no longer resolves (a CommentV3 delete removed a
- * parent's CommentV2 row); otherwise the chain resolves the same owners.
- */
-async function v3Comment(commentId: number) {
+/** A live comment's author and section. */
+async function storedComment(commentId: number) {
   const [row] = await guardDb.$queryRaw<
     {
       userId: number;
-      hidden: boolean;
       entityType: CommentTargetType;
       entityId: number;
-      parentUserId: number | null;
-      replyToUserId: number | null;
     }[]
   >`
-    SELECT c."userId", c.hidden, c."entityType"::text AS "entityType", c."entityId",
-           p."userId" AS "parentUserId", r."userId" AS "replyToUserId"
+    SELECT c."userId", c."entityType"::text AS "entityType", c."entityId"
     FROM "CommentV3" c
-    LEFT JOIN "CommentV3" p ON p.id = c."parentId"
-    LEFT JOIN "CommentV3" r ON r.id = c."replyToId"
     WHERE c.id = ${commentId} AND c."deletedAt" IS NULL
   `;
-  return row && isV3WriteSurface(row.entityType) ? row : undefined;
+  return row;
 }
 
-/**
- * The owner of the content a stored comment ultimately belongs to — never the author of the
- * comment a reply answers, who is not the content owner and must not moderate replies to them.
- * An unresolved chain has no owner, which leaves the comment to moderators.
- */
-export async function getContentOwnerIdForComment(commentId: number) {
-  const comment = await guardDb.commentV2.findUnique({
-    where: { id: commentId },
-    select: { hidden: true, threadId: true },
-  });
-  const root = comment ? await rootOwnerOfThread(comment.threadId) : undefined;
-  if (!comment || !root?.resolved) {
-    const v3 = await v3Comment(commentId);
-    if (v3) return { hidden: v3.hidden, ownerId: (await getBlockCheckOwnerIds(v3))[0] };
-    if (!comment) throw throwNotFoundError(`No comment with id ${commentId}`);
-  }
-  return { hidden: comment.hidden ?? false, ownerId: root?.resolved ? root.ownerId : undefined };
-}
-
-/**
- * Block targets for acting on CommentV2 `commentId`: its author and the root content owner.
- *
- * `authorOnly` suits reactions, which no lock walk guards and which legitimately land on comments
- * in orphaned chains. Comment writes `refuse`.
- */
-async function ownersForCommentV2(
-  commentId: number,
-  onUnresolved: 'refuse' | 'authorOnly'
-): Promise<number[]> {
-  const comment = await guardDb.commentV2.findUnique({
-    where: { id: commentId },
-    select: { userId: true, threadId: true },
-  });
-  const root = comment ? await rootOwnerOfThread(comment.threadId) : undefined;
-  if (!comment || !root?.resolved) {
-    const v3 = await v3Comment(commentId);
-    if (v3) return [...new Set([v3.userId, ...(await getBlockCheckOwnerIds(v3))])];
-    if (!comment || !root) throw throwNotFoundError(`No comment with id ${commentId}`);
-  }
-  const ids = new Set<number>([comment.userId]);
-  if (!root.resolved && onUnresolved === 'refuse')
-    throw throwBadRequestError(UNRESOLVED_THREAD_CHAIN_MESSAGE);
-  if (root.resolved && root.ownerId) ids.add(root.ownerId);
-  return [...ids];
-}
-
-/** Owners to check when creating a reply to CommentV2 `parentCommentId`. */
-export async function getBlockCheckOwnerIdsForReply(parentCommentId: number): Promise<number[]> {
-  return ownersForCommentV2(parentCommentId, 'refuse');
-}
-
-/**
- * Owners to check when editing an EXISTING comment.
- *
- * The request's `entityType`/`entityId` are client-supplied and never verified against the comment
- * being edited — the update is scoped by comment id alone — so an edit must resolve its target from
- * the stored comment. Trusting the request instead would let a blocked user aim the check at an
- * entity with no owner and edit freely.
- *
- * Resolves the same targets the create path checks: for a reply, the parent comment's author and
- * the root content owner; for a top-level comment, the content owner. The editor's own id may come
- * back among them — `throwIfBlockedByOwners` skips self.
- */
-export async function getBlockCheckOwnerIdsForComment(commentId: number): Promise<number[]> {
-  const comment = await guardDb.commentV2.findUnique({
-    where: { id: commentId },
-    select: { threadId: true, thread: { select: { commentId: true } } },
-  });
-  const root = comment ? await rootOwnerOfThread(comment.threadId) : undefined;
-  if (!comment || !root?.resolved) {
-    const v3 = await v3Comment(commentId);
-    if (v3) {
-      const owners = await getBlockCheckOwnerIds(v3);
-      // A reply past the depth cap answers `replyToId`, not its parent.
-      const answered = [v3.parentUserId, v3.replyToUserId].filter((x): x is number => !!x);
-      return [...new Set([...answered, ...owners])];
-    }
-    if (!comment) throw throwNotFoundError(`No comment with id ${commentId}`);
-    throw throwBadRequestError(UNRESOLVED_THREAD_CHAIN_MESSAGE);
-  }
-
-  const ids = new Set<number>();
-  const parentCommentId = comment.thread?.commentId;
-  if (parentCommentId) {
-    const parent = await guardDb.commentV2.findUnique({
-      where: { id: parentCommentId },
-      select: { userId: true },
-    });
-    if (parent) ids.add(parent.userId);
-  }
-  if (root.ownerId) ids.add(root.ownerId);
-
-  return [...ids];
+/** Block targets for reacting to a comment: its author and its section's owner. */
+async function ownersForComment(commentId: number): Promise<number[]> {
+  const comment = await storedComment(commentId);
+  if (!comment) throw throwNotFoundError(`No comment with id ${commentId}`);
+  return [...new Set([comment.userId, ...(await getBlockCheckOwnerIds(comment))])];
 }
 
 // Resolves the content owner user id(s) relevant to an interaction on a given
@@ -420,7 +152,7 @@ export async function getBlockCheckOwnerIds({
       return r ? [r.userId] : [];
     }
     case 'comment':
-      return ownersForCommentV2(entityId, 'authorOnly');
+      return ownersForComment(entityId);
     default:
       // Compile-time exhaustiveness: a new comment/reaction entity type fails to
       // build here until it resolves an owner. Runtime still yields "no owner"

@@ -9,6 +9,7 @@ import {
   deletePostHandler,
   getPostContestCollectionDetailsHandler,
   getPostHandler,
+  getPostResourceCoversHandler,
   getPostResourcesHandler,
   getPostsInfiniteHandler,
   getPostTagsHandler,
@@ -32,6 +33,7 @@ import {
   getScheduledPostsSchema,
   plannerPostIdSchema,
   plannerPublishNowSchema,
+  getPostResourceCoversSchema,
   plannerRescheduleSchema,
   plannerShiftSchema,
   plannerUnscheduleSchema,
@@ -217,6 +219,10 @@ export const postRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(getPostResourcesHandler),
+  getResourceCovers: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getPostResourceCoversSchema)
+    .query(getPostResourceCoversHandler),
   getContestCollectionDetails: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)

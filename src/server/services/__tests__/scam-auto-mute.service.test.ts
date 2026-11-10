@@ -67,7 +67,7 @@ const { autoMuteScamAccount } = await import('~/server/services/scam-auto-mute.s
 const DAY = 86_400_000;
 const UNMUTED_AT = new Date(Date.now() - DAY);
 const RECORD = {
-  kind: 'commentsV2',
+  kind: 'comments',
   at: new Date().toISOString(),
   count: 2,
   ids: [3, 4],
@@ -84,17 +84,17 @@ const user = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 const evidence = (over: Record<string, unknown> = {}) => ({
-  source: 'text-scan:Comment:7',
+  source: 'text-scan:CommentV3:7',
   dedupeKey: 'wf-1',
   reason: 'Fake support',
-  entityType: 'Comment',
+  entityType: 'CommentV3',
   entityId: 7,
   text: 'DM me for the prize',
   textHash: 'h1',
   contentAt: new Date(),
   ...over,
 });
-const base = { userId: 42, cleanup: 'commentsV2' as const, evidence: evidence() };
+const base = { userId: 42, cleanup: 'comments' as const, evidence: evidence() };
 
 const nothingActed = () => {
   expect(m.claimPendingReviewMute).not.toHaveBeenCalled();
@@ -147,10 +147,10 @@ describe('autoMuteScamAccount', () => {
     expect(call.triggers).toEqual([
       expect.objectContaining({
         category: 'scam',
-        source: 'text-scan:Comment:7',
+        source: 'text-scan:CommentV3:7',
         dedupeKey: 'wf-1',
         reason: 'Fake support',
-        entityType: 'Comment',
+        entityType: 'CommentV3',
         entityId: 7,
         text: 'DM me for the prize',
         textHash: 'h1',
@@ -161,13 +161,13 @@ describe('autoMuteScamAccount', () => {
       entityId: 42,
       activity: 'autoMuteScam',
     });
-    expect(m.runScamCleanup).toHaveBeenCalledWith('commentsV2', 42);
+    expect(m.runScamCleanup).toHaveBeenCalledWith('comments', 42);
     expect(m.recordScamCleanup).toHaveBeenCalledWith(5, 0, 'wf-1', RECORD);
     expect(m.userActivity).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         type: 'Muted',
         targetUserId: 42,
-        source: expect.stringContaining('text-scan:Comment:7'),
+        source: expect.stringContaining('text-scan:CommentV3:7'),
       })
     );
     expect(m.appendScamTrigger).not.toHaveBeenCalled();

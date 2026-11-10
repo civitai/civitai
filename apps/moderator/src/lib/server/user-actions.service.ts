@@ -1,3 +1,7 @@
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import { z } from 'zod';
 import {
   HOLD_UNKNOWN_REFUSAL,
@@ -464,28 +468,15 @@ export async function bulkCommentAction(input: {
   } as const;
   const [path, label] = ENDPOINTS[input.action];
 
-  const result = await callModEndpoint(
-    path,
-    // CommentV3 shares its ids with CommentV2, whose name the endpoint's field keeps.
-    { commentV2Ids: input.commentIds },
-    label
-  );
+  const result = await callModEndpoint(path, { commentIds: input.commentIds }, label);
   if (!result.ok) return result;
 
-  // `removeAsTos` nests its counts per table; `bulkDelete` returns them flat.
-  const nested = (key: string, field = 'count') => {
-    const section = result.body[key];
-    return section && typeof section === 'object'
-      ? countOf(section as Record<string, unknown>, [field])
-      : 0;
-  };
-  // `restoreFromTos` nests like `removeAsTos`; only `bulkDelete` is flat.
+  // `bulkDelete` answers `{ deleted }`; the ToS pair answer `{ comments: { count, failed? } }`.
+  const section = result.body.comments;
+  const tos = section && typeof section === 'object' ? (section as Record<string, unknown>) : {};
   const affected =
-    input.action === 'bulkDelete'
-      ? countOf(result.body, ['commentV2Deleted'])
-      : nested('commentV2');
-
-  const failed = input.action === 'restoreFromTos' ? nested('commentV2', 'failed') : 0;
+    input.action === 'bulkDelete' ? countOf(result.body, ['deleted']) : countOf(tos, ['count']);
+  const failed = input.action === 'restoreFromTos' ? countOf(tos, ['failed']) : 0;
 
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
   if (affected === 0 && failed === 0)
@@ -616,6 +607,8 @@ export async function setMuted(input: {
       moderatorId: input.moderatorId,
       activity: 'unmute',
     });
+  if (isFeedbackCaptureOwner(input.userId))
+    return { ok: false, error: FEEDBACK_CAPTURE_OWNER_REFUSAL };
 
   const now = new Date();
   // `mutedAt` is what marks this as a moderator's decision rather than an automatic one, and strike
@@ -847,6 +840,9 @@ export async function setBanned(input: {
   removeComments?: boolean;
   moderatorId: number;
 }): Promise<ActionResult> {
+  // The ban endpoint answers before it bans, so its own refusal would not reach the moderator.
+  if (input.ban && isFeedbackCaptureOwner(input.userId))
+    return { ok: false, error: FEEDBACK_CAPTURE_OWNER_REFUSAL };
   const current = await dbWrite
     .selectFrom('User')
     .select('bannedAt')

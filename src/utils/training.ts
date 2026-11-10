@@ -32,7 +32,6 @@ export const studioModelFlagFeatures = {
   'krea2-training': 'krea2Training',
   'boogu-training': 'booguTraining',
   'mageflow-training': 'mageflowTraining',
-  'flux2-klein-training': 'fluxTwoKleinTraining',
   'ernie-training': 'ernieTraining',
   'hidream-o1-training': 'hidreamO1Training',
   'anima-training': 'animaTraining',
