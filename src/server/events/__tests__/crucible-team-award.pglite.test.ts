@@ -106,7 +106,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Cosmetic" (id int PRIMARY KEY, type text, data jsonb);
     CREATE TABLE "UserCosmetic" (
-      "userId" int, "cosmeticId" int, "claimKey" text, "createdAt" timestamptz DEFAULT now()
+      "userId" int, "cosmeticId" int, "claimKey" text, "obtainedAt" timestamptz DEFAULT now()
     );
 
     INSERT INTO "User" (id, "bannedAt", flags) VALUES

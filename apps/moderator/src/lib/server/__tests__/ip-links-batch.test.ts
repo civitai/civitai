@@ -116,6 +116,33 @@ describe('getAccountsOnAddresses', () => {
     expect(invalid).toEqual(['01.2.3.4', '192.0.2.010']);
   });
 
+  // ClickHouse returns tied rows in no fixed order, so each page is a fresh read in a new order.
+  it('pages through tied accounts with no repeats and no gaps, whatever order the rows arrive in', async () => {
+    const saved = answers.login.peers;
+    const tied = Array.from({ length: 30 }, (_, i) => ({
+      uid: String(100 + i),
+      clusters: [A],
+      last: '2026-10-20 00:00:00',
+      total: '30',
+    }));
+    try {
+      const seen: number[] = [];
+      for (const [offset, order] of [
+        [0, tied],
+        [10, [...tied].reverse()],
+        [20, [...tied.slice(15), ...tied.slice(0, 15)]],
+      ] as const) {
+        answers.login.peers = [...order];
+        const { linked } = await getAccountsOnAddresses([A], { offset, limit: 10 });
+        seen.push(...linked!.accounts.map((a) => a.userId).filter((id) => id >= 100));
+      }
+      expect(seen).toHaveLength(30);
+      expect(new Set(seen).size).toBe(30);
+    } finally {
+      answers.login.peers = saved;
+    }
+  });
+
   it('names what is not an address, and reads nothing when none is', async () => {
     expect((await getAccountsOnAddresses([A, 'not-an-ip'])).invalid).toEqual(['not-an-ip']);
     peerQueries.length = 0;
