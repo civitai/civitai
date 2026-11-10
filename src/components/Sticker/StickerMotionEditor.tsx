@@ -1,4 +1,12 @@
-import { ActionIcon, Button, SegmentedControl, Slider, Text, UnstyledButton } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  Portal,
+  SegmentedControl,
+  Slider,
+  Text,
+  UnstyledButton,
+} from '@mantine/core';
 import {
   IconChevronDown,
   IconChevronLeft,
@@ -9,6 +17,8 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { PAGE_MODAL_Z_INDEX } from '~/components/Dialog/Templates/PageModal';
+import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
 import { Menu } from '~/components/MantineOverlays';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { StickerTrackEase, StickerTrackKey } from '~/shared/utils/sticker-track';
@@ -220,6 +230,9 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [moving, seek, toggle]);
 
+  // The tray covers where the editor sits, so with it open only the mode choice shows, above it.
+  if (trayOpen && selected && !previewing)
+    return <TrayModeToggle video={video} draftId={selected.id} moving={!!selected.motion?.on} />;
   if (!open || !selected) return null;
 
   return (
@@ -292,20 +305,13 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
         </div>
       )}
       <div className="flex items-center gap-2">
-        <SegmentedControl
-          size="xs"
-          radius="xl"
-          aria-label="Sticker mode"
-          value={moving ? 'movement' : 'static'}
-          onChange={(value) => {
+        <ModeControl
+          moving={moving}
+          onChange={(movement) => {
             // Paused on a frame, so the first move sets a key where the placer is looking.
-            if (value === 'movement') video.pause();
-            useStore.getState().setMotion(selected.id, value === 'movement');
+            if (movement) video.pause();
+            useStore.getState().setMotion(selected.id, movement);
           }}
-          data={[
-            { label: 'Static', value: 'static' },
-            { label: 'Movement', value: 'movement' },
-          ]}
         />
         {primaryLabel && !previewing && !refusal && (
           // Presses the selected draft's own pay button: one way to pay, and any choice it
@@ -317,6 +323,89 @@ export function StickerMotionEditor({ video }: { video: HTMLVideoElement }) {
         )}
       </div>
     </div>
+  );
+}
+
+function ModeControl({
+  moving,
+  onChange,
+}: {
+  moving: boolean;
+  onChange: (movement: boolean) => void;
+}) {
+  return (
+    <SegmentedControl
+      size="xs"
+      radius="xl"
+      aria-label="Sticker mode"
+      value={moving ? 'movement' : 'static'}
+      onChange={(value) => onChange(value === 'movement')}
+      data={[
+        { label: 'Static', value: 'static' },
+        { label: 'Movement', value: 'movement' },
+      ]}
+    />
+  );
+}
+
+/**
+ * Static | Movement while the tray is open, held just above it. Movement puts the tray away,
+ * because the timeline it opens sits where the tray is.
+ */
+function TrayModeToggle({
+  video,
+  draftId,
+  moving,
+}: {
+  video: HTMLVideoElement;
+  draftId: string;
+  moving: boolean;
+}) {
+  const tray = useStore((state) => state.tray);
+  const [trayHeight, setTrayHeight] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!tray) return;
+    const measure = () => setTrayHeight(tray.getBoundingClientRect().height);
+    const observer = new ResizeObserver(measure);
+    observer.observe(tray);
+    measure();
+    return () => observer.disconnect();
+  }, [tray]);
+
+  if (trayHeight == null) return null;
+
+  return (
+    <Portal>
+      <div
+        {...{ [STICKER_EDITOR_ATTR]: '' }}
+        className="pointer-events-none flex justify-center"
+        // Inline, not Tailwind: browser tests load no stylesheet, and the placement is what they check.
+        style={{
+          position: 'fixed',
+          left: 0,
+          right: 0,
+          bottom: trayHeight,
+          zIndex: PAGE_MODAL_Z_INDEX + 1,
+        }}
+      >
+        <div className="pointer-events-auto" onPointerDown={(event) => event.stopPropagation()}>
+          <ModeControl
+            moving={moving}
+            onChange={(movement) => {
+              const store = useStore.getState();
+              if (movement) {
+                video.pause();
+                // The editor's clock is off while the tray is open; the first key goes at this frame.
+                store.setPlayhead(Math.round(video.currentTime * 1000));
+              }
+              store.setMotion(draftId, movement);
+              if (movement) store.closeTray();
+            }}
+          />
+        </div>
+      </div>
+    </Portal>
   );
 }
 

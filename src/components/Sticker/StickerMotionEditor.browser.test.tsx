@@ -209,3 +209,43 @@ describe('the sticker timeline', () => {
     await expect.poll(() => store.getState().videoPlaying).toBe(false);
   });
 });
+
+describe('the mode choice while the tray is open', () => {
+  const openTray = () => {
+    const tray = document.createElement('div');
+    Object.assign(tray.style, {
+      position: 'fixed',
+      left: '0',
+      right: '0',
+      bottom: '0',
+      height: '160px',
+    });
+    document.body.appendChild(tray);
+    store.setState({ trayOpen: true, tray });
+    return tray;
+  };
+
+  test('sits on top of the tray rather than under it', async () => {
+    const tray = openTray();
+    const trayTop = tray.getBoundingClientRect().top;
+    const control = () =>
+      page.getByRole('radiogroup', { name: 'Sticker mode' }).element().getBoundingClientRect();
+
+    await expect.poll(() => Math.round(control().bottom)).toBe(Math.round(trayTop));
+    expect(control().height).toBeGreaterThan(0);
+    tray.remove();
+  });
+
+  test('Movement puts the tray away and opens the timeline at the video frame', async () => {
+    const tray = openTray();
+    video.currentTime = 1.5;
+
+    await page.getByText('Movement').click();
+
+    expect(store.getState().trayOpen).toBe(false);
+    expect(video.pause).toHaveBeenCalled();
+    await expect.element(page.getByRole('group', { name: 'Sticker timeline' })).toBeVisible();
+    expect(selected().motion?.keys.map((key) => key.t)).toEqual([1500]);
+    tray.remove();
+  });
+});
