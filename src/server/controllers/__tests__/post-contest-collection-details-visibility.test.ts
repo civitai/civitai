@@ -46,6 +46,8 @@ const SHOWN = 101;
 const HIDDEN = 102;
 const MISSING = { collection: null, permissions: null, items: [] };
 const COLLECTION_OWNER = 600;
+// May add to the collection without reading it (Private read, write granted).
+const WRITER = 601;
 let collectionPrivate = false;
 
 type User = { id: number; isModerator?: boolean } | undefined;
@@ -81,7 +83,8 @@ beforeEach(() => {
   m.permissions.mockImplementation(
     async ({ userId, isModerator }: { userId?: number; isModerator?: boolean }) => {
       const manage = userId === COLLECTION_OWNER || !!isModerator;
-      return { userId, read: !collectionPrivate || manage, write: false, manage };
+      const write = userId === WRITER;
+      return { userId, read: !collectionPrivate || manage, write, manage };
     }
   );
   m.visibleIds.mockImplementation(async ({ ids, userId, isModerator }) => {
@@ -137,16 +140,20 @@ describe('post.getContestCollectionDetails visibility', () => {
   it('answers a Private collection as none for a viewer who may not read it', async () => {
     postIs({});
     collectionPrivate = true;
-    for (const user of [ANON, STRANGER, SELF]) expect(await detailsFor(user)).toEqual(MISSING);
+    for (const user of [ANON, STRANGER]) expect(await detailsFor(user)).toEqual(MISSING);
     expect(m.getCollectionById).not.toHaveBeenCalled();
     expect(dbMock.dbRead.collectionItem.findMany).not.toHaveBeenCalled();
   });
 
-  it("serves a Private collection's entries to its owner and a moderator (control)", async () => {
+  it("serves a Private collection's entries to its owner, a writer, a moderator and the post's owner", async () => {
     postIs({});
     collectionPrivate = true;
-    for (const user of [{ id: COLLECTION_OWNER }, MOD])
+    for (const user of [{ id: COLLECTION_OWNER }, { id: WRITER }, MOD, SELF]) {
       expect(itemImageIds(await detailsFor(user)).length).toBeGreaterThan(0);
+      expect(m.getCollectionById).toHaveBeenLastCalledWith(
+        expect.objectContaining({ viewer: { id: user.id, isModerator: user.isModerator } })
+      );
+    }
   });
 
   it('gives a moderator their moderator permissions', async () => {

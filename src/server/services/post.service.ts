@@ -2250,8 +2250,10 @@ export const getPostContestCollectionDetails = async ({
     userId,
     isModerator,
   });
-  // collection.getById's read rule: a collection the viewer may not read answers as none.
-  if (!permissions.read && !permissions.write && !permissions.manage)
+  // collection.getById's read rule: a collection the viewer may not read answers as none. The
+  // post's owner submitted it, so they always see it.
+  const isPostOwner = !!userId && userId === post.userId;
+  if (!isPostOwner && !permissions.read && !permissions.write && !permissions.manage)
     return {
       collection: null,
       permissions: null,

@@ -8892,8 +8892,9 @@ export const getImageContestCollectionDetails = async ({
   const permissionsFor = (item: { collection: { id: number } }) =>
     allPermissions.find((p) => p.collectionId === item.collection.id);
   // The items are cached per image for every viewer, so the collection read rule
-  // (collection.getById's) is applied here, per viewer.
+  // (collection.getById's) is applied here, per viewer. Submitters always see their own entry.
   const items = cachedItems.filter((item) => {
+    if (!!userId && userId === item.addedById) return true;
     const p = permissionsFor(item);
     return !!p && (p.read || p.write || p.manage);
   });
@@ -8902,7 +8903,8 @@ export const getImageContestCollectionDetails = async ({
   // someone else's entry — is only for the submitter, whoever manages the collection,
   // and site moderators investigating reports about reviewer behaviour.
   const canReadRejection = (item: SharedContestCollectionItem) =>
-    (!!userId && userId === item.addedById) || !!permissionsFor(item)?.manage || !!isModerator;
+    // `manage` includes moderators: the permissions above are read with isModerator.
+    (!!userId && userId === item.addedById) || !!permissionsFor(item)?.manage;
 
   // The shared value carries no rejection fields (see SharedContestCollectionItem), so with the
   // flag on they are read live, and only for the entries this viewer passes the gate on.

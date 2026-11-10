@@ -47,6 +47,7 @@ const COLLECTION_OWNER_ID = 900;
 const JUDGE_A = 31;
 const JUDGE_B = 32;
 const STRANGER_ID = 7;
+const SUBMITTER_ID = 8;
 const SCORES = [
   { userId: JUDGE_A, score: 8 },
   { userId: JUDGE_B, score: 3 },
@@ -63,7 +64,7 @@ function mockQueries({ imageId, read }: { imageId: number; read: string }) {
         {
           id: 77,
           imageId,
-          addedById: STRANGER_ID + 1,
+          addedById: SUBMITTER_ID,
           status: 'ACCEPTED',
           rejectionReason: null,
           rejectionDetail: null,
@@ -113,8 +114,9 @@ describe('contest entries in a collection the viewer may not read', () => {
     expect(await details({}, 'Private')).toEqual([]);
   });
 
-  it("lists a Private collection's entry to its owner and a moderator (control)", async () => {
+  it("lists a Private collection's entry to its owner, a moderator and its submitter", async () => {
     expect(await details({ userId: COLLECTION_OWNER_ID }, 'Private')).toHaveLength(1);
+    expect(await details({ userId: SUBMITTER_ID }, 'Private')).toHaveLength(1);
     expect(await details({ userId: STRANGER_ID, isModerator: true }, 'Private')).toHaveLength(1);
   });
 
