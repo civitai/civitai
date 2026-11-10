@@ -147,6 +147,64 @@ describe('findLinkedClusters earner loading', () => {
     expect(sql).toMatch(/gold" > 0/);
     expect(sql).toMatch(/"createdAt" >= now\(\)/);
     expect(sql).toMatch(/"bannedAt" IS NULL/);
-    expect(sql).toMatch(/ORDER BY count\(\*\) DESC/);
+    expect(sql).toMatch(/ORDER BY sum\(g.gold\) DESC/);
+  });
+
+  it('counts acolyte level gold and watch bonus gold as earning', async () => {
+    mockV1([]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+
+    await findLinkedClusters(config);
+
+    const sql = voteSql();
+    expect(sql).toMatch(/"KnightsAcolyteLevelGold"/);
+    expect(sql).toMatch(/"KnightsPlayerDay"/);
+    expect(sql).toMatch(/"bonusGold" > 0/);
+    expect(sql).toMatch(/UNION ALL/);
+    expect(sql).toMatch(/sum\(/);
+  });
+
+  it('still returns v1 earners when the v2 query throws, and logs the failure', async () => {
+    mockV1([1, 2]);
+    dbMock.dbRead.$queryRaw.mockRejectedValue(new Error('relation does not exist'));
+
+    await findLinkedClusters(config);
+
+    expect(earnersIn()).toEqual([1, 2]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'new-order-link-detection-v2-earners' })
+    );
+  });
+
+  it('throws when both earner sources fail', async () => {
+    query.mockRejectedValue(new Error('clickhouse down'));
+    dbMock.dbRead.$queryRaw.mockRejectedValue(new Error('relation does not exist'));
+
+    await expect(findLinkedClusters(config)).rejects.toThrow();
+  });
+
+  it('warns when the cap drops v1 earners', async () => {
+    mockV1([1, 2, 3]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ playerId: 5 }, { playerId: 6 }]);
+
+    await findLinkedClusters({ ...config, maxEarners: 3 });
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'new-order-link-detection-earner-cap',
+        details: { v2: 2, v1: 3, dropped: 2 },
+      })
+    );
+  });
+
+  it('stays quiet about the cap when nothing is dropped', async () => {
+    mockV1([1, 2]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ playerId: 5 }]);
+
+    await findLinkedClusters(config);
+
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'new-order-link-detection-earner-cap' })
+    );
   });
 });

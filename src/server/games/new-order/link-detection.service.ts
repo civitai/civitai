@@ -57,34 +57,61 @@ async function loadV1Earners(config: LinkDetectionConfig) {
 }
 
 async function loadV2Earners(config: LinkDetectionConfig) {
+  const days = Math.trunc(config.lookbackDays);
   const rows = await dbRead.$queryRaw<{ playerId: number }[]>`
-    SELECT v."playerId"
-    FROM "KnightsVote" v
-    JOIN "User" u ON u."id" = v."playerId"
-    WHERE v."gold" > 0
-      AND v."createdAt" >= now() - (${Math.trunc(config.lookbackDays)}::int * interval '1 day')
-      AND u."bannedAt" IS NULL
-    GROUP BY v."playerId"
-    ORDER BY count(*) DESC, v."playerId"
+    SELECT g."playerId"
+    FROM (
+      SELECT "playerId", "gold"::bigint AS gold
+      FROM "KnightsVote"
+      WHERE "gold" > 0 AND "createdAt" >= now() - (${days}::int * interval '1 day')
+      UNION ALL
+      SELECT "playerId", "gold"::bigint AS gold
+      FROM "KnightsAcolyteLevelGold"
+      WHERE "gold" > 0 AND "createdAt" >= now() - (${days}::int * interval '1 day')
+      UNION ALL
+      SELECT "playerId", "bonusGold"::bigint AS gold
+      FROM "KnightsPlayerDay"
+      WHERE "bonusGold" > 0 AND "day" >= (now() - (${days}::int * interval '1 day'))::date
+    ) g
+    JOIN "User" u ON u."id" = g."playerId"
+    WHERE u."bannedAt" IS NULL
+    GROUP BY g."playerId"
+    ORDER BY sum(g.gold) DESC, g."playerId"
     LIMIT ${Math.trunc(config.maxEarners)}
   `;
   return rows.map((r) => Number(r.playerId));
 }
 
-// v1 earners are temporary (v1 Buzz is still paid until it retires); its failure must not drop v2.
+// Each source is temporary or may be missing a table, so one failing must not stop the other.
 async function loadEarners(config: LinkDetectionConfig) {
-  const [v2, v1] = await Promise.all([
-    loadV2Earners(config),
-    loadV1Earners(config).catch(async (error: unknown) => {
+  const settled = await Promise.allSettled([loadV2Earners(config), loadV1Earners(config)]);
+  const [v2Result, v1Result] = settled;
+  if (v2Result.status === 'rejected' && v1Result.status === 'rejected') throw v2Result.reason;
+  for (const [name, result] of [
+    ['new-order-link-detection-v2-earners', v2Result],
+    ['new-order-link-detection-v1-earners', v1Result],
+  ] as const) {
+    if (result.status === 'rejected') {
       await logToAxiom({
         type: 'error',
-        name: 'new-order-link-detection-v1-earners',
-        message: error instanceof Error ? error.message : String(error),
+        name,
+        message: result.reason instanceof Error ? result.reason.message : String(result.reason),
       }).catch(() => null);
-      return [] as number[];
-    }),
-  ]);
-  return [...new Set([...v2, ...v1])].slice(0, Math.trunc(config.maxEarners));
+    }
+  }
+  const v2 = v2Result.status === 'fulfilled' ? v2Result.value : [];
+  const v1 = v1Result.status === 'fulfilled' ? v1Result.value : [];
+  const merged = [...new Set([...v2, ...v1])];
+  const cap = Math.trunc(config.maxEarners);
+  if (merged.length > cap) {
+    await logToAxiom({
+      type: 'warning',
+      name: 'new-order-link-detection-earner-cap',
+      details: { v2: v2.length, v1: v1.length, dropped: merged.length - cap },
+      message: 'Earner list reached its cap and dropped v1 earners',
+    }).catch(() => null);
+  }
+  return merged.slice(0, cap);
 }
 
 async function loadIpGroups(earners: number[], config: LinkDetectionConfig): Promise<IpGroup[]> {
