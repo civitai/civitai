@@ -384,10 +384,48 @@ describe('hook: the sheet cookie', () => {
 
   it('falls back to a valid web session, not 401, when the sheet cookie is dead', async () => {
     guardCheck.mockResolvedValue({ status: 'ok', user: { ...MOD }, setCookies: [] });
+    redis.get.mockClear();
     const { res, locals } = await run('/api/held-media/7', `__Secure-held_sheet=${'x'.repeat(43)}`);
     expect(res.status).toBe(299);
     expect(locals.heldCredential).toBeUndefined();
     expect(res.headers.get('set-cookie')).toBeNull();
+    expect(redis.get).not.toHaveBeenCalled();
+  });
+
+  it('keeps the web session cookie the guard rolled when the web session wins', async () => {
+    const token = await signIn();
+    guardCheck.mockResolvedValue({
+      status: 'ok',
+      user: { ...MOD },
+      setCookies: ['civ-token=rolled; Path=/; HttpOnly'],
+    });
+    const { res } = await run('/api/held-media/7', `__Secure-held_sheet=${token}`);
+    expect(res.headers.get('set-cookie')).toContain('civ-token=rolled');
+  });
+
+  it.each([
+    ['forbidden', { status: 'forbidden', user: { id: 5 } }],
+    ['login', { status: 'login', redirect: 'https://hub.test/login' }],
+  ])('uses the sheet when the web session is %s', async (_n, web) => {
+    const token = await signIn();
+    guardCheck.mockResolvedValue(web);
+    const { res, locals } = await run('/api/held-media/7', `__Secure-held_sheet=${token}`);
+    expect(res.status).toBe(299);
+    expect(locals.heldCredential).toBe('sheet');
+    expect(locals.user).toMatchObject({ id: 42 });
+  });
+
+  it('answers 401 to two sheet cookies, even when one is valid', async () => {
+    const token = await signIn();
+    const other = 'o'.repeat(43);
+    for (const cookie of [
+      `__Secure-held_sheet=${token}; __Secure-held_sheet=${other}`,
+      `__Secure-held_sheet=${other}; __Secure-held_sheet=${token}`,
+    ]) {
+      const { res, resolve } = await run('/api/held-media/7', cookie);
+      expect(res.status).toBe(401);
+      expect(resolve).not.toHaveBeenCalled();
+    }
   });
 
   it('asks the web guard once per request', async () => {

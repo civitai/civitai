@@ -113,36 +113,6 @@ export const handle: Handle = async ({ event, resolve }) => {
   // else the cookie is ignored.
   if (event.url.pathname === SHEET_EXCHANGE_PATH && event.request.method === 'POST')
     return resolve(event);
-  const cookieHeader = event.request.headers.get('cookie') ?? '';
-  const sheetToken = parseCookieHeader(cookieHeader)[SHEET_COOKIE];
-  let webSession: Awaited<ReturnType<typeof guard.check>> | undefined;
-  if (
-    sheetToken !== undefined &&
-    isSheetImagePath(event.url.pathname) &&
-    (event.request.method === 'GET' || event.request.method === 'HEAD')
-  ) {
-    webSession = await guard.check(cookieHeader, event.url.href, {
-      navigation: isNavigationRequest(event.request),
-    });
-  }
-  if (webSession && webSession.status !== 'ok') {
-    const user = await resolveSheetSession(sheetToken).catch(() => {
-      console.error('[held-sheet] session lookup failed');
-      return undefined;
-    });
-    if (user === undefined)
-      return new Response(null, { status: 503, headers: { 'cache-control': 'no-store' } });
-    if (!user)
-      return new Response(null, {
-        status: 401,
-        headers: { 'cache-control': 'no-store', 'set-cookie': clearedSheetCookie() },
-      });
-    event.locals.user = user;
-    event.locals.heldCredential = 'sheet';
-    applyGrants(await loadPageAccessGrants());
-    event.locals.grants = resolvePermissions(user);
-    return resolve(event);
-  }
   // An /api/* request presenting a credential of its own is verified HERE and never redirected to the hub
   // login — a script needs a status code, not an HTML login page. Verifying in the hook means an invalid
   // token cannot reach a handler at all; WebhookEndpoint then decides which endpoints accept a verified
@@ -167,6 +137,43 @@ export const handle: Handle = async ({ event, resolve }) => {
     }
   }
 
+  const cookieHeader = event.request.headers.get('cookie') ?? '';
+  const sheetToken = parseCookieHeader(cookieHeader)[SHEET_COOKIE];
+  let webSession: Awaited<ReturnType<typeof guard.check>> | undefined;
+  if (
+    sheetToken !== undefined &&
+    isSheetImagePath(event.url.pathname) &&
+    (event.request.method === 'GET' || event.request.method === 'HEAD')
+  ) {
+    webSession = await guard.check(cookieHeader, event.url.href, {
+      navigation: isNavigationRequest(event.request),
+    });
+  }
+  if (webSession && webSession.status !== 'ok') {
+    // Two sheet cookies (one set from elsewhere on the domain) answer as an invalid session.
+    const sheetCookies = cookieHeader
+      .split(';')
+      .filter((c) => c.trim().startsWith(`${SHEET_COOKIE}=`));
+    const user =
+      sheetCookies.length > 1
+        ? null
+        : await resolveSheetSession(sheetToken).catch(() => {
+            console.error('[held-sheet] session lookup failed');
+            return undefined;
+          });
+    if (user === undefined)
+      return new Response(null, { status: 503, headers: { 'cache-control': 'no-store' } });
+    if (!user)
+      return new Response(null, {
+        status: 401,
+        headers: { 'cache-control': 'no-store', 'set-cookie': clearedSheetCookie() },
+      });
+    event.locals.user = user;
+    event.locals.heldCredential = 'sheet';
+    applyGrants(await loadPageAccessGrants());
+    event.locals.grants = resolvePermissions(user);
+    return resolve(event);
+  }
   const result =
     webSession ??
     (await guard.check(cookieHeader, event.url.href, {
