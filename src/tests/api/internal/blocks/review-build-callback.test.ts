@@ -811,6 +811,10 @@ describe('review-build-callback with directPublish: true', () => {
   });
   afterEach(() => {
     vi.clearAllMocks();
+    // A once-implementation a case did not consume (the code under test never called it) must
+    // not leak into the next case: drop it and restore the default.
+    mockReviewUnpublish.mockReset();
+    mockReviewUnpublish.mockImplementation(async () => ({ name: 'review-unpub-1' }));
     mockFindUnique.mockReset();
     mockFindUnique.mockResolvedValue({
       deployDetail: JSON.stringify({ url: 'https://x/y' }),
@@ -853,15 +857,69 @@ describe('review-build-callback with directPublish: true', () => {
     expect(mockWaitApply).not.toHaveBeenCalled();
   });
 
-  it('failure: marks the preview failed like any failed build, no apply, no unpublish', async () => {
+  it('failure: marks the preview failed like any failed build, no apply', async () => {
     const { req, res } = makeReqRes(directBody({ status: 'Failed' }));
     await handler(req, res);
     expect(res.body).toMatchObject({ applied: false, reason: 'review build failed' });
     expect(mockTriggerApplyReview).not.toHaveBeenCalled();
-    expect(mockReviewUnpublish).not.toHaveBeenCalled();
     expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-failed', expect.anything(), {
       requireActivePreview: true,
     });
+  });
+
+  // The build publishes files + meta BEFORE this callback, so a publish that wrote its meta and
+  // then failed would leave the preview served (behind the gate) until the bucket lifecycle. A
+  // failed direct callback unpublishes its sha, without holding the response, and the row stays
+  // failed.
+  it('failure: unpublishes what the build may have published, without waiting on it', async () => {
+    let finish: (v: { name: string }) => void = () => undefined;
+    mockReviewUnpublish.mockImplementationOnce(
+      () => new Promise<{ name: string }>((r) => (finish = r))
+    );
+    const { req, res } = makeReqRes(directBody({ status: 'Failed' }));
+    const done = handler(req, res);
+    try {
+      await vi.waitFor(() => expect(res.statusCode).toBe(200), { timeout: 1000 });
+      expect(res.body).toMatchObject({ applied: false, reason: 'review build failed' });
+      expect(mockReviewUnpublish.mock.calls).toEqual([
+        [{ slug: SLUG, sha: SHA, publishRequestId: PUBREQ }],
+      ]);
+      const states = (mockMarkPreview.mock.calls as unknown as unknown[][]).map((c) => c[1]);
+      expect(states).toEqual(['preview-failed']);
+    } finally {
+      finish({ name: 'review-unpub-1' });
+      await done;
+    }
+  });
+
+  it('failure: a rejected unpublish does not fail the callback', async () => {
+    mockReviewUnpublish.mockRejectedValueOnce(new Error('k8s down'));
+    const { req, res } = makeReqRes(directBody({ status: 'Failed' }));
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockReviewUnpublish).toHaveBeenCalledTimes(1);
+  });
+
+  // A superseded run's late failure must not unpublish: a newer run of the SAME sha may have
+  // published the preview the moderator is looking at.
+  it('failure from a SUPERSEDED direct run: no unpublish, no state write', async () => {
+    mockSuperseded.mockResolvedValueOnce(true);
+    const { req, res } = makeReqRes(directBody({ status: 'Failed', runId: 'old-run' }));
+    await handler(req, res);
+    expect(res.body).toMatchObject({ applied: false, reason: 'superseded run' });
+    expect(mockSuperseded).toHaveBeenCalledTimes(1);
+    expect(mockReviewUnpublish).not.toHaveBeenCalled();
+    expect(mockMarkPreview).not.toHaveBeenCalled();
+  });
+
+  // INVARIANT GUARD (green before and after): a failed build without the field published nothing
+  // to the shared server, so its callback unpublishes nothing.
+  it('failure without the field: no unpublish', async () => {
+    mockFlag.sharedServer = true;
+    const { req, res } = makeReqRes(directBody({ status: 'Failed', directPublish: undefined }));
+    await handler(req, res);
+    expect(res.body).toMatchObject({ applied: false, reason: 'review build failed' });
+    expect(mockReviewUnpublish).not.toHaveBeenCalled();
   });
 
   it('success for a preview torn down mid-build: unpublishes what the build just published', async () => {
