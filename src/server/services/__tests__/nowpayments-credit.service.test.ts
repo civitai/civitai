@@ -275,6 +275,19 @@ describe('creditDeposit', () => {
     expect(grantBuzzPurchase).not.toHaveBeenCalled();
   });
 
+  it('refuses a payment the deposit flow settled as paid by hand', async () => {
+    dbMock.dbRead.cryptoDeposit.findUnique.mockResolvedValue({
+      status: 'hand_paid',
+      buzzCredited: null,
+    });
+
+    const result = await credit();
+
+    expect(result).toMatchObject({ credited: false, decision: 'refused' });
+    expect(result.reason).toMatch(/paid by hand/);
+    expect(grantBuzzPurchase).not.toHaveBeenCalled();
+  });
+
   it('refuses a payment credited by hand against its payin hash', async () => {
     ledger.push({
       externalTransactionId: `np-payin-${PAYIN_HASH}`,

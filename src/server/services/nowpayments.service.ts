@@ -20,6 +20,7 @@ import {
   manualPayinCreditExternalId,
   userIdFromOrderId,
 } from '~/server/services/nowpayments-settle-decision';
+
 import { signalClient } from '~/utils/signal-client';
 import { SignalMessages, NotificationCategory } from '~/server/common/enums';
 import { createNotification } from '~/server/services/notification.service';
@@ -80,6 +81,7 @@ export { manualPayinCreditExternalId };
 
 /** Support monitors this exact message for deposits a staff hand grant already paid. */
 const DEPOSIT_HELD_MESSAGE = 'Deposit held: a hand grant cites this payment';
+
 
 // The IPN body carries no payin_hash, so an IPN-driven event costs one status lookup. A null on
 // the event is not trusted as "no hash": the status response is the authority.
@@ -202,12 +204,7 @@ export const recordUnverifiedDeposit = async (event: NOWPayments.WebhookEvent) =
 
   await dbWrite.cryptoDeposit.upsert({
     where: { paymentId },
-    create: {
-      paymentId,
-      userId,
-      status: 'unverified',
-      payCurrency: event.pay_currency ?? 'unknown',
-    },
+    create: { paymentId, userId, status: 'unverified', payCurrency: event.pay_currency ?? 'unknown' },
     update: {},
   });
   // A row NOWPayments already confirmed keeps its owner; the sweep picks it up from here. Run
@@ -254,7 +251,6 @@ export const processDeposit = async (
   let transactionId: string | undefined;
   let buzzGrantFailed = false;
   let held = false;
-  /** Support already paid this deposit by hand. */
   let handPaid = false;
   let heldReason: HeldReason | undefined;
   let failure: string | undefined;
@@ -466,7 +462,9 @@ export const processDeposit = async (
       // webhook retries can't double-grant. Fire-and-forget so a referral DB
       // hiccup never holds up confirming the deposit.
       if (!buzzGrantFailed && transactionId && transactionId !== 'already_granted') {
-        const { recordBuzzPurchaseKickback } = await import('~/server/services/referral.service');
+        const { recordBuzzPurchaseKickback } = await import(
+          '~/server/services/referral.service'
+        );
         await recordBuzzPurchaseKickback({
           refereeId: userId,
           buzzAmount,
@@ -524,34 +522,24 @@ export const processDeposit = async (
       // Fetch existing record for status ordering and data preservation
       const existing = await dbWrite.cryptoDeposit.findUnique({
         where: { paymentId: BigInt(event.payment_id) },
-        select: {
-          status: true,
-          payAmount: true,
-          outcomeAmount: true,
-          buzzCredited: true,
-          bonusBuzz: true,
-          multiplier: true,
-          depositFee: true,
-          serviceFee: true,
-          feeCurrency: true,
-          paidFiat: true,
-        },
+        select: { status: true, payAmount: true, outcomeAmount: true, buzzCredited: true,
+                  bonusBuzz: true, multiplier: true, depositFee: true, serviceFee: true,
+                  feeCurrency: true, paidFiat: true },
       });
 
       const depositData = {
         payCurrency: event.pay_currency ?? 'unknown',
         // A `failed` IPN typically carries null amounts; preserve the recorded values
         // instead of nulling them out (matches the sibling fields below).
-        payAmount: event.actually_paid ?? existing?.payAmount ?? null,
-        outcomeAmount: event.outcome_amount ?? existing?.outcomeAmount ?? null,
-        buzzCredited:
-          buzzAmount > 0 && !buzzGrantFailed ? buzzAmount : existing?.buzzCredited ?? null,
-        bonusBuzz: !buzzGrantFailed ? bonusBuzz : existing?.bonusBuzz ?? null,
-        multiplier: !buzzGrantFailed ? multiplierInt : existing?.multiplier ?? null,
-        depositFee: event.fee ? parseFloat(event.fee.depositFee) : existing?.depositFee ?? null,
-        serviceFee: event.fee ? parseFloat(event.fee.serviceFee) : existing?.serviceFee ?? null,
-        feeCurrency: event.fee?.currency ?? existing?.feeCurrency ?? null,
-        paidFiat: event.actually_paid_at_fiat ?? existing?.paidFiat ?? null,
+        payAmount: event.actually_paid ?? (existing?.payAmount ?? null),
+        outcomeAmount: event.outcome_amount ?? (existing?.outcomeAmount ?? null),
+        buzzCredited: buzzAmount > 0 && !buzzGrantFailed ? buzzAmount : (existing?.buzzCredited ?? null),
+        bonusBuzz: !buzzGrantFailed ? bonusBuzz : (existing?.bonusBuzz ?? null),
+        multiplier: !buzzGrantFailed ? multiplierInt : (existing?.multiplier ?? null),
+        depositFee: event.fee ? parseFloat(event.fee.depositFee) : (existing?.depositFee ?? null),
+        serviceFee: event.fee ? parseFloat(event.fee.serviceFee) : (existing?.serviceFee ?? null),
+        feeCurrency: event.fee?.currency ?? (existing?.feeCurrency ?? null),
+        paidFiat: event.actually_paid_at_fiat ?? (existing?.paidFiat ?? null),
         chain,
       };
 
@@ -562,21 +550,10 @@ export const processDeposit = async (
       const statusRank: Record<string, number> = {
         // unverified sits above the in-flight statuses: a confirming IPN NOWPayments has verified
         // re-owns the row but leaves it to the sweep, which a paid IPN already asked for.
-        waiting: 0,
-        unverified_exhausted: 0,
-        confirming: 1,
-        confirmed: 1,
-        sending: 1,
-        partially_paid: 1,
+        waiting: 0, unverified_exhausted: 0, confirming: 1, confirmed: 1, sending: 1, partially_paid: 1,
         unverified: 1.5,
         // Nothing automatic moves a held deposit; only a credit that finishes it can.
-        failed: 2,
-        expired: 2,
-        refunded: 2,
-        buzz_failed: 3,
-        held: 3.5,
-        finished: 4,
-        hand_paid: 4,
+        failed: 2, expired: 2, refunded: 2, buzz_failed: 3, held: 3.5, finished: 4, hand_paid: 4,
       };
       const nextRank = statusRank[depositStatus] ?? 0;
 
@@ -615,7 +592,7 @@ export const processDeposit = async (
     ? 'finished'
     : webhookStatus;
   const granted = !buzzGrantFailed && !!transactionId && transactionId !== 'already_granted';
-  // A hand-paid deposit was settled with the user by Support; telling them now would only confuse.
+  // Support already settled this with the user.
   const tellUser = !buzzGrantFailed && !handPaid && (statusAdvanced || granted);
   if (tellUser) {
     // Best effort: a failed signal must not cost the user the notification below, which a
@@ -854,9 +831,7 @@ async function fetchPaymentsByDateRange(
     });
 
     if (result === null) {
-      throw new Error(
-        `NP API returned error on page ${page} (dateFrom=${dateFrom}, dateTo=${dateTo})`
-      );
+      throw new Error(`NP API returned error on page ${page} (dateFrom=${dateFrom}, dateTo=${dateTo})`);
     }
 
     if (result.data.length === 0) break;
@@ -889,9 +864,7 @@ async function reconcileSinglePayment(
   // Also check if we have a local CryptoDeposit that's already finished
   try {
     const localDeposit = await dbRead.cryptoDeposit.findUnique({
-      where: {
-        paymentId: BigInt(typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId),
-      },
+      where: { paymentId: BigInt(typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId) },
       select: { status: true, buzzCredited: true },
     });
     if (
@@ -1451,86 +1424,81 @@ const SUPPORTED_CURRENCIES_INPROC_TTL_MS = 60_000;
 // call retries the upstream fetch immediately, preserving the original semantics.
 class NowPaymentsCurrencyUnavailableError extends Error {}
 
-const getSupportedCurrenciesMemo = createTtlMemo<SupportedCurrencyGroup[]>(
-  async () => {
-    // Check cache first
-    const cached = await redis.packed.get<SupportedCurrencyGroup[]>(CACHE_KEY);
-    if (cached) return cached;
+const getSupportedCurrenciesMemo = createTtlMemo<SupportedCurrencyGroup[]>(async () => {
+  // Check cache first
+  const cached = await redis.packed.get<SupportedCurrencyGroup[]>(CACHE_KEY);
+  if (cached) return cached;
 
-    const [merchantCoins, fullCurrencies] = await Promise.all([
-      nowpaymentsCaller.getMerchantCoins(),
-      nowpaymentsCaller.getFullCurrencies(),
-    ]);
+  const [merchantCoins, fullCurrencies] = await Promise.all([
+    nowpaymentsCaller.getMerchantCoins(),
+    nowpaymentsCaller.getFullCurrencies(),
+  ]);
 
-    if (!merchantCoins || !fullCurrencies) {
-      await log({
-        message: 'Failed to fetch currency data from NowPayments',
-        hasMerchantCoins: !!merchantCoins,
-        hasFullCurrencies: !!fullCurrencies,
+  if (!merchantCoins || !fullCurrencies) {
+    await log({
+      message: 'Failed to fetch currency data from NowPayments',
+      hasMerchantCoins: !!merchantCoins,
+      hasFullCurrencies: !!fullCurrencies,
+    });
+    throw new NowPaymentsCurrencyUnavailableError('Failed to fetch currency data from NowPayments');
+  }
+
+  const selectedCodes = new Set(merchantCoins.selectedCurrencies.map((c) => c.toLowerCase()));
+
+  // Filter full currencies to only our selected ones with a known network
+  const selectedCurrencies = fullCurrencies.currencies
+    .filter((c) => selectedCodes.has(c.code.toLowerCase()))
+    .filter((c) => !!c.network);
+
+  // Fetch min amounts with bounded concurrency to avoid overwhelming NowPayments API
+  const currenciesWithMin: SupportedCurrencyNetwork[] = await mapWithConcurrency(
+    selectedCurrencies,
+    MAX_CONCURRENT_MIN_AMOUNT_REQUESTS,
+    async (currency) => {
+      const minAmount = await nowpaymentsCaller.getMinimumPaymentAmount({
+        currency_from: currency.code,
+        currency_to: 'usdcbase',
+        fiat_equivalent: 'usd',
       });
-      throw new NowPaymentsCurrencyUnavailableError(
-        'Failed to fetch currency data from NowPayments'
-      );
+
+      return {
+        code: currency.code,
+        name: currency.name,
+        network: currency.network,
+        ticker: currency.ticker,
+        logoUrl: currency.logo_url,
+        isStable: currency.is_stable ?? false,
+        minAmount: minAmount?.min_amount ?? null,
+        minAmountUsd: minAmount?.fiat_equivalent ?? null,
+        chain: currency.network
+          ? getChainForNetworkWithFallback(currency.network).chain
+          : null,
+      };
     }
+  );
 
-    const selectedCodes = new Set(merchantCoins.selectedCurrencies.map((c) => c.toLowerCase()));
+  // Group by ticker
+  const grouped: Record<string, SupportedCurrencyGroup> = {};
 
-    // Filter full currencies to only our selected ones with a known network
-    const selectedCurrencies = fullCurrencies.currencies
-      .filter((c) => selectedCodes.has(c.code.toLowerCase()))
-      .filter((c) => !!c.network);
-
-    // Fetch min amounts with bounded concurrency to avoid overwhelming NowPayments API
-    const currenciesWithMin: SupportedCurrencyNetwork[] = await mapWithConcurrency(
-      selectedCurrencies,
-      MAX_CONCURRENT_MIN_AMOUNT_REQUESTS,
-      async (currency) => {
-        const minAmount = await nowpaymentsCaller.getMinimumPaymentAmount({
-          currency_from: currency.code,
-          currency_to: 'usdcbase',
-          fiat_equivalent: 'usd',
-        });
-
-        return {
-          code: currency.code,
-          name: currency.name,
-          network: currency.network,
-          ticker: currency.ticker,
-          logoUrl: currency.logo_url,
-          isStable: currency.is_stable ?? false,
-          minAmount: minAmount?.min_amount ?? null,
-          minAmountUsd: minAmount?.fiat_equivalent ?? null,
-          chain: currency.network ? getChainForNetworkWithFallback(currency.network).chain : null,
-        };
-      }
-    );
-
-    // Group by ticker
-    const grouped: Record<string, SupportedCurrencyGroup> = {};
-
-    for (const currency of currenciesWithMin) {
-      const ticker = (currency.ticker ?? currency.code).toLowerCase();
-      if (!grouped[ticker]) {
-        grouped[ticker] = {
-          ticker,
-          name: currency.name,
-          networks: [],
-        };
-      }
-      grouped[ticker].networks.push(currency);
+  for (const currency of currenciesWithMin) {
+    const ticker = (currency.ticker ?? currency.code).toLowerCase();
+    if (!grouped[ticker]) {
+      grouped[ticker] = {
+        ticker,
+        name: currency.name,
+        networks: [],
+      };
     }
+    grouped[ticker].networks.push(currency);
+  }
 
-    const result = Object.values(grouped);
+  const result = Object.values(grouped);
 
-    // Cache for 3 hours — currency list rarely changes
-    await redis.packed.set(CACHE_KEY, result, { EX: CacheTTL.hour * 3 });
+  // Cache for 3 hours — currency list rarely changes
+  await redis.packed.set(CACHE_KEY, result, { EX: CacheTTL.hour * 3 });
 
-    return result;
-  },
-  SUPPORTED_CURRENCIES_INPROC_TTL_MS,
-  undefined,
-  { freeze: true }
-);
+  return result;
+}, SUPPORTED_CURRENCIES_INPROC_TTL_MS, undefined, { freeze: true });
 
 export const clearSupportedCurrenciesMemo = () => getSupportedCurrenciesMemo.clear();
 

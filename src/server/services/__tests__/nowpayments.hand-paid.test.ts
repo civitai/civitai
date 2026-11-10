@@ -283,8 +283,6 @@ describe('decideDepositCredit', () => {
       dbMock.dbWrite.cryptoDeposit.updateMany,
       dbMock.dbWrite.cryptoDeposit.update,
     ];
-    for (const write of writes) write.mockRejectedValue(new Error('write path'));
-    grantBuzzPurchase.mockRejectedValue(new Error('grant'));
     const input = {
       paymentId: PAYMENT_ID,
       userId: USER_ID,
@@ -304,6 +302,8 @@ describe('decideDepositCredit', () => {
       decision: 'already_granted',
       via: 'hand_paid',
     });
+    for (const write of [...writes, grantBuzzPurchase, createTransaction])
+      expect(write).not.toHaveBeenCalled();
   });
 });
 

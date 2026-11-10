@@ -15,9 +15,8 @@ import { runScriptAndExit } from './lib/run-as-script';
  * deposit must come out "would grant"). Every line it prints starts `[control: prior grant ignored]`.
  *
  * Reads only:
- *   - Postgres through `dbRead`. The script checks that server is a standby (`pg_is_in_recovery()`)
- *     before it starts, before each payment and after the last; if it is not, it prints so and exits
- *     non-zero without printing that payment's decision.
+ *   - Postgres through `dbRead`. It asserts dbRead is a standby (`pg_is_in_recovery()`) around every
+ *     payment and exits non-zero without printing that payment's decision if not.
  *   - the buzz ledger through the buzz service's GET endpoints (transaction by external id, account
  *     transactions).
  *   - NowPayments `GET /payment/<id>`, for the payin hash, settled amount and creation time.
