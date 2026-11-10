@@ -209,6 +209,21 @@ describe('publishModelById :: the date of a scheduled model', () => {
     expect(await modelDate()).toEqual(at(-2));
   });
 
+  it('dates a Draft model at its first scheduled version', async () => {
+    await seed(null, [[V1, 'Draft', null]]);
+    await publishModelById({ id: MODEL_ID, versionIds: [V1], publishedAt: at(2) });
+    expect(await modelDate()).toEqual(at(2));
+  });
+
+  it('ignores a version that is neither live nor scheduled', async () => {
+    await seed(at(1), [
+      [V1, 'Unpublished', at(-5)],
+      [V2, 'Draft', null],
+    ]);
+    await publishModelById({ id: MODEL_ID, versionIds: [V2], publishedAt: at(3) });
+    expect(await modelDate()).toEqual(at(3));
+  });
+
   it('follows a lone version rescheduled later', async () => {
     await seed(at(1), [[V1, 'Scheduled', at(1)]]);
     await publishModelById({ id: MODEL_ID, versionIds: [V1], publishedAt: at(4) });

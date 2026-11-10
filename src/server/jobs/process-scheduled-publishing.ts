@@ -178,7 +178,7 @@ export const scheduledModelsGoLiveSql = (
   releasedWithVersionIds: number[] = []
 ) => Prisma.sql`
   UPDATE "Model"
-  -- A live model left with a future date reads as Scheduled again to the restore path, which would
+  -- A live model left with a future date reads as Scheduled again to restoreModelById, which would
   -- send it back through this job and fire its publish side effects a second time.
   SET status = 'Published', "publishedAt" = LEAST("publishedAt", ${now})
   WHERE id IN (${Prisma.join(ids)})
@@ -402,7 +402,6 @@ export const processScheduledPublishing = createJob(
           }
         }
 
-        // A version going live on its schedule takes its scheduled model with it.
         const releasedWithVersionIds = uniq(
           scheduledModelVersions
             .filter(({ id }) => publishedVersions.has(id))

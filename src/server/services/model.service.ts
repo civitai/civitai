@@ -5075,13 +5075,11 @@ export const publishModelById = async ({
         movedPostIds = movedPosts.map((post) => post.id);
       }
 
-      // Anti-bump guard: publishedAt is immutable once a model has gone
-      // public. Allowed transitions: NULL (Draft) -> set, or future
-      // (Scheduled) -> reschedule. Republish of an already-public model is a
-      // no-op for this column.
-      // Never later than the model's earliest scheduled version, the one it goes live with. A live
-      // version may have been published at once, ahead of the model's date, so it neither sets the
-      // date nor lets another version push it later. Must run after the version writes.
+      // Anti-bump guard: publishedAt is set only while NULL (Draft) or future (Scheduled); once
+      // public it never moves. Never later than the earliest scheduled version, the one the model
+      // goes live with. A live version may have been published at once, ahead of the model's date,
+      // so it neither sets the date nor lets another version push it later. Must run after the
+      // version writes.
       await tx.$executeRaw`
         UPDATE "Model" m
         SET "publishedAt" = LEAST(
