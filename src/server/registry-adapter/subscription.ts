@@ -1,5 +1,5 @@
 /**
- * The one implementation of `Subscribe` (spec/registry.md @ 4166f34, "Subscribe"), shared by
+ * The one implementation of `Subscribe` (spec/registry.md @ 2709083, "Subscribe"), shared by
  * both bindings: `serve.ts` (HTTP/SSE) and `grpc.ts` (gRPC) only translate a request in and
  * events and errors out, so the two cannot drift.
  *
@@ -91,9 +91,12 @@ export function unbindCursor(cursor: string, binding: string): string {
 
 /**
  * How long a consumer may keep a binding's buffer full before its stream ends with
- * `slow_consumer` (rule 8). A source here never queues: it waits on the binding's flow control,
- * and the poll loops behind it wait with it, so a stalled consumer holds a connection and nothing
- * else.
+ * `slow_consumer` (rule 8).
+ *
+ * Before that, a consumer that falls behind is sent the latest state, not every superseded event
+ * (rule 8): the next poll diffs against what it was last sent. `slow_consumer` is for a consumer
+ * that takes nothing for this long; it frees the connection, and the consumer resumes from its
+ * cursor.
  */
 export const SLOW_CONSUMER_MS = 30_000;
 

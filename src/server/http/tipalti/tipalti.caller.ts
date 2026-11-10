@@ -210,17 +210,20 @@ export class TipaltiCaller extends HttpCaller {
     });
 
     if (response.status === 404) return null;
-    if (!response.ok) {
-      console.error('Failed to get payment by refCode', response.statusText);
-      return null;
-    }
+    if (!response.ok)
+      throw new Error(
+        `Failed to get payment by refCode: ${response.status} ${response.statusText}`
+      );
 
     const data = (await response.json()) as {
       items: Tipalti.Payment[];
       totalCount: number;
     };
 
-    if (!data.items.length) return null;
+    if (!data.items?.length) return null;
+    // Legacy refCodes could be shared by two payments; items[0] may be the other one's fees.
+    if (data.items.length > 1)
+      throw new Error(`refCode ${refCode} matches ${data.items.length} Tipalti payments`);
     return data.items[0];
   }
 }

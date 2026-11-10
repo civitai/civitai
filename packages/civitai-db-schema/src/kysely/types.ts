@@ -1948,6 +1948,10 @@ export type BoxOpening = {
    * granted | refunded (text + CHECK)
    */
   rewardStatus: string;
+  /**
+   * Drawn from a pack's guaranteed tiers only.
+   */
+  guaranteed: Generated<boolean>;
   createdAt: Generated<Timestamp>;
 };
 export type BoxRevision = {
@@ -2439,6 +2443,7 @@ export type Collection = {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Timestamp | null;
+  archivedAt: Timestamp | null;
 };
 export type CollectionContributor = {
   createdAt: Generated<Timestamp | null>;
@@ -4530,6 +4535,34 @@ export type ModelVersionExploration = {
   prompt: string;
   modelVersionId: number;
 };
+export type ModelVersionGiftLink = {
+  id: Generated<number>;
+  modelVersionId: number;
+  createdById: number;
+  codeHash: string;
+  codeHint: string;
+  label: string | null;
+  batchId: string | null;
+  /**
+   * null = uncapped. CHECKs (> 0, redemptionCount <= maxRedemptions) live only in the migration.
+   */
+  maxRedemptions: number | null;
+  redemptionCount: Generated<number>;
+  expiresAt: Timestamp | null;
+  revokedAt: Timestamp | null;
+  revokedById: number | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ModelVersionGiftRedemption = {
+  giftLinkId: number;
+  userId: number;
+  claimedAt: Generated<Timestamp>;
+  /**
+   * Set when the link's owner or a moderator removed this claimer's gifted access.
+   */
+  revokedAt: Timestamp | null;
+  revokedById: number | null;
+};
 export type ModelVersionMetric = {
   modelVersionId: number;
   downloadCount: Generated<number>;
@@ -5427,6 +5460,15 @@ export type ResourceReview = {
   nsfw: Generated<boolean>;
   tosViolation: Generated<boolean>;
   metadata: unknown | null;
+  /**
+   * The unpublished post the review was written from. The review stays hidden until that post is live.
+   */
+  postId: number | null;
+  /**
+   * When a review linked to a post was announced: notified and recounted. Cleared when the post is
+   * unpublished, so the next go-live announces it again.
+   */
+  releasedAt: Timestamp | null;
 };
 export type ResourceReviewHelper = {
   resourceReviewId: number;
@@ -7048,6 +7090,8 @@ export type DB = {
   ModelVersion: ModelVersion;
   ModelVersionEngagement: ModelVersionEngagement;
   ModelVersionExploration: ModelVersionExploration;
+  ModelVersionGiftLink: ModelVersionGiftLink;
+  ModelVersionGiftRedemption: ModelVersionGiftRedemption;
   ModelVersionMetric: ModelVersionMetric;
   ModelVersionMonetization: ModelVersionMonetization;
   ModelVersionSale: ModelVersionSale;

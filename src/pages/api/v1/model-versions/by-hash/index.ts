@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import * as z from 'zod';
 import { isProd } from '~/env/other';
 import { prepareModelVersionResponse } from '~/pages/api/v1/model-versions/[id]';
@@ -74,7 +75,8 @@ export default PublicEndpoint(
           baseUrl,
           images.filter((x) => x.modelVersionId === file.modelVersion.id),
           paidAccess[file.modelVersion.id] ?? null,
-          showSfwFace
+          showSfwFace,
+          isRedCapableHost(req.headers.host)
         )
       )
     );

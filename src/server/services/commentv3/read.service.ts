@@ -47,6 +47,8 @@ export type CommentV3Item = {
   pinnedAt: Date | null;
   hidden: boolean;
   tosViolation: boolean;
+  /** Closed to replies below it, by a moderator. */
+  locked: boolean;
   reactionCount: number;
   /** Null on a deleted comment. */
   user: CommentV3Author | null;
@@ -78,6 +80,7 @@ type Row = {
   pinnedAt: Date | null;
   hidden: boolean;
   tosViolation: boolean;
+  locked: boolean;
   reactionCount: number;
   deletedAt: Date | null;
   userId: number;
@@ -90,7 +93,7 @@ type Row = {
 const intArray = (ids: number[]) => sql`string_to_array(${ids.join(',')}, ',')::int[]`;
 
 const COLUMNS = sql`c.id, c."parentId", c."replyToId", c.depth, c.content, c."createdAt", c."updatedAt",
-  c."pinnedAt", c.hidden, c."tosViolation", c."reactionCount", c."deletedAt", c."userId",
+  c."pinnedAt", c.hidden, c."tosViolation", c.locked, c."reactionCount", c."deletedAt", c."userId",
   u.username, u."deletedAt" AS "userDeletedAt", u.image AS "userImage"`;
 
 /** Whether a row's ToS state and author let this viewer see it. `alias` names the CommentV3 row. */
@@ -237,6 +240,7 @@ async function decorate(
     pinnedAt: r.pinnedAt,
     hidden: r.deletedAt === null && r.hidden,
     tosViolation: r.deletedAt === null && r.tosViolation,
+    locked: r.locked,
     reactionCount: r.reactionCount,
     user:
       r.deletedAt === null
@@ -259,6 +263,8 @@ export type SectionOptions = {
   repliesPerParent?: number;
   /** Reply levels opened up front. 0 opens none. */
   replyDepth: number;
+  /** Hidden top-level comments left out, or only those; folded into the list when unset. */
+  hidden?: 'exclude' | 'only';
 };
 
 const MAX_PINNED = 20;
@@ -282,7 +288,14 @@ export async function getCommentSection(
   const topLevel = sql`c."entityType" = ${
     entity.entityType
   }::"CommentEntityType" AND c."entityId" = ${entity.entityId}
-    AND c."parentId" IS NULL AND ${visibleTo(viewer)}`;
+    AND c."parentId" IS NULL AND ${visibleTo(viewer)}
+    ${
+      options.hidden === 'exclude'
+        ? sql`AND NOT c.hidden`
+        : options.hidden === 'only'
+        ? sql`AND c.hidden`
+        : sql``
+    }`;
 
   // One more than any page can hold, so a full page knows whether another follows.
   const [pinned, candidates] = await Promise.all([
@@ -397,12 +410,44 @@ function childrenOf(items: CommentV3Item[], sort: SortSpec): Record<number, Comm
   return children;
 }
 
+/** Top-level comments this viewer may see, split into visible and hidden. */
+export async function countSectionComments(
+  db: CommentV3Db,
+  entity: { entityType: string; entityId: number },
+  viewer: CommentV3Viewer
+) {
+  const { rows } = await sql<{ visible: number; hidden: number }>`
+    SELECT count(*) FILTER (WHERE NOT c.hidden)::int AS visible,
+           count(*) FILTER (WHERE c.hidden)::int AS hidden
+      FROM "CommentV3" c
+     WHERE c."entityType" = ${entity.entityType}::"CommentEntityType" AND c."entityId" = ${
+    entity.entityId
+  }
+       AND c."parentId" IS NULL AND ${visibleTo(viewer)}`.execute(db);
+  return rows[0] ?? { visible: 0, hidden: 0 };
+}
+
 /** The comment's entity, if the comment exists. Whether a viewer may see it is `isShown`. */
 export async function getCommentEntity(db: CommentV3Db, commentId: number) {
   const { rows } = await sql<{ entityType: string; entityId: number; path: string }>`
     SELECT c."entityType", c."entityId", c.path::text AS path FROM "CommentV3" c
      WHERE c.id = ${commentId}`.execute(db);
   return rows[0] ?? null;
+}
+
+/**
+ * The model comment a model-page link names. Links and notifications sent before the model flip
+ * carry the old v1 id (`modelPageId`), which on another model or surface can be a different
+ * comment's id. On the same model no comment's id is another's v1 id, so a v1 id found there wins,
+ * and any other id is taken as the comment's own.
+ */
+export async function resolveModelPageCommentId(db: CommentV3Db, modelId: number, id: number) {
+  const { rows } = await sql<{ id: number }>`
+    SELECT c.id FROM "CommentV3" c
+     WHERE c."legacyV1Id" = ${id} AND c."entityType" = 'model' AND c."entityId" = ${modelId}`.execute(
+    db
+  );
+  return rows[0]?.id ?? id;
 }
 
 /** Whether the comment and every comment above it are visible to this viewer. */

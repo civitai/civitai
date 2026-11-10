@@ -13,6 +13,8 @@ import {
   IconFlag,
   IconGift,
   IconGraphOff,
+  IconConfetti,
+  IconConfettiOff,
   IconGraph,
   IconEye,
   IconMicrophone,
@@ -181,6 +183,25 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     },
   });
 
+  const toggleEventPointsMutation = trpc.user.setEventPointsExclusion.useMutation({
+    async onMutate({ setTo }) {
+      await queryUtils.user.getCreator.cancel({ username });
+
+      const prevUser = queryUtils.user.getCreator.getData({ username });
+      queryUtils.user.getCreator.setData({ username }, () =>
+        prevUser ? { ...prevUser, excludeFromEventPoints: setTo } : undefined
+      );
+
+      return { prevUser };
+    },
+    onError(_error, _vars, context) {
+      queryUtils.user.getCreator.setData({ username }, context?.prevUser);
+      showErrorNotification({
+        error: new Error('Unable to change event points eligibility, please try again.'),
+      });
+    },
+  });
+
   const colorScheme = useComputedColorScheme('dark');
 
   const handleToggleMute = () => {
@@ -316,6 +337,26 @@ export const UserContextMenu = ({ username }: { username: string }) => {
                 {user.excludeFromLeaderboards
                   ? 'Include in leaderboards'
                   : 'Exclude from leaderboards'}
+              </Menu.Item>
+              <Menu.Item
+                color={user.excludeFromEventPoints ? 'green' : 'red'}
+                leftSection={
+                  user.excludeFromEventPoints ? (
+                    <IconConfetti size={14} stroke={1.5} />
+                  ) : (
+                    <IconConfettiOff size={14} stroke={1.5} />
+                  )
+                }
+                onClick={() =>
+                  toggleEventPointsMutation.mutate({
+                    id: user.id,
+                    setTo: !user.excludeFromEventPoints,
+                  })
+                }
+              >
+                {user.excludeFromEventPoints
+                  ? 'Include in event points'
+                  : 'Exclude from event points'}
               </Menu.Item>
               {/* <Menu.Item
                 color="red"

@@ -1,7 +1,9 @@
 import type { AutocompleteProps } from '@mantine/core';
-import { Group, Select, Text } from '@mantine/core';
+import { Group, Select } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
+import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { IconChevronDown } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -39,23 +41,19 @@ import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
-import { emptySearchClient } from '~/components/Search/emptySearchClient';
 import { resolveSearchTarget } from '~/components/Search/search-target';
-import { IMAGE_SEARCH_MAINTENANCE_MESSAGE } from '~/components/Search/ImageSearchMaintenance';
 import classes from './QuickSearchDropdown.module.scss';
 import { truncate } from 'lodash-es';
 import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
 import { searchHitName } from '~/shared/utils/model-sfw-face';
 
-// Sentinel option value for the "image search is in maintenance" dropdown item. Not a numeric id,
-// so `hitIds`/`onHits` filter it out and `onItemSelected` is never called with it.
-const IMAGE_SEARCH_MAINTENANCE_VALUE = '__image-search-maintenance__';
-
 // Wrapped so a Meili outage degrades this dropdown to an empty result set
 // instead of an uncaught `MeiliSearchCommunicationError`. Fails quietly (no
 // banner) — the header quick-search just shows nothing during a blip.
 const meilisearch = withUserHydration(
-  createResilientSearchClient(createInstantMeiliSearch({ primaryKey: 'id' }))
+  createResilientSearchClient(
+    withSemanticImageSearch(createInstantMeiliSearch({ primaryKey: 'id' }))
+  )
 );
 
 // TODO: These styles were taken from the original SearchBar component. We should probably migrate that searchbar to use this component.
@@ -203,13 +201,6 @@ const QuickSearchDropdownInner = ({
     buildMinorExclusionFilter({ targetIndex, addons, currentUser }),
   ].filter(isDefined);
 
-  // Images is selectable while image search is retired whenever `imageSearchEntry` offers it, but
-  // the images_v6 index is empty and declares no filterable attributes — so swap to a client that
-  // returns nothing (no request to an index that errors on a filtered query) and show a notice.
-  // 🔴 The index EXISTS, and whenever `imageSearchEntry` offers the Images target this swap is the
-  // only thing keeping a public query off it. Do not remove it as dead code.
-  const imageSearchMaintenance = targetIndex === 'images' && !features.imageSearch;
-
   // The options the selector OFFERS: what the caller declared, narrowed by feature flag. Computed
   // once here because the render below reads it twice — as `data`, and in the `value` expression
   // that blanks the label when the target is not one of these.
@@ -221,7 +212,7 @@ const QuickSearchDropdownInner = ({
   const enabledTargets = (props.supportedIndexes ?? [])
     .filter(
       (value) =>
-        (features.imageSearchEntry ? true : searchIndexMap[value] !== IMAGES_SEARCH_INDEX) &&
+        (features.imageSearch ? true : searchIndexMap[value] !== IMAGES_SEARCH_INDEX) &&
         (features.toolSearch ? true : searchIndexMap[value] !== TOOLS_SEARCH_INDEX) &&
         (features.articles ? true : value !== 'articles')
     )
@@ -286,13 +277,7 @@ const QuickSearchDropdownInner = ({
         // previous index's parameters: react-instantsearch sets the new index and searches in its
         // render body, before the children that own `filters` have re-rendered.
         key={indexName}
-        searchClient={
-          imageSearchMaintenance
-            ? emptySearchClient
-            : disableInitialSearch
-            ? searchClient
-            : meilisearch
-        }
+        searchClient={disableInitialSearch ? searchClient : meilisearch}
         indexName={indexName}
         future={{ preserveSharedStateOnUnmount: true }}
       >
@@ -307,7 +292,6 @@ const QuickSearchDropdownInner = ({
           indexName={targetIndex}
           dropdownItemLimit={dropdownItemLimit}
           carriedSearchText={carriedSearchText}
-          imageSearchMaintenance={imageSearchMaintenance}
         />
       </InstantSearch>
     </Group>
@@ -325,12 +309,10 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   placeholder,
   onHits,
   carriedSearchText,
-  imageSearchMaintenance,
   ...autocompleteProps
 }: QuickSearchDropdownProps & {
   indexName: TIndex;
   carriedSearchText: React.MutableRefObject<string>;
-  imageSearchMaintenance: boolean;
 }) {
   // const currentUser = useCurrentUser();
   const { query, refine: setQuery, isSearchStalled } = useSearchBox();
@@ -339,6 +321,9 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const isSubmittingOptionRef = useRef(false);
   const showSfwFace = useShowsSfwFace();
+  // The dropdown portals at Mantine's popover z-index (300), but a registry dialog stacked on
+  // another sits at 300 + index and would cover it.
+  const dialogZIndex = useDialogContext().zIndex;
 
   const indexName = results?.index
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
@@ -353,9 +338,6 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   });
 
   const items = useMemo(() => {
-    if (imageSearchMaintenance) {
-      return [{ hit: null as any, value: IMAGE_SEARCH_MAINTENANCE_VALUE, label: 'Maintenance' }];
-    }
     const items = filtered.map((hit) => ({
       // key: String(hit.id),
       hit,
@@ -372,7 +354,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
           : '',
     }));
     return items;
-  }, [filtered, imageSearchMaintenance, showSfwFace]);
+  }, [filtered, showSfwFace]);
 
   // Report what is on offer. Keyed on the joined id list rather than on `items`, whose identity
   // changes on every re-render of the memo's inputs — re-firing on an unchanged set would make a
@@ -400,13 +382,6 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
 
   const renderOption = useCallback<NonNullable<AutocompleteProps['renderOption']>>(
     ({ option }) => {
-      if (option.value === IMAGE_SEARCH_MAINTENANCE_VALUE) {
-        return (
-          <Text size="sm" ta="center">
-            {IMAGE_SEARCH_MAINTENANCE_MESSAGE}
-          </Text>
-        );
-      }
       const item = getItemFromValue(option.value);
       if (!item) return null;
 
@@ -417,21 +392,17 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   );
 
   useEffect(() => {
-    // Image search is retired and its index deleted — never send a query to it.
-    if (imageSearchMaintenance) return;
-
     // Only set the query when the debounced search changes
     // and user didn't select from the list
     if (!shouldRefineSearchQuery(debouncedSearch, query)) return;
 
     setQuery(debouncedSearch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, query, imageSearchMaintenance]);
+  }, [debouncedSearch, query]);
 
   // Covers both halves of the wait: the 300ms debounce before the query is even sent, and the
   // request itself. `isSearchStalled` alone leaves the first 300ms looking like a dead input.
-  const loading =
-    !imageSearchMaintenance && search.length > 0 && (search !== query || isSearchStalled);
+  const loading = search.length > 0 && (search !== query || isSearchStalled);
 
   return (
     <ClearableAutoComplete
@@ -467,7 +438,6 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
       onClear={() => setSearch('')}
       // onBlur={() => (!isMobile ? onClear?.() : undefined)}
       onOptionSubmit={(value) => {
-        if (value === IMAGE_SEARCH_MAINTENANCE_VALUE) return;
         const item = getItemFromValue(value);
         if (item) {
           // Set flag before calling onItemSelected to prevent onChange from overwriting
@@ -490,6 +460,10 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
       clearable={query.length > 0}
       loading={loading}
       {...autocompleteProps}
+      comboboxProps={{
+        zIndex: dialogZIndex ? dialogZIndex + 1 : undefined,
+        ...autocompleteProps.comboboxProps,
+      }}
     />
   );
 }

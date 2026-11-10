@@ -1523,6 +1523,21 @@ export const chatCompletionStep = {
   // through this step. ENFORCED, not just declared: clause 7 deep-scans the
   // BUILT step for an AIR reference.
   resourcePolicy: { kind: 'none' },
+  // Message text is words to the model, not an input the orchestrator fetches:
+  // a chat that pastes a link (a model page, an external image) is not an image
+  // input, so the generation input gate does not refuse it as one. Keys and links
+  // naming one of our images in that text are still ownership-checked.
+  //
+  // 🔴 SOUND BECAUSE OF THIS FILE'S SCHEMA, NOT THE ORCHESTRATOR'S CODE. Every
+  // member's `content` is `z.string()`, so neither a content-part array (whose
+  // `image_url` the orchestrator fetches) nor a `{ $ref }` object can sit there;
+  // "free-text param paths" in `__tests__/chat-completion.step.test.ts` pins that
+  // (it goes red if `content` widens). The orchestrator side, read for this
+  // (not enforced here): a string content becomes a text part only, only
+  // structured image parts are fetched, and its server-side page fetch tool runs
+  // only with a web-search tool this schema's `z.literal('function')` forbids.
+  // The AIR scan above is a separate check and is NOT narrowed by this.
+  freeTextParamPaths: ['messages[].content'],
   paramSchema: chatCompletionParamsSchema,
   // Models AS variants: the allowlist, the price key and the audit row's
   // `detail.variant` in one declaration.

@@ -33,7 +33,13 @@ function cacheWithFakeRedis(excluded: MetricExcludedUsers) {
       incr.push({ key, field, value });
       return Promise.resolve(1);
     },
-    hIncrIfExistsOnce: (key: string, _dedupeKey: string, field: string, value: number) => {
+    hIncrIfExistsOnce: (
+      key: string,
+      _dedupeKey: string,
+      _recentEventKey: string,
+      field: string,
+      value: number
+    ) => {
       incrOnce.push({ key, field, value });
       return Promise.resolve(true);
     },

@@ -223,4 +223,21 @@ export const FEEDBACK_NETWORK_URL_MAX_LENGTH = 300;
  */
 export const FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH = 20;
 
+/**
+ * Failed tRPC calls. A batched call fails inside an HTTP 200 response, so the network buffer above
+ * never sees it. Each entry is the procedure path, the tRPC error code and status, and a time:
+ * never the input, never the error message (a message can echo what the user typed).
+ */
+export const FEEDBACK_TRPC_ERROR_MAX_COUNT = 10;
+export const FEEDBACK_TRPC_PATH_MAX_LENGTH = 100;
+/** A procedure path is dotted identifiers (`model.getById`). Anything else is not recorded. */
+export const FEEDBACK_TRPC_PATH_PATTERN = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$/;
+/** tRPC codes are SCREAMING_SNAKE (`NOT_FOUND`, `INTERNAL_SERVER_ERROR`). */
+export const FEEDBACK_TRPC_CODE_PATTERN = /^[A-Z_]{1,40}$/;
+
+/** Bounds on the environment the client reports: build id, short device strings, user agent. */
+export const FEEDBACK_BUILD_MAX_LENGTH = 64;
+export const FEEDBACK_DEVICE_TEXT_MAX_LENGTH = 64;
+export const FEEDBACK_USER_AGENT_MAX_LENGTH = 400;
+
 export const feedbackAreaFlagKey = (area: FeedbackArea) => `feedback-area-${area}`;

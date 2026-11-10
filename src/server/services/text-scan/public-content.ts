@@ -48,7 +48,7 @@ export function blockReturnsToAuthor(article: { status: ArticleStatus; scheduled
 /**
  * The metadata a block moving an article to UnpublishedViolation writes: the status a restore
  * returns it to, replacing any an earlier block left behind. A Draft, scheduled or not, returns as a
- * Draft (its schedule untouched, so the go-live job still publishes it), and Unpublished as
+ * Draft (the restore clears its schedule, so the author schedules it again), and Unpublished as
  * Unpublished. Processing records Published, as it may have no `publishedAt` yet to restore by; a
  * Published article needs no key, since a row without one restores by `publishedAt`.
  */

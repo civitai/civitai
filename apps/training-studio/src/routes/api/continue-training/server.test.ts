@@ -3,6 +3,8 @@ import { MatureAckRequiredError } from '$lib/mature-charge';
 
 const continueTrainingWhatIf = vi.fn();
 const continueTraining = vi.fn();
+// Empty: the route loads train-core only for its error class; the client's dist can't load under Node's ESM loader.
+vi.mock('@civitai/orchestration-client', () => ({}));
 vi.mock('$lib/server/token', () => ({ requireToken: async () => 'token' }));
 vi.mock('$lib/server/text-check', () => ({
   textCheckCookie: () => null,

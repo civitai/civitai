@@ -528,6 +528,10 @@
                   "minItems": 1,
                   "maxItems": 32,
                   "items": { "$ref": "#/$defs/storageMigrationOp" }
+                },
+                "hook": {
+                  "description": "RESERVED — civitai.com refuses this field until permission hooks are enabled, so do not declare it yet. Optional. A permission hook: one ES module of the bundle whose default export decides, for every write to this collection, whether the write is allowed. It runs after the collection `schema` check, never instead of it. `file` is the hook's path in the submitted bundle, shipped verbatim — a committed source file, not a build output, so it must not be inside `outputDir` or `node_modules`; one self-contained module with no imports, at most 65536 bytes of UTF-8 text. `sha256` is the SHA-256 of that file's bytes as 64 lowercase hex characters: submit, the git-push path and approve each refuse a version whose file is missing or does not match it. `timeoutMs` is the most time one call may take, from 1 to 500 (omitted means 50). One file used by several collections must be pinned with the same sha256 in each.",
+                  "$ref": "#/$defs/storageCollectionHook"
                 }
               },
               "allOf": [
@@ -733,6 +737,32 @@
     },
     "storageCollectionSchemaType": {
       "enum": ["object", "array", "string", "number", "integer", "boolean", "null"]
+    },
+    "storageCollectionHook": {
+      "type": "object",
+      "description": "A collection's permission hook (see `storage.collections.<name>.hook`). Whether `file` is inside `outputDir`, whether it exists in the bundle with this sha256, its size, and two collections pinning one file with different digests are checked by the server, not by this schema.",
+      "additionalProperties": false,
+      "required": ["file", "sha256"],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "The hook's relative path in the bundle: \"/\"-separated segments, each starting with a letter, digit, _ or - and then letters, digits, _, . or - (so no \".\" or \"..\" segment, no hidden file, no leading \"/\"), ending .js or .mjs, at most 200 characters, with no node_modules segment.",
+          "maxLength": 200,
+          "pattern": "^([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\\.m?js$",
+          "not": { "pattern": "(^|/)node_modules(/|$)" }
+        },
+        "sha256": {
+          "type": "string",
+          "description": "The SHA-256 of the file's bytes, as 64 lowercase hex characters.",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "description": "The most milliseconds one call of the hook may take, from 1 to 500. Omitted means 50.",
+          "minimum": 1,
+          "maximum": 500
+        }
+      }
     }
   },
   "allOf": [

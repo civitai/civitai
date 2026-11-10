@@ -288,11 +288,11 @@ function checkDecision(decision: Decision, site: Site): string | null {
       if (
         // The row's only spread is the client-column helper; `metadata` follows it (after any
         // plain `column: value` entries), so the stripped copy plus the stamp is what lands.
-        !/\.\.\.pickClientImageColumns\(image\),(?:\s*\w+:\s*[\w.]+,)*\s*metadata:\s*blockProvenance\s*\?\s*\{\s*\.\.\.metadata,\s*\[blockProvenance\.key\]:\s*blockProvenance\.appId\s*\}\s*:\s*metadata,/.test(
+        !/\.\.\.pickClientImageColumns\(image\),(?:\s*\w+:\s*[\w.]+,)*\s*metadata:\s*blockProvenance\s*\?\s*\{\s*\.\.\.metadata,\s*\[blockProvenance\.key\]:\s*blockProvenance\.appId\s*\}\s*:\s*(?:feedbackCapture\s*\?\s*\{\s*\.\.\.metadata,\s*\[FEEDBACK_CAPTURE_METADATA_KEY\]:\s*feedbackCapture\s*\}\s*:\s*)?metadata,/.test(
           region
         )
       )
-        return 'createImage no longer writes the stripped metadata plus blockProvenance';
+        return 'createImage no longer writes the stripped metadata plus a server stamp';
       return null;
     case 'in-function-strip':
       if (

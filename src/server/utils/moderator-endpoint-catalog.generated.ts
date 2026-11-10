@@ -5,6 +5,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/admin/temp/text-scan-clavata-cutover': () =>
     import('~/pages/api/admin/temp/text-scan-clavata-cutover'),
   '/api/admin/temp/text-scan-rescan': () => import('~/pages/api/admin/temp/text-scan-rescan'),
+  '/api/mod/apps/refund-workflows': () => import('~/pages/api/mod/apps/refund-workflows'),
+  '/api/mod/apps/workflow-charges': () => import('~/pages/api/mod/apps/workflow-charges'),
   '/api/mod/audit/change-history': () => import('~/pages/api/mod/audit/change-history'),
   '/api/mod/bounty-entry-file/clear-check': () =>
     import('~/pages/api/mod/bounty-entry-file/clear-check'),
@@ -39,6 +41,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/homeblock/delete': () => import('~/pages/api/mod/homeblock/delete'),
   '/api/mod/homeblock/reorder': () => import('~/pages/api/mod/homeblock/reorder'),
   '/api/mod/homeblock/update': () => import('~/pages/api/mod/homeblock/update'),
+  '/api/mod/image/report-csam': () => import('~/pages/api/mod/image/report-csam'),
   '/api/mod/image/set-nsfw-level': () => import('~/pages/api/mod/image/set-nsfw-level'),
   '/api/mod/image/tag-vote': () => import('~/pages/api/mod/image/tag-vote'),
   '/api/mod/knights/enqueue': () => import('~/pages/api/mod/knights/enqueue'),
@@ -90,6 +93,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
     import('~/pages/api/mod/text-scan/model-rules-hold/resolve'),
   '/api/mod/training-data/resolve': () => import('~/pages/api/mod/training-data/resolve'),
   '/api/mod/user/buzz-membership-end': () => import('~/pages/api/mod/user/buzz-membership-end'),
+  '/api/mod/user/cancel-pending-workflows': () =>
+    import('~/pages/api/mod/user/cancel-pending-workflows'),
   '/api/mod/user/clear-profile': () => import('~/pages/api/mod/user/clear-profile'),
   '/api/mod/user/creator-program-ban': () => import('~/pages/api/mod/user/creator-program-ban'),
   '/api/mod/user/creator-score-grant': () => import('~/pages/api/mod/user/creator-score-grant'),
@@ -114,6 +119,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
     import('~/pages/api/mod/user/membership-resync-preview'),
   '/api/mod/user/message-as-civitai': () => import('~/pages/api/mod/user/message-as-civitai'),
   '/api/mod/user/mute': () => import('~/pages/api/mod/user/mute'),
+  '/api/mod/user/personal-data-export-release': () =>
+    import('~/pages/api/mod/user/personal-data-export-release'),
   '/api/mod/user/reactions': () => import('~/pages/api/mod/user/reactions'),
   '/api/mod/user/remove-reactions': () => import('~/pages/api/mod/user/remove-reactions'),
   '/api/mod/user/toggle-moderator': () => import('~/pages/api/mod/user/toggle-moderator'),

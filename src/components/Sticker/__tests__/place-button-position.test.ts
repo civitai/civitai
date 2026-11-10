@@ -500,3 +500,79 @@ describe('the side the cluster is already on', () => {
     expect(shouldFlipPlaceButton({ below, above, tray, clip, flipped: true })).toBe(true);
   });
 });
+
+describe('a cluster with no side that fits', () => {
+  const STANDOFF = { rotation: 0, knobOffset: KNOB, outset: OUTSET, gap: GAP };
+  const STICKER = { width: 80, height: 100 };
+  // A short video: the carousel viewport clips at 400.
+  const SHORT_CLIP: Box = { top: 60, bottom: 400, left: 100, right: 500 };
+  const { below } = chromeClearance({ ...STICKER, ...STANDOFF });
+
+  const element = (top: number, height: number, width: number) => ({
+    getBoundingClientRect: () => ({
+      top,
+      bottom: top + height,
+      left: 200,
+      right: 200 + width,
+      width,
+      height,
+    }),
+  });
+
+  /** The cluster under a sticker at `stickerTop`, pulled up by `lift` as the last result set it. */
+  const position = (stickerTop: number, clusterHeight: number, lift = 0) =>
+    placeButtonPosition({
+      sticker: element(stickerTop, STICKER.height, STICKER.width),
+      cluster: element(stickerTop + STICKER.height + below - lift, clusterHeight, 220),
+      tray: null,
+      clip: SHORT_CLIP,
+      flipped: false,
+      lift,
+      ...STANDOFF,
+    });
+
+  it('is pulled up over the sticker until its bottom is inside the clip', () => {
+    const unlifted = 220 + STICKER.height + below + 200;
+    const first = position(220, 200);
+
+    expect(first?.flipped).toBe(false);
+    expect(unlifted).toBeGreaterThan(SHORT_CLIP.bottom);
+    // Inside, and by no more than the pixel the lift rounds up to.
+    expect(unlifted - first!.lift).toBeLessThanOrEqual(SHORT_CLIP.bottom);
+    expect(unlifted - first!.lift).toBeGreaterThan(SHORT_CLIP.bottom - 1);
+  });
+
+  it('keeps the same lift once it is applied, so it cannot oscillate', () => {
+    const first = position(220, 200)!;
+
+    expect(position(220, 200, first.lift)?.lift).toBe(first.lift);
+  });
+
+  it('is not moved where it already fits', () => {
+    expect(position(100, 60)?.lift).toBe(0);
+  });
+
+  // An image whose lower half is under the open tray; the clip is the whole media box.
+  const underTray = (liftOverTray?: boolean) =>
+    placeButtonPosition({
+      sticker: element(220, STICKER.height, STICKER.width),
+      cluster: element(220 + STICKER.height + below, 200, 220),
+      tray: { top: 400, bottom: 900, left: 0, right: 1000 },
+      clip: { top: 60, bottom: 900, left: 100, right: 500 },
+      flipped: false,
+      liftOverTray,
+      ...STANDOFF,
+    });
+
+  it('is not pulled over a sticker for the tray, which the page can scroll away from', () => {
+    expect(underTray()?.lift).toBe(0);
+  });
+
+  it('is pulled above the tray for a host that opts in', () => {
+    const unlifted = 220 + STICKER.height + below + 200;
+    const lift = underTray(true)!.lift;
+
+    expect(unlifted - lift).toBeLessThanOrEqual(400);
+    expect(unlifted - lift).toBeGreaterThan(399);
+  });
+});

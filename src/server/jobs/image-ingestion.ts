@@ -21,7 +21,11 @@ import {
   PLACEHOLDER_OWNER_ID,
   userUnderLegalHoldSql,
 } from '~/server/utils/legal-hold';
-import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import {
+  accountHoldSql,
+  captureImageKeptSql,
+  holdMarkerViewExists,
+} from '~/server/services/legal-hold.service';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
 import {
@@ -604,6 +608,7 @@ export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: b
     AND "Image"."blockedFor" IS DISTINCT FROM 'CSAM'
     AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
     AND NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}
+    AND NOT ${captureImageKeptSql('"Image"')}
     ${
       holdForTrainingCopy
         ? Prisma.sql`AND NOT ${appealTrainingHeld(Prisma.raw('"Image"'))}`

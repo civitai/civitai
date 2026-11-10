@@ -2113,6 +2113,48 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     }
   );
 
+  describe('a chat App Block (the registry chat-completion step)', () => {
+    const chatStep = (content: string) => ({
+      kind: 'step' as const,
+      step: 'chat-completion',
+      params: {
+        model: 'deepseek/deepseek-chat',
+        messages: [{ role: 'user', content }],
+        maxTokens: 128,
+      },
+    });
+
+    it('POSITIVE CONTROL: a plain message reaches the orchestrator', async () => {
+      await estimate(chatStep('hello')).catch(() => undefined);
+      expect(whatifs().length).toBeGreaterThan(0);
+    });
+
+    // A whole url with a control byte inside is refused as an image input anywhere else (see
+    // 'refuses a url with a control byte inside'). In message text it is words.
+    it('reads message text as text: a link in it is not refused as an image input', async () => {
+      await estimate(chatStep('https://example.com/a\u0001.png')).catch(() => undefined);
+      expect(whatifs().length).toBeGreaterThan(0);
+    });
+
+    it("still refuses another user's private image named in message text", async () => {
+      givenImage(OTHER_USER, false);
+      await refusedBeforeTheOrchestrator(chatStep(CDN));
+      await refusedBeforeTheOrchestrator(chatStep(`what is in this picture?\n${CDN}`));
+    });
+
+    it('a workflow still reads a link in a $ref-wired text field as an image input', async () => {
+      const [gen, , transcode] = body().steps;
+      const upscale = {
+        $type: 'imageUpscaler',
+        input: { image: { $ref: '$arguments', path: 'prompt' } },
+      };
+      const steps = [gen, upscale, transcode];
+      await refusedBeforeTheOrchestrator(
+        body({ steps, arguments: { prompt: 'https://example.com/a\u0001.png' } })
+      );
+    });
+  });
+
   it('the registry step still refuses an external host (its own param schema)', async () => {
     const error = await estimate(registryWith('https://example.com/a.png')).catch((e) => e);
     expect(error).toMatchObject({ code: 'BAD_REQUEST' });

@@ -115,6 +115,8 @@ export const trainingServiceStatusSchema = z.object({
   available: z.boolean().default(true),
   message: z.string().nullish(),
   blockedModels: z.array(z.string()).optional().default(blockedCustomModels),
+  // Optional note per blocked key. A malformed value drops the notes, never the blocks.
+  blockedModelReasons: z.record(z.string(), z.string()).optional().default({}).catch({}),
 });
 export type TrainingServiceStatus = z.infer<typeof trainingServiceStatusSchema>;
 

@@ -4,8 +4,8 @@ import { COMMENT_V3_SURFACES } from './comment-v3';
 /**
 ## Metrics driven by commentv2 table:
 - UserMetric.commentCount (create/delete) — comments *received* by the owner of the commented-on
-  entity, on the threads CommentV3 does not count: model, 3D model review and club post. An
-  orphaned thread has no owner, so it counts nothing.
+  entity, on the threads CommentV3 does not count: 3D model review and club post. An orphaned
+  thread has no owner, so it counts nothing.
 
 A surface in COMMENT_V3_SURFACES is counted by comment-v3.ts instead, entity metrics included, so it
 is skipped here.
@@ -43,6 +43,7 @@ export const commentV2Handler = createEventHandler<CommentV2Record>({
           WHEN COALESCE(r."appListingId", t."appListingId") IS NOT NULL THEN 'appListing'
           WHEN COALESCE(r."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'
           WHEN COALESCE(r."storylineId", t."storylineId") IS NOT NULL THEN 'storyline'
+          WHEN COALESCE(r."modelId", t."modelId") IS NOT NULL THEN 'model'
         END AS "surface",
         COALESCE(
           p."userId", i."userId", a."userId", b."userId",

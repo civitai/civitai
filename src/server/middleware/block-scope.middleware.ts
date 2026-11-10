@@ -2,12 +2,12 @@ import { decodeProtectedHeader, jwtVerify } from 'jose';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import {
+  blockRequestResult,
   ensureRegisterAppBlockRuntimeMetrics,
   recordBlockConsentMarkerUnavailable,
   recordBlockRestApprovalVerdict,
   recordConsentStrip,
   recordBlockRevocationRefusal,
-  statusToRequestResult,
   type AppBlockEndpoint,
 } from '~/server/metrics/app-block-runtime.metrics';
 import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
@@ -655,10 +655,10 @@ export interface WithBlockScopeOpts {
 
   /**
    * Methods beyond GET and POST that this route serves, added to the CORS preflight's
-   * `Access-Control-Allow-Methods`. Without it a browser refuses a cross-origin PUT or
-   * DELETE before it is sent. Only the document store (`blocks/storage`) declares any.
+   * `Access-Control-Allow-Methods`. Without it a browser refuses a cross-origin PUT,
+   * DELETE or PATCH before it is sent. Only the document store (`blocks/storage`) declares any.
    */
-  extraCorsMethods?: readonly ('PUT' | 'DELETE')[];
+  extraCorsMethods?: readonly ('PUT' | 'DELETE' | 'PATCH')[];
 
   /**
    * Opt-in: write THIS route's refusals in its own envelope instead of the wrapper's
@@ -845,8 +845,10 @@ function rememberWarnedOrigin(origin: string) {
 }
 
 // `Retry-After` is not a CORS-safelisted response header; a cross-origin block can't read a
-// 429's wait unless it is exposed.
-const BLOCK_CORS_EXPOSE_HEADERS = 'Retry-After';
+// 429's wait unless it is exposed. `Deprecation` and `Link` likewise: the document store's
+// deprecated per-tally routes announce themselves with them (`LEGACY_TALLY_HEADERS`), and an SDK
+// can only warn about what it can read.
+const BLOCK_CORS_EXPOSE_HEADERS = 'Retry-After, Deprecation, Link';
 
 /**
  * Sets block-CORS headers when the origin is in the allowlist (union of
@@ -1656,7 +1658,9 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         const labels = { app_block_id: appBlockIdLabel, endpoint: resolveEndpointLabel() };
         const elapsedSeconds = Number(process.hrtime.bigint() - metricStart) / 1e9;
         requestDurationSeconds.observe(labels, elapsedSeconds);
-        requestsTotal.inc({ ...labels, result: statusToRequestResult(res.statusCode) });
+        // `blockRequestResult`, not the bare status: a document-store read miss the handler
+        // marked is `not_found`, not `client_error` (see `AppBlockRequestResult`).
+        requestsTotal.inc({ ...labels, result: blockRequestResult(res) });
       } catch {
         // never let observability break the request
       }

@@ -96,6 +96,7 @@ export const birthday2026 = createEvent(name, {
     accent: 'Pick up a hat.',
     text: 'Four color teams, Nov 1 to Nov 30. Hat your best work and score for your team.',
     cta: 'Join a team',
+    joinedCta: 'See the standings',
     // The hero art's backdrop, so the strip runs on seamlessly to the left of the image.
     background: '#1c1a30',
   },

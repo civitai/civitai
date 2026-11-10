@@ -109,13 +109,14 @@ beforeAll(async () => {
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       "ingestion"       "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
       "blockedFor"      text,
+      "acceptableMinor" boolean NOT NULL DEFAULT false,
       "needsReview"     text,
       "metadata"        jsonb,
       "scanJobs"        jsonb
     );
     CREATE TABLE "Post" (
       "id" integer PRIMARY KEY, "userId" integer NOT NULL, "publishedAt" timestamp,
-      "availability" text NOT NULL DEFAULT 'Public', "collectionId" integer
+      "availability" text NOT NULL DEFAULT 'Public', "collectionId" integer, "metadata" jsonb
     );
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TABLE "CollectionContributor" (
@@ -127,6 +128,11 @@ beforeAll(async () => {
       "bannerId" integer
     );
     CREATE TABLE "ImageConnection" ("imageId" integer, "entityId" integer, "entityType" text);
+    CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "CollectionItem" (
+      id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "addedById" int,
+      status text NOT NULL
+    );
     CREATE TABLE "Bounty" ("id" integer PRIMARY KEY, "userId" integer, "availability" text);
     CREATE TABLE "BountyEntry" ("id" integer PRIMARY KEY, "bountyId" integer);
 

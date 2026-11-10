@@ -664,9 +664,28 @@ export async function rowTotals(db: SqlRunner): Promise<Record<string, number>> 
 export type ParityVerdict = {
   /** Findings worth paging about: drift the backfill or the mirror should have settled. */
   pages: string[];
-  /** Nonzero findings that are known residue: the orphan classes and what `sweep` clears. */
+  /**
+   * Nonzero findings that are known residue (the orphan classes and what `sweep` clears), plus the
+   * old-side presence checks, which count every row written on CommentV3 since its surface's write flip.
+   */
   expected: string[];
 };
+
+/**
+ * Every surface writes CommentV3 (`constants.comments.v3WriteSurfaces`): a comment, reaction, report
+ * or mute written there has no old row, so these checks grow with normal use. The reverse copy, not
+ * the mirror, carries such rows back on a rollback. `v2_ghosts` and `thread_count_mismatch` can no
+ * longer tell a mirror ghost from a new comment; `v1_ghosts` can, since a new model comment has no
+ * `legacyV1Id`, so it still pages.
+ */
+const V3_NATIVE = new Set([
+  'v2_ghosts',
+  'thread_count_mismatch',
+  'v2_reactions_extra',
+  'v1_reactions_extra',
+  'reports_extra',
+  'mutes_extra',
+]);
 
 export function parityVerdict(
   unmirrored: Awaited<ReturnType<typeof unmirroredReport>>,
@@ -689,7 +708,7 @@ export function parityVerdict(
   ]);
   for (const [name, f] of Object.entries({ ...unmirrored, ...parity })) {
     if (!f.count) continue;
-    (residue.has(name) ? expected : pages).push(line(name, f));
+    (residue.has(name) || V3_NATIVE.has(name) ? expected : pages).push(line(name, f));
   }
   return { pages, expected };
 }

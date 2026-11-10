@@ -170,6 +170,10 @@ import {
 } from '~/shared/constants/block-storage.constants';
 import { DOC_STORE_BOUNDS } from '~/server/services/apps/doc-store.types';
 import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
+import {
+  blockRequestResult,
+  type AppBlockRequestResult,
+} from '~/server/metrics/app-block-runtime.metrics';
 import { resolveImportAccess, resolveStorageAccess } from '~/server/services/apps/doc-store-access';
 import {
   grantImportSourcePublish,
@@ -353,7 +357,13 @@ function installDb() {
 // Driving the route
 // ---------------------------------------------------------------------------
 
-type Reply = { status: number; body: unknown; headers: Record<string, unknown> };
+type Reply = {
+  status: number;
+  body: unknown;
+  headers: Record<string, unknown>;
+  /** The `result` label the block-scope middleware records for this response on finish. */
+  requestResult: AppBlockRequestResult;
+};
 
 async function mint(opts: {
   app: AppRow | { id: string; appId: string; blockId: string };
@@ -417,8 +427,10 @@ async function call(opts: {
   let status = 0;
   let body: unknown;
   const res = {
+    statusCode: 0,
     status(code: number) {
       status = code;
+      res.statusCode = code;
       return res;
     },
     json(payload: unknown) {
@@ -449,7 +461,7 @@ async function call(opts: {
     },
   };
   await storageRoute(req, res as unknown as NextApiResponse);
-  return { status, body, headers };
+  return { status, body, headers, requestResult: blockRequestResult(res) };
 }
 
 /** Every response is checked for a numeric user id, under any key or value. */
@@ -1131,6 +1143,37 @@ describe('namespaces per token kind', () => {
   });
 });
 
+// A first read of a key that was never written is a 404 by contract. The per-app REST counter
+// (`civitai_app_block_requests_total`) used to count it as `client_error`, inflating every
+// storage-using app's error ratio. Red on origin/main: `requestResult` was `client_error`.
+describe('a document read miss is not an error on the per-app REST counter', () => {
+  it('GET of a missing document records result=not_found', async () => {
+    const { A } = freshApps();
+    const token = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const miss = await call({ token, method: 'GET', path: '/prefs/never-written' });
+    expect(miss.status).toBe(404);
+    expect(miss.body).toMatchObject({ code: 'not_found' });
+    expect(miss.requestResult).toBe('not_found');
+  });
+
+  it('a hit is still success, and other 404s are still client_error', async () => {
+    const { A } = freshApps();
+    const token = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const put = await call({ token, method: 'PUT', path: '/prefs/k1', body: { data: { n: 1 } } });
+    expect(put.status).toBe(200);
+    expect((await call({ token, method: 'GET', path: '/prefs/k1' })).requestResult).toBe('success');
+    // An unmatched route is also `code: not_found`, but it is the caller's mistake, not a miss.
+    const noRoute = await call({ token, method: 'GET', path: '/a/b/c/d/e' });
+    expect(noRoute.status).toBe(404);
+    expect(noRoute.body).toMatchObject({ code: 'not_found' });
+    expect(noRoute.requestResult).toBe('client_error');
+    const undeclared = await call({ token, method: 'GET', path: '/undeclaredcoll/k1' });
+    expect(undeclared.status).toBe(404);
+    expect(undeclared.body).toMatchObject({ code: 'collection_not_declared' });
+    expect(undeclared.requestResult).toBe('client_error');
+  });
+});
+
 describe('rate limits: separate buckets', () => {
   it('reads: 300 per minute per (app, viewer); anonymous readers per IP; writes and other viewers unaffected', async () => {
     const { A, B } = freshApps();
@@ -1376,10 +1419,12 @@ describe('route faults and CORS', () => {
     }
   );
 
-  it('the preflight from an opaque origin allows PUT and DELETE', async () => {
+  it('the preflight from an opaque origin allows PUT, DELETE and PATCH', async () => {
     const r = await call({ token: null, method: 'OPTIONS', path: '/prefs/k', origin: 'null' });
     expect(r.status).toBe(204);
-    expect(r.headers['access-control-allow-methods']).toBe('GET, POST, PUT, DELETE, OPTIONS');
+    expect(r.headers['access-control-allow-methods']).toBe(
+      'GET, POST, PUT, DELETE, PATCH, OPTIONS'
+    );
   });
 });
 
@@ -1575,7 +1620,7 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
     });
   });
 
-  it('the preflight from an ALLOWLISTED origin allows PUT and DELETE too', async () => {
+  it('the preflight from an ALLOWLISTED origin allows PUT, DELETE and PATCH too', async () => {
     const { _internalsForTests } = await import('~/server/middleware/block-scope.middleware');
     _internalsForTests.resetOriginCache();
     dbMock.dbRead.oauthClient.findMany.mockResolvedValue([
@@ -1589,7 +1634,9 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
     });
     expect(r.status).toBe(204);
     expect(r.headers['access-control-allow-origin']).toBe('https://contract-app.example');
-    expect(r.headers['access-control-allow-methods']).toBe('GET, POST, PUT, DELETE, OPTIONS');
+    expect(r.headers['access-control-allow-methods']).toBe(
+      'GET, POST, PUT, DELETE, PATCH, OPTIONS'
+    );
     _internalsForTests.resetOriginCache();
   });
 

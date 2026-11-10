@@ -178,6 +178,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         liveNow: bootstrap.liveNow,
         navBanners: bootstrap.navBanners,
         siteAlerts: bootstrap.siteAlerts,
+        eventSeeds: bootstrap.eventSeeds,
         flags,
         userFeatureFlags,
         chatSettings,

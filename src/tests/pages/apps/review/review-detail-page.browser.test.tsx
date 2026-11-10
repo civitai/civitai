@@ -1,3 +1,4 @@
+import { Notifications } from '@mantine/notifications';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -26,6 +27,8 @@ const state = vi.hoisted(() => ({
   selections: [] as unknown[],
   // Feature-flags the page sees (switchable per test).
   flags: { appBlocks: true, appReviewPage: true } as Record<string, boolean>,
+  // listPendingRequests.useQuery — what "next" is chosen from after a decision.
+  pending: { data: undefined as unknown },
 }));
 
 // The page's `getServerSideProps` calls createServerSideProps at module top —
@@ -44,6 +47,7 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 // covered by its own tests); stub it so this shell test doesn't pull that live
 // trpc-backed action bar. The title still comes from `OnsiteReviewModal`.
 vi.mock('~/components/Apps/ReviewDetailView', () => ({
+  AllCaughtUp: () => <div data-testid="all-caught-up">No more app submissions waiting</div>,
   ReviewDetailView: (props: { selection: any; onClose: () => void }) => {
     state.bodyProps.last = props;
     state.selections.push(props.selection);
@@ -53,11 +57,6 @@ vi.mock('~/components/Apps/ReviewDetailView', () => ({
       </div>
     );
   },
-}));
-vi.mock('~/components/Apps/OnsiteReviewModal', () => ({
-  OnsiteReviewModalTitle: ({ selection }: { selection: any }) => (
-    <div data-testid="review-title">{selection.request.slug}</div>
-  ),
 }));
 
 // Pass-through layout so title/actions/children are all in the DOM.
@@ -80,11 +79,19 @@ vi.mock('~/utils/trpc', () => ({
   trpc: {
     blocks: {
       getPublishRequest: { useQuery: () => state.query },
+      listPendingRequests: { useQuery: () => state.pending },
     },
   },
 }));
 
 const ReviewDetailPage = (await import('~/pages/apps/review/[publishRequestId]')).default;
+
+// The scaffold's `next/router` mock returns one router singleton; read it outside React
+// through an alias so the hook rule does not mistake this helper for a component.
+const readRouter = useRouter;
+function routerPush() {
+  return (readRouter() as unknown as { push: ReturnType<typeof vi.fn> }).push;
+}
 
 const REQUEST = {
   id: 'pubreq_1',
@@ -103,6 +110,7 @@ beforeEach(() => {
   state.query = { data: undefined, isLoading: false, isError: false, error: null };
   state.bodyProps.last = null;
   state.flags = { appBlocks: true, appReviewPage: true };
+  state.pending = { data: undefined };
 });
 
 describe('ReviewDetailPage — route shell', () => {
@@ -121,8 +129,9 @@ describe('ReviewDetailPage — route shell', () => {
     await expect
       .element(page.getByTestId('review-body'))
       .toHaveTextContent('body:pubreq_1:pending');
-    // The page header uses the shared modal title component.
-    await expect.element(page.getByTestId('review-title')).toHaveTextContent('my-onsite-block');
+    // The submission's own header is the body's (`ReviewDetailHeader`); the page's fallback
+    // title only covers loading / not-found, so it is gone once the request resolved.
+    expect(page.getByText('Submission review').elements()).toHaveLength(0);
     // No fail-closed surface on the happy path.
     expect(page.getByTestId('not-found').elements()).toHaveLength(0);
   });
@@ -160,7 +169,89 @@ describe('ReviewDetailPage — route shell', () => {
     expect(page.getByTestId('review-body').elements()).toHaveLength(0);
   });
 
-  test('Q6: the body onClose redirects to the review queue', async () => {
+  test('🔴 after a decision the body’s onClose opens the NEXT oldest pending submission', async () => {
+    state.query = {
+      data: { mode: 'pending', request: REQUEST },
+      isLoading: false,
+      isError: false,
+      error: null,
+    };
+    state.pending = {
+      data: {
+        items: [
+          { id: 'pubreq_1', submittedAt: new Date('2026-01-01T00:00:00Z') },
+          { id: 'pubreq_newer', submittedAt: new Date('2026-01-03T00:00:00Z') },
+          { id: 'pubreq_older', submittedAt: new Date('2026-01-02T00:00:00Z') },
+        ],
+        nextCursor: null,
+      },
+    };
+    renderWithProviders(<ReviewDetailPage publishRequestId="pubreq_1" />);
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    const push = routerPush();
+    push.mockClear();
+    state.bodyProps.last?.onClose();
+    expect(push).toHaveBeenCalledWith('/apps/review/pubreq_older');
+  });
+
+  test('🔴 …and when nothing is left it shows "No more app submissions waiting" instead of navigating', async () => {
+    state.query = {
+      data: { mode: 'pending', request: REQUEST },
+      isLoading: false,
+      isError: false,
+      error: null,
+    };
+    state.pending = {
+      data: { items: [{ id: 'pubreq_1', submittedAt: new Date() }], nextCursor: null },
+    };
+    renderWithProviders(<ReviewDetailPage publishRequestId="pubreq_1" />);
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    const push = routerPush();
+    push.mockClear();
+    state.bodyProps.last?.onClose();
+    await expect.element(page.getByTestId('all-caught-up')).toBeInTheDocument();
+    expect(page.getByTestId('review-body').elements()).toHaveLength(0);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  test('🔴 Undo after "Approve & next" on the LAST submission shows that submission again', async () => {
+    // The real queue + toast (only the body is stubbed): "Approve & next" records A's delayed
+    // approval, then calls `onClose` — exactly the bar's order.
+    const { enqueueReviewApproval } = await import('~/components/Apps/reviewApprovalToasts');
+    const { reviewApprovalQueue } = await import('~/components/Apps/pendingApprovalQueue');
+    const id = 'pubreq_last_undo';
+    state.query = {
+      data: { mode: 'pending', request: { ...REQUEST, id } },
+      isLoading: false,
+      isError: false,
+      error: null,
+    };
+    state.pending = { data: { items: [{ id, submittedAt: new Date() }], nextCursor: null } };
+    const commit = vi.fn(async () => undefined);
+    renderWithProviders(
+      <>
+        <Notifications />
+        <ReviewDetailPage publishRequestId={id} />
+      </>
+    );
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    try {
+      expect(enqueueReviewApproval({ id, label: 'my-onsite-block v1.2.0', commit })).toBe(true);
+      state.bodyProps.last?.onClose();
+      await expect.element(page.getByTestId('all-caught-up')).toBeInTheDocument();
+
+      // Undo from the toast. Its push is to /apps/review/<id> — the URL the page is already on,
+      // so Next keeps it mounted with the same prop: only the page's own state can bring A back.
+      await page.getByTestId('apps-review-approve-undo').click();
+      await expect.element(page.getByTestId('review-body')).toHaveTextContent(`body:${id}:pending`);
+      expect(page.getByTestId('all-caught-up').elements()).toHaveLength(0);
+      expect(commit).not.toHaveBeenCalled();
+    } finally {
+      if (reviewApprovalQueue.get(id)?.status === 'pending') reviewApprovalQueue.undo(id);
+    }
+  });
+
+  test('the queue not loaded: onClose falls back to the queue page', async () => {
     state.query = {
       data: { mode: 'pending', request: REQUEST },
       isLoading: false,
@@ -169,10 +260,7 @@ describe('ReviewDetailPage — route shell', () => {
     };
     renderWithProviders(<ReviewDetailPage publishRequestId="pubreq_1" />);
     await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
-
-    // Fire the onClose the shell handed the body (what runs after approve/reject
-    // success) and assert it navigates back to the queue.
-    const push = vi.mocked((useRouter as any)()).push as ReturnType<typeof vi.fn>;
+    const push = routerPush();
     push.mockClear();
     state.bodyProps.last?.onClose();
     expect(push).toHaveBeenCalledWith('/apps/review');

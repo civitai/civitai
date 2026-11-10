@@ -673,6 +673,8 @@ model User {
   mysteryBoxesSold                   ItemDefinition[]           @relation("ItemDefinitionSeller")
 
   gameFrameGames          GameFrameGame[]
+  giftLinksCreated        ModelVersionGiftLink[]
+  giftRedemptions         ModelVersionGiftRedemption[]
 
   @@index([deletedAt])
   /// Partial in the database (WHERE "bannedAt" IS NOT NULL), as it exists in prod; Prisma cannot
@@ -1357,6 +1359,7 @@ model ModelVersion {
   coveredCheckpoints      CoveredCheckpoint[]
   wildcardSet             WildcardSet?
   licensingRoot           LicensingRoot?
+  giftLinks               ModelVersionGiftLink[]
 
   @@index([modelId], type: Hash)
   @@index([licensingSourceVersionId])
@@ -1946,10 +1949,20 @@ model ResourceReview {
   reactions      ResourceReviewReaction[]
   helper         ResourceReviewHelper?
   reports        ResourceReviewReport[]
+  /// The unpublished post the review was written from. The review stays hidden until that post is live.
+  postId         Int?
+  post           Post?                    @relation(fields: [postId], references: [id], onDelete: SetNull)
+  /// When a review linked to a post was announced: notified and recounted. Cleared when the post is
+  /// unpublished, so the next go-live announces it again.
+  releasedAt     DateTime?
 
   @@unique([modelVersionId, userId])
   @@index([modelVersionId], type: Hash)
   @@index([userId], type: Hash)
+  @@index([postId])
+  // NOTE: the partial index "ResourceReview_unreleased_postId_idx" (postId WHERE postId IS NOT NULL
+  // AND releasedAt IS NULL) serves the review release sweep. It lives only in migration
+  // 20261231130000_resource_review_post_id: Prisma does not support partial indexes.
 }
 
 model ResourceReviewReaction {
@@ -2112,6 +2125,7 @@ model Post {
   collectionItems CollectionItem[]
   storylineChapter StorylineChapter?
   storylinePendingChapter StorylinePendingChapter?
+  resourceReviews  ResourceReview[]
 
   @@index([modelVersionId])
   @@index([model3dId])
@@ -5001,6 +5015,20 @@ model AppStorageMigrationRun {
   @@map("app_storage_migration_runs")
 }
 
+// App Blocks App Storage permission hooks: the verified source of each hook file, keyed by its own
+// sha256 (content-addressed, append-only). RAW SQL ONLY (`storage-hooks.ts`), so the model is
+// stripped from the generated client; the migration `20261224120000_app_storage_hook_sources` is
+// applied by hand (with its CHECKs, which live only there).
+// @no-type
+model AppStorageHookSource {
+  sha256    String   @id
+  source    String
+  sizeBytes Int      @map("size_bytes")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("app_storage_hook_sources")
+}
+
 /// App Blocks Phase 3 (git-push self-service) — per-civitai-user Forgejo
 /// identity. 1:1 with User (PK is the civitai userId), provisioned LAZILY the
 /// first time a developer requests git access to one of their apps.
@@ -6230,6 +6258,8 @@ model BoxOpening {
   itemRoll           Int
   /// granted | refunded (text + CHECK)
   rewardStatus       String
+  /// Drawn from a pack's guaranteed tiers only.
+  guaranteed         Boolean  @default(false)
   createdAt          DateTime @default(now())
 
   @@index([userId, createdAt])
@@ -6546,6 +6576,7 @@ model Collection {
   moderatorNsfwLevel      Int?
   moderatorNsfwLevelBasis Int?
   collaborationDisabledAt DateTime?
+  archivedAt   DateTime?
 
   items        CollectionItem[]
   contributors CollectionContributor[]
@@ -7166,6 +7197,45 @@ model EntityAccess {
   meta         Json?    @default("{}")
 
   @@id([accessToId, accessToType, accessorId, accessorType])
+}
+
+// A free claim of a gated model version. The code is never stored, only its hash; a claim grants
+// EntityAccess with meta.giftLinkId. See docs/features/model-gift-links.md.
+model ModelVersionGiftLink {
+  id              Int                          @id @default(autoincrement())
+  modelVersionId  Int
+  modelVersion    ModelVersion                 @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  createdById     Int
+  createdBy       User                         @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  codeHash        String                       @unique
+  codeHint        String
+  label           String?
+  batchId         String?
+  /// null = uncapped. CHECKs (> 0, redemptionCount <= maxRedemptions) live only in the migration.
+  maxRedemptions  Int?
+  redemptionCount Int                          @default(0)
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  revokedById     Int?
+  createdAt       DateTime                     @default(now())
+  redemptions     ModelVersionGiftRedemption[]
+
+  @@index([modelVersionId, createdAt(sort: Desc)])
+  @@index([batchId])
+}
+
+model ModelVersionGiftRedemption {
+  giftLinkId Int
+  giftLink   ModelVersionGiftLink @relation(fields: [giftLinkId], references: [id], onDelete: Cascade)
+  userId     Int
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  claimedAt  DateTime             @default(now())
+  /// Set when the link's owner or a moderator removed this claimer's gifted access.
+  revokedAt   DateTime?
+  revokedById Int?
+
+  @@id([giftLinkId, userId])
+  @@index([userId])
 }
 
 enum PaidAccessEntityType {

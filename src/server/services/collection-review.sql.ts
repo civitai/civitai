@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { imageReviewedSql } from '~/server/common/image-visibility';
+import { imageReviewedSql, pendingOthersImageConditions } from '~/server/common/image-visibility';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ArticleStatus, ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 
@@ -129,11 +129,10 @@ export const pendingViewerImageSql = ({
 }) => {
   const own = Prisma.sql`i."userId" = ${userId}`;
   const review = reviewCollectionId ? { collectionId: reviewCollectionId, userId } : undefined;
-  return Prisma.sql`((i."needsReview" IS NULL OR ${own})
-    AND (i."acceptableMinor" = FALSE OR ${own}${
-    review ? Prisma.sql` OR ${reviewSubmissionSql(review)}` : Prisma.empty
-  })
-    AND (${own} OR i."nsfwLevel" = 0 OR ${imageReviewedSql()})
+  const others = pendingOthersImageConditions(userId, {
+    acceptableMinorAlso: review ? reviewSubmissionSql(review) : undefined,
+  });
+  return Prisma.sql`(${Prisma.join(others, ' AND ')}
     AND ((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND ${own}) OR (p."collectionId" IS NOT NULL AND i."nsfwLevel" NOT IN (0, ${
     NsfwLevel.Blocked
   }) AND (i."acceptableMinor" = FALSE OR ${own}) AND EXISTS (SELECT 1 FROM "CollectionContributor" cc WHERE cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[] AND cc."collectionId" = p."collectionId" AND cc."userId" = ${userId}))${

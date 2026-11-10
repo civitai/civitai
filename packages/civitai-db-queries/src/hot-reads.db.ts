@@ -273,6 +273,7 @@ export function getUserCreatorRow(
       'User.publicSettings',
       'User.settings',
       'User.excludeFromLeaderboards',
+      'User.flags',
       'UserRank.userId as rankUserId',
       'UserRank.leaderboardRank',
       'UserRank.leaderboardId',

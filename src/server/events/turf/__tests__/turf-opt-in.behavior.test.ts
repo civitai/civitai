@@ -67,6 +67,11 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, ingestion text,
       "tosViolation" boolean, "needsReview" text, "blockedFor" text
     );
+    -- Read by getTurfStock's count of the player's live hats; empty here.
+    CREATE TABLE "EventTurfSticker" (
+      id bigserial PRIMARY KEY, event text, "imageId" int, "userId" int, team text,
+      "cosmeticId" int, data jsonb, "createdAt" timestamptz DEFAULT now(), "removedAt" timestamptz
+    );
     CREATE TABLE "Cosmetic" (id int PRIMARY KEY, type text, data jsonb);
     CREATE TABLE "UserCosmetic" ("userId" int, "cosmeticId" int);
     -- Read by the contest-entry rule; empty, so no image here is a contest entry.

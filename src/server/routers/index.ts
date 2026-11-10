@@ -33,7 +33,6 @@ const routers = {
   buzz: () => import('./buzz.router').then((m) => m.buzzRouter),
   chat: () => import('./chat.router').then((m) => m.chatRouter),
   collection: () => import('./collection.router').then((m) => m.collectionRouter),
-  comment: () => import('./comment.router').then((m) => m.commentRouter),
   contestScore: () => import('./contest-score.router').then((m) => m.contestScoreRouter),
   commentv3: () => import('./commentv3.router').then((m) => m.commentv3Router),
   common: () => import('~/server/routers/common.router').then((m) => m.commonRouter),
@@ -53,6 +52,8 @@ const routers = {
   model3d: () => import('./model3d.router').then((m) => m.model3dRouter),
   modelFile: () => import('./model-file.router').then((m) => m.modelFileRouter),
   modelVersion: () => import('./model-version.router').then((m) => m.modelVersionRouter),
+  modelVersionGift: () =>
+    import('./model-version-gift.router').then((m) => m.modelVersionGiftRouter),
   notification: () => import('./notification.router').then((m) => m.notificationRouter),
   partner: () => import('./partner.router').then((m) => m.partnerRouter),
   placement: () => import('./placement.router').then((m) => m.placementRouter),

@@ -238,7 +238,7 @@ describe('createTrainingWorkflow single submission per version', () => {
       blockedModels: ['krea2'],
     } as never);
 
-    await expect(submit()).rejects.toThrow('blocked from training');
+    await expect(submit()).rejects.toThrow('Krea 2 is temporarily unavailable for training');
     expect(dbMock.dbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
   });
 

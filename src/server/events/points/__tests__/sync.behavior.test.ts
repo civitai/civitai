@@ -6,6 +6,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -68,11 +69,11 @@ beforeAll(async () => {
     CREATE TABLE "Article" ("id" integer PRIMARY KEY, "userId" integer NOT NULL);
     CREATE TABLE "User" (
       "id" integer PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3),
-      "excludeFromLeaderboards" boolean NOT NULL DEFAULT false
+      "excludeFromLeaderboards" boolean NOT NULL DEFAULT false, "flags" integer NOT NULL DEFAULT 0
     );
-    INSERT INTO "User" ("id", "bannedAt", "excludeFromLeaderboards") VALUES
-      (${OWNER}, NULL, false), (${OTHER}, NULL, false), (${BANNED}, now(), false),
-      (${EXCLUDED}, NULL, true);
+    INSERT INTO "User" ("id", "bannedAt", "excludeFromLeaderboards", "flags") VALUES
+      (${OWNER}, NULL, false, 0), (${OTHER}, NULL, false, 0), (${BANNED}, now(), false, 0),
+      (${EXCLUDED}, NULL, true, ${UserFlag.ExcludeFromEventPoints});
   `);
   await db.pg.exec(readFileSync(MIGRATION, 'utf8'));
 });
@@ -136,6 +137,23 @@ describe('desiredEventHats: which placements may earn', () => {
       claimKey: 'claimed',
       team: 'Blue',
     });
+  });
+
+  // Leaderboard exclusion and event-points exclusion are separate on purpose: a player may ask to
+  // stay off the public boards and still play the event. Do not fold this back into
+  // excludeFromLeaderboards.
+  it('lets an owner excluded from leaderboards, but not from event points, earn', async () => {
+    const LEADERBOARD_ONLY = 6;
+    await db.pg.exec(
+      `INSERT INTO "User" ("id", "excludeFromLeaderboards", "flags") VALUES (${LEADERBOARD_ONLY}, true, ${UserFlag.DisablePayout})`
+    );
+    try {
+      await place(LEADERBOARD_ONLY, 105);
+      const hats = await desiredEventHats(EVENT, undefined);
+      expect([...hats.keys()]).toEqual(['Image:105']);
+    } finally {
+      await db.pg.exec(`DELETE FROM "User" WHERE id = ${LEADERBOARD_ONLY}`);
+    }
   });
 
   it('gives an entity wearing two hats to the one placed first', async () => {
@@ -392,7 +410,11 @@ describe('syncEventHats -> engine', () => {
       expect(log).toEqual([{ k: 'Image:100', v: ownerHat() }]);
     });
 
-    it.each(['"bannedAt" = now()', '"deletedAt" = now()', '"excludeFromLeaderboards" = true'])(
+    it.each([
+      '"bannedAt" = now()',
+      '"deletedAt" = now()',
+      `flags = flags | ${UserFlag.ExcludeFromEventPoints}`,
+    ])(
       'takes an owner’s hats off when %s, and puts them back when it is undone',
       async (change) => {
         const OWNER_5 = 5;
@@ -404,7 +426,7 @@ describe('syncEventHats -> engine', () => {
           await syncOwnerEventHats(OWNER_5, [], LIVE);
           expect(Object.fromEntries(hashes.get(keys.hats)!)).toEqual({});
           await db.pg.exec(
-            `UPDATE "User" SET "bannedAt" = NULL, "deletedAt" = NULL, "excludeFromLeaderboards" = false WHERE id = ${OWNER_5}`
+            `UPDATE "User" SET "bannedAt" = NULL, "deletedAt" = NULL, flags = 0 WHERE id = ${OWNER_5}`
           );
           await syncOwnerEventHats(OWNER_5, [], LIVE);
           expect(log).toEqual([

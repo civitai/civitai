@@ -17,6 +17,7 @@ import {
 import { sendModNotification } from '$lib/server/moderation-memory.service';
 import {
   countImagesForUser,
+  capturesSkippedNote,
   getBatchOwners,
   getImagesByIds,
   getImagesForCollection,
@@ -190,9 +191,15 @@ export const actions: Actions = {
       result.flag && !result.flag.applied
         ? `The ${result.flag.flag} flag was NOT applied: ${result.flag.error}`
         : undefined;
-    const strikeWarning = result.struck?.error
-      ? `Struck ${result.struck.struck} of ${result.struck.owners} owners: ${result.struck.error}`
-      : undefined;
+    const strikeWarning =
+      [
+        result.struck?.error
+          ? `Struck ${result.struck.struck} of ${result.struck.owners} owners: ${result.struck.error}`
+          : '',
+        capturesSkippedNote(result.struck?.capturesSkipped ?? 0),
+      ]
+        .filter(Boolean)
+        .join(' ') || undefined;
 
     return {
       success: true,
@@ -296,8 +303,13 @@ export const actions: Actions = {
     );
     if (typeof input === 'string') return actionFail(input);
 
-    const owners = await getBatchOwners(input.imageIds);
-    if (!owners.length) return actionFail('Those images have no resolvable owners.');
+    const { owners, capturesSkipped } = await getBatchOwners(input.imageIds);
+    if (!owners.length)
+      return actionFail(
+        capturesSkipped
+          ? capturesSkippedNote(capturesSkipped)
+          : 'Those images have no resolvable owners.'
+      );
 
     const results = await Promise.all(
       owners.map((userId) =>
@@ -312,7 +324,13 @@ export const actions: Actions = {
       notified: owners.length - failed,
       // A partial failure is reported rather than swallowed: the moderator has to know which of the
       // affected accounts were actually told.
-      warning: failed ? `${failed} of ${owners.length} owners could not be notified.` : undefined,
+      warning:
+        [
+          failed ? `${failed} of ${owners.length} owners could not be notified.` : '',
+          capturesSkippedNote(capturesSkipped),
+        ]
+          .filter(Boolean)
+          .join(' ') || undefined,
     };
   },
 };
