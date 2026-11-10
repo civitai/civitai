@@ -347,7 +347,7 @@ describe('/api/download/[...key] — ownership scope', () => {
   });
 
   it.each([
-    ["another user's upload key", ['model', '99', 'other-user.safetensors']],
+    ["another user's upload key", ['training-images-temp', '99', 'other-user.zip']],
     ['a version-prefixed key', ['modelVersion', '123', 'other-user.safetensors']],
   ])('refuses %s with 404 and never resolves it', async (_label, key) => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
@@ -363,11 +363,11 @@ describe('/api/download/[...key] — ownership scope', () => {
   it.each([
     [
       'a .. traversal segment past the owned prefix',
-      ['model', '42', '..', '..', 'model', '99', 'f.safetensors'],
+      ['training-images-temp', '42', '..', '..', 'training-images-temp', '99', 'f.zip'],
     ],
     [
       'an encoded separator inside a segment',
-      ['model', '42', '..%2f..%2fmodel%2f99%2ff.safetensors'],
+      ['training-images-temp', '42', '..%2f..%2ftraining-images-temp%2f99%2ff.zip'],
     ],
   ])('refuses %s with 404, even though segment 1 is the caller', async (_label, key) => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
@@ -416,9 +416,7 @@ describe('/api/download/[...key] — model and training file prefixes', () => {
   });
 
   it.each([
-    // However the file's stored url spells the key.
     ['its own model upload', ['model', '42', 'mine.safetensors']],
-    // Even when the model it was uploaded to now belongs to another user.
     ['its own default upload', ['default', '42', 'archive.zip']],
     ['its own training data', ['training-images', '42', 'data.zip']],
     // Segment 1 of a version-prefixed key is a version id, which can equal the caller's user id.
