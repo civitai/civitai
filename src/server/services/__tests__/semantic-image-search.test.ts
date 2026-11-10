@@ -82,12 +82,8 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ]),
 }));
 
-import {
-  collectPage,
-  MAX_CANDIDATE_OFFSET,
-  searchSemanticImages,
-  type CandidateSource,
-} from '~/server/services/semantic-image-search.service';
+import { searchSemanticImages } from '~/server/services/semantic-image-search.service';
+import type { CandidateSource } from '~/server/services/semantic-search-client';
 
 const VIEWER = { id: 500, isModerator: false } as SessionUser;
 const PG = 1;
@@ -378,21 +374,23 @@ describe('filters', () => {
       user: VIEWER,
       candidateSource: source,
     });
-    expect(calls[0].filter.postedAfter).toBe('2026-01-01T00:00:00.000Z');
+    expect(calls[0].filter.range).toMatchObject({ key: 'sortAt', gte: '2026-01-01T00:00:00.000Z' });
   });
 
   it('never proposes NSFW images on a base model that forbids NSFW', async () => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({ input: textQuery(), candidateSource: source });
-    const restricted = calls[0].filter.restrictedBaseModels;
-    expect(restricted?.nsfwLevels.length).toBeGreaterThan(0);
-    expect(restricted?.baseModels.length).toBeGreaterThan(0);
+    const [restricted] = calls[0].filter.mustNot as {
+      must: { key: string; match: { any: unknown[] } }[];
+    }[];
+    expect(restricted.must.map((c) => c.key)).toEqual(['nsfwLevel', 'baseModels']);
+    for (const c of restricted.must) expect(c.match.any.length).toBeGreaterThan(0);
   });
 
   it("sends the viewer's browsing level, never an empty one", async () => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({ input: textQuery({ browsingLevel: 0 }), candidateSource: source });
-    expect(calls[0].filter.nsfwLevels.length).toBeGreaterThan(0);
+    expect(calls[0].filter.gate.nsfwLevels.length).toBeGreaterThan(0);
   });
 });
 
@@ -485,48 +483,5 @@ describe('the search service call', () => {
     await expect(
       searchSemanticImages({ input: input({ imageId: undefined, query: 'fox' }), user: VIEWER })
     ).rejects.toMatchObject({ code: 'BAD_GATEWAY' });
-  });
-});
-
-describe('collectPage', () => {
-  it('stops after a bounded number of rounds when nothing hydrates', async () => {
-    const { source, calls } = rankedSource(Array.from({ length: 5000 }, (_, i) => i + 1));
-    const page = await collectPage({
-      candidates: async (offset, limit) =>
-        (
-          await source({ query: { similarTo: 1 }, filter: { nsfwLevels: [1] }, offset, limit })
-        ).ids,
-      hydrate: async () => [],
-      offset: 0,
-      limit: 10,
-    });
-    expect(page.items).toEqual([]);
-    expect(calls.length).toBe(3);
-    expect(page.nextCursor).toBe(90);
-  });
-
-  it('stops paging at the candidate offset cap', async () => {
-    const { source, calls } = rankedSource(Array.from({ length: 5000 }, (_, i) => i + 1));
-    const candidates = async (offset: number, limit: number) =>
-      (await source({ query: { similarTo: 1 }, filter: { nsfwLevels: [1] }, offset, limit })).ids;
-    const hydrate = async (ids: number[]) => ids.map((id) => ({ id })) as never;
-
-    const last = await collectPage({
-      candidates,
-      hydrate,
-      offset: MAX_CANDIDATE_OFFSET - 5,
-      limit: 10,
-    });
-    expect(last.items).toHaveLength(5);
-    expect(calls.at(-1)).toMatchObject({ offset: MAX_CANDIDATE_OFFSET - 5, limit: 5 });
-    expect(last.nextCursor).toBeUndefined();
-
-    const beyond = await collectPage({
-      candidates,
-      hydrate,
-      offset: MAX_CANDIDATE_OFFSET + 500,
-      limit: 10,
-    });
-    expect(beyond).toEqual({ items: [], nextCursor: undefined });
   });
 });
