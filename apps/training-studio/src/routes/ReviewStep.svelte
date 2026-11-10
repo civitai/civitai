@@ -368,6 +368,9 @@
   // Clamp a numeric string field into the model's [min, max] on blur, so a user can't submit out-of-range.
   function clampField(i: number, field: ParamField, bound: ParamBound) {
     const p = paramsAt(i) as unknown as Record<string, NumericInput | boolean>;
+    // Leave a cleared field blank — Number('') is 0, which would clamp up to `min`; the Start payload
+    // fills a blank with the model's default instead.
+    if (typeof p[field] === 'string' && !p[field].trim()) return;
     const n = Number(p[field]);
     if (!Number.isFinite(n)) return;
     const clamped = Math.min(bound.max, Math.max(bound.min, n));
