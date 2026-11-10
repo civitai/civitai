@@ -8,22 +8,13 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
-/**
- * A registry dialog opened from another registry dialog is stacked at `300 + index`
- * (DialogProvider). Mantine's popover — the dropdown's portal — defaults to 300, so the second
- * dialog covered the option list: the profile showcase picker opened from the profile edit modal.
- *
- * This uses the real `DialogProvider` and `dialogStore`, so the z-indexes under test are the ones
- * the app assigns, not numbers typed in here.
- */
+// A registry dialog stacked at 300 + index vs the Mantine popover default of 300 hides the option list.
 
 const HITS = vi.hoisted(() => [
   { id: 8801, username: 'first-candidate', image: null, deletedAt: null, cosmetics: [] },
   { id: 8802, username: 'second-candidate', image: null, deletedAt: null, cosmetics: [] },
 ]);
 
-// The transport. Nothing here talks to Meilisearch; `useHitsTransformed` is where results would
-// have arrived from, so it is the one seam that has to be faked.
 // The search modules build a Meilisearch client at import time; faked so none can send.
 vi.mock('@meilisearch/instant-meilisearch', () => ({
   instantMeiliSearch: () => ({ search: async () => ({ results: [] }) }),
@@ -32,7 +23,6 @@ vi.mock('react-instantsearch', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
-    // The provider is the only piece that would reach a real search transport.
     InstantSearch: (props: any) => props.children,
     useSearchBox: () => ({ query: '', refine: () => undefined, isSearchStalled: false }),
   };
@@ -52,9 +42,7 @@ vi.mock('~/components/Search/search.utils2', async (importOriginal) => {
     useHitsTransformed: () => ({ hits: HITS, results: { index: 'users_v3' } }),
   };
 });
-// The OPTION RENDERER is out of frame — it drags in the session context, avatars and cosmetics,
-// none of which this seam is about, and it has its own coverage. Replaced with a marker so the
-// dropdown can render its list at all.
+// Stub: the real renderer needs session context, avatars and cosmetics.
 vi.mock('~/components/AutocompleteSearch/renderItems/users', async () => {
   const React = await import('react');
   const UserSearchItem = React.forwardRef((props: any, ref: any) =>
@@ -65,7 +53,7 @@ vi.mock('~/components/AutocompleteSearch/renderItems/users', async () => {
 });
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
-  // Every flag on. The index selector is hidden here, so nothing branches on a specific one.
+  // All flags on; the test doesn't depend on any one.
   return { ...actual, useFeatureFlags: () => new Proxy({}, { get: () => true }) };
 });
 // The harness has no tRPC client or session, and the search scope reads both.
