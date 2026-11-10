@@ -670,9 +670,7 @@ const featureFlags = createFeatureFlags({
   // Not public until C2: the orchestrator prices a prepare at zero, so a wider audience would be
   // loading models for free.
   resourceLoad: ['mod', 'granted'],
-  // The old in-app Knights game. Turning `knights-v1-game` off in Flipt is the cutover to the Knights
-  // app: every v1 gate reads this through `isV1KnightsLive`. Absent from Flipt, it stays on.
-  newOrderGame: { availability: ['blue', 'red', 'public'], fliptKey: 'knights-v1-game' },
+  newOrderGame: ['blue', 'red', 'public'],
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
   bugsPage: ['public'],
