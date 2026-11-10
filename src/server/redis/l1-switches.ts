@@ -1,10 +1,5 @@
-import {
-  ensureFliptInitialized,
-  FLIPT_FEATURE_FLAGS,
-  getFliptClientSync,
-  isFliptSync,
-} from '~/server/flipt/client';
-import { createCachedFlagGate } from '~/server/utils/otel-withspan-gate';
+import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
+import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 
 /**
  * Runtime switches for per-pod (L1) cache settings, each a `localTtl` function for
@@ -17,20 +12,8 @@ import { createCachedFlagGate } from '~/server/utils/otel-withspan-gate';
  * mocks the Flipt client without these exports reads every switch as off.
  */
 
-type FlagKey = (typeof FLIPT_FEATURE_FLAGS)[keyof typeof FLIPT_FEATURE_FLAGS];
-
-function readFlag(flag: () => FlagKey) {
-  return () => {
-    const on = isFliptSync(flag());
-    // `isFliptSync` answers null until the client is initialized; start it rather than wait for an
-    // unrelated async flag read to do so.
-    if (on === null && !getFliptClientSync()) void ensureFliptInitialized().catch(() => undefined);
-    return on;
-  };
-}
-
-const readBasicTagsLong = readFlag(() => FLIPT_FEATURE_FLAGS.BASIC_TAGS_L1_LONG_TTL);
-const readCosmetics = readFlag(() => FLIPT_FEATURE_FLAGS.COSMETICS_L1);
+const readBasicTagsLong = readFliptSwitch(() => FLIPT_FEATURE_FLAGS.BASIC_TAGS_L1_LONG_TTL);
+const readCosmetics = readFliptSwitch(() => FLIPT_FEATURE_FLAGS.COSMETICS_L1);
 
 let basicTagsLongGate = createCachedFlagGate(readBasicTagsLong);
 let cosmeticsGate = createCachedFlagGate(readCosmetics);

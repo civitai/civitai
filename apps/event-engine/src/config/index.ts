@@ -212,6 +212,8 @@ export const config = {
     modelAlias: process.env.VECTOR_MODEL_ALIAS ?? 'models_semantic',
     articleCollection: process.env.VECTOR_ARTICLE_COLLECTION ?? 'articles_wemm2b_256_v1',
     articleAlias: process.env.VECTOR_ARTICLE_ALIAS ?? 'articles_semantic',
+    comicCollection: process.env.VECTOR_COMIC_COLLECTION ?? 'comics_wemm2b_256_v1',
+    comicAlias: process.env.VECTOR_COMIC_ALIAS ?? 'comics_semantic',
     // Image CDN base the edge URLs are built on (the main app's NEXT_PUBLIC_IMAGE_LOCATION).
     imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
     orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',

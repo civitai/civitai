@@ -1,6 +1,6 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { config } from '@/config';
-import { VectorStore, type CollectionSpec } from '../qdrant';
+import { SITE_REPLICATION, VectorStore, type CollectionSpec } from '../qdrant';
 import type { ModelPayload } from './source';
 
 /**
@@ -10,6 +10,7 @@ import type { ModelPayload } from './source';
  * for the live sync's version-delete lookup.
  */
 export const MODEL_COLLECTION: CollectionSpec<ModelPayload> = {
+  ...SITE_REPLICATION,
   // The demo's measured setting (model-search-demo docs/handoff.md).
   quantile: 0.99,
   indexes: [
