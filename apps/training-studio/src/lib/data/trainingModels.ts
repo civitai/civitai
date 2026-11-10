@@ -1744,8 +1744,9 @@ export interface ExtraParamDefaults {
   flipAugmentation: boolean;
 }
 
-/** Ecosystems whose ai-toolkit trainer takes Min SNR gamma — the main app only sends it for these two
- *  (training.orch.ts), so it is never offered elsewhere. */
+/** Ecosystems whose ai-toolkit trainer takes Min SNR gamma: only the orchestrator's SD1/SDXL
+ *  AI-Toolkit inputs carry `minSnrGamma`, and it is silently dropped for every other ecosystem.
+ *  Widen this only once `@civitai/client` adds the field to that ecosystem's input. */
 const SD_FAMILY_ECOSYSTEMS = new Set(['sd1', 'sdxl']);
 
 /** The recommended values for the extra fields — the Review seed and the "Reset" target. Independent
