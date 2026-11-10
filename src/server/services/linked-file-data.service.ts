@@ -24,6 +24,8 @@ export async function getLinkedFileData(fileIds: number[]) {
   return byId;
 }
 
+// Keeps quantType and isRequired, which reduceToBasicFileMetadata drops: a linked GGUF file needs
+// them to be told apart from its siblings.
 function basicMetadata(metadata: unknown): BasicFileMetadata | null {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
   const { format, size, fp, quantType, isRequired } = metadata as BasicFileMetadata;

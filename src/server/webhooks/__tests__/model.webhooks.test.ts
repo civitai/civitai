@@ -30,6 +30,8 @@ const model = () => ({
             format: 'SafeTensor',
             size: 'full',
             fp: 'fp16',
+            quantType: 'Q4_K_M',
+            isRequired: true,
             selectedEpochUrl: EPOCH_URL,
             trainingResults: { epochs: [{ modelUrl: EPOCH_URL }] },
           },
@@ -40,7 +42,7 @@ const model = () => ({
 });
 
 describe.each(['new-model', 'updated-model'] as const)('%s webhook payload', (event) => {
-  it("carries only a file's basic metadata", async () => {
+  it("carries a file's metadata without its training epoch URLs", async () => {
     const [payload] = await modelWebhooks[event].getData({
       lastSent: new Date(0),
       prisma: { model: { findMany: vi.fn(async () => [model()]) } },
@@ -50,6 +52,8 @@ describe.each(['new-model', 'updated-model'] as const)('%s webhook payload', (ev
       format: 'SafeTensor',
       size: 'full',
       fp: 'fp16',
+      quantType: 'Q4_K_M',
+      isRequired: true,
     });
   });
 
@@ -61,6 +65,6 @@ describe.each(['new-model', 'updated-model'] as const)('%s webhook payload', (ev
       prisma: { model: { findMany: vi.fn(async () => [withoutMetadata]) } },
     } as never);
 
-    expect(payload.modelVersions[0]?.files[0].metadata).toEqual({});
+    expect(payload.modelVersions[0]?.files[0].metadata).toBeNull();
   });
 });
