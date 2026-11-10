@@ -277,6 +277,41 @@ describe('getCommentSection', () => {
 });
 
 describe('getCommentReplies', () => {
+  // A tombstone that was pinned when deleted: older rows still carry pinnedAt (the delete now clears it).
+  it('treats a deleted comment as unpinned: no pin, no lead slot, no jump among replies', async () => {
+    await pg.exec(`
+      INSERT INTO "Article" VALUES (12);
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 12);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt", "pinnedAt", "deletedAt") VALUES
+        (1200, 'article', 12, NULL, 2, 'live', ${at(1)}, NULL, NULL),
+        (1210, 'article', 12, NULL, 3, '', ${at(2)}, ${at(90)}, now()),
+        (1220, 'article', 12, NULL, 4, 'pinned', ${at(3)}, ${at(80)}, NULL),
+        (1230, 'article', 12, NULL, 5, 'plain', ${at(4)}, NULL, NULL);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt", "pinnedAt", "deletedAt") VALUES
+        (1211, 'article', 12, 1210, 2, 'under the tombstone', ${at(5)}, NULL, NULL),
+        (1201, 'article', 12, 1200, 2, 'first reply', ${at(10)}, NULL, NULL),
+        (1202, 'article', 12, 1200, 3, '', ${at(11)}, ${at(91)}, now());
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt")
+        VALUES (1203, 'article', 12, 1202, 4, 'under the reply tombstone', ${at(12)});
+    `);
+    const entity = { entityType: 'article', entityId: 12 };
+    const page = await getCommentSection(db, entity, reader, {
+      sort: ThreadSort.Oldest,
+      replyDepth: 10,
+      budget: 100,
+      repliesPerRoot: 10,
+      repliesPerParent: 5,
+    });
+    expect(page.rootIds).toEqual([1220, 1200, 1210, 1230]);
+    expect(item(page, 1210)).toMatchObject({ deleted: true, pinnedAt: null });
+    expect(item(page, 1220).pinnedAt).not.toBeNull();
+    expect(page.children[1200].ids).toEqual([1201, 1202]);
+
+    const replies = await getCommentReplies(db, 1200, reader, { sort: ThreadSort.Oldest });
+    expect(ids(replies).slice(0, 2)).toEqual([1201, 1202]);
+    expect(item(replies, 1202)).toMatchObject({ deleted: true, pinnedAt: null });
+  });
+
   it('pages one comment’s replies and continues where the section stopped', async () => {
     const page = await section(reader);
     const rest = await getCommentReplies(db, 101, reader, {
