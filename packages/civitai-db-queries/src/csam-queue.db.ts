@@ -37,9 +37,13 @@ export function setAsideCounts(image: string, state: SetAsideState) {
   ))`;
 }
 
+/** The account that owns feedback page captures (`FEEDBACK_CAPTURE_OWNER_ID` in `@civitai/shared`).
+ *  No report names it: a report on a capture names whatever subject the moderator picked. */
+const FEEDBACK_CAPTURE_OWNER_ID = -2;
+
 /** A CSAM-queue image listed as `{ id }` in a sent image report on its owner, unless that send
- *  recorded it as missing. The send reads only `{ id }` entries. `image` is the table or alias the
- *  image row is read as. */
+ *  recorded it as missing. A feedback page capture counts on a report on any subject. The send reads
+ *  only `{ id }` entries. `image` is the table or alias the image row is read as. */
 export function listedInSentImageReport(image: string) {
   const col = (name: string) => sql.ref(`${image}.${name}`);
   return sql<boolean>`exists (
@@ -48,7 +52,9 @@ export function listedInSentImageReport(image: string) {
     cross join lateral jsonb_array_elements(
       case when jsonb_typeof(r.images) = 'array' then r.images else '[]'::jsonb end
     ) e
-    where r."userId" = ${col('userId')}
+    where (r."userId" = ${col('userId')} or ${col('userId')} = ${sql.lit(
+    FEEDBACK_CAPTURE_OWNER_ID
+  )})
       and r."reportSentAt" is not null
       and r.type = 'Image'
       and e ->> 'id' = ${col('id')}::text

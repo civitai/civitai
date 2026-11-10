@@ -112,6 +112,9 @@
         </TableCell>
         <TableCell class="whitespace-nowrap text-right text-sm">
           {#if user.capture}
+            <!-- The capture's card is where it is ruled on and, once removed, dismissed. -->
+            <a href={`/images/csam?captures=1&level=${data.level}`} class={LINK_CLASS}>Captures</a>
+            <span class="text-dark-4">·</span>
             <a href={imageLookupUrl(user.capture.imageId)} class={LINK_CLASS}>Image</a>
             <span class="text-dark-4">·</span>
             <a
@@ -146,6 +149,9 @@
         </TableCell>
         <TableCell class="whitespace-nowrap text-sm">
           <div class="flex items-center gap-2">
+            {#if user.capture?.removed}
+              <span class="text-xs text-dark-2">Removed: dismiss it from its card</span>
+            {/if}
             {#if user.heldBy.length}
               <span class="text-xs text-dark-2">Held: {holdLegLabels(user.heldBy)}</span>
             {/if}

@@ -17,6 +17,7 @@
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
   import { page } from '$app/state';
+  import { clearPaging } from '$lib/paging';
   import { csamCaptureReportUrl, csamReportUrl, userLookupUrl } from '$lib/entity-url';
   import type { FeedbackCaptureStamp } from '$lib/server/image-review.service';
   import CsamQueueTabs from './CsamQueueTabs.svelte';
@@ -229,7 +230,7 @@
 {#if data.kind === 'review' || data.kind === 'review-highlight'}
   {@const capturesHref = (() => {
     const url = new URL(page.url);
-    url.searchParams.delete('cursor');
+    clearPaging(url.searchParams);
     if (data.capturesOnly) url.searchParams.delete('captures');
     else url.searchParams.set('captures', '1');
     return `${url.pathname}${url.search}`;

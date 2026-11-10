@@ -342,19 +342,36 @@ describe('feedback page captures in the CSAM queue', () => {
       {
         userId: -2,
         flagged: 1,
-        capture: { imageId: 301, feedbackId: 77 },
+        capture: { imageId: 301, feedbackId: 77, removed: false },
         reported: false,
         heldBy: [],
       },
       {
         userId: -2,
         flagged: 1,
-        capture: { imageId: 302, feedbackId: 78 },
+        capture: { imageId: 302, feedbackId: 78, removed: false },
         reported: false,
         heldBy: [],
       },
     ]);
     expect(users.find((u) => u.userId === 101)?.capture).toBeNull();
+  });
+
+  it('counts a capture as reported by a sent report on whichever subject was picked', async () => {
+    await db.exec(`
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "images", "type")
+        VALUES (103, '2026-03-01', '[{"id": 301}]', 'Image');
+    `);
+    try {
+      const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+      const row = (imageId: number) => users.find((u) => u.capture?.imageId === imageId);
+      expect(row(301)).toMatchObject({ pending: 0, reported: true });
+      expect(row(301)?.reportSentAt).toEqual(new Date('2026-03-01'));
+      // The unlisted capture beside it is still pending (control).
+      expect(row(302)).toMatchObject({ pending: 1, reported: false, reportSentAt: null });
+    } finally {
+      await db.exec(`DELETE FROM "CsamReport" WHERE images = '[{"id": 301}]'`);
+    }
   });
 
   it("names each capture's report and reporter, and no other image's", async () => {

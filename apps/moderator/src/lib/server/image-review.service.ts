@@ -270,7 +270,7 @@ export type CsamQueueUser = {
   /** The holds on the user's account; empty when there are none. */
   heldBy: CsamQueueHoldReason[];
   /** A feedback page capture is a row of its own, never grouped under the capture account. */
-  capture: { imageId: number; feedbackId: number | null } | null;
+  capture: { imageId: number; feedbackId: number | null; removed: boolean } | null;
 };
 
 /** The CSAM review queue as one row per owning user, most pending first, at the browsing level of
@@ -288,6 +288,23 @@ export async function getCsamQueueByUser({
     .select([
       sql<number>`min(i."userId")`.as('userId'),
       sql<number | null>`max(${captureStampInt('feedbackId')})`.as('captureFeedbackId'),
+      // A report on a capture names whatever subject the moderator picked, so a capture is reported
+      // when any report lists it. One image per capture group.
+      sql<Date | null>`max(case when i."userId" = ${captureOwner} then (
+        select max(r."reportSentAt") from "CsamReport" r
+        cross join lateral jsonb_array_elements(
+          case when jsonb_typeof(r.images) = 'array' then r.images else '[]'::jsonb end
+        ) e
+        where e ->> 'id' = i.id::text
+      ) end)`.as('captureReportSentAt'),
+      sql<boolean>`coalesce(bool_or(i."userId" = ${captureOwner} and exists (
+        select 1 from "CsamReport" r
+        cross join lateral jsonb_array_elements(
+          case when jsonb_typeof(r.images) = 'array' then r.images else '[]'::jsonb end
+        ) e
+        where e ->> 'id' = i.id::text
+      )), false)`.as('captureReported'),
+      sql<boolean>`bool_or(i.ingestion = 'Blocked')`.as('anyRemoved'),
       sql<number>`count(*)::int`.as('flagged'),
       sql<number>`(count(*) filter (where not ${outOfPending('i', setAside)}))::int`.as('pending'),
       sql<number>`max(i.id)`.as('latestImageId'),
@@ -311,7 +328,7 @@ export async function getCsamQueueByUser({
   );
   const capture = (g: (typeof page)[number]) =>
     isFeedbackCaptureOwner(g.userId)
-      ? { imageId: Number(g.latestImageId), feedbackId: g.captureFeedbackId }
+      ? { imageId: Number(g.latestImageId), feedbackId: g.captureFeedbackId, removed: g.anyRemoved }
       : null;
 
   const none = userIds.length === 0;
@@ -364,9 +381,11 @@ export async function getCsamQueueByUser({
       removed: Number(removedByUser.get(g.userId)?.count ?? 0),
       removedVersion: removedByUser.get(g.userId)?.version ?? null,
       latestImageId: Number(g.latestImageId),
-      reportSentAt: reportsByUser.get(g.userId)?.reportSentAt ?? null,
+      reportSentAt: isFeedbackCaptureOwner(g.userId)
+        ? g.captureReportSentAt
+        : reportsByUser.get(g.userId)?.reportSentAt ?? null,
       latestSentImageReportId: reportsByUser.get(g.userId)?.latestSentImageReportId ?? null,
-      reported: reportsByUser.has(g.userId),
+      reported: isFeedbackCaptureOwner(g.userId) ? g.captureReported : reportsByUser.has(g.userId),
       heldBy: reasons(holds.get(g.userId)),
       capture: capture(g),
     })),
