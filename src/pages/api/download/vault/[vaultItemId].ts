@@ -3,7 +3,7 @@ import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
-import { EntityAccessPermission } from '~/server/common/enums';
+import { EntityAccessPermission, UploadType } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import type { VaultItemFilesSchema } from '~/server/schema/vault.schema';
 import { hasEntityAccess } from '~/server/services/common.service';
@@ -129,8 +129,12 @@ export default AuthedEndpoint(
           where: { id: file.id },
           select: { type: true, pickleScanResult: true, virusScanResult: true },
         });
-        // The vault serves model files only, to everyone, whatever an older item stored.
-        if (stored?.type === 'Training Data') return onError(404, 'File not found');
+        // The vault serves model files only, to everyone, whatever an older item stored. A row deleted
+        // since leaves only the stored url, under the training data upload prefix.
+        const isTrainingData = stored
+          ? stored.type === 'Training Data'
+          : new RegExp(`(^|/)${UploadType.TrainingImages}/`).test(file.url);
+        if (isTrainingData) return onError(404, 'File not found');
         if (!user.isModerator && stored && hasFailedScan(stored))
           return onError(403, FAILED_SCAN_DOWNLOAD_MESSAGE);
         const { url } = await resolveDownloadUrl(file.id, file.url, file.displayName, {

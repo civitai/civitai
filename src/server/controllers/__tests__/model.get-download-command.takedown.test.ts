@@ -149,6 +149,16 @@ describe('model.getDownloadCommand offers the files the download route offers', 
     expect((await call(user))?.commands).toHaveLength(1);
   });
 
+  it('leaves a component that is not Public out for a non-owner, and serves the model file', async () => {
+    givenModel({}, 'Download', [
+      { id: 10, type: 'Model', visibility: 'Public', replacedAt: null },
+      { id: 13, type: 'VAE', visibility: 'Private', replacedAt: null },
+    ]);
+
+    expect((await call(OTHER_USER))?.commands).toHaveLength(1);
+    expect(vi.mocked(resolveDownloadUrl).mock.calls.map(([id]) => id)).toEqual([10]);
+  });
+
   it('never adds a replaced component, for anyone', async () => {
     givenModel({}, 'Download', [
       { id: 10, type: 'Model', visibility: 'Public', replacedAt: null },

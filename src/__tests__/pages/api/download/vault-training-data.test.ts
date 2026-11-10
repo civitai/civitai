@@ -93,6 +93,47 @@ describe('/api/download/vault/[vaultItemId] — a training data file', () => {
     expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
   });
 
+  it('is not found when its file row is gone and the stored url is a training data upload', async () => {
+    dbMock.dbRead.modelFile.findUnique.mockResolvedValue(null);
+    mockVaultItemFindUnique.mockResolvedValue({
+      id: 31,
+      modelVersionId: 9,
+      modelName: 'model',
+      versionName: 'v1',
+      files: [
+        {
+          id: 1,
+          url: 'https://bucket.example.invalid/training-images/7/data.zip',
+          displayName: 'data.zip',
+        },
+      ],
+    });
+    const { promise, res } = run();
+    await promise;
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('still serves a model file whose row is gone, as the vault promises (control)', async () => {
+    dbMock.dbRead.modelFile.findUnique.mockResolvedValue(null);
+    mockVaultItemFindUnique.mockResolvedValue({
+      id: 31,
+      modelVersionId: 9,
+      modelName: 'model',
+      versionName: 'v1',
+      files: [
+        {
+          id: 1,
+          url: 'https://bucket.example.invalid/model/7/model.safetensors',
+          displayName: 'model.safetensors',
+        },
+      ],
+    });
+    const { promise, res } = run();
+    await promise;
+    expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/file');
+  });
+
   it('still serves a model file (control)', async () => {
     stored('Model');
     const { promise, res } = run();
