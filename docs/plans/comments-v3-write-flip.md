@@ -4,6 +4,12 @@ Status: **release 1 merged; release 2 built, not deployed** (release 1 2026-11-0
 2026-11-05; the dev rollback rehearsal passed 2026-11-05). Follows `comments-v3-article-flip.md`. Model
 comments are not in this flip: they move last, reads and writes together, once this one has shipped.
 
+> **Superseded in part by `comments-v3-phase5.md`.** Phase 5 removes the surface switches
+> (`v3ReadSurfaces`/`v3WriteSurfaces`), the old-row sync, the reverse copy (so there is no rollback
+> to the old tables), `commentsv2.service.ts`, the CommentV2 event-engine handler and its parity
+> test, and drops the mirror triggers. "Metrics", "What still reads the old tables" and the
+> rollback notes below describe the state before it.
+
 ## Decisions (Briant, 2026-11-03)
 
 - **All read-flipped surfaces flip at once**: image, post, review, bounty, bounty entry, challenge,
@@ -77,7 +83,7 @@ type CommentSurface = {
   the old comment type goes through it too, since a pre-flip comment keeps its id in both tables.
 - **Comics, at the flip**: `comics.createChapterComment` and its branch in `useCommentMutations` are
   removed (release 2); the chapter page creates through `commentv3.create`. Block-hide resolves a
-  chapter's owner through its project (`V3_SECTION_OWNERS` in `block-hide-comments.service.ts`).
+  chapter's owner through its project (`SECTION_OWNERS` in `block-hide-comments.service.ts`, `V3_SECTION_OWNERS` until Phase 5).
 
 ## Metrics
 
@@ -87,7 +93,9 @@ was written to. `comment-v2.ts` skips those surfaces by the thread's entity colu
 `UserMetric.commentCount`, on 3D-model-review and club-post threads (model joined the CommentV3
 surfaces in the model flip, `comments-v3-model-flip.md`); an orphaned thread has
 no owner and counts nothing. `comment-v3-surfaces.parity.test.ts` pins its list to
-`v3ReadSurfaces`. Crucible and storyline have no entry, as CommentV2 never counted them.
+`v3ReadSurfaces`. Crucible and storyline have no entry, as CommentV2 never counted them. Phase 5
+deletes `comment-v2.ts`, `COMMENT_V3_SURFACES` and that test: `comment-v3.ts` counts the comments of
+every surface in its own `SURFACES` map.
 
 ## What still reads the old tables
 
@@ -97,7 +105,8 @@ backfill, reverse copy and mirror, the old-row sync and the delete and ToS funct
 moderation path (reports, account wipe, scam cleanup, block-hide) that routes CommentV3
 rows by `v3WriteSurfaces`, so it follows the flip. Old reports still key on the old link tables
 until Phase 6. Release 2 deleted the v2 write path; model comments wrote v1 until the model flip
-(`comments-v3-model-flip.md`, built 2026-11-06), and 3D model reviews have no comment UI.
+(`comments-v3-model-flip.md`, built 2026-11-06), and 3D model reviews have no comment UI. Phase 5
+removes these readers, except those listed under "Kept, with reasons" in `comments-v3-phase5.md`.
 
 ## ClickHouse comment tracking (open)
 
@@ -135,6 +144,8 @@ writes CommentV3 (model comments write through the v1 `comment` router):
 Kept until release 2 has soaked, as the rollback path: the old tables, the mirror trigger, the
 reverse copy and the old-row sync (old reports still key on the old link tables). Code shared with
 v1 model comments went with the model flip (`comments-v3-model-flip.md`), or waits for Phase 6.
+Phase 5 removes the mirror triggers, the reverse copy and the old-row sync, and with them this
+rollback path.
 
 **Dev rollback rehearsal, 2026-11-05: passed.** On every write surface, release 2 shaped writes on
 the dev database (a top-level comment, a reply to it, a reply to a pre-flip comment, an edit of a

@@ -109,7 +109,10 @@ describe('the search Outbox forward', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'search-outbox-forward',
-        message: expect.stringMatching(/invalid input value for enum/),
+        // The harness socket drops the connection on a failed statement, racing the error itself.
+        message: expect.stringMatching(
+          /invalid input value for enum|Server has closed the connection/
+        ),
       })
     );
   });

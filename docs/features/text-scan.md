@@ -49,7 +49,7 @@ ImageCaption's (an author's caption on one image of a storyline chapter, keyed b
 rating, and a refusal that hides the caption) is applied by `text-scan/actions/image-caption.ts`. It
 has no Clavata counterpart.
 
-ChatMessage, Comment, CommentV2, CommentV3, UserProfile, Post, Model and Article also list `csam`, asked only while its
+ChatMessage, CommentV3, UserProfile, Post, Model and Article also list `csam`, asked only while its
 gate is `review` (see Modes). A chat window is scanned only for senders a scam verdict could act on;
 in `review` every sender's window is scanned, and the others are asked for `csam` alone, still one
 workflow per window.

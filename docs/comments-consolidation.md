@@ -51,11 +51,19 @@ kept (hot list-page reads), and the ltree operational constraints documented.
 Amendments to the merged design that Koen has not yet reviewed, newest first. Each names the
 section that holds the detail.
 
+- **2026-11-09 — Phase 5 built, not deployed** (Briant; `docs/plans/comments-v3-phase5.md`). It
+  takes Phase 5 together with Phase 6's "Transition code to remove": the old-row sync, the surface
+  switches, the reverse copy (so there is no rollback to the old tables after it), the backfill
+  endpoint and the parity job, `commentsv2.service.ts`, `thread-chain.ts`, the CommentV2
+  event-engine handler, the old report and text-scan types, and every CommentV2 arm. Migration
+  `20270101120000_comment_v3_old_table_triggers_off` drops the mirror and old-table moderation
+  triggers. No table or data is dropped: the old tables, the trigger functions and a few named
+  readers stay for Phase 6.
 - **2026-10-30 — article writes flip before the remaining cross-surface readers move** (Briant;
   _Phase 4_). Article's writes ship first, keeping each article comment's `CommentV2` row in step
   for the readers still on the old tables. Every other surface's reads and those readers then
   move in one flip, then every other surface's writes flip at once in two releases, with the
-  old-row sync kept until Phase 6 (revised 2026-11-03, `docs/plans/comments-v3-write-flip.md`). Comic chapters and model comments write through the same v3 path
+  old-row sync kept until Phase 5 (revised 2026-11-03 and 2026-11-09, `docs/plans/comments-v3-write-flip.md`). Comic chapters and model comments write through the same v3 path
   (`docs/plans/comments-v3-article-flip.md`).
 - **2026-10-30 — v3 writes are raw SQL, not Kysely** (decision 8, amended). Porting the old writes
   to Kysely instead was rejected: the old code is deleted in Phase 6.
@@ -401,7 +409,8 @@ New writers and readers the phases below now include: the text-scan / scam-scan 
 `hiddenCount` and the hidden-count `groupBy`. `commentsv2.service.ts` now derives reply ancestry
 server-side (#5622), ignoring the client's `parentThreadId`. (Built 2026-11-05, release 2 of the write flip, not deployed:
 `commentv2.controller.ts` and the v2 write paths are deleted; comment visibility is each surface's
-`assertVisible` in `commentv3/surfaces.ts`.)
+`assertVisible` in `commentv3/surfaces.ts`. Phase 5 deletes `commentsv2.service.ts` and the
+`Comment`/`CommentV2` text-scan profiles.)
 
 ## Why the current system is expensive
 
@@ -916,9 +925,10 @@ parentId = id`) → per-comment `locked` is now **subtree-scoped**: the write pa
 
 - **Write-time**: creating a comment checks `throwIfBlockedByEntityOwner`; _editing_ re-resolves
   owners from the stored comment (`getBlockCheckOwnerIdsForComment` in `block-check.service.ts`),
-  deliberately not trusting client-supplied entity params. That owner resolution currently walks
-  `rootThreadId` — it becomes a single-row read, but the don't-trust-the-client property must
-  survive the rewrite.
+  deliberately not trusting client-supplied entity params. That owner resolution walked
+  `rootThreadId`; it is now a single-row read (`sectionOwnerId` in `commentv3.controller.ts`, and
+  `getBlockCheckOwnerIdsForComment` is removed in Phase 5), keeping the don't-trust-the-client
+  property.
 - **Read-time**: hidden/blocked/blockedBy exclusion lists (`boundExcludedUserIds`, including the
   bind-parameter cap) with the **content-owner exemption** (`isViewerContentOwner` — an owner
   still sees a blocker's comments on their own content, for reporting). Phase 5's "unify exclusion
@@ -1228,8 +1238,8 @@ in `apps/event-engine/src/config/index.ts`), the `postgres.CommentV3` topic
 copied twice; a mirrored row is always at least as fresh as the copy). With the trigger mirror in
 place there is no read-then-insert window for a live edit or delete to fall into; if the mirror is
 ever app-level instead, add an `updatedAt` comparison pass and a delete log to the parity checks.
-The jobs are steps of one admin endpoint (`src/pages/api/admin/temp/comment-v3-backfill.ts`,
-service `comment-v3-backfill.service.ts`), each range-based over the source table's id and
+The jobs were steps of one admin endpoint (`src/pages/api/admin/temp/comment-v3-backfill.ts`,
+service `comment-v3-backfill.service.ts`, both removed in Phase 5), each range-based over the source table's id and
 re-runnable; the comment copies call the mirror's own `commentv3_mirror_v2`/`commentv3_mirror_v1`
 per source row, so a backfilled row is exactly what the mirror would have written (entity
 resolution, clamp, id floor, timestamps) and ancestors are copied before each row, which makes
@@ -1295,7 +1305,8 @@ batch order irrelevant. Idempotent, batched copy jobs:
 Once the backfill has converged and parity holds, the cross-surface **readers** move (see the
 Phase 4 prerequisite) — still before any write flip.
 
-**Rollback story** (why reads flip before writes): while writes still land in the old tables,
+**Rollback story** (why reads flip before writes; Phase 5 removes the reverse copy and the old-row
+sync, so after it there is no rollback to the old tables): while writes still land in the old tables,
 flipping a surface's reads back is instant and lossless — dual-write kept both sides current. Once
 a surface's _writes_ flip, new rows exist only in CommentV3; rolling that back requires a
 reverse-copy (CommentV3 → old tables: ids are shared, but a v3-only comment also needs its entity's
@@ -1361,7 +1372,8 @@ prerequisite. What lands after the flips is the cleanup that requires old write 
 (enum/endpoint collapses, handler retirement). Notifications and the
 moderator app are the two largest consumers and get their own sections below. The rest:
 
-- event-engine: one CDC handler on `CommentV3` replaces `comments.ts` + `comment-v2.ts`; owner
+- event-engine: one CDC handler on `CommentV3` replaces `comments.ts` + `comment-v2.ts` (both
+  removed, `comment-v2.ts` in Phase 5); owner
   resolution becomes one entity lookup instead of the 15-way COALESCE. The handler, replica
   identity, subscription and topic are provisioned together just before the first Phase 4 write
   flip (end of _Phase 2_), not earlier: under dual-write the old handlers already count every
@@ -1375,13 +1387,15 @@ moderator app are the two largest consumers and get their own sections below. Th
 - Cron jobs touching the tables directly (beyond the metrics jobs above):
   - `src/server/services/scam-cleanup.service.ts` — the scam auto-mute cleanup (`runScamCleanup`)
     and its restore (`restoreScamCase`) treat `Comment` and `CommentV2` as separate kinds with
-    separate hide and unhide statements. Collapses to one `CommentV3` branch; during Phases 2–4
+    separate hide and unhide statements. Collapses to one `CommentV3` branch (done in Phase 5: the
+    kind is `comments`); during Phases 2–4
     the trigger mirror carries its raw-SQL hides across. Its `ScamCleanupRecord` persists the
     hidden ids on the user restriction, so restores of v1 cases need the `legacyV1Id` alias.
   - `src/server/events/points/hooks.ts` — `onCommentCreated`/`onCommentsRemoved` read
     `Thread.rootThread` for the entity, count `CommentV2` rows and key on `CommentV2:<id>`;
     one more `rootThread` fallback to collapse, and its source ids need the same alias policy as
-    notification details.
+    notification details. Phase 5 removed the CommentV2 arms; the `CommentV2:` keys stay until a
+    later change (Group B in the checklist).
   - `src/server/services/creator-score-self-activity.service.ts` and
     `src/server/services/bot-account-detection/cohort.ts` — per-user comment counts over both
     tables; one count each on the new table.
@@ -1393,9 +1407,9 @@ moderator app are the two largest consumers and get their own sections below. Th
 id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes** go through
     `writeJudgeComment` (`commentv3/comment-write.service.ts`), which writes CommentV3 directly
     (release 2 of the write flip removed its `upsertComment` branch); `getJudgeCommentForImage` in
-    `commentsv2.service.ts` is the matching read; both read CommentV3 since Phase 3.
+    `challenge-judge-review.service.ts` (moved there in Phase 5) is the matching read; both read CommentV3 since Phase 3.
   - `src/server/jobs/job-queue.ts` — `EntityType.Comment`/`CommentV2` mappings are marked
-    `// unused`; delete them in Phase 6 rather than porting.
+    `// unused`; deleted in Phase 5 rather than ported.
   - `src/server/jobs/update-user-score.ts` — touches comments only via `ArticleMetric.commentCount`
     and ClickHouse `entityMetricEvents` (`metricType='commentCount'`), both downstream of the
     metrics/CDC work above; no direct change, but its inputs must not gap during the CDC handler
@@ -1404,8 +1418,9 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
   client key went with the model flip, built 2026-11-07):
   `goodContent.reward.ts`'s `typeToTable` and the buzz-tip labels in `src/utils/buzz.ts` collapse to
   one mapping; `ReportEntity.Comment`/`ReportEntity.CommentV2` collapse to one value in
-  `report-helpers.ts` + `report.service.ts` (accept both from clients for one release), and
-  `ReportModal.tsx` lists one comment entity. The reaction entity enum
+  `report-helpers.ts` + `report.service.ts`, and `ReportModal.tsx` lists one comment entity (done
+  in Phase 5: the old values are removed outright and new reports on them are refused). The
+  Buzz `typeToTable` and labels keep `CommentV2` until a later change (Group B in the checklist). The reaction entity enum
   (`src/server/schema/reaction.schema.ts`) and its
   twin switch in `reaction.controller.ts` (which also emits `Comment_*` vs `CommentV2_*` ClickHouse
   events) collapse too; keep both input values accepted for a release since it's a breaking tRPC
@@ -1485,16 +1500,16 @@ What v2 has today:
 
 - `ThreadMute (userId, threadId)`, FK'd to `Thread` with `ON DELETE CASCADE` on both sides.
 - `muteableThreadsCte` (since Phase 3 `threadAncestorsCte`, the block guard's only) in
-  `src/server/common/thread-chain.ts` — a `WITH RECURSIVE` ancestor walk up
+  `src/server/common/thread-chain.ts` (deleted in Phase 5) — a `WITH RECURSIVE` ancestor walk up
   `Thread.commentId → CommentV2.threadId`, capped at `MAX_THREAD_CHAIN_DEPTH = 100`.
 - The mute filter at **15 sites** in `comment.notifications.ts` (storyline added the 15th),
   producer-side: `notThreadMuted(recipient, threadId)` over the walk until Phase 3, now
   `notCommentMuted(recipient, alias)` in `base.notifications.ts` over CommentV3.
-- Two controls: per-comment (overflow menu) via `toggleThreadMute`, and section-level (beside the
+- Two controls: per-comment (overflow menu) via `toggleThreadMute` (`toggleCommentMute` since Phase 5), and section-level (beside the
   top-level composer) via `toggleSectionMute` (both now on `commentv3`, in
   `commentv3/section.service.ts`), which is the only writer that targets an entity-root
   thread.
-- `getThreadMuted` / `getSectionMuted` read the suppression's own predicate (`notCommentMuted`;
+- `getThreadMuted` (`getCommentMuted` since Phase 5) / `getSectionMuted` read the suppression's own predicate (`notCommentMuted`;
   `CommentTopicMute` for the section), so the menu label and the suppression agree (past the depth clamp, one hop only).
 - A convention guard, `no-unmuteable-comment-processor`, wired into `test:lint-rules`.
 
@@ -1503,8 +1518,8 @@ What v2 has today:
 **The recursive walk disappears.** v2 has to climb thread-by-thread because nesting is modeled as a
 child `Thread` per comment. In CommentV3 ancestry _is_ `path`, so suppression is one `@>` GiST
 containment test — the identical shape as the lock check, and a natural row in the interactions
-table above. That took the mute check off `thread-chain.ts` in Phase 3 (the file itself goes with
-the block guard and the block hide sweep, which still import it), with three consequences:
+table above. That took the mute check off `thread-chain.ts` in Phase 3 (the file itself went in
+Phase 5, once the block guard and the block hide sweep read CommentV3), with three consequences:
 
 - **The depth cap stops being a correctness hole.** `MAX_THREAD_CHAIN_DEPTH` is a bound on work, not
   a proof; past it `notThreadMuted` failed open and sent. Measured on prod 2026-08-27: 149 chains
@@ -1582,22 +1597,22 @@ deletes about half of each:
 - `reports.service.ts::commentContextUrl`: the 10-branch Thread-FK `CASE` + `rootThreadId` fallback
   becomes a single `entityType` switch on the row.
 - `report-entities.ts`: gains a `{ 'CommentV3Report', 'CommentV3' }` entry beside the old two with
-  `ReportEntity.CommentV3` at the first write flip; the old two go in Phase 6 (the report backfill
+  `ReportEntity.CommentV3` at the first write flip; the old two went in Phase 5 (the report backfill
   maps `CommentReport` rows through `legacyV1Id`, so no legacy-id handling survives here). Until
   then the `commentV3` entry lists only reports with no old link, so the mirror's copies are not
   listed twice.
 - `entity-url.ts` + `retool/user-lookup/CommentsPanel.svelte`: `modelCommentUrl()`/`commentV2Url()`
-  collapse to one builder; the "Model comments"/"Other comments" panels become one list. The
-  backing mod endpoints (`src/pages/api/mod/comment/bulk-delete.ts`, `remove-as-tos.ts`,
-  `restore-from-tos.ts`) take only `commentV2Ids` (CommentV3 ids) since the model flip; the v1
-  `commentIds` list is gone, and renaming the field to `commentIds` is the only step left.
+  collapse to one builder (`commentUrl`); the "Model comments"/"Other comments" panels become one
+  list (both done in Phase 5). The backing mod endpoints (`src/pages/api/mod/comment/bulk-delete.ts`,
+  `remove-as-tos.ts`, `restore-from-tos.ts`) take `{ commentIds }` (CommentV3 ids) since Phase 5
+  (`commentV2Ids` from the model flip until then) and return `{ deleted }` / `{ comments }`.
 
 Sequencing: the moderator app's read rewrite lands **during the dual-write window, before the
 first write flip** (CommentV3 is complete then, and dual-write is one-directional — waiting until
 after flips would leave mod tooling blind to new comments on flipped surfaces), except the
 report-queue joins and `csam-holds.queries.ts`, which move with `ReportEntity.CommentV3` at the first
 write flip. Its old-table code
-paths are deleted with Phase 6. Pre-existing dead link to note while in there:
+paths were deleted in Phase 5. Pre-existing dead link to note while in there:
 `src/pages/moderator/strikes.tsx` links v1 comments to `/comments/<id>`, a route that doesn't exist.
 
 **Phase 6 — contract.** First drop the Phase 2 mirror triggers (all named `commentv3_mirror`) and

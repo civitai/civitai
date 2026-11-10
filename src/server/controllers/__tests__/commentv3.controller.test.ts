@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as CommentsV2Service from '~/server/services/commentsv2.service';
+import type * as CommentOwnerService from '~/server/services/comment-owner.service';
 import type * as ReadService from '~/server/services/commentv3/read.service';
 import type * as Surfaces from '~/server/services/commentv3/surfaces';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
@@ -55,8 +55,8 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
 }));
 
 const ownsContent = vi.hoisted(() => vi.fn(async () => false));
-vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof CommentsV2Service>()),
+vi.mock('~/server/services/comment-owner.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CommentOwnerService>()),
   isViewerContentOwner: ownsContent,
 }));
 
@@ -71,8 +71,8 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 const section = vi.hoisted(() => ({
   getSectionMuted: vi.fn(async () => ({ muted: false, exists: true })),
   toggleSectionMute: vi.fn(async () => ({ muted: true, exists: true })),
-  getThreadMuted: vi.fn(async () => ({ muted: false, viaAncestor: false, canMute: true })),
-  toggleThreadMute: vi.fn(async () => ({ muted: true })),
+  getCommentMuted: vi.fn(async () => ({ muted: false, viaAncestor: false, canMute: true })),
+  toggleCommentMute: vi.fn(async () => ({ muted: true })),
 }));
 
 const stored = vi.hoisted(() =>
@@ -101,8 +101,8 @@ const {
   getSectionLockHandler,
   getSectionMutedHandler,
   toggleSectionMuteHandler,
-  getThreadMutedHandler,
-  toggleThreadMuteHandler,
+  getCommentMutedHandler,
+  toggleCommentMuteHandler,
 } = await import('../commentv3.controller');
 
 const ctxFor = (user?: { id: number; isModerator?: boolean }) => ({ user } as never);
@@ -334,20 +334,23 @@ describe('the section controls answer only where the section is visible', () => 
 
   // A thread mute takes a bare comment id, so it is gated on the stored comment's section.
   it.each([
-    ['thread mute state', () => getThreadMutedHandler({ ctx: member, input: { commentId: 5 } })],
-    ['thread mute toggle', () => toggleThreadMuteHandler({ ctx: member, input: { commentId: 5 } })],
+    ['thread mute state', () => getCommentMutedHandler({ ctx: member, input: { commentId: 5 } })],
+    [
+      'thread mute toggle',
+      () => toggleCommentMuteHandler({ ctx: member, input: { commentId: 5 } }),
+    ],
   ])('%s is not found in a hidden section', async (_, call) => {
     gate.mockRejectedValueOnce(Object.assign(new Error('hidden'), { code: 'NOT_FOUND' }));
     await expect(call()).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(gate).toHaveBeenCalledWith({ entityType: 'bounty', entityId: 7 }, expect.anything());
-    expect(section.getThreadMuted).not.toHaveBeenCalled();
-    expect(section.toggleThreadMute).not.toHaveBeenCalled();
+    expect(section.getCommentMuted).not.toHaveBeenCalled();
+    expect(section.toggleCommentMute).not.toHaveBeenCalled();
   });
 
   it('mutes a thread in a visible section, as the caller (control)', async () => {
-    await toggleThreadMuteHandler({ ctx: member, input: { commentId: 5 } });
+    await toggleCommentMuteHandler({ ctx: member, input: { commentId: 5 } });
     // Hands on the row the gate read, so the service does not read it again.
-    expect(section.toggleThreadMute).toHaveBeenCalledWith(
+    expect(section.toggleCommentMute).toHaveBeenCalledWith(
       { commentId: 5, userId: 2 },
       { comment: expect.objectContaining({ id: 5, entityType: 'bounty' }) }
     );

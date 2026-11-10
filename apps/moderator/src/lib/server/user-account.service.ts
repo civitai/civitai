@@ -337,32 +337,9 @@ export type UserComment = {
   createdAt: Date;
   content: string;
   tosViolation: boolean | null;
-  modelId: number | null;
-};
-
-/** Comments on models. Tombstones keep their `userId`, so are excluded. */
-export async function getComments(userId: number, limit = 25): Promise<Capped<UserComment>> {
-  return dbRead
-    .selectFrom('CommentV3')
-    .select(['id', 'createdAt', 'content', 'tosViolation', 'entityId as modelId'])
-    .where('userId', '=', userId)
-    .where('entityType', '=', 'model')
-    .where('deletedAt', 'is', null)
-    .orderBy('createdAt', 'desc')
-    .limit(limit + 1)
-    .execute()
-    .then((rows) => capped(rows, limit));
-}
-
-// Retool's "Other Comments": every surface but the model page.
-export type UserCommentV2 = {
-  id: number;
-  createdAt: Date;
-  content: string;
-  tosViolation: boolean | null;
   /** What the comment is ON. A reply carries its entity on its own row. */
-  entityType: string | null;
-  entityId: number | null;
+  entityType: string;
+  entityId: number;
 };
 
 /** What each comment hangs off, by id. A comment with no row has no entry. */
@@ -378,12 +355,12 @@ export async function commentParents(
   return new Map(rows.map((r) => [r.id, { type: r.entityType, id: r.entityId }]));
 }
 
-export async function getCommentsV2(userId: number, limit = 25): Promise<Capped<UserCommentV2>> {
+/** Every comment the user wrote, on any surface. Tombstones keep their `userId`, so are excluded. */
+export async function getComments(userId: number, limit = 50): Promise<Capped<UserComment>> {
   return dbRead
     .selectFrom('CommentV3')
     .select(['id', 'createdAt', 'content', 'tosViolation', 'entityType', 'entityId'])
     .where('userId', '=', userId)
-    .where('entityType', '<>', 'model')
     .where('deletedAt', 'is', null)
     .orderBy('createdAt', 'desc')
     .limit(limit + 1)

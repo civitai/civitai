@@ -178,7 +178,7 @@ async function state(app: string) {
 }
 
 /** The evidence tables the wipe deletes with raw SQL, so each statement carries the legal hold. */
-const MAIN_DB_WIPE = ['Model', 'Image', 'Post', 'Article', 'Comment'];
+const MAIN_DB_WIPE = ['Model', 'Image', 'Post', 'Article'];
 const rawDeleted = (table: string) =>
   dbMock.dbWrite.$executeRaw.mock.calls
     .map(([strings, ...values]) =>
