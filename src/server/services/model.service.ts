@@ -5032,11 +5032,12 @@ export const publishModelById = async ({
             tx,
           });
         } else if (status === ModelStatus.Scheduled) {
-          // Schedule model versions. Status flips unconditionally, but
-          // publishedAt only flips while the row is mutable (Draft or
-          // future-Scheduled) — anti-bump guard via raw SQL.
+          // Schedule model versions. A version already live stays live: put back to Scheduled with
+          // its past date, the job would re-release it at once and take the model with it.
+          // publishedAt only flips while the row is mutable (Draft or future-Scheduled) — anti-bump
+          // guard via raw SQL.
           await tx.modelVersion.updateMany({
-            where: { id: { in: versionIds }, modelId: id },
+            where: { id: { in: versionIds }, modelId: id, status: { not: ModelStatus.Published } },
             data: { status },
           });
           await tx.$executeRaw`

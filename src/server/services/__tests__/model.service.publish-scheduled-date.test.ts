@@ -107,7 +107,8 @@ const OWNER_ID = 7;
 const V1 = 100;
 const V2 = 101;
 const DAY = 24 * 60 * 60_000;
-const at = (days: number) => new Date(Math.floor(Date.now() / DAY) * DAY + days * DAY);
+const TODAY = Math.floor(Date.now() / DAY) * DAY;
+const at = (days: number) => new Date(TODAY + days * DAY);
 
 const pg = { db: null as unknown as PGlite };
 
@@ -146,13 +147,14 @@ beforeEach(async () => {
     where,
     data,
   }: {
-    where: { id: { in: number[] } };
+    where: { id: { in: number[] }; status?: { not: string } };
     data: { status: string };
   }) =>
-    pg.db.query(`UPDATE "ModelVersion" SET status = $1 WHERE id = ANY($2)`, [
-      data.status,
-      where.id.in,
-    ])) as never);
+    pg.db.query(
+      `UPDATE "ModelVersion" SET status = $1
+       WHERE id = ANY($2) AND ($3::text IS NULL OR status <> $3)`,
+      [data.status, where.id.in, where.status?.not ?? null]
+    )) as never);
   mockTx.model.update.mockResolvedValue({
     id: MODEL_ID,
     userId: OWNER_ID,
@@ -200,6 +202,22 @@ describe('publishModelById :: the date of a scheduled model', () => {
       [V2, 'Scheduled', at(3)],
     ]);
     await publishModelById({ id: MODEL_ID, versionIds: [V2], publishedAt: at(5) });
+    expect(await modelDate()).toEqual(at(3));
+  });
+
+  it('keeps a live version live when the model is rescheduled with it', async () => {
+    await seed(at(3), [
+      [V1, 'Published', at(-1)],
+      [V2, 'Scheduled', at(3)],
+    ]);
+    await publishModelById({ id: MODEL_ID, versionIds: [V1, V2], publishedAt: at(5) });
+    const [v1] = (
+      await pg.db.query<{ status: string; publishedAt: Date }>(
+        `SELECT status, "publishedAt" FROM "ModelVersion" WHERE id = $1`,
+        [V1]
+      )
+    ).rows;
+    expect(v1).toEqual({ status: 'Published', publishedAt: at(-1) });
     expect(await modelDate()).toEqual(at(3));
   });
 
