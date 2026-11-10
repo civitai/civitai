@@ -40,7 +40,7 @@ describe('getImageTagRows', () => {
           'SELECT 1 FROM "TagsOnImageDetails" wd ' +
           'WHERE wd."imageId" = toi."imageId" AND wd."source" = \'WD14\' AND wd."disabled" = false ) ' +
           'AND EXISTS ( SELECT 1 FROM "Tag" t ' +
-          'WHERE t.id = toi."tagId" AND t.type <> \'Moderation\' AND t.name::text <> \'\' ' +
+          "WHERE t.id = toi.\"tagId\" AND t.type <> 'Moderation' AND t.name::text <> '' " +
           'AND t.name::text <> ALL($2::text[]) ) )'
       );
     }

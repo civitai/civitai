@@ -45,8 +45,7 @@ const BATCH = [I_WD, I_NO_WD, I_WD_DISABLED, I_OTHER];
 
 let pg: PGlite;
 let raw: ReturnType<typeof pgliteRaw>;
-const db = () =>
-  ({ $queryRaw: raw.queryRaw } as unknown as Parameters<typeof getImageTagRows>[0]);
+const db = () => ({ $queryRaw: raw.queryRaw } as unknown as Parameters<typeof getImageTagRows>[0]);
 
 beforeAll(async () => {
   pg = new PGlite({ extensions: { citext } });
@@ -119,7 +118,9 @@ const byKey = (rows: ImageTagRow[]) =>
 
 type TagLookup = { id: number; name: string; type: string };
 async function tagLookup(): Promise<Record<number, TagLookup>> {
-  const { rows } = await pg.query<TagLookup>(`SELECT id, name::text AS name, type::text FROM "Tag"`);
+  const { rows } = await pg.query<TagLookup>(
+    `SELECT id, name::text AS name, type::text FROM "Tag"`
+  );
   return Object.fromEntries(rows.map((t) => [t.id, t]));
 }
 
