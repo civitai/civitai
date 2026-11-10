@@ -288,8 +288,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // A direct publish that succeeded put this preview on the shared server after its row stopped
     // being an active preview, and that teardown's unpublish may have run before it landed:
     // unpublish it for this sha. Best-effort and idempotent.
+    // Fire-and-forget like the other watchers here: the unpublish creates a k8s Job (calls with
+    // long timeouts) and must not hold the build callback's short request window.
     if (directPublish && reportedSucceeded) {
-      await triggerReviewUnpublish({
+      void triggerReviewUnpublish({
         slug: body.slug,
         sha: body.sha,
         publishRequestId: body.publishRequestId,
@@ -361,6 +363,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       'preview-failed',
       {
         ...baseDetail,
+        // A direct build may have published its meta to the shared server before it failed:
+        // record that, so a different-sha rebuild and a teardown unpublish it the shared way.
+        ...(directPublish ? { sharedServer: true } : {}),
         error: reviewBuildFailureError(body.status, signals.failedStep, failureClass),
       },
       { requireActivePreview: true }
@@ -480,6 +485,8 @@ type ReviewWatchArgs = {
   onSettled?: (publishRequestId: string, live: boolean) => void;
   /** The preview was published to the shared static server (probe it there). */
   sharedServer?: boolean;
+  /** The build published the preview itself: no apply Job (or its smoke test) ran. */
+  directPublish?: boolean;
 };
 
 /** The helpers every watcher write shares; see watchReviewApplyJob for why each exists. */
@@ -546,9 +553,9 @@ async function settlePublishedReview(
   ctx: ReturnType<typeof reviewWatchContext>
 ): Promise<void> {
   const { settled, guard, unpublishOrphan } = ctx;
-  // The apply Job succeeded — but the preview's PUBLIC host DNS record is
-  // created lazily and can lag the deploy by up to ~a minute before it
-  // resolves publicly. Marking the preview "live" the instant the Job
+  // The preview is published (apply lane: the Job succeeded) — but the
+  // preview's PUBLIC host DNS record is created lazily and can lag the deploy
+  // by up to ~a minute before it resolves publicly. Marking the preview "live" the instant the Job
   // finishes races that propagation, so the mod clicks through and hits
   // ERR_NAME_NOT_RESOLVED. Gate "live" on a real reachability probe: stay on
   // "deploying…" until the host actually answers, so the link is never dead.
@@ -568,20 +575,24 @@ async function settlePublishedReview(
     if (marked === 0) await unpublishOrphan();
     await settled(args.publishRequestId, marked > 0);
   } else {
-    // Deploy is healthy but its host never became publicly reachable within
-    // the budget (DNS propagation stall, or a genuinely-broken route). Do
-    // NOT mark it live — that's the whole point. Free the replay-dedup slot
-    // (mirror the failed branch below) so a same-sha rebuild isn't
+    // The host never answered within the budget. Do NOT mark it live — that's the whole point.
+    // Free the replay-dedup slot (mirror the failed branch below) so a same-sha rebuild isn't
     // suppressed within the TTL window.
     await clearReviewApplyMark(args.publishRequestId, args.sha);
-    recordReviewApplyFailure();
+    // A direct publish ran no apply Job, so this is not an apply failure and is not counted as
+    // one (its build was already counted as succeeded). On the apply lane it is.
+    if (!args.directPublish) recordReviewApplyFailure();
     const marked = await markReviewPreviewState(
       args.publishRequestId,
       'preview-failed',
       {
         ...args.baseDetail,
-        error:
-          'Preview deployed but its host did not become reachable in time (DNS propagation). Rebuild to retry.',
+        // Apply lane: its existing text (the Job's own smoke test already passed).
+        // Direct lane: no Job and no smoke test ran, and the shared route needs no new DNS record,
+        // so a page that never answers points at the build itself.
+        error: args.directPublish
+          ? 'Preview published, but it never answered through the review gate (its page at / must return 200). The build may be broken: check it, then rebuild.'
+          : 'Preview deployed but its host did not become reachable in time (DNS propagation). Rebuild to retry.',
       },
       guard
     );
@@ -635,13 +646,14 @@ export async function watchReviewApplyJob(
 
 /**
  * A DIRECT publish (`directPublish: true`): the build already published the preview to the shared
- * static server, so there is no apply Job to wait for. Probe the shared route and mark it
- * live/failed exactly as after a successful apply Job. Exported for the watcher unit tests.
+ * static server, so there is no apply Job to wait for, and no apply-Job smoke test runs. Probe the
+ * shared route (a 200 for its page at /) and mark it live/failed as after a successful apply Job,
+ * with its own failure text and no apply-failure count. Exported for the watcher unit tests.
  */
 export async function watchDirectPublishedReview(
-  args: Omit<ReviewWatchArgs, 'sharedServer'>
+  args: Omit<ReviewWatchArgs, 'sharedServer' | 'directPublish'>
 ): Promise<void> {
-  const shared: ReviewWatchArgs = { ...args, sharedServer: true };
+  const shared: ReviewWatchArgs = { ...args, sharedServer: true, directPublish: true };
   try {
     await settlePublishedReview(shared, reviewWatchContext(shared));
   } catch (err) {
