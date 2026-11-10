@@ -6,11 +6,11 @@ type Executor = Kysely<DB> | Transaction<DB>;
 
 export type StreakMilestone = 7 | 30 | 100;
 
-/** Watch-streak badge Trophy cosmetics. Filled in once the prod rows exist; a null id is skipped. */
+/** Watch-streak badge Trophy cosmetics (Vigil 7, 30 and 100 days). A null id is skipped. */
 export const STREAK_BADGE_IDS: Record<StreakMilestone, number | null> = {
-  7: null,
-  30: null,
-  100: null,
+  7: 4213,
+  30: 4214,
+  100: 4215,
 };
 
 /**
