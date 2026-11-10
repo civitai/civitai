@@ -91,6 +91,12 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
+/* A feed card stacks its menu and Remix buttons down the right edge, above this layer. */
+.moreFeed {
+  right: auto;
+  left: max(8px, var(--event-decoration-clear-left, 0px));
+}
+
 .moreButton {
   border: 0;
   cursor: pointer;
