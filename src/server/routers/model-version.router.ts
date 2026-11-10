@@ -80,7 +80,7 @@ import {
   trainingDataPublicView,
   withoutEpochUrls,
 } from '~/server/services/training-data-restricted.service';
-import { isModelWithheld } from '~/server/utils/model-withheld';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
@@ -93,11 +93,17 @@ const versionFileUrlsForOwner = ownerOnlyFileUrls<
   strip: async (data, { redCapable }) => {
     const view = await trainingDataPublicView(dbRead, [data], { redCapable });
     const files = withoutFileUrls(view(data.files)) as typeof data.files;
-    return { ...data, files: isModelWithheld(data.model) ? withoutEpochUrls(files) : files };
+    return {
+      ...data,
+      files: isModelDeletedOrTakenDown(data.model) ? withoutEpochUrls(files) : files,
+    };
   },
   forOwner: (data) => {
     const files = trainingDataOwnerView(data.files);
-    return { ...data, files: isModelWithheld(data.model) ? withoutEpochUrls(files) : files };
+    return {
+      ...data,
+      files: isModelDeletedOrTakenDown(data.model) ? withoutEpochUrls(files) : files,
+    };
   },
 });
 

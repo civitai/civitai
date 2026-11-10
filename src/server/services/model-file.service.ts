@@ -56,7 +56,7 @@ import {
   withoutEpochUrls,
   withoutServerOnlyKeys,
 } from '~/server/services/training-data-restricted.service';
-import { isModelWithheld } from '~/server/utils/model-withheld';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import {
   liveRunDatasetTrainingStatuses,
   reviewedDatasetTrainingStatuses,
@@ -858,7 +858,7 @@ export const getRecentTrainingData = async ({
       items: data.map((file) => {
         const item = { ...file, metadata: withoutServerOnlyKeys(file.metadata) };
         // A deleted or taken-down model's epoch urls are withheld from everyone but moderators.
-        return !isModerator && isModelWithheld(file.modelVersion.model)
+        return !isModerator && isModelDeletedOrTakenDown(file.modelVersion.model)
           ? withoutEpochUrls([item])[0]
           : item;
       }),

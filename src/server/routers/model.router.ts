@@ -129,7 +129,7 @@ import {
   trainingDataPublicView,
   withoutEpochUrls,
 } from '~/server/services/training-data-restricted.service';
-import { isModelWithheld } from '~/server/utils/model-withheld';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readModelPoiAndOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
@@ -240,7 +240,7 @@ const modelFileUrlsForOwner = ownerOnlyFileUrls<Awaited<ReturnType<typeof getMod
   ownerId: ({ data }) => data.user.id,
   strip: async (data, { redCapable }) => {
     const view = await trainingDataPublicView(dbRead, data.modelVersions, { redCapable });
-    const withheld = isModelWithheld(data);
+    const withheld = isModelDeletedOrTakenDown(data);
     return {
       ...data,
       modelVersions: data.modelVersions.map((version) => {
@@ -250,7 +250,7 @@ const modelFileUrlsForOwner = ownerOnlyFileUrls<Awaited<ReturnType<typeof getMod
     };
   },
   forOwner: (data) => {
-    const withheld = isModelWithheld(data);
+    const withheld = isModelDeletedOrTakenDown(data);
     return {
       ...data,
       modelVersions: data.modelVersions.map((version) => {

@@ -31,7 +31,7 @@ import {
   mayCarryEpochUrls,
   withoutEpochUrls,
 } from '~/server/services/training-data-restricted.service';
-import { isModelWithheld } from '~/server/utils/model-withheld';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const fileUrlsForOwner = ownerOnlyFileUrls<
@@ -82,7 +82,7 @@ function versionModel(data: VersionFiles, modelVersionId: number) {
 async function withheld(data: NonNullable<VersionFiles>) {
   if (!mayCarryEpochUrls(data.files)) return false;
   const model = await versionModel(data, data.modelVersionId);
-  return !!model && isModelWithheld(model);
+  return !!model && isModelDeletedOrTakenDown(model);
 }
 
 export const modelFileRouter = router({

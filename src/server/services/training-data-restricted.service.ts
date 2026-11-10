@@ -131,7 +131,7 @@ export function trainingDataOwnerView<
  * Files without their training epochs' urls, which are the orchestrator's links to the run's
  * weights; everything else about each epoch is kept. A file whose own `url` is one of those links
  * (a Training Studio dataset placeholder holds its selected epoch until it is archived) loses it
- * too. For a model whose weights are withheld (`isModelWithheld`) from everyone but moderators.
+ * too. For a model whose weights are withheld (`isModelDeletedOrTakenDown`) from everyone but moderators.
  */
 export function withoutEpochUrls<
   T extends { url?: unknown; metadata?: unknown }[] | null | undefined

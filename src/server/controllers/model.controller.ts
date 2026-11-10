@@ -240,7 +240,7 @@ import {
   trainingDataOwnerView,
   withoutEpochUrls,
 } from '~/server/services/training-data-restricted.service';
-import { isModelWithheld } from '~/server/utils/model-withheld';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import {
   getResourceData,
   resolveCanGenerateForVersions,
@@ -1612,7 +1612,7 @@ export const getMyTrainingModelsHandler = async ({
         return {
           ...version,
           files:
-            isModelWithheld(item.model) && !ctx.user.isModerator
+            isModelDeletedOrTakenDown(item.model) && !ctx.user.isModerator
               ? withoutEpochUrls(ownerFiles)
               : ownerFiles,
           model: {

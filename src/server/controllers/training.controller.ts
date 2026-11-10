@@ -11,7 +11,7 @@ import {
   trainingDataOwnerView,
   withoutEpochUrls,
 } from '~/server/services/training-data-restricted.service';
-import { isModelWithheld } from '~/server/utils/model-withheld';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import {
@@ -95,7 +95,7 @@ export const getModelData = async ({ input, ctx }: { input: GetByIdInput; ctx: C
     }
 
     if (ctx.user?.isModerator) return modelData;
-    const withheld = isModelWithheld(model);
+    const withheld = isModelDeletedOrTakenDown(model);
     return {
       ...modelData,
       modelVersions: modelData.modelVersions.map((v) => ({
