@@ -684,8 +684,9 @@ export async function runAbuseDetectionScan() {
 
   // Two independent sources. v1 (ClickHouse) is the old game and stays through the payout tail;
   // v2 (Postgres votes) is report-only. A failing source is logged and skipped so the other's
-  // suspects are still filed; the run only fails when every source that ran failed. No ClickHouse
-  // client means v1 did not run, which is not a failure.
+  // suspects are still filed. When every source that ran failed, nothing is filed and the run fails;
+  // when one failed, the report says so and the run fails after filing, unless it already smited.
+  // No ClickHouse client means v1 did not run, which is not a failure.
   const loadV1Suspects = async (): Promise<AbuseSuspect[]> => {
     if (!clickhouse) return [];
     return await clickhouse.$query<AbuseSuspect>`
