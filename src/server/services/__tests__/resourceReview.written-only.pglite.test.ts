@@ -60,4 +60,15 @@ describe('getResourceReviewPagedSchema', () => {
         .success
     ).toBe(true);
   });
+
+  // The page's SSR safeParse 404s on a failed parse, so an oversized limit must clamp, not fail.
+  it('clamps limit to 50 and defaults it to 20', () => {
+    const limitOf = (limit?: number) =>
+      getResourceReviewPagedSchema.parse({ modelId: 1, limit }).limit;
+    expect(limitOf(51)).toBe(50);
+    expect(limitOf(200)).toBe(50);
+    expect(limitOf(50)).toBe(50);
+    expect(limitOf()).toBe(20);
+    expect(getResourceReviewPagedSchema.safeParse({ modelId: 1, limit: 0 }).success).toBe(false);
+  });
 });

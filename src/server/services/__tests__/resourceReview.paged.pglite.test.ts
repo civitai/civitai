@@ -12,12 +12,13 @@ import type * as UserService from '~/server/services/user.service';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
+const blockedBy = vi.hoisted(() => ({ ids: [] as number[] }));
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => {
   const none = { getCached: async () => [] };
   return {
     ...(await importOriginal<typeof UserPreferences>()),
     HiddenUsers: none,
-    BlockedByUsers: none,
+    BlockedByUsers: { getCached: async () => blockedBy.ids.map((id) => ({ id })) },
     BlockedUsers: none,
   };
 });
@@ -31,6 +32,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 
 const { getPagedResourceReviews } = await import('~/server/services/resourceReview.service');
 const { REVIEW_IMAGE_COUNT_CAP } = await import('~/server/schema/resourceReview.schema');
+const { NsfwLevel } = await import('~/server/common/enums');
 
 const MODEL = 10;
 const V1 = 20;
@@ -50,7 +52,8 @@ beforeAll(async () => {
       id int PRIMARY KEY,
       "userId" int NOT NULL,
       "publishedAt" timestamp,
-      availability "Availability" NOT NULL DEFAULT 'Public'
+      availability "Availability" NOT NULL DEFAULT 'Public',
+      metadata jsonb
     );
     CREATE TABLE "ResourceReview" (
       id int PRIMARY KEY,
@@ -98,6 +101,7 @@ afterAll(() => pg.close());
 
 beforeEach(async () => {
   await pg.exec(`TRUNCATE "Post", "ResourceReview", "Image", "ImageResourceNew", "CommentV3";`);
+  blockedBy.ids = [];
   dbMock.dbRead.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
@@ -131,8 +135,8 @@ const insertReviews = (rows: Review[]) =>
     ]
   );
 
-const page = (input: { modelVersionId?: number; page?: number; limit?: number }) =>
-  getPagedResourceReviews({ input: { modelId: MODEL, limit: 10, page: 1, ...input } });
+const page = (input: { modelVersionId?: number; page?: number; limit?: number }, userId?: number) =>
+  getPagedResourceReviews({ input: { modelId: MODEL, limit: 10, page: 1, ...input }, userId });
 
 describe('getPagedResourceReviews', () => {
   it("lists every version's reviews of the model when no version is selected", async () => {
@@ -225,6 +229,102 @@ describe('getPagedResourceReviews', () => {
 
     const counts = (await page({ modelVersionId: V1 })).items.map((r) => r.imageCount);
     expect(counts).toEqual([REVIEW_IMAGE_COUNT_CAP + 1, REVIEW_IMAGE_COUNT_CAP + 1]);
+  });
+
+  it("excludes blocked images and the review's unpublished, Private or stamped post", async () => {
+    const AUTHOR = 8;
+    await pg.exec(`
+      INSERT INTO "Post" (id, "userId", "publishedAt", availability, metadata) VALUES
+        (400, ${AUTHOR}, now() - interval '1 day', 'Public', NULL),
+        (401, ${AUTHOR}, NULL, 'Public', NULL),
+        (402, ${AUTHOR}, now() - interval '1 day', 'Private', NULL),
+        (403, ${AUTHOR}, now() - interval '1 day', 'Public', '{"unpublishedAt": "2026-01-01"}');
+      INSERT INTO "Image" (id, "userId", "postId", "blockedFor", "nsfwLevel") VALUES
+        (40, ${AUTHOR}, 400, NULL, 1),
+        (41, ${AUTHOR}, 400, 'tos', 1),
+        (42, ${AUTHOR}, 400, NULL, ${NsfwLevel.Blocked}),
+        (43, ${AUTHOR}, 401, NULL, 1),
+        (44, ${AUTHOR}, 402, NULL, 1),
+        (45, ${AUTHOR}, 403, NULL, 1);
+      INSERT INTO "ImageResourceNew" VALUES (40, ${V1}), (41, ${V1}), (42, ${V1}), (43, ${V1}), (44, ${V1}), (45, ${V1});
+    `);
+    await insertReviews([
+      { id: 1, userId: AUTHOR, postId: 400, daysAgo: 1 },
+      { id: 2, userId: AUTHOR, postId: 401, daysAgo: 2 },
+      { id: 3, userId: AUTHOR, postId: 402, daysAgo: 3 },
+      { id: 4, userId: AUTHOR, postId: 403, daysAgo: 4 },
+      { id: 5, userId: AUTHOR, postId: null, daysAgo: 5 },
+    ]);
+
+    // As the author, who alone sees the review on the unpublished post. The postless review falls
+    // back to the reviewer's servable images: only image 40.
+    const counts = (await page({ modelVersionId: V1 }, AUTHOR)).items.map((r) => [
+      r.id,
+      r.imageCount,
+    ]);
+    expect(counts).toEqual([
+      [1, 1],
+      [2, 0],
+      [3, 0],
+      [4, 0],
+      [5, 1],
+    ]);
+  });
+
+  it('counts 0 for a review with no matching image', async () => {
+    const AUTHOR = 9;
+    await pg.exec(`
+      INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (500, ${AUTHOR}, now() - interval '1 day');
+      INSERT INTO "Image" (id, "userId", "postId") VALUES (50, ${AUTHOR}, 500);
+      INSERT INTO "ImageResourceNew" VALUES (50, ${V2});
+    `);
+    await insertReviews([
+      { id: 1, userId: AUTHOR, postId: 500, daysAgo: 1 },
+      { id: 2, userId: AUTHOR, postId: null, daysAgo: 2 },
+    ]);
+
+    const counts = (await page({ modelVersionId: V1 })).items.map((r) => r.imageCount);
+    expect(counts).toEqual([0, 0]);
+  });
+
+  it('caps the count when the version has fewer images than the reviewer', async () => {
+    const AUTHOR = 10;
+    const over = REVIEW_IMAGE_COUNT_CAP + 20;
+    await pg.exec(`
+      INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (600, ${AUTHOR}, now() - interval '1 day');
+      INSERT INTO "Image" (id, "userId", "postId")
+        SELECT g, ${AUTHOR}, 600 FROM generate_series(1, ${over + 50}) g;
+      INSERT INTO "ImageResourceNew" SELECT g, ${V1} FROM generate_series(1, ${over}) g;
+    `);
+    await insertReviews([{ id: 1, userId: AUTHOR, postId: null, daysAgo: 1 }]);
+
+    const [review] = (await page({ modelVersionId: V1 })).items;
+    expect(review.imageCount).toBe(REVIEW_IMAGE_COUNT_CAP + 1);
+  });
+
+  describe("a blocker's review, with no version selected", () => {
+    const OWNER = 70;
+    const BLOCKER = 71;
+    beforeEach(async () => {
+      blockedBy.ids = [BLOCKER];
+      dbMock.dbRead.model.findUnique.mockImplementation((async ({
+        where,
+      }: {
+        where: { id: number };
+      }) => (where.id === MODEL ? { userId: OWNER } : null)) as never);
+      await insertReviews([
+        { id: 1, userId: BLOCKER, versionId: V1, daysAgo: 1 },
+        { id: 2, userId: 72, versionId: V2, daysAgo: 2 },
+      ]);
+    });
+
+    it('still shows to the model owner', async () => {
+      expect((await page({}, OWNER)).items.map((r) => r.id)).toEqual([1, 2]);
+    });
+
+    it('is hidden from any other viewer', async () => {
+      expect((await page({}, 73)).items.map((r) => r.id)).toEqual([2]);
+    });
   });
 
   it('lists reviews newest first across pages, written or not', async () => {
