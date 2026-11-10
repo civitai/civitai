@@ -869,13 +869,15 @@ describe('prompts sent with each file', () => {
       `Prompt, as stored on the image: ${scrubbed}\nNegative prompt, as stored on the image: blurry & <bad>`,
     ]);
     // The EXIF pair is trimmed of leading and trailing symbols, as on the preserved-evidence send.
-    expect(file.pairs.prompt).toContain('lora:style_v2:0.8> R&D > less');
+    expect(file.pairs.prompt).toBe(scrubbed.slice(1, -1));
     expect(file.pairs.negativePrompt).toBe('blurry & <bad');
   });
 
-  it('on an image report: a meta prompt that is not text is not sent', async () => {
+  it('on an image report: a meta prompt that is not text, and meta resources, are not sent', async () => {
     dbMock.dbRead.image.findMany.mockResolvedValue([
-      imageRow(501, { meta: { prompt: { nested: '<x>' }, negativePrompt: 7 } }),
+      imageRow(501, {
+        meta: { prompt: { nested: '<x>' }, negativePrompt: 7, resources: ['urn:air:x'] },
+      }),
     ]);
 
     await processCsamReport(report('Image', {}, [{ id: 501 }]));
@@ -915,6 +917,7 @@ describe('prompts sent with each file', () => {
       `Prompt: ${scrubbed}\nNegative prompt: blurry & <bad>\nResources: urn:air:x&y`,
     ]);
     expect(file.pairs.resources).toBe('urn:air:x&y');
+    expect(file.pairs.prompt).toBe(scrubbed.slice(1, -1));
   });
 
   it.each([
@@ -935,5 +938,33 @@ describe('prompts sent with each file', () => {
 
     expect(submitReport).not.toHaveBeenCalled();
     expect(lines('send-xml')).toHaveLength(1);
+  });
+
+  it('on a generated-image report: only text resources are sent', async () => {
+    await processCsamReport(
+      report('GeneratedImage', {
+        generatedImages: [
+          { jobId: 'job-1', resources: [{ a: 1 }, '', 'ok'], blobs: [{ url: 'blob-1' }] },
+        ],
+      })
+    );
+
+    const [file] = await sentAsParsed();
+    expect(file.pairs).toEqual({ resources: 'ok' });
+  });
+
+  it('on an image report: a very long meta prompt is cut before it is trimmed, and sent', async () => {
+    const long = `a${'!'.repeat(200_000)}b`;
+    dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501, { meta: { prompt: long } })]);
+
+    const started = Date.now();
+    await processCsamReport(report('Image', {}, [{ id: 501 }]));
+
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(markedSent()).toBe(true);
+    const [file] = await sentAsParsed();
+    // The cut leaves 'a' and a run of symbols, which the trim removes.
+    expect(file.pairs.prompt).toBe('a… [truncated]');
+    expect(file.additionalInfo[0].endsWith('… [truncated]')).toBe(true);
   });
 });

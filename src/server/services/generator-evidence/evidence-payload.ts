@@ -97,6 +97,19 @@ type PromptSource = { prompt?: unknown; negativePrompt?: unknown; resources?: un
 const asText = (value: unknown) => (typeof value === 'string' && value.trim() ? value : undefined);
 
 /**
+ * An EXIF value, trimmed of edge symbols as the preserved-evidence send always has. Image metadata has
+ * no length limit, so it is cut to the plain line's limit first: the trim's pattern is slow on long text.
+ */
+function exifValue(text: string | undefined, storedOnImage: boolean) {
+  if (!text || !storedOnImage) return trimNonAlphanumeric(text);
+  const chars = Array.from(text);
+  if (chars.length <= MAX_GENERATION_LINE_CHARS) return trimNonAlphanumeric(text);
+  const cut = `… ${IMAGE_TRUNCATION_MARKER}`;
+  const kept = trimNonAlphanumeric(chars.slice(0, MAX_GENERATION_LINE_CHARS - cut.length).join(''));
+  return kept ? `${kept}${cut}` : undefined;
+}
+
+/**
  * A file's prompts as NCMEC is sent them: EXIF pairs, and the same words as plain lines. `storedOnImage`
  * labels them as read from the image's own metadata, which its uploader can write.
  */
@@ -106,12 +119,14 @@ export function promptFileDetails(
 ): Pick<SubmitFileDetails, 'details'> & { additionalInfo: string[] } {
   const prompt = asText(source.prompt);
   const negativePrompt = asText(source.negativePrompt);
-  const resources = Array.isArray(source.resources)
-    ? source.resources.filter((r): r is string => typeof r === 'string' && !!r)
-    : [];
+  // Image metadata names no resources NCMEC could use, and its uploader writes it.
+  const resources =
+    !storedOnImage && Array.isArray(source.resources)
+      ? source.resources.filter((r): r is string => typeof r === 'string' && !!r)
+      : [];
   const valuePair: { name: string; value: string }[] = [];
-  const trimmedPrompt = trimNonAlphanumeric(prompt);
-  const trimmedNegative = trimNonAlphanumeric(negativePrompt);
+  const trimmedPrompt = exifValue(prompt, storedOnImage);
+  const trimmedNegative = exifValue(negativePrompt, storedOnImage);
   if (trimmedPrompt) valuePair.push({ name: 'prompt', value: xmlText(trimmedPrompt) });
   if (trimmedNegative) valuePair.push({ name: 'negativePrompt', value: xmlText(trimmedNegative) });
   if (resources.length) valuePair.push({ name: 'resources', value: xmlText(resources.join(',')) });
