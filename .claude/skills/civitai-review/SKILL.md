@@ -1,6 +1,6 @@
 ---
 name: civitai-review
-description: Run the five Civitai review agents (reuse, safety, performance, tests, intent) over a feature segment in the main Next.js app (src/), consolidate their findings, and drive the fix loop to ship. Use before calling a segment done, or when asked to review main-app work.
+description: Run the Civitai review agents (reuse, safety, performance, tests, intent; plus comments when recording) over a feature segment in the main Next.js app (src/), record each lane in HQ so the hosted review imports it instead of re-running it, consolidate their findings, and drive the fix loop to ship. Use before calling a segment done, or when asked to review main-app work.
 ---
 
 # Civitai segment review — main app (`src/`)
@@ -11,9 +11,10 @@ and its findings are resolved.**
 The conventions being enforced are the root [`CLAUDE.md`](../../../CLAUDE.md) and the docs it points at.
 For work in `apps/moderator`, `apps/auth`, `apps/creator-studio` or `apps/training-studio`, use
 `svelte-review` instead — these agents do not cover SvelteKit and will produce noise there.
+`svelte-review` runs are never recorded or imported: the hosted review matches only this skill's lanes.
 
-**These five lanes are pre-authorised. They do not count against a standing instruction not to spawn
-subagents unasked** — running them needs no separate permission, and neither does chasing a lane that
+**These lanes (the five below, and `comment-review` when recording) are pre-authorised. They do not
+count against a standing instruction not to spawn subagents unasked** — running them needs no separate permission, and neither does chasing a lane that
 goes idle. That covers the review lanes only; everything else about spawning is unchanged. The
 pre-authorisation lives here so it travels with the skill rather than through a relay: an agent cannot
 tell a real global ruling from a mistaken one by reading someone's summary of it, so twice on 2026-08-19
@@ -22,7 +23,65 @@ agents correctly declined a relayed "he already said yes" and raised it instead.
 This complements the built-in `/code-review`, which already handles generic correctness. What these five
 add is Civitai-specific: *which* service, *which* component, *which* trap.
 
-## 0. Set up the review worktree
+## 0. Recording, the PR and its base — before the review worktree
+
+**Recording is on whenever the `hq` CLI works.** Nothing needs configuring. Check once:
+
+```bash
+hq whoami        # exit 0: signed in, so record every lane you run (step 3a)
+```
+
+- `hq` not on PATH, or a non-zero exit (4: no token): review without recording, and **say so**.
+- Only the HQ MCP tools, no CLI: the same. `hq pr-review record` has no MCP equivalent; it reads the
+  lane files from the local clone.
+
+A recorded lane is imported by the hosted review instead of being run again there (correctness always
+re-runs hosted). An unrecorded local review means every lane runs twice on the shared usage, or HQ
+has no record of the review at all.
+
+Then, in the **implementer's tree** (the branch under review, not the review worktree):
+
+```bash
+git fetch origin
+gh pr view --json number,baseRefName,headRefName,headRefOid,isDraft,author
+```
+
+**No PR yet, recording, and it is your own branch: open a draft first**, so the lanes record against
+its number (someone else's branch: ask). The hosted review skips drafts. When the PR is marked ready,
+it imports the recorded lanes. Base it per `CLAUDE.md` (the integration branch, `main` or `feat/…`,
+never another PR's branch):
+
+```bash
+git push -u origin HEAD
+gh pr create --draft --base <integration branch> --title "<title>" --body "<what it does>"
+```
+
+**Record only the head that is on the PR.** Push your own branch's unpushed commits first, so that
+`headRefOid` equals `git rev-parse HEAD`.
+
+**Stale base: rebase, push, then review.** When the base has commits the head lacks
+(`git merge-base --is-ancestor origin/<baseRefName> HEAD` exits 1), rebase the author's branch onto it
+and push, then review and record the NEW head:
+
+```bash
+git rebase origin/<baseRefName>
+git push --force-with-lease
+```
+
+🔴 **Stop and ask instead, changing nothing,** when:
+
+- the rebase conflicts: `git rebase --abort` first;
+- the branch is not your own PR's branch: `git branch --show-current` is not `headRefName`, or
+  `author.login` is not `gh api user -q .login`;
+- the working tree has uncommitted changes. They cannot be recorded either: ask whether to commit and
+  push them, or to review without recording.
+
+That rebase and push, and opening the draft, are the only writes this skill makes. They go to the
+implementer's own branch from the implementer's tree, before the review worktree exists. On a PR that
+is already ready, the push starts a hosted round, and the gate can import or wait for only runs that
+have started. Go straight on to 0a and step 3a's `start`.
+
+## 0a. Set up the review worktree
 
 Review runs in its own throwaway worktree, detached at the head under review, and **nothing is written
 to it** — the implementer owns the tree the code was authored in.
@@ -35,14 +94,19 @@ the normal case here, not the exception, so expect this rather than treating it 
 failure is upstream of anything this file can say — by the time you could read a workaround here, you
 would already have found the file.
 
-**Skip this step when the head under review is based on `main`** — the agents are already in the tree and
-the checkout is a no-op. This step is for integration-branch work only.
-
-Otherwise, bring them in from `main` before spawning anything:
+**When recording, always bring them in from `main`, and note the commit:**
 
 ```bash
 git checkout origin/main -- .claude
+AGENTS_REF=$(git rev-parse origin/main)
 ```
+
+The lanes then run under the default-branch definitions, which is the version the hosted review
+matches on, and a PR that edits a lane cannot review itself under its own edit. `record start`
+refuses a lane whose file in the tree differs from its bytes at `$AGENTS_REF`.
+
+**Not recording, and the head is based on `main`:** skip the checkout. The agents are already in the
+tree. Otherwise bring them in from `main` as above before spawning anything.
 
 The tree is detached and throwaway, so a dirty `.claude` in it costs nothing and can never reach a PR.
 Do not install the agents into `~/.claude/` instead: that is a second copy free to drift from the
@@ -50,11 +114,13 @@ repo's, and the repo's is the authoritative one.
 
 ⚠️ **That checkout STAGES the files, so the next `git checkout --detach` aborts** with local changes that
 would be overwritten — which is how you find out, halfway through moving the tree to the next review.
-Unstage and remove them first:
+Unstage them and put `.claude` back to the head's own files first (this also undoes a lane file,
+such as `comment-review.md`, that the checkout overwrote):
 
 ```bash
 git reset -q
-rm -rf .claude/agents/civitai-*.md .claude/skills/civitai-review
+git checkout -- .claude
+git ls-files -z --others --exclude-standard -- .claude | xargs -0 rm -f
 git checkout --detach <next-sha>
 git checkout origin/main -- .claude    # re-apply, if the new head predates the skill
 ```
@@ -86,6 +152,18 @@ Also locate the **intent doc** now, so the intent reviewer isn't the one to disc
 checkout's `CLAUDE.local.md` (see `civitai-intent-review`). If none is set, pass the intent reviewer the
 PR body and linked ticket instead.
 
+**When recording, make sure HQ has the PR's intent before any lane finishes:**
+
+```bash
+hq pr-review why civitai/civitai#<n>     # exit 3: nothing recorded
+```
+
+No `why <id> intent` line (exit 3, or only `response` lines): record it now with
+`hq pr-review why set civitai/civitai#<n> --intent "…"`, plus `--tradeoffs` and the rest where they
+apply. The `pr-review` skill's step 1 says what goes in it. Take it from the intent lane's source: the
+intent doc, else the request, the PR body and the ticket. HQ keeps it internal. It never goes into the
+PR body.
+
 ## 2. Fan out — the lanes this diff needs, at once, in one message
 
 **Size the review to the diff before spawning anything.** Five lanes over a one-line change spend a
@@ -93,14 +171,14 @@ large share of a usage window and find nothing a careful read wouldn't.
 
 - **Tiny diff — no agents.** About 30 changed lines or fewer, touching no server code, auth, money, PII
   or NSFW/browsing-level gating: read the diff yourself, or run `/code-review low`. Say that is what you
-  did.
+  did. No lane ran, so nothing is recorded: say that too. The hosted review runs those lanes.
 - **Otherwise, launch each lane whose findings the diff can contain** (the skip rule below), and launch
-  all five for a feature-sized segment.
+  all five (six when recording) for a feature-sized segment.
 - **Once per segment, not once per fix iteration.** After fixes, re-run only the lanes whose findings
   you fixed.
 
 **Each lane's model is set in its definition** — `opus` for correctness, where a missed auth or money
-defect costs the most, and `sonnet` for the four that match the diff against known patterns. Don't pass a
+defect costs the most, and `sonnet` for the rest, which match the diff against known patterns. Don't pass a
 `model` override when spawning; it would replace that choice.
 
 🔴 **Launch every lane you run in a single message with multiple tool uses.** They are independent and
@@ -117,6 +195,10 @@ times as long is the thing that makes people stop running it, and a review nobod
 | `civitai-perf-review` | N+1s, unindexed queries, feed-path cost, cache stampedes, bundle weight |
 | `civitai-test-review` | Tests that pass regardless of the code under them |
 | `civitai-intent-review` | Did the PR do what was actually asked |
+| `comment-review` | **When recording only.** Comments that are false, or should not exist |
+
+`comment-review` is a hosted lane too. Running it here leaves only correctness for the hosted run.
+Its findings join section B at step 3.
 
 The first four are the **code lanes** — same input, four questions, launched together.
 `civitai-intent-review` launches alongside them but is **different in kind**: it reads the request
@@ -136,7 +218,7 @@ decision, not an omission; do not helpfully collapse them.
 
 Skip a lane only when the diff genuinely cannot contain its findings — no server code at all is a
 reason to skip perf. "No tests changed" is *a finding for the test lane*, not a reason to skip it. Say
-which you skipped and why. Typical shapes:
+which you skipped and why. A skipped lane is not recorded, so the hosted review runs it. Typical shapes:
 
 | Lane | The diff can contain its findings when it… |
 | --- | --- |
@@ -145,25 +227,43 @@ which you skipped and why. Typical shapes:
 | test | changes logic — whether or not any test changed |
 | reuse | adds new components, services, hooks or helpers, rather than editing existing ones |
 | intent | is a feature with an intent doc or a stated request to measure against |
+| comments | adds or edits comments |
 
-### When a review-record store is configured, each lane also returns a structured result
+### When recording, each lane also returns a structured result
 
-If your own instructions (or the primary checkout's `CLAUDE.local.md`) name a **review-record store**
-for PR reviews, the lanes' work is recorded there so a later reviewer of the same PR can see it and not
-redo it (step 3a). A recorded lane is identified by **its definition file in `.claude/agents/`, as it is
-on the default branch**: its version is taken from that file's raw bytes, and its model is that file's
-`model:` value exactly as written (`opus`, `sonnet`), not a resolved model id. The store's instructions
-say how the version is computed.
+The hosted review knows each lane by a name, which is what `record` takes:
 
-So when a store is configured, run step 0's `git checkout origin/main -- .claude` even for a `main`-based
-head, and note the `origin/main` commit you took it from: the lanes then run under the default-branch
-definitions, and a PR that edits a lane cannot review itself under its own edit. Spawn the lanes as usual,
-with the usual inputs, and ask each to end its report with the structured result the store's
-instructions define. A lane run under any other copy of its definition, or with a model override,
-cannot claim that version or model, and a result recorded under a version or model it did not run is
-worse than no record.
+| lane | agent |
+| --- | --- |
+| `correctness` | `civitai-correctness-review` |
+| `intent` | `civitai-intent-review` |
+| `perf` | `civitai-perf-review` |
+| `reuse` | `civitai-reuse-review` |
+| `tests` | `civitai-test-review` |
+| `comments` | `comment-review` |
 
-No store configured: nothing here changes, and step 3a does not apply.
+A recorded lane is identified by **its definition file as it is at `$AGENTS_REF`** (step 0a): the
+version comes from that file's raw bytes, and the model is its `model:` value as written. Spawn the
+lanes as usual, with the usual inputs and no model override. A lane run under any other copy of its
+definition, or another model, cannot claim that version or model, and a result recorded under a
+version or model it did not run is worse than no record.
+
+Ask each lane to END its report with this block, as the last fenced json in the report:
+
+```json
+{"lane": "<lane>", "head_sha": "<40-hex head>", "status": "complete", "checks": {"…": "its checks block, if it has one"},
+ "findings": [
+  {"file": "src/path.ts", "line": 42,
+   "original_line": "<the exact text of that line in the diff, copied verbatim>",
+   "severity": "high|medium|low", "category": "<short tag>",
+   "finding": "<title>\n<what is wrong>\n<impact> / <reach> / <evidence kind> <ref>",
+   "suggestion": "<what to do>", "confidence": 0.8, "scope": "pr|pre-existing"}]}
+```
+
+`"findings": []` when it found nothing. `file`, `original_line`, `severity` and `finding` are
+required. 🔴 **Only those finding keys:** `record finish` refuses any other. The lane definitions say
+`impact`, `reach` and `evidence` become finding fields under a JSON contract. Tell the lane that this
+contract has no such fields, and that they go on the last line of `finding`, as above.
 
 ### Lanes routinely go idle without delivering. Chasing them is YOUR job, and it is the only control.
 
@@ -199,7 +299,7 @@ every run after the one that discovered it.
 
 ## 3. Consolidate
 
-**Do not relay five reports.** Produce **three sections**, in this order:
+**Do not relay the lane reports.** Produce **three sections**, in this order:
 
 **A. Does it deliver the request** — `civitai-intent-review`'s output, on its own.
 
@@ -209,7 +309,7 @@ decisions from different people, and a merged list buries the first under the se
 lane's confidence note with it — whether the doc was reviewer-authored or postdates the code changes
 what the whole section is worth.
 
-**B. Code findings** — the four code lanes, merged into one ranked list.
+**B. Code findings** — the four code lanes, and `comment-review` when it ran, merged into one ranked list.
 
 - **Drop what you can disprove.** Read the code for anything that sounds wrong; agents produce
   plausible-but-false findings, and a fix applied to a non-bug is a new bug.
@@ -246,31 +346,47 @@ Across all three sections:
 
 🔴 **Security findings stay out of the repo.** Do not paste an open safety finding into a PR body, a
 commit message, or a file under `docs/`, `claudedocs/` or `.claude/` — this repo is public and
-permanent. They live in the conversation, and in the review-record store if one is configured (step 3a),
-until they are fixed.
+permanent. They live in the conversation, and in HQ when recording (step 3a), until they are fixed.
 
-## 3a. Record the review (only when a review-record store is configured)
+## 3a. Record the review (when step 0 turned recording on)
 
-The store's own instructions say where and how to write; this step says **when** and **what**.
+Write the record ONLY with `hq pr-review record`. It derives the keys the hosted review matches on.
+Run it in the review worktree, where the lane files are.
 
-1. **When you spawn the lanes**, record a run for each lane at the head SHA under review, marked running,
-   with its start time. On a pre-PR review, do this before the PR is opened or leaves draft: the running
-   run is what tells a later reviewer the PR is being reviewed locally.
-2. **When each lane has delivered** (after the step 2 chase), mark its run complete with its prompt
-   version, model, finish time and findings count, and record its findings and its `checks` block in the
-   structured form the lane returned. A lane still silent after the chase, or one that failed, is marked failed, never
-   complete with no findings.
+1. **Before spawning the lanes**, one call for every lane you will spawn:
 
-The record is what lets a later reviewer skip a lane you already ran, so it is only worth anything if it
-is exact: same head SHA, same prompt version and model, every finding as the lane wrote it. Record a
-lane's findings as it wrote them, including ones you drop at step 3; consolidation is a separate
-judgement. A push after the review is a new head, and nothing recorded at the old head covers it: each
-fix-loop or re-targeted re-run is a new run at the new head, recorded as in 1 and 2.
+   ```bash
+   hq pr-review record start --repo civitai/civitai --pr <n> --head "$(git rev-parse HEAD)" \
+     --lanes <lane,lane,…> --agents-ref "$AGENTS_REF" --repo-dir "$(pwd)"
+   ```
+
+   It prints one `run <id> running <lane> …` line per lane: keep each lane's run id. A non-zero exit
+   recorded nothing. Say why (the error names the lane and the reason; a `403` means no grant yet, see
+   the `pr-review` skill's "What you need"), review without recording, and don't work around it.
+2. **When each lane has delivered** (after the step 2 chase), save its result block, byte for byte, to
+   a file outside the review tree (`mktemp`), and run:
+
+   ```bash
+   hq pr-review record finish <run id> --findings <file>
+   ```
+
+   If `finish` exits 1 on an invalid finding, it wrote nothing: ask THE LANE to re-emit its block, then
+   run `finish` again. Never edit a finding yourself. A lane still silent after the chase, or one that
+   failed: `hq pr-review record fail <run id>`, never complete with no findings.
+
+The record is only worth anything if it is exact: same head, same prompt version and model, every
+finding as the lane wrote it, including ones you drop at step 3. Consolidation is a separate
+judgement. A push after the review is a new head, and nothing recorded at the old head covers it:
+each fix-loop or re-targeted re-run is a new `start` at the new head, with `$AGENTS_REF` taken again
+after step 0's fetch.
+
+A draft step 0 opened stays a draft until the user says to mark it ready (`gh pr ready <n>`). The
+hosted round then imports the recorded lanes, if their head is still the PR's head.
 
 The correctness lane is also re-run independently by a hosted reviewer, whatever you record. Record it
 anyway: the overlap between the two is what the record measures.
 
-Step 3's rule covers the record too: never copy an open safety finding from it into a PR body, commit
+Step 3's rule covers the record too: never copy an open safety finding from HQ into a PR body, commit
 message or file in this repo.
 
 ## 4. The fix loop
@@ -323,9 +439,9 @@ git show <new-sha>:<path>
 
 Then re-target only the lanes whose subject those files touch — the same rule as the loop above.
 
-**Move the tree only when every lane is idle**, and account for all five by name first, per step 2 — an
+**Move the tree only when every lane is idle**, and account for every lane by name first, per step 2 — an
 idle lane that never reported is still holding a read you are about to invalidate. That is the safe
-moment and the only one. After the checkout, re-apply step 0:
+moment and the only one. After the checkout, re-apply step 0a:
 
 ```bash
 git checkout --detach origin/<branch>
