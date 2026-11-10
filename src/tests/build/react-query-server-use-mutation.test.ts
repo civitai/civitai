@@ -68,6 +68,29 @@ describe.each(builds)('useMutation during a server render (%s build)', (_name, l
     expect(defaults).toHaveBeenCalledTimes(1);
   });
 
+  // The stub must use the same "is this the server?" answer as react-query's own hooks
+  // (useBaseQuery reads `environmentManager.isServer()`), not the fixed `isServer` constant, so an
+  // app that overrides it via `environmentManager.setIsServer` gets queries and mutations that agree.
+  it('follows environmentManager.setIsServer, like useBaseQuery', async () => {
+    const rq = await load();
+    const client = new rq.QueryClient();
+    const defaults = vi.spyOn(client, 'defaultMutationOptions');
+    try {
+      rq.environmentManager.setIsServer(() => false);
+      const { html } = renderCapturing(rq, client);
+      expect(html).toBe('<i>idle</i>');
+      // Not the server, so the real hook ran and built its MutationObserver.
+      expect(defaults).toHaveBeenCalledTimes(1);
+
+      defaults.mockClear();
+      rq.environmentManager.setIsServer(() => true);
+      renderCapturing(rq, client);
+      expect(defaults).not.toHaveBeenCalled();
+    } finally {
+      rq.environmentManager.setIsServer(() => rq.isServer);
+    }
+  });
+
   // Hydration parity. Invariant guard rather than regression coverage: before the patch the
   // server read a real observer's result, so this held then too. It is what keeps the hand-written
   // idle literal in the patch honest against the library's own initial result.

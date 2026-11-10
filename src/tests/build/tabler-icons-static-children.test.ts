@@ -3,12 +3,16 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Pins `patches/@tabler__icons-react@3.34.1.patch`. Every tabler icon rebuilt its own shape
  * elements (`iconNode.map(createElement)`) on every render. Those elements depend only on the
- * icon's static `iconNode`, so the patch builds them once, on first render, and reuses them.
+ * icon's static `iconNode`, so the patch builds them once, on first render, and reuses them —
+ * in production only. Development builds keep building them per render: a dev element records the
+ * fiber that created it (`_owner`), so a cached one would pin the first icon's fiber. The patch
+ * reads `process.env.NODE_ENV` at render time, so each test sets it (`vi.stubEnv`) rather than
+ * relying on the test runner's own value (`test`).
  *
  * 🔴 If this file fails after a tabler upgrade, re-read `createReactComponent` in BOTH builds
  * (`dist/esm/createReactComponent.mjs` and the single-file `dist/cjs/tabler-icons-react.cjs`),
@@ -85,13 +89,19 @@ const EXPECTED: Array<[string, string, Record<string, unknown>, unknown, string]
   ],
 ];
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+// children = [title?, ...shapes, ...extraChildren]
+const shapes = (list: unknown[]) => list.slice(1, 3);
+
 describe.each(builds)('tabler icons (%s build)', (_name, load) => {
-  it('reuses the icon shape elements across renders', async () => {
+  it('reuses the icon shape elements across renders in production', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
     const icons = await load();
     const first = renderSvg(icons.IconX).props.children as unknown[];
     const second = renderSvg(icons.IconX, { size: 30, title: 't' }).props.children as unknown[];
-    // children = [title?, ...shapes, ...extraChildren]
-    const shapes = (list: unknown[]) => list.slice(1, 3);
     expect(shapes(first)).toHaveLength(2);
     expect(shapes(second)[0]).toBe(shapes(first)[0]);
     expect(shapes(second)[1]).toBe(shapes(first)[1]);
@@ -100,14 +110,33 @@ describe.each(builds)('tabler icons (%s build)', (_name, load) => {
     expect(star[1]).not.toBe(shapes(first)[0]);
   });
 
-  it.each(EXPECTED)(
-    'server markup is unchanged: %s',
-    async (_case, iconName, props, child, expected) => {
+  it.each(['development', 'test'])(
+    'builds fresh shape elements on every render when NODE_ENV=%s',
+    async (env) => {
+      vi.stubEnv('NODE_ENV', env);
       const icons = await load();
-      const el = createElement(icons[iconName], props, child as any);
-      // Twice: the first render builds the cached shapes, the second reuses them.
-      expect(renderToStaticMarkup(el)).toBe(expected);
-      expect(renderToStaticMarkup(el)).toBe(expected);
+      const first = renderSvg(icons.IconX).props.children as unknown[];
+      const second = renderSvg(icons.IconX).props.children as unknown[];
+      expect(shapes(first)).toHaveLength(2);
+      expect(shapes(second)).toHaveLength(2);
+      expect(shapes(second)[0]).not.toBe(shapes(first)[0]);
+      expect(shapes(second)[1]).not.toBe(shapes(first)[1]);
+      // Same shapes, though: only the element identity differs.
+      expect(shapes(second)).toEqual(shapes(first));
     }
   );
+
+  describe.each(['production', 'development'])('NODE_ENV=%s', (env) => {
+    it.each(EXPECTED)(
+      'server markup is unchanged: %s',
+      async (_case, iconName, props, child, expected) => {
+        vi.stubEnv('NODE_ENV', env);
+        const icons = await load();
+        const el = createElement(icons[iconName], props, child as any);
+        // Twice: in production the first render builds the cached shapes, the second reuses them.
+        expect(renderToStaticMarkup(el)).toBe(expected);
+        expect(renderToStaticMarkup(el)).toBe(expected);
+      }
+    );
+  });
 });

@@ -46,10 +46,10 @@ patchedDependencies:
     hash: 56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353
     path: patches/@prisma__generator-helper@6.19.3.patch
   '@tabler/icons-react@3.34.1':
-    hash: 4f54dcf816c57c482548e584dc233ca65af5c15ad4ab567ac38622c62a621829
+    hash: d2d86ad8dc9d827fe15ed7fcf21f7a16f0731b900a8f68b6fee1e53798876b94
     path: patches/@tabler__icons-react@3.34.1.patch
   '@tanstack/react-query@5.101.0':
-    hash: 136a8a94bac879195bdc65c68a3f385d1cc10caec76d91cbbfeb862d96d0d743
+    hash: ffaa35ebbc57d730fe23139adccdabf2083206ea01b8c4e1ad533660dc8f6d8d
     path: patches/@tanstack__react-query@5.101.0.patch
   '@trpc/next@11.17.0':
     hash: 5798a0e6887c5f9a43534217055fe24cd16fa84a4914f07175115a2f43758b69
@@ -289,13 +289,13 @@ importers:
         version: 2.4.0
       '@tabler/icons-react':
         specifier: ^3.7.0
-        version: 3.34.1(patch_hash=4f54dcf816c57c482548e584dc233ca65af5c15ad4ab567ac38622c62a621829)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
+        version: 3.34.1(patch_hash=d2d86ad8dc9d827fe15ed7fcf21f7a16f0731b900a8f68b6fee1e53798876b94)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
       '@tanstack/react-query':
         specifier: ^5.101.0
-        version: 5.101.0(patch_hash=136a8a94bac879195bdc65c68a3f385d1cc10caec76d91cbbfeb862d96d0d743)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
+        version: 5.101.0(patch_hash=ffaa35ebbc57d730fe23139adccdabf2083206ea01b8c4e1ad533660dc8f6d8d)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
       '@tanstack/react-query-devtools':
         specifier: ^5.101.0
-        version: 5.101.0(@tanstack/react-query@5.101.0(patch_hash=136a8a94bac879195bdc65c68a3f385d1cc10caec76d91cbbfeb862d96d0d743)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
+        version: 5.101.0(@tanstack/react-query@5.101.0(patch_hash=ffaa35ebbc57d730fe23139adccdabf2083206ea01b8c4e1ad533660dc8f6d8d)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
       '@tanstack/react-virtual':
         specifier: ^3.13.12
         version: 3.13.12(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
@@ -349,10 +349,10 @@ importers:
         version: 11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2)
       '@trpc/next':
         specifier: ^11.17.0
-        version: 11.17.0(patch_hash=5798a0e6887c5f9a43534217055fe24cd16fa84a4914f07175115a2f43758b69)(3b3e7a967a4cb28d96beafd03f53d40a)
+        version: 11.17.0(patch_hash=5798a0e6887c5f9a43534217055fe24cd16fa84a4914f07175115a2f43758b69)(3fe231a2d3de7cae4aa4b28c602afdf2)
       '@trpc/react-query':
         specifier: ^11.17.0
-        version: 11.17.0(@tanstack/react-query@5.101.0(patch_hash=136a8a94bac879195bdc65c68a3f385d1cc10caec76d91cbbfeb862d96d0d743)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(typescript@5.9.2)
+        version: 11.17.0(@tanstack/react-query@5.101.0(patch_hash=ffaa35ebbc57d730fe23139adccdabf2083206ea01b8c4e1ad533660dc8f6d8d)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(typescript@5.9.2)
       '@trpc/server':
         specifier: ^11.17.0
         version: 11.17.0(typescript@5.9.2)
@@ -496,7 +496,7 @@ importers:
         version: 11.2.2
       mantine-react-table:
         specifier: ^2.0.0-beta.9
-        version: 2.0.0-beta.9(9a0b578d0e90c8365ceda1f273c2bd29)
+        version: 2.0.0-beta.9(520e749c3740199e92087b4a82326d19)
       meilisearch:
         specifier: 0.33.0
         version: 0.33.0
@@ -16548,7 +16548,7 @@ snapshots:
     dependencies:
       '@swc/counter': 0.1.3
 
-  '@tabler/icons-react@3.34.1(patch_hash=4f54dcf816c57c482548e584dc233ca65af5c15ad4ab567ac38622c62a621829)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))':
+  '@tabler/icons-react@3.34.1(patch_hash=d2d86ad8dc9d827fe15ed7fcf21f7a16f0731b900a8f68b6fee1e53798876b94)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))':
     dependencies:
       '@tabler/icons': 3.34.1
       react: 18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)
@@ -16638,13 +16638,13 @@ snapshots:
 
   '@tanstack/query-devtools@5.101.0': {}
 
-  '@tanstack/react-query-devtools@5.101.0(@tanstack/react-query@5.101.0(patch_hash=136a8a94bac879195bdc65c68a3f385d1cc10caec76d91cbbfeb862d96d0d743)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))':
+  '@tanstack/react-query-devtools@5.101.0(@tanstack/react-query@5.101.0(patch_hash=ffaa35ebbc57d730fe23139adccdabf2083206ea01b8c4e1ad533660dc8f6d8d)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))':
     dependencies:
       '@tanstack/query-devtools': 5.101.0
-      '@tanstack/react-query': 5.101.0(patch_hash=136a8a94bac879195bdc65c68a3f385d1cc10caec76d91cbbfeb862d96d0d743)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
+      '@tanstack/react-query': 5.101.0(patch_hash=ffaa35ebbc57d730fe23139adccdabf2083206ea01b8c4e1ad533660dc8f6d8d)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
       react: 18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)
 
-  '@tanstack/react-query@5.101.0(patch_hash=136a8a94bac879195bdc65c68a3f385d1cc10caec76d91cbbfeb862d96d0d743)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))':
+  '@tanstack/react-query@5.101.0(patch_hash=ffaa35ebbc57d730fe23139adccdabf2083206ea01b8c4e1ad533660dc8f6d8d)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))':
     dependencies:
       '@tanstack/query-core': 5.101.0
       react: 18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)
@@ -16897,7 +16897,7 @@ snapshots:
       '@trpc/server': 11.17.0(typescript@5.9.2)
       typescript: 5.9.2
 
-  '@trpc/next@11.17.0(patch_hash=5798a0e6887c5f9a43534217055fe24cd16fa84a4914f07175115a2f43758b69)(3b3e7a967a4cb28d96beafd03f53d40a)':
+  '@trpc/next@11.17.0(patch_hash=5798a0e6887c5f9a43534217055fe24cd16fa84a4914f07175115a2f43758b69)(3fe231a2d3de7cae4aa4b28c602afdf2)':
     dependencies:
       '@trpc/client': 11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2)
       '@trpc/server': 11.17.0(typescript@5.9.2)
@@ -16906,12 +16906,12 @@ snapshots:
       react-dom: 18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
       typescript: 5.9.2
     optionalDependencies:
-      '@tanstack/react-query': 5.101.0(patch_hash=136a8a94bac879195bdc65c68a3f385d1cc10caec76d91cbbfeb862d96d0d743)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
-      '@trpc/react-query': 11.17.0(@tanstack/react-query@5.101.0(patch_hash=136a8a94bac879195bdc65c68a3f385d1cc10caec76d91cbbfeb862d96d0d743)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(typescript@5.9.2)
+      '@tanstack/react-query': 5.101.0(patch_hash=ffaa35ebbc57d730fe23139adccdabf2083206ea01b8c4e1ad533660dc8f6d8d)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
+      '@trpc/react-query': 11.17.0(@tanstack/react-query@5.101.0(patch_hash=ffaa35ebbc57d730fe23139adccdabf2083206ea01b8c4e1ad533660dc8f6d8d)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(typescript@5.9.2)
 
-  '@trpc/react-query@11.17.0(@tanstack/react-query@5.101.0(patch_hash=136a8a94bac879195bdc65c68a3f385d1cc10caec76d91cbbfeb862d96d0d743)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(typescript@5.9.2)':
+  '@trpc/react-query@11.17.0(@tanstack/react-query@5.101.0(patch_hash=ffaa35ebbc57d730fe23139adccdabf2083206ea01b8c4e1ad533660dc8f6d8d)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(typescript@5.9.2)':
     dependencies:
-      '@tanstack/react-query': 5.101.0(patch_hash=136a8a94bac879195bdc65c68a3f385d1cc10caec76d91cbbfeb862d96d0d743)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
+      '@tanstack/react-query': 5.101.0(patch_hash=ffaa35ebbc57d730fe23139adccdabf2083206ea01b8c4e1ad533660dc8f6d8d)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
       '@trpc/client': 11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2)
       '@trpc/server': 11.17.0(typescript@5.9.2)
       react: 18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)
@@ -17732,9 +17732,9 @@ snapshots:
       obug: 2.1.1
       std-env: 4.2.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
     optionalDependencies:
-      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))(vitest@4.1.11)
+      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))(vitest@4.1.11)
 
   '@vitest/expect@4.1.11':
     dependencies:
@@ -21379,12 +21379,12 @@ snapshots:
   make-error@1.3.6:
     optional: true
 
-  mantine-react-table@2.0.0-beta.9(9a0b578d0e90c8365ceda1f273c2bd29):
+  mantine-react-table@2.0.0-beta.9(520e749c3740199e92087b4a82326d19):
     dependencies:
       '@mantine/core': 7.17.8(patch_hash=931d5abe5ba37a67dbf2fd359d8e27219d22e4824a178377cc47c4fe13c73b8f)(@mantine/hooks@7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(@types/react@18.0.14)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
       '@mantine/dates': 7.17.8(b0c6362d4d307cc0b1df78a14695b0fe)
       '@mantine/hooks': 7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
-      '@tabler/icons-react': 3.34.1(patch_hash=4f54dcf816c57c482548e584dc233ca65af5c15ad4ab567ac38622c62a621829)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
+      '@tabler/icons-react': 3.34.1(patch_hash=d2d86ad8dc9d827fe15ed7fcf21f7a16f0731b900a8f68b6fee1e53798876b94)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
       '@tanstack/match-sorter-utils': 8.19.4
       '@tanstack/react-table': 8.20.5(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
       '@tanstack/react-virtual': 3.11.2(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))
