@@ -63,7 +63,7 @@ export const modelWebhooks = createWebhookProcessor({
               files: castedFiles.map((file) => ({
                 ...file,
                 url: file.visibility === 'Public' ? file.url : undefined,
-                metadata: reduceToBasicFileMetadata(file.metadata),
+                metadata: reduceToBasicFileMetadata(file.metadata ?? {}),
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,
@@ -131,7 +131,7 @@ export const modelWebhooks = createWebhookProcessor({
               files: castedFiles.map((file) => ({
                 ...file,
                 url: file.visibility === 'Public' ? file.url : undefined,
-                metadata: reduceToBasicFileMetadata(file.metadata),
+                metadata: reduceToBasicFileMetadata(file.metadata ?? {}),
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,

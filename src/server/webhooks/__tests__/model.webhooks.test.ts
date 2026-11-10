@@ -52,4 +52,15 @@ describe.each(['new-model', 'updated-model'] as const)('%s webhook payload', (ev
       fp: 'fp16',
     });
   });
+
+  it('sends a file with no metadata', async () => {
+    const withoutMetadata = model();
+    (withoutMetadata.modelVersions[0].files[0] as { metadata: unknown }).metadata = null;
+    const [payload] = await modelWebhooks[event].getData({
+      lastSent: new Date(0),
+      prisma: { model: { findMany: vi.fn(async () => [withoutMetadata]) } },
+    } as never);
+
+    expect(payload.modelVersions[0]?.files[0].metadata).toEqual({});
+  });
 });
