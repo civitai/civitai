@@ -87,7 +87,7 @@ describe('sticker rendering is opt-in', () => {
     const mounts = walk(SRC, [], ['.ts', '.tsx'])
       .filter((file) => /<StickerAttributionHoverCard/.test(fs.readFileSync(file, 'utf8')))
       .map(relative)
-      .filter((file) => !file.includes('/__tests__/'))
+      .filter((file) => !file.includes('/__tests__/') && !/\.test\.tsx?$/.test(file))
       .sort();
 
     expect(mounts).toEqual(['components/RenderHtml/RenderHtml.tsx']);
