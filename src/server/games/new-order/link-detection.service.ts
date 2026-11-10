@@ -32,7 +32,7 @@ async function loadConfig() {
   return parseLinkDetectionConfig(config?.linkDetection);
 }
 
-async function loadEarners(config: LinkDetectionConfig) {
+async function loadV1Earners(config: LinkDetectionConfig) {
   const rows = await clickhouse!.$query<{ userId: number }>(`
     SELECT userId
     FROM knights_new_order_image_rating FINAL
@@ -54,6 +54,37 @@ async function loadEarners(config: LinkDetectionConfig) {
     select: { userId: true },
   });
   return players.map((p) => p.userId);
+}
+
+async function loadV2Earners(config: LinkDetectionConfig) {
+  const rows = await dbRead.$queryRaw<{ playerId: number }[]>`
+    SELECT v."playerId"
+    FROM "KnightsVote" v
+    JOIN "User" u ON u."id" = v."playerId"
+    WHERE v."gold" > 0
+      AND v."createdAt" >= now() - (${Math.trunc(config.lookbackDays)}::int * interval '1 day')
+      AND u."bannedAt" IS NULL
+    GROUP BY v."playerId"
+    ORDER BY count(*) DESC, v."playerId"
+    LIMIT ${Math.trunc(config.maxEarners)}
+  `;
+  return rows.map((r) => Number(r.playerId));
+}
+
+// v1 earners are temporary (v1 Buzz is still paid until it retires); its failure must not drop v2.
+async function loadEarners(config: LinkDetectionConfig) {
+  const [v2, v1] = await Promise.all([
+    loadV2Earners(config),
+    loadV1Earners(config).catch(async (error: unknown) => {
+      await logToAxiom({
+        type: 'error',
+        name: 'new-order-link-detection-v1-earners',
+        message: error instanceof Error ? error.message : String(error),
+      }).catch(() => null);
+      return [] as number[];
+    }),
+  ]);
+  return [...new Set([...v2, ...v1])].slice(0, Math.trunc(config.maxEarners));
 }
 
 async function loadIpGroups(earners: number[], config: LinkDetectionConfig): Promise<IpGroup[]> {
@@ -122,7 +153,8 @@ export async function findLinkedClusters(config: LinkDetectionConfig): Promise<L
     loadIpGroups(earners, config),
     loadTips(earners, config),
   ]);
-  const sinkIds = tips.filter((t) => earners.includes(t.from)).map((t) => t.to);
+  const earnerSet = new Set(earners);
+  const sinkIds = tips.filter((t) => earnerSet.has(t.from)).map((t) => t.to);
   const accountIds = [...new Set([...earners, ...sinkIds])];
   const accounts = await dbRead.user.findMany({
     where: { id: { in: accountIds } },

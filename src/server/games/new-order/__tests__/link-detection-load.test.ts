@@ -66,3 +66,87 @@ describe('findLinkedClusters tip loading', () => {
     expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 });
+
+describe('findLinkedClusters earner loading', () => {
+  const ipQuery = () =>
+    query.mock.calls.map(([sql]) => String(sql)).find((s) => /FROM default.userActivities/.test(s));
+  const earnersIn = () => {
+    const m = ipQuery()?.match(/targetUserId IN \(([\d,]+)\)/);
+    return m ? m[1].split(',').map(Number) : [];
+  };
+  const voteSql = () =>
+    String(
+      dbMock.dbRead.$queryRaw.mock.calls
+        .map(([strings]) => (Array.isArray(strings) ? strings.join('?') : String(strings)))
+        .find((s) => /KnightsVote/.test(s))
+    );
+
+  const mockV1 = (ids: number[]) =>
+    query.mockImplementation(async (sql: string) => {
+      if (/FROM knights_new_order_image_rating/.test(sql)) return ids.map((userId) => ({ userId }));
+      return [];
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbRead.user.findMany.mockResolvedValue([]);
+    dbMock.dbRead.newOrderPlayer.findMany.mockImplementation(async ({ where }) =>
+      where.userId.in.map((userId: number) => ({ userId }))
+    );
+  });
+
+  it('returns v2 earners when v1 has none', async () => {
+    mockV1([]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ playerId: 5 }, { playerId: 6 }]);
+
+    await findLinkedClusters(config);
+
+    expect(earnersIn()).toEqual([5, 6]);
+  });
+
+  it('merges v2 and v1 earners without duplicates', async () => {
+    mockV1([1, 2, 5]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ playerId: 5 }, { playerId: 6 }]);
+
+    await findLinkedClusters(config);
+
+    expect(earnersIn().sort()).toEqual([1, 2, 5, 6]);
+  });
+
+  it('caps the merged list, keeping v2 earners first', async () => {
+    mockV1([1, 2, 3]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ playerId: 5 }, { playerId: 6 }]);
+
+    await findLinkedClusters({ ...config, maxEarners: 3 });
+
+    expect(earnersIn()).toEqual([5, 6, 1]);
+  });
+
+  it('still returns v2 earners when the v1 query throws, and logs the failure', async () => {
+    query.mockImplementation(async (sql: string) => {
+      if (/FROM knights_new_order_image_rating/.test(sql)) throw new Error('clickhouse down');
+      return [];
+    });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ playerId: 5 }, { playerId: 6 }]);
+
+    await findLinkedClusters(config);
+
+    expect(earnersIn()).toEqual([5, 6]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'new-order-link-detection-v1-earners' })
+    );
+  });
+
+  it('counts only positive-gold votes in the window and excludes banned users', async () => {
+    mockV1([]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+
+    await findLinkedClusters(config);
+
+    const sql = voteSql();
+    expect(sql).toMatch(/gold" > 0/);
+    expect(sql).toMatch(/"createdAt" >= now\(\)/);
+    expect(sql).toMatch(/"bannedAt" IS NULL/);
+    expect(sql).toMatch(/ORDER BY count\(\*\) DESC/);
+  });
+});
