@@ -42,7 +42,11 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   articleOwnImageIds,
   deriveArticleIngestionState,
+  articleModerationText,
+  articleTextScanFields,
 } from '~/server/services/article-ingestion.helpers';
+import { hashContent } from '~/server/services/entity-moderation.service';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
 import { isSharedArticle, sharedArticleTextHash } from '~/server/services/article-share.helpers';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
@@ -1161,9 +1165,7 @@ export const upsertArticle = async ({
 
       // Submit for text moderation (non-blocking, fire-and-forget)
       if (result.content && isPublicArticle(result)) {
-        const textForModeration = [data.title, removeTags(result.content)]
-          .filter(Boolean)
-          .join(' ');
+        const textForModeration = articleModerationText(data.title, result.content);
         submitTextModerationOrScan({
           entityType: 'Article',
           entityId: result.id,
@@ -1791,9 +1793,6 @@ export async function applyArticleContentChange({
 }
 
 const ARTICLE_TEXT_SUBMIT_TIMEOUT_MS = 10_000;
-
-const articleModerationText = (title: string, content: string | null) =>
-  [title, removeTags(content ?? '')].filter(Boolean).join(' ');
 
 /**
  * Whether the row now holds this text's scan or its verdict. Neither path throws on every miss: the
@@ -2841,7 +2840,7 @@ export async function submitSharedArticleText(id: number): Promise<boolean> {
         submitTextModeration({
           entityType: 'Article',
           entityId: id,
-          content: [text.title, removeTags(text.content ?? '')].filter(Boolean).join(' '),
+          content: articleModerationText(text.title, text.content),
           labels: ['nsfw'],
           recordForReview: true,
           forceRescan: true,
@@ -2885,6 +2884,39 @@ export function articleHasText(title: string | null, content: string | null): bo
   const titleText = title?.trim() ?? '';
   const contentText = removeTags(content ?? '').trim();
   return titleText.length > 0 || contentText.length > 0;
+}
+
+/**
+ * Text verdicts written from here on carry a hash of the text they judged. A Succeeded row with no
+ * comparable hash that is older than this is counted as before; a newer one is treated as a
+ * verdict for other text.
+ */
+export const ARTICLE_TEXT_VERDICT_HASHED_SINCE = new Date('2026-11-11T00:00:00Z');
+
+/**
+ * Whether a stored text verdict judged this title and content. A text-scan verdict carries the
+ * scanned text's `textHash` in its result; an XGuard verdict carries `contentHash`.
+ */
+export function articleTextVerdictMatch(
+  row: { contentHash: string | null; result: Prisma.JsonValue | null; updatedAt: Date },
+  article: { title: string | null; content: string | null }
+): 'current' | 'other' | 'legacy' {
+  const result = row.result as { version?: unknown; textHash?: unknown } | null;
+  const stored =
+    result?.version != null
+      ? typeof result.textHash === 'string'
+        ? result.textHash
+        : null
+      : row.contentHash;
+  if (!stored) return row.updatedAt < ARTICLE_TEXT_VERDICT_HASHED_SINCE ? 'legacy' : 'other';
+  const current =
+    result?.version != null
+      ? textScanTextHash({
+          fields: articleTextScanFields(article.title, article.content),
+          declared: {},
+        })
+      : hashContent(articleModerationText(article.title, article.content));
+  return stored === current ? 'current' : 'other';
 }
 
 /**
@@ -3003,7 +3035,7 @@ export async function recomputeArticleIngestionInTx(
   // --- Text moderation side ---
   const textModeration = await tx.entityModeration.findUnique({
     where: { entityType_entityId: { entityType: 'Article', entityId: articleId } },
-    select: { status: true, blocked: true },
+    select: { status: true, blocked: true, contentHash: true, result: true, updatedAt: true },
   });
 
   // Articles with no text to scan (empty/null title AND content) can never
@@ -3016,13 +3048,21 @@ export async function recomputeArticleIngestionInTx(
     EntityModerationStatus.Expired,
     EntityModerationStatus.Canceled,
   ];
-  const textBlocked =
-    hasText &&
-    textModeration?.status === EntityModerationStatus.Succeeded &&
-    textModeration.blocked === true;
+  const textSucceeded = hasText && textModeration?.status === EntityModerationStatus.Succeeded;
+  // Only on the way into Scanned: an article already there keeps what it has, so rows from before
+  // verdicts carried a hash do not take it down on its next recompute.
+  const verdictMatch =
+    textSucceeded && textModeration && current.ingestion !== ArticleIngestionStatus.Scanned
+      ? articleTextVerdictMatch(textModeration, current)
+      : 'current';
+  if (verdictMatch === 'legacy')
+    logToAxiom({ type: 'info', name: 'article-verdict-unverifiable' }).catch();
+  // A verdict for other text neither clears nor blocks this text.
+  const verdictForThisText = verdictMatch !== 'other';
+  const textBlocked = textSucceeded && verdictForThisText && textModeration?.blocked === true;
   const textError =
     hasText && !!textModeration && textErrorStatuses.includes(textModeration.status);
-  const textDone = !hasText || textModeration?.status === EntityModerationStatus.Succeeded;
+  const textDone = !hasText || (textSucceeded && verdictForThisText);
 
   // --- Derive ingestion state (precedence documented on deriveArticleIngestionState) ---
   const hasModeratorOverride = current.moderatorNsfwLevel != null;
@@ -3385,9 +3425,7 @@ export async function rescanArticle({
     article.content &&
     (isPublicArticle(article) || (await isSharedArticle(id, article.status)))
   ) {
-    const textForModeration = [article.title, removeTags(article.content)]
-      .filter(Boolean)
-      .join(' ');
+    const textForModeration = articleModerationText(article.title, article.content);
 
     await submitTextModerationOrScan({
       entityType: 'Article',

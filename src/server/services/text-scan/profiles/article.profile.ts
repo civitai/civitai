@@ -5,7 +5,7 @@ import {
   isPublicArticle,
   isShareableArticleStatus,
 } from '~/server/services/text-scan/public-content';
-import { removeTags } from '~/utils/string-helpers';
+import { articleTextScanFields } from '~/server/services/article-ingestion.helpers';
 
 registerTextScanProfile({
   entityType: 'Article',
@@ -34,10 +34,7 @@ registerTextScanProfile({
           userId: a.userId,
           notPublic: !isPublicArticle(a, shared.has(a.id)),
           declared: { nsfwLevel: a.userNsfwLevel },
-          fields: [
-            { heading: 'Title', text: a.title },
-            { heading: 'Content', text: a.content ? removeTags(a.content) : null },
-          ],
+          fields: articleTextScanFields(a.title, a.content),
         },
       ])
     );
