@@ -60,7 +60,8 @@ const MAX_ROUNDS = 3;
 const stable = (value: unknown): string =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? `{${Object.keys(value)
-        .filter((k) => k !== 'payloadHash')
+        // Qdrant drops an undefined key, so it hashes as absent; null is stored and stays distinct.
+        .filter((k) => k !== 'payloadHash' && (value as Record<string, unknown>)[k] !== undefined)
         .sort()
         .map((k) => `${JSON.stringify(k)}:${stable((value as Record<string, unknown>)[k])}`)
         .join(',')}}`

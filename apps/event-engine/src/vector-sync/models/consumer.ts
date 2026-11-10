@@ -33,7 +33,7 @@ export class ModelSyncQueue extends DomainSyncQueue {
   private readonly lane: SyncLane<ModelPayload>;
 
   constructor(deps: ModelQueueDeps, commit: (offsets: Offset[]) => Promise<void>) {
-    super([{ domain: modelDomain, deps }], commit);
+    super([{ domain: modelDomain, deps }], commit, 'model-sync');
     this.lane = this.lanes.get(modelDomain.name)!;
   }
 

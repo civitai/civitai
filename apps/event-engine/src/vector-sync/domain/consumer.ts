@@ -60,20 +60,20 @@ export async function runSyncConsumer(opts: {
     sessionTimeout: 30000,
     retry: { restartOnFailure: async () => true },
   });
-  const queue = new DomainSyncQueue(lanes, (offsets) => consumer.commitOffsets(offsets));
+  const queue = new DomainSyncQueue(lanes, (offsets) => consumer.commitOffsets(offsets), log);
+  // Fixed at start: a lane whose embedding stops keeps reporting its gate.
+  const gated = [...queue.lanes.values()].filter((lane) => lane.deps.embedder);
   // A Kafka Connect blip only pauses embedding.
   const checkGates = () =>
     Promise.all(
-      [...queue.lanes.values()]
-        .filter((lane) => lane.deps.embedder)
-        .map((lane) =>
-          Promise.all([
-            connectorBlock(globalThis.fetch, lane.domain.cdcTables),
-            lane.refreshStamp().catch(() => undefined),
-          ])
-            .then(([reason]) => lane.setGate(reason))
-            .catch((err) => lane.setGate(`gate check failed: ${(err as Error).message}`))
-        )
+      gated.map((lane) =>
+        Promise.all([
+          connectorBlock(globalThis.fetch, lane.domain.cdcTables),
+          lane.refreshStamp().catch(() => undefined),
+        ])
+          .then(([reason]) => lane.setGate(reason))
+          .catch((err) => lane.setGate(`gate check failed: ${(err as Error).message}`))
+      )
     );
   await checkGates();
   const gate = setInterval(() => void checkGates(), 60_000);

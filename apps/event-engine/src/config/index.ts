@@ -118,7 +118,7 @@ export const config = {
     cdcOnlyTables: [
       ...(process.env.CDC_IMAGE_ENABLED === 'true' ? ['public.Image'] : []),
       ...(process.env.CDC_MODEL_ENABLED === 'true' ? ['public.Model', 'public.ModelVersion'] : []),
-      // Every content search index at once: each change recreates the connector (J6, envelopes v6).
+      // Every content search index at once: each change to this list recreates the connector.
       ...(process.env.CDC_CONTENT_ENABLED === 'true' ? CONTENT_CDC_TABLES : []),
     ],
 

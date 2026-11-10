@@ -20,8 +20,14 @@ class Store {
   points = new Map<number, VectorPoint<Payload>>();
   writes: string[] = [];
   failNext = false;
-  payloadFields = async (ids: number[]) =>
-    new Map(ids.flatMap((id) => (this.points.has(id) ? [[id, this.points.get(id)!.payload]] : [])));
+  /** Only the requested fields, as Qdrant's include does, so a field the sync forgets to read shows. */
+  payloadFields = async (ids: number[], fields: string[]) =>
+    new Map(
+      ids.flatMap((id) => {
+        const p = this.points.get(id)?.payload as Record<string, unknown> | undefined;
+        return p ? [[id, Object.fromEntries(fields.map((f) => [f, p[f]]))]] : [];
+      })
+    );
   delete = async (ids: number[]) => {
     for (const id of ids) this.writes.push(`delete ${id}`), this.points.delete(id);
   };
@@ -77,6 +83,25 @@ describe('domain sync writes nothing for an unchanged row', () => {
     expect(await syncIds(getDocs, [1], deps)).toMatchObject({ updated: 1, unchanged: 0 });
     expect(store.writes).toEqual(['payload 1']);
     expect(store.points.get(1)!.payload.nsfwLevel).toEqual([4]);
+  });
+
+  test('an edit that changes the text and the rating moves the rating at once, before the re-embed', async () => {
+    const { rows, getDocs, store, deps } = setup();
+    rows.set(1, doc('castle', 1));
+    await syncIds(getDocs, [1], deps);
+    rows.set(1, doc('dungeon', 16));
+    store.writes = [];
+    await syncIds(getDocs, [1], { ...(deps as object), embedder: null } as never);
+    // No embedder: only the payload moves; the old docHash stays so the next sync re-embeds.
+    expect(store.writes).toEqual(['payload 1']);
+    expect(store.points.get(1)!.payload).toMatchObject({
+      nsfwLevel: [16],
+      docHash: doc('castle').docHash,
+    });
+    store.writes = [];
+    await syncIds(getDocs, [1], deps);
+    expect(store.writes).toEqual(['upsert 1']);
+    expect(store.points.get(1)!.payload.docHash).toBe(doc('dungeon').docHash);
   });
 
   test('a point written before payloadHash existed is rewritten once, then left alone', async () => {

@@ -72,13 +72,15 @@ export class SyncLane<P extends DomainPayload> {
     this.children = new Set();
     try {
       const field = this.domain.childField;
+      if (children.length && !field)
+        logger.warn({ children: children.length }, `${this.log}: child deletes but no childField`);
       if (children.length && field) {
         // No match: no point holds the child, or the point predates the field.
         const owners = await this.deps.store.idsMatching(field, children);
         if (!owners.length)
           logger.info(
-            { children: children.length },
-            `${this.log}: deleted children matched no point`
+            { [field]: children.length },
+            `${this.log}: deleted ${field} matched no point`
           );
         ids.push(...owners);
       }
@@ -149,7 +151,8 @@ export class DomainSyncQueue {
 
   constructor(
     lanes: Array<{ domain: Domain<any>; deps: LaneDeps<any> }>,
-    private readonly commit: (offsets: Offset[]) => Promise<void>
+    private readonly commit: (offsets: Offset[]) => Promise<void>,
+    private readonly log = 'vector-sync'
   ) {
     for (const { domain, deps } of lanes)
       this.lanes.set(domain.name, new SyncLane(domain, deps, () => this.noteProgress()));
@@ -185,7 +188,14 @@ export class DomainSyncQueue {
     // Every lane runs, so one domain's outage does not stall the others' writes; offsets wait
     // for all of them.
     const results = await Promise.allSettled([...this.lanes.values()].map((l) => l.flush()));
-    const failure = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+    const lanes = [...this.lanes.keys()];
+    const failed = results.flatMap((r, i) =>
+      r.status === 'rejected' ? [[lanes[i], r.reason]] : []
+    );
+    // Each lane's error, since only the first is rethrown; one stuck lane holds every offset.
+    for (const [domain, err] of failed)
+      logger.error({ err, domain }, `${this.log}: lane flush failed`);
+    const failure = failed[0] && { reason: failed[0][1] };
     if (failure) {
       for (const o of offsets) {
         const key = `${o.topic}:${o.partition}`;
@@ -202,7 +212,7 @@ export class DomainSyncQueue {
           offsets.map((o) => ({ ...o, offset: (BigInt(o.offset) + 1n).toString() }))
         );
       } catch (err) {
-        logger.warn({ err }, 'vector-sync: offset commit failed');
+        logger.warn({ err }, `${this.log}: offset commit failed`);
       }
     }
     this.lastFlushOk = Date.now();
