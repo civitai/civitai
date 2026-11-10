@@ -1949,7 +1949,17 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
   function givenImage(owner: number, visible: boolean, scanComplete = true) {
     dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
       strings.join('').includes('FROM "Image" i')
-        ? [{ url: KEY, userId: owner, visible, blocked: false, scanComplete, held: false }]
+        ? [
+            {
+              url: KEY,
+              userId: owner,
+              visible,
+              blocked: false,
+              scanComplete,
+              scanPending: !scanComplete,
+              held: false,
+            },
+          ]
         : []) as never);
   }
   afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());

@@ -58,7 +58,7 @@ export async function assertStoredImageUrlsUnblocked(urls: string[]) {
   if (blocked.length) throw generationImageUnavailableError();
 }
 
-type AppSourceRefusal = 'held' | 'pending' | 'unrowed';
+type AppSourceRefusal = 'held' | 'unscannable' | 'pending' | 'unrowed';
 
 type InputImageRow = {
   url: string;
@@ -66,6 +66,8 @@ type InputImageRow = {
   visible: boolean;
   blocked: boolean;
   scanComplete: boolean;
+  /** Not scanned yet, in a state the scan still moves on from. */
+  scanPending: boolean;
   /** Held for review, or flagged minor or poi. */
   held: boolean;
 };
@@ -132,6 +134,7 @@ async function assertKeysUsable({
             AND NOT i."tosViolation" AND p."publishedAt" <= now()
             AND p.availability IN ('Public', 'Unsearchable') AND NOT p."tosViolation") IS TRUE AS visible,
           (i.ingestion = 'Scanned') AS "scanComplete",
+          (i.ingestion IN ('Pending', 'Error', 'Rescan', 'PendingManualAssignment')) AS "scanPending",
           (i."needsReview" IS NOT NULL OR i.minor IS TRUE OR i.poi IS TRUE) AS held
         FROM "Image" i
         LEFT JOIN "Post" p ON p.id = i."postId"
@@ -151,6 +154,10 @@ async function assertKeysUsable({
       if (!own) throw generationImageUnavailableError();
       if (keyRows.some((r) => r.held)) {
         appBlock.refusing('held');
+        throw appSourceUnusableError();
+      }
+      if (keyRows.some((r) => !r.scanComplete && !r.scanPending)) {
+        appBlock.refusing('unscannable');
         throw appSourceUnusableError();
       }
       appBlock.refusing('pending');
@@ -835,6 +842,7 @@ export async function assertGenerationInputsUsable({
     ? { refusing: (reason: AppSourceRefusal) => logAppSource(reason) }
     : undefined;
   let refuseExternalAppSource: boolean | undefined;
+  const loggedHosts = new Set<string>();
   let refuseOrchestrator: boolean | undefined;
   for (const url of given) {
     if (opaqueInput && KEY_LIKE.test(url.trim())) {
@@ -873,29 +881,28 @@ export async function assertGenerationInputsUsable({
       keyedUrls.push(url);
       continue;
     }
-    if (cls === 'external' && appBlock) {
-      refuseExternalAppSource ??= await isFlipt(
-        FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES
-      );
-      logAppSource('external', {
-        host: externalHostBucket(url),
-        mode: refuseExternalAppSource ? 'refuse' : 'log',
-      });
-      if (refuseExternalAppSource) throw refuse(cls, pageLink);
-      refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });
-      keysIn(url).forEach((key) => externalKeys.add(key));
-      continue;
-    }
     if (cls === 'external' && EXTERNAL_COUNTED_ENTRIES.has(entry)) {
       refuseExternal ??= await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS);
+      if (appBlock && !refuseExternal)
+        refuseExternalAppSource ??= await isFlipt(
+          FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES
+        );
+      const refuseHere = refuseExternal || refuseExternalAppSource === true;
       recordExternalHost({
         url,
         entry,
         caller,
-        mode: refuseExternal ? 'refuse' : 'log',
+        mode: refuseHere ? 'refuse' : 'log',
         userId,
       });
-      if (refuseExternal) throw refuse(cls, pageLink);
+      if (appBlock) {
+        const host = externalHostBucket(url);
+        if (!loggedHosts.has(host)) {
+          loggedHosts.add(host);
+          logAppSource('external', { host, mode: refuseHere ? 'refuse' : 'log' });
+        }
+      }
+      if (refuseHere) throw refuse(cls, pageLink);
       refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });
       // A proxy or wrapper url may carry one of our image keys.
       keysIn(url).forEach((key) => externalKeys.add(key));

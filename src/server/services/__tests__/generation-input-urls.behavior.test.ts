@@ -427,6 +427,22 @@ describe('an App Blocks generation source', () => {
     expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain('secret-path');
   });
 
+  it("refuses the caller's own image the scan could not read as unusable, not as pending", async () => {
+    await givenImage({ userId: CALLER, postId: null, ingestion: 'NotFound' });
+    expect(await check([CDN()], 'appBlocksPassThrough')).toBe(
+      `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`
+    );
+  });
+
+  it('with app external refusal off: the txt2img arm still refuses, the step arms log, the general flag still refuses', async () => {
+    holder.refuseExternalApp = false;
+    const url = 'https://example.com/a.png';
+    expect(await check([url], 'appBlocks')).toBe(`refused: ${EXTERNAL_MESSAGE}`);
+    expect(await check([url], 'appBlocksPassThrough')).toBe('accepted');
+    holder.refuseExternal = true;
+    expect(await check([url], 'appBlocksPassThrough')).toBe(`refused: ${EXTERNAL_MESSAGE}`);
+  });
+
   it('logs the reason for refusing an own image, without naming the image', async () => {
     await givenImage({ userId: CALLER, postId: null, ingestion: 'Pending' });
     loggingMock.logToAxiom.mockClear();
