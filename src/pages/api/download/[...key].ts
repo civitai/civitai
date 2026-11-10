@@ -4,6 +4,7 @@ import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
 import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
 import { isClientAbortError } from '~/server/utils/errorHandling';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { logToAxiom, safeError } from '~/server/logging/client';
 
 export default async function downloadTrainingData(req: NextApiRequest, res: NextApiResponse) {
@@ -52,6 +53,7 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
     () => undefined
   );
   if (!allowed) return res.status(404).json({ error: 'Not found' });
+  if (!requireFullScopeSession(req, res)) return;
 
   // This is a catch-all `/api/download/[...key]` route. Clients that hit a
   // non-existent sub-path (e.g. `/api/download/images/:id`, which is NOT a real

@@ -151,17 +151,15 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     // The dominant dp-prod 500: `/api/download/images/127209598` → key
     // "images/127209598" → worker 404. Pre-fix this threw an unguarded 500.
     mockGetDownloadUrl.mockRejectedValue(new MockDeliveryWorkerError(404, 'Not Found'));
-    // Own-prefix key so it passes the ownership gate and the worker's own 404 is what we assert.
     const { req, res } = createMocks({ key: ['training-images-temp', '42', 'missing.zip'] });
 
     await expect(handler(req, res)).resolves.toBe(res); // resolves (no throw)
+    expect(mockGetDownloadUrl).toHaveBeenCalledWith('training-images-temp/42/missing.zip');
     expect(res._getStatusCode()).toBe(404);
     expect(res._getJSONData()).toEqual({ error: 'Not found' });
     expect(res._getRedirect()).toBeUndefined();
     expect(res._getHeader('retry-after')).toBeUndefined();
     // Client-fault: MUST NOT error-log to Axiom (an unresolvable key is expected).
-    // The route now emits one info-level audit log per request; a client-fault must still never
-    // ERROR-log to Axiom (an unresolvable key is expected).
     expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
@@ -171,9 +169,8 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
 
     await handler(req, res);
 
+    expect(mockGetDownloadUrl).toHaveBeenCalled();
     expect(res._getStatusCode()).toBe(404);
-    // The route now emits one info-level audit log per request; a client-fault must still never
-    // ERROR-log to Axiom (an unresolvable key is expected).
     expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
@@ -186,8 +183,6 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     expect(res._getStatusCode()).toBe(400);
     expect(res._getJSONData()).toEqual({ error: 'Invalid download key' });
     // Client-fault: no Axiom error log.
-    // The route now emits one info-level audit log per request; a client-fault must still never
-    // ERROR-log to Axiom (an unresolvable key is expected).
     expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
@@ -335,13 +330,13 @@ describe('/api/download/[...key] — moderators only', () => {
   });
 
   it.each([
-    ['an upload key under its own id', ['image', '42', 'mine.png']],
-    ['a model upload key under its own id', ['model', '42', 'mine.safetensors']],
-    ['a version-prefixed key whose version id is its user id', ['modelVersion', '42', 'e.bin']],
-    ["another user's upload key", ['training-images-temp', '99', 'other-user.zip']],
-    ['a key whose first segment is a scheme', ['http:', '42', 'model', '99', 'f.safetensors']],
-    ['a key with an escaped segment', ['%6Dodel', '42', 'mine.safetensors']],
-  ])('refuses a non-moderator %s with 404 and never resolves it', async (_label, key) => {
+    [['image', '42', 'mine.png']],
+    [['model', '42', 'mine.safetensors']],
+    [['modelVersion', '42', 'e.bin']],
+    [['training-images-temp', '99', 'other-user.zip']],
+    [['http:', '42', 'model', '99', 'f.safetensors']],
+    [['%6Dodel', '42', 'mine.safetensors']],
+  ])('refuses a non-moderator any key with 404 and never resolves it (case %#)', async (key) => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
     const { req, res } = createMocks({ key });
 
@@ -366,6 +361,19 @@ describe('/api/download/[...key] — moderators only', () => {
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'model/99/any.safetensors', allowed: true })
     );
+  });
+
+  it('refuses a moderator signed in with a scoped token with 403 and never resolves it', async () => {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 1, isModerator: true } });
+    const { req, res } = createMocks({
+      key: ['model', '99', 'any.safetensors'],
+      headers: { authorization: 'Bearer scoped-token' },
+    });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(403);
+    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
   });
 
   it.each([
