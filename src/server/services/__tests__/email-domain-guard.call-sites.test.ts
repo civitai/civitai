@@ -139,13 +139,15 @@ describe('updateUserById', () => {
     expect(call[0].data).not.toHaveProperty('email');
   });
 
-  it('does NOT run the guard on an unrelated update for a user whose address is not plain', async () => {
+  it('does NOT run the guard for a user whose stored address is not plain', async () => {
     dbMock.dbWrite.user.findFirst.mockResolvedValue({ email: '"ada"@example.test' });
 
-    await updateUserById({ id: USER_ID, data: { username: 'ada2' } });
+    await updateUserById({ id: USER_ID, data: { email: '"ada"@example.test', username: 'ada2' } });
 
     expect(mockAssertEmailAllowed).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.user.update).toHaveBeenCalledTimes(1);
+    const [call] = dbMock.dbWrite.user.update.mock.calls;
+    expect(call[0].data).toMatchObject({ username: 'ada2' });
+    expect(call[0].data).not.toHaveProperty('email');
   });
 
   it('propagates the guard rejection instead of writing', async () => {

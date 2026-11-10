@@ -10,6 +10,10 @@ describe('parsePlainEmailAddress', () => {
     expect(parsePlainEmailAddress('  user@ok.test  ', echo)).toBe('user@ok.test');
   });
 
+  it('accepts an internationalised domain in punycode form', () => {
+    expect(parsePlainEmailAddress('user@xn--bcher-kva.de', echo)).toBe('user@xn--bcher-kva.de');
+  });
+
   it.each([
     'user@ok.test(x).other.test',
     'user@ok.test .other.test',
@@ -20,6 +24,9 @@ describe('parsePlainEmailAddress', () => {
     'group:user@ok.test;',
     'user@[127.0.0.1]',
     'us\\er@ok.test',
+    'user@b\u00FCcher.de',
+    'user@ok.test\u0000x',
+    'user@ok\u3002test',
     '',
   ])('refuses %j before parsing', (input) => {
     expect(parsePlainEmailAddress(input, echo)).toBeNull();

@@ -7,5 +7,5 @@ export type { SendEmailInput } from './client';
 export { createEmail } from './create-email';
 export type { Email } from './create-email';
 export { removeTags } from './string';
-// The parser the transport reads `to` with, for checks that must agree with delivery.
+// The address parser this package's transport uses.
 export { default as addressparser } from 'nodemailer/lib/addressparser';

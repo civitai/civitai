@@ -94,9 +94,8 @@ export const actions: Actions = {
     const returnUrl = String(data.get('returnUrl') ?? '/');
     const sync = data.get(SYNC_PARAM) ? String(data.get(SYNC_PARAM)) : null;
 
-    // The address the mail transport will deliver to; every check below reads this, not the input.
-    const deliverTo = parsePlainEmailAddress(email, addressparser);
-    if (!deliverTo || !EMAIL_RE.test(deliverTo)) return fail(400, { email, invalid: true });
+    if (!EMAIL_RE.test(email)) return fail(400, { email, invalid: true });
+    const plain = parsePlainEmailAddress(email, addressparser);
 
     // Resolve the real client IP from proxy headers (not the shared ingress socket peer) so the per-IP
     // limit is genuinely per-client; null behind a misconfigured proxy → checkRateLimit skips the limit.
@@ -127,7 +126,11 @@ export const actions: Actions = {
     //    accounts when a domain is later added to either list (mirrors the exemption in step 4).
     //    "Either list" matters: the exact list is appended weekly from upstream, while the suffix
     //    list is hand-maintained and synced by nothing.
-    const domain = emailDomain(deliverTo);
+    //    Only a plain address may start a new account. A returning user whose address on file is
+    //    not plain (saved before this rule) still signs in with exactly that address. The lookup
+    //    sits after the captcha so it is rate limited like every other one here.
+    if (!plain && !(await userExistsByEmail(email))) return fail(400, { email, invalid: true });
+    const domain = plain ? emailDomain(plain) : '';
     if (domain && (await isBlockedEmailDomain(domain)) && !(await userExistsByEmail(email))) {
       blockedEmailDomainSignupsTotal.inc({ path: 'email' });
       return fail(400, { email, blockedDomain: true });

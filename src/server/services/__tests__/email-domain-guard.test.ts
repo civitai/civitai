@@ -99,6 +99,14 @@ describe('assertEmailAllowed', () => {
       '"someone"@blocked-plain.test',
       'Name <someone@ok.test>',
       'a@ok.test, b@blocked-plain.test',
+      'someone@blocked-plain.tes\u0000t',
+      'someone@blocked-plain.test\u0001.ok.test',
+      'u@ｍａｉｌｉｎａｔｏｒ.test',
+      'u@mail­inator.test',
+      'u@mail​inator.test',
+      'u@mailinator。test',
+      'u@ⓜailinator.test',
+      'u@bücher.de',
     ])('rejects %j with the invalid-address error', async (email) => {
       setBlockedDomains(['blocked-plain.test']);
 
@@ -120,7 +128,6 @@ describe('assertEmailAllowed', () => {
     it.each([
       'someone@ok.test',
       'first.last+tag@sub.example.co.uk',
-      'someone@bücher.de',
       'someone@xn--bcher-kva.de',
       'First.Last@Example.COM',
       '  someone@ok.test  ',

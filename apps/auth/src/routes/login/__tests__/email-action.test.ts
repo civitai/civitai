@@ -3,7 +3,7 @@ import type * as Blocklist from '$lib/server/auth/blocklist';
 
 const mocks = vi.hoisted(() => ({
   isBlockedEmailDomain: vi.fn(async (domain: string) => domain === 'blocked.test'),
-  userExistsByEmail: vi.fn(async () => false),
+  userExistsByEmail: vi.fn(async (email: string) => email === '"ada"@ok.test'),
   sendVerificationEmail: vi.fn(async () => undefined),
 }));
 
@@ -58,6 +58,14 @@ describe('magic-link sign-in accepts only plain email addresses', () => {
     '"a@b"@ok.test',
     'Name <user@ok.test>',
     'a@ok.test, b@blocked.test',
+    'user@blocked.tes\u0000t',
+    'user@blocked.test\u0001.ok.test',
+    'u@ｍａｉｌｉｎａｔｏｒ.test',
+    'u@mail­inator.test',
+    'u@mail​inator.test',
+    'u@mailinator。test',
+    'u@ⓜailinator.test',
+    'u@bücher.de',
   ])('refuses %j as an invalid address and sends nothing', async (email) => {
     const result = await submit(email);
 
@@ -76,7 +84,6 @@ describe('magic-link sign-in accepts only plain email addresses', () => {
   it.each([
     'user@ok.test',
     'first.last+tag@sub.example.co.uk',
-    'user@bücher.de',
     'user@xn--bcher-kva.de',
     'First.Last@Example.COM',
     '  user@ok.test  ',
@@ -85,5 +92,19 @@ describe('magic-link sign-in accepts only plain email addresses', () => {
 
     expect(result).toMatchObject({ sent: true });
     expect(mocks.sendVerificationEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the link to a returning user whose address on file is not plain', async () => {
+    const result = await submit('"ada"@ok.test');
+
+    expect(result).toMatchObject({ sent: true });
+    expect(mocks.sendVerificationEmail).toHaveBeenCalledWith('"ada"@ok.test', expect.any(String));
+  });
+
+  it('refuses a non-plain address that differs from the one on file', async () => {
+    const result = await submit('"adb"@ok.test');
+
+    expect(result).toMatchObject({ status: 400, data: { invalid: true } });
+    expect(mocks.sendVerificationEmail).not.toHaveBeenCalled();
   });
 });

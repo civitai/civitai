@@ -830,7 +830,7 @@ export function matchesBlockedSuffix(entries: string[], domain: string) {
  * later must not lock out an account that predates it — same rule as the hub's login action.
  */
 export async function assertEmailAllowed(input: string) {
-  // The parser is the one `~/server/email/client` delivers with; the domain comes from its output.
+  // `addressparser` from the same nodemailer `~/server/email/client` sends with.
   const email = parsePlainEmailAddress(input, addressparser);
   if (!email) throw throwBadRequestError('Please provide a valid email address');
 
