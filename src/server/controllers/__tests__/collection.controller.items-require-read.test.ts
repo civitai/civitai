@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * `collection.getAllCollectionItems` asks the service to answer a collection the viewer may not
@@ -16,9 +17,8 @@ vi.mock('~/server/services/collection.service', async (importOriginal) => ({
   getCollectionEntryCount: getEntryCount,
 }));
 
-const { collectionItemsInfiniteHandler, getCollectionEntryCountHandler } = await import(
-  '~/server/controllers/collection.controller'
-);
+const { collectionItemsInfiniteHandler, getCollectionEntryCountHandler, getCollectionByIdHandler } =
+  await import('~/server/controllers/collection.controller');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -42,5 +42,40 @@ describe('getCollectionEntryCountHandler', () => {
       ctx: { user: { id: 78, isModerator: true } } as never,
     });
     expect(getEntryCount).toHaveBeenCalledWith({ collectionId: 7, userId: 78, isModerator: true });
+  });
+});
+
+describe('getCollectionByIdHandler for a viewer with no access', () => {
+  // The permission rule runs for real over this row; no row means no such collection.
+  const collectionIs = (row: Record<string, unknown> | null) =>
+    vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue(
+      (row
+        ? [
+            {
+              id: 7,
+              read: 'Private',
+              write: 'Review',
+              userId: 9,
+              type: 'Image',
+              mode: 'Contest',
+              collaborationDisabledAt: null,
+              archivedAt: new Date(),
+              contributorPermissions: null,
+              hasAcceptedSeat: false,
+              ...row,
+            },
+          ]
+        : []) as never
+    );
+  const byId = (id: number) =>
+    getCollectionByIdHandler({ input: { id }, ctx: { user: { id: 77 } } as never });
+
+  it('answers a Private collection exactly as a missing id', async () => {
+    collectionIs(null);
+    const missing = await byId(7);
+    collectionIs({});
+    const hidden = await byId(7);
+    expect(hidden.collection).toBeNull();
+    expect(hidden).toEqual(missing);
   });
 });

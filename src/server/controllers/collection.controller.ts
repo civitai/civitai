@@ -37,6 +37,7 @@ import {
   getCollectionById,
   getCollectionCoverImages,
   getCollectionItemById,
+  createEmptyPermissions,
   getCollectionEntryCount,
   getCollectionItemCount,
   getCollectionItemsByCollectionId,
@@ -230,10 +231,11 @@ export const getCollectionByIdHandler = async ({
     });
 
     // If the user has 0 permission over this collection, they have no business asking for it.
+    // The flags go back empty, as for a missing id, so the answer does not describe the collection.
     if (!permissions.read && !permissions.write && !permissions.manage) {
       return {
         collection: null,
-        permissions,
+        permissions: createEmptyPermissions(input.id),
         collaborators: [] as Collaborator[],
         pendingReviewCount: 0,
         redPendingReviewCount: 0,

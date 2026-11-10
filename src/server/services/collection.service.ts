@@ -490,7 +490,7 @@ export function submissionStatus(
     : CollectionItemStatus.ACCEPTED;
 }
 
-function createEmptyPermissions(collectionId: number): CollectionContributorPermissionFlags {
+export function createEmptyPermissions(collectionId: number): CollectionContributorPermissionFlags {
   return {
     collectionId,
     read: false,
