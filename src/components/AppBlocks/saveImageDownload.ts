@@ -21,12 +21,16 @@
  *                 allowlist, so the download step is uniform.
  *   - `bytes`   — a file the block produced in its tab (an `ArrayBuffer`). Nothing
  *                 is fetched; the type is classified from the CONTENT
- *                 ({@link classifySaveBytes}) — the filename only picks JSON over
+ *                 ({@link classifySaveBytesContent}) — the filename only picks JSON over
  *                 plain text for text that parses as JSON — so only PNG / WebP /
  *                 JPEG / JSON / plain text can be saved, always under that type's
  *                 own extension — plus a `.zip` that passes {@link validateSaveZip}
  *                 (structure, names, types, declared sizes) and then
  *                 {@link verifySaveZipInflate}. Rate-limited per host by {@link processSaveBytes}.
+ *
+ * The zip validator is `@civitai/app-sdk/save-zip` — the ONE copy, shared with the SDK's
+ * `createMockHost` so a block's tests accept and refuse the zips this host does. Its rules and their
+ * tests live there; a change to them is an app-sdk release plus a bump of the dependency here.
  */
 
 import { sniffImageFormat, type ImageMagicFormat } from '~/shared/utils/image-magic-bytes';
@@ -36,7 +40,7 @@ import {
   validateSaveZip,
   verifySaveZipInflate,
   type SaveZipDeflatedEntry,
-} from './saveZipValidate';
+} from '@civitai/app-sdk/save-zip';
 
 /**
  * Civitai-owned image / orchestration-blob hostnames the download bridge may
@@ -487,16 +491,6 @@ export function classifySaveBytesContent(
   return text ? { ok: true, type: text } : { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR };
 }
 
-/**
- * {@link classifySaveBytesContent} without the reason: the type, or `null` when the bytes are not
- * saveable (GIF, an invalid zip, executables, binary). An empty buffer never gets here:
- * {@link resolveSaveImageRequest} refuses it.
- */
-export function classifySaveBytes(bytes: ArrayBuffer, filename = ''): SaveBytesType | null {
-  const c = classifySaveBytesContent(bytes, filename);
-  return c.ok ? c.type : null;
-}
-
 function classifySaveBytesText(
   u8: Uint8Array,
   filename: string
@@ -556,11 +550,8 @@ export function sanitizeSaveBytesFilename(name: string | undefined | null): stri
   return sanitizeDownloadFilename((name ?? 'download').replace(/[?#]/g, '_'), 'download');
 }
 
-/** A bare type / `null` (a test double) or a full {@link SaveBytesClassification}. */
-export type SaveBytesClassifier = (
-  bytes: ArrayBuffer,
-  filename?: string
-) => SaveBytesType | null | SaveBytesClassification;
+/** The classifier {@link prepareSaveBytes} runs; injectable so a test can count its calls. */
+export type SaveBytesClassifier = (bytes: ArrayBuffer, filename?: string) => SaveBytesClassification;
 
 /** An accepted `bytes` save. A zip also carries what {@link verifySaveBytesContent} must inflate. */
 export type PreparedSaveBytes =
@@ -568,16 +559,16 @@ export type PreparedSaveBytes =
   | { ok: true; type: 'application/zip'; filename: string; deflated: SaveZipDeflatedEntry[] };
 
 /**
- * Is this buffer held to the ZIP caps? Decided on the first four bytes alone (cheap, before the
- * window check), so an over-50 MB file that does not even start like a zip is too-large at once.
+ * The caps this buffer is held to — the ONE place the zip-or-not choice is made. Decided on the
+ * first four bytes alone ({@link looksLikeSaveZip}; cheap, before the window check), so an over-50
+ * MB file that does not even start like a zip is too-large at once. A zip: the per-file
+ * {@link SAVE_BYTES_ZIP_MAX_BYTES} and the zip window budget; anything else:
+ * {@link SAVE_BYTES_MAX_BYTES} and the regular window budget.
  */
-function isZipCandidate(bytes: ArrayBuffer): boolean {
-  return looksLikeSaveZip(new Uint8Array(bytes, 0, Math.min(4, bytes.byteLength)));
-}
-
-/** The per-file cap for this buffer: {@link SAVE_BYTES_ZIP_MAX_BYTES} for a zip, else {@link SAVE_BYTES_MAX_BYTES}. */
-function saveBytesMaxBytes(bytes: ArrayBuffer): number {
-  return isZipCandidate(bytes) ? SAVE_BYTES_ZIP_MAX_BYTES : SAVE_BYTES_MAX_BYTES;
+function saveBytesLimits(bytes: ArrayBuffer): { maxBytes: number; window: BytesWindowLimits } {
+  return looksLikeSaveZip(new Uint8Array(bytes, 0, Math.min(4, bytes.byteLength)))
+    ? { maxBytes: SAVE_BYTES_ZIP_MAX_BYTES, window: SAVE_BYTES_ZIP_WINDOW_LIMITS }
+    : { maxBytes: SAVE_BYTES_MAX_BYTES, window: SAVE_BYTES_WINDOW_LIMITS };
 }
 
 /** Size-cap, classify and name a `bytes` save — every refusal is the reply's error string. */
@@ -585,20 +576,11 @@ export function prepareSaveBytes(
   req: { bytes: ArrayBuffer; filename?: string },
   classify: SaveBytesClassifier = classifySaveBytesContent
 ): PreparedSaveBytes | { ok: false; error: string } {
-  if (req.bytes.byteLength > saveBytesMaxBytes(req.bytes)) {
+  if (req.bytes.byteLength > saveBytesLimits(req.bytes).maxBytes) {
     return { ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR };
   }
   const filename = sanitizeSaveBytesFilename(req.filename);
-  const raw = classify(req.bytes, filename);
-  const c: SaveBytesClassification =
-    raw === null
-      ? { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR }
-      : typeof raw === 'string'
-      ? raw === 'application/zip'
-        ? // A bare 'application/zip' carries no entries to inflate-check, so it is never accepted.
-          { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR }
-        : { ok: true, type: raw }
-      : raw;
+  const c = classify(req.bytes, filename);
   if (!c.ok) return c;
   const name = forceSaveBytesExtension(filename, c.type);
   if (c.type === 'application/zip') {
@@ -648,11 +630,10 @@ export function processSaveBytes(
   recent: SaveBytesWindowEntry[];
 } {
   const size = req.bytes.byteLength;
-  const zip = isZipCandidate(req.bytes);
-  if (size > (zip ? SAVE_BYTES_ZIP_MAX_BYTES : SAVE_BYTES_MAX_BYTES)) {
+  const { maxBytes, window: limits } = saveBytesLimits(req.bytes);
+  if (size > maxBytes) {
     return { result: { ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR }, recent: [...recent] };
   }
-  const limits = zip ? SAVE_BYTES_ZIP_WINDOW_LIMITS : SAVE_BYTES_WINDOW_LIMITS;
   if (!saveBytesWindowHasRoom(recent, now, size, limits)) {
     return { result: { ok: false, error: SAVE_BYTES_BUSY_ERROR }, recent: [...recent] };
   }

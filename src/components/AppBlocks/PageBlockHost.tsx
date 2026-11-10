@@ -3977,7 +3977,7 @@ export function PageBlockHost({
   //            can NEVER be saved.
   //   • bytes — a file the block produced in its tab. Nothing is fetched; the type
   //            is classified from the content (processSaveBytes) and only
-  //            image/JSON/text — or a validated .zip (saveZipValidate.ts: structure,
+  //            image/JSON/text — or a validated .zip (@civitai/app-sdk/save-zip: structure,
   //            local headers, entry names/types, declared sizes, then an inflate
   //            check before the download) — can be saved, under the classified
   //            extension.
