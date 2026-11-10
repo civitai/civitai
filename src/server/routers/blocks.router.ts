@@ -292,10 +292,12 @@ import {
   getStep,
   planStepSpend,
   resolveStepVariant,
+  STEP_TYPE_ACCEPTABLE_POSTURES,
 } from '~/server/services/blocks/steps';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import {
   assertStepTypeAllowed,
+  foldStepTypeCase,
   isTrainingStepTypeIgnoringCase,
   PlatformInternalStepTypeError,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
@@ -10917,6 +10919,29 @@ async function assertStepOrWorkflowInputsUsable(
     entry,
     isApiCaller: false,
     opaqueInput: true,
+    textOutputOnly: producesTextOnly(body),
+  });
+}
+
+const TEXT_OUTPUT_STEP_TYPES: ReadonlySet<string> = new Set(
+  Object.entries(STEP_TYPE_ACCEPTABLE_POSTURES)
+    .filter(([, postures]) => postures.includes('textOutput'))
+    .map(([type]) => foldStepTypeCase(type))
+);
+
+/** True when every step the body can run outputs text, so no url in it is a media source. */
+function producesTextOnly(
+  body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>
+): boolean {
+  if (body.kind === 'step' && !isPassThroughStepBody(body)) {
+    return getStep(body.step)?.moderationPosture === 'textOutput';
+  }
+  const steps = body.kind === 'workflow' ? body.steps : [body];
+  return steps.every((step) => {
+    const types = collectBlockStepTypes(step.$type, step.input);
+    return (
+      types !== null && types.every((type) => TEXT_OUTPUT_STEP_TYPES.has(foldStepTypeCase(type)))
+    );
   });
 }
 

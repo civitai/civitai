@@ -1946,7 +1946,7 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
   function givenImage(owner: number, visible: boolean) {
     dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
       strings.join('').includes('FROM "Image" i')
-        ? [{ url: KEY, userId: owner, visible, blocked: false }]
+        ? [{ url: KEY, userId: owner, visible, blocked: false, scanned: true, flagged: false }]
         : []) as never);
   }
   afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
@@ -1988,10 +1988,13 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
   );
 
   it.each(ARMS.slice(0, 2))(
-    '%s: an external host is counted, not refused, while the external-host flag is off',
+    '%s: an external host is refused while the external-host flag is off',
     async (_, make) => {
-      await estimate(make('https://example.com/a.png')).catch(() => undefined);
-      expect(whatifs().length).toBeGreaterThan(0);
+      await expect(estimate(make('https://example.com/a.png'))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('hosted outside Civitai'),
+      });
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
     }
   );
 
@@ -2014,10 +2017,8 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   };
 
-  it('refuses a url with a control byte inside, where the same url without it is counted', async () => {
+  it('refuses a url with a control byte inside as unavailable, not as an external host', async () => {
     await refusedBeforeTheOrchestrator(passThroughWith('https://example.com/a\u0001.png'));
-    await estimate(passThroughWith('https://example.com/a.png')).catch(() => undefined);
-    expect(whatifs().length).toBeGreaterThan(0);
   });
 
   it("refuses another user's private image in a step input, not only in arguments", async () => {
@@ -2080,6 +2081,21 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     const refusal = { code: 'BAD_REQUEST', message: 'step input is too large to check' };
     await expect(estimate(make())).rejects.toMatchObject(refusal);
     await expect(submit(make())).rejects.toMatchObject(refusal);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: the same external link in a generation step input is refused', async () => {
+    await expect(
+      estimate({
+        kind: 'step' as const,
+        $type: 'videoGen',
+        input: { engine: 'wan', prompt: 'x', images: ['https://example.com/a.png'] },
+        maxBuzz: 30,
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('hosted outside Civitai'),
+    });
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
@@ -2234,10 +2250,10 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     });
   });
 
-  it('the registry step still refuses an external host (its own param schema)', async () => {
+  it('the registry step refuses an external host', async () => {
     const error = await estimate(registryWith('https://example.com/a.png')).catch((e) => e);
     expect(error).toMatchObject({ code: 'BAD_REQUEST' });
-    expect(String(error.message)).toContain('Civitai-hosted https image URL');
+    expect(String(error.message)).toContain('hosted outside Civitai');
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 

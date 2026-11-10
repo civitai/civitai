@@ -57,7 +57,29 @@ export async function assertStoredImageUrlsUnblocked(urls: string[]) {
   if (blocked.length) throw generationImageUnavailableError();
 }
 
-type InputImageRow = { url: string; userId: number; visible: boolean; blocked: boolean };
+type InputImageRow = {
+  url: string;
+  userId: number;
+  visible: boolean;
+  blocked: boolean;
+  scanned: boolean;
+  flagged: boolean;
+};
+
+/** Shown to an app whose generation input names an image the scan has not finished. */
+export const APP_SOURCE_PENDING_MESSAGE =
+  'that image is still being scanned — wait for it to finish before using it';
+/** Shown to an app whose generation input names an image it may not generate from. */
+export const APP_SOURCE_UNUSABLE_MESSAGE =
+  'that image can’t be used as a generation source — choose a different image';
+/** Shown to an app whose generation input is not an image stored on Civitai. */
+export const APP_SOURCE_NOT_ON_CIVITAI_MESSAGE =
+  'generation inputs from apps must be images uploaded or published on Civitai';
+
+const appSourcePendingError = () => imageUrlUnavailableError(APP_SOURCE_PENDING_MESSAGE);
+const appSourceUnusableError = () => imageUrlUnavailableError(APP_SOURCE_UNUSABLE_MESSAGE);
+const appSourceNotOnCivitaiError = () =>
+  imageUrlUnavailableError(APP_SOURCE_NOT_ON_CIVITAI_MESSAGE);
 
 /**
  * Each key must name the caller's own image, another user's publicly visible image, or, with no
@@ -73,11 +95,14 @@ async function assertKeysUsable({
   now,
   imagesOnly = false,
   maxKeys = MAX_KEYS,
+  appBlock = false,
 }: {
   keys: string[];
   urls: string[];
   userId: number;
   now?: Date;
+  /** Every image, the caller's own included, must be scanned and unflagged; see `APP_BLOCK_ENTRIES`. */
+  appBlock?: boolean;
   imagesOnly?: boolean;
   /** Most keys one check reads; the image lookup still goes `MAX_KEYS` at a time. */
   maxKeys?: number;
@@ -94,19 +119,23 @@ async function assertKeysUsable({
           (i."blockedFor" IS NOT NULL OR i."tosViolation" OR p."tosViolation" IS TRUE) AS blocked,
           (i.ingestion = 'Scanned' AND i."blockedFor" IS NULL AND i."needsReview" IS NULL
             AND NOT i."tosViolation" AND p."publishedAt" <= now()
-            AND p.availability IN ('Public', 'Unsearchable') AND NOT p."tosViolation") IS TRUE AS visible
+            AND p.availability IN ('Public', 'Unsearchable') AND NOT p."tosViolation") IS TRUE AS visible,
+          (i.ingestion = 'Scanned' AND i."needsReview" IS NULL) IS TRUE AS scanned,
+          (i.minor IS TRUE OR i.poi IS TRUE) AS flagged
         FROM "Image" i
         LEFT JOIN "Post" p ON p.id = i."postId"
         WHERE i.url = ANY(${lookup.slice(i, i + MAX_KEYS)}::text[])
       `)
     );
   if (rows.some((r) => r.blocked)) throw generationImageUnavailableError();
+  if (appBlock && rows.some((r) => r.flagged)) throw appSourceUnusableError();
 
   // One pass over the rows (`keysIn` once each), not keys × rows.
   const rowsByKey = new Map(keys.map((key): [string, InputImageRow[]] => [key, []]));
   for (const row of rows)
     for (const key of new Set([row.url, ...keysIn(row.url)])) rowsByKey.get(key)?.push(row);
   for (const keyRows of rowsByKey.values()) {
+    if (appBlock && keyRows.some((r) => !r.scanned)) throw appSourcePendingError();
     if (!keyRows.length || keyRows.some((r) => r.userId === userId)) continue;
     if (!keyRows.every((r) => r.visible)) throw generationImageUnavailableError();
   }
@@ -120,6 +149,10 @@ async function assertKeysUsable({
     const unreadable = issuers.recordReadFailed && issuers.requestLogReadFailed;
     if (issuers.tooMany || issuers.issuedToOthers.length || unreadable)
       throw generationImageUnavailableError();
+    // A key issued to the caller with no row is an upload that never reached the scan.
+    const unrecorded = new Set(issuers.unrecorded);
+    if (appBlock && unrowed.flatMap(keysIn).some((key) => !unrecorded.has(key)))
+      throw appSourceUnusableError();
     return;
   }
   try {
@@ -129,6 +162,7 @@ async function assertKeysUsable({
       throw generationImageUnavailableError();
     throw error;
   }
+  if (appBlock) throw appSourceUnusableError();
 }
 
 /**
@@ -177,6 +211,14 @@ export type GenerationInputEntryPoint =
   | 'articleReframe';
 
 /** Entry points where an external host is only counted while the external-host flag is off. */
+/** App Blocks entries: their sources must be scanned, unflagged images stored on Civitai. */
+const APP_BLOCK_ENTRIES = new Set<GenerationInputEntryPoint>([
+  'appBlocks',
+  'appBlocksStep',
+  'appBlocksPassThrough',
+  'appBlocksWorkflow',
+]);
+
 const EXTERNAL_COUNTED_ENTRIES = new Set<GenerationInputEntryPoint>([
   'generateFromGraph',
   'whatIfFromGraph',
@@ -717,6 +759,7 @@ export async function assertGenerationInputsUsable({
   entry,
   isApiCaller,
   opaqueInput = false,
+  textOutputOnly = false,
   now,
 }: {
   urls: (string | null | undefined)[];
@@ -729,6 +772,11 @@ export async function assertGenerationInputsUsable({
    * that fails, and http to an external host counts as external.
    */
   opaqueInput?: boolean;
+  /**
+   * Every step the input feeds outputs text, so a url in it is no media source: an App Blocks
+   * entry then treats an external host as other entries do (a JSON-schema id, a link in a prompt).
+   */
+  textOutputOnly?: boolean;
   now?: Date;
 }) {
   const given = [...new Set(urls.filter((url): url is string => !!url))];
@@ -747,6 +795,8 @@ export async function assertGenerationInputsUsable({
   const externalKeys = new Set<string>();
   // Read once per call, only when an external url is seen.
   let refuseExternal: boolean | undefined;
+  const appBlock = APP_BLOCK_ENTRIES.has(entry);
+  let refuseOrchestrator: boolean | undefined;
   for (const url of given) {
     if (opaqueInput && KEY_LIKE.test(url.trim())) {
       externalKeys.add(canonicalKey(url.trim()));
@@ -762,7 +812,17 @@ export async function assertGenerationInputsUsable({
       pageLink = asHttps === 'civitai_other' && isPlainPageLink(url);
       if (asHttps === 'external' || pageLink) cls = 'external';
     }
-    if (cls === 'orchestrator') continue;
+    if (cls === 'orchestrator') {
+      if (appBlock) {
+        // Turns on with scanned source rows: until then an app's uploaded source is a blob.
+        refuseOrchestrator ??= await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS);
+        if (refuseOrchestrator) {
+          refusalCounter.inc({ entry, class: cls, caller, mode: 'refuse' });
+          throw appSourceNotOnCivitaiError();
+        }
+      }
+      continue;
+    }
     if (cls === 'key') {
       keys.add(url);
       continue;
@@ -774,6 +834,7 @@ export async function assertGenerationInputsUsable({
       keyedUrls.push(url);
       continue;
     }
+    if (cls === 'external' && appBlock && !textOutputOnly) throw refuse(cls, pageLink);
     if (cls === 'external' && EXTERNAL_COUNTED_ENTRIES.has(entry)) {
       refuseExternal ??= await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS);
       recordExternalHost({
@@ -793,7 +854,7 @@ export async function assertGenerationInputsUsable({
   }
 
   try {
-    await assertKeysUsable({ keys: [...keys], urls: keyedUrls, userId, now });
+    await assertKeysUsable({ keys: [...keys], urls: keyedUrls, userId, now, appBlock });
     const imageOnlyKeys = [...externalKeys].filter((key) => !keys.has(key));
     if (imageOnlyKeys.length > IMAGE_ONLY_KEY_SIZE_REPORTED)
       largeKeySetCounter.inc({ entry, size: keySetSizeBucket(imageOnlyKeys.length) });
@@ -808,6 +869,7 @@ export async function assertGenerationInputsUsable({
       now,
       imagesOnly: true,
       maxKeys: IMAGE_ONLY_MAX_KEYS,
+      appBlock,
     });
   } catch (error) {
     if (error instanceof TRPCError && error.code === 'BAD_REQUEST')
