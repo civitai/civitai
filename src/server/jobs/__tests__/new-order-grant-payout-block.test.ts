@@ -126,18 +126,8 @@ describe('runGrantBlessedBuzz release catch-up', () => {
     );
   });
 
-  it('a released player reset mid-hold is paid only judgments at or after startAt', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date(2026, 9, 17, 12));
-    const local = (d: number, h = 0) => new Date(2026, 9, d, h);
-    const startAt = local(11, 12);
-    const ratings = [
-      { createdAt: local(9, 10), exp: 900 },
-      { createdAt: local(11, 6), exp: 1100 },
-      { createdAt: local(11, 18), exp: 1300 },
-      { createdAt: local(12, 9), exp: 1700 },
-    ];
-    // Honours the catch-up query's time bounds and any per-user lower bound.
+  // A catch-up ClickHouse for user 7: honours the query's time bounds and any per-user lower bound.
+  const fakeCatchUp = (ratings: Array<{ createdAt: Date; exp: number }>) => {
     mockClickhouseQuery.mockImplementation(
       (strings: TemplateStringsArray, ...values: unknown[]) => {
         const sql = strings.reduce(
@@ -165,6 +155,20 @@ describe('runGrantBlessedBuzz release catch-up', () => {
         );
       }
     );
+  };
+
+  it('a released player reset mid-hold is paid only judgments at or after startAt', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 17, 12));
+    const local = (d: number, h = 0) => new Date(2026, 9, d, h);
+    const startAt = local(11, 12);
+    const ratings = [
+      { createdAt: local(9, 10), exp: 900 },
+      { createdAt: local(11, 6), exp: 1100 },
+      { createdAt: local(11, 18), exp: 1300 },
+      { createdAt: local(12, 9), exp: 1700 },
+    ];
+    fakeCatchUp(ratings);
     stubPlayers([], [player(7, { payoutReleaseFrom: local(8), startAt })]);
 
     try {
@@ -175,6 +179,28 @@ describe('runGrantBlessedBuzz release catch-up', () => {
 
     const txs = mockCreateBuzzMany.mock.calls.flatMap(([t]) => t as Array<{ amount: number }>);
     expect(txs.map((t) => t.amount)).toEqual([1300, 1700]);
+  });
+
+  it('a released player whose career began before the hold is paid from the start of the release day', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 17, 12));
+    const local = (d: number, h = 0) => new Date(2026, 9, d, h);
+    fakeCatchUp([
+      { createdAt: local(9, 10), exp: 900 },
+      { createdAt: local(11, 6), exp: 1100 },
+      { createdAt: local(11, 18), exp: 1300 },
+      { createdAt: local(12, 9), exp: 1700 },
+    ]);
+    stubPlayers([], [player(7, { payoutReleaseFrom: local(11, 15), startAt: local(5) })]);
+
+    try {
+      await runGrantBlessedBuzz();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const txs = mockCreateBuzzMany.mock.calls.flatMap(([t]) => t as Array<{ amount: number }>);
+    expect(txs.map((t) => t.amount)).toEqual([2400, 1700]);
   });
 
   it('does not pay a released player who has since been blocked again or banned', async () => {
