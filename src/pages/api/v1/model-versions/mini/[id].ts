@@ -27,9 +27,8 @@ import type {
   LicensingFeeType,
   ModelType,
   ModelHashType,
-  ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { Availability, ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import { Availability, ModelFileVisibility, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
@@ -381,12 +380,19 @@ export default MixedAuthEndpoint(async function handler(
     })}`;
   }
 
-  // The content-hash url serves the same bytes from any copy, so a downloader caches one file per
-  // content rather than per version. The id url stays as the fallback.
   const downloadUrls = [downloadUrl];
   const sha256 = targetFile.hashes.SHA256;
+  // The hash route offers a non-owner only these copies (findHashCandidates); anything else would
+  // lead with a url that refuses where the id url serves.
+  const hashRouteServes =
+    targetFile.visibility === ModelFileVisibility.Public &&
+    modelVersion.usageControl === ModelUsageControl.Download &&
+    modelVersion.availability !== Availability.Private &&
+    modelVersion.status === 'Published' &&
+    modelVersion.modelStatus === 'Published';
   if (
     !trainingResults &&
+    hashRouteServes &&
     sha256 &&
     // A scan that never ran writes 64 zeros, which every such file would share.
     !/^0+$/.test(sha256) &&

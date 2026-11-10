@@ -215,6 +215,8 @@ const versionRow = {
   modelName: 'Test Model',
   baseModel: 'SD 1.5',
   status: 'Published',
+  modelStatus: 'Published',
+  modelMode: null,
   type: 'Checkpoint',
   requireAuth: false,
   checkPermission: false,
@@ -1194,6 +1196,29 @@ describe('content-hash download url (download-hash-urls flag)', () => {
 
     expect(body.downloadUrls).toHaveLength(1);
   });
+
+  it.each([
+    ['a non-public file seen by its owner', [PRIVATE_MODEL], {}, true],
+    ['a generation-only version', [SAFETENSOR], { usageControl: 'Generation' }, false],
+    ['a private version seen by its owner', [SAFETENSOR], { availability: 'Private' }, true],
+    ['an unpublished version seen by its owner', [SAFETENSOR], { status: 'Draft' }, true],
+    ['an unpublished model seen by its owner', [SAFETENSOR], { modelStatus: 'Unpublished' }, true],
+  ] as const)(
+    'flag on: %s keeps the id url alone, since the hash route would not serve it',
+    async (_, files, versionOverrides, asOwner) => {
+      mockIsFlipt.mockResolvedValue(true);
+      currentUser.value = asOwner ? { id: OWNER_ID } : { id: OTHER_USER_ID, isModerator: true };
+
+      const { status, body } = await run(
+        [...files],
+        { modelFileId: String(files[0].id) },
+        versionOverrides as Partial<typeof versionRow>
+      );
+
+      expect(status).toBe(200);
+      expect(body.downloadUrls).toHaveLength(1);
+    }
+  );
 
   it('flag on: a file with no sha256 keeps the id url alone', async () => {
     mockIsFlipt.mockResolvedValue(true);
