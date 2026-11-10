@@ -21,7 +21,7 @@ const OWNER = 5;
 const SHOWN = 101;
 const HIDDEN = 102;
 
-// Version 1 is on the shown image, 2 on the hidden one, 3 on both.
+// Version 1 is on the shown image, 2 on the hidden one, 3 on both. Version n is of model n * 10.
 const USES = [
   { imageId: SHOWN, modelVersionId: 1 },
   { imageId: HIDDEN, modelVersionId: 2 },
@@ -30,10 +30,12 @@ const USES = [
 ];
 // The view keeps one row per version, naming whichever image it met first.
 const VIEW_ROWS = [
-  { postId: POST_ID, modelVersionId: 1, name: 'a', imageId: SHOWN },
-  { postId: POST_ID, modelVersionId: 2, name: 'b', imageId: HIDDEN },
-  { postId: POST_ID, modelVersionId: 3, name: 'c', imageId: HIDDEN },
+  { postId: POST_ID, modelVersionId: 1, modelId: 10, name: 'a', imageId: SHOWN },
+  { postId: POST_ID, modelVersionId: 2, modelId: 20, name: 'b', imageId: HIDDEN },
+  { postId: POST_ID, modelVersionId: 3, modelId: 30, name: 'c', imageId: HIDDEN },
 ];
+const MODEL_OWNER = 66;
+let models: { id: number; status: string; userId: number; poi: boolean }[];
 
 type Viewer = { userId?: number; isModerator?: boolean };
 const ANON: Viewer = {};
@@ -48,6 +50,15 @@ beforeEach(() => {
   dbMock.dbRead.imageResourceNew.findMany.mockImplementation((async (args: {
     where: { imageId: { in: number[] } };
   }) => USES.filter((u) => args.where.imageId.in.includes(u.imageId))) as never);
+  models = VIEW_ROWS.map((row) => ({
+    id: row.modelId,
+    status: 'Published',
+    userId: MODEL_OWNER,
+    poi: false,
+  }));
+  dbMock.dbRead.model.findMany.mockImplementation((async (args: {
+    where: { id: { in: number[] } };
+  }) => models.filter((model) => args.where.id.in.includes(model.id))) as never);
   mockVisibleIds.mockImplementation(async ({ ids, userId, isModerator }) => {
     const opens = isModerator || userId === OWNER;
     return new Set((ids as number[]).filter((id) => id !== HIDDEN || opens));
@@ -80,5 +91,33 @@ describe('post resources from images the viewer may not open', () => {
   it('answers a post whose every image is hidden with no resources', async () => {
     mockVisibleIds.mockResolvedValue(new Set());
     expect(await resourcesFor(STRANGER)).toEqual([]);
+  });
+});
+
+describe('post resources from models the viewer may not see', () => {
+  const MODEL_OWNER_VIEWER: Viewer = { userId: MODEL_OWNER };
+  const modelIs = (id: number, over: Partial<(typeof models)[number]>) =>
+    Object.assign(models.find((model) => model.id === id)!, over);
+
+  it.each([
+    ['a draft', { status: 'Draft' }],
+    ['a poi', { poi: true }],
+  ])("drops a resource of %s model, for a stranger and the post's owner", async (_, over) => {
+    modelIs(10, over);
+    for (const viewer of [ANON, STRANGER, SELF]) {
+      const rows = await resourcesFor(viewer);
+      expect(rows.map((r) => r.modelVersionId)).not.toContain(1);
+      expect(rows.map((r) => r.modelVersionId)).toContain(3);
+    }
+  });
+
+  it.each([
+    ['a draft', { status: 'Draft' }],
+    ['a poi', { poi: true }],
+  ])("keeps a resource of %s model for that model's owner and a moderator", async (_, over) => {
+    modelIs(10, over);
+    for (const viewer of [MODEL_OWNER_VIEWER, MOD]) {
+      expect((await resourcesFor(viewer)).map((r) => r.modelVersionId)).toContain(1);
+    }
   });
 });

@@ -4,10 +4,20 @@ import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 
 type Viewer = { id?: number | null; isModerator?: boolean | null } | null | undefined;
 
+type ModelVisibilityRow = { status: ModelStatus; userId: number; poi: boolean };
+const modelVisibilitySelect = { status: true, userId: true, poi: true } as const;
+
 /**
- * Null unless `viewer` may see the model: published or theirs, and not `poi` unless theirs.
- * `getModelHandler`'s rule without its owner-block check. A moderator sees every model, with no
- * read, so `userId` (the owner) is null for them.
+ * Published or the viewer's own, and not `poi` unless theirs: `getModelHandler`'s rule without its
+ * owner-block check. The caller lets moderators through.
+ */
+const isModelVisibleTo = (model: ModelVisibilityRow, viewer?: Viewer) =>
+  (model.status === ModelStatus.Published || model.userId === viewer?.id) &&
+  canViewPoiModel(model.poi, model.userId, viewer);
+
+/**
+ * Null unless `viewer` may see the model (`isModelVisibleTo`). A moderator sees every model, with
+ * no read, so `userId` (the owner) is null for them.
  */
 export async function getModelVisibleToViewer(
   modelId: number,
@@ -16,12 +26,22 @@ export async function getModelVisibleToViewer(
   if (viewer?.isModerator) return { userId: null };
   const model = await dbRead.model.findUnique({
     where: { id: modelId },
-    select: { status: true, userId: true, poi: true },
+    select: modelVisibilitySelect,
   });
-  if (!model) return null;
-  if (model.status !== ModelStatus.Published && model.userId !== viewer?.id) return null;
-  if (!canViewPoiModel(model.poi, model.userId, viewer)) return null;
+  if (!model || !isModelVisibleTo(model, viewer)) return null;
   return { userId: model.userId };
+}
+
+/** The ids among `modelIds` that `viewer` may see (`isModelVisibleTo`); every id for a moderator. */
+export async function getModelIdsVisibleToViewer(modelIds: number[], viewer?: Viewer) {
+  const ids = [...new Set(modelIds)];
+  if (viewer?.isModerator) return new Set(ids);
+  if (!ids.length) return new Set<number>();
+  const models = await dbRead.model.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, ...modelVisibilitySelect },
+  });
+  return new Set(models.filter((model) => isModelVisibleTo(model, viewer)).map((m) => m.id));
 }
 
 /** The ids among `modelIds` that `viewer` may not see (see `canViewPoiModel`). */

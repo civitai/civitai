@@ -95,6 +95,7 @@ import { Flags } from '~/shared/utils/flags';
 import { hasCompleteSfwFace, imagesForFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { getImageIdsVisibleToViewer } from '~/server/services/image-visibility.service';
+import { getModelIdsVisibleToViewer } from '~/server/services/model-visibility.service';
 import { invalidateHiddenImageMetadata } from '~/server/services/hidden-meta-invalidation.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueForWorkflow } from '~/server/services/technique.service';
@@ -2059,9 +2060,10 @@ const readPostResourceRows = (id: number) =>
   dbRead.postResourceHelper.findMany({ where: { postId: id }, orderBy: { modelName: 'asc' } });
 
 /**
- * The resources of the post's images the viewer may open (`getImageIdsVisibleToViewer`). The view
- * keeps one row per resource from any of the post's images, so for anyone but a moderator a row
- * stays only when a visible image uses that version, and it names that image.
+ * The resources of the post's images the viewer may open (`getImageIdsVisibleToViewer`), from
+ * models they may see (`getModelIdsVisibleToViewer`). The view keeps one row per resource from any
+ * of the post's images, so for anyone but a moderator a row stays only when a visible image uses
+ * that version, and it names that image.
  */
 export const getPostResources = async ({
   id,
@@ -2092,9 +2094,16 @@ export const getPostResources = async ({
   for (const { imageId, modelVersionId } of used)
     if (!imageByVersion.has(modelVersionId)) imageByVersion.set(modelVersionId, imageId);
 
+  const visibleModelIds = await getModelIdsVisibleToViewer(
+    rows.map((row) => row.modelId).filter(isDefined),
+    { id: userId }
+  );
+
   return rows.flatMap((row) => {
     const imageId = imageByVersion.get(row.modelVersionId);
-    return imageId === undefined ? [] : [{ ...row, imageId }];
+    if (imageId === undefined) return [];
+    if (row.modelId == null || !visibleModelIds.has(row.modelId)) return [];
+    return [{ ...row, imageId }];
   });
 };
 
