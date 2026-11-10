@@ -690,9 +690,10 @@ jobs:
     # Per-shard, not the whole suite. The ~3.4m estimate above is from the
     # 2026-08-25 measurement; on 2026-10-23, under heavy runner load, shards took
     # 7 to 12.5 minutes, close enough to the old 15m limit to be cancelled by it.
-    # 20m leaves headroom over that. It is NOT 30/4: the fixed overhead does not
-    # shard.
-    timeout-minutes: 20
+    # Raised 20 -> 25m on 2026-11-10: shard medians had reached 13-16m and shard 3
+    # (the heaviest, since `--shard` splits by file count, not cost) hit 20m on
+    # slow runners. It is NOT 30/4: the fixed overhead does not shard.
+    timeout-minutes: 25
     # A real Redis for the tests that must see what Redis itself does: Lua scripts, sorted-set
     # order of equal scores, increment exactness (roster.real-redis.test.ts). Such a test skips
     # itself without its URL, so a shard that does not hold it pays only the container start.
