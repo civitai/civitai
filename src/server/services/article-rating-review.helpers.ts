@@ -415,7 +415,9 @@ export async function autoResolveArticleRatingReview(args: AutoResolveArgs): Pro
 
   // Post-commit (best-effort).
   await articlesSearchIndex
-    .queueUpdate([{ id: args.articleId, action: SearchIndexUpdateQueueAction.Update }])
+    .queueUpdate([{ id: args.articleId, action: SearchIndexUpdateQueueAction.Update }], {
+      reason: 'rating-review',
+    })
     .catch((e) =>
       handleLogError(e, 'article-rating-review-auto-search-index', {
         articleId: args.articleId,

@@ -124,6 +124,7 @@ import {
   getLinkedVaeIds,
   withPairedStrength,
 } from '~/server/services/model-version.service';
+import { getLinkedFileData } from '~/server/services/linked-file-data.service';
 import { getModelVersionCountsByModelId } from '~/server/services/model-version-count.service';
 import {
   copyGallerySettingsToAllModelsByUser,
@@ -222,6 +223,8 @@ import {
   ModelUploadType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
+import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { failedScanFileWhere } from '~/server/utils/failed-scan';
 import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
@@ -233,7 +236,11 @@ import { logToAxiom } from '~/server/logging/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import { withoutRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
 import { isRemovedWithOwner } from '~/server/utils/legal-hold';
-import { trainingDataOwnerView } from '~/server/services/training-data-restricted.service';
+import {
+  trainingDataOwnerView,
+  withoutEpochUrls,
+} from '~/server/services/training-data-restricted.service';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import {
   getResourceData,
   resolveCanGenerateForVersions,
@@ -381,23 +388,7 @@ export const getModelHandler = async ({
         )
       ),
     ];
-    const linkedFileDataMap = new Map<
-      number,
-      { name: string; sizeKB: number; type: string; metadata: Record<string, unknown> | null }
-    >();
-    if (allLinkedFileIds.length > 0) {
-      const fileData = await dbRead.modelFile.findMany({
-        where: { id: { in: allLinkedFileIds } },
-        select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
-      });
-      for (const f of fileData)
-        linkedFileDataMap.set(f.id, {
-          name: f.name,
-          sizeKB: f.sizeKB,
-          type: f.type,
-          metadata: f.metadata as Record<string, unknown> | null,
-        });
-    }
+    const linkedFileDataMap = await getLinkedFileData(allLinkedFileIds);
 
     // Creator Controls metric privacy: resolve once per request. Owners/mods bypass;
     // otherwise flags apply only while the owner holds a valid CP membership.
@@ -559,9 +550,7 @@ export const getModelHandler = async ({
                 fileName: fileData?.name ?? s.fileName,
                 sizeKB: fileData?.sizeKB,
                 fileType: fileData?.type,
-                fileMetadata: fileData?.metadata as
-                  | { format?: string | null; size?: string | null; fp?: string | null }
-                  | undefined,
+                fileMetadata: fileData?.metadata ?? undefined,
                 isRequired: s.isRequired,
               };
             }),
@@ -1260,6 +1249,7 @@ export const getDownloadCommandHandler = async ({
       where: { modelId, id: modelVersionId },
       select: {
         id: true,
+        status: true,
         model: {
           select: {
             id: true,
@@ -1299,6 +1289,10 @@ export const getDownloadCommandHandler = async ({
       orderBy: { index: 'asc' },
     });
     if (!modelVersion) throw throwNotFoundError();
+    // Matches the download route: a deleted or taken-down model is moderators-only, and that is
+    // decided before any other refusal.
+    if ((isModelDeleted(modelVersion) || isModelTakenDown(modelVersion)) && !ctx.user?.isModerator)
+      throw throwNotFoundError();
 
     const isOwner = ctx.user?.id === modelVersion.model.userId;
     const isDownloadable =
@@ -1321,7 +1315,9 @@ export const getDownloadCommandHandler = async ({
       throw throwAuthorizationError();
     }
 
-    const { model, files } = modelVersion;
+    const { model } = modelVersion;
+    // The command hands out model files only, to everyone.
+    const files = modelVersion.files.filter((f) => f.type !== 'Training Data');
     const castedFiles = files as Array<
       Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
     >;
@@ -1557,6 +1553,7 @@ export const getMyTrainingModelsHandler = async ({
             id: true,
             name: true,
             status: true,
+            mode: true,
             // `_count: { select: { modelVersions: true } }` intentionally
             // omitted — see getMyDraftModelsHandler: Prisma compiles it to a
             // full-table grouped subquery (~1344ms) instead of pushing the id
@@ -1613,9 +1610,13 @@ export const getMyTrainingModelsHandler = async ({
       ...results,
       items: results.items.map((item) => {
         const version = applyTrainingWorkflowOverlay(item, overlay);
+        const ownerFiles = trainingDataOwnerView(version.files);
         return {
           ...version,
-          files: trainingDataOwnerView(version.files),
+          files:
+            isModelDeletedOrTakenDown(item.model) && !ctx.user.isModerator
+              ? withoutEpochUrls(ownerFiles)
+              : ownerFiles,
           model: {
             ...item.model,
             _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },
@@ -2119,7 +2120,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
             collectedCount: rank?.collectedCountAllTime ?? 0,
             tippedAmountCount: hiddenMetrics.buzz ? null : rank?.tippedAmountCountAllTime ?? 0,
           },
-          images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
+          images: !isModelWithheld(model) ? (versionImages as typeof images) : [],
           canGenerate,
           version,
         };

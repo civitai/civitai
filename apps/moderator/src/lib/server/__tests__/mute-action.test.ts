@@ -33,7 +33,9 @@ vi.mock('../cache', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   bustKeyBestEffort,
 }));
-vi.mock('$env/dynamic/private', () => ({ env: { CIVITAI_APP_URL: 'https://civitai.com' } }));
+vi.mock('$env/dynamic/private', () => ({
+  env: { CIVITAI_APP_URL: 'https://civitai.com', WEBHOOK_TOKEN: 'test-token' },
+}));
 vi.mock('$app/server', () => ({
   getRequestEvent: () => ({
     locals: {},
@@ -41,7 +43,7 @@ vi.mock('$app/server', () => ({
   }),
 }));
 
-const { setMuted } = await import('../user-actions.service');
+const { setBanned, setMuted } = await import('../user-actions.service');
 
 // Every test: `setMuted` posts to the main app, and a test must never reach a real host.
 const fetchMock = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
@@ -58,6 +60,38 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe('the feedback capture account', () => {
+  it('is never muted, and nothing is written or sent', async () => {
+    expect(await setMuted({ userId: -2, muted: true, moderatorId: 7 })).toEqual({
+      ok: false,
+      error: expect.stringMatching(/feedback page captures/),
+    });
+    expect(captured).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // A ban from before the refusal can still be lifted.
+  it('can still be unbanned', async () => {
+    const result = await setBanned({ userId: -2, ban: false, moderatorId: 7 });
+    expect(result).not.toEqual({
+      ok: false,
+      error: expect.stringMatching(/feedback page captures/),
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/mod/ban-user'))).toBe(
+      true
+    );
+  });
+
+  it('is never banned, and nothing is written or sent', async () => {
+    expect(await setBanned({ userId: -2, ban: true, moderatorId: 7 })).toEqual({
+      ok: false,
+      error: expect.stringMatching(/feedback page captures/),
+    });
+    expect(captured).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('a moderator-app mute reaches the orchestrator and the cached standing', () => {

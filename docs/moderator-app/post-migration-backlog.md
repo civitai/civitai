@@ -302,18 +302,19 @@ findings are done — see the parity checklist.
       next person reach for `sql.raw` on a value — which is the shape that turns a value into SQL.
 - [ ] **ClickHouse `comments.entityId` is the comment's own id, not the thing commented on.**
       `commentv3.controller.ts` tracks `entityId: row.id` (the new `CommentV3` row, as the deleted
-      `commentv2.controller.ts` did), while the legacy
-      `comment.controller.ts` tracks `entityId: comment.modelId` (a real target). So for Image, Post,
+      `commentv2.controller.ts` did), while a model comment's `trackAs` (`commentv3/surfaces.ts`)
+      tracks `entityId: <modelId>` (a real target, as the deleted v1 `comment.controller.ts` did). So for Image, Post,
       Comment, Review, Bounty and BountyEntry — ~73% of comment volume — `uniq(entityId)` equals
       `count()` and any "distinct targets" measure is meaningless. Verified over 7 days: Image 18,717
       rows / 18,700 "distinct" against Model 8,987 / 3,261. It cost the comment-spam signature a
       condition (2026-08-24) and would silently mislead anything else that groups on it. Fixing it is a
       one-line tracker change, and only helps from that point forward — the history stays wrong.
       Two further gaps found at the same time: **article and challenge comments are never tracked at
-      all** (`commentTrackTypes` in `clickhouse/tracker.ts` has no type for them), and **editing a model comment emits a second
-      event**, inflating counts.
+      all** (`commentTrackTypes` in `clickhouse/tracker.ts` has no type for them), and editing a model
+      comment emitted a second event, inflating counts (the v1 path; gone with the model flip, 2026-11-06).
 - [ ] **`getJudgeCommentForImage` returns comment content with no ToS predicate.**
-      `commentsv2.service.ts` reads a challenge judge's comment by raw SQL and returns the body. Every
+      `challenge-judge-review.service.ts` (moved from `commentsv2.service.ts`, deleted in CommentV3
+      Phase 5) reads a challenge judge's comment from CommentV3 by raw SQL and returns the body. Every
       other v2 read filters `tosViolation` for non-moderators as of 2026-08-24; this one does not. The
       authors are challenge judges, so the exposure is small — filed rather than fixed, and it is the
       one v2 content read left unfiltered.

@@ -35,6 +35,8 @@ import * as nodeHttp from 'node:http';
 import * as nodeHttps from 'node:https';
 import { readFile } from 'node:fs/promises';
 import { env } from '~/env/server';
+import { constants } from '~/server/common/constants';
+import { signReviewAccessToken } from '~/server/services/blocks/review-session';
 
 // ---------- shared HTTP helpers --------------------------------------------
 
@@ -46,7 +48,11 @@ export type K8sTarget = {
 // Exported for reuse by the sibling dev-tunnel service (renders/deletes the
 // ephemeral dev-tunnel Traefik route via the SAME in-pod SA k8s API surface as
 // the review render). Kept thin + dependency-free on purpose.
-export async function k8sFetch(target: K8sTarget, path: string, init?: RequestInit): Promise<Response> {
+export async function k8sFetch(
+  target: K8sTarget,
+  path: string,
+  init?: RequestInit
+): Promise<Response> {
   const url = `${target.server.replace(/\/$/, '')}${path}`;
   const headers: HeadersInit = {
     Authorization: `Bearer ${target.token}`,
@@ -223,7 +229,8 @@ function defaultOriginProbe(
         host: u.hostname,
         port: u.port ? Number(u.port) : isHttps ? 443 : 80,
         method: init.method,
-        path: u.pathname || '/',
+        // The query rides along: the shared-server review probe carries its `?mr=` token in it.
+        path: `${u.pathname || '/'}${u.search}`,
         headers: init.headers,
         ...(isHttps ? { rejectUnauthorized: false } : {}),
       },
@@ -355,11 +362,14 @@ export async function waitForReviewHostReachable(
     // fetch impl for the DoH query; defaults to fetchImpl ?? fetch.
     dohFetchImpl?: typeof fetch;
     // The preview is on the shared static server (`app-blocks-review-shared-server`). Its route
-    // already exists and is moderator-gated: a request with no `Sec-Fetch-Dest` counts as an
-    // ENTRY request and is denied, so "not 404" proves nothing. Probe instead as a non-entry
-    // request (`Sec-Fetch-Dest: empty`, which the gate lets through) and require 200: a 404
-    // means the server has not read the published meta yet (it re-reads every 5s). No DNS wait:
-    // the wildcard record already covers review hosts. Retries every 1s for 15s by default.
+    // already exists and is moderator-gated, so "not 404" proves nothing: the gate answers 401
+    // before anything is published. Probe instead the way a moderator's browser loads the
+    // preview — an ENTRY request (`Sec-Fetch-Dest: document`) for `/?mr=<token>` with a freshly
+    // minted, host-bound entry token — and require 200: a 404 means the server has not read the
+    // published meta yet (it re-reads every 5s). A non-entry dest does NOT get `/` past the gate:
+    // its PATH arm treats every path that is not a static subresource shape as entry, whatever
+    // the dest (see waitForSharedReviewHost). No DNS wait: the wildcard record already covers
+    // review hosts. Retries every 1s for 15s by default.
     sharedServer?: boolean;
   } = {}
 ): Promise<boolean> {
@@ -379,14 +389,10 @@ export async function waitForReviewHostReachable(
   const doFetch = opts.fetchImpl ?? fetch;
   const now = opts.now ?? (() => Date.now());
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const signalFactory =
-    opts.signalFactory ?? ((ms: number) => AbortSignal.timeout(ms));
+  const signalFactory = opts.signalFactory ?? ((ms: number) => AbortSignal.timeout(ms));
 
   const originIp =
-    opts.originIp ??
-    env.APPS_REVIEW_INGRESS_TARGET ??
-    env.APPS_DEV_TUNNEL_INGRESS_TARGET ??
-    null;
+    opts.originIp ?? env.APPS_REVIEW_INGRESS_TARGET ?? env.APPS_DEV_TUNNEL_INGRESS_TARGET ?? null;
 
   const deadline = now() + timeoutMs;
 
@@ -457,8 +463,30 @@ export async function waitForReviewHostReachable(
   }
 }
 
-/** The request a shared-server review probe makes: a non-entry GET that the mod gate admits. */
-export const SHARED_REVIEW_PROBE_HEADERS = { 'Sec-Fetch-Dest': 'empty' } as const;
+/**
+ * The headers a shared-server review probe sends: an ENTRY request, as a moderator's browser
+ * makes when it loads the preview iframe. The mod gate admits it only with a valid `mr` token.
+ *
+ * 🔴 NOT `Sec-Fetch-Dest: empty`: the gate classifies `/` as an entry request whatever the dest,
+ * so it would answer 401. Pinned by the mod-gate seam test.
+ */
+export const SHARED_REVIEW_PROBE_HEADERS = { 'Sec-Fetch-Dest': 'document' } as const;
+
+/**
+ * The user id the probe's entry token is bound to: the system actor (a negative id no real user
+ * has), so the probe is not attributed to a moderator. The token carries no authority by id.
+ */
+export const SHARED_REVIEW_PROBE_MOD_USER_ID = constants.system.user.id;
+
+/**
+ * The request target for one probe attempt: `/` with a FRESH entry token. Minted per attempt
+ * (120s TTL, bound to this one host) so a long retry never sends an expired one. The token is
+ * a credential: never log the returned path.
+ */
+function sharedReviewProbePath(host: string): string {
+  const token = signReviewAccessToken({ modUserId: SHARED_REVIEW_PROBE_MOD_USER_ID, host });
+  return `/?mr=${encodeURIComponent(token)}`;
+}
 
 async function waitForSharedReviewHost(
   host: string,
@@ -486,15 +514,16 @@ async function waitForSharedReviewHost(
   for (;;) {
     let status = 0;
     try {
+      const path = sharedReviewProbePath(host);
       if (originIp) {
-        ({ status } = await originProbe(`http://${originIp}/`, {
+        ({ status } = await originProbe(`http://${originIp}${path}`, {
           method: 'GET',
           headers: { Host: host, ...SHARED_REVIEW_PROBE_HEADERS },
           redirect: 'manual',
           signal: signalFactory(attemptTimeoutMs),
         }));
       } else {
-        ({ status } = await doFetch(`https://${host}/`, {
+        ({ status } = await doFetch(`https://${host}${path}`, {
           method: 'GET',
           headers: { ...SHARED_REVIEW_PROBE_HEADERS },
           redirect: 'manual',
@@ -528,9 +557,7 @@ export function resolveReviewTriggerUrl(
 ): string {
   if (reviewUrl) return reviewUrl;
   if (buildUrl) return buildUrl.replace(/\/trigger-build\/?$/, '/trigger-review-build');
-  throw new Error(
-    'APPS_TEKTON_REVIEW_TRIGGER_URL / APPS_TEKTON_TRIGGER_URL not configured'
-  );
+  throw new Error('APPS_TEKTON_REVIEW_TRIGGER_URL / APPS_TEKTON_TRIGGER_URL not configured');
 }
 
 export type TriggerReviewBuildArgs = {
@@ -549,9 +576,7 @@ export type TriggerReviewBuildArgs = {
  * carries `mode:'review'` + the publishRequestId + modUserId so the receiver
  * creates a review-labelled PipelineRun that builds from the in-review repo.
  */
-export async function triggerReviewBuild(
-  args: TriggerReviewBuildArgs
-): Promise<{ name: string }> {
+export async function triggerReviewBuild(args: TriggerReviewBuildArgs): Promise<{ name: string }> {
   const url = resolveReviewTriggerUrl(
     env.APPS_TEKTON_REVIEW_TRIGGER_URL,
     env.APPS_TEKTON_TRIGGER_URL
@@ -616,9 +641,7 @@ export type TriggerApplyReviewArgs = {
  * `app-templates` ConfigMap (the review template is added to that CM in the
  * talos PR as `review.yaml.tmpl`).
  */
-export async function triggerApplyReview(
-  args: TriggerApplyReviewArgs
-): Promise<{ name: string }> {
+export async function triggerApplyReview(args: TriggerApplyReviewArgs): Promise<{ name: string }> {
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   const host = reviewHostSha(args.sha);
@@ -1011,7 +1034,10 @@ export async function deleteReviewResources(args: {
           const body = await listRes.text().catch(() => '');
           // eslint-disable-next-line no-console
           console.warn(
-            `[apps-pipeline] deleteReviewResources list ${k.label} ${listRes.status}: ${body.slice(0, 160)}`
+            `[apps-pipeline] deleteReviewResources list ${k.label} ${listRes.status}: ${body.slice(
+              0,
+              160
+            )}`
           );
         }
         continue;
@@ -1034,7 +1060,9 @@ export async function deleteReviewResources(args: {
             const body = await delRes.text().catch(() => '');
             // eslint-disable-next-line no-console
             console.warn(
-              `[apps-pipeline] deleteReviewResources delete ${k.label}/${name} ${delRes.status}: ${body.slice(0, 160)}`
+              `[apps-pipeline] deleteReviewResources delete ${k.label}/${name} ${
+                delRes.status
+              }: ${body.slice(0, 160)}`
             );
           }
         } catch (err) {
@@ -1150,9 +1178,13 @@ export async function triggerApply(args: TriggerApplyArgs): Promise<{ name: stri
   // Delete an existing Job by the same name first (re-pushes of the same
   // SHA must restart the apply cycle, not silently succeed because the
   // first one finished).
-  await k8sFetch(target, `/apis/batch/v1/namespaces/${ns}/jobs/${jobName}?propagationPolicy=Background`, {
-    method: 'DELETE',
-  }).then(async (r) => {
+  await k8sFetch(
+    target,
+    `/apis/batch/v1/namespaces/${ns}/jobs/${jobName}?propagationPolicy=Background`,
+    {
+      method: 'DELETE',
+    }
+  ).then(async (r) => {
     // 404 is fine — first time we're applying for this SHA.
     if (!r.ok && r.status !== 404) {
       const body = await r.text().catch(() => '');
@@ -1235,9 +1267,7 @@ export async function waitForApplyJob(
       // DeadlineExceeded) is the cleanest "give up" signal. Don't rely on
       // .status.failed (which counts individual Pod attempts and can climb
       // mid-retry without the Job being terminal).
-      const failed = status.conditions?.find(
-        (c) => c.type === 'Failed' && c.status === 'True'
-      );
+      const failed = status.conditions?.find((c) => c.type === 'Failed' && c.status === 'True');
       if (failed) return 'failed';
     }
     await new Promise((resolve) => setTimeout(resolve, pollMs));

@@ -293,17 +293,31 @@ describe('setTextScanRollout', () => {
 
   it('writes a shadow rollout, logs who, and removes the field for null', async () => {
     dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
-    await setTextScanRollout('Comment', { shadow: 100, active: 0 }, { moderatorId: 5 });
+    await setTextScanRollout('CommentV3', { shadow: 100, active: 0 }, { moderatorId: 5 });
     expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
       'system:text-scan:modes',
-      'Comment',
+      'CommentV3',
       '{"shadow":100,"active":0}'
     );
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'rollout updated', moderatorId: 5, entityType: 'Comment' })
+      expect.objectContaining({
+        message: 'rollout updated',
+        moderatorId: 5,
+        entityType: 'CommentV3',
+      })
     );
-    await setTextScanRollout('Comment', null, { moderatorId: 5 });
-    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:modes', 'Comment');
+    await setTextScanRollout('CommentV3', null, { moderatorId: 5 });
+    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:modes', 'CommentV3');
+  });
+
+  it('turns CommentV3 off with null, dropping the stored CommentV2 rollout it falls back to', async () => {
+    await setTextScanRollout('CommentV3', null, { moderatorId: 5 });
+    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:modes', 'CommentV2');
+  });
+
+  it('leaves the stored CommentV2 rollout alone for any other type', async () => {
+    await setTextScanRollout('Post', null, { moderatorId: 5 });
+    expect(redisMock.sysRedis.hDel).not.toHaveBeenCalledWith('system:text-scan:modes', 'CommentV2');
   });
 });
 

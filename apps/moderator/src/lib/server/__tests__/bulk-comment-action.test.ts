@@ -20,34 +20,43 @@ vi.mock('$app/server', () => ({
 const { bulkCommentAction } = await import('../user-actions.service');
 
 let body: Record<string, unknown>;
+let sent: unknown;
 
 beforeEach(() => {
   vi.unstubAllGlobals();
   recordModActivity.mockClear();
-  vi.stubGlobal('fetch', () =>
-    Promise.resolve(
+  vi.stubGlobal('fetch', (_url: string, init?: { body?: string }) => {
+    sent = init?.body ? JSON.parse(init.body) : undefined;
+    return Promise.resolve(
       new Response(JSON.stringify(body), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
-    )
-  );
+    );
+  });
 });
 
-const run = (action: 'bulkDelete' | 'restoreFromTos') =>
-  bulkCommentAction({ action, commentIds: [1, 2], commentV2Ids: [3], userId: 8, moderatorId: 9 });
+const run = (action: 'bulkDelete' | 'removeAsTos' | 'restoreFromTos') =>
+  bulkCommentAction({ action, commentIds: [1, 2, 3], userId: 8, moderatorId: 9 });
 const activities = () => recordModActivity.mock.calls.map(([row]) => row.activity);
 
 describe('bulk comment delete', () => {
+  it('sends the ids in the field the endpoint reads', async () => {
+    body = { deleted: 3, affected: { commentIds: [1, 2, 3] } };
+
+    await run('bulkDelete');
+    expect(sent).toEqual({ commentIds: [1, 2, 3] });
+  });
+
   it('fails, and logs nothing, when no row was deleted', async () => {
-    body = { commentDeleted: 0, commentV2Deleted: 0 };
+    body = { deleted: 0, affected: { commentIds: [1, 2, 3] } };
 
     await expect(run('bulkDelete')).resolves.toMatchObject({ ok: false });
     expect(activities()).toEqual([]);
   });
 
   it('reports a short count as the count deleted', async () => {
-    body = { commentDeleted: 1, commentV2Deleted: 1 };
+    body = { deleted: 2, affected: { commentIds: [1, 2, 3] } };
 
     await expect(run('bulkDelete')).resolves.toEqual({ ok: true, affected: 2 });
     expect(activities()).toEqual(['comments:bulkDelete:2']);
@@ -57,8 +66,8 @@ describe('bulk comment delete', () => {
 describe('a ToS restore', () => {
   it('is a failure the moderator sees when a clear errored, logging only what did change', async () => {
     body = {
-      comment: { count: 1, reopenedReports: 1, failed: 1 },
-      commentV2: { count: 0, reopenedReports: 0, failed: 0 },
+      comments: { count: 1, reopenedReports: 1, failed: 1 },
+      affected: { commentIds: [1, 2, 3] },
     };
 
     await expect(run('restoreFromTos')).resolves.toEqual({
@@ -70,8 +79,8 @@ describe('a ToS restore', () => {
 
   it('is a failure, not "nothing changed", when every clear errored', async () => {
     body = {
-      comment: { count: 0, reopenedReports: 0, failed: 2 },
-      commentV2: { count: 0, reopenedReports: 0, failed: 1 },
+      comments: { count: 0, reopenedReports: 0, failed: 3 },
+      affected: { commentIds: [1, 2, 3] },
     };
 
     await expect(run('restoreFromTos')).resolves.toMatchObject({
@@ -82,12 +91,21 @@ describe('a ToS restore', () => {
   });
 
   it('reports a short count as the count restored', async () => {
-    body = {
-      comment: { count: 1, reopenedReports: 0 },
-      commentV2: { count: 1, reopenedReports: 1 },
-    };
+    body = { comments: { count: 2, reopenedReports: 1 }, affected: { commentIds: [1, 2, 3] } };
 
     await expect(run('restoreFromTos')).resolves.toEqual({ ok: true, affected: 2 });
     expect(activities()).toEqual(['comments:restoreFromTos:2']);
+  });
+});
+
+describe('a ToS removal', () => {
+  it('reads the count from the comments section', async () => {
+    body = {
+      comments: { count: 3, notified: 1, rewardedReports: 0 },
+      affected: { commentIds: [1, 2, 3] },
+    };
+
+    await expect(run('removeAsTos')).resolves.toEqual({ ok: true, affected: 3 });
+    expect(activities()).toEqual(['comments:removeAsTos:3']);
   });
 });

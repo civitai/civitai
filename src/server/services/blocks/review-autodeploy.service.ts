@@ -69,7 +69,14 @@ export type ClaimedReviewRequest = {
 };
 
 export type ReviewBuildSlotClaim =
-  | { claimed: ClaimedReviewRequest }
+  | {
+      claimed: ClaimedReviewRequest;
+      /**
+       * `request` claims only: the deploy detail the claim overwrote, read in the same
+       * transaction. Absent for `next-queued`.
+       */
+      replacedDeployDetail?: string | null;
+    }
   /** Every slot is held (automatic claims only). */
   | { claimed: null; reason: 'full' }
   /** Nothing is queued (`next-queued`), or the row is no longer pending (`request`). */
@@ -115,14 +122,15 @@ export async function claimReviewBuildSlot(
 
     const row = await tx.appBlockPublishRequest.findFirst({
       where: { id: target.publishRequestId, status: 'pending' },
-      select,
+      select: { ...select, deployDetail: true },
     });
     if (!row) return { claimed: null, reason: 'nothing-to-claim' as const };
     await tx.appBlockPublishRequest.updateMany({
       where: { id: row.id, status: 'pending' },
       data: claimData(target.actor, now),
     });
-    return { claimed: row };
+    const { deployDetail, ...claimed } = row;
+    return { claimed, replacedDeployDetail: deployDetail };
   });
 }
 

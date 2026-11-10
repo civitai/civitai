@@ -1,9 +1,11 @@
 import type { GenerationCtx } from '~/shared/generation/context';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
+import { ECOSYSTEM_FEATURE_FLAGS } from '~/shared/form-graph/generation/ecosystem-gates';
 
 /**
  * The entitlement a probe answers under: the NARROWEST one, so a limit it reports is a
- * limit every caller can rely on. Free tier, no flags, no gate rules.
+ * limit every caller can rely on. Free tier, no gate rules, and no flags but the ones that
+ * unhide an ecosystem.
  *
  * Exported because three callers probe (`images-limit`, `workflow-capability`,
  * `workflow-media`) and each had a byte-identical private copy. One drifting copy makes
@@ -13,7 +15,9 @@ import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 export const PROBE_CTX: GenerationCtx = {
   limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
   user: { isMember: false, tier: 'free' },
-  flags: {},
+  // Only the flags that unhide a whole ecosystem: whether a user may reach one is the
+  // submission's question, not the probe's, just as gate rules are left out below.
+  flags: Object.fromEntries(Object.values(ECOSYSTEM_FEATURE_FLAGS).map((flag) => [flag, true])),
   selfHostedDisabledEcosystems: [],
   selfHostedMode: 'enabled',
   gateRules: [],

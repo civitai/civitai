@@ -56,7 +56,6 @@ const ALLOWLIST: Record<string, { procedures: string[]; why: string }> = {
 const MUST_STAY_GUARDED: Record<string, string[]> = {
   'post.router.ts': ['create', 'createWithImages', 'addImage'],
   'commentv3.router.ts': ['create', 'update'],
-  'comment.router.ts': ['upsert'],
   'model.router.ts': ['upsert'],
   'article.router.ts': ['upsert'],
   'orchestrator.router.ts': ['iterateGenerate'],

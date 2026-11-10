@@ -453,6 +453,14 @@ export type TrainingWorkflowUpdateResult = {
   fileMetadata: FileMetadata;
 };
 
+/** Debits minus credits (refunds) across a workflow's transactions. */
+const netTransactionCharge = (transactions: TrainingResultsV2['transactionData'] | null) =>
+  (transactions ?? []).reduce(
+    (sum, { type, amount }) =>
+      type === 'debit' ? sum + amount : type === 'credit' ? sum - amount : sum,
+    0
+  );
+
 /**
  * Updates the model file metadata and model version training status based on workflow data.
  * Returns data needed for notifications (signals, emails, webhooks) which should be handled by the caller.
@@ -535,6 +543,34 @@ export async function updateTrainingWorkflowRecords(
           epochCount: epochData.length,
           status,
           userId: model.user.id,
+        },
+      },
+      'webhooks'
+    ).catch();
+  }
+
+  // The run was priced and debited at submit, so its net charge should never grow afterwards. The
+  // orchestrator can re-price a re-created job (gate release, retry) and debit again; nothing else
+  // here would notice, so flag it. Only within one workflow: a resubmit legitimately starts over.
+  const storedCharge = netTransactionCharge(trainingResults.transactionData);
+  const currentCharge = netTransactionCharge(derived.transactionData);
+  if (
+    storedCharge > 0 &&
+    currentCharge > storedCharge &&
+    trainingResults.workflowId === derived.workflowId
+  ) {
+    logToAxiom(
+      {
+        name: 'training-charge-increased',
+        type: 'error',
+        message: 'Training charge grew after submit',
+        data: {
+          workflowId: derived.workflowId,
+          modelFileId,
+          userId: model.user.id,
+          status: trainingStatus,
+          storedCharge,
+          currentCharge,
         },
       },
       'webhooks'

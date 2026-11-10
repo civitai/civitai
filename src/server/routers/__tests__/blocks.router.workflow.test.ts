@@ -1359,6 +1359,26 @@ describe('blocks.submitWorkflow', () => {
     });
   });
 
+  it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
+    '%s refuses a model on a base model no app may use, before the orchestrator',
+    async (procedure) => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      mockDbRead.modelVersion.findUnique.mockResolvedValue({
+        id: 99,
+        baseModel: 'Flux.2 Klein 9B',
+        modelId: 7,
+        status: 'Published',
+        model: { id: 7, type: 'Checkpoint' },
+      });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller[procedure]({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
   // ---- Item 2 (gen half): idempotency key → orchestrator externalId dedupe ----
   //
   // STEP-1 GATE TEST. Verifies the load-bearing property: a same-key RETRY collapses
@@ -6447,6 +6467,18 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
+    it('refuses an engine whose pinned model no app may use, before any spend', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      const body = ccBody({ params: { prompt: 'a sunset over mountains', engine: 'flux2-klein' } });
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body, idempotencyKey: 'cc-key' })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
     it('IDEMPOTENCY (audit 🔴-1): a concurrent claim in-progress → 409 CONFLICT, NO reserve, NO submit', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       happyCcResources();
@@ -6561,21 +6593,9 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       );
     });
 
-    it('flux2-klein reserves 150 and stamps a 00:02:30 timeout', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
-      happyCcResources();
-      happySubmit();
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'flux2-klein' } }),
-      });
-      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 150);
-      expect(mockSubmitWorkflow.mock.calls[0][0].body.steps[0].timeout).toBe('00:02:30');
-    });
-
     // ── Per-engine reserve↔refund SYMMETRY. The refund/rollback tests in the
     // budget-belt block above only exercise the DEFAULT engine (zimage 90); these
-    // prove a NON-default engine refunds ITS OWN ceiling (qwen 180 / flux2 150),
+    // prove a NON-default engine refunds ITS OWN ceiling (qwen 180),
     // not the flat 90 — so a cheaper engine can never over-refund and a pricier
     // one can never under-refund on a deny/throw.
     it('SYMMETRY: a qwen-image daily-cap breach refunds ITS ceiling (180, not 90) on the pinned key', async () => {
@@ -6597,7 +6617,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
-    it('SYMMETRY: a flux2-klein app-cap breach refunds ITS ceiling (150) on the per-user key', async () => {
+    it('SYMMETRY: a qwen-image app-cap breach refunds ITS ceiling (180) on the per-user key', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       happyCcResources();
       mockReserveAppSpend.mockResolvedValue({
@@ -6608,13 +6628,13 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       });
       const result = await caller().submitWorkflow({
         blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'flux2-klein' } }),
+        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
       });
       expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
-      // The per-user reservation rolled back at flux2's ceiling (150), not 90.
+      // The per-user reservation rolled back at qwen's ceiling (180), not 90.
       expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
         expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        150
+        180
       );
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });

@@ -229,7 +229,7 @@ export type CreateStickerPlacement = {
 /**
  * A placer's optional note travels with the placement it belongs to.
  *
- * Not a `CommentV2` thread: this is one immutable line bought with the
+ * Not a comment: this is one immutable line bought with the
  * placement, and giving it the comment system's identity would give it that
  * system's edit, reply and notification behaviour — none of which anyone asked
  * for, all of which would then need their own answer to "the owner accepted the
@@ -747,7 +747,9 @@ async function keptOffPlacementIds(
   const cosmeticIds = [...new Set(rows.map((row) => row.cosmeticId).filter(isDefined))];
   if (!cosmeticIds.length) return new Set<number>();
 
-  const cosmetics = await cosmeticCache.fetch(cosmeticIds);
+  // Past this pod's L1: a moderator's rating refreshes Redis at once, and hiding the sticker should
+  // not wait for another pod's L1 entry to expire.
+  const cosmetics = await cosmeticCache.fetch(cosmeticIds, { bypassLocal: true });
   const flagged = rows.filter(
     (row) =>
       row.cosmeticId != null &&
