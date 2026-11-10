@@ -8,12 +8,6 @@ vi.mock('@civitai/auth', async (importOriginal) => {
   const actual = await importOriginal<typeof CivitaiAuth>();
   return { ...actual, createSessionClient: h.createSessionClient };
 });
-// Hand-listed (as in session-client.test.ts): importOriginal would construct the real redis clients.
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: { set: vi.fn() },
-  REDIS_SYS_KEYS: { SESSION: { LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock' } },
-  withSysReadDeadline: (p: Promise<unknown>) => p,
-}));
 vi.mock('../session-verifier', () => ({ isRevoked: vi.fn() }));
 
 describe('sessionClient construction', () => {
