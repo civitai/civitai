@@ -118,3 +118,31 @@ describe('semantic article search', () => {
     );
   });
 });
+
+describe('semantic article search refinements', () => {
+  // A refinement that names nothing must narrow to nothing, never fall back to every article.
+  const refined = (input: { usernames?: string[]; tagNames?: string[] }) =>
+    searchSemanticArticles({
+      input: { query: 'guide', browsingLevel: 1, limit: 10, ...input },
+      candidateSource: ranking([10]),
+    });
+
+  it('returns nothing for a username that does not exist, without asking the service', async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue([] as never);
+    expect((await refined({ usernames: ['nobody'] })).items).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('returns nothing when any named tag does not exist, without asking the service', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: 1 }] as never);
+    expect((await refined({ tagNames: ['anime', 'missing'] })).items).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('searches with the ids of names that all exist', async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 10 }] as never);
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: 1 }] as never);
+    await refined({ usernames: ['someone'], tagNames: ['anime'] });
+    expect(sent[0]).toMatchObject({ userIds: [10], tagIds: [1] });
+  });
+});

@@ -1,5 +1,6 @@
 import type { InstantSearchProps } from 'react-instantsearch';
 import {
+  createOffsetPager,
   emptyResult,
   readBrowsingLevel,
   readFacetFilters,
@@ -42,8 +43,7 @@ function toHit(item: SearchOutput['items'][number]) {
 export function createSemanticArticleSearch({
   search = (input: SearchInput) => trpcVanilla.semanticArticleSearch.search.query(input),
 }: { search?: (input: SearchInput) => Promise<SearchOutput> } = {}) {
-  // InstantSearch pages by number, the search by an offset into its ranking: remembered per query.
-  const pageCursors = new Map<string, number | undefined>();
+  const fetchPage = createOffsetPager();
 
   return async function searchArticles(indexName: string, params: RequestParams) {
     const query = params.query?.trim();
@@ -65,24 +65,15 @@ export function createSemanticArticleSearch({
       tagNames: refined.get('tags.name'),
       usernames: refined.get('user.username'),
     };
-    const key = JSON.stringify([query, filters, hitsPerPage]);
-    const page = params.page ?? 0;
-    const cursor = page === 0 ? undefined : pageCursors.get(`${key}:${page}`);
-    const offset = page === 0 ? undefined : cursor ?? page * hitsPerPage;
-
-    const result = await search({ query, ...filters, limit: hitsPerPage, cursor: offset });
-    if (result.nextCursor !== undefined) pageCursors.set(`${key}:${page + 1}`, result.nextCursor);
-    const shown = page * hitsPerPage + result.items.length;
-
-    return {
-      ...empty,
-      hits: result.items.map(toHit),
-      nbHits: result.nextCursor !== undefined ? shown + hitsPerPage : shown,
-      nbPages: result.nextCursor !== undefined ? page + 2 : page + 1,
-      processingTimeMS: result.latencyMs,
-      exhaustiveNbHits: false,
-      userData: result.correctedQuery ? [{ correctedQuery: result.correctedQuery }] : undefined,
-    };
+    const page = await fetchPage({
+      query,
+      filters,
+      hitsPerPage,
+      page: params.page,
+      search,
+      toHit,
+    });
+    return { ...empty, ...page };
   };
 }
 

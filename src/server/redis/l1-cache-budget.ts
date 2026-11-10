@@ -33,10 +33,6 @@ export const L1_CACHE_BYTE_BUDGETS = {
   // cosmeticCache (cosmetics2) — { id, name, type, data, source, flags } per cosmetic, the
   // catalog every avatar, badge and sticker lookup reads. Only used while its switch is on.
   cosmetics: 2 * MB,
-  // imagesForModelVersionsCache (images-for-model-version-2) — up to 20 showcase images per
-  // model version with their tag ids, the heaviest value here per entry. Only used while its
-  // switch is on.
-  modelVersionImages: 10 * MB,
 } as const;
 
 /**
