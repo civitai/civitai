@@ -14,8 +14,8 @@ export const STREAK_BADGE_IDS: Record<StreakMilestone, number | null> = {
 };
 
 /**
- * Grants the badge of every milestone `streak` has reached, so a streak that skips past one (a shield, or a
- * correction) still earns it. A badge the player already holds is skipped, so it is earned once ever.
+ * Grants the badge of every milestone `streak` has reached, so a player already past a milestone when its id is
+ * filled in earns it on their next Watch. A badge the player already holds is skipped, so it is earned once ever.
  */
 export async function grantStreakBadges(
   db: Executor,
