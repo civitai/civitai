@@ -111,7 +111,7 @@ import {
   createBuzzTransactionMany,
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
-import { createPrizes } from '~/server/services/prize.service';
+import { createPrizes, getBannedUserIds } from '~/server/services/prize.service';
 import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { createNotification } from '~/server/services/notification.service';
 import { cosmeticEntityCaches } from '~/server/redis/caches';
@@ -2305,16 +2305,7 @@ export async function getJudgedEntries(
   `;
   // Re-checked on the primary: the refund and participation payout read it there, so a ban the
   // replica has not seen yet must not let the same user be refunded and still place.
-  const bannedOnPrimary = judgedRows.length
-    ? await dbWrite.user.findMany({
-        where: {
-          id: { in: [...new Set(judgedRows.map((e) => e.userId))] },
-          bannedAt: { not: null },
-        },
-        select: { id: true },
-      })
-    : [];
-  const bannedIds = new Set(bannedOnPrimary.map((u) => u.id));
+  const bannedIds = await getBannedUserIds(judgedRows.map((e) => e.userId));
   const userBestEntries = judgedRows.filter((e) => !bannedIds.has(e.userId));
   log('Users with judged entries:', userBestEntries.length);
   if (!userBestEntries.length) {

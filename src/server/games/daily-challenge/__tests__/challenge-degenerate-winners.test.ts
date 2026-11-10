@@ -293,6 +293,7 @@ describe('pickWinnersForChallenge degenerate guard', () => {
     const { refundBannedEntrantReviews } = await import(
       '~/server/games/daily-challenge/challenge-rewards'
     );
+    expect(refundBannedEntrantReviews).toHaveBeenCalledTimes(1);
     expect(refundBannedEntrantReviews).toHaveBeenCalledWith(
       expect.objectContaining({ challengeId: 1, reviewMeTagId: 12 })
     );
