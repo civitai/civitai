@@ -272,6 +272,18 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
   return cosmetic;
 };
 
+/** Knights of New Order sells its own shop cosmetics and grants its badges as Trophies; the main shop must not sell either. */
+async function assertNotKnightsCosmetic(cosmeticId: number) {
+  const [cosmetic, knightsItem] = await Promise.all([
+    dbWrite.cosmetic.findUnique({ where: { id: cosmeticId }, select: { source: true } }),
+    dbWrite.knightsShopItem.findFirst({ where: { cosmeticId }, select: { id: true } }),
+  ]);
+  if (knightsItem || cosmetic?.source === 'Trophy')
+    throw new Error(
+      'This cosmetic belongs to Knights of New Order and cannot be listed in the shop'
+    );
+}
+
 export const upsertCosmeticShopItem = async ({
   userId,
   isModerator,
@@ -323,6 +335,8 @@ export const upsertCosmeticShopItem = async ({
   if (id && !existingItem) throw new Error('Shop item not found');
   if (id && existingItem?.cosmeticId == null)
     throw new Error('Packs are edited through the pack editor');
+  if (cosmeticShopItem.cosmeticId !== existingItem?.cosmeticId)
+    await assertNotKnightsCosmetic(cosmeticShopItem.cosmeticId);
 
   // Re-expanded from the owner's rows rather than trusted from the client, and before the write
   // so what is stored is what the blurb actually says. `addedById` is nullable and only ever
