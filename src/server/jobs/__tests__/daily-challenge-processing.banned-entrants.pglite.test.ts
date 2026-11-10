@@ -215,6 +215,13 @@ describe('banned entrants', () => {
     expect(await judgedUserIds()).toEqual([CLEAN, BANNED]);
   });
 
+  it('are left out when the primary has the ban and the replica does not yet', async () => {
+    await setBanned(null);
+    // The replica (PGlite here) still reads the entrant as unbanned; the primary already has it.
+    dbMock.dbWrite.user.findMany.mockResolvedValueOnce([{ id: BANNED }] as never);
+    expect(await judgedUserIds()).toEqual([CLEAN]);
+  });
+
   it('are not reviewed while banned: requested, sampled or owed', async () => {
     await setBanned(null);
     expect(await reviewedImageIds()).toEqual([3, 4, 5, 6, 7, 8]);

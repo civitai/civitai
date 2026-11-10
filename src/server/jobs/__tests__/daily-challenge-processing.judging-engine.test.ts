@@ -79,6 +79,7 @@ vi.mock('~/server/db/client', () => ({
     $executeRaw: mockDbWriteExecuteRaw,
     $executeRawUnsafe: mockDbWriteExecuteRaw,
     challenge: { update: mockDbWriteChallengeUpdate, findUnique: mockDbWriteChallengeFindUnique },
+    user: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 

@@ -367,6 +367,23 @@ describe('entry prizes stay automatic and blue', () => {
   });
 });
 
+describe('moderator completion with an empty judged field', () => {
+  it("still refunds banned entrants' waiting paid reviews before taking the no-winner return", async () => {
+    // No stored winners, and the judged-entries read returns nothing (e.g. every entrant banned).
+    mockGetExistingWinnersForRetry.mockResolvedValueOnce([]);
+
+    await expect(endChallengeAndPickWinners(1)).resolves.toMatchObject({ winnersCount: 0 });
+
+    const { refundBannedEntrantReviews } = await import(
+      '~/server/games/daily-challenge/challenge-rewards'
+    );
+    expect(vi.mocked(refundBannedEntrantReviews).mock.calls).toEqual([
+      [{ challengeId: 1, collectionId: 100, reviewMeTagId: 13 }],
+    ]);
+    expect(mockCreatePrizes).not.toHaveBeenCalled();
+  });
+});
+
 describe('mod -> job completion boundary — prize Buzz is counted exactly once', () => {
   it('a moderator run that pays winners then throws before its Completed write emits nothing', async () => {
     // The entry-participation prize block runs (user 2 earned it, user 1 is the winner) and its
@@ -404,7 +421,7 @@ describe('mod -> job completion boundary — prize Buzz is counted exactly once'
     // The job's claim-conditional Completed write landed.
     expect(mockCompleteChallengeIfClaimHeld).toHaveBeenCalledTimes(1);
 
-    // Both runs refund a banned entrant's waiting paid reviews; the shared refund key settles once.
+    // Both runs call the banned-entrant review refund.
     const { refundBannedEntrantReviews } = await import(
       '~/server/games/daily-challenge/challenge-rewards'
     );

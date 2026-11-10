@@ -139,11 +139,8 @@ export const challengeReviewRefundTxId = (challengeId: number, imageId: number) 
   `challenge-review-refund-${challengeId}-${imageId}`;
 
 /**
- * A banned entrant's paid per-entry review is skipped while the ban stands, so one still waiting
- * when the challenge completes is refunded: the amount of its own purchase transaction, under the
- * rejected-entry refund's key. The entry then leaves the paid-review queue (tag and note), so a
- * later pass neither refunds it again nor reviews it after a lifted ban.
- * Flat-rate purchases are not refunded, matching the rejected-entry path.
+ * Refunds a banned entrant's per-entry paid reviews still waiting at completion, for the purchase's
+ * own amount. The entry then leaves the paid-review queue, so a later pass refunds nothing more.
  */
 export async function refundBannedEntrantReviews(args: {
   challengeId: number;

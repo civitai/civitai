@@ -960,7 +960,6 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     ? Prisma.empty
     : Prisma.sql`AND ci."reviewedAt" >= ${lastReviewedAt}`;
 
-  // A banned entrant's owed review is resolved, not retried, so it can't hold completion back.
   const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
     SELECT
       ci."imageId",
@@ -1027,6 +1026,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   `;
   log('Requested review:', requestReview.length);
   // Owed reviews: a review that failed on an earlier tick, or a moderator re-judge.
+  // Banned entrants are excluded: resolved, not retried; a paid review is refunded at completion.
   const pendingEntries = pendingIds.length
     ? await dbWrite.$queryRaw<RecentEntry[]>`
         SELECT
@@ -2288,7 +2288,7 @@ export async function getJudgedEntries(
   // to drop disqualified entries, so a user whose top entry is gated falls through to their next.
   // A ban leaves the user's entries ACCEPTED in the collection, so banned entrants are dropped
   // here. Read at query time: a ban lifted before completion makes them eligible again.
-  const userBestEntries = await dbRead.$queryRaw<JudgedEntry[]>`
+  const judgedRows = await dbRead.$queryRaw<JudgedEntry[]>`
     SELECT
       ci."imageId",
       i."userId",
@@ -2303,7 +2303,20 @@ export async function getJudgedEntries(
     AND ci.status = 'ACCEPTED'
     AND u."bannedAt" IS NULL
   `;
-  log('Users with judged entries:', userBestEntries?.length);
+  // Re-checked on the primary: the refund and participation payout read it there, so a ban the
+  // replica has not seen yet must not let the same user be refunded and still place.
+  const bannedOnPrimary = judgedRows.length
+    ? await dbWrite.user.findMany({
+        where: {
+          id: { in: [...new Set(judgedRows.map((e) => e.userId))] },
+          bannedAt: { not: null },
+        },
+        select: { id: true },
+      })
+    : [];
+  const bannedIds = new Set(bannedOnPrimary.map((u) => u.id));
+  const userBestEntries = judgedRows.filter((e) => !bannedIds.has(e.userId));
+  log('Users with judged entries:', userBestEntries.length);
   if (!userBestEntries.length) {
     return [];
   }
