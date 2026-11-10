@@ -252,10 +252,13 @@ describe('images-for-model-version-2 L1 bypass (MODEL_VERSION_IMAGES_L1 on)', ()
       model: { findMany: vi.fn(async () => [{ id: MODEL_ID, modelVersions: [{ id: 9303 }] }]) },
     };
 
-    const result = await pullModelsData({ db, logger: () => undefined } as never, {
-      type: 'update',
-      ids: [MODEL_ID],
-    } as never);
+    const result = await pullModelsData(
+      { db, logger: () => undefined } as never,
+      {
+        type: 'update',
+        ids: [MODEL_ID],
+      } as never
+    );
 
     expect(result.images.map((i) => i.url)).toEqual([urlFor(9303, 'new')]);
   });
