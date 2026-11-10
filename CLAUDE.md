@@ -46,7 +46,7 @@ where it loads on demand:
   `pr-review` (the hosted review of your PR: intent, findings, fixes), etc.
 
 ## Commands
-- **Dev servers: always the `dev-server` skill**, never `pnpm run dev` directly. `start --app moderator|creator-studio`
+- **Dev servers: always the `dev-server` skill**, never `pnpm run dev` directly. `start --app moderator|creator-studio|training-studio`
   runs those from the current worktree with the auth hub; other `apps/*` use their own `pnpm dev:<name>`.
 - **Local env misbehaving** (override ignored, sign-in fails, onboarding wizard everywhere)? Read
   `docs/dev/local-setup.md` first.
