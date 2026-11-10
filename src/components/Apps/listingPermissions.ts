@@ -39,12 +39,7 @@ export type ListingPermission = {
   rank: number;
 };
 
-/**
- * Said before the viewer allows anything, for every scope the app holds without a grant: such a
- * permission has no grant to take back, and the viewer would otherwise learn that only from the
- * row's note after the fact. Derived from the shared exempt set, so a scope added to it carries
- * the sentence without anyone remembering to write it.
- */
+/** Appended to the description of every consent-exempt scope; see `permissionDetail`. */
 export const IRREVOCABLE_PERMISSION_NOTE = "This permission can't be removed later.";
 
 /**

@@ -501,15 +501,8 @@ export function useScopeRevoke({
   };
 
   /**
-   * Removes every scope in `scopes` with ONE `blocks.revokeScopes` call. The caller passes the rows
-   * whose state is `revokable` — the server's own decision, the set each row's Remove button
-   * offers — so this cannot reach a scope the per-row control could not, and the server validates
-   * every entry again (known, not consent-exempt, currently held).
-   *
-   * The server refuses the whole batch with BAD_REQUEST when the viewer no longer holds one of the
-   * scopes (a second tab removed it first). That is retried ONCE with the confirmed scopes that the
-   * freshly fetched grant still lists as removable and held — never a scope the viewer did not see — so a stale list costs one
-   * extra call and not a failed click. A second refusal is shown as the failure it is.
+   * One `revokeScopes` call. The server refuses the whole batch with BAD_REQUEST if another tab
+   * already removed one, so retry once with the still-held subset.
    */
   const requestRevokeAll = (scopes: string[], keptCount: number) => {
     if (scopes.length === 0 || scopes.length > REVOKE_SCOPES_MAX_PER_CALL) return;

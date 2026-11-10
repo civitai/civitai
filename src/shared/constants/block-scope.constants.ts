@@ -937,8 +937,8 @@ export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): number
  * grantedScopes.has(scope)` — the exempt test comes FIRST and never consults the grant —
  * so a suppression entry for a member of this set would be stored and enforce NOTHING.
  * `blocks.revokeScopes` therefore REFUSES every member of this set with a specific error rather than
- * accepting and silently doing nothing, and phase 3's UI must not offer a control for
- * them. Making revocation override exemption is deliberately NOT the design: each
+ * accepting and silently doing nothing, and the permissions UI must not offer a control for
+ * them (ScopeConsentList shows them as fixed). Making revocation override exemption is deliberately NOT the design: each
  * exemption above rests on its own server-side gate (min-trust, moderation,
  * visibility/ownership, self-bound subject, rate limits), and removing the scope would
  * not remove those gates' subject matter — it would only break the #3090 page-token fix.

@@ -157,7 +157,6 @@ export function ScopeConsentList({
     grantWithheldAt: grant?.grantWithheldAt,
   });
   const stateByScope = new Map(rows.map((r) => [r.scope, r.state]));
-  // The rows each Remove button offers, taken together. A single one is left to its own button.
   const revokable = rows.filter((r) => r.state === 'revokable').map((r) => r.scope);
   const keptCount = rows.filter((r) => r.state === 'fixed').length;
   const tooManyForOneCall = revokable.length > REVOKE_SCOPES_MAX_PER_CALL;
