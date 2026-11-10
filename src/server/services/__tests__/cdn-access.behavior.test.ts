@@ -2851,3 +2851,164 @@ describe('retractions per run', () => {
     expect(await retryRows()).toEqual([]);
   });
 });
+
+describe('new rows before deferred ones', () => {
+  const range = (from: number, n: number) => Array.from({ length: n }, (_, i) => from + i);
+  /** `n` images from `from`, each blocked by a moderator, in three statements. */
+  const blockRange = async (from: number, n: number) => {
+    const to = from + n - 1;
+    await sql`INSERT INTO "Image" (id, "userId", url)
+              SELECT g, ${OWNER}, '00000000-0000-4000-8000-' || lpad(g::text, 12, '0')
+              FROM generate_series(${from}::int, ${to}::int) g`;
+    await sql`UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated'
+              WHERE id BETWEEN ${from} AND ${to}`;
+    await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+              SELECT ${MOD}, 'review', 'image', g FROM generate_series(${from}::int, ${to}::int) g`;
+  };
+  const countIn = async (ids: number[], state?: string) =>
+    (
+      (
+        await sql`SELECT count(*)::int AS n FROM "ImageCdnAccess"
+                  WHERE url = ANY(${ids.map(u)}) AND (${state ?? null}::text IS NULL OR state = ${
+          state ?? null
+        })`
+      ).rows[0] as { n: number }
+    ).n;
+  const row = async (id: number) =>
+    (
+      await sql`SELECT data, "createdAt" FROM "JobQueue"
+                WHERE type = 'CdnAccessSync' AND "entityType" = 'Image' AND "entityId" = ${id}`
+    ).rows[0] as { data: Record<string, unknown>; createdAt: Date } | undefined;
+  /** 45 blocks and one run: 1-15 retracted, 16-45 denied and deferred. */
+  const thirtyDeferred = async () => {
+    await blockRange(1, 45);
+    await syncCdnAccess();
+    expect(await countIn(range(16, 30), 'Denied')).toBe(30);
+    return range(16, 30);
+  };
+
+  it('denies a new block in the first run behind 500 deferred rows, and defers its retraction', async () => {
+    await blockRange(1, 515);
+    await syncCdnAccess();
+    expect((await queued()).n).toBe(500);
+
+    await image(5000);
+    await moderatorBlock(5000);
+    calls.length = 0;
+    await syncCdnAccess();
+    expect(callsFor(u(5000))).toEqual(['deny']);
+    expect(await stateOf(u(5000))).toBe('Denied');
+    const queuedRow = await row(5000);
+    expect(queuedRow?.data.deferred).toBeDefined();
+    expect(queuedRow?.data.deferred).toEqual(queuedRow?.data.seq);
+  });
+
+  it('keeps retracting the oldest deferrals under 400 new blocks a run', async () => {
+    const old = await thirtyDeferred();
+    for (const batch of [1, 2]) {
+      await blockRange(batch * 1000, 400);
+      expect(await syncCdnAccess()).toMatchObject({ retracts: 15 });
+      expect(await countIn(range(batch * 1000, 400))).toBe(400);
+    }
+    expect(await countIn(old, 'Retracted')).toBe(30);
+  });
+
+  it('keeps retracting the oldest deferrals through a burst of 600 new blocks', async () => {
+    const old = await thirtyDeferred();
+    await blockRange(1000, 600);
+    await syncCdnAccess();
+    await syncCdnAccess();
+    expect(await countIn(old, 'Retracted')).toBe(30);
+    expect(await countIn(range(1000, 600))).toBe(600);
+  });
+
+  it('reads deferred rows even when every run brings a full batch of new blocks', async () => {
+    const old = await thirtyDeferred();
+    for (const batch of [1, 2]) {
+      await blockRange(batch * 1000, 500);
+      await syncCdnAccess();
+    }
+    expect(await countIn(old, 'Retracted')).toBe(30);
+  });
+
+  it('a deferred row keeps its marker and its place when deferred again', async () => {
+    await blockRange(1, 35);
+    await syncCdnAccess();
+    const before = await row(35);
+    expect(before?.data.deferred).toEqual(before?.data.seq);
+
+    await syncCdnAccess();
+    expect(await countIn(range(16, 15), 'Retracted')).toBe(15);
+    const after = await row(35);
+    expect(after?.data).toEqual(before?.data);
+    expect(after?.createdAt).toEqual(before?.createdAt);
+  });
+
+  it('a deferred row queued again is taken as a new row', async () => {
+    await blockRange(1, 20);
+    await syncCdnAccess();
+    await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+              VALUES (${MOD}, 'review', 'image', 20)`;
+    const requeued = await row(20);
+    expect(requeued?.data.deferred).toBeDefined();
+    expect(requeued?.data.deferred).not.toEqual(requeued?.data.seq);
+
+    calls.length = 0;
+    await syncCdnAccess({ limit: 2 });
+    expect(callsFor(u(20))).toEqual(['retract']);
+    expect(callsFor(u(17))).toEqual([]);
+  });
+
+  it('leaves a row queued again mid-run in place, unmarked', async () => {
+    await blockRange(1, 16);
+    respond = async (c) => {
+      if (onUrl(u(16))(c) && kind(c) === 'deny')
+        await sql`SELECT queue_cdn_access_sync(16, 'Image', NULL)`;
+      return undefined;
+    };
+    await syncCdnAccess();
+    expect(callsFor(u(16))).toEqual(['deny']);
+    expect((await row(16))?.data).not.toHaveProperty('deferred');
+  });
+
+  it('alerts on a failed deny, including one for a deferred row', async () => {
+    await blockRange(1, 31);
+    await syncCdnAccess();
+    // The deny on 31 is gone, and its retraction is past this run's cap: it is denied again.
+    await sql`DELETE FROM "ImageCdnAccess" WHERE url = ${u(31)}`;
+    respond = (c) => (onUrl(u(31))(c) && kind(c) === 'deny' ? 503 : undefined);
+    calls.length = 0;
+    await syncCdnAccess();
+    expect(callsFor(u(31))).toEqual(['deny', 'deny', 'deny']);
+    expect(errorLogs('cdn-access-sync-deny-failed')).toEqual([
+      expect.objectContaining({ denyFailed: 1 }),
+    ]);
+
+    loggingMock.logToAxiom.mockClear();
+    await image(5000);
+    await scannerBlock(5000);
+    respond = (c) => (onUrl(u(5000))(c) ? 503 : undefined);
+    await syncCdnAccess();
+    expect(errorLogs('cdn-access-sync-deny-failed')).toEqual([
+      expect.objectContaining({ denyFailed: 1 }),
+    ]);
+  });
+
+  it('alerts on a retraction deferred for over 24 hours, not on a younger one that failed', async () => {
+    await blockRange(1, 16);
+    await syncCdnAccess();
+    const age = (hours: number) =>
+      sql`UPDATE "JobQueue" SET "createdAt" = now() - interval '1 hour' * ${hours}
+          WHERE type = 'CdnAccessSync' AND "entityId" = 16`;
+
+    await age(2);
+    respond = (c) => (kind(c) === 'retract' ? 503 : undefined);
+    await syncCdnAccess();
+    expect(errorLogs('cdn-access-sync-stale')).toEqual([]);
+    expect(errorLogs('cdn-access-sync-deferred-stale')).toEqual([]);
+
+    await age(25);
+    await syncCdnAccess();
+    expect(errorLogs('cdn-access-sync-deferred-stale')).toHaveLength(1);
+  });
+});

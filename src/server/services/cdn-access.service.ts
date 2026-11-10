@@ -1236,6 +1236,7 @@ type QueueRow = {
   entityType: 'Image' | 'Post';
   entityId: number;
   createdAt: Date;
+  deferred: boolean;
   data: {
     url?: string;
     moderatorDelete?: boolean;
@@ -1250,6 +1251,15 @@ type QueueRow = {
 export const CDN_ACCESS_SYNC_BATCH = 500;
 const CALL_CONCURRENCY = 8;
 const QUEUE_AGE_ALERT_MS = 15 * 60 * 1000;
+const DEFERRED_AGE_ALERT_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A row whose retraction the per-run cap held back, and that has not been queued again since: the
+ * marker is the `seq` it was deferred at, and a re-queue writes a new `seq`.
+ */
+const IS_DEFERRED = Prisma.raw(
+  `COALESCE(data ? 'deferred' AND data->'deferred' IS NOT DISTINCT FROM data->'seq', false)`
+);
 
 /**
  * Drains `CdnAccessSync`. Each url's desired state is recomputed from the current rows, so the queue
@@ -1257,13 +1267,29 @@ const QUEUE_AGE_ALERT_MS = 15 * 60 * 1000;
  * every url it covers is in its desired state, so a failed call is retried on the next run.
  */
 export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
-  const queue = await dbWrite.$queryRaw<QueueRow[]>`
-    SELECT "entityType"::text AS "entityType", "entityId", "createdAt", data
-    FROM "JobQueue"
-    WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
-    ORDER BY "createdAt"
-    LIMIT ${limit}
+  // New rows first, so a deferred backlog cannot hold up a first deny; a share of the batch stays
+  // with deferred rows so their retractions still advance under a full batch of new rows.
+  const candidates = await dbWrite.$queryRaw<QueueRow[]>`
+    SELECT "entityType", "entityId", "createdAt", data, deferred
+    FROM (
+      SELECT "entityType"::text AS "entityType", "entityId", "createdAt", data,
+        ${IS_DEFERRED} AS deferred,
+        row_number() OVER (
+          PARTITION BY ${IS_DEFERRED} ORDER BY "createdAt", "entityType", "entityId"
+        ) AS rn
+      FROM "JobQueue"
+      WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+    ) q
+    WHERE rn <= ${limit}
+    ORDER BY deferred, "createdAt", "entityType", "entityId"
   `;
+  const newRows = candidates.filter((q) => !q.deferred);
+  const waiting = candidates.filter((q) => q.deferred);
+  const waitingTake = Math.min(
+    waiting.length,
+    Math.max(Math.ceil(limit / 5), limit - newRows.length)
+  );
+  const queue = [...newRows.slice(0, limit - waitingTake), ...waiting.slice(0, waitingTake)];
   if (!queue.length) return { queued: 0, calls: 0, failed: 0 };
 
   const imageIds = queue.filter((q) => q.entityType === 'Image').map((q) => q.entityId);
@@ -1309,14 +1335,26 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   // Retractions past this run's cap: denied for now, and retracted by a later run.
   const deferred = new Set<string>();
   const maxRetracts = env.CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN;
-  let retractsLeft = maxRetracts;
   let retracts = 0;
   let calls = 0;
   let failed = 0;
   // After a 429 or a timeout the rest of the run's retractions wait for the next run; denies and
   // lifts still go.
   const gate = newRetractionGate();
-  const planned = urls.filter((url) => callFor(url, facts.get(url), state.get(url)));
+  const plannedCall = new Map(
+    urls.map((url) => [url, callFor(url, facts.get(url), state.get(url))])
+  );
+  const planned = urls.filter((url) => plannedCall.get(url));
+  // The cap goes to the oldest deferral first, then to new rows in queue order; the rest are denied.
+  const deferredUrls = new Set(queue.flatMap((q, i) => (q.deferred ? urlsByRow[i] : [])));
+  const wantsRetract = planned.filter((url) => plannedCall.get(url) === 'retract');
+  const mayRetract = new Set(
+    [
+      ...wantsRetract.filter((url) => deferredUrls.has(url)),
+      ...wantsRetract.filter((url) => !deferredUrls.has(url)),
+    ].slice(0, maxRetracts)
+  );
+  let denyFailed = 0;
   await limitConcurrency(
     planned.map((url) => async () => {
       let call: CdnCall | null = null;
@@ -1325,7 +1363,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
           const [fresh, freshState] = await Promise.all([loadFacts([url]), loadState([url])]);
           call = callFor(url, fresh.get(url), freshState.get(url));
           if (!call) return;
-          if (call === 'retract' && retractsLeft-- <= 0) {
+          if (call === 'retract' && !mayRetract.has(url)) {
             deferred.add(url);
             if (freshState.get(url)?.state === 'Denied') return;
             call = 'deny';
@@ -1338,6 +1376,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       } catch (error) {
         pending.add(url);
         failed++;
+        if ((call as CdnCall | null) === 'deny') denyFailed++;
         logToAxiom({
           type: error instanceof RetractionNotDoneError ? 'warning' : 'error',
           name: 'cdn-access-sync',
@@ -1371,13 +1410,16 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
 
   const settled = (url: string) => !pending.has(url) && !deferred.has(url);
   const done = queue.filter((_, i) => urlsByRow[i].every(settled));
-  // To the back of the queue, so a retraction backlog cannot hold up the denies and lifts behind it.
+  // Already-deferred rows keep their place, so the oldest deferral is retracted first.
   const rotate = queue.filter(
-    (_, i) => !urlsByRow[i].every(settled) && urlsByRow[i].every((url) => !pending.has(url))
+    (q, i) =>
+      !q.deferred && !urlsByRow[i].every(settled) && urlsByRow[i].every((url) => !pending.has(url))
   );
   for (const q of rotate) {
     await dbWrite.$executeRaw`
-      UPDATE "JobQueue" SET "createdAt" = now()
+      UPDATE "JobQueue"
+      SET "createdAt" = now(),
+          data = COALESCE(data, '{}'::jsonb) || jsonb_build_object('deferred', data->'seq')
       WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
         AND "entityType" = ${q.entityType}::"EntityType"
         AND "entityId" = ${q.entityId}
@@ -1395,14 +1437,33 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     `;
   }
 
-  const oldest = queue[0].createdAt;
-  if (failed && Date.now() - oldest.getTime() > QUEUE_AGE_ALERT_MS)
+  // Deferred rows keep their first-deferral time and are already denied, so they have their own bound.
+  const oldest = queue.find((q) => !q.deferred)?.createdAt;
+  if (failed && oldest && Date.now() - oldest.getTime() > QUEUE_AGE_ALERT_MS)
     logToAxiom({
       type: 'error',
       name: 'cdn-access-sync-stale',
       message: 'takedown CDN queue has rows older than 15 minutes',
       oldest: oldest.toISOString(),
       failed,
+    }).catch(() => undefined);
+
+  const oldestDeferred = queue.find((q) => q.deferred)?.createdAt;
+  if (oldestDeferred && Date.now() - oldestDeferred.getTime() > DEFERRED_AGE_ALERT_MS)
+    logToAxiom({
+      type: 'error',
+      name: 'cdn-access-sync-deferred-stale',
+      message: 'takedown CDN queue has a retraction deferred for over 24 hours',
+      oldest: oldestDeferred.toISOString(),
+      deferredInBatch: waitingTake,
+    }).catch(() => undefined);
+
+  if (denyFailed)
+    logToAxiom({
+      type: 'error',
+      name: 'cdn-access-sync-deny-failed',
+      message: 'takedown CDN deny calls failed; will retry',
+      denyFailed,
     }).catch(() => undefined);
 
   if (retracts || deferred.size)
