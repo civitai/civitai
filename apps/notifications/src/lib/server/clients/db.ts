@@ -9,9 +9,21 @@
 // Both accessors are lazy + memoized, so importing this module never connects (build/typecheck/health-
 // only tests don't touch the DB).
 
-import { createClients, createPool, type AugmentedPool } from '@civitai/db';
+import { createClients, createPool, type AugmentedPool, type DbLogFn } from '@civitai/db';
 
-function log(label: string) {
+/** The `LOGGING` entry that turns on the pools' query echo (the monolith's `createLogger` convention). */
+export const DB_LOG_FLAG = 'notif-db';
+
+/**
+ * The pools' logger, or `undefined` unless `LOGGING` (comma-delimited) contains `notif-db`.
+ *
+ * Off by default because `cancellableQuery` passes every statement it runs to this logger with its
+ * parameter values inlined, so an always-on logger prints each query, and the user data bound into
+ * it, once per call. `createPool` treats a missing logger as a no-op.
+ */
+export function log(label: string, logging = process.env.LOGGING): DbLogFn | undefined {
+  const flags = (logging ?? '').split(',').map((s) => s.trim());
+  if (!flags.includes(DB_LOG_FLAG)) return undefined;
   return (message: string, ...args: unknown[]) =>
     // eslint-disable-next-line no-console
     console.log(`[notifications:db:${label}] ${message}`, ...args);
