@@ -161,6 +161,7 @@ function HatDraftSticker({
       onGesture={onGesture}
       opaque
       liftOverTray
+      knobFlips
       commit={
         <Button
           size="sm"
