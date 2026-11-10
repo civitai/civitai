@@ -45,7 +45,8 @@ import {
  *      `directPublish: true` (the build already published the preview to the shared
  *      static server) skips the apply Job and goes straight to the reachability probe.
  *   5. On failure → flip the preview state to failed, unless a newer run for the
- *      same sha has superseded the sender (stale-run guard).
+ *      same sha has superseded the sender (stale-run guard). A failed direct publish also
+ *      unpublishes its sha (it may have published before failing).
  *
  * An additive parallel lane for review previews only.
  */
@@ -370,6 +371,24 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       },
       { requireActivePreview: true }
     );
+    // The build publishes files + meta BEFORE this callback, so a failed direct build may have
+    // left its preview on the shared server: unpublish this sha. Only past the stale-run guard
+    // above (a newer run of the same sha may have published the preview being reviewed), and
+    // fire-and-forget like the orphan branch: best-effort, idempotent, logged on error.
+    if (directPublish) {
+      void triggerReviewUnpublish({
+        slug: body.slug,
+        sha: body.sha,
+        publishRequestId: body.publishRequestId,
+      }).catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[review-build-callback] failed direct-publish unpublish failed for ${
+            body.publishRequestId
+          }: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
+    }
     await recordBuildAttempt(attempt);
     // Counted only once the failure is APPLIED: a superseded run's late report is history,
     // not a build outcome, and must not move a failure-rate alert.
