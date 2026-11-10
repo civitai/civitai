@@ -56,7 +56,11 @@ const DATE_ANNOTATION = 'Date';
 type PathNode = { parent: PathNode | null; key: string };
 
 /** One visited object: its walk (unset while its children are walked) and every path it was at. */
-type Visit = { walked: Walked | undefined; path: PathNode | null; more: (PathNode | null)[] | undefined };
+type Visit = {
+  walked: Walked | undefined;
+  path: PathNode | null;
+  more: (PathNode | null)[] | undefined;
+};
 
 type WalkContext = {
   /** Every visited object in first-visit order — the order superjson's identity map has. */
@@ -170,9 +174,7 @@ function referentialEqualities(visits: Map<object, Visit>): Record<string, strin
   const result: Record<string, string[]> = {};
   for (const visit of visits.values()) {
     if (visit.more === undefined) continue;
-    const paths = [visit.path, ...visit.more]
-      .map(pathSegments)
-      .sort((a, b) => a.length - b.length);
+    const paths = [visit.path, ...visit.more].map(pathSegments).sort((a, b) => a.length - b.length);
     const [representative, ...identical] = paths;
     result[pathString(representative)] = identical.map(pathString);
   }

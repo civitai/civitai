@@ -376,7 +376,13 @@ describe('fastSuperjsonSerialize — sharedRefs', () => {
         return { x: outer, y: outer, z: inner };
       })(),
     ],
-    ['the same empty array twice', (() => { const a: unknown[] = []; return { a, b: a }; })()],
+    [
+      'the same empty array twice',
+      (() => {
+        const a: unknown[] = [];
+        return { a, b: a };
+      })(),
+    ],
     // Still handed to superjson with sharedRefs on — identical by construction.
     [
       'a circular reference',
@@ -395,7 +401,13 @@ describe('fastSuperjsonSerialize — sharedRefs', () => {
         return { root: a };
       })(),
     ],
-    ['a BigInt beside a shared object', (() => { const o = {}; return { o, p: o, n: 1n }; })()],
+    [
+      'a BigInt beside a shared object',
+      (() => {
+        const o = {};
+        return { o, p: o, n: 1n };
+      })(),
+    ],
   ])('%s', (_label, value) => {
     expectIdenticalShared(value);
   });
@@ -453,7 +465,13 @@ describe('fastSuperjsonSerialize — sharedRefs', () => {
           pool.push(d);
           return d;
         }
-        return pick<() => unknown>([() => 'str', () => 1, () => null, () => undefined, () => true])();
+        return pick<() => unknown>([
+          () => 'str',
+          () => 1,
+          () => null,
+          () => undefined,
+          () => true,
+        ])();
       }
       let v: object;
       if (r < 0.65) v = Array.from({ length: Math.floor(rand() * 5) }, () => gen(depth - 1));
