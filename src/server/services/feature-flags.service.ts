@@ -441,6 +441,9 @@ const featureFlags = createFeatureFlags({
   // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
   // does, Flipt decides both ways, so keep mods in its rule.
   imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
+  // Article search (/search/articles, the header and the quick-search dropdown) answers from the
+  // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
+  semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
