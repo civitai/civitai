@@ -882,8 +882,9 @@ export async function runAbuseDetectionScan() {
   }
 
   // Report filed (it says which source is missing); now fail the run so the error still shows up.
-  // A null ClickHouse client is not a failure, only a source that ran and threw is.
-  if (failed.length > 0) throw failed[0].reason;
+  // A null ClickHouse client is not a failure, only a source that ran and threw is. Once smites
+  // are written the run must not fail, as above: a retry would smite the same accounts again.
+  if (failed.length > 0 && smitedUserIds.size === 0) throw failed[0].reason;
 }
 
 const newOrderAbuseDetection = createJob(

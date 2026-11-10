@@ -187,11 +187,23 @@ describe('runAbuseDetectionScan v2 source', () => {
     );
   });
 
-  it('files and smites the v1 suspects, says v2 failed, then fails the run when the v2 query fails', async () => {
+  it('fails the run when the v2 query fails and nothing was smited', async () => {
+    mockGetVotingRateLimitConfig.mockResolvedValue({ autoSmiteAbusers: false });
     mockClickhouseQuery.mockResolvedValue([v1Row()]);
     dbMock.dbRead.$queryRaw.mockRejectedValue(new Error('pg down'));
 
     await expect(runAbuseDetectionScan()).rejects.toThrow('pg down');
+
+    expect(mockSmitePlayer).not.toHaveBeenCalled();
+    expect(filed().summary).toContain('Knights v2 scan failed; only v1 votes were scanned.');
+  });
+
+  // A failed run can be retried, and a retry would smite the same accounts again.
+  it('files and smites the v1 suspects, says v2 failed, and does not fail the run once it has smited', async () => {
+    mockClickhouseQuery.mockResolvedValue([v1Row()]);
+    dbMock.dbRead.$queryRaw.mockRejectedValue(new Error('pg down'));
+
+    await expect(runAbuseDetectionScan()).resolves.toBeUndefined();
 
     expect(mockSmitePlayer).toHaveBeenCalledTimes(1);
     expect(filed().findings.map((f) => f.userId)).toEqual([100]);
