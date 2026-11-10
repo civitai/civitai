@@ -47,6 +47,8 @@ type ModerationRow = {
 } | null;
 /** The article's text-moderation row, as the recompute reads it. */
 let moderation: ModerationRow;
+/** The stored body, as the content write leaves it. */
+let storedContent: string;
 
 const editTo = (content: string) =>
   applyArticleContentChange({ id: ARTICLE, userId: AUTHOR, content });
@@ -85,7 +87,11 @@ beforeEach(() => {
     status: ArticleStatus.Published,
     scheduledAt: null,
   };
-  dbMock.dbWrite.article.findUnique.mockResolvedValue(stored as never);
+  storedContent = stored.content;
+  dbMock.dbWrite.article.findUnique.mockImplementation((async () => ({
+    ...stored,
+    content: storedContent,
+  })) as never);
   dbMock.dbWrite.article.findUniqueOrThrow.mockImplementation((async () => ({
     ...stored,
     content: '<p>New body</p>',
@@ -97,11 +103,19 @@ beforeEach(() => {
   dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([] as never);
   dbMock.dbWrite.entityModeration.findUnique.mockImplementation((async () => moderation) as never);
   dbMock.dbWrite.entityModeration.updateMany.mockImplementation((async ({ data }: never) => {
-    const { status } = data as { status?: EntityModerationStatus };
+    const { status, workflowId } = data as Partial<NonNullable<ModerationRow>>;
     if (moderation && status) moderation = { ...moderation, status };
+    if (moderation && workflowId !== undefined) moderation = { ...moderation, workflowId };
     return { count: moderation ? 1 : 0 };
   }) as never);
-  dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
+  dbMock.dbWrite.$executeRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    const sql = Prisma.sql(strings, ...values);
+    if (sql.sql.startsWith('UPDATE "Article" SET content')) storedContent = sql.values[0] as string;
+    return 1;
+  }) as never);
 });
 
 describe('editing the text of a published article', () => {
@@ -162,6 +176,19 @@ describe('editing the text of a published article', () => {
     });
     await editTo('<p>New body</p>');
     expect(writtenIngestion()).toBe(ArticleIngestionStatus.Scanned);
+  });
+
+  it('keeps its verdict off the row when a later save of other text recorded first', async () => {
+    // This save's upsert lands last, so the row carries its workflow, while the stored text is
+    // the other save's, which this verdict never saw.
+    vi.mocked(submitTextModerationOrScan).mockImplementation(async () => {
+      storedContent = '<p>Other text</p>';
+      return submitRecordsPending();
+    });
+    await editTo('<p>New body</p>');
+    // Callbacks record only on a matching workflowId, so 'wf-new' can no longer land.
+    expect(moderation).toMatchObject({ status: EntityModerationStatus.Pending, workflowId: null });
+    expect(writtenIngestion()).toBe(ArticleIngestionStatus.Pending);
   });
 
   it('is already out of Scanned when the hold write fails after the text is written', async () => {

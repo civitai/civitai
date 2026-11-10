@@ -1740,7 +1740,7 @@ export async function applyArticleContentChange({
         }));
       if (!checked) await revokeActiveAccessTokens('Article', id);
     } else if (isPublicArticle(publication)) {
-      const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
+      const textForModeration = articleModerationText(currentTitle, content);
 
       // Awaited, published edits included: the submit records the pending scan for this text,
       // so the recompute below cannot count a verdict for older text.
@@ -1771,7 +1771,7 @@ export async function applyArticleContentChange({
       });
       // The orchestrator client sets no timeout, so a hung submit would hold the save open.
       const workflow = await withTimeoutFallback(submitted, ARTICLE_TEXT_SUBMIT_TIMEOUT_MS, null);
-      if (!(await articleTextSubmitRecorded(id, workflow, skipped)))
+      if (!(await articleTextSubmitRecorded(id, textForModeration, workflow, skipped)))
         await holdArticleTextVerdict(id);
     }
   }
@@ -1792,15 +1792,27 @@ export async function applyArticleContentChange({
 
 const ARTICLE_TEXT_SUBMIT_TIMEOUT_MS = 10_000;
 
+const articleModerationText = (title: string, content: string | null) =>
+  [title, removeTags(content ?? '')].filter(Boolean).join(' ');
+
 /**
  * Whether the row now holds this text's scan or its verdict. Neither path throws on every miss: the
  * XGuard submit logs a failed row write, and an active scan can skip without writing.
  */
 async function articleTextSubmitRecorded(
   articleId: number,
+  submittedText: string,
   workflow: { id?: string | null } | null | undefined,
   skipped: SkipReason | undefined
 ) {
+  // A save that wrote later text may have recorded first, leaving this save's scan on the row for
+  // text the article no longer has.
+  const stored = await dbWrite.article.findUnique({
+    where: { id: articleId },
+    select: { title: true, content: true },
+  });
+  if (!stored || articleModerationText(stored.title ?? '', stored.content) !== submittedText)
+    return false;
   // The row already has this text's verdict, or its scan in flight.
   if (skipped === 'unchanged' || skipped === 'in-flight') return true;
   if (!workflow?.id) return false;
