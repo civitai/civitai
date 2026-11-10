@@ -23,6 +23,7 @@ import {
   bulkRemoveBlockedImages,
   deleteImageById,
   getAllImagesIndex,
+  getImagesForModelVersionCache,
   getPostDetailByImageId,
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
@@ -55,6 +56,7 @@ import { buildSearchActor } from '~/server/meilisearch/client';
 import {
   getGallerySettingsByModelId,
   getHeldGalleryLevel,
+  isModelGalleryWithheld,
   getHeldLevelsByPost,
 } from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
@@ -358,6 +360,25 @@ export const setTosViolationHandler = async ({
  */
 const moderatorView = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
 
+/** The owner a taken-down model's gallery is shown to, on the same credentials as `moderatorView`. */
+const galleryOwnerId = (ctx: Context) =>
+  ctx.user && isSessionOrFullUserKey(ctx) ? ctx.user.id : undefined;
+
+/** Whether the request's model gallery is withheld from this viewer (see `isModelGalleryWithheld`). */
+const isGalleryWithheldFrom = (ctx: Context, input: Parameters<typeof isModelGalleryWithheld>[0]) =>
+  moderatorView(ctx) ? false : isModelGalleryWithheld(input, galleryOwnerId(ctx));
+
+export const getImagesForModelVersionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  if (await isGalleryWithheldFrom(ctx, { modelVersionId: input.id })) return {};
+  return getImagesForModelVersionCache([input.id]);
+};
+
 /**
  * The images a viewer may see whole: one on a minor or SFW-only model's post, above that model's held
  * level, only the model's owner and moderators may, each in their own session or with a full key.
@@ -454,9 +475,14 @@ export const getInfiniteImagesHandler = async ({
   }
 
   try {
-    // A minor or SFW-only model's images are served only at its gallery's held level, except to
-    // moderators, who must see what they may need to remove.
-    const heldLevel = moderatorView(ctx) ? undefined : await getHeldGalleryLevel(scopedInput);
+    // A minor or SFW-only model's images are served only at its gallery's held level, and a
+    // taken-down model's only to its owner, except to moderators, who must see what they may need
+    // to remove.
+    const [heldLevel, withheld] = await Promise.all([
+      moderatorView(ctx) ? undefined : getHeldGalleryLevel(scopedInput),
+      isGalleryWithheldFrom(ctx, scopedInput),
+    ]);
+    if (withheld) return { items: [], nextCursor: undefined };
     if (heldLevel !== undefined) {
       const browsingLevel = Flags.intersection(scopedInput.browsingLevel, heldLevel);
       // The fetches read 0 as their default level, not as none, so an empty intersection is an empty page.
@@ -669,10 +695,13 @@ export const getImagesAsPostsInfiniteHandler = async ({
     }
     // A minor or SFW-only model's gallery serves only its held level, whatever level is asked for:
     // the page, the pinned posts and the sponsored post alike. Moderators see it whole.
-    const [modelGallerySettings, heldLevel] = await Promise.all([
+    // A taken-down model's gallery is its owner's alone.
+    const [modelGallerySettings, heldLevel, withheld] = await Promise.all([
       input.modelId ? getGallerySettingsByModelId({ id: input.modelId }) : null,
       moderatorView(ctx) ? undefined : getHeldGalleryLevel(input),
+      isGalleryWithheldFrom(ctx, input),
     ]);
+    if (withheld) return { nextCursor: undefined, items: [] };
     if (heldLevel !== undefined) {
       const browsingLevel = Flags.intersection(input.browsingLevel, heldLevel);
       // The fetches below read 0 as their default level, not as none, so an empty intersection is an

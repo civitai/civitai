@@ -23,6 +23,7 @@ vi.mock('~/server/services/model.service', () => ({
   getHeldGalleryLevel: async () => undefined,
   getHeldLevelsByPost: async (postIds: number[]) =>
     new Map(postIds.filter((id) => id === 9).map((id) => [id, { level: 1, ownerId: 99 }])),
+  isModelGalleryWithheld: async () => false,
 }));
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<object>()),

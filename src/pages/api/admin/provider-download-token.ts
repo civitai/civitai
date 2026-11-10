@@ -1,7 +1,6 @@
 import type { AxiomAPIRequest } from '@civitai/next-axiom';
 import type { NextApiResponse } from 'next';
 import * as z from 'zod';
-import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { trackModActivity } from '~/server/services/moderator.service';
 import {
@@ -13,7 +12,7 @@ import {
 } from '~/server/services/provider-download/provider-token';
 import { updateProviderTokenRecords } from '~/server/services/provider-download/provider-token.store';
 import { HeaderTokenSecuredEndpoint } from '~/server/utils/endpoint-helpers';
-import { webhookTokenValues } from '~/server/utils/webhook-token';
+import { distinctAdminToken } from '~/server/utils/admin-token';
 
 /**
  * Mints, retires and unretires per-provider download tokens, and sets a provider's hourly ceiling.
@@ -45,25 +44,11 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('ceiling'), provider, hourlyCeiling, actorUserId }),
 ]);
 
-function adminToken() {
-  const token = env.PROVIDER_DOWNLOAD_TOKEN_ADMIN_TOKEN;
-  return token &&
-    [
-      ...webhookTokenValues(),
-      env.PROBE_TOKEN,
-      env.JOB_TOKEN,
-      env.SYSTEM_ACCOUNT_KEY_TOKEN,
-      env.SYSTEM_ACCOUNT_PROFILE_TOKEN,
-    ].includes(token)
-    ? undefined
-    : token;
-}
-
 /** A record as the admin sees it: everything but the hash. */
 const describe = ({ hash: _hash, ...record }: ProviderTokenRecord) => record;
 
 export default HeaderTokenSecuredEndpoint(
-  adminToken,
+  () => distinctAdminToken('PROVIDER_DOWNLOAD_TOKEN_ADMIN_TOKEN'),
   async function (req: AxiomAPIRequest, res: NextApiResponse) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
     res.setHeader('Cache-Control', 'no-store');
