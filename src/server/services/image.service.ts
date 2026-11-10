@@ -8878,18 +8878,25 @@ export const getImageContestCollectionDetails = async ({
   isModerator,
 }: { userId?: number; isModerator?: boolean } & GetByIdInput) => {
   const useSharedCache = await isFlipt(FLIPT_FEATURE_FLAGS.CONTEST_COLLECTION_ITEMS_REDIS_CACHE);
-  const items: (SharedContestCollectionItem | ContestCollectionItem)[] = useSharedCache
+  const cachedItems: (SharedContestCollectionItem | ContestCollectionItem)[] = useSharedCache
     ? await fetchSharedContestCollectionItems(id)
     : await contestCollectionItemsCache.fetch(id);
 
   // Fetch all permissions in one query instead of N queries
-  const collectionIds = items.map((i) => i.collection.id);
+  const collectionIds = [...new Set(cachedItems.map((i) => i.collection.id))];
   const allPermissions = await getUserCollectionPermissionsByIds({
     ids: collectionIds,
     userId,
+    isModerator,
   });
   const permissionsFor = (item: { collection: { id: number } }) =>
     allPermissions.find((p) => p.collectionId === item.collection.id);
+  // The items are cached per image for every viewer, so the collection read rule
+  // (collection.getById's) is applied here, per viewer.
+  const items = cachedItems.filter((item) => {
+    const p = permissionsFor(item);
+    return !!p && (p.read || p.write || p.manage);
+  });
 
   // This endpoint is public. The reason — and above all the reviewer's free text about
   // someone else's entry — is only for the submitter, whoever manages the collection,
@@ -8915,6 +8922,11 @@ export const getImageContestCollectionDetails = async ({
 
     return {
       ...i,
+      // Every judge's score only for the collection's managers and moderators (manage); anyone
+      // else sees their own.
+      scores: permissions?.manage
+        ? i.scores
+        : i.scores.filter((s) => !!userId && s.userId === userId),
       rejectionReason: readable ? rejection?.rejectionReason ?? null : null,
       rejectionDetail: readable ? rejection?.rejectionDetail ?? null : null,
       permissions,

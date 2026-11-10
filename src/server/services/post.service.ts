@@ -2245,7 +2245,23 @@ export const getPostContestCollectionDetails = async ({
       items: [],
     };
 
-  const collection = await getCollectionById({ input: { id: post.collectionId } });
+  const permissions = await getUserCollectionPermissionsById({
+    id: post.collectionId,
+    userId,
+    isModerator,
+  });
+  // collection.getById's read rule: a collection the viewer may not read answers as none.
+  if (!permissions.read && !permissions.write && !permissions.manage)
+    return {
+      collection: null,
+      permissions: null,
+      items: [],
+    };
+
+  const collection = await getCollectionById({
+    input: { id: post.collectionId },
+    viewer: { id: userId, isModerator },
+  });
 
   if (!collection || collection?.mode !== CollectionMode?.Contest)
     return {
@@ -2287,11 +2303,6 @@ export const getPostContestCollectionDetails = async ({
       reviewedAt: true,
       tag: true,
     },
-  });
-
-  const permissions = await getUserCollectionPermissionsById({
-    id: post.collectionId,
-    userId,
   });
 
   return {

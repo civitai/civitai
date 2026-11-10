@@ -45,6 +45,8 @@ const COLLECTION_ID = 40;
 const SHOWN = 101;
 const HIDDEN = 102;
 const MISSING = { collection: null, permissions: null, items: [] };
+const COLLECTION_OWNER = 600;
+let collectionPrivate = false;
 
 type User = { id: number; isModerator?: boolean } | undefined;
 const ANON: User = undefined;
@@ -73,7 +75,15 @@ beforeEach(() => {
     mode: CollectionMode.Contest,
     type: CollectionType.Image,
   });
-  m.permissions.mockImplementation(async ({ userId }: { userId?: number }) => ({ userId }));
+  collectionPrivate = false;
+  // getUserCollectionPermissionsById's rule, reduced: a Private collection is read only by its
+  // owner and moderators.
+  m.permissions.mockImplementation(
+    async ({ userId, isModerator }: { userId?: number; isModerator?: boolean }) => {
+      const manage = userId === COLLECTION_OWNER || !!isModerator;
+      return { userId, read: !collectionPrivate || manage, write: false, manage };
+    }
+  );
   m.visibleIds.mockImplementation(async ({ ids, userId, isModerator }) => {
     const opens = isModerator || userId === OWNER;
     return new Set((ids as number[]).filter((id) => id !== HIDDEN || opens));
@@ -121,6 +131,26 @@ describe('post.getContestCollectionDetails visibility', () => {
 
   it('computes permissions for the signed-in viewer, not as signed out', async () => {
     postIs({});
-    expect((await detailsFor(STRANGER)).permissions).toEqual({ userId: STRANGER!.id });
+    expect((await detailsFor(STRANGER)).permissions).toMatchObject({ userId: STRANGER!.id });
+  });
+
+  it('answers a Private collection as none for a viewer who may not read it', async () => {
+    postIs({});
+    collectionPrivate = true;
+    for (const user of [ANON, STRANGER, SELF]) expect(await detailsFor(user)).toEqual(MISSING);
+    expect(m.getCollectionById).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.collectionItem.findMany).not.toHaveBeenCalled();
+  });
+
+  it("serves a Private collection's entries to its owner and a moderator (control)", async () => {
+    postIs({});
+    collectionPrivate = true;
+    for (const user of [{ id: COLLECTION_OWNER }, MOD])
+      expect(itemImageIds(await detailsFor(user)).length).toBeGreaterThan(0);
+  });
+
+  it('gives a moderator their moderator permissions', async () => {
+    postIs({});
+    expect((await detailsFor(MOD)).permissions).toMatchObject({ manage: true });
   });
 });
