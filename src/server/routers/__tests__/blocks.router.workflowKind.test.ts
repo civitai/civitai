@@ -2084,6 +2084,41 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      'a captioning step’s media',
+      { $type: 'mediaCaptioning', input: { mediaUrl: 'https://example.com/a.png' } },
+    ],
+    [
+      'a transcription step’s media',
+      { $type: 'transcription', input: { mediaUrl: 'https://example.com/a.mp3' } },
+    ],
+    [
+      'an image part of a chat message',
+      {
+        $type: 'chatCompletion',
+        input: {
+          model: 'm',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'what is this?' },
+                { type: 'image_url', image_url: { url: 'https://example.com/a.png' } },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  ])('refuses an external url in %s, which the orchestrator fetches', async (_, step) => {
+    await expect(estimate({ kind: 'step' as const, ...step, maxBuzz: 30 })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('hosted outside Civitai'),
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
   it('CONTROL: the same external link in a generation step input is refused', async () => {
     await expect(
       estimate({
@@ -2223,13 +2258,11 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
         expect(whatifs().length).toBeGreaterThan(0);
       });
 
-      it('POSITIVE CONTROL: the flag is live — the same schema in a pass-through body is refused', async () => {
+      it('POSITIVE CONTROL: the refusal is live — the same schema in a workflow, read whole, is refused', async () => {
         const refusal = { code: 'BAD_REQUEST', message: GENERATION_EXTERNAL_IMAGE_MESSAGE };
         const passThrough = {
-          kind: 'step' as const,
-          $type: 'chatCompletion',
-          input: senseiBody().params,
-          maxBuzz: 30,
+          kind: 'workflow' as const,
+          steps: [{ name: 'chat', $type: 'chatCompletion', input: senseiBody().params }],
         };
         await expect(estimate(passThrough)).rejects.toMatchObject(refusal);
         await expect(submit(passThrough)).rejects.toMatchObject(refusal);

@@ -292,7 +292,6 @@ import {
   getStep,
   planStepSpend,
   resolveStepVariant,
-  STEP_TYPE_ACCEPTABLE_POSTURES,
 } from '~/server/services/blocks/steps';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import {
@@ -10899,13 +10898,15 @@ async function assertStepOrWorkflowInputsUsable(
       : isPassThroughStepBody(body)
       ? (['appBlocksPassThrough', body.input] as const)
       : (['appBlocksStep', body.params] as const);
-  // Only a registry step declares free text in its params (`freeTextParamPaths`, pinned against
-  // its param schema). A workflow or pass-through body is read whole: there any step can `$ref`
-  // any field, so a link in a text field may be wired into an image input.
+  // A registry step declares free text in its params (`freeTextParamPaths`, pinned against its
+  // param schema); a lone pass-through step by its `$type`. A workflow is read whole: there any
+  // step can `$ref` any field, so a link in a text field may be wired into an image input.
   const freeTextPaths =
-    body.kind === 'step' && !isPassThroughStepBody(body)
-      ? getStep(body.step)?.freeTextParamPaths
-      : undefined;
+    body.kind === 'workflow'
+      ? undefined
+      : isPassThroughStepBody(body)
+      ? PASS_THROUGH_FREE_TEXT_PATHS[foldStepTypeCase(body.$type)]
+      : getStep(body.step)?.freeTextParamPaths;
   const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs, freeTextPaths);
   if (tooDeep) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input nests too deeply' });
@@ -10919,31 +10920,21 @@ async function assertStepOrWorkflowInputsUsable(
     entry,
     isApiCaller: false,
     opaqueInput: true,
-    textOutputOnly: producesTextOnly(body),
   });
 }
 
-const TEXT_OUTPUT_STEP_TYPES: ReadonlySet<string> = new Set(
-  Object.entries(STEP_TYPE_ACCEPTABLE_POSTURES)
-    .filter(([, postures]) => postures.includes('textOutput'))
-    .map(([type]) => foldStepTypeCase(type))
-);
-
-/** True when every step the body can run outputs text, so no url in it is a media source. */
-function producesTextOnly(
-  body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>
-): boolean {
-  if (body.kind === 'step' && !isPassThroughStepBody(body)) {
-    return getStep(body.step)?.moderationPosture === 'textOutput';
-  }
-  const steps = body.kind === 'workflow' ? body.steps : [body];
-  return steps.every((step) => {
-    const types = collectBlockStepTypes(step.$type, step.input);
-    return (
-      types !== null && types.every((type) => TEXT_OUTPUT_STEP_TYPES.has(foldStepTypeCase(type)))
-    );
-  });
-}
+/**
+ * Free-text fields of a pass-through step's orchestrator input, by case-folded `$type`: text the
+ * orchestrator never fetches (message text, tool schemas). A media part beside them is still read.
+ */
+const PASS_THROUGH_FREE_TEXT_PATHS: Readonly<Record<string, readonly string[]>> = {
+  chatcompletion: [
+    'messages[].content',
+    'messages[].tool_calls.**',
+    'tools[].function.**',
+    'tools[].parameters.**',
+  ],
+};
 
 /**
  * Settle-time observability labels for a pass-through submit.

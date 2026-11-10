@@ -759,7 +759,6 @@ export async function assertGenerationInputsUsable({
   entry,
   isApiCaller,
   opaqueInput = false,
-  textOutputOnly = false,
   now,
 }: {
   urls: (string | null | undefined)[];
@@ -772,11 +771,6 @@ export async function assertGenerationInputsUsable({
    * that fails, and http to an external host counts as external.
    */
   opaqueInput?: boolean;
-  /**
-   * Every step the input feeds outputs text, so a url in it is no media source: an App Blocks
-   * entry then treats an external host as other entries do (a JSON-schema id, a link in a prompt).
-   */
-  textOutputOnly?: boolean;
   now?: Date;
 }) {
   const given = [...new Set(urls.filter((url): url is string => !!url))];
@@ -834,7 +828,7 @@ export async function assertGenerationInputsUsable({
       keyedUrls.push(url);
       continue;
     }
-    if (cls === 'external' && appBlock && !textOutputOnly) throw refuse(cls, pageLink);
+    if (cls === 'external' && appBlock) throw refuse(cls, pageLink);
     if (cls === 'external' && EXTERNAL_COUNTED_ENTRIES.has(entry)) {
       refuseExternal ??= await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS);
       recordExternalHost({
