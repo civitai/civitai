@@ -15,6 +15,11 @@ import {
   swapIndex,
 } from '~/server/meilisearch/util';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
+import {
+  forwardSearchUpdate,
+  type SearchOutboxEntity,
+  type SearchUpdateReason,
+} from '~/server/search-index/search-outbox-forward';
 import type {
   PullTask,
   PushTask,
@@ -95,6 +100,11 @@ type SearchIndexProcessor = {
    * re-running a `reset` — the index is stale for as long as it is retired.
    */
   retired?: boolean;
+  /**
+   * Forward each queued update to "Outbox" for the semantic search sync. Retiring the index does
+   * not stop it: the sync outlives the Meilisearch index.
+   */
+  outboxEntity?: SearchOutboxEntity;
 };
 
 /**
@@ -446,6 +456,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     queues,
     updateSyncChunkSize: configuredUpdateSyncChunkSize = DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
     retired = false,
+    outboxEntity,
   } = processor;
 
   // `chunk(xs, 0)`, `chunk(xs, -1)`, `chunk(xs, NaN)` and `chunk(xs, -Infinity)` all return `[]`
@@ -811,7 +822,11 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       return result;
     },
-    async queueUpdate(items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>) {
+    async queueUpdate(
+      items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>,
+      { reason }: { reason?: SearchUpdateReason } = {}
+    ) {
+      if (outboxEntity) await forwardSearchUpdate({ entityType: outboxEntity, items, reason });
       if (retired) return;
       await SearchIndexUpdate.queueUpdate({ indexName, items });
     },
