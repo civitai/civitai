@@ -280,10 +280,12 @@ export const usageLimitDefs = [
   // (`server/services/blocks/user-app-caps.service.ts`), which both enforcement and the
   // account Limits section call, so the two cannot disagree. Never `rateLimit()` rules.
   //
-  // Every tier is at the pre-tier constants (`BLOCK_BUZZ_CAP_PER_DAY`, the doc store's
-  // `userBytes` / `userDocs`) until per-tier numbers are set: set them with a `byTier` override
-  // in the `usage-limits` KeyValue row, no deploy needed. `kind: 'abuse'` so an override can
-  // raise or lower these but never `disabled` them (an unbounded spend or storage ceiling).
+  // The per-tier table (decided 2026-11-10). Free (`base`) is the pre-tier constants
+  // (`BLOCK_BUZZ_CAP_PER_DAY`, the doc store's `userBytes` / `userDocs`); Founder, a legacy paid
+  // tier with no row in the table, gets Bronze's. Change a value with a `byTier` override in the
+  // `usage-limits` KeyValue row, no deploy needed (an override's `byTier` replaces this one whole,
+  // so it repeats every tier it keeps). `kind: 'abuse'` so an override can raise or lower these
+  // but never `disabled` them (an unbounded spend or storage ceiling).
   {
     // Buzz spent through apps per UTC day, across all of a user's apps.
     id: 'apps.buzz-daily',
@@ -292,17 +294,32 @@ export const usageLimitDefs = [
     label: 'Daily Buzz cap across apps',
     window: { type: 'utc-day' },
     base: 50_000,
+    byTier: {
+      founder: { limit: 75_000 },
+      bronze: { limit: 75_000 },
+      silver: { limit: 100_000 },
+      gold: { limit: 200_000 },
+    },
   },
   {
     // What `apps.buzz-daily` rises to for the rest of the UTC day once the viewer opts in to
-    // continue on their own Buzz at the limit. Never below the plan cap: where it is not above
-    // it, there is nothing to opt in to and no prompt offers it.
+    // continue on their own Buzz at the limit: TWICE the viewer's tier cap. Read as a rule on the
+    // tier's own cap, not as a figure: a tier's `{ multiplier: m }` is m times its
+    // `apps.buzz-daily` cap and `{ limit: n }` is n Buzz; a tier with no rule (an override that
+    // names other tiers only) keeps twice its cap. `base` is unused. Never below the plan cap.
     id: 'apps.buzz-daily-opt-in',
     area: 'apps',
     kind: 'abuse',
     label: 'Daily Buzz cap across apps after opting in',
     window: { type: 'utc-day' },
-    base: 50_000,
+    base: 100_000,
+    byTier: {
+      free: { multiplier: 2 },
+      founder: { multiplier: 2 },
+      bronze: { multiplier: 2 },
+      silver: { multiplier: 2 },
+      gold: { multiplier: 2 },
+    },
   },
   {
     // Bytes one user may hold in one app.
@@ -312,6 +329,12 @@ export const usageLimitDefs = [
     label: 'Storage per app',
     window: { type: 'standing' },
     base: 2 * 1024 * 1024,
+    byTier: {
+      founder: { limit: 4 * 1024 * 1024 },
+      bronze: { limit: 4 * 1024 * 1024 },
+      silver: { limit: 8 * 1024 * 1024 },
+      gold: { limit: 16 * 1024 * 1024 },
+    },
   },
   {
     // Documents one user may hold in one app.
@@ -321,6 +344,12 @@ export const usageLimitDefs = [
     label: 'Documents per app',
     window: { type: 'standing' },
     base: 1_000,
+    byTier: {
+      founder: { limit: 2_000 },
+      bronze: { limit: 2_000 },
+      silver: { limit: 5_000 },
+      gold: { limit: 10_000 },
+    },
   },
 ] as const satisfies readonly UsageLimitDef[];
 

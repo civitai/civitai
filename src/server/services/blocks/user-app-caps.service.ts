@@ -41,6 +41,27 @@ function capFor(config: UsageLimitConfig, id: string, tier: string | null | unde
   return resolveUsageLimitValues(values, { tier }).limit;
 }
 
+/** A tier with no opt-in rule continues to this multiple of its daily cap. */
+export const OPT_IN_DEFAULT_MULTIPLIER = 2;
+
+/**
+ * The opt-in ceiling of `tier`: its `apps.buzz-daily-opt-in` rule applied to its OWN daily cap
+ * (`{ multiplier: m }` → m × the cap, `{ limit: n }` → n), or twice the cap with no rule. Not
+ * `capFor`: the registry would scale the entry's own base, and the ceiling must follow the cap.
+ */
+function optInCeilingFor(
+  config: UsageLimitConfig,
+  tier: string | null | undefined,
+  planBuzzPerDay: number
+): number {
+  const id = USER_APP_CAP_IDS.optInBuzzPerDay;
+  const values = config.get(id) ?? getUsageLimitDef(id);
+  const rule = resolveUsageLimitValues(values, { tier }).tierRule;
+  if (rule && 'limit' in rule) return rule.limit;
+  const multiplier = rule ? rule.multiplier : OPT_IN_DEFAULT_MULTIPLIER;
+  return Math.floor(planBuzzPerDay * multiplier);
+}
+
 /** The plan caps of `tier` (no tier, or an unknown one, reads as free). Pure. */
 export function planCapsForTier(
   config: UsageLimitConfig,
@@ -50,10 +71,7 @@ export function planCapsForTier(
   return {
     planBuzzPerDay,
     // Opting in can only ever widen: a ceiling set below the plan's cap gives nothing to opt in to.
-    optInBuzzPerDay: Math.max(
-      planBuzzPerDay,
-      capFor(config, USER_APP_CAP_IDS.optInBuzzPerDay, tier)
-    ),
+    optInBuzzPerDay: Math.max(planBuzzPerDay, optInCeilingFor(config, tier, planBuzzPerDay)),
     docBytes: capFor(config, USER_APP_CAP_IDS.docBytes, tier),
     docCount: capFor(config, USER_APP_CAP_IDS.docCount, tier),
   };
@@ -135,8 +153,8 @@ export async function resolveUserAppCaps(
 
   const plan = planCapsForTier(config, user.tier);
   let optedIn = false;
-  // No flag read and no Redis read while there is nothing to opt in to: then this is exactly the
-  // plan's cap, whatever was recorded.
+  // No flag read and no Redis read where there is nothing to opt in to (an override that sets the
+  // ceiling at or below the cap): then this is exactly the plan's cap, whatever was recorded.
   if (plan.optInBuzzPerDay > plan.planBuzzPerDay) {
     try {
       optedIn = (await d.isOptInEnabled(user)) && (await d.readOptIn(userId));

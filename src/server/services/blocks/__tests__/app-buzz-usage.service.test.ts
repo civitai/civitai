@@ -112,7 +112,7 @@ describe('getMyAppBuzzCap (the paused notice)', () => {
     });
   });
 
-  it('today (no higher ceiling): paused at 50,000 with an upgrade only, no opt-in', async () => {
+  it('no higher ceiling (an override at the cap): paused with an upgrade only, no opt-in', async () => {
     counterReads('50000');
     expect(await getMyAppBuzzCap(USER)).toMatchObject({ paused: true, canOptIn: false });
   });
@@ -136,7 +136,7 @@ describe('optInAppBuzzToday', () => {
     expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
   });
 
-  it('is refused where there is nothing higher to continue to (today), and records nothing', async () => {
+  it('is refused where there is nothing higher to continue to, and records nothing', async () => {
     await expect(optInAppBuzzToday(USER)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
   });
