@@ -6,6 +6,8 @@ import { constants } from '~/server/common/constants';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { withSpan } from '~/server/utils/otel-helpers';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
+import { Flags } from '~/shared/utils/flags';
 
 /**
  * The read behind the creator card (`fetchUserCreator`): the user with its links, stats, rank,
@@ -64,7 +66,10 @@ const userCreatorSelect = {
   },
 } satisfies Prisma.UserSelect;
 
-export type UserCreatorUser = Prisma.UserGetPayload<{ select: typeof userCreatorSelect }>;
+export type UserCreatorUser = Prisma.UserGetPayload<{ select: typeof userCreatorSelect }> & {
+  /** UserFlag.ExcludeFromEventPoints; moderator-only, masked like `excludeFromLeaderboards`. */
+  excludeFromEventPoints: boolean;
+};
 export type UserCreatorRead = { user: UserCreatorUser; modelCount: number } | null;
 
 type CreatorRow = NonNullable<Awaited<ReturnType<typeof getUserCreatorRow>>>;
@@ -131,6 +136,7 @@ export async function readUserCreatorViaKysely(
     publicSettings: row.publicSettings,
     settings: row.settings,
     excludeFromLeaderboards: row.excludeFromLeaderboards,
+    excludeFromEventPoints: Flags.hasFlag(row.flags, UserFlag.ExcludeFromEventPoints),
     links: row.links,
     stats: stats ?? null,
     rank:

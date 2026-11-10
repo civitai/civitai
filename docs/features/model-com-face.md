@@ -50,6 +50,10 @@ saved, when one of the creator's images or posts on the model is deleted, blocke
 moderated, when a version is unpublished, and when an image's rating changes. When the cover stops
 qualifying, the model leaves .com again.
 
+The editor's .com tab says "Not listed on civitai.com" when a saved cover does not count, with what
+to change (`comCoverState` in `src/shared/utils/model-sfw-face.ts`). Any review or moderation state
+on the image reads the same as a flag.
+
 For a mature model shown through its face, the feed sends .com viewers only its PG/PG-13 images.
 
 `hasSfwFace` on model responses and search documents marks a complete face. The client-side drop
@@ -70,6 +74,23 @@ and trigger words, which .com shows unchanged.
 
 The .com fields are never fed to the automatic checks that set `Model.nsfw`; those keep reading the
 .red title and description.
+
+A .com face is also refused when the model's own listing (.red title, description and trigger
+words) fails the listing check. The refusal names those fields; the check's reason is kept for
+moderators and never sent to the owner. A check that could not run says so, separately.
+
+## Listing re-check
+
+When the owner edits the .red title, description or trigger words of a model with a .com face, a
+job (`model-com-face-recheck.service.ts`) checks the listing again. A flagged listing takes the face
+off .com: the .com cover is cleared, the .com title and description stay, and
+`meta.comFaceRemoved` records it. The editor shows the owner a notice on both tabs; for a
+non-mature model, which stays on .com, it says only that the .com cover was removed.
+
+The marker goes when the owner sets a .com cover again (through the save checks), turns the face
+off, or edits the .red listing so that it passes. That edit gets one check, once the owner has
+stopped editing for two minutes; no verdict keeps the marker. The old cover is not put back.
+Creator Studio's Make Safe can draft a removed face again.
 
 ## Draft action
 

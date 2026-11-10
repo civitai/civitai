@@ -88,7 +88,7 @@ import {
   VIDEO_MIME_TYPE,
   ZIP_MIME_TYPE,
 } from '~/shared/constants/mime-types';
-import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import { trainingDataVisibility } from '~/shared/utils/training-data-visibility';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import {
   type AutoLabelType,
@@ -1220,12 +1220,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 sizeKB: bytesToKB(size),
                 modelVersionId: versionId,
                 type: 'Training Data',
-                visibility:
-                  ownRights && shareDataset
-                    ? ModelFileVisibility.Public
-                    : ownRights
-                    ? ModelFileVisibility.Sensitive
-                    : ModelFileVisibility.Private,
+                visibility: trainingDataVisibility({ ownRights, shareDataset }),
                 metadata,
                 ...(result.backend === 'b2' ? { s3Path: result.key } : {}),
               });
@@ -1279,12 +1274,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         await updateFileMutation.mutateAsync({
           id: modelFileId!,
           metadata: { ...existingMetadata!, ownRights, shareDataset, labelType },
-          visibility:
-            ownRights && shareDataset
-              ? ModelFileVisibility.Public
-              : ownRights
-              ? ModelFileVisibility.Sensitive
-              : ModelFileVisibility.Private,
+          visibility: trainingDataVisibility({ ownRights, shareDataset }),
         });
         setZipping(false);
       }
@@ -1966,7 +1956,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     .
                   </Text>
                   <Checkbox
-                    label="I own the rights to all these files"
+                    label="I have the right, or the rightholder’s explicit permission, to redistribute these files"
                     checked={ownRights}
                     onChange={(event) => {
                       setOwnRights(model.id, thisMediaType, event.currentTarget.checked);

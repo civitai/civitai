@@ -102,6 +102,7 @@ import { imageDetailGateLevel } from '~/components/Image/DetailV2/image-detail-g
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { useReactionNudgeClass } from '~/components/HatTurf/reaction-nudge';
 import { ImageReactorsPreview } from '~/components/Reaction/ImageReactorsPreview';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -267,24 +268,61 @@ function ImageDetail2Content() {
     ? IconLayoutSidebarRightExpand
     : IconLayoutSidebarRightCollapse;
 
+  const reactionsHidden =
+    hideReactions || collectionItems.some((ci) => contestCollectionReactionsHidden(ci.collection));
+
+  const pillStyling =
+    (h: number) =>
+    (_reaction: unknown, hasReacted?: boolean): Omit<ButtonProps, 'onClick'> & BadgeProps => ({
+      radius: 'xl',
+      variant: 'light',
+      px: undefined,
+      pl: 4,
+      pr: 8,
+      h,
+      style: {
+        color: 'white',
+        background: hasReacted ? rgba(theme.colors.blue[4], 0.4) : rgba(theme.colors.gray[8], 0.4),
+      },
+    });
+
+  // `withStoryline` is the desktop toolbar; without it, the phone's bottom bar, where Remix and
+  // Save are icon-only circles so the hat button and sticker pill fit beside them.
   const renderLeftImageControls = (withStoryline: boolean) => (
     <>
       {canRemix && (
         <RemixMenu image={image} source="remix:image">
-          <Button {...sharedButtonProps} color="blue" data-activity="remix:image">
-            <Group gap={4} wrap="nowrap">
-              <IconBrush size={16} />
-              <Text size="xs">Remix</Text>
-            </Group>
-          </Button>
+          {withStoryline ? (
+            <Button {...sharedButtonProps} color="blue" data-activity="remix:image">
+              <Group gap={4} wrap="nowrap">
+                <IconBrush size={16} />
+                <Text size="xs">Remix</Text>
+              </Group>
+            </Button>
+          ) : (
+            <LegacyActionIcon
+              {...sharedActionIconProps}
+              color="blue"
+              data-activity="remix:image"
+              aria-label="Remix"
+            >
+              <IconBrush {...sharedIconProps} />
+            </LegacyActionIcon>
+          )}
         </RemixMenu>
       )}
-      <Button {...sharedButtonProps} onClick={handleSaveClick}>
-        <IconBookmark {...sharedIconProps} />
-        <Text size="xs" align="center" fw={500}>
-          Save
-        </Text>
-      </Button>
+      {withStoryline ? (
+        <Button {...sharedButtonProps} onClick={handleSaveClick}>
+          <IconBookmark {...sharedIconProps} />
+          <Text size="xs" align="center" fw={500}>
+            Save
+          </Text>
+        </Button>
+      ) : (
+        <LegacyActionIcon {...sharedActionIconProps} onClick={handleSaveClick} aria-label="Save">
+          <IconBookmark {...sharedIconProps} />
+        </LegacyActionIcon>
+      )}
       {withStoryline && (
         <StorylineToolbarChip
           imageId={image.id}
@@ -308,10 +346,27 @@ function ImageDetail2Content() {
           </Button>
         </NextLink>
       )}
-      {!image.poi && (
+      {/* On a phone the Buzz chip in the reaction row is the tip button, unless reactions are
+          hidden: the chip goes with them, so the bar keeps a Tip circle. */}
+      {!withStoryline && reactionsHidden && !image.poi && (
+        // The wrapper is the button; the circle inside it is a plain badge.
+        <InteractiveTipBuzzButton
+          toUserId={image.user.id}
+          entityId={image.id}
+          entityType="Image"
+          aria-label="Tip"
+          data-testid="image-detail-tip"
+        >
+          <Badge {...sharedBadgeProps} px={0} w={36}>
+            <IconBolt size={18} fill={theme.colors.accent[5]} color={theme.colors.accent[5]} />
+          </Badge>
+        </InteractiveTipBuzzButton>
+      )}
+      {withStoryline && !image.poi && (
         <InteractiveTipBuzzButton toUserId={image.user.id} entityId={image.id} entityType="Image">
           <Badge
             {...sharedBadgeProps}
+            data-testid="image-detail-tip"
             pr={12}
             style={{
               fontSize: 12,
@@ -325,12 +380,18 @@ function ImageDetail2Content() {
           </Badge>
         </InteractiveTipBuzzButton>
       )}
-      {/* On a phone the badge is in the top toolbar and the hat button is here, by Save and Tip. */}
+      {/* On a phone the badge is in the top toolbar, by Close, and the hat button is here. */}
       {withStoryline && !narrowStage && takesHats(image) && (
         <HatTurfDetailBadge imageId={image.id} />
       )}
       {!withStoryline && narrowStage && takesHats(image) && (
         <HatTurfDetailControls imageId={image.id} large />
+      )}
+      {/* Off the reaction row on a phone: beside the reactions it squeezed their counts. */}
+      {!withStoryline && narrowStage && (
+        <ReactionSettingsProvider settings={{ buttonStyling: pillStyling(36) }}>
+          <StickerPlacementBar imageId={image.id} imageNsfwLevel={image.nsfwLevel} />
+        </ReactionSettingsProvider>
       )}
     </>
   );
@@ -375,11 +436,21 @@ function ImageDetail2Content() {
                     <>
                       {/* HEADER */}
                       <div className="flex justify-between gap-3 p-3 @md:gap-8">
-                        <CloseButton
-                          onClick={close}
-                          variant="filled"
-                          className="size-9 rounded-full"
-                        />
+                        <div className="flex shrink-0 items-center gap-1">
+                          <CloseButton
+                            onClick={close}
+                            variant="filled"
+                            className="size-9 rounded-full"
+                            data-testid="image-detail-close"
+                          />
+                          {narrowStage && takesHats(image) && (
+                            <HatTurfDetailBadge imageId={image.id} />
+                          )}
+                          <ImageGuard2.BlurToggle
+                            {...sharedBadgeProps}
+                            className={clsx('@md:hidden', sharedBadgeProps.className)}
+                          />
+                        </div>
                         {/* One line on a phone: a wrapped row shrinks the image under it. */}
                         <div className="flex flex-1 flex-wrap justify-between gap-1 @max-md:min-w-0 @max-md:flex-nowrap">
                           <div className="flex min-w-0 items-center @md:hidden">
@@ -395,13 +466,6 @@ function ImageDetail2Content() {
                           </div>
 
                           <div className="flex shrink-0 items-center gap-1">
-                            {narrowStage && takesHats(image) && (
-                              <HatTurfDetailBadge imageId={image.id} />
-                            )}
-                            <ImageGuard2.BlurToggle
-                              {...sharedBadgeProps}
-                              className={clsx('@md:hidden', sharedBadgeProps.className)}
-                            />
                             {/* Disable view count  */}
                             {/* <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
@@ -519,36 +583,19 @@ function ImageDetail2Content() {
                           <ReactionSettingsProvider
                             settings={{
                               hideReactionCount: false,
-                              hideReactions:
-                                hideReactions ||
-                                collectionItems.some((ci) =>
-                                  contestCollectionReactionsHidden(ci.collection)
-                                ),
-                              buttonStyling: (reaction, hasReacted) => ({
-                                radius: 'xl',
-                                variant: 'light',
-                                px: undefined,
-                                pl: 4,
-                                pr: 8,
-                                h: 30,
-                                style: {
-                                  color: 'white',
-                                  background: hasReacted
-                                    ? rgba(theme.colors.blue[4], 0.4)
-                                    : rgba(theme.colors.gray[8], 0.4),
-                                  // backdropFilter: 'blur(7px)',
-                                },
-                              }),
+                              hideReactions: reactionsHidden,
+                              buttonStyling: pillStyling(30),
                             }}
                           >
                             <ImageDetailReactions image={image} />
-                            {/* Inside the provider, not beside it: the bar reads
-                                the same `buttonStyling` the reactions do. */}
-                            <StickerPlacementBar
-                              imageId={image.id}
-                              imageNsfwLevel={image.nsfwLevel}
-                              className="ml-2"
-                            />
+                            {/* On a phone it is in the bottom bar. */}
+                            {!narrowStage && (
+                              <StickerPlacementBar
+                                imageId={image.id}
+                                imageNsfwLevel={image.nsfwLevel}
+                                className="ml-2"
+                              />
+                            )}
                             {!narrowStage && takesHats(image) && (
                               <div className="ml-2">
                                 <HatTurfDetailControls imageId={image.id} />
@@ -606,7 +653,7 @@ function ImageDetail2Content() {
                     !active ? '@max-md:pb-[calc(0.75rem+var(--safe-area-inset-bottom-unpaid))]' : ''
                   }`}
                 >
-                  <div className="flex gap-1">{renderLeftImageControls(false)}</div>
+                  <div className="flex items-center gap-1">{renderLeftImageControls(false)}</div>
                   <LegacyActionIcon
                     {...sharedActionIconProps}
                     onClick={toggleInfo}
@@ -758,6 +805,11 @@ function ImageDetailReactions({
 }: {
   image: ReturnType<typeof useImageDetailContext>['images'][number];
 }) {
+  const nudge = useReactionNudgeClass({
+    imageId: image.id,
+    ownerId: image.user.id,
+    reactions: image.reactions,
+  });
   return (
     <Metrics
       entityType="Image"
@@ -781,6 +833,8 @@ function ImageDetailReactions({
             metricsUnknown={image.stats?.statsUnknown}
             targetUserId={image.user.id}
             disableBuzzTip={image.poi}
+            // Wrap, never shrink: a shrunk pill cuts its count off.
+            className={clsx('flex-wrap', nudge)}
           />
         </ImageReactorsPreview>
       )}

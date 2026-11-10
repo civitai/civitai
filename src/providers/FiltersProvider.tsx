@@ -1,4 +1,6 @@
+import { listingSortSchema } from '~/server/schema/blocks/app-listing-read.schema';
 import { createContext, useCallback, useContext, useRef } from 'react';
+import { HAT_SORTS } from '~/shared/constants/hat-turf-feed.constants';
 import * as z from 'zod';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
@@ -53,6 +55,7 @@ const modelFilterSchema = z.object({
   earlyAccess: z.boolean().optional(),
   paidAccess: z.boolean().optional(),
   hidePaid: z.boolean().optional(),
+  onSale: z.boolean().optional(),
   supportsGeneration: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
   followed: z.boolean().optional(),
@@ -102,6 +105,12 @@ const imageFilterSchema = z.object({
   // Green-domain only: opt-in to PG-13 content on image/video feeds.
   // Default off — feeds show PG only until user toggles this on.
   includePG13: z.boolean().optional(),
+  // Hat Turf players only; the server ignores these from anyone else.
+  hatSort: z.enum(HAT_SORTS).optional(),
+  hatTeams: z.string().array().optional(),
+  hatTurfMine: z.boolean().optional(),
+  hideTurfHats: z.boolean().optional(),
+  hideWornHats: z.boolean().optional(),
 });
 
 type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;
@@ -140,6 +149,11 @@ const collectionFilterSchema = z.object({
 export type CollectionFeedFilterSchema = z.infer<typeof collectionFeedFilterSchema>;
 const collectionFeedFilterSchema = z.object({
   query: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
+});
+
+export type AppsStoreFilterSchema = z.infer<typeof appsStoreFilterSchema>;
+const appsStoreFilterSchema = z.object({
+  sort: listingSortSchema.optional().catch(undefined),
 });
 
 type BountyFilterSchema = z.infer<typeof bountyFilterSchema>;
@@ -216,6 +230,7 @@ type StorageState = {
   collectionImages: CollectionFeedFilterSchema;
   collectionPosts: CollectionFeedFilterSchema;
   collectionArticles: CollectionFeedFilterSchema;
+  appsStore: AppsStoreFilterSchema;
   bounties: BountyFilterSchema;
   crucibles: CrucibleFilterSchema;
   videos: VideoFilterSchema;
@@ -231,8 +246,8 @@ export type CollectionFeedKey =
   | 'collectionImages'
   | 'collectionPosts'
   | 'collectionArticles';
-// Without the collection feed keys, which hold a URL query rather than filters a feed can run on.
-export type FilterSubTypes = Exclude<keyof StorageState, CollectionFeedKey>;
+// Without the keys that remember a URL query or a lone sort rather than filters a feed can run on.
+export type FilterSubTypes = Exclude<keyof StorageState, CollectionFeedKey | 'appsStore'>;
 
 const periodModeTypes = ['models', 'images', 'posts', 'articles', 'bounties'] as const;
 export type PeriodModeType = (typeof periodModeTypes)[number];
@@ -252,6 +267,7 @@ type StoreState = FilterState & {
   setCollectionImageFilters: (filters: Partial<CollectionFeedFilterSchema>) => void;
   setCollectionPostFilters: (filters: Partial<CollectionFeedFilterSchema>) => void;
   setCollectionArticleFilters: (filters: Partial<CollectionFeedFilterSchema>) => void;
+  setAppsStoreFilters: (filters: Partial<AppsStoreFilterSchema>) => void;
   setBountyFilters: (filters: Partial<BountyFilterSchema>) => void;
   setCrucibleFilters: (filters: Partial<CrucibleFilterSchema>) => void;
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
@@ -275,6 +291,7 @@ const localStorageSchemas: LocalStorageSchema = {
   collectionImages: { key: 'collection-image-filters', schema: collectionFeedFilterSchema },
   collectionPosts: { key: 'collection-post-filters', schema: collectionFeedFilterSchema },
   collectionArticles: { key: 'collection-article-filters', schema: collectionFeedFilterSchema },
+  appsStore: { key: 'apps-store-filters', schema: appsStoreFilterSchema },
   bounties: { key: 'bounties-filters', schema: bountyFilterSchema },
   crucibles: { key: 'crucibles-filters', schema: crucibleFilterSchema },
   videos: { key: 'videos-filters', schema: videoFilterSchema },
@@ -382,6 +399,8 @@ const createFilterStore = () =>
         set((state) => handleLocalStorageChange({ key: 'collectionPosts', data, state })),
       setCollectionArticleFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'collectionArticles', data, state })),
+      setAppsStoreFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'appsStore', data, state })),
       setBountyFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'bounties', data, state })),
       setCrucibleFilters: (data) =>

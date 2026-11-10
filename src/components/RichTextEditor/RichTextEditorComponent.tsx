@@ -45,6 +45,11 @@ import { openBlurbManager } from '~/components/Dialog/triggers/blurb-manager';
 import { insertBlurb } from '~/components/RichTextEditor/blurb.util';
 import { BlurbEditNode, BlurbEditorProvider } from '~/components/TipTap/BlurbNode';
 import { CivitaiEmbedEditNode } from '~/components/TipTap/CivitaiEmbedEditNode';
+import { SpoilerBlockNode, SpoilerMark } from '~/shared/tiptap/spoiler.node';
+import {
+  SpoilerBlockControl,
+  SpoilerTextControl,
+} from '~/components/RichTextEditor/InsertSpoilerControl';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -157,6 +162,7 @@ export function RichTextEditor({
   // Needs the addVideo branch: only it registers the image nodes that carry `size`.
   const addImageSize = addVideo && includeControls.includes('imageSize');
   const addAlign = includeControls.includes('align');
+  const addSpoilers = includeControls.includes('spoiler');
   const civitaiCardPaste =
     !!useFeatureFlags().articleCivitaiCards && includeControls.includes('civitaiEmbed');
 
@@ -278,6 +284,7 @@ export function RichTextEditor({
     if (addStickers) arr.push(StickerEditNode);
     if (addBlurbs) arr.push(BlurbEditNode);
     if (addAlign) arr.push(TextAlignExtension);
+    if (addSpoilers) arr.push(SpoilerMark, SpoilerBlockNode);
     // Registered everywhere, like the timestamp node, so content holding cards survives a save.
     arr.push(CivitaiEmbedEditNode.configure({ pasteToCard: civitaiCardPaste }));
 
@@ -287,6 +294,7 @@ export function RichTextEditor({
     addStickers,
     addBlurbs,
     addAlign,
+    addSpoilers,
     addList,
     addFormatting,
     withoutBlockContainers,
@@ -520,6 +528,12 @@ export function RichTextEditor({
                   <InsertEmbedControl />
                 </RTE.ControlsGroup>
               )}
+              {addSpoilers && (
+                <RTE.ControlsGroup>
+                  <SpoilerTextControl />
+                  <SpoilerBlockControl />
+                </RTE.ControlsGroup>
+              )}
               {addTimestamp && (
                 <RTE.ControlsGroup>
                   <InsertTimestampControl />
@@ -568,6 +582,7 @@ export function RichTextEditor({
                 ) : null}
                 {addList ? <RTE.BulletList /> : null}
                 {addLink ? <RTE.Link /> : null}
+                {addSpoilers ? <SpoilerTextControl /> : null}
               </RTE.ControlsGroup>
             </BubbleMenu>
           )}
@@ -611,7 +626,8 @@ type ControlType =
   | 'blurb'
   | 'imageSize'
   | 'align'
-  | 'civitaiEmbed';
+  | 'civitaiEmbed'
+  | 'spoiler';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;

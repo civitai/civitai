@@ -6,7 +6,7 @@ describe('createPersistQueue', () => {
   afterEach(() => vi.useRealTimers());
 
   it('sends a burst as chunks of the configured size once the window closes', async () => {
-    const send = vi.fn(async () => undefined);
+    const send = vi.fn(async (_items: number[]) => undefined);
     const queue = createPersistQueue<number>({ chunkSize: 10, delayMs: 300, send });
     for (let i = 0; i < 25; i++) {
       queue.add(i);
@@ -14,12 +14,12 @@ describe('createPersistQueue', () => {
     }
     expect(send).not.toHaveBeenCalled();
     vi.advanceTimersByTime(300);
-    expect(send.mock.calls.map(([items]) => (items as number[]).length)).toEqual([10, 10, 5]);
-    expect((send.mock.calls[2][0] as number[])[4]).toBe(24);
+    expect(send.mock.calls.map(([items]) => items.length)).toEqual([10, 10, 5]);
+    expect(send.mock.calls[2][0][4]).toBe(24);
   });
 
   it('starts a new batch for items added after the window closed', () => {
-    const send = vi.fn(async () => undefined);
+    const send = vi.fn(async (_items: string[]) => undefined);
     const queue = createPersistQueue<string>({ chunkSize: 10, delayMs: 300, send });
     queue.add('a');
     vi.advanceTimersByTime(300);
@@ -43,7 +43,7 @@ describe('createPersistQueue', () => {
   });
 
   it('sends nothing after dispose', () => {
-    const send = vi.fn(async () => undefined);
+    const send = vi.fn(async (_items: number[]) => undefined);
     const queue = createPersistQueue<number>({ chunkSize: 10, delayMs: 300, send });
     queue.add(1);
     queue.dispose();

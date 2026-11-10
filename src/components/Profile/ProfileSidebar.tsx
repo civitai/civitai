@@ -1,3 +1,4 @@
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import type { MantineSize } from '@mantine/core';
 import {
   Anchor,
@@ -108,6 +109,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const showEventCosmetics = useShowEventCosmetics();
   const { data: user } = trpc.userProfile.get.useQuery({
     username,
   });
@@ -270,9 +272,10 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   );
 
   // The sidebar scrolls, so it clips a showcase hat reaching above the avatar unless it makes room.
-  const hatRoom = isShowcaseHatShowing(user.showcaseHat)
-    ? avatarHatOverhang(user.showcaseHat, sizeOpts.avatar)
-    : 0;
+  const hatRoom =
+    showEventCosmetics && isShowcaseHatShowing(user.showcaseHat)
+      ? avatarHatOverhang(user.showcaseHat, sizeOpts.avatar)
+      : 0;
 
   return (
     <Stack

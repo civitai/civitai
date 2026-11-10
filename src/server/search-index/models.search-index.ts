@@ -1,9 +1,8 @@
-import { isGeneratorReady } from '~/shared/generation/generator-readiness';
 import { indexedVersionEligibility } from '~/shared/generation/coverage-fields';
+import { toIndexedVersion, toIndexedVersions } from '~/server/search-index/models-index-versions';
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
-import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { allowsDifferentLicenseOnMerges, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { dbRead } from '~/server/db/client';
@@ -11,7 +10,6 @@ import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { modelTagCache } from '~/server/redis/caches';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
-import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type {
   SearchIndexContext,
@@ -30,7 +28,6 @@ import { modelsFilterableAttributes } from '~/server/search-index/filterable-att
 import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
 import { modelsSearchableAttributes } from '~/server/search-index/searchable-attributes';
 import { modelsRankingRules } from '~/server/search-index/ranking-rules';
-import { modelVersionPricingSignals } from '@civitai/buzz';
 import {
   getModelPaidAccessGates,
   getModelVersionPaidAccessTerms,
@@ -44,7 +41,6 @@ import {
   getUserMetricPrivacyDefaults,
   resolveModelHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
-import type { HiddenModelMetrics } from '~/server/utils/model-metric-privacy';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -55,6 +51,7 @@ import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
 import { hasCompleteSfwFace, hoistCoverImage } from '~/shared/utils/model-sfw-face';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 
 const READ_BATCH_SIZE = 2000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -180,27 +177,49 @@ type PullDataResult = {
   images: ImagesForModelVersions[];
 };
 
-type VersionMetricRow = {
-  generationCount: number;
-  downloadCount: number;
-  thumbsUpCount: number;
-  thumbsDownCount: number;
-};
+/** A taken-down model's document names none of its images: its cover ids are cleared. */
+export const withheldCoverIds = (model: { mode?: string | null }) =>
+  isModelWithheld(model) ? { coverImageId: null, sfwCoverImageId: null } : {};
 
-// Nested per-version metrics ship in `displayedAttributes`, so they must obey the
-// same model-level hide flags as the card — otherwise the raw hidden number leaks.
-// The search-index version selector carries no earned/tipped (buzz) field, so only
-// downloads + generations are maskable here.
-function maskHiddenVersionMetrics<T extends VersionMetricRow | undefined>(
-  metrics: T,
-  hidden: HiddenModelMetrics
+/**
+ * The images a model's search document carries: the newest version of each distinct base model
+ * keeps its images, so base-model-filtered cards can show a matching version's cover. The latest
+ * version goes first, so images[0] stays the primary cover. A taken-down model is still listed,
+ * without its images.
+ */
+export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
+  model: {
+    mode?: string | null;
+    coverImageId?: number | null;
+    sfwCoverImageId?: number | null;
+  },
+  modelVersions: { id: number; baseModel: string }[],
+  images: TImage[]
 ) {
-  if (!metrics) return metrics;
-  return {
-    ...metrics,
-    downloadCount: hidden.downloads ? null : metrics.downloadCount,
-    generationCount: hidden.generations ? null : metrics.generationCount,
-  };
+  if (isModelWithheld(model)) return [];
+  const coveredBaseModels = new Set<string>();
+  const coveredVersionIds: number[] = [];
+  for (const version of modelVersions) {
+    if (coveredBaseModels.has(version.baseModel)) continue;
+    coveredBaseModels.add(version.baseModel);
+    coveredVersionIds.push(version.id);
+  }
+
+  // The .red cover ahead of the .com one: a .com viewer filters a mature .red cover out and
+  // lands on theirs, while a .red viewer keeps the creator's pick.
+  return [model.sfwCoverImageId, model.coverImageId].reduce(
+    (list, coverId) =>
+      hoistCoverImage(
+        list,
+        list.find((image) => image.id === coverId)
+      ),
+    coveredVersionIds.flatMap((versionId) =>
+      images.filter(
+        (image) =>
+          image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
+      )
+    )
+  );
 }
 
 const transformData = async ({ models, tags, cosmetics, images }: PullDataResult) => {
@@ -292,8 +311,6 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       const [version] = modelVersions;
       if (!version) return null;
-
-      const { files, ...restVersion } = version;
 
       const eligibility = modelVersions.map((x) => indexedVersionEligibility(x, model.type));
       const canGenerate = eligibility.some((x) => x.canGenerate);
@@ -396,6 +413,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       return {
         ...model,
+        ...withheldCoverIds(model),
         // All four keys written unconditionally — see the merge argument above. `?? null`
         // and never `?? 0`: a version can legitimately be judged 0 with high confidence,
         // and `?.qualityScore ?? null` keeps that 0 while still clearing an absent label.
@@ -501,41 +519,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           minor: modelRecord.minor,
           sfwOnly: modelRecord.sfwOnly,
         },
-        version: {
-          ...restVersion,
-          metrics: maskHiddenVersionMetrics(restVersion.metrics[0], hidden),
-          hashes: restVersion.hashes.map((hash) => hash.hash),
-          hashData: restVersion.hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
-          settings: restVersion.settings as RecommendedSettingsSchema,
-          baseModel: restVersion.baseModel as BaseModel,
-        },
-        versions: modelVersions.map(
-          (
-            {
-              generationCoverage: _coverage,
-              files,
-              hashes,
-              settings,
-              metrics: vMetrics,
-              usageControl,
-              ...x
-            },
-            i
-          ) => ({
-            ...x,
-            // Keeps the column's name but holds readiness — the loaded-only filter reads this.
-            generatorLoaded: isGeneratorReady({ generatorLoaded: x.generatorLoaded, usageControl }),
-            // A turbo block on the version is what makes it a turbo variant; the picker filters on this.
-            turbo: !!(settings as RecommendedSettingsSchema | null)?.turbo,
-            pricing: modelVersionPricingSignals({ paidAccess: paidAccessTerms.get(x.id) ?? null }),
-            metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
-            hashes: hashes.map((hash) => hash.hash),
-            hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
-            ...eligibility[i],
-            settings: settings as RecommendedSettingsSchema,
-            baseModel: x.baseModel as BaseModel,
-          })
-        ),
+        version: toIndexedVersion(version, hidden),
+        versions: toIndexedVersions(modelVersions, { hidden, paidAccessTerms, eligibility }),
         triggerWords: [
           ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
         ],
@@ -597,32 +582,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         return null;
       }
 
-      // Keep images for the newest version of each distinct base model — not just the
-      // latest version — so base-model-filtered cards can show a matching version's
-      // cover. The latest version goes first, so images[0] stays the primary cover.
-      const coveredBaseModels = new Set<string>();
-      const coveredVersionIds: number[] = [];
-      for (const version of modelVersions) {
-        if (coveredBaseModels.has(version.baseModel)) continue;
-        coveredBaseModels.add(version.baseModel);
-        coveredVersionIds.push(version.id);
-      }
-
-      // The .red cover ahead of the .com one: a .com viewer filters a mature .red cover out and
-      // lands on theirs, while a .red viewer keeps the creator's pick.
-      const modelImages = [model.sfwCoverImageId, model.coverImageId].reduce(
-        (list, coverId) =>
-          hoistCoverImage(
-            list,
-            list.find((image) => image.id === coverId)
-          ),
-        coveredVersionIds.flatMap((versionId) =>
-          images.filter(
-            (image) =>
-              image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
-          )
-        )
-      );
+      const modelImages = pickModelIndexImages(model, modelVersions, images);
 
       return {
         id: model.id,

@@ -37,6 +37,7 @@ import {
   getUserSettingsHandler,
   getUserTagsHandler,
   setLeaderboardEligibilityHandler,
+  setEventPointsExclusionHandler,
   setUserSettingHandler,
   toggleArticleEngagementHandler,
   toggleBanHandler,
@@ -128,6 +129,7 @@ import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils'
 import { dbRead } from '~/server/db/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getUsageLimits, USAGE_LIMITS_SCOPES } from '~/server/services/usage-limits.service';
+import { getActiveLimits } from '~/server/utils/active-rate-limits';
 import { userCreatorEdgeTag } from '~/server/services/user-creator.service';
 
 export const userRouter = router({
@@ -168,6 +170,14 @@ export const userRouter = router({
         ids: input?.ids,
       })
     ),
+  getActiveLimits: protectedProcedure
+    .meta({ anyOfScopes: USAGE_LIMITS_SCOPES })
+    .query(({ ctx }) => getActiveLimits(ctx.user.id)),
+  /** Buzz spent through apps today against the per-user cap; `null` where apps are off. */
+  getAppBuzzUsage: protectedProcedure.meta({ blockApiKeys: true }).query(async ({ ctx }) => {
+    const { getMyAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
+    return getMyAppBuzzToday(ctx.user);
+  }),
   getSearchHydration: publicProcedure
     .input(getUserSearchHydrationSchema)
     .query(getUserSearchHydrationHandler),
@@ -425,6 +435,9 @@ export const userRouter = router({
   setLeaderboardEligibility: moderatorProcedure
     .input(setLeaderboardEligbilitySchema)
     .mutation(setLeaderboardEligibilityHandler),
+  setEventPointsExclusion: moderatorProcedure
+    .input(setLeaderboardEligbilitySchema)
+    .mutation(setEventPointsExclusionHandler),
   requestAdToken: verifiedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .mutation(({ ctx }) => requestAdToken({ userId: ctx.user.id })),

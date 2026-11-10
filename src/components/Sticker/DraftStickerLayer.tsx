@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { DraftSticker } from '~/components/Sticker/DraftSticker';
+import { StickerMotionGuides } from '~/components/Sticker/StickerMotionGuides';
 import { useDraftGestures } from '~/components/Sticker/useDraftGestures';
 import { freeOfferFor } from '~/components/Sticker/free-offer';
 import {
@@ -39,6 +40,11 @@ export function DraftStickerLayer() {
   const drafts = useStickerPlacementDraftStore((state) => state.drafts);
   const selectedDraftId = useStickerPlacementDraftStore((state) => state.selectedDraftId);
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
+  const playheadMs = useStickerPlacementDraftStore((state) => state.playheadMs);
+  // Previewing shows the stickers as viewers see them, so no guides.
+  const showGuides = useStickerPlacementDraftStore(
+    (state) => !state.videoPlaying && !state.previewing && !state.trayOpen
+  );
   const { sticker } = useOwnedSticker();
   // A draft dragged out of the shop is a sticker the placer does not own yet, so
   // its artwork is not in `useOwnedSticker` — without this it renders nothing and
@@ -99,12 +105,18 @@ export function DraftStickerLayer() {
   );
 
   const onGesture = useDraftGestures(maxScale);
+  const artFor = (cosmeticId: number) =>
+    sticker.find((option) => option.id === cosmeticId) ?? shopArt.get(cosmeticId);
+  const selectedDraft = drafts.find((draft) => draft.id === selectedDraftId);
+  const selectedArt = selectedDraft && artFor(selectedDraft.cosmeticId);
 
   return (
     <>
+      {showGuides && selectedDraft && selectedArt && (
+        <StickerMotionGuides draft={selectedDraft} art={selectedArt} playheadMs={playheadMs} />
+      )}
       {drafts.map((draft) => {
-        const art =
-          sticker.find((option) => option.id === draft.cosmeticId) ?? shopArt.get(draft.cosmeticId);
+        const art = artFor(draft.cosmeticId);
         if (!art) return null;
 
         return (

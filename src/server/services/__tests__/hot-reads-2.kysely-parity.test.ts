@@ -8,6 +8,7 @@ import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
 import { readTaggedGolden } from '~/server/db/__tests__/tagged-golden';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 import {
   readModelWithDetailsViaKysely,
   type ModelWithDetails,
@@ -17,7 +18,6 @@ import {
   type UserCreatorRead,
   type UserCreatorWhere,
 } from '~/server/services/user-creator.reads';
-import { getImageThread } from '@civitai/db-queries/hot-reads';
 import {
   readImageTagsViaKysely,
   type ImageTagsForImagesRow,
@@ -122,9 +122,6 @@ const IMAGE_TWO = 2102;
 const ALICE_VOTER = 1201;
 const BOB_VOTER = 1202;
 const IMAGE_UNTAGGED = 2103;
-const THREAD_LOCKED = 9301;
-const THREAD_OPEN = 9302;
-const THREAD_OF_MODEL = 9303;
 
 const golden = readTaggedGolden(
   resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures/hot-reads-2-golden.json')
@@ -141,15 +138,15 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
 
     await prisma.$executeRawUnsafe(`
       INSERT INTO ${t('User')} (id, username, image, "createdAt", "deletedAt", muted, "bannedAt",
-        "excludeFromLeaderboards", "profilePictureId", settings, "publicSettings") VALUES
+        "excludeFromLeaderboards", flags, "profilePictureId", settings, "publicSettings") VALUES
         (${CREATOR}, 'creator', 'avatar.png', '2025-05-06 07:08:09.123', NULL, true,
-          '2026-01-02 03:04:05.678', true, ${PICTURE}, '{"creatorShop": {"enabled": true}}',
-          '{"showcase": [1, 2]}'),
-        (${BARE}, 'bare', NULL, '2024-03-04 05:06:07.891', NULL, false, NULL, false, NULL, NULL, NULL),
-        (${NAMELESS}, NULL, NULL, '2024-03-05 05:06:07.891', NULL, false, NULL, false, NULL, '{}', '{}'),
+          '2026-01-02 03:04:05.678', true, ${UserFlag.ExcludeFromEventPoints}, ${PICTURE},
+          '{"creatorShop": {"enabled": true}}', '{"showcase": [1, 2]}'),
+        (${BARE}, 'bare', NULL, '2024-03-04 05:06:07.891', NULL, false, NULL, false, 0, NULL, NULL, NULL),
+        (${NAMELESS}, NULL, NULL, '2024-03-05 05:06:07.891', NULL, false, NULL, false, 0, NULL, '{}', '{}'),
         (${DELETED}, 'gone', NULL, '2024-03-06 05:06:07.891', '2026-02-03 04:05:06.789', false,
-          NULL, false, NULL, '{}', '{}'),
-        (${SYSTEM}, 'civitai', NULL, '2020-01-01 00:00:00.000', NULL, false, NULL, false, NULL,
+          NULL, false, 0, NULL, '{}', '{}'),
+        (${SYSTEM}, 'civitai', NULL, '2020-01-01 00:00:00.000', NULL, false, NULL, false, 0, NULL,
           '{}', '{}')
     `);
     await prisma.$executeRawUnsafe(`
@@ -334,12 +331,6 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
         (9811, ${PICTURE}, ${BOB_VOTER}, 1, '2026-05-01 00:00:00.000'),
         (9817, ${IMAGE_TWO}, ${ALICE_VOTER}, 1, '2026-05-02 00:00:00.000')
     `);
-    await prisma.$executeRawUnsafe(`
-      INSERT INTO ${t('Thread')} (id, locked, "imageId", "modelId") VALUES
-        (${THREAD_LOCKED}, true, ${PICTURE}, NULL),
-        (${THREAD_OPEN}, false, ${IMAGE_TWO}, NULL),
-        (${THREAD_OF_MODEL}, false, NULL, ${MODEL})
-    `);
   });
 
   afterAll(async () => {
@@ -446,21 +437,6 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       expect(golden.peek<ImageTagsForImagesRow[]>('tags:several images, one untagged')).toEqual(
         rows
       );
-    });
-  });
-
-  describe("an image's comment thread", () => {
-    it.each([
-      ['a locked thread', PICTURE],
-      ['an open thread', IMAGE_TWO],
-      ['no thread', IMAGE_UNTAGGED],
-    ])('%s', async (_, imageId) => {
-      const viaKysely = (await getImageThread(kysely, imageId)) ?? null;
-      expect(viaKysely).toStrictEqual(golden.take(`thread:${_}`));
-    });
-
-    it('control: the fixture threads are found', async () => {
-      expect(await getImageThread(kysely, PICTURE)).toEqual({ id: THREAD_LOCKED, locked: true });
     });
   });
 

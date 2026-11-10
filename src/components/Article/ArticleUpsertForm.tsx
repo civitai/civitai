@@ -2,14 +2,16 @@ import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
 import { Alert, Anchor, Button, Group, Input, Paper, Stack, Text, Title } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
-import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
+import { IconLink, IconQuestionMark, IconSparkles, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
 import { ArticleEditEventCard } from '~/components/Article/ArticleEditEventCard';
 import { articleEditEventCard } from '~/components/Article/article-edit-event-card.utils';
+import { openArticleReframeModal } from '~/components/Article/ArticleReframeModal';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { openArticleShareDraftModal } from '~/components/Article/ArticleShareDraftModal';
 import { getUserNsfwLevelSubmit } from '~/components/Article/article-nsfw-submit';
 import { getArticleScheduleSubmit } from '~/components/Article/article-schedule-submit';
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -40,8 +42,9 @@ import {
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { upsertArticleInput } from '~/server/schema/article.schema';
-import { imageSchema } from '~/server/schema/image.schema';
+import { articleFormSchema } from '~/components/Article/article-form.schema';
+import type { ImageSchema } from '~/server/schema/image.schema';
+import { getReframeRefusal, type ArticleReframeTarget } from '~/shared/utils/article-reframe';
 import type { ArticleGetById } from '~/server/services/article.service';
 import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { ArticleStatus, TagTarget } from '~/shared/utils/prisma/enums';
@@ -52,22 +55,7 @@ import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-const schema = upsertArticleInput
-  .omit({
-    coverImage: true,
-    bannerImage: true,
-    userNsfwLevel: true,
-    moderatorNsfwLevel: true,
-    lockedProperties: true,
-  })
-  .extend({
-    categoryId: z.number().min(0, 'Please select a valid category'),
-    coverImage: imageSchema.refine((data) => !!data.url, { error: 'Please upload a cover image' }),
-    bannerImage: imageSchema.nullish(),
-    userNsfwLevel: z.string().optional(),
-    moderatorNsfwLevel: z.string().optional(),
-    lockedProperties: z.string().array().optional(),
-  });
+const schema = articleFormSchema(true);
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional().default(-1)),
 });
@@ -100,6 +88,10 @@ export function ArticleUpsertForm({ article }: Props) {
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const features = useFeatureFlags();
+  const formSchema = useMemo(
+    () => articleFormSchema(!!features.articleTypography),
+    [features.articleTypography]
+  );
   const result = querySchema.safeParse(router.query);
 
   const defaultCategory = result.success ? result.data.category : -1;
@@ -110,7 +102,7 @@ export function ArticleUpsertForm({ article }: Props) {
     : true;
 
   const form = useForm({
-    schema,
+    schema: formSchema,
     shouldUnregister: false,
     defaultValues: {
       ...article,
@@ -127,7 +119,7 @@ export function ArticleUpsertForm({ article }: Props) {
     } as any,
   });
   const clearStorage = useFormStorage({
-    schema,
+    schema: formSchema,
     form,
     timeout: 1000,
     key: `article${article?.id ? `_${article?.id}` : 'new'}`,
@@ -148,6 +140,7 @@ export function ArticleUpsertForm({ article }: Props) {
       !persistedValueLostIdentity(storedValue, currentValue),
   });
   const [userNsfwLevel, content] = form.watch(['userNsfwLevel', 'content']);
+  const [watchedCover, watchedBanner] = form.watch(['coverImage', 'bannerImage']);
   useEffect(() => {
     if (currentUser?.isModerator) {
       if (userNsfwLevel)
@@ -372,6 +365,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 'formatting',
                 'list',
                 'link',
+                'mentions',
                 'media',
                 'video',
                 'polls',
@@ -381,6 +375,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 'imageSize',
                 'align',
                 'civitaiEmbed',
+                'spoiler',
               ]}
               withAsterisk
               stickyToolbar
@@ -517,9 +512,20 @@ export function ArticleUpsertForm({ article }: Props) {
             <InputSimpleImageUpload
               name="coverImage"
               label="Cover Image"
-              description={`Suggested resolution: ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}`}
-              withAsterisk
+              description={
+                features.articleTypography
+                  ? `Shown on cards. Optional if you add a banner, which is then used on cards instead. Suggested resolution: ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}`
+                  : `Suggested resolution: ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}`
+              }
+              withAsterisk={!features.articleTypography}
             />
+            {features.articleTypography && (
+              <ReframeButton
+                source={watchedCover}
+                target="banner"
+                onKeep={(image) => form.setValue('bannerImage', image, { shouldDirty: true })}
+              />
+            )}
             {features.articleTypography && (
               <InputSimpleImageUpload
                 name="bannerImage"
@@ -528,6 +534,13 @@ export function ArticleUpsertForm({ article }: Props) {
                 aspectRatio={
                   constants.article.bannerImageHeight / constants.article.bannerImageWidth
                 }
+              />
+            )}
+            {features.articleTypography && (
+              <ReframeButton
+                source={watchedBanner}
+                target="cover"
+                onKeep={(image) => form.setValue('coverImage', image, { shouldDirty: true })}
               />
             )}
             <InputSelect
@@ -765,6 +778,19 @@ function ActionButtons({
           )}
         </>
       )}
+      {article?.id &&
+        (article.status === ArticleStatus.Draft ||
+          article.status === ArticleStatus.Unpublished) && (
+          <Button
+            variant="default"
+            type="button"
+            fullWidth
+            leftSection={<IconLink size={16} />}
+            onClick={() => openArticleShareDraftModal(article.id)}
+          >
+            Share draft
+          </Button>
+        )}
       {article?.publishedAt ? (
         <Text size="xs" c="dimmed">
           Published at {formatDate(article.publishedAt)}
@@ -813,3 +839,36 @@ type ActionButtonProps = StackProps & {
   article?: ArticleGetById;
   currentContent?: string;
 };
+
+/** Only beside a saved image: the source must be an Image row the server can check. */
+function ReframeButton({
+  source,
+  target,
+  onKeep,
+}: {
+  source?: { id?: number; url: string; nsfwLevel?: number | null } | null;
+  target: ArticleReframeTarget;
+  onKeep: (image: ImageSchema) => void;
+}) {
+  const id = source?.id;
+  if (!source || !id) return null;
+  const refusal = getReframeRefusal(target, source);
+  if (refusal)
+    return (
+      <Text size="xs" c="dimmed" ta="right" mt={-8}>
+        {refusal}
+      </Text>
+    );
+  return (
+    <Group justify="flex-end" mt={-8}>
+      <Button
+        size="compact-sm"
+        variant="light"
+        leftSection={<IconSparkles size={14} />}
+        onClick={() => openArticleReframeModal({ source: { id, url: source.url }, target, onKeep })}
+      >
+        Generate {target} from this image
+      </Button>
+    </Group>
+  );
+}

@@ -251,7 +251,7 @@ describe('image detail on a phone', () => {
     );
 
   // Hat Turf in the reaction row squeezed the reaction counts on a phone: the badge goes to the top
-  // toolbar and the hat button to the bottom strip, by Save and Tip.
+  // toolbar and the hat button to the bottom strip, after Save.
   test.each([false, true])(
     'the badge shows once, in the top toolbar (sheet expanded: %s)',
     async (active) => {
@@ -275,7 +275,7 @@ describe('image detail on a phone', () => {
       const hats = shown('hat-controls');
       expect(hats).toHaveLength(1);
       expect(sheet()!.contains(hats[0])).toBe(true);
-      const save = [...sheet()!.querySelectorAll('button')].find((b) => b.textContent === 'Save')!;
+      const save = sheet()!.querySelector('[aria-label="Save"]')!;
       expect(save.compareDocumentPosition(hats[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
   );

@@ -11,14 +11,18 @@
     IconArrowRight,
     IconSearch,
   } from '@tabler/icons-svelte';
-  import { untrack } from 'svelte';
-  import { pickModel } from '$lib/host';
+  import { onMount, untrack } from 'svelte';
+  import { serviceStatus } from '$lib/service-status.svelte';
+  import { modelUnavailability, UNAVAILABLE_LABEL } from '$lib/service-status-core';
+  import { autoLabelAvailable, pickModel } from '$lib/host';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
+  import StickySummary from '$lib/components/StickySummary.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import {
     MEDIA_OPTIONS,
     cardsForMedia,
+    visibleVersions,
     editCards,
     loraTypeById,
     releasedLabel,
@@ -36,6 +40,9 @@
     newRun,
     nextRunId,
     recommendedCardFor,
+    blockedSelectionMessage,
+    cardUnavailability,
+    versionStatusKey,
     runCard,
     runVersion,
     runVersionLabel,
@@ -71,7 +78,7 @@
   // The "from" price for a card — the single source of truth lives in trainingFlow so Select/Data/Review
   // can't drift. Null when the orchestrator hasn't quoted it (the caller shows a muted em-dash).
   function price(cardType: string): number | null {
-    return cardFromPrice(prices, cardType);
+    return cardFromPrice(prices, cardType, enabledFlags);
   }
 
   // Seed from a restored selection (Back from Data) when present, else the defaults. untrack marks the
@@ -80,7 +87,7 @@
   let loraType = $state<string>(untrack(() => initial?.loraType ?? 'character'));
   let runs = $state<Run[]>(
     untrack(() =>
-      initial ? [...initial.runs] : [newRun(recommendedCardFor('character', 'image', enabledFlags))]
+      initial ? [...initial.runs] : [newRun(recommendedCardFor('character', 'image', enabledFlags), enabledFlags)]
     )
   );
   let focus = $state(0);
@@ -167,7 +174,7 @@
     editSection = true;
     media = 'image';
     loraType = 'edit';
-    runs = [newRun(visibleEditCards[0])];
+    runs = [newRun(visibleEditCards[0], enabledFlags)];
     userPickedModel = false;
     focus = 0;
     sweepOpen = false;
@@ -187,7 +194,7 @@
     const next = typesForMedia(m);
     const t = next.find((o) => o.id === loraType) ?? next[0]!;
     loraType = t.id;
-    runs = [newRun(recommendedCardFor(t.id, m, enabledFlags))];
+    runs = [newRun(recommendedCardFor(t.id, m, enabledFlags), enabledFlags)];
     userPickedModel = false;
     focus = 0;
     sweepOpen = false;
@@ -196,20 +203,53 @@
   function pickType(id: string) {
     loraType = id;
     if (runs.length === 1 && !userPickedModel) {
-      runs = [newRun(recommendedCardFor(id, media, enabledFlags))];
+      runs = [newRun(recommendedCardFor(id, media, enabledFlags), enabledFlags)];
       focus = 0;
     }
   }
 
+  // The banner refreshes it too; Select reads it on its own so a down model greys out on first paint.
+  onMount(() => void serviceStatus.refresh());
+  const blockedMessage = $derived(blockedSelectionMessage(runs, serviceStatus.value));
+
+  /** Whether a version chip's model is down (Custom has no catalog version: never). */
+  function versionDown(card: ModelCard, key: string) {
+    const v = card.versions.find((x) => x.key === key);
+    return v ? modelUnavailability(serviceStatus.value, versionStatusKey(v)) : null;
+  }
+
+  function cardLabel(
+    card: ModelCard,
+    cardPrice: number | null,
+    versionCount: number,
+    down: { reason: string | null } | null,
+    locked: boolean
+  ): string {
+    return [
+      `${card.name}. ${card.description}`,
+      cardPrice != null ? `From ${cardPrice.toLocaleString()} Buzz.` : 'Price not available.',
+      card.flag ? `${card.flag}.` : '',
+      versionCount > 1 ? `${versionCount} versions.` : '',
+      down ? `${UNAVAILABLE_LABEL}.` : '',
+      down?.reason ?? '',
+      locked ? `Unavailable. ${sweepLockReason(card)}` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+
   function pickBase(card: ModelCard) {
     if (multi && !sweepCompatible(card, runCard(primary))) return; // dataset-shape lock
-    runs = runs.map((r, i) => (i === focus ? { ...newRun(card), id: r.id } : r));
+    if (cardUnavailability(card, enabledFlags, serviceStatus.value)) return;
+    runs = runs.map((r, i) =>
+      i === focus ? { ...newRun(card, enabledFlags, serviceStatus.value), id: r.id } : r
+    );
     userPickedModel = true;
   }
 
   function useRecommended() {
     if (!recommendedCard) return;
-    runs = [newRun(recommendedCard)];
+    runs = [newRun(recommendedCard, enabledFlags)];
     focus = 0;
     userPickedModel = false;
   }
@@ -301,7 +341,9 @@
 </script>
 
 {#snippet customIncompleteNote()}
-  {#if customIncomplete}
+  {#if blockedMessage}
+    <p class="mb-0 mt-1.5 text-center font-mono text-xs text-buzz">{blockedMessage}</p>
+  {:else if customIncomplete}
     <p class="mb-0 mt-1.5 text-center font-mono text-xs text-buzz">
       Paste a Civitai model AIR for the custom base to continue.
     </p>
@@ -331,7 +373,11 @@
 {/snippet}
 
 {#snippet continueButton(placement: string)}
-  <Button class="h-11 {placement}" disabled={customIncomplete} onclick={continueToData}>
+  <Button
+    class="h-11 {placement}"
+    disabled={customIncomplete || !!blockedMessage}
+    onclick={continueToData}
+  >
     Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
   </Button>
 {/snippet}
@@ -483,8 +529,8 @@
           {primaryPairs
             ? 'before/after pairs + instructions'
             : labelMode === 'tag'
-              ? 'auto-labeled with tags'
-              : 'auto-labeled with captions'}
+              ? `${autoLabelAvailable() ? 'auto-labeled' : 'labeled'} with tags`
+              : `${autoLabelAvailable() ? 'auto-labeled' : 'labeled'} with captions`}
         </div>
       </div>
       {#if recommendedCard}
@@ -517,8 +563,12 @@
       >
         {#each visibleCards as card (card.type)}
           {@const selected = card.type === focused.cardType}
-          {@const disabled = multi && !selected && !sweepCompatible(card, runCard(primary))}
+          {@const down = cardUnavailability(card, enabledFlags, serviceStatus.value)}
+          {@const locked = multi && !selected && !sweepCompatible(card, runCard(primary))}
+          {@const disabled = locked || (!!down && !selected)}
+          {@const dim = down && !selected && !locked ? 'opacity-40 grayscale' : ''}
           {@const cardPrice = price(card.type)}
+          {@const versionCount = visibleVersions(card, enabledFlags).length}
           <button
             type="button"
             role="radio"
@@ -526,19 +576,17 @@
             tabindex={selected ? 0 : -1}
             {disabled}
             onclick={() => pickBase(card)}
-            aria-label={`${card.name}. ${card.description} ${
-              cardPrice != null ? `From ${cardPrice.toLocaleString()} Buzz.` : 'Price not available.'
-            } ${card.flag ? `${card.flag}. ` : ''}${
-              card.versions.length > 1 ? `${card.versions.length} versions. ` : ''
-            }${disabled ? `Unavailable. ${sweepLockReason(card)}` : ''}`}
-            title={disabled ? sweepLockReason(card) : undefined}
+            aria-label={cardLabel(card, cardPrice, versionCount, down, locked)}
+            title={locked ? sweepLockReason(card) : down ? (down.reason ?? UNAVAILABLE_LABEL) : undefined}
             class="group relative flex flex-col rounded-md border p-3 text-left transition
               {selected
               ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40'
               : 'border-dark-4 bg-dark-6 hover:border-dark-3 hover:bg-dark-5'}
-              {disabled ? 'cursor-not-allowed opacity-40 grayscale' : ''}"
+              {locked ? 'cursor-not-allowed opacity-40 grayscale' : ''}
+              {down && !selected && !locked ? 'cursor-not-allowed' : ''}"
           >
-            <div class="flex items-center gap-2">
+            <!-- A down card dims everything but its status, which stays readable. -->
+            <div class="flex items-center gap-2 {dim}">
               <div class="min-w-0 flex-1 truncate text-sm font-semibold text-dark-0">
                 {card.name}
               </div>
@@ -551,18 +599,24 @@
             <!-- Own row, never sharing the title's: on the recommended tile the badge was truncating
                  the model name to "MiniMax …". -->
             {#if card.flag}
-              <div class="mt-1">
+              <div class="mt-1 {dim}">
                 <span class="inline-flex items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
                   {#if card.flag === 'recommended'}<IconStarFilled size={8} />{:else if card.flag === 'new'}<IconSparkles size={10} stroke={2.5} />{/if}{card.flag}
                 </span>
               </div>
             {/if}
+            {#if down}
+              <div class="mt-1 text-xs leading-snug">
+                <div class="font-semibold text-buzz">{UNAVAILABLE_LABEL}</div>
+                {#if down.reason}<div class="line-clamp-2 text-dark-2">{down.reason}</div>{/if}
+              </div>
+            {/if}
             <!-- Two lines, and always two lines tall: at one line most taglines were clipped mid-sentence,
                  and letting the height follow the text made the price rows sit at different heights. -->
-            <div class="mt-1 line-clamp-2 min-h-[2lh] text-xs leading-snug text-dark-2">
+            <div class="mt-1 line-clamp-2 min-h-[2lh] text-xs leading-snug text-dark-2 {dim}">
               {card.description}
             </div>
-            <div class="mt-auto flex items-center gap-2 pt-2">
+            <div class="mt-auto flex items-center gap-2 pt-2 {dim}">
               {#if cardPrice != null}
                 <span
                   class="inline-flex items-center whitespace-nowrap rounded border border-buzz/25 bg-buzz/[0.08] px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
@@ -575,14 +629,14 @@
               {#if releasedLabel(card.released)}
                 <span class="font-mono text-xs text-dark-2">{releasedLabel(card.released)}</span>
               {/if}
-              {#if card.versions.length > 1}
+              {#if versionCount > 1}
                 <span
                   aria-hidden="true"
-                  title={`${card.versions.length} versions`}
+                  title={`${versionCount} versions`}
                   class="ml-auto inline-flex items-center gap-0.5 rounded-sm border border-dark-4 px-1 py-px font-mono text-xs leading-none text-dark-2"
                 >
                   <IconStack2 size={10} stroke={2} />
-                  {card.versions.length}
+                  {versionCount}
                 </span>
               {/if}
             </div>
@@ -618,7 +672,7 @@
       {#if !multi}
         {@const card = selectedCard}
         {@const runPrice = price(primary.cardType)}
-        {@const versions = versionOptions(card)}
+        {@const versions = versionOptions(card, enabledFlags)}
         <div class="mt-3 rounded-md border border-dark-4 bg-dark-6 p-3">
           <div class="flex items-center gap-3">
             <div class="min-w-0">
@@ -644,8 +698,10 @@
                   type="button"
                   role="radio"
                   aria-checked={primary.versionKey === v.key}
+                  disabled={!!versionDown(card, v.key) && primary.versionKey !== v.key}
+                  title={versionDown(card, v.key) ? UNAVAILABLE_LABEL : undefined}
                   onclick={() => pickVersion(0, v.key)}
-                  class="rounded border px-3 py-1.5 text-left transition
+                  class="rounded border px-3 py-1.5 text-left transition disabled:cursor-not-allowed disabled:opacity-40
                     {primary.versionKey === v.key
                     ? 'border-primary bg-primary/10'
                     : 'border-dark-4 bg-dark-7 hover:border-dark-3'}
@@ -734,13 +790,15 @@
                 {/if}
               </div>
               <div class="mt-2.5 flex flex-wrap gap-2" role="radiogroup" aria-label={`Run ${ri + 1} version`}>
-                {#each versionOptions(card) as v (v.key)}
+                {#each versionOptions(card, enabledFlags) as v (v.key)}
                   <button
                     type="button"
                     role="radio"
                     aria-checked={r.versionKey === v.key}
+                    disabled={!!versionDown(card, v.key) && r.versionKey !== v.key}
+                    title={versionDown(card, v.key) ? UNAVAILABLE_LABEL : undefined}
                     onclick={() => pickVersion(ri, v.key)}
-                    class="rounded border px-3 py-1.5 text-left transition
+                    class="rounded border px-3 py-1.5 text-left transition disabled:cursor-not-allowed disabled:opacity-40
                       {r.versionKey === v.key
                       ? 'border-primary bg-primary/10'
                       : 'border-dark-4 bg-dark-7 hover:border-dark-3'}
@@ -771,8 +829,7 @@
   </div>
 
   <!-- summary -->
-  <div class="h-fit lg:sticky lg:top-4">
-  <aside class="rounded-xl lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto border border-dark-4 bg-dark-6 p-5">
+  <StickySummary>
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">Your training</h3>
     <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
       <span class="text-dark-2">Media</span><span class="font-semibold capitalize text-dark-0">
@@ -809,37 +866,41 @@
       {@render continueButton('mt-4 w-full')}
       {@render customIncompleteNote()}
     </div>
-  </aside>
-  <p
-    class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-xs text-dark-2"
-  >
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="var(--color-buzz)"
-      stroke-width="2"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      class="h-3 w-3 shrink-0"
-      aria-hidden="true"
-    >
-      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
-      <path d="M12 9v4" />
-      <path d="M12 17h.01" />
-    </svg>
-    Nothing is saved until you start training
-  </p>
-  </div>
+    {#snippet footer()}
+      <p
+        class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-xs text-dark-2"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="var(--color-buzz)"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="h-3 w-3 shrink-0"
+          aria-hidden="true"
+        >
+          <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+          <path d="M12 9v4" />
+          <path d="M12 17h.01" />
+        </svg>
+        Nothing is saved until you start training
+      </p>
+    {/snippet}
+  </StickySummary>
 
   <div
     class="sticky bottom-3 z-20 rounded-xl border border-dark-4 bg-dark-6 p-3 shadow-lg lg:hidden"
   >
     <div class="flex items-center gap-3">
-      <div class="min-w-0 flex-1 leading-tight">
-        <div class="font-mono text-xs text-dark-2">Starting at</div>
-        {@render totalTag('text-lg', 16)}
-      </div>
-      {@render continueButton('shrink-0')}
+      <!-- No quote: drop the price and let the button take the row rather than show a bare dash. -->
+      {#if total != null}
+        <div class="min-w-0 flex-1 leading-tight">
+          <div class="font-mono text-xs text-dark-2">Starting at</div>
+          {@render totalTag('text-lg', 16)}
+        </div>
+      {/if}
+      {@render continueButton(total != null ? 'shrink-0' : 'w-full')}
     </div>
     {@render customIncompleteNote()}
   </div>

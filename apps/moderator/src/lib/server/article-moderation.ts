@@ -8,7 +8,12 @@ import { deleteImageRows, finishImageDeletes } from './image-deletion';
 import { syncSearchIndex } from './search-index';
 import { logToAxiom } from './axiom';
 import type { KeptImage } from '$lib/image-kept-reasons';
-import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
+import {
+  ArticleStatus,
+  canRestoreArticle,
+  restoreStatus,
+  type ArticleMetadata,
+} from '$lib/articles';
 import type { ArticleUnpublishReason } from '$lib/article-unpublish-reasons';
 
 type ModerateResult = { ok: true; kept?: KeptImage[] } | { ok: false; error: string };
@@ -109,6 +114,9 @@ async function unpublishArticle(
       customMessage,
       unpublishedAt: new Date().toISOString(),
       unpublishedBy: moderatorId,
+      // Only a Published article gets here: a restore must publish it again, whatever an earlier
+      // block recorded.
+      statusBeforeViolation: undefined,
     };
     await trx
       .updateTable('Article')
@@ -140,8 +148,23 @@ export function withContentLinkHold(
   return derived;
 }
 
+// The main app's share-link lock (`lockAccessTokens` in access-token.service.ts), taken before the
+// row lock as it is there, so a link being created waits for this transaction.
+const ACCESS_TOKEN_LOCK_CLASS = 0x41544b;
+
 async function restoreArticle(id: number): Promise<void> {
   const userId = await dbWrite.transaction().execute(async (trx): Promise<number> => {
+    // A share link made while it was unpublished must not read it again after a later unpublish.
+    await sql`SELECT pg_advisory_xact_lock(${ACCESS_TOKEN_LOCK_CLASS}::int, ${id}::int)`.execute(
+      trx
+    );
+    await trx
+      .updateTable('AccessToken')
+      .set({ revokedAt: new Date() })
+      .where('resourceType', '=', 'Article')
+      .where('resourceId', '=', id)
+      .where('revokedAt', 'is', null)
+      .execute();
     const article = await trx
       .selectFrom('Article')
       .select([
@@ -157,24 +180,34 @@ async function restoreArticle(id: number): Promise<void> {
         'moderatorNsfwLevel',
       ])
       .where('id', '=', id)
+      .forUpdate()
       .executeTakeFirst();
     if (!article) throw new Error(`No article with id ${id}`);
     if (!UNPUBLISHED.includes(article.status as ArticleStatus))
       throw new Error('Article is not unpublished');
+    if (!canRestoreArticle({ ...article, metadata: article.metadata as ArticleMetadata }))
+      throw new Error('The author unpublished this article; only they can republish it.');
 
     const meta = { ...((article.metadata as ArticleMetadata) ?? {}) } as Record<string, unknown>;
     delete meta.unpublishedReason;
     delete meta.customMessage;
     delete meta.unpublishedAt;
     delete meta.unpublishedBy;
+    delete meta.statusBeforeViolation;
+    const status = restoreStatus(article.metadata as ArticleMetadata, article.publishedAt);
 
     await trx
       .updateTable('Article')
       .set({
-        status: ArticleStatus.Published,
+        status,
         // Preserve the original publishedAt so a restored article doesn't bump to the top of the feed.
-        publishedAt: article.publishedAt ?? new Date(),
+        publishedAt:
+          status === ArticleStatus.Published
+            ? article.publishedAt ?? new Date()
+            : article.publishedAt,
         metadata: sql`${JSON.stringify(meta)}::jsonb`,
+        // The author schedules it again: one that lapsed while it was blocked would go live at once.
+        ...(status === ArticleStatus.Draft ? { scheduledAt: null } : {}),
       })
       .where('id', '=', id)
       .execute();
@@ -311,12 +344,6 @@ async function deleteArticle(id: number): Promise<KeptImage[]> {
       .where('id', '=', id)
       .executeTakeFirst();
     if (!article) throw new Error(`No article with id ${id}`);
-
-    // Same lock order as the main app's deleteArticleById: CommentV3 before the cascade reaches
-    // CommentV2.
-    await sql`DELETE FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" = ${id}`.execute(
-      trx
-    );
 
     await trx
       .deleteFrom('File')

@@ -59,7 +59,11 @@ import {
 } from '~/server/services/hot-reads-8.reads';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
-import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
+import {
+  dataForModelsCache,
+  modelVersionAccessCache,
+  refreshHasReceivedReviews,
+} from '~/server/redis/caches';
 import type { DonationGoalWithTotal } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -140,6 +144,11 @@ import {
 } from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import {
+  getModelVersionAccessPermissions,
+  EARLY_ACCESS_PURCHASES,
+  grantModelVersionAccess,
+} from '~/server/services/model-version-access.service';
+import {
   checkDonationGoalComplete,
   ensureDonationGoal,
   getDonationGoals,
@@ -153,9 +162,18 @@ import {
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
-import { queueComFaceRecheck } from '~/server/services/model-com-face-recheck.service';
-import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import {
+  queueComFaceRecheck,
+  queueComFaceRestore,
+} from '~/server/services/model-com-face-recheck.service';
+import {
+  bustOrchestratorAirs,
+  bustOrchestratorModelCache,
+  getOrchestratorVersionAirs,
+} from '~/server/services/orchestrator/models';
+import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
 import { addPostImage, createPost } from '~/server/services/post.service';
+import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
   runClickHouseRead,
@@ -204,7 +222,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
-import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
+import { hasCompleteSfwFace, resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -1038,7 +1056,10 @@ export const upsertModelVersion = async ({
       { maxWait: 10000, timeout: 30000 }
     );
     // First after commit, so a later step that throws cannot drop it.
-    if (!isModerator && trainedWordsChanged) await queueComFaceRecheck(version.modelId);
+    if (!isModerator && trainedWordsChanged) {
+      await queueComFaceRecheck(version.modelId);
+      await queueComFaceRestore(version.modelId);
+    }
 
     // Native: derive the gate straight from the config input (endsAt materialized at publish for a
     // timed window), and create the EA donation goal here (option A) instead of at publish.
@@ -1294,7 +1315,10 @@ export const upsertModelVersion = async ({
       { maxWait: 10000, timeout: 30000 }
     );
     // First after commit, so a later step that throws cannot drop it.
-    if (!isModerator && trainedWordsChanged) await queueComFaceRecheck(version.modelId);
+    if (!isModerator && trainedWordsChanged) {
+      await queueComFaceRecheck(version.modelId);
+      await queueComFaceRestore(version.modelId);
+    }
 
     const paidAccessBefore = tracker ? await readPaidAccessAuditState(version.id) : null;
     const keptGate = await writeModelVersionGateAndGoal(
@@ -2097,6 +2121,7 @@ export const publishModelVersionById = async ({
     select: { entityId: true },
   });
 
+  let movedPostIds: number[] = [];
   const version = await dbWrite.$transaction(
     async (tx) => {
       // Re-checked here, under a lock, because the caller's check ran before this transaction and
@@ -2105,6 +2130,11 @@ export const publishModelVersionById = async ({
       const downed = await readDownedVersion(tx, id, 'update');
       if (enforceTakedown && downed)
         throw throwAuthorizationError('You are not authorized to publish this model version');
+      // Under the lock: a replica read can still show a version the owner just published as Draft.
+      const [stored] = await tx.$queryRaw<{ status: ModelStatus }[]>`
+        SELECT status FROM "ModelVersion" WHERE id = ${id}
+      `;
+      const isLive = stored?.status === ModelStatus.Published;
 
       let updatedVersion;
       if (status === ModelStatus.Published && paidAccessGate) {
@@ -2127,7 +2157,9 @@ export const publishModelVersionById = async ({
         updatedVersion = await tx.modelVersion.update({
           where: { id },
           data: {
-            status,
+            // A live version stays live: put back to Scheduled with its past date, the job would
+            // re-release it at once, taking a scheduled model with it.
+            status: isLive ? ModelStatus.Published : status,
             meta,
             availability: currentVersion.model.availability,
           },
@@ -2159,7 +2191,7 @@ export const publishModelVersionById = async ({
       // overwrite every attached post's publishedAt and let an owner repeatedly
       // bump old posts to the top of feeds. Mirrors the `WHERE "publishedAt" IS
       // NOT NULL` guard in the unpublish path below.
-      await tx.$executeRaw`
+      const movedPosts = await tx.$queryRaw<{ id: number }[]>`
         UPDATE "Post"
         SET
           "publishedAt" = CASE
@@ -2171,7 +2203,9 @@ export const publishModelVersionById = async ({
         WHERE "userId" = ${updatedVersion.model.userId}
         AND "modelVersionId" = ${updatedVersion.id}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        RETURNING id
       `;
+      movedPostIds = movedPosts.map((post) => post.id);
 
       if (!currentVersion.model.publishedAt) {
         // Safeguard to ensure the model is marked as published if it wasn't
@@ -2216,6 +2250,11 @@ export const publishModelVersionById = async ({
     posts.map((p) => p.id)
   );
   void onStorySparkPostsRestored({ postIds: posts.map((p) => p.id) });
+  syncReviewsOfMovedPosts({
+    change: 'publish',
+    postIds: movedPostIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 
   await updateModelLastVersionAt({ id: version.modelId, onlyForward: republishing });
   await bustMvCache(version.id, version.modelId);
@@ -2405,6 +2444,11 @@ export const unpublishModelVersionById = async ({
     select: { id: true },
   });
   void onStorySparkPostsHidden({ postIds: posts.map((x) => x.id) });
+  syncReviewsOfMovedPosts({
+    change: 'unpublish',
+    postIds: posts.map((x) => x.id),
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
   const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
@@ -2738,6 +2782,27 @@ You agree to the following with respect to the Model (each a “Permission”):
   return license;
 }
 
+// Read from the primary: the face can have been removed seconds ago. Neutral message: it must not
+// disclose the model's .com status.
+export async function assertSellableInDomainCurrency({
+  modelId,
+  buzzType,
+}: {
+  modelId: number;
+  buzzType: BuzzSpendType;
+}) {
+  if (buzzType !== 'green') return;
+  const face = await dbWrite.model.findUniqueOrThrow({
+    where: { id: modelId },
+    select: { nsfw: true, nsfwLevel: true, sfwName: true, sfwCoverImageId: true },
+  });
+  // A rated model with no PG/PG-13 bit is off .com whatever its nsfw flag says. Level 0 is unrated
+  // (a new model's launch) and stays sellable.
+  const noSfwLevel = face.nsfwLevel > 0 && (face.nsfwLevel & sfwBrowsingLevelsFlag) === 0;
+  if (noSfwLevel || (face.nsfw && !hasCompleteSfwFace(face)))
+    throw throwBadRequestError('This model version is not available with this currency.');
+}
+
 export const earlyAccessPurchase = async ({
   userId,
   modelVersionId,
@@ -2753,7 +2818,9 @@ export const earlyAccessPurchase = async ({
     type === 'generation'
       ? EntityAccessPermission.EarlyAccessGeneration
       : EntityAccessPermission.EarlyAccessDownload;
-  const buzzTransactionKey = `${type}-buzzTransactionId`;
+  const purchase = EARLY_ACCESS_PURCHASES.find((kind) => kind.type === type);
+  if (!purchase) throw throwBadRequestError('Unknown early access type.');
+  const buzzTransactionKey = purchase.transactionKey;
 
   const modelVersion = await getVersionById({
     id: modelVersionId,
@@ -2768,7 +2835,6 @@ export const earlyAccessPurchase = async ({
           id: true,
           name: true,
           userId: true,
-          nsfw: true,
         },
       },
     },
@@ -2798,6 +2864,8 @@ export const earlyAccessPurchase = async ({
   if (buzzType === 'blue' && !acceptsBlueBuzz(terms)) {
     throw throwBadRequestError('This model version does not accept Blue Buzz.');
   }
+
+  await assertSellableInDomainCurrency({ modelId: modelVersion.model.id, buzzType });
 
   // The EA donation goal is the forward relation (DonationGoal entity target), not a config back-link.
   // Only an active goal receives the purchase's donation record. We use the raw owner accessor (not the
@@ -2853,14 +2921,10 @@ export const earlyAccessPurchase = async ({
   const sales = await getFreshSalesForPermanentGate(modelVersionId, permanent, paidAccess.ownerId);
   const amount = discountedPrice(storedPrice, sales);
 
-  const accessRecord = await dbWrite.entityAccess.findFirst({
-    where: {
-      accessorId: userId,
-      accessorType: 'User',
-      accessToId: modelVersionId,
-      accessToType: 'ModelVersion',
-    },
-  });
+  const heldPermissions = await getModelVersionAccessPermissions(userId, modelVersionId);
+  const requestedPermissions = purchase.permissions;
+  if ((heldPermissions & requestedPermissions) === requestedPermissions)
+    throw throwBadRequestError('You already have access to this model version.');
 
   try {
     // A timed early-access window and a permanent paid-access sale are different products and must be
@@ -2897,40 +2961,17 @@ export const earlyAccessPurchase = async ({
     // statement on purpose: the previous interactive transaction's client-side timeout
     // could fire while the COMMIT was still in flight on the server, so the catch
     // refunded buyers who ended up keeping access (see ClickUp 868k97v07).
-    await dbWrite.entityAccess.upsert({
-      where: {
-        accessToId_accessToType_accessorId_accessorType: {
-          accessToId: modelVersionId,
-          accessToType: 'ModelVersion',
-          accessorId: userId,
-          accessorType: 'User',
-        },
+    await grantModelVersionAccess({
+      userId,
+      modelVersionId,
+      permissions: requestedPermissions,
+      // Dated per purchase: a later download lands on the same row as an earlier generation
+      // purchase, and the unpublish refund window runs from each one's own date.
+      meta: {
+        [buzzTransactionKey]: buzzTransactionId,
+        [purchase.purchasedAtKey]: new Date().toISOString(),
       },
-      create: {
-        accessToId: modelVersionId,
-        accessToType: 'ModelVersion',
-        accessorId: userId,
-        accessorType: 'User',
-        permissions:
-          type === 'generation'
-            ? EntityAccessPermission.EarlyAccessGeneration
-            : EntityAccessPermission.EarlyAccessGeneration +
-              EntityAccessPermission.EarlyAccessDownload,
-        meta: { [buzzTransactionKey]: buzzTransactionId },
-        addedById: userId, // Since it's a purchase
-      },
-      // An existing row means the user previously acquired partial access
-      // (e.g. generation-only) and is now upgrading.
-      update: {
-        permissions: Math.max(
-          EntityAccessPermission.EarlyAccessDownload + EntityAccessPermission.EarlyAccessGeneration,
-          accessRecord?.permissions ?? 0
-        ),
-        meta: {
-          ...((accessRecord?.meta as Prisma.JsonObject | null) ?? {}),
-          [buzzTransactionKey]: buzzTransactionId,
-        },
-      },
+      addedById: userId,
     });
 
     // Post-grant side effects: failures here must not trigger a refund,
@@ -3634,6 +3675,7 @@ export const mergeVersions = async ({
     where: { id: modelId },
     select: {
       userId: true,
+      type: true,
       modelVersions: {
         select: {
           id: true,
@@ -3708,6 +3750,11 @@ export const mergeVersions = async ({
   let sourceFileUrls: string[] = [];
 
   let movedPostIds: number[] = [];
+  let baseModelByVersion = new Map<number, string>();
+  let movedFiles: { id: number; modelVersionId: number }[] = [];
+  // Read before the write, while the versions still derive them: the bust after it finds the sources
+  // deleted and derives only the target's new AIR.
+  const oldAirs = await getOrchestratorVersionAirs([targetVersionId, ...sourceVersionIds]);
   await dbWrite.$transaction(
     async (tx) => {
       // 0. Lock the rows, in id order, so a run can't change status under these checks.
@@ -3727,6 +3774,7 @@ export const mergeVersions = async ({
       `;
       if (runs.length !== new Set([targetVersionId, ...sourceVersionIds]).size)
         throw throwNotFoundError('One or more versions to merge no longer exist.');
+      baseModelByVersion = new Map(runs.map((r) => [r.id, r.baseModel]));
       const sourceRuns = runs.filter((r) => sourceVersionIds.includes(r.id));
       const lockedSource = sourceRuns.find(
         (r) => r.trainingStatus && versionRemovalLockedTrainingStatuses.includes(r.trainingStatus)
@@ -3807,6 +3855,10 @@ export const mergeVersions = async ({
       }
 
       // 2. Move all files from source versions to target
+      movedFiles = await tx.modelFile.findMany({
+        where: { modelVersionId: { in: sourceVersionIds } },
+        select: { id: true, modelVersionId: true },
+      });
       await tx.modelFile.updateMany({
         where: { modelVersionId: { in: sourceVersionIds } },
         data: { modelVersionId: targetVersionId },
@@ -4068,6 +4120,32 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
+  // Then the AIRs read before the write, and the file-pinned AIRs, which version busts never reach: a
+  // pinned AIR names its version, so a moved file is cached under its source's AIR, and the target's
+  // coverage now counts the moved files.
+  const versionAir = (id: number) => ({
+    modelId,
+    baseModel: baseModelByVersion.get(id) ?? '',
+    model: { type: model.type },
+  });
+  await Promise.all([
+    bustOrchestratorAirs(oldAirs),
+    bustVersionScannedFileAirs(targetVersionId, versionAir(targetVersionId)),
+    ...sourceVersionIds.map((id) =>
+      bustVersionScannedFileAirs(
+        id,
+        versionAir(id),
+        movedFiles.filter((f) => f.modelVersionId === id).map((f) => f.id)
+      )
+    ),
+  ]).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'model-version-merge',
+      message: `Failed to bust file AIRs for merged versions of model ${modelId}`,
+      error,
+    }).catch(() => undefined)
+  );
   scanModelAndRules(modelId);
 
   // Post-commit S3 cleanup for any stragglers the move missed.

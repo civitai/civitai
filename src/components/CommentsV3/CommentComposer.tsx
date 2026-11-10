@@ -134,13 +134,16 @@ export function CommentEditor({
 }
 
 /**
- * The top-level composer with the states a reader can be in: signed out, read-only, without
- * permission, locked or muted (the section's mute control stays reachable in both), or writing.
+ * The composer with the states a reader can be in: signed out, read-only, without permission,
+ * locked or muted (the section's mute control stays reachable in both), or writing. Top-level, or
+ * a standing reply box under `parent` (a thread dialog's root).
  */
-export function CommentComposer() {
+export function CommentComposer({ parent }: { parent?: CommentV3Comment } = {}) {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const { entityType, entityId, locked, isMuted, isReadonly, forceLocked } = useCommentSection();
+  const { entityType, entityId, isMuted, isReadonly, forceLocked, focusedThread, ...section } =
+    useCommentSection();
+  const locked = section.locked || (!!parent && (parent.locked || !!focusedThread?.locked));
   const target = commentSectionSchema.safeParse({ entityType, entityId });
   const sectionMute = useSectionMute({
     target: target.success ? target.data : undefined,
@@ -197,7 +200,7 @@ export function CommentComposer() {
   return (
     <div className="flex items-start gap-3">
       <UserAvatar user={currentUser} size="md" />
-      <CommentEditor />
+      <CommentEditor parent={parent} />
       {sectionMute.control}
     </div>
   );

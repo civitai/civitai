@@ -260,7 +260,9 @@ describe('toPersistImage', () => {
   });
 
   it('sends no meta when there is none', () => {
-    expect(toPersistImage({ ...media, meta: undefined }).meta).toBeUndefined();
+    expect(
+      toPersistImage({ ...media, meta: undefined } as unknown as UploadedMedia).meta
+    ).toBeUndefined();
     expect(toPersistImage({ ...media, meta: {} }).meta).toBeUndefined();
   });
 });

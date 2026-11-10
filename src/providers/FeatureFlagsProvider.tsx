@@ -4,6 +4,7 @@ import { type FeatureAccess } from '~/server/services/feature-flags.service';
 import { setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
 import { setTrpcUnifiedBatchWindowEnabled } from '~/utils/trpc-batch-window';
 import { setSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
+import { setSemanticArticleSearchEnabled } from '~/components/Search/semanticArticleSearchFlag';
 import { OverlayFastPathContext } from '~/components/MantineOverlays/overlayFastPathContext';
 
 const FeatureFlagsCtx = createContext<FeatureAccess | null>(null);
@@ -104,7 +105,10 @@ export const FeatureFlagsProvider = ({
   // Bridge `siteSearchProxy` to the module-scope search clients. Written while rendering, so the
   // searches InstantSearch starts from the first commit's effects already go the right way. Browser
   // only: on the server this module flag would be shared across concurrent requests.
-  if (typeof window !== 'undefined') setSiteSearchProxyEnabled(!!featureFlags.siteSearchProxy);
+  if (typeof window !== 'undefined') {
+    setSiteSearchProxyEnabled(!!featureFlags.siteSearchProxy);
+    setSemanticArticleSearchEnabled(!!featureFlags.semanticArticleSearch);
+  }
 
   // Bridge `trpcBatching` to the module-scope tRPC link (see `shouldBatch` in
   // `~/utils/trpc`).

@@ -48,7 +48,11 @@
 //   - resolve `author.uid` to a username (and never forward the uid).
 //
 // A collection's declared `schema` it DOES check, on every document write (put and create;
-// counters and marks are not document bodies): `doc-store-schema.ts`.
+// counters and marks are not document bodies): `doc-store-schema.ts`. Every write of a body also
+// stamps the schema major the caller passes (`DocCollection.schemaMajor`) into
+// `doc.schema_major`, once that manual-apply column exists (`stampWrittenDoc`). It is read only by
+// a read path that migrates a body on serve (a caller of `applyMajorChain` in
+// `storage-schema-majors.ts`, which takes the stamped major as `from`); any other read ignores it.
 //
 // Deliberately not supported yet, refused with `invalid_request` so a
 // declaration that uses them fails loudly: `write: 'anyone'`, `ttlSeconds`,
@@ -583,6 +587,17 @@ const SQL_CHARGE_USER = `INSERT INTO appdata.usage_user AS u (app_id, ns, user_i
 const SQL_STAMP_SEQ = `UPDATE appdata.doc d SET seq = $6::bigint
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
   RETURNING ${docColumns('$7::int')}`;
+// The same, also stamping the schema major the body was written under (NULL = not known). Only
+// once the manual migration `20261106130000_appdata_doc_schema_major.sql` added the column (see
+// `hasSchemaMajorColumn`). $8 the major.
+const SQL_STAMP_SEQ_MAJOR = `UPDATE appdata.doc d SET seq = $6::bigint, schema_major = $8::int
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
+  RETURNING ${docColumns('$7::int')}`;
+// Whether `appdata.doc.schema_major` exists: fails with undefined_column (42703) until the manual
+// migration is applied. Reads no row. Run under a savepoint, so that failure leaves the write's
+// transaction usable. $1 app, $2 ns
+const SQL_SCHEMA_MAJOR_PROBE = `SELECT d.schema_major FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 LIMIT 0`;
 
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 seq
 const SQL_TOMBSTONE = `INSERT INTO appdata.doc_tomb AS tb (app_id, ns, coll, scope_uid, key, seq)
@@ -1273,6 +1288,11 @@ export type MigrateDocumentsResult = {
 /** The production namespace: published data, never a developer's dev or a moderator's review namespace. */
 export const PUBLISHED_NS = 'prod';
 
+/** Postgres `undefined_column`: what a statement naming `schema_major` gets before the migration. */
+const PG_UNDEFINED_COLUMN = '42703';
+/** How long a store trusts "no `schema_major` column" before probing again. */
+const SCHEMA_MAJOR_RECHECK_MS = 60_000;
+
 /** One shared document matched by `findSharedByKey`. */
 export type SharedKeyMatch = {
   collection: string;
@@ -1285,6 +1305,66 @@ function buildDocStore(deps: DocStoreDeps) {
   const limits = deps.limits ?? DEFAULT_DOC_STORE_LIMITS;
   // Settled only by a successful role read; a failed read is retried next call.
   let privileges: 'safe' | 'refused' | undefined;
+  // Whether `appdata.doc.schema_major` exists (a manual migration). Found once and kept; while
+  // absent, probed again at most every SCHEMA_MAJOR_RECHECK_MS, so applying the migration starts
+  // the stamping without a restart.
+  let schemaMajorColumn: { present: boolean; at: number } | undefined;
+
+  /**
+   * Whether this write can stamp `schema_major`. Probed inside the write's own transaction under
+   * a savepoint: a missing column (42703) rolls back to the savepoint and the write goes on
+   * without the stamp. Any other failure is the transaction's own and is thrown as it is.
+   */
+  async function hasSchemaMajorColumn(c: DocStoreClient, ctx: DocStoreContext): Promise<boolean> {
+    if (
+      schemaMajorColumn &&
+      (schemaMajorColumn.present || Date.now() - schemaMajorColumn.at < SCHEMA_MAJOR_RECHECK_MS)
+    ) {
+      return schemaMajorColumn.present;
+    }
+    await c.query('SAVEPOINT schema_major_probe');
+    try {
+      await c.query(SQL_SCHEMA_MAJOR_PROBE, [ctx.appId, ctx.ns]);
+      await c.query('RELEASE SAVEPOINT schema_major_probe');
+      schemaMajorColumn = { present: true, at: Date.now() };
+    } catch (err) {
+      if ((err as { code?: string } | null)?.code !== PG_UNDEFINED_COLUMN) throw err;
+      await c.query('ROLLBACK TO SAVEPOINT schema_major_probe');
+      schemaMajorColumn = { present: false, at: Date.now() };
+    }
+    return schemaMajorColumn.present;
+  }
+
+  /**
+   * Stamp the seq of a document whose body this transaction just wrote, and return it. With
+   * `coll.schemaMajor` given and the column present, also stamp the major the body was written
+   * under. Every write of a document body ends here (`finishWrite`, the counter document a first
+   * increment creates, `migrateDocuments`), and nothing else does.
+   */
+  async function stampWrittenDoc(
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    coll: DocCollection,
+    scope: number,
+    key: string,
+    seq: number,
+    viewer: number | null
+  ): Promise<DocStoreQueryResult> {
+    const base = [ctx.appId, ctx.ns, coll.name, scope, key, seq, viewer];
+    if (coll.schemaMajor === undefined || !(await hasSchemaMajorColumn(c, ctx))) {
+      return c.query(SQL_STAMP_SEQ, base);
+    }
+    try {
+      return await c.query(SQL_STAMP_SEQ_MAJOR, [...base, coll.schemaMajor]);
+    } catch (err) {
+      // The column was dropped after it was found (a rollback of the migration): look again on
+      // the next write. This write fails; the next one writes without the stamp.
+      if ((err as { code?: string } | null)?.code === PG_UNDEFINED_COLUMN) {
+        schemaMajorColumn = undefined;
+      }
+      throw err;
+    }
+  }
 
   /**
    * Refuse to run on a role row-level security does not bind. Checked on the
@@ -1593,15 +1673,7 @@ function buildDocStore(deps: DocStoreDeps) {
       indexRows.map((r) => r.type),
     ]);
     const seq = await charge(c, ctx, usage.app, usage.user);
-    const res = await c.query(SQL_STAMP_SEQ, [
-      ctx.appId,
-      ctx.ns,
-      coll.name,
-      scope,
-      key,
-      seq,
-      ctx.viewerUid,
-    ]);
+    const res = await stampWrittenDoc(c, ctx, coll, scope, key, seq, ctx.viewerUid);
     return toDocRecord(res.rows[0], ctx, coll);
   }
 
@@ -1767,7 +1839,7 @@ function buildDocStore(deps: DocStoreDeps) {
           { bytes: size, docs: 1 },
           { uid: viewer, bytes: size, docs: 1, ceiling: 'viewer' }
         );
-        await c.query(SQL_STAMP_SEQ, [ctx.appId, ctx.ns, coll.name, 0, key, seq, ctx.viewerUid]);
+        await stampWrittenDoc(c, ctx, coll, 0, key, seq, ctx.viewerUid);
         return { value };
       }
       throw new DocStoreError('version_conflict', 'concurrent write; retry', {
@@ -2261,7 +2333,7 @@ function buildDocStore(deps: DocStoreDeps) {
    * between the page read and the lock is what gets transformed: the transform must leave a
    * document already in the new shape unchanged (the migration ops do — `applyMigrationOps`), and
    * then a write racing the run, or a re-run of the same page, is safe. A changed document gets a new version
-   * and seq, its index rows are re-derived, and its size delta is charged exactly as a write
+   * and seq (and `coll.schemaMajor` as its schema major, as any write stamps it), its index rows are re-derived, and its size delta is charged exactly as a write
    * would charge it (the app's ceiling for a shared document, and the user the document is
    * charged to: its viewer for a private one, its author or counter creator for a shared one).
    * A document the write would refuse — over the size cap, an index value of the wrong type, a
@@ -2359,7 +2431,7 @@ function buildDocStore(deps: DocStoreDeps) {
                     ceiling: scope !== 0 ? 'viewer' : 'author',
                   }
             );
-            await c.query(SQL_STAMP_SEQ, [...base, seq, null]);
+            await stampWrittenDoc(c, ctx, coll, scope, key, seq, null);
             return { changed: true, invalid: stillInvalid(next) };
           });
         // A lock wait that timed out (a burst of writes to this app) is retried once; the

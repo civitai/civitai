@@ -1,24 +1,6 @@
-import { DEFAULT_ENGINE, SYSTEM_REMIX_APPS } from '~/shared/constants/remix-apps.constants';
+import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
 import { defineRemixApp, type RemixApp } from '~/shared/remix-apps/define';
-
-export const animeIt = defineRemixApp({
-  slug: 'anime-it',
-  name: 'Anime it',
-  icon: 'sparkles',
-  version: 1,
-  engine: DEFAULT_ENGINE,
-  async run(ctx) {
-    const { images } = await ctx.workflow({
-      kind: 'image',
-      prompt:
-        "Redraw this image as a 2D anime illustration with clean black line art, flat cel shading with hard-edged shadow shapes, and simple flat colors. If the source is a photo or a 3D render, convert every surface into hand-drawn anime style, with no photographic texture and no realistic rendering. Keep the subject, pose and composition. Don't add any text or lettering.",
-      images: [ctx.source],
-      aspectRatio: 'source',
-      quantity: 1,
-    });
-    return images;
-  },
-});
+import type { RemixCodeSpec } from '~/shared/remix-apps/row.schema';
 
 /** The first app with more than one step: four takes, a pick, then upscale it or keep it. */
 export const pickOfFour = defineRemixApp({
@@ -58,103 +40,10 @@ export const pickOfFour = defineRemixApp({
   },
 });
 
-export const RESTYLE_STYLES = [
-  {
-    value: 'watercolor',
-    label: 'Watercolor',
-    style:
-      'a loose watercolor painting on textured paper, with soft washes and visible brush edges',
-  },
-  {
-    value: 'oil-painting',
-    label: 'Oil painting',
-    style: 'a classical oil painting on canvas, with rich colour and visible brushstrokes',
-  },
-  {
-    value: 'ukiyo-e',
-    label: 'Ukiyo-e',
-    style: 'a Japanese ukiyo-e woodblock print, with flat colour, bold outlines and paper grain',
-    /** Ukiyo-e outputs drew a seal stamp with characters under the plain no-text line. */
-    noText: "Don't add any text, lettering, seals or stamps.",
-  },
-  {
-    value: 'cyberpunk-neon',
-    label: 'Cyberpunk neon',
-    style:
-      'a cyberpunk night scene lit by neon signs, with magenta and cyan glow and wet reflections',
-  },
-  {
-    value: 'claymation',
-    label: 'Claymation',
-    style: 'a stop-motion claymation scene, with plasticine figures and fingerprint texture',
-  },
-] as const;
-
-export const RESTYLE_EXTRA_MAX_LENGTH = 120;
-
-const NO_TEXT = "Don't add any text or lettering.";
-
-export function restylePrompt(style: string, extra: string) {
-  const picked: { style: string; noText?: string } =
-    RESTYLE_STYLES.find((s) => s.value === style) ?? RESTYLE_STYLES[0];
-  const base = `Restyle this image as ${picked.style}. Keep the subject, their pose and the composition the same.`;
-  const withExtra = extra ? `${base} Also add to the scene: ${extra}.` : base;
-  return `${withExtra} ${picked.noText ?? NO_TEXT}`;
-}
-
-/** Asks first: an optional addition, then a style whose options show the edit's price. */
-export const restyle = defineRemixApp({
-  slug: 'restyle',
-  name: 'Restyle',
-  icon: 'palette',
-  description: 'Pick a style, and add something to the scene if you like.',
-  version: 1,
-  engine: DEFAULT_ENGINE,
-  async run(ctx) {
-    const extra = await ctx.ask({
-      kind: 'text',
-      prompt: 'Add something to the scene (optional)',
-      maxLength: RESTYLE_EXTRA_MAX_LENGTH,
-      optional: true,
-    });
-    const style = await ctx.ask({
-      kind: 'choice',
-      prompt: 'Pick a style',
-      options: RESTYLE_STYLES.map(({ value, label }) => ({ value, label })),
-    });
-    const { images } = await ctx.workflow({
-      kind: 'image',
-      prompt: restylePrompt(style, extra.trim()),
-      images: [ctx.source],
-      aspectRatio: 'source',
-      quantity: 1,
-    });
-    return images;
-  },
-});
-
-export const SYSTEM_RUNTIME_APPS: RemixApp[] = [animeIt, pickOfFour, restyle];
-
-export function getRuntimeRemixApp(slug: string) {
-  return SYSTEM_RUNTIME_APPS.find((app) => app.slug === slug);
-}
-
-export type RemixMenuApp = Pick<RemixApp, 'slug' | 'name' | 'icon' | 'description' | 'engine'> & {
-  /** Started through `remixApp.start` rather than the one-shot `remixApp.run`. */
-  runtime: boolean;
+/**
+ * Apps whose `run` stays code: a row lists one by naming it in `code`, and takes from the row only
+ * its listing (name, description, icon, target, enabled, order).
+ */
+export const CODE_REMIX_APPS: Record<RemixCodeSpec['code'], RemixApp> = {
+  'pick-of-four': pickOfFour,
 };
-
-export const REMIX_MENU_APPS: RemixMenuApp[] = [
-  ...SYSTEM_RUNTIME_APPS.map((app) => ({ ...menuFields(app), runtime: true })),
-  ...SYSTEM_REMIX_APPS.map((app) => ({ ...menuFields(app), runtime: false })),
-];
-
-function menuFields({
-  slug,
-  name,
-  icon,
-  description,
-  engine,
-}: Pick<RemixApp, 'slug' | 'name' | 'icon' | 'description' | 'engine'>) {
-  return { slug, name, icon, description, engine };
-}

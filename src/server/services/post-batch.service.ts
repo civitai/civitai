@@ -15,7 +15,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { trpcSlowLogThresholdMs } from '~/server/logging/trpc-slow-log';
 import { ImageIngestionStatus, ModelStatus } from '~/shared/utils/prisma/enums';
 import { sysRedis, type RedisKeyTemplateSys } from '~/server/redis/client';
-import { getDailyPostLimit } from '~/server/schema/post.schema';
+import { getDailyPostLimit } from '~/server/services/usage-limit-config.service';
 import type {
   BatchMediaStatusInput,
   PersistBatchMediaInput,
@@ -46,6 +46,11 @@ import {
 import { bustCacheTag } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
+import { refreshHasReceivedReviews } from '~/server/redis/caches';
+import {
+  announceReviewsInBackground,
+  unreleasedReviewIdsOfPosts,
+} from '~/server/services/resourceReview.visibility';
 import {
   handleLogError,
   throwBadRequestError,
@@ -204,7 +209,7 @@ async function loadBatchScheduleContext(user: SessionUser, now: Date) {
     SELECT "publishedAt" FROM "Post" WHERE "userId" = ${user.id} AND "publishedAt" >= ${startOfTodayUtc}
   `;
   return {
-    dailyLimit: getDailyPostLimit(user),
+    dailyLimit: await getDailyPostLimit(user),
     existingPublishedAts: rows.map((row) => row.publishedAt),
   };
 }
@@ -254,6 +259,7 @@ async function assertCanUseModelVersion(modelVersionId: number, user: SessionUse
 /** Drops a half-made post and hands its images back to the draft: the creator retries with the
  *  same image ids, which `deletePost` would have deleted along with their files. */
 async function discardFailedPost(postId: number) {
+  const unreleasedReviewIds = await unreleasedReviewIdsOfPosts([postId]);
   await dbWrite.$executeRaw`
     UPDATE "Image"
     SET "postId" = NULL, "index" = NULL,
@@ -261,6 +267,10 @@ async function discardFailedPost(postId: number) {
     WHERE "postId" = ${postId}
   `;
   await dbWrite.post.delete({ where: { id: postId } });
+  announceReviewsInBackground({
+    reviewIds: unreleasedReviewIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 }
 
 /** `modelVersionId`s per image, to tell what adoption added. */

@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *  a poll must never hand one user another user's workflow. */
 
 const orch = vi.hoisted(() => ({ submitWorkflow: vi.fn(), getWorkflow: vi.fn() }));
-vi.mock('@civitai/orchestration-client', () => ({
+vi.mock('@civitai/orchestration-client', async () => ({
+  ...(
+    await import('~/server/services/orchestrator/__tests__/civitai-client.stub')
+  ).civitaiClientStub(),
   submitWorkflow: orch.submitWorkflow,
   getWorkflow: orch.getWorkflow,
 }));
@@ -45,6 +48,21 @@ describe('Training Studio auto-label', () => {
       counters.set(k, (counters.get(k) ?? 0) - n);
       return counters.get(k)!;
     });
+  });
+
+  it('accepts the media URL a Studio upload returns (both surfaces share $lib/upload)', async () => {
+    // The orchestrator answers the upload POST with a signed consumer-blob URL on its public host.
+    const uploaded =
+      'https://orchestration.civitai.com/v2/consumer/blobs/E8S6FBPH50ENNVF2PD5-0.jpeg?sig=a1b2c3&exp=2026-11-08T19:00:00.0000000Z';
+    await expect(
+      submitStudioAutoLabel({
+        userId: 7,
+        mode: 'caption',
+        media: 'image',
+        items: [{ mediaUrl: uploaded, key: 'k' }],
+      })
+    ).resolves.toEqual({ workflowId: 'wf-1' });
+    expect(orch.submitWorkflow.mock.calls[0][0].body.steps[0].input.mediaUrl).toBe(uploaded);
   });
 
   it('submits with the system client and stamps the submitting user', async () => {

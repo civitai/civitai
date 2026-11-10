@@ -1,4 +1,5 @@
 import type { MantineColor } from '@mantine/core';
+import { TRAINING_REVIEW_COPY } from '@civitai/shared/training-review';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 
 // nb: these should be proper AIRs now
@@ -22,8 +23,7 @@ export const trainingStatusFields: {
   },
   [TrainingStatus.Paused]: {
     color: 'orange',
-    description:
-      'Your training will resume or terminate within 1 business day. No action is required on your part.',
+    description: TRAINING_REVIEW_COPY.pendingBody,
   },
   [TrainingStatus.Denied]: {
     color: 'red',
@@ -94,3 +94,12 @@ export const versionRemovalLockedTrainingStatuses: TrainingStatus[] = [
   TrainingStatus.Paused,
   TrainingStatus.Denied,
 ];
+
+/**
+ * The classic trainer (/models/train) stops starting runs at this instant; Training Studio is
+ * unaffected. The banners quote it, so change it only alongside the announcement.
+ */
+export const CLASSIC_TRAINER_RETIRES_AT = new Date('2026-11-16T00:00:00Z');
+export const isClassicTrainerRetired = (now = new Date()) => now >= CLASSIC_TRAINER_RETIRES_AT;
+export const CLASSIC_TRAINER_RETIRED_MESSAGE =
+  'The classic trainer has been retired and no longer starts new runs. Use Training Studio to train.';

@@ -86,6 +86,13 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
   resolveMetaToolAndTechnique: resolveToolTechnique,
   addResourceToPostImage: attachResource,
 }));
+const { announceReviewsInBackground } = vi.hoisted(() => ({
+  announceReviewsInBackground: vi.fn(),
+}));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  announceReviewsInBackground,
+}));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   addImageTools: addTools,
@@ -372,6 +379,22 @@ describe('scheduleBatch', () => {
     expect(dbMock.dbWrite.image.deleteMany).not.toHaveBeenCalled();
     expect(deleteImageRows).not.toHaveBeenCalled();
     expect(removePost).not.toHaveBeenCalled();
+  });
+
+  it('announces the unreleased reviews of the post it rolls back, read before the delete', async () => {
+    addImage.mockRejectedValueOnce(new TRPCError({ code: 'BAD_REQUEST', message: 'nope' }));
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      Array.isArray(strings) && strings.join('?').includes('"releasedAt" IS NULL')
+        ? [{ id: 77 }]
+        : []) as never);
+
+    await scheduleBatch({ input: batchOf([at(2)]), ctx: ctxFor() });
+
+    expect(announceReviewsInBackground).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ reviewIds: [77] })
+    );
+    const capture = dbMock.dbWrite.$queryRaw.mock.invocationCallOrder.at(-1)!;
+    expect(capture).toBeLessThan(dbMock.dbWrite.post.delete.mock.invocationCallOrder[0]);
   });
 
   it('masks a server-side failure message', async () => {

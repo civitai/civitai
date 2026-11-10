@@ -39,7 +39,11 @@ const h = vi.hoisted(() => ({
     lastUsedAt: null;
     art?: { url: string; canvas?: number[]; bounds?: number[] } | null;
   }[],
-  stock: { available: 3, optedIn: true },
+  stock: { available: 3, optedIn: true } as {
+    available: number;
+    optedIn: boolean;
+    expiry?: { ttlHours: number; rolloutAt: string | null } | null;
+  },
   mutate: vi.fn(),
   optIn: vi.fn(),
   invalidate: vi.fn(async () => undefined),
@@ -70,6 +74,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             getStock: { invalidate: h.invalidate },
             getSummaries: { invalidate: h.invalidate },
             getStickersForImages: { invalidate: h.invalidate },
+            getImageStickers: { invalidate: h.invalidate },
           },
         }),
       }
@@ -143,9 +148,11 @@ const svg = (w: number, h: number) =>
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="#3b5bdb"/></svg>`
   )}`;
 
+/** Where the draft opens; reset before each test. */
+const openAt = { x: 0.5, y: 0.5 };
 function OpenDraft() {
   const card = useHatTurfCard();
-  useEffect(() => card?.setDraft({ x: 0.5, y: 0.5 }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => card?.setDraft({ ...openAt }), []); // eslint-disable-line react-hooks/exhaustive-deps
   return null;
 }
 
@@ -153,7 +160,7 @@ const CARD = { width: 171, height: 228 };
 
 type Fit = 'contain' | 'cover';
 
-function renderPictures(pictures: [Fit, [number, number]][], card = CARD) {
+function renderPictures(pictures: [Fit, [number, number]][], card = CARD, after?: ReactNode) {
   return renderWithProviders(
     <TurfSummaryContext.Provider
       value={{
@@ -177,6 +184,7 @@ function renderPictures(pictures: [Fit, [number, number]][], card = CARD) {
             />
             <HatTurfLayer imageId={5 + i} />
             <OpenDraft />
+            {after}
           </div>
         </HatTurfCardProvider>
       ))}
@@ -289,6 +297,7 @@ beforeEach(() => {
   h.stock = { available: 3, optedIn: true };
   h.user = { id: 1 };
   h.mutate.mockReset();
+  Object.assign(openAt, { x: 0.5, y: 0.5 });
 });
 afterEach(() => cleanup());
 
@@ -322,6 +331,30 @@ describe('a hat is placed with the sticker editor', () => {
     });
 
     expect((await saved()).scale).toBeCloseTo(HAT_MAX_SCALE, 10);
+  });
+
+  // The DraftSticker geometry tests cover what `knobFlips` does; this one fails if the hat
+  // editor stops passing it, which is the fix a user at the top edge depends on.
+  test('at the top of the picture the rotate knob hangs below the hat, inside the card', async () => {
+    // On a 171px card the hat is small enough that its knob fits above even at the top edge;
+    // on a 390px card it does not.
+    const card = { width: 390, height: 520 };
+    openAt.y = 0.02;
+    renderPictures([['cover', [card.width, card.height]]], card);
+    await editorPart(BODY);
+    await vi.waitFor(() => {
+      const knob = document.body.querySelector<HTMLElement>('[data-testid="draft-rotate-knob"]')!;
+      const k = knob.getBoundingClientRect();
+      const body = document.body.querySelector<HTMLElement>(BODY)!.getBoundingClientRect();
+      const frame = q('frame')!.getBoundingClientRect();
+      expect(body.height, 'hat drawn').toBeGreaterThan(0);
+      expect(body.top - frame.top, 'hat at the top edge').toBeLessThan(k.height);
+      expect(k.top - frame.top, "knob top, from the card's top").toBeGreaterThanOrEqual(0);
+      expect(frame.bottom - k.bottom, "knob bottom, from the card's bottom").toBeGreaterThanOrEqual(
+        0
+      );
+      expect(knob.dataset.knobBelow, 'knob hung below').toBe('true');
+    });
   });
 
   test('the rotate knob saves a rotation', async () => {
@@ -470,5 +503,110 @@ describe('a hat is placed with the sticker editor', () => {
       expect(q('hat-turf-draft')?.querySelector('[data-testid="hat-turf-cone"]')).toBeTruthy()
     );
     expect(q('hat-turf-draft')!.querySelector('img')).toBeNull();
+  });
+});
+
+// AspectRatioImageCard paints its header and footer chips over the picture as later, unstacked
+// siblings of the hat layer. A z-index on the resting layer put hats over the reaction counts and
+// the hat button (tester report, 2026-11-06); only the hat being placed may sit on top of them.
+describe('hats and the card chips painted over the picture', () => {
+  // Hats take no pointer events, so hit-testing can't see them until they do. The card's hover
+  // zoom is on too: its transform makes the layer a stacking context, which caps a draft's own
+  // z-index under the chips unless the layer itself is raised.
+  const hoveredAndHitTestable = () => {
+    const style = document.createElement('style');
+    style.textContent = [
+      '[data-testid="hat-turf-layer"], [data-testid="hat-turf-layer"] * { pointer-events: auto !important; }',
+      '[data-sticker-overlay] { transform: scale(1.05) rotate(0.02deg); }',
+    ].join('\n');
+    document.head.appendChild(style);
+    return () => style.remove();
+  };
+  const chip = <div data-testid="chip" style={{ position: 'absolute', inset: 0 }} />;
+  const topAt = (el: HTMLElement) => {
+    const { x, y } = centre(el);
+    return document.elementFromPoint(x, y);
+  };
+
+  test('a placed hat sits under the chips; the hat being placed sits over them', async () => {
+    const restore = hoveredAndHitTestable();
+    try {
+      renderPictures([['contain', [700, 500]]], { width: 700, height: 500 }, chip);
+      await measured('contain', [700, 500], { width: 700, height: 500 });
+      const draft = await editorPart(BODY);
+      expect(
+        q('hat-turf-layer')!.contains(topAt(draft)),
+        'the hat being placed is under the chips'
+      ).toBe(true);
+
+      await saved();
+      await act(async () => h.mutate.mock.calls[0][1].onSuccess());
+      const placed = await editorPart('[data-testid="hat-turf-placed"]');
+      expect(topAt(placed), 'a placed hat paints over the chips').toBe(q('chip'));
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe("the viewer's own hat says how long it keeps counting", () => {
+  const POSE = { x: 0.5, y: 0.4, scale: 0.25, rotation: 0, flip: false };
+  // Placed 2h 1m ago: 45h 59m of a 48h lifetime left.
+  const hat = (userId: number) => ({
+    id: userId,
+    userId,
+    team: 'blue',
+    cosmeticId: 11,
+    data: POSE,
+    createdAt: new Date(Date.now() - 121 * 60_000),
+  });
+  const renderHats = (stickers: ReturnType<typeof hat>[]) =>
+    renderWithProviders(
+      <TurfSummaryContext.Provider
+        value={{
+          event: 'birthday2026',
+          arm: 'control',
+          team: 'blue',
+          images: {},
+          open: {},
+          stickers: {},
+          joined: true,
+          watch: () => () => undefined,
+        }}
+      >
+        <HatTurfCardProvider>
+          <div style={{ position: 'relative', overflow: 'hidden', ...CARD }}>
+            <img
+              src={svg(300, 400)}
+              alt=""
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            />
+            <HatTurfLayer imageId={5} stickers={stickers} />
+          </div>
+        </HatTurfCardProvider>
+      </TurfSummaryContext.Provider>
+    );
+  const timeLeft = () =>
+    document.body.querySelectorAll<HTMLElement>('[data-testid="hat-turf-time-left"]');
+
+  test("on the viewer's own hat only, in whole hours", async () => {
+    h.stock = { ...h.stock, expiry: { ttlHours: 48, rolloutAt: null } };
+    renderHats([hat(2), hat(1)]);
+    await vi.waitFor(() => expect(timeLeft()).toHaveLength(1));
+    expect(timeLeft()[0].textContent).toBe('45h left');
+  });
+
+  test('an own hat past its lifetime shows nothing and rereads the hats', async () => {
+    h.stock = { ...h.stock, expiry: { ttlHours: 2, rolloutAt: null } };
+    h.invalidate.mockClear();
+    renderHats([hat(1)]);
+    await vi.waitFor(() => expect(h.invalidate).toHaveBeenCalled());
+    expect(timeLeft()).toHaveLength(0);
+  });
+
+  test('nothing while hats do not expire', async () => {
+    renderHats([hat(1)]);
+    await vi.waitFor(() => expect(q('hat-turf-hat')).not.toBeNull());
+    expect(timeLeft()).toHaveLength(0);
   });
 });

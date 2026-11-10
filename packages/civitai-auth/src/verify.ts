@@ -7,7 +7,14 @@
 //                  not imported, so the package keeps zero infra deps (base-package rules).
 //
 // Factory mirrors the createXClients(config) injection convention.
-import { createRemoteJWKSet, decodeProtectedHeader, importSPKI, jwtVerify } from 'jose';
+import { createHash } from 'node:crypto';
+import {
+  createRemoteJWKSet,
+  decodeProtectedHeader,
+  importSPKI,
+  jwtVerify,
+  type JWTPayload,
+} from 'jose';
 import { sessionCookieName } from './cookies';
 import { decodeLegacySessionCookie } from './legacy-cookie';
 import { loadAuthEnv } from './env';
@@ -60,6 +67,16 @@ export interface AuthVerifierConfig {
    * local-public-key (hub) path.
    */
   onJwksLeg?: (outcome: 'hit' | 'timeout', durationSeconds: number) => void;
+  /**
+   * Opt-in: remember a successful ES256 signature + `iss`/`aud`/`exp` check per token (keyed on a
+   * SHA-256 of it) so a token presented on every request is cryptographically verified once per
+   * `maxTtlMs`, never past its own `exp`. Only that step is cached: failures are not, and the
+   * purpose, lineage and `isRevoked` checks still run on every call. This widens key-removal
+   * staleness: a token verified just before a JWKS refresh stays cached for up to `maxTtlMs`, so a
+   * signing key dropped from the JWKS stays usable for jose's JWKS cache window plus up to
+   * `maxTtlMs`. A cache hit fires no `onJwksLeg`.
+   */
+  verifiedTokenCache?: { maxEntries: number; maxTtlMs: number };
 }
 
 export interface AuthVerifier {
@@ -134,6 +151,20 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     }
   }
 
+  const verifiedCache = config.verifiedTokenCache
+    ? createVerifiedTokenCache(config.verifiedTokenCache)
+    : undefined;
+
+  async function verifyAsymmetricPayload(token: string): Promise<JWTPayload> {
+    if (!verifiedCache) return (await verifyAsymmetric(token)).payload;
+    const key = createHash('sha256').update(token).digest('base64url');
+    const cached = verifiedCache.get(key);
+    if (cached) return structuredClone(cached);
+    const { payload } = await verifyAsymmetric(token);
+    verifiedCache.set(key, payload);
+    return structuredClone(payload);
+  }
+
   async function verifyToken(token: string): Promise<SessionClaims | null> {
     let claims: SessionClaims | null = null;
 
@@ -150,7 +181,7 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
           `[@civitai/auth] no AUTH_JWT_PUBLIC_KEY or AUTH_JWKS_URI configured for ${ALG} verification`
         );
       try {
-        const { payload } = await verifyAsymmetric(token);
+        const payload = await verifyAsymmetricPayload(token);
         // Session tokens carry no `aud`; without a configured audience, tokens with one are not sessions.
         if (!cfg.audience && payload.aud !== undefined) return null;
         claims = payload as SessionClaims;
@@ -177,6 +208,8 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
   function withinLineageLimits(claims: SessionClaims): boolean {
     const t = cfg.clock();
     if (claims.impExp != null && t >= claims.impExp) return false;
+    // Every impersonation is minted with an end time; one without it predates that rule.
+    if (claims.impersonatedBy != null && claims.impExp == null) return false;
     if (claims.iat0 == null) return !cfg.requireIat0;
     return t < claims.iat0 + SESSION_LINEAGE_MAX_AGE_MS;
   }
@@ -200,6 +233,44 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
   }
 
   return { verifyToken, getSession, requireAuth };
+}
+
+/**
+ * Bounded LRU of verified payloads. An entry lives `maxTtlMs`, or until the token's `exp` if that is
+ * sooner, on `Date.now()` — the clock jose checks `exp` against.
+ */
+export function createVerifiedTokenCache({
+  maxEntries,
+  maxTtlMs,
+}: {
+  maxEntries: number;
+  maxTtlMs: number;
+}) {
+  const entries = new Map<string, { payload: JWTPayload; expiresAt: number }>();
+  return {
+    get(key: string): JWTPayload | undefined {
+      const entry = entries.get(key);
+      if (!entry) return undefined;
+      entries.delete(key);
+      if (Date.now() >= entry.expiresAt) return undefined;
+      entries.set(key, entry);
+      return entry.payload;
+    },
+    set(key: string, payload: JWTPayload): void {
+      const now = Date.now();
+      const expiresAt =
+        typeof payload.exp === 'number'
+          ? Math.min(now + maxTtlMs, payload.exp * 1000)
+          : now + maxTtlMs;
+      if (expiresAt <= now || maxEntries <= 0) return;
+      entries.delete(key);
+      entries.set(key, { payload, expiresAt });
+      while (entries.size > maxEntries) entries.delete(entries.keys().next().value as string);
+    },
+    get size() {
+      return entries.size;
+    },
+  };
 }
 
 function readCookie(

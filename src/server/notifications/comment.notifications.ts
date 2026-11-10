@@ -21,30 +21,45 @@ export const liveV3Since = (lastSent: string) =>
   `c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '${lastSent}'`;
 
 /**
- * The id the model page's dialog addresses a comment by: its old Comment id. Every v1-shaped row has
- * one; a row from the shared sequence carries its own id there.
+ * The id a model-page notification addresses a comment by: its old Comment id when it has one, so
+ * links and milestone keys already sent keep matching, else its own id. Details carry
+ * version 4 so a reader can tell the two apart (`comment.detail-fetcher.ts`).
  */
-export const legacyId = (alias: string) => `${alias}."legacyV1Id"`;
+export const modelPageId = (alias: string) => `COALESCE(${alias}."legacyV1Id", ${alias}.id)`;
+
+/** A comment the model page's thread dialog opens, rather than a thread-addressed section. */
+export const isModelComment = (alias: string) => `(${alias}."entityType" = 'model')`;
 
 /**
- * A comment the model page's v1 dialog can open: on a model, with an old `Comment` id. v2 comments
- * on model threads have none and stay thread-addressed.
+ * A comment on an unpublished article is shared only with its owner and link holders; a notification
+ * can reach someone who never held the link. `ownerMay` is the recipient, when the owner may still hear.
  */
-export const isV1Shaped = (alias: string) =>
-  `(${alias}."entityType" = 'model' AND ${alias}."legacyV1Id" IS NOT NULL)`;
+export const notOnUnpublishedArticle = (alias: string, ownerMay?: string) => `NOT EXISTS (
+            SELECT 1 FROM "Article" da
+            WHERE ${alias}."entityType" = 'article' AND da.id = ${alias}."entityId"
+              AND da.status <> 'Published'${ownerMay ? ` AND da."userId" <> ${ownerMay}` : ''}
+          )`;
+
+/**
+ * The model section shows an unpublished or POI model's comments only to its owner and moderators
+ * (`surfaces.ts`); a notification would carry their snippet to anyone else. `ownerMay` as above.
+ */
+export const notOnHiddenModel = (alias: string, ownerMay?: string) => `NOT EXISTS (
+            SELECT 1 FROM "Model" hm
+            WHERE ${alias}."entityType" = 'model' AND hm.id = ${alias}."entityId"
+              AND (hm.status <> 'Published' OR hm.poi)${
+                ownerMay ? ` AND hm."userId" <> ${ownerMay}` : ''
+              }
+          )`;
 
 /** The comment a reply answers: the depth clamp keeps it in `replyToId` when it is not the parent. */
 export const answeredId = (alias: string) => `COALESCE(${alias}."replyToId", ${alias}."parentId")`;
 
 /**
- * The comment whose replies a notification opens. A v3 section lists a comment's direct replies,
- * where a clamped reply hangs off its parent; a v2 section opens the answered comment's thread.
+ * The comment whose replies a notification opens: a section lists a comment's direct replies, where
+ * a clamped reply hangs off its parent.
  */
-export const deepLinkParentId = (alias: string) =>
-  `CASE WHEN ${alias}."entityType"::text = ANY(ARRAY[${constants.comments.v3ReadSurfaces
-    .map((t) => `'${t}'`)
-    .join(', ')}])
-     THEN ${alias}."parentId" ELSE ${answeredId(alias)} END`;
+export const deepLinkParentId = (alias: string) => `${alias}."parentId"`;
 
 /**
  * The two entities whose URL is not built from `entityId`: a comic chapter is addressed by its
@@ -187,7 +202,10 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
       : `/comics/${threadParentId}?${queryString}`;
 
   return {
-    model: `/models/${threadParentId}?dialog=commentThread&${queryString}`,
+    // The model page's thread dialog opens the comment it is given: the thread's root when there is one.
+    model: `/models/${threadParentId}?dialog=commentThread&commentId=${
+      details.commentParentType === 'comment' ? details.commentParentId : details.commentId
+    }&${queryString}`,
     image: `/images/${threadParentId}?${queryString}`,
     post: `/posts/${threadParentId}?${queryString}`,
     article: `/articles/${threadParentId}?${queryString}`,
@@ -226,9 +244,9 @@ export const commentDedupeKey = (version: 'v1' | 'v2') =>
   `concat('comment:${version}:', details->>'commentId')`;
 
 /**
- * Same, for queries that emit both shapes: a v1-shaped model comment (no `threadType`) carries its
- * old v1 id, which can equal another surface's id, so it keeps the v1 namespace; everything else the
- * v2 one.
+ * Same, for queries that emit both shapes: a model comment (no `threadType`) carries its model-page
+ * id, often an old v1 id that can equal another surface's id, so it keeps the v1 namespace;
+ * everything else the v2 one.
  */
 export const commentDedupeKeyByShape = `concat('comment:', case when details->>'threadType' is not null then 'v2:' else 'v1:' end, details->>'commentId')`;
 
@@ -239,8 +257,8 @@ export const commentDedupeKeyByShape = `concat('comment:', case when details->>'
  *
  * `threadType` resolves to the `'comment'` fallback for any entity `threadUrlMap` doesn't address
  * (model3dReview today). Those stay unclaimed, which is what lets a purpose-built owner notification
- * own the key instead. v1-shaped model comments carry no `threadType` and build their URL from
- * `modelId`, so they always render and always claim.
+ * own the key instead. Model comments carry no `threadType` and build their URL from `modelId`, so
+ * they always render and always claim.
  *
  * `comicProject` IS addressed now, so it claims here. That does not strand the comic project owner's
  * richer `new-comic-comment` (which deep-links to the chapter): it shares this same `comment:v2:<id>`
@@ -275,8 +293,7 @@ export const CommentNotificationPriority = {
 
 /**
  * Everyone else in `c`'s conversation, live, unblocked and not muted, each author checked once. For a
- * top-level comment, the entity's other top-level comments of the same shape (a v2 comment on a
- * model thread never shared a thread with v1 ones); for a reply, everyone answering the same
+ * top-level comment, the entity's other top-level comments; for a reply, everyone answering the same
  * comment, via `parentId` or the clamp's `replyToId`, found through that comment alone since a reply
  * shares its entity. Two arms rather than `IS NOT DISTINCT FROM`, which no index serves.
  */
@@ -302,21 +319,22 @@ export const commentNotifications = createNotificationProcessor({
         SELECT DISTINCT
           m."userId" "ownerId",
           JSONB_BUILD_OBJECT(
-            'version', 3,
+            'version', 4,
             'modelId', c."entityId",
-            'commentId', ${legacyId('c')},
+            'commentId', ${modelPageId('c')},
             'modelName', m.name,
             'username', u.username
           ) "details"
         FROM "CommentV3" c
         JOIN "User" u ON c."userId" = u.id
         JOIN "Model" m ON m.id = c."entityId"
-        WHERE ${isV1Shaped('c')}
+        WHERE ${isModelComment('c')}
           AND c."parentId" IS NULL
           AND ${liveV3Since(lastSent)}
           AND m."userId" > 0
           AND c."userId" != m."userId"
           AND ${notBlockedBetween('m."userId"', 'c."userId"')}
+          AND ${notCommentMuted('m."userId"', 'c')}
       )
       SELECT
         concat('new-comment-model:owner:v3:', details->>'commentId') "key",
@@ -349,10 +367,10 @@ export const commentNotifications = createNotificationProcessor({
         SELECT DISTINCT
           pa."userId" "ownerId",
           JSONB_BUILD_OBJECT(
-            'version', 3,
+            'version', 4,
             'modelId', c."entityId",
-            'commentId', ${legacyId('c')},
-            'parentId', ${legacyId('p')},
+            'commentId', ${modelPageId('c')},
+            'parentId', ${modelPageId('p')},
             'modelName', m.name,
             'username', u.username
           ) "details"
@@ -361,11 +379,13 @@ export const commentNotifications = createNotificationProcessor({
         JOIN "CommentV3" pa ON pa.id = ${answeredId('c')} AND pa."deletedAt" IS NULL
         JOIN "User" u ON c."userId" = u.id
         JOIN "Model" m ON m.id = c."entityId"
-        WHERE ${isV1Shaped('c')}
+        WHERE ${isModelComment('c')}
           AND ${liveV3Since(lastSent)}
           AND m."userId" > 0
           AND c."userId" != pa."userId"
+          AND ${notOnHiddenModel('c', 'pa."userId"')}
           AND ${notBlockedBetween('pa."userId"', 'c."userId"')}
+          AND ${notCommentMuted('pa."userId"', 'c')}
       )
       SELECT
         concat('new-comment-response:owner:v3:', details->>'commentId') "key",
@@ -391,10 +411,10 @@ export const commentNotifications = createNotificationProcessor({
         SELECT DISTINCT
           m."userId" "ownerId",
           JSONB_BUILD_OBJECT(
-            'version', 3,
+            'version', 4,
             'modelId', c."entityId",
-            'commentId', ${legacyId('c')},
-            'parentId', ${legacyId('p')},
+            'commentId', ${modelPageId('c')},
+            'parentId', ${modelPageId('p')},
             'parentType', 'comment',
             'modelName', m.name,
             'username', u.username
@@ -403,11 +423,12 @@ export const commentNotifications = createNotificationProcessor({
         JOIN "CommentV3" p ON p.id = c."parentId"
         JOIN "User" u ON c."userId" = u.id
         JOIN "Model" m ON m.id = c."entityId"
-        WHERE ${isV1Shaped('c')}
+        WHERE ${isModelComment('c')}
           AND ${liveV3Since(lastSent)}
           AND m."userId" > 0
           AND c."userId" != m."userId"
           AND ${notBlockedBetween('m."userId"', 'c."userId"')}
+          AND ${notCommentMuted('m."userId"', 'c')}
       )
       SELECT
         concat('new-comment-nested:user:v3:', details->>'commentId') "key",
@@ -443,9 +464,10 @@ export const commentNotifications = createNotificationProcessor({
         JOIN "CommentV3" pc ON pc.id = ${answeredId('c')} AND pc."deletedAt" IS NULL
         JOIN "User" u ON c."userId" = u.id
         ${v3EntityJoins('c')}
-        WHERE NOT ${isV1Shaped('c')}
+        WHERE NOT ${isModelComment('c')}
           AND ${liveV3Since(lastSent)}
           AND c."userId" != pc."userId"
+          AND ${notOnUnpublishedArticle('c', 'pc."userId"')}
           AND ${notBlockedBetween('pc."userId"', 'c."userId"')}
           AND ${notCommentMuted('pc."userId"', 'c')}
           AND ${v3AppListingResolved('c')}
@@ -483,14 +505,13 @@ export const commentNotifications = createNotificationProcessor({
         url,
       };
     },
-    // v1-shaped model comments notify on replies only and keep that shape: their page's dialog still
-    // reads `Comment`.
+    // Model comments notify on replies only, addressed to the model page's thread dialog.
     prepareQuery: ({ lastSent }) => `
       WITH new_thread_response AS (
         SELECT DISTINCT
           UNNEST(CASE
             WHEN c."parentId" IS NULL THEN ${siblingAuthors(
-              'cu."entityType" = c."entityType" AND cu."entityId" = c."entityId" AND cu."parentId" IS NULL AND (cu."legacyV1Id" IS NULL) = (c."legacyV1Id" IS NULL)'
+              'cu."entityType" = c."entityType" AND cu."entityId" = c."entityId" AND cu."parentId" IS NULL'
             )}
             ELSE ${siblingAuthors(
               `((cu."parentId" = ${answeredId(
@@ -498,11 +519,11 @@ export const commentNotifications = createNotificationProcessor({
               )} AND cu."replyToId" IS NULL) OR cu."replyToId" = ${answeredId('c')})`
             )}
           END) "ownerId",
-          CASE WHEN ${isV1Shaped('c')} THEN JSONB_BUILD_OBJECT(
-            'version', 3,
+          CASE WHEN ${isModelComment('c')} THEN JSONB_BUILD_OBJECT(
+            'version', 4,
             'modelId', c."entityId",
-            'commentId', ${legacyId('c')},
-            'parentId', ${legacyId('p')},
+            'commentId', ${modelPageId('c')},
+            'parentId', ${modelPageId('p')},
             'parentType', 'comment',
             'modelName', m.name,
             'username', u.username
@@ -510,10 +531,12 @@ export const commentNotifications = createNotificationProcessor({
         FROM "CommentV3" c
         JOIN "User" u ON c."userId" = u.id
         LEFT JOIN "CommentV3" p ON p.id = c."parentId"
-        LEFT JOIN "Model" m ON ${isV1Shaped('c')} AND m.id = c."entityId"
+        LEFT JOIN "Model" m ON ${isModelComment('c')} AND m.id = c."entityId"
         ${v3EntityJoins('c')}
         WHERE ${liveV3Since(lastSent)}
-          AND (NOT ${isV1Shaped('c')} OR c."parentId" IS NOT NULL)
+          AND (NOT ${isModelComment('c')} OR c."parentId" IS NOT NULL)
+          AND ${notOnUnpublishedArticle('c')}
+          AND ${notOnHiddenModel('c')}
           AND ${v3AppListingResolved('c')}
       )
       SELECT

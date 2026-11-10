@@ -1,5 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ManifestSubmitValidation from '~/server/services/blocks/manifest-submit-validation';
+// Submit-time deep manifest validation is pinned in publish-request.submitValidation.test.ts;
+// this file's fixtures are not full manifests, so that seam is a no-op here (approve's own
+// validator is untouched).
+vi.mock('~/server/services/blocks/manifest-submit-validation', async (importOriginal) => ({
+  ...(await importOriginal<typeof ManifestSubmitValidation>()),
+  assertManifestValidAtSubmit: vi.fn(async () => undefined),
+}));
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
+import type * as ReviewAutodeployService from '~/server/services/blocks/review-autodeploy.service';
 import JSZip from 'jszip';
 
 import { NsfwLevel } from '~/server/common/enums';
@@ -243,6 +252,18 @@ vi.mock('~/server/notifications/client', () => ({
   notifications: { createNotification: vi.fn(async () => undefined) },
 }));
 
+// What follows a NEW pending request (moderator alert + automatic preview) is its own module,
+// pinned in review-autodeploy.service.test.ts; here only WHEN it is called, and that a throw from
+// it cannot fail the push.
+const { mockOnNewPendingSubmission, mockDeleteReviewResources } = vi.hoisted(() => ({
+  mockOnNewPendingSubmission: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+  mockDeleteReviewResources: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/review-autodeploy.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReviewAutodeployService>()),
+  onNewPendingSubmission: (...a: unknown[]) => mockOnNewPendingSubmission(...a),
+}));
+
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   dbWrite: mockDbWrite,
@@ -274,6 +295,8 @@ vi.mock('~/server/services/blocks/forgejo.service', () => mockForgejo);
 // triggers builds). Mock the resolved absolute id the service sees.
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerBuild: mockTriggerBuild,
+  // A superseded request's review preview is torn down by label (teardownReviewForRequest).
+  deleteReviewResources: (...a: unknown[]) => mockDeleteReviewResources(...a),
 }));
 
 // approveRequest does `await import('~/server/services/apps/storage-provision.service')`
@@ -1936,6 +1959,46 @@ describe('approveRequest', () => {
       approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
     ).resolves.toMatchObject({ isFirstVersion: true });
     expect(mockDbWrite.appBlock.create).toHaveBeenCalledOnce();
+  });
+
+  // approveRequest resets the request's deploy state (clearing its detail) before it tears the
+  // preview down, so the teardown must use the detail read before that write: the preview's sha
+  // and serving mode. The DB fake below clears the detail once the 'building' write lands, as the
+  // real row does.
+  it('approving a request with a shared-server preview unpublishes THAT preview', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    const PREVIEW_SHA = 'b'.repeat(40);
+    let reset = false;
+    mockDbWrite.appBlockPublishRequest.updateMany.mockImplementation((async (a: {
+      data?: { deployState?: string };
+    }) => {
+      if (a?.data?.deployState === 'building') reset = true;
+      return { count: 1 };
+    }) as never);
+    mockDbRead.appBlockPublishRequest.findUnique.mockImplementation((async () =>
+      pendingRequest(
+        reset
+          ? { deployState: 'building', deployDetail: null }
+          : {
+              deployState: 'preview-live',
+              deployDetail: JSON.stringify({ sha: PREVIEW_SHA, sharedServer: true }),
+            }
+      )) as never);
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+    mockDeleteReviewResources.mockClear();
+
+    await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+    await vi.waitFor(() => expect(mockDeleteReviewResources).toHaveBeenCalled(), {
+      timeout: 15_000,
+    });
+    expect(reset).toBe(true);
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'hello',
+      sha: PREVIEW_SHA,
+      publishRequestId: 'pubreq_1',
+      sharedServer: true,
+    });
   });
 
   it('approves a new version of an EXISTING app whose blockId contains consecutive hyphens', async () => {
@@ -4054,7 +4117,105 @@ describe('recordPendingFromPush', () => {
     mockForgejo.listRepoTreeAtRef.mockResolvedValue(new Map());
     mockForgejo.getBlobContent.mockResolvedValue(Buffer.from(''));
     mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 0 });
+    // The supersede read: no other pending request for the slug.
+    mockDbWrite.appBlockPublishRequest.findMany.mockResolvedValue([]);
+    mockOnNewPendingSubmission.mockReset();
+    mockOnNewPendingSubmission.mockResolvedValue(undefined);
+    mockDeleteReviewResources.mockClear();
   }
+
+  /** Let the fire-and-forget follow-ups (dynamic import → call) settle. */
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it('a NEW pending request announces itself once (moderator alert + automatic preview), attributed to the owner', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockResolvedValue(undefined);
+
+    const res = await recordPendingFromPush(pushArgs);
+    await flush();
+
+    expect(mockOnNewPendingSubmission).toHaveBeenCalledTimes(1);
+    expect(mockOnNewPendingSubmission).toHaveBeenCalledWith({
+      publishRequestId: res.publishRequestId,
+      slug: 'hello',
+      version: '0.1.0',
+      appName: 'Hello World',
+      submittedByUserId: 777,
+      origin: 'push',
+    });
+  });
+
+  it('a refresh of an already-pending sha announces nothing (one alert per new request)', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ app: { userId: 7 } });
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce({
+      id: 'pubreq_existing_sha',
+    });
+    mockDbWrite.appBlockPublishRequest.update.mockResolvedValue(undefined);
+
+    await recordPendingFromPush(pushArgs);
+    await flush();
+
+    expect(mockOnNewPendingSubmission).not.toHaveBeenCalled();
+  });
+
+  it('a throw from the follow-ups cannot fail the push', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockOnNewPendingSubmission.mockImplementation(() => {
+      throw new Error('discord down');
+    });
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockResolvedValue(undefined);
+
+    await expect(recordPendingFromPush(pushArgs)).resolves.toMatchObject({
+      publishRequestId: expect.stringMatching(/^pubreq_/),
+    });
+    await flush();
+    expect(mockOnNewPendingSubmission).toHaveBeenCalledTimes(1);
+  });
+
+  it('superseding a pending request tears down ITS review preview (and only a request that had one)', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    const OLD_SHA = 'f'.repeat(40);
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null);
+    mockDbWrite.appBlockPublishRequest.findMany.mockResolvedValue([
+      { id: 'pubreq_old_preview', deployState: 'preview-live' },
+      { id: 'pubreq_old_none', deployState: null },
+    ]);
+    // teardownReviewForRequest re-reads each request it tears down.
+    mockDbRead.appBlockPublishRequest.findUnique.mockImplementation(
+      async (args: { where: { id: string } }) =>
+        args.where.id === 'pubreq_old_preview'
+          ? {
+              slug: 'hello',
+              deployState: 'preview-live',
+              deployDetail: JSON.stringify({ sha: OLD_SHA }),
+            }
+          : { slug: 'hello', deployState: null, deployDetail: null }
+    );
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockResolvedValue(undefined);
+
+    await recordPendingFromPush(pushArgs);
+    await vi.waitFor(() => expect(mockDeleteReviewResources).toHaveBeenCalled(), {
+      timeout: 15_000,
+    });
+    await flush();
+
+    expect(mockDeleteReviewResources).toHaveBeenCalledTimes(1);
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'hello',
+      sha: OLD_SHA,
+      publishRequestId: 'pubreq_old_preview',
+    });
+  });
 
   it('(a) existingForSha refresh path — updates the existing (slug,sha) pending row, no create', async () => {
     const { recordPendingFromPush } = await import('../publish-request.service');

@@ -441,12 +441,34 @@ export function AppListingsMarketplaceBody() {
             aria-busy={isPlaceholderData ? true : undefined}
           >
             <div className={gridClasses.grid} data-testid="apps-listing-grid">
-              {filteredItems.map((card) => (
+              {filteredItems.map((card, position) => (
                 <div key={card.id} data-testid="apps-listing-grid-col">
                   {isSubListingCard(card) ? (
-                    <AppSubListingCard card={card} canOpenPage={!!features.appBlocksPages} />
+                    <AppSubListingCard
+                      card={card}
+                      canOpenPage={!!features.appBlocksPages}
+                      telemetry={{
+                        surface: 'sub_listing',
+                        position,
+                        sort,
+                        category,
+                        query: debouncedSearch,
+                      }}
+                    />
                   ) : (
-                    <AppListingCard card={card} canOpenPage={!!features.appBlocksPages} />
+                    <AppListingCard
+                      card={card}
+                      canOpenPage={!!features.appBlocksPages}
+                      // Acquisition telemetry: the card's grid position and the sort / filter /
+                      // search it was found under (`AppStore_Action`, see appStoreTelemetry.ts).
+                      telemetry={{
+                        surface: 'store_card',
+                        position,
+                        sort,
+                        category,
+                        query: debouncedSearch,
+                      }}
+                    />
                   )}
                 </div>
               ))}

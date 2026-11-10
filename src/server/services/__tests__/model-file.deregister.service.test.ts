@@ -198,7 +198,7 @@ const deleteSql = () => {
 
 // Decision (2026-10-18): a dataset under review or denied stays on record; only a moderator may
 // remove it.
-describe('deleteFile — a dataset under review or denied', () => {
+describe('deleteFile — a dataset awaiting an epoch pick, under review or denied', () => {
   it.each(['Denied', 'Paused'])(
     'refuses the owner on a %s run, and deletes nothing',
     async (status) => {
@@ -212,6 +212,8 @@ describe('deleteFile — a dataset under review or denied', () => {
     }
   );
 
+  // Without its dataset a finished run with no epoch picked is lost, even once another version of
+  // the model is published.
   // The status can change between the check and the DELETE, so the DELETE carries it too; a NULL
   // status must not make the condition NULL and drop the row.
   it("repeats the check inside an owner's DELETE, NULL-safe", async () => {
@@ -257,7 +259,7 @@ describe('deleteFile — a dataset under review or denied', () => {
 // The model's Draft/Training status doesn't cover a run once the model is published: a finished
 // run InReview (or a new version training on a published model) still needs its dataset.
 describe('deleteFile — a dataset whose run is in progress or awaiting review', () => {
-  it.each(['Submitted', 'Processing', 'InReview'])(
+  it.each(['Submitted', 'Processing'])(
     'refuses the owner on a %s run of a published model, and deletes nothing',
     async (status) => {
       stubDeletableFile({
@@ -273,6 +275,20 @@ describe('deleteFile — a dataset whose run is in progress or awaiting review',
       expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
     }
   );
+
+  it('refuses the owner on an InReview run of a published model, telling them to publish first', async () => {
+    stubDeletableFile({
+      type: 'Training Data',
+      trainingStatus: 'InReview',
+      modelStatus: ModelStatus.Published,
+    });
+
+    await expect(deleteFile({ id: FILE_ID, userId: USER_ID })).rejects.toThrow(
+      "Training data for a training run that hasn't been published yet can't be deleted. Publish this version first."
+    );
+    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
+  });
 
   it('lets a moderator remove it', async () => {
     stubDeletableFile({ type: 'Training Data', trainingStatus: 'InReview' });

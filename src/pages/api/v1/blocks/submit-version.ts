@@ -169,42 +169,36 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     return;
   }
 
-  // 5. Rate limit — per API key (the stable, authenticated identity), with a
-  // client-IP fallback. `SET NX EX` + `INCR` in one MULTI (same atomic pattern
-  // as the retool endpoint): the key is always created with its TTL, so a crash
-  // between INCR and EXPIRE can't strand a TTL-less counter.
-  // Per API key is the primary identity (always present for a resolved bearer
-  // token); the client-IP form is a defensive fallback only.
-  //
-  // FOLLOW-UP (F2, not yet implemented): this bucket is per-API-KEY, but a user
-  // can mint many personal keys (or rotate them) to widen their effective window.
-  // The retool endpoint buckets on `actor.id` (per-user), which is the stronger
-  // identity. Switching here to `user:${user.id}` would be the more robust limit;
-  // left as a deliberate follow-up to keep this PR's auth change focused.
-  const rateSubject = session.apiKeyId ? `key:${session.apiKeyId}` : `ip:${clientIp(req)}`;
+  // 5. Rate limit — per USER (shared with the session route's `user:<id>` bucket, so minting or
+  // rotating keys cannot widen the window) AND per API key (client-IP fallback). Each is
+  // `SET NX EX` + `INCR` in one MULTI: the key is always created with its TTL, so a crash between
+  // INCR and EXPIRE can't strand a TTL-less counter.
   // F3 + #28: the limiter fails CLOSED (a Redis throw, a hang past the sys read deadline, or a
   // malformed counter is a 503, never a silent bypass). See `takeSubmitSlot`.
-  const slot = await takeSubmitSlot(rateSubject);
-  if (!slot.ok && slot.reason !== 'limited') {
-    req.log?.warn(
-      slot.reason === 'unavailable'
-        ? 'blocks/submit-version: rate limiter threw; failing closed'
-        : 'blocks/submit-version: rate-limit counter malformed; failing closed',
-      { rateSubject }
-    );
-    res.status(503).json({ message: 'Rate limiter unavailable; please retry' });
-    return;
-  }
-  if (!slot.ok) {
-    const retryAfter = slot.retryAfterSeconds;
-    res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
-    res.status(429).json({
-      message: 'Rate limit exceeded',
-      retryAfterSeconds: retryAfter,
-      limit: SUBMIT_RATE_LIMIT.max,
-      windowSeconds: SUBMIT_RATE_LIMIT.windowSeconds,
-    });
-    return;
+  const keySubject = session.apiKeyId ? `key:${session.apiKeyId}` : `ip:${clientIp(req)}`;
+  for (const rateSubject of [`user:${user.id}`, keySubject]) {
+    const slot = await takeSubmitSlot(rateSubject);
+    if (!slot.ok && slot.reason !== 'limited') {
+      req.log?.warn(
+        slot.reason === 'unavailable'
+          ? 'blocks/submit-version: rate limiter threw; failing closed'
+          : 'blocks/submit-version: rate-limit counter malformed; failing closed',
+        { rateSubject }
+      );
+      res.status(503).json({ message: 'Rate limiter unavailable; please retry' });
+      return;
+    }
+    if (!slot.ok) {
+      const retryAfter = slot.retryAfterSeconds;
+      res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
+      res.status(429).json({
+        message: 'Rate limit exceeded',
+        retryAfterSeconds: retryAfter,
+        limit: SUBMIT_RATE_LIMIT.max,
+        windowSeconds: SUBMIT_RATE_LIMIT.windowSeconds,
+      });
+      return;
+    }
   }
 
   // 6. Validate the JSON body (same schema as the session route: bundleBase64
@@ -263,14 +257,24 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       res.status(403).json({ message: err.message });
       return;
     }
-    const { isStorageMigrationRefusal } = await import(
-      '~/server/services/apps/storage-schema-migrations'
-    );
+    const [
+      { isStorageMigrationRefusal },
+      { isStorageHookRefusal },
+      { isManifestValidationRefusal },
+    ] = await Promise.all([
+      import('~/server/services/apps/storage-schema-migrations'),
+      import('~/server/services/apps/storage-hooks'),
+      import('~/server/services/blocks/manifest-submit-validation'),
+    ]);
     // A schema-migration refusal also carries the structured list (collection, pointer,
     // keyword, old → new) so a client can show each breaking change.
     res.status(400).json({
       message: (err as Error).message,
       ...(isStorageMigrationRefusal(err) ? { storageBreakingChanges: err.breaking } : {}),
+      // A permission-hook refusal carries one entry per refused hook (collection, file, reason).
+      ...(isStorageHookRefusal(err) ? { storageHookErrors: err.problems } : {}),
+      // A manifest the approve-time validator refuses carries every validator error.
+      ...(isManifestValidationRefusal(err) ? { manifestErrors: err.errors } : {}),
     });
   }
 });

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { createTailFollower } from '$lib/tail-follow';
   import {
     followTrace,
     interpretTraceLine,
@@ -137,11 +138,16 @@
     return () => controller.abort();
   });
 
-  // Follow the raw tail as lines arrive (only matters while the log is expanded).
+  // Follow the raw tail as lines arrive, unless the reader has scrolled up to read.
   let logEl: HTMLDivElement | undefined;
+  const tail = createTailFollower();
+  $effect.pre(() => {
+    raw.length;
+    tail.beforeUpdate(logEl);
+  });
   $effect(() => {
     raw.length;
-    if (logEl) logEl.scrollTop = logEl.scrollHeight;
+    tail.afterUpdate(logEl);
   });
 </script>
 

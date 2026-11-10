@@ -5,7 +5,7 @@
   import { buzzMode, type BuzzMode } from '$lib/buzz-mode.svelte';
   import { buzzBalance } from '$lib/buzz-balance.svelte';
   import { dismiss } from '$lib/actions/dismiss';
-  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
+  import BlueFirstToggle from './BlueFirstToggle.svelte';
 
   let {
     username,
@@ -44,7 +44,6 @@
     </span>
     <div class="whitespace-nowrap font-semibold leading-tight text-white">
       Training Studio
-      <span class="block font-mono text-xs uppercase tracking-widest text-dark-2">Beta</span>
     </div>
   </a>
 
@@ -95,7 +94,7 @@
                 <IconBoltFilled
                   size={14}
                   stroke={2}
-                  class={opt.mode === 'green' ? 'text-emerald-400' : 'text-buzz'}
+                  class={opt.mode === 'green' ? 'text-emerald-400' : 'text-yellow-400'}
                 />
                 <span class="text-dark-0">{opt.label}</span>
                 <span class="ml-auto font-mono text-xs text-dark-2">{opt.balance.toLocaleString()}</span>
@@ -105,17 +104,9 @@
               </button>
             {/each}
           {/if}
-          <!-- id/for, not a wrapping label: the Checkbox is a button, as elsewhere in the app. -->
-          <div class="flex items-center gap-2 px-3 py-2 text-sm">
-            <Checkbox
-              id="buzz-blue-first"
-              bind:checked={() => buzzMode.blueFirst, (v) => buzzMode.setBlueFirst(v)}
-            />
-            <label for="buzz-blue-first" class="cursor-pointer text-dark-0">
-              Spend <span class="text-blue-400">Blue</span> first
-            </label>
+          <BlueFirstToggle class="px-3 py-2">
             <span class="ml-auto font-mono text-xs text-blue-400">{buzz.blue.toLocaleString()}</span>
-          </div>
+          </BlueFirstToggle>
           <p class="px-3 pb-1.5 pt-1 text-xs leading-snug text-dark-2">
             <span class="text-emerald-400">Green</span> (membership) Buzz can't be used to train NSFW
             content.

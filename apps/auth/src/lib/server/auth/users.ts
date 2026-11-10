@@ -241,9 +241,20 @@ export async function linkAccountToUser(
   return 'linked';
 }
 
+/** A magic link for an address that may only sign in to an account that already has it. */
+export class NoAccountForEmailError extends Error {
+  constructor() {
+    super('No account for this email address');
+    this.name = 'NoAccountForEmailError';
+  }
+}
+
 // Email magic-link sign-in: clicking the verified link proves email ownership, so the user is
-// created (or matched) with emailVerified set.
-export async function findOrCreateUserByEmail(email: string): Promise<SessionUser> {
+// created (or matched) with emailVerified set. `allowCreate: false` matches an existing user only.
+export async function findOrCreateUserByEmail(
+  email: string,
+  { allowCreate = true }: { allowCreate?: boolean } = {}
+): Promise<SessionUser> {
   const existing = await db
     .selectFrom('User')
     .select(['id', 'meta'])
@@ -252,6 +263,7 @@ export async function findOrCreateUserByEmail(email: string): Promise<SessionUse
   if (existing && isSystemAccountMeta(existing.meta)) throw new SystemAccountSignInError();
 
   let userId = existing?.id;
+  if (!userId && !allowCreate) throw new NoAccountForEmailError();
   if (!userId) {
     const created = await db
       .insertInto('User')

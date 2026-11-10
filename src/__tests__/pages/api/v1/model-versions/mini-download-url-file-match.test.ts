@@ -27,6 +27,13 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * not vary with the caller's preferences.
  */
 
+// As in production: civitai.red is a blue alias and the red primary.
+vi.hoisted(() => {
+  process.env.SERVER_DOMAIN_BLUE = 'civitai.com';
+  process.env.SERVER_DOMAIN_BLUE_ALIASES = 'civitai.red';
+  process.env.SERVER_DOMAIN_RED = 'civitai.red';
+});
+
 const {
   mockQueryRaw,
   mockResolveCanGenerateForVersions,
@@ -240,7 +247,8 @@ type Body = {
 async function run(
   files: object[],
   query: Record<string, string> = {},
-  versionOverrides: Partial<typeof versionRow> = {}
+  versionOverrides: Partial<typeof versionRow> = {},
+  host = 'civitai.com'
 ) {
   // Call 1 = the version row, call 2 = the version's ModelFile rows.
   // Deep-clone so a handler that mutates the rows it was handed cannot leak that
@@ -257,7 +265,7 @@ async function run(
   const req = {
     method: 'GET',
     query: { id: String(VERSION_ID), ...query },
-    headers: { host: 'civitai.com' },
+    headers: { host },
   } as unknown as NextApiRequest;
 
   const json = vi.fn().mockReturnThis();
@@ -606,6 +614,48 @@ describe('GET /api/v1/model-versions/mini/[id] — the AIR handed to Air.stringi
     expect(pinnedDefault.body.defaultFileId).toBe(SAFETENSOR.id);
     const pinnedOther = await run([SAFETENSOR, GGUF], { modelFileId: String(GGUF.id) });
     expect(pinnedOther.body.defaultFileId).toBe(SAFETENSOR.id);
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — the epoch url of a taken-down or deleted model', () => {
+  // The epoch url is the orchestrator's own link to the weights, outside the download route, so a
+  // taken-down or deleted model's is withheld from everyone but moderators; the rest stays.
+  type Row = Partial<typeof versionRow>;
+  const takenDown = {
+    availability: 'Private',
+    modelStatus: 'Published',
+    modelMode: 'TakenDown',
+  } as Row;
+  const deleted = { availability: 'Private', modelStatus: 'Deleted', modelMode: null } as Row;
+
+  it.each([
+    ['an anonymous caller', 'taken down', undefined, takenDown],
+    ['its owner', 'taken down', { id: OWNER_ID }, takenDown],
+    ['its owner', 'deleted', { id: OWNER_ID }, deleted],
+  ])('is withheld from %s when %s, and the rest kept', async (_who, _state, user, row) => {
+    currentUser.value = user;
+    const { status, body } = await run([TRAINING_FILE], {}, row);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([]);
+    expect(body.fileName).toBe(TRAINING_FILE.name);
+    expect(body.air).toEqual(expect.any(String));
+  });
+
+  it('is still given to a moderator', async () => {
+    currentUser.value = { id: 1, isModerator: true };
+    const { body } = await run([TRAINING_FILE], {}, takenDown);
+
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+
+  // The rows above are mocked, so this is what ties them to the real query.
+  it('reads the model status and mode in the version query', async () => {
+    await run([TRAINING_FILE], {}, takenDown);
+    const versionSql = (mockQueryRaw.mock.calls[0][0] as TemplateStringsArray).join('?');
+
+    expect(versionSql).toMatch(/\bm\.mode as "modelMode"/);
+    expect(versionSql).toMatch(/\bm\.status as "modelStatus"/);
   });
 });
 
@@ -1019,5 +1069,49 @@ describe('non-commercial base models: no fee, no comp, no tips', () => {
     ).toEqual([
       expect.objectContaining({ role: 'baseModel', amount: 3, recipientModelVersionId: 900 }),
     ]);
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — a mature training dataset', () => {
+  const DATASET = {
+    id: 404,
+    type: 'Training Data',
+    visibility: 'Public',
+    url: 'https://example.invalid/data.zip',
+    metadata: { nsfwLevel: 4, fullyRated: true },
+    sizeKB: 1024,
+    name: 'data.zip',
+    hashes: {},
+  };
+  // Call 3 = the listing check's read of the dataset row.
+  const fetchDataset = (host: string) => {
+    mockQueryRaw.mockReset();
+    const pending = run([SAFETENSOR, DATASET], { modelFileId: String(DATASET.id) }, {}, host);
+    mockQueryRaw.mockResolvedValueOnce([
+      { id: DATASET.id, nsfwLevel: 4, fullyRated: true, restricted: false },
+    ]);
+    return pending;
+  };
+
+  it('is not offered on a host that is not red-capable', async () => {
+    const { status, body } = await fetchDataset('civitai.com');
+    expect(status).toBe(404);
+    expect(body).not.toHaveProperty('hashes');
+  });
+
+  it('is offered on a red-capable host', async () => {
+    const { status, body } = await fetchDataset('civitai.red');
+    expect(status).toBe(200);
+    expect(body.fileName).toBe(DATASET.name);
+  });
+
+  it.each([
+    ['its owner', { id: OWNER_ID }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('is still offered to %s on a host that is not red-capable', async (_, user) => {
+    currentUser.value = user;
+    const { status, body } = await fetchDataset('civitai.com');
+    expect(status).toBe(200);
+    expect(body.fileName).toBe(DATASET.name);
   });
 });

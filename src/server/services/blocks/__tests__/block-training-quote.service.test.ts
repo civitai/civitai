@@ -160,9 +160,15 @@ describe('resolveBlockTrainingRun — the gates', () => {
   });
 
   it('refuses a base model blocked from training', () => {
-    expect(() => resolve({ status: { available: true, blockedModels: ['sdxl'] } })).toThrow(
-      'blocked from training'
-    );
+    expect(() =>
+      resolve({
+        status: {
+          available: true,
+          blockedModels: ['sdxl'],
+          blockedModelReasons: { sdxl: 'Provider outage.' },
+        },
+      })
+    ).toThrow('SDXL is temporarily unavailable for training. Provider outage.');
     // Control: a different blocked model does not refuse this one.
     expect(() => resolve({ status: { available: true, blockedModels: ['pony'] } })).not.toThrow();
   });

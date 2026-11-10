@@ -95,6 +95,7 @@ const box = (overrides: Partial<MysteryBoxView> = {}): MysteryBoxView => ({
   team: 'Blue',
   art: null,
   listing: { shopItemId: 42, title: 'Birthday Box', unitAmount: 500, availableTo: null },
+  packListing: null,
   tiers: [{ id: 7, key: 'common', name: 'Common', color: null, weight: 1, sortOrder: 0 }],
   contents: [content(1), content(2)],
   heldBoxItemIds: [],

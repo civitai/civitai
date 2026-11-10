@@ -124,6 +124,12 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-file-urls';
+import {
+  trainingDataOwnerView,
+  trainingDataPublicView,
+  withoutEpochUrls,
+} from '~/server/services/training-data-restricted.service';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readModelPoiAndOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
@@ -229,15 +235,30 @@ const creatorGalleryHiddenUsersRateLimit = rateLimit(
   { sharedKey: 'creator-gallery-hidden-users' }
 );
 
+// A deleted or taken-down model's epoch urls are withheld from everyone but moderators.
 const modelFileUrlsForOwner = ownerOnlyFileUrls<Awaited<ReturnType<typeof getModelHandler>>>({
   ownerId: ({ data }) => data.user.id,
-  strip: (data) => ({
-    ...data,
-    modelVersions: data.modelVersions.map((version) => ({
-      ...version,
-      files: withoutFileUrls(version.files) as typeof version.files,
-    })),
-  }),
+  strip: async (data, { redCapable }) => {
+    const view = await trainingDataPublicView(dbRead, data.modelVersions, { redCapable });
+    const withheld = isModelDeletedOrTakenDown(data);
+    return {
+      ...data,
+      modelVersions: data.modelVersions.map((version) => {
+        const files = withoutFileUrls(view(version.files)) as typeof version.files;
+        return { ...version, files: withheld ? withoutEpochUrls(files) : files };
+      }),
+    };
+  },
+  forOwner: (data) => {
+    const withheld = isModelDeletedOrTakenDown(data);
+    return {
+      ...data,
+      modelVersions: data.modelVersions.map((version) => {
+        const files = trainingDataOwnerView(version.files);
+        return { ...version, files: withheld ? withoutEpochUrls(files) : files };
+      }),
+    };
+  },
 });
 
 export const modelRouter = router({

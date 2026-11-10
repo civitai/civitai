@@ -83,9 +83,11 @@ import {
   modelTagCache,
   modelVersionPublicDonationGoalsCache,
   modelVotableTagsCache,
+  refreshHasReceivedReviews,
   userBasicCache,
   userModelCountCache,
 } from '~/server/redis/caches';
+import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import {
   bustModelGallerySettings,
@@ -148,6 +150,7 @@ import {
 import {
   enqueueCollectionRebuild,
   getCollectionIdsForModelCascade,
+  getCollectionIdsForModelImages,
 } from '~/server/services/collection-media-index';
 import {
   getCosmeticsForEntity,
@@ -313,11 +316,18 @@ import {
   resolveModelFace,
   showsSfwFace,
 } from '~/shared/utils/model-sfw-face';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
-import { queueComFaceRecheck } from '~/server/services/model-com-face-recheck.service';
-import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
+import {
+  queueComFaceRecheck,
+  queueComFaceRestore,
+} from '~/server/services/model-com-face-recheck.service';
+import {
+  isGenerationDisabled,
+  toPublicApiVersionFlags,
+} from '~/shared/constants/model-version-flags.constants';
 import {
   isModelNameTooLong,
   MODEL_NAME_TOO_LONG_MESSAGE,
@@ -1421,11 +1431,16 @@ export const getModelsRaw = async ({
           const data = modelData[model.id.toString()];
           if (!data) return null;
 
+          // Every public model read (browse feed, associated resources, /api/v1/models) starts here.
+          const publicVersions = data.versions.map((version) => ({
+            ...version,
+            flags: toPublicApiVersionFlags(version.flags),
+          }));
           // A .com face has no per-version description; the .red one is not shown in its place.
           let modelVersions =
             showSfwFace && rawModel.sfwName != null
-              ? data.versions.map((version) => ({ ...version, description: '' }))
-              : data.versions;
+              ? publicVersions.map((version) => ({ ...version, description: '' }))
+              : publicVersions;
 
           // Visibility filters first, so the badge's base-model list reflects only
           // versions the viewer can actually see (no Private/license-restricted leaks).
@@ -1867,7 +1882,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   });
 
   const modelVersionIds = items
-    .filter((model) => model.mode !== ModelModifier.TakenDown)
+    .filter((model) => !isModelWithheld(model))
     .flatMap((m) => m.modelVersions)
     .map((m) => m.id);
 
@@ -2103,11 +2118,16 @@ export const updateModelById = async ({
    */
   meta?: (stored: ModelMeta | null, row: LockedModelRow) => ModelMeta;
 }) => {
+  let written = typeof data === 'function' ? undefined : data;
+  // The mode before this write; undefined when the write locked no row to read it from.
+  let priorMode: ModelModifier | null | undefined;
   const model =
     meta || typeof data === 'function'
       ? await dbWrite.$transaction(async (tx) => {
           const row = await lockModelRow(tx, id);
+          priorMode = row?.mode ?? null;
           const fields = typeof data === 'function' ? data(row) : data;
+          written = fields;
           return tx.model.update({
             where: { id },
             data: meta
@@ -2143,6 +2163,22 @@ export const updateModelById = async ({
   // through here, and the cached body's images/files/downloadUrl depend on
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
+  // A taken-down model's search document carries no images, so a change of mode rewrites it.
+  if (written && 'mode' in written) {
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    // Collection covers drawn from its images change only when it enters or leaves TakenDown.
+    // Not awaited: the lookup reads every image on the model.
+    const writtenMode =
+      written.mode && typeof written.mode === 'object' ? written.mode.set : written.mode;
+    if (
+      writtenMode === ModelModifier.TakenDown ||
+      priorMode === ModelModifier.TakenDown ||
+      priorMode === undefined
+    )
+      void getCollectionIdsForModelImages({ modelId: id })
+        .then((found) => enqueueCollectionRebuild({ ...found, source: 'model-mode-change' }))
+        .catch(() => undefined);
+  }
 
   return withoutModeratorOnlyMeta(model);
 };
@@ -4266,8 +4302,9 @@ export const upsertModel = async (
           throw throwConflictError(
             'This model’s civitai.com card changed while you were editing. Reload and save again.'
           );
-        // A .com cover this save changed (through the gate, for an owner) ends the re-check's removal.
-        if (coverChanged && data.sfwCoverImageId) {
+        // A .com cover this save changed (through the gate, for an owner) ends the re-check's
+        // removal, and so does turning the face off: there is no face left to have removed.
+        if ((coverChanged && data.sfwCoverImageId) || data.sfwName === null) {
           const { comFaceRemoved: _removed, ...rest } = mergedMeta;
           mergedMeta = rest;
         }
@@ -4492,6 +4529,7 @@ export const upsertModel = async (
     const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
     if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
       await queueComFaceRecheck(id);
+    if (!isModerator && listingChanged) await queueComFaceRestore(id);
     if (heldVerdictApplied) {
       const { finishHeldVerdictApply } = await import(
         '~/server/services/text-scan/actions/model-nsfw'
@@ -4755,7 +4793,10 @@ export async function applyModelContentChange({
     if (expectedDescription !== undefined && !affected) return false;
     await preventReplicationLag('model', id);
     // A changed description is part of the listing the .com face re-check reads.
-    if (affected) await queueComFaceRecheck(id);
+    if (affected) {
+      await queueComFaceRecheck(id);
+      await queueComFaceRestore(id);
+    }
 
     // A caller passing `context` has already written the body AND already run this gate on it.
     // This branch is the fan-out, which has neither — and the text it just wrote is text the
@@ -4903,6 +4944,7 @@ export const publishModelById = async ({
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
   else publishedAt = new Date();
 
+  let movedPostIds: number[] = [];
   const model = await dbWrite.$transaction(
     async (tx) => {
       // The caller read the meta before this: a wipe, a moderator or a scan may have written the
@@ -4947,17 +4989,6 @@ export const publishModelById = async ({
           throw throwAuthorizationError('You are not authorized to publish this model version');
       }
 
-      // Anti-bump guard: publishedAt is immutable once a model has gone
-      // public. Allowed transitions: NULL (Draft) -> set, or future
-      // (Scheduled) -> reschedule. Republish of an already-public model is a
-      // no-op for this column. Mirrors the Post guard below.
-      await tx.$executeRaw`
-        UPDATE "Model"
-        SET "publishedAt" = ${publishedAt}
-        WHERE id = ${id}
-        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
-      `;
-
       // Validate NSFW + restricted base model combination
       if (model.nsfw) {
         const hasRestrictedBaseModel = model.modelVersions.some((version) =>
@@ -5001,11 +5032,12 @@ export const publishModelById = async ({
             tx,
           });
         } else if (status === ModelStatus.Scheduled) {
-          // Schedule model versions. Status flips unconditionally, but
-          // publishedAt only flips while the row is mutable (Draft or
-          // future-Scheduled) — anti-bump guard via raw SQL.
+          // Schedule model versions. A version already live stays live: put back to Scheduled with
+          // its past date, the job would re-release it at once and take the model with it.
+          // publishedAt only flips while the row is mutable (Draft or future-Scheduled) — anti-bump
+          // guard via raw SQL.
           await tx.modelVersion.updateMany({
-            where: { id: { in: versionIds }, modelId: id },
+            where: { id: { in: versionIds }, modelId: id, status: { not: ModelStatus.Published } },
             data: { status },
           });
           await tx.$executeRaw`
@@ -5025,7 +5057,7 @@ export const publishModelById = async ({
         // overwrite every attached post's publishedAt and let an owner repeatedly
         // bump old posts to the top of feeds. Mirrors the unpublish path's
         // `WHERE "publishedAt" IS NOT NULL`.
-        await tx.$executeRaw`
+        const movedPosts = await tx.$queryRaw<{ id: number }[]>`
           UPDATE "Post" p
           SET "publishedAt" = CASE
                                 WHEN p."metadata" ->> 'prevPublishedAt' IS NOT NULL
@@ -5039,8 +5071,25 @@ export const publishModelById = async ({
             AND p."userId" = ${model.userId}
             AND p."modelVersionId" IN (${Prisma.join(versionIds, ',')})
             AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())
+          RETURNING p.id
         `;
+        movedPostIds = movedPosts.map((post) => post.id);
       }
+
+      // Never later than the earliest still-future scheduled version: a live version may have been
+      // published at once, ahead of the model's date. Must run after the version writes.
+      await tx.$executeRaw`
+        UPDATE "Model" m
+        SET "publishedAt" = LEAST(
+          ${publishedAt},
+          (
+            SELECT MIN(mv."publishedAt") FROM "ModelVersion" mv
+            WHERE mv."modelId" = m.id AND mv.status = 'Scheduled' AND mv."publishedAt" > NOW()
+          )
+        )
+        WHERE m.id = ${id}
+        AND (m."publishedAt" IS NULL OR m."publishedAt" > NOW())
+      `;
       await updateModelLastVersionAt({ id, tx, onlyForward: republishing });
 
       return model;
@@ -5089,6 +5138,11 @@ export const publishModelById = async ({
     scanEntitiesInBackground('Post', versionPostIds);
     void onStorySparkPostsRestored({ postIds: versionPostIds });
   }
+  syncReviewsOfMovedPosts({
+    change: 'publish',
+    postIds: movedPostIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 
   // Republish only: a dropped Update on this path has no recovery without an updatedAt bump (both
   // image indexes re-derive a missing Update solely from a delta scan of moved rows, and a
@@ -5316,6 +5370,11 @@ export const unpublishModelById = async ({
       select: { id: true },
     });
     void onStorySparkPostsHidden({ postIds: posts.map((x) => x.id) });
+    syncReviewsOfMovedPosts({
+      change: 'unpublish',
+      postIds: posts.map((x) => x.id),
+      onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+    });
     const images = await dbWrite.image.findMany({
       where: { postId: { in: posts.map((x) => x.id) } },
       select: { id: true },
@@ -6115,21 +6174,7 @@ export async function bustPostVersionCache(postIds: number[]) {
   if (postIds.length) await bustTwice(() => postVersionCache().bust(postIds));
 }
 
-/**
- * The level a request's images may be served at when it selects them by a minor or SFW-only
- * model: the intersection of each such model's held gallery level, or undefined when none is held.
- * The model comes from the version and the review as well as `modelId`, because those pick the
- * images ahead of `modelId`.
- */
-export async function getHeldGalleryLevel({
-  modelId,
-  modelIds: namedModelIds = [],
-  modelVersionId,
-  modelVersionIds = [],
-  reviewId,
-  postId,
-  postIds = [],
-}: {
+type ImageModelSelector = {
   modelId?: number | null;
   modelIds?: number[];
   modelVersionId?: number | null;
@@ -6137,11 +6182,24 @@ export async function getHeldGalleryLevel({
   reviewId?: number | null;
   postId?: number | null;
   postIds?: number[] | null;
-}) {
-  // The version, review or post a single selector names must resolve, or nothing is served: one not
-  // yet on the replica can still be found by the image query. Lists (a hub's versions, a page of
-  // posts) are not held to that, so one deleted entry does not empty them; what is gone serves no
-  // images anyway.
+};
+
+/**
+ * The models a request selects images by: those it names, and those of the versions, review and
+ * posts it names, which pick the images ahead of `modelId`. Null when a single named version,
+ * review or post cannot be found: one not yet on the replica can still be found by the image
+ * query, so nothing may be served. Lists (a hub's versions, a page of posts) are not held to that,
+ * so one deleted entry does not empty them; what is gone serves no images anyway.
+ */
+async function resolveImageModelIds({
+  modelId,
+  modelIds: namedModelIds = [],
+  modelVersionId,
+  modelVersionIds = [],
+  reviewId,
+  postId,
+  postIds = [],
+}: ImageModelSelector) {
   const requiredVersionIds = new Set<number>();
   if (modelVersionId) requiredVersionIds.add(modelVersionId);
   if (reviewId) {
@@ -6149,7 +6207,7 @@ export async function getHeldGalleryLevel({
       where: { id: reviewId },
       select: { modelVersionId: true },
     });
-    if (!review) return 0;
+    if (!review) return null;
     requiredVersionIds.add(review.modelVersionId);
   }
   const listedVersionIds = new Set(modelVersionIds);
@@ -6157,7 +6215,7 @@ export async function getHeldGalleryLevel({
     const ids = new Set(postIds);
     if (postId) ids.add(postId);
     const posts = await postVersionCache().fetch([...ids]);
-    if (postId && !posts[postId]) return 0;
+    if (postId && !posts[postId]) return null;
     // A post's version is not required: the replica gets the version before its posts, so a version
     // missing behind a post it has is one deleted since, which leaves the post on no model.
     for (const id of ids) {
@@ -6171,9 +6229,20 @@ export async function getHeldGalleryLevel({
   if (modelId) modelIds.add(modelId);
   if (versionIds.size) {
     const versions = await versionModelCache().fetch([...versionIds]);
-    for (const id of requiredVersionIds) if (!versions[id]) return 0;
+    for (const id of requiredVersionIds) if (!versions[id]) return null;
     for (const version of Object.values(versions)) modelIds.add(version.modelId);
   }
+  return modelIds;
+}
+
+/**
+ * The level a request's images may be served at when it selects them by a minor or SFW-only
+ * model: the intersection of each such model's held gallery level, or undefined when none is held.
+ * 0 (nothing) when a model it names through a single selector cannot be resolved.
+ */
+export async function getHeldGalleryLevel(selector: ImageModelSelector) {
+  const modelIds = await resolveImageModelIds(selector);
+  if (!modelIds) return 0;
 
   // Bounded: a hub can name dozens of models, and each settings miss rebuilds from the database.
   const galleries: Awaited<ReturnType<typeof getGallerySettingsByModelId>>[] = [];
@@ -6187,6 +6256,44 @@ export async function getHeldGalleryLevel({
   for (const gallery of galleries)
     if (gallery?.sfwHeld) held = Flags.intersection(held ?? allBrowsingLevelsFlag, gallery.level);
   return held;
+}
+
+/**
+ * Whether a request's images come from a taken-down model the viewer does not own, resolved as for
+ * the gallery hold, so a version, review or post selects them too. Withheld when a single selector
+ * cannot be resolved. Moderators are the caller's to exempt.
+ */
+export async function isModelGalleryWithheld(selector: ImageModelSelector, viewerId?: number) {
+  const modelIds = await resolveImageModelIds(selector);
+  if (!modelIds) return true;
+  if (!modelIds.size) return false;
+  const models = await dbRead.model.findMany({
+    where: { id: { in: [...modelIds] } },
+    select: { userId: true, mode: true },
+  });
+  return models.some((model) => isModelWithheld(model) && model.userId !== viewerId);
+}
+
+/**
+ * Of the named versions, those whose model is taken down and not owned by the viewer. A version
+ * not found serves no images, so it is not returned. Moderators are the caller's to exempt.
+ */
+export async function getWithheldVersionIds(modelVersionIds: number[], viewerId?: number) {
+  const withheld = new Set<number>();
+  if (!modelVersionIds.length) return withheld;
+  const versions = await versionModelCache().fetch(uniq(modelVersionIds));
+  const modelIds = uniq(Object.values(versions).map((version) => version.modelId));
+  if (!modelIds.length) return withheld;
+  const models = await dbRead.model.findMany({
+    where: { id: { in: modelIds } },
+    select: { id: true, userId: true, mode: true },
+  });
+  const withheldModelIds = new Set(
+    models.filter((m) => isModelWithheld(m) && m.userId !== viewerId).map((m) => m.id)
+  );
+  for (const id of modelVersionIds)
+    if (versions[id] && withheldModelIds.has(versions[id].modelId)) withheld.add(id);
+  return withheld;
 }
 
 /**
@@ -7419,6 +7526,7 @@ export const publishPrivateModel = async (
 
   const heldVerdict = await import('~/server/services/text-scan/actions/model-nsfw');
   let heldVerdictApplied = false;
+  let movedPostIds: number[] = [];
   await dbWrite.$transaction(async (tx) => {
     // Everything above ran before this transaction, and a takedown can land in between. Re-read
     // under a lock that the writes below then hold: the model first, then its versions, the order
@@ -7468,7 +7576,7 @@ export const publishPrivateModel = async (
       // then the model went through a Private cycle). Strips the stash on
       // success. Mirrors the CASE pattern used by publishModelVersionById
       // and publishModelById.
-      await tx.$executeRaw`
+      const movedPosts = await tx.$queryRaw<{ id: number }[]>`
         UPDATE "Post"
         SET
           "publishedAt" = CASE
@@ -7480,7 +7588,9 @@ export const publishPrivateModel = async (
         WHERE "modelVersionId" IN (${Prisma.join(versionIds, ',')})
         AND "userId" = ${model.userId}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        RETURNING id
       `;
+      movedPostIds = movedPosts.map((post) => post.id);
     }
 
     await tx.modelVersion.updateMany({
@@ -7532,6 +7642,11 @@ export const publishPrivateModel = async (
     }
   });
   if (heldVerdictApplied) await heldVerdict.finishHeldVerdictApply(modelId);
+  syncReviewsOfMovedPosts({
+    change: 'publish',
+    postIds: movedPostIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {

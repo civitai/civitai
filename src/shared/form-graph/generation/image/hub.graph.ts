@@ -1,6 +1,6 @@
 import { branch, defineGraph, rootScope } from 'form-graph';
 import {
-  getEcosystemField,
+  getEcosystemStates,
   supportsEnhancedCompatibility,
   supportsSdcpp,
 } from '../ecosystem-gates';
@@ -50,26 +50,27 @@ import { zimage } from './zimage.graph';
 
 export const imageHub = defineGraph<RootCtx>()
   .field('ecosystem', ({ _ext }) => {
-    const {
-      compatibleEcosystems,
-      hiddenEcosystems,
-      ecosystemStates,
-      gatedKeys,
-      usableEcosystems,
-      defaultEcosystem,
-    } = getEcosystemField(_ext.workflow, _ext, { preferred: 'ZImageTurbo', fallback: 'SDXL' });
+    const { compatibleEcosystems, hiddenEcosystems, ecosystemStates } = getEcosystemStates(
+      _ext.workflow,
+      _ext
+    );
+    const disabledSet = new Set(ecosystemStates.map((e) => e.key));
+    const usableEcosystems = disabledSet.size
+      ? compatibleEcosystems.filter((key) => !disabledSet.has(key))
+      : compatibleEcosystems;
+    const defaultValue = usableEcosystems.includes('ZImageTurbo')
+      ? 'ZImageTurbo'
+      : usableEcosystems[0] ?? compatibleEcosystems[0] ?? 'SDXL';
 
     return {
-      ...ecosystemFieldSchemas(_ext.workflow, hiddenEcosystems, gatedKeys, usableEcosystems),
-      default: defaultEcosystem,
+      ...ecosystemFieldSchemas(_ext.workflow, hiddenEcosystems, ecosystemStates, usableEcosystems),
+      default: defaultValue,
       // The ecosystem selection is stored per OUTPUT type.
       scope: 'image',
       meta: {
         compatibleEcosystems,
         hiddenEcosystems,
         ecosystemStates,
-        usableEcosystems,
-        defaultEcosystem,
         mediaType: 'image' as const,
       },
     };
