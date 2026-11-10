@@ -8,7 +8,7 @@ import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/co
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({ UserAvatar: () => null }));
 
 const COVER = 'https://image.example/comic-cover.jpeg';
-const hit = (nsfwLevel: number, coverImageNsfwLevel: number) =>
+const hit = (nsfwLevel: number, coverImageNsfwLevel: number | null) =>
   ({
     id: 1,
     objectID: '1',
@@ -28,6 +28,20 @@ const coverShown = () =>
 describe('comics autocomplete cover', () => {
   test('a cover above the comic’s own level is hidden', async () => {
     await renderWithProviders(<ComicsSearchItem value="1" label="Sky Knights" hit={hit(1, 4)} />);
+    await expect.element(page.getByTestId('comic-cover-hidden')).toBeInTheDocument();
+    expect(coverShown()).toBe(false);
+  });
+
+  test('a safe cover on a mature comic is hidden', async () => {
+    await renderWithProviders(<ComicsSearchItem value="1" label="Sky Knights" hit={hit(4, 1)} />);
+    await expect.element(page.getByTestId('comic-cover-hidden')).toBeInTheDocument();
+    expect(coverShown()).toBe(false);
+  });
+
+  test('an unrated comic with an unrated cover is hidden', async () => {
+    await renderWithProviders(
+      <ComicsSearchItem value="1" label="Sky Knights" hit={hit(0, null)} />
+    );
     await expect.element(page.getByTestId('comic-cover-hidden')).toBeInTheDocument();
     expect(coverShown()).toBe(false);
   });

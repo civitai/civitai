@@ -127,7 +127,9 @@ export function ComicHitList() {
               <Card.Section>
                 {hit.coverImageUrl ? (
                   <div className="relative" style={{ height: 200 }}>
-                    <ImageGuard2 image={{ id: hit.id, nsfwLevel: comicSearchCoverLevel(hit) }}>
+                    {/* The index holds no cover image id. A negative id keeps this guard's reveal state and
+                        level overrides apart from any real image's, which are keyed by image id. */}
+                    <ImageGuard2 image={{ id: -hit.id, nsfwLevel: comicSearchCoverLevel(hit) }}>
                       {(safe) =>
                         safe ? (
                           <EdgeMedia
