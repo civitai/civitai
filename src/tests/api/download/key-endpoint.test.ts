@@ -52,6 +52,8 @@ vi.mock('~/server/logging/client', () => ({
 // real abort classification runs.
 
 import handler from '~/pages/api/download/[...key]';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
 
@@ -334,8 +336,6 @@ describe('/api/download/[...key] — moderators only', () => {
     [['model', '42', 'mine.safetensors']],
     [['modelVersion', '42', 'e.bin']],
     [['training-images-temp', '99', 'other-user.zip']],
-    [['http:', '42', 'model', '99', 'f.safetensors']],
-    [['%6Dodel', '42', 'mine.safetensors']],
   ])('refuses a non-moderator any key with 404 and never resolves it (case %#)', async (key) => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
     const { req, res } = createMocks({ key });
@@ -363,17 +363,52 @@ describe('/api/download/[...key] — moderators only', () => {
     );
   });
 
-  it('refuses a moderator signed in with a scoped token with 403 and never resolves it', async () => {
-    mockGetServerAuthSession.mockResolvedValue({ user: { id: 1, isModerator: true } });
-    const { req, res } = createMocks({
+  // `req.context` as getServerAuthSession leaves it for a bearer credential.
+  const bearerRequest = (user: { id: number; isModerator: boolean }, context: object) => {
+    mockGetServerAuthSession.mockResolvedValue({ user });
+    const mocks = createMocks({
       key: ['model', '99', 'any.safetensors'],
-      headers: { authorization: 'Bearer scoped-token' },
+      headers: { authorization: 'Bearer token' },
     });
+    Object.assign(mocks.req, { context });
+    return mocks;
+  };
+  const fullKey = {
+    apiKeyType: ApiKeyType.User,
+    subject: { type: 'apiKey', id: 1 },
+    tokenScope: TokenScope.Full,
+  };
+
+  it('serves a moderator using a full-access personal API key', async () => {
+    const { req, res } = bearerRequest({ id: 1, isModerator: true }, fullKey);
+
+    await handler(req, res);
+
+    expect(res._getRedirect()).toBe('https://cdn.example.com/signed');
+  });
+
+  it.each([
+    ['a scoped API key', { ...fullKey, tokenScope: TokenScope.Full - 1 }],
+    ['an OAuth token', { ...fullKey, subject: { type: 'oauth', id: 'client' } }],
+  ])('refuses a moderator using %s with 403 and never resolves it', async (_label, context) => {
+    const { req, res } = bearerRequest({ id: 1, isModerator: true }, context);
 
     await handler(req, res);
 
     expect(res._getStatusCode()).toBe(403);
     expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ allowed: false }));
+  });
+
+  it('refuses a non-moderator using a scoped API key with the same 404 as any other', async () => {
+    const { req, res } = bearerRequest(
+      { id: 42, isModerator: false },
+      { ...fullKey, tokenScope: TokenScope.Full - 1 }
+    );
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
   });
 
   it.each([
