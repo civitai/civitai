@@ -5,9 +5,8 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-// A scheduled model's date, as publishModelById writes it: the scheduled-publishing job releases the
-// model only once that date passes, so it must never land after the model's first version. The
-// transaction's raw SQL runs against an in-process Postgres; its ORM calls are stubs.
+// A scheduled model's date, as publishModelById writes it: never after the model's first version.
+// The transaction's raw SQL runs against an in-process Postgres; its ORM calls are stubs.
 
 const { mockTx } = vi.hoisted(() => ({
   mockTx: {

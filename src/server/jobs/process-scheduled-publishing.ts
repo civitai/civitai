@@ -54,18 +54,12 @@ const noFailedScanFileSql = (versionId: string) => Prisma.sql`
   )
 `;
 
-/** Scheduled models due by `now`, or with a version already live. */
+/** Scheduled models due by `now`. */
 export const scheduledModelsDueSql = (now: Date) => Prisma.sql`
   SELECT id, "userId"
   FROM "Model"
   WHERE status = 'Scheduled'
-    AND (
-      "publishedAt" <= ${now}
-      OR EXISTS (
-        SELECT 1 FROM "ModelVersion" mv
-        WHERE mv."modelId" = "Model".id AND mv.status = 'Published'
-      )
-    )
+    AND "publishedAt" <= ${now}
     AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
     AND ${notRemovedWithOwnerSql('meta')}
 `;
@@ -175,16 +169,30 @@ export const scheduledVersionsGoLiveSql = (ids: number[], now: Date) => Prisma.s
 `;
 
 /**
- * Scheduled models with a live version go live, whatever their own date, unless a moderation rule or
- * a wipe's record stops them.
+ * Scheduled models due by `now` go live, and so does the model of a version this run published on
+ * its schedule, whatever the model's own date. Unless a moderation rule or a wipe's record stops them.
  */
-export const scheduledModelsGoLiveSql = (ids: number[], now: Date) => Prisma.sql`
+export const scheduledModelsGoLiveSql = (
+  ids: number[],
+  now: Date,
+  releasedWithVersionIds: number[] = []
+) => Prisma.sql`
   UPDATE "Model"
   -- A live model left with a future date reads as Scheduled again to the restore path, which would
   -- send it back through this job and fire its publish side effects a second time.
   SET status = 'Published', "publishedAt" = LEAST("publishedAt", ${now})
   WHERE id IN (${Prisma.join(ids)})
     AND status = 'Scheduled'
+    -- Not every model with a live version: an owner may publish a version at once on a model they
+    -- scheduled for later, and that model keeps its date.
+    AND (
+      "publishedAt" <= ${now}
+      ${
+        releasedWithVersionIds.length
+          ? Prisma.sql`OR id IN (${Prisma.join(releasedWithVersionIds)})`
+          : Prisma.empty
+      }
+    )
     AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
     AND ${notRemovedWithOwnerSql('meta')}
     -- After the version UPDATE, so a version it just published counts. A model whose versions all
@@ -394,11 +402,21 @@ export const processScheduledPublishing = createJob(
           }
         }
 
-        if (scheduledModels.length) {
-          const scheduledModelIds = scheduledModels.map(({ id }) => id);
+        // A version going live on its schedule takes its scheduled model with it.
+        const releasedWithVersionIds = uniq(
+          scheduledModelVersions
+            .filter(({ id }) => publishedVersions.has(id))
+            .map(({ extras }) => extras?.modelId)
+            .filter(isDefined)
+        );
+        const releasedModelIds = uniq([
+          ...scheduledModels.map(({ id }) => id),
+          ...releasedWithVersionIds,
+        ]);
 
+        if (releasedModelIds.length) {
           const published = await tx.$queryRaw<{ id: number }[]>(
-            scheduledModelsGoLiveSql(scheduledModelIds, now)
+            scheduledModelsGoLiveSql(releasedModelIds, now, releasedWithVersionIds)
           );
           publishedModels = new Set(published.map(({ id }) => id));
         }
@@ -450,13 +468,18 @@ export const processScheduledPublishing = createJob(
       );
 
     // Process event engagements
-    for (const model of scheduledModels) {
-      if (!publishedModelIds.has(model.id)) continue;
+    const modelOwners = new Map<number, number>();
+    for (const { extras, userId } of scheduledModelVersions)
+      if (extras?.modelId) modelOwners.set(extras.modelId, userId);
+    for (const { id, userId } of scheduledModels) modelOwners.set(id, userId);
+    for (const id of publishedModelIds) {
+      const userId = modelOwners.get(id);
+      if (userId === undefined) continue;
       await eventEngine.processEngagement({
-        userId: model.userId,
+        userId,
         type: 'published',
         entityType: 'model',
-        entityId: model.id,
+        entityId: id,
       });
     }
     for (const modelVersion of scheduledModelVersions) {

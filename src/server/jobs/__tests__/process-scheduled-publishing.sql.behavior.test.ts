@@ -330,12 +330,12 @@ describe('processScheduledPublishing :: story spark', () => {
   });
 });
 
-describe('processScheduledPublishing :: a model dated after its live version', () => {
+describe('processScheduledPublishing :: a model dated after its first version', () => {
   const FUTURE = new Date(Date.now() + 2 * 24 * 60 * 60_000);
 
-  // A second, later version once pushed the model's own date to its own: the first version went live
-  // on schedule and the model stayed Scheduled until the second.
-  async function modelDatedAfterLiveVersion({ v1Status }: { v1Status: string }) {
+  // The model is dated at its second version; the first is either due on its schedule or was
+  // published at once by the owner.
+  async function modelDatedAfterFirstVersion({ v1Status }: { v1Status: string }) {
     await pg.db.query(`INSERT INTO "Model" VALUES (1, $1, 'Scheduled', $2, NULL, NULL)`, [
       OWNER,
       FUTURE,
@@ -344,6 +344,7 @@ describe('processScheduledPublishing :: a model dated after its live version', (
       `INSERT INTO "ModelVersion" VALUES (10, 1, $1, $2, 'Public'), (11, 1, 'Scheduled', $3, 'Private')`,
       [v1Status, PAST, FUTURE]
     );
+    await addFile();
   }
   const model = async () =>
     (
@@ -352,8 +353,8 @@ describe('processScheduledPublishing :: a model dated after its live version', (
       )
     ).rows[0];
 
-  it('publishes the model, no longer dated in the future', async () => {
-    await modelDatedAfterLiveVersion({ v1Status: 'Published' });
+  it('publishes the model with its first version, no longer dated in the future', async () => {
+    await modelDatedAfterFirstVersion({ v1Status: 'Scheduled' });
     await runJob();
     const after = await model();
     expect(after.status).toBe('Published');
@@ -361,8 +362,8 @@ describe('processScheduledPublishing :: a model dated after its live version', (
     expect(engaged('model')).toEqual([1]);
   });
 
-  it('keeps a model with no live version Scheduled until its date', async () => {
-    await modelDatedAfterLiveVersion({ v1Status: 'Draft' });
+  it('keeps the model Scheduled to its date when its first version was published at once', async () => {
+    await modelDatedAfterFirstVersion({ v1Status: 'Published' });
     await runJob();
     expect(await model()).toEqual({ status: 'Scheduled', publishedAt: FUTURE });
     expect(engaged('model')).toEqual([]);
