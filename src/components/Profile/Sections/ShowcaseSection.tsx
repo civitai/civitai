@@ -60,7 +60,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
 
   const isNullState = showcaseItems.length === 0 || (!isLoading && !coverImages.length);
 
-  if (isNullState) {
+  if (showcaseItems.length === 0 || (isNullState && inView)) {
     return null;
   }
 
