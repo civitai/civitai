@@ -3,7 +3,6 @@ import type { Session } from '~/types/session';
 import { matchesOrchestratorServiceToken } from '~/server/auth/orchestrator-service-token';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { hasEntityAccess } from '~/server/services/common.service';
 
 export type MiniEpochGateMode = 'off' | 'log' | 'enforce';
 
@@ -70,7 +69,9 @@ export async function evaluateMiniEpochCaller({
   else if (!user?.id) callerClass = 'anonymous';
   else {
     // One id per call: the batch form decides owned Private ids differently. A failed lookup
-    // counts as no grant, so `log` still serves and `enforce` withholds.
+    // counts as no grant, so `log` still serves and `enforce` withholds. Imported here so the mini
+    // route's module graph does not take on common.service.
+    const { hasEntityAccess } = await import('~/server/services/common.service');
     const access = await hasEntityAccess({
       entityType: 'ModelVersion',
       entityIds: [modelVersionId],
