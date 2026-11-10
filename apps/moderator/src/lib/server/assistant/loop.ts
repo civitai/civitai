@@ -308,7 +308,7 @@ export type Page = { list: string; offset: number; nextOffset: number | null };
 /**
  * About `max` characters of JSON: the longest array is halved (up to 40 times), then the text is cut.
  * Either way the output carries `trimmedForSize`: the lists cut, with `kept` of `of`, or `true` when the
- * text itself was cut. The model must know where a slice ends, or it re-asks for the same page.
+ * text itself was cut.
  */
 export function fitJson(
   value: unknown,

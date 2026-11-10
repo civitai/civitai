@@ -35,9 +35,10 @@ const getAccountsOnAddresses = vi.fn(async (_addresses: string[], _opts?: unknow
   linked: linked as never,
   invalid: [] as string[],
 }));
+const getLinkedAccounts = vi.fn(async (_id: number, _opts?: unknown) => linked);
 vi.mock('$lib/server/ip-links.service', async (importOriginal) => ({
   ...(await importOriginal<typeof IpLinks>()),
-  getLinkedAccounts: vi.fn(async () => linked),
+  getLinkedAccounts,
   getAccountsOnAddresses,
   getReactionBreadth: vi.fn(async () => ({ reactors: 0, top: [] })),
 }));
@@ -329,6 +330,18 @@ describe('accounts_on_address', () => {
     });
     expect((await ask({ address: '192.0.2.1', offset: 40, limit: 1 })).page).toMatchObject({
       nextOffset: null,
+    });
+  });
+
+  it('says where the next page starts for find_linked_accounts too', async () => {
+    getLinkedAccounts.mockResolvedValueOnce({ ...linked, matched: 195 } as never);
+    const { data } = await run('find_linked_accounts', { userId: 5, offset: 40, limit: 1 }, [
+      LOOKUP_PAGE,
+    ]);
+    expect((data as { page: unknown }).page).toEqual({
+      list: 'accounts',
+      offset: 40,
+      nextOffset: 41,
     });
   });
 

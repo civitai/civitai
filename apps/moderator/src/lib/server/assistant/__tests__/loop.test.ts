@@ -125,6 +125,22 @@ describe('runTurn', () => {
     expect(second.messages.at(-1)?.content).not.toContain('emailsShown');
   });
 
+  it('records a cut for size on the audit row, apart from the tool truncating itself', async () => {
+    lookup.mockImplementationOnce(async () => ({
+      data: { rows: Array.from({ length: 1000 }, (_, i) => `${i}`.padEnd(100, 'x')) },
+      rows: 1000,
+      truncated: false,
+      sources: [],
+    }));
+    const { run } = turn([reply(null, [call('lookup', { userId: 5 })]), reply('done')]);
+    const [logged] = (await run).toolCalls;
+    expect(logged.cutForSize).toEqual([
+      { at: 'data.rows', kept: expect.any(Number) as number, of: 1000 },
+    ]);
+    expect(logged.cutForSize![0].kept).toBeLessThan(1000);
+    expect(logged.truncated).toBe(true);
+  });
+
   describe('a tool with its own timeout', () => {
     const slow = (ms: number, timeoutMs?: number): AnyTool => ({
       name: 'slow',
