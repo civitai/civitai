@@ -160,6 +160,7 @@ import {
 import * as z from 'zod';
 import { getBlockTool } from '~/server/services/blocks/tools/registry';
 import { ANON_SUBJECT } from '~/server/services/block-token-subject';
+import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 
 // ── An in-memory sysRedis: get/set (NX)/del/incrBy/decrBy. ──────────────────
@@ -2379,6 +2380,7 @@ describe('inline customComfy — the generation input gate', () => {
   const OTHER_USER = 7;
   const KEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
   const CDN = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${KEY}/original=true`;
+  const OWN_KEY = '11111111-2222-4333-8444-555555555555';
 
   function givenImage(owner: number, row: { scanComplete?: boolean; held?: boolean } = {}) {
     const scanComplete = row.scanComplete ?? true;
@@ -2398,12 +2400,16 @@ describe('inline customComfy — the generation input gate', () => {
         : []) as never);
   }
   afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
-  // The customComfy arm reads the session user; keep the account-restriction row as well.
+  // The customComfy arm reads the session user, and the issue record from the in-memory store.
   beforeEach(() => {
     const viewer = { id: VIEWER, isModerator: false, email: 'v@example.com', username: 'v' };
-    for (const db of [dbMock.dbWrite, dbMock.dbRead])
-      db.user.findUnique.mockImplementation((async (args: { select?: Record<string, boolean> }) =>
-        args.select?.bannedAt ? { muted: false, bannedAt: null } : viewer) as never);
+    dbMock.dbRead.user.findUnique.mockImplementation((async () => viewer) as never);
+    redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+      keys.map((k) => store.get(k) ?? null)) as never);
+  });
+  afterEach(() => {
+    dbMock.dbRead.user.findUnique.mockReset();
+    redisMock.sysRedis.mGet.mockReset();
   });
 
   const inline = (inputs: Record<string, unknown> = {}) => ({
@@ -2446,10 +2452,12 @@ describe('inline customComfy — the generation input gate', () => {
     expect(counter(USER_CAP)).toBe(0);
   });
 
-  it('checks the graph the submit carries, not the one an estimate passed', async () => {
+  it('submit gates its own graph: an image swapped in after a passing estimate is refused', async () => {
     givenImage(OTHER_USER);
-    await expect(estimate(inline())).resolves.toMatchObject({ snapshot: { status: 'pending' } });
-    await expect(submit(inline({ image: CDN }))).rejects.toMatchObject({
+    const body = inline({ image: 'clean.png' });
+    await expect(estimate(body)).resolves.toMatchObject({ snapshot: { status: 'pending' } });
+    body.workflow['3'].inputs.image = CDN;
+    await expect(submit(body)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
     });
@@ -2465,6 +2473,35 @@ describe('inline customComfy — the generation input gate', () => {
   });
 
   it.each([
+    ['unrowed', async () => recordUploadKeyOwner(OWN_KEY, VIEWER)],
+    [
+      'store-unreadable',
+      async () => {
+        await recordUploadKeyOwner(OWN_KEY, VIEWER);
+        redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+      },
+    ],
+  ])('refuses an own row-less upload (%s) before any orchestrator call', async (reason, given) => {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
+    await given();
+    loggingMock.logToAxiom.mockClear();
+    await expect(submit(inline({ image: OWN_KEY }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: APP_SOURCE_UNUSABLE_MESSAGE,
+    });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'app-block-source-refusal', reason })
+    );
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses inline image bytes in a node input at the schema', async () => {
+    const png = `data:image/png;base64,${'iVBORw0KGgo'.repeat(40)}`;
+    await expect(submit(inline({ image: png }))).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it.each([
     [
       'nests too deeply',
       () => {
@@ -2474,9 +2511,12 @@ describe('inline customComfy — the generation input gate', () => {
       },
     ],
     ['is too large to check', () => ({ image: 'a\n'.repeat(70_000) })],
-  ])('refuses a graph that %s, never passing it unscanned', async (_, inputs) => {
+  ])('refuses a graph that %s, never passing it unscanned', async (what, inputs) => {
     for (const call of [estimate, submit]) {
-      await expect(call(inline(inputs()))).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      await expect(call(inline(inputs()))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: `workflow graph ${what}`,
+      });
     }
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();

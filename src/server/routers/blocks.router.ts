@@ -10252,11 +10252,11 @@ async function submitCustomComfyWorkflow(opts: {
   // forget to read. Full reasoning in `services/blocks/inline-comfy.service`.
   let inlineAuditText = '';
   if (inlineBody) {
-    const pending = await checkInlineComfySources({ graph: inlineBody.workflow, userId, claims });
-    if (pending) return pending;
     // (a) CONTAINMENT — every AIR in the graph must be declared in `resources`,
     //     which is what makes gating that flat array sufficient.
     assertInlineGraphAirsDeclared(inlineBody.workflow, inlineBody.resources);
+    const pending = await checkInlineComfySources({ graph: inlineBody.workflow, userId, claims });
+    if (pending) return pending;
     // (b) ENTITLEMENT — the real belt (early-access `hasAccess` + Private
     //     subscription + anti-drop + anti-substitute) over the declared AIRs.
     await assertViewerEntitledToInlineResources({

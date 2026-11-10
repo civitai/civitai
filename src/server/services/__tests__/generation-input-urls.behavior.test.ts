@@ -493,7 +493,10 @@ describe('an App Blocks generation source', () => {
 
     it('returns pending for an own image still being scanned', async () => {
       await givenImage({ userId: CALLER, postId: null, ingestion: 'Pending' });
-      expect(await check([CDN()], 'appBlocksInlineComfy', true)).toMatch(/^refused: /);
+      loggingMock.logToAxiom.mockClear();
+      const got = await check([CDN()], 'appBlocksInlineComfy', true);
+      expect(got).toMatch(/^refused: /);
+      expect(got).not.toBe(unusable);
       logged('pending');
     });
 
