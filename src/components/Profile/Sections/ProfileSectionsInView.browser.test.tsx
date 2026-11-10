@@ -119,11 +119,11 @@ const sections = [
 
 let providerCount = 0;
 // A fresh provider id per mount keeps one test's cached size from leaking into the next.
-const mount = (Section: React.ComponentType<any>, providerId: string, top: number) =>
+const mount = (Section: React.ComponentType<any>, providerId: string, top: number, u = user) =>
   renderWithProviders(
     <IntersectionObserverProvider id={providerId}>
       <div data-testid="host" style={{ position: 'absolute', top, left: 0, width: 600 }}>
-        <Section user={user} />
+        <Section user={u} />
       </div>
     </IntersectionObserverProvider>
   );
@@ -135,27 +135,44 @@ beforeEach(() => {
   h.items = [];
 });
 
+// First visit renders at once (no cached size) and, being far below the fold, is reported out of
+// view, which caches its height. Remounting is the client-side navigation back: inView starts false.
+async function visitThenReturn(
+  Section: React.ComponentType<any>,
+  items: any[],
+  returnItems: any[],
+  returnUser = user
+) {
+  const providerId = `seed-${providerCount++}`;
+  h.items = items;
+  const first = await mount(Section, providerId, 20000);
+  await expect
+    .poll(() => (host().firstElementChild as HTMLElement | null)?.style.height, { timeout: 5000 })
+    .toBeTruthy();
+  await first.unmount();
+
+  h.items = returnItems;
+  await mount(Section, providerId, 20000, returnUser);
+}
+
 describe.each(sections)('$name', ({ Section, item }) => {
   test('a section that was scrolled away earlier still mounts its observed wrapper, then loads on return', async () => {
-    h.items = [item];
-    const providerId = `seed-${providerCount++}`;
-
-    // First visit: no cached size, so the section renders at once; being far below the fold, the
-    // observer reports it out of view and the hook caches its height.
-    const first = await mount(Section, providerId, 20000);
-    await settle();
-    await first.unmount();
-
-    // Client-side navigation back: the cached size makes inView start false.
-    await mount(Section, providerId, 20000);
-    await settle();
-    expect(host().firstElementChild).not.toBeNull();
+    await visitThenReturn(Section, [item], [item]);
+    await expect.poll(() => host().firstElementChild, { timeout: 2000 }).not.toBeNull();
     expect(host().querySelector('[data-testid="section-body"]')).toBeNull();
 
     host().style.top = '0px';
     await expect
       .poll(() => host().querySelector('[data-testid="section-body"]'), { timeout: 5000 })
       .not.toBeNull();
+  });
+
+  test('a returning section whose data has since emptied collapses once it is in view', async () => {
+    await visitThenReturn(Section, [item], []);
+    await expect.poll(() => host().firstElementChild, { timeout: 2000 }).not.toBeNull();
+
+    host().style.top = '0px';
+    await expect.poll(() => host().firstElementChild, { timeout: 5000 }).toBeNull();
   });
 
   test('visible with data renders the section', async () => {
@@ -172,4 +189,11 @@ describe.each(sections)('$name', ({ Section, item }) => {
     await settle();
     expect(host().firstElementChild).toBeNull();
   });
+});
+
+test('ShowcaseSection with nothing to showcase renders nothing even with a cached size', async () => {
+  const emptyUser = { ...user, profile: { showcaseItems: [] } };
+  await visitThenReturn(ShowcaseSection, [sections[5].item], [], emptyUser);
+  await settle();
+  expect(host().firstElementChild).toBeNull();
 });
