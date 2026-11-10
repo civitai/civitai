@@ -30,12 +30,7 @@ export const model3dHub = defineGraph<RootCtx>()
       : usableEcosystems[0] ?? compatibleEcosystems[0] ?? 'PolyGen';
 
     return {
-      ...ecosystemFieldSchemas(
-        _ext.workflow,
-        hiddenEcosystems,
-        ecosystemStates,
-        usableEcosystems
-      ),
+      ...ecosystemFieldSchemas(_ext.workflow, hiddenEcosystems, ecosystemStates, usableEcosystems),
       default: defaultValue,
       // The ecosystem selection is stored per OUTPUT type.
       scope: 'model3d',

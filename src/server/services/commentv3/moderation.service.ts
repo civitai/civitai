@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
@@ -7,26 +7,11 @@ import {
   deleteComments,
   prismaRunner,
   setCommentFlags,
-  v3SurfaceCommentIds,
-  v3WriteSurfaceSql,
 } from '~/server/services/commentv3/write.service';
 import { logToAxiom } from '~/server/logging/client';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 
-/**
- * Moderator actions on comments of the surfaces that write CommentV3 directly (`isV3WriteSurface`).
- * The v2 twins in `commentsv2.service.ts` act on the old tables.
- */
-
-/** Of `ids`, the comments on surfaces that write CommentV3 directly. */
-export async function v3WriteCommentIds(ids: number[], db: Prisma.TransactionClient = dbWrite) {
-  if (!ids.length) return [];
-  const rows = await db.$queryRaw<{ id: number }[]>`
-    SELECT id FROM "CommentV3"
-    WHERE id = ANY(${ids}::int[]) AND ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))}
-  `;
-  return rows.map((r) => r.id);
-}
+/** Moderator actions on comments. */
 
 /**
  * Removes comments as ToS violations: the flag takes them off the page, their ToS reports are
@@ -142,15 +127,39 @@ export function afterCommentsV3Deleted(deleted: Awaited<ReturnType<typeof delete
   void onTopicCommentsRemoved(deleted);
 }
 
-/**
- * Flags a user's live comments on CommentV3-write surfaces as ToS violations (the ban path), keeping
- * their CommentV2 rows in step. The ban's own CommentV2 update leaves these out, so each row is
- * locked CommentV3 first, as every write on these surfaces does.
- */
+/** The moderator bulk delete, in one transaction. */
+export async function bulkDeleteComments({ ids }: { ids: number[] }) {
+  const deleted = await dbWrite.$transaction((tx) => deleteCommentsV3(tx, ids));
+  afterCommentsV3Deleted(deleted);
+  return { deleted: deleted.length };
+}
+
+/** Flags a user's live comments as ToS violations (the ban path). */
 export async function setUserCommentsV3Tos(userId: number) {
-  const ids = await v3SurfaceCommentIds(prismaRunner(dbWrite), userId, 'NOT "tosViolation"');
-  if (ids.length)
-    await dbWrite.$transaction((tx) =>
-      setCommentFlags(prismaRunner(tx), ids, { tosViolation: true })
+  const ids = (
+    await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "CommentV3"
+      WHERE "userId" = ${userId} AND "deletedAt" IS NULL AND NOT "tosViolation"`
+  ).map((r) => r.id);
+  await setFlagsInBatches(ids, { tosViolation: true });
+}
+
+const FLAG_BATCH = 1_000;
+
+/**
+ * `setCommentFlags` over any number of comments, a batch per transaction: one account can hold
+ * hundreds of thousands. Returns the rows it changed.
+ */
+export async function setFlagsInBatches(
+  ids: number[],
+  flags: Parameters<typeof setCommentFlags>[2]
+) {
+  const changed: Awaited<ReturnType<typeof setCommentFlags>> = [];
+  for (let i = 0; i < ids.length; i += FLAG_BATCH) {
+    const batch = ids.slice(i, i + FLAG_BATCH);
+    changed.push(
+      ...(await dbWrite.$transaction((tx) => setCommentFlags(prismaRunner(tx), batch, flags)))
     );
+  }
+  return changed;
 }

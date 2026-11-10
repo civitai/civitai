@@ -27,6 +27,11 @@ import {
   modelVersionVisibilitySelect,
 } from '~/server/services/model-version-visibility.service';
 import { addPostImage } from '~/server/services/post.service';
+import { refreshHasReceivedReviews } from '~/server/redis/caches';
+import {
+  announceReviewsInBackground,
+  unreleasedReviewIdsOfPosts,
+} from '~/server/services/resourceReview.visibility';
 import {
   handleLogError,
   throwBadRequestError,
@@ -103,6 +108,7 @@ async function assertCanUseModelVersion(modelVersionId: number, user: SessionUse
 /** Drops a half-made post and its image rows but keeps the uploaded files: the creator retries
  *  with the same upload keys, which `deletePost` would have removed from storage. */
 async function discardFailedPost(postId: number) {
+  const unreleasedReviewIds = await unreleasedReviewIdsOfPosts([postId]);
   const images = await dbWrite.image.findMany({ where: { postId }, select: { id: true } });
   await dbWrite.image.deleteMany({ where: { postId } });
   if (images.length)
@@ -111,6 +117,10 @@ async function discardFailedPost(postId: number) {
       action: SearchIndexUpdateQueueAction.Delete,
     });
   await dbWrite.post.delete({ where: { id: postId } });
+  announceReviewsInBackground({
+    reviewIds: unreleasedReviewIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 }
 
 const IDEMPOTENCY_TTL_SECONDS = 60 * 60;

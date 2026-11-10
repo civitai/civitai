@@ -27,7 +27,9 @@ import {
 } from '~/server/games/daily-challenge/challenge-helpers';
 import {
   distributeParticipationPrizes,
+  challengeReviewRefundTxId,
   promoteChallengeEntries,
+  refundBannedEntrantReviews,
 } from '~/server/games/daily-challenge/challenge-rewards';
 import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
 import {
@@ -109,7 +111,7 @@ import {
   createBuzzTransactionMany,
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
-import { createPrizes } from '~/server/services/prize.service';
+import { createPrizes, getBannedUserIds } from '~/server/services/prize.service';
 import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { createNotification } from '~/server/services/notification.service';
 import { cosmeticEntityCaches } from '~/server/redis/caches';
@@ -844,7 +846,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           type: TransactionType.Refund,
           amount: challenge.reviewCost,
           description: `Challenge review refund: entry ${e.imageId}`,
-          externalTransactionId: `challenge-review-refund-${currentChallenge.challengeId}-${e.imageId}`,
+          externalTransactionId: challengeReviewRefundTxId(currentChallenge.challengeId, e.imageId),
         }))
       );
     }
@@ -971,6 +973,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     WHERE ci."collectionId" = ${currentChallenge.collectionId}
     AND ci.status = 'ACCEPTED'
     AND ci."tagId" IS NULL
+    AND u."bannedAt" IS NULL
     ${reviewedSince}
     AND ${notYetReviewedByJudge}
   `;
@@ -1018,10 +1021,12 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     WHERE ci."collectionId" = ${currentChallenge.collectionId}
     AND ci.status = 'ACCEPTED'
     AND ci."tagId" = ${config.reviewMeTagId}
+    AND u."bannedAt" IS NULL
     AND ${notYetReviewedByJudge}
   `;
   log('Requested review:', requestReview.length);
   // Owed reviews: a review that failed on an earlier tick, or a moderator re-judge.
+  // Banned entrants are excluded: resolved, not retried; a paid review is refunded at completion.
   const pendingEntries = pendingIds.length
     ? await dbWrite.$queryRaw<RecentEntry[]>`
         SELECT
@@ -1036,6 +1041,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         WHERE ci."collectionId" = ${currentChallenge.collectionId}
         AND ci.status = 'ACCEPTED'
         AND ci."imageId" = ANY(${pendingIds}::int[])
+        AND u."bannedAt" IS NULL
         AND ${notYetReviewedByJudge}
       `
     : [];
@@ -1576,6 +1582,14 @@ export async function pickWinnersForChallenge(
     // Check if winners already exist from a previous (failed) run.
     // If so, skip LLM generation entirely to avoid non-deterministic re-picks.
     const existingWinners = await getExistingWinnersForRetry(currentChallenge.challengeId);
+
+    // Before any early return: a challenge left with no judged entries still owes these.
+    const refundedReviews = await refundBannedEntrantReviews({
+      challengeId: currentChallenge.challengeId,
+      collectionId: currentChallenge.collectionId,
+      reviewMeTagId: config.reviewMeTagId,
+    });
+    log('Paid reviews refunded to banned entrants:', refundedReviews.length);
 
     let winningEntries: Array<{
       userId: number;
@@ -2272,7 +2286,9 @@ export async function getJudgedEntries(
 
   // Every judged entry — the per-user best is picked below, after the theme gate has had a chance
   // to drop disqualified entries, so a user whose top entry is gated falls through to their next.
-  const userBestEntries = await dbRead.$queryRaw<JudgedEntry[]>`
+  // A ban leaves the user's entries ACCEPTED in the collection, so banned entrants are dropped
+  // here. Read at query time: a ban lifted before completion makes them eligible again.
+  const judgedRows = await dbRead.$queryRaw<JudgedEntry[]>`
     SELECT
       ci."imageId",
       i."userId",
@@ -2285,8 +2301,13 @@ export async function getJudgedEntries(
     AND ci."tagId" = ${config.judgedTagId}
     AND ci.note IS NOT NULL
     AND ci.status = 'ACCEPTED'
+    AND u."bannedAt" IS NULL
   `;
-  log('Users with judged entries:', userBestEntries?.length);
+  // Re-checked on the primary: the refund and participation payout read it there, so a ban the
+  // replica has not seen yet must not let the same user be refunded and still place.
+  const bannedIds = await getBannedUserIds(judgedRows.map((e) => e.userId));
+  const userBestEntries = judgedRows.filter((e) => !bannedIds.has(e.userId));
+  log('Users with judged entries:', userBestEntries.length);
   if (!userBestEntries.length) {
     return [];
   }

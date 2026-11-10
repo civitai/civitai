@@ -5,6 +5,8 @@ import type * as CardStickerOverlayModule from '~/components/Sticker/CardSticker
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as BrowserSettingsModule from '~/providers/BrowserSettingsProvider';
 import type * as TrackUtilsModule from '~/components/TrackView/track.utils';
+import type * as ImageContextMenuModule from '~/components/Image/ContextMenu/ImageContextMenu';
+import type * as CardRemixButtonModule from '~/components/Image/Remix/CardRemixButton';
 
 const features = {
   stickerPlacement: false,
@@ -84,10 +86,23 @@ vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
 vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
   useImagesContext: () => ({ getImages: () => [] }),
 }));
-vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
-  ImageContextMenu: () => null,
-}));
-vi.mock('~/components/Image/Remix/CardRemixButton', () => ({ CardRemixButton: () => null }));
+// The header's buttons are real only where a test measures them (the +N chip below).
+const header = { real: false };
+vi.mock('~/components/Image/ContextMenu/ImageContextMenu', async (importOriginal) => {
+  const real = await importOriginal<typeof ImageContextMenuModule>();
+  return {
+    ...real,
+    ImageContextMenu: (props: Parameters<typeof real.ImageContextMenu>[0]) =>
+      header.real ? <real.ImageContextMenu {...props} /> : null,
+  };
+});
+vi.mock('~/components/Image/Remix/CardRemixButton', async (importOriginal) => {
+  const real = await importOriginal<typeof CardRemixButtonModule>();
+  return {
+    CardRemixButton: (props: Parameters<typeof real.CardRemixButton>[0]) =>
+      header.real ? <real.CardRemixButton {...props} /> : null,
+  };
+});
 vi.mock('~/components/UserAvatar/UserAvatarSimple', () => ({
   UserAvatarSimple: () => <span>user</span>,
 }));
@@ -159,7 +174,17 @@ const image = {
   stats: { likeCountAllTime: 1082, heartCountAllTime: 12400, tippedAmountCountAllTime: 25000 },
 } as unknown as Parameters<typeof ImageCard>[0]['data'];
 
-async function renderCard(viewport: { width: number; height: number } = PHONE_VIEWPORT) {
+type TurfSummaries = NonNullable<React.ContextType<typeof TurfSummaryContext>>['images'];
+type TurfStickers = NonNullable<React.ContextType<typeof TurfSummaryContext>>['stickers'];
+
+async function renderCard(
+  viewport: { width: number; height: number } = PHONE_VIEWPORT,
+  {
+    width = 171,
+    images = {},
+    stickers = {},
+  }: { width?: number; images?: TurfSummaries; stickers?: TurfStickers } = {}
+) {
   useHatTurfStore.setState({ cosmeticId: null, showHats: true });
   await renderAtViewport(
     <TurfSummaryContext.Provider
@@ -167,15 +192,15 @@ async function renderCard(viewport: { width: number; height: number } = PHONE_VI
         event: 'birthday2026',
         arm: 'control',
         team: 'blue',
-        images: {},
+        images,
         open: {},
-        stickers: {},
+        stickers,
         joined: true,
         watch: () => () => undefined,
       }}
     >
       <IntersectionObserverProvider>
-        <div style={{ width: 171 }}>
+        <div style={{ width }} data-testid="card-frame">
           <ImageCard data={image} />
         </div>
       </IntersectionObserverProvider>
@@ -272,4 +297,63 @@ describe('Hat Turf button geometry on a feed card', () => {
       }
     }
   );
+});
+
+// Feedback: the "+N" hats chip sat at the card's top right, under the Remix button the card's
+// header stacks below its menu, so it could not be seen.
+describe('the +N hats chip on a feed card', () => {
+  const overlaps = (a: DOMRect, b: DOMRect) =>
+    a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+
+  test.each([171, 260, 320])('clears the Remix and menu buttons at %spx', async (width) => {
+    features.imageGeneration = true;
+    header.real = true;
+    try {
+      await renderCard(
+        { width: 1280, height: 800 },
+        {
+          width,
+          images: {
+            [image.id]: {
+              shown: { blue: 6, pink: 4 },
+              counted: { blue: 6, pink: 4 },
+              leader: 'blue',
+              leaderCosmeticId: 11,
+              hatted: true,
+              hattedTeam: null,
+            },
+          },
+          stickers: {
+            [image.id]: [1, 2].map((id) => ({
+              id,
+              userId: 10 + id,
+              team: 'blue',
+              cosmeticId: 11,
+              data: { x: 0.3 * id, y: 0.6, scale: 0.2, rotation: 0, flip: false },
+            })),
+          },
+        }
+      );
+      const q = (selector: string) => document.body.querySelector(selector);
+      await vi.waitFor(() => expect(q('[data-testid="hat-turf-more"]')).not.toBeNull());
+      const chip = q('[data-testid="hat-turf-more"]')!.getBoundingClientRect();
+      expect(chip.width).toBeGreaterThan(0);
+      const remix = q('[data-activity="remix:image-card-home"]')!;
+      expect(remix.getBoundingClientRect().width).toBeGreaterThan(0);
+      // The header's right column: the menu button with Remix under it.
+      const column = remix.closest('.flex-col')!.getBoundingClientRect();
+      expect(column.height).toBeGreaterThan(remix.getBoundingClientRect().height);
+      expect(overlaps(chip, column), 'the +N chip is under the menu or Remix button').toBe(false);
+      // It moves to the left, under the badge row there.
+      const badge = q('[data-testid="hat-turf-count"]')!.getBoundingClientRect();
+      expect(badge.width).toBeGreaterThan(0);
+      expect(overlaps(chip, badge), 'the +N chip is under the Hat Turf badge').toBe(false);
+      const frame = q('[data-testid="card-frame"]')!.getBoundingClientRect();
+      expect(chip.left).toBeGreaterThanOrEqual(frame.left);
+      expect(chip.right).toBeLessThanOrEqual(frame.right);
+    } finally {
+      features.imageGeneration = false;
+      header.real = false;
+    }
+  });
 });

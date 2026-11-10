@@ -518,6 +518,7 @@ describe('what the builders hand resolveHubSources', () => {
       ...input(1),
       isModerator: true,
       holdExempt: true,
+      galleryOwnerId: 5,
       hubExcludedSources: [{ type: UserHubSourceType.User, targetId: 11 }],
     } as Parameters<typeof getImagesFromSearchPreFilter>[0]);
 
@@ -527,6 +528,7 @@ describe('what the builders hand resolveHubSources', () => {
         userId: 5,
         isModerator: true,
         holdExempt: true,
+        galleryOwnerId: 5,
         excludedSources: [{ type: UserHubSourceType.User, targetId: 11 }],
       })
     );

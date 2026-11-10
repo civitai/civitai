@@ -49,10 +49,12 @@ import {
 } from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getWithheldCosmeticIds } from '~/server/services/creator-shop-withheld';
+import { visibleReviewSql } from '~/server/services/resourceReview.visibility';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { getImageTagRows } from '~/server/redis/image-tag-rows';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
+import { basicTagsLocalTtl, cosmeticsLocalTtl } from '~/server/redis/l1-switches';
 import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
 import { foldUserMultipliers } from '~/server/redis/user-multipliers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
@@ -276,6 +278,12 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
     return Object.fromEntries(cosmetics.map((x) => [x.id, x]));
   },
   ttl: CacheTTL.day,
+  // L1 only while COSMETICS_L1 is on. Admin edits refresh Redis and this process's L1 but there is
+  // no cross-process bust, so other processes can serve the previous value for up to the L1 TTL.
+  // Readers that hide content on `flags` or cache the result for long read with `bypassLocal`.
+  localTtl: cosmeticsLocalTtl,
+  localMax: 20000,
+  localMaxBytes: L1_CACHE_BYTE_BUDGETS.cosmetics,
 });
 
 /** A user whose profile picture may not be served gets no entry, the same as a user with none. */
@@ -369,13 +377,13 @@ export const cosmeticEntityCaches = Object.fromEntries(
           record.id = rawRecord.cosmeticId;
           delete (record as any).cosmeticId;
 
-          // Add userData to the data field
-          record.data = cosmetic.data as ContentDecorationCosmetic['data'];
-          if (rawRecord.userData) {
-            const userData = rawRecord.userData as ContentDecorationCosmetic['data'];
-            if (userData.lights) record.data.lights = userData.lights;
-            delete (record as any).userData;
-          }
+          // Add userData to the data field. `cosmetic.data` is the cosmetics2 entry's own object,
+          // shared by every record in this batch that wears it and, while that cache's L1 is on, by
+          // every request this process serves, so a wearer's lights go on a copy, never on it.
+          const data = cosmetic.data as ContentDecorationCosmetic['data'];
+          const userData = rawRecord.userData as ContentDecorationCosmetic['data'] | null;
+          record.data = userData?.lights ? { ...data, lights: userData.lights } : data;
+          if (rawRecord.userData) delete (record as any).userData;
         }
       },
       ttl: CacheTTL.day,
@@ -414,7 +422,11 @@ export const eventDecorationEntityCaches = Object.fromEntries(
             AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
             AND jsonb_typeof(c.data->'event') = 'string';
         `;
-        const cosmetics = await cosmeticCache.fetch([...new Set(rows.map((x) => x.cosmeticId))]);
+        // Past this process's cosmetics2 L1: what this builds is cached for a day, so a copy up to
+        // the L1 TTL old would outlive the edit that a refresh of cosmetics2 already put in Redis.
+        const cosmetics = await cosmeticCache.fetch([...new Set(rows.map((x) => x.cosmeticId))], {
+          bypassLocal: true,
+        });
         const result: Record<number, WornEventDecoration> = {};
         for (const row of rows) {
           const cosmetic = cosmetics[row.cosmeticId];
@@ -629,22 +641,18 @@ export const tagCache = createCachedObject<TagLookup>({
     );
   },
   ttl: CacheTTL.day,
-  // L1: the tag catalog is a small, near-static, SHARED universe keyed by tag id, so a
-  // per-pod L1 sized to hold the hot catalog reaches a near-100% feed hit ratio and
-  // removes tagCache's per-id Redis GET fan-out. The 1d Redis TTL dwarfs a 30s L1.
-  // BEHAVIOR-AUDIT (2026-07): the value carries nsfwLevel + unlisted. Every reader was
-  // grepped — neither field feeds a HARD content-visibility gate on the feed. Readers
-  // use tag NAMES for display (getTagNamesForImages, search-index tagNames), tag id/name
-  // for category filtering (model.service), and `unlisted` ONLY in stripUnlistedTags —
-  // a non-moderator filter on the model VOTABLE-TAGS panel (a tag-label surface, not
-  // image/content visibility; the ImageTag SQL view already drops unlisted at the DB
-  // layer, and moderators bypass it). Image/model visibility is gated by the entity's
-  // OWN nsfwLevel, never the tag's. So a ≤30s L1 delay on a busted tag-level/unlisted
-  // edit is a cosmetic tag-label lag, not a moderation-visibility bug. localTtl kept
-  // conservative (30s) given that (minor) mod-adjacent surface; hit ratio is driven by
-  // catalog coverage (localMax), not localTtl. Busted per-id on mod tag-level changes
-  // (adjust-tag-level.ts) — dropped from THIS pod's L1, ≤30s cross-pod lag accepted.
-  localTtl: 30,
+  // L1: the tag catalog is small, near-static and shared by every reader, so an L1 sized to hold
+  // the hot catalog (localMax) removes tagCache's per-id Redis read fan-out.
+  //
+  // localTtl is 30s, or 300s while BASIC_TAGS_L1_LONG_TTL is on. A busted tag-level or unlisted
+  // edit (adjust-tag-level.ts, the only bust) is dropped from the editing process's L1 and reaches
+  // other processes after at most that long. Readers: tag names for display (getTagNamesForImages,
+  // the images search index), modelTagCache's tags (category filtering in model.service, and the
+  // model page's tag list, which drops `unlisted` tags), and stripUnlistedTags (`unlisted`, on the
+  // non-moderator votable-tags panel). These are label surfaces: image and model visibility is
+  // gated on the entity's own nsfwLevel, never the tag's. `type` also decides which Rekognition tag
+  // ids tagIdsForImagesCache keeps, a value that cache holds for hours.
+  localTtl: basicTagsLocalTtl,
   localMax: 100000,
   localMaxBytes: L1_CACHE_BYTE_BUDGETS.basicTags,
 });
@@ -1214,8 +1222,15 @@ export const userHasReceivedReviewsCache = createUserContentCountCache<UserHasRe
     INNER JOIN "ResourceReview" r ON r."modelId" = m.id
     WHERE m."userId" IN (${Prisma.join(userIds)})
       AND r."userId" != m."userId"
+      AND ${Prisma.raw(visibleReviewSql('r'))}
   `
 );
+
+/** For the model owners of reviews that were just released or hidden again. */
+export async function refreshHasReceivedReviews(reviews: { modelOwnerId: number }[]) {
+  const ownerIds = [...new Set(reviews.map((review) => review.modelOwnerId))];
+  if (ownerIds.length) await userHasReceivedReviewsCache.refresh(ownerIds);
+}
 
 type UserContentOverview = {
   id: number;

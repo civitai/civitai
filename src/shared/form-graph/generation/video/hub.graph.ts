@@ -67,12 +67,7 @@ export const videoHub = defineGraph<RootCtx>()
       : usableEcosystems[0] ?? compatibleEcosystems[0] ?? 'MiniMaxH3';
 
     return {
-      ...ecosystemFieldSchemas(
-        _ext.workflow,
-        hiddenEcosystems,
-        ecosystemStates,
-        usableEcosystems
-      ),
+      ...ecosystemFieldSchemas(_ext.workflow, hiddenEcosystems, ecosystemStates, usableEcosystems),
       default: defaultValue,
       // The ecosystem selection is stored per OUTPUT type.
       scope: 'video',

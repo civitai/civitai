@@ -5233,6 +5233,15 @@ export type ResourceReview = {
   nsfw: Generated<boolean>;
   tosViolation: Generated<boolean>;
   metadata: unknown | null;
+  /**
+   * The unpublished post the review was written from. The review stays hidden until that post is live.
+   */
+  postId: number | null;
+  /**
+   * When a review linked to a post was announced: notified and recounted. Cleared when the post is
+   * unpublished, so the next go-live announces it again.
+   */
+  releasedAt: Timestamp | null;
 };
 export type ResourceReviewHelper = {
   resourceReviewId: number;

@@ -1,3 +1,7 @@
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { getModerationAccountId } from '~/server/auth/moderation-account';
@@ -128,6 +132,7 @@ export async function sendAsCivitai({ actorId, userId, message, context }: SendA
   const moderationId = requireModerationAccountId();
   if (userId === moderationId || actorId === moderationId)
     throw throwBadRequestError('The Civitai Moderation account cannot message itself.');
+  if (isFeedbackCaptureOwner(userId)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
 
   const target = await dbWrite.user.findFirst({
     where: { id: userId, deletedAt: null },

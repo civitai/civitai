@@ -1328,7 +1328,17 @@ describe('the generation input gate runs on a CONFIRMED submit too', () => {
   function givenImage(owner: number, visible: boolean) {
     dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
       strings.join('').includes('FROM "Image" i')
-        ? [{ url: KEY, userId: owner, visible, blocked: false }]
+        ? [
+            {
+              url: KEY,
+              userId: owner,
+              visible,
+              blocked: false,
+              scanComplete: true,
+              scanPending: false,
+              held: false,
+            },
+          ]
         : []) as never);
   }
   beforeEach(() =>
@@ -1354,5 +1364,17 @@ describe('the generation input gate runs on a CONFIRMED submit too', () => {
     const r = await submit(imageBody({ quoteId: SEEDED }));
     expect(r.snapshot.workflowId).toBe(workflowId);
     expect(realSubmits()).toHaveLength(1);
+  });
+});
+
+describe('account Limits section: the Apps Buzz row is what the per-user cap enforces', () => {
+  it('reads the counter a real submit reserved', async () => {
+    const flag = await import('~/server/services/app-blocks-flag');
+    vi.spyOn(flag, 'isAppBlocksEnabled').mockResolvedValue(true);
+    const quoteId = await confirmedQuote();
+    await submit(body({ quoteId }));
+    const { getMyAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
+    const row = await getMyAppBuzzToday({ id: VIEWER } as never);
+    expect(row?.used).toBe(PRICE);
   });
 });

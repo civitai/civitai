@@ -12,6 +12,7 @@ import {
   CIVITAI_MEDIA_TYPE_MIME,
 } from '~/components/EdgeMedia/media-drag-data';
 import { useEffect, useMemo, useState, useCallback } from 'react';
+import { blobExtension } from '~/utils/file-utils';
 import {
   ActionIcon,
   Button,
@@ -88,8 +89,7 @@ async function fetchImageAsFile(url: string): Promise<File> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
   const blob = await res.blob();
-  const ext = blob.type.split('/')[1] ?? 'png';
-  return new File([blob], `image.${ext}`, { type: blob.type });
+  return new File([blob], `image.${blobExtension(blob, 'png')}`, { type: blob.type });
 }
 
 export function MetadataExtractionPanel() {

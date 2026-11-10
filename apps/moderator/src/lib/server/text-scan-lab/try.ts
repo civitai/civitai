@@ -1,6 +1,7 @@
 import { fail, type ActionFailure } from '@sveltejs/kit';
 import { z } from 'zod';
 import { jsonField, parseForm } from '$lib/server/query';
+import { dbRead } from '$lib/server/db';
 import { userIdByUsername } from '$lib/server/users.service';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { parseCheckInput } from '$lib/text-scan-lab/input';
@@ -66,7 +67,7 @@ const trySchema = z.object({
       )} characters.`
     ),
   lookupAs: z.enum(LAB_ENTITY_TYPES).catch('Model'),
-  judgeAs: z.enum(LAB_ENTITY_TYPES).catch('CommentV2'),
+  judgeAs: z.enum(LAB_ENTITY_TYPES).catch('CommentV3'),
   profileAs: z.enum(PROFILE_TYPES).catch('UserProfile'),
   prompts: promptChangesField.optional().default({}),
 });
@@ -122,12 +123,30 @@ async function entityPlan(
   return { entityType, subjects, skipped, notice: null };
 }
 
+/**
+ * A model page names a comment by its old id when it has one, else by its own (`modelPageId`). An
+ * old id is unique, but another surface's comment can carry the same number as its own id, so the
+ * lookup keeps to model comments.
+ */
+async function commentV3IdsOfModelPageIds(ids: number[]): Promise<number[]> {
+  const rows = await dbRead
+    .selectFrom('CommentV3')
+    .select(['id', 'legacyV1Id'])
+    .where('legacyV1Id', 'in', ids)
+    .where('entityType', '=', 'model')
+    .execute();
+  const byOldId = new Map(rows.map((r) => [r.legacyV1Id, r.id]));
+  return ids.map((id) => byOldId.get(id) ?? id);
+}
+
 async function plan(
   reader: Reader,
   input: TryInput,
   edited: readonly PromptKey[]
 ): Promise<Plan | string> {
-  const parsed = parseCheckInput(input.input);
+  let parsed = parseCheckInput(input.input);
+  if (parsed.kind === 'entity' && parsed.modelPage)
+    parsed = { ...parsed, ids: await commentV3IdsOfModelPageIds(parsed.ids) };
   if (parsed.kind === 'empty') return 'Paste a Civitai link, an id, or some text.';
   if (parsed.kind === 'too-many-ids')
     return `${parsed.count} ids is more than the ${parsed.max} one check can take.`;

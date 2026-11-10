@@ -30,8 +30,7 @@ describe('judgeCandidates', () => {
   it('offers only the types that use an edited label', () => {
     expect(judgeCandidates(null, ['label:scam'])).toEqual([
       'ChatMessage',
-      'Comment',
-      'CommentV2',
+      'CommentV3',
       'ResourceReview',
       'User',
       'UserProfile',

@@ -106,6 +106,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate as formatDateHelper } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { withLiveNote } from '~/components/Apps/appListingDetailModActions';
 import type { ReviewSubmitterChip } from '~/components/Apps/unifiedReviewRow';
 
 /**
@@ -1665,7 +1666,7 @@ function ReportActionModal({
   }
 
   const delistMut = trpc.appListings.delistListing.useMutation({
-    onSuccess: () => afterSuccess('Listing delisted.'),
+    onSuccess: (result) => afterSuccess(withLiveNote('Listing delisted.', result)),
     onError: onError('Delist failed'),
   });
   const relistMut = trpc.appListings.relistListing.useMutation({

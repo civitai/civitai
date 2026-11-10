@@ -867,6 +867,8 @@ export class Tracker {
     earlyAccess?: boolean;
     time?: Date;
     fileId?: number;
+    /** A per-provider download: the provider whose token fetched the file. */
+    provider?: string;
   }) {
     return this.track('modelVersionEvents', { ...values, ...this.provenance });
   }

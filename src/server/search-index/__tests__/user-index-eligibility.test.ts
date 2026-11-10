@@ -166,11 +166,26 @@ describe('user search index eligibility', () => {
   });
 });
 
-describe('the feedback capture account', () => {
-  it('is never indexed', async () => {
+describe('the accounts the predicate admits, run in Postgres', () => {
+  it('leaves out the system accounts, deleted and banned accounts, and keeps an ordinary one', async () => {
+    const { PGlite } = await import('@electric-sql/pglite');
     const { FEEDBACK_CAPTURE_OWNER_ID } = await import('@civitai/shared/feedback-capture');
-    expect(norm(userSearchIndexEligibilitySql().sql)).toContain(
-      `u.id != ${FEEDBACK_CAPTURE_OWNER_ID}`
-    );
+    const db = new PGlite();
+    try {
+      await db.exec(`
+        CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp, "bannedAt" timestamp);
+        INSERT INTO "User" VALUES
+          (-1, NULL, NULL), (${FEEDBACK_CAPTURE_OWNER_ID}, NULL, NULL), (5, NULL, NULL),
+          (6, now(), NULL), (7, NULL, now());
+      `);
+      const where = userSearchIndexEligibilitySql();
+      const { rows } = await db.query<{ id: number }>(
+        `SELECT u.id FROM "User" u WHERE ${where.sql} ORDER BY u.id`,
+        where.values
+      );
+      expect(rows.map((r) => r.id)).toEqual([5]);
+    } finally {
+      await db.close();
+    }
   });
 });

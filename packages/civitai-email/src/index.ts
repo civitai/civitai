@@ -7,3 +7,4 @@ export type { SendEmailInput } from './client';
 export { createEmail } from './create-email';
 export type { Email } from './create-email';
 export { removeTags } from './string';
+export { default as addressparser } from 'nodemailer/lib/addressparser/index.js';

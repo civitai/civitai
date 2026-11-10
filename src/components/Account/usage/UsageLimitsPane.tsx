@@ -1,6 +1,7 @@
 import { Alert, Button, Code, Loader, Paper, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
+import { AppStorageCard } from '~/components/Account/AppStorageCard';
 import { UsageLimitCard } from '~/components/Account/usage/UsageLimitCard';
 import { formatWhen, type UsageLimitRow } from '~/components/Account/usage/usage-limit-view';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -17,6 +18,10 @@ export function UsageLimitsPane() {
   const currentUser = useCurrentUser();
   const limits = trpc.user.getUsageLimits.useQuery(undefined, { staleTime: STALE_MS });
   const active = trpc.user.getActiveLimits.useQuery(undefined, { staleTime: STALE_MS });
+  const appBuzz = trpc.user.getAppBuzzUsage.useQuery(undefined, {
+    staleTime: STALE_MS,
+    retry: false,
+  });
 
   return (
     <UsageLimitsView
@@ -29,6 +34,8 @@ export function UsageLimitsPane() {
       limits={limits.data?.limits}
       status={limits.isLoading ? 'loading' : limits.isError ? 'error' : 'ready'}
       active={active.data ?? []}
+      appBuzz={appBuzz.data ?? undefined}
+      appStorage={<AppStorageCard flat />}
     />
   );
 }
@@ -40,6 +47,10 @@ export type UsageLimitsViewProps = {
   limits?: UsageLimitRow[];
   status: 'loading' | 'error' | 'ready';
   active: { area: string; retryAt: string }[];
+  /** Buzz spent through apps today; absent where apps are off or it failed to load. */
+  appBuzz?: UsageLimitRow;
+  /** The per-app storage card, which loads and gates itself. */
+  appStorage?: ReactNode;
 };
 
 export function UsageLimitsView({
@@ -49,6 +60,8 @@ export function UsageLimitsView({
   limits,
   status,
   active,
+  appBuzz,
+  appStorage,
 }: UsageLimitsViewProps) {
   const areas = useMemo(() => {
     const byArea = new Map<string, UsageLimitRow[]>();
@@ -86,6 +99,8 @@ export function UsageLimitsView({
           <UsageLimitCard key={area} area={area} rows={rows} now={now} timeZone={timeZone} />
         ))
       )}
+      {appBuzz && <UsageLimitCard area="apps" rows={[appBuzz]} now={now} timeZone={timeZone} />}
+      {appStorage}
       <Paper withBorder radius="md" p="sm" className="bg-gray-0 dark:bg-dark-7">
         <Text size="xs" c="dimmed">
           For scripts: <Code>GET /api/v1/me/limits</Code> returns this as JSON. A limit error is
