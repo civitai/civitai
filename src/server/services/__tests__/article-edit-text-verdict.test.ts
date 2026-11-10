@@ -59,6 +59,12 @@ const writtenIngestion = () => {
   return written.at(-1)?.values[0];
 };
 
+/** The statement that wrote the new text. */
+const contentWrite = () =>
+  dbMock.dbWrite.$executeRaw.mock.calls
+    .map(([strings, ...values]) => Prisma.sql(strings as TemplateStringsArray, ...values).sql)
+    .find((sql) => sql.startsWith('UPDATE "Article" SET content'));
+
 /** What the orchestrator submit does on success: the row is Pending for the new text. */
 const submitRecordsPending = async () => {
   moderation = { status: EntityModerationStatus.Pending, blocked: null, workflowId: 'wf-new' };
@@ -156,6 +162,21 @@ describe('editing the text of a published article', () => {
     });
     await editTo('<p>New body</p>');
     expect(writtenIngestion()).toBe(ArticleIngestionStatus.Scanned);
+  });
+
+  it('is already out of Scanned when the hold write fails after the text is written', async () => {
+    vi.mocked(submitTextModerationOrScan).mockResolvedValue(null);
+    dbMock.dbWrite.entityModeration.updateMany.mockRejectedValue(new Error('db unavailable'));
+    await expect(editTo('<p>New body</p>')).rejects.toThrow('db unavailable');
+    // The recompute never ran; the write that changed the text took it out of Scanned.
+    expect(writtenIngestion()).toBeUndefined();
+    expect(contentWrite()).toContain(`ingestion = 'Rescan'`);
+  });
+
+  it('leaves Scanned in the same write only when the text changes', async () => {
+    vi.mocked(submitTextModerationOrScan).mockResolvedValue({ id: 'wf-old' });
+    await editTo('<p>Old body</p>');
+    expect(contentWrite()).not.toContain('ingestion');
   });
 
   it('stays out of Scanned when the submit hangs, and the save still returns', async () => {

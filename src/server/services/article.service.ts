@@ -1344,11 +1344,16 @@ export const upsertArticle = async ({
         ));
       if (sharedSave) await resetSharedArticleTextCheck(tx, id as number);
       sharedTextChanged = sharedSave;
+      // A live article leaves Scanned with its new text too, so no failure before the recompute
+      // can leave that text public without its own verdict.
+      const liveSave =
+        textChanged &&
+        ((data.status as ArticleStatus | undefined) ?? article.status) === ArticleStatus.Published;
       const updated = await tx.article.update({
         where: updateWhere,
         data: {
           ...data,
-          ...(sharedSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
+          ...(sharedSave || liveSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
           // The locked read: a block may have written its own keys since the first read.
           metadata: {
@@ -1619,15 +1624,19 @@ export async function applyArticleContentChange({
     // re-materialization is not a user edit: it must not reorder the "Recently Updated"
     // feed or reopen the rating-dispute re-edit window keyed on `updatedAt > resolvedAt`.
     // Under the share-token lock, so a link created meanwhile cannot miss this body: a shared
-    // draft leaves Scanned in the same statement that changes its text.
+    // draft, or a live article, leaves Scanned in the same statement that changes its text.
     const affected = await dbWrite.$transaction(async (tx) => {
       await lockAccessTokens(tx, id);
-      const locked = (await isSharedArticle(id, publication.status, tx))
-        ? await tx.article.findUnique({ where: { id }, select: { content: true } })
-        : null;
-      const resetting = !!locked && locked.content !== content;
+      const shared = await isSharedArticle(id, publication.status, tx);
+      const live = publication.status === ArticleStatus.Published;
+      const locked =
+        shared || live
+          ? await tx.article.findUnique({ where: { id }, select: { content: true } })
+          : null;
+      const changed = !!locked && locked.content !== content;
+      const resetting = shared && changed;
       const written = await tx.$executeRaw`UPDATE "Article" SET content = ${content}${
-        resetting ? Prisma.sql`, ingestion = 'Rescan'::"ArticleIngestionStatus"` : Prisma.empty
+        changed ? Prisma.sql`, ingestion = 'Rescan'::"ArticleIngestionStatus"` : Prisma.empty
       } WHERE id = ${id}${
         expectedContent === undefined ? Prisma.empty : Prisma.sql` AND content = ${expectedContent}`
       }`;

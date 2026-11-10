@@ -511,6 +511,32 @@ describe('article text scan — public content only', () => {
   });
 });
 
+describe('upsertArticle — a live article leaves Scanned with its new text', () => {
+  const stored = (state: Record<string, unknown>) => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({ ...storedArticle, ...state });
+    dbMock.dbRead.article.findUnique.mockResolvedValue({ ...storedArticle, ...state });
+  };
+  const live = { status: 'Published', publishedAt: new Date('2026-11-01') };
+
+  it('in the same write, when the text changes', async () => {
+    stored(live);
+    await upsert({ status: 'Published' });
+    expect(contentWrites()[0]).toMatchObject({ ingestion: 'Rescan' });
+  });
+
+  it('not when the text is unchanged', async () => {
+    stored({ ...live, title: 'A title', content: EXPANDED_HTML });
+    await upsert({ status: 'Published' });
+    expect(contentWrites()[0]).not.toHaveProperty('ingestion');
+  });
+
+  it('not for a draft, which is not live', async () => {
+    stored({ status: 'Draft' });
+    await upsert({ status: 'Draft' });
+    expect(contentWrites()[0]).not.toHaveProperty('ingestion');
+  });
+});
+
 describe('rescanArticle — public content only', () => {
   const storeAs = (state: { status: string; scheduledAt: Date | null }) => {
     dbMock.dbRead.article.findUnique.mockResolvedValue({ ...storedArticle, ...state });
