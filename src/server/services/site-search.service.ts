@@ -156,9 +156,32 @@ export function shapeModelHit(
   return rest;
 }
 
+type ComicHit = Record<string, unknown> & {
+  coverImageNsfwLevel?: unknown;
+  _formatted?: Record<string, unknown>;
+};
+
+/** A capped site gets no cover outside its cap; an unrated cover counts as outside. */
+function shapeComicHit(hit: ComicHit, browsingLevelCap: number | undefined) {
+  if (browsingLevelCap === undefined) return hit;
+  const level = Number(hit.coverImageNsfwLevel) || 0;
+  if (level > 0 && (level & ~browsingLevelCap) === 0) return hit;
+
+  const { coverImageUrl: _url, ...rest } = hit;
+  if (rest._formatted) {
+    const { coverImageUrl: _formattedUrl, ...formatted } = rest._formatted;
+    rest._formatted = formatted;
+  }
+  return rest;
+}
+
 function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSearchViewer) {
-  if (indexUid !== MODELS_SEARCH_INDEX || !Array.isArray(hits)) return hits;
-  return hits.map((hit: ModelHit) => shapeModelHit(hit, viewer));
+  if (!Array.isArray(hits)) return hits;
+  if (indexUid === MODELS_SEARCH_INDEX)
+    return hits.map((hit: ModelHit) => shapeModelHit(hit, viewer));
+  if (indexUid === COMICS_SEARCH_INDEX)
+    return hits.map((hit: ComicHit) => shapeComicHit(hit, viewer.browsingLevelCap));
+  return hits;
 }
 
 function assertSiteSearchIndex(indexUid: string) {

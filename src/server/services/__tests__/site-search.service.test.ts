@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   COMICS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
@@ -9,10 +9,14 @@ import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
 import {
   SITE_SEARCH_INDEXES,
   shapeModelHit,
+  siteIndexSearch,
+  siteMultiSearch,
   viewerSearchClauses,
 } from '~/server/services/site-search.service';
 import { NsfwLevel } from '~/server/common/enums';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+
+vi.mock('~/env/server', () => ({ env: { NEXT_PUBLIC_SEARCH_HOST: 'http://search.test' } }));
 
 describe('viewerSearchClauses', () => {
   // An attribute the index does not declare filterable makes Meilisearch reject every query on it
@@ -96,5 +100,47 @@ describe('shapeModelHit', () => {
     expect(shaped.images).toEqual([{ id: 11, nsfwLevel: NsfwLevel.PG }]);
     expect(shaped._formatted?.images).toEqual([{ id: 11, nsfwLevel: NsfwLevel.PG }]);
     expect(shapeModelHit({ id: 3, name: 'M', images }, redViewer).images).toEqual(images);
+  });
+});
+
+describe('comic covers', () => {
+  const capped = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
+  const uncapped = { showSfwFace: false };
+  const cover = 'https://image.test/cover.jpeg';
+  const hits = [
+    { id: 1, coverImageUrl: cover, coverImageNsfwLevel: NsfwLevel.R },
+    { id: 2, coverImageUrl: cover, coverImageNsfwLevel: NsfwLevel.PG },
+    { id: 3, coverImageUrl: cover, coverImageNsfwLevel: null },
+  ];
+  const respond = (body: unknown) =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(body), { status: 200 }))
+    );
+  const covers = (shaped: unknown) =>
+    (shaped as { coverImageUrl?: string }[]).map((hit) => hit.coverImageUrl);
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('a capped viewer gets no cover above the cap or unrated, in a single search', async () => {
+    respond({ hits });
+    const { body } = await siteIndexSearch(COMICS_SEARCH_INDEX, { q: 'x' }, capped);
+    expect(covers((body as { hits: unknown }).hits)).toEqual([undefined, cover, undefined]);
+  });
+
+  it('a capped viewer gets no cover above the cap in a multi-search', async () => {
+    respond({ results: [{ indexUid: COMICS_SEARCH_INDEX, hits }] });
+    const { body } = await siteMultiSearch(
+      { queries: [{ indexUid: COMICS_SEARCH_INDEX, q: 'x' }] },
+      capped
+    );
+    const [result] = (body as { results: { hits: unknown }[] }).results;
+    expect(covers(result.hits)).toEqual([undefined, cover, undefined]);
+  });
+
+  it('an uncapped viewer keeps every cover', async () => {
+    respond({ hits });
+    const { body } = await siteIndexSearch(COMICS_SEARCH_INDEX, { q: 'x' }, uncapped);
+    expect(covers((body as { hits: unknown }).hits)).toEqual([cover, cover, cover]);
   });
 });
