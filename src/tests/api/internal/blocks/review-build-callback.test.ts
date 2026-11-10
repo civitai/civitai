@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Readable } from 'node:stream';
 import type * as BuildAttemptsService from '~/server/services/blocks/build-attempts.service';
+import client from 'prom-client';
+import { APP_BLOCK_BUILDS_METRIC } from '~/server/prom/app-block-build.metrics';
 
 /**
  * MOD REVIEW SANDBOX (#2831) — coverage for POST
@@ -155,6 +157,28 @@ function makeReqRes(body: string, sig?: string) {
     res: res as unknown as NextApiResponse & { statusCode: number; body: any },
   };
 }
+
+/** The live counter value of one review build-outcome series (0 before the series exists). */
+async function reviewOutcomeCount(failedStep: string): Promise<number> {
+  const metric = client.register.getSingleMetric(APP_BLOCK_BUILDS_METRIC) as unknown as
+    | { get(): Promise<{ values: { labels: Record<string, string>; value: number }[] }> }
+    | undefined;
+  if (!metric) return 0;
+  const row = (await metric.get()).values.find(
+    (v) =>
+      v.labels.mode === 'review' &&
+      v.labels.outcome === 'failed' &&
+      v.labels.failed_step === failedStep
+  );
+  return row?.value ?? 0;
+}
+
+/** The moderator-visible text when a DIRECT publish never answers its probe (pinned whole). */
+const DIRECT_UNREACHABLE_ERROR =
+  'Preview published, but it never answered through the review gate (its page at / must return 200). The build may be broken: check it, then rebuild.';
+/** The apply lane's text for the same probe failure (unchanged by the direct lane). */
+const APPLY_UNREACHABLE_ERROR =
+  'Preview deployed but its host did not become reachable in time (DNS propagation). Rebuild to retry.';
 
 describe('expectedReviewImageRef (pure)', () => {
   it('binds to the review-prefixed image', () => {
@@ -863,6 +887,58 @@ describe('review-build-callback with directPublish: true', () => {
     expect(mockRelease).toHaveBeenCalledWith(PUBREQ, { sha: SHA });
   });
 
+  // A direct build can publish its meta and THEN fail (a later step, or its callback reports
+  // failure). Its failed detail must still say it was served by the shared server, or a
+  // different-sha rebuild (unpublishReplacedSharedPreview needs sharedServer === true and the
+  // old sha) skips unpublishing it, and teardown falls back to the CURRENT flag.
+  it('failure: the failed detail records sharedServer: true and the sha, even while that flag reads off', async () => {
+    const { req, res } = makeReqRes(directBody({ status: 'Failed' }));
+    await handler(req, res);
+    expect(res.body).toMatchObject({ applied: false, reason: 'review build failed' });
+    const failedWrites = (mockMarkPreview.mock.calls as unknown as unknown[][]).filter(
+      (c) => c[1] === 'preview-failed'
+    );
+    expect(failedWrites).toHaveLength(1);
+    // What the row will hold, read back the way the rebuild reads it (a JSON round trip).
+    const stored = JSON.parse(JSON.stringify(failedWrites[0][2]));
+    expect(stored.sharedServer).toBe(true);
+    expect(stored.sha).toBe(SHA);
+  });
+
+  // INVARIANT GUARD (green before and after): a failed build WITHOUT the field published
+  // nothing to the shared server, so its failed detail does not claim it.
+  it('failure without the field: the failed detail does not claim the shared server', async () => {
+    mockFlag.sharedServer = true;
+    const { req, res } = makeReqRes(directBody({ status: 'Failed', directPublish: undefined }));
+    await handler(req, res);
+    const failedWrites = (mockMarkPreview.mock.calls as unknown as unknown[][]).filter(
+      (c) => c[1] === 'preview-failed'
+    );
+    expect(failedWrites).toHaveLength(1);
+    expect((failedWrites[0][2] as { sharedServer?: unknown }).sharedServer).toBeUndefined();
+  });
+
+  // The orphan unpublish creates a k8s Job (two API calls with long timeouts) and must not hold
+  // the Tekton callback's short request window: the handler answers without waiting on it.
+  it('torn-down success: responds without waiting on the orphan unpublish', async () => {
+    mockFindUnique.mockResolvedValue({ deployDetail: null, status: 'pending', deployState: null });
+    let finish: (v: { name: string }) => void = () => undefined;
+    mockReviewUnpublish.mockImplementationOnce(
+      () => new Promise<{ name: string }>((r) => (finish = r))
+    );
+    const { req, res } = makeReqRes(directBody());
+    const done = handler(req, res);
+    try {
+      await vi.waitFor(() => expect(res.statusCode).toBe(200), { timeout: 1000 });
+      expect(res.body).toMatchObject({ applied: false });
+      expect(mockReviewUnpublish).toHaveBeenCalledTimes(1);
+      expect(mockRelease).toHaveBeenCalledWith(PUBREQ, { sha: SHA });
+    } finally {
+      finish({ name: 'review-unpub-1' });
+      await done;
+    }
+  });
+
   // INVARIANT GUARDS (green before the change too): the old body is still the old path.
   it('without the field, a torn-down preview is NOT unpublished by its build callback', async () => {
     mockFindUnique.mockResolvedValue({ deployDetail: null, status: 'pending', deployState: null });
@@ -905,10 +981,54 @@ describe('watchDirectPublishedReview', () => {
     expect(mockMarkPreview).toHaveBeenCalledWith(
       PUBREQ,
       'preview-failed',
-      expect.objectContaining({ error: expect.stringContaining('did not become reachable') }),
+      expect.objectContaining({ error: DIRECT_UNREACHABLE_ERROR }),
       { requireActivePreview: true, expectedSha: SHA }
     );
     expect(onSettled.mock.calls).toEqual([[PUBREQ, false]]);
+  });
+
+  // No apply Job ran on this lane, so its probe failure is not an apply failure: it is not
+  // counted under failed_step="apply" (the build itself was already counted as succeeded).
+  it('host never answers: NOT counted as an apply failure', async () => {
+    mockWaitReachable.mockResolvedValueOnce(false);
+    const before = await reviewOutcomeCount('apply');
+    await watchDirectPublishedReview({
+      publishRequestId: PUBREQ,
+      slug: SLUG,
+      sha: SHA,
+      baseDetail,
+      onSettled: () => undefined,
+    });
+    expect(mockMarkPreview).toHaveBeenCalledWith(
+      PUBREQ,
+      'preview-failed',
+      expect.anything(),
+      expect.anything()
+    );
+    expect((await reviewOutcomeCount('apply')) - before).toBe(0);
+  });
+
+  // POSITIVE CONTROL for the case above (green before and after): the same counter read DOES
+  // move by one when the apply lane's probe fails, so the 0 above is not a dead instrument.
+  it('control: the apply lane probe failure IS counted as an apply failure, with the DNS text', async () => {
+    mockWaitApply.mockResolvedValueOnce('succeeded');
+    mockWaitReachable.mockResolvedValueOnce(false);
+    const before = await reviewOutcomeCount('apply');
+    await watchReviewApplyJob({
+      publishRequestId: PUBREQ,
+      slug: SLUG,
+      sha: SHA,
+      jobName: 'review-apply-1',
+      baseDetail,
+      onSettled: () => undefined,
+    });
+    expect((await reviewOutcomeCount('apply')) - before).toBe(1);
+    expect(mockMarkPreview).toHaveBeenCalledWith(
+      PUBREQ,
+      'preview-failed',
+      expect.objectContaining({ error: APPLY_UNREACHABLE_ERROR }),
+      { requireActivePreview: true, expectedSha: SHA }
+    );
   });
 
   it('live-mark matching no row (torn down while probing): unpublishes the orphan', async () => {
