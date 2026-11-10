@@ -1167,6 +1167,9 @@ importers:
       redis:
         specifier: 6.3.0
         version: 6.3.0(@opentelemetry/api@1.9.0)
+      sanitize-html:
+        specifier: 2.12.1
+        version: 2.12.1
       tsconfig-paths:
         specifier: ^4.2.0
         version: 4.2.0
@@ -1183,6 +1186,9 @@ importers:
       '@types/pg':
         specifier: ^8.10.9
         version: 8.15.5
+      '@types/sanitize-html':
+        specifier: ^2.16.0
+        version: 2.16.0
       '@typescript-eslint/eslint-plugin':
         specifier: ^6.17.0
         version: 6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.1)(typescript@5.9.3))(eslint@8.57.1)(typescript@5.9.3)
