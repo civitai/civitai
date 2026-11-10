@@ -764,6 +764,7 @@ function EditDetail() {
     const visible = sortByModelTypes(image.resourceHelper).filter((x) => !!x.modelName);
     if (visible.findIndex((x) => x.modelVersionId === reviewFocus.modelVersionId) >= 3)
       setShowMoreResources(true);
+    useReviewFocusStore.setState({ target: null });
   }, [reviewFocus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
