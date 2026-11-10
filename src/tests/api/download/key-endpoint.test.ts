@@ -1,5 +1,4 @@
-import { PGlite } from '@electric-sql/pglite';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 // The catch-all `/api/download/[...key]` handler resolves a download key via the
@@ -55,17 +54,12 @@ vi.mock('~/server/logging/client', () => ({
 import handler from '~/pages/api/download/[...key]';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
-// The withheld-file lookup. No key belongs to a deleted or taken-down model unless a test says so.
-const mockQueryRaw = dbMock.dbRead.$queryRaw;
-beforeEach(() => {
-  mockQueryRaw.mockResolvedValue([] as never);
-});
 
 // Default to a key under the authed user's own `<type>/<userId>/` prefix so the branch tests below
 // pass the ownership gate (added below) and still reach the delivery worker. The
 // gate itself is covered by its own describe block at the end.
 function createMocks({
-  key = ['model', '42', 'file.safetensors'],
+  key = ['training-images-temp', '42', 'file.zip'],
   headers = {},
   remoteAddress,
 }: {
@@ -142,11 +136,11 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     });
     // Own-prefix key for the authed user (id 42) so it passes the ownership gate and the redirect
     // path is what we assert; the gate is covered in its own describe block below.
-    const { req, res } = createMocks({ key: ['model', '42', 'file.safetensors'] });
+    const { req, res } = createMocks({ key: ['training-images-temp', '42', 'file.zip'] });
 
     await handler(req, res);
 
-    expect(mockGetDownloadUrl).toHaveBeenCalledWith('model/42/file.safetensors');
+    expect(mockGetDownloadUrl).toHaveBeenCalledWith('training-images-temp/42/file.zip');
     expect(res._getRedirect()).toBe('https://cdn.example.com/signed-url');
     expect(res._getStatusCode()).toBe(200); // status() never called on the redirect path
     // The route now emits one info-level audit log per request; a client-fault must still never
@@ -159,7 +153,7 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     // "images/127209598" → worker 404. Pre-fix this threw an unguarded 500.
     mockGetDownloadUrl.mockRejectedValue(new MockDeliveryWorkerError(404, 'Not Found'));
     // Own-prefix key so it passes the ownership gate and the worker's own 404 is what we assert.
-    const { req, res } = createMocks({ key: ['model', '42', 'missing.safetensors'] });
+    const { req, res } = createMocks({ key: ['training-images-temp', '42', 'missing.zip'] });
 
     await expect(handler(req, res)).resolves.toBe(res); // resolves (no throw)
     expect(res._getStatusCode()).toBe(404);
@@ -344,11 +338,11 @@ describe('/api/download/[...key] — ownership scope', () => {
 
   it("resolves the caller's own-prefix key", async () => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
-    const { req, res } = createMocks({ key: ['model', '42', 'mine.safetensors'] });
+    const { req, res } = createMocks({ key: ['training-images-temp', '42', 'mine.zip'] });
 
     await handler(req, res);
 
-    expect(mockGetDownloadUrl).toHaveBeenCalledWith('model/42/mine.safetensors');
+    expect(mockGetDownloadUrl).toHaveBeenCalledWith('training-images-temp/42/mine.zip');
     expect(res._getRedirect()).toBe('https://cdn.example.com/signed');
   });
 
@@ -406,124 +400,49 @@ describe('/api/download/[...key] — ownership scope', () => {
   });
 });
 
-describe('/api/download/[...key] — a deleted or taken-down model', () => {
-  const KEY = ['model', '42', 'mine.safetensors'];
-  const BUCKET = 'https://storage.example.com/bucket';
-  // The lookup's SQL runs on a real Postgres (PGlite) with its values bound as parameters, so the
-  // matching, the state filter and the owner scope are the database's, not a stand-in's.
-  let pg: PGlite;
-  let nextId = 1;
-  const addFile = async (
-    userId: number,
-    state: 'Published' | 'Deleted' | 'TakenDown',
-    url: string
-  ) => {
-    const id = nextId++;
-    await pg.query(`INSERT INTO "Model" (id, "userId", status, mode) VALUES ($1, $2, $3, $4)`, [
-      id,
-      userId,
-      state === 'Deleted' ? 'Deleted' : 'Published',
-      state === 'TakenDown' ? 'TakenDown' : null,
-    ]);
-    await pg.query(`INSERT INTO "ModelVersion" (id, "modelId") VALUES ($1, $1)`, [id]);
-    await pg.query(`INSERT INTO "ModelFile" (id, "modelVersionId", url) VALUES ($1, $1, $2)`, [
-      id,
-      url,
-    ]);
-  };
-  const request = async (key: string[], user = { id: 42, isModerator: false }) => {
-    mockGetServerAuthSession.mockResolvedValue({ user });
-    const { req, res } = createMocks({ key });
-    await handler(req, res);
-    return res;
-  };
-
-  beforeAll(async () => {
-    pg = new PGlite();
-    await pg.exec(`
-      CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL, mode text);
-      CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
-      CREATE TABLE "ModelFile" (id int PRIMARY KEY, "modelVersionId" int NOT NULL, url text NOT NULL);
-    `);
-  });
-  afterAll(() => pg.close());
-
-  beforeEach(async () => {
+/**
+ * Model and training files are served only through the download routes, which apply each file's
+ * gates (taken down, deleted, early access). Here they are refused to everyone but moderators by
+ * prefix alone: no stored url, model owner or version id is consulted.
+ */
+describe('/api/download/[...key] — model and training file prefixes', () => {
+  beforeEach(() => {
     vi.clearAllMocks();
-    await pg.exec(`TRUNCATE "Model", "ModelVersion", "ModelFile"`);
     mockFindUnique.mockResolvedValue({ value: '' });
     mockGetDownloadUrl.mockResolvedValue({
       url: 'https://cdn.example.com/signed',
       urlExpiryDate: new Date(),
     });
-    mockQueryRaw.mockImplementation(((sql: TemplateStringsArray, ...values: unknown[]) =>
-      pg
-        .query(
-          sql.reduce((text, part, i) => `${text}$${i}${part}`),
-          values
-        )
-        .then((r) => r.rows)) as never);
   });
 
   it.each([
-    ['a plain url', `${BUCKET}/model/42/mine.safetensors`],
-    ['a url that encodes the path separators', `${BUCKET}/model%2F42%2Fmine.safetensors`],
-    ['a url that encodes them in lower case', `${BUCKET}/model%2f42%2fmine.safetensors`],
-    ['a url with a query string', `${BUCKET}/model/42/mine.safetensors?X-Amz-Expires=43200`],
-  ])("refuses its owner a taken-down model's file stored at %s", async (_, url) => {
-    await addFile(42, 'TakenDown', url);
+    // However the file's stored url spells the key.
+    ['its own model upload', ['model', '42', 'mine.safetensors']],
+    // Even when the model it was uploaded to now belongs to another user.
+    ['its own default upload', ['default', '42', 'archive.zip']],
+    ['its own training data', ['training-images', '42', 'data.zip']],
+    // Segment 1 of a version-prefixed key is a version id, which can equal the caller's user id.
+    ['a version-prefixed key whose id is its user id', ['modelVersion', '42', 'epoch.safetensors']],
+  ])('refuses the caller %s with 404 and never resolves it', async (_label, key) => {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+    const { req, res } = createMocks({ key });
 
-    const res = await request(KEY);
+    await handler(req, res);
 
     expect(res._getStatusCode()).toBe(404);
     expect(res._getJSONData()).toEqual({ error: 'Not found' });
     expect(mockGetDownloadUrl).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['a space', 'my file.safetensors', `${BUCKET}/model/42/my%20file.safetensors`],
-    // The S3 presigner, which wrote these urls, also escapes !'()* where encodeURIComponent does not.
-    ['a presigner-escaped character', 'mine.safe(1)', `${BUCKET}/model/42/mine.safe%281%29`],
-  ])("refuses its owner a deleted model's file whose url encodes %s", async (_, name, url) => {
-    await addFile(42, 'Deleted', url);
+  it.each([['model'], ['default'], ['training-images'], ['modelVersion']])(
+    'serves a moderator a %s key',
+    async (prefix) => {
+      mockGetServerAuthSession.mockResolvedValue({ user: { id: 1, isModerator: true } });
+      const { req, res } = createMocks({ key: [prefix, '42', 'f.bin'] });
 
-    const res = await request(['model', '42', name]);
+      await handler(req, res);
 
-    expect(res._getStatusCode()).toBe(404);
-    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
-  });
-
-  it('still serves a moderator', async () => {
-    await addFile(42, 'TakenDown', `${BUCKET}/model/42/mine.safetensors`);
-
-    const res = await request(KEY, { id: 1, isModerator: true });
-
-    expect(res._getRedirect()).toBe('https://cdn.example.com/signed');
-  });
-
-  it("serves the owner a published model's file", async () => {
-    await addFile(42, 'Published', `${BUCKET}/model/42/mine.safetensors`);
-
-    const res = await request(KEY);
-
-    expect(res._getRedirect()).toBe('https://cdn.example.com/signed');
-  });
-
-  // Storage keys are case-sensitive: a withheld file must not refuse one that differs only in case.
-  it('serves the owner a published file whose name differs only in case from a withheld one', async () => {
-    await addFile(42, 'TakenDown', `${BUCKET}/model/42/mine.safetensors`);
-    await addFile(42, 'Published', `${BUCKET}/model/42/Mine.safetensors`);
-
-    const res = await request(['model', '42', 'Mine.safetensors']);
-
-    expect(res._getRedirect()).toBe('https://cdn.example.com/signed');
-  });
-
-  it("serves the caller when the taken-down file at that key is another user's", async () => {
-    await addFile(7, 'TakenDown', `${BUCKET}/model/42/mine.safetensors`);
-
-    const res = await request(KEY);
-
-    expect(res._getRedirect()).toBe('https://cdn.example.com/signed');
-  });
+      expect(mockGetDownloadUrl).toHaveBeenCalledWith(`${prefix}/42/f.bin`);
+    }
+  );
 });

@@ -1,11 +1,20 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { DeliveryWorkerError, getDownloadUrl } from '~/utils/delivery-worker';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
-import { dbRead } from '~/server/db/client';
+import { UploadType } from '~/server/common/enums';
 import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
 import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { logToAxiom, safeError } from '~/server/logging/client';
+
+// Key prefixes that hold model and training files (ModelFile urls); `modelVersion/<versionId>/` is
+// the trained-model output prefix, whose segment 1 is not a user id.
+const MODERATOR_ONLY_PREFIXES = new Set<string>([
+  UploadType.Model,
+  UploadType.Default,
+  UploadType.TrainingImages,
+  'modelVersion',
+]);
 
 export default async function downloadTrainingData(req: NextApiRequest, res: NextApiResponse) {
   // Get ip so that we can block exploits we catch. Derived via getTrustedClientIp
@@ -35,7 +44,9 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
   }
 
   // Upload keys are `<type>/<userId>/<name>` (buildUploadKey): a caller may fetch their own uploads
-  // here; anything else goes through the download route for its record. Moderators may fetch any key.
+  // here; anything else goes through the download route for its record. Model and training files
+  // (MODERATOR_ONLY_PREFIXES) are served only through the download routes, which apply each file's
+  // gates, so they are not fetchable here even by their uploader. Moderators may fetch any key.
   //
   // The prefix match reads segment 1, but the whole joined key is handed to the delivery worker,
   // whose normalization we don't control. Require each segment to be a plain name first — non-empty,
@@ -50,13 +61,14 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
     }
     return seg !== '' && decoded !== '.' && decoded !== '..' && !/[/\\%]/.test(decoded);
   });
-  const allowed = safeSegments && (!!session.user?.isModerator || keyParts[1] === String(userId));
+  const allowed =
+    safeSegments &&
+    (!!session.user?.isModerator ||
+      (keyParts[1] === String(userId) && !MODERATOR_ONLY_PREFIXES.has(keyParts[0])));
   logToAxiom({ type: 'info', name: 'download-key-route', userId, key, allowed }).catch(
     () => undefined
   );
   if (!allowed) return res.status(404).json({ error: 'Not found' });
-  if (!session.user?.isModerator && (await isWithheldModelFile(userId, key)))
-    return res.status(404).json({ error: 'Not found' });
 
   // This is a catch-all `/api/download/[...key]` route. Clients that hit a
   // non-existent sub-path (e.g. `/api/download/images/:id`, which is NOT a real
@@ -127,50 +139,4 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
   }
 
   res.redirect(url);
-}
-
-/**
- * Whether `key` is a file of a deleted or taken-down model the caller owns: those files are
- * moderators-only, as on the download route. Walks from the caller's models (indexed on userId),
- * so it never scans every file's url.
- *
- * `key` arrives decoded, but a stored url may carry a query string and percent-encode its name or
- * its separators (`bucket/model%2F42%2Fname`), so the url without its query is matched against
- * each of those spellings.
- */
-async function isWithheldModelFile(userId: number, key: string) {
-  const rows = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT mf.id
-    FROM "Model" m
-    JOIN "ModelVersion" mv ON mv."modelId" = m.id
-    JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id
-    WHERE m."userId" = ${userId}
-      AND (m.mode = 'TakenDown' OR m.status = 'Deleted')
-      AND EXISTS (
-        SELECT 1 FROM unnest(${keySpellings(key)}::text[]) AS s(suffix)
-        WHERE right(split_part(mf.url, '?', 1), length(s.suffix)) = s.suffix
-      )
-    LIMIT 1
-  `;
-  return rows.length > 0;
-}
-
-/** `/<key>` raw, and as encodeURIComponent or the S3 presigner (which also escapes !'()*) would
- * write it, with plain or encoded separators, and with upper- or lower-case escapes. */
-function keySpellings(key: string) {
-  const segments = key.split('/');
-  const presignerEscape = (segment: string) =>
-    encodeURIComponent(segment).replace(
-      /[!'()*]/g,
-      (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
-    );
-  const spellings = new Set([`/${key}`]);
-  for (const escape of [encodeURIComponent, presignerEscape]) {
-    for (const separator of ['/', '%2F']) {
-      const spelling = `/${segments.map(escape).join(separator)}`;
-      spellings.add(spelling);
-      spellings.add(spelling.replace(/%[0-9A-F]{2}/g, (escaped) => escaped.toLowerCase()));
-    }
-  }
-  return [...spellings];
 }
