@@ -56,7 +56,9 @@ const live = vi.hoisted(() => ({
 }));
 vi.mock('~/server/services/blocks/live-unpublish.service', () => ({
   takeDownLiveApp: async () => ({}),
-  restoreLiveApp: (input: { slug: string; appBlockId: string }) => live.restore(input),
+  restoreLiveAppSoon: (input: { slug: string; appBlockId: string }) => {
+    void Promise.resolve(live.restore(input)).catch(() => undefined);
+  },
 }));
 
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({

@@ -16,6 +16,7 @@ import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { countsTowardDownloadLimit } from '~/server/utils/download-repeats';
 import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
+import { takeProviderToken } from '~/server/services/provider-download/provider-token';
 import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
 import { fetchDownloadCount } from '~/server/utils/download-count';
 import {
@@ -135,10 +136,12 @@ function parseVersionRequest(req: NextApiRequest, repaired: boolean): DownloadRe
 /**
  * The download route, shared by every URL that names a model file. `parseRequest` reads the URL
  * and says how its file is chosen; everything else, from the blocklists to the redirect, is here,
- * so no download URL can check less than another.
+ * so no download URL can check less than another. Only the ID URL accepts a per-provider token
+ * (`providerTokens`); the others refuse one rather than serve its holder as anonymous.
  */
 export function createModelDownloadHandler(
-  parseRequest: (req: NextApiRequest, repaired: boolean) => DownloadRequest
+  parseRequest: (req: NextApiRequest, repaired: boolean) => DownloadRequest,
+  { providerTokens = false }: { providerTokens?: boolean } = {}
 ) {
   return PublicEndpoint(
     async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
@@ -158,6 +161,8 @@ export function createModelDownloadHandler(
       // Unsampled: this is what says whether any client still needs the shim, and
       // a rate that can report zero is the point.
       if (repaired) logSplitQueryRepair(req);
+      // Before anything reads the request: a provider token is removed from it here.
+      const providerToken = takeProviderToken(req);
 
       const isBrowser = isRequestFromBrowser(req);
       function errorResponse(status: number, message: string) {
@@ -179,6 +184,36 @@ export function createModelDownloadHandler(
         const ip = getTrustedClientIp(req);
         const ipBlacklist = parseIpBlocklist(await getDownloadBlocklistValue('ip-blacklist'));
         if (ip && ipBlacklist.includes(ip)) return errorResponse(403, 'Forbidden');
+
+        // A per-provider download token: no session, no user blocklist, no per-user limit.
+        if (providerToken.kind === 'duplicate')
+          return res.status(400).json({ error: 'Send one token' });
+        if (providerToken.kind === 'provider') {
+          if (!providerTokens)
+            return res.status(400).json({ error: 'Provider tokens are not accepted on this URL' });
+          // Loaded only for a provider token, so every other download keeps today's import graph.
+          const { authorizeProviderToken, serveProviderDownload } = await import(
+            '~/server/services/provider-download/provider-download.service'
+          );
+          const authorized = await authorizeProviderToken(providerToken.token);
+          if (!authorized.ok) return res.status(authorized.status).json(authorized.body);
+          const parsed = schema.safeParse(req.query);
+          if (!parsed.success)
+            return res
+              .status(400)
+              .json({ error: z.prettifyError(parsed.error) ?? 'Invalid modelVersionId' });
+          const { modelVersionId, fileId, ...selectors } = parsed.data;
+          const served = await serveProviderDownload({
+            req,
+            res,
+            provider: authorized.provider,
+            modelVersionId,
+            fileId,
+            selectors,
+          });
+          if (!served.ok) return res.status(served.status).json(served.body);
+          return res.redirect(served.url);
+        }
 
         // Check if user is blacklisted
         const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
@@ -401,4 +436,4 @@ export function createModelDownloadHandler(
   );
 }
 
-export default createModelDownloadHandler(parseVersionRequest);
+export default createModelDownloadHandler(parseVersionRequest, { providerTokens: true });
