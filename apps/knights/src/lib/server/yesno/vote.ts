@@ -103,7 +103,7 @@ export async function castYesNoVote(
         .execute();
       const answers = await trx
         .selectFrom('KnightsVote')
-        .select('answer')
+        .select(['answer', 'weight'])
         .where('itemId', '=', item.id)
         .execute();
       const decision = decideYesNo(answers, consensusRule(item));
