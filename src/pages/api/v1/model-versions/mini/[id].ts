@@ -295,6 +295,26 @@ export default MixedAuthEndpoint(async function handler(
   const useEpochUrl =
     modelVersion.availability === Availability.Private && !!requestedFile?.metadata.trainingResults;
 
+  // Decided before the epoch is read, so a refused caller gets the same answer whatever the
+  // version's training results hold.
+  if (useEpochUrl) {
+    const mode = await getMiniEpochGateMode();
+    if (mode !== 'off') {
+      // The body now depends on the caller, so no shared cache may hold it.
+      res.setHeader('Cache-Control', 'private, no-store');
+      const caller = await evaluateMiniEpochCaller({
+        req,
+        user,
+        modelVersionId: modelVersion.id,
+        ownerId: modelVersion.modelUserId,
+        mode,
+      });
+      // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
+      // 404 to a caller who would be served.
+      if (caller.withhold) return res.status(404).json({ error: 'Model not found' });
+    }
+  }
+
   const targetFile = useEpochUrl
     ? requestedFile
     : modelFileId
@@ -350,22 +370,6 @@ export default MixedAuthEndpoint(async function handler(
       modelId: jobId,
       id: fileName,
     });
-
-    const mode = await getMiniEpochGateMode();
-    if (mode !== 'off') {
-      // The body now depends on the caller, so no shared cache may hold it.
-      res.setHeader('Cache-Control', 'private, no-store');
-      const caller = await evaluateMiniEpochCaller({
-        req,
-        user,
-        modelVersionId: modelVersion.id,
-        ownerId: modelVersion.modelUserId,
-        mode,
-      });
-      // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
-      // 404 to a caller who would be served.
-      if (caller.withhold) return res.status(404).json({ error: 'Model not found' });
-    }
   } else {
     // this does not work for things like Flux
     // if (targetFile.type !== 'Model') return res.status(404).json({ error: 'File is not a model' });

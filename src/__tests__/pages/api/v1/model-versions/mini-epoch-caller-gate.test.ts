@@ -210,7 +210,7 @@ describe('mini/[id] epoch arm, enforce', () => {
     });
   });
 
-  it('withholds from a signed-in caller when the grant lookup fails', async () => {
+  it('refuses a signed-in caller when the grant lookup fails', async () => {
     h.hasEntityAccess.mockRejectedValueOnce(new Error('db down'));
     expectRefused(await request(grantee));
   });
@@ -221,7 +221,7 @@ describe('mini/[id] epoch arm, enforce', () => {
     expect(body.downloadUrls).toEqual([]);
   });
 
-  it('answers a refused caller exactly as an id that does not exist', async () => {
+  it('answers a refused caller with the same status and body as an unknown id', async () => {
     const refused = await request(anonymous);
     const unknown = await request(anonymous, {}, TRAINING_FILE, []);
     expect(refused.status).toBe(404);
@@ -242,9 +242,21 @@ describe('mini/[id] epoch arm, enforce', () => {
   ])('still gives %s the epoch air and hashes', async (_label, caller) => {
     const { status, body } = await request(caller);
     expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
     expect(body.hashes).toEqual(TRAINING_FILE.hashes);
     expect(body.fileName).toBe(TRAINING_FILE.name);
     expect(body).toHaveProperty('air');
+  });
+
+  it('refuses before the epoch is read: a version with no epochs answers as an unknown id', async () => {
+    const noEpochs = {
+      ...TRAINING_FILE,
+      metadata: { ...TRAINING_FILE.metadata, trainingResults: { epochs: [] } },
+    };
+    expectRefused(await request(anonymous, {}, noEpochs));
+    // control: the owner reaches the epoch read and gets its own error
+    const forOwner = await request(owner, {}, noEpochs);
+    expect(forOwner).toMatchObject({ status: 404, body: { error: 'Missing epoch' } });
   });
 });
 
