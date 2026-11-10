@@ -82,14 +82,22 @@ describe('sticker attribution card anchoring', () => {
     expectCardOnSticker();
   });
 
-  test('does not stay at the old spot when content above grows while the pointer rests on the card', async () => {
+  test('follows its sticker when content above grows while the card is open', async () => {
     await renderWithProviders(<Thread above style={{ marginTop: 40, marginLeft: 80 }} />);
     await openCard();
     // Onto the card: the sticker's mouseout no longer closes it.
     await userEvent.hover(dropdown()!);
-    expect(dropdown()).not.toBeNull();
-    document.querySelector<HTMLElement>('[data-testid="above"]')!.style.height = '160px';
-    // The card moves out from under the pointer and closes; left open, it would hang 130px from the sticker.
-    await vi.waitFor(() => expect(dropdown()).toBeNull(), { timeout: 5000 });
+    const gap = () => dropdown()!.getBoundingClientRect().top - sticker().bottom;
+    const before = gap();
+    // Small enough that the card stays under the pointer, so nothing here depends on the
+    // browser synthesising a mouseleave after a layout shift.
+    const GROW = 12;
+    expect(dropdown()!.getBoundingClientRect().height).toBeGreaterThan(GROW * 4);
+    document.querySelector<HTMLElement>('[data-testid="above"]')!.style.height = `${20 + GROW}px`;
+    // Left in place, the card would sit GROW px closer to the sticker than it opened.
+    await vi.waitFor(() => expect(Math.abs(gap() - before)).toBeLessThanOrEqual(1), {
+      timeout: 5000,
+    });
+    expectCardOnSticker();
   });
 });
