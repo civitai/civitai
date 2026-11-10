@@ -128,3 +128,71 @@ index 6f4904abc77c9166514259483015c6fd25dd5046..dec4f2a90b4069ab9db4d52eb850d0c0
      return mod;
  }
  
+diff --git a/dist/client/resolve-href.js b/dist/client/resolve-href.js
+index d886a89a8df50d25dea73ca60f2d6bd5edc0da14..d6eb3fd4c5cc8ea2defa7b43af0fbe841f7e7a98 100644
+--- a/dist/client/resolve-href.js
++++ b/dist/client/resolve-href.js
+@@ -18,7 +18,29 @@ const _utils1 = require("../shared/lib/router/utils");
+ const _interpolateas = require("../shared/lib/router/utils/interpolate-as");
+ const _routeregex = require("../shared/lib/router/utils/route-regex");
+ const _routematcher = require("../shared/lib/router/utils/route-matcher");
++// civitai patch (patches/next@16.4.5.patch): memoize resolveHref for root-relative string hrefs.
++// For an href that starts with a single "/" the result depends only on the href and resolveAs:
++// the router supplies just the base URL, and an absolute path replaces the base path entirely.
++// Every other input (relative, "?query", "#hash", absolute URLs, URL objects, and hrefs that hit
++// the repeated-slash warning) goes through the original function unchanged. Bounded, oldest
++// entry evicted first. Arrays are copied out so a caller can never alter a cached result.
++const RESOLVE_HREF_CACHE_MAX = 2000;
++const resolveHrefCache = new Map();
++function resolveHrefCacheable(href) {
++    return typeof href === 'string' && href.charCodeAt(0) === 47 && href.charCodeAt(1) !== 47 && !/(\/\/|\\)/.test(href.split('?', 1)[0]);
++}
+ function resolveHref(router, href, resolveAs) {
++    if (!resolveHrefCacheable(href)) return resolveHrefUncached(router, href, resolveAs);
++    const cacheKey = (resolveAs ? '1' : '0') + href;
++    let cached = resolveHrefCache.get(cacheKey);
++    if (cached === undefined) {
++        cached = resolveHrefUncached(router, href, resolveAs);
++        if (resolveHrefCache.size >= RESOLVE_HREF_CACHE_MAX) resolveHrefCache.delete(resolveHrefCache.keys().next().value);
++        resolveHrefCache.set(cacheKey, cached);
++    }
++    return Array.isArray(cached) ? cached.slice() : cached;
++}
++function resolveHrefUncached(router, href, resolveAs) {
+     // we use a dummy base url for relative urls
+     let base;
+     let urlAsString = typeof href === 'string' ? href : (0, _formaturl.formatWithValidation)(href);
+diff --git a/dist/esm/client/resolve-href.js b/dist/esm/client/resolve-href.js
+index 847fc727aaffb48eb0b6713ba01875ca871ef4f4..03e1d5ad5ee5688d568fc29d00fb859faa4980ff 100644
+--- a/dist/esm/client/resolve-href.js
++++ b/dist/esm/client/resolve-href.js
+@@ -8,7 +8,29 @@ import { isDynamicRoute } from '../shared/lib/router/utils';
+ import { interpolateAs } from '../shared/lib/router/utils/interpolate-as';
+ import { getRouteRegex } from '../shared/lib/router/utils/route-regex';
+ import { getRouteMatcher } from '../shared/lib/router/utils/route-matcher';
++// civitai patch (patches/next@16.4.5.patch): memoize resolveHref for root-relative string hrefs.
++// For an href that starts with a single "/" the result depends only on the href and resolveAs:
++// the router supplies just the base URL, and an absolute path replaces the base path entirely.
++// Every other input (relative, "?query", "#hash", absolute URLs, URL objects, and hrefs that hit
++// the repeated-slash warning) goes through the original function unchanged. Bounded, oldest
++// entry evicted first. Arrays are copied out so a caller can never alter a cached result.
++const RESOLVE_HREF_CACHE_MAX = 2000;
++const resolveHrefCache = new Map();
++function resolveHrefCacheable(href) {
++    return typeof href === 'string' && href.charCodeAt(0) === 47 && href.charCodeAt(1) !== 47 && !/(\/\/|\\)/.test(href.split('?', 1)[0]);
++}
+ export function resolveHref(router, href, resolveAs) {
++    if (!resolveHrefCacheable(href)) return resolveHrefUncached(router, href, resolveAs);
++    const cacheKey = (resolveAs ? '1' : '0') + href;
++    let cached = resolveHrefCache.get(cacheKey);
++    if (cached === undefined) {
++        cached = resolveHrefUncached(router, href, resolveAs);
++        if (resolveHrefCache.size >= RESOLVE_HREF_CACHE_MAX) resolveHrefCache.delete(resolveHrefCache.keys().next().value);
++        resolveHrefCache.set(cacheKey, cached);
++    }
++    return Array.isArray(cached) ? cached.slice() : cached;
++}
++function resolveHrefUncached(router, href, resolveAs) {
+     // we use a dummy base url for relative urls
+     let base;
+     let urlAsString = typeof href === 'string' ? href : formatWithValidation(href);
