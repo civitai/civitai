@@ -5,13 +5,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 /**
- * Runs the endpoint's real id query against an in-process Postgres: it queues every indexed
- * taken-down model, and no other.
+ * Runs the endpoint's real id queries against an in-process Postgres: it queues every indexed
+ * taken-down model, and no other, and the collections showing any taken-down model's images.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { env, queueModelsReindex } = vi.hoisted(() => ({
+const { env, queueModelsReindex, collectionsOf, enqueueCollectionRebuild } = vi.hoisted(() => ({
   env: {
     WEBHOOK_TOKEN: 'test-token',
     LOGGING: '',
@@ -19,6 +19,12 @@ const { env, queueModelsReindex } = vi.hoisted(() => ({
     TRPC_ORIGINS: [] as string[],
   },
   queueModelsReindex: vi.fn(async (ids: number[]) => ({ ids: ids.length })),
+  // Model n's images show in collections 10n and 100 (shared, so it must be queued once).
+  collectionsOf: vi.fn(async ({ modelId }: { modelId: number }) => ({
+    collectionIds: [modelId * 10, 100],
+    truncated: false,
+  })),
+  enqueueCollectionRebuild: vi.fn(async () => ({ queued: 0, truncated: false })),
 }));
 
 vi.mock('~/env/server', () => ({ env }));
@@ -27,7 +33,18 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 // The queueing and its read-back are queue-paid-models-reindex-endpoint.test.ts's to pin.
 vi.mock('~/server/search-index/queue-models-reindex', () => ({
   queueModelsReindex,
-  queueModelsReindexSchema: { safeParse: (data: unknown) => ({ success: true, data }) },
+  queueModelsReindexSchema: {
+    safeParse: (data: { dryRun?: string }) => ({
+      success: true,
+      data: { ...data, dryRun: data.dryRun !== 'false' },
+    }),
+  },
+}));
+
+// The lookup's SQL is collection-media-index-model-images.behavior.test.ts's to pin.
+vi.mock('~/server/services/collection-media-index', () => ({
+  getCollectionIdsForModelImages: collectionsOf,
+  enqueueCollectionRebuild,
 }));
 
 const handler = (await import('~/pages/api/admin/temp/queue-takendown-models-reindex')).default;
@@ -79,5 +96,23 @@ describe('/api/admin/temp/queue-takendown-models-reindex', () => {
     expect(await call({ dryRun: 'false' })).toBe(200);
     const [ids] = queueModelsReindex.mock.calls.at(-1) as unknown as [number[]];
     expect([...ids].sort()).toEqual([1, 2]);
+  });
+
+  it("queues the collections showing any taken-down model's images, indexed or not", async () => {
+    collectionsOf.mockClear();
+    enqueueCollectionRebuild.mockClear();
+    expect(await call({ dryRun: 'false' })).toBe(200);
+    const looked = collectionsOf.mock.calls.map(([arg]) => arg.modelId).sort();
+    expect(looked).toEqual([1, 2, 3, 4]);
+    const [{ collectionIds }] = enqueueCollectionRebuild.mock.calls.at(-1) as unknown as [
+      { collectionIds: number[] }
+    ];
+    expect([...collectionIds].sort((a, b) => a - b)).toEqual([10, 20, 30, 40, 100]);
+  });
+
+  it('queues no collection on a dry run', async () => {
+    enqueueCollectionRebuild.mockClear();
+    expect(await call({ dryRun: 'true' })).toBe(200);
+    expect(enqueueCollectionRebuild).not.toHaveBeenCalled();
   });
 });
