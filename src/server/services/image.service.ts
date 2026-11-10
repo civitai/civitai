@@ -1779,6 +1779,10 @@ export const ingestImage = async ({
 
   const { url, id, type } = parsedImage.data;
 
+  // No audio scan exists yet, and the frame-extraction path below would run on a song. The row stays
+  // Pending with no scan requested, which no feed reads as visible.
+  if (type === MediaType.audio) return false;
+
   if (!isAllowedImageScanUrl(url)) {
     // Same guard createImageIngestionRequest applies (which would throw here); checking
     // first routes the rejection through the submit-failure machinery — status 400
@@ -7129,10 +7133,16 @@ export async function createImage({
   feedbackCapture,
   assertPostOwnedBy = createPostOwnerCheck(),
   clientUrl,
+  allowAudio,
   ...image
 }: ImageSchema & {
   userId: number;
   skipIngestion?: boolean;
+  /**
+   * The caller has checked the owner may store a song (the `music` flag). Without it audio is
+   * refused here, because `imageSchema` accepts `type: 'audio'` on every route that creates an image.
+   */
+  allowAudio?: boolean;
   /**
    * Derivation the caller proved (see remix-provenance.ts). Nothing else can put
    * `meta.extra.sourceImageIds` on a row — every other caller's claim is stripped
@@ -7163,6 +7173,8 @@ export async function createImage({
   if (blockProvenance && !blockProvenance.appId) {
     throw new Error('createImage: blockProvenance requires an appId');
   }
+  if (image.type === MediaType.audio && !allowAudio)
+    throw throwAuthorizationError('Songs are not available yet.');
   if (image.postId != null) await assertPostOwnedBy({ postId: image.postId, userId: image.userId });
 
   /**
