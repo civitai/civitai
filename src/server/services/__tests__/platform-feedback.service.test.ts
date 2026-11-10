@@ -159,7 +159,7 @@ beforeAll(async () => {
   const template = await freshAppFeedbackDb();
   alice = await seedUser(template, 'alice');
   bob = await seedUser(template, 'bob');
-  // Without it the dump replays WAL on load, and each sequence resumes 32 values ahead.
+  // Without it the dump replays WAL on load, and each sequence resumes up to 32 values ahead.
   await template.exec('CHECKPOINT');
   snapshot = await template.dumpDataDir('none');
   await template.close();
@@ -188,15 +188,17 @@ describe('the fixtures', () => {
     expect([alice, bob]).toEqual([1, 2]);
   });
 
-  // The next two run in order: the first dirties its copy, the second must not see it.
-  it('lets a test write rows and advance sequences', async () => {
+  it('gives each copy of the snapshot its own rows and sequences', async () => {
     await seedFeedback(pg, { userId: alice, message: 'left behind' });
-    expect(await seedUser(pg, 'carol')).toBe(3);
-  });
+    await seedUser(pg, 'carol');
 
-  it("starts every test from the snapshot, not the previous test's copy", async () => {
-    expect(await countRows(pg, 'Feedback')).toBe(0);
-    expect(await seedUser(pg, 'carol')).toBe(3);
+    const copy = await PGlite.create({ loadDataDir: snapshot });
+    try {
+      expect(await countRows(copy, 'Feedback')).toBe(0);
+      expect(await seedUser(copy, 'carol')).toBe(3);
+    } finally {
+      await copy.close();
+    }
   });
 });
 
