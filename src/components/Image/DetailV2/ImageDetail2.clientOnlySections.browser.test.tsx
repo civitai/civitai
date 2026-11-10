@@ -44,6 +44,7 @@ const image = {
 /** The sidebar's tail: what the switch moves to the client, in screen order. */
 const TAIL = [
   'votable-tags',
+  'post-card',
   'image-process',
   'image-remix-of',
   'remix-gallery',
@@ -200,11 +201,11 @@ vi.mock('~/components/CreatorCard/CreatorCard', async (o) => ({
   ...(await o<object>()),
   SmartCreatorCard: () => <div data-testid="creator-card" />,
 }));
+// The tail, as probes.
 vi.mock('~/components/Image/DetailV2/ImageDetailPostCard', async (o) => ({
   ...(await o<object>()),
-  ImageDetailPostCard: () => null,
+  ImageDetailPostCard: () => <div data-testid="post-card" />,
 }));
-// The tail, as probes.
 vi.mock('~/components/VotableTags/VotableTags', async (o) => ({
   ...(await o<object>()),
   VotableTags: () => <div data-testid="votable-tags" />,
