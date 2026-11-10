@@ -1534,6 +1534,15 @@ function buildDocStore(deps: DocStoreDeps) {
     }
   }
 
+  /**
+   * The per-user ceiling of `uid`: `deps.userLimits` (production: their membership tier's), else
+   * the store-wide `limits`. The one rule the write charge and the `info` figures both apply.
+   */
+  async function viewerLimits(uid: number): Promise<{ userBytes: number; userDocs: number }> {
+    if (deps.userLimits) return deps.userLimits(uid);
+    return { userBytes: limits.userBytes, userDocs: limits.userDocs };
+  }
+
   /** Charge one write: `usage_app` (which also yields the seq), then the caller's `usage_user`. */
   async function charge(
     c: DocStoreClient,
@@ -1555,10 +1564,7 @@ function buildDocStore(deps: DocStoreDeps) {
     }
     if (user.bytes !== 0 || user.docs !== 0) {
       // A charge that only frees passes whatever the ceiling (SQL_CHARGE_USER), so it reads none.
-      const ceiling =
-        deps.userLimits && (user.bytes > 0 || user.docs > 0)
-          ? await deps.userLimits(user.uid)
-          : limits;
+      const ceiling = user.bytes > 0 || user.docs > 0 ? await viewerLimits(user.uid) : limits;
       const res = await c.query(SQL_CHARGE_USER, [
         ctx.appId,
         ctx.ns,
@@ -2591,6 +2597,7 @@ function buildDocStore(deps: DocStoreDeps) {
     unmark,
     usage,
     limits,
+    viewerLimits,
     isUsable,
   };
   /**

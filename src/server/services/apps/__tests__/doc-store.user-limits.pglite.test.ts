@@ -67,6 +67,15 @@ describe('per-user ceilings from userLimits', () => {
     expect(userLimits.mock.calls.every(([uid]) => uid === VIEWER_1)).toBe(true);
   });
 
+  // The figure the storage `info` route and the running app's notice show is this same function.
+  it('viewerLimits is the ceiling the writes above were held to, per user', async () => {
+    const { store } = storeWithCeilings();
+    expect(await store.viewerLimits(VIEWER_1)).toEqual({ userBytes: 1_000_000, userDocs: 2 });
+    expect(await store.viewerLimits(VIEWER_2)).toEqual({ userBytes: 1_000_000, userDocs: 3 });
+    const plain = createDocStore({ db: h.db, limits: LOOSE });
+    expect(await plain.viewerLimits(VIEWER_1)).toEqual({ userBytes: 1_000_000, userDocs: 10_000 });
+  });
+
   it('a write that only frees reads no ceiling, and is allowed', async () => {
     const app = freshApp('tierfree');
     const { store, userLimits } = storeWithCeilings();

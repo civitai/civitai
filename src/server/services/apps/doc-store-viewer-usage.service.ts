@@ -118,11 +118,9 @@ export async function getMyAppStorage(
  */
 export async function getMyAppStorageForApp(
   userId: number,
-  appBlockId: string,
-  deps: { limits?: ViewerLimitsLookup } = {}
+  appBlockId: string
 ): Promise<MyAppStorageForApp> {
   const store = getDocStore();
-  const limitsOf = deps.limits ?? docStoreUserLimits;
   try {
     const { viewer } = await store.usage({
       appId: appBlockId,
@@ -131,7 +129,8 @@ export async function getMyAppStorageForApp(
     });
     return {
       status: 'ok',
-      limits: await limitsOf(userId),
+      // The ceiling this store charges the user's writes against.
+      limits: await store.viewerLimits(userId),
       usage: viewer ?? { bytes: 0, docs: 0 },
     };
   } catch (err) {

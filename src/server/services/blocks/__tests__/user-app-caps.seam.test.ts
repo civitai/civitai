@@ -19,9 +19,10 @@ describe('one resolver for the per-user app caps', () => {
     ]);
   });
 
-  it('the storage ceiling: the stores that charge writes, the storage info route and the account storage card read it', () => {
+  // The storage info route and the running app's notice read the ceiling through the store
+  // (`store.viewerLimits`), the same function its write charge applies.
+  it('the storage ceiling: the stores that charge writes and the account storage card read it', () => {
     expect(importersOf(CAPS, 'docStoreUserLimits')).toEqual([
-      'server/services/apps/doc-store-api.ts',
       'server/services/apps/doc-store-maintenance.instance.ts',
       'server/services/apps/doc-store-viewer-usage.service.ts',
       'server/services/apps/doc-store.instance.ts',
@@ -31,7 +32,6 @@ describe('one resolver for the per-user app caps', () => {
   it('nothing else imports the resolver module', () => {
     expect(importersOf(CAPS)).toEqual([
       'server/routers/blocks.router.ts',
-      'server/services/apps/doc-store-api.ts',
       'server/services/apps/doc-store-maintenance.instance.ts',
       'server/services/apps/doc-store-viewer-usage.service.ts',
       'server/services/apps/doc-store.instance.ts',
@@ -39,11 +39,15 @@ describe('one resolver for the per-user app caps', () => {
     ]);
   });
 
-  // A dynamic `import()` takes every binding, so it is listed: each one below destructures some
-  // other export (`REVIEW_RUN_FOR_REAL_BUZZ_CAP`, `isDocStoreError`).
+  // A dynamic `import()` or an `export … from` counts as every binding, so it is listed: each
+  // one below takes some other export (`REVIEW_RUN_FOR_REAL_BUZZ_CAP`, `isDocStoreError`,
+  // `manifestWantsOauthToken`).
   it('no code reads the pre-tier daily Buzz cap constant in place of the resolver', () => {
     expect(importersOf('shared/constants/block-scope.constants', 'BLOCK_BUZZ_CAP_PER_DAY')).toEqual(
-      ['server/services/blocks/publish-request.service.ts']
+      [
+        'server/services/blocks/block-oauth-scope.ts',
+        'server/services/blocks/publish-request.service.ts',
+      ]
     );
   });
 
