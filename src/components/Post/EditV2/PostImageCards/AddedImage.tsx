@@ -55,6 +55,7 @@ import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import { MoveImageToPostModal } from '~/components/Post/EditV2/MoveImageToPostModal';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
+import { ResourceReviewEditButton } from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewEditButton';
 import {
   ResourceReviewCommentHint,
   ResourceReviewThumbs,
@@ -664,6 +665,22 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
           ownerId={ownerId}
           modelVersionId={modelVersionId}
           modelName={modelName}
+        />
+      )}
+      {postId && ownerId && (
+        <ResourceReviewEditButton
+          postId={postId}
+          ownerId={ownerId}
+          modelVersionId={modelVersionId}
+          modelName={modelName}
+          getImages={() =>
+            [image, ...otherImages].map((img) => ({
+              id: img.id,
+              url: img.url,
+              type: img.type,
+              modelVersionIds: img.resourceHelper.map((r) => r.modelVersionId),
+            }))
+          }
         />
       )}
 

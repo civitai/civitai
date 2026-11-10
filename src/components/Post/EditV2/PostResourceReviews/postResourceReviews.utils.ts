@@ -35,3 +35,18 @@ export function patchReview<T extends ReviewRow>(
 ): T[] {
   return rows.map((row) => (row.modelVersionId === modelVersionId ? { ...row, ...patch } : row));
 }
+
+/** Rich-text editors report an empty document as markup, e.g. `<p></p>`. */
+export const normalizeComment = (html: string | null | undefined) =>
+  !html || html.replace(/<(?!img\b)[^>]*>/g, '').trim() === '' ? '' : html;
+
+/**
+ * Whether the stepper nudges for a comment. Soft today; make saving depend on this to require one.
+ */
+export const shouldNudgeForComment = ({
+  recommended,
+  comment,
+}: {
+  recommended: boolean | null | undefined;
+  comment: string | null | undefined;
+}) => recommended === false && normalizeComment(comment) === '';
