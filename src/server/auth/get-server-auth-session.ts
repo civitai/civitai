@@ -10,6 +10,7 @@ import {
   rollSlot,
 } from '@civitai/auth';
 import { env } from '~/env/server';
+import { matchWebhookToken } from '~/server/utils/webhook-token';
 import { isPreview } from '~/env/other';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
@@ -73,7 +74,7 @@ export const getServerAuthSession = async ({
   if (req.headers.authorization) token = req.headers.authorization.split(' ')[1];
   else if (req.url) {
     const url = new URL(req.url, getBaseUrl());
-    if (url.searchParams.get('token') !== env.WEBHOOK_TOKEN)
+    if (!matchWebhookToken(url.searchParams.get('token')))
       token = url.searchParams.get('token') || undefined;
   }
 

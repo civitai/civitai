@@ -24,6 +24,8 @@ type ModelModActivity = {
     | 'dismissPoiHashMatch'
     | 'approveLockReview'
     | 'rejectLockReview'
+    // A ruling on a restricted-verdict lead in Needs review (`restrictedNsfwVerdict:keep`).
+    | `restrictedNsfwVerdict:${'keep' | 'dismiss' | 'rateNsfw' | 'autoApply'}`
     // A moderator's model save added or removed one locked property (`lockProperty:poi`).
     | `lockProperty:${string}`
     | `unlockProperty:${string}`;
@@ -31,7 +33,7 @@ type ModelModActivity = {
 
 type ModelVersionModActivity = {
   entityType: 'modelVersion';
-  activity: TagActivities | 'review';
+  activity: TagActivities | 'review' | `trainingData:${'approve' | 'deny'}`;
 };
 
 type ImageTagModActivity = {
@@ -81,6 +83,9 @@ type UserModActivity = {
     | 'revokeTimedMute'
     | 'createSystemAccount'
     | 'mintSystemAccountApiKey'
+    // An admin minted, retired, unretired or re-ceilinged a per-provider download token
+    // (`providerDownloadToken:<action>:<provider>`). `userId` is the asserted actor.
+    | `providerDownloadToken:${string}`
     | 'setSystemAccountProfile'
     // A moderator gave a Stripe member free days (membership-extend.service). Counts toward its cooldown.
     | 'extendMembership'
@@ -89,6 +94,8 @@ type UserModActivity = {
     | 'undoMembershipCancel'
     // A moderator re-read a member's Stripe subscription into CustomerSubscription (membership-resync.service).
     | 'resyncMembership'
+    // A moderator released a built personal-data export to the account owner (personal-data-export.service).
+    | 'releasePersonalDataExport'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
     // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
     // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when
@@ -139,10 +146,11 @@ type PlacementModActivity = {
   activity: 'removePlacement';
 };
 
-/** A moderator hid an `app-block` report from the app's developer, or unhid it. */
+/** A moderator hid an `app-block` report from the app's developer, or unhid it — or closed it with
+ *  a Buzz refund for the generations it reported (`/api/mod/apps/refund-workflows`). */
 type FeedbackModActivity = {
   entityType: 'feedback';
-  activity: 'hideFromOwner' | 'unhideFromOwner';
+  activity: 'hideFromOwner' | 'unhideFromOwner' | 'refundAppBuzz';
 };
 
 /** A moderator cleared a bounty entry file's check result

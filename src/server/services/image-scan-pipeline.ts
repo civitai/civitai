@@ -19,7 +19,7 @@ import {
 } from '~/server/common/enums';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import {
-  auditMetaData,
+  auditPostImageMeta,
   getTagsFromPrompt,
   includesInappropriate,
   includesPoi,
@@ -27,6 +27,7 @@ import {
 import { getComputedTags, getConditionalTagsForReview } from '~/server/utils/tag-rules';
 import { getTagRules } from '~/server/services/system-cache';
 import { Prisma } from '@prisma/client';
+import { captureImageKeptSql, ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
 import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { isDefined } from '~/utils/type-guards';
 import { normalizeText } from '~/utils/normalize-text';
@@ -67,6 +68,7 @@ import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { decreaseDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 
 // Ingestion stages shared by the legacy (wdTagging + mediaRating) and imageScanning result handlers.
 
@@ -515,13 +517,25 @@ export type ScanOutcome = {
   audit?: Awaited<ReturnType<typeof auditScanResults>>;
 };
 
+/** Whether the owner is held or a hold kept the image. A read that fails counts as held. */
+function isBlockKeptByHold(imageId: number) {
+  return ownerHeld(
+    dbWrite,
+    Prisma.sql`FROM "Image" m WHERE m.id = ${imageId}`,
+    Prisma.sql`(${ownerHeldSql(Prisma.raw('m."userId"'))}
+      OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" k WHERE k."imageId" = m.id)
+      OR ${captureImageKeptSql('m')})`
+  );
+}
+
 /**
  * Resolve and persist the final state of the image row, returning the bits the
  * post-update side effects need. Three terminal shapes:
  *  - `blocked` (legacy mediaRating hard block, already written by the caller): only
  *    stamp provenance — re-auditing would recompute nsfwLevel/ingestion and silently
  *    un-block the image. A *prior* block is deliberately not sticky, so a moderator
- *    rescan can clear it, unless the owner is banned or the image is under appeal.
+ *    rescan can clear it, unless the owner is banned or held, a hold kept the image, or the
+ *    image is under appeal.
  *    imageScanning never passes `blocked`, so on that path only `audit.blockedFor` and
  *    moderation rules re-block.
  *  - `audit.blockedFor` (prompt TOS/CSAM): block.
@@ -645,8 +659,9 @@ export async function resolveScanOutcome({
     reviewKey = 'csam';
   }
 
-  // A block on a banned owner's image is the ban's decision, not a stale automated one, so a scan
-  // never lifts it. Read fresh, not from `image`: the ban can block the row after this scan loaded it.
+  // A block on a banned or held owner's image, or on one a hold kept, is that decision, not a stale
+  // automated one, so a scan never lifts it. Read fresh, not from `image`: the ban or hold can block
+  // the row after this scan loaded it.
   if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
     const [current] = await dbWrite.$queryRaw<
       {
@@ -661,7 +676,11 @@ export async function resolveScanOutcome({
       JOIN "User" u ON u.id = i."userId"
       WHERE i.id = ${image.id}
     `;
-    if (current?.ownerBanned && hasBlockMarker(current)) {
+    if (
+      current &&
+      hasBlockMarker(current) &&
+      (current.ownerBanned || (await isBlockKeptByHold(image.id)))
+    ) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = current.blockedFor ?? BlockedReason.Moderated;
       toUpdate.nsfwLevel = NsfwLevel.Blocked;
@@ -792,17 +811,33 @@ async function auditScanResults(args: {
   const minor = minorTags.length > 0 || !!associatedEntities.minor;
   const poi = poiTags.length > 0 || !!associatedEntities.poi || (!!prompt && !!includesPoi(prompt));
 
+  // A feedback page capture is a picture of the site, not the capture account's content.
   let reviewKey: string | undefined;
-  if (poiReview) reviewKey = 'poi';
+  if (args.userId === FEEDBACK_CAPTURE_OWNER_ID) reviewKey = undefined;
+  else if (poiReview) reviewKey = 'poi';
   else if (minorReview) reviewKey = 'minor';
   else if (tagReview) reviewKey = 'tag';
   else if (newUserReview) reviewKey = 'newUser';
 
   let blockedFor: string | undefined;
   if (nsfw && prompt) {
-    const auditResult = auditMetaData({ prompt }, nsfw);
+    // The post editor's own verdict, so the scan never blocks what the editor let through.
+    const auditResult = auditPostImageMeta({ prompt }, nsfw);
     if (!auditResult.success)
       blockedFor = auditResult.blockedFor.join(',') ?? 'Failed audit, no explanation';
+    else if (auditResult.softBlockedFor?.length)
+      logToAxiom({
+        name: 'image-prompt-soft-block-pass',
+        type: 'info',
+        userId: args.userId,
+        imageId: args.imageId,
+        details: {
+          triggers: auditResult.softBlockedFor.map((word) => ({
+            category: 'nsfw_blocklist',
+            matchedWord: word,
+          })),
+        },
+      }).catch(() => null);
   }
 
   return {
@@ -1046,7 +1081,7 @@ export async function applyIngestionSideEffects({
         });
       }
 
-      if (!reviewKey && image.type === 'image') {
+      if (!reviewKey && image.type === 'image' && image.userId !== FEEDBACK_CAPTURE_OWNER_ID) {
         await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
       }
     }

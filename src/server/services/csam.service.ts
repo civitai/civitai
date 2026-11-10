@@ -7,7 +7,6 @@ import type {
   GetImageResourcesOutput,
   CsamReportFormOutput,
 } from '~/server/schema/csam.schema';
-import { csamCapabilitiesDictionary, csamContentsDictionary } from '~/server/schema/csam.schema';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import { isGeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -23,22 +22,20 @@ import archiver from 'archiver';
 import stream, { Readable } from 'stream';
 import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import { Upload } from '@aws-sdk/lib-storage';
-import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
 import * as z from 'zod';
 import plimit from 'p-limit';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import type { PaginationInput } from '~/server/schema/base.schema';
 import type { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 import { isProd } from '~/env/other';
-import { unzipTrainingData } from '~/utils/training';
 import { getFileForModelVersion } from '~/server/services/file.service';
-import JSZip from 'jszip';
-import { CYBERTIP_CONTACT_EMAIL, MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
+import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
 import { csamSendClaimCutoff } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
-import { removeEmpty } from '~/utils/object-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
+import type { CsamContextText } from '~/server/services/csam-context-text';
+import { foldContextText } from '~/server/services/csam-context-text';
 
 type CsamReportImage = {
   id: number;
@@ -105,10 +102,11 @@ function foldImages(stored: unknown, added: { id: number }[]) {
 
 type GeneratedImagesEntry = NonNullable<CsamReportFormOutput['generatedImages']>[number];
 
-type FoldBlob = { url?: string; blobId?: string; status?: string };
+type FoldBlob = { url?: string; blobId?: string; status?: string; orchestratorJobId?: string };
 
 /** A preserved file is one blob however many filings name it; a legacy file is its URL. A copy that
- *  was preserved replaces one that could not be, but never a moderator's exclusion. */
+ *  was preserved replaces one that could not be, but never a moderator's exclusion. A kept blob
+ *  takes the producing job id a later filing knows and it lacks. */
 function foldBlobs(stored: unknown, added: unknown) {
   const byKey = new Map<unknown, FoldBlob>();
   for (const blob of [
@@ -121,7 +119,14 @@ function foldBlobs(stored: unknown, added: unknown) {
       !kept ||
       (kept.status !== 'preserved' && kept.status !== 'excluded' && blob?.status === 'preserved')
     )
-      byKey.set(key, blob);
+      byKey.set(
+        key,
+        kept?.orchestratorJobId && !blob.orchestratorJobId
+          ? { ...blob, orchestratorJobId: kept.orchestratorJobId }
+          : blob
+      );
+    else if (!kept.orchestratorJobId && blob?.orchestratorJobId)
+      byKey.set(key, { ...kept, orchestratorJobId: blob.orchestratorJobId });
   }
   return [...byKey.values()];
 }
@@ -156,6 +161,11 @@ function foldDetails(stored: unknown, added: CsamReportFormOutput | undefined) {
     const list = unionLists<unknown>(prior[key], next[key], (item) => item);
     if (list) folded[key] = list;
   }
+  const contextText = foldContextText(
+    prior.contextText,
+    (next as { contextText?: CsamContextText[] }).contextText
+  );
+  if (contextText) folded.contextText = contextText;
   const generatedImages = foldGeneratedImages(prior.generatedImages, next.generatedImages);
   if (generatedImages) folded.generatedImages = generatedImages;
   const nextEvidence = (next as Record<string, unknown>).generatorEvidence;
@@ -388,34 +398,6 @@ async function getReportedUser(id: number) {
   });
 }
 
-async function getModelVersions(versionIds?: number[]) {
-  if (!versionIds?.length) return [];
-  return await dbRead.modelVersion.findMany({
-    where: { id: { in: versionIds } },
-    select: { id: true, createdAt: true, name: true, model: { select: { id: true, name: true } } },
-  });
-}
-
-async function getImages(imageIds?: number[]) {
-  if (!imageIds?.length) return [];
-  const images = await dbRead.image.findMany({
-    where: { id: { in: imageIds } },
-    select: {
-      id: true,
-      url: true,
-      createdAt: true,
-      name: true,
-      type: true,
-      meta: true,
-      post: {
-        select: { modelVersionId: true },
-      },
-      tags: { select: { tag: { select: { name: true } } } },
-    },
-  });
-  return images.map(({ post, ...image }) => ({ ...image, modelVersionId: post?.modelVersionId }));
-}
-
 export async function getUserIpInfo(report: Partial<CsamReportProps>) {
   if (!report.userId || !report.type || !clickhouse) return [];
 
@@ -492,324 +474,6 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
     .filter(isDefined);
 }
 
-async function constructReportPayload({
-  reportedById,
-  userId,
-  reportDetails,
-  modelVersions,
-  incidentDateTime,
-}: {
-  reportedById: number;
-  userId: number | null;
-  reportDetails: CsamReportDetails;
-  modelVersions: AsyncReturnType<typeof getModelVersions>;
-  incidentDateTime: Date;
-}) {
-  const reportingUser = await getReportingUser(reportedById);
-  const reportedUser = userId ? await getReportedUser(userId) : null;
-  // const ipAddresses = userId ? await getUserIpInfo({ userId }) : null;
-
-  const additionalInfo: string[] = [];
-
-  const { minorDepiction, capabilities, contents, userActivity } = reportDetails;
-
-  const section2 = modelVersions.length
-    ? `\nModels format: [modelId:modelName]:[modelVersionId:modelVersionName]\n${modelVersions
-        .map(({ id, name, model }) => `  - [${model.id}:${model.name}]:[${id}:${name}]\n`)
-        .join('')}
-    `
-    : '';
-
-  if (reportedUser) {
-    if (minorDepiction === 'non-real')
-      additionalInfo.push(
-        `${reportedUser.username as string} (${
-          reportedUser.id
-        }), appears to have used the following models' image/video generation and/or editing capabilities to produce sexual content depicting non-real minors.`
-      );
-    else if (minorDepiction === 'real')
-      additionalInfo.push(
-        `${reportedUser.username as string} (${
-          reportedUser.id
-        }), appears to have used the following models' image/video editing capabilities to modify images of real minors for the apparent purpose of sexualizing them.`
-      );
-
-    additionalInfo.push(section2);
-  } else {
-    additionalInfo.push(`
-      The images/videos in this report were unintentionally and inadvertently generated or manipulated, during testing that is part of Civitai's trust and safety program, by the following models, one or more artificial intelligence-powered image/video generator.
-      `);
-    additionalInfo.push(section2);
-
-    if (capabilities?.length) {
-      additionalInfo.push(`The aforementioned model(s) can do the following:
-        ${capabilities
-          .map((key) => {
-            const capability = csamCapabilitiesDictionary[key];
-            return capability ? `  - ${capability}\n` : undefined;
-          })
-          .filter(isDefined)
-          .join('')}
-        `);
-    }
-  }
-
-  if (contents?.length) {
-    additionalInfo.push(`The images/videos in this report may involve:
-    ${contents
-      .map((key) => {
-        const content = csamContentsDictionary[key];
-        return content ? `  - ${content}\n` : undefined;
-      })
-      .filter(isDefined)
-      .join('')}
-    `);
-  }
-
-  additionalInfo.push('All evidence in this report should be independently verified.');
-
-  return {
-    report: {
-      incidentSummary: {
-        incidentType: 'Child Pornography (possession, manufacture, and distribution)',
-        incidentDateTime: incidentDateTime.toISOString(),
-      },
-      reporter: {
-        reportingPerson: {
-          firstName: reportingUser?.name,
-          email: reportingUser?.email,
-        },
-        contactPerson: {
-          email: CYBERTIP_CONTACT_EMAIL,
-        },
-      },
-      personOrUserReported: userId
-        ? removeEmpty({
-            espIdentifier: userId,
-            screenName: reportedUser?.username,
-            // personOrUserReportedPerson: {
-            //   firstName: reportedUser?.name,
-            //   email: reportedUser?.email,
-            // },
-            ipCaptureEvent: userActivity?.map((activity) => {
-              const [year, month, day, hour, minute, second] = activity.time
-                .split(/[-: ]/)
-                .map(Number);
-              return {
-                ipAddress: activity.ip,
-                eventName: activity.type,
-                dateTime: new Date(
-                  Date.UTC(year, month - 1, day, hour, minute, second)
-                ).toISOString(),
-              };
-            }),
-            additionalInfo: `
-              Email: ${reportedUser?.email ?? 'NA'}
-              Name: ${reportedUser?.name ?? 'NA'}
-            `,
-          })
-        : undefined,
-      additionalInfo: `${additionalInfo
-        .join('\n\n')
-        .replace(/\n\s*\n\s*\n/g, '\n\n')
-        .trim()}`,
-    },
-  };
-}
-
-export async function processCsamReport(report: CsamReportProps) {
-  const images = await getImages(report.images.map((x) => x.id));
-  const modelVersions = await getModelVersions([
-    ...new Set([
-      ...(report.details.modelVersionIds ?? []),
-      ...images.map((x) => x.modelVersionId).filter(isDefined),
-    ]),
-  ]);
-
-  let shouldDelete = false;
-  if (report.type === 'Image' && !images.length) shouldDelete = true;
-  if (report.type === 'TrainingData' && !modelVersions.length) shouldDelete = true;
-  if (shouldDelete) {
-    await dbWrite.csamReport.delete({ where: { id: report.id } });
-    return;
-  }
-
-  let incidentDateTime = new Date();
-  if (report.type === 'Image') {
-    incidentDateTime = images[0].createdAt;
-  } else if (report.type === 'TrainingData') {
-    incidentDateTime = modelVersions[0].createdAt;
-  }
-
-  const userActivity = await getUserIpInfo(report);
-
-  const reportPayload = await constructReportPayload({
-    reportedById: report.reportedById,
-    userId: report.userId,
-    reportDetails: { ...report.details, userActivity },
-    modelVersions,
-    incidentDateTime,
-  });
-
-  const { reportId } = await ncmecCaller().initializeReport(reportPayload);
-
-  const fns = {
-    [CsamReportType.Image]: uploadImages,
-    [CsamReportType.TrainingData]: uploadTrainingData,
-    [CsamReportType.GeneratedImage]: () => {
-      throw new Error('unsupported report type: "generated-image"');
-    },
-    [CsamReportType.ExternalLink]: () => {
-      throw new Error('unsupported report type: "external-link"');
-    },
-  };
-
-  try {
-    const data = await fns[report.type]();
-    await ncmecCaller().finishReport(reportId);
-    console.log('finished report:', reportId);
-
-    await dbWrite.csamReport.update({
-      where: { id: report.id },
-      data: { ...data, details: { ...data.details, userActivity } },
-    });
-  } catch (e) {
-    console.log('ERROR');
-    console.log(e);
-    await ncmecCaller().retractReport(reportId);
-    throw e;
-  }
-
-  async function uploadImages(): Promise<Partial<CsamReportProps>> {
-    const limit = plimit(2);
-    const result = await Promise.all(
-      images.map((image) => {
-        return limit(async () => {
-          const imageReportInfo = report.images.find((x) => x.id === image.id);
-          if (!imageReportInfo) return;
-
-          const imageUrl = getEdgeUrl(image.url, { type: image.type });
-          const { prompt, negativePrompt } = (image.meta ?? {}) as Record<string, unknown>;
-          const modelVersion = modelVersions.find((x) => x.id === image.modelVersionId);
-          const modelId = modelVersion?.model.id;
-          const modelVersionId = modelVersion?.id;
-          const additionalInfo: string[] = [];
-          if (modelId) additionalInfo.push(`model id: ${modelId}`);
-          if (modelVersionId) additionalInfo.push(`model version id: ${modelVersionId}`);
-          if (prompt && typeof prompt === 'string') additionalInfo.push(`prompt: ${prompt}`);
-          if (negativePrompt && typeof negativePrompt === 'string')
-            additionalInfo.push(`negativePrompt: ${negativePrompt}`);
-
-          const fileAnnotations =
-            imageReportInfo?.fileAnnotations ?? ({} as Ncmec.FileAnnotationsSchema);
-          const tags = image.tags.map((x) => x.tag.name);
-          if (tags.some((tag) => ['anime', 'illustrated explicit nudity'].includes(tag))) {
-            fileAnnotations.animeDrawingVirtualHentai = true;
-          }
-          if (
-            tags.some((tag) =>
-              [
-                'violence',
-                'explosions and blasts',
-                'physical violence',
-                'weapon violence',
-                'graphic violence or gore',
-                'hanging',
-              ].includes(tag)
-            )
-          ) {
-            fileAnnotations.physicalHarm = true;
-          }
-
-          const blob = await fetchBlob(imageUrl);
-          if (!blob) return;
-
-          const { fileId, hash } = await ncmecCaller().uploadFile({
-            reportId,
-            file: blob,
-            fileDetails: {
-              originalFileName: image.name ?? undefined,
-              locationOfFile: imageUrl,
-              fileViewedByEsp: false,
-              fileAnnotations,
-              additionalInfo: additionalInfo.length
-                ? `${additionalInfo.map((info) => `  - ${info}`).join('\n')}`
-                : undefined,
-            },
-          });
-
-          return {
-            ...imageReportInfo,
-            fileAnnotations,
-            fileId,
-            hash,
-          };
-        });
-      })
-    );
-
-    return {
-      images: result.filter(isDefined),
-      reportId,
-      reportSentAt: new Date(),
-    };
-  }
-
-  async function uploadTrainingData() {
-    const version = modelVersions[0];
-    const dir = `${baseDir}/training-data/${report.id}`;
-    const outPath = `${dir}/${report.userId ?? 'unknown'}_training-data.zip`;
-
-    // persist output to be used in upcoming job
-    createDir(dir);
-
-    try {
-      const zipStream = await getTrainingDataZipStream({
-        reportedById: report.reportedById,
-        versionId: version.id,
-      });
-
-      await fsAsync.writeFile(outPath, zipStream);
-
-      const limit = plimit(2);
-
-      const zipReader = new JSZip();
-      const zData = await new Promise<Buffer>((resolve, reject) => {
-        fs.readFile(outPath, function (err, data) {
-          if (err) reject(err);
-          else resolve(data);
-        });
-      }).then((data) => zipReader.loadAsync(new Uint8Array(data)));
-
-      const results = await unzipTrainingData(zData, ({ imgBlob, filename }) =>
-        limit(async () => {
-          const { fileId, hash } = await ncmecCaller().uploadFile({
-            reportId,
-            file: imgBlob,
-            fileDetails: {
-              originalFileName: filename,
-            },
-          });
-          return { filename, fileId, hash };
-        })
-      );
-
-      const details = report.details as CsamReportDetails;
-      details.trainingData = results;
-
-      removeDir(dir);
-      return {
-        reportId,
-        reportSentAt: new Date(),
-        details,
-      };
-    } catch (e) {
-      removeDir(dir);
-      throw e;
-    }
-  }
-}
-
 async function getTrainingDataZipStream({
   reportedById,
   versionId,
@@ -824,6 +488,7 @@ async function getTrainingDataZipStream({
     user: reportingUser ?? undefined,
     // Fetched server-side to build a report, not on a user's behalf.
     attribution: { caller: 'other', actor: 'internal' },
+    redCapable: true,
   });
   if (modelFile.status !== 'success') throw new Error('training data not found');
 

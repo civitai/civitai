@@ -53,6 +53,7 @@ vi.mock('~/server/redis/caches', () => {
     userPostCountCache: cacheStub(),
   };
 });
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
   createImage: vi.fn(),
   createImageResources: vi.fn(),
@@ -62,7 +63,6 @@ vi.mock('~/server/services/image.service', () => ({
   imagesForModelVersionsCache: { refresh: vi.fn() },
   enqueueImageIngestion: vi.fn(),
   invalidateManyImageExistence: vi.fn(),
-  purgeImageGenerationDataCache: vi.fn(),
   purgeResizeCache: vi.fn(),
   queueImageSearchIndexUpdate: vi.fn(),
 }));

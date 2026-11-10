@@ -13,6 +13,7 @@ import { OAuthAppsCard } from '~/components/Account/OAuthAppsCard';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
 import { ShowcaseHatSetting } from '~/components/Events/ScoredEvent/ShowcaseHatToggle';
 import { HatTurfSetting } from '~/components/Account/HatTurfSetting';
+import { HatTurfOwnerSetting } from '~/components/Account/HatTurfOwnerSetting';
 import { ProfileCard } from '~/components/Account/ProfileCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
 import { SocialProfileCard } from '~/components/Account/SocialProfileCard';
@@ -26,6 +27,9 @@ import { PreferencesPane } from '~/components/Account/PreferencesPane';
 import { SettingsStack } from '~/components/Account/SettingsLayout';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
+const UsageLimitsPane = dynamic(() =>
+  import('~/components/Account/usage/UsageLimitsPane').then((mod) => mod.UsageLimitsPane)
+);
 const NotificationsPane = dynamic(() =>
   import('~/components/Account/NotificationsPane').then((mod) => mod.NotificationsPane)
 );
@@ -38,6 +42,7 @@ export const accountPaneCopy: Record<string, { title: string }> = {
   content: { title: 'Content & Browsing' },
   creator: { title: 'Creator' },
   billing: { title: 'Membership & Billing' },
+  usage: { title: 'Usage limits' },
   security: { title: 'Security & Apps' },
 };
 
@@ -78,6 +83,7 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
           {/* Ungated on purpose: the card self-gates, and still owes the sticker pointer with
               every flag off. */}
           <CreatorControlsCard flat stickerFooter={<StickerInventoryCard flat />} />
+          <HatTurfOwnerSetting />
         </SettingsStack>
       );
 
@@ -90,6 +96,9 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
           <MembershipGiftsCard pointer />
         </SettingsStack>
       );
+
+    case 'usage':
+      return <UsageLimitsPane />;
 
     case 'security':
       return (

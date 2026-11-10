@@ -3,12 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, redisMock } from '~/__tests__/mocks';
 import type { CrucibleEntrySubscriber } from '~/server/services/crucible-entry-accepted';
 
-const {
-  acceptCrucibleEntry,
-  getJudgeableTaggedEntries,
-  revokeCrucibleEntry,
-  sweepAcceptedCrucibleEntries,
-} = await import('~/server/services/crucible-entry-accepted');
+const { acceptCrucibleEntry, revokeCrucibleEntry, sweepAcceptedCrucibleEntries } = await import(
+  '~/server/services/crucible-entry-accepted'
+);
 const { visibleEntryImageSql } = await import('~/server/services/crucible-entry-sql');
 
 const REVIEW_KEY = 'system:crucible-theme-review';
@@ -85,16 +82,18 @@ beforeEach(() => {
   }: {
     where: { id: number };
   }) => ({ eventTags: tags.get(where.id) ?? [] })) as never);
-  // Running tagged crucibles, then their judgeable entries (minus any excluded crucible).
+  // Running tagged crucibles, then one crucible's judgeable entries outside its accepted ids.
   dbMock.dbRead.$queryRaw.mockImplementation((async (...args: unknown[]) => {
     const query = sqlOf(args);
     if (!query.sql.includes('JOIN "CrucibleEntry"'))
-      return [...tags].filter(([, t]) => t.includes(TAG)).map(([id]) => ({ id }));
-    const excluded =
-      (query.values.find((v) => Array.isArray(v) && typeof v[0] === 'number') as number[]) ?? [];
+      return [...tags]
+        .filter(([, t]) => t.includes(TAG))
+        .map(([id, eventTags]) => ({ id, eventTags }));
+    const [crucibleId, acceptedIds] = query.values as [number, number[]];
+    const limit = query.values.at(-1) as number;
     return withImage()
-      .filter(([, row]) => tags.get(row.crucibleId)?.includes(TAG))
-      .filter(([, row]) => !excluded.includes(row.crucibleId))
+      .filter(([id, row]) => row.crucibleId === crucibleId && !acceptedIds.includes(id))
+      .slice(0, limit)
       .map(([entryId, row]) => ({ entryId, crucibleId: row.crucibleId, userId: row.userId }));
   }) as never);
   // The primary's checks: is this entry still in its crucible, and which of these still are.
@@ -139,6 +138,22 @@ describe('acceptCrucibleEntry', () => {
     expect(await acceptCrucibleEntry(ref, [sub])).toBe(true);
 
     expect(sub.accept).toHaveBeenCalledTimes(2);
+  });
+
+  it('takes back what an earlier subscriber granted when a later one fails', async () => {
+    const first = granting();
+    const second = subscriber();
+    second.accept.mockRejectedValueOnce(new Error('down'));
+    const untouched = subscriber();
+
+    await expect(acceptCrucibleEntry(enter(1), [first.sub, second, untouched])).rejects.toThrow(
+      'down'
+    );
+
+    expect([...first.granted]).toEqual([]);
+    expect(second.revoke).toHaveBeenCalledTimes(1);
+    expect(untouched.accept).not.toHaveBeenCalled();
+    expect(untouched.revoke).not.toHaveBeenCalled();
   });
 
   it('skips a subscriber whose tags the crucible does not carry', async () => {
@@ -206,6 +221,19 @@ describe('revokeCrucibleEntry', () => {
     expect(await acceptCrucibleEntry(ref, [sub])).toBe(true);
   });
 
+  it('reaches every subscriber when an earlier one fails to revoke', async () => {
+    const first = subscriber();
+    const second = granting();
+    const ref = enter(1);
+    await acceptCrucibleEntry(ref, [first, second.sub]);
+    first.revoke.mockRejectedValueOnce(new Error('down'));
+
+    await expect(revokeCrucibleEntry(ref, [first, second.sub])).resolves.toBeUndefined();
+
+    expect(first.revoke).toHaveBeenCalledWith(ref);
+    expect(second.granted.size).toBe(0);
+  });
+
   it('reaches the subscriber that granted the entry after the crucible loses its tag', async () => {
     const { sub, granted } = granting();
     const ref = enter(1);
@@ -228,6 +256,20 @@ describe('sweepAcceptedCrucibleEntries', () => {
     expect(await sweepAcceptedCrucibleEntries([sub])).toMatchObject({ accepted: 3, failed: 0 });
     expect(await sweepAcceptedCrucibleEntries([sub])).toMatchObject({ accepted: 0 });
     expect(sub.accept).toHaveBeenCalledTimes(3);
+    // The crucible list carries the tags, so no entry reads them again.
+    expect(dbMock.dbRead.crucible.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('accepts a backlog over several sweeps, never re-reading what it already accepted', async () => {
+    const sub = subscriber();
+    for (let id = 1; id <= 250; id++) enter(id, id % 2 ? 7 : 8);
+
+    const first = await sweepAcceptedCrucibleEntries([sub]);
+    const second = await sweepAcceptedCrucibleEntries([sub]);
+
+    expect(first.accepted).toBeLessThan(250);
+    expect(first.accepted + second.accepted).toBe(250);
+    expect(new Set(sub.accept.mock.calls.map(([e]) => e.entryId)).size).toBe(250);
   });
 
   it('counts an entry whose subscriber failed, and still accepts the rest', async () => {
@@ -307,34 +349,27 @@ describe('the SQL the sweep runs', () => {
   const lastQuery = (fn: typeof dbMock.dbRead.$queryRaw) =>
     sqlOf(fn.mock.calls.at(-1) as unknown[]);
 
-  it('lists only visible entries of running crucibles, skipping the excluded ones', async () => {
-    await getJudgeableTaggedEntries([TAG], [8, 9]);
-    const query = lastQuery(dbMock.dbRead.$queryRaw);
-
-    expect(bound(query, 'c."eventTags" && ?::text[]')).toEqual([TAG]);
-    expect(bound(query, 'c.status = ?::"CrucibleStatus"')).toBe('Active');
-    expect(squash(query.sql)).toContain('AND c."endAt" > now()');
-    expect(bound(query, 'AND c.id <> ALL(?::int[])')).toEqual([8, 9]);
-    expect(squash(query.sql)).toContain(`AND ${visible}`);
-  });
-
-  it('adds no exclusion clause when nothing is excluded', async () => {
-    await getJudgeableTaggedEntries([TAG], []);
-    const query = lastQuery(dbMock.dbRead.$queryRaw);
-
-    expect(query.sql).not.toMatch(/c\.id\s*(<>|=|!=)/);
-    expect(query.values.some((v) => Array.isArray(v) && typeof v[0] === 'number')).toBe(false);
-    expect(squash(query.sql)).toContain(`c."endAt" > now() AND ${visible}`);
-  });
-
-  it('looks for departed entries only in running tagged crucibles', async () => {
+  it('lists the running crucibles carrying a subscribed tag', async () => {
     await sweepAcceptedCrucibleEntries([subscriber()]);
     const query = sqlOf(dbMock.dbRead.$queryRaw.mock.calls[0] as unknown[]);
 
-    expect(squash(query.sql)).toMatch(/^SELECT c\.id FROM "Crucible" c WHERE/);
+    expect(squash(query.sql)).toMatch(/^SELECT c\.id, c\."eventTags" FROM "Crucible" c WHERE/);
     expect(bound(query, 'c."eventTags" && ?::text[]')).toEqual([TAG]);
     expect(bound(query, 'c.status = ?::"CrucibleStatus"')).toBe('Active');
     expect(squash(query.sql)).toContain('AND c."endAt" > now()');
+  });
+
+  it("lists one crucible's visible entries outside those accepted, capped", async () => {
+    const sub = subscriber();
+    await acceptCrucibleEntry(enter(1), [sub]);
+    enter(2);
+    await sweepAcceptedCrucibleEntries([sub]);
+    const query = lastQuery(dbMock.dbRead.$queryRaw);
+
+    expect(bound(query, 'WHERE c.id = ?')).toBe(7);
+    expect(bound(query, 'AND ce.id <> ALL(?::int[])')).toEqual([1]);
+    expect(squash(query.sql)).toContain(`AND ${visible}`);
+    expect(bound(query, 'ORDER BY ce.id LIMIT ?')).toEqual(expect.any(Number));
   });
 
   it('accepts only an entry judges can still see in a running crucible', async () => {

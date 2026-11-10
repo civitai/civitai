@@ -1,3 +1,7 @@
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import { chunk } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
@@ -5,9 +9,9 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { deleteImages } from '~/server/services/image.service';
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import {
   accountHoldSql,
+  captureImageKeptSql,
   assertAccountNotUnderLegalHold,
   isLegalHoldAbort,
   LEGAL_HOLD_STOPPED,
@@ -26,6 +30,8 @@ export default ModEndpoint(
   async function deleteUserImages(req: NextApiRequest, res: NextApiResponse) {
     try {
       const { userId, batchSize } = schema.parse(req.query);
+      if (isFeedbackCaptureOwner(userId))
+        return res.status(400).json({ error: FEEDBACK_CAPTURE_OWNER_REFUSAL });
       const { markerView } = await assertAccountNotUnderLegalHold(userId);
       // Repeated in each delete, so a hold that lands mid-run stops the rest.
       const held = accountHoldSql(Prisma.sql`${userId}::int`, markerView);
@@ -44,7 +50,9 @@ export default ModEndpoint(
 
       let deletedImages = 0;
       for (const batch of chunk(imageIds, batchSize)) {
-        const result = await deleteImages(batch, true, { onlyWhere: unlessHeld });
+        const result = await deleteImages(batch, true, {
+          onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}`,
+        });
         deletedImages += result.length;
       }
 
@@ -56,8 +64,7 @@ export default ModEndpoint(
           WITH doomed AS (
             SELECT id FROM "Post"
             WHERE "userId" = ${userId} AND id = ANY(${postIds}::int[]) AND ${unlessHeld}
-          ),
-          ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT id FROM doomed` }, markerView)}
+          )
           DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
         `;
       }

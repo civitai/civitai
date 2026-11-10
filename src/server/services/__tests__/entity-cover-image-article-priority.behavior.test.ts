@@ -34,6 +34,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text, "nsfwLevel" int DEFAULT 1, width int, height int,
       hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
@@ -41,15 +42,16 @@ beforeAll(async () => {
       "needsReview" text, "blockedFor" text, "userId" int DEFAULT 1, index int DEFAULT 0, "postId" int,
       poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "modelRestricted" boolean DEFAULT false, "nsfwLevelLocked" boolean DEFAULT false,
-      "scanJobs" jsonb
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "publishedAt" timestamp, "userId" int DEFAULT 1,
-      status text DEFAULT 'Published', ingestion text DEFAULT 'Scanned'
+      status text DEFAULT 'Published', ingestion text DEFAULT 'Scanned', "bannerId" int
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "Model" (
-      id int PRIMARY KEY, "userId" int, status text, availability "Availability" DEFAULT 'Public'
+      id int PRIMARY KEY, "userId" int, status text, availability "Availability" DEFAULT 'Public',
+      mode "ModelModifier"
     );
     CREATE TABLE "ModelVersion" (
       id int PRIMARY KEY, "modelId" int, index int, status text, "publishedAt" timestamp,
@@ -111,6 +113,33 @@ describe('getEntityCoverImage, an Article with content images', () => {
     `);
     expect(await coverOf(1)).toBe(30);
     expect(await coverOf(2)).toBe(31);
+  });
+
+  it('serves the banner of an article with no cover', async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, url) VALUES (10, 'content'), (40, 'banner');
+      INSERT INTO "Article" (id, "coverId", "publishedAt", "bannerId") VALUES (1, null, now(), 40);
+      INSERT INTO "ImageConnection" VALUES (10, 1, 'Article');
+    `);
+    expect(await coverOf(1)).toBe(40);
+  });
+
+  it('serves the cover over the banner when both are set', async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, url) VALUES (20, 'cover'), (40, 'banner');
+      INSERT INTO "Article" (id, "coverId", "publishedAt", "bannerId") VALUES (1, 20, now(), 40);
+    `);
+    expect(await coverOf(1)).toBe(20);
+  });
+
+  it('does not serve a banner that awaits review in place of a cover', async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, url, ingestion, "needsReview") VALUES
+        (40, 'flagged banner', 'Scanned', 'minor'), (30, 'content', 'Scanned', null);
+      INSERT INTO "Article" (id, "coverId", "publishedAt", "bannerId") VALUES (1, null, now(), 40);
+      INSERT INTO "ImageConnection" VALUES (30, 1, 'Article');
+    `);
+    expect(await coverOf(1)).toBe(30);
   });
 
   it('keeps a bounty on its lowest connected image', async () => {

@@ -121,8 +121,7 @@ describe('bulk form fields have exactly one writer', () => {
   const FIELDS: [file: string, field: string][] = [
     ['routes/retool/user-lookup/ReviewsPanel.svelte', 'reviewIds'],
     ['routes/retool/user-lookup/IdentityPanel.svelte', 'fields'],
-    // Spelled as a prop, not a literal — see the dedicated case below for why that row is not enough.
-    ['routes/retool/user-lookup/CommentList.svelte', '{field}'],
+    ['routes/retool/user-lookup/CommentList.svelte', 'commentIds'],
     ['lib/components/ImageActionBar.svelte', 'strikeOwners'],
     ['routes/retool/bulk-ban/+page.svelte', 'removeMedia'],
     ['routes/retool/bulk-ban/+page.svelte', 'removeComments'],
@@ -130,16 +129,6 @@ describe('bulk form fields have exactly one writer', () => {
 
   it.each(FIELDS)('%s posts `%s` from exactly one element', (file, field) => {
     expect(writersOf(read(file), field)).toHaveLength(1);
-  });
-
-  it('CommentList’s interpolated name still resolves to the fields the action reads', () => {
-    // The ledger row above can only see that ONE element writes `name={field}` — not what `field` is.
-    // Pinning the prop's type is what keeps that row meaningful: renamed to something
-    // `contentAction` does not read, the row would still pass while every comment bulk action became
-    // a silent no-op over an empty `form.getAll(...)`.
-    expect(read('routes/retool/user-lookup/CommentList.svelte')).toContain(
-      "field: 'commentIds' | 'commentV2Ids'"
-    );
   });
 
   it('ReviewsPanel posts reviewIds from a hidden input driven by the selection, not by a checkbox', () => {

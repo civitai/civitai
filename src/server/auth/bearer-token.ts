@@ -4,9 +4,10 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { Subject } from '~/server/http/orchestrator/api-key-spend';
 import type { BuzzLimit } from '~/server/schema/api-key.schema';
-import { isSystemAccountMeta } from '@civitai/auth';
+import { allowsModeratorWriteKeys, isSystemAccountMeta } from '@civitai/auth';
 import { refuseModerationAccountSession } from '~/server/auth/moderation-account';
 import { holdsModeratorAccess } from '~/server/auth/moderator-access';
+import { isOrchestratorServiceToken } from '~/server/auth/orchestrator-service-token';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import {
   CLIENT_CREDENTIALS_ONLY_SCOPES,
@@ -30,6 +31,12 @@ export type BearerTokenOptions = {
  * single-purpose: it resolves to no session unless the caller opts in.
  */
 export async function getSessionFromBearerToken(key: string, options: BearerTokenOptions = {}) {
+  // A per-provider download token (`<provider>:<secret>`) is accepted by the download route alone
+  // and never stands for a session. No API key contains `:`.
+  if (key.includes(':')) return null;
+  // The orchestrator service token is not an API key; answer as for any unknown key without the
+  // lookup.
+  if (isOrchestratorServiceToken(key.trim())) return null;
   const token = generateSecretHash(key.trim());
 
   const now = new Date();
@@ -87,22 +94,24 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
   // OAuth token or personal API key can't keep hitting any /api/v1 handler that forgets to re-check.
   if (user.bannedAt) return null;
   if (refuseModerationAccountSession(user, 'bearer-token')) return null;
-  // A system account with moderator access authenticates with read-only keys only. Its access is
-  // read from the primary, not the session copy, so a grant counts as soon as it lands.
+  // A system account with moderator access authenticates with read-only keys only, unless an admin
+  // has allowed it write keys. Both are read from the primary, not the session copy, so a grant
+  // counts as soon as it lands.
   if (
     isSystemAccountMeta(user.meta) &&
     ((apiKey.tokenScope ?? 0) & ~TokenScopePresets.ReadOnly) !== 0
   ) {
     const access = await dbWrite.user.findUnique({
       where: { id: user.id },
-      select: { isModerator: true, roles: { select: { role: true } } },
+      select: { meta: true, isModerator: true, roles: { select: { role: true } } },
     });
     if (
       !access ||
-      (await holdsModeratorAccess({
-        isModerator: access.isModerator,
-        roles: access.roles.map(({ role }) => role),
-      }))
+      (!allowsModeratorWriteKeys(access.meta) &&
+        (await holdsModeratorAccess({
+          isModerator: access.isModerator,
+          roles: access.roles.map(({ role }) => role),
+        })))
     )
       return null;
   }
@@ -131,11 +140,15 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
     subject,
     tokenScope: apiKey.tokenScope,
     buzzLimit,
+    // A cached row went through JSON, so its date may be a string.
+    expiresAt: apiKey.expiresAt ? new Date(apiKey.expiresAt) : null,
   } as Session & {
     apiKeyId: number;
     apiKeyType: ApiKeyType;
     subject: Subject;
     tokenScope: number;
     buzzLimit: BuzzLimit | null;
+    /** When the credential stops being accepted; null for one that never expires. */
+    expiresAt: Date | null;
   };
 }

@@ -161,16 +161,11 @@ const BASE_SCHEMA = `
       ingestion "ImageIngestionStatus" NOT NULL,
       "needsReview" text,
       "blockedFor" text,
+      minor boolean NOT NULL DEFAULT false,
       metadata jsonb,
       "updatedAt" timestamp(3),
       "cascadeParentId" int
     );
-    -- The image's comment threads, which an image delete detaches when a held author is in one.
-    CREATE TABLE "Thread" (
-      id serial PRIMARY KEY, "imageId" int, "parentThreadId" int, "rootThreadId" int,
-      "commentId" int, metadata jsonb NOT NULL DEFAULT '{}'
-    );
-    CREATE TABLE "CommentV2" (id serial PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Post" (
       id int PRIMARY KEY,

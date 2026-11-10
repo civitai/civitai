@@ -71,3 +71,64 @@ describe('CrucibleHeader entry count', () => {
     expect(claimed()).toBe('1 entry');
   });
 });
+
+describe('CrucibleHeader description links', () => {
+  const renderDescription = async (description: string) => {
+    renderWithProviders(
+      <CrucibleHeader crucible={{ ...crucible(0), description }} entryCount={0} />
+    );
+    await drawn();
+    return Array.from(
+      document.querySelectorAll<HTMLAnchorElement>('[data-testid="crucible-description"] a')
+    );
+  };
+
+  test('links an https URL with a safe rel and a new tab', async () => {
+    const links = await renderDescription(
+      'Song, timed lyrics and how it works: https://civitai.com/articles/37938'
+    );
+    const link = links[0];
+    expect(link.getAttribute('href')).toBe('https://civitai.com/articles/37938');
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(link.getAttribute('rel')).toBe('nofollow ugc noopener noreferrer');
+  });
+
+  test('links an http URL', async () => {
+    const links = await renderDescription('see http://example.com/song');
+    expect(links[0].getAttribute('href')).toBe('http://example.com/song');
+  });
+
+  test('links every URL, including an uppercase scheme', async () => {
+    const links = await renderDescription('one HTTPS://example.com/a then https://example.org/b');
+    expect(links.map((a) => a.getAttribute('href'))).toEqual([
+      'HTTPS://example.com/a',
+      'https://example.org/b',
+    ]);
+  });
+
+  test.each([
+    ['see https://civitai.com/articles/37938.', 'https://civitai.com/articles/37938'],
+    ['(see https://civitai.com/articles/37938)', 'https://civitai.com/articles/37938'],
+  ])('keeps trailing punctuation out of the href: %s', async (text, href) => {
+    const links = await renderDescription(text);
+    expect(links[0].getAttribute('href')).toBe(href);
+  });
+
+  test.each([
+    'bare foo.com and www.example.org words',
+    'mail me at someone@example.com',
+    'javascript:alert(1) and mailto:a@b.co',
+    'creds https://user:pass@example.com/x',
+    'plain text with no url at all',
+  ])('does not link: %s', async (text) => {
+    const links = await renderDescription(text);
+    expect(links).toHaveLength(0);
+    expect(document.body.textContent).toContain(text);
+  });
+
+  test('does not interpret HTML in the description', async () => {
+    await renderDescription('<b>bold</b> <img src=x onerror=alert(1)>');
+    expect(document.querySelector('b')).toBeNull();
+    expect(document.body.textContent).toContain('<b>bold</b>');
+  });
+});

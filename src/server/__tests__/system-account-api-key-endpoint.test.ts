@@ -239,7 +239,14 @@ describe('POST /api/admin/system-account-api-key', () => {
     expect(apiKeys).toHaveLength(0);
   });
 
-  it.each(['WEBHOOK_TOKEN', 'JOB_TOKEN'])('is closed while its token repeats %s', async (other) => {
+  it.each([
+    'SYSTEM_ACCOUNT_PROFILE_TOKEN',
+    'PROVIDER_DOWNLOAD_TOKEN_ADMIN_TOKEN',
+    'WEBHOOK_TOKEN',
+    'WEBHOOK_TOKEN_PREVIOUS',
+    'PROBE_TOKEN',
+    'JOB_TOKEN',
+  ])('is closed while its token repeats %s', async (other) => {
     // Distinct per row: env overrides persist across tests in a file.
     const shared = `shared-${other}`.padEnd(40, 's');
     setEnv({ SYSTEM_ACCOUNT_KEY_TOKEN: shared, [other]: shared });

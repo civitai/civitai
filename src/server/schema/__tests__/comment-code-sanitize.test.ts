@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { commentUpsertInput } from '~/server/schema/comment.schema';
-import { upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
+import { createCommentV3Schema, updateCommentV3Schema } from '~/server/schema/commentv3.schema';
 
 /**
  * The comment editor ships the code-block control and StarterKit's inline `code`
@@ -11,11 +10,11 @@ import { upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
  */
 const surfaces = [
   [
-    'commentv2',
+    'new comment',
     (content: string) =>
-      upsertCommentv2Schema.parse({ entityType: 'model', entityId: 1, content }).content,
+      createCommentV3Schema.parse({ entityType: 'article', entityId: 1, content }).content,
   ],
-  ['model comment', (content: string) => commentUpsertInput.parse({ modelId: 1, content }).content],
+  ['comment edit', (content: string) => updateCommentV3Schema.parse({ id: 1, content }).content],
 ] as const;
 
 describe.each(surfaces)('%s sanitization', (_label, parse) => {

@@ -139,11 +139,24 @@ describe('SubListingReviewQueue', () => {
     expect(page.getByText('/neon').elements()).toHaveLength(0);
   });
 
-  test('an on-site item shows its path, not a link (negative control)', async () => {
+  test('🔴 an on-site item shows its path AS A LINK to where it runs, in a new tab', async () => {
+    // Was plain text: judging an item meant copying its path into the app by hand.
     m.rows = [row()];
     renderWithProviders(<SubListingReviewQueue />);
-    await expect.element(page.getByText('/g/NEON')).toBeVisible();
+    const link = page.getByTestId('sub-listing-open-link');
+    await expect.element(link).toHaveTextContent('/g/NEON');
+    expect(link.element().getAttribute('href')).toBe('/apps/run/custom-generators/g/NEON?sl=asl_1');
+    expect(link.element().getAttribute('target')).toBe('_blank');
+    // …and it is not mislabelled as the off-site link.
     expect(page.getByTestId('sub-listing-external-link').elements()).toHaveLength(0);
+  });
+
+  test('a row with no image still gets a thumbnail slot (placeholder)', async () => {
+    m.rows = [row()];
+    renderWithProviders(<SubListingReviewQueue />);
+    await expect
+      .element(page.getByTestId('sub-listing-thumb-placeholder-asl_1'))
+      .toBeInTheDocument();
   });
 
   test('approving a new item sends approve and refreshes the queue and the tab count', async () => {

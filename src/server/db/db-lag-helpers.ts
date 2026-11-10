@@ -15,7 +15,6 @@ const lagTracker = createLagTracker<RedisKeyTemplateCache>({
 type LaggingType =
   | 'model'
   | 'modelVersion'
-  | 'commentModel'
   | 'resourceReview'
   | 'post'
   | 'postImages'
@@ -60,6 +59,13 @@ export async function getKyselyWithoutLag(type?: LaggingType, id?: number | stri
     return isHighReplicationLagMode() ? kyselyWrite : kyselyRead;
   }
   return (await lagTracker.isStale(lagKey(type, id))) ? kyselyWrite : kyselyRead;
+}
+
+// The Kysely client on the same pool as a Prisma client `getDbWithoutLag` returned (the primary for
+// dbWrite, the replica for dbRead), for a read that already took the lag decision once and serves
+// some of its statements through Kysely.
+export function kyselyMatching(db: typeof dbRead | typeof dbWrite) {
+  return db === dbWrite ? kyselyWrite : kyselyRead;
 }
 
 export async function preventReplicationLag(type: LaggingType, id?: number | string) {

@@ -51,7 +51,7 @@ async function getImageConnectedEntities(imageIds: number[]) {
     ),
     idQueryLimiter().process(imageIds, (ids) =>
       dbRead.article.findMany({
-        where: { coverId: { in: ids } },
+        where: { OR: [{ coverId: { in: ids } }, { bannerId: { in: ids } }] },
         select: { id: true },
       })
     ),
@@ -362,8 +362,9 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
         SELECT
           a.id,
           GREATEST(
-            -- Cover is a single row per article, so max() is effectively identity.
+            -- Cover and banner are a single row per article, so max() is effectively identity.
             COALESCE(max(cover."nsfwLevel"), 0),
+            COALESCE(max(banner."nsfwLevel"), 0),
             -- Content images can be many-per-article. Take the highest rating
             -- rather than bit_or'ing them: image nsfwLevel values are powers of
             -- 2 (PG=1, PG13=2, R=4, X=8, XXX=16), so integer max == highest
@@ -383,6 +384,11 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
         LEFT JOIN "Image" cover
           ON a."coverId" = cover.id
           AND cover."ingestion" IN ('Scanned', 'Blocked')
+
+        -- Banner image: same rule as the cover.
+        LEFT JOIN "Image" banner
+          ON a."bannerId" = banner.id
+          AND banner."ingestion" IN ('Scanned', 'Blocked')
 
         -- Content images (left join - may not exist)
         LEFT JOIN "ImageConnection" ic
@@ -424,7 +430,8 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
       RETURNING a.id;
     `);
   await articlesSearchIndex.queueUpdate(
-    articles.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    articles.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
+    { reason: 'nsfw-level' }
   );
 }
 
@@ -808,7 +815,8 @@ export async function queueComicsForPanelImages(imageIds: number[]) {
   const projectIds = await getComicProjectIdsForImages(imageIds);
   if (!projectIds.length) return;
   await comicsSearchIndex.queueUpdate(
-    projectIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    projectIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
+    { reason: 'nsfw-level' }
   );
 }
 

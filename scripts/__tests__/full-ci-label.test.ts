@@ -118,6 +118,7 @@ describe('the full-ci label', () => {
     ['lint.yml', 'typecheck-tests'],
     ['lint.yml', 'packages'],
     ['lint.yml', 'component'],
+    ['lint.yml', 'component-ledger'],
     ['apps.yml', 'apps'],
     ['moderator-boot.yml', 'boot'],
   ])('%s:%s runs on a labeled draft', (file, id) => {
@@ -127,7 +128,10 @@ describe('the full-ci label', () => {
   // Ledger: the job set the assertions above were written against. A new job fails here so its
   // author decides which draft gate it takes.
   it.each([
-    ['lint.yml', ['component', 'eslint', 'packages', 'typecheck', 'typecheck-tests', 'unit']],
+    [
+      'lint.yml',
+      ['component', 'component-ledger', 'eslint', 'packages', 'typecheck', 'typecheck-tests', 'unit'],
+    ],
     ['apps.yml', ['apps']],
     ['moderator-boot.yml', ['boot']],
   ])('%s has exactly the jobs this guard was written for', (file, ids) => {

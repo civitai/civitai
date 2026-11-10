@@ -106,16 +106,6 @@ beforeAll(async () => {
     CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
     CREATE VIEW "EvidenceHeldUser" AS
       SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
-    -- As production: a reply thread goes with its parent and root threads; a comment's delete
-    -- only unlinks its reply thread.
-    CREATE TABLE "Thread" ("id" serial PRIMARY KEY,
-      "storylineId" integer REFERENCES "Storyline"("id") ON DELETE CASCADE, "commentId" integer,
-      "parentThreadId" integer REFERENCES "Thread"("id") ON DELETE CASCADE,
-      "rootThreadId" integer REFERENCES "Thread"("id") ON DELETE CASCADE, "metadata" jsonb);
-    CREATE TABLE "CommentV2" ("id" serial PRIMARY KEY,
-      "threadId" integer NOT NULL REFERENCES "Thread"("id") ON DELETE CASCADE,
-      "userId" integer NOT NULL);
-    ALTER TABLE "Thread" ADD FOREIGN KEY ("commentId") REFERENCES "CommentV2"("id") ON DELETE SET NULL;
     CREATE TABLE "CommentTopic" ("entityType" text NOT NULL,
       "entityId" integer NOT NULL REFERENCES "Storyline"("id") ON DELETE CASCADE,
       PRIMARY KEY ("entityId", "entityType"));
@@ -145,8 +135,6 @@ beforeEach(async () => {
     DELETE FROM "StorylineBranchChoice";
     DELETE FROM "CommentV3";
     DELETE FROM "CommentTopic";
-    DELETE FROM "CommentV2";
-    DELETE FROM "Thread";
     DELETE FROM "StorylineReport";
     DELETE FROM "HeldStoryline";
     DELETE FROM "HeldStorylineChapter";
@@ -178,7 +166,7 @@ describe('deleteStoryline under a real account hold', () => {
   const REPLIER = 4;
   const READER = 5;
   // Two chapters (1 by the owner, 2 by CONTRIBUTOR) on published posts with images, a reader's
-  // branch choice and create click, and a thread with a comment and a reply thread by REPLIER.
+  // branch choice and create click, and a comment by CONTRIBUTOR with a reply by REPLIER.
   const seedStoryline = () =>
     db.pg.exec(`
       INSERT INTO "User" (id) VALUES (4), (5), (6), (7), (8), (9) ON CONFLICT DO NOTHING;
@@ -192,10 +180,9 @@ describe('deleteStoryline under a real account hold', () => {
       INSERT INTO "StorylineBranchChoice" ("userId", "parentChapterId", "chapterId")
         VALUES (${READER}, 10, 11);
       INSERT INTO "StorylineCreateClick" ("userId", "parentChapterId") VALUES (${READER}, 11);
-      INSERT INTO "Thread" (id, "storylineId") VALUES (1, 1);
-      INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (1, 1, ${CONTRIBUTOR});
-      INSERT INTO "Thread" (id, "commentId", "parentThreadId", "rootThreadId") VALUES (2, 1, 1, 1);
-      INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (2, 2, ${REPLIER});
+      INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('storyline', 1);
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId", "parentId") VALUES
+        (1, 'storyline', 1, ${CONTRIBUTOR}, NULL), (2, 'storyline', 1, ${REPLIER}, 1);
     `);
   beforeEach(seedStoryline);
   const hold = (userId: number) =>
@@ -251,7 +238,7 @@ describe('deleteStoryline under a real account hold', () => {
     clicks: [{ userId: READER, parentChapterId: 11 }],
   });
   const noCopy = { storyline: [], chapters: [], edges: [], choices: [], clicks: [] };
-  const comments = () => rows<{ id: number }>(`SELECT id FROM "CommentV2" ORDER BY id`);
+  const comments = () => rows<{ id: number }>(`SELECT id FROM "CommentV3" ORDER BY id`);
   const outcome = (fn: () => Promise<unknown>) =>
     fn().then(
       (value) => JSON.stringify({ value }),
@@ -275,9 +262,7 @@ describe('deleteStoryline under a real account hold', () => {
     expect(await deleteStoryline({ id: 1, userId: OWNER })).toEqual({ id: 1 });
     expect(await storylineIds()).toEqual([2]);
     expect(await heldCopy()).toEqual(fullCopy(['owner', 'chapter-author']));
-    // Its comments are by unheld accounts, so they go: only a held commenter's thread is kept.
     expect(await comments()).toEqual([]);
-    expect(await rows(`SELECT id FROM "Thread"`)).toEqual([]);
     expect(before.posts).toHaveLength(2);
     expect(before.images).toHaveLength(2);
     expect({
@@ -324,10 +309,7 @@ describe('deleteStoryline under a real account hold', () => {
     await hold(CONTRIBUTOR);
     await deleteStoryline({ id: 1, userId: OWNER });
     expect((await heldCopy()).chapters).toHaveLength(2);
-    // CONTRIBUTOR also wrote the thread's first comment.
-    expect((await heldCopy()).storyline).toMatchObject([
-      { holdReasons: ['chapter-author', 'commenter'] },
-    ]);
+    expect((await heldCopy()).storyline).toMatchObject([{ holdReasons: ['chapter-author'] }]);
   });
 
   it("copies everything when a chapter is a moderator's tombstone", async () => {
@@ -350,58 +332,24 @@ describe('deleteStoryline under a real account hold', () => {
     expect(await rows(`SELECT id, status FROM "Report"`)).toEqual([{ id: 70, status: 'Actioned' }]);
   });
 
-  describe("a held commenter's thread outlives the delete", () => {
-    for (const [where, setup, heldUser] of [
-      ['a comment on its thread', '', CONTRIBUTOR],
-      ['a reply in a reply thread', '', REPLIER],
-      [
-        'a reply thread linked only through its comment',
-        `INSERT INTO "Thread" (id, "commentId") VALUES (8, 1);
-         INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (8, 8, 8);`,
-        8,
-      ],
-      [
-        'a thread linked by its root alone',
-        `INSERT INTO "Thread" (id, "rootThreadId") VALUES (4, 1);
-         INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (4, 4, 6);`,
-        6,
-      ],
-      [
-        'two threads down, through a parent at each step',
-        `INSERT INTO "Thread" (id, "parentThreadId") VALUES (5, 1), (6, 5);
-         INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (6, 6, 7);`,
-        7,
-      ],
-    ] as const)
-      it(`when held for ${where}`, async () => {
-        if (setup) await db.pg.exec(setup);
-        const before = await comments();
-        await hold(heldUser);
-        await deleteStoryline({ id: 1, userId: OWNER });
-        expect(await storylineIds()).toEqual([2]);
-        expect(await comments()).toEqual(before);
-        // Detached, with its old parent kept for moderators.
-        expect(
-          await rows(
-            `SELECT id, "storylineId", metadata->'detachedFrom' AS "from" FROM "Thread" WHERE id = 1`
-          )
-        ).toEqual([{ id: 1, storylineId: null, from: { storylineId: 1 } }]);
-        expect((await heldCopy()).storyline).toMatchObject([
-          { holdReasons: expect.arrayContaining(['commenter']) },
-        ]);
-      });
+  // Comments are not kept for a hold: a held commenter neither keeps a copy nor their comments.
+  it("deletes a held commenter's comments with it, keeping no copy", async () => {
+    await hold(REPLIER);
+    await deleteStoryline({ id: 1, userId: OWNER });
+    expect(await storylineIds()).toEqual([2]);
+    expect(await comments()).toEqual([]);
+    expect(await heldCopy()).toEqual(noCopy);
+  });
 
-    it('keeps a copy when the held author commented on its topic', async () => {
-      await db.pg.exec(`
-        INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('storyline', 1);
-        INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId") VALUES (20, 'storyline', 1, 9);
-      `);
-      await hold(9);
-      await deleteStoryline({ id: 1, userId: OWNER });
-      expect((await heldCopy()).storyline).toMatchObject([
-        { commenterIds: [CONTRIBUTOR, REPLIER, 9], holdReasons: ['commenter'] },
-      ]);
-    });
+  it('records every commenter in a copy kept for another reason', async () => {
+    await db.pg.exec(
+      `INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId") VALUES (20, 'storyline', 1, 9)`
+    );
+    await reportIt();
+    await deleteStoryline({ id: 1, userId: OWNER });
+    expect((await heldCopy()).storyline).toMatchObject([
+      { commenterIds: [CONTRIBUTOR, REPLIER, 9], holdReasons: ['open-report'] },
+    ]);
   });
 
   it('copies everything when a hold lands after the checks, by the delete statement itself', async () => {
@@ -451,14 +399,14 @@ describe('deleteStoryline under a real account hold', () => {
       const plain = await ownerSees();
       expect(await heldCopy()).toEqual(noCopy);
 
-      // The whole storyline again: chapters, readers' rows, threads and comments.
+      // The whole storyline again: chapters, readers' rows and comments.
       const seeds = async () => {
         await db.pg.exec(`
           DELETE FROM "HeldStoryline"; DELETE FROM "HeldStorylineChapter";
           DELETE FROM "HeldStorylineChapterEdge"; DELETE FROM "HeldStorylineBranchChoice";
           DELETE FROM "HeldStorylineCreateClick"; DELETE FROM "StorylineReport";
-          DELETE FROM "Report"; DELETE FROM "EvidenceHold"; DELETE FROM "CommentV2";
-          DELETE FROM "Thread"; DELETE FROM "Image"; DELETE FROM "Post";
+          DELETE FROM "Report"; DELETE FROM "EvidenceHold"; DELETE FROM "CommentV3";
+          DELETE FROM "CommentTopic"; DELETE FROM "Image"; DELETE FROM "Post";
           INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt")
             VALUES (1, ${OWNER}, 'A story with no story', 1, now());
         `);

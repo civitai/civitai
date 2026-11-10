@@ -35,7 +35,6 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { StorylineModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { placementMoneyInFlightSql } from '~/server/services/placement-escrow.service';
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import {
   accountHoldSql,
   holdMarkerViewExists,
@@ -45,7 +44,10 @@ import { isPlacementBlocked } from '~/server/services/placement-moderation.servi
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { placementPriceRanges } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
-import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
+import {
+  storyLevelText,
+  storylineRootVisibleText,
+} from '~/server/services/storyline-visibility.sql';
 import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import {
@@ -98,7 +100,11 @@ import {
   storylineShareMinChoices,
   toStorylineForkShares,
 } from '~/shared/utils/storyline';
-import type { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
+import type {
+  StorylineFollowScope,
+  StorylineStatus,
+  StorylineWhoCanContinue,
+} from '~/shared/utils/prisma/enums';
 import { AppealStatus, EntityType, ReportStatus } from '~/shared/utils/prisma/enums';
 import {
   isAnswerableParentChapter,
@@ -373,19 +379,13 @@ function raiseNsfwLevel(level: number, floor: number) {
 }
 
 /** The SQL twin of the level `isStorylineOutsideLevel` judges, for the feed query. */
-export const storyLevelSql = Prisma.sql`(SELECT ${Prisma.raw(raiseNsfwLevelText('lv.l', 'lv.f'))}
-  FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ${
-    NsfwLevel.Blocked
-  }), st."maxNsfwLevel") AS l,
-    COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv)`;
+export const storyLevelSql = Prisma.raw(storyLevelText());
 
 /**
  * `getStorylineRootHiddenReason` is null, in SQL: chapter 1 `rc` (joined), its post `rp` and that
  * post's author `ru` (both LEFT JOINed). Change both together.
  */
-export const storylineRootVisibleSql = Prisma.sql`(rp.id IS NOT NULL AND rc."removedAt" IS NULL
-  AND rp."tosViolation" = false AND ru."bannedAt" IS NULL AND ru."deletedAt" IS NULL
-  AND rp."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) AND rp."publishedAt" < now())`;
+export const storylineRootVisibleSql = Prisma.raw(storylineRootVisibleText());
 
 /** `storylineCeiling` in SQL, for a storyline aliased `st`. */
 export const storylineCeilingSql = Prisma.sql`(CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ${STORYLINE_MINOR_CEILING}) ELSE st."maxNsfwLevel" END)`;
@@ -921,6 +921,9 @@ export async function createStoryline({
         data: { userId, title, maxNsfwLevel, whoCanContinue, sparkImageId },
         select: { id: true },
       });
+      await tx.$executeRaw`
+        INSERT INTO "StorylineFollow" ("storylineId", "userId") VALUES (${storyline.id}, ${userId})
+      `;
       const root = postId
         ? await createRootChapter(tx, { storylineId: storyline.id, postId, userId })
         : null;
@@ -1125,28 +1128,9 @@ export async function updateStoryline({
   return updated;
 }
 
-/**
- * Every author of a comment the delete of storyline `id` reaches: its thread and every thread below
- * it, and its CommentV3 topic. The `commentId` arm reaches threads the cascade does not delete, so
- * it can only keep more than needed.
- */
+/** Every author of a comment on storyline `id`; recorded in the held copy only. */
 function storylineCommentersSql(id: number) {
-  return Prisma.sql`WITH RECURSIVE below AS (
-      SELECT t.id FROM "Thread" t WHERE t."storylineId" = ${id}
-      UNION
-      -- One indexed lookup per link: an OR across them scans the whole Thread table every step.
-      SELECT x.id FROM below b CROSS JOIN LATERAL (
-        SELECT t.id FROM "Thread" t WHERE t."parentThreadId" = b.id
-        UNION ALL
-        SELECT t.id FROM "Thread" t WHERE t."rootThreadId" = b.id
-        UNION ALL
-        SELECT t.id FROM "CommentV2" k JOIN "Thread" t ON t."commentId" = k.id
-        WHERE k."threadId" = b.id
-      ) x
-    )
-    SELECT r."userId" FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
-    UNION
-    SELECT c."userId" FROM "CommentV3" c
+  return Prisma.sql`SELECT c."userId" FROM "CommentV3" c
     WHERE c."entityType" = 'storyline' AND c."entityId" = ${id}`;
 }
 
@@ -1184,9 +1168,6 @@ function deleteStorylineStatement(
           WHERE c."storylineId" = ${id} AND ${ownerHeldSql(Prisma.raw('c."userId"'))}
         ) AS author_held,
         EXISTS (
-          SELECT 1 FROM commenters a WHERE ${accountHoldSql(Prisma.raw('a."userId"'), markerView)}
-        ) AS commenter_held,
-        EXISTS (
           SELECT 1 FROM pending p WHERE ${accountHoldSql(Prisma.raw('p."userId"'), markerView)}
         ) AS pending_author_held,
         EXISTS (
@@ -1196,13 +1177,12 @@ function deleteStorylineStatement(
     ),
     keep AS MATERIALIZED (
       SELECT (
-          reported OR owner_held OR author_held OR commenter_held OR pending_author_held OR tombstoned
+          reported OR owner_held OR author_held OR pending_author_held OR tombstoned
         ) IS NOT FALSE AS keep,
         array_remove(ARRAY[
           CASE WHEN reported THEN 'open-report' END,
           CASE WHEN owner_held THEN 'owner' END,
           CASE WHEN author_held THEN 'chapter-author' END,
-          CASE WHEN commenter_held THEN 'commenter' END,
           CASE WHEN pending_author_held THEN 'pending-author' END,
           CASE WHEN tombstoned THEN 'tombstone' END
         ], NULL) AS reasons
@@ -1270,8 +1250,7 @@ function deleteStorylineStatement(
     answered_reports AS (
       UPDATE "Report" r SET status = ${ReportStatus.Actioned}::"ReportStatus"
       WHERE ${asModerator} AND r.id IN (SELECT id FROM open_reports)
-    ),
-    ${detachHeldThreadsCte({ storylineId: Prisma.sql`SELECT ${id}::int` }, markerView)}
+    )
     DELETE FROM "Storyline" WHERE id = ${id}
   `;
 }
@@ -1309,7 +1288,7 @@ export async function deleteStoryline({
   userId: number;
   isModerator?: boolean;
 }) {
-  // Read outside the transaction, as `bulkDeleteComments` does: what `accountHoldSql` needs.
+  // Read outside the transaction: what `accountHoldSql` needs.
   const markerView = await holdMarkerViewExists();
   let spark: { actorId: number; imageId: number | null } | undefined;
   await dbWrite.$transaction(async (tx) => {
@@ -2878,11 +2857,71 @@ export async function acceptStorylineInvite({
     });
     throw throwNotFoundError(INVITE_CLOSED);
   }
-  const { count } = await dbWrite.storylineCollaborator.updateMany({
-    where: { storylineId, userId, acceptedAt: null },
-    data: { acceptedAt: new Date() },
+  const accepted = await dbWrite.$transaction(async (tx) => {
+    const { count } = await tx.storylineCollaborator.updateMany({
+      where: { storylineId, userId, acceptedAt: null },
+      data: { acceptedAt: new Date() },
+    });
+    // Accepting is a fresh act, so it follows again someone who unfollowed before; a follow
+    // they already hold keeps its scope.
+    if (count)
+      await tx.$executeRaw`
+        INSERT INTO "StorylineFollow" ("storylineId", "userId") VALUES (${storylineId}, ${userId})
+        ON CONFLICT ("storylineId", "userId") DO NOTHING
+      `;
+    return count > 0;
   });
-  if (!count) throw throwNotFoundError(INVITE_CLOSED);
+  if (!accepted) throw throwNotFoundError(INVITE_CLOSED);
+}
+
+/**
+ * Follows a storyline the user may read, or changes the scope of a follow they hold. A takedown or
+ * a hidden chapter 1 refuses as reading does (`assertStorylineVisible`).
+ */
+export async function followStoryline({
+  storylineId,
+  scope,
+  viewer,
+  browsingLevel,
+}: {
+  storylineId: number;
+  scope: StorylineFollowScope;
+  viewer: NonNullable<Viewer>;
+  browsingLevel: number;
+}) {
+  await assertStorylineVisible(storylineId, viewer, browsingLevel);
+  await dbWrite.$executeRaw`
+    INSERT INTO "StorylineFollow" ("storylineId", "userId", scope)
+    VALUES (${storylineId}, ${viewer.id}, ${scope}::"StorylineFollowScope")
+    ON CONFLICT ("storylineId", "userId") DO UPDATE SET scope = EXCLUDED.scope
+  `;
+  return { scope };
+}
+
+export async function unfollowStoryline({
+  storylineId,
+  userId,
+}: {
+  storylineId: number;
+  userId: number;
+}) {
+  await dbWrite.$executeRaw`
+    DELETE FROM "StorylineFollow" WHERE "storylineId" = ${storylineId} AND "userId" = ${userId}
+  `;
+}
+
+/** The viewer's follow scope for a storyline, null when they do not follow it. */
+export async function getStorylineFollow({
+  storylineId,
+  userId,
+}: {
+  storylineId: number;
+  userId: number;
+}) {
+  const [follow] = await dbRead.$queryRaw<{ scope: StorylineFollowScope }[]>`
+    SELECT scope FROM "StorylineFollow" WHERE "storylineId" = ${storylineId} AND "userId" = ${userId}
+  `;
+  return { scope: follow?.scope ?? null };
 }
 
 export async function removeStorylineCollaborator({
@@ -4267,20 +4306,44 @@ async function getChosenStorylineImages(
     imageId ? found.get(key(storylineId, imageId)) ?? null : null;
 }
 
-/** Deepest offset the most-chapters order pages to. */
+/** Deepest offset the offset-paged orders (all but newest) page to. */
 const STORYLINE_FEED_MAX_OFFSET = 1000;
 
-export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open' | 'mine';
-export type StorylineFeedSort = 'newest' | 'mostChapters';
+export type StorylineFeedFilter =
+  | 'all'
+  | 'ongoing'
+  | 'complete'
+  | 'open'
+  | 'mine'
+  | 'participated'
+  | 'following';
+export type StorylineFeedSort = 'newest' | 'mostChapters' | 'recentlyUpdated';
 
 /**
- * Storylines a reader may open, newest or with most chapters first. Hidden ones and stories
- * outside the reader's browsing level are left out, judged as everywhere else (see
- * `isStorylineHidden`, `isStorylineOutsideLevel`).
+ * When storyline `st` last gained a chapter readers are shown: approved (a chapter row exists only
+ * once its placement is), not removed (`isStorylineChapterRemoved`) and its post published. A
+ * scheduled chapter counts from when it goes out. Read for every listed storyline, every request:
+ * a stored `Storyline."lastChapterAt"` replaces it once the storyline count grows (follow-up filed).
+ */
+const storylineLastChapterAtSql = Prisma.sql`(
+  SELECT MAX(GREATEST(lc."createdAt", lp."publishedAt"))
+  FROM "StorylineChapter" lc
+  JOIN "Post" lp ON lp.id = lc."postId"
+  JOIN "User" lu ON lu.id = lp."userId"
+  WHERE lc."storylineId" = st.id AND lc."removedAt" IS NULL AND lp."tosViolation" = false
+    AND lp."publishedAt" <= now() AND lu."bannedAt" IS NULL AND lu."deletedAt" IS NULL
+)`;
+
+/**
+ * Storylines a reader may open, newest, most recently updated or with most chapters first. Hidden
+ * ones and stories outside the reader's browsing level are left out, judged as everywhere else
+ * (see `isStorylineHidden`, `isStorylineOutsideLevel`).
  *
  * "open" means accepting continuations from this reader: not Complete, the placement layer's
  * mode (the storyline's, else its owner's, else 'review') not 'off', and the reader among those
- * it takes them from.
+ * it takes them from. "participated" is the storylines the reader takes part in
+ * (`storylineParticipantSql`), an accepted collaborator with no chapter yet included;
+ * "following" those they follow.
  */
 export async function getStorylinesInfinite({
   filter,
@@ -4293,7 +4356,7 @@ export async function getStorylinesInfinite({
 }: {
   filter: StorylineFeedFilter;
   sort: StorylineFeedSort;
-  /** The last id seen when newest first; an offset when by most chapters. */
+  /** The last id seen when newest first; an offset otherwise. */
   cursor?: number;
   limit: number;
   viewer: Viewer;
@@ -4321,6 +4384,12 @@ export async function getStorylinesInfinite({
   if (filter === 'ongoing') where.push(Prisma.sql`st.status = 'Ongoing'`);
   if (filter === 'complete') where.push(Prisma.sql`st.status = 'Complete'`);
   if (filter === 'mine') where.push(Prisma.sql`st."userId" = ${viewerId}`);
+  if (filter === 'participated')
+    where.push(storylineParticipantSql(Prisma.sql`${viewerId}`, Prisma.sql`st.id`));
+  if (filter === 'following')
+    where.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "StorylineFollow" sf WHERE sf."storylineId" = st.id AND sf."userId" = ${viewerId}
+    )`);
   if (userId) where.push(Prisma.sql`st."userId" = ${userId}`);
   if (filter === 'open') {
     // A Complete storyline takes no continuations, whatever its space says.
@@ -4334,13 +4403,17 @@ export async function getStorylinesInfinite({
     )}
     ))`);
   }
-  // Newest pages by id (stable while storylines are added); most-chapters by offset, capped,
-  // because its order depends on counts computed per storyline.
+  // Newest pages by id (stable while storylines are added); the others by offset, capped,
+  // because their order depends on values computed per storyline.
   if (sort === 'newest' && cursor) where.push(Prisma.sql`st.id < ${cursor}`);
-  const offset = sort === 'mostChapters' ? Math.min(cursor, STORYLINE_FEED_MAX_OFFSET) : 0;
+  const offset = sort === 'newest' ? 0 : Math.min(cursor, STORYLINE_FEED_MAX_OFFSET);
 
   const orderBy =
-    sort === 'mostChapters' ? Prisma.sql`"chapterCount" DESC, st.id DESC` : Prisma.sql`st.id DESC`;
+    sort === 'mostChapters'
+      ? Prisma.sql`"chapterCount" DESC, st.id DESC`
+      : sort === 'recentlyUpdated'
+      ? Prisma.sql`${storylineLastChapterAtSql} DESC NULLS LAST, st.id DESC`
+      : Prisma.sql`st.id DESC`;
 
   const rows = await dbRead.$queryRaw<
     {

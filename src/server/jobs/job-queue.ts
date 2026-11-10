@@ -3,6 +3,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { chunk, uniq } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import {
   collectionsSearchIndex,
   imagesMetricsSearchIndex,
@@ -13,7 +14,6 @@ import {
   updateCollectionsNsfwLevels,
   updateNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { limitConcurrency, Limiter } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -32,8 +32,6 @@ const jobQueueMap = {
   [EntityType.Collection]: 'collectionIds',
   [EntityType.Model]: 'modelIds',
   [EntityType.ModelVersion]: 'modelVersionIds',
-  [EntityType.Comment]: 'commentIds', // unused
-  [EntityType.CommentV2]: 'commentV2Ids', // unused
   [EntityType.CommentV3]: 'commentV3Ids', // unused
   [EntityType.User]: 'userIds', // unused
   [EntityType.UserProfile]: 'userProfileIds', // unused
@@ -53,7 +51,11 @@ export function reduceJobQueueToIds(jobs: { entityId: number; entityType: Entity
     jobIds[jobQueueMap[key as keyof JobQueueMap]] = [];
   }
   for (const job of jobs) {
-    const key = jobQueueMap[job.entityType];
+    // An entity type that no longer queues (Comment, CommentV2) has no ids to collect.
+    const key = jobQueueMap[job.entityType as keyof JobQueueMap] as
+      | JobQueueMap[keyof JobQueueMap]
+      | undefined;
+    if (!key) continue;
     if (!jobIds[key]) jobIds[key] = [];
     jobIds[key]!.push(job.entityId);
   }
@@ -244,6 +246,7 @@ const handleJobQueueCleanup = createJob('job-queue-cleanup', '*/1 * * * *', asyn
     chunk(jobQueueIds.imageIds, batchSize).map((ids) => async () => {
       await dbWrite.imageConnection.deleteMany({ where: { imageId: { in: ids } } });
       await dbWrite.collectionItem.deleteMany({ where: { imageId: { in: ids } } });
+      await bustContestCollectionItemsCache(ids);
     });
   const cleanupPosts = () =>
     chunk(jobQueueIds.postIds, batchSize).map((ids) => async () => {
@@ -301,8 +304,7 @@ const handleJobQueueCleanIfEmpty = createJob(
               )
               AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = p.id)
               AND NOT ${accountHoldSql(Prisma.raw('p."userId"'), true)}
-          ),
-          ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT id FROM doomed` }, true)}
+          )
           DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
         `;
       });

@@ -8,8 +8,7 @@ export const LAB_ENTITY_TYPES = [
   'Crucible',
   'Collection',
   'ChatMessage',
-  'Comment',
-  'CommentV2',
+  'CommentV3',
   'ResourceReview',
   'User',
   'UserProfile',
@@ -29,8 +28,7 @@ export const LAB_LABELS: Record<LabEntityType, readonly LabLabel[]> = {
   Crucible: ['nsfw'],
   Collection: ['nsfw'],
   ChatMessage: ['scam'],
-  Comment: ['scam'],
-  CommentV2: ['scam'],
+  CommentV3: ['scam'],
   ResourceReview: ['scam'],
   User: ['scam'],
   UserProfile: ['scam'],
@@ -47,8 +45,7 @@ export const DEFAULT_HEADING: Record<LabEntityType, string> = {
   Crucible: 'Name',
   Collection: 'Name',
   ChatMessage: 'Messages, newest first',
-  Comment: 'Comment',
-  CommentV2: 'Comment',
+  CommentV3: 'Comment',
   ResourceReview: 'Review',
   User: 'Username',
   UserProfile: 'Bio',
@@ -81,6 +78,7 @@ export const PROMPT_KEYS = [
   'label:minor',
   'label:scam',
   'label:csam',
+  'label:model-com-face-intent',
 ] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 

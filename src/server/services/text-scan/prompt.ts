@@ -127,6 +127,8 @@ export async function setTextScanRollout(
   } else {
     await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.MODES, entityType);
   }
+  // CommentV3 falls back to the stored CommentV2 rollout until written; once written, `null` must mean off.
+  if (entityType === 'CommentV3') await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.MODES, 'CommentV2');
   resetTextScanRolloutCache();
   await logToAxiom({
     name: 'text-scan',
@@ -218,7 +220,8 @@ export async function setTextScanCsamMode(
 
 export type ActiveTextScanPrompt = { id: number; key: string; content: string };
 
-export const TEXT_SCAN_PROMPT_KEY = /^(base|label:(nsfw|poi|minor|scam|csam))$/;
+export const TEXT_SCAN_PROMPT_KEY =
+  /^(base|label:(nsfw|poi|minor|scam|csam|model-com-face-intent))$/;
 
 export async function getActiveTextScanPrompts(): Promise<Record<string, ActiveTextScanPrompt>> {
   return fetchThroughCache(

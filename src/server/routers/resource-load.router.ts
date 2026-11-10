@@ -1,6 +1,6 @@
 import { coverageAudience } from '~/server/services/generation/coverage-source';
-import { CacheTTL } from '~/server/common/constants';
 import { rateLimit } from '~/server/middleware.trpc';
+import { usageLimits } from '~/shared/constants/usage-limits';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import {
   getDownloadStatusSchema,
@@ -46,36 +46,10 @@ export function assertCanRequestLoad(user: SessionUser) {
 }
 
 /**
- * Two windows, and they mean different things.
- *
- * **Daily rows are entitlement** — what a plan includes. **The hourly row is the cluster's**, so it
- * is flat and unconditional: no plan buys its way out of burst protection.
- *
- * The middleware keeps ONE list of attempt timestamps per key and filters it per rule, so the two
- * windows compose on the same `sharedKey` with no extra bookkeeping. Per period the highest
- * matching limit wins, which is what lets the unconditional daily row sit alongside the tier rows.
- *
- * 🔴 The unconditional daily row is required, not stylistic: a tier matching NO row gets no limit at
- * all — `validLimits` comes out empty and the check loop never runs. `userTiers` is
- * `[free, founder, bronze, silver, gold]`, so `founder` needs its own row too.
- *
- * The comparison is `attempts > limit`, so every nonzero number permits one more than it says —
- * 3/hour is really 4 (`limit: 0` short-circuits and is exact).
+ * Two windows on one `sharedKey`, meaning different things: the daily entry is entitlement (what a
+ * plan includes, by tier), the hourly entry is the cluster's burst cap, flat for every tier.
  */
-export const RESOURCE_LOAD_HOURLY_LIMIT = 3;
-
-export const resourceLoadRateLimits = [
-  { limit: 0, period: CacheTTL.day, errorMessage: 'Loading models is a member benefit.' },
-  { limit: 3, period: CacheTTL.day, userReq: (u: { tier?: string }) => u.tier === 'bronze' },
-  { limit: 6, period: CacheTTL.day, userReq: (u: { tier?: string }) => u.tier === 'silver' },
-  { limit: 10, period: CacheTTL.day, userReq: (u: { tier?: string }) => u.tier === 'gold' },
-  { limit: 10, period: CacheTTL.day, userReq: (u: { tier?: string }) => u.tier === 'founder' },
-  {
-    limit: RESOURCE_LOAD_HOURLY_LIMIT,
-    period: CacheTTL.hour,
-    errorMessage: 'You can only queue a few model loads an hour. Try again shortly.',
-  },
-];
+export const resourceLoadRateLimits = usageLimits('resource-loads.daily', 'resource-loads.hourly');
 
 export const resourceLoadRouter = router({
   /**

@@ -362,23 +362,23 @@ async function loadImagesForType(
             AND EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = ic."imageId")) x
         WHERE x.rn <= ${CONNECTION_CAP}
         ORDER BY "entityId", "imageId"`.execute(dbRead);
-      const covers = new Map<number, number>();
+      const covers = new Map<number, number[]>();
       if (entityType === 'Article') {
         const found = await dbRead
           .selectFrom('Article')
-          .select(['id', 'coverId'])
+          .select(['id', 'coverId', 'bannerId'])
           .where('id', 'in', ids)
           .execute();
-        const existing = await imagesById(found.map((a) => a.coverId));
+        const existing = await imagesById(found.flatMap((a) => [a.coverId, a.bannerId]));
         for (const a of found)
-          if (a.coverId && existing.has(a.coverId)) covers.set(a.id, a.coverId);
+          covers.set(
+            a.id,
+            [a.coverId, a.bannerId].filter((x): x is number => x != null && existing.has(x))
+          );
       }
-      // The cover leads, then connections by image id.
+      // The cover leads, then the banner, then connections by image id.
       const idsByEntity = new Map<number, number[]>();
-      for (const id of ids) {
-        const cover = covers.get(id);
-        idsByEntity.set(id, cover ? [cover] : []);
-      }
+      for (const id of ids) idsByEntity.set(id, [...new Set(covers.get(id) ?? [])]);
       for (const l of links) {
         const list = idsByEntity.get(l.entityId);
         if (list && !list.includes(l.imageId)) list.push(l.imageId);

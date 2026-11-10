@@ -1,7 +1,8 @@
-import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
+import type * as TrackBufferMod from '~/components/TrackView/trackEventBuffer';
 /**
  * 🔴 THE APP'S REAL STYLESHEET CASCADE, imported ON PURPOSE — without it every
  * geometry assertion in this file is a lie.
@@ -107,6 +108,14 @@ vi.mock('~/components/UserAvatar/UserAvatar', () => ({
 
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => mocks.currentUser,
+}));
+
+// The card's acquisition telemetry is queued on the shared beacon; spied here so a test can read
+// the exact `AppStore_Action` rows a click produces. Spread, not replaced.
+const trackMocks = vi.hoisted(() => ({ enqueue: vi.fn() }));
+vi.mock('~/components/TrackView/trackEventBuffer', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrackBufferMod>()),
+  enqueueTrackEvent: trackMocks.enqueue,
 }));
 
 /**
@@ -376,15 +385,19 @@ describe('AppListingCard', () => {
     await expect.element(open).toHaveAttribute('href', '/apps/run/my-app');
   });
 
-  test('kind + category badges are NOT rendered on the card (round-2 truncation fix)', async () => {
-    // "App" was formerly the on-site kind badge's exact-match text; "utility" is
-    // base()'s category. Neither should render now that the badge column is gone
-    // — the kind signal instead lives in the CTA (Open/View details vs Visit ↗)
-    // and, for off-site, the detail-page disclosure Alert.
+  test('no kind badge on the card; the category is a meta-line link, not a badge', async () => {
+    // "App" was formerly the on-site kind badge's exact-match text. It should not render
+    // now that the badge column is gone — the kind signal instead lives in the CTA
+    // (Open/View details vs Visit ↗) and, for off-site, the detail-page disclosure Alert.
+    // The category came back deliberately, as plain text in the one-line meta line (see
+    // the meta-line suite below), not as the truncating badge this test used to exclude.
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
     await expect.element(page.getByText('My App')).toBeInTheDocument();
     await expect.element(page.getByText('App', { exact: true })).not.toBeInTheDocument();
-    await expect.element(page.getByText('Utility', { exact: true })).not.toBeInTheDocument();
+    const category = page.getByText('Utility', { exact: true });
+    await expect.element(category).toBeInTheDocument();
+    expect(category.element().closest('[data-testid="apps-listing-card-meta"]')).not.toBeNull();
+    expect(category.element().closest('.mantine-Badge-root')).toBeNull();
   });
 
   test('no reviews → "No reviews yet"', async () => {
@@ -416,9 +429,11 @@ describe('AppListingCard', () => {
       />
     );
     const visit = page.getByRole('link', { name: 'Visit' });
-    await expect.element(visit).toHaveAttribute('href', 'https://ext.app');
+    // Through the server-side visit redirect, never the raw URL: `/apps/go/<id>` records the
+    // visit and 302s to the listing's STORED destination. Untracked placement → `direct`.
+    await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=direct');
     await expect.element(visit).toHaveAttribute('target', '_blank');
-    await expect.element(visit).toHaveAttribute('rel', 'noopener noreferrer');
+    await expect.element(visit).toHaveAttribute('rel', 'nofollow noopener noreferrer');
     // The kind signal ("Standalone") is no longer a badge — it's conveyed by the
     // CTA above (an external "Visit" anchor vs. an internal Open/View details
     // link) plus the off-site disclosure Alert on the detail page.
@@ -469,9 +484,9 @@ describe('AppListingCard', () => {
     );
     await expect.element(page.getByRole('link', { name: 'View details' })).not.toBeInTheDocument();
     const visit = page.getByRole('link', { name: 'Visit' });
-    await expect.element(visit).toHaveAttribute('href', 'https://connect.app');
+    await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=direct');
     await expect.element(visit).toHaveAttribute('target', '_blank');
-    await expect.element(visit).toHaveAttribute('rel', 'noopener noreferrer');
+    await expect.element(visit).toHaveAttribute('rel', 'nofollow noopener noreferrer');
   });
 
   test('on-site page app WITHOUT canOpenPage → View details → unified detail (P2c)', async () => {
@@ -606,7 +621,7 @@ describe('AppListingCard', () => {
         })}
       />
     );
-    expect(ctaGlyph(await waitForCta('https://ext.app'))).toBe('external-link');
+    expect(ctaGlyph(await waitForCta('/apps/go/l1?src=direct'))).toBe('external-link');
   });
 
   test('🔴 S6b: the View-details CTA carries the view glyph, distinct from the other two', async () => {
@@ -1514,6 +1529,29 @@ describe('AppListingCard — the beta badge', () => {
   });
 });
 
+describe('AppListingCard — the Official badge', () => {
+  test('renders the Official badge when the moderator flag is set', async () => {
+    renderWithProviders(<AppListingCard card={base({ isOfficial: true })} canOpenPage />);
+    await expect.element(page.getByTestId('apps-listing-official-badge')).toBeInTheDocument();
+    expect(
+      document.querySelector('[data-testid="apps-listing-official-badge"]')?.textContent
+    ).toContain('Official');
+  });
+
+  test.each([
+    ['false', { isOfficial: false }],
+    ['absent', {}],
+  ])('renders NO Official badge when the flag is %s', async (_label, over) => {
+    renderWithProviders(<AppListingCard card={base(over)} canOpenPage />);
+    // Positive control FIRST: the card really did render.
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(document.querySelectorAll('[data-testid="apps-listing-official-badge"]')).toHaveLength(
+      0
+    );
+    expect(document.body.textContent).not.toContain('Official');
+  });
+});
+
 /**
  * The RESTRICTED-VISIBILITY badge ("Testers only" / "Moderators only" / "Unlisted").
  *
@@ -1687,5 +1725,181 @@ describe('AppListingCard — the restricted-visibility badge', () => {
       expect(avatar.getAttribute('data-user-id')).toBe('5');
       expect(avatar.getAttribute('data-link-to-profile')).toBe('true');
     });
+  });
+});
+
+/**
+ * The META LINE — the category (display label, linked to the store filtered by it) and a
+ * relative "Updated …" date. Absences are read off `querySelector` / `textContent` after a
+ * positive control (the `.not.toBeInTheDocument()` matcher is inert here — #4197).
+ */
+describe('🔴 AppListingCard — the category and last-updated meta line', () => {
+  const THREE_DAYS_AGO = () => new Date(Date.now() - 3 * 86_400_000).toISOString();
+
+  test('🔴 shows the category label linked to the store filtered by it', async () => {
+    renderWithProviders(
+      <AppListingCard card={base({ category: 'games', updatedAt: THREE_DAYS_AGO() })} canOpenPage />
+    );
+    const link = page.getByTestId('apps-listing-card-category');
+    await expect.element(link).toHaveTextContent('Games');
+    const el = link.element();
+    expect(el.tagName).toBe('A');
+    expect(el.getAttribute('href')).toBe('/apps/store?category=games');
+    // Never the raw stored key, and never the card's own detail link.
+    expect(el.textContent).not.toBe('games');
+  });
+
+  test('🔴 shows "Updated <relative date>" from the listing\'s update time', async () => {
+    renderWithProviders(
+      <AppListingCard card={base({ category: 'games', updatedAt: THREE_DAYS_AGO() })} canOpenPage />
+    );
+    await expect
+      .element(page.getByTestId('apps-listing-card-updated'))
+      .toHaveTextContent('Updated 3 days ago');
+    expect(page.getByTestId('apps-listing-card-meta').element().textContent).toBe(
+      'Games · Updated 3 days ago'
+    );
+  });
+
+  test('a category the store cannot filter by is plain text, not a link', async () => {
+    renderWithProviders(<AppListingCard card={base({ category: 'hats' })} canOpenPage />);
+    const label = page.getByTestId('apps-listing-card-category');
+    await expect.element(label).toHaveTextContent('hats');
+    expect(label.element().tagName).toBe('SPAN');
+  });
+
+  test('in preview the category is not a link (the moderator stays on the review)', async () => {
+    renderWithProviders(<AppListingCard card={base({ category: 'games' })} canOpenPage preview />);
+    const label = page.getByTestId('apps-listing-card-category');
+    await expect.element(label).toHaveTextContent('Games');
+    expect(label.element().tagName).toBe('SPAN');
+  });
+
+  test('no update time → no date, and the line still renders', async () => {
+    renderWithProviders(<AppListingCard card={base({ category: 'games' })} canOpenPage />);
+    // Positive control: the meta line rendered.
+    await expect.element(page.getByTestId('apps-listing-card-category')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="apps-listing-card-updated"]')).toBeNull();
+    expect(page.getByTestId('apps-listing-card-meta').element().textContent).not.toContain(
+      'Updated'
+    );
+  });
+});
+
+describe('AppListingCard — acquisition telemetry', () => {
+  beforeEach(() => {
+    trackMocks.enqueue.mockReset();
+    // The funnel's one gate (the `feedImpressions` dial) — ON unless a case turns it off.
+    mocks.features.feedImpressions = true;
+  });
+  afterEach(() => {
+    delete mocks.features.feedImpressions;
+  });
+
+  const OFFSITE = {
+    kind: 'offsite' as const,
+    name: 'Pixel Forge',
+    kindData: { kind: 'offsite' as const, externalUrl: 'https://ext.app' },
+  };
+  const GRID = {
+    surface: 'store_card' as const,
+    position: 3,
+    sort: 'newest' as const,
+    category: 'games',
+    query: 'pixel',
+  };
+
+  function storeActions() {
+    return trackMocks.enqueue.mock.calls
+      .map(([event]) => event)
+      .filter((e: any) => e?.kind === 'action' && e.data?.type === 'AppStore_Action')
+      .map((e: any) => e.data.details);
+  }
+
+  test('a tracked off-site Visit goes through /apps/go with its surface, never the raw URL', async () => {
+    renderWithProviders(<AppListingCard card={base(OFFSITE)} telemetry={GRID} />);
+    const visit = page.getByRole('link', { name: 'Visit' });
+    await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=store_card');
+    await expect.element(visit).toHaveAttribute('target', '_blank');
+    expect(document.querySelector('a[href="https://ext.app"]')).toBeNull();
+  });
+
+  test('a tracked on-site Open carries its surface into the run route', async () => {
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage telemetry={GRID} />);
+    await expect
+      .element(page.getByRole('link', { name: 'Open' }))
+      .toHaveAttribute('href', '/apps/run/my-app?src=store_card');
+  });
+
+  test('a moderator preview keeps the raw destination and records nothing', async () => {
+    renderWithProviders(<AppListingCard card={base(OFFSITE)} preview telemetry={GRID} />);
+    const visit = page.getByRole('link', { name: 'Visit' });
+    await expect.element(visit).toHaveAttribute('href', 'https://ext.app');
+    visit.element().addEventListener('click', (e) => e.preventDefault());
+    await visit.click();
+    expect(storeActions()).toEqual([]);
+  });
+
+  test('clicking the CTA records ONE cta_click carrying the grid state', async () => {
+    renderWithProviders(<AppListingCard card={base(OFFSITE)} telemetry={GRID} />);
+    const visit = page.getByRole('link', { name: 'Visit' });
+    await expect.element(visit).toBeInTheDocument();
+    // Keep the test page in place: the anchor would otherwise open a tab.
+    visit.element().addEventListener('click', (e) => e.preventDefault());
+    await visit.click();
+    expect(storeActions()).toEqual([
+      {
+        action: 'cta_click',
+        listingId: 'l1',
+        surface: 'store_card',
+        position: 3,
+        sort: 'newest',
+        category: 'games',
+        // The search TEXT never leaves the browser: only that there was one, and its length.
+        hasQuery: true,
+        queryLength: '4-10',
+      },
+    ]);
+  });
+
+  test('🔴 with the funnel gate OFF a click records nothing (same gate as impressions)', async () => {
+    mocks.features.feedImpressions = false;
+    renderWithProviders(<AppListingCard card={base(OFFSITE)} telemetry={GRID} />);
+    const visit = page.getByRole('link', { name: 'Visit' });
+    await expect.element(visit).toBeInTheDocument();
+    visit.element().addEventListener('click', (e) => e.preventDefault());
+    await visit.click();
+    expect(storeActions()).toEqual([]);
+    // The link itself is unaffected: the visit is still counted server-side.
+    await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=store_card');
+  });
+
+  test('clicking the card TITLE (the stretched card link) queues ONE card_click', async () => {
+    renderWithProviders(<AppListingCard card={base(OFFSITE)} telemetry={GRID} />);
+    const title = page.getByRole('link', { name: 'Pixel Forge' });
+    await expect.element(title).toHaveAttribute('href', '/apps/store-preview/my-app');
+    title.element().addEventListener('click', (e) => e.preventDefault());
+    await title.click();
+    expect(storeActions()).toEqual([
+      {
+        action: 'card_click',
+        listingId: 'l1',
+        surface: 'store_card',
+        position: 3,
+        sort: 'newest',
+        category: 'games',
+        hasQuery: true,
+        queryLength: '4-10',
+      },
+    ]);
+  });
+
+  test('an untracked card records no click', async () => {
+    renderWithProviders(<AppListingCard card={base(OFFSITE)} />);
+    const visit = page.getByRole('link', { name: 'Visit' });
+    await expect.element(visit).toBeInTheDocument();
+    visit.element().addEventListener('click', (e) => e.preventDefault());
+    await visit.click();
+    expect(storeActions()).toEqual([]);
   });
 });

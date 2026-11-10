@@ -67,13 +67,19 @@ const tripoVersionDef = cachedFactory((workflow: string) => {
 // optional — omitted means Tripo auto-selects the face count
 const tripoFaceLimitDef = cachedFactory((version: TripoVersion) => {
   const max = TRIPO_MAX_FACE_LIMIT[version];
+  const clamp = clampCorrect({ min: TRIPO_MIN_FACE_LIMIT, max, fallback: TRIPO_MIN_FACE_LIMIT });
   return {
     input: z.coerce.number().int().min(TRIPO_MIN_FACE_LIMIT).max(max).optional(),
     output: z.number().int().min(TRIPO_MIN_FACE_LIMIT).max(max).optional(),
     default: undefined,
-    // Clamp rather than clear: an out-of-range face limit came from somewhere, and
+    // Blank is 'Auto', not out of range: clampCorrect's non-finite fallback would send the
+    // minimum. Clamp a real number rather than clear it — it came from somewhere, and
     // dropping it silently reverts the user to 'Auto'.
-    correct: clampCorrect({ min: TRIPO_MIN_FACE_LIMIT, max, fallback: TRIPO_MIN_FACE_LIMIT }),
+    correct: (value: number | null | undefined | '') => {
+      if (value === undefined) return undefined;
+      if (value === null || value === '') return { value: undefined, reason: 'face_limit_auto' };
+      return clamp(value);
+    },
     meta: { min: TRIPO_MIN_FACE_LIMIT, max, placeholder: 'Auto' },
   };
 });

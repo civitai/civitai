@@ -86,6 +86,9 @@ vi.mock('~/server/services/nav-banner.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NavBannerService>()),
   getNavBanners: vi.fn(async () => []),
 }));
+vi.mock('~/server/services/event-seeds.service', () => ({
+  getEventSeeds: vi.fn(async () => [{ event: 'fixture', access: 'open' }]),
+}));
 vi.mock('~/server/services/site-alert.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SiteAlertService>()),
   getActiveSiteAlerts: vi.fn(async () => ({ version: 2, alerts: [] })),

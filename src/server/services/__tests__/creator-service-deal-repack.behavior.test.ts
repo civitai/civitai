@@ -200,6 +200,7 @@ const MIGRATIONS = [
   '20261028170000_creator_service_offering_takedown',
   '20261029140000_creator_service_deal_file_delivery',
   '20261128150000_creator_service_final_malware_scan',
+  '20261224150000_service_deal_file_removed_at',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -221,6 +222,7 @@ type FileRecord = {
   malwareScanStatus: string;
   repackedAt: Date | null;
   deliveryKey: string | null;
+  removedAt: Date | null;
   deliverySize: number | null;
 };
 const fileRow = async (id: number) =>
@@ -287,10 +289,11 @@ const SCAN_COPY = (n: number) => Buffer.from(`scan-copy-${n}`);
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
     CREATE TABLE "Report" (id serial PRIMARY KEY);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1);
@@ -709,16 +712,16 @@ describe('when the build goes wrong', () => {
     expect((await fileRow(fileId)).deliveryKey).toBeNull();
   });
 
-  it('removes the archive it built when the file was deleted while it worked', async () => {
-    const { dealId, fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);
+  it('finishes the archive of a file removed while it worked, on the kept row', async () => {
+    const { fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);
     uploads.beforeDone = async () => {
       await files.deleteServiceDealFile({ fileId, userId: SELLER });
     };
-    expect(await repack.repackFinals()).toBe(0);
-    expect(dealId).toBe(1);
-    expect([...bucket.objects.keys()].some((k) => k.startsWith('service-deals/delivered/'))).toBe(
-      false
-    );
+    expect(await repack.repackFinals()).toBe(1);
+    const row = await fileRow(fileId);
+    expect(row.removedAt).not.toBeNull();
+    // The row owns the archive, so purging the row deletes it.
+    expect(bucket.objects.has(row.deliveryKey!)).toBe(true);
   });
 
   it('removes the archive when the file is deleted afterwards', async () => {

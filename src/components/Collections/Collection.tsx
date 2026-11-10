@@ -2,6 +2,7 @@ import type { ContainerProps } from '@mantine/core';
 import {
   ActionIcon,
   AspectRatio,
+  Badge,
   Box,
   Button,
   Center,
@@ -60,6 +61,7 @@ import {
   resolveImageCollectionSort,
   toSortMenuOptions,
 } from '~/components/Collections/collection-sort';
+import { useRememberCollectionFilters } from '~/components/Collections/useRememberCollectionFilters';
 import { CollectionInvitePrompt } from '~/components/Collections/CollectionCollaborators/CollectionInvitePrompt';
 import { usePendingInviteFor } from '~/components/Collections/CollectionCollaborators/collectionInvite.util';
 import { CollectionCollaboratorsSummary } from '~/components/Collections/CollectionCollaboratorsSummary';
@@ -132,6 +134,11 @@ const ModelCollection = ({
 }) => {
   const { set, ...query } = useModelQueryParams();
   const isContestCollection = collection.mode === CollectionMode.Contest;
+  useRememberCollectionFilters({
+    type: 'models',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = isContestCollection ? getRandom(contestModelSorts) : query.sort ?? ModelSort.Newest;
   const currentUser = useCurrentUser();
 
@@ -145,6 +152,7 @@ const ModelCollection = ({
         status: undefined,
         earlyAccess: undefined,
         hidePaid: undefined,
+        onSale: undefined,
         view: undefined,
         supportsGeneration: undefined,
         followed: undefined,
@@ -231,6 +239,11 @@ const ImageCollection = ({
 }) => {
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const { replace, query } = useImageQueryParams();
+  useRememberCollectionFilters({
+    type: 'images',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = resolveImageCollectionSort({
     querySort: query.sort,
     isContest: isContestCollection,
@@ -393,6 +406,11 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
   const { replace, query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
+  useRememberCollectionFilters({
+    type: 'posts',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = isContestCollection ? getRandom(contestPostSorts) : query.sort ?? PostSort.Newest;
 
   const filters = isContestCollection
@@ -445,6 +463,11 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
   const { replace, query } = useArticleQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
+  useRememberCollectionFilters({
+    type: 'articles',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = isContestCollection
     ? getRandom(contestArticleSorts)
     : query.sort ?? ArticleSort.Newest;
@@ -747,6 +770,11 @@ export function Collection({
                         <Title order={1} lineClamp={1} className={classes.title}>
                           {collection?.name ?? 'Loading...'}
                         </Title>
+                        {collection?.archivedAt && (
+                          <Badge color="gray" variant="light" radius="sm">
+                            Archived
+                          </Badge>
+                        )}
                         {submissionPeriod}
                       </Group>
                       {collection?.description && (

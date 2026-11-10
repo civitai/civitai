@@ -6,7 +6,6 @@ import {
   CloseButton,
   Group,
   Paper,
-  SimpleGrid,
   Skeleton,
   Stack,
   Text,
@@ -51,28 +50,15 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
- * `/apps` — the signed-in viewer's app HOME ("My apps"): a launcher grid of the apps they
- * have, drawn like a phone home screen (a large rounded icon, a one-line name under it). The
- * list is the server-derived apps (`appListings.listMyApps`) merged with this browser's
- * "Recently opened" store for the current account (`mergeHomeApps`, which owns the order,
- * the dedupe and the "Remove from My apps" rule). The store is `/apps/store`.
- *
- * The page (`pages/apps/index.tsx`) owns the gate: it renders this body only for a
- * signed-in viewer the store admits, so nothing here re-checks store access.
+ * `/apps` — the signed-in viewer's "My apps" launcher grid (`listMyApps` merged with this
+ * browser's recents by `mergeHomeApps`). The page owns the store-access gate; this body does
+ * not re-check it.
  */
 
-/**
- * Columns per breakpoint, so a tile stays icon-sized rather than stretching: 4 on a phone, up
- * to 8 on a wide screen. Each column is `minmax(0, 1fr)`, and the name truncates, so nothing
- * can push the grid wider than its container (no horizontal scroll at 390px).
- */
-export const APPS_HOME_GRID_COLS = { base: 4, xs: 5, sm: 6, md: 7, lg: 8 } as const;
-/** Skeleton tiles shown while the list loads. */
 const APPS_HOME_SKELETON_TILES = 8;
 export const APPS_HOME_ICON_PX = 60;
-/** The rounded-square app icon's corner radius (≈ 22% of the side, like a launcher icon). */
+/** A launcher-icon corner radius. */
 const APPS_HOME_ICON_RADIUS = 14;
-/** How long the "Removed … Undo" bar stays up. */
 const APPS_HOME_UNDO_MS = 8000;
 
 /** The deep link to the viewer's permissions for their apps. */
@@ -81,16 +67,19 @@ export const APPS_HOME_PERMISSIONS_HREF = {
   query: activityTabQuery('permissions'),
 };
 
+/**
+ * Fixed-width tiles packed from the left, so two apps sit side by side instead of stretching
+ * across the page. 96px tiles with a 16px gap on a phone (three fit at 360px wide), 104px with
+ * a 20px gap from `sm`. The name truncates, so a long one cannot widen its column.
+ */
 function TileGrid({ children, testId }: { children: ReactNode; testId: string }) {
   return (
-    <SimpleGrid
+    <div
       data-testid={testId}
-      cols={APPS_HOME_GRID_COLS}
-      spacing={{ base: 'xs', sm: 'md' }}
-      verticalSpacing="lg"
+      className="grid grid-cols-[repeat(auto-fill,96px)] justify-start gap-x-4 gap-y-6 sm:grid-cols-[repeat(auto-fill,104px)] sm:gap-x-5"
     >
       {children}
-    </SimpleGrid>
+    </div>
   );
 }
 
@@ -377,13 +366,61 @@ export function AppsHomeBody() {
 
   // ── "Remove from My apps", optimistic ────────────────────────────────────────
   // A removal hides the tile at once (a local override), then persists. On failure the
-  // override is dropped, so the grid falls back to the server's state — which never took
-  // the hide — and the tile returns. Undo is the same in reverse. A successful write keeps
-  // its override (it now agrees with the server) and refreshes the list.
+  // override is dropped, so the grid falls back to the cached server state — which never had
+  // the hide — and the tile returns. A failed Undo instead re-applies the hide (see below).
+  //
+  // Don't refetch while an Undo is offered: the server drops hidden rows from `listMyApps`, so
+  // a refetch would evict the row Undo restores. The owed refetch runs once the bar closes.
   const [overrides, setOverrides] = useState<HiddenOverrides>({});
-  const [removed, setRemoved] = useState<{ slug: string; name: string } | null>(null);
-  // An Undo waits for its own hide to settle, so the two writes reach the server in order.
+  const [removed, setRemoved] = useState<{ slug: string; name: string; hiddenAt: string } | null>(
+    null
+  );
+  // An Undo waits for its own hide to settle, and a re-remove for the Undo's unhide, so the
+  // writes for one slug reach the server in the order they were made.
   const pendingHides = useRef(new Map<string, Promise<unknown>>());
+  const pendingUnhides = useRef(new Map<string, Promise<unknown>>());
+  // Every hide/unhide still in flight (settled-only, never rejecting); the refetch waits on them.
+  const inFlight = useRef(new Set<Promise<unknown>>());
+  const refetchOwed = useRef(false);
+  const barOpen = useRef(false);
+  barOpen.current = removed !== null;
+
+  function track(write: Promise<unknown>) {
+    const settled = write.then(
+      () => undefined,
+      () => undefined
+    );
+    inFlight.current.add(settled);
+    void settled.then(() => inFlight.current.delete(settled));
+    refetchOwed.current = true;
+    return settled;
+  }
+
+  /** Run the owed refetch, unless a bar (an open Undo window) still needs the cached rows. */
+  function flushRefetch() {
+    if (!refetchOwed.current) return;
+    refetchOwed.current = false;
+    void Promise.all([...inFlight.current]).then(() => {
+      // A removal made while the writes settled reopened a window: wait for that one instead.
+      if (barOpen.current) refetchOwed.current = true;
+      else void utils.appListings.listMyApps.invalidate();
+    });
+  }
+  const flushRef = useRef(flushRefetch);
+  flushRef.current = flushRefetch;
+
+  useEffect(() => {
+    if (!removed) flushRef.current();
+  }, [removed]);
+  // Leaving mid-window still owes the refetch: the cache outlives this page, and the next
+  // visit would otherwise show the removed app again. (`invalidate` is not component state.)
+  useEffect(
+    () => () => {
+      barOpen.current = false;
+      flushRef.current();
+    },
+    []
+  );
 
   /** Drop `slug`'s override, but only if it still holds the value this action set. */
   function dropOverride(slug: string, expected: string | null) {
@@ -398,15 +435,16 @@ export function AppsHomeBody() {
   async function handleRemove(app: AppsHomeTileModel) {
     const optimistic = new Date().toISOString();
     setOverrides((prev) => ({ ...prev, [app.slug]: optimistic }));
-    setRemoved({ slug: app.slug, name: app.name });
-    const write = hideMutation.mutateAsync({ slug: app.slug });
-    pendingHides.current.set(
-      app.slug,
-      write.catch(() => undefined)
-    );
+    setRemoved({ slug: app.slug, name: app.name, hiddenAt: optimistic });
+    // Remove → Undo → remove again before the unhide settles: sent at once, the hide could
+    // land first and the unhide after it, leaving the server unhidden under a removed tile.
+    const unhide = pendingUnhides.current.get(app.slug);
+    const write = unhide
+      ? unhide.then(() => hideMutation.mutateAsync({ slug: app.slug }))
+      : hideMutation.mutateAsync({ slug: app.slug });
+    pendingHides.current.set(app.slug, track(write));
     try {
       await write;
-      void utils.appListings.listMyApps.invalidate();
     } catch (error) {
       dropOverride(app.slug, optimistic);
       closeRemovedBar(app.slug);
@@ -419,15 +457,27 @@ export function AppsHomeBody() {
 
   async function handleUndo() {
     if (!removed) return;
-    const { slug, name } = removed;
-    closeRemovedBar();
+    const { slug, name, hiddenAt } = removed;
+    // No refetch has run, so the row is still cached: clearing the hide puts the tile back
+    // at once, in its place.
     setOverrides((prev) => ({ ...prev, [slug]: null }));
-    await pendingHides.current.get(slug);
+    const write = (async () => {
+      await pendingHides.current.get(slug);
+      return unhideMutation.mutateAsync({ slug });
+    })();
+    const settled = track(write);
+    pendingUnhides.current.set(slug, settled);
+    void settled.then(() => {
+      if (pendingUnhides.current.get(slug) === settled) pendingUnhides.current.delete(slug);
+    });
+    // Closing the bar flushes the owed refetch, which waits for this unhide to settle.
+    closeRemovedBar();
     try {
-      await unhideMutation.mutateAsync({ slug });
-      void utils.appListings.listMyApps.invalidate();
+      await write;
     } catch (error) {
-      dropOverride(slug, null);
+      // The server still holds the hide. Restore it rather than fall back to the cached
+      // state, which predates the hide and would keep showing the app.
+      setOverrides((prev) => (prev[slug] === null ? { ...prev, [slug]: hiddenAt } : prev));
       showErrorNotification({
         title: `Couldn't restore ${name}`,
         error: error instanceof Error ? error : { message: 'Please try again.' },
@@ -495,8 +545,9 @@ export function AppsHomeBody() {
         recents,
         canOpenPage,
         hidden,
+        removedSlugsByListingId: myApps.data?.removedSlugsByListingId,
       }),
-    [myApps.data?.apps, recents, canOpenPage, hidden]
+    [myApps.data?.apps, myApps.data?.removedSlugsByListingId, recents, canOpenPage, hidden]
   );
 
   return (
@@ -566,6 +617,8 @@ export function AppsHomeBody() {
               recents,
               canOpenPage,
               hidden,
+              removedSlugsByListingId: myApps.data?.removedSlugsByListingId,
+              removedCount: myApps.data?.removedCount,
             })}
           />
         )

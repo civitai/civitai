@@ -1,3 +1,4 @@
+import { unpack } from 'msgpackr';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { OriginNotAllowedError } from '../errors';
 
@@ -366,6 +367,42 @@ describe('oauthModel.saveAuthorizationCode — fail-closed + hashed atomic store
     expect(opts.arguments[0]).not.toBe('raw-code-value');
     expect(opts.arguments[0]).toMatch(/^[0-9a-f]{64}$/);
   });
+
+  it('records an impersonation on the code, and nothing for an ordinary one', async () => {
+    const stored = async (user: Record<string, unknown>) => {
+      h.evalCalls.length = 0;
+      await oauthModel.saveAuthorizationCode(mkCode(), { id: 'c1' } as any, user as any);
+      const [, opts] = h.evalCalls[0] as [unknown, { arguments: unknown[] }];
+      return unpack(opts.arguments[1] as Buffer) as Record<string, unknown>;
+    };
+    expect(await stored({ id: 1, impersonation: true })).toMatchObject({ impersonation: true });
+    expect(await stored({ id: 1 })).not.toHaveProperty('impersonation');
+  });
+});
+
+describe('oauthModel.getAuthorizationCode — impersonation marker', () => {
+  it('returns the marker with the code user, and none for an ordinary code', async () => {
+    const read = async (extra: Record<string, unknown>) => {
+      h.selectResults.push({
+        id: 'pub-1',
+        grants: ['authorization_code'],
+        redirectUris: ['https://a.example/cb'],
+      });
+      (h.state.redis as { packed: { hGet: () => Promise<unknown> } }).packed.hGet = () =>
+        Promise.resolve({
+          clientId: 'pub-1',
+          userId: 7,
+          scope: '1',
+          redirectUri: 'https://a.example/cb',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          ...extra,
+        });
+      const code = await oauthModel.getAuthorizationCode('c');
+      return code ? code.user : null;
+    };
+    expect(await read({ impersonation: true })).toEqual({ id: 7, impersonation: true });
+    expect(await read({})).toEqual({ id: 7 });
+  });
 });
 
 describe('oauthModel.revokeToken — routine rotation does NOT cascade (resolved 2026-06-19, §D.x)', () => {
@@ -481,6 +518,34 @@ describe('first-party resolution requires an https redirect_uri', () => {
     expect(await oauthModel.getClient(MOD_ID, null, request)).toMatchObject({
       id: MOD_ID,
       redirectUris: ['https://moderator.civitai.com/api/auth/callback'],
+    });
+  });
+});
+
+describe('the remix apps client (civitai-remix-apps)', () => {
+  /** As the seed migration inserts it: it owns the remix app rows and must never authenticate. */
+  const remixClient = {
+    ...baseClient,
+    id: 'civitai-remix-apps',
+    isConfidential: true,
+    secret: null,
+    grants: [],
+    redirectUris: [],
+    allowedOrigins: [],
+    allowedScopes: 0,
+    accessMode: 'disabled',
+  };
+
+  it('authenticates at the token endpoint with no secret it could match', async () => {
+    const request: any = { headers: {}, body: tokenExchangeBody };
+    for (const secret of ['', 'guess', 'null']) {
+      h.selectResults.push(remixClient);
+      expect(await oauthModel.getClient('civitai-remix-apps', secret, request)).toBe(false);
+    }
+    // POSITIVE CONTROL: the same client with a stored secret authenticates on it.
+    h.selectResults.push({ ...remixClient, secret: 'hash:guess' });
+    expect(await oauthModel.getClient('civitai-remix-apps', 'guess', request)).toMatchObject({
+      id: 'civitai-remix-apps',
     });
   });
 });

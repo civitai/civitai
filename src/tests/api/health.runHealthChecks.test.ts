@@ -85,7 +85,7 @@ vi.mock('~/server/redis/client', () => ({
 }));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint: (handler: unknown) => handler,
+  ProbeEndpoint: (handler: unknown) => handler,
 }));
 
 vi.mock('~/utils/number-helpers', () => ({ getRandomInt: () => 123 }));

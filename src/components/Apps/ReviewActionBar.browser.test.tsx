@@ -1,3 +1,4 @@
+import superjson from 'superjson';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcMod from '~/utils/trpc';
@@ -519,5 +520,62 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
       approvalNotes: undefined,
       mediaSplit: 'rate-mature',
     });
+  });
+});
+
+describe('🔴 "Approve & next" survives the tab closing (keepalive)', () => {
+  /**
+   * Closing the tab inside the undo window commits the pending approval from `pagehide`
+   * (`bindPendingApprovalLifecycle`). A plain fetch started there is cancelled with the page, so
+   * the send must be a `keepalive` request — to the same procedure, carrying the same input.
+   * This drives the REAL path: the bar's commit closure, the real queue + lifecycle binding,
+   * and the real tRPC link down to `fetch`. Only `fetch` itself is stubbed.
+   */
+  test('pagehide sends the pending approval as a keepalive POST to blocks.approveRequest', async () => {
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const sent: { url: string; init: RequestInit | undefined }[] = [];
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (!url.includes('/api/trpc/')) return realFetch(input, init);
+      sent.push({ url, init });
+      return new Response(JSON.stringify({ result: { data: { json: { ok: true } } } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    try {
+      const request = { ...PENDING, id: 'req-keepalive' };
+      const onClose = vi.fn();
+      renderWithProviders(
+        <ReviewActionBar
+          selection={{ request, mode: 'pending' }}
+          onClose={onClose}
+          approveAndNext
+        />
+      );
+      await page.getByTestId('apps-review-approve-next').click();
+      expect(onClose).toHaveBeenCalledTimes(1);
+      // Nothing is sent inside the undo window…
+      expect(sent).toHaveLength(0);
+
+      // …until the tab goes away.
+      window.dispatchEvent(new PageTransitionEvent('pagehide'));
+      await vi.waitFor(() => expect(sent).toHaveLength(1));
+      const [{ url, init }] = sent;
+      expect(new URL(url, window.location.href).pathname).toBe('/api/trpc/blocks.approveRequest');
+      expect(init?.method).toBe('POST');
+      expect(init?.keepalive).toBe(true);
+      // The client's superjson wire format (`{ json, meta? }`), carrying the approval's input.
+      expect(superjson.deserialize(JSON.parse(String(init?.body)))).toEqual({
+        publishRequestId: 'req-keepalive',
+        approvalNotes: undefined,
+      });
+      const { reviewApprovalQueue } = await import('./pendingApprovalQueue');
+      await vi.waitFor(() =>
+        expect(reviewApprovalQueue.get('req-keepalive')?.status).toBe('committed')
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

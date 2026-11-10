@@ -19,6 +19,41 @@ export function assertVectorSyncConfig() {
   if (invalidVectorEnv.length) throw new Error(`invalid ${invalidVectorEnv.join(', ')}`);
 }
 
+/** The content search indexes' tables, streamed by CDC_CONTENT_ENABLED. Article already streams. */
+export const CONTENT_CDC_TABLES = [
+  'public.ComicProject',
+  'public.ComicChapter',
+  'public.Challenge',
+  'public.ChallengeEvent',
+  'public.Crucible',
+  'public.Model3D',
+  'public.TagsOnModel3D',
+  'public.Storyline',
+  'public.StorylineChapter',
+];
+
+/**
+ * Their unbounded text and JSON columns, kept out of the stream: content sync re-reads rows from
+ * Postgres, and a record over the producer's size limit fails the connector task for every table.
+ */
+export const CONTENT_EXCLUDED_COLUMNS = {
+  ComicProject: ['description', 'meta'],
+  ComicChapter: ['earlyAccessConfig'],
+  Challenge: [
+    'description',
+    'invitation',
+    'judgingPrompt',
+    'judgingCategories',
+    'prizes',
+    'entryPrize',
+    'prizeDistribution',
+    'metadata',
+  ],
+  ChallengeEvent: ['description'],
+  Crucible: ['description', 'prizePositions', 'allowedResources', 'takedownReason'],
+  Model3D: ['description', 'licenseDetails', 'generationParams', 'meta', 'gallerySettings'],
+};
+
 export const config = {
   postgres: {
     connectionString: process.env.DATABASE_URL!,
@@ -54,8 +89,6 @@ export const config = {
       'public.ImageReaction',
       'public.ResourceReview',
       'public.CollectionItem',
-      'public.Comment',
-      'public.CommentV2',
       'public.CommentV3',
       'public.ImageResourceNew',
       'public.BuzzTip',
@@ -80,7 +113,12 @@ export const config = {
     // Streamed by the connector but not consumed by the metrics watcher (only by
     // vector-sync). Adding a table here changes the Debezium publication, and the
     // watcher recreates the connector on startup, so each entry is opt-in.
-    cdcOnlyTables: process.env.CDC_IMAGE_ENABLED === 'true' ? ['public.Image'] : [],
+    cdcOnlyTables: [
+      ...(process.env.CDC_IMAGE_ENABLED === 'true' ? ['public.Image'] : []),
+      ...(process.env.CDC_MODEL_ENABLED === 'true' ? ['public.Model', 'public.ModelVersion'] : []),
+      // Every content search index at once: each change to this list recreates the connector.
+      ...(process.env.CDC_CONTENT_ENABLED === 'true' ? CONTENT_CDC_TABLES : []),
+    ],
 
     // ClickHouse topics streamed directly to Kafka
     clickhouseTopics: [
@@ -149,6 +187,13 @@ export const config = {
   // Semantic image search: see docs/features/semantic-image-search.md at the repo root.
   vectorSync: {
     consumerGroup: process.env.VECTOR_SYNC_CONSUMER_GROUP ?? 'image-vector-sync',
+    modelConsumerGroup: process.env.VECTOR_MODEL_CONSUMER_GROUP ?? 'model-vector-sync',
+    contentConsumerGroup: process.env.VECTOR_CONTENT_CONSUMER_GROUP ?? 'content-vector-sync',
+    // The content consumer's domains, by name (e.g. "article,comic"); one is added per rollout step.
+    contentDomains: (process.env.VECTOR_CONTENT_DOMAINS ?? '')
+      .split(',')
+      .map((d) => d.trim())
+      .filter(Boolean),
     pgPoolMax: vectorInt('VECTOR_PG_POOL_MAX', 4, 1),
     // Off: nothing embeds (a paid call). The consumer and reconcile still delete and update
     // payloads; backfill refuses to run. Embedding also needs CDC_IMAGE_ENABLED, see
@@ -162,6 +207,11 @@ export const config = {
     // collection while the old one keeps serving.
     collection: process.env.VECTOR_COLLECTION ?? 'images_wemm2b_256_v1',
     alias: process.env.VECTOR_ALIAS ?? 'images_semantic',
+    // Semantic model search, the same way: the search service reads the alias.
+    modelCollection: process.env.VECTOR_MODEL_COLLECTION ?? 'models_wemm2b_256_v1',
+    modelAlias: process.env.VECTOR_MODEL_ALIAS ?? 'models_semantic',
+    articleCollection: process.env.VECTOR_ARTICLE_COLLECTION ?? 'articles_wemm2b_256_v1',
+    articleAlias: process.env.VECTOR_ARTICLE_ALIAS ?? 'articles_semantic',
     // Image CDN base the edge URLs are built on (the main app's NEXT_PUBLIC_IMAGE_LOCATION).
     imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
     orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',
@@ -183,6 +233,16 @@ export const config = {
     embedVideo: process.env.VECTOR_EMBED_VIDEO === 'true',
   },
 };
+
+/**
+ * Whether a vector-sync domain may embed: the global switch, then VECTOR_<NAME>_EMBED_ENABLED
+ * ('true' or 'false'), else the domain's default.
+ */
+export function domainEmbedEnabled(name: string, byDefault = false) {
+  if (!config.vectorSync.embedEnabled) return false;
+  const own = process.env[`VECTOR_${name.toUpperCase()}_EMBED_ENABLED`];
+  return own === undefined ? byDefault : own === 'true';
+}
 
 export function validateConfig() {
   const required = ['DATABASE_URL', 'CLICKHOUSE_URL', 'REDIS_URL'];

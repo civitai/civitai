@@ -1,3 +1,4 @@
+import { childBrowsingTagIds, peopleBrowsingTagIds } from '@civitai/shared';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 
@@ -150,28 +151,12 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
     type: 'some',
     nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
     disablePoi: true,
-    excludedTagIds: [
-      5161, //actor
-      5162, //actress
-      5188, //celebrity
-      5249, //real person
-      130818, //porn actress
-      130820, //adult actress
-      133182, //porn star
-      130401, //deepfake
-      110980, //public figure
-    ],
+    excludedTagIds: peopleBrowsingTagIds,
   },
   {
     type: 'some',
     nsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
     disableMinor: true,
-    excludedTagIds: [
-      5351, //child
-      306619, //child present
-      154326, //toddler
-      161829, //male child
-      163032, //female child
-    ],
+    excludedTagIds: childBrowsingTagIds,
   },
 ] as const;

@@ -23,7 +23,9 @@ const { mockIsAppBlocksEnabled, mockEnsureForgejoIdentity, mockAddCollaborator }
   })
 );
 
-vi.mock('~/server/services/app-blocks-flag', () => ({ isAppBlocksEnabled: mockIsAppBlocksEnabled }));
+vi.mock('~/server/services/app-blocks-flag', () => ({
+  isAppBlocksEnabled: mockIsAppBlocksEnabled,
+}));
 // env comes from the global ~/env/server mock in src/__tests__/setup.ts
 // (complete TEST_ENV_DEFAULTS incl. FORGEJO_PUBLIC_URL / APPS_DOMAIN / MEILI /
 // S3). Overriding it locally drops those defaults and crashes at import.
@@ -101,6 +103,7 @@ const otherUser = { id: 99, isModerator: false, tier: 'free', username: 'intrude
 
 const findUnique = dbRead.appBlock.findUnique as ReturnType<typeof vi.fn>;
 const findFirst = dbRead.appBlock.findFirst as ReturnType<typeof vi.fn>;
+const acceptedTerms = new Set<number>();
 
 beforeEach(() => {
   mockIsAppBlocksEnabled.mockReset().mockResolvedValue(true);
@@ -109,6 +112,16 @@ beforeEach(() => {
     .mockResolvedValue({ forgejoUsername: 'dev-7', token: 'minted-token-sha1' });
   mockAddCollaborator.mockReset().mockResolvedValue(undefined);
   findUnique.mockReset();
+  acceptedTerms.clear();
+  acceptedTerms.add(ownerUser.id);
+  dbMock.dbWrite.appDeveloperTermsAcceptance.findUnique.mockImplementation((async ({
+    where,
+  }: {
+    where: { userId_version: { userId: number } };
+  }) =>
+    acceptedTerms.has(where.userId_version.userId)
+      ? { userId: where.userId_version.userId }
+      : null) as never);
   findFirst.mockReset();
 });
 
@@ -122,7 +135,11 @@ describe('blocks.getMyForgejoCloneInfo — Phase 2 CLI pull credential', () => {
   });
 
   it('non-owner: FORBIDDEN, nothing provisioned', async () => {
-    findUnique.mockResolvedValue({ blockId: 'my-app', status: 'approved', app: { userId: ownerUser.id } });
+    findUnique.mockResolvedValue({
+      blockId: 'my-app',
+      status: 'approved',
+      app: { userId: ownerUser.id },
+    });
     const caller = blocksRouter.createCaller(fakeCtx(otherUser) as never);
     await expect(caller.getMyForgejoCloneInfo({ appBlockId: 'ab_1' })).rejects.toMatchObject({
       code: 'FORBIDDEN',
@@ -131,7 +148,11 @@ describe('blocks.getMyForgejoCloneInfo — Phase 2 CLI pull credential', () => {
   });
 
   it('owner, NOT approved: notYetAvailable, nothing provisioned', async () => {
-    findUnique.mockResolvedValue({ blockId: 'my-app', status: 'pending', app: { userId: ownerUser.id } });
+    findUnique.mockResolvedValue({
+      blockId: 'my-app',
+      status: 'pending',
+      app: { userId: ownerUser.id },
+    });
     const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
     const res = await caller.getMyForgejoCloneInfo({ appBlockId: 'ab_1' });
     expect(res.notYetAvailable).toBe(true);
@@ -139,7 +160,11 @@ describe('blocks.getMyForgejoCloneInfo — Phase 2 CLI pull credential', () => {
   });
 
   it('owner, approved, BY SLUG: provisions identity, grants READ, returns tokened cloneUrl + token', async () => {
-    findFirst.mockResolvedValue({ blockId: 'my-app', status: 'approved', app: { userId: ownerUser.id } });
+    findFirst.mockResolvedValue({
+      blockId: 'my-app',
+      status: 'approved',
+      app: { userId: ownerUser.id },
+    });
     const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
     const res = await caller.getMyForgejoCloneInfo({ slug: 'my-app' });
 
@@ -259,5 +284,21 @@ describe('blocks.getMyForgejoCloneInfo — OAuth scope gate', () => {
     // and this ctx IS the owner, so it cannot be the ownership check refusing.
     expect(mockEnsureForgejoIdentity).not.toHaveBeenCalled();
     expect(mockAddCollaborator).not.toHaveBeenCalled();
+  });
+});
+
+describe('blocks.getMyForgejoCloneInfo: App Developer Terms gate the token', () => {
+  it('an owner who has not accepted gets no token (it is the same push token getMyAppRepo returns)', async () => {
+    acceptedTerms.clear();
+    findUnique.mockResolvedValue({
+      blockId: 'my-app',
+      status: 'approved',
+      app: { userId: ownerUser.id },
+    });
+    const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+    const err = await caller.getMyForgejoCloneInfo({ appBlockId: 'ab_1' }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'FORBIDDEN' });
+    expect((err as Error).message).toContain('/content/app-developer-terms');
+    expect(mockEnsureForgejoIdentity).not.toHaveBeenCalled();
   });
 });

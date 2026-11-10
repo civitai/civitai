@@ -23,14 +23,13 @@ import { postSelect } from '~/server/selectors/post.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
-import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 
 /**
- * The reads behind `kysely-hot-reads-6`, each as a Prisma reader and its Kysely twin taking the
- * client, so the parity suite (__tests__/hot-reads-6.kysely-parity.test.ts) runs the very code the
- * services run. The Prisma readers are the original reads, moved here verbatim; each twin returns
- * the value its Prisma reader returns (same keys in the same order, Dates as Dates, enums as their
- * text, `null` where Prisma gives `null`).
+ * Kysely reads, each returning the value the Prisma read it replaced returned (same keys in the same
+ * order, Dates as Dates, enums as their text, `null` where Prisma gave `null`). Each takes the
+ * client, so __tests__/hot-reads-6.kysely-parity.test.ts runs the very code the services run. The
+ * Prisma readers left here still serve a path: the fallback where a Kysely read answers `undefined`
+ * (an orphaned required relation), and the donation goals cache's primary reads.
  */
 
 type UserWithCosmetics = Prisma.UserGetPayload<{ select: typeof userWithCosmeticsSelect }>;
@@ -75,23 +74,15 @@ function toUserWithCosmetics(row: UserWithCosmeticsRow): UserWithCosmetics {
 
 // The owner of a model version's model (`getModelVersionOwnerHandler`, model-version.controller.ts).
 
-/** `getVersionById({ id, select })` with that handler's select, on the client it is given. */
-export function readModelVersionOwnerViaPrisma(db: PrismaClient, id: number) {
-  return db.modelVersion.findUnique({
-    where: { id },
-    select: { model: { select: { user: { select: userWithCosmeticsSelect } } } },
-  });
-}
-
 /**
- * The owner in one statement. No row (a missing version, or an orphaned model or user) returns
- * `undefined`: the caller then runs the Prisma read, so a missing version is still `null` and an
- * orphan still throws as Prisma throws.
+ * The owner in one statement, in the shape `getVersionById` returns for that handler's select. No
+ * row (a missing version, or an orphaned model or user) returns `undefined`: the caller then runs
+ * `getVersionById`, so a missing version is still `null` and an orphan still throws as Prisma throws.
  */
 export async function readModelVersionOwnerViaKysely(
   db: Kysely<DB>,
   id: number
-): Promise<Awaited<ReturnType<typeof readModelVersionOwnerViaPrisma>> | undefined> {
+): Promise<{ model: { user: UserWithCosmetics } } | undefined> {
   const row = await getModelVersionOwnerWithCosmetics(db, id);
   if (!row) return undefined;
   return { model: { user: toUserWithCosmetics(row) } };
@@ -145,10 +136,6 @@ export async function readPostDetailViaKysely(
 // The POI/owner check of the `model.*` visibility middleware (`modelVisibleToViewer`,
 // model.router.ts).
 
-export function readModelPoiAndOwnerViaPrisma(db: PrismaClient, id: number) {
-  return db.model.findUnique({ where: { id }, select: { poi: true, userId: true } });
-}
-
 export async function readModelPoiAndOwnerViaKysely(
   db: Kysely<DB>,
   id: number
@@ -157,10 +144,6 @@ export async function readModelPoiAndOwnerViaKysely(
 }
 
 // A user's id by username (`findUserIdByUsername`, image.service.ts, the replica read).
-
-export function readUserIdByUsernameViaPrisma(db: PrismaClient, username: string) {
-  return db.user.findUnique({ where: { username }, select: { id: true } });
-}
 
 export async function readUserIdByUsernameViaKysely(
   db: Kysely<DB>,
@@ -171,10 +154,6 @@ export async function readUserIdByUsernameViaKysely(
 
 // A user's `bannedAt` by username (the `/user/[username]/*` tab pages' banned redirect).
 
-export function readUserBannedAtViaPrisma(db: PrismaClient, username: string) {
-  return db.user.findUnique({ where: { username }, select: { bannedAt: true } });
-}
-
 export async function readUserBannedAtViaKysely(
   db: Kysely<DB>,
   username: string
@@ -183,7 +162,7 @@ export async function readUserBannedAtViaKysely(
 }
 
 // The public donation goals cache's lookup (`publicDonationGoalsLookupFn`,
-// donation-goals-cache.ts), its replica reads.
+// donation-goals-cache.ts): Kysely on the replica, Prisma on the primary.
 
 export function readExistingModelVersionIdsViaPrisma(db: PrismaClient, ids: number[]) {
   return db.modelVersion.findMany({ where: { id: { in: ids } }, select: { id: true } });
@@ -227,40 +206,22 @@ export function readActiveDonationGoalsViaKysely(
 
 export type ModelVersionEngagementsInput = { userId: number; modelVersionIds: number[] };
 
-export function readModelVersionEngagementsViaPrisma(
-  db: PrismaClient,
-  { userId, modelVersionIds }: ModelVersionEngagementsInput
-) {
-  return db.modelVersionEngagement.findMany({
-    where: { userId, modelVersionId: { in: modelVersionIds } },
-    select: { modelVersionId: true, type: true },
-  });
-}
+type ModelVersionEngagementRow = Prisma.ModelVersionEngagementGetPayload<{
+  select: { modelVersionId: true; type: true };
+}>;
 
 export function readModelVersionEngagementsViaKysely(
   db: Kysely<DB>,
   input: ModelVersionEngagementsInput
-): Promise<Awaited<ReturnType<typeof readModelVersionEngagementsViaPrisma>>> {
-  return listModelVersionEngagements(db, input) as Promise<
-    Awaited<ReturnType<typeof readModelVersionEngagementsViaPrisma>>
-  >;
+): Promise<ModelVersionEngagementRow[]> {
+  return listModelVersionEngagements(db, input) as Promise<ModelVersionEngagementRow[]>;
 }
 
 // A model's associated resources (`getAssociatedResourcesCardDataHandler`, model.controller.ts).
 
 export type ModelAssociationsInput = { fromModelId: number; type?: AssociationType };
 
-export function readModelAssociationTargetsViaPrisma(
-  db: PrismaClient,
-  { fromModelId, type }: ModelAssociationsInput
-) {
-  return db.modelAssociations.findMany({
-    where: { fromModelId, type },
-    select: { toModelId: true, toArticleId: true },
-    orderBy: { index: 'asc' },
-  });
-}
-
+/** Ordered by `index`, as the Prisma read was. */
 export function readModelAssociationTargetsViaKysely(
   db: Kysely<DB>,
   input: ModelAssociationsInput
@@ -272,16 +233,6 @@ export function readModelAssociationTargetsViaKysely(
 
 export type UserReviewsInput = { userId: number; recommended?: boolean; modelIds?: number[] };
 
-export function readUserReviewsViaPrisma(
-  db: PrismaClient,
-  { userId, recommended, modelIds }: UserReviewsInput
-) {
-  return db.resourceReview.findMany({
-    where: { userId, recommended, ...(modelIds ? { modelId: { in: modelIds } } : {}) },
-    select: { modelId: true, modelVersionId: true },
-  });
-}
-
 export function readUserReviewsViaKysely(
   db: Kysely<DB>,
   input: UserReviewsInput
@@ -292,6 +243,7 @@ export function readUserReviewsViaKysely(
 // A model version's metric-privacy inputs (`prepareModelVersionResponse`,
 // pages/api/v1/model-versions/[id].ts).
 
+/** The Prisma read, for a version the Kysely read answers `undefined` for. */
 export function readModelVersionPrivacyViaPrisma(db: PrismaClient, id: number) {
   return db.modelVersion.findUnique({
     where: { id },
@@ -335,31 +287,16 @@ export const downloadFileSelect = {
   type: true,
   metadata: true,
   sizeKB: true,
+  pickleScanResult: true,
+  virusScanResult: true,
   hashes: { select: { hash: true }, where: { type: 'SHA256' as const } },
 };
 
-export function readDownloadFilesViaPrisma(db: PrismaClient, where: Prisma.ModelFileWhereInput) {
-  return db.modelFile.findMany({ where, select: downloadFileSelect });
-}
-
-/** The Prisma `where` the download path builds, from the same inputs. */
-export function downloadFilesWhere({
-  modelVersionId,
-  notReplaced,
-  type,
-  publicOnly,
-}: DownloadFilesWhere): Prisma.ModelFileWhereInput {
-  const where: Prisma.ModelFileWhereInput = { modelVersionId };
-  if (notReplaced) where.replacedAt = null;
-  if (type) where.type = type;
-  if (publicOnly) where.visibility = ModelFileVisibility.Public;
-  return where;
-}
-
+/** The files in the shape a Prisma `modelFile.findMany` with `downloadFileSelect` returned. */
 export async function readDownloadFilesViaKysely(
   db: Kysely<DB>,
   where: DownloadFilesWhere
-): Promise<Awaited<ReturnType<typeof readDownloadFilesViaPrisma>>> {
+): Promise<Prisma.ModelFileGetPayload<{ select: typeof downloadFileSelect }>[]> {
   const rows = await listDownloadFiles(db, { ...where, type: where.type || undefined });
   return rows.map((row) => ({
     id: row.id,
@@ -369,6 +306,8 @@ export async function readDownloadFilesViaKysely(
     type: row.type,
     metadata: row.metadata as Prisma.JsonValue,
     sizeKB: row.sizeKB,
+    pickleScanResult: row.pickleScanResult,
+    virusScanResult: row.virusScanResult,
     hashes: row.hashes.map((hash) => ({ hash: hash.hash })),
   }));
 }

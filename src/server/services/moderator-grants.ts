@@ -10,6 +10,8 @@ const SUPER_ROLE = 'moderator:admin';
 /** Grant ids this module can check; declared in `apps/moderator/src/lib/permissions.ts`. */
 export type ModeratorGrantId =
   | 'user.deleteAccount'
+  | 'user.personalDataExport.queue'
+  | 'user.personalDataExport.release'
   | 'user.purge'
   | 'user.removeReactions'
   | 'user.membership.code'
@@ -26,7 +28,9 @@ export type ModeratorGrantId =
   | 'user.ban'
   | 'user.strike'
   | 'user.message.asCivitai'
-  | 'labelStore.submitPrediction';
+  | 'labelStore.submitPrediction'
+  | 'apps.buzz.refund'
+  | 'apps.buzz.refund.large';
 
 export async function hasModeratorGrant(
   user: { roles?: string[] },

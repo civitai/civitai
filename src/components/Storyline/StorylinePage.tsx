@@ -33,6 +33,7 @@ import {
 } from '~/components/Storyline/StorylineChips';
 import { storylineWriteChapterUrl } from '~/components/Storyline/storyline-routes';
 import { StorylineContextMenu } from '~/components/Storyline/StorylineContextMenu';
+import { StorylineFollowButton } from '~/components/Storyline/StorylineFollowButton';
 import { StorylineHero } from '~/components/Storyline/StorylineCover';
 import {
   StorylineInviteAlert,
@@ -252,6 +253,7 @@ function StorylineHeader({
               Continue the story
             </Button>
           )}
+          <StorylineFollowButton storylineId={storyline.id} />
           {(storyline.viewerRole === 'owner' || currentUser?.isModerator) && (
             <ActionIcon
               variant="default"

@@ -1,4 +1,6 @@
+import { listingSortSchema } from '~/server/schema/blocks/app-listing-read.schema';
 import { createContext, useCallback, useContext, useRef } from 'react';
+import { HAT_SORTS } from '~/shared/constants/hat-turf-feed.constants';
 import * as z from 'zod';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
@@ -53,6 +55,7 @@ const modelFilterSchema = z.object({
   earlyAccess: z.boolean().optional(),
   paidAccess: z.boolean().optional(),
   hidePaid: z.boolean().optional(),
+  onSale: z.boolean().optional(),
   supportsGeneration: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
   followed: z.boolean().optional(),
@@ -102,6 +105,12 @@ const imageFilterSchema = z.object({
   // Green-domain only: opt-in to PG-13 content on image/video feeds.
   // Default off — feeds show PG only until user toggles this on.
   includePG13: z.boolean().optional(),
+  // Hat Turf players only; the server ignores these from anyone else.
+  hatSort: z.enum(HAT_SORTS).optional(),
+  hatTeams: z.string().array().optional(),
+  hatTurfMine: z.boolean().optional(),
+  hideTurfHats: z.boolean().optional(),
+  hideWornHats: z.boolean().optional(),
 });
 
 type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;
@@ -133,6 +142,18 @@ const articleFilterSchema = z.object({
 type CollectionFilterSchema = z.infer<typeof collectionFilterSchema>;
 const collectionFilterSchema = z.object({
   sort: z.enum(CollectionSort).default(constants.collectionFilterDefaults.sort),
+});
+
+// The URL query a collection view was last left on, per content type. Validated again when it is
+// used, so a value an enum has since dropped is discarded there.
+export type CollectionFeedFilterSchema = z.infer<typeof collectionFeedFilterSchema>;
+const collectionFeedFilterSchema = z.object({
+  query: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
+});
+
+export type AppsStoreFilterSchema = z.infer<typeof appsStoreFilterSchema>;
+const appsStoreFilterSchema = z.object({
+  sort: listingSortSchema.optional().catch(undefined),
 });
 
 type BountyFilterSchema = z.infer<typeof bountyFilterSchema>;
@@ -205,6 +226,11 @@ type StorageState = {
   posts: PostFilterSchema;
   articles: ArticleFilterSchema;
   collections: CollectionFilterSchema;
+  collectionModels: CollectionFeedFilterSchema;
+  collectionImages: CollectionFeedFilterSchema;
+  collectionPosts: CollectionFeedFilterSchema;
+  collectionArticles: CollectionFeedFilterSchema;
+  appsStore: AppsStoreFilterSchema;
   bounties: BountyFilterSchema;
   crucibles: CrucibleFilterSchema;
   videos: VideoFilterSchema;
@@ -215,7 +241,13 @@ type StorageState = {
   changelogs: ChangelogFilterSchema;
   auctions: AuctionFilterSchema;
 };
-export type FilterSubTypes = keyof StorageState;
+export type CollectionFeedKey =
+  | 'collectionModels'
+  | 'collectionImages'
+  | 'collectionPosts'
+  | 'collectionArticles';
+// Without the keys that remember a URL query or a lone sort rather than filters a feed can run on.
+export type FilterSubTypes = Exclude<keyof StorageState, CollectionFeedKey | 'appsStore'>;
 
 const periodModeTypes = ['models', 'images', 'posts', 'articles', 'bounties'] as const;
 export type PeriodModeType = (typeof periodModeTypes)[number];
@@ -231,6 +263,11 @@ type StoreState = FilterState & {
   setPostFilters: (filters: Partial<PostFilterSchema>) => void;
   setArticleFilters: (filters: Partial<ArticleFilterSchema>) => void;
   setCollectionFilters: (filters: Partial<CollectionFilterSchema>) => void;
+  setCollectionModelFilters: (filters: Partial<CollectionFeedFilterSchema>) => void;
+  setCollectionImageFilters: (filters: Partial<CollectionFeedFilterSchema>) => void;
+  setCollectionPostFilters: (filters: Partial<CollectionFeedFilterSchema>) => void;
+  setCollectionArticleFilters: (filters: Partial<CollectionFeedFilterSchema>) => void;
+  setAppsStoreFilters: (filters: Partial<AppsStoreFilterSchema>) => void;
   setBountyFilters: (filters: Partial<BountyFilterSchema>) => void;
   setCrucibleFilters: (filters: Partial<CrucibleFilterSchema>) => void;
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
@@ -250,6 +287,11 @@ const localStorageSchemas: LocalStorageSchema = {
   posts: { key: 'post-filters', schema: postFilterSchema },
   articles: { key: 'article-filters', schema: articleFilterSchema },
   collections: { key: 'collections-filters', schema: collectionFilterSchema },
+  collectionModels: { key: 'collection-model-filters', schema: collectionFeedFilterSchema },
+  collectionImages: { key: 'collection-image-filters', schema: collectionFeedFilterSchema },
+  collectionPosts: { key: 'collection-post-filters', schema: collectionFeedFilterSchema },
+  collectionArticles: { key: 'collection-article-filters', schema: collectionFeedFilterSchema },
+  appsStore: { key: 'apps-store-filters', schema: appsStoreFilterSchema },
   bounties: { key: 'bounties-filters', schema: bountyFilterSchema },
   crucibles: { key: 'crucibles-filters', schema: crucibleFilterSchema },
   videos: { key: 'videos-filters', schema: videoFilterSchema },
@@ -349,6 +391,16 @@ const createFilterStore = () =>
         set((state) => handleLocalStorageChange({ key: 'articles', data, state })),
       setCollectionFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'collections', data, state })),
+      setCollectionModelFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'collectionModels', data, state })),
+      setCollectionImageFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'collectionImages', data, state })),
+      setCollectionPostFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'collectionPosts', data, state })),
+      setCollectionArticleFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'collectionArticles', data, state })),
+      setAppsStoreFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'appsStore', data, state })),
       setBountyFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'bounties', data, state })),
       setCrucibleFilters: (data) =>
@@ -401,7 +453,7 @@ function deserializeJSON(value: string) {
   }
 }
 
-export function useSetFilters(type: FilterSubTypes) {
+export function useSetFilters(type: FilterSubTypes | CollectionFeedKey) {
   return useFiltersContext(
     useCallback(
       (state) =>
@@ -412,6 +464,10 @@ export function useSetFilters(type: FilterSubTypes) {
           modelImages: state.setModelImageFilters,
           articles: state.setArticleFilters,
           collections: state.setCollectionFilters,
+          collectionModels: state.setCollectionModelFilters,
+          collectionImages: state.setCollectionImageFilters,
+          collectionPosts: state.setCollectionPostFilters,
+          collectionArticles: state.setCollectionArticleFilters,
           bounties: state.setBountyFilters,
           crucibles: state.setCrucibleFilters,
           videos: state.setVideoFilters,

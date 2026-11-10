@@ -1,3 +1,4 @@
+import { stickerPoseStyle } from '~/components/Sticker/sticker-pose-style';
 import { Button } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -10,6 +11,11 @@ import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { placementControlPosition } from '~/components/Sticker/placement-control-position';
 import { placementMarkLayout } from '~/components/Sticker/placement-mark-layout';
 import { PENDING_CONTROL_Z } from '~/components/Sticker/placement-layers';
+import type { PeekToggleCorner } from '~/components/Sticker/peek-toggle-corner';
+import {
+  PEEK_TOGGLE_CORNER_CLASS,
+  peekToggleCorner,
+} from '~/components/Sticker/peek-toggle-corner';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import { freeMarkerVisible } from '~/components/Sticker/free-marker';
@@ -85,8 +91,17 @@ export function StickerPlacementOverlay({
   armed = false,
   paced = true,
   step = null,
+  takenCorners,
+  hiddenIds,
+  bindPose,
 }: {
   placements: PlacedSticker[];
+  /** Hidden but kept mounted, so showing one again does not replay the reveal. */
+  hiddenIds?: ReadonlySet<number>;
+  /** A ref per sticker for playback that moves it along its track (`useTrackPlayback`). */
+  bindPose?: (id: number) => (node: HTMLElement | null) => void;
+  /** Corners another decoration draws in, which the peek toggle keeps out of. */
+  takenCorners?: PeekToggleCorner[];
   viewerId?: number;
   className?: string;
   /**
@@ -356,6 +371,12 @@ export function StickerPlacementOverlay({
   // every placed sticker and not just the one they belong to; isolation would cap
   // them at the layer's own z-index.
   const pendingControls: ReactElement[] = [];
+  const toggleCorner = peekToggleCorner(
+    visible
+      .filter((placement) => placement.isPending && placement.ownerId === viewerId)
+      .map(({ data }) => data),
+    takenCorners
+  );
 
   return (
     <>
@@ -483,13 +504,17 @@ export function StickerPlacementOverlay({
           const body = (
             <div
               key={placement.id}
-              ref={placement.isPending ? measureSticker(placement) : undefined}
-              className={clsx('absolute', interactive && 'pointer-events-auto', revealClassName)}
+              ref={placement.isPending ? measureSticker(placement) : bindPose?.(placement.id)}
+              className={clsx(
+                'absolute',
+                interactive && 'pointer-events-auto',
+                revealClassName,
+                // Important: the reveal animation fills `visibility: visible`, which only an
+                // important rule beats.
+                hiddenIds?.has(placement.id) && '!invisible'
+              )}
               style={{
-                left: `${placement.data.x * 100}%`,
-                top: `${placement.data.y * 100}%`,
-                width: `${placement.data.scale * 100}%`,
-                transform: `translate(-50%, -50%) rotate(${placement.data.rotation}deg)`,
+                ...stickerPoseStyle(placement.data),
                 zIndex: layer,
                 ...delayStyle,
               }}
@@ -732,7 +757,7 @@ export function StickerPlacementOverlay({
             h={44}
             radius="xl"
             variant="default"
-            className="pointer-events-auto absolute right-2 top-2"
+            className={clsx('pointer-events-auto absolute', PEEK_TOGGLE_CORNER_CLASS[toggleCorner])}
             leftSection={peek ? <IconEye size={16} /> : <IconEyeOff size={16} />}
             aria-pressed={peek}
             onClick={() => setPeeking(!peek)}

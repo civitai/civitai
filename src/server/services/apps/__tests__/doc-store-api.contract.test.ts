@@ -170,6 +170,10 @@ import {
 } from '~/shared/constants/block-storage.constants';
 import { DOC_STORE_BOUNDS } from '~/server/services/apps/doc-store.types';
 import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
+import {
+  blockRequestResult,
+  type AppBlockRequestResult,
+} from '~/server/metrics/app-block-runtime.metrics';
 import { resolveImportAccess, resolveStorageAccess } from '~/server/services/apps/doc-store-access';
 import {
   grantImportSourcePublish,
@@ -353,7 +357,13 @@ function installDb() {
 // Driving the route
 // ---------------------------------------------------------------------------
 
-type Reply = { status: number; body: unknown; headers: Record<string, unknown> };
+type Reply = {
+  status: number;
+  body: unknown;
+  headers: Record<string, unknown>;
+  /** The `result` label the block-scope middleware records for this response on finish. */
+  requestResult: AppBlockRequestResult;
+};
 
 async function mint(opts: {
   app: AppRow | { id: string; appId: string; blockId: string };
@@ -417,8 +427,10 @@ async function call(opts: {
   let status = 0;
   let body: unknown;
   const res = {
+    statusCode: 0,
     status(code: number) {
       status = code;
+      res.statusCode = code;
       return res;
     },
     json(payload: unknown) {
@@ -449,7 +461,7 @@ async function call(opts: {
     },
   };
   await storageRoute(req, res as unknown as NextApiResponse);
-  return { status, body, headers };
+  return { status, body, headers, requestResult: blockRequestResult(res) };
 }
 
 /** Every response is checked for a numeric user id, under any key or value. */
@@ -655,7 +667,9 @@ let harness: Harness;
 let liveStore: DocStore;
 
 beforeAll(async () => {
-  harness = await createPgliteHarness({ rls: true });
+  // With the manual `schema_major` migration applied, so the route's stamping is observable (the
+  // column-absent path is `doc-store.schema-major.pglite.test.ts`).
+  harness = await createPgliteHarness({ rls: true, schemaMajor: true });
   liveStore = createDocStore({
     db: harness.db,
     limits: { ...DEFAULT_DOC_STORE_LIMITS, userDocs: contract.limits.viewerDocs },
@@ -994,6 +1008,170 @@ describe('namespaces per token kind', () => {
     expect(r.status).toBe(403);
     expect(r.body).toMatchObject({ code: 'not_eligible', details: { reason: 'apps_disabled' } });
   });
+
+  describe('schema_major: the major a write is stamped with follows the token kind', () => {
+    // Approved history for A: `prefs` gains a schema, then (at the enforced MANIFEST) loses it
+    // again, so it is on @v3; `posts` loses one it had from the start, so it is on @v2; `plays`
+    // never changes (@v1 — and as a `write: 'none'` collection it cannot take a schema at all).
+    // Distinct majors per collection.
+    const withSchema = (names: string[]) => ({
+      ...MANIFEST,
+      storage: {
+        collections: Object.fromEntries(
+          Object.entries(contract.storage.collections).map(([name, decl]) => [
+            name,
+            names.includes(name) ? { ...(decl as object), schema: { type: 'object' } } : decl,
+          ])
+        ),
+      },
+    });
+    const historyOf = (appBlockId: string) => [
+      {
+        id: `pubreq_${appBlockId}_a`,
+        manifest: withSchema(['posts']),
+        reviewedAt: new Date('2026-10-01T00:00:00Z'),
+      },
+      {
+        id: `pubreq_${appBlockId}_b`,
+        manifest: withSchema(['posts', 'prefs']),
+        reviewedAt: new Date('2026-10-02T00:00:00Z'),
+      },
+    ];
+    const majorOf = async (appId: string, ns: string, key: string) =>
+      (
+        await harness.raw(
+          `SELECT d.schema_major FROM appdata.doc d WHERE d.app_id = $1 AND d.ns = $2 AND d.key = $3`,
+          [appId, ns, key]
+        )
+      ).map((r) => r.schema_major);
+
+    beforeEach(() => {
+      // Any app's history is the one above, so a write that WERE stamped would carry a major.
+      dbMock.dbRead.appBlockPublishRequest.findMany.mockImplementation(
+        async ({ where }: { where: { appBlockId: string } }) => historyOf(where.appBlockId)
+      );
+    });
+
+    it('control: every history manifest parses, so the derivation replays it rather than skipping it', () => {
+      for (const step of historyOf('apb_any')) {
+        expect({ id: step.id, errors: parseManifestStorage(step.manifest).errors }).toEqual({
+          id: step.id,
+          errors: [],
+        });
+      }
+    });
+
+    it('🔴 a production write stamps the collection’s current major: put, and the counter document a first increment creates', async () => {
+      const { A } = freshApps();
+      const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+      expect(
+        (await call({ token: t, method: 'PUT', path: '/prefs/k1', body: { data: { a: 1 } } }))
+          .status
+      ).toBe(200);
+      expect(
+        (
+          await call({
+            token: t,
+            method: 'POST',
+            path: '/plays/g1/counters/plays',
+            body: { by: 1 },
+          })
+        ).status
+      ).toBe(200);
+      expect(
+        (
+          await call({
+            token: t,
+            method: 'PUT',
+            path: '/posts/p1',
+            body: { data: { status: 'open' } },
+          })
+        ).status
+      ).toBe(200);
+      expect(await majorOf(A.id, 'prod', 'k1')).toEqual([3]);
+      expect(await majorOf(A.id, 'prod', 'p1')).toEqual([2]);
+      expect(await majorOf(A.id, 'prod', 'g1')).toEqual([1]);
+    });
+
+    it('🔴 a dev write never stamps', async () => {
+      const { A } = freshApps();
+      const dev = await mintDevReal(A, VIEWER_IDS.v2, contract.defaultScopes);
+      expect(
+        (await call({ token: dev, method: 'PUT', path: '/prefs/k1', body: { data: { a: 1 } } }))
+          .status
+      ).toBe(200);
+      expect(
+        (
+          await call({
+            token: dev,
+            method: 'POST',
+            path: '/plays/g1/counters/plays',
+            body: { by: 1 },
+          })
+        ).status
+      ).toBe(200);
+      const ns = `dev:${VIEWER_IDS.v2}`;
+      expect(await majorOf(A.id, ns, 'k1')).toEqual([null]);
+      expect(await majorOf(A.id, ns, 'g1')).toEqual([null]);
+    });
+
+    it('🔴 a review write never stamps: it leaves a stamp it did not write alone', async () => {
+      freshApps();
+      const pubreq = {
+        id: 'pubreq_01JREVIEWNOSTAMP00000000',
+        status: 'pending',
+        slug: 'review-no-stamp',
+        manifest: MANIFEST,
+      };
+      publishRequests.push(pubreq);
+      const { token } = await realReviewMint(pubreq, VIEWER_IDS.v1);
+      const ns = `rev:${pubreq.id}:${VIEWER_IDS.v1}`;
+      expect(
+        (await call({ token, method: 'PUT', path: '/prefs/k1', body: { data: { a: 1 } } })).status
+      ).toBe(200);
+      // A review token has no enforced manifest, so a stamp would be NULL; a sentinel tells
+      // "left alone" from "stamped NULL".
+      await harness.raw(
+        `UPDATE appdata.doc d SET schema_major = 97 WHERE d.app_id = $1 AND d.ns = $2 AND d.key = 'k1'`,
+        [pubreq.id, ns]
+      );
+      expect(
+        (await call({ token, method: 'PUT', path: '/prefs/k1', body: { data: { a: 2 } } })).status
+      ).toBe(200);
+      expect(await majorOf(pubreq.id, ns, 'k1')).toEqual([97]);
+    });
+  });
+});
+
+// A first read of a key that was never written is a 404 by contract. The per-app REST counter
+// (`civitai_app_block_requests_total`) used to count it as `client_error`, inflating every
+// storage-using app's error ratio. Red on origin/main: `requestResult` was `client_error`.
+describe('a document read miss is not an error on the per-app REST counter', () => {
+  it('GET of a missing document records result=not_found', async () => {
+    const { A } = freshApps();
+    const token = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const miss = await call({ token, method: 'GET', path: '/prefs/never-written' });
+    expect(miss.status).toBe(404);
+    expect(miss.body).toMatchObject({ code: 'not_found' });
+    expect(miss.requestResult).toBe('not_found');
+  });
+
+  it('a hit is still success, and other 404s are still client_error', async () => {
+    const { A } = freshApps();
+    const token = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const put = await call({ token, method: 'PUT', path: '/prefs/k1', body: { data: { n: 1 } } });
+    expect(put.status).toBe(200);
+    expect((await call({ token, method: 'GET', path: '/prefs/k1' })).requestResult).toBe('success');
+    // An unmatched route is also `code: not_found`, but it is the caller's mistake, not a miss.
+    const noRoute = await call({ token, method: 'GET', path: '/a/b/c/d/e' });
+    expect(noRoute.status).toBe(404);
+    expect(noRoute.body).toMatchObject({ code: 'not_found' });
+    expect(noRoute.requestResult).toBe('client_error');
+    const undeclared = await call({ token, method: 'GET', path: '/undeclaredcoll/k1' });
+    expect(undeclared.status).toBe(404);
+    expect(undeclared.body).toMatchObject({ code: 'collection_not_declared' });
+    expect(undeclared.requestResult).toBe('client_error');
+  });
 });
 
 describe('rate limits: separate buckets', () => {
@@ -1241,10 +1419,12 @@ describe('route faults and CORS', () => {
     }
   );
 
-  it('the preflight from an opaque origin allows PUT and DELETE', async () => {
+  it('the preflight from an opaque origin allows PUT, DELETE and PATCH', async () => {
     const r = await call({ token: null, method: 'OPTIONS', path: '/prefs/k', origin: 'null' });
     expect(r.status).toBe(204);
-    expect(r.headers['access-control-allow-methods']).toBe('GET, POST, PUT, DELETE, OPTIONS');
+    expect(r.headers['access-control-allow-methods']).toBe(
+      'GET, POST, PUT, DELETE, PATCH, OPTIONS'
+    );
   });
 });
 
@@ -1440,7 +1620,7 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
     });
   });
 
-  it('the preflight from an ALLOWLISTED origin allows PUT and DELETE too', async () => {
+  it('the preflight from an ALLOWLISTED origin allows PUT, DELETE and PATCH too', async () => {
     const { _internalsForTests } = await import('~/server/middleware/block-scope.middleware');
     _internalsForTests.resetOriginCache();
     dbMock.dbRead.oauthClient.findMany.mockResolvedValue([
@@ -1454,7 +1634,9 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
     });
     expect(r.status).toBe(204);
     expect(r.headers['access-control-allow-origin']).toBe('https://contract-app.example');
-    expect(r.headers['access-control-allow-methods']).toBe('GET, POST, PUT, DELETE, OPTIONS');
+    expect(r.headers['access-control-allow-methods']).toBe(
+      'GET, POST, PUT, DELETE, PATCH, OPTIONS'
+    );
     _internalsForTests.resetOriginCache();
   });
 
@@ -3440,6 +3622,67 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     });
     expect(own.status).toBe(400);
     expect(own.body).toMatchObject({ code: 'schema_violation', details: { keyword: 'required' } });
+  });
+
+  it("🔴 a write through an import is stamped with the SOURCE app's major, derived against the source's manifest", async () => {
+    const { S, C } = importApps();
+    // The source's `notes` had a schema and lost it at the enforced manifest: @v2. The consumer's
+    // own `notes` has no history: @v1. Only the source's manifest declares the imported `notes`
+    // collection with a history that mints, so @v2 can come from nowhere but the source.
+    const sourceCollections = (S.manifest as { storage: { collections: Record<string, object> } })
+      .storage.collections;
+    const sourceV1 = {
+      ...(S.manifest as object),
+      storage: {
+        collections: {
+          ...sourceCollections,
+          notes: { ...sourceCollections.notes, schema: { type: 'object' } },
+        },
+      },
+    };
+    // The consumer's own `notes` keeps that schema, so against the source's history the
+    // CONSUMER's manifest would give @v1: deriving against the wrong manifest is visible too.
+    const consumer = C.manifest as { storage: { collections: Record<string, object> } };
+    consumer.storage.collections.notes = {
+      ...consumer.storage.collections.notes,
+      schema: { type: 'object' },
+    };
+    dbMock.dbRead.appBlockPublishRequest.findMany.mockImplementation(
+      async ({ where }: { where: { appBlockId: string } }) =>
+        where.appBlockId === S.id
+          ? [
+              {
+                id: `pubreq_${S.id}_a`,
+                manifest: sourceV1,
+                reviewedAt: new Date('2026-10-01T00:00:00Z'),
+              },
+            ]
+          : []
+    );
+    await grant(VIEWER_IDS.v1, C, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    const put = await call({
+      token: c,
+      method: 'PUT',
+      path: '/notes/stamped',
+      query: { from: S.blockId },
+      body: { data: { text: 'from fork' } },
+    });
+    expect(put.status).toBe(200);
+    const rows = await harness.raw(
+      `SELECT d.app_id, d.ns, d.schema_major FROM appdata.doc d WHERE d.key = 'stamped'`
+    );
+    expect(rows).toEqual([{ app_id: S.id, ns: 'prod', schema_major: 2 }]);
+
+    // Control: the consumer's own `notes` (no `from`) is stamped with the consumer's major.
+    expect(
+      (await call({ token: c, method: 'PUT', path: '/notes/own-stamp', body: { data: { t: 1 } } }))
+        .status
+    ).toBe(200);
+    const own = await harness.raw(
+      `SELECT d.app_id, d.schema_major FROM appdata.doc d WHERE d.key = 'own-stamp'`
+    );
+    expect(own).toEqual([{ app_id: C.id, schema_major: 1 }]);
   });
 });
 

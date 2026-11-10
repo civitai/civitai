@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RedisClientModule from '@civitai/redis/client';
-import type * as StringHelpers from '~/utils/string-helpers';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
@@ -11,7 +10,7 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
  * Pins that on a namespaced deployment every cache key and every `tag:<name>` set moves into that
  * namespace, that a tag bust still finds its members there, and that a production entry sitting
  * under the unprefixed key is neither read nor overwritten. Expected keys are hand-written
- * literals; `hashifyObject` is stubbed to a constant.
+ * literals; `queryCacheKeyHash` is stubbed to a constant.
  */
 
 // Must run before the `vi.mock` factory below imports the key table — the prefix is resolved at
@@ -54,10 +53,7 @@ vi.mock('~/server/redis/client', async () => {
   return { ...pkg, redis: fakeRedis, sysRedis: fakeRedis };
 });
 
-vi.mock('~/utils/string-helpers', async () => {
-  const actual = await vi.importActual<typeof StringHelpers>('~/utils/string-helpers');
-  return { ...actual, hashifyObject: () => 'HASH' };
-});
+vi.mock('~/server/utils/query-cache-key', () => ({ queryCacheKeyHash: () => 'HASH' }));
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/prom/client', () => ({

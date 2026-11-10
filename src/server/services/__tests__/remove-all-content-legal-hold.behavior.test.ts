@@ -125,18 +125,6 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
     }
   ),
 }));
-// The soft delete is model-removal-collection-reindex's; here, only which models get it, and how.
-// It commits the Deleted status, as the real one does before its refunds and cache steps.
-const { deleteModelById } = vi.hoisted(() => ({
-  deleteModelById: vi.fn(async ({ id }: { id: number }) => {
-    await holder.db.exec(`UPDATE "Model" SET status = 'Deleted' WHERE id = ${id}`);
-    return null;
-  }),
-}));
-vi.mock('~/server/services/model.service', async (importOriginal) => ({
-  ...((await importOriginal()) as Record<string, unknown>),
-  deleteModelById,
-}));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   refundBidsForVersions: vi.fn(async () => ({
@@ -175,8 +163,8 @@ import {
   deleteSettledKeptBounties,
   retryUnsettledBountyPayouts,
 } from '~/server/services/bounty.service';
-import { bulkClearCommentTosViolation } from '~/server/services/comment.service';
 import { deleteImages } from '~/server/services/image.service';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { refundBidsForVersions } from '~/server/services/auction.service';
 import { KEPT_MODEL_STATUS } from '~/server/utils/legal-hold';
 import { restoreModelRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
@@ -201,14 +189,14 @@ const EVIDENCE = [
   'BountyEntry',
   'Bounty',
   'ResourceReview',
-  'CommentV2',
-  'Comment',
   'Article',
   'Post',
   'Model',
   'ChatMessage',
   'ChatMember',
 ];
+/** Every table seeded with one row per account. */
+const SEEDED_TABLES = EVIDENCE;
 // Kept as data with no code for them: the wipe leaves these rows alone.
 const QA_DATA = ['Question', 'Answer'];
 
@@ -238,9 +226,11 @@ beforeAll(async () => {
       details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]'
     );
     CREATE TABLE "Image" (
-      id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "needsReview" text, "blockedFor" text
+      id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "needsReview" text, "blockedFor" text,
+      minor boolean NOT NULL DEFAULT false
     );
-    ${[...EVIDENCE, ...QA_DATA]
+    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
+    ${[...SEEDED_TABLES, ...QA_DATA]
       .map((t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`)
       .join('\n')}
     CREATE TABLE "BountyBenefactor" ("awardedToId" int REFERENCES "BountyEntry"(id) ON DELETE SET NULL);
@@ -266,44 +256,30 @@ beforeAll(async () => {
     ALTER TABLE "BountyBenefactor" ADD COLUMN "userId" int,
       ADD COLUMN "unitAmount" int NOT NULL DEFAULT 0,
       ADD COLUMN "buzzTransactionId" text[] NOT NULL DEFAULT '{}';
-    ALTER TABLE "Comment" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE,
-      ADD COLUMN "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
-      ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false, ADD COLUMN "updatedAt" timestamp(3),
-      ADD COLUMN "removedByAuthor" boolean NOT NULL DEFAULT false;
-    -- What a ToS restore reopens; no reports here, so only the flag moves.
-    CREATE DOMAIN "ReportStatus" AS text;
-    CREATE DOMAIN "ReportReason" AS text;
-    CREATE TABLE "Report" (id int PRIMARY KEY, status text, reason text);
-    CREATE TABLE "CommentReport" ("reportId" int, "commentId" int);
-    -- A parent's comment thread, and the comments on it, go with the parent; reply threads with
-    -- their root.
-    CREATE TABLE "Thread" (
-      id serial PRIMARY KEY,
-      "reviewId" int REFERENCES "ResourceReview"(id) ON DELETE CASCADE,
-      "postId" int REFERENCES "Post"(id) ON DELETE CASCADE,
-      "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE,
-      "imageId" int REFERENCES "Image"(id) ON DELETE CASCADE,
-      "articleId" int REFERENCES "Article"(id) ON DELETE CASCADE,
-      "bountyId" int REFERENCES "Bounty"(id) ON DELETE CASCADE,
-      "bountyEntryId" int REFERENCES "BountyEntry"(id) ON DELETE CASCADE,
-      "parentThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
-      "rootThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
-      "commentId" int,
-      metadata jsonb NOT NULL DEFAULT '{}'
-    );
-    ALTER TABLE "CommentV2" ADD COLUMN "threadId" int REFERENCES "Thread"(id) ON DELETE CASCADE;
-    -- What a CommentV3 write keeps in step on a comment's CommentV2 row.
-    ALTER TABLE "CommentV2" ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false,
-      ADD COLUMN "updatedAt" timestamp(3), ADD COLUMN metadata jsonb;
-    CREATE TABLE "CommentTopic" ("entityType" text NOT NULL, "entityId" int NOT NULL);
+    -- As production: a topic goes with its entity (a partition per entity type, each with its
+    -- cascading key; the rest share one with none here), its comments with it, and a comment with
+    -- replies cannot be deleted on its own.
+    CREATE TABLE "CommentTopic" (
+      "entityType" text NOT NULL, "entityId" int NOT NULL, PRIMARY KEY ("entityId", "entityType")
+    ) PARTITION BY LIST ("entityType");
+    ${Object.entries({ post: 'Post', review: 'ResourceReview', article: 'Article', model: 'Model' })
+      .map(
+        ([type, table]) => `
+    CREATE TABLE "CommentTopic_${type}" PARTITION OF "CommentTopic" FOR VALUES IN ('${type}');
+    ALTER TABLE "CommentTopic_${type}"
+      ADD FOREIGN KEY ("entityId") REFERENCES "${table}"(id) ON DELETE CASCADE;`
+      )
+      .join('')}
+    CREATE TABLE "CommentTopic_other" PARTITION OF "CommentTopic" DEFAULT;
     CREATE TABLE "Collection" (id serial PRIMARY KEY, "userId" int NOT NULL);
-    -- Comments on a surface that writes CommentV3 directly, which have no CommentV2 row.
     CREATE EXTENSION ltree;
     CREATE TABLE "CommentV3" (
-      id int PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL, "parentId" int,
+      id int PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL,
+      "parentId" int REFERENCES "CommentV3"(id) ON DELETE RESTRICT,
       "replyToId" int, path ltree NOT NULL, "rootId" int GENERATED ALWAYS AS (ltree2text(subpath(path, 0, 1))::int) STORED, "userId" int NOT NULL, content text NOT NULL,
       "tosViolation" boolean NOT NULL DEFAULT false, "deletedAt" timestamptz, "updatedAt" timestamptz,
-      "removedByAuthor" boolean NOT NULL DEFAULT false
+      "legacyV1Id" int, "pinnedAt" timestamptz,
+      FOREIGN KEY ("entityId", "entityType") REFERENCES "CommentTopic" ON DELETE CASCADE
     );
     CREATE TABLE "CommentV3Report" (
       "reportId" int PRIMARY KEY, "commentId" int NOT NULL REFERENCES "CommentV3"(id) ON DELETE CASCADE
@@ -360,10 +336,10 @@ beforeEach(async () => {
   await holder.db.exec(`
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
-    TRUNCATE "CsamReport", "Image", "BountyBenefactor", "Thread", "Collection", "ModelVersion",
+    TRUNCATE "CsamReport", "Image", "BountyBenefactor", "Collection", "ModelVersion",
       "CommentV3", "CommentV3Report", "CommentV3Reaction", "CommentTopic",
       "ModActivity", "BountyUnpaidAward", "HeldResourceReview",
-      ${[...EVIDENCE, ...QA_DATA].map((t) => `"${t}"`).join(', ')} RESTART IDENTITY;
+      ${[...SEEDED_TABLES, ...QA_DATA].map((t) => `"${t}"`).join(', ')} RESTART IDENTITY;
     ALTER SEQUENCE "Collection_id_seq" RESTART ${COLLECTION};
     ALTER SEQUENCE "Article_id_seq" RESTART ${ARTICLE};
     ALTER SEQUENCE "Model_id_seq" RESTART ${MODEL};
@@ -374,7 +350,7 @@ beforeEach(async () => {
       (${CLEAN * 100}, ${CLEAN}, 1), (${CLEAN * 100 + 1}, ${CLEAN}, 1),
       (${HELD * 100}, ${HELD}, NULL), (${MARKED * 100}, ${MARKED}, NULL),
       (${BYSTANDER * 100}, ${BYSTANDER}, NULL);
-    ${[...EVIDENCE, ...QA_DATA]
+    ${[...SEEDED_TABLES, ...QA_DATA]
       .map(
         (t) =>
           `INSERT INTO "${t}" ("userId") VALUES (${CLEAN}), (${HELD}), (${MARKED}), (${BYSTANDER});`
@@ -507,7 +483,7 @@ async function createMarkerView() {
 /** Rows left per table for `userId`, images included. */
 async function remaining(userId: number) {
   const counts: Record<string, number> = {};
-  for (const t of [...EVIDENCE, 'Image'])
+  for (const t of [...SEEDED_TABLES, 'Image'])
     counts[t] = Number(
       (
         await holder.db.query<{ n: number }>(
@@ -518,9 +494,17 @@ async function remaining(userId: number) {
     );
   return counts;
 }
-const all = (n: number) => Object.fromEntries([...EVIDENCE, 'Image'].map((t) => [t, n]));
+const all = (n: number) => Object.fromEntries([...SEEDED_TABLES, 'Image'].map((t) => [t, n]));
 /** What the seed gives `userId`: one row per table, and two images for CLEAN. */
 const seeded = (userId: number) => ({ ...all(1), Image: userId === CLEAN ? 2 : 1 });
+/** CommentV3 rows of `userId`'s still there. */
+const commentsOf = async (userId: number) =>
+  (
+    await holder.db.query<{ id: number }>(
+      `SELECT id FROM "CommentV3" WHERE "userId" = $1 ORDER BY id`,
+      [userId]
+    )
+  ).rows.map((r) => r.id);
 
 describe('removeAllContent', () => {
   it('wipes an account no hold covers, and no one else’s', async () => {
@@ -553,19 +537,30 @@ describe('removeAllContent', () => {
     );
   });
 
-  describe('comments that exist only in CommentV3', () => {
+  // Its content is every reporter's page captures; each one is acted on as an image instead.
+  it('refuses the feedback capture account, deleting nothing', async () => {
+    const CAPTURE = FEEDBACK_CAPTURE_OWNER_ID;
+    await holder.db.exec(`INSERT INTO "Image" (id, "userId") VALUES (9703, ${CAPTURE})`);
+    await expect(removeAllContent({ id: CAPTURE })).rejects.toThrow(/feedback page captures/);
+    const left = await holder.db.query<{ id: number }>(
+      `SELECT id FROM "Image" WHERE "userId" = ${CAPTURE} ORDER BY id`
+    );
+    expect(left.rows.map((r) => r.id)).toEqual([9703]);
+  });
+
+  // On someone else's content, so only the comment pass reaches them.
+  describe('the account’s comments', () => {
     beforeEach(async () => {
       await holder.db.exec(`
+        INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('image', 1), ('model3dReview', 1);
         INSERT INTO "CommentV3" (id, "entityType", "entityId", "parentId", path, "userId", content) VALUES
-          (91, 'article', 1, NULL, '91', ${CLEAN}, 'gone'),
-          (92, 'article', 1, NULL, '92', ${CLEAN}, 'kept as a placeholder'),
-          (93, 'article', 1, 92, '92.93', ${BYSTANDER}, 'a reply by someone else'),
-          (94, 'image', 1, NULL, '94', ${CLEAN}, 'an image comment, wiped through CommentV2'),
-          (95, 'article', 1, NULL, '95', ${CLEAN}, 'above a held reply'),
-          (96, 'article', 1, 95, '95.96', ${HELD}, 'a held author''s reply');
+          (91, 'image', 1, NULL, '91', ${CLEAN}, 'gone'),
+          (92, 'image', 1, NULL, '92', ${CLEAN}, 'kept as a placeholder'),
+          (93, 'image', 1, 92, '92.93', ${BYSTANDER}, 'a reply by someone else'),
+          (94, 'model3dReview', 1, NULL, '94', ${CLEAN}, 'a 3D model review comment'),
+          (95, 'image', 1, NULL, '95', ${CLEAN}, 'above a held author''s reply'),
+          (96, 'image', 1, 95, '95.96', ${HELD}, 'a held author''s reply');
         INSERT INTO "CommentV3Reaction" ("commentId", "userId") VALUES (93, ${CLEAN}), (93, ${BYSTANDER});
-        -- CommentV2 twins, as comments written before the flip have.
-        INSERT INTO "CommentV2" (id, "userId") VALUES (91, ${CLEAN}), (95, ${CLEAN});
       `);
     });
     const v3 = async () =>
@@ -576,69 +571,33 @@ describe('removeAllContent', () => {
         )
       ).rows;
 
-    it('are wiped, with a placeholder above a reply, and kept above a held reply', async () => {
+    it('are wiped on every surface, with a placeholder above a reply, a held author’s too', async () => {
       await removeAllContent({ id: CLEAN });
       expect(await v3()).toEqual([
         { id: 92, content: '', deleted: true, tos: false },
         { id: 93, content: 'a reply by someone else', deleted: false, tos: false },
-        {
-          id: 94,
-          content: 'an image comment, wiped through CommentV2',
-          deleted: false,
-          tos: false,
-        },
-        // Kept for the held reply below it, and taken off the page.
-        { id: 95, content: 'above a held reply', deleted: false, tos: true },
+        { id: 95, content: '', deleted: true, tos: false },
         { id: 96, content: "a held author's reply", deleted: false, tos: false },
       ]);
-      // A reaction on a CommentV3-only comment has no CommentV2Reaction row to go with.
+      // The account's reactions go too, and no one else's.
       const reactors = await holder.db.query<{ userId: number }>(
         `SELECT "userId" FROM "CommentV3Reaction" ORDER BY 1`
       );
       expect(reactors.rows).toEqual([{ userId: BYSTANDER }]);
-      // 95's twin outlives the CommentV2 delete: through the mirror it would blank the kept comment.
-      const twins = await holder.db.query<{ id: number }>(
-        `SELECT id FROM "CommentV2" WHERE id IN (91, 95) ORDER BY id`
-      );
-      expect(twins.rows).toEqual([{ id: 95 }]);
-      // Marked as its author's removal, so a moderator's ToS restore cannot republish it.
-      const marked = await holder.db.query<{ id: number }>(
-        `SELECT id FROM "CommentV3" WHERE "removedByAuthor" ORDER BY id`
-      );
-      expect(marked.rows).toEqual([{ id: 95 }]);
     });
 
-    // Deleting the article would delete the held comment with it.
-    it('keep an article of the account, unpublished, while a held author commented on it', async () => {
+    it('deletes an article of the account and its comments, a held author’s comment on it notwithstanding', async () => {
       await holder.db.exec(`
         INSERT INTO "Article" (id, "userId") VALUES (777, ${CLEAN});
-        INSERT INTO "Article" (id, "userId", status, "scheduledAt") VALUES (778, ${CLEAN}, 'Draft', now() + interval '1 day');
+        INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('article', 777);
         INSERT INTO "CommentV3" (id, "entityType", "entityId", "parentId", path, "userId", content) VALUES
-          (97, 'article', 777, NULL, '97', ${HELD}, 'held, on the account''s article'),
-          (98, 'article', 778, NULL, '98', ${HELD}, 'held, on a scheduled draft');
+          (97, 'article', 777, NULL, '97', ${HELD}, 'held, on the account''s article');
       `);
       await removeAllContent({ id: CLEAN });
-      // Taken down as a violation: neither its owner nor its schedule can publish it again.
-      const articles = await holder.db.query<{ id: number; status: string; scheduled: boolean }>(
-        `SELECT id, status, "scheduledAt" IS NOT NULL AS scheduled FROM "Article" WHERE "userId" = ${CLEAN} ORDER BY id`
-      );
-      expect(articles.rows).toEqual([
-        { id: 777, status: 'UnpublishedViolation', scheduled: false },
-        { id: 778, status: 'UnpublishedViolation', scheduled: false },
-      ]);
-      const kept = await holder.db.query<{ id: number }>(
-        `SELECT id FROM "CommentV3" WHERE id = 97`
-      );
-      expect(kept.rows).toEqual([{ id: 97 }]);
-    });
-
-    it('are kept when a hold lands mid-wipe, before they are reached', async () => {
-      const before = await v3();
-      landsBefore = 'ResourceReview';
-      beforeEvidence = () =>
-        holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-      await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-      expect(await v3()).toEqual(before);
+      expect(
+        (await holder.db.query(`SELECT id FROM "Article" WHERE "userId" = ${CLEAN}`)).rows
+      ).toEqual([]);
+      expect(await commentsOf(HELD)).not.toContain(97);
     });
   });
 
@@ -747,27 +706,28 @@ describe('removeAllContent', () => {
     });
   });
 
-  it('keeps another user’s comment on a review of theirs when a hold lands mid-wipe', async () => {
-    await holder.db.exec(`
-      INSERT INTO "Thread" ("reviewId")
-        SELECT id FROM "ResourceReview" WHERE "userId" = ${CLEAN};
-      INSERT INTO "CommentV2" ("userId", "threadId") SELECT ${BYSTANDER}, id FROM "Thread";
+  const bystanderCommentsOnItsReviews = () =>
+    holder.db.exec(`
+      INSERT INTO "CommentTopic" ("entityType", "entityId")
+        SELECT 'review', id FROM "ResourceReview" WHERE "userId" = ${CLEAN};
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", path, "userId", content)
+        SELECT 8000 + id, 'review', id, (8000 + id)::text::ltree, ${BYSTANDER}, 'on its review'
+        FROM "ResourceReview" WHERE "userId" = ${CLEAN};
     `);
+
+  it('keeps another user’s comment on a review of theirs when a hold lands mid-wipe', async () => {
+    await bystanderCommentsOnItsReviews();
     beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
 
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
 
-    expect((await remaining(BYSTANDER)).CommentV2).toBe(2);
+    expect(await commentsOf(BYSTANDER)).toHaveLength(1);
   });
 
   it('takes the comments on its reviews with it when no hold lands (control for the above)', async () => {
-    await holder.db.exec(`
-      INSERT INTO "Thread" ("reviewId")
-        SELECT id FROM "ResourceReview" WHERE "userId" = ${CLEAN};
-      INSERT INTO "CommentV2" ("userId", "threadId") SELECT ${BYSTANDER}, id FROM "Thread";
-    `);
+    await bystanderCommentsOnItsReviews();
     await removeAllContent({ id: CLEAN });
-    expect((await remaining(BYSTANDER)).CommentV2).toBe(1);
+    expect(await commentsOf(BYSTANDER)).toEqual([]);
   });
 
   describe('a held author’s rows under the wiped account’s own', () => {
@@ -1508,232 +1468,35 @@ function fakeRes() {
   return res;
 }
 
-describe('removeAllContent keeps other people’s comments a held author is part of', () => {
+// Comments are not kept for a held author: they go with the content they are on.
+describe('removeAllContent and other people’s comments on its content', () => {
   const rows = async (sql: string) => (await holder.db.query<Record<string, unknown>>(sql)).rows;
-  const commentIds = async () =>
-    (await rows(`SELECT id FROM "CommentV2" WHERE id >= 5000 ORDER BY id`)).map((r) => r.id);
 
-  /**
-   * A thread on CLEAN's post: BYSTANDER comments, and `replier` answers in a reply thread. The reply
-   * thread hangs off the root thread (both cascade edges) and off BYSTANDER's comment.
-   */
-  async function seedPostThread(replier: number) {
+  it('takes the comments on a deleted post with it, a held author’s reply included', async () => {
+    // BYSTANDER comments on CLEAN's post; HELD answers.
     await holder.db.exec(`
-      INSERT INTO "Thread" (id, "postId") VALUES (5000, 1);
-      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5000, ${BYSTANDER}, 5000);
-      INSERT INTO "Thread" (id, "rootThreadId", "parentThreadId", "commentId")
-        VALUES (5001, 5000, 5000, 5000);
-      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5001, ${replier}, 5001);
+      INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('post', 1);
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "parentId", path, "userId", content) VALUES
+        (5000, 'post', 1, NULL, '5000', ${BYSTANDER}, 'on its post'),
+        (5001, 'post', 1, 5000, '5000.5001', ${HELD}, 'a held author''s reply');
     `);
-  }
-
-  it('keeps the thread, and the unheld reply above the held one, off the deleted post', async () => {
-    await seedPostThread(HELD);
 
     await removeAllContent({ id: CLEAN });
 
-    expect(await rows(`SELECT id FROM "Post" WHERE "userId" = ${CLEAN}`)).toEqual([]);
-    expect(await commentIds()).toEqual([5000, 5001]);
-    expect(await rows(`SELECT "postId", metadata FROM "Thread" WHERE id = 5000`)).toEqual([
-      { postId: null, metadata: expect.objectContaining({ detachedFrom: { postId: 1 } }) },
-    ]);
+    expect(await rows(`SELECT id FROM "CommentV3" WHERE id >= 5000`)).toEqual([]);
   });
 
-  it('takes the whole thread with the post when no held author is in it (control)', async () => {
-    await seedPostThread(BYSTANDER);
-
-    await removeAllContent({ id: CLEAN });
-
-    expect(await commentIds()).toEqual([]);
-  });
-
-  it('keeps a held comment on another user’s review of the deleted model', async () => {
+  it('deletes a model a held author commented on, with the comment', async () => {
     await holder.db.exec(`
-      UPDATE "ResourceReview" SET "modelId" = ${MODEL} WHERE "userId" = ${BYSTANDER};
-      INSERT INTO "Thread" (id, "reviewId")
-        SELECT 5000, id FROM "ResourceReview" WHERE "userId" = ${BYSTANDER};
-      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5000, ${HELD}, 5000);
+      INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('model', ${MODEL});
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", path, "userId", content) VALUES
+        (5000, 'model', ${MODEL}, '5000', ${HELD}, 'held, on its model');
     `);
 
     await removeAllContent({ id: CLEAN });
 
     expect(await rows(`SELECT id FROM "Model" WHERE id = ${MODEL}`)).toEqual([]);
-    expect(await commentIds()).toEqual([5000]);
-  });
-
-  it('keeps a held comment on another user’s entry to the deleted bounty', async () => {
-    await holder.db.exec(`
-      UPDATE "BountyEntry" SET "bountyId" = ${BOUNTY} WHERE "userId" = ${BYSTANDER};
-      INSERT INTO "Thread" (id, "bountyEntryId")
-        SELECT 5000, id FROM "BountyEntry" WHERE "userId" = ${BYSTANDER};
-      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5000, ${HELD}, 5000);
-    `);
-
-    await removeAllContent({ id: CLEAN });
-
-    expect(await rows(`SELECT id FROM "Bounty" WHERE id = ${BOUNTY}`)).toEqual([]);
-    expect(await commentIds()).toEqual([5000]);
-  });
-
-  it('takes a model a held author left a legacy comment on off the site instead of deleting it', async () => {
-    await holder.db.exec(`
-      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${MODEL});
-    `);
-
-    await removeAllContent({ id: CLEAN, actorUserId: 77 });
-
-    expect(deleteModelById).toHaveBeenCalledTimes(1);
-    expect(deleteModelById).toHaveBeenCalledWith(
-      expect.objectContaining({ id: MODEL, userId: 77, isModerator: true })
-    );
-    // The legacy comment cascades with the model, so a hard delete would take it. Not hidden as
-    // well: the end-of-wipe refund would then refund its bids a second time.
-    expect(
-      await rows(`SELECT id, status, meta ->> 'removedWithOwner' AS removed
-        FROM "Model" WHERE id = ${MODEL}`)
-    ).toEqual([{ id: MODEL, status: 'Deleted', removed: null }]);
-    expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([{ id: 5000 }]);
-  });
-
-  it('hides, with its record, a model with a held legacy comment that an earlier owner’s hold keeps', async () => {
-    await holder.db.exec(`
-      INSERT INTO "Model" (id, "userId", status) VALUES (${GIVEN_BY_HELD}, ${CLEAN}, 'Published');
-      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${GIVEN_BY_HELD});
-    `);
-
-    await removeAllContent({ id: CLEAN, actorUserId: 77 });
-
-    expect(deleteModelById).not.toHaveBeenCalledWith(
-      expect.objectContaining({ id: GIVEN_BY_HELD })
-    );
-    expect(
-      await rows(`SELECT status, meta ->> 'removedWithOwner' AS removed
-        FROM "Model" WHERE id = ${GIVEN_BY_HELD}`)
-    ).toEqual([{ status: KEPT_MODEL_STATUS, removed: 'true' }]);
-    expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([{ id: 5000 }]);
-  });
-
-  // The same alerted line as a hard-deleted model's failed refund, which the bids need by hand.
-  it('alerts on a bid refund that fails for the model it soft-deletes', async () => {
-    await holder.db.exec(`
-      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${MODEL});
-    `);
-    deleteModelById.mockImplementationOnce((async (args: {
-      onBidRefundFailed?: (f: { versionIds: number[]; transactionIds: string[] }) => void;
-    }) => {
-      args.onBidRefundFailed?.({ versionIds: [41], transactionIds: ['tx-1'] });
-      return null;
-    }) as never);
-
-    const result = await removeAllContent({ id: CLEAN, actorUserId: 77 });
-
-    expect(result).toMatchObject({ incomplete: expect.arrayContaining(['bid-refunds']) });
-    expect(refundAlerts()).toContainEqual(
-      expect.objectContaining({
-        source: 'remove-all-content',
-        userId: CLEAN,
-        moderatorId: 77,
-        versionIds: [41],
-        transactionIds: ['tx-1'],
-      })
-    );
-  });
-
-  it('names the soft-deleted model’s failed refund when a hold stops the wipe', async () => {
-    await holder.db.exec(`
-      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${MODEL});
-    `);
-    deleteModelById.mockImplementationOnce((async (args: {
-      onBidRefundFailed?: (f: { versionIds: number[]; transactionIds: string[] }) => void;
-    }) => {
-      args.onBidRefundFailed?.({ versionIds: [41], transactionIds: ['tx-1'] });
-      return null;
-    }) as never);
-    landsBefore = 'ChatMessage';
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-
-    const stopped = await removeAllContent({ id: CLEAN, actorUserId: 77 }).catch((e) => e);
-
-    expect(stopped).toBeInstanceOf(LegalHoldStoppedError);
-    expect((stopped as LegalHoldStoppedError).incomplete).toContain('bid-refunds');
-  });
-
-  it('still finishes the wipe when that soft delete fails, and names it incomplete', async () => {
-    await holder.db.exec(`
-      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${MODEL});
-    `);
-    deleteModelById.mockRejectedValueOnce(new Error('cache down'));
-
-    const result = await removeAllContent({ id: CLEAN });
-
-    // No moderator named: the wipe is no one's delete, so none is recorded as the deleter.
-    expect(deleteModelById).toHaveBeenCalledWith(
-      expect.objectContaining({ id: MODEL, userId: null, isModerator: true })
-    );
-    expect(result).toMatchObject({ incomplete: expect.arrayContaining(['model-soft-delete']) });
-    expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([{ id: 5000 }]);
-  });
-
-  it('deletes a model whose legacy comments no held author wrote (control)', async () => {
-    await holder.db.exec(`
-      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${BYSTANDER}, ${MODEL});
-    `);
-
-    await removeAllContent({ id: CLEAN });
-
-    expect(deleteModelById).not.toHaveBeenCalled();
-    expect(await rows(`SELECT id FROM "Model" WHERE id = ${MODEL}`)).toEqual([]);
-    expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([]);
-  });
-
-  it('keeps, hidden, its own legacy comment a held author replied to', async () => {
-    await holder.db.exec(`
-      INSERT INTO "Comment" (id, "userId", "modelId", "parentId") VALUES
-        (5000, ${CLEAN}, NULL, NULL), (5001, ${HELD}, NULL, 5000), (5002, ${CLEAN}, NULL, NULL);
-    `);
-
-    await removeAllContent({ id: CLEAN });
-
-    expect(
-      await rows(`SELECT id, "tosViolation" FROM "Comment" WHERE id >= 5000 ORDER BY id`)
-    ).toEqual([
-      { id: 5000, tosViolation: true },
-      { id: 5001, tosViolation: false },
-    ]);
-  });
-
-  it("leaves the legacy comment it kept hidden through a moderator's ToS restore", async () => {
-    // Prisma's update, as one UPDATE whose WHERE carries every field the call names.
-    vi.mocked(dbMock.dbWrite.comment.update).mockImplementation((async (args: {
-      where: { id: number; removedByAuthor?: boolean };
-      data: { tosViolation: boolean };
-    }) => {
-      const { rows: updated } = await holder.db.query(
-        `UPDATE "Comment" SET "tosViolation" = $2 WHERE id = $1
-           AND ($3::boolean IS NULL OR "removedByAuthor" = $3) RETURNING id`,
-        [args.where.id, args.data.tosViolation, args.where.removedByAuthor ?? null]
-      );
-      if (!updated.length) throw Object.assign(new Error('not found'), { code: 'P2025' });
-      return updated[0];
-    }) as never);
-    // 5003 is a bystander's comment a moderator hid: the control a restore brings back.
-    await holder.db.exec(`
-      INSERT INTO "Comment" (id, "userId", "modelId", "parentId") VALUES
-        (5000, ${CLEAN}, NULL, NULL), (5001, ${HELD}, NULL, 5000);
-      INSERT INTO "Comment" (id, "userId", "tosViolation") VALUES (5003, ${BYSTANDER}, true);
-    `);
-
-    await removeAllContent({ id: CLEAN });
-    await expect(bulkClearCommentTosViolation({ ids: [5000, 5003] })).resolves.toMatchObject({
-      count: 1,
-    });
-
-    expect(
-      await rows(`SELECT id, "tosViolation" FROM "Comment" WHERE id IN (5000, 5003) ORDER BY id`)
-    ).toEqual([
-      { id: 5000, tosViolation: true },
-      { id: 5003, tosViolation: false },
-    ]);
+    expect(await rows(`SELECT id FROM "CommentV3" WHERE id = 5000`)).toEqual([]);
   });
 });
 
@@ -1892,22 +1655,17 @@ describe('/api/mod/delete-user-images', () => {
     expect((await remaining(BYSTANDER)).Post).toBe(1);
   });
 
-  it.each([
-    ['keeps', HELD, [5000]],
-    ['takes, as a control,', BYSTANDER, []],
-  ])("%s a comment on the deleted post's thread by an author", async (_, author, left) => {
+  it("takes a held author's comment on the deleted post", async () => {
     await holder.db.exec(`
-      INSERT INTO "Thread" (id, "postId") VALUES (5000, 1);
-      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5000, ${author}, 5000);
+      INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('post', 1);
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", path, "userId", content) VALUES
+        (5000, 'post', 1, '5000', ${HELD}, 'held, on its post');
     `);
 
     expect((await call(CLEAN)).statusCode).toBe(200);
 
     expect((await remaining(CLEAN)).Post).toBe(0);
-    const { rows } = await holder.db.query<{ id: number }>(
-      `SELECT id FROM "CommentV2" WHERE id >= 5000`
-    );
-    expect(rows.map((r) => r.id)).toEqual(left);
+    expect(await commentsOf(HELD)).toEqual([]);
   });
 
   it('deletes an unheld account’s images while the marker view exists', async () => {
@@ -2134,19 +1892,6 @@ describe('a bounty a content wipe kept for its unsettled payout', () => {
         `UPDATE "EvidenceHold" SET "releasedAt" = now() WHERE "userId" = ${CLEAN}`
       );
       expect(await deleteSettledKeptBounties()).toBe(1);
-    });
-
-    it('keeps a held author’s comment on it', async () => {
-      await settle();
-      await holder.db.exec(`
-        INSERT INTO "Thread" (id, "bountyId") VALUES (5000, ${BOUNTY});
-        INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5000, ${HELD}, 5000);
-      `);
-
-      expect(await deleteSettledKeptBounties()).toBe(1);
-      expect(
-        (await holder.db.query(`SELECT id FROM "CommentV2" WHERE id = 5000`)).rows
-      ).toHaveLength(1);
     });
 
     it('leaves a settled bounty no wipe kept alone (control)', async () => {

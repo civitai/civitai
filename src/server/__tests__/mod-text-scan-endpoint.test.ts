@@ -166,12 +166,12 @@ describe('mod/text-scan', () => {
   it('keeps free text out of the audit row', async () => {
     await call({
       action: 'scanTexts',
-      entityType: 'Comment',
+      entityType: 'CommentV3',
       texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'USER TEXT' }] }],
       promptOverrides: { base: 'CANDIDATE PROMPT' },
     });
     const payload = mockAudit.mock.calls[0][0].payload as Record<string, unknown>;
-    expect(payload).toMatchObject({ action: 'scanTexts', entityType: 'Comment' });
+    expect(payload).toMatchObject({ action: 'scanTexts', entityType: 'CommentV3' });
     expect(JSON.stringify(payload)).not.toContain('USER TEXT');
     expect(JSON.stringify(payload)).not.toContain('CANDIDATE PROMPT');
   });
@@ -217,7 +217,7 @@ describe('mod/text-scan', () => {
       { action: 'quoteEntities', entityType: 'Post', entityIds: [1] },
       {
         action: 'scanTexts',
-        entityType: 'Comment',
+        entityType: 'CommentV3',
         texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'x' }] }],
       },
     ];

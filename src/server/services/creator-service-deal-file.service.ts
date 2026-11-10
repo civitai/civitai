@@ -12,12 +12,17 @@ import { logToAxiom } from '~/server/logging/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { holdServiceDealForReview } from '~/server/services/creator-service-escrow.service';
 import { transitionDeal } from '~/server/services/creator-service-deal.service';
-import { dealReadyToDeliver } from '~/server/services/creator-service-deal-file-sql';
+import {
+  dealReadyToDeliver,
+  liveFile,
+  SCANNED_FILE_KINDS,
+} from '~/server/services/creator-service-deal-file-sql';
 import { isFinalsMalwareScanOn } from '~/server/services/creator-service-deal-file-scan';
 import {
   throwBadRequestError,
   throwConflictError,
   throwNotFoundError,
+  throwServiceUnavailableError,
 } from '~/server/utils/errorHandling';
 import {
   buildScanCopy,
@@ -25,6 +30,7 @@ import {
   PreviewRejectedError,
 } from '~/server/utils/service-deal-preview';
 import {
+  SERVICE_ATTACHMENT_MAX_FILES,
   SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
   SERVICE_FINAL_EXTENSIONS,
   SERVICE_FINAL_MAX_BYTES,
@@ -62,12 +68,26 @@ import {
  * Who may do what is decided in SQL on the deal row, never from an id in the input: uploads need
  * the deal's seller and a deal still being worked (Accepted or InRevision). A file belongs to the
  * deal's CURRENT round (`revisionsUsed`), the same round the escrow's gates read.
+ *
+ * An Attachment is the buyer's: uploaded from the request until the seller delivers, scanned by the
+ * Final pipeline, and kept from the seller until it passes. Nothing that gates delivery or payout
+ * counts it.
  */
 
 /** Statuses a seller may upload in. */
 const WORKING = Prisma.sql`'Accepted'::"ServiceDealStatus", 'InRevision'::"ServiceDealStatus"`;
+/** Statuses a buyer may attach in: from the request until the seller delivers. */
+const ATTACHABLE = Prisma.sql`'Requested'::"ServiceDealStatus", 'Accepted'::"ServiceDealStatus",
+  'InRevision'::"ServiceDealStatus"`;
+// Compared as text, so seller paths do not depend on the enum value existing: the client deploys
+// before the migration that adds it.
+const NOT_ATTACHMENT = Prisma.sql`f."kind"::text <> 'Attachment'`;
+const LIVE_F = liveFile(Prisma.sql`f`);
+/** A deal that ended without the work: the seller loses the buyer's attachments. */
+const CLOSED_TO_SELLER = new Set(['Declined', 'Expired', 'Cancelled']);
 
 const UPLOAD_KEY_ROOT = 'service-deals';
+const HELD_COPY_ATTEMPTS = 3;
 
 /** What a seller types is shown back; strip paths and control characters, and bound it. */
 export function cleanFileName(name: string) {
@@ -89,6 +109,22 @@ export function assertFinalFileType(fileName: string) {
   if (!(SERVICE_FINAL_EXTENSIONS as readonly string[]).includes(extension))
     throw throwBadRequestError(
       'This file type cannot be delivered. Use a .zip, a model file, or an image, audio or text file.'
+    );
+}
+
+/** The type and size limits a Final has, which an Attachment shares. */
+function assertScannableFile(fileName: string, size: number) {
+  assertFinalFileType(fileName);
+  if (size > SERVICE_FINAL_MAX_BYTES) throw throwBadRequestError('That file is too large.');
+  // An image is scanned whole, so it has its own, lower, cap.
+  if (
+    (SERVICE_ZIP_IMAGE_EXTENSIONS as readonly string[]).includes(
+      fileExtension(cleanFileName(fileName))
+    ) &&
+    size > SERVICE_ZIP_MAX_IMAGE_BYTES
+  )
+    throw throwBadRequestError(
+      `An image cannot be more than ${Math.floor(SERVICE_ZIP_MAX_IMAGE_BYTES / (1024 * 1024))} MB.`
     );
 }
 
@@ -118,11 +154,13 @@ export async function requestServiceDealUpload({
 }: {
   dealId: number;
   userId: number;
-  kind: ServiceDealFileKind;
+  kind: Exclude<ServiceDealFileKind, 'Attachment'>;
   fileName: string;
   mimeType: string;
   size: number;
 }) {
+  // The input schema says the same; a caller that skips it must not create a buyer's Attachment.
+  if (kind !== 'Preview' && kind !== 'Final') throw throwBadRequestError('Unknown file kind.');
   // The buyer sees the file name. Scanned as it will be stored.
   await throwOnBlockedUserContent(cleanFileName(fileName), { surface: 'service-deal-file' });
 
@@ -134,21 +172,7 @@ export async function requestServiceDealUpload({
         `Preview is too large (max ${Math.floor(previewByteCap(mimeType) / (1024 * 1024))} MB).`
       );
   } else {
-    assertFinalFileType(fileName);
-    if (size > SERVICE_FINAL_MAX_BYTES)
-      throw throwBadRequestError('That file is too large to deliver.');
-    // An image is scanned whole, so it has its own, lower, cap.
-    if (
-      (SERVICE_ZIP_IMAGE_EXTENSIONS as readonly string[]).includes(
-        fileExtension(cleanFileName(fileName))
-      ) &&
-      size > SERVICE_ZIP_MAX_IMAGE_BYTES
-    )
-      throw throwBadRequestError(
-        `An image cannot be more than ${Math.floor(
-          SERVICE_ZIP_MAX_IMAGE_BYTES / (1024 * 1024)
-        )} MB.`
-      );
+    assertScannableFile(fileName, size);
   }
 
   const created = await dbWrite.$transaction(async (tx) => {
@@ -157,7 +181,7 @@ export async function requestServiceDealUpload({
       SELECT d."id", d."revisionsUsed" AS "round", d."previewKind",
         (SELECT count(*)::int FROM "ServiceDealFile" f
           WHERE f."dealId" = d."id" AND f."round" = d."revisionsUsed"
-            AND f."kind" = ${kind}::"ServiceDealFileKind") AS "files"
+            AND f."kind" = ${kind}::"ServiceDealFileKind" AND ${LIVE_F}) AS "files"
       FROM "ServiceDeal" d
       WHERE d."id" = ${dealId}::int AND d."sellerId" = ${userId}::int
         AND d."status" IN (${WORKING})
@@ -190,6 +214,68 @@ export async function requestServiceDealUpload({
   return { fileId: created.id, uploadUrl: url };
 }
 
+/**
+ * The buyer attaches a file to their deal. The attestations are required by the input schema; the
+ * time they were given is stored on the row.
+ */
+export async function requestServiceDealAttachment({
+  dealId,
+  userId,
+  fileName,
+  mimeType,
+  size,
+  rightsAttested,
+  likenessAttested,
+}: {
+  dealId: number;
+  userId: number;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  rightsAttested: boolean;
+  likenessAttested: boolean;
+}) {
+  // `attestedAt` records both; the input schema requires them too.
+  if (rightsAttested !== true || likenessAttested !== true)
+    throw throwBadRequestError('Confirm both statements to attach files.');
+  // An Attachment passes only on a malware scan that ran (see `recordFinalScanResult`).
+  if (!(await isFinalsMalwareScanOn()))
+    throw throwBadRequestError('Attaching files is not available right now.');
+  // The seller sees the file name once the file passes. Scanned as it will be stored.
+  await throwOnBlockedUserContent(cleanFileName(fileName), { surface: 'service-deal-file' });
+  assertScannableFile(fileName, size);
+
+  const created = await dbWrite.$transaction(async (tx) => {
+    const [deal] = await tx.$queryRaw<{ id: number; round: number; files: number }[]>`
+      SELECT d."id", d."revisionsUsed" AS "round",
+        (SELECT count(*)::int FROM "ServiceDealFile" f
+          WHERE f."dealId" = d."id" AND f."kind"::text = 'Attachment' AND ${LIVE_F}) AS "files"
+      FROM "ServiceDeal" d
+      WHERE d."id" = ${dealId}::int AND d."buyerId" = ${userId}::int
+        AND d."status" IN (${ATTACHABLE})
+      FOR UPDATE`;
+    if (!deal) throw throwNotFoundError('Deal not found');
+    if (deal.files >= SERVICE_ATTACHMENT_MAX_FILES)
+      throw throwConflictError(
+        `A request can have at most ${SERVICE_ATTACHMENT_MAX_FILES} attached files.`
+      );
+
+    const s3Key = `${UPLOAD_KEY_ROOT}/uploads/${dealId}/${deal.round}/attachment/${randomUUID()}`;
+    const [row] = await tx.$queryRaw<{ id: number }[]>`
+      INSERT INTO "ServiceDealFile"
+        ("dealId", "round", "kind", "s3Key", "fileName", "mimeType", "size", "attestedAt")
+      VALUES (${dealId}::int, ${
+      deal.round
+    }::int, 'Attachment'::"ServiceDealFileKind", ${s3Key}::text,
+        ${cleanFileName(fileName)}::text, ${mimeType}::text, ${size}::int, now())
+      RETURNING "id"`;
+    return { id: row.id, s3Key };
+  });
+
+  const { url } = await getPutUrl(created.s3Key);
+  return { fileId: created.id, uploadUrl: url };
+}
+
 type OwnedFileRow = {
   id: number;
   dealId: number;
@@ -203,16 +289,24 @@ type OwnedFileRow = {
   imageId: number | null;
 };
 
-/** The seller's own file in a deal still being worked, or null. */
-async function findSellerFile(fileId: number, userId: number) {
+/** Which of a deal's files a user may change: `scope` is a condition on `f` and `d`. */
+async function findOwnFile(fileId: number, scope: Prisma.Sql) {
   const [file] = await dbWrite.$queryRaw<OwnedFileRow[]>`
     SELECT f."id", f."dealId", f."round", f."kind", f."s3Key", f."fileName", f."mimeType", f."size",
       f."status", f."imageId"
     FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
-    WHERE f."id" = ${fileId}::int AND d."sellerId" = ${userId}::int
-      AND d."status" IN (${WORKING}) AND f."round" = d."revisionsUsed"`;
+    WHERE f."id" = ${fileId}::int AND ${scope}`;
   return file ?? null;
 }
+
+/** The seller's own delivery file, in the current round of a deal still being worked. */
+const sellerScope = (userId: number) => Prisma.sql`d."sellerId" = ${userId}::int
+  AND d."status" IN (${WORKING}) AND f."round" = d."revisionsUsed" AND ${NOT_ATTACHMENT}
+  AND ${LIVE_F}`;
+
+/** The buyer's own attachment, in a deal the seller has not delivered yet. */
+const buyerAttachmentScope = (userId: number) => Prisma.sql`d."buyerId" = ${userId}::int
+  AND d."status" IN (${ATTACHABLE}) AND f."kind"::text = 'Attachment' AND ${LIVE_F}`;
 
 const ZIP_LOCAL_HEADER = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 
@@ -252,20 +346,25 @@ const failFile = (fileId: number, reason: string, onlyFrom: ServiceDealFileStatu
     WHERE "id" = ${fileId}::int
       AND (${onlyFrom}::text IS NULL OR "status"::text = ${onlyFrom}::text)`;
 
-/**
- * The seller says the bytes are in the bucket. The seller holds a long-lived upload URL for the key
- * they were given, so nothing they could still write to is trusted: the object is COPIED to a key
- * only the server ever has, and every check here, and every later read, is of that copy. A size
- * that is not the declared one fails the file and removes both objects.
- */
-export async function completeServiceDealUpload({
+export const completeServiceDealUpload = ({ fileId, userId }: { fileId: number; userId: number }) =>
+  completeUpload(fileId, sellerScope(userId));
+
+export const completeServiceDealAttachment = ({
   fileId,
   userId,
 }: {
   fileId: number;
   userId: number;
-}) {
-  const file = await findSellerFile(fileId, userId);
+}) => completeUpload(fileId, buyerAttachmentScope(userId));
+
+/**
+ * The uploader says the bytes are in the bucket. They hold a long-lived upload URL for the key
+ * they were given, so nothing they could still write to is trusted: the object is COPIED to a key
+ * only the server ever has, and every check here, and every later read, is of that copy. A size
+ * that is not the declared one fails the file and removes both objects.
+ */
+async function completeUpload(fileId: number, scope: Prisma.Sql) {
+  const file = await findOwnFile(fileId, scope);
   if (!file) throw throwNotFoundError('File not found');
   if (file.status !== 'Uploading') return { id: file.id, status: file.status };
 
@@ -291,37 +390,61 @@ export async function completeServiceDealUpload({
     throw couldNotCheck();
   }
 
-  // The copy is what gets measured. The seller can no longer change it.
+  // The copy is what gets measured. The uploader can no longer change it.
   const held = await headObject(bucket, heldKey);
   if (held.status === 'unknown') throw couldNotCheck();
   if (held.status === 'absent' || held.size !== file.size) {
     const reason = 'The uploaded file did not match its declared size.';
     if ((await failFile(file.id, reason, 'Uploading')) === 0) return currentState(file.id);
-    await deleteObject(bucket, file.s3Key).catch(() => null);
-    await deleteObject(bucket, heldKey).catch(() => null);
+    await discardFailedUpload(bucket, file, heldKey);
     throw throwBadRequestError(reason);
   }
 
-  if (file.kind === 'Final' && fileExtension(file.fileName) === 'zip') {
+  if (file.kind !== 'Preview' && fileExtension(file.fileName) === 'zip') {
     const refusal = await zipRefusal(bucket, heldKey);
     if (refusal) {
       if ((await failFile(file.id, refusal, 'Uploading')) === 0) return currentState(file.id);
-      await deleteObject(bucket, file.s3Key).catch(() => null);
-      await deleteObject(bucket, heldKey).catch(() => null);
+      await discardFailedUpload(bucket, file, heldKey);
       throw throwBadRequestError(refusal);
     }
   }
 
-  // A preview is processed by the job; a final is ready now and is unpacked by the job.
+  // A preview is processed by the job; a final or attachment is ready now and is unpacked by the job.
   const next: ServiceDealFileStatus = file.kind === 'Preview' ? 'Processing' : 'Ready';
-  const moved = await dbWrite.$executeRaw`
-    UPDATE "ServiceDealFile"
-    SET "status" = ${next}::"ServiceDealFileStatus", "uploadedAt" = now(), "s3Key" = ${heldKey}::text
-    WHERE "id" = ${file.id}::int AND "status" = 'Uploading'::"ServiceDealFileStatus"`;
-  // The seller's key is dead either way. A repeat call that lost the race removes its own copy.
+  // Under the deal lock and the same scope as the lookup: the deal may have moved on (a delivery
+  // closes the attach window) while the copy above was being made.
+  const moved = await dbWrite.$transaction(async (tx) => {
+    const [deal] = await tx.$queryRaw<{ id: number }[]>`
+      SELECT d."id" FROM "ServiceDeal" d JOIN "ServiceDealFile" f ON f."dealId" = d."id"
+      WHERE f."id" = ${file.id}::int AND ${scope}
+      FOR UPDATE OF d`;
+    if (!deal) return null;
+    return tx.$executeRaw`
+      UPDATE "ServiceDealFile"
+      SET "status" = ${next}::"ServiceDealFileStatus", "uploadedAt" = now(), "s3Key" = ${heldKey}::text
+      WHERE "id" = ${file.id}::int AND "status" = 'Uploading'::"ServiceDealFileStatus"`;
+  });
+  // The uploader's key is dead either way. A repeat call that lost the race removes its own copy.
   await deleteObject(bucket, moved === 1 ? file.s3Key : heldKey).catch(() => null);
+  if (moved === null) throw throwConflictError('This deal no longer takes this file.');
   return { id: file.id, status: next };
 }
+
+/**
+ * A refused upload: the uploader's key goes, and the server's copy goes too unless the file must be
+ * kept (`mustKeep`), in which case the row points at it. The file stays Failed either way, so it
+ * looks the same to its uploader and nothing but the moderator tools serves it.
+ */
+async function discardFailedUpload(bucket: string, file: OwnedFileRow, heldKey: string) {
+  await deleteObject(bucket, file.s3Key).catch(() => null);
+  const kept = await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFile" f SET "s3Key" = ${heldKey}::text
+    WHERE f."id" = ${file.id}::int AND ${mustKeep(Prisma.sql`f`)}`;
+  if (!kept) await deleteObject(bucket, heldKey).catch(() => null);
+}
+
+/** A key the uploader was given and can still write to, not a copy the server made. */
+const isUploaderKey = (key: string) => key.startsWith(`${UPLOAD_KEY_ROOT}/uploads/`);
 
 /**
  * Where a file stands now. A completion that lost a race to another call returns this instead of
@@ -342,71 +465,176 @@ const couldNotCheck = () =>
  * Removes a file from a delivery that has not been sent yet. The deal row is locked first, as
  * delivering locks it, so a delete cannot slip between "the round is ready" and "it is delivered".
  */
-export async function deleteServiceDealFile({
+export const deleteServiceDealFile = ({ fileId, userId }: { fileId: number; userId: number }) =>
+  deleteFile(fileId, sellerScope(userId));
+
+/** The buyer removes an attachment, until the seller delivers. */
+export const deleteServiceDealAttachment = ({
   fileId,
   userId,
 }: {
   fileId: number;
   userId: number;
-}) {
+}) => deleteFile(fileId, buyerAttachmentScope(userId));
+
+async function deleteFile(fileId: number, scope: Prisma.Sql) {
   const removed = await dbWrite.$transaction(async (tx) => {
     const [deal] = await tx.$queryRaw<{ id: number }[]>`
       SELECT d."id" FROM "ServiceDeal" d JOIN "ServiceDealFile" f ON f."dealId" = d."id"
-      WHERE f."id" = ${fileId}::int AND d."sellerId" = ${userId}::int
-        AND d."status" IN (${WORKING})
+      WHERE f."id" = ${fileId}::int AND ${scope}
       FOR UPDATE OF d`;
     if (!deal) throw throwNotFoundError('File not found');
-    // Re-read under the lock: the state above is the one that is true now.
-    // An image that passed has no more use for its copy. One still being scanned, or rejected, keeps
-    // its copy and its row (detached from the file): that is what the moderators would need.
+    // Re-read under the lock: the state above is the one that is true now. Every entry is locked,
+    // so an unpack still attaching copies waits for this to finish.
+    await tx.$queryRaw`
+      SELECT 1 FROM "ServiceDealFileEntry" e WHERE e."fileId" = ${fileId}::int FOR UPDATE OF e`;
+    // An image that passed has no more use for its copy.
     const copies = await tx.$queryRaw<{ imageId: number }[]>`
       SELECT e."imageId" FROM "ServiceDealFileEntry" e
       WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL
-        AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
-      FOR UPDATE OF e`;
-    await tx.$executeRaw`
-      DELETE FROM "ServiceDealFileEntry" e
-      WHERE e."fileId" = ${fileId}::int
-        AND (e."imageId" IS NULL OR e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus")`;
-    const [file] = await tx.$queryRaw<
-      {
-        id: number;
-        s3Key: string;
-        deliveryKey: string | null;
-        imageId: number | null;
-        scanKey: string | null;
-      }[]
-    >`
+        AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
+    // A file that must be kept stays, with its entries and objects, out of the parties' sight.
+    const [kept] = await tx.$queryRaw<{ id: number; s3Key: string }[]>`
+      UPDATE "ServiceDealFile" f SET "removedAt" = now()
+      WHERE f."id" = ${fileId}::int AND ${mustKeep(Prisma.sql`f`)}
+      RETURNING f."id", f."s3Key"`;
+    if (kept) {
+      await tx.$executeRaw`
+        UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL
+        WHERE "fileId" = ${fileId}::int AND "scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
+      return { kept, copies };
+    }
+    await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" e WHERE e."fileId" = ${fileId}::int`;
+    const [file] = await tx.$queryRaw<FileObjects[]>`
       DELETE FROM "ServiceDealFile" f USING "ServiceDeal" d
-      WHERE f."id" = ${fileId}::int AND d."id" = f."dealId" AND f."round" = d."revisionsUsed"
-        AND d."status" IN (${WORKING})
-      RETURNING f."id", f."s3Key", f."deliveryKey", f."imageId", f."scanKey"`;
+      WHERE f."id" = ${fileId}::int AND d."id" = f."dealId" AND ${scope}
+      RETURNING f."id", f."s3Key", f."deliveryKey", f."imageId"`;
     if (!file) throw throwNotFoundError('File not found');
-    return { ...file, copies };
+    return { file, copies };
   });
 
-  // The row is the source of truth; an object left behind is unreachable and harmless.
+  await deleteImages(removed.copies.map(({ imageId }) => imageId));
+  if (removed.kept) {
+    // An upload never completed still sits at the uploader's key, which they can write to: the
+    // server keeps its own copy instead.
+    if (isUploaderKey(removed.kept.s3Key))
+      await keepServerCopy(await getBucket(), removed.kept.id, removed.kept.s3Key);
+    return { id: removed.kept.id };
+  }
+  await deleteFileObjects(removed.file);
+  return { id: removed.file.id };
+}
+
+type FileObjects = {
+  id: number;
+  s3Key: string;
+  deliveryKey: string | null;
+  imageId: number | null;
+};
+
+async function deleteImages(imageIds: number[]) {
+  if (!imageIds.length) return;
+  const { deleteImageById } = await import('~/server/services/image.service');
+  for (const id of imageIds) await deleteImageById({ id, updatePost: false }).catch(() => null);
+}
+
+/** The row is the source of truth; an object left behind is unreachable and harmless. */
+async function deleteFileObjects(file: FileObjects) {
   const bucket = await getBucket();
-  await deleteObject(bucket, removed.s3Key).catch(() => null);
-  if (removed.deliveryKey) await deleteObject(bucket, removed.deliveryKey).catch(() => null);
-  if (removed.imageId) {
-    // A preview deleted mid-scan: its hidden copy goes with it.
-    const { deleteImageById } = await import('~/server/services/image.service');
-    await deleteImageById({ id: removed.imageId, updatePost: false }).catch(() => null);
-  }
-  if (removed.copies.length) {
-    const { deleteImageById } = await import('~/server/services/image.service');
-    for (const { imageId } of removed.copies)
-      await deleteImageById({ id: imageId, updatePost: false }).catch(() => null);
-  }
-  return { id: removed.id };
+  await deleteObject(bucket, file.s3Key).catch(() => null);
+  if (file.deliveryKey) await deleteObject(bucket, file.deliveryKey).catch(() => null);
+  // A preview deleted mid-scan: its hidden copy goes with it.
+  if (file.imageId) await deleteImages([file.imageId]);
 }
 
 /**
- * Records a verdict on a Final. Only a Pending Final takes one, so a repeat or late result cannot
- * overturn an earlier one. Passed also needs the file unpacked and ready, never refused, its malware
- * scan passed (or skipped while the scan is off) and every image passed. A Failed Final sends a
- * delivered deal to the moderators; one not yet delivered cannot be delivered while it stands (see `dealReadyToDeliver`).
+ * Whether a file must be kept when it is removed, judged from the row each time: its uploader is
+ * named on a report, or a scan of it has not passed (an image in it, its own scan copy, or a
+ * processing step still running). `f` names the file row.
+ */
+const mustKeep = (f: Prisma.Sql) => Prisma.sql`(${uploaderReported(f)} OR ${scanOpen(f)})`;
+
+const uploaderReported = (f: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "CsamReport" r JOIN "ServiceDeal" rd ON rd."id" = ${f}."dealId"
+  WHERE r."userId" = CASE WHEN ${f}."kind"::text = 'Attachment' THEN rd."buyerId" ELSE rd."sellerId" END
+)`;
+
+const scanOpen = (f: Prisma.Sql) => Prisma.sql`(
+  EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+    WHERE e."fileId" = ${f}."id" AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")
+  OR (${f}."imageId" IS NOT NULL AND ${f}."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")
+  OR (${f}."processingAt" IS NOT NULL AND ${f}."scanStatus" = 'Pending'::"ServiceDealFileScanStatus")
+)`;
+
+/**
+ * A removed file whose scans finished clean, with an uploader not on a report, has nothing left to
+ * keep: it goes as a delete would have, once its scan copies are gone. A removed file that failed stays for the moderators.
+ */
+export async function purgeRemovedFiles({ limit = 50 } = {}) {
+  const purged = await dbWrite.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<FileObjects[]>`
+      SELECT f."id", f."s3Key", f."deliveryKey", f."imageId" FROM "ServiceDealFile" f
+      WHERE f."removedAt" IS NOT NULL
+        AND f."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+        AND NOT ${mustKeep(Prisma.sql`f`)}
+        -- Scan copies of its images go first (deleteEntryScanCopies).
+        AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+          WHERE e."fileId" = f."id" AND e."imageId" IS NOT NULL)
+      ORDER BY f."id" LIMIT ${limit}::int
+      FOR UPDATE OF f SKIP LOCKED`;
+    if (!rows.length) return rows;
+    const ids = rows.map(({ id }) => id);
+    await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "fileId" = ANY(${ids}::int[])`;
+    await tx.$executeRaw`DELETE FROM "ServiceDealFile" WHERE "id" = ANY(${ids}::int[])`;
+    return rows;
+  });
+  for (const file of purged) await deleteFileObjects(file);
+  return purged.length;
+}
+
+/**
+ * A kept upload that never completed: copies what is at the uploader's key to a key only the server
+ * has, points the row at it, and only then deletes the uploader's key. A copy that still fails after
+ * retries leaves the row and the object at the uploader's key, and is logged: a removed row on a
+ * `service-deals/uploads/` key is one with no server copy.
+ */
+async function keepServerCopy(bucket: string, fileId: number, uploaderKey: string) {
+  const serverKey = `${UPLOAD_KEY_ROOT}/held/${fileId}/${randomUUID()}`;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < HELD_COPY_ATTEMPTS; attempt++) {
+    try {
+      await getS3Client().send(
+        new CopyObjectCommand({
+          Bucket: bucket,
+          Key: serverKey,
+          CopySource: encodeURI(`${bucket}/${uploaderKey}`),
+        })
+      );
+      await dbWrite.$executeRaw`
+        UPDATE "ServiceDealFile" SET "s3Key" = ${serverKey}::text
+        WHERE "id" = ${fileId}::int AND "s3Key" = ${uploaderKey}::text`;
+      await deleteObject(bucket, uploaderKey).catch(() => null);
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  logToAxiom({
+    type: 'error',
+    name: 'service-deal-file-held',
+    message: 'no server copy of a kept upload',
+    details: { fileId, error: (lastError as Error)?.message },
+  }).catch(() => null);
+}
+
+/**
+ * Records a verdict on a Final or Attachment. Only a Pending file takes one, so a repeat or late
+ * result cannot overturn an earlier one. Passed also needs the file unpacked and ready, never
+ * refused, its malware scan passed (or skipped while the scan is off) and every image passed. A
+ * Failed Final sends a delivered deal to the moderators; one not yet delivered cannot be delivered
+ * while it stands (see `dealReadyToDeliver`). A Failed Attachment holds nothing: the seller is not
+ * answerable for the buyer's file, which simply never reaches them. A removed file holds nothing
+ * either; a Failed one is logged and kept.
  */
 export async function recordFinalScanResult({
   fileId,
@@ -415,27 +643,48 @@ export async function recordFinalScanResult({
   fileId: number;
   verdict: 'Passed' | 'Failed';
 }) {
-  // A skipped malware scan stands in for a passed one only while the scan is off, so turning it on
-  // stops passing the Finals it skipped until they are scanned (see `settleFinals`).
+  // A skipped malware scan stands in for a passed one only for a Final and only while the scan is
+  // off, so turning it on stops passing the Finals it skipped until they are scanned (see
+  // `settleFinals`). An Attachment always needs a scan that ran.
   const malwareScanOn = verdict === 'Passed' ? await isFinalsMalwareScanOn() : true;
-  const [file] = await dbWrite.$queryRaw<{ dealId: number }[]>`
+  const [file] = await dbWrite.$queryRaw<
+    {
+      dealId: number;
+      kind: ServiceDealFileKind;
+      removedAt: Date | null;
+      failReason: string | null;
+    }[]
+  >`
     UPDATE "ServiceDealFile" SET "scanStatus" = ${verdict}::"ServiceDealFileScanStatus"
-    WHERE "id" = ${fileId}::int AND "kind" = 'Final'::"ServiceDealFileKind"
+    WHERE "id" = ${fileId}::int AND "kind"::text IN (${SCANNED_FILE_KINDS})
       AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
       AND (${verdict}::text = 'Failed' OR (
         "unpackedAt" IS NOT NULL
         AND "repackedAt" IS NOT NULL
         AND "failReason" IS NULL
         AND ("malwareScanStatus" = 'Passed'::"ServiceDealFileScanStatus"
-          OR ("malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus" AND NOT ${malwareScanOn}))
+          OR ("malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus" AND NOT ${malwareScanOn}
+            AND "kind"::text <> 'Attachment'))
         AND NOT EXISTS (
           SELECT 1 FROM "ServiceDealFileEntry" e
           WHERE e."fileId" = "ServiceDealFile"."id"
             AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")))
-    RETURNING "dealId"`;
+    RETURNING "dealId", "kind", "removedAt", "failReason"`;
   if (!file) return { recorded: false, held: false };
+  if (file.removedAt) {
+    // The buyer never had this file and the round no longer counts it, so its verdict says
+    // something about the uploader, not the deal.
+    if (verdict === 'Failed')
+      logToAxiom({
+        type: 'error',
+        name: 'service-deal-file-removed-failed',
+        message: 'a removed deal file failed its scan',
+        details: { fileId, dealId: file.dealId, kind: file.kind, failReason: file.failReason },
+      }).catch(() => null);
+    return { recorded: true, held: false };
+  }
   const held =
-    verdict === 'Failed'
+    verdict === 'Failed' && file.kind === 'Final'
       ? await holdServiceDealForReview(file.dealId, SERVICE_DEAL_HOLD_REASONS.finalScanFailed)
       : false;
   return { recorded: true, held };
@@ -482,6 +731,22 @@ type DealForFiles = {
   currentRoundDelivered: boolean;
 };
 
+type ListedFile = {
+  id: number;
+  round: number;
+  kind: ServiceDealFileKind;
+  fileName: string | null;
+  mimeType: string | null;
+  size: number;
+  status: ServiceDealFileStatus;
+  failReason: string | null;
+  scanStatus: ServiceDealFileScanStatus | null;
+  previewUrl: string | null;
+  canDownload: boolean;
+  /** Moderators only: when the uploader removed a file that was kept. */
+  removedAt?: Date;
+};
+
 type FileRow = {
   id: number;
   round: number;
@@ -495,6 +760,7 @@ type FileRow = {
   scanStatus: ServiceDealFileScanStatus;
   malwareScanStatus: ServiceDealFileScanStatus;
   watermarkedKey: string | null;
+  removedAt: Date | null;
 };
 
 /**
@@ -508,6 +774,12 @@ const finalScansClear = (row: {
 }) =>
   row.scanStatus === 'Passed' &&
   (row.malwareScanStatus === 'Passed' || row.malwareScanStatus === 'NotScanned');
+
+/** An attachment reaches the seller only on a malware scan that ran: a skipped one never counts. */
+const attachmentScansClear = (row: {
+  scanStatus: ServiceDealFileScanStatus;
+  malwareScanStatus: ServiceDealFileScanStatus;
+}) => row.scanStatus === 'Passed' && row.malwareScanStatus === 'Passed';
 
 /** The buyer's claim on a deal's final files: it is paid for, and not since reversed. */
 export const buyerOwnsFinals = (deal: Pick<DealForFiles, 'status' | 'completedAt'>) =>
@@ -525,10 +797,13 @@ export async function listServiceDealFiles({
   dealId,
   userId,
   isModerator,
+  canReviewCsam = false,
 }: {
   dealId: number;
   userId: number;
   isModerator: boolean;
+  /** See `resolveServiceDealFileDownload`. */
+  canReviewCsam?: boolean;
 }) {
   const [deal] = await dbWrite.$queryRaw<DealForFiles[]>`
     SELECT d."id", d."buyerId", d."sellerId", d."status"::text AS "status", d."revisionsUsed",
@@ -545,13 +820,60 @@ export async function listServiceDealFiles({
 
   const rows = await dbWrite.$queryRaw<FileRow[]>`
     SELECT f."id", f."round", f."kind", f."fileName", f."mimeType", f."size", f."deliverySize",
-      f."status", f."failReason", f."scanStatus", f."malwareScanStatus", f."watermarkedKey"
+      f."status", f."failReason", f."scanStatus", f."malwareScanStatus", f."watermarkedKey",
+      f."removedAt"
     FROM "ServiceDealFile" f
     WHERE f."dealId" = ${dealId}::int
     ORDER BY f."round", f."id"`;
 
   const privileged = isSeller || isModerator;
-  return rows.flatMap((row) => {
+  // A removed file is for moderators who are not a party to the deal.
+  const seesRemoved = isModerator && !isSeller && !isBuyer;
+  return rows.flatMap((row): ListedFile[] => {
+    if (row.removedAt) {
+      if (!seesRemoved) return [];
+      return [
+        {
+          id: row.id,
+          round: row.round,
+          kind: row.kind,
+          fileName: row.fileName,
+          mimeType: row.mimeType,
+          size: row.size,
+          status: row.status,
+          failReason: row.failReason,
+          scanStatus: row.scanStatus,
+          previewUrl: null,
+          canDownload: canReviewCsam,
+          removedAt: row.removedAt,
+        },
+      ];
+    }
+    if (row.kind === 'Attachment') {
+      // The buyer's file. The seller is not told it exists until its scans pass, and then gets what
+      // a buyer gets of a Final: the delivery copy's size, no failure detail.
+      // A moderator who is also the seller is the seller here.
+      const owner = isBuyer || (isModerator && !isSeller);
+      const cleared =
+        row.status === 'Ready' && attachmentScansClear(row) && !CLOSED_TO_SELLER.has(deal.status);
+      if (!owner && !cleared) return [];
+      return [
+        {
+          id: row.id,
+          round: row.round,
+          kind: row.kind,
+          fileName: row.fileName,
+          mimeType: row.mimeType,
+          size: owner ? row.size : row.deliverySize ?? row.size,
+          status: row.status,
+          failReason: owner ? row.failReason : null,
+          scanStatus: row.scanStatus,
+          previewUrl: null,
+          canDownload: row.status === 'Ready' && (owner || cleared),
+        },
+      ];
+    }
+
     const buyerOnly = !privileged;
     if (buyerOnly && !buyerSeesRound(deal, row.round)) return [];
     // A buyer sees a preview only once it is scanned, marked and published: never the original.
@@ -601,12 +923,16 @@ export type ServiceDealFileDownload = {
   key: string;
   fileName: string;
   access: ServiceDealFileAccess;
+  /** A removed file is signed only once its access is recorded. */
+  removed: boolean;
 };
 
 /**
  * The object a user may download, or null (the route answers 404 for null, so a file id reveals
  * nothing). The seller may take back anything they uploaded; a moderator anything, for dispute
  * review; the buyer only a Final of the delivered round that has passed its scan, once they own it.
+ * An Attachment reverses the roles: the buyer may take back their own, and the seller gets the
+ * delivery copy only once its scans pass, and never after the deal is Declined, Expired or Cancelled.
  *
  * A buyer gets the delivery file, never the upload: for a zip that is the archive the server built,
  * and a zip without one is not downloadable by them at all. `delivered` asks a moderator for the
@@ -618,11 +944,14 @@ export async function resolveServiceDealFileDownload({
   isModerator,
   delivered = false,
   moderatorFetch = false,
+  canReviewCsam = false,
 }: {
   fileId: number;
   userId: number;
   isModerator: boolean;
   delivered?: boolean;
+  /** The `csamReports` permission: a removed file is served only to a moderator who holds it. */
+  canReviewCsam?: boolean;
   /** The moderator dispute tool. Recorded as a ModeratorFetch under the caller's role on the deal;
    *  it never counts as the buyer's download. */
   moderatorFetch?: boolean;
@@ -643,28 +972,49 @@ export async function resolveServiceDealFileDownload({
       dealStatus: string;
       revisionsUsed: number;
       completedAt: Date | null;
+      removedAt: Date | null;
     }[]
   >`
     SELECT f."dealId", f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus",
-      f."malwareScanStatus", f."status",
+      f."malwareScanStatus", f."status", f."removedAt",
       d."buyerId", d."sellerId", d."status"::text AS "dealStatus", d."revisionsUsed", d."completedAt"
     FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
     WHERE f."id" = ${fileId}::int`;
   if (!row) return null;
 
-  const allowed =
-    row.sellerId === userId ||
-    isModerator ||
-    (row.buyerId === userId &&
-      row.kind === 'Final' &&
-      row.status === 'Ready' &&
-      row.round === row.revisionsUsed &&
-      finalScansClear(row) &&
-      buyerOwnsFinals({ status: row.dealStatus, completedAt: row.completedAt }));
+  const isAttachment = row.kind === 'Attachment';
+  const ready = row.status === 'Ready';
+  const party = row.sellerId === userId || row.buyerId === userId;
+  const allowed = row.removedAt
+    ? canReviewCsam && isModerator && !party
+    : isAttachment
+    ? (isModerator && row.sellerId !== userId) ||
+      (row.buyerId === userId && ready) ||
+      (row.sellerId === userId &&
+        ready &&
+        attachmentScansClear(row) &&
+        !CLOSED_TO_SELLER.has(row.dealStatus))
+    : row.sellerId === userId
+    ? // A refused or rejected upload is not served back, a seller who moderates included.
+      row.status !== 'Failed'
+    : isModerator ||
+      (row.buyerId === userId &&
+        row.kind === 'Final' &&
+        ready &&
+        row.round === row.revisionsUsed &&
+        finalScansClear(row) &&
+        buyerOwnsFinals({ status: row.dealStatus, completedAt: row.completedAt }));
   if (!allowed) return null;
+  // A file never completed, or refused at completion, can still sit at the key its uploader holds
+  // an upload URL for. Only the uploader is served those bytes (see `keepServerCopy`).
+  const uploaderId = isAttachment ? row.buyerId : row.sellerId;
+  if (isUploaderKey(row.s3Key) && userId !== uploaderId) return null;
 
-  const isBuyer = row.buyerId === userId && row.sellerId !== userId;
-  const wantsDelivered = isBuyer || (isModerator && delivered);
+  // The party receiving the file gets the copy the server built, never the upload.
+  const receives = isAttachment
+    ? row.sellerId === userId && row.buyerId !== userId
+    : row.buyerId === userId && row.sellerId !== userId;
+  const wantsDelivered = receives || (isModerator && delivered);
   let key = row.s3Key;
   if (wantsDelivered) {
     if (row.deliveryKey) key = row.deliveryKey;
@@ -676,6 +1026,7 @@ export async function resolveServiceDealFileDownload({
   return {
     bucket: await getBucket(),
     key,
+    removed: !!row.removedAt,
     fileName: row.fileName,
     access: {
       dealId: row.dealId,
@@ -688,16 +1039,23 @@ export async function resolveServiceDealFileDownload({
 }
 
 /** Not awaited, so recording never slows or fails a download; it still awaits delivery so a lost
- *  row is logged. */
+ *  row is logged. A removed file is the exception: it is not signed unless the access was recorded. */
 export async function getServiceDealFileDownloadUrl(
   target: ServiceDealFileDownload,
   tracker: Pick<Tracker, 'serviceDealFileAccess'>
 ) {
-  const { url } = await getGetUrlByKey(target.key, {
-    bucket: target.bucket,
-    fileName: target.fileName,
-    expiresIn: SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
-  });
+  if (target.removed) {
+    const sent = await Promise.resolve()
+      .then(() => tracker.serviceDealFileAccess(target.access, { awaitDelivery: true }))
+      .catch((error: unknown) => {
+        logAccessFailure(target.access)(error);
+        return null;
+      });
+    if (sent === false) logAccessFailure(target.access)(new Error('Tracker not configured'));
+    if (!sent) throw throwServiceUnavailableError('This file cannot be downloaded right now.');
+    return signDownload(target);
+  }
+  const url = await signDownload(target);
   try {
     tracker
       .serviceDealFileAccess(target.access, { awaitDelivery: true })
@@ -711,6 +1069,15 @@ export async function getServiceDealFileDownloadUrl(
   }
   return url;
 }
+
+const signDownload = async (target: ServiceDealFileDownload) =>
+  (
+    await getGetUrlByKey(target.key, {
+      bucket: target.bucket,
+      fileName: target.fileName,
+      expiresIn: SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
+    })
+  ).url;
 
 const logAccessFailure = (access: ServiceDealFileAccess) => (error: unknown) =>
   logToAxiom({
@@ -752,7 +1119,7 @@ function claimPreviews(where: Prisma.Sql, limit: number) {
       SELECT p."id" FROM "ServiceDealFile" p
       WHERE p."kind" = 'Preview'::"ServiceDealFileKind"
         AND p."status" = 'Processing'::"ServiceDealFileStatus"
-        AND ${where}
+        AND ${where} AND ${liveFile(Prisma.sql`p`)}
         AND (p."processingAt" IS NULL
           OR p."processingAt" < now() - (${SERVICE_PREVIEW_PROCESSING_STALE_MS}::int * interval '1 millisecond'))
       ORDER BY p."id" LIMIT ${limit}::int FOR UPDATE SKIP LOCKED)
@@ -832,6 +1199,7 @@ export async function startPreviewScans({ limit = 5 } = {}) {
         }
         imageId = (await createScanImage(scanKey, copy, preview.sellerId)).id;
       }
+      // By id alone: a preview removed while its copy was made is kept, and keeps the copy too.
       await dbWrite.$executeRaw`
         UPDATE "ServiceDealFile" SET "imageId" = ${imageId}::int, "processingAt" = NULL
         WHERE "id" = ${preview.id}::int`;

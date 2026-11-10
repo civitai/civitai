@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 import { ModelFileVisibility, ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
@@ -12,8 +14,8 @@ import {
   createSerializedFileDownloadUrl,
 } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   readModelVersionPrivacyViaKysely,
   readModelVersionPrivacyViaPrisma,
@@ -186,7 +188,9 @@ export async function prepareModelVersionResponse(
   // `null` means known-ungated; only `undefined` self-fetches.
   paidAccess?: PublicPaidAccessDto | null,
   // The .com face, as the API v1 model list resolves it: for a caller served only safe levels.
-  showSfwFace = false
+  showSfwFace = false,
+  // `isRedCapableHost` of the request: decides which training datasets are offered.
+  redCapable = false
 ) {
   // `availability` and the owner only decide visibility; they are not part of the response.
   const { files, model: modelRow, metrics, vaeId, availability, ...storedVersion } = modelVersion;
@@ -213,15 +217,15 @@ export async function prepareModelVersionResponse(
       (await getPaidAccess('ModelVersion', [version.id]))[version.id]
     );
   const includeDownloadUrl = model.mode !== ModelModifier.Archived;
-  const includeImages = model.mode !== ModelModifier.TakenDown;
+  const includeImages = !isModelWithheld(model);
+  const listed = await trainingDataListing(dbRead, [{ id: version.id, files }], { redCapable });
 
   // Creator Controls: gate the version download count (public API — no owner/mod
   // bypass wired here, matching buildPublicModelResponse). The base query doesn't
   // carry meta/owner, so fetch the privacy inputs directly.
-  let privacy = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-    ? await readModelVersionPrivacyViaKysely((await loadKyselyDb()).kyselyRead, version.id)
-    : undefined;
-  // `undefined` is OFF, or a version whose model or user row is gone, for which Prisma throws.
+  const { kyselyRead } = await loadKyselyDb();
+  let privacy = await readModelVersionPrivacyViaKysely(kyselyRead, version.id);
+  // `undefined` is a version whose model or user row is gone; the Prisma read throws for it.
   if (privacy === undefined) privacy = await readModelVersionPrivacyViaPrisma(dbRead, version.id);
   // Only resolve CP membership when something is actually hidden (version meta, model
   // meta, or the owner's user default). When nothing is hidden, the resolver returns
@@ -260,7 +264,7 @@ export async function prepareModelVersionResponse(
     model: { ...model, mode: model.mode == null ? undefined : model.mode },
     files: includeDownloadUrl
       ? castedFiles
-          .filter((file) => file.visibility === ModelFileVisibility.Public)
+          .filter((file) => file.visibility === ModelFileVisibility.Public && listed(file))
           .map(({ hashes, url, visibility, metadata, modelVersionId, ...file }) => ({
             ...file,
             metadata: reduceToBasicFileMetadata(metadata),
@@ -339,7 +343,8 @@ export async function resModelVersionDetails(
     baseUrl,
     undefined,
     undefined,
-    showSfwFace
+    showSfwFace,
+    isRedCapableHost(req.headers.host)
   );
   if (!body) return res.status(404).json({ error: 'Missing model file' });
   // Only its owner or a moderator gets here with a Private version: never let a cache keep it.

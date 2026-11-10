@@ -6,6 +6,8 @@ import { constants } from '~/server/common/constants';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { withSpan } from '~/server/utils/otel-helpers';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
+import { Flags } from '~/shared/utils/flags';
 
 /**
  * The read behind the creator card (`fetchUserCreator`): the user with its links, stats, rank,
@@ -64,8 +66,37 @@ const userCreatorSelect = {
   },
 } satisfies Prisma.UserSelect;
 
-export type UserCreatorUser = Prisma.UserGetPayload<{ select: typeof userCreatorSelect }>;
+export type UserCreatorUser = Prisma.UserGetPayload<{ select: typeof userCreatorSelect }> & {
+  /** UserFlag.ExcludeFromEventPoints; moderator-only, masked like `excludeFromLeaderboards`. */
+  excludeFromEventPoints: boolean;
+};
 export type UserCreatorRead = { user: UserCreatorUser; modelCount: number } | null;
+
+type CreatorRow = NonNullable<Awaited<ReturnType<typeof getUserCreatorRow>>>;
+
+/**
+ * The `profileImageSelect` payload from a row's `ProfilePicture` columns; also used by the user
+ * profile read (`getUserWithProfileRow`), which selects the same columns.
+ */
+export function profilePictureOf(
+  row: Pick<CreatorRow, Extract<keyof CreatorRow, `profilePicture${string}`>>
+) {
+  return row.profilePictureId !== null
+    ? {
+        id: row.profilePictureId,
+        name: row.profilePictureName,
+        url: row.profilePictureUrl,
+        nsfwLevel: row.profilePictureNsfwLevel,
+        hash: row.profilePictureHash,
+        userId: row.profilePictureUserId,
+        ingestion: row.profilePictureIngestion,
+        type: row.profilePictureType,
+        width: row.profilePictureWidth,
+        height: row.profilePictureHeight,
+        metadata: row.profilePictureMetadata,
+      }
+    : null;
+}
 
 /**
  * Two Kysely statements, one after the other on ONE pooled connection, mapped to the Prisma shape: the user (`getUserCreatorRow`, with links, rank, cosmetics, profile picture and
@@ -105,6 +136,7 @@ export async function readUserCreatorViaKysely(
     publicSettings: row.publicSettings,
     settings: row.settings,
     excludeFromLeaderboards: row.excludeFromLeaderboards,
+    excludeFromEventPoints: Flags.hasFlag(row.flags, UserFlag.ExcludeFromEventPoints),
     links: row.links,
     stats: stats ?? null,
     rank:
@@ -127,22 +159,7 @@ export async function readUserCreatorViaKysely(
         data: cosmetic.cosmeticData,
       },
     })),
-    profilePicture:
-      row.profilePictureId !== null
-        ? {
-            id: row.profilePictureId,
-            name: row.profilePictureName,
-            url: row.profilePictureUrl,
-            nsfwLevel: row.profilePictureNsfwLevel,
-            hash: row.profilePictureHash,
-            userId: row.profilePictureUserId,
-            ingestion: row.profilePictureIngestion,
-            type: row.profilePictureType,
-            width: row.profilePictureWidth,
-            height: row.profilePictureHeight,
-            metadata: row.profilePictureMetadata,
-          }
-        : null,
+    profilePicture: profilePictureOf(row),
   };
 
   return { user: user as unknown as UserCreatorUser, modelCount: row.modelCount ?? 0 };

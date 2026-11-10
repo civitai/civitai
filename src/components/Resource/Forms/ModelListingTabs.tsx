@@ -28,9 +28,16 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { InputRTE, InputText } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { SfwFaceCheckField, SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
-import { normalizeSfwFaceText, SFW_DESCRIPTION_MAX_LENGTH } from '~/shared/utils/model-sfw-face';
+import type { ComCoverState } from '~/shared/utils/model-sfw-face';
+import {
+  COM_COVER_NOT_LISTED_LABEL,
+  comCoverStateMessages,
+  comFaceRemovedMessage,
+  isComSafeLevel,
+  normalizeSfwFaceText,
+  SFW_DESCRIPTION_MAX_LENGTH,
+} from '~/shared/utils/model-sfw-face';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -56,9 +63,15 @@ const CHECK_DEBOUNCE_MS = 800;
 export function ModelListingTabs({
   modelId,
   redFields,
+  comFaceRemoved,
+  comCoverState,
 }: {
   modelId?: number;
   redFields: ReactNode;
+  /** The listing re-check took the model off civitai.com. */
+  comFaceRemoved?: 'detected' | 'recheck-unverified' | null;
+  /** Why the saved .com cover does not list the model on .com; null when it does. */
+  comCoverState?: ComCoverState | null;
 }) {
   const form = useFormContext<ListingForm>();
   const [sfwName, sfwDescription, nsfw] = useWatch({
@@ -70,6 +83,14 @@ export function ModelListingTabs({
   const [site, setSite] = useState<Site>(features.isGreen ? 'com' : 'red');
   const ownComContent = sfwName != null;
   const cardState: CardState = ownComContent ? 'custom' : nsfw ? 'redOnly' : 'same';
+  const coverNotListed = ownComContent && nsfw && comCoverState ? comCoverState : null;
+  const comCardState: CardState = coverNotListed ? 'notListed' : cardState;
+  const removedMessage = comFaceRemoved ? comFaceRemovedMessage(comFaceRemoved, !!nsfw) : null;
+  const removedAlert = removedMessage && (
+    <Alert color="red" p="xs" mb="md">
+      <Text size="xs">{removedMessage}</Text>
+    </Alert>
+  );
 
   const nameVerdict = useSfwFaceVerdict(
     'sfwName',
@@ -113,7 +134,7 @@ export function ModelListingTabs({
           <Tabs.List>
             <Tabs.Tab
               value="com"
-              rightSection={comHasErrors ? <ErrorDot /> : <CardBadge state={cardState} />}
+              rightSection={comHasErrors ? <ErrorDot /> : <CardBadge state={comCardState} />}
             >
               civitai.com
             </Tabs.Tab>
@@ -126,6 +147,7 @@ export function ModelListingTabs({
           </Tabs.List>
 
           <Tabs.Panel value="red" pt="md">
+            {removedAlert}
             <Stack>
               {redFields}
               {modelId && <SiteCoverPicker site="red" modelId={modelId} />}
@@ -133,6 +155,12 @@ export function ModelListingTabs({
           </Tabs.Panel>
 
           <Tabs.Panel value="com" pt="md">
+            {removedAlert}
+            {coverNotListed && (
+              <Alert color="yellow" p="xs" mb="md" title={COM_COVER_NOT_LISTED_LABEL}>
+                <Text size="xs">{comCoverStateMessages[coverNotListed]}</Text>
+              </Alert>
+            )}
             <ComListing
               modelId={modelId}
               ownContent={ownComContent}
@@ -306,9 +334,6 @@ function ComListing({
   );
 }
 
-const isSafeLevel = (nsfwLevel: number) =>
-  !!nsfwLevel && (nsfwLevel & sfwBrowsingLevelsFlag) === nsfwLevel;
-
 /** The cover a site leads with, picked from the creator's own published images on the model. */
 function SiteCoverPicker({ site, modelId }: { site: Site; modelId: number }) {
   const features = useFeatureFlags();
@@ -326,7 +351,8 @@ function SiteCoverPicker({ site, modelId }: { site: Site; modelId: number }) {
       </Text>
     );
 
-  const images = site === 'com' ? candidates.filter((i) => isSafeLevel(i.nsfwLevel)) : candidates;
+  const images =
+    site === 'com' ? candidates.filter((i) => isComSafeLevel(i.nsfwLevel)) : candidates;
   const description =
     site === 'com'
       ? 'Only your images rated PG or PG-13 can lead on civitai.com. Click a picked image again to clear it.'
@@ -387,11 +413,12 @@ function SiteCoverPicker({ site, modelId }: { site: Site; modelId: number }) {
   );
 }
 
-type CardState = 'custom' | 'same' | 'redOnly';
+type CardState = 'custom' | 'same' | 'redOnly' | 'notListed';
 const cardBadges: Record<CardState, { label: string; color: string }> = {
   custom: { label: 'Custom for this site', color: 'green' },
   same: { label: 'Same on both sites', color: 'gray' },
   redOnly: { label: 'Only on civitai.red', color: 'yellow' },
+  notListed: { label: COM_COVER_NOT_LISTED_LABEL, color: 'yellow' },
 };
 
 function CardBadge({ state }: { state: CardState }) {

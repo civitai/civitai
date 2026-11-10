@@ -21,6 +21,7 @@ import { createMossImageInput } from './moss-image.handler';
 import { createBooguInput } from './boogu.handler';
 import { createKrea2Input } from './krea2.handler';
 import { createKrea3Input } from './krea3.handler';
+import { createMinimaxH3ImageInput } from './minimax-h3-image.handler';
 import { createPonyV7Input } from './pony-v7.handler';
 import { createReveInput } from './reve.handler';
 import { createMingInput } from './ming.handler';
@@ -78,6 +79,7 @@ export { createMossImageInput } from './moss-image.handler';
 export { createBooguInput } from './boogu.handler';
 export { createKrea2Input } from './krea2.handler';
 export { createKrea3Input } from './krea3.handler';
+export { createMinimaxH3ImageInput } from './minimax-h3-image.handler';
 export { createPonyV7Input } from './pony-v7.handler';
 export { createReveInput } from './reve.handler';
 export { createMingInput } from './ming.handler';
@@ -194,6 +196,8 @@ function createStep(
       return createKrea2Input(data, handlerCtx);
     case 'Krea3':
       return createKrea3Input(data, handlerCtx);
+    case 'MiniMaxH3Image':
+      return createMinimaxH3ImageInput(data, handlerCtx);
 
     case 'PonyV7':
       return createPonyV7Input(data, handlerCtx);

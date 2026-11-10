@@ -218,6 +218,62 @@ describe('gate rules — a disabled version is refused, not costed', () => {
   });
 });
 
+// The ecosystem/workflow nodes refuse a gated value BEFORE `refuseGatedSelection`
+// runs, so their refusal is the only text an API caller (an App Blocks app)
+// gets. A shown rule's message has to ride on it; a hidden rule's must not. The
+// stable prefix stays, because callers match on it.
+describe('gate rules — an ecosystem/workflow refusal says why', () => {
+  const rule = (overrides: Record<string, unknown>) => ({
+    id: 'gate-2',
+    name: 'outage',
+    availableTo: 'nobody',
+    presentation: 'disabled',
+    message: 'Back Monday.',
+    ecosystems: [],
+    workflows: [],
+    modelVersionIds: [],
+    ...overrides,
+  });
+  const SECRET = 'internal-note-must-not-leak';
+  const refusalOf = async (gateRules: unknown[]) => {
+    try {
+      await whatIfFromGraph({
+        input: input(QWEN_DEFAULT),
+        externalCtx: ctx({ gateRules }),
+        ...common,
+      } as never);
+    } catch (e) {
+      return (e as Error).message;
+    }
+    return undefined;
+  };
+
+  it('🔴 a disabled ecosystem is refused with the rule message after the stable text', async () => {
+    expect(await refusalOf([rule({ ecosystems: ['Qwen'] })])).toContain(
+      'Validation failed: ecosystem: Ecosystem is currently unavailable. Back Monday.'
+    );
+  });
+
+  it('🔴 a disabled workflow is refused with the rule message after the stable text', async () => {
+    expect(await refusalOf([rule({ workflows: ['txt2img'] })])).toContain(
+      'Validation failed: workflow: Workflow is currently unavailable. Back Monday.'
+    );
+  });
+
+  it('a hidden workflow keeps the bare stable text and never its message', async () => {
+    const message = await refusalOf([
+      rule({ presentation: 'hidden', message: SECRET, workflows: ['txt2img'] }),
+    ]);
+    expect(message).toContain('workflow: Workflow is currently unavailable');
+    expect(message).not.toContain(SECRET);
+    expect(message).not.toContain('Workflow is currently unavailable.');
+  });
+
+  // No hidden-ecosystem case here: a hidden ecosystem falls back to the default
+  // at the input boundary, so this path never refuses it. Its refusal and the
+  // stripped message are pinned at the unit level in `gate-refusal-reason.test.ts`.
+});
+
 describe('whatIfFromGraph — reply carries the substitution (mutant F)', () => {
   it('🔴 reports the swap on the zero-spend estimate', async () => {
     const result = (await whatIfFromGraph({

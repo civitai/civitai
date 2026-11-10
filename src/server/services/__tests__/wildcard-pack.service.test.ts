@@ -117,6 +117,7 @@ describe('resolveWildcardPackForUser — download gate (getFileForModelVersion i
       modelVersionId: 100,
       user: sfwUser,
       attribution: { caller: 'wildcard', actor: 'user' },
+      redCapable: false,
     });
   });
 });

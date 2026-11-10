@@ -43,6 +43,7 @@ export function PostImageCards() {
           .map((image, i) => (
             <div
               key={image.type === 'added' ? image.data.id : image.data.url}
+              data-image-id={image.type === 'added' ? image.data.id : undefined}
               className="flex flex-col gap-1"
             >
               <Text size="sm" fw={600} c="dimmed">

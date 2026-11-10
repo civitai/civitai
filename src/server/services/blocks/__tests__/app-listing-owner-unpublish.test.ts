@@ -153,6 +153,8 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
       'storage-doc-delete',
       'storage-doc-dismiss',
       'moderator-edit',
+      // Writes `is_official` only — a label, never a status.
+      'set-official',
     ]);
   });
 
@@ -183,6 +185,8 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
     'storage-doc-delete',
     'storage-doc-dismiss',
     'moderator-edit',
+    // The moderator-set Official flag: `is_official` moves; `status` does not.
+    'set-official',
   ])(
     '%s leaves app_listings.status alone ⇒ state-neutral, and must NOT displace a removal',
     (action) => {

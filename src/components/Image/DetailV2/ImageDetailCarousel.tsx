@@ -1,3 +1,4 @@
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -5,6 +6,10 @@ import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import { HatTurfDetailLayer } from '~/components/HatTurf/detail/HatTurfDetailLayer';
 import { takesHats } from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import { ImageStickerOverlay } from '~/components/Sticker/ImageStickerOverlay';
+import {
+  STICKER_TIMELINE_SPACE,
+  useStickerTimelineOpen,
+} from '~/components/Sticker/StickerMotionEditor';
 import { DrawnMediaHat } from '~/components/Cosmetics/EventDecoration/DrawnMediaHat';
 import type { WornDecoration } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
@@ -67,7 +72,7 @@ export function ImageDetailCarouselProvider<T extends ImageProps>({
 // VIDEO is here so arrow keys still seek a focused player with native controls
 const IGNORED_HOTKEY_TAGS = ['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO'];
 
-function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | null) {
+export function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | null) {
   if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
     return false;
   const target = event.target;
@@ -75,6 +80,8 @@ function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | nu
   if (target.isContentEditable) return false;
   if (IGNORED_HOTKEY_TAGS.includes(target.tagName)) return false;
   if (target.closest('[role="menu"],[role="listbox"]')) return false;
+  // An element that uses the arrows itself (a sticker being nudged into place).
+  if (target.closest('[data-arrow-keys]')) return false;
   // A dialog stacked on top of the detail view (report, add-to-collection) owns
   // its own arrow handling. The detail view's own modal shell is also a dialog,
   // but it contains the carousel, which is what tells the two apart.
@@ -275,6 +282,7 @@ function ImageContent({
   embla: EmblaCarouselType | null;
 } & ConnectProps &
   ImageDetailCarouselProps) {
+  const showEventCosmetics = useShowEventCosmetics();
   const [defaultMuted, setDefaultMuted] = useLocalStorage({
     getInitialValueInEffect: false,
     key: 'detailView_defaultMuted',
@@ -295,6 +303,7 @@ function ImageContent({
   // dragstart carries no pointerType, and android chrome fires it for a long-press
   // drag — leaving that one to embla keeps the touch swipe as `watchTouchDrag` has it
   const pointerType = useRef('mouse');
+  const timelineOpen = useStickerTimelineOpen(image.id);
 
   const handleDragStart = (event: React.DragEvent) => {
     if (pointerType.current !== 'mouse') return;
@@ -316,8 +325,10 @@ function ImageContent({
           onPointerDownCapture={(event) => (pointerType.current = event.pointerType)}
           onDragStartCapture={handleDragStart}
           className="relative flex size-full items-center justify-center"
+          // The sticker timeline floats in the room this leaves, so it never covers the video.
+          style={timelineOpen ? { paddingBottom: STICKER_TIMELINE_SPACE } : undefined}
         >
-          {!safe && width && height ? (
+          {!safe ? (
             <div
               className="relative flex max-h-full max-w-full flex-1"
               style={{
@@ -336,11 +347,9 @@ function ImageContent({
               {...imageDetailMediaProps(image)}
               alt={image.name ?? undefined}
               imageId={image.id}
-              className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
+              className="max-h-full w-auto max-w-full"
               wrapperProps={{
-                className: `flex items-center justify-center max-h-full w-auto max-w-full ${
-                  !safe ? 'invisible' : ''
-                }`,
+                className: 'flex items-center justify-center max-h-full w-auto max-w-full',
                 style: {
                   aspectRatio: (image?.width ?? 0) / (image?.height ?? 0),
                 },
@@ -349,7 +358,9 @@ function ImageContent({
               // and the aspect-ratio wrapper then clips the image's height. A `width` would also
               // change the URL, which `imageDetailMediaProps` owns.
               html5Controls={
-                active && (features.nativeVideoControls || shouldDisplayHtmlControls(image))
+                active &&
+                !timelineOpen &&
+                (features.nativeVideoControls || shouldDisplayHtmlControls(image))
               }
               muted={defaultMuted}
               onMutedChange={(isMuted) => {
@@ -366,12 +377,13 @@ function ImageContent({
                   ? (image.metadata as VideoMetadata)?.vimeoVideoId
                   : undefined
               }
-              controls={active}
+              controls={active && !timelineOpen}
               videoProps={{
                 autoPlay: active,
                 // A slide mid-transition is still in view, which the player's own in-view check
-                // reads as a reason to play.
-                standby: !active,
+                // reads as a reason to play. The sticker timeline owns play and pause: dropping
+                // the controls for it would otherwise re-run the player's autoplay.
+                standby: !active || timelineOpen,
               }}
             />
           )}
@@ -381,7 +393,12 @@ function ImageContent({
             layer={hatLayer}
             embla={embla}
           />
-          {safe && <ImageStickerOverlay imageId={image.id} />}
+          {safe && (
+            <ImageStickerOverlay
+              imageId={image.id}
+              wearsHat={showEventCosmetics && !!image.eventDecoration}
+            />
+          )}
           {safe && active && takesHats(image) && <HatTurfDetailLayer imageId={image.id} />}
         </div>
       )}

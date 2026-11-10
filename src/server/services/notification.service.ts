@@ -8,6 +8,10 @@ import { notifications } from '~/server/notifications/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import { DEFAULT_PUSH_TYPES } from '~/server/notifications/push.constants';
 import {
+  imageReactionMilestoneKey,
+  imageReactionMilestones,
+} from '~/server/notifications/reaction.notifications';
+import {
   emailNotificationTypeList,
   isEmailNotificationType,
   isPushableNotificationType,
@@ -17,6 +21,7 @@ import {
   notificationSingleRowFull,
   type DeletePushSubscriptionInput,
   type GetUserNotificationsSchema,
+  type MarkImageMilestonesReadInput,
   type MarkReadNotificationInput,
   type ToggleNotificationSettingInput,
   type ToggleEmailSettingInput,
@@ -47,13 +52,20 @@ export type CreateNotificationPendingRow = z.infer<typeof createNotificationPend
 // live in that app now; the monolith keeps only the main-DB `details` enrichment + the
 // UserNotificationSettings writes below.
 
-export const createNotification = async (data: CreateNotificationPendingRow) => {
+/** `throwOnError` rethrows a failed send, after the usual logging, for a caller that must know it failed. */
+export const createNotification = async (
+  data: CreateNotificationPendingRow,
+  { throwOnError = false }: { throwOnError?: boolean } = {}
+) => {
   try {
     await notifications.createNotification(data);
   } catch (e) {
     // Client errors are logged centrally (notifications-request-failed); best-effort, so swallow them and
     // only surface a non-request error (e.g. schema validation).
-    if (e instanceof NotificationsClientError) return;
+    if (e instanceof NotificationsClientError) {
+      if (throwOnError) throw e;
+      return;
+    }
     const error = e as Error;
     logToAxiom(
       {
@@ -66,6 +78,7 @@ export const createNotification = async (data: CreateNotificationPendingRow) => 
       },
       'notifications'
     ).catch();
+    if (throwOnError) throw e;
   }
 };
 
@@ -142,6 +155,23 @@ export const markNotificationsRead = async ({
     ).catch();
   }
 };
+
+// Best-effort: any client failure (an old app's 404 for this route, a 5xx, a timeout) is already logged
+// once as `notifications-request-failed` by the shared client, so return [] and leave the badge as it was.
+export async function markImageMilestonesRead({
+  userId,
+  imageId,
+}: MarkImageMilestonesReadInput & { userId: number }) {
+  try {
+    return await notifications.markNotificationsReadByKeys({
+      userId,
+      keys: imageReactionMilestones.map((n) => imageReactionMilestoneKey(imageId, n)),
+    });
+  } catch (e) {
+    if (e instanceof NotificationsClientError) return [];
+    throw e;
+  }
+}
 
 export const createUserNotificationSetting = async ({
   type,

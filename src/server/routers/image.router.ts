@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import {
   deleteImageHandler,
+  getImagesForModelVersionHandler,
   handleUpdateImageNsfwLevel,
   moderateImageHandler,
   setTosViolationHandler,
@@ -17,7 +18,6 @@ import {
   getImageDetail,
   getImageGenerationData,
   getImagesByUserIdForModeration,
-  getImagesForModelVersionCache,
   getMyImages,
   ingestImageById,
   removeImageResource,
@@ -110,7 +110,9 @@ export const imageRouter = router({
   getDetail: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
-    .query(({ input }) => getImageDetail({ ...input })),
+    .query(({ input, ctx }) =>
+      getImageDetail({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator })
+    ),
   getInfinite: heavyProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteImagesSchema)
@@ -118,7 +120,7 @@ export const imageRouter = router({
   getImagesForModelVersion: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
-    .query(({ input }) => getImagesForModelVersionCache([input.id])),
+    .query(getImagesForModelVersionHandler),
   getImagesAsPostsInfinite: heavyProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteImagesSchema)
