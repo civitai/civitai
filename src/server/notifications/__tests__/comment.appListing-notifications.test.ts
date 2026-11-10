@@ -144,7 +144,7 @@ describe('threadUrlMap — appListing resolves by slug', () => {
     );
 
     expect(resolved).toEqual({
-      model: `/models/3310?dialog=commentThread&${QUERY}`,
+      model: `/models/3310?dialog=commentThread&commentId=9052&${QUERY}`,
       image: `/images/3310?${QUERY}`,
       post: `/posts/3310?${QUERY}`,
       article: `/articles/3310?${QUERY}`,
@@ -166,10 +166,16 @@ describe('threadUrlMap — appListing resolves by slug', () => {
       );
   });
 
+  it('a model thread opens the comment itself when no parent comment is pinned', () => {
+    expect(
+      threadUrlMap({ threadType: 'model', threadParentId: 3310, commentId: 8123, threadId: 4471 })
+    ).toBe('/models/3310?dialog=commentThread&commentId=8123&highlight=8123&threadId=4471');
+  });
+
   it('REGRESSION: an appListing payload does not disturb a sibling type on the same details', () => {
     // A stale-binding mutant (reading `appListingSlug` unconditionally) would corrupt these.
     expect(threadUrlMap(details({ threadType: 'model', appListingSlug: SLUG }))).toBe(
-      `/models/3310?dialog=commentThread&${QUERY}`
+      `/models/3310?dialog=commentThread&commentId=9052&${QUERY}`
     );
     expect(threadUrlMap(details({ threadType: 'image', appListingSlug: SLUG }))).toBe(
       `/images/3310?${QUERY}`
@@ -251,7 +257,7 @@ describe('prepareMessage — an appListing thread produces a linked notification
       })
     ).toEqual({
       message: 'ada mentioned you in a comment on a model',
-      url: `/models/3310?dialog=commentThread&${QUERY}`,
+      url: `/models/3310?dialog=commentThread&commentId=9052&${QUERY}`,
     });
   });
 
@@ -444,8 +450,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       END,
       'appListingSlug', al.slug,
       'comicChapterPosition', cch.position,
-      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article', 'post', 'image', 'review', 'bounty', 'bountyEntry', 'challenge', 'crucible', 'storyline', 'model3d', 'appListing', 'comicChapter'])
-      THEN c."parentId" ELSE COALESCE(c."replyToId", c."parentId") END, CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'commentParentId', COALESCE(c."parentId", CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
@@ -459,7 +464,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       JOIN "User" u ON c."userId" = u.id
       LEFT JOIN "ComicChapter" cch ON c."entityType" = 'comicChapter' AND cch.id = c."entityId"
       LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"
-      WHERE NOT (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL)
+      WHERE NOT (c."entityType" = 'model')
       AND c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '2026-01-01T00:00:00.000Z'
       AND c."userId" != pc."userId"
       AND NOT EXISTS (
@@ -507,7 +512,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       UNNEST(CASE
       WHEN c."parentId" IS NULL THEN (SELECT ARRAY_AGG(s."userId") FROM (
       SELECT DISTINCT cu."userId" FROM "CommentV3" cu
-      WHERE cu."entityType" = c."entityType" AND cu."entityId" = c."entityId" AND cu."parentId" IS NULL AND (cu."legacyV1Id" IS NULL) = (c."legacyV1Id" IS NULL) AND cu."deletedAt" IS NULL AND NOT cu."tosViolation"
+      WHERE cu."entityType" = c."entityType" AND cu."entityId" = c."entityId" AND cu."parentId" IS NULL AND cu."deletedAt" IS NULL AND NOT cu."tosViolation"
       AND cu."userId" != c."userId"
       ) s
       WHERE NOT EXISTS (
@@ -548,11 +553,11 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND (anc.path @> c.path OR anc.id = c."replyToId")
       )))
       END) "ownerId",
-      CASE WHEN (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) THEN JSONB_BUILD_OBJECT(
-      'version', 3,
+      CASE WHEN (c."entityType" = 'model') THEN JSONB_BUILD_OBJECT(
+      'version', 4,
       'modelId', c."entityId",
-      'commentId', c."legacyV1Id",
-      'parentId', p."legacyV1Id",
+      'commentId', COALESCE(c."legacyV1Id", c.id),
+      'parentId', COALESCE(p."legacyV1Id", p.id),
       'parentType', 'comment',
       'modelName', m.name,
       'username', u.username
@@ -568,8 +573,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       END,
       'appListingSlug', al.slug,
       'comicChapterPosition', cch.position,
-      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article', 'post', 'image', 'review', 'bounty', 'bountyEntry', 'challenge', 'crucible', 'storyline', 'model3d', 'appListing', 'comicChapter'])
-      THEN c."parentId" ELSE COALESCE(c."replyToId", c."parentId") END, CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'commentParentId', COALESCE(c."parentId", CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
@@ -581,15 +585,20 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       FROM "CommentV3" c
       JOIN "User" u ON c."userId" = u.id
       LEFT JOIN "CommentV3" p ON p.id = c."parentId"
-      LEFT JOIN "Model" m ON (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) AND m.id = c."entityId"
+      LEFT JOIN "Model" m ON (c."entityType" = 'model') AND m.id = c."entityId"
       LEFT JOIN "ComicChapter" cch ON c."entityType" = 'comicChapter' AND cch.id = c."entityId"
       LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"
       WHERE c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '2026-01-01T00:00:00.000Z'
-      AND (NOT (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) OR c."parentId" IS NOT NULL)
+      AND (NOT (c."entityType" = 'model') OR c."parentId" IS NOT NULL)
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
       AND da.status <> 'Published'
+      )
+      AND NOT EXISTS (
+      SELECT 1 FROM "Model" hm
+      WHERE c."entityType" = 'model' AND hm.id = c."entityId"
+      AND (hm.status <> 'Published' OR hm.poi)
       )
       AND (c."entityType" <> 'appListing' OR al.slug IS NOT NULL)
       )
@@ -614,12 +623,12 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       SELECT DISTINCT
       CAST(unnest(regexp_matches(c.content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
       c."userId" "actorId",
-      CASE WHEN (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) THEN JSONB_BUILD_OBJECT(
-      'version', 3,
+      CASE WHEN (c."entityType" = 'model') THEN JSONB_BUILD_OBJECT(
+      'version', 4,
       'mentionedIn', 'comment',
       'modelId', c."entityId",
-      'commentId', c."legacyV1Id",
-      'parentId', p."legacyV1Id",
+      'commentId', COALESCE(c."legacyV1Id", c.id),
+      'parentId', COALESCE(p."legacyV1Id", p.id),
       'parentType', CASE WHEN c."parentId" IS NOT NULL THEN 'comment' ELSE 'review' END,
       'modelName', m.name,
       'username', u.username
@@ -635,8 +644,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       END,
       'appListingSlug', al.slug,
       'comicChapterPosition', cch.position,
-      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article', 'post', 'image', 'review', 'bounty', 'bountyEntry', 'challenge', 'crucible', 'storyline', 'model3d', 'appListing', 'comicChapter'])
-      THEN c."parentId" ELSE COALESCE(c."replyToId", c."parentId") END, CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'commentParentId', COALESCE(c."parentId", CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
@@ -649,7 +657,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       FROM "CommentV3" c
       JOIN "User" u ON c."userId" = u.id
       LEFT JOIN "CommentV3" p ON p.id = c."parentId"
-      LEFT JOIN "Model" m ON (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) AND m.id = c."entityId"
+      LEFT JOIN "Model" m ON (c."entityType" = 'model') AND m.id = c."entityId"
       LEFT JOIN "ComicChapter" cch ON c."entityType" = 'comicChapter' AND cch.id = c."entityId"
       LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"
       WHERE c."createdAt" > '2026-01-01T00:00:00.000Z'::timestamp - interval '1 day'
@@ -658,12 +666,17 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND c.hidden IS NOT TRUE
       AND c."deletedAt" IS NULL
       AND c.content LIKE '%"mention:%'
-      AND (NOT (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) OR m."userId" > 0)
+      AND (NOT (c."entityType" = 'model') OR m."userId" > 0)
       AND (c."entityType" <> 'appListing' OR al.slug IS NOT NULL)
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
       WHERE c."entityType" = 'article' AND da.id = c."entityId"
       AND da.status <> 'Published'
+      )
+      AND NOT EXISTS (
+      SELECT 1 FROM "Model" hm
+      WHERE c."entityType" = 'model' AND hm.id = c."entityId"
+      AND (hm.status <> 'Published' OR hm.poi)
       )
       UNION
       SELECT DISTINCT

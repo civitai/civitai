@@ -41,6 +41,9 @@ export const postsFilterSchema = z.object({
 const postInclude = z.enum(['cosmetics']);
 export type ImageInclude = z.infer<typeof postInclude>;
 export type PostsQueryInput = z.infer<typeof postsQuerySchema>;
+export type GetPostResourceCoversInput = z.infer<typeof getPostResourceCoversSchema>;
+export const getPostResourceCoversSchema = baseQuerySchema.extend({ id: z.number() });
+
 export const postsQuerySchema = baseQuerySchema.merge(
   postsFilterSchema.extend({
     limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).default(100),

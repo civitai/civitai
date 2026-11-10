@@ -271,7 +271,6 @@
     "src/server/clickhouse/__tests__/tracker.impressions.test.ts",
     "src/server/cloudflare/__tests__/client.purgeCache.test.ts",
     "src/server/controllers/__tests__/buzz.controller.tip.test.ts",
-    "src/server/controllers/__tests__/comment.controller.block-check.test.ts",
     "src/server/controllers/__tests__/image.controller.feed-source.test.ts",
     "src/server/controllers/__tests__/model-version.controller.licensing-lineage.test.ts",
     "src/server/controllers/__tests__/model-version.controller.publish-guards.test.ts",

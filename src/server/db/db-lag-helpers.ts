@@ -15,7 +15,6 @@ const lagTracker = createLagTracker<RedisKeyTemplateCache>({
 type LaggingType =
   | 'model'
   | 'modelVersion'
-  | 'commentModel'
   | 'resourceReview'
   | 'post'
   | 'postImages'

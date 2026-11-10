@@ -4,9 +4,13 @@ import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
+import {
+  isAppBlocksPipelineEnabled,
+  isAppBlocksReviewSharedServerEnabled,
+} from '~/server/services/app-blocks-flag';
 import {
   triggerApplyReview,
+  triggerReviewUnpublish,
   waitForApplyJob,
   waitForReviewHostReachable,
 } from '~/server/services/blocks/apps-pipeline.service';
@@ -18,6 +22,7 @@ import { deriveFailureClass, parseBuildSignals } from '~/server/services/blocks/
 import {
   markReviewPreviewState,
   parseReviewDetail,
+  releaseSettledBuildSlot,
 } from '~/server/services/blocks/publish-request.service';
 import { recordAppBlockBuildOutcome } from '~/server/prom/app-block-build.metrics';
 import {
@@ -271,6 +276,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
 
   if (previewNoLongerActive) {
+    // This build is over, so the build slot its (torn-down, superseded or decided) row still
+    // holds is released now, and the queue moves on.
+    await releaseSettledBuildSlot(body.publishRequestId, { sha: body.sha });
+    reviewBuildSettled(body.publishRequestId, false);
     res.status(200).json({
       ok: true,
       applied: false,
@@ -356,6 +365,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
+  // Read once per build, so the apply Job and the reachability probe agree on the serving path.
+  // Recorded on the detail from here on, so a later teardown unpublishes the way it was served.
+  const sharedServer = await isAppBlocksReviewSharedServerEnabled().catch(() => false);
+  baseDetail = { ...baseDetail, sharedServer };
+
   await markReviewPreviewState(body.publishRequestId, 'preview-deploying', baseDetail, {
     requireActivePreview: true,
   });
@@ -382,6 +396,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       sha: body.sha,
       publishRequestId: body.publishRequestId,
       imageRef: body.imageRef,
+      sharedServer,
     });
   } catch (e) {
     // Job creation failed — no watcher will run to free the dedup mark, so free
@@ -407,9 +422,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
 
   void watchReviewApplyJob({
     publishRequestId: body.publishRequestId,
+    slug: body.slug,
     sha: body.sha,
     jobName: applyJob.name,
     baseDetail,
+    sharedServer,
   });
 });
 
@@ -417,13 +434,31 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
 // this runs fire-and-forget, so it can't be observed through the HTTP response).
 export async function watchReviewApplyJob(args: {
   publishRequestId: string;
+  /** The app, for unpublishing a preview nobody is looking at any more (see below). */
+  slug?: string;
   sha: string;
   jobName: string;
   baseDetail: ReturnType<typeof parseReviewDetail>;
   /** What to do once the build stops holding a slot. Injectable for the watcher's tests. */
   onSettled?: (publishRequestId: string, live: boolean) => void;
+  /** The preview was published to the shared static server (probe it there). */
+  sharedServer?: boolean;
 }): Promise<void> {
-  const settled = args.onSettled ?? reviewBuildSettled;
+  // A row torn down, withdrawn, superseded or decided while this apply ran still holds its build
+  // slot (its build callback already ran, so nothing else would release it before the stale
+  // window): release it before the queue moves on. A no-op for the active preview just marked.
+  const onSettled = args.onSettled ?? reviewBuildSettled;
+  const settled = async (id: string, live: boolean) => {
+    try {
+      await releaseSettledBuildSlot(id, {
+        sha: args.sha,
+        buildStartedAt: args.baseDetail.buildStartedAt,
+      });
+    } catch {
+      /* never throws; the stale window is the backstop */
+    }
+    onSettled(id, live);
+  };
   // Every write below is a WATCHER advancing write — it must only ever touch the
   // preview THIS watcher owns. The reachability wait can keep this watcher alive
   // for a few minutes, so a mod could tear down this preview and re-preview a new
@@ -431,6 +466,34 @@ export async function watchReviewApplyJob(args: {
   // superseded watcher's late write can't clobber the newer preview (see
   // markReviewPreviewState's expectedSha guard).
   const guard = { requireActivePreview: true as const, expectedSha: args.sha };
+  // The apply Job published this sha to the shared server, but its row is no longer this active
+  // preview (torn down, withdrawn, superseded or decided while it ran). That teardown's unpublish
+  // may have run BEFORE this publish landed, and the row no longer carries the sha to retry it: so
+  // unpublish it now, for the sha this watcher knows. Idempotent.
+  const unpublishOrphan = async () => {
+    if (args.sharedServer !== true) return;
+    if (!args.slug) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[review-build-callback] no slug to unpublish the orphaned preview of ${args.publishRequestId}`
+      );
+      return;
+    }
+    try {
+      await triggerReviewUnpublish({
+        slug: args.slug,
+        sha: args.sha,
+        publishRequestId: args.publishRequestId,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[review-build-callback] orphaned preview unpublish failed for ${args.publishRequestId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  };
   try {
     const outcome = await waitForApplyJob(args.jobName);
     if (outcome === 'succeeded') {
@@ -441,7 +504,9 @@ export async function watchReviewApplyJob(args: {
       // ERR_NAME_NOT_RESOLVED. Gate "live" on a real reachability probe: stay on
       // "deploying…" until the host actually answers, so the link is never dead.
       const host = args.baseDetail.host;
-      const reachable = host ? await waitForReviewHostReachable(host) : true;
+      const reachable = host
+        ? await waitForReviewHostReachable(host, { sharedServer: args.sharedServer === true })
+        : true;
       if (reachable) {
         const marked = await markReviewPreviewState(
           args.publishRequestId,
@@ -450,8 +515,9 @@ export async function watchReviewApplyJob(args: {
           guard
         );
         // Live only if THIS preview was still the active one: a torn-down or superseded preview
-        // (the guard matched no row) must not start an agent review.
-        settled(args.publishRequestId, marked > 0);
+        // (the guard matched no row) must not start an agent review, and is unpublished.
+        if (marked === 0) await unpublishOrphan();
+        await settled(args.publishRequestId, marked > 0);
       } else {
         // Deploy is healthy but its host never became publicly reachable within
         // the budget (DNS propagation stall, or a genuinely-broken route). Do
@@ -460,7 +526,7 @@ export async function watchReviewApplyJob(args: {
         // suppressed within the TTL window.
         await clearReviewApplyMark(args.publishRequestId, args.sha);
         recordReviewApplyFailure();
-        await markReviewPreviewState(
+        const marked = await markReviewPreviewState(
           args.publishRequestId,
           'preview-failed',
           {
@@ -470,7 +536,9 @@ export async function watchReviewApplyJob(args: {
           },
           guard
         );
-        settled(args.publishRequestId, false);
+        // Published (the Job succeeded) for a row that is no longer this preview: unpublish it.
+        if (marked === 0) await unpublishOrphan();
+        await settled(args.publishRequestId, false);
       }
     } else {
       // On a DEFINITIVE failure free the replay-dedup slot so a same-sha retry
@@ -490,7 +558,7 @@ export async function watchReviewApplyJob(args: {
         },
         guard
       );
-      settled(args.publishRequestId, false);
+      await settled(args.publishRequestId, false);
     }
   } catch (err) {
     // eslint-disable-next-line no-console

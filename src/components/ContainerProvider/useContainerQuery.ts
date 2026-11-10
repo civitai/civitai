@@ -24,18 +24,21 @@ export function useContainerSize() {
 export function useContainerQuery({
   type,
   width,
+  unmeasured,
 }: {
   type: 'min-width' | 'max-width';
   width: MantineSpacing;
+  /** Answer while unmeasured (SSR, hydration); pass the request's device guess to avoid a shift at hydration. */
+  unmeasured?: boolean;
 }) {
   const size = typeof width === 'string' ? mantineContainerSizes[width] : width;
   const { inlineSize } = useContainerSize();
 
   return useMemo(() => {
-    if (inlineSize === 0) return false;
+    if (inlineSize === 0) return unmeasured ?? false;
     if (type === 'max-width') return size > inlineSize;
     else return size <= inlineSize;
-  }, [inlineSize, type, size]);
+  }, [inlineSize, type, size, unmeasured]);
 }
 
 export function useMediaQuery({

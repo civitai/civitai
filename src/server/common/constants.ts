@@ -63,23 +63,11 @@ const v3PageBudgetOverrides: Record<string, number> = {
   bountyEntry: 10,
   review: 10,
   post: 15,
+  model: 8,
 };
 const v3PageBudget = 40;
-const v3ReadSurfaces: string[] = [
-  'article',
-  'post',
-  'image',
-  'review',
-  'bounty',
-  'bountyEntry',
-  'challenge',
-  'crucible',
-  'storyline',
-  'model3d',
-  'appListing',
-  'comicChapter',
-];
-
+/** Surfaces whose section leaves hidden top-level comments out, where every other shows them folded. */
+const hiddenCommentsLeftOut = new Set(['model']);
 function getCommentAutoExpandDepth(entityType: string) {
   const override = autoExpandDepthOverrides[entityType];
   if (override === undefined && !wideCommentSurfaces.has(entityType)) return 0;
@@ -462,16 +450,9 @@ export const constants = {
     getV3PageBudget({ entityType }: { entityType: string }) {
       return v3PageBudgetOverrides[entityType] ?? v3PageBudget;
     },
-    /**
-     * Surfaces whose comments are read from CommentV3 through the v3 suite. A surface's flip adds
-     * it here and mounts `CommentSection`; notifications build their deep links from this list.
-     */
-    v3ReadSurfaces,
-    /**
-     * Surfaces whose comments are written to CommentV3 directly (stage B of a flip): a new comment
-     * on one exists only there. A surface read-flipped ahead of its write flip must be left out.
-     */
-    v3WriteSurfaces: [...v3ReadSurfaces],
+    leavesOutHiddenComments({ entityType }: { entityType: string }) {
+      return hiddenCommentsLeftOut.has(entityType);
+    },
     /** Most replies the v3 suite opens up front under one top-level comment. */
     v3RepliesPerRoot: 10,
     /** Replies per "show more" page in the v3 suite. */

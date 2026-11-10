@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { ReportReason } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
+import { createReportInputSchema } from '~/server/schema/report.schema';
 
-// A report on a CommentV3 comment links it through CommentV3Report.commentId, and a deleted comment,
-// whose placeholder row is still there to link to, takes no new report.
+// A report on a comment links it through CommentV3Report.commentId, and a deleted comment, whose
+// placeholder row is still there to link to, takes no new report.
 
 const reportCreate = vi.fn();
 const txQueryRaw = vi.fn();
@@ -30,7 +31,7 @@ beforeEach(() => {
   reportCreate.mockResolvedValue({ id: 74, details: {} });
 });
 
-describe('reporting a CommentV3 comment', () => {
+describe('reporting a comment', () => {
   const lookup = () => {
     const [sql, ...values] = txQueryRaw.mock.calls[0] as unknown as [string[], ...unknown[]];
     return { sql: sql.join('?'), values };
@@ -51,14 +52,19 @@ describe('reporting a CommentV3 comment', () => {
     expect(reportCreate).not.toHaveBeenCalled();
   });
 
-  it('looks only at comments on a surface that writes CommentV3', async () => {
-    txQueryRaw.mockResolvedValueOnce([]);
-    await expect(report()).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    const filter = lookup()
-      .values.map((v) => (v as { sql?: string })?.sql)
-      .find((s) => s?.startsWith(`"entityType"::text IN (`));
-    // Model is the one surface that does not write CommentV3.
-    expect(filter).toContain(`'image'`);
-    expect(filter).not.toContain(`'model'`);
+  const parses = (type: string) =>
+    createReportInputSchema.safeParse({
+      type,
+      id: 1,
+      reason: ReportReason.TOSViolation,
+      details: { violation: 'spam' },
+    }).success;
+
+  it.each(['comment', 'commentV2'])('refuses the old %s type at the input', (type) => {
+    expect(parses(type)).toBe(false);
+  });
+
+  it('accepts the same payload as commentV3', () => {
+    expect(parses('commentV3')).toBe(true);
   });
 });

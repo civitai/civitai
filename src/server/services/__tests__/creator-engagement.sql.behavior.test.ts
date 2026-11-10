@@ -104,7 +104,7 @@ CREATE TABLE "ImageReaction" (
 );
 CREATE TABLE "ResourceReview" (
   id serial PRIMARY KEY, "modelId" int, "userId" int, recommended boolean, exclude boolean DEFAULT false,
-  "tosViolation" boolean DEFAULT false, "createdAt" timestamp(3)
+  "tosViolation" boolean DEFAULT false, "createdAt" timestamp(3), "postId" int
 );
 CREATE TABLE "CommentV3" (
   id serial PRIMARY KEY, "entityType" "CommentEntityType", "entityId" int, "userId" int,
@@ -182,6 +182,11 @@ INSERT INTO "ResourceReview"("modelId", "userId", recommended, exclude, "created
   (40, 3, true, false, '${ago(1)}');
 INSERT INTO "ResourceReview"("modelId", "userId", recommended, "tosViolation", "createdAt") VALUES
   (30, 9, true, true, '${ago(1)}');
+-- Written from the reviewers' own draft and scheduled posts, so hidden until those go live.
+INSERT INTO "Post" VALUES (5, 6, NULL), (6, 7, '2099-01-01');
+INSERT INTO "ResourceReview"("modelId", "userId", recommended, "createdAt", "postId") VALUES
+  (30, 6, true, '${ago(1)}', 5),
+  (30, 7, false, '${ago(1)}', 6);
 `;
 
 let pg: PGlite;
@@ -287,6 +292,11 @@ describe('sort=newest', () => {
       d30: { reactions: { total: 2, thumbsUp: 1, thumbsDown: 1 } },
       allTime: { downloads: 77, tippedBuzz: 25, collects: 1 },
     });
+  });
+
+  it('leaves reviews from posts not yet live out of the thumbs', async () => {
+    const [model] = (await getCreatorEngagement(query({ type: 'model' }))).items;
+    expect(model.allTime.reactions).toMatchObject({ total: 2, thumbsUp: 1, thumbsDown: 1 });
   });
 
   it('drops metric-suppressed reactors from reaction counts', async () => {

@@ -1,3 +1,5 @@
+// Mantine's real stylesheet: the one-row tab-bar case measures layout, which is CSS.
+import '@mantine/core/styles.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -23,6 +25,8 @@ import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 
 const state = vi.hoisted(() => ({
   flags: { appBlocks: true, appReviewPage: true } as Record<string, boolean>,
+  // The Pending tab's count badge (`blocks.countReviewQueue`).
+  reviewQueueTotal: 0,
   subListingCount: 0,
   flaggedCount: 0,
   // The Access requests tab: the badge's count proc, and the queue's `list` (useInfiniteQuery).
@@ -159,6 +163,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       'appListings.listPendingRequests': { useQuery: emptyQuery },
       'appListings.listApprovedRequests': { useQuery: emptyQuery },
       'appListings.listRejectedRequests': { useQuery: emptyQuery },
+      // The Pending tab label's count — on-site + listing requests, from a count proc.
+      'blocks.countReviewQueue': {
+        useQuery: () => ({
+          data: { onsite: state.reviewQueueTotal, offsite: 0, total: state.reviewQueueTotal },
+        }),
+      },
       // The Sub-listings tab label's pending count runs on every render of the page.
       'appListings.countSubListingQueue': {
         useQuery: () => ({ data: { count: state.subListingCount } }),
@@ -216,6 +226,7 @@ function routerState() {
 
 beforeEach(() => {
   state.flags = { appBlocks: true, appReviewPage: true };
+  state.reviewQueueTotal = 0;
   state.subListingCount = 0;
   state.flaggedCount = 0;
   state.accessPendingCount = 0;
@@ -350,5 +361,88 @@ describe('ReviewQueuePage — dual-path row selection', () => {
     // Modal opened with the selected request; NO navigation to the detail page.
     await expect.element(page.getByTestId('modal-open')).toHaveTextContent('my-onsite-block');
     expect(routerPush()).not.toHaveBeenCalledWith('/apps/review/onsite-req-1');
+  });
+});
+
+describe('ReviewQueuePage — Pending tab count', () => {
+  test('🔴 the Pending tab shows how many submissions are waiting', async () => {
+    state.reviewQueueTotal = 12;
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /Pending/ })).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-review-pending-count')).toHaveTextContent(/^12$/);
+  });
+
+  test('no badge when the queue is empty', async () => {
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /Pending/ })).toBeInTheDocument();
+    expect(page.getByTestId('apps-review-pending-count').elements()).toHaveLength(0);
+  });
+
+  test('🔴 approvals in their undo window are not counted (the list hides them too)', async () => {
+    const { reviewApprovalQueue } = await import('~/components/Apps/pendingApprovalQueue');
+    const ids = ['badge-undo-window-1', 'badge-undo-window-2'];
+    for (const id of ids) reviewApprovalQueue.enqueue({ id, label: id, commit: async () => 0 });
+    try {
+      state.reviewQueueTotal = 12;
+      renderWithProviders(<ReviewQueuePage />);
+      await expect.element(page.getByTestId('apps-review-pending-count')).toHaveTextContent(/^10$/);
+      // Undone → waiting again → counted again.
+      reviewApprovalQueue.undo(ids[0]);
+      await expect.element(page.getByTestId('apps-review-pending-count')).toHaveTextContent(/^11$/);
+    } finally {
+      for (const id of ids) reviewApprovalQueue.undo(id);
+    }
+  });
+});
+
+describe('ReviewQueuePage — the tab bar', () => {
+  test('🔴 at phone width every tab sits on ONE row, and only the tab bar scrolls sideways', async () => {
+    await page.viewport(390, 844);
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByTestId('review-queue-tabs')).toBeInTheDocument();
+    const tabs = [...document.querySelectorAll('[role="tab"]')] as HTMLElement[];
+    expect(tabs.length).toBe(9);
+    const tops = new Set(tabs.map((t) => Math.round(t.getBoundingClientRect().top)));
+    expect([...tops], 'tabs wrapped onto more than one row').toHaveLength(1);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390 + 1);
+    const list = page.getByTestId('review-queue-tabs').element() as HTMLElement;
+    expect(getComputedStyle(list).overflowX).toBe('auto');
+  });
+
+  test('to-review tabs come first, then history & admin', async () => {
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByTestId('review-queue-tabs')).toBeInTheDocument();
+    const order = [...document.querySelectorAll('[role="tab"]')].map((t) =>
+      (t.textContent ?? '').replace(/\d+$/, '').trim()
+    );
+    expect(order).toEqual([
+      'Pending',
+      'Reports',
+      'Sub-listings',
+      'App feedback',
+      'Storage reports',
+      'Access requests',
+      'Approved',
+      'Rejected',
+      'Manage listings',
+    ]);
+  });
+});
+
+describe('ReviewQueuePage — phone and desktop open a review the SAME way', () => {
+  /**
+   * The screenshot tour recorded "mobile opens a modal while desktop navigates". The routing
+   * is ONE flag read (`appReviewPage`), with no viewport input anywhere in it — and the tour's
+   * own mobile screenshots show the queue, not a modal. Pinned at a phone viewport so a
+   * breakpoint-dependent branch cannot creep in.
+   */
+  test('flag ON at 390px: Review NAVIGATES to the page, no modal', async () => {
+    await page.viewport(390, 844);
+    renderWithProviders(<ReviewQueuePage />);
+    const reviewBtn = page.getByRole('button', { name: 'Review' });
+    await expect.element(reviewBtn).toBeInTheDocument();
+    await userEvent.click(reviewBtn);
+    expect(routerPush()).toHaveBeenCalledWith('/apps/review/onsite-req-1');
+    expect(page.getByTestId('modal-open').elements()).toHaveLength(0);
   });
 });

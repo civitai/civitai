@@ -71,6 +71,7 @@ import {
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
+import { restoreLiveAppSoon } from '~/server/services/blocks/live-unpublish.service';
 import {
   applyListingMediaSplitDecision,
   applyRevisionRedSlots,
@@ -3495,6 +3496,9 @@ export async function approveExternalRequest(opts: {
   // (5), same TOCTOU discipline as the floor + scan gates above.
   assertOffsiteListingActionable(listing);
 
+  // Set when the on-site branch below un-suspended the backing block: the app to put back live.
+  let liveRestore: { slug: string; appBlockId: string } | null = null;
+
   // (5) One transaction: RE-ASSERT the asset gate on the PRIMARY (row-consistent
   // with the flip) + guarded request flip + guarded listing flip + supersede.
   const rating = await dbWrite.$transaction(async (tx) => {
@@ -3701,10 +3705,13 @@ export async function approveExternalRequest(opts: {
     // would be harmless), an on-site listing whose block is already approved, and every
     // off-site listing (no `appBlockId` at all).
     if (request.kind === 'onsite' && primaryListing.appBlockId) {
-      await tx.appBlock.updateMany({
+      const unsuspended = await tx.appBlock.updateMany({
         where: { id: primaryListing.appBlockId, status: 'suspended' },
         data: { status: 'approved' },
       });
+      if (unsuspended.count > 0) {
+        liveRestore = { slug: primaryListing.slug, appBlockId: primaryListing.appBlockId };
+      }
     }
     // Supersede any OTHER pending off-site request pointing at the SAME listing row
     // (`appListingId`), NOT merely the same slug. 🔴 A pending REVISION request
@@ -3754,6 +3761,9 @@ export async function approveExternalRequest(opts: {
 
   // Catalog bust: approve puts the listing INTO the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
+  // Widened explicitly: TypeScript cannot see the assignment inside the transaction callback.
+  const restore = liveRestore as { slug: string; appBlockId: string } | null;
+  if (restore) restoreLiveAppSoon(restore);
 
   return { publishRequestId, listingId: appListingId, slug: request.slug };
 }
@@ -4760,10 +4770,20 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
  * oldest-first (FIFO), keyset-paginated. Each row carries `kind` so the unified
  * /apps/review queue (PR-2) can badge an onsite media revision vs an offsite submission.
  */
+/** The `where` for the listing PENDING queue — shared by the list and its count. */
+function pendingOffsiteRequestWhere() {
+  return { status: 'pending', kind: { in: [...REVIEWABLE_LISTING_KINDS] } };
+}
+
+/** How many listing requests are waiting for review (the Pending tab's badge). */
+export async function countPendingOffsiteRequests(): Promise<number> {
+  return dbRead.appListingPublishRequest.count({ where: pendingOffsiteRequestWhere() });
+}
+
 export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOptions = {}) {
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appListingPublishRequest.findMany({
-    where: { status: 'pending', kind: { in: [...REVIEWABLE_LISTING_KINDS] } },
+    where: pendingOffsiteRequestWhere(),
     orderBy: { submittedAt: 'asc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),

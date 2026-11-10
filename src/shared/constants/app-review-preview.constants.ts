@@ -35,3 +35,12 @@ export const BUILDING_REVIEW_PREVIEW_STATES = [
 export function isReviewPreviewBuilding(state: string | null | undefined): boolean {
   return (BUILDING_REVIEW_PREVIEW_STATES as readonly string[]).includes(state ?? '');
 }
+
+/**
+ * The `deploy_detail` fragment of a started review build (its `buildStartedAt`, stamped when the
+ * build slot is claimed). A preview a moderator tears down while its build is still running goes
+ * back to no preview (`deploy_state` null) but KEEPS this detail: the build keeps running, so the
+ * row keeps holding its build slot until the build's callback clears the detail
+ * (releaseSettledBuildSlot) or the stale window passes.
+ */
+export const STARTED_REVIEW_BUILD_DETAIL_MARK = '"buildStartedAt":';

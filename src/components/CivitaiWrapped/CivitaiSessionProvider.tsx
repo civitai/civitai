@@ -207,3 +207,15 @@ const publicContentSettings: BrowsingSettings = {
   showEventCosmetics: true,
   eventPointPops: DEFAULT_EVENT_POINT_POPS,
 };
+
+const signedOutUser: UnauthedUser = { type: 'unauthed', settings: publicContentSettings };
+
+/** A fixed signed-out session for harnesses with no auth hub (Ladle). The app mounts
+ * `CivitaiSessionProvider`. */
+export function SignedOutSessionProvider({ children }: { children: React.ReactNode }) {
+  return (
+    <CivitaiSessionContext.Provider value={signedOutUser}>
+      {children}
+    </CivitaiSessionContext.Provider>
+  );
+}

@@ -1961,6 +1961,46 @@ describe('approveRequest', () => {
     expect(mockDbWrite.appBlock.create).toHaveBeenCalledOnce();
   });
 
+  // approveRequest resets the request's deploy state (clearing its detail) before it tears the
+  // preview down, so the teardown must use the detail read before that write: the preview's sha
+  // and serving mode. The DB fake below clears the detail once the 'building' write lands, as the
+  // real row does.
+  it('approving a request with a shared-server preview unpublishes THAT preview', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    const PREVIEW_SHA = 'b'.repeat(40);
+    let reset = false;
+    mockDbWrite.appBlockPublishRequest.updateMany.mockImplementation((async (a: {
+      data?: { deployState?: string };
+    }) => {
+      if (a?.data?.deployState === 'building') reset = true;
+      return { count: 1 };
+    }) as never);
+    mockDbRead.appBlockPublishRequest.findUnique.mockImplementation((async () =>
+      pendingRequest(
+        reset
+          ? { deployState: 'building', deployDetail: null }
+          : {
+              deployState: 'preview-live',
+              deployDetail: JSON.stringify({ sha: PREVIEW_SHA, sharedServer: true }),
+            }
+      )) as never);
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+    mockDeleteReviewResources.mockClear();
+
+    await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+    await vi.waitFor(() => expect(mockDeleteReviewResources).toHaveBeenCalled(), {
+      timeout: 15_000,
+    });
+    expect(reset).toBe(true);
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'hello',
+      sha: PREVIEW_SHA,
+      publishRequestId: 'pubreq_1',
+      sharedServer: true,
+    });
+  });
+
   it('approves a new version of an EXISTING app whose blockId contains consecutive hyphens', async () => {
     const { approveRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(

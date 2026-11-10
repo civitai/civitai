@@ -183,6 +183,29 @@ beforeEach(() => {
   });
 });
 
+describe('app-developer ranges', () => {
+  it.each(['getMyRevenue', 'getMyAppAnalytics', 'getMyAppCustomEvents'] as const)(
+    '%s reads a minute-precision range as :00',
+    (name) => {
+      const proc = blocksRouter._def.procedures[name] as unknown as {
+        _def: { inputs: Array<{ parse: (v: unknown) => { from?: string; to?: string } }> };
+      };
+      const parsed = proc._def.inputs.reduce<Record<string, unknown>>(
+        (acc, input) => ({
+          ...acc,
+          ...input.parse({
+            appBlockId: 'apb_1',
+            from: '2026-09-01T00:00Z',
+            to: '2026-09-30T00:00Z',
+          }),
+        }),
+        {}
+      );
+      expect(parsed).toMatchObject({ from: '2026-09-01T00:00:00Z', to: '2026-09-30T00:00:00Z' });
+    }
+  );
+});
+
 describe('getMyAppAnalytics — gate', () => {
   it('moderator: gate passes, service called with the session user id', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);

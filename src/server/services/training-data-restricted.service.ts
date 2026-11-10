@@ -1,3 +1,4 @@
+import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { Prisma } from '@prisma/client';
 import { logToAxiom } from '~/server/logging/client';
 import { ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
@@ -67,12 +68,14 @@ type ListedFile = { id: number; type: string; visibility: string };
  */
 export async function trainingDataListing(
   db: Pick<Prisma.TransactionClient, '$queryRaw'>,
-  versions: { id: number; files: ListedFile[] }[],
+  versions: { id: number; files?: ListedFile[] | null }[],
   { redCapable, viewerManages = false }: { redCapable: boolean; viewerManages?: boolean }
 ): Promise<(file: ListedFile) => boolean> {
   if (viewerManages) return () => true;
   const candidates = versions
-    .filter((v) => v.files.some((f) => f.type === 'Training Data'))
+    // `files` is absent when the read did not select them (model-version getById without
+    // `withFiles`): such a version lists nothing, so it has nothing to check.
+    .filter((v) => v.files?.some((f) => f.type === 'Training Data'))
     .map((v) => v.id);
   if (!candidates.length) return () => true;
   const rows = await db.$queryRaw<
@@ -124,6 +127,60 @@ export function trainingDataOwnerView<
   ) as T;
 }
 
+/**
+ * Files without their training epochs' urls, which are the orchestrator's links to the run's
+ * weights; everything else about each epoch is kept. A file whose own `url` is one of those links
+ * (a Training Studio dataset placeholder holds its selected epoch until it is archived) loses it
+ * too. For a model whose weights are withheld (`isModelDeletedOrTakenDown`) from everyone but moderators.
+ */
+export function withoutEpochUrls<
+  T extends { url?: unknown; metadata?: unknown }[] | null | undefined
+>(files: T): T {
+  return files?.map((file) => {
+    const metadata = file.metadata as Record<string, unknown> | null | undefined;
+    const epochUrls = new Set<unknown>();
+    let kept = metadata;
+    if (metadata && typeof metadata === 'object') {
+      const { selectedEpochUrl, ...rest } = metadata;
+      epochUrls.add(selectedEpochUrl);
+      const trainingResults = rest.trainingResults as { epochs?: unknown } | undefined;
+      if (Array.isArray(trainingResults?.epochs)) {
+        rest.trainingResults = {
+          ...trainingResults,
+          epochs: trainingResults.epochs.map((epoch: unknown) => {
+            if (!epoch || typeof epoch !== 'object') return epoch;
+            const { modelUrl, model_url, ...epochRest } = epoch as Record<string, unknown>;
+            epochUrls.add(modelUrl);
+            epochUrls.add(model_url);
+            return epochRest;
+          }),
+        };
+      }
+      kept = rest;
+    }
+    const url =
+      typeof file.url === 'string' &&
+      (epochUrls.has(file.url) || isTrustedOrchestratorUrl(file.url))
+        ? undefined
+        : file.url;
+    return { ...file, ...('url' in file ? { url } : {}), metadata: kept };
+  }) as T;
+}
+
+/** Whether any of `files` could hold an epoch url, so a view need not look its model up otherwise. */
+export function mayCarryEpochUrls(
+  files: { url?: unknown; metadata?: unknown }[] | null | undefined
+) {
+  return !!files?.some((file) => {
+    const metadata = file.metadata as Record<string, unknown> | null | undefined;
+    return (
+      !!metadata?.selectedEpochUrl ||
+      !!metadata?.trainingResults ||
+      (typeof file.url === 'string' && isTrustedOrchestratorUrl(file.url))
+    );
+  });
+}
+
 /** A `Training Data` file's metadata as its owner sees it (`trainingDataOwnerView`). */
 export function withoutServerOnlyKeys<M>(metadata: M): M {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return metadata;
@@ -139,14 +196,17 @@ export function withoutServerOnlyKeys<M>(metadata: M): M {
  */
 export async function trainingDataPublicView<F extends ViewedFile>(
   db: Pick<Prisma.TransactionClient, '$queryRaw'>,
-  versions: { id: number; files: F[] }[],
+  versions: { id: number; files?: F[] | null }[],
   { redCapable }: { redCapable: boolean }
-): Promise<(files: F[]) => F[]> {
+): Promise<<T extends F[] | null | undefined>(files: T) => T> {
   const listed = await trainingDataListing(db, versions, { redCapable });
+  // An absent `files` (not selected by the read) is passed through as it came.
   return (files) =>
-    files
-      .filter((f) => f.type !== 'Training Data' || (f.visibility === 'Public' && listed(f)))
-      .map((f) => (f.type === 'Training Data' ? { ...f, metadata: {} } : f));
+    files == null
+      ? files
+      : (files
+          .filter((f) => f.type !== 'Training Data' || (f.visibility === 'Public' && listed(f)))
+          .map((f) => (f.type === 'Training Data' ? { ...f, metadata: {} } : f)) as typeof files);
 }
 
 /**

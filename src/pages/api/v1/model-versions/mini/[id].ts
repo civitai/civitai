@@ -29,12 +29,14 @@ import type {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { Availability, ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { evaluateMiniEpochCaller, getMiniEpochGateMode } from '~/server/utils/mini-epoch-caller';
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -73,6 +75,8 @@ type VersionRow = {
   sfwOnly: boolean;
   usageControl: ModelUsageControl;
   modelUserId: number;
+  modelStatus: string;
+  modelMode: string | null;
   poi: boolean;
   licensingFee: number | null;
   licensingFeeType: LicensingFeeType | null;
@@ -134,6 +138,8 @@ export default MixedAuthEndpoint(async function handler(
       m.minor,
       m."sfwOnly",
       m."userId" as "modelUserId",
+      m.status as "modelStatus",
+      m.mode as "modelMode",
       m.poi,
       pa."endsAt" AS "earlyAccessEndsAt",
       mv."requireAuth",
@@ -311,6 +317,8 @@ export default MixedAuthEndpoint(async function handler(
   // narrows for the block below.
   const trainingResults = useEpochUrl ? targetFile.metadata.trainingResults : undefined;
 
+  let withheldFromCaller = false;
+
   if (trainingResults) {
     const epoch =
       trainingResults.epochs?.find((e) => {
@@ -344,6 +352,20 @@ export default MixedAuthEndpoint(async function handler(
       modelId: jobId,
       id: fileName,
     });
+
+    const mode = await getMiniEpochGateMode();
+    if (mode !== 'off') {
+      // The body now depends on the caller, so no shared cache may hold it.
+      res.setHeader('Cache-Control', 'private, no-store');
+      const caller = await evaluateMiniEpochCaller({
+        req,
+        user,
+        modelVersionId: modelVersion.id,
+        ownerId: modelVersion.modelUserId,
+        mode,
+      });
+      withheldFromCaller = caller.withhold;
+    }
   } else {
     // this does not work for things like Flux
     // if (targetFile.type !== 'Model') return res.status(404).json({ error: 'File is not a model' });
@@ -516,6 +538,16 @@ export default MixedAuthEndpoint(async function handler(
       ownerFlags: modelVersion.userFlags,
     });
 
+  // An epoch url is the orchestrator's own link to the weights, outside the download route's
+  // gates: a deleted or taken-down model's is moderators-only, as its files are.
+  const gated = {
+    status: modelVersion.status,
+    model: { status: modelVersion.modelStatus, mode: modelVersion.modelMode },
+  };
+  const withholdEpochUrl =
+    withheldFromCaller ||
+    (!!trainingResults && !user?.isModerator && (isModelDeleted(gated) || isModelTakenDown(gated)));
+
   const data = {
     air,
     defaultFileId: getGenerationFile(files)?.id ?? null,
@@ -530,7 +562,7 @@ export default MixedAuthEndpoint(async function handler(
     fileName: targetFile.name,
     // nullable - hashes (all available hash types)
     hashes: targetFile.hashes,
-    downloadUrls: [downloadUrl], // nullable
+    downloadUrls: withholdEpochUrl ? [] : [downloadUrl], // nullable
     format, // nullable
     canGenerate,
     isFeatured,

@@ -4,11 +4,14 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { newBlockIdError } from '~/server/utils/apps-slug';
+import { isPrismaForeignKeyViolation } from '~/server/utils/errorHandling';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { compileRemixApp } from '~/shared/remix-apps/compile';
 import type { RemixApp } from '~/shared/remix-apps/define';
 import {
   REMIX_BLOCK_ID_PREFIX,
+  REMIX_CODE_APP_SLUGS,
+  REMIX_SAVABLE_SLOT_IDS,
   REMIX_STATUS,
   REMIX_STATUSES,
   remixEngineIssues,
@@ -253,9 +256,13 @@ export async function saveRemixApp(input: RemixAppInput) {
   if (existing && !REMIX_STATUSES.includes(existing.status))
     throw new TRPCError({ code: 'CONFLICT', message: `${blockId} belongs to another app` });
 
+  const previous = existing ? remixManifestSchema.safeParse(existing.manifest) : undefined;
+  const storedTarget = previous?.success ? previous.data.targets[0].slotId : undefined;
+  if (!isSavableTarget(input.target) && input.target !== storedTarget)
+    throw new TRPCError({ code: 'BAD_REQUEST', message: `New apps cannot target ${input.target}` });
+
   let runVersion = 1;
-  if (existing) {
-    const previous = remixManifestSchema.safeParse(existing.manifest);
+  if (existing && previous) {
     runVersion = previous.success
       ? runVersionOf(previous.data) +
         (runShape(previous.data.remix) === runShape(input.spec) ? 0 : 1)
@@ -290,6 +297,61 @@ export async function saveRemixApp(input: RemixAppInput) {
   return { slug: input.slug, version: runVersion };
 }
 
+const isSavableTarget = (target: string) =>
+  (REMIX_SAVABLE_SLOT_IDS as readonly string[]).includes(target);
+
+const BUILT_IN_SLUGS = new Set<string>([
+  ...SEED_REMIX_APPS.map((app) => app.slug),
+  ...REMIX_CODE_APP_SLUGS,
+]);
+
+/** Only a disabled app that is not a built-in default can be deleted. */
+const isDeletable = (slug: string, status: string) =>
+  status === REMIX_STATUS.disabled && !BUILT_IN_SLUGS.has(slug);
+
+/**
+ * Deletes a disabled, non-default app row for good. Rows hanging off it (BlockUserSubscription
+ * among them) go by FK cascade or SET NULL; a Restrict FK (attribution, a platform default) refuses.
+ */
+export async function deleteRemixApp({ slug }: { slug: string }) {
+  const blockId = remixBlockId(slug);
+  const row = await dbWrite.appBlock.findUnique({
+    where: { blockId },
+    select: remixAppRowSelect,
+  });
+  if (!row || !REMIX_STATUSES.includes(row.status))
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
+  if (BUILT_IN_SLUGS.has(slug))
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Built-in default apps cannot be deleted' });
+  if (row.status !== REMIX_STATUS.disabled)
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Disable the app first' });
+
+  // The only record of what was deleted.
+  await logToAxiom({
+    name: 'remix-app-registry',
+    type: 'info',
+    message: 'Deleted a remix app row',
+    row,
+  }).catch(() => undefined);
+  let count: number;
+  try {
+    // Conditional on the status, so an enable that lands after the read above wins.
+    ({ count } = await dbWrite.appBlock.deleteMany({
+      where: { id: row.id, status: REMIX_STATUS.disabled },
+    }));
+  } catch (error) {
+    if (isPrismaForeignKeyViolation(error))
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'Other records still point at this app, so it cannot be deleted',
+      });
+    throw error;
+  }
+  if (!count)
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Disable the app first' });
+  await bumpRemixAppRegistry();
+}
+
 export async function setRemixAppEnabled({ slug, enabled }: { slug: string; enabled: boolean }) {
   const { count } = await dbWrite.appBlock.updateMany({
     where: { blockId: remixBlockId(slug), status: { in: REMIX_STATUSES } },
@@ -320,10 +382,12 @@ export async function listRemixAppsForAdmin() {
       const slug = row.blockId.slice(REMIX_BLOCK_ID_PREFIX.length);
       const enabled = row.status === REMIX_STATUS.enabled;
       const order = row.featuredOrder ?? Number.MAX_SAFE_INTEGER;
+      const deletable = isDeletable(slug, row.status);
       if (!parsed.success)
         return {
           slug,
           enabled,
+          deletable,
           order,
           version: row.version,
           invalid: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
@@ -332,6 +396,7 @@ export async function listRemixAppsForAdmin() {
       return {
         slug,
         enabled,
+        deletable,
         order,
         version: parsed.data.version,
         input: { slug, name, description, target: targets[0].slotId, spec: remix } as RemixAppInput,

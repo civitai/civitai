@@ -1339,7 +1339,7 @@
             <div class="flex w-full flex-col gap-2 border-b border-dark-4 pb-3">
               <label class="inline-flex items-center gap-2 text-sm text-dark-0">
                 <Checkbox bind:checked={() => ownRights, setOwnRights} />
-                I own the rights to all these files
+                I have the right, or the rightholder’s explicit permission, to redistribute these files
               </label>
               <label
                 class="inline-flex items-center gap-2 text-sm {ownRights ? 'text-dark-0' : 'text-dark-2'}"

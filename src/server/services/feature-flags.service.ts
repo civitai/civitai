@@ -441,6 +441,9 @@ const featureFlags = createFeatureFlags({
   // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
   // does, Flipt decides both ways, so keep mods in its rule.
   imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
+  // Article search (/search/articles, the header and the quick-search dropdown) answers from the
+  // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
+  semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -959,12 +962,6 @@ const featureFlags = createFeatureFlags({
   resourceIntentV1: { availability: [], fliptKey: 'resource-intent-v1' },
   resourceIntentV1Shadow: { availability: [], fliptKey: 'resource-intent-v1-shadow' },
   resourceIntentJudgeCapture: { availability: [], fliptKey: 'resource-intent-judge-capture' },
-  // The model page discussion's comment counts in ONE call (`comment.getVisibleCountsByModel`,
-  // the plain and the hidden view's counts together) instead of two `getVisibleCountByModel` calls,
-  // and no visible count at all when the first `comment.getAll` page holds every comment (the
-  // count then equals the loaded comments). Off = the two calls, as before. Dark like the above:
-  // Flipt owns it, and an absent key or an unreachable Flipt reads OFF.
-  commentCountsSingleCall: { availability: [], fliptKey: 'comment-counts-single-call' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

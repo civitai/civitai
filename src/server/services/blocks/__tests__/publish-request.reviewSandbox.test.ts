@@ -24,6 +24,7 @@ const {
   mockGetReviewHead,
   mockTriggerReviewBuild,
   mockDeleteReviewResources,
+  mockTriggerReviewUnpublish,
   mockDeleteAgentReviewResources,
   mockDeleteStagedBundle,
   mockDeprovisionReviewPreview,
@@ -86,6 +87,7 @@ const {
   mockCommitFiles: vi.fn(async () => ({ sha: 'b'.repeat(40) })),
   mockTriggerReviewBuild: vi.fn(async () => ({ name: 'review-pr-1' })),
   mockDeleteReviewResources: vi.fn(async () => undefined),
+  mockTriggerReviewUnpublish: vi.fn(async () => ({ name: 'my-app-review-unpub-aaaaaaaa' })),
   mockDeleteAgentReviewResources: vi.fn(async () => undefined),
   mockDeleteStagedBundle: vi.fn(async () => undefined),
   // #2831 — teardownReviewForRequest dynamically imports this to drop the
@@ -122,6 +124,7 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   getReviewRepoHeadSha: mockGetReviewHead,
   triggerReviewBuild: mockTriggerReviewBuild,
   deleteReviewResources: mockDeleteReviewResources,
+  triggerReviewUnpublish: mockTriggerReviewUnpublish,
   // pure helper used by previewRequest
   reviewHost: (sha: string, domain: string) => `review-${sha.slice(0, 16)}.${domain}`,
 }));
@@ -148,8 +151,10 @@ import {
   markReviewPreviewState,
   withdrawRequest,
   parseReviewDetail,
+  releaseSettledBuildSlot,
 } from '~/server/services/blocks/publish-request.service';
 import { MAX_CONCURRENT_REVIEW_BUILDS } from '~/server/services/blocks/review-autodeploy.service';
+import { matches, type Where } from './prisma-where.fixture';
 import { REVIEW_PREVIEW_MAX_AGE_MS } from '~/shared/constants/app-review-preview.constants';
 
 const PUBREQ = 'pubreq_0123456789ABCDEFGHJKMNPQRS';
@@ -566,6 +571,19 @@ describe('previewRequest repeat preview (push origin, unchanged tree)', () => {
 describe('getReviewStatus', () => {
   beforeEach(() => mockDbRead.appBlockPublishRequest.findUnique.mockReset());
 
+  it('a preview torn down mid-build (build detail kept) reads as no preview', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: null,
+      deployDetail: JSON.stringify({ sha: SHA, buildStartedAt: new Date().toISOString() }),
+      deployUpdatedAt: new Date(),
+    });
+    const r = await getReviewStatus({ publishRequestId: PUBREQ });
+    expect(r.state).toBeNull();
+    expect(r.detail).toEqual({});
+  });
+
   it('returns the preview state + parsed detail', async () => {
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
       id: PUBREQ,
@@ -726,6 +744,25 @@ describe('teardownReviewForRequest', () => {
     mockDeleteReviewResources.mockClear();
     mockDeprovisionReviewPreview.mockReset();
     mockDeprovisionReviewPreview.mockResolvedValue(undefined);
+  });
+
+  // approveRequest clears the row's detail (markRequestDeployState) before it tears down, so it
+  // hands over the detail it read first; without its sha the preview is never unpublished.
+  it('uses the detail the caller read before changing the row (sha and serving mode)', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      slug: 'my-app',
+      deployState: 'building',
+      deployDetail: null,
+    });
+    await teardownReviewForRequest(PUBREQ, {
+      reviewDetail: JSON.stringify({ sha: SHA, sharedServer: true }),
+    });
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'my-app',
+      sha: SHA,
+      publishRequestId: PUBREQ,
+      sharedServer: true,
+    });
   });
 
   it('deletes review resources by publish request (label selector is the boundary)', async () => {
@@ -954,7 +991,11 @@ describe('previewRequest and the build cap', () => {
     const claim = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls.find(
       ([arg]: any[]) => arg.data.deployState === 'preview-building'
     );
-    expect(JSON.parse(claim![0].data.deployDetail)).toEqual({ actor: 'moderator', modUserId: 5 });
+    expect(JSON.parse(claim![0].data.deployDetail)).toEqual({
+      actor: 'moderator',
+      modUserId: 5,
+      buildStartedAt: expect.any(String),
+    });
     // The build's own mark (with the sha) carries the build start the expiry clock counts from.
     const built = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls
       .map(([arg]: any[]) => arg.data)
@@ -1004,6 +1045,60 @@ describe('teardownPreview', () => {
     expect(updateArg.data.deployState).toBeNull();
     expect(updateArg.data.deployDetail).toBeNull();
     expect(updateArg.data.deployUpdatedAt).toBeInstanceOf(Date);
+  });
+
+  // Its build is still running: the row is no preview any more (deploy_state null) but keeps its
+  // started-build detail, so it holds the build slot until the build's callback settles it; the
+  // stale window still counts from its last state change, so deployUpdatedAt is not touched.
+  it('preview-building pending: torn down to no preview, keeping its build detail (and so its build slot)', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-building',
+      deployDetail: JSON.stringify({ sha: SHA }),
+      slug: 'my-app',
+    });
+    const res = await teardownPreview({ publishRequestId: PUBREQ });
+    expect(res).toEqual({ publishRequestId: PUBREQ, tornDown: true });
+    const updateArg = mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0];
+    expect(updateArg.data).toEqual({ deployState: null });
+  });
+
+  // In preview-deploying the build's callback has already run, so nothing would release a slot
+  // kept here before the stale window: the row is cleared and frees its slot now.
+  it('preview-deploying pending: cleared outright (its build is over), freeing its slot', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-deploying',
+      deployDetail: JSON.stringify({ sha: SHA, buildStartedAt: new Date().toISOString() }),
+      slug: 'my-app',
+    });
+    const res = await teardownPreview({ publishRequestId: PUBREQ });
+    expect(res).toEqual({ publishRequestId: PUBREQ, tornDown: true });
+    const updateArg = mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0];
+    expect(updateArg.data).toEqual({
+      deployState: null,
+      deployDetail: null,
+      deployUpdatedAt: expect.any(Date),
+    });
+  });
+
+  it('teardown passes the serving mode recorded on the preview detail', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-live',
+      deployDetail: JSON.stringify({ sha: SHA, sharedServer: true }),
+      slug: 'my-app',
+    });
+    await teardownPreview({ publishRequestId: PUBREQ });
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'my-app',
+      sha: SHA,
+      publishRequestId: PUBREQ,
+      sharedServer: true,
+    });
   });
 
   it('non-pending / non-preview state: no-op, tornDown:false (no delete, no DB clear)', async () => {
@@ -1283,8 +1378,8 @@ describe('markReviewPreviewState requireActivePreview guard', () => {
     const arg = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls[0][0];
     expect(arg.where.id).toBe(PUBREQ);
     expect(arg.where.status).toBe('pending');
-    // The load-bearing guard: a torn-down row (deployState=null) won't match
-    // startsWith 'preview-', so a late build callback can't resurrect it.
+    // The load-bearing guard: a torn-down row (deployState=null, even while its build still runs
+    // and its detail is kept) is not a preview-* state, so a late build callback can't resurrect it.
     expect(arg.where.deployState).toEqual({ startsWith: 'preview-' });
   });
 
@@ -1296,5 +1391,239 @@ describe('markReviewPreviewState requireActivePreview guard', () => {
     // Initial mark transitions from null / preview-failed → preview-building, so
     // it must NOT require an existing preview-* state.
     expect(arg.where.deployState).toBeUndefined();
+  });
+});
+
+describe('releaseSettledBuildSlot', () => {
+  const STARTED = '2026-11-09T10:00:00.000Z';
+  const LATER = '2026-11-09T10:05:00.000Z';
+  const NEWER_SHA = 'c'.repeat(40);
+  const detail = (sha: string, buildStartedAt: string) =>
+    JSON.stringify({ modUserId: 7, sha, buildStartedAt });
+  type Row = {
+    id: string;
+    status: string;
+    deployState: string | null;
+    deployDetail: string | null;
+    deployUpdatedAt: Date | null;
+  };
+  let rows: Row[] = [];
+  const row = (over: Partial<Row>): Row => ({
+    id: PUBREQ,
+    status: 'withdrawn',
+    deployState: 'preview-building',
+    deployDetail: detail(SHA, STARTED),
+    deployUpdatedAt: null,
+    ...over,
+  });
+  const released = (r: Row) => r.deployState === null && r.deployDetail === null;
+
+  // The real `where` runs against rows (the same reading of it the review-autodeploy tests use),
+  // so these pin which rows it hits, not how the object is spelled.
+  beforeEach(() => {
+    rows = [];
+    mockDbWrite.appBlockPublishRequest.updateMany
+      .mockReset()
+      .mockImplementation(async ({ where, data }: { where: Where; data: Partial<Row> }) => {
+        const hit = rows.filter((r) => matches(r, where));
+        for (const r of hit) Object.assign(r, data);
+        return { count: hit.length };
+      });
+  });
+  afterEach(() => {
+    mockDbWrite.appBlockPublishRequest.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  });
+
+  it.each([
+    ['superseded, withdrawn or decided while its build ran', {}],
+    [
+      'torn down mid-build (no preview, started-build detail kept)',
+      { status: 'pending', deployState: null },
+    ],
+  ])('releases the slot of THAT build: %s', async (_label, over) => {
+    rows = [row(over)];
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA, buildStartedAt: STARTED });
+    expect(released(rows[0])).toBe(true);
+    expect(rows[0].deployUpdatedAt).toBeInstanceOf(Date);
+  });
+
+  it('never touches an active pending preview', async () => {
+    rows = [row({ status: 'pending' })];
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA, buildStartedAt: STARTED });
+    expect(rows[0]).toEqual(row({ status: 'pending' }));
+  });
+
+  it("an old build's watcher leaves the slot a NEWER build of the same request holds", async () => {
+    rows = [row({ deployDetail: detail(NEWER_SHA, LATER) })];
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA, buildStartedAt: STARTED });
+    expect(rows[0]).toEqual(row({ deployDetail: detail(NEWER_SHA, LATER) }));
+  });
+
+  it('a rebuild of the same sha started later is left alone when the start time is known', async () => {
+    rows = [row({ deployDetail: detail(SHA, LATER) })];
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA, buildStartedAt: STARTED });
+    expect(rows[0]).toEqual(row({ deployDetail: detail(SHA, LATER) }));
+  });
+
+  it('another request is never touched', async () => {
+    rows = [row({ id: 'pubreq_OTHER' })];
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA, buildStartedAt: STARTED });
+    expect(rows[0]).toEqual(row({ id: 'pubreq_OTHER' }));
+  });
+
+  it('with only the sha known (the build callback), matches on the sha', async () => {
+    rows = [row({ deployDetail: detail(SHA, LATER) })];
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA });
+    expect(released(rows[0])).toBe(true);
+    rows = [row({ deployDetail: detail(NEWER_SHA, LATER) })];
+    await releaseSettledBuildSlot(PUBREQ, { sha: SHA });
+    expect(released(rows[0])).toBe(false);
+  });
+
+  it('no valid sha: releases nothing', async () => {
+    rows = [row({})];
+    await releaseSettledBuildSlot(PUBREQ, { sha: '' });
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
+    expect(released(rows[0])).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REBUILD over a preview that was published to the shared static server.
+//
+// A rebuild (previewRequest on a row that already has a preview) claims a fresh build slot, and the
+// claim REPLACES the row's deploy detail. That detail is the only record that a review-lane meta
+// was published for the old sha, so if the rebuild does not unpublish it there, nothing ever does:
+// the old preview stays served (behind the mod-gate) until the bucket lifecycle expires it. This is
+// the state a preview-failed preview from the reachability-probe bug was left in: published, then
+// marked failed, then rebuilt.
+// ---------------------------------------------------------------------------
+describe('previewRequest — rebuild unpublishes the replaced shared-server preview', () => {
+  const OLD_SHA = 'e'.repeat(40);
+  const pendingRow = (deployState: string | null, detail: Record<string, unknown> | null) => ({
+    id: PUBREQ,
+    status: 'pending',
+    slug: 'my-app',
+    bundleKey: ZIP_BUNDLE_KEY,
+    forgejoCommitSha: null,
+    deployState,
+    deployDetail: detail ? JSON.stringify(detail) : null,
+  });
+
+  beforeEach(() => {
+    process.env.NEXTAUTH_URL = 'https://civitai.com';
+    mockDbRead.appBlockPublishRequest.findUnique.mockReset();
+    mockTriggerReviewBuild.mockReset();
+    mockTriggerReviewBuild.mockResolvedValue({ name: 'review-pr-1' });
+    mockTriggerReviewUnpublish.mockReset();
+    mockTriggerReviewUnpublish.mockResolvedValue({ name: 'my-app-review-unpub-eeeeeeee' });
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it.each(['preview-failed', 'preview-live', 'preview-deploying'])(
+    'a rebuild over a %s shared-server preview unpublishes the OLD sha',
+    async (state) => {
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRow(state, {
+          sha: OLD_SHA,
+          host: `review-${'e'.repeat(16)}.civit.ai`,
+          sharedServer: true,
+          error: 'Preview deployed but its host did not become reachable in time',
+        })
+      );
+      await previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 99 } });
+      expect(mockTriggerReviewUnpublish).toHaveBeenCalledTimes(1);
+      expect(mockTriggerReviewUnpublish).toHaveBeenCalledWith({
+        slug: 'my-app',
+        sha: OLD_SHA,
+        publishRequestId: PUBREQ,
+      });
+      // The replaced detail is read inside the claim's transaction (the mock returns every field
+      // whatever is selected, so pin that the claim actually asks for it).
+      expect(mockTx.appBlockPublishRequest.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ select: expect.objectContaining({ deployDetail: true }) })
+      );
+      // ...and the rebuild itself still goes ahead.
+      expect(mockTriggerReviewBuild).toHaveBeenCalledWith(
+        expect.objectContaining({ publishRequestId: PUBREQ, sha: SHA })
+      );
+    }
+  );
+
+  it('a SAME-sha rebuild does NOT unpublish: it would delete the meta the new build is about to republish', async () => {
+    // With the flag on, the new build republishes review/<sha16>/ for this same sha. An unpublish
+    // Job that lands after that publish leaves the preview marked live but 404ing, and the
+    // callback's replay guard means nothing republishes it.
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRow('preview-failed', { sha: SHA, sharedServer: true })
+    );
+    await previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 99 } });
+    expect(mockTriggerReviewUnpublish).not.toHaveBeenCalled();
+    // Positive control: the rebuild ran and resolved the same sha.
+    expect(mockTriggerReviewBuild).toHaveBeenCalledWith(expect.objectContaining({ sha: SHA }));
+  });
+
+  it('the different-sha decision is made AFTER the new sha is resolved', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRow('preview-failed', { sha: OLD_SHA, sharedServer: true })
+    );
+    await previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 99 } });
+    expect(mockTriggerReviewUnpublish).toHaveBeenCalledTimes(1);
+    expect(mockGetReviewHead.mock.invocationCallOrder[0]).toBeLessThan(
+      mockTriggerReviewUnpublish.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('a rebuild whose source cannot be resolved still unpublishes the replaced preview (its detail is gone)', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRow('preview-failed', { sha: OLD_SHA, sharedServer: true })
+    );
+    mockGetReviewHead.mockRejectedValueOnce(new Error('forgejo down'));
+    await expect(
+      previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 99 } })
+    ).rejects.toThrow(/forgejo down/);
+    expect(mockTriggerReviewUnpublish).toHaveBeenCalledWith({
+      slug: 'my-app',
+      sha: OLD_SHA,
+      publishRequestId: PUBREQ,
+    });
+  });
+
+  it.each([
+    ['a per-preview preview (sharedServer false)', { sha: OLD_SHA, sharedServer: false }],
+    ['a preview whose serving mode was never recorded', { sha: OLD_SHA }],
+    ['a shared-server detail with no sha', { sharedServer: true }],
+    ['a shared-server detail with a malformed sha', { sha: 'nope', sharedServer: true }],
+  ])('no unpublish for %s', async (_label, detail) => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRow('preview-failed', detail)
+    );
+    await previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 99 } });
+    expect(mockTriggerReviewUnpublish).not.toHaveBeenCalled();
+    // Positive control: the rebuild ran, so the zero above is not a rebuild that never started.
+    expect(mockTriggerReviewBuild).toHaveBeenCalledTimes(1);
+  });
+
+  it('a first start (no prior preview) unpublishes nothing', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRow(null, null));
+    await previewRequest({ publishRequestId: PUBREQ, actor: { kind: 'moderator', userId: 99 } });
+    expect(mockTriggerReviewUnpublish).not.toHaveBeenCalled();
+    expect(mockTriggerReviewBuild).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failing unpublish does not block the rebuild', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRow('preview-failed', { sha: OLD_SHA, sharedServer: true })
+    );
+    mockTriggerReviewUnpublish.mockRejectedValue(new Error('k8s down'));
+    const result = await previewRequest({
+      publishRequestId: PUBREQ,
+      actor: { kind: 'moderator', userId: 99 },
+    });
+    expect(mockTriggerReviewUnpublish).toHaveBeenCalledTimes(1);
+    expect(result.sha).toBe(SHA);
+    expect(mockTriggerReviewBuild).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });

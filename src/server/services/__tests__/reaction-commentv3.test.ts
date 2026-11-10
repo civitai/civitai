@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// Reactions on a comment of a CommentV3-write surface go to CommentV3Reaction, whose trigger keeps
-// the comment's reaction count.
+// Every comment reaction goes to CommentV3Reaction, whose trigger keeps the comment's reaction count.
 
 const blockCheck = vi.hoisted(() => vi.fn(async (_: unknown) => undefined));
 vi.mock('~/server/db/db-lag-helpers', () => ({ getDbWithoutLag: async () => dbMock.dbRead }));
@@ -15,16 +14,22 @@ const { toggleReaction } = await import('~/server/services/reaction.service');
 const sqlOf = (call: unknown[]) => (call[0] as string[]).join('?');
 const react = (entityId: number) =>
   toggleReaction({ entityType: 'comment', entityId, userId: 5, reaction: 'Like' });
-const comment = (row: { entityType: string; deletedAt: Date | null } | undefined) =>
-  dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(row ? [row] : []);
+// Honours the query's own live-row filter, so a query that drops it finds a deleted comment.
+const comment = (state: 'live' | 'deleted' | 'missing') =>
+  dbMock.dbWrite.$queryRaw.mockImplementationOnce((async (strings: TemplateStringsArray) => {
+    const sql = strings.join('?');
+    if (state === 'missing' || (state === 'deleted' && sql.includes('"deletedAt" IS NULL')))
+      return [];
+    return [{ id: 1 }];
+  }) as never);
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
 describe('toggleReaction on a CommentV3 comment', () => {
-  it('adds the reaction to CommentV3Reaction after the block check, and never to CommentV2', async () => {
-    comment({ entityType: 'article', deletedAt: null });
+  it('adds the reaction to CommentV3Reaction after the block check', async () => {
+    comment('live');
     dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
 
     expect(await react(1)).toBe('created');
@@ -45,11 +50,10 @@ describe('toggleReaction on a CommentV3 comment', () => {
     expect(blockCheck.mock.invocationCallOrder[0]).toBeLessThan(
       dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[1]
     );
-    expect(dbMock.dbWrite.commentV2Reaction.create).not.toHaveBeenCalled();
   });
 
   it('removes a reaction the user holds, without a block check', async () => {
-    comment({ entityType: 'article', deletedAt: null });
+    comment('live');
     dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(1);
 
     expect(await react(1)).toBe('removed');
@@ -58,7 +62,7 @@ describe('toggleReaction on a CommentV3 comment', () => {
   });
 
   it('adds nothing when the block check refuses', async () => {
-    comment({ entityType: 'article', deletedAt: null });
+    comment('live');
     dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(0);
     blockCheck.mockRejectedValueOnce(new Error('blocked'));
     await expect(react(1)).rejects.toThrow('blocked');
@@ -66,34 +70,33 @@ describe('toggleReaction on a CommentV3 comment', () => {
   });
 
   it('refuses a reaction on a deleted comment', async () => {
-    comment({ entityType: 'article', deletedAt: new Date() });
+    comment('deleted');
     await expect(react(1)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('is a no-op when the same reaction lands concurrently on a live comment', async () => {
-    comment({ entityType: 'article', deletedAt: null });
+    comment('live');
     dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(0).mockResolvedValueOnce(0);
-    comment({ entityType: 'article', deletedAt: null });
+    comment('live');
     expect(await react(1)).toBe('noop');
   });
 
   it('refuses when the comment is deleted between the check and the insert', async () => {
-    comment({ entityType: 'article', deletedAt: null });
+    comment('live');
     dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(0).mockResolvedValueOnce(0);
-    comment({ entityType: 'article', deletedAt: new Date() });
+    comment('deleted');
     await expect(react(1)).rejects.toMatchObject({ code: 'NOT_FOUND' });
 
-    comment({ entityType: 'article', deletedAt: null });
+    comment('live');
     dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(0).mockResolvedValueOnce(0);
-    comment(undefined);
+    comment('missing');
     await expect(react(1)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
-  it('leaves a comment on any other surface on the CommentV2 table', async () => {
-    comment({ entityType: 'model', deletedAt: null });
-    expect(await react(2)).toBe('created');
-    expect(dbMock.dbWrite.commentV2Reaction.create).toHaveBeenCalled();
+  it('refuses a reaction on a comment that does not exist', async () => {
+    comment('missing');
+    await expect(react(1)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });

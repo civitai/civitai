@@ -145,6 +145,7 @@ beforeEach(() => {
   });
   mockTx.modelVersion.findFirst.mockResolvedValue({ publishedAt: new Date('2026-01-01') });
   mockTx.$executeRaw.mockResolvedValue(0);
+  mockTx.$queryRaw.mockResolvedValue([]);
   // The requested versions are this model's own.
   dbMock.dbWrite.modelVersion.findMany.mockImplementation((async ({
     where,
