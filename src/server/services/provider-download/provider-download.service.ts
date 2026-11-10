@@ -8,40 +8,11 @@ import {
 } from '~/server/services/download-link/generation-fetch.service';
 import { takeProviderDownload } from '~/server/services/provider-download/provider-download.limiter';
 import {
-  isProviderToken,
   matchProviderToken,
   parseProviderToken,
 } from '~/server/services/provider-download/provider-token';
 import { getLiveProviderTokens } from '~/server/services/provider-download/provider-token.store';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
-
-export type ProviderTokenParam =
-  | { kind: 'none' }
-  | { kind: 'duplicate' }
-  | { kind: 'provider'; token: string };
-
-/**
- * Reads `?token=` for a per-provider download token. When one is present it is removed from
- * `req.query` and `req.url` before anything else reads the request, so no session code sees it and
- * no log line carries it. A `?token=` without `:` is left alone: it is a user API key.
- */
-export function takeProviderToken(req: NextApiRequest): ProviderTokenParam {
-  const raw = req.query.token;
-  const values = raw === undefined ? [] : Array.isArray(raw) ? raw : [raw];
-  if (!values.some(isProviderToken)) return { kind: 'none' };
-
-  delete req.query.token;
-  if (req.url) {
-    const queryAt = req.url.indexOf('?');
-    if (queryAt >= 0) {
-      const params = new URLSearchParams(req.url.slice(queryAt + 1));
-      params.delete('token');
-      const rest = params.toString();
-      req.url = req.url.slice(0, queryAt) + (rest ? `?${rest}` : '');
-    }
-  }
-  return values.length === 1 ? { kind: 'provider', token: values[0] } : { kind: 'duplicate' };
-}
 
 export type ProviderRefusal = { status: number; body: { error: string } };
 

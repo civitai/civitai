@@ -72,10 +72,16 @@ beforeEach(() => {
     db.keyValue.findUnique.mockImplementation(findRow as never);
     db.workerClient.findMany.mockImplementation(providers as never);
   }
-  dbMock.dbWrite.keyValue.upsert.mockImplementation((async ({ create, update }: any) => {
-    store.row = store.row ? { ...store.row, value: update.value } : create;
+  dbMock.dbWrite.keyValue.upsert.mockImplementation((async ({ create }: any) => {
+    store.row ??= create;
     return store.row;
   }) as never);
+  dbMock.dbWrite.keyValue.update.mockImplementation((async ({ data }: any) => {
+    store.row = { ...store.row!, value: data.value };
+    return store.row;
+  }) as never);
+  dbMock.dbWrite.$queryRaw.mockImplementation((async () =>
+    store.row ? [store.row] : []) as never);
   dbMock.dbWrite.$transaction.mockImplementation((async (fn: any) => fn(dbMock.dbWrite)) as never);
 });
 
@@ -98,7 +104,7 @@ describe('mint', () => {
   it('refuses a provider no worker client uses', async () => {
     const res = await call({ action: 'mint', provider: 'NotAProvider', hourlyCeiling: 500 });
     expect(res.status).toBe(400);
-    expect(store.row).toBeNull();
+    expect(await call({ action: 'list' })).toMatchObject({ body: [] });
   });
 
   it('never shows a token again: the list carries names, state, ceiling and times only', async () => {
@@ -113,7 +119,7 @@ describe('mint', () => {
   it('refuses a ceiling out of bounds', async () => {
     for (const hourlyCeiling of [0, -1, 1.5, 1_000_001])
       expect((await call({ action: 'mint', provider: 'RunPods', hourlyCeiling })).status).toBe(400);
-    expect(store.row).toBeNull();
+    expect(await call({ action: 'list' })).toMatchObject({ body: [] });
   });
 
   it('records a ceiling change in the moderator audit', async () => {

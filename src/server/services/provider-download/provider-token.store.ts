@@ -84,18 +84,23 @@ export async function updateProviderTokenRecords<T>(
   ) => { records?: ProviderTokenRecord[]; result: T } | { error: string }
 ): Promise<{ result: T } | { error: string }> {
   const outcome = await dbWrite.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${PROVIDER_TOKENS_KEY}))`;
-    const [row, registered] = await Promise.all([
-      tx.keyValue.findUnique({ where: { key: PROVIDER_TOKENS_KEY } }),
+    // The row is the lock: create it if missing, then hold it until commit.
+    await tx.keyValue.upsert({
+      where: { key: PROVIDER_TOKENS_KEY },
+      create: { key: PROVIDER_TOKENS_KEY, value: [] },
+      update: {},
+    });
+    const [[row], registered] = await Promise.all([
+      tx.$queryRaw<{ value: unknown }[]>`
+        SELECT value FROM "KeyValue" WHERE key = ${PROVIDER_TOKENS_KEY} FOR UPDATE`,
       registeredProviders(tx as unknown as typeof dbWrite),
     ]);
     const changed = change(parseProviderTokenRecords(row?.value), registered);
     if ('error' in changed) return changed;
     if (!changed.records) return { result: changed.result, live: undefined };
-    await tx.keyValue.upsert({
+    await tx.keyValue.update({
       where: { key: PROVIDER_TOKENS_KEY },
-      create: { key: PROVIDER_TOKENS_KEY, value: changed.records },
-      update: { value: changed.records },
+      data: { value: changed.records },
     });
     return { result: changed.result, live: liveProviderTokens(changed.records, registered) };
   });

@@ -16,11 +16,7 @@ import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { countsTowardDownloadLimit } from '~/server/utils/download-repeats';
 import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
-import {
-  authorizeProviderToken,
-  serveProviderDownload,
-  takeProviderToken,
-} from '~/server/services/provider-download/provider-download.service';
+import { takeProviderToken } from '~/server/services/provider-download/provider-token';
 import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
 import { fetchDownloadCount } from '~/server/utils/download-count';
 import {
@@ -130,6 +126,10 @@ export default PublicEndpoint(
       if (providerToken.kind === 'duplicate')
         return res.status(400).json({ error: 'Send one token' });
       if (providerToken.kind === 'provider') {
+        // Loaded only for a provider token, so every other download keeps today's import graph.
+        const { authorizeProviderToken, serveProviderDownload } = await import(
+          '~/server/services/provider-download/provider-download.service'
+        );
         const authorized = await authorizeProviderToken(providerToken.token);
         if (!authorized.ok) return res.status(authorized.status).json(authorized.body);
         const parsed = schema.safeParse(req.query);
