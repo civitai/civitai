@@ -530,6 +530,13 @@ describe('upsertArticle — a live article leaves Scanned with its new text', ()
     expect(contentWrites()[0]).not.toHaveProperty('ingestion');
   });
 
+  it('for a scheduled draft too, which goes live without another text check', async () => {
+    const scheduledAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    stored({ status: 'Draft', scheduledAt });
+    await upsert({ status: 'Draft', scheduledAt });
+    expect(contentWrites()[0]).toMatchObject({ ingestion: 'Rescan' });
+  });
+
   it('not for a draft, which is not live', async () => {
     stored({ status: 'Draft' });
     await upsert({ status: 'Draft' });
