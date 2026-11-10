@@ -73,7 +73,17 @@ export const exportUserBuzzTransactionsSchema = z.object(userTransactionFilters)
 export const buzzTransactionDetails = z
   .object({
     user: z.string().optional(),
-    entityId: z.number().optional(),
+    // Some ledger rows store entityId as a string; one unreadable value must not fail the whole list.
+    entityId: z
+      .preprocess(
+        (v) =>
+          typeof v === 'string' && /^\d+$/.test(v) && Number.isSafeInteger(Number(v))
+            ? Number(v)
+            : v,
+        z.number()
+      )
+      .optional()
+      .catch(undefined),
     entityType: z.string().optional(),
     url: z.string().optional(),
     toAccountType: z.enum(buzzAccountTypes).optional(),

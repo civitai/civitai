@@ -66,7 +66,12 @@ vi.mock('~/utils/signal-client', () => ({
 // The hand-grant scan runs against a fake ledger in nowpayments-credit.service.test.ts.
 vi.mock('~/server/services/nowpayments-manual-credit', async (importOriginal) => ({
   ...(await importOriginal<typeof ManualCredit>()),
-  findHandGrantsForDeposit: vi.fn(async () => ({ covering: [], possible: [], overflowed: [] })),
+  findHandGrantsForDeposit: vi.fn(async () => ({
+    handPaid: [],
+    covering: [],
+    possible: [],
+    overflowed: [],
+  })),
 }));
 
 vi.mock('~/server/utils/distributed-lock', () => ({
@@ -1180,7 +1185,7 @@ function resetDepositMocks() {
   mockGrantBuzzPurchase.mockReset().mockResolvedValue('tx_123');
   vi.mocked(findHandGrantsForDeposit)
     .mockReset()
-    .mockResolvedValue({ covering: [], possible: [], overflowed: [] });
+    .mockResolvedValue({ handPaid: [], covering: [], possible: [], overflowed: [] });
 }
 
 type DepositRow = Record<string, unknown>;
@@ -1250,6 +1255,7 @@ describe('recordUnverifiedDeposit', () => {
 });
 
 const staffTipCitingPayment = {
+  handPaid: [],
   covering: [
     {
       ref: 'tip-1',
@@ -1675,11 +1681,13 @@ describe('watchOpenDeposits', () => {
     });
 
     const softMatch = {
+      handPaid: [],
       covering: [],
       possible: [{ strength: 'soft', ref: 'tx-tip', why: 'amount' }],
       overflowed: [],
     } as unknown as Awaited<ReturnType<typeof findHandGrantsForDeposit>>;
     const overflow = {
+      handPaid: [],
       covering: [],
       possible: [],
       overflowed: ['Tip'],

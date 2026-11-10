@@ -10,10 +10,16 @@ import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
+import type { ManualCreditMatch } from '~/server/services/nowpayments-manual-credit';
 import {
-  findHandGrantsForDeposit,
-  type ManualCreditMatch,
-} from '~/server/services/nowpayments-manual-credit';
+  decideDepositCredit,
+  HAND_PAID,
+  HELD,
+  type HeldReason,
+  LATE_FINISH_STATUSES,
+  manualPayinCreditExternalId,
+  userIdFromOrderId,
+} from '~/server/services/nowpayments-settle-decision';
 import { signalClient } from '~/utils/signal-client';
 import { SignalMessages, NotificationCategory } from '~/server/common/enums';
 import { createNotification } from '~/server/services/notification.service';
@@ -70,24 +76,10 @@ const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'nowpayments-service', type: 'error', ...data }).catch();
 };
 
-/**
- * Key for Buzz credited by hand for an on-chain deposit NowPayments never turned into a payment.
- * If NP later backfills that deposit, the backfill gets a fresh payment id, so `np-deposit-<id>`
- * cannot collide with the manual grant; the deposit's tx hash is the only identity both share.
- */
-export const manualPayinCreditExternalId = (payinHash: string) =>
-  `np-payin-${payinHash.toLowerCase()}`;
+export { manualPayinCreditExternalId };
 
 /** Support monitors this exact message for deposits a staff hand grant already paid. */
 const DEPOSIT_HELD_MESSAGE = 'Deposit held: a hand grant cites this payment';
-type HeldReason = 'hand_grant_covers' | 'soft_hand_grant_match' | 'hand_grant_scan_incomplete';
-const HELD = 'held';
-/**
- * Closed unpaid on our side. NowPayments can still finish such a payment; crediting one then fails
- * closed, and a failed attempt leaves the row here for the late sweep (watchOpenDeposits).
- */
-const LATE_FINISH_STATUSES = ['failed', 'expired'];
-
 
 // The IPN body carries no payin_hash, so an IPN-driven event costs one status lookup. A null on
 // the event is not trusted as "no hash": the status response is the authority.
@@ -187,19 +179,19 @@ export const getDepositAddress = async (userId: number, chain = 'evm') => {
   return result;
 };
 
-export const userIdFromOrderId = (orderId: string | null | undefined) => {
-  if (!orderId?.startsWith('user:')) return null;
-  const userId = parseInt(orderId.split(':')[1], 10);
-  return userId && !isNaN(userId) ? userId : null;
-};
+export { userIdFromOrderId };
 
-/** Nothing left to credit: credited already, or held because a hand grant paid it. */
+/** Nothing left to credit: credited already, paid by hand, or held because a hand grant paid it. */
 export const isDepositCredited = async (paymentId: number) => {
   const row = await dbRead.cryptoDeposit.findUnique({
     where: { paymentId: BigInt(paymentId) },
     select: { status: true, buzzCredited: true },
   });
-  return (row?.status === 'finished' && row.buzzCredited != null) || row?.status === HELD;
+  return (
+    (row?.status === 'finished' && row.buzzCredited != null) ||
+    row?.status === HELD ||
+    row?.status === HAND_PAID
+  );
 };
 
 /** Hands a paid IPN NOWPayments could not confirm to the retry sweep, crediting nothing. */
@@ -210,7 +202,12 @@ export const recordUnverifiedDeposit = async (event: NOWPayments.WebhookEvent) =
 
   await dbWrite.cryptoDeposit.upsert({
     where: { paymentId },
-    create: { paymentId, userId, status: 'unverified', payCurrency: event.pay_currency ?? 'unknown' },
+    create: {
+      paymentId,
+      userId,
+      status: 'unverified',
+      payCurrency: event.pay_currency ?? 'unknown',
+    },
     update: {},
   });
   // A row NOWPayments already confirmed keeps its owner; the sweep picks it up from here. Run
@@ -257,6 +254,8 @@ export const processDeposit = async (
   let transactionId: string | undefined;
   let buzzGrantFailed = false;
   let held = false;
+  /** Support already paid it by hand: settles as hand_paid, with no grant and nothing sent to the user. */
+  let handPaid = false;
   let heldReason: HeldReason | undefined;
   let failure: string | undefined;
   // A late finish holds, rather than credits, when the hand-grant scan is unsure, and records what
@@ -297,76 +296,74 @@ export const processDeposit = async (
         // Throwing here lands the deposit in buzz_failed, which the retry sweep picks up.
         const settle = async (): Promise<string | undefined> => {
           const payinHash = await resolvePayinHash(paymentId, event);
-          const manualCredit = payinHash
-            ? await getTransactionByExternalId(manualPayinCreditExternalId(payinHash))
-            : null;
+          const row = actor
+            ? null
+            : await dbWrite.cryptoDeposit.findUnique({
+                where: { paymentId: BigInt(paymentId) },
+                select: { status: true, createdAt: true },
+              });
+          const decision = await decideDepositCredit({
+            paymentId,
+            userId,
+            payinHash,
+            expectedBuzz: buzzAmount,
+            paymentCreatedAt: event.created_at,
+            row,
+            lateStatus,
+            byModerator: !!actor,
+          });
 
-          if (manualCredit) {
-            ledgerAmount = manualCredit.amount;
-            bonusBuzz = null;
-            multiplierInt = null;
-            await log({
-              type: 'info',
-              message: 'Deposit already credited manually by payin hash; skipping grant',
-              paymentId,
-              userId,
-              payinHash,
-            });
+          if (decision.decision === 'already_granted') {
+            ledgerAmount = decision.ledgerAmount;
+            if (decision.via === 'payin_hash') {
+              bonusBuzz = null;
+              multiplierInt = null;
+              await log({
+                type: 'info',
+                message: 'Deposit already credited manually by payin hash; skipping grant',
+                paymentId,
+                userId,
+                payinHash,
+              });
+            }
+            if (decision.via === 'hand_paid') {
+              handPaid = true;
+              await log({
+                type: 'info',
+                message: 'Deposit already paid by hand; settled without a grant',
+                paymentId,
+                userId,
+                matches: decision.matches.map((m) => `${m.ref} (${m.why})`),
+              });
+            }
             return 'already_granted';
           }
 
-          // A moderator crediting by hand has already been through assessDepositCredit.
-          if (!actor) {
-            const row = await dbWrite.cryptoDeposit.findUnique({
-              where: { paymentId: BigInt(paymentId) },
-              select: { status: true, createdAt: true },
-            });
-            // No rescan: a redelivery must not credit it once the grant drops out of the scan.
-            if (row?.status === HELD) return HELD;
-            const priorGrant = await getTransactionByExternalId(`np-deposit-${paymentId}`);
-            if (priorGrant) {
-              ledgerAmount = priorGrant.amount;
-              return 'already_granted';
-            }
-
-            const { covering, possible, overflowed } = await findHandGrantsForDeposit(userId, {
-              paymentId,
-              payinHash,
-              expectedBuzz: buzzAmount,
-              paymentCreatedAt: event.created_at ?? row?.createdAt,
-            });
-            if (covering.length) {
-              heldReason = 'hand_grant_covers';
+          if (decision.decision === 'held') {
+            heldReason = decision.reason;
+            if (decision.reason === 'hand_grant_covers')
               await log({
                 type: 'warning',
                 message: DEPOSIT_HELD_MESSAGE,
                 paymentId,
                 userId,
-                matches: covering.map((m) => `${m.ref} (${m.why})`),
+                matches: decision.matches.map((m) => `${m.ref} (${m.why})`),
               });
-              return HELD;
-            }
-            const uncertain: HeldReason | undefined = possible.length
-              ? 'soft_hand_grant_match'
-              : overflowed.length
-              ? 'hand_grant_scan_incomplete'
-              : undefined;
-            if (lateStatus && uncertain) {
-              heldReason = uncertain;
+            else if (decision.reason)
               await log({
                 type: 'warning',
                 message: 'Late deposit held: hand-grant scan inconclusive',
                 paymentId,
                 userId,
-                reason: uncertain,
-                matches: possible.map((m) => `${m.strength}:${m.ref} (${m.why})`),
-                unscanned: overflowed,
+                reason: decision.reason,
+                matches: decision.matches.map((m) => `${m.strength}:${m.ref} (${m.why})`),
+                unscanned: decision.unscanned,
               });
-              return HELD;
-            }
-            possibleHandGrants = possible;
-            unscanned = overflowed;
+            return HELD;
           }
+
+          possibleHandGrants = decision.possible;
+          unscanned = decision.unscanned;
 
           return grantBuzzPurchase({
             userId,
@@ -391,6 +388,11 @@ export const processDeposit = async (
           });
         if (result?.settled === HELD) {
           held = true;
+          buzzAmount = 0;
+          bonusBuzz = null;
+          multiplierInt = null;
+        } else if (handPaid) {
+          transactionId = result?.settled;
           buzzAmount = 0;
           bonusBuzz = null;
           multiplierInt = null;
@@ -456,9 +458,7 @@ export const processDeposit = async (
       // webhook retries can't double-grant. Fire-and-forget so a referral DB
       // hiccup never holds up confirming the deposit.
       if (!buzzGrantFailed && transactionId && transactionId !== 'already_granted') {
-        const { recordBuzzPurchaseKickback } = await import(
-          '~/server/services/referral.service'
-        );
+        const { recordBuzzPurchaseKickback } = await import('~/server/services/referral.service');
         await recordBuzzPurchaseKickback({
           refereeId: userId,
           buzzAmount,
@@ -486,6 +486,8 @@ export const processDeposit = async (
     depositStatus = lateStatus ?? 'buzz_failed';
   } else if (held) {
     depositStatus = HELD;
+  } else if (handPaid) {
+    depositStatus = HAND_PAID;
   } else if (isDepositComplete(webhookStatus)) {
     depositStatus = 'finished';
   } else {
@@ -514,24 +516,34 @@ export const processDeposit = async (
       // Fetch existing record for status ordering and data preservation
       const existing = await dbWrite.cryptoDeposit.findUnique({
         where: { paymentId: BigInt(event.payment_id) },
-        select: { status: true, payAmount: true, outcomeAmount: true, buzzCredited: true,
-                  bonusBuzz: true, multiplier: true, depositFee: true, serviceFee: true,
-                  feeCurrency: true, paidFiat: true },
+        select: {
+          status: true,
+          payAmount: true,
+          outcomeAmount: true,
+          buzzCredited: true,
+          bonusBuzz: true,
+          multiplier: true,
+          depositFee: true,
+          serviceFee: true,
+          feeCurrency: true,
+          paidFiat: true,
+        },
       });
 
       const depositData = {
         payCurrency: event.pay_currency ?? 'unknown',
         // A `failed` IPN typically carries null amounts; preserve the recorded values
         // instead of nulling them out (matches the sibling fields below).
-        payAmount: event.actually_paid ?? (existing?.payAmount ?? null),
-        outcomeAmount: event.outcome_amount ?? (existing?.outcomeAmount ?? null),
-        buzzCredited: buzzAmount > 0 && !buzzGrantFailed ? buzzAmount : (existing?.buzzCredited ?? null),
-        bonusBuzz: !buzzGrantFailed ? bonusBuzz : (existing?.bonusBuzz ?? null),
-        multiplier: !buzzGrantFailed ? multiplierInt : (existing?.multiplier ?? null),
-        depositFee: event.fee ? parseFloat(event.fee.depositFee) : (existing?.depositFee ?? null),
-        serviceFee: event.fee ? parseFloat(event.fee.serviceFee) : (existing?.serviceFee ?? null),
-        feeCurrency: event.fee?.currency ?? (existing?.feeCurrency ?? null),
-        paidFiat: event.actually_paid_at_fiat ?? (existing?.paidFiat ?? null),
+        payAmount: event.actually_paid ?? existing?.payAmount ?? null,
+        outcomeAmount: event.outcome_amount ?? existing?.outcomeAmount ?? null,
+        buzzCredited:
+          buzzAmount > 0 && !buzzGrantFailed ? buzzAmount : existing?.buzzCredited ?? null,
+        bonusBuzz: !buzzGrantFailed ? bonusBuzz : existing?.bonusBuzz ?? null,
+        multiplier: !buzzGrantFailed ? multiplierInt : existing?.multiplier ?? null,
+        depositFee: event.fee ? parseFloat(event.fee.depositFee) : existing?.depositFee ?? null,
+        serviceFee: event.fee ? parseFloat(event.fee.serviceFee) : existing?.serviceFee ?? null,
+        feeCurrency: event.fee?.currency ?? existing?.feeCurrency ?? null,
+        paidFiat: event.actually_paid_at_fiat ?? existing?.paidFiat ?? null,
         chain,
       };
 
@@ -542,10 +554,21 @@ export const processDeposit = async (
       const statusRank: Record<string, number> = {
         // unverified sits above the in-flight statuses: a confirming IPN NOWPayments has verified
         // re-owns the row but leaves it to the sweep, which a paid IPN already asked for.
-        waiting: 0, unverified_exhausted: 0, confirming: 1, confirmed: 1, sending: 1, partially_paid: 1,
+        waiting: 0,
+        unverified_exhausted: 0,
+        confirming: 1,
+        confirmed: 1,
+        sending: 1,
+        partially_paid: 1,
         unverified: 1.5,
         // Nothing automatic moves a held deposit; only a credit that finishes it can.
-        failed: 2, expired: 2, refunded: 2, buzz_failed: 3, held: 3.5, finished: 4,
+        failed: 2,
+        expired: 2,
+        refunded: 2,
+        buzz_failed: 3,
+        held: 3.5,
+        finished: 4,
+        hand_paid: 4,
       };
       const nextRank = statusRank[depositStatus] ?? 0;
 
@@ -584,7 +607,8 @@ export const processDeposit = async (
     ? 'finished'
     : webhookStatus;
   const granted = !buzzGrantFailed && !!transactionId && transactionId !== 'already_granted';
-  const tellUser = !buzzGrantFailed && (statusAdvanced || granted);
+  // A hand-paid deposit was settled with the user by Support; telling them now would only confuse.
+  const tellUser = !buzzGrantFailed && !handPaid && (statusAdvanced || granted);
   if (tellUser) {
     // Best effort: a failed signal must not cost the user the notification below, which a
     // redelivery would no longer send.
@@ -822,7 +846,9 @@ async function fetchPaymentsByDateRange(
     });
 
     if (result === null) {
-      throw new Error(`NP API returned error on page ${page} (dateFrom=${dateFrom}, dateTo=${dateTo})`);
+      throw new Error(
+        `NP API returned error on page ${page} (dateFrom=${dateFrom}, dateTo=${dateTo})`
+      );
     }
 
     if (result.data.length === 0) break;
@@ -855,10 +881,15 @@ async function reconcileSinglePayment(
   // Also check if we have a local CryptoDeposit that's already finished
   try {
     const localDeposit = await dbRead.cryptoDeposit.findUnique({
-      where: { paymentId: BigInt(typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId) },
+      where: {
+        paymentId: BigInt(typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId),
+      },
       select: { status: true, buzzCredited: true },
     });
-    if (localDeposit?.status === 'finished' && localDeposit.buzzCredited != null) {
+    if (
+      (localDeposit?.status === 'finished' && localDeposit.buzzCredited != null) ||
+      localDeposit?.status === HAND_PAID
+    ) {
       return { paymentId, status: payment.payment_status, action: 'already_processed' };
     }
     if (localDeposit?.status === HELD) {
@@ -1212,6 +1243,7 @@ const processLateFinish = async (
     userId,
     credited,
     held: after?.status === HELD,
+    handPaid: after?.status === HAND_PAID,
     heldReason,
     error: failure,
     buzz: buzzAmount,
@@ -1411,81 +1443,86 @@ const SUPPORTED_CURRENCIES_INPROC_TTL_MS = 60_000;
 // call retries the upstream fetch immediately, preserving the original semantics.
 class NowPaymentsCurrencyUnavailableError extends Error {}
 
-const getSupportedCurrenciesMemo = createTtlMemo<SupportedCurrencyGroup[]>(async () => {
-  // Check cache first
-  const cached = await redis.packed.get<SupportedCurrencyGroup[]>(CACHE_KEY);
-  if (cached) return cached;
+const getSupportedCurrenciesMemo = createTtlMemo<SupportedCurrencyGroup[]>(
+  async () => {
+    // Check cache first
+    const cached = await redis.packed.get<SupportedCurrencyGroup[]>(CACHE_KEY);
+    if (cached) return cached;
 
-  const [merchantCoins, fullCurrencies] = await Promise.all([
-    nowpaymentsCaller.getMerchantCoins(),
-    nowpaymentsCaller.getFullCurrencies(),
-  ]);
+    const [merchantCoins, fullCurrencies] = await Promise.all([
+      nowpaymentsCaller.getMerchantCoins(),
+      nowpaymentsCaller.getFullCurrencies(),
+    ]);
 
-  if (!merchantCoins || !fullCurrencies) {
-    await log({
-      message: 'Failed to fetch currency data from NowPayments',
-      hasMerchantCoins: !!merchantCoins,
-      hasFullCurrencies: !!fullCurrencies,
-    });
-    throw new NowPaymentsCurrencyUnavailableError('Failed to fetch currency data from NowPayments');
-  }
-
-  const selectedCodes = new Set(merchantCoins.selectedCurrencies.map((c) => c.toLowerCase()));
-
-  // Filter full currencies to only our selected ones with a known network
-  const selectedCurrencies = fullCurrencies.currencies
-    .filter((c) => selectedCodes.has(c.code.toLowerCase()))
-    .filter((c) => !!c.network);
-
-  // Fetch min amounts with bounded concurrency to avoid overwhelming NowPayments API
-  const currenciesWithMin: SupportedCurrencyNetwork[] = await mapWithConcurrency(
-    selectedCurrencies,
-    MAX_CONCURRENT_MIN_AMOUNT_REQUESTS,
-    async (currency) => {
-      const minAmount = await nowpaymentsCaller.getMinimumPaymentAmount({
-        currency_from: currency.code,
-        currency_to: 'usdcbase',
-        fiat_equivalent: 'usd',
+    if (!merchantCoins || !fullCurrencies) {
+      await log({
+        message: 'Failed to fetch currency data from NowPayments',
+        hasMerchantCoins: !!merchantCoins,
+        hasFullCurrencies: !!fullCurrencies,
       });
-
-      return {
-        code: currency.code,
-        name: currency.name,
-        network: currency.network,
-        ticker: currency.ticker,
-        logoUrl: currency.logo_url,
-        isStable: currency.is_stable ?? false,
-        minAmount: minAmount?.min_amount ?? null,
-        minAmountUsd: minAmount?.fiat_equivalent ?? null,
-        chain: currency.network
-          ? getChainForNetworkWithFallback(currency.network).chain
-          : null,
-      };
+      throw new NowPaymentsCurrencyUnavailableError(
+        'Failed to fetch currency data from NowPayments'
+      );
     }
-  );
 
-  // Group by ticker
-  const grouped: Record<string, SupportedCurrencyGroup> = {};
+    const selectedCodes = new Set(merchantCoins.selectedCurrencies.map((c) => c.toLowerCase()));
 
-  for (const currency of currenciesWithMin) {
-    const ticker = (currency.ticker ?? currency.code).toLowerCase();
-    if (!grouped[ticker]) {
-      grouped[ticker] = {
-        ticker,
-        name: currency.name,
-        networks: [],
-      };
+    // Filter full currencies to only our selected ones with a known network
+    const selectedCurrencies = fullCurrencies.currencies
+      .filter((c) => selectedCodes.has(c.code.toLowerCase()))
+      .filter((c) => !!c.network);
+
+    // Fetch min amounts with bounded concurrency to avoid overwhelming NowPayments API
+    const currenciesWithMin: SupportedCurrencyNetwork[] = await mapWithConcurrency(
+      selectedCurrencies,
+      MAX_CONCURRENT_MIN_AMOUNT_REQUESTS,
+      async (currency) => {
+        const minAmount = await nowpaymentsCaller.getMinimumPaymentAmount({
+          currency_from: currency.code,
+          currency_to: 'usdcbase',
+          fiat_equivalent: 'usd',
+        });
+
+        return {
+          code: currency.code,
+          name: currency.name,
+          network: currency.network,
+          ticker: currency.ticker,
+          logoUrl: currency.logo_url,
+          isStable: currency.is_stable ?? false,
+          minAmount: minAmount?.min_amount ?? null,
+          minAmountUsd: minAmount?.fiat_equivalent ?? null,
+          chain: currency.network ? getChainForNetworkWithFallback(currency.network).chain : null,
+        };
+      }
+    );
+
+    // Group by ticker
+    const grouped: Record<string, SupportedCurrencyGroup> = {};
+
+    for (const currency of currenciesWithMin) {
+      const ticker = (currency.ticker ?? currency.code).toLowerCase();
+      if (!grouped[ticker]) {
+        grouped[ticker] = {
+          ticker,
+          name: currency.name,
+          networks: [],
+        };
+      }
+      grouped[ticker].networks.push(currency);
     }
-    grouped[ticker].networks.push(currency);
-  }
 
-  const result = Object.values(grouped);
+    const result = Object.values(grouped);
 
-  // Cache for 3 hours — currency list rarely changes
-  await redis.packed.set(CACHE_KEY, result, { EX: CacheTTL.hour * 3 });
+    // Cache for 3 hours — currency list rarely changes
+    await redis.packed.set(CACHE_KEY, result, { EX: CacheTTL.hour * 3 });
 
-  return result;
-}, SUPPORTED_CURRENCIES_INPROC_TTL_MS, undefined, { freeze: true });
+    return result;
+  },
+  SUPPORTED_CURRENCIES_INPROC_TTL_MS,
+  undefined,
+  { freeze: true }
+);
 
 export const clearSupportedCurrenciesMemo = () => getSupportedCurrenciesMemo.clear();
 
@@ -1560,6 +1597,7 @@ export const reconcileUserDeposits = async (userId: number) => {
       if (
         existingTx ||
         existingDeposit?.status === HELD ||
+        existingDeposit?.status === HAND_PAID ||
         (existingDeposit?.status === 'finished' && existingDeposit.buzzCredited)
       ) {
         continue;
