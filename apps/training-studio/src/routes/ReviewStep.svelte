@@ -303,10 +303,13 @@
   const isExtra = (field: ParamField): field is ExtraParamField =>
     EXTRA_PARAM_FIELDS.includes(field as ExtraParamField);
 
-  const defaultsAt = (i: number) => defaultRunParams(selection.runs[i]!, trigger);
+  const defaultsAt = (i: number) =>
+    defaultRunParams(selection.runs[i]!, trigger, selection.loraType);
   const capsAt = (i: number) => runExtraCapabilities(selection.runs[i]!, labelMode);
   const deviationsByRun = $derived(
-    selection.runs.map((run, i) => paramDeviations(run, paramsAt(i), labelMode, trigger))
+    selection.runs.map((run, i) =>
+      paramDeviations(run, paramsAt(i), labelMode, trigger, selection.loraType)
+    )
   );
   const deviationsAt = (i: number) => deviationsByRun[i] ?? [];
   // The Advanced panel's own count — Steps lives in the header, Checkpoints in the panel.
