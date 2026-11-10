@@ -125,11 +125,12 @@ import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import {
-  articleAwaitsTextVerdict,
   isPublicArticle,
   isShareableArticleStatus,
 } from '~/server/services/text-scan/public-content';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import type { SkipReason } from '~/server/services/text-scan/actions/settle-skipped';
 import {
   computeArticleDerivedNsfwLevel,
   maybeAutoResolveDisputeAfterScan,
@@ -1702,7 +1703,7 @@ export async function applyArticleContentChange({
     }
   }
 
-  // Submit for text moderation (non-blocking). `submitTextModeration` →
+  // Submit for text moderation. `submitTextModeration` →
   // `createXGuardModerationRequest` handles contentHash dedup internally,
   // so a save that doesn't change `title` or `content` is a no-op
   // orchestrator-wise. If the article's text was emptied out entirely,
@@ -1732,6 +1733,9 @@ export async function applyArticleContentChange({
     } else if (isPublicArticle(publication)) {
       const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
 
+      // Awaited, published edits included: the submit records the pending scan for this text,
+      // so the recompute below cannot count a verdict for older text.
+      let skipped: SkipReason | undefined;
       const submitted = submitTextModerationOrScan({
         entityType: 'Article',
         entityId: id,
@@ -1744,6 +1748,9 @@ export async function applyArticleContentChange({
             recordForReview: true,
             rearmRetries: true,
           }),
+        onActiveSkip: async (reason) => {
+          skipped = reason;
+        },
       }).catch((e) => {
         logToAxiom({
           type: 'error',
@@ -1751,9 +1758,12 @@ export async function applyArticleContentChange({
           message: (e as Error).message,
           articleId: id,
         }).catch();
+        return null;
       });
-      // Otherwise the recompute below can count a verdict for older text and take it live.
-      if (articleAwaitsTextVerdict(publication)) await submitted;
+      // The orchestrator client sets no timeout, so a hung submit would hold the save open.
+      const workflow = await withTimeoutFallback(submitted, ARTICLE_TEXT_SUBMIT_TIMEOUT_MS, null);
+      if (!(await articleTextSubmitRecorded(id, workflow, skipped)))
+        await holdArticleTextVerdict(id);
     }
   }
 
@@ -1769,6 +1779,44 @@ export async function applyArticleContentChange({
   );
 
   return true;
+}
+
+const ARTICLE_TEXT_SUBMIT_TIMEOUT_MS = 10_000;
+
+/**
+ * Whether the row now holds this text's scan or its verdict. Neither path throws on every miss: the
+ * XGuard submit logs a failed row write, and an active scan can skip without writing.
+ */
+async function articleTextSubmitRecorded(
+  articleId: number,
+  workflow: { id?: string | null } | null | undefined,
+  skipped: SkipReason | undefined
+) {
+  // The row already has this text's verdict, or its scan in flight.
+  if (skipped === 'unchanged' || skipped === 'in-flight') return true;
+  if (!workflow?.id) return false;
+  const row = await dbWrite.entityModeration.findUnique({
+    where: { entityType_entityId: { entityType: 'Article', entityId: articleId } },
+    select: { workflowId: true },
+  });
+  return row?.workflowId === workflow.id;
+}
+
+/**
+ * A submit that recorded nothing leaves the verdict for the previous text in place.
+ * Pending keeps that verdict from counting for this text until the retry cron's stuck-Pending sweep
+ * resubmits; the stored verdict fields stay, as a fresh submit leaves them (`markTextScanPending`).
+ */
+async function holdArticleTextVerdict(articleId: number) {
+  await dbWrite.entityModeration.updateMany({
+    where: { entityType: 'Article', entityId: articleId },
+    data: {
+      status: EntityModerationStatus.Pending,
+      workflowId: null,
+      contentHash: null,
+      retryCount: 0,
+    },
+  });
 }
 
 /**
