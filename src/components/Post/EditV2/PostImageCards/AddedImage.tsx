@@ -37,7 +37,7 @@ import {
 } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { remove, uniq } from 'lodash-es';
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
@@ -56,6 +56,7 @@ import { MoveImageToPostModal } from '~/components/Post/EditV2/MoveImageToPostMo
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 import { ResourceReviewEditButton } from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewEditButton';
+import { useReviewFocusStore } from '~/components/Post/EditV2/PostResourceReviews/reviewFocus';
 import {
   ResourceReviewCommentHint,
   ResourceReviewThumbs,
@@ -755,6 +756,15 @@ function EditDetail() {
   const updateImage = usePostEditStore((state) => state.updateImage);
 
   const { meta, hideMeta, resourceHelper: resources, blockedFor } = image;
+
+  // "Next unrated" on the review progress card may target a resource hidden behind "Show All".
+  const reviewFocus = useReviewFocusStore((state) => state.target);
+  useEffect(() => {
+    if (reviewFocus?.imageId !== image.id) return;
+    const visible = sortByModelTypes(image.resourceHelper).filter((x) => !!x.modelName);
+    if (visible.findIndex((x) => x.modelVersionId === reviewFocus.modelVersionId) >= 3)
+      setShowMoreResources(true);
+  }, [reviewFocus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
   const hasSimpleMeta = !!simpleMeta.length;

@@ -43,7 +43,9 @@ export function PostImageCards() {
           .map((image, i) => (
             <div
               key={image.type === 'added' ? image.data.id : image.data.url}
+              data-image-id={image.type === 'added' ? image.data.id : undefined}
               className="flex flex-col gap-1"
+              style={{ scrollMarginTop: 'calc(var(--header-height) + 8px)' }}
             >
               <Text size="sm" fw={600} c="dimmed">
                 {i + 1} / {maxItems}

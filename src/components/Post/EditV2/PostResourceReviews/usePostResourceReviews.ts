@@ -43,7 +43,8 @@ const useCanReview = (ownerId: number) => {
   const currentUser = useCurrentUser();
   const isMuted = currentUser?.muted ?? false;
   // A moderator editing someone else's post must not review under their own account.
-  return { isMuted, canReview: !isMuted && !!currentUser && currentUser.id === ownerId };
+  const isOwner = !!currentUser && currentUser.id === ownerId;
+  return { isMuted, isOwner, canReview: !isMuted && isOwner };
 };
 
 /**
@@ -100,7 +101,7 @@ export function PostResourceReviewsSync(props: { postId: number; ownerId: number
  */
 export function usePostResourceReviews({ postId, ownerId }: { postId: number; ownerId: number }) {
   const queryUtils = trpc.useUtils();
-  const { canReview, isMuted } = useCanReview(ownerId);
+  const { canReview, isMuted, isOwner } = useCanReview(ownerId);
 
   const { data } = trpc.post.getResources.useQuery({ id: postId }, { enabled: false });
   const reviews = useMemo(() => dedupeByModelVersion(data ?? []), [data]);
@@ -203,5 +204,15 @@ export function usePostResourceReviews({ postId, ownerId }: { postId: number; ow
     [postId, queryUtils, save]
   );
 
-  return { reviews, byModelVersionId, counts, canReview, isMuted, isPending, rate, saveDetails };
+  return {
+    reviews,
+    byModelVersionId,
+    counts,
+    canReview,
+    isMuted,
+    isOwner,
+    isPending,
+    rate,
+    saveDetails,
+  };
 }
