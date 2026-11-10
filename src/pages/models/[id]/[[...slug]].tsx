@@ -1674,7 +1674,12 @@ export default function ModelDetailsV2({
               </>
             )}
             {selectedVersion && (
-              <ModelVersionWrittenReviews modelId={model.id} modelVersionId={selectedVersion.id} />
+              <ModelVersionWrittenReviews
+                modelId={model.id}
+                modelVersionId={selectedVersion.id}
+                thumbsUpCount={thumbsUpCount}
+                thumbsDownCount={thumbsDownCount}
+              />
             )}
             <AdUnitTopSection />
             <Container size="xl" my="xl">
