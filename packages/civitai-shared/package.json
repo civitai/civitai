@@ -25,6 +25,7 @@
     "./training-text-encoder": "./src/training-text-encoder.ts",
     "./job-queue": "./src/job-queue.ts",
     "./rated-entity-sql": "./src/rated-entity-sql.ts",
+    "./minor-content-gate": "./src/minor-content-gate.ts",
     "./rating-review": "./src/rating-review.ts",
     "./crucible": "./src/crucible.ts",
     "./box-odds": "./src/box-odds.ts",
