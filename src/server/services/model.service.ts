@@ -2117,11 +2117,13 @@ export const updateModelById = async ({
    */
   meta?: (stored: ModelMeta | null, row: LockedModelRow) => ModelMeta;
 }) => {
+  let written = typeof data === 'function' ? undefined : data;
   const model =
     meta || typeof data === 'function'
       ? await dbWrite.$transaction(async (tx) => {
           const row = await lockModelRow(tx, id);
           const fields = typeof data === 'function' ? data(row) : data;
+          written = fields;
           return tx.model.update({
             where: { id },
             data: meta
@@ -2157,6 +2159,9 @@ export const updateModelById = async ({
   // through here, and the cached body's images/files/downloadUrl depend on
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
+  // A taken-down model's search document carries no images, so a change of mode rewrites it.
+  if (written && 'mode' in written)
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
   return withoutModeratorOnlyMeta(model);
 };
