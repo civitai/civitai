@@ -2066,7 +2066,18 @@ export const attachPostResourceCovers = async <T extends { modelVersionId: numbe
   rows: T[]
 ) => {
   const versionIds = [...new Set(rows.map((row) => row.modelVersionId).filter(isDefined))];
-  const byVersion = versionIds.length ? await imagesForModelVersionsCache.fetch(versionIds) : {};
+  // Covers are decoration: a cache failure must not take the review list down with it.
+  const byVersion = versionIds.length
+    ? await imagesForModelVersionsCache.fetch(versionIds).catch((error: Error) => {
+        logToAxiom({
+          name: 'post-service',
+          type: 'error',
+          message: 'post resource covers unavailable',
+          error: error.message,
+        }).catch();
+        return {} as Awaited<ReturnType<typeof imagesForModelVersionsCache.fetch>>;
+      })
+    : {};
 
   return rows.map((row) => {
     const cover = row.modelVersionId ? byVersion[row.modelVersionId]?.images[0] : undefined;

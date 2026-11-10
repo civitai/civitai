@@ -75,6 +75,14 @@ describe('attachPostResourceCovers', () => {
     expect(rows.map((r) => r.coverImage)).toEqual([null, null]);
   });
 
+  it('still returns the rows, without covers, when the cache fails', async () => {
+    mockFetchCovers.mockRejectedValue(new Error('redis down'));
+
+    const rows = await attachPostResourceCovers([{ modelVersionId: 1, name: 'lora' }]);
+
+    expect(rows).toEqual([{ modelVersionId: 1, name: 'lora', coverImage: null }]);
+  });
+
   it('skips the cache when there are no rows', async () => {
     expect(await attachPostResourceCovers([])).toEqual([]);
     expect(mockFetchCovers).not.toHaveBeenCalled();
