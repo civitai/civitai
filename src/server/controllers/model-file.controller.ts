@@ -251,6 +251,8 @@ export const createModelFile = async ({
     if (createInput.type === 'Training Data') {
       const metadata = { ...createInput.metadata };
       delete metadata.uploadDomain;
+      // Marks a Training Studio dataset row; only the Studio publish writes it.
+      delete metadata.selectedEpochUrl;
       if (uploadDomain) metadata.uploadDomain = uploadDomain;
       createInput.metadata = metadata;
     }

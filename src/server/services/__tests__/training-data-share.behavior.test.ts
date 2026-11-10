@@ -338,15 +338,25 @@ describe('keepTrainingDataPrivateOnStudioVersion', () => {
   });
 
   it('makes the other training data files on a Studio version Private, and nothing else', async () => {
-    await insert(9100, VERSION, 'Training Data', { selectedEpochUrl: 'x' });
+    await insert(9100, VERSION, 'Training Data', {
+      selectedEpochUrl: 'x',
+      datasetArchive: { status: 'archived' },
+    });
+    // The marker alone, with no archive the job wrote, does not make a row the Studio dataset.
+    await insert(9105, VERSION, 'Training Data', { selectedEpochUrl: 'y' });
+    await db.exec(
+      `INSERT INTO "ModelFile" (id, "modelVersionId", type, metadata, visibility) VALUES (9106, ${VERSION}, 'Training Data', '{}', 'Private')`
+    );
 
-    expect(await keepTrainingDataPrivateOnStudioVersion(executor, VERSION)).toBe(2);
+    expect(await keepTrainingDataPrivateOnStudioVersion(executor, VERSION)).toBe(3);
     expect(await visibilities()).toEqual([
-      [9100, 'Public'], // the Studio dataset row keeps its own rules
+      [9100, 'Public'], // the archived Studio dataset row keeps its own rules
       [9101, 'Private'],
       [9102, 'Private'],
       [9103, 'Public'],
       [9104, 'Public'],
+      [9105, 'Private'],
+      [9106, 'Private'],
     ]);
   });
 

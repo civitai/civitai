@@ -77,6 +77,13 @@ describe.each(['new-model', 'updated-model'] as const)('%s webhook payload', (ev
       url: 'https://storage.example.test/training-images/7/data.zip',
       metadata: { numImages: 12 } as never,
     });
+    withDataset.modelVersions[0].files.push({
+      id: 7,
+      type: 'Training Data',
+      visibility: 'Private',
+      url: 'https://storage.example.test/training-images/7/private.zip',
+      metadata: {} as never,
+    });
     const [payload] = await modelWebhooks[event].getData({
       lastSent: new Date(0),
       prisma: { model: { findMany: vi.fn(async () => [withDataset]) } },
@@ -85,6 +92,7 @@ describe.each(['new-model', 'updated-model'] as const)('%s webhook payload', (ev
     const files = payload.modelVersions[0]?.files ?? [];
     expect(files.map((f: { id: number }) => f.id)).toEqual([5]);
     expect(files[0].url).toBe('https://storage.example.test/model/7/m.safetensors');
+    expect(files[0].downloadUrl).toMatch(/\/api\/download\/models\/10/);
     expect(JSON.stringify(payload)).not.toContain('training-images');
   });
 });

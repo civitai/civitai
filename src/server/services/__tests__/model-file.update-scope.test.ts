@@ -249,6 +249,37 @@ describe('updateFile', () => {
  * about the old object describes the new one. To whoever is about to "simplify" this back into an
  * in-place url update: the new id is the point; do not reuse the old row.
  */
+describe('the Training Studio dataset marker on an edit', () => {
+  const sentMetadata = (url: string) => ({ selectedEpochUrl: url, numImages: 2 });
+  const written = () => writtenData().metadata as Record<string, unknown>;
+
+  it('is not added to a training data file by an edit', async () => {
+    withFile({ type: 'Training Data', metadata: { numImages: 1 } });
+
+    await updateFile({ id: 1, metadata: sentMetadata('https://orch.test/forged'), userId: 7 });
+
+    expect(written()).not.toHaveProperty('selectedEpochUrl');
+    expect(written().numImages).toBe(2);
+  });
+
+  it('keeps the stored value on a training data file, whatever the edit sends', async () => {
+    withFile({
+      type: 'Training Data',
+      metadata: { selectedEpochUrl: 'https://orch.test/epoch-1', numImages: 1 },
+    });
+
+    await updateFile({ id: 1, metadata: sentMetadata('https://orch.test/forged'), userId: 7 });
+
+    expect(written().selectedEpochUrl).toBe('https://orch.test/epoch-1');
+  });
+
+  it('is still written on a model file (control)', async () => {
+    await updateFile({ id: 1, metadata: sentMetadata('https://orch.test/epoch-2'), userId: 7 });
+
+    expect(written().selectedEpochUrl).toBe('https://orch.test/epoch-2');
+  });
+});
+
 describe('a new upload creates a new file record', () => {
   it('deletes the old record and creates an unscanned one with the new id', async () => {
     const result = await updateFile({ id: 1, url: NEW_URL, sizeKB: 2048, userId: 7 });

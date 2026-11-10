@@ -559,7 +559,8 @@ describe('mergeVersions training data visibility', () => {
   const PAST_MOVE = 'reached the steps after the file move';
   const studioTarget = vi.fn();
   const executeRaw = vi.fn(async () => 1);
-  const queryRaw = vi.fn(async (strings: TemplateStringsArray) => {
+  const fileMove = vi.fn(async () => ({ count: 1 }));
+  const queryRaw = vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join('?');
     if (sql.includes('FOR UPDATE'))
       return [TARGET, SOURCE].map((id) => ({
@@ -569,7 +570,10 @@ describe('mergeVersions training data visibility', () => {
         trainingStatus: null,
         baseModel: 'SDXL 1.0',
       }));
-    if (sql.includes('selectedEpochUrl')) return studioTarget();
+    // The target reads as a Studio version only once the move has run, as when the Studio dataset
+    // comes from a source.
+    if (sql.includes('selectedEpochUrl'))
+      return fileMove.mock.calls.length && values.every((v) => v === TARGET) ? studioTarget() : [];
     return [];
   });
   const fileFindMany = vi.fn(async () => []);
@@ -577,7 +581,7 @@ describe('mergeVersions training data visibility', () => {
     {
       $queryRaw: queryRaw,
       $executeRaw: executeRaw,
-      modelFile: { findMany: fileFindMany, updateMany: vi.fn(async () => ({ count: 1 })) },
+      modelFile: { findMany: fileFindMany, updateMany: fileMove },
     },
     {
       get(target, key) {
@@ -601,6 +605,7 @@ describe('mergeVersions training data visibility', () => {
 
   beforeEach(() => {
     executeRaw.mockClear();
+    fileMove.mockClear();
     studioTarget.mockReset();
     mockDbRead.model.findUniqueOrThrow.mockResolvedValue({
       userId: OWNER,

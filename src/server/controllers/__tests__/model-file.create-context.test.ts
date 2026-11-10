@@ -222,6 +222,34 @@ describe('the uploadDomain stamp on a training-data upload', () => {
   });
 });
 
+describe('the Training Studio dataset marker in the metadata a client sends', () => {
+  const EPOCH_URL = 'https://orch.example/v2/consumer/blobs/E.safetensors';
+
+  it('is dropped from a training data upload, the rest kept', async () => {
+    await createFileHandler({
+      input: {
+        ...trainingInput,
+        metadata: { ...trainingInput.metadata, selectedEpochUrl: EPOCH_URL },
+      },
+      ctx: { user: { id: 7, isModerator: false }, track, domain: 'green' } as never,
+    });
+
+    const [{ metadata }] = createFile.mock.calls[0];
+    expect(metadata).not.toHaveProperty('selectedEpochUrl');
+    expect(metadata.numImages).toBe(12);
+  });
+
+  it('is kept on a model file, where the trainer records the picked epoch', async () => {
+    await createFileHandler({
+      input: { ...input, metadata: { selectedEpochUrl: EPOCH_URL } },
+      ctx: { user: { id: 7, isModerator: false }, track, domain: 'green' } as never,
+    });
+
+    const [{ metadata }] = createFile.mock.calls[0];
+    expect(metadata.selectedEpochUrl).toBe(EPOCH_URL);
+  });
+});
+
 describe('training results in the metadata a client sends', () => {
   const trainingResults = {
     version: 2,

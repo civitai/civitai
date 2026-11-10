@@ -258,6 +258,13 @@ export async function updateFile({
 
   assertFileTypeChangeAllowed(modelFile, inputData.type);
 
+  // A Training Studio dataset row's marker is written only by the Studio publish: an edit keeps the
+  // stored value.
+  if (metadata && (inputData.type ?? modelFile.type) === 'Training Data') {
+    const { selectedEpochUrl: _sent, ...rest } = metadata;
+    const stored = (modelFile.metadata as ModelFileMetadata | null)?.selectedEpochUrl;
+    metadata = stored != null ? { ...rest, selectedEpochUrl: stored } : rest;
+  }
   metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
 
   if (inputData.url && inputData.url !== modelFile.url) {

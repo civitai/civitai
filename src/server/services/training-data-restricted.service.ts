@@ -262,8 +262,9 @@ export async function versionHasStudioDataset(
 }
 
 /**
- * Makes every `Training Data` file on a Training Studio version Private, other than its Studio
- * dataset row, which keeps its own rules. For writes that put files on a version without going
+ * Makes every `Training Data` file on a Training Studio version Private, other than an archived
+ * Studio dataset row, which keeps its own rules (`datasetArchive` is written only by the archive
+ * job). For writes that put files on a version without going
  * through the upload and edit paths, such as a version merge. Returns the number of files changed.
  */
 export async function keepTrainingDataPrivateOnStudioVersion(
@@ -276,7 +277,10 @@ export async function keepTrainingDataPrivateOnStudioVersion(
     WHERE "modelVersionId" = ${modelVersionId}
       AND type = 'Training Data'
       AND visibility <> 'Private'
-      AND NOT COALESCE(metadata ? 'selectedEpochUrl', false)
+      AND NOT COALESCE(
+        metadata ? 'selectedEpochUrl' AND metadata -> 'datasetArchive' ->> 'status' = 'archived',
+        false
+      )
   `;
 }
 
