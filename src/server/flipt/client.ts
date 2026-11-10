@@ -208,6 +208,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
   // no entity or context. See `responseWriteSerialize`.
   TRPC_FAST_SUPERJSON_WRITE = 'trpc-fast-superjson-write',
+  // With TRPC_FAST_SUPERJSON_WRITE on, lets the fast walk handle a shared (non-circular) object
+  // reference instead of bailing to `superjson.serialize` (same output either way). DEFAULT-OFF.
+  // Global boolean, read at most once per 5s per process (`createCachedFlagGate`).
+  TRPC_FAST_SUPERJSON_SHARED_REFS = 'trpc-fast-superjson-shared-refs',
+  // One shared `user` object per creator in the image.getInfinite / image.getImagesAsPostsInfinite
+  // responses, so devalue writes each creator once (decoded shape unchanged). DEFAULT-OFF. Global
+  // boolean, read at most once per 5s per process. See `~/server/utils/feed-shared-users`.
+  IMAGE_FEED_SHARED_USERS = 'image-feed-shared-users',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the

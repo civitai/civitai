@@ -19,8 +19,10 @@ import type { SuperJSONResult } from 'superjson';
  *    extra enumerable properties. So NaN, ±Infinity, -0, bigint, symbol, Map, Set, RegExp, Error,
  *    URL, typed arrays, functions, class instances (e.g. a Prisma Decimal) and invalid Dates all
  *    go to superjson;
- *  - any object (including a Date) reached twice — a shared or circular reference, which
- *    superjson records as `referentialEqualities`;
+ *  - any object (including a Date) reached twice — unless `sharedRefs` is on, in which case only
+ *    a CIRCULAR reference bails, and a shared (non-circular) one is written the way superjson
+ *    writes it: its first walk is reused at every later path (so its annotations repeat there),
+ *    and every path it was reached at is listed in `meta.referentialEqualities`, shortest first;
  *  - an object key `__proto__`, `constructor` or `prototype` (superjson throws on these; the
  *    bail lets it throw its own error);
  *  - any class, symbol or custom transformer registered on the default superjson instance,
@@ -45,7 +47,30 @@ function escapeKey(key: string): string {
 const UNDEFINED_ANNOTATION = 'undefined';
 const DATE_ANNOTATION = 'Date';
 
-function walk(object: unknown, seen: Set<object>): Walked {
+/**
+ * Where an object was reached: its key under its parent's path. The root path is `null`. Built
+ * only with `sharedRefs` on, as a parent-linked list (one small object per visited object) rather
+ * than superjson's array copy per visited value; it is turned into a path string only for an
+ * object reached more than once.
+ */
+type PathNode = { parent: PathNode | null; key: string };
+
+/** One visited object: its walk (unset while its children are walked) and every path it was at. */
+type Visit = { walked: Walked | undefined; path: PathNode | null; more: (PathNode | null)[] | undefined };
+
+type WalkContext = {
+  /** Every visited object in first-visit order — the order superjson's identity map has. */
+  visits: Map<object, Visit>;
+  sharedRefs: boolean;
+  shared: boolean;
+};
+
+function walk(
+  object: unknown,
+  ctx: WalkContext,
+  parent: PathNode | null,
+  key: string | null
+): Walked {
   switch (typeof object) {
     case 'string':
     case 'boolean':
@@ -66,12 +91,23 @@ function walk(object: unknown, seen: Set<object>): Walked {
   }
   if (object === null) return { value: null, annotations: undefined };
 
-  if (seen.has(object)) throw BAIL;
-  seen.add(object);
+  const path = ctx.sharedRefs && key !== null ? { parent, key } : null;
+  const visited = ctx.visits.get(object);
+  if (visited) {
+    // A circular reference (the object is still being walked: superjson writes `null` there), or
+    // any repeat with shared references off.
+    if (!ctx.sharedRefs || visited.walked === undefined) throw BAIL;
+    // superjson's walker returns the first walk of a seen object as-is and records the path.
+    (visited.more ??= []).push(path);
+    ctx.shared = true;
+    return visited.walked;
+  }
+  const visit: Visit = { walked: undefined, path, more: undefined };
+  ctx.visits.set(object, visit);
 
   if (object instanceof Date) {
     if (Object.getPrototypeOf(object) !== Date.prototype || isNaN(object.valueOf())) throw BAIL;
-    return { value: object.toISOString(), annotations: [DATE_ANNOTATION] };
+    return (visit.walked = { value: object.toISOString(), annotations: [DATE_ANNOTATION] });
   }
 
   let inner: Record<string, unknown> | undefined;
@@ -88,9 +124,10 @@ function walk(object: unknown, seen: Set<object>): Walked {
     const out: unknown[] = [];
     for (let i = 0; i < length; i++) {
       if (!(i in object)) throw BAIL;
-      const child = walk(object[i], seen);
+      const index = String(i);
+      const child = walk(object[i], ctx, path, index);
       out.push(child.value);
-      if (child.annotations !== undefined) inner = mergeChild(inner, String(i), child.annotations);
+      if (child.annotations !== undefined) inner = mergeChild(inner, index, child.annotations);
     }
     transformed = out;
   } else {
@@ -100,15 +137,46 @@ function walk(object: unknown, seen: Set<object>): Walked {
     const out: Record<string, unknown> = {};
     const keys = Object.keys(source);
     for (let k = 0; k < keys.length; k++) {
-      const key = keys[k];
-      if (key === '__proto__' || key === 'constructor' || key === 'prototype') throw BAIL;
-      const child = walk(source[key], seen);
-      out[key] = child.value;
-      if (child.annotations !== undefined) inner = mergeChild(inner, key, child.annotations);
+      const childKey = keys[k];
+      if (childKey === '__proto__' || childKey === 'constructor' || childKey === 'prototype')
+        throw BAIL;
+      const child = walk(source[childKey], ctx, path, childKey);
+      out[childKey] = child.value;
+      if (child.annotations !== undefined) inner = mergeChild(inner, childKey, child.annotations);
     }
     transformed = out;
   }
-  return { value: transformed, annotations: inner };
+  return (visit.walked = { value: transformed, annotations: inner });
+}
+
+/** superjson `stringifyPath`: each segment escaped, joined with '.'. */
+function pathString(segments: string[]): string {
+  return segments.map(escapeKey).join('.');
+}
+
+function pathSegments(node: PathNode | null): string[] {
+  const segments: string[] = [];
+  for (let n = node; n !== null; n = n.parent) segments.push(n.key);
+  return segments.reverse();
+}
+
+/**
+ * superjson `generateReferentialEqualityAnnotations` (dedupe off): for each object reached more
+ * than once, in first-visit order, its paths sorted shortest first (a stable sort, so equal
+ * lengths keep visit order); the first is the key, the rest its value. The root is never among
+ * them here: reaching the root again is a cycle, which bails.
+ */
+function referentialEqualities(visits: Map<object, Visit>): Record<string, string[]> {
+  const result: Record<string, string[]> = {};
+  for (const visit of visits.values()) {
+    if (visit.more === undefined) continue;
+    const paths = [visit.path, ...visit.more]
+      .map(pathSegments)
+      .sort((a, b) => a.length - b.length);
+    const [representative, ...identical] = paths;
+    result[pathString(representative)] = identical.map(pathString);
+  }
+  return result;
 }
 
 // superjson walker: a leaf's type list lands at `escapeKey(index)`, a nested map is re-keyed
@@ -157,6 +225,14 @@ function defaultInstanceHasNoRegistrations(): boolean {
 /** How one `fastSuperjsonSerialize` call ended (see `onOutcome`). */
 export type FastSuperjsonOutcome = 'fast' | 'bail' | 'registry_off';
 
+export type FastSuperjsonOptions = {
+  /**
+   * Walk shared (non-circular) references instead of bailing on them, writing superjson's
+   * `referentialEqualities` for them. Off: any object reached twice bails, as before.
+   */
+  sharedRefs?: boolean;
+};
+
 /**
  * `onOutcome`, when given, is told how the call ended, before the result is returned: `fast`
  * (the walk produced it), `bail` (handed to `superjson.serialize` after a partial walk) or
@@ -164,15 +240,21 @@ export type FastSuperjsonOutcome = 'fast' | 'bail' | 'registry_off';
  */
 export function fastSuperjsonSerialize(
   object: unknown,
-  onOutcome?: (outcome: FastSuperjsonOutcome) => void
+  onOutcome?: (outcome: FastSuperjsonOutcome) => void,
+  options?: FastSuperjsonOptions
 ): SuperJSONResult {
   if (!defaultInstanceHasNoRegistrations()) {
     onOutcome?.('registry_off');
     return superjson.serialize(object);
   }
+  const ctx: WalkContext = {
+    visits: new Map(),
+    sharedRefs: options?.sharedRefs === true,
+    shared: false,
+  };
   let walked: Walked;
   try {
-    walked = walk(object, new Set());
+    walked = walk(object, ctx, null, null);
   } catch (error) {
     if (error === BAIL) {
       onOutcome?.('bail');
@@ -181,10 +263,18 @@ export function fastSuperjsonSerialize(
     throw error;
   }
   onOutcome?.('fast');
+  // superjson's key order: `values`, then `referentialEqualities`, then `v`.
   const result: SuperJSONResult = { json: walked.value as SuperJSONResult['json'] };
+  type Meta = NonNullable<SuperJSONResult['meta']>;
   if (walked.annotations !== undefined) {
-    result.meta = { values: walked.annotations as NonNullable<SuperJSONResult['meta']>['values'] };
-    result.meta.v = 1;
+    result.meta = { values: walked.annotations as Meta['values'] };
   }
+  if (ctx.shared) {
+    result.meta = {
+      ...result.meta,
+      referentialEqualities: referentialEqualities(ctx.visits) as Meta['referentialEqualities'],
+    };
+  }
+  if (result.meta) result.meta.v = 1;
   return result;
 }
