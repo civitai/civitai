@@ -31,17 +31,14 @@ function readFlag(flag: () => FlagKey) {
 
 const readBasicTagsLong = readFlag(() => FLIPT_FEATURE_FLAGS.BASIC_TAGS_L1_LONG_TTL);
 const readCosmetics = readFlag(() => FLIPT_FEATURE_FLAGS.COSMETICS_L1);
-const readModelVersionImages = readFlag(() => FLIPT_FEATURE_FLAGS.MODEL_VERSION_IMAGES_L1);
 
 let basicTagsLongGate = createCachedFlagGate(readBasicTagsLong);
 let cosmeticsGate = createCachedFlagGate(readCosmetics);
-let modelVersionImagesGate = createCachedFlagGate(readModelVersionImages);
 
 /** Tests only: forget the cached flag reads so the next fetch re-reads Flipt. */
 export function resetL1SwitchesForTests() {
   basicTagsLongGate = createCachedFlagGate(readBasicTagsLong);
   cosmeticsGate = createCachedFlagGate(readCosmetics);
-  modelVersionImagesGate = createCachedFlagGate(readModelVersionImages);
 }
 
 /** `basic-tags` L1 TTL in seconds: 30 (as before), or 300 with BASIC_TAGS_L1_LONG_TTL on. */
@@ -53,11 +50,3 @@ export const basicTagsLocalTtl = () =>
 /** `cosmetics2` L1 TTL in seconds: none (as before), or 60 with COSMETICS_L1 on. */
 export const COSMETICS_L1_TTL = 60;
 export const cosmeticsLocalTtl = () => (cosmeticsGate() ? COSMETICS_L1_TTL : undefined);
-
-/**
- * `images-for-model-version-2` L1 TTL in seconds: none (as before), or 30 with
- * MODEL_VERSION_IMAGES_L1 on.
- */
-export const MODEL_VERSION_IMAGES_L1_TTL = 30;
-export const modelVersionImagesLocalTtl = () =>
-  modelVersionImagesGate() ? MODEL_VERSION_IMAGES_L1_TTL : undefined;
