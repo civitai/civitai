@@ -46,6 +46,7 @@ const MOD: Viewer = { userId: 77, isModerator: true };
 beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbRead.postResourceHelper.findMany.mockResolvedValue(VIEW_ROWS as never);
+  dbMock.dbRead.post.findUnique.mockResolvedValue({ userId: OWNER } as never);
   dbMock.dbRead.image.findMany.mockResolvedValue([{ id: SHOWN }, { id: HIDDEN }] as never);
   dbMock.dbRead.imageResourceNew.findMany.mockImplementation((async (args: {
     where: { imageId: { in: number[] } };
@@ -87,6 +88,25 @@ describe('post resources from images the viewer may not open', () => {
       const rows = await resourcesFor(viewer);
       expect(rows.map((r) => r.modelVersionId)).toEqual([1, 2, 3]);
     }
+  });
+
+  it("gives the post's owner rows from all their images, even one they may not open", async () => {
+    // e.g. an image of their own post held back from them: the image filter is not theirs to pass.
+    mockVisibleIds.mockImplementation(
+      async ({ ids }) => new Set((ids as number[]).filter((id) => id !== HIDDEN))
+    );
+    const rows = await resourcesFor(SELF);
+    expect(rows.map((r) => r.modelVersionId)).toEqual([1, 2, 3]);
+    expect(mockVisibleIds).not.toHaveBeenCalled();
+  });
+
+  it("still drops a resource whose model the post's owner may not see", async () => {
+    mockVisibleIds.mockImplementation(
+      async ({ ids }) => new Set((ids as number[]).filter((id) => id !== HIDDEN))
+    );
+    Object.assign(models.find((model) => model.id === 20)!, { status: 'Draft' });
+    const rows = await resourcesFor(SELF);
+    expect(rows.map((r) => r.modelVersionId)).toEqual([1, 3]);
   });
 
   it('answers a post whose every image is hidden with no resources', async () => {

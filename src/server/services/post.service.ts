@@ -2055,15 +2055,19 @@ export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostIma
   return transaction;
 };
 
-/** Every resource row of the post, from all its images: for its owner or a moderator only. */
+/**
+ * Unfiltered: includes rows from images the viewer may not open. Filter before returning to anyone
+ * but the owner or a moderator.
+ */
 const readPostResourceRows = (id: number) =>
   dbRead.postResourceHelper.findMany({ where: { postId: id }, orderBy: { modelName: 'asc' } });
 
 /**
  * The resources of the post's images the viewer may open (`getImageIdsVisibleToViewer`), from
  * models they may see (`getModelIdsVisibleToViewer`). The view keeps one row per resource from any
- * of the post's images, so for anyone but a moderator a row stays only when a visible image uses
- * that version, and it names that image.
+ * of the post's images, so for anyone but the post's owner or a moderator a row stays only when a
+ * visible image uses that version, and it names that image. The owner gets rows from all their
+ * images, still only of models they may see.
  */
 export const getPostResources = async ({
   id,
@@ -2074,10 +2078,21 @@ export const getPostResources = async ({
   userId: number | undefined;
   isModerator: boolean | undefined;
 }) => {
-  const rows = await readPostResourceRows(id);
+  const [rows, post, images] = await Promise.all([
+    readPostResourceRows(id),
+    dbRead.post.findUnique({ where: { id }, select: { userId: true } }),
+    dbRead.image.findMany({ where: { postId: id }, select: { id: true } }),
+  ]);
   if (isModerator || !rows.length) return rows;
 
-  const images = await dbRead.image.findMany({ where: { postId: id }, select: { id: true } });
+  if (userId !== undefined && post?.userId === userId) {
+    const visibleModelIds = await getModelIdsVisibleToViewer(
+      rows.map((row) => row.modelId).filter(isDefined),
+      { id: userId }
+    );
+    return rows.filter((row) => row.modelId != null && visibleModelIds.has(row.modelId));
+  }
+
   const visibleIds = await getImageIdsVisibleToViewer({
     ids: images.map((image) => image.id),
     userId,
