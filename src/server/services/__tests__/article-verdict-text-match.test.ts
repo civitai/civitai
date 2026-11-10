@@ -157,6 +157,13 @@ describe('the recompute counts a text verdict only for the text it judged', () =
     expect(writtenIngestion()).toBe(ArticleIngestionStatus.Pending);
   });
 
+  it('a text-scan verdict that did not cover all of the current text leaves it Pending', async () => {
+    row = scanVerdict(NEW);
+    row.result = { ...(row.result as object), meta: { inputCut: true } };
+    await recomputeArticleIngestion(ARTICLE);
+    expect(writtenIngestion()).toBe(ArticleIngestionStatus.Pending);
+  });
+
   it('a blocked verdict for older text does not block this text', async () => {
     row = xguardVerdict(OLD, { blocked: true });
     await recomputeArticleIngestion(ARTICLE);
@@ -246,6 +253,14 @@ describe('the reconcile', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'article-verdict-resubmit-capped' })
     );
+  });
+
+  it('does not resubmit a verdict that did not cover all of the text', async () => {
+    row = scanVerdict(NEW);
+    row.result = { ...(row.result as object), meta: { inputCut: true } };
+    await reconcile();
+    expect(writtenIngestion()).toBe(ArticleIngestionStatus.Pending);
+    expect(submitTextModerationOrScan).not.toHaveBeenCalled();
   });
 
   it('counts a resubmit the scan skipped as skipped, not resubmitted', async () => {
