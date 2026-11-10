@@ -90,9 +90,19 @@ export const updateResourceReviewSchema = z.object({
 });
 
 export type GetResourceReviewPagedInput = z.infer<typeof getResourceReviewPagedSchema>;
-export const getResourceReviewPagedSchema = paginationSchema.extend({
-  modelId: numericString(),
-  modelVersionId: numericString().optional(),
-  username: z.string().optional(),
-  writtenOnly: z.boolean().optional(),
-});
+export const getResourceReviewPagedSchema = paginationSchema
+  .extend({
+    limit: z.coerce.number().min(1).max(50).default(20),
+    modelId: numericString(),
+    modelVersionId: numericString().optional(),
+    username: z.string().optional(),
+    writtenOnly: z.boolean().optional(),
+  })
+  // Without a version, writtenOnly regex-filters every review of the model before the first match.
+  .refine((input) => !input.writtenOnly || input.modelVersionId, {
+    message: 'writtenOnly requires modelVersionId',
+    path: ['writtenOnly'],
+  });
+
+/** A review's image count stops at this; the list returns one more to mean "more than this". */
+export const REVIEW_IMAGE_COUNT_CAP = 100;

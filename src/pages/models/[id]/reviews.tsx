@@ -43,7 +43,10 @@ import {
   getModelReviewsCanonical,
   getModelReviewsRedirect,
 } from '~/components/ResourceReview/model-reviews-url';
-import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
+import {
+  getResourceReviewPagedSchema,
+  REVIEW_IMAGE_COUNT_CAP,
+} from '~/server/schema/resourceReview.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import type { ResourceReviewPagedModel } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -302,7 +305,9 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
                       </Center>
                     }
                   >
-                    {review.imageCount ?? '0'}
+                    {review.imageCount > REVIEW_IMAGE_COUNT_CAP
+                      ? `${REVIEW_IMAGE_COUNT_CAP}+`
+                      : review.imageCount}
                   </Badge>
                 </RoutedDialogLink>
 

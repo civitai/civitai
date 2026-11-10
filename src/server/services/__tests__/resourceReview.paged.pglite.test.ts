@@ -30,6 +30,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 
 const { getPagedResourceReviews } = await import('~/server/services/resourceReview.service');
+const { REVIEW_IMAGE_COUNT_CAP } = await import('~/server/schema/resourceReview.schema');
 
 const MODEL = 10;
 const V1 = 20;
@@ -208,7 +209,25 @@ describe('getPagedResourceReviews', () => {
     }
   );
 
-  it('puts written reviews before bare ratings across pages, newest first within each', async () => {
+  it('caps each image count at one over the cap, so the page can show "100+"', async () => {
+    const AUTHOR = 7;
+    const over = REVIEW_IMAGE_COUNT_CAP + 20;
+    await pg.exec(`
+      INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (300, ${AUTHOR}, now() - interval '1 day');
+      INSERT INTO "Image" (id, "userId", "postId")
+        SELECT g, ${AUTHOR}, 300 FROM generate_series(1, ${over}) g;
+      INSERT INTO "ImageResourceNew" SELECT g, ${V1} FROM generate_series(1, ${over}) g;
+    `);
+    await insertReviews([
+      { id: 1, userId: AUTHOR, postId: 300, daysAgo: 1 },
+      { id: 2, userId: AUTHOR, postId: null, daysAgo: 2 },
+    ]);
+
+    const counts = (await page({ modelVersionId: V1 })).items.map((r) => r.imageCount);
+    expect(counts).toEqual([REVIEW_IMAGE_COUNT_CAP + 1, REVIEW_IMAGE_COUNT_CAP + 1]);
+  });
+
+  it('lists reviews newest first across pages, written or not', async () => {
     await insertReviews([
       { id: 1, details: '<p>Great with the turbo base.</p>', daysAgo: 9 },
       { id: 2, details: '<p></p>', daysAgo: 1 },
@@ -222,7 +241,7 @@ describe('getPagedResourceReviews', () => {
     const third = await page({ modelVersionId: V1, limit: 2, page: 3 });
 
     expect([...first.items, ...second.items, ...third.items].map((r) => r.id)).toEqual([
-      4, 1, 2, 3, 5,
+      2, 3, 5, 4, 1,
     ]);
   });
 });
