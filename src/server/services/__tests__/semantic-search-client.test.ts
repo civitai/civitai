@@ -70,15 +70,19 @@ describe('the content gate', () => {
     expect(sent[0].must).toContainEqual({ key: 'nsfwLevel', match: { any: [1, 2] } });
   });
 
-  it('refuses a comic with any level the viewer does not allow, and keeps unrated ones', async () => {
+  it('refuses a comic with any level the viewer does not allow, and every unrated one', async () => {
     await search('comics', { kind: 'mask', nsfwLevels: [1] });
     await search('comics', { kind: 'mask', nsfwLevels: [1, 4] });
     const allowed = (i: number) =>
       (sent[i].must[0] as { key: string; match: { any: number[] } }).match.any;
     // PG + R is 5: refused for a PG-only viewer, allowed for PG + R.
-    expect(allowed(0)).toEqual([0, 1]);
+    expect(allowed(0)).toEqual([1]);
     expect(allowed(0)).not.toContain(1 | 4);
-    expect(allowed(1)).toEqual([0, 1, 4, 5]);
+    expect(allowed(1)).toEqual([1, 4, 5]);
+    // Unrated (0) for a PG-only viewer, and for one who allows every level.
+    await search('comics', { kind: 'mask', nsfwLevels: [1, 2, 4, 8, 16, 32] });
+    expect(allowed(0)).not.toContain(0);
+    expect(allowed(2)).not.toContain(0);
   });
 
   it('requires both levels of a challenge, and keeps user challenges to their domain', async () => {

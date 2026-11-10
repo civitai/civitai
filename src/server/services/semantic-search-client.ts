@@ -21,8 +21,8 @@ export type ViewerGate =
   | { kind: 'level'; nsfwLevels: number[] }
   /**
    * For an item whose nsfwLevel combines several levels (a comic: the OR of its chapters'): it
-   * matches only when every level it carries is allowed, and always when unrated (0), as the
-   * comic feed lists them. The point stores the whole mask, not its bits.
+   * matches only when every level it carries is allowed, never when unrated (0). The point stores
+   * the whole mask, not its bits.
    */
   | { kind: 'mask'; nsfwLevels: number[] }
   | {
@@ -77,15 +77,18 @@ function refuse(collection: string, why: string): never {
   });
 }
 
-/** The gate's own conditions. Throws rather than search unfiltered when any part is missing. */
-/** Every mask made only of allowed levels (Blocked counts unless allowed), plus 0 for unrated. */
+/**
+ * Every mask made only of allowed levels (Blocked counts unless allowed). Unrated (0) is not one of
+ * them: an unrated comic's cover has no level to check, so it stays out, as comics search does.
+ */
 function allowedMasks(levels: number[]) {
   const allowed = levels.reduce((mask, level) => mask | level, 0);
-  const masks = [0];
+  const masks: number[] = [];
   for (let mask = 1; mask < 64; mask++) if ((mask & ~allowed) === 0) masks.push(mask);
   return masks;
 }
 
+/** The gate's own conditions. Throws rather than search unfiltered when any part is missing. */
 function gateConditions(collection: SearchCollection, gate: ViewerGate | undefined) {
   if (!gate) refuse(collection, 'no gate');
   const expected = GATE_KIND[collection];
