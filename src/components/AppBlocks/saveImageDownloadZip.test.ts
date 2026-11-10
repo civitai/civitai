@@ -1,8 +1,16 @@
 import JSZip from 'jszip';
 import { describe, expect, it } from 'vitest';
-import { SAVE_ZIP_INFLATE_ERROR, SAVE_ZIP_MAX_BYTES } from '@civitai/app-sdk/save-zip';
+import {
+  SAVE_ZIP_INFLATE_ERROR,
+  SAVE_ZIP_MAX_BYTES,
+  SAVE_ZIP_VERIFY_ABORTED_ERROR,
+} from '@civitai/app-sdk/save-zip';
 import {
   classifySaveBytesContent,
+  downloadBytesAsBlob,
+  SAVE_BYTES_VERIFY_DEADLINE_MS,
+  SAVE_BYTES_VERIFY_TIMEOUT_ERROR,
+  verifySaveBytesBeforeDownload,
   prepareSaveBytes,
   processSaveBytes,
   SAVE_BYTES_MAX_BYTES,
@@ -37,7 +45,21 @@ const DATASET = {
   'meta.json': '{"trigger":"my-dataset"}',
 };
 
-/** A valid single-entry STORED zip of exactly `total` bytes, written in place (no second copy). */
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+const crc32 = (bytes: Uint8Array) => {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]!) & 0xff]! ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+
+/**
+ * A valid single-entry STORED zip of exactly `total` bytes, written in place (no second copy). Its
+ * data is zeros, and it declares their REAL CRC-32 — the validator checks a stored entry's CRC.
+ */
 function storedZipOfSize(total: number, name = 'big.png'): ArrayBuffer {
   const n = enc.encode(name);
   const dataLen = total - (30 + n.length) - (46 + n.length) - 22;
@@ -49,8 +71,11 @@ function storedZipOfSize(total: number, name = 'big.png'): ArrayBuffer {
   v.setUint32(22, dataLen, true);
   v.setUint16(26, n.length, true);
   u8.set(n, 30);
+  const crc = crc32(u8.subarray(30 + n.length, 30 + n.length + dataLen));
+  v.setUint32(14, crc, true);
   const cd = 30 + n.length + dataLen;
   v.setUint32(cd, 0x02014b50, true);
+  v.setUint32(cd + 16, crc, true);
   v.setUint16(cd + 4, 20, true);
   v.setUint16(cd + 6, 20, true);
   v.setUint32(cd + 20, dataLen, true);
@@ -153,7 +178,7 @@ describe('verifySaveBytesContent — the inflate step before the download', () =
     expect(ok).toMatchObject({ ok: true, type: 'application/zip' });
     if (!ok.ok) return;
     expect(ok.type === 'application/zip' && ok.deflated.length).toBe(3);
-    expect(await verifySaveBytesContent(dataset, ok)).toBeNull();
+    expect(await verifySaveBytesContent(dataset, ok)).toMatchObject({ ok: true, save: { type: 'application/zip' } });
 
     // 5 MB of zeros deflates to a few KB. Declare a size that keeps the ratio under 100x so only the inflate step can catch it.
     const real = await jszip({ 'zeros.txt': new Uint8Array(5 * MB + 3) }, 'DEFLATE');
@@ -161,7 +186,7 @@ describe('verifySaveBytesContent — the inflate step before the download', () =
     const prepared = prepareSaveBytes({ bytes: lie, filename: 'd.zip' });
     expect(prepared).toMatchObject({ ok: true, type: 'application/zip' });
     if (!prepared.ok) return;
-    expect(await verifySaveBytesContent(lie, prepared)).toBe(SAVE_ZIP_INFLATE_ERROR);
+    expect(await verifySaveBytesContent(lie, prepared)).toEqual({ ok: false, error: SAVE_ZIP_INFLATE_ERROR });
   });
 
   it('is a no-op for non-zip types', async () => {
@@ -171,7 +196,68 @@ describe('verifySaveBytesContent — the inflate step before the download', () =
         type: 'text/plain',
         filename: 'a.txt',
       })
-    ).toBeNull();
+    ).toMatchObject({ ok: true, save: { type: 'text/plain', filename: 'a.txt' } });
+  });
+
+  it('TYPE-LEVEL: downloadBytesAsBlob takes only a VERIFIED save, never a prepared one', () => {
+    // Never called — it exists for the typecheck. The @ts-expect-error fails the typecheck if a
+    // prepared (unverified) save ever becomes acceptable to the download.
+    const _unused = (bytes: ArrayBuffer) => {
+      const prepared = prepareSaveBytes({ bytes });
+      if (!prepared.ok) return;
+      // @ts-expect-error a PreparedSaveBytes is not a VerifiedSaveBytes
+      downloadBytesAsBlob(bytes, prepared);
+    };
+    expect(typeof _unused).toBe('function');
+  });
+});
+
+describe('verifySaveBytesBeforeDownload — the deadline and the unmount signal', () => {
+  it('pins the deadline under the SDK’s 30 s SAVE_IMAGE request timeout', () => {
+    expect(SAVE_BYTES_VERIFY_DEADLINE_MS).toBe(25_000);
+    expect(SAVE_BYTES_VERIFY_DEADLINE_MS).toBeLessThan(30_000);
+  });
+
+  it('a check that outlives its deadline is aborted and replies the timeout error', async () => {
+    // 64 MB of zeros, declared honestly: far more inflate work than a 1 ms deadline allows.
+    const big = await jszip({ 'z.txt': new Uint8Array(64 * MB) }, 'DEFLATE');
+    const prepared = prepareSaveBytes({ bytes: big });
+    // (The ratio bound refuses this zip in prepare — so build the prepared value by hand: the
+    // deadline is what is under test, not the validator.)
+    const cd = new DataView(big).getUint32(big.byteLength - 22 + 16, true);
+    const v = new DataView(big);
+    const entry = {
+      dataOffset: 30 + v.getUint16(26, true) + v.getUint16(28, true),
+      compressedSize: v.getUint32(cd + 20, true),
+      size: v.getUint32(cd + 24, true),
+      crc: v.getUint32(cd + 16, true),
+    };
+    expect(prepared.ok).toBe(false); // the bound, as noted
+    const result = await verifySaveBytesBeforeDownload(
+      big,
+      { ok: true, type: 'application/zip', filename: 'z.zip', deflated: [entry] },
+      { deadlineMs: 1 }
+    );
+    expect(result).toEqual({ ok: false, error: SAVE_BYTES_VERIFY_TIMEOUT_ERROR });
+  });
+
+  it('CONTROL: the same helper passes a real dataset under the default deadline', async () => {
+    const dataset = await jszip(DATASET, 'DEFLATE');
+    const prepared = prepareSaveBytes({ bytes: dataset });
+    if (!prepared.ok) throw new Error(prepared.error);
+    expect(await verifySaveBytesBeforeDownload(dataset, prepared)).toMatchObject({ ok: true });
+  });
+
+  it('an already-aborted unmount signal returns the aborted error without checking anything', async () => {
+    const dataset = await jszip(DATASET, 'DEFLATE');
+    const prepared = prepareSaveBytes({ bytes: dataset });
+    if (!prepared.ok) throw new Error(prepared.error);
+    const ac = new AbortController();
+    ac.abort();
+    expect(await verifySaveBytesBeforeDownload(dataset, prepared, { signal: ac.signal })).toEqual({
+      ok: false,
+      error: SAVE_ZIP_VERIFY_ABORTED_ERROR,
+    });
   });
 });
 

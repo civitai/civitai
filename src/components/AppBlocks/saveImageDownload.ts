@@ -37,6 +37,8 @@ import { sniffImageFormat, type ImageMagicFormat } from '~/shared/utils/image-ma
 import {
   looksLikeSaveZip,
   SAVE_ZIP_MAX_BYTES,
+  SAVE_ZIP_VERIFY_ABORTED_ERROR,
+  SaveZipVerifyAbortedError,
   validateSaveZip,
   verifySaveZipInflate,
   type SaveZipDeflatedEntry,
@@ -559,14 +561,21 @@ export type PreparedSaveBytes =
   | { ok: true; type: 'application/zip'; filename: string; deflated: SaveZipDeflatedEntry[] };
 
 /**
- * The caps this buffer is held to — the ONE place the zip-or-not choice is made. Decided on the
+ * Is this buffer a ZIP CANDIDATE — the ONE place the zip-or-not choice is made? Decided on the
  * first four bytes alone ({@link looksLikeSaveZip}; cheap, before the window check), so an over-50
- * MB file that does not even start like a zip is too-large at once. A zip: the per-file
- * {@link SAVE_BYTES_ZIP_MAX_BYTES} and the zip window budget; anything else:
- * {@link SAVE_BYTES_MAX_BYTES} and the regular window budget.
+ * MB file that does not even start like a zip is too-large at once. The caps
+ * ({@link saveBytesLimits}) and the handler's one-zip-verify-in-flight gate both branch on it.
+ */
+export function isZipSaveCandidate(bytes: ArrayBuffer): boolean {
+  return looksLikeSaveZip(new Uint8Array(bytes, 0, Math.min(4, bytes.byteLength)));
+}
+
+/**
+ * The caps this buffer is held to. A zip: the per-file {@link SAVE_BYTES_ZIP_MAX_BYTES} and the zip
+ * window budget; anything else: {@link SAVE_BYTES_MAX_BYTES} and the regular window budget.
  */
 function saveBytesLimits(bytes: ArrayBuffer): { maxBytes: number; window: BytesWindowLimits } {
-  return looksLikeSaveZip(new Uint8Array(bytes, 0, Math.min(4, bytes.byteLength)))
+  return isZipSaveCandidate(bytes)
     ? { maxBytes: SAVE_BYTES_ZIP_MAX_BYTES, window: SAVE_BYTES_ZIP_WINDOW_LIMITS }
     : { maxBytes: SAVE_BYTES_MAX_BYTES, window: SAVE_BYTES_WINDOW_LIMITS };
 }
@@ -589,20 +598,91 @@ export function prepareSaveBytes(
   return { ok: true, type: c.type, filename: name };
 }
 
+declare const verifiedSaveBytesBrand: unique symbol;
+
+/**
+ * A `bytes` save that has passed EVERY content check, the zip inflate check included. Only
+ * {@link verifySaveBytesContent} makes one, and {@link downloadBytesAsBlob} takes nothing else — so
+ * a future caller cannot download a zip it did not verify (the type does not allow it).
+ */
+export type VerifiedSaveBytes = PreparedSaveBytes & { readonly [verifiedSaveBytesBrand]: true };
+
+export type SaveBytesVerification = { ok: true; save: VerifiedSaveBytes } | { ok: false; error: string };
+
 /**
  * The asynchronous last step of a `bytes` save, run by the host AFTER {@link processSaveBytes}
  * accepted it and BEFORE the download: for a zip, {@link verifySaveZipInflate} (every deflated
- * entry inflates to exactly its declared size); for every other type nothing. Returns the error
- * string, or `null` to go ahead. The window already recorded the save, so a zip refused here still
- * counts against it — a hostile app that sends lying zips only uses up its own budget.
+ * entry inflates to exactly its declared size and CRC-32); for every other type nothing. The window
+ * already recorded the save, so a zip refused here still counts against it — a hostile app that
+ * sends lying zips only uses up its own budget. Rejects with `SaveZipVerifyAbortedError` when
+ * `signal` fires; {@link verifySaveBytesBeforeDownload} is the deadline-bounded form the host calls.
  */
 export async function verifySaveBytesContent(
   bytes: ArrayBuffer,
-  prepared: PreparedSaveBytes
-): Promise<string | null> {
-  if (prepared.type !== 'application/zip') return null;
-  return verifySaveZipInflate(bytes, prepared.deflated);
+  prepared: PreparedSaveBytes,
+  signal?: AbortSignal
+): Promise<SaveBytesVerification> {
+  if (prepared.type === 'application/zip') {
+    const error = await verifySaveZipInflate(bytes, prepared.deflated, signal);
+    if (error) return { ok: false, error };
+  }
+  return { ok: true, save: prepared as VerifiedSaveBytes };
 }
+
+/**
+ * The host's deadline for one zip's content check: under the SDK's 30 s `SAVE_IMAGE` request
+ * timeout (a `'protocol'` request), with room for the postMessage round trip, so the block gets
+ * this host's reply rather than its own timeout. Measured: an honest 256 MiB entry verifies in
+ * about 2 s on Node, so the deadline only fires on a pathological archive or a starved tab.
+ */
+export const SAVE_BYTES_VERIFY_DEADLINE_MS = 25_000;
+export const SAVE_BYTES_VERIFY_TIMEOUT_ERROR = 'zip verification timed out';
+
+/**
+ * {@link verifySaveBytesContent} under a deadline, the same shape as `withDeadline` for
+ * GET_RESOURCE_FILE: at `deadlineMs` the check is aborted and the result is
+ * {@link SAVE_BYTES_VERIFY_TIMEOUT_ERROR} whether or not it has stopped yet; a later verdict is
+ * dropped. `signal` (the host unmounting) aborts it too, with `SAVE_ZIP_VERIFY_ABORTED_ERROR`.
+ * Never rejects for an abort.
+ */
+export async function verifySaveBytesBeforeDownload(
+  bytes: ArrayBuffer,
+  prepared: PreparedSaveBytes,
+  { deadlineMs = SAVE_BYTES_VERIFY_DEADLINE_MS, signal }: { deadlineMs?: number; signal?: AbortSignal } = {}
+): Promise<SaveBytesVerification> {
+  const controller = new AbortController();
+  const onOuterAbort = () => controller.abort();
+  if (signal?.aborted) return { ok: false, error: SAVE_ZIP_VERIFY_ABORTED_ERROR };
+  signal?.addEventListener('abort', onOuterAbort, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<SaveBytesVerification>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve({ ok: false, error: SAVE_BYTES_VERIFY_TIMEOUT_ERROR });
+    }, deadlineMs);
+  });
+  const running = verifySaveBytesContent(bytes, prepared, controller.signal).catch(
+    (err: unknown): SaveBytesVerification => {
+      if (err instanceof SaveZipVerifyAbortedError) {
+        return { ok: false, error: signal?.aborted ? SAVE_ZIP_VERIFY_ABORTED_ERROR : SAVE_BYTES_VERIFY_TIMEOUT_ERROR };
+      }
+      throw err;
+    }
+  );
+  try {
+    return await Promise.race([running, deadline]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onOuterAbort);
+  }
+}
+
+/**
+ * How many zip content checks one host runs at once. Each one inflates up to 1 GiB declared (twice:
+ * see `verifySaveZipInflate`) on the viewer's main thread's event loop, so a second zip while one is
+ * verifying replies `busy`. Non-zip `bytes` saves never await and are not counted.
+ */
+export const SAVE_BYTES_ZIP_VERIFY_MAX_CONCURRENT = 1;
 
 export const SAVE_BYTES_BUSY_ERROR = 'busy';
 
@@ -646,7 +726,10 @@ export function processSaveBytes(
   return { result: prepared, recent: admitted.recent };
 }
 
-/** Build the Blob in the host frame with the CLASSIFIED type (never the caller's) and download it. */
-export function downloadBytesAsBlob(bytes: ArrayBuffer, type: SaveBytesType, filename: string) {
-  triggerBlobDownload(new Blob([bytes], { type }), filename);
+/**
+ * Build the Blob in the host frame with the CLASSIFIED type (never the caller's) and download it.
+ * Takes only a {@link VerifiedSaveBytes}, so the content check cannot be skipped.
+ */
+export function downloadBytesAsBlob(bytes: ArrayBuffer, save: VerifiedSaveBytes) {
+  triggerBlobDownload(new Blob([bytes], { type: save.type }), save.filename);
 }
