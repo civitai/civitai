@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { IMAGES_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import {
+  COMICS_SEARCH_INDEX,
+  IMAGES_SEARCH_INDEX,
+  MODELS_SEARCH_INDEX,
+} from '~/server/common/constants';
 import { filterableAttributesByIndex } from '~/server/search-index/filterable-attributes';
 import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
 import {
@@ -22,7 +26,7 @@ describe('viewerSearchClauses', () => {
         { userId: 42, showSfwFace: false },
       ]) {
         for (const clause of viewerSearchClauses(index, viewer)) {
-          for (const [, attribute] of clause.matchAll(/([\w.]+)\s*(?:!=|>=|<=|=|<|>)/g)) {
+          for (const [, attribute] of clause.matchAll(/([\w.]+)\s*(?:!=|>=|<=|=|<|>|NOT IN\b)/g)) {
             expect(filterable[index], `${index}: ${attribute}`).toContain(attribute);
             checked.add(`${index}:${attribute}`);
           }
@@ -34,6 +38,19 @@ describe('viewerSearchClauses', () => {
     expect(checked).toContain(`${MODELS_SEARCH_INDEX}:user.id`);
     expect(checked).toContain(`${MODELS_SEARCH_INDEX}:nsfwLevel`);
     expect(checked).toContain(`${IMAGES_SEARCH_INDEX}:poi`);
+    expect(checked).toContain(`${COMICS_SEARCH_INDEX}:nsfwLevel`);
+  });
+
+  it('caps a comic by every level it carries; other indexes by any of their levels', () => {
+    const viewer = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
+    expect(viewerSearchClauses(COMICS_SEARCH_INDEX, viewer)).toEqual([
+      'nsfwLevel NOT IN [4, 8, 16, 32]',
+    ]);
+    expect(viewerSearchClauses(MODELS_SEARCH_INDEX, viewer)).toEqual([
+      'poi != true',
+      'availability != Private',
+      'nsfwLevel=1 OR nsfwLevel=2',
+    ]);
   });
 
   it('a retired index is not searchable', () => {
