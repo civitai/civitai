@@ -61,12 +61,10 @@ const semanticMeilisearch = withUserHydration(
   )
 );
 
-// Mantine bounds the option list at `maxDropdownHeight` but never bounds the popover to the window,
-// so in a short window the list can hang past the bottom edge with its own scroll ending off-screen.
-// The `size` middleware hands over the room left on the chosen side; the list's scroll area shrinks
-// to that, so its last row stays reachable. (Mantine's own `size: true` caps only the outer box,
-// which would clip the scroll area instead.) The value is cleared on close: `flip` measures the
-// dropdown at its current height, so a stale small value would keep a reopened list cramped.
+// Caps the option list's scroll area at the room left in the window, so its last row stays
+// reachable. Mantine's `size: true` would cap the outer dropdown instead and clip the scroll area.
+// Cleared on close: Combobox keeps the closed dropdown mounted (display: none) and reuses it, and
+// `flip` measures it at its current height, so a stale small value would keep it cramped.
 const MAX_DROPDOWN_HEIGHT = 300;
 const AVAILABLE_HEIGHT_VAR = '--quick-search-available-height';
 const viewportMiddlewares = (floatingRef: React.MutableRefObject<HTMLElement | null>) => ({

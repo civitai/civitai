@@ -69,6 +69,9 @@ vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', () => ({
 
 const { QuickSearchDropdown } = await import('~/components/Search/QuickSearchDropdown');
 
+const nextPaint = () =>
+  new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
 async function openListAt(viewport: { width: number; height: number }, inputTop: number) {
   await page.viewport(viewport.width, viewport.height);
   expect(window.innerHeight).toBe(viewport.height);
@@ -87,8 +90,7 @@ async function openListAt(viewport: { width: number; height: number }, inputTop:
   );
   await page.getByPlaceholder('Search').click();
   await expect.element(page.getByRole('option').nth(HITS.length - 1)).toBeInTheDocument();
-  // Let the popover settle on its final placement.
-  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  await nextPaint();
 
   const listbox = page.getByRole('listbox').element() as HTMLElement;
   const scroller = listbox.querySelector('.mantine-ScrollArea-viewport') as HTMLElement;
@@ -109,7 +111,7 @@ describe('QuickSearchDropdown option list and the viewport', () => {
     await expect.poll(() => inViewport(dropdown)).toBe(true);
 
     scroller.scrollTop = scroller.scrollHeight;
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await nextPaint();
     const options = page.getByRole('option').elements();
     const last = options[options.length - 1];
     const rect = last.getBoundingClientRect();
@@ -127,8 +129,8 @@ describe('QuickSearchDropdown option list and the viewport', () => {
   });
 });
 
-// The list is kept mounted between opens, so the room measured last time must not carry over: Mantine
-// picks the side by measuring the list at its current height.
+// Combobox keeps the closed dropdown mounted (display: none) and reuses it on reopen, and `flip`
+// measures it at its current height, so the room measured last time must not carry over.
 test('reopened after the input moves, the list takes the roomier side again', async () => {
   await page.viewport(1280, 500);
   let moveInput: (top: number) => void = () => undefined;
