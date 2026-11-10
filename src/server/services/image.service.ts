@@ -6003,13 +6003,14 @@ const shapeCachedMetricHash = (
   });
 };
 
-// The image-metrics-swr arm's primary read: every hash, under the same deadline as the stale arm,
-// serving whatever landed. A key that rejects or misses the deadline is `undefined`, which the
-// SWR arm classifies as cold (`image_metrics_swr_ids_total{class="cold"}`) and reads through
-// MetricService as before. It does NOT touch `image_metrics_stale_cache_timeout_total`, which
-// keeps meaning the fallback arm only.
+// The image-metrics-swr arm's primary read: every hash, under `deadlineMs`, serving whatever
+// landed. A key that rejects or misses the deadline is `undefined`, which the SWR arm classifies as
+// `image_metrics_swr_ids_total{class="unanswered"}` (an absent key is `{}`, class "cold") and
+// reads through the flag-OFF path with what is left of its budget. It does NOT touch
+// `image_metrics_stale_cache_timeout_total`, which keeps meaning the fallback arm only.
 const readImageMetricHashesForSwr = async (
-  uniqueIds: number[]
+  uniqueIds: number[],
+  deadlineMs: number
 ): Promise<(Record<string, string> | undefined)[]> => {
   const metricRedis = redis as unknown as IRedisClient;
   const landed: (Record<string, string> | undefined)[] = new Array(uniqueIds.length);
@@ -6023,7 +6024,8 @@ const readImageMetricHashesForSwr = async (
         .catch(() => undefined)
     )
   );
-  await withTimeoutFallback<unknown>(reads, STALE_METRIC_CACHE_TIMEOUT_MS, undefined);
+  // `withTimeoutFallback` treats a non-positive deadline as NO deadline, hence the floor.
+  await withTimeoutFallback<unknown>(reads, Math.max(1, deadlineMs), undefined);
   return landed;
 };
 
@@ -6037,11 +6039,25 @@ const getImageMetricsRefresher = () =>
     getImageMetricService()['refreshInBackground']('Image', ids)
   ));
 
-const getImageMetricsObjectSwr = (ids: number[]): Promise<ImageMetricsObject> =>
+// `remainingMs` is what is left of the flag-OFF read's ClickHouse budget. The cache read takes at
+// most min(500ms, that budget), and the ids it cannot answer get only what remains of it, so the
+// flag-ON worst case is the flag-OFF one (budget + the 500ms stale-cache deadline), not their sum.
+const getImageMetricsObjectSwr = (
+  ids: number[],
+  remainingMs: () => number
+): Promise<ImageMetricsObject> =>
   resolveMetricsStaleWhileRevalidate<ImageMetricsObject[number]>(ids, {
-    readHashes: readImageMetricHashesForSwr,
+    readHashes: (uniqueIds) =>
+      readImageMetricHashesForSwr(
+        uniqueIds,
+        Math.min(STALE_METRIC_CACHE_TIMEOUT_MS, remainingMs())
+      ),
     shape: shapeCachedMetricHash,
-    fetchCold: (coldIds) => getImageMetricsObjectDirect(coldIds.map((id) => ({ id }))),
+    fetchCold: (coldIds) =>
+      getImageMetricsObjectDirect(
+        coldIds.map((id) => ({ id })),
+        remainingMs()
+      ),
     enqueueRefresh: (dueIds) => getImageMetricsRefresher().enqueue(dueIds),
   });
 
@@ -6180,30 +6196,47 @@ export const getImageMetricsObject = async (
   data: { id: number }[]
 ): Promise<ImageMetricsObject> => {
   if (imageMetricsSwrEnabled()) {
+    // One budget for the whole call, the flag-OFF read's own: the SWR cache read and any
+    // flag-OFF read after it (for the ids it could not answer, or all of them on a throw) share it.
+    const deadline = Date.now() + env.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS;
+    const remainingMs = () => Math.max(0, deadline - Date.now());
     try {
-      return await getImageMetricsObjectSwr(data.map((d) => d.id));
+      return await getImageMetricsObjectSwr(
+        data.map((d) => d.id),
+        remainingMs
+      );
     } catch (e) {
-      // Not expected (every leg fails soft), but the flag must never cost more than OFF.
+      // Not expected (every leg fails soft). The fallback gets only what is left of the budget, so
+      // even this path costs no more than OFF's worst case.
       const error = e as Error;
       logToAxiom(
         { type: 'error', name: 'Failed to getImageMetrics swr', message: error.message },
         'clickhouse'
       ).catch();
+      return getImageMetricsObjectDirect(data, remainingMs());
     }
   }
   return getImageMetricsObjectDirect(data);
 };
 
-// The flag-OFF read, and the SWR arm's read for ids the cache cannot answer.
-const getImageMetricsObjectDirect = async (data: { id: number }[]): Promise<ImageMetricsObject> => {
+// The flag-OFF read, and the SWR arm's read for ids the cache cannot answer. `timeoutMs` bounds
+// the MetricService read; the SWR arm passes what is left of its budget. With none left the
+// MetricService read is skipped and the ids are answered from the cache, as on a timeout.
+const getImageMetricsObjectDirect = async (
+  data: { id: number }[],
+  timeoutMs: number = env.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS
+): Promise<ImageMetricsObject> => {
   try {
     const ids = data.map((d) => d.id);
+
+    // `withTimeoutFallback` reads a non-positive deadline as NO deadline, so an exhausted budget
+    // must not reach it.
+    if (!(timeoutMs > 0)) return await getCachedImageMetricsObject(ids);
 
     // The ClickHouse read has NO request-level timeout other than the client's own
     // `request_timeout` (300s), and a try/catch CANNOT catch a hang. Bound
     // it here so a saturated/cold-miss metric read fails SOFT to empty metrics
     // instead of parking for minutes and blowing the SSR deadline.
-    const timeoutMs = env.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS;
     // Narrow type flows from this call (`fetch('Image', …)` → Record<number,
     // ImageMetrics>); withTimeoutFallback infers T from it so the empty fallback
     // is typed identically (no widening to the full metric union).

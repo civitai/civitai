@@ -22,8 +22,10 @@ import { createCachedFlagGate } from '~/server/utils/otel-withspan-gate';
  * it refreshed within `cooldownMs`. The repopulate itself is MetricService's own (same per-id
  * cross-pod lock, same stamp), so this changes WHEN and HOW OFTEN it runs, never what it writes.
  *
- * Ids with no cached hash, or one older than `SWR_MAX_STALE_SECONDS`, are answered by the caller's
- * `fetchCold` - the flag-OFF path - and that request waits for them exactly as before.
+ * Ids with no cached hash, whose read did not answer in time, or whose hash is older than
+ * `SWR_MAX_STALE_SECONDS`, are answered by the caller's `fetchCold` - the flag-OFF path - and that
+ * request waits for them. The caller bounds that wait (image.service gives it only what is left of
+ * the flag-OFF read's own time budget).
  */
 
 // Mirrors event-engine-common/services/metrics.ts (REFRESH_AFTER, UNSTAMPED_REFRESH_CHANCE,
@@ -38,11 +40,13 @@ export const SWR_POPULATED_AT_FIELD = '_populatedAt';
 export const SWR_MAX_STALE_SECONDS = 6 * 60 * 60;
 
 export type MetricHash = Record<string, string>;
-export type SwrClass = 'fresh' | 'stale' | 'unstamped' | 'cold' | 'overstale';
+// `cold`: Redis answered and holds no hash for the id. `unanswered`: the read rejected or missed
+// its deadline, so whether a hash exists is unknown - a slow or failing Redis, not a cache miss.
+export type SwrClass = 'fresh' | 'stale' | 'unstamped' | 'cold' | 'unanswered' | 'overstale';
 
 const swrIdsCounter = registerCounterWithLabels({
   name: 'image_metrics_swr_ids_total',
-  help: 'Ids read by the image-metrics-swr path, by how the cached hash classified (fresh, stale, unstamped: served from cache; cold, overstale: read through MetricService on the request)',
+  help: 'Ids read by the image-metrics-swr path, by how the cached hash classified (fresh, stale, unstamped: served from cache; cold: no hash cached, unanswered: the cache read rejected or missed its deadline, overstale: past the max-staleness bound - all three read through MetricService on the request)',
   labelNames: ['class'] as const,
 });
 
@@ -62,7 +66,8 @@ export function classifyMetricHash(
   nowSeconds: number,
   maxStaleSeconds: number = SWR_MAX_STALE_SECONDS
 ): SwrClass {
-  if (!hash || Object.keys(hash).length === 0) return 'cold';
+  if (!hash) return 'unanswered';
+  if (Object.keys(hash).length === 0) return 'cold';
   const populatedAt = Number(hash[SWR_POPULATED_AT_FIELD]);
   if (!populatedAt) return 'unstamped';
   const age = nowSeconds - populatedAt;
@@ -164,7 +169,14 @@ export function createMetricRefresher(
             remember(id, at);
           }
           running -= 1;
-          schedule();
+          // A full batch already waiting has waited long enough: re-arming the timer here would
+          // cap throughput at maxConcurrent * batchSize per (refresh time + flushMs). A partial
+          // batch still waits for the timer, so ids keep coalescing.
+          if (pending.size >= batchSize) {
+            if (timer) clearTimeout(timer);
+            timer = undefined;
+            flush();
+          } else schedule();
         });
     }
   };
@@ -247,6 +259,7 @@ export async function resolveMetricsStaleWhileRevalidate<T>(
     stale: 0,
     unstamped: 0,
     cold: 0,
+    unanswered: 0,
     overstale: 0,
   };
 
@@ -254,7 +267,7 @@ export async function resolveMetricsStaleWhileRevalidate<T>(
     const hash = hashes[index];
     const cls = classifyMetricHash(hash, now);
     counts[cls] += 1;
-    if (cls === 'cold' || cls === 'overstale' || !hash) {
+    if (cls === 'cold' || cls === 'unanswered' || cls === 'overstale' || !hash) {
       cold.push(id);
       return;
     }

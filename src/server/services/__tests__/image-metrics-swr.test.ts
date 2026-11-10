@@ -44,7 +44,7 @@ const stamped = (ageSeconds: number, fields: Record<string, string> = {}) => ({
   _populatedAt: String(NOW - ageSeconds),
 });
 
-const never = () => new Promise<never>(() => {});
+const never = () => new Promise<never>(() => undefined);
 const refreshCount = (outcome: string) =>
   refreshIncMock.mock.calls
     .filter(([labels]) => labels.outcome === outcome)
@@ -56,7 +56,8 @@ beforeEach(() => {
 
 describe('classifyMetricHash', () => {
   it('classifies by the populate stamp, with both refresh boundaries exact', () => {
-    expect(classifyMetricHash(undefined, NOW)).toBe('cold');
+    // A read that did not answer is not a miss: Redis never said the key is absent.
+    expect(classifyMetricHash(undefined, NOW)).toBe('unanswered');
     expect(classifyMetricHash({}, NOW)).toBe('cold');
     expect(classifyMetricHash({ Like: '3' }, NOW)).toBe('unstamped');
     expect(classifyMetricHash(stamped(0), NOW)).toBe('fresh');
@@ -115,17 +116,17 @@ describe('resolveMetricsStaleWhileRevalidate', () => {
     expect(enqueueRefresh).not.toHaveBeenCalled();
   });
 
-  it('reads COLD and OVER-STALE ids the old way, awaited, and only those', async () => {
+  it('reads COLD, UNANSWERED and OVER-STALE ids the old way, awaited, and only those', async () => {
     const fetchCold = vi.fn(async (ids: number[]) =>
       Object.fromEntries(ids.map((id) => [id, { id, like: 1000 + id }]))
     );
     const enqueueRefresh = vi.fn();
 
-    const result = await resolveMetricsStaleWhileRevalidate([1, 2, 3, 2], {
+    const result = await resolveMetricsStaleWhileRevalidate([1, 2, 3, 2, 6], {
       readHashes: async (ids) => {
         // De-duplicated before the read, in first-seen order.
-        expect(ids).toEqual([1, 2, 3]);
-        return [stamped(5, { Like: '11' }), undefined, stamped(SWR_MAX_STALE_SECONDS + 1)];
+        expect(ids).toEqual([1, 2, 3, 6]);
+        return [stamped(5, { Like: '11' }), {}, stamped(SWR_MAX_STALE_SECONDS + 1), undefined];
       },
       shape,
       fetchCold,
@@ -134,17 +135,26 @@ describe('resolveMetricsStaleWhileRevalidate', () => {
     });
 
     expect(fetchCold).toHaveBeenCalledTimes(1);
-    expect(fetchCold).toHaveBeenCalledWith([2, 3]);
+    expect(fetchCold).toHaveBeenCalledWith([2, 3, 6]);
     expect(result).toEqual({
       1: { id: 1, like: 11 },
       2: { id: 2, like: 1002 },
       3: { id: 3, like: 1003 },
+      6: { id: 6, like: 1006 },
     });
     // Over-stale is the old path's to refresh, not the background refresher's.
     expect(enqueueRefresh).not.toHaveBeenCalled();
-    expect(idsIncMock).toHaveBeenCalledWith({ class: 'fresh' }, 1);
-    expect(idsIncMock).toHaveBeenCalledWith({ class: 'cold' }, 1);
-    expect(idsIncMock).toHaveBeenCalledWith({ class: 'overstale' }, 1);
+    // One per class, each its own label value: a slow Redis (unanswered) must not read as a
+    // cache miss (cold) on the counter.
+    expect(idsIncMock.mock.calls).toEqual(
+      expect.arrayContaining([
+        [{ class: 'fresh' }, 1],
+        [{ class: 'cold' }, 1],
+        [{ class: 'unanswered' }, 1],
+        [{ class: 'overstale' }, 1],
+      ])
+    );
+    expect(idsIncMock).toHaveBeenCalledTimes(4);
   });
 
   it('refreshes an UNSTAMPED entry only on the sampled share of reads', async () => {
@@ -261,6 +271,40 @@ describe('createMetricRefresher', () => {
     finishers[0]();
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(3));
     expect(refresher.stats().running).toBe(2);
+  });
+
+  it('starts the next FULL batch as soon as a slot frees, without waiting for the timer', async () => {
+    const finishers: (() => void)[] = [];
+    const refresh = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishers.push(() => resolve());
+        })
+    );
+    // A flush window far longer than the wait below: if the freed slot re-armed the timer, the
+    // second batch could not start inside this test.
+    const refresher = createMetricRefresher(refresh, {
+      flushMs: 60_000,
+      batchSize: 2,
+      maxConcurrent: 1,
+    });
+
+    refresher.enqueue([1, 2, 3, 4, 5]);
+    refresher.flushNow();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenLastCalledWith([1, 2]);
+
+    // Three waiting >= batchSize: the next batch starts the moment the slot frees.
+    finishers[0]();
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2), { timeout: 1_000 });
+    expect(refresh).toHaveBeenLastCalledWith([3, 4]);
+
+    // CONTROL: one waiting < batchSize, so it keeps coalescing until the timer instead.
+    finishers[1]();
+    await vi.waitFor(() => expect(refresher.stats().running).toBe(0));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(refresher.stats().pending).toBe(1);
   });
 
   it('drops ids past maxPending instead of growing without bound', () => {
