@@ -279,6 +279,25 @@ describe('getInquisitorQueue block reason', () => {
   });
 });
 
+describe('getInquisitorQueue held votes', () => {
+  it('counts only votes that carry weight, in the tallies and in the Blocked reason', async () => {
+    await insertItem(1, 1, 'Inquisitor');
+    await insertVote(1, 11, '4', 1);
+    await insertVote(1, 12, '32', 1, 'pending', 'Other');
+    await insertVote(1, 13, '32', 0, 'pending', 'DepictsRealPerson');
+    await insertVote(1, 14, '32', 0, 'pending', 'DepictsRealPerson');
+    await insertVote(1, 15, '8', 0);
+
+    const [only] = await getInquisitorQueue();
+
+    expect(only.votes.map((v) => [v.answer, v.votes])).toEqual([
+      ['32', 1],
+      ['4', 1],
+    ]);
+    expect(only.blockReason).toEqual({ reason: 'Other', label: 'Other', count: 1, of: 1 });
+  });
+});
+
 describe('getInquisitorQueue block markers', () => {
   it('marks an image that is blocked or carries a block reason', async () => {
     await db.query(`UPDATE "Image" SET "ingestion"='Blocked', "blockedFor"='tos' WHERE id=1`);

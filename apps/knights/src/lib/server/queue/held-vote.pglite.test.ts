@@ -60,11 +60,9 @@ describe('a vote that weighs nothing', () => {
     expect((await pg.query(`SELECT 1 FROM "KnightsVote"`)).rows).toEqual([]);
   });
 
-  it('is accepted and stored at weight 0 for a held player', async () => {
+  it('is refused as no-weight for a held player too, since only a positive weight is replaced by 0', async () => {
     await pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt" = now() WHERE "userId" = 2`);
-    expect(await cast(2)).toMatchObject({ status: 'recorded' });
-    expect((await pg.query<{ weight: number }>(`SELECT weight FROM "KnightsVote"`)).rows).toEqual([
-      { weight: 0 },
-    ]);
+    expect(await cast(2)).toMatchObject({ status: 'rejected', reason: 'no-weight' });
+    expect((await pg.query(`SELECT 1 FROM "KnightsVote"`)).rows).toEqual([]);
   });
 });

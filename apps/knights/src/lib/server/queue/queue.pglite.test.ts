@@ -1341,4 +1341,27 @@ describe('held players', () => {
     });
     expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Knight' });
   });
+
+  it('does not let a held player staff a rank, so an item skips to the next rank someone can serve', async () => {
+    await active(1, 'Knight');
+    await active(2, 'Paladin');
+    await hold(2);
+    await image(10);
+    const id = await item(10, { expires: PAST });
+    await vote(1, id, '4');
+
+    expect(await escalateExpired(db, { now: NOW })).toEqual({
+      escalated: 0,
+      toInquisitor: 1,
+      extended: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor' });
+
+    await image(11);
+    const other = await item(11, { expires: PAST });
+    await pg.query(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt" = NULL WHERE "userId" = 2`);
+    await vote(1, other, '4');
+    await escalateExpired(db, { now: NOW });
+    expect(await itemRow(other)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+  });
 });

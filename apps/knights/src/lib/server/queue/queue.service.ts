@@ -1,4 +1,4 @@
-import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kysely';
+import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import { gradeKnightsVotes } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
@@ -13,6 +13,7 @@ import { settleAndMirror, settleItemVotes } from '../progression/progression';
 import { servableImage } from '@civitai/db/knights';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { RANKS, rankIndex, type Rank } from '../ranks';
+import { heldSql } from '../conversion/held';
 import { creditVote, insertVote, lockPlayerVoting } from './vote-record';
 import { FEED_STRETCH_SIZE, isStageRank, nextStaffedRank, stagesWorkedBy } from './ranks';
 import { SMITES } from '../smites/config';
@@ -327,6 +328,8 @@ export async function staffedRanks(db: Executor, now: Date): Promise<Set<string>
       .selectFrom('NewOrderPlayer as p')
       .select('p.userId')
       .where('p.rankType', '=', rank)
+      // A held player's votes decide nothing, so a rank only they serve is not served.
+      .where(sql<SqlBool>`NOT ${heldSql('p.userId')}`)
       .where((eb) =>
         eb.exists(
           eb

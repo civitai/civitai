@@ -52,6 +52,8 @@ export type InsertedVote = {
   status: 'inserted';
   player: { rankType: string; startAt: Date };
   gold: number;
+  /** What the vote was stored with: 0 for a held player's. */
+  weight: number;
 };
 
 /**
@@ -126,9 +128,9 @@ export async function insertVote(
     belowBar,
   });
   // A vote that weighs nothing could still be the one that tips a split into a decision, so it is refused. A held
-  // player's vote is the exception: it is recorded, graded and paid but stored at 0, which `decideChoice` and
+  // player's vote is the exception: it is recorded, graded and paid but stored at 0 (only when its computed weight is positive), which `decideChoice` and
   // `escalateExpired` ignore. Clearing the hold does not re-weight votes already cast.
-  if (computed <= 0 && !player.held) return rejected('no-weight');
+  if (computed <= 0) return rejected('no-weight');
   const weight = player.held ? 0 : computed;
   const gold = goldForRank(player.rankType, belowBar);
 
@@ -153,6 +155,7 @@ export async function insertVote(
     status: 'inserted',
     player: { rankType: player.rankType, startAt: player.startAt },
     gold,
+    weight,
   };
 }
 
