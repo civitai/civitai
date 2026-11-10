@@ -1,7 +1,11 @@
 import { dbRead } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
-import { articleHasText, updateArticleImageScanStatus } from '~/server/services/article.service';
+import {
+  articleHasText,
+  articleTextVerdictMatch,
+  updateArticleImageScanStatus,
+} from '~/server/services/article.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -11,7 +15,7 @@ import {
   EntityModerationStatus,
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
-import { removeTags } from '~/utils/string-helpers';
+import { articleModerationText } from '~/server/services/article-ingestion.helpers';
 
 // Grace window before an article is considered "stuck". Gives the normal
 // webhook path time to fire before the cron steps in.
@@ -131,11 +135,20 @@ export const articleIngestionReconcile = createJob(
         if (stillPending && articleHasText(after.title, after.content)) {
           const moderation = await dbRead.entityModeration.findUnique({
             where: { entityType_entityId: { entityType: 'Article', entityId: id } },
-            select: { status: true, retryCount: true, updatedAt: true },
+            select: {
+              status: true,
+              retryCount: true,
+              updatedAt: true,
+              contentHash: true,
+              result: true,
+            },
           });
 
           const shouldResubmit =
             !moderation ||
+            // The recompute left it unscanned because the verdict is for other text.
+            (moderation.status === EntityModerationStatus.Succeeded &&
+              articleTextVerdictMatch(moderation, after) === 'other') ||
             (moderation.retryCount < MODERATION_RETRY_LIMIT &&
               (moderation.status === EntityModerationStatus.Failed ||
                 moderation.status === EntityModerationStatus.Expired ||
@@ -144,9 +157,7 @@ export const articleIngestionReconcile = createJob(
                   moderation.updatedAt < pendingModerationBefore)));
 
           if (shouldResubmit) {
-            const textForModeration = [after.title, removeTags(after.content ?? '')]
-              .filter(Boolean)
-              .join(' ');
+            const textForModeration = articleModerationText(after.title, after.content);
             try {
               await submitTextModerationOrScan({
                 entityType: 'Article',
