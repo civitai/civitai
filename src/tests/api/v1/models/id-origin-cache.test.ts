@@ -385,11 +385,4 @@ describe('GET /api/v1/models/[id] — origin-side response cache', () => {
       ignoreBrowsingAddons: true,
     });
   });
-
-  it("(j) builds the cached body from Redis, not from this process's images L1", async () => {
-    // A version edit refreshes the images cache in Redis and then clears this body; a rebuild
-    // from another process's older L1 copy would store the old images again.
-    await invoke({ id: '123' });
-    expect(mockGetModelsWithVersions.mock.calls[0][0]).toMatchObject({ bypassImagesL1: true });
-  });
 });

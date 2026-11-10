@@ -150,6 +150,7 @@ import {
 import {
   enqueueCollectionRebuild,
   getCollectionIdsForModelCascade,
+  getCollectionIdsForModelImages,
 } from '~/server/services/collection-media-index';
 import {
   getCosmeticsForEntity,
@@ -315,6 +316,7 @@ import {
   resolveModelFace,
   showsSfwFace,
 } from '~/shared/utils/model-sfw-face';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
@@ -1880,7 +1882,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   });
 
   const modelVersionIds = items
-    .filter((model) => model.mode !== ModelModifier.TakenDown)
+    .filter((model) => !isModelWithheld(model))
     .flatMap((m) => m.modelVersions)
     .map((m) => m.id);
 
@@ -2116,11 +2118,16 @@ export const updateModelById = async ({
    */
   meta?: (stored: ModelMeta | null, row: LockedModelRow) => ModelMeta;
 }) => {
+  let written = typeof data === 'function' ? undefined : data;
+  // The mode before this write; undefined when the write locked no row to read it from.
+  let priorMode: ModelModifier | null | undefined;
   const model =
     meta || typeof data === 'function'
       ? await dbWrite.$transaction(async (tx) => {
           const row = await lockModelRow(tx, id);
+          priorMode = row?.mode ?? null;
           const fields = typeof data === 'function' ? data(row) : data;
+          written = fields;
           return tx.model.update({
             where: { id },
             data: meta
@@ -2156,6 +2163,22 @@ export const updateModelById = async ({
   // through here, and the cached body's images/files/downloadUrl depend on
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
+  // A taken-down model's search document carries no images, so a change of mode rewrites it.
+  if (written && 'mode' in written) {
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    // Collection covers drawn from its images change only when it enters or leaves TakenDown.
+    // Not awaited: the lookup reads every image on the model.
+    const writtenMode =
+      written.mode && typeof written.mode === 'object' ? written.mode.set : written.mode;
+    if (
+      writtenMode === ModelModifier.TakenDown ||
+      priorMode === ModelModifier.TakenDown ||
+      priorMode === undefined
+    )
+      void getCollectionIdsForModelImages({ modelId: id })
+        .then((found) => enqueueCollectionRebuild({ ...found, source: 'model-mode-change' }))
+        .catch(() => undefined);
+  }
 
   return withoutModeratorOnlyMeta(model);
 };
@@ -6146,21 +6169,7 @@ export async function bustPostVersionCache(postIds: number[]) {
   if (postIds.length) await bustTwice(() => postVersionCache().bust(postIds));
 }
 
-/**
- * The level a request's images may be served at when it selects them by a minor or SFW-only
- * model: the intersection of each such model's held gallery level, or undefined when none is held.
- * The model comes from the version and the review as well as `modelId`, because those pick the
- * images ahead of `modelId`.
- */
-export async function getHeldGalleryLevel({
-  modelId,
-  modelIds: namedModelIds = [],
-  modelVersionId,
-  modelVersionIds = [],
-  reviewId,
-  postId,
-  postIds = [],
-}: {
+type ImageModelSelector = {
   modelId?: number | null;
   modelIds?: number[];
   modelVersionId?: number | null;
@@ -6168,11 +6177,24 @@ export async function getHeldGalleryLevel({
   reviewId?: number | null;
   postId?: number | null;
   postIds?: number[] | null;
-}) {
-  // The version, review or post a single selector names must resolve, or nothing is served: one not
-  // yet on the replica can still be found by the image query. Lists (a hub's versions, a page of
-  // posts) are not held to that, so one deleted entry does not empty them; what is gone serves no
-  // images anyway.
+};
+
+/**
+ * The models a request selects images by: those it names, and those of the versions, review and
+ * posts it names, which pick the images ahead of `modelId`. Null when a single named version,
+ * review or post cannot be found: one not yet on the replica can still be found by the image
+ * query, so nothing may be served. Lists (a hub's versions, a page of posts) are not held to that,
+ * so one deleted entry does not empty them; what is gone serves no images anyway.
+ */
+async function resolveImageModelIds({
+  modelId,
+  modelIds: namedModelIds = [],
+  modelVersionId,
+  modelVersionIds = [],
+  reviewId,
+  postId,
+  postIds = [],
+}: ImageModelSelector) {
   const requiredVersionIds = new Set<number>();
   if (modelVersionId) requiredVersionIds.add(modelVersionId);
   if (reviewId) {
@@ -6180,7 +6202,7 @@ export async function getHeldGalleryLevel({
       where: { id: reviewId },
       select: { modelVersionId: true },
     });
-    if (!review) return 0;
+    if (!review) return null;
     requiredVersionIds.add(review.modelVersionId);
   }
   const listedVersionIds = new Set(modelVersionIds);
@@ -6188,7 +6210,7 @@ export async function getHeldGalleryLevel({
     const ids = new Set(postIds);
     if (postId) ids.add(postId);
     const posts = await postVersionCache().fetch([...ids]);
-    if (postId && !posts[postId]) return 0;
+    if (postId && !posts[postId]) return null;
     // A post's version is not required: the replica gets the version before its posts, so a version
     // missing behind a post it has is one deleted since, which leaves the post on no model.
     for (const id of ids) {
@@ -6202,9 +6224,20 @@ export async function getHeldGalleryLevel({
   if (modelId) modelIds.add(modelId);
   if (versionIds.size) {
     const versions = await versionModelCache().fetch([...versionIds]);
-    for (const id of requiredVersionIds) if (!versions[id]) return 0;
+    for (const id of requiredVersionIds) if (!versions[id]) return null;
     for (const version of Object.values(versions)) modelIds.add(version.modelId);
   }
+  return modelIds;
+}
+
+/**
+ * The level a request's images may be served at when it selects them by a minor or SFW-only
+ * model: the intersection of each such model's held gallery level, or undefined when none is held.
+ * 0 (nothing) when a model it names through a single selector cannot be resolved.
+ */
+export async function getHeldGalleryLevel(selector: ImageModelSelector) {
+  const modelIds = await resolveImageModelIds(selector);
+  if (!modelIds) return 0;
 
   // Bounded: a hub can name dozens of models, and each settings miss rebuilds from the database.
   const galleries: Awaited<ReturnType<typeof getGallerySettingsByModelId>>[] = [];
@@ -6218,6 +6251,44 @@ export async function getHeldGalleryLevel({
   for (const gallery of galleries)
     if (gallery?.sfwHeld) held = Flags.intersection(held ?? allBrowsingLevelsFlag, gallery.level);
   return held;
+}
+
+/**
+ * Whether a request's images come from a taken-down model the viewer does not own, resolved as for
+ * the gallery hold, so a version, review or post selects them too. Withheld when a single selector
+ * cannot be resolved. Moderators are the caller's to exempt.
+ */
+export async function isModelGalleryWithheld(selector: ImageModelSelector, viewerId?: number) {
+  const modelIds = await resolveImageModelIds(selector);
+  if (!modelIds) return true;
+  if (!modelIds.size) return false;
+  const models = await dbRead.model.findMany({
+    where: { id: { in: [...modelIds] } },
+    select: { userId: true, mode: true },
+  });
+  return models.some((model) => isModelWithheld(model) && model.userId !== viewerId);
+}
+
+/**
+ * Of the named versions, those whose model is taken down and not owned by the viewer. A version
+ * not found serves no images, so it is not returned. Moderators are the caller's to exempt.
+ */
+export async function getWithheldVersionIds(modelVersionIds: number[], viewerId?: number) {
+  const withheld = new Set<number>();
+  if (!modelVersionIds.length) return withheld;
+  const versions = await versionModelCache().fetch(uniq(modelVersionIds));
+  const modelIds = uniq(Object.values(versions).map((version) => version.modelId));
+  if (!modelIds.length) return withheld;
+  const models = await dbRead.model.findMany({
+    where: { id: { in: modelIds } },
+    select: { id: true, userId: true, mode: true },
+  });
+  const withheldModelIds = new Set(
+    models.filter((m) => isModelWithheld(m) && m.userId !== viewerId).map((m) => m.id)
+  );
+  for (const id of modelVersionIds)
+    if (versions[id] && withheldModelIds.has(versions[id].modelId)) withheld.add(id);
+  return withheld;
 }
 
 /**
@@ -6378,7 +6449,6 @@ export async function getModelsWithVersions({
   ignoreBrowsingAddons,
   ownerUserId,
   publicVersionsOnly,
-  bypassImagesL1,
 }: {
   input: GetAllModelsOutput & { take?: number; skip?: number };
   user?: {
@@ -6393,12 +6463,6 @@ export async function getModelsWithVersions({
   ownerUserId?: number;
   /** See `getModelsRaw`. */
   publicVersionsOnly?: boolean;
-  /**
-   * Read the showcase images past this process's L1 (`getImagesForModelVersionCache`), for a
-   * caller that caches what it returns: a version edit refreshes Redis and then clears that
-   * caller's cache, so a rebuild from another process's older L1 copy would put it back.
-   */
-  bypassImagesL1?: boolean;
 }) {
   const { items, nextCursor } = await getModelsRaw({
     input,
@@ -6412,9 +6476,7 @@ export async function getModelsWithVersions({
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
   const paidAccessMap = await getPublicPaidAccessForModelVersions(modelVersionIds);
   // Let's swap to the new cache based method for now...
-  const images = await getImagesForModelVersionCache(modelVersionIds, {
-    bypassLocal: bypassImagesL1,
-  });
+  const images = await getImagesForModelVersionCache(modelVersionIds);
   // const images = await getImagesForModelVersion({
   //   modelVersionIds,
   //   imagesPerVersion: 10,

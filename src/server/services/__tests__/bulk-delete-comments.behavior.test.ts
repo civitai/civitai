@@ -41,7 +41,8 @@ const SCHEMA = `
     CREATE TABLE "Comment" (
       id int PRIMARY KEY, "userId" int NOT NULL, "modelId" int NOT NULL, content text NOT NULL,
       "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
-      "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now()
+      "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now(),
+      "pinnedAt" timestamp(3)
     );
     CREATE TABLE "CommentV2" (
       id int PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL, content text NOT NULL,
@@ -62,7 +63,8 @@ const SCHEMA = `
       id int PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL,
       "parentId" int REFERENCES "CommentV3"(id), "replyToId" int, path ltree NOT NULL, "rootId" int GENERATED ALWAYS AS (ltree2text(subpath(path, 0, 1))::int) STORED,
       "userId" int NOT NULL, content text NOT NULL, "tosViolation" boolean NOT NULL DEFAULT false,
-      "deletedAt" timestamptz, "updatedAt" timestamptz NOT NULL DEFAULT now(), "legacyV1Id" int
+      "deletedAt" timestamptz, "updatedAt" timestamptz NOT NULL DEFAULT now(), "legacyV1Id" int,
+      "pinnedAt" timestamptz
     );
     CREATE TABLE "CommentV3Report" (
       "reportId" int PRIMARY KEY, "commentId" int NOT NULL REFERENCES "CommentV3"(id) ON DELETE CASCADE

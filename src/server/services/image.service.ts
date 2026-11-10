@@ -153,8 +153,6 @@ import {
   withSysReadDeadline,
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
-import { modelVersionImagesLocalTtl } from '~/server/redis/l1-switches';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
 import { createLruCache } from '~/server/utils/lru-cache';
 import {
@@ -312,6 +310,7 @@ import {
   ImageIngestionStatus,
   JobQueueType,
   MediaType,
+  ModelModifier,
   NewOrderRankType,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
@@ -2011,6 +2010,8 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   postIdsInRequestedSort?: boolean;
   // Server-only: a hub's held models do not hold this viewer (a moderator on a full credential).
   holdExempt?: boolean;
+  // Server-only: the viewer a hub still shows their own taken-down models to (session or full key).
+  galleryOwnerId?: number;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
@@ -3961,6 +3962,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   currentUserId?: number;
   isModerator?: boolean;
   holdExempt?: boolean;
+  galleryOwnerId?: number;
   offset?: number;
   entry?: number;
   blockedFor?: string[];
@@ -4338,6 +4340,7 @@ async function resolvedHubSources(input: ImageSearchInput) {
     userId: input.currentUserId,
     isModerator: input.isModerator,
     holdExempt: input.holdExempt,
+    galleryOwnerId: input.galleryOwnerId,
     excludedSources: input.hubExcludedSources,
   });
 }
@@ -6659,28 +6662,10 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
       }
     }
   },
-  // L1 only while MODEL_VERSION_IMAGES_L1 is on. The value is built with no viewer: consumers apply
-  // their own viewer filtering after the read, and nothing viewer-specific may be written into an
-  // entry. There is no cross-process L1 bust, so other processes can serve old images (including an
-  // old nsfwLevel) for up to the L1 TTL; callers that store what they build pass `bypassLocal`.
-  localTtl: modelVersionImagesLocalTtl,
-  localMax: 5000,
-  localMaxBytes: L1_CACHE_BYTE_BUDGETS.modelVersionImages,
-  localClone: (entry) => ({
-    ...entry,
-    images: entry.images.map((image) => ({
-      ...image,
-      ...(image.tags ? { tags: [...image.tags] } : {}),
-    })),
-  }),
 });
 
-export async function getImagesForModelVersionCache(
-  modelVersionIds: number[],
-  // For a caller that stores what it builds from this beyond the L1 TTL (see the cache's L1 note).
-  { bypassLocal = false }: { bypassLocal?: boolean } = {}
-) {
-  const images = await imagesForModelVersionsCache.fetch(modelVersionIds, { bypassLocal });
+export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
+  const images = await imagesForModelVersionsCache.fetch(modelVersionIds);
   // `images` is keyed by model version id, so this lookup treats version ids as image ids and the
   // entry-level `tags` it attaches belong to an unrelated image; no consumer reads them. Each
   // image's own `tags` come from the cache's appendFn and are unaffected.
@@ -7597,6 +7582,13 @@ export const getEntityCoverImage = async ({
     i."acceptableMinor" = FALSE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean
   )`;
 
+  // A taken-down model's images are its owner's and moderators' alone. Also true with no model
+  // (a NULL mode), so the image and post arms keep images on no model version.
+  const modelNotWithheld = Prisma.sql`(
+    m.mode IS DISTINCT FROM ${ModelModifier.TakenDown}::"ModelModifier"
+    OR (${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean
+  )`;
+
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.
   const imagesRaw = await dbRead.$queryRaw<GetEntityImageRaw[]>`
@@ -7664,6 +7656,7 @@ export const getEntityCoverImage = async ({
           JOIN "Post" p ON mv.id = p."modelVersionId" AND p."userId" = m."userId"
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'Model'
+          AND ${modelNotWithheld}
           -- The version and post rules sit before DISTINCT ON so a hidden first version or post
           -- falls back to the next visible one rather than leaving the model without a cover.
           AND (
@@ -7704,6 +7697,7 @@ export const getEntityCoverImage = async ({
           JOIN "Post" p ON mv.id = p."modelVersionId" AND (p."userId" = m."userId" OR m."userId" = -1)
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'ModelVersion'
+          AND ${modelNotWithheld}
           -- canViewModelVersionStatus plus the private-version rule; access grantees are not resolved here.
           AND (
             (
@@ -7737,8 +7731,11 @@ export const getEntityCoverImage = async ({
         FROM entities e
         JOIN "Image" i ON i.id = e."entityId"
         LEFT JOIN "Post" p ON p.id = i."postId"
+        LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+        LEFT JOIN "Model" m ON m.id = mv."modelId"
         WHERE e."entityType" = 'Image'
           AND ${imageVisible}
+          AND ${modelNotWithheld}
 
         UNION
         -- ARTICLES
@@ -7778,8 +7775,10 @@ export const getEntityCoverImage = async ({
           FROM entities e
           JOIN "Post" p ON p.id = e."entityId"
           LEFT JOIN "ModelVersion" mv ON p."modelVersionId" = mv.id
+          LEFT JOIN "Model" m ON m.id = mv."modelId"
           JOIN "Image" i ON i."postId" = p.id
           WHERE e."entityType" = 'Post'
+            AND ${modelNotWithheld}
             AND (
               (p."publishedAt" < now() AND p.availability <> 'Private')
               OR (${signedIn}::boolean AND p."userId" = ${viewerId}) OR ${isModerator}::boolean

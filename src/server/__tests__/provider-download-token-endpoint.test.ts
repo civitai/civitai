@@ -266,11 +266,17 @@ describe('gating', () => {
     expect((await call({ action: 'list' }, { method: 'GET' })).status).toBe(405);
   });
 
-  it('is off when its token is the same value as another admin token', async () => {
-    setEnv({
-      PROVIDER_DOWNLOAD_TOKEN_ADMIN_TOKEN: TOKEN,
-      SYSTEM_ACCOUNT_KEY_TOKEN: TOKEN,
-    });
-    expect((await call({ action: 'list' })).status).toBe(503);
+  it.each([
+    'SYSTEM_ACCOUNT_KEY_TOKEN',
+    'SYSTEM_ACCOUNT_PROFILE_TOKEN',
+    'WEBHOOK_TOKEN',
+    'WEBHOOK_TOKEN_PREVIOUS',
+    'PROBE_TOKEN',
+    'JOB_TOKEN',
+  ])('is off while its token repeats %s', async (other) => {
+    // Distinct per row: env overrides persist across tests in a file.
+    const shared = `shared-${other}`.padEnd(40, 's');
+    setEnv({ PROVIDER_DOWNLOAD_TOKEN_ADMIN_TOKEN: shared, [other]: shared });
+    expect((await call({ action: 'list' }, { token: shared })).status).toBe(503);
   });
 });

@@ -229,7 +229,7 @@ const syncOldRows = {
     ]);
     if (v1Blanked.length)
       await db.query(
-        `UPDATE "Comment" SET content = '', "updatedAt" = now()
+        `UPDATE "Comment" SET content = '', "pinnedAt" = NULL, "updatedAt" = now()
          WHERE id = ANY(string_to_array($1, ',')::int[])`,
         [v1Blanked.join(',')]
       );
@@ -327,7 +327,7 @@ export async function deleteComments(db: SqlRunner, ids: number[]) {
     const { rows } = await db.query<
       RemovedCommentV3 & { deletedAt: Date | null; legacyV1Id: number | null }
     >(
-      `UPDATE "CommentV3" SET "deletedAt" = now(), content = '', "updatedAt" = now()
+      `UPDATE "CommentV3" SET "deletedAt" = now(), content = '', "pinnedAt" = NULL, "updatedAt" = now()
        WHERE id = ANY(${IDS}) AND "deletedAt" IS NULL
        RETURNING id, "userId", "entityType"::text AS "entityType", "entityId", NULL::timestamptz AS "deletedAt",
                  "legacyV1Id"`,
