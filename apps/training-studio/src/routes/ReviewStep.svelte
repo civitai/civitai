@@ -44,6 +44,7 @@
     defaultRunParams,
     isCustom,
     MAX_SAMPLE_PROMPTS,
+    numberInputValue,
     PARAM_LABELS,
     optimizerLrParams,
     paramDeviations,
@@ -71,7 +72,8 @@
     type Selection,
   } from './trainingFlow';
 
-  // name / prompts / params / presetType are owned and seeded by the flow so they survive Back.
+  // name / prompts / params / presetType and the Advanced panel state are owned by the flow so they
+  // survive Back.
   let {
     selection,
     trigger,
@@ -80,6 +82,8 @@
     prompts = $bindable(),
     params = $bindable(),
     presetType = $bindable(),
+    openAdvanced = $bindable(),
+    acknowledgedAdvanced = $bindable(),
     imageCount,
     trainsPairs = false,
     matureCount: scannedMature,
@@ -97,6 +101,10 @@
     /** Keyed by `runParamsKey`; the flow guarantees an entry for every run in `selection`. */
     params: Record<string, RunParams>;
     presetType: string;
+    /** `runParamsKey` of the run whose Advanced panel is open, or '' when none is. */
+    openAdvanced: string;
+    /** Refund-forfeit acknowledgements, keyed by `runParamsKey`. */
+    acknowledgedAdvanced: Record<string, boolean>;
     imageCount: number;
     /** An edit LoRA: `imageCount` counts before/after pairs, which the copy names as such. */
     trainsPairs?: boolean;
@@ -155,11 +163,10 @@
   const typeName = $derived(loraTypeById(selection.loraType).name);
 
   const paramsAt = (i: number): RunParams => params[runParamsKey(selection.runs[i]!)]!;
-  let openAdv = $state(-1);
+  const advancedOpen = (i: number) => openAdvanced === runParamsKey(selection.runs[i]!);
 
   // Support refuses refunds on a poor result once advanced params were edited, so editing them needs
   // the same acknowledgement as the in-app trainer — per run, and again when its model changes.
-  let acknowledgedAdvanced = $state<Record<string, boolean>>({});
   const advancedAcknowledged = (i: number) =>
     acknowledgedAdvanced[runParamsKey(selection.runs[i]!)] === true;
   const fieldLocked = (i: number, field: ParamField) =>
@@ -362,6 +369,9 @@
   // Clamp a numeric string field into the model's [min, max] on blur, so a user can't submit out-of-range.
   function clampField(i: number, field: ParamField, bound: ParamBound) {
     const p = paramsAt(i) as unknown as Record<string, NumericInput | boolean>;
+    // Leave a cleared field blank — Number('') is 0, which would clamp up to `min`; the Start payload
+    // fills a blank with the model's default instead.
+    if (typeof p[field] === 'string' && !p[field].trim()) return;
     const n = Number(p[field]);
     if (!Number.isFinite(n)) return;
     const clamped = Math.min(bound.max, Math.max(bound.min, n));
@@ -606,7 +616,8 @@
         max={bound?.max}
         step={bound?.step}
         aria-label={PARAM_LABELS[f.field]}
-        bind:value={() => paramsAt(i)[f.field] as NumericInput, (v) => setField(i, f.field, v ?? '')}
+        bind:value={() => numberInputValue(paramsAt(i)[f.field] as NumericInput),
+          (v) => setField(i, f.field, v ?? '')}
         onblur={() => bound && clampField(i, f.field, bound)}
         disabled={locked || unacknowledged}
         class="h-7 font-mono"
@@ -680,9 +691,9 @@
               {:else}
                 <button
                   type="button"
-                  onclick={() => (openAdv = openAdv === i ? -1 : i)}
+                  onclick={() => (openAdvanced = advancedOpen(i) ? '' : runParamsKey(run))}
                   class="mt-1 inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition
-                  {openAdv === i
+                  {advancedOpen(i)
                     ? 'border-primary/50 bg-primary/10 text-primary'
                     : 'border-dark-4 text-dark-2 hover:border-dark-3 hover:text-white'}"
                 >
@@ -692,7 +703,7 @@
                       {advancedDeviationsAt(i).length} changed
                     </span>
                   {/if}
-                  {#if openAdv === i}<IconChevronUp size={12} stroke={2} />{:else}<IconChevronDown
+                  {#if advancedOpen(i)}<IconChevronUp size={12} stroke={2} />{:else}<IconChevronDown
                       size={12}
                       stroke={2}
                     />{/if}
@@ -738,7 +749,7 @@
           </div>
           {/if}
 
-          {#if openAdv === i && !noAdvancedParams(run)}
+          {#if advancedOpen(i) && !noAdvancedParams(run)}
             {@const extras = supportedExtras(i)}
             {@const hidden = unsupportedExtras(i)}
             <div class="border-t border-dark-4 bg-dark-8 px-4 py-4">

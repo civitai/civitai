@@ -358,16 +358,6 @@ export async function listImageTagsForImages(db: Kysely<DB>, imageIds: number[])
     .execute();
 }
 
-/** An image's comment thread (`Thread.imageId` is unique): its id, and `locked`. `undefined` if none. */
-export function getImageThread(db: Kysely<DB>, imageId: number) {
-  return db
-    .selectFrom('Thread')
-    .select(['Thread.id', 'Thread.locked'])
-    .where('Thread.imageId', '=', imageId)
-    .limit(1)
-    .executeTakeFirst();
-}
-
 /**
  * A user's stats: the "UserStat" VIEW filtered by the user id PARAMETER, which Postgres pushes into
  * the view's per-user aggregates. Its columns are sums (bigint), read as JS numbers by the INT8

@@ -147,8 +147,6 @@ export enum FLIPT_FEATURE_FLAGS {
   BASIC_TAGS_L1_LONG_TTL = 'basic-tags-l1-long-ttl',
   // Gates an L1 in front of the `cosmetics2` catalog cache (cosmeticCache).
   COSMETICS_L1 = 'cosmetics-l1',
-  // Gates an L1 in front of `images-for-model-version-2` (imagesForModelVersionsCache).
-  MODEL_VERSION_IMAGES_L1 = 'model-version-images-l1',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -215,6 +213,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
   // no entity or context. See `responseWriteSerialize`.
   TRPC_FAST_SUPERJSON_WRITE = 'trpc-fast-superjson-write',
+  // With TRPC_FAST_SUPERJSON_WRITE on, lets the fast walk handle a shared (non-circular) object
+  // reference instead of bailing to `superjson.serialize` (same output either way). DEFAULT-OFF.
+  // Global boolean, read at most once per 5s per process (`createCachedFlagGate`).
+  TRPC_FAST_SUPERJSON_SHARED_REFS = 'trpc-fast-superjson-shared-refs',
+  // One shared `user` object per creator in the image.getInfinite / image.getImagesAsPostsInfinite
+  // responses, so devalue writes each creator once (decoded shape unchanged). DEFAULT-OFF. Global
+  // boolean, read at most once per 5s per process. A no-op unless TRPC_FAST_SUPERJSON_SHARED_REFS
+  // is on too (the fast walk would bail on the shared users). See `feed-shared-users.ts`.
+  IMAGE_FEED_SHARED_USERS = 'image-feed-shared-users',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
@@ -448,6 +455,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // On: generateFromGraph / whatIfFromGraph refuse input urls on external hosts. Off (and unknown
   // or unreachable): they are allowed and counted in generation_input_url_refusals_total{mode="log"}.
   GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS = 'generation-input-refuse-external-hosts',
+  // On: App Blocks generation sources must be scanned Image rows, so orchestrator blob urls from
+  // apps are refused. Off (and unknown or unreachable): blob urls are accepted as before.
+  APP_BLOCK_SOURCE_SCANNED_ROWS = 'app-block-source-scanned-rows',
+  // On: App Blocks generation inputs on an external host are refused. Off (and unknown or
+  // unreachable): they are allowed and each one is logged as `app-block-source-refusal`.
+  APP_BLOCK_REFUSE_EXTERNAL_SOURCES = 'app-block-refuse-external-sources',
 
   // On: the followed creator-announcements feed first narrows to authors this viewer follows who
   // have a live announcement, and makes no feed query when there are none
@@ -468,6 +481,28 @@ export enum FLIPT_FEATURE_FLAGS {
   // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
   // serves traffic.
   BOT_HTML_EDGE_CACHE = 'bot-html-edge-cache',
+
+  // On: `getImageMetricsObject` serves an image's cached `metrics:Image:<id>` hash straight from
+  // Redis, and hands entries past their refresh age to a per-pod, de-duplicated, concurrency-capped
+  // background refresher instead of reading through MetricService.fetch on the request
+  // (`~/server/services/image-metrics-swr`). Ids with no cached hash, or one older than the
+  // max-staleness bound, still take the MetricService read inline, as before. Off (and unknown,
+  // or a client that has not initialised): every id takes the MetricService read, as before.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
+  // serves traffic.
+  IMAGE_METRICS_SWR = 'image-metrics-swr',
+
+  // On: a full page load of `/images/[imageId]` or `/posts/[postId]` server-renders a fixed
+  // placeholder in place of the sections listed at their `ClientOnlySection` call sites, and those
+  // sections mount right after hydration (`~/components/ClientOnlySection`). Off (and unknown, or a
+  // client that has not initialised): the pages server-render every section, as before.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`, `~/server/utils/ssr-client-only-sections`). The key must exist in flag
+  // state (enabled: false) before this code serves traffic.
+  SSR_CLIENT_ONLY_SECTIONS = 'ssr-client-only-sections',
 
   // Download links (`/api/download/l/<id>` and the mint at `/api/v1/download-links`). Off, unknown
   // or unreachable: every link answers 404 and no link is minted.
