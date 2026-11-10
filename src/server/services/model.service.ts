@@ -6378,6 +6378,7 @@ export async function getModelsWithVersions({
   ignoreBrowsingAddons,
   ownerUserId,
   publicVersionsOnly,
+  bypassImagesL1,
 }: {
   input: GetAllModelsOutput & { take?: number; skip?: number };
   user?: {
@@ -6392,6 +6393,12 @@ export async function getModelsWithVersions({
   ownerUserId?: number;
   /** See `getModelsRaw`. */
   publicVersionsOnly?: boolean;
+  /**
+   * Read the showcase images past this process's L1 (`getImagesForModelVersionCache`), for a
+   * caller that caches what it returns: a version edit refreshes Redis and then clears that
+   * caller's cache, so a rebuild from another process's older L1 copy would put it back.
+   */
+  bypassImagesL1?: boolean;
 }) {
   const { items, nextCursor } = await getModelsRaw({
     input,
@@ -6405,7 +6412,9 @@ export async function getModelsWithVersions({
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
   const paidAccessMap = await getPublicPaidAccessForModelVersions(modelVersionIds);
   // Let's swap to the new cache based method for now...
-  const images = await getImagesForModelVersionCache(modelVersionIds);
+  const images = await getImagesForModelVersionCache(modelVersionIds, {
+    bypassLocal: bypassImagesL1,
+  });
   // const images = await getImagesForModelVersion({
   //   modelVersionIds,
   //   imagesPerVersion: 10,
