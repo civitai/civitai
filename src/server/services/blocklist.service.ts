@@ -1,5 +1,5 @@
 import { parsePlainEmailAddress } from '@civitai/auth/plain-email';
-import addressparser from 'nodemailer/lib/addressparser';
+import addressparser from 'nodemailer/lib/addressparser/index.js';
 import { CacheTTL } from '~/server/common/constants';
 import { BlocklistType } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
