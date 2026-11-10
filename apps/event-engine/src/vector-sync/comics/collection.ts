@@ -1,6 +1,6 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { config } from '@/config';
-import { VectorStore, type CollectionSpec } from '../qdrant';
+import { SITE_REPLICATION, VectorStore, type CollectionSpec } from '../qdrant';
 import type { ComicPayload } from './source';
 
 /**
@@ -8,6 +8,7 @@ import type { ComicPayload } from './source';
  * quoted-phrase search. name, username, coverImageId and docHash are stored, never filtered.
  */
 export const COMIC_COLLECTION: CollectionSpec<ComicPayload> = {
+  ...SITE_REPLICATION,
   quantile: 0.99,
   indexes: [
     ['title_normalized', { type: 'keyword', on_disk: true, enable_hnsw: false }],
