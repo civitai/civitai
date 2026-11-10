@@ -196,6 +196,41 @@ describe('createCachedObject — switchable L1 (localTtl function)', () => {
     await cache.fetch([5]);
     expect(t.redis.packed.mGet).toHaveBeenCalledTimes(3);
   });
+
+  // A fetch reads the TTL when it starts and fills the L1 when it ends; a change in between empties
+  // the L1, and the late fetch must not refill it under the TTL it started with.
+  it.each([
+    ['the TTL changes mid-fetch: a fetch begun before it does not refill the emptied L1', 30, 2],
+    ['control, no change: the same late fetch does fill the L1', 60, 1],
+  ] as const)('%s', async (_name, ttlAfter, redisReadsOfId1) => {
+    const t = build();
+    let ttl = 60;
+    const cache = t.make({ localTtl: () => ttl });
+
+    // The first lookup (fetch A, id 1) waits until released.
+    let release!: () => void;
+    let entered!: () => void;
+    const inLookup = new Promise<void>((r) => (entered = r));
+    t.lookupFn.mockImplementationOnce(async (ids: number[]) => {
+      entered();
+      await new Promise<void>((r) => (release = r));
+      return Object.fromEntries(ids.map((id) => [id, { id, v: `slow-${id}`, images: [] }]));
+    });
+
+    const slow = cache.fetch([1]); // starts under 60s
+    await inLookup;
+    ttl = ttlAfter;
+    await cache.fetch([2]); // the first fetch to see the change empties the L1
+    release();
+    expect((await slow)[1].v).toBe('slow-1');
+
+    // With the change id 1 is not in the L1, so this read goes to Redis; without it, it does not.
+    expect((await cache.fetch([1]))[1].v).toBe('slow-1');
+    const readsOfId1 = t.redis.packed.mGet.mock.calls.filter(([keys]) =>
+      keys.includes(`${KEY}:1` as RedisKeyTemplateCache)
+    ).length;
+    expect(readsOfId1).toBe(redisReadsOfId1);
+  });
 });
 
 describe('createCachedObject — switchable L1 and busts', () => {
