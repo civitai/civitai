@@ -149,7 +149,11 @@ export const cosmeticRouter = router({
     // A flagged viewer's homepage asks once per block section, about a dozen times a load.
     .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
     .query(({ input, ctx }) =>
-      getViewerEventDecorations({ ids: input.ids, entity: input.entityType, viewer: ctx.user })
+      getViewerEventDecorations({
+        ids: input.ids,
+        entity: input.entityType,
+        viewer: eventViewerOf(ctx),
+      })
     ),
   // The search grids' hats, one call per page of hits. See searchDecorationGate.
   getEventDecorationsForSearch: publicProcedure
