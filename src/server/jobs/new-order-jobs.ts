@@ -775,7 +775,7 @@ export async function runAbuseDetectionScan() {
     if (config?.autoSmiteAbusers === true) {
       const isStrictSignal = (s: AbuseSuspect) =>
         s.uniqueRatings <= smiteMaxUniqueRatings || s.dominantPct >= smiteDominantPct;
-      const targets = v1Suspects.filter(isStrictSignal);
+      const targets = v1Suspects.filter((s) => s.source !== 'v2' && isStrictSignal(s));
       log(`AbuseDetection :: Auto-smiting ${targets.length} strict-signal suspect(s)`);
 
       for (const s of targets) {
@@ -858,7 +858,16 @@ export async function runAbuseDetectionScan() {
   // a sentence.
   try {
     await moderatorApp.abuseReport(
-      buildAbuseReport({ suspects, smitedUserIds, startedAt, finishedAt: new Date() })
+      buildAbuseReport({
+        suspects,
+        smitedUserIds,
+        startedAt,
+        finishedAt: new Date(),
+        coverage: {
+          v1: !clickhouse ? 'not-run' : v1Result.status === 'rejected' ? 'failed' : 'ok',
+          v2: v2Result.status === 'rejected' ? 'failed' : 'ok',
+        },
+      })
     );
     log(
       `AbuseDetection :: Filed ${suspects.length} finding(s) on the abuse board ` +
@@ -871,6 +880,10 @@ export async function runAbuseDetectionScan() {
       suspects: suspects.length,
     });
   }
+
+  // Report filed (it says which source is missing); now fail the run so the error still shows up.
+  // A null ClickHouse client is not a failure, only a source that ran and threw is.
+  if (failed.length > 0) throw failed[0].reason;
 }
 
 const newOrderAbuseDetection = createJob(

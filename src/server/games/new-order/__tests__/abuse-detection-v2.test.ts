@@ -128,7 +128,31 @@ describe('runAbuseDetectionScan v2 source', () => {
       [true, false],
       [false, true],
     ]);
+    // The v2 row is not actioned, but it must not claim nothing happened to an account that was
+    // smited for v1 in this very run.
+    expect(findings[1].reason).toContain('auto-smited by the Knights v1 scan in this run');
+    expect(findings[1].reason).not.toContain('No action was taken');
     expect(mockSmitePlayer).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts the account once in the summary when it is flagged in both games', async () => {
+    mockClickhouseQuery.mockResolvedValue([v1Row({ userId: 100 })]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([v2Row({ userId: 100 })]);
+
+    await runAbuseDetectionScan();
+
+    const report = filed();
+    expect(report.summary).toContain('1 account matched');
+    expect(report.counters).toMatchObject({ suspects: 1, auto_smited: 1, filed_for_review: 0 });
+  });
+
+  it('never smites a v2 row that reaches the smite loop', async () => {
+    mockClickhouseQuery.mockResolvedValue([{ ...v1Row(), source: 'v2' }]);
+
+    await runAbuseDetectionScan();
+
+    expect(mockSmitePlayer).not.toHaveBeenCalled();
+    expect(filed().findings[0].actioned).toBe(false);
   });
 
   it('still scans v2 when ClickHouse is unavailable', async () => {
@@ -138,29 +162,40 @@ describe('runAbuseDetectionScan v2 source', () => {
     await runAbuseDetectionScan();
 
     expect(filed().findings.map((f) => f.userId)).toEqual([200]);
+    expect(filed().summary).toContain('Knights v1 scan did not run (ClickHouse unavailable)');
   });
 
-  it('files the v2 suspects when the v1 query fails', async () => {
-    mockClickhouseQuery.mockRejectedValue(new Error('clickhouse down'));
+  it('says nothing about coverage when both sources ran', async () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([v2Row()]);
 
     await runAbuseDetectionScan();
 
+    expect(filed().summary).not.toMatch(/scan (failed|did not run)/);
+  });
+
+  it('files the v2 suspects, says v1 failed, then fails the run when the v1 query fails', async () => {
+    mockClickhouseQuery.mockRejectedValue(new Error('clickhouse down'));
+    dbMock.dbRead.$queryRaw.mockResolvedValue([v2Row()]);
+
+    await expect(runAbuseDetectionScan()).rejects.toThrow('clickhouse down');
+
     expect(filed().findings.map((f) => f.userId)).toEqual([200]);
+    expect(filed().summary).toContain('Knights v1 scan failed; only v2 votes were scanned.');
     expect(mockHandleLogError).toHaveBeenCalledWith(
       expect.any(Error),
       'new-order-abuse-detection:v1-scan-failed'
     );
   });
 
-  it('files and smites the v1 suspects when the v2 query fails', async () => {
+  it('files and smites the v1 suspects, says v2 failed, then fails the run when the v2 query fails', async () => {
     mockClickhouseQuery.mockResolvedValue([v1Row()]);
     dbMock.dbRead.$queryRaw.mockRejectedValue(new Error('pg down'));
 
-    await runAbuseDetectionScan();
+    await expect(runAbuseDetectionScan()).rejects.toThrow('pg down');
 
     expect(mockSmitePlayer).toHaveBeenCalledTimes(1);
     expect(filed().findings.map((f) => f.userId)).toEqual([100]);
+    expect(filed().summary).toContain('Knights v2 scan failed; only v1 votes were scanned.');
     expect(mockHandleLogError).toHaveBeenCalledWith(
       expect.any(Error),
       'new-order-abuse-detection:v2-scan-failed'
