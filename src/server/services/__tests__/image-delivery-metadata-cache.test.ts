@@ -10,11 +10,18 @@ const { store } = vi.hoisted(() => ({
   store: new Map<string, Buffer>(),
 }));
 
+// The origin read runs through Kysely over the pg pools, not Prisma's `$queryRaw`. Each client's
+// statements go to a `$queryRaw`-shaped fake (`fakeKysely`), so the fixtures below answer it as
+// they answered Prisma.
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
+
 import {
   getCachedImageDeliveryMetadata,
   bustImageDeliveryMetadataCache,
 } from '~/server/services/image-delivery.service';
-import { CacheTTL } from '~/server/common/constants';
 // The DB fake narrows each fixture row to the columns the statement actually SELECTs, the way
 // a real database does. Without it, `mockResolvedValue([row])` hands back the whole fixture no
 // matter what was asked for, and every assertion about a NEWLY-selected column passes on code
@@ -28,8 +35,9 @@ import { dbReadFallbackCounter } from '~/server/prom/client';
 const redisDel = redisMock.redis.del;
 const redisPackedGet = redisMock.redis.packed.get;
 const redisPackedSet = redisMock.redis.packed.set;
-const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
-const dbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+// Named for the replica and the primary, as before the port; they are the Kysely clients' fakes.
+const dbReadQueryRaw = kysely.read;
+const dbWriteQueryRaw = kysely.write;
 
 // `:v2` — bumped when the cached value gained `type`/`mimeType`, so a hit on an entry packed
 // by the previous release can never serve a response missing those fields.
@@ -53,6 +61,9 @@ const VIDEO_ROW = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Not reset by the shared db mock's hooks: drop queued once-implementations between tests.
+  kysely.read.mockReset();
+  kysely.write.mockReset();
   store.clear();
   // Real msgpackr round-trip: set packs to a Buffer, get unpacks — mirrors the production
   // redis.packed codec so serializer fidelity (number id, string url, boolean hideMeta) is
@@ -153,12 +164,26 @@ describe('getCachedImageDeliveryMetadata — read-through cache', () => {
     expect(values).toContain(URL);
   });
 
-  it('sets the cache entry with the short TTL', async () => {
+  it('sets the cache entry with an hour TTL', async () => {
     dbReadQueryRaw.mockImplementation(respondWithRows([IMAGE_ROW]));
     await getCachedImageDeliveryMetadata(URL);
+    // A literal, not CacheTTL.hour: the number is the contract.
     expect(redisPackedSet).toHaveBeenCalledWith(`${KEY_PREFIX}:${URL}`, IMAGE_ROW, {
-      EX: CacheTTL.sm,
+      EX: 3600,
     });
+  });
+
+  it('never reaches the Prisma query engine: replica, primary fallback and miss alike', async () => {
+    dbReadQueryRaw.mockImplementationOnce(respondWithRows([IMAGE_ROW]));
+    expect(await getCachedImageDeliveryMetadata(URL)).toEqual(IMAGE_ROW);
+    dbReadQueryRaw.mockRejectedValueOnce(new Error('replica error'));
+    dbWriteQueryRaw.mockImplementationOnce(respondWithRows([VIDEO_ROW]));
+    expect(await getCachedImageDeliveryMetadata(VIDEO_URL)).toEqual(VIDEO_ROW);
+
+    expect(dbReadQueryRaw).toHaveBeenCalledTimes(2);
+    expect(dbWriteQueryRaw).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('does NOT cache a negative result — an unknown url re-hits the DB every call', async () => {

@@ -1,6 +1,8 @@
 import { chunk } from 'lodash-es';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { flagAudienceAmong } from '~/server/events/event-access';
 import { eventPlayerEligibleSql } from '~/server/events/player-eligibility';
 import { loadEvents } from '~/server/events/load-events';
@@ -123,17 +125,6 @@ export function ownDrawnStickers(event: TurfEvent, userId: number, now: Date) {
   return drawnStickers(event, now, Prisma.sql`s."userId" = ${userId}`);
 }
 
-/** The images among `imageIds` that are entries in a contest (see contestEntry). */
-async function contestImageIds(imageIds: number[], db: typeof dbRead | typeof dbWrite) {
-  if (!imageIds.length) return new Set<number>();
-  const rows = await db.$queryRaw<{ imageId: number }[]>`
-    SELECT DISTINCT ci."imageId" FROM "CollectionItem" ci
-    JOIN "Collection" c ON c.id = ci."collectionId"
-    WHERE ci."imageId" = ANY(${imageIds}::int[]) AND c.mode = 'Contest'
-  `;
-  return new Set((rows ?? []).map((r) => r.imageId));
-}
-
 /**
  * Only stickers still counting at `now` (schedule.ts stickerLiveAfter): an expired sticker is neither
  * counted, credited nor drawn. Empty while none has expired.
@@ -253,25 +244,28 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
     userTeam && stepAt(event.turf.catchUp ?? [], now)
       ? userTeam.then((team) => turfCatchUpAt(event, team, now))
       : 1;
+  const { kyselyRead } = await loadKyselyDb();
   const [row, [user], multiplier, creditedByTeam, team] = await Promise.all([
     dbRead.eventTurfStock.findUnique({
       where: { event_userId: { event: event.name, userId } },
       select: { stock: true, refilledAt: true },
     }),
-    dbRead.$queryRaw<
-      {
-        optedIn: boolean | null;
-        left: boolean | null;
-        ownerOff: boolean | null;
-        liveHats: number | null;
-      }[]
-    >`
+    // Through Kysely, not Prisma's `$queryRaw` (see queryPrismaSql). Booleans and an int4 count.
+    queryPrismaSql<{
+      optedIn: boolean | null;
+      left: boolean | null;
+      ownerOff: boolean | null;
+      liveHats: number | null;
+    }>(
+      kyselyRead,
+      Prisma.sql`
       SELECT ${inTurf('u', event.name)} AS "optedIn",
         (u.settings -> ${TURF_SETTING} ->> ${event.name}) = 'false' AS "left",
         (u.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event.name}) = 'true' AS "ownerOff",
         (SELECT count(*)::int ${ownDrawnStickers(event, userId, now)}) AS "liveHats"
       FROM "User" u WHERE u.id = ${userId}
-    `,
+    `
+    ),
     catchUp,
     turfCreditedByTeam(event, now),
     userTeam,
@@ -1011,29 +1005,42 @@ export async function getTurfSummaries(
   const mineStillBlocks = liveAfter
     ? Prisma.sql`AND (s."removedAt" IS NOT NULL OR s."createdAt" > ${liveAfter})`
     : Prisma.empty;
-  const [counts, hats, openRows, mineRows, contestRows] = await Promise.all([
+  const { kyselyRead } = await loadKyselyDb();
+  const [counts, hats, flags] = await Promise.all([
     sysRedis.hmGet(turfKeys(event.name).counts, keys),
     sysRedis.hmGet(eventPointKeys(event.name).hats, keys),
-    dbRead.$queryRaw<{ id: number }[]>`
-      SELECT i.id FROM "Image" i
-      JOIN "Post" p ON p.id = i."postId"
-      WHERE i.id = ANY(${imageIds}::int[]) AND ${imageVisible} AND ${ownerAllowsTurf(event.name)}
-    `,
-    // Removed ones too: placing again refuses them. Not expired ones, which placing renews.
-    viewerId
-      ? dbRead.$queryRaw<{ imageId: number }[]>`
-          SELECT s."imageId" FROM "EventTurfSticker" s
+    // One statement for what were three (open, mine, contest entry), each answered per asked id by
+    // the same predicate the separate reads applied, and through Kysely rather than Prisma's
+    // `$queryRaw` (see queryPrismaSql). `mine` counts removed stickers too, since placing again
+    // refuses them, but not expired ones, which placing renews.
+    queryPrismaSql<{ id: number; open: boolean; mine: boolean; contest: boolean }>(
+      kyselyRead,
+      Prisma.sql`
+      SELECT x.id,
+        EXISTS (
+          SELECT 1 FROM "Image" i
+          JOIN "Post" p ON p.id = i."postId"
+          WHERE i.id = x.id AND ${imageVisible} AND ${ownerAllowsTurf(event.name)}
+        ) AS open,
+        ${
+          viewerId
+            ? Prisma.sql`EXISTS (
+          SELECT 1 FROM "EventTurfSticker" s
           WHERE s.event = ${event.name} AND s."userId" = ${viewerId}
-            AND s."imageId" = ANY(${imageIds}::int[]) ${mineStillBlocks}
-        `
-      : [],
-    contestImageIds(imageIds, dbRead),
+            AND s."imageId" = x.id ${mineStillBlocks}
+        )`
+            : Prisma.sql`false`
+        } AS mine,
+        ${contestEntry(Prisma.sql`x.id`)} AS contest
+      FROM unnest(${imageIds}::int[]) AS x(id)
+    `
+    ),
   ]);
-  const hiddenIds = contestRows;
+  const hiddenIds = new Set(flags.filter((r) => r.contest).map((r) => r.id));
   const hidden = Object.fromEntries([...hiddenIds].map((id) => [id, true]));
-  const mineIds = new Set(mineRows.map((r) => r.imageId));
+  const mineIds = new Set(flags.filter((r) => r.mine).map((r) => r.id));
   const mine = Object.fromEntries(imageIds.map((id) => [id, mineIds.has(id)]));
-  const openIds = new Set(openRows.map((r) => r.id));
+  const openIds = new Set(flags.filter((r) => r.open).map((r) => r.id));
   const open = Object.fromEntries(
     imageIds.map((id) => [id, openIds.has(id) && !hiddenIds.has(id)])
   );

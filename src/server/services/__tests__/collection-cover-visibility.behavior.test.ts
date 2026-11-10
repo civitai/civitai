@@ -5,6 +5,17 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as LagHelpers from '~/server/db/db-lag-helpers';
 import type * as UserService from '~/server/services/user.service';
 
+// assertImageVisibleToViewer reads through Kysely, not Prisma's `$queryRaw`. Its statements get the
+// answers this file's `$queryRaw` fakes give, without counting as `$queryRaw` calls (answerLike).
+vi.mock('~/server/db/kyselyDb.lazy', async () => {
+  const { fakeKyselyDbLazy, answerLike } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock } = await import('~/__tests__/mocks/db.mock');
+  return fakeKyselyDbLazy(
+    answerLike(dbMock.dbRead.$queryRaw),
+    answerLike(dbMock.dbWrite.$queryRaw)
+  );
+});
+
 /**
  * A collection's cover is shown only to someone who could see the image itself, and a cover can
  * only be set to an image the caller could see. Covers stored before that rule existed stay in

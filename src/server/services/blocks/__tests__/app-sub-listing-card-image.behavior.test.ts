@@ -10,6 +10,17 @@ import type * as AppListingService from '~/server/services/blocks/app-listing.se
 import type * as SharedContentSafety from '~/server/services/apps/shared-content-safety';
 import type * as RateLimit from '~/server/utils/shared-storage-rate-limit';
 
+// assertImageVisibleToViewer reads through Kysely, not Prisma's `$queryRaw`. Its statements get the
+// answers this file's `$queryRaw` fakes give, without counting as `$queryRaw` calls (answerLike).
+vi.mock('~/server/db/kyselyDb.lazy', async () => {
+  const { fakeKyselyDbLazy, answerLike } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock } = await import('~/__tests__/mocks/db.mock');
+  return fakeKyselyDbLazy(
+    answerLike(dbMock.dbRead.$queryRaw),
+    answerLike(dbMock.dbWrite.$queryRaw)
+  );
+});
+
 /**
  * A store item's image, decided by the real SQL on real rows: `image.get`'s anonymous visibility
  * conditions and the card's published-post rule, through the catalog PUT.

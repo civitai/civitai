@@ -1,5 +1,6 @@
 import { CacheTTL } from '~/server/common/constants';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordImageDeliveryBustFailure } from '~/server/prom/image-delivery.metrics';
@@ -89,15 +90,21 @@ export const imageDeliveryStatement = (url: string) => Prisma.sql`
   LIMIT 1
 `;
 
-// Origin read, with the dbRead -> dbWrite (primary) fallback so a read-replica error still
-// resolves. Only an error falls back: an empty result from the replica is a not-found.
+// Origin read, with the replica -> primary fallback so a read-replica error still resolves. Only
+// an error falls back: an empty result from the replica is a not-found.
+//
+// Through Kysely over the pg pools, not Prisma's `$queryRaw`: same statement text and parameters
+// (`queryPrismaSql`), without the query engine's per-statement cost on one of the hottest reads.
+// Every selected column is int4, text, boolean or an enum, which both executors parse alike.
 const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMetadata | null> => {
-  const [image] = await dbRead
-    .$queryRaw<ImageDeliveryMetadataRow[]>(imageDeliveryStatement(url))
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'image', caller: 'imageDelivery' });
-      return dbWrite.$queryRaw<ImageDeliveryMetadataRow[]>(imageDeliveryStatement(url));
-    });
+  const { kyselyRead, kyselyWrite } = await loadKyselyDb();
+  const [image] = await queryPrismaSql<ImageDeliveryMetadataRow>(
+    kyselyRead,
+    imageDeliveryStatement(url)
+  ).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'image', caller: 'imageDelivery' });
+    return queryPrismaSql<ImageDeliveryMetadataRow>(kyselyWrite, imageDeliveryStatement(url));
+  });
 
   if (!image) return null;
 
@@ -120,7 +127,7 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
 // scanning) that are untouched.
 //
 // Fail-open like `fetchThroughCache`: on any Redis error we degrade to the origin query
-// (this is a hot path — ~9.2 req/s at peak — so a Redis stall must not 500). No distributed
+// (this is one of the hottest internal paths, so a Redis stall must not 500). No distributed
 // stampede lock: the origin is a single-row indexed lookup that at worst runs once per url
 // per TTL, so a brief cold-key stampede is trivially cheap — not worth the lock's extra
 // Redis round-trips on the hot read (mirrors `getTagWithModelCount`).
@@ -129,16 +136,21 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
 // registered image resolves immediately (no register-then-deliver staleness). This also
 // shrinks invalidation to writers that change an EXISTING image's cached shape.
 //
-// STALENESS: `hideMeta` can flip. The privacy-sensitive direction (false -> true, the owner
-// hiding their prompt) is busted explicitly in `updatePostImage` (first step of
-// `invalidateHiddenImageMetadata`), so an app-path flip takes effect at once. An out-of-band
-// flip (mod tooling / direct DB) lags at most TTL; because the delivered image BYTES are
-// still separately purged/CDN-managed and this value only gates embedded-metadata
-// visibility, a bounded ≤TTL window is acceptable. TTL is deliberately short (3 min) to keep
-// that window tight. `type`/`mimeType` need no bust of their own: they are set when the
-// media row is created and no writer in this repo updates them afterwards, so the existing
-// hideMeta bust plus the TTL already covers every way a cached entry can go stale.
-// `ingestion` moving to NotFound is not busted either; a cached row lingers at most TTL.
+// STALENESS: `hideMeta` can flip, and `updatePostImage` is the only writer in this repo that
+// flips it on an existing image. It busts in BOTH directions: hiding through
+// `invalidateHiddenImageMetadata` (whose first step is this bust), showing directly. So every
+// app-path flip takes effect at once, and the TTL only bounds what no app path writes: an
+// out-of-band flip (direct DB) and a failed bust (`bustImageDeliveryMetadataCache` never throws).
+// Because the delivered image BYTES are still separately purged/CDN-managed and this value only
+// gates embedded-metadata visibility, that ≤TTL window is acceptable. `type`/`mimeType`/`url`
+// need no bust of their own: they are set when the media row is created and no writer in this
+// repo updates them afterwards. `ingestion` moving to NotFound is not written by any path in
+// this repo, so it is not busted; a cached row lingers at most TTL, and the caller then converts
+// an original that turns out to be gone, as it did before the row was marked.
+// The TTL is an hour, up from 3 minutes, now that every in-repo writer of a cached field is
+// accounted for above: at 3 minutes most reads missed.
+export const IMAGE_DELIVERY_METADATA_TTL = CacheTTL.hour;
+
 export const getCachedImageDeliveryMetadata = async (
   url: string
 ): Promise<ImageDeliveryMetadata | null> => {
@@ -155,7 +167,7 @@ export const getCachedImageDeliveryMetadata = async (
 
   if (result) {
     try {
-      await redis.packed.set(key, result, { EX: CacheTTL.sm });
+      await redis.packed.set(key, result, { EX: IMAGE_DELIVERY_METADATA_TTL });
     } catch {
       // Best-effort cache write; a Redis stall here never fails the request.
     }
