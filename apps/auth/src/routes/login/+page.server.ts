@@ -1,7 +1,8 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 import { SYNC_PARAM } from '@civitai/auth';
-import { isEmailConfigured } from '@civitai/email';
+import { parsePlainEmailAddress } from '@civitai/auth/plain-email';
+import { addressparser, isEmailConfigured } from '@civitai/email';
 import type { Actions, PageServerLoad } from './$types';
 import { listEnabledProviders } from '$lib/server/auth/providers';
 import { readReturnUrl, readSync, buildPostLoginRedirect } from '$lib/server/auth/redirect';
@@ -94,6 +95,7 @@ export const actions: Actions = {
     const sync = data.get(SYNC_PARAM) ? String(data.get(SYNC_PARAM)) : null;
 
     if (!EMAIL_RE.test(email)) return fail(400, { email, invalid: true });
+    const plain = parsePlainEmailAddress(email, addressparser);
 
     // Resolve the real client IP from proxy headers (not the shared ingress socket peer) so the per-IP
     // limit is genuinely per-client; null behind a misconfigured proxy → checkRateLimit skips the limit.
@@ -119,12 +121,17 @@ export const actions: Actions = {
       return fail(400, { email, captcha: true });
     }
 
+    // Only a plain address may start a new account. A returning user whose address on file is not
+    // plain (saved before this rule) still signs in with exactly that address. The lookup sits after
+    // the captcha so it is rate limited like every other one here.
+    if (!plain && !(await userExistsByEmail(email))) return fail(400, { email, invalid: true });
+
     // 3. Blocked email domains: reject NEW signups on a blocklisted domain — an exact entry, or a
     //    domain a moderator opted into suffix blocking — but don't retroactively lock out EXISTING
     //    accounts when a domain is later added to either list (mirrors the exemption in step 4).
     //    "Either list" matters: the exact list is appended weekly from upstream, while the suffix
     //    list is hand-maintained and synced by nothing.
-    const domain = emailDomain(email);
+    const domain = plain ? emailDomain(plain) : '';
     if (domain && (await isBlockedEmailDomain(domain)) && !(await userExistsByEmail(email))) {
       blockedEmailDomainSignupsTotal.inc({ path: 'email' });
       return fail(400, { email, blockedDomain: true });

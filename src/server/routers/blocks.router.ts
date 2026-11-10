@@ -57,6 +57,7 @@ import {
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
   CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
+  SOURCE_SCAN_PENDING_ERROR_CODE,
   isKnownBlockScope,
   PRIVATE_RUN_BUZZ_CAP,
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
@@ -267,6 +268,7 @@ import {
 import type { ResolvedBlockWorkflowStep } from '~/server/services/blocks/workflow-graph';
 import { collectTrainingTriggerWords } from '~/server/services/blocks/block-training-trigger-word';
 import { projectModelSubstitutions } from '~/shared/generation/model-substitution';
+import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
@@ -296,6 +298,7 @@ import {
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import {
   assertStepTypeAllowed,
+  foldStepTypeCase,
   isTrainingStepTypeIgnoringCase,
   PlatformInternalStepTypeError,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
@@ -411,6 +414,7 @@ import {
 } from '~/server/services/orchestrator/orchestration-new.service';
 import {
   assertGenerationInputsUsable,
+  isAppSourcePendingError,
   opaqueInputUrlsIn,
 } from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
@@ -6950,13 +6954,15 @@ export const blocksRouter = router({
       if (input.body.kind === 'training') {
         return await submitTrainingWorkflow({ ctx, claims, body: input.body });
       }
-      if (input.body.kind === 'workflow' || input.body.kind === 'step')
-        await assertStepOrWorkflowInputsUsable(input.body, claims, {
+      if (input.body.kind === 'workflow' || input.body.kind === 'step') {
+        const pending = await assertStepOrWorkflowInputsUsable(input.body, claims, {
           confirmedSubmit:
             input.body.kind === 'step' &&
             isPassThroughStepBody(input.body) &&
             input.body.quoteId !== undefined,
         });
+        if (pending) return pending;
+      }
       if (input.body.kind === 'workflow') {
         return await submitMultiStepWorkflow({
           ctx,
@@ -7099,6 +7105,7 @@ export const blocksRouter = router({
         userId,
         slotId: ctxSlotId,
       });
+      assertNoRestrictedBaseModels({ baseModels: [resolved.baseModel, checkpoint.baseModel] });
       // PAGE branch: pre-spend availability gate over the resources THIS gate
       // can see — the viewer-picked BODY version (`resolved.gate`) AND each
       // additional LoRA — a fail-fast UX layer in place of the skipped
@@ -7140,6 +7147,7 @@ export const blocksRouter = router({
           checkpointBaseModel: checkpoint.baseModel,
         });
         additionalResourceTypes = resourceTypes;
+        assertNoRestrictedBaseModels({ baseModels: loraGates.map((g) => g.baseModel) });
         await assertViewerCanGeneratePageResources({
           gates: [buildGateVersion(resolved.gate), ...loraGates],
           viewer: { id: userId, isModerator: !!user.isModerator },
@@ -9727,8 +9735,10 @@ async function estimateBlockWorkflowCell(
   if (input.body.kind === 'training') {
     return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
   }
-  if (input.body.kind === 'workflow' || input.body.kind === 'step')
-    await assertStepOrWorkflowInputsUsable(input.body, claims);
+  if (input.body.kind === 'workflow' || input.body.kind === 'step') {
+    const pending = await assertStepOrWorkflowInputsUsable(input.body, claims);
+    if (pending) return pending;
+  }
   if (input.body.kind === 'workflow') {
     return await estimateMultiStepWorkflow({ ctx, claims, body: input.body });
   }
@@ -9822,6 +9832,7 @@ async function estimateBlockWorkflowCell(
     userId,
     slotId: ctxSlotId,
   });
+  assertNoRestrictedBaseModels({ baseModels: [resolved.baseModel, checkpoint.baseModel] });
   // PAGE branch: pre-spend availability gate over the resources THIS gate
   // can see — the viewer-picked BODY version (`resolved.gate`) AND each
   // additional LoRA — as a fail-fast UX layer in place of the skipped
@@ -9858,6 +9869,7 @@ async function estimateBlockWorkflowCell(
       checkpointBaseModel: checkpoint.baseModel,
     });
     additionalResourceTypes = resourceTypes;
+    assertNoRestrictedBaseModels({ baseModels: loraGates.map((g) => g.baseModel) });
     await assertViewerCanGeneratePageResources({
       gates: [buildGateVersion(resolved.gate), ...loraGates],
       viewer: { id: userId, isModerator: !!user.isModerator },
@@ -10272,6 +10284,7 @@ async function submitCustomComfyWorkflow(opts: {
       const resolvedVersion = await resolvePageResourceContext(versionId);
       gates.push(buildGateVersion(resolvedVersion.gate));
     }
+    assertNoRestrictedBaseModels({ baseModels: gates.map((g) => g.baseModel) });
     await assertViewerCanGeneratePageResources({
       gates,
       viewer: { id: userId, isModerator: !!user.isModerator },
@@ -10279,6 +10292,10 @@ async function submitCustomComfyWorkflow(opts: {
       wildcardsEnabled: !!ctx.features.wildcards,
     });
   }
+
+  // A recipe's Hugging Face AIRs depend on the engine its params pick, so check the built step's.
+  if (recipe && params)
+    assertNoRestrictedBaseModels({ airs: recipe.buildStep(params, {}).resources });
 
   const token = await getOrchestratorToken(userId, ctx);
 
@@ -10867,7 +10884,7 @@ type RegistryStepBody = Exclude<StepBody, PassThroughStepBody>;
  * Narrow a `kind:'step'` body to its PASS-THROUGH arm.
  *
  * 🔴 KEYED ON THE VALUE OF `step`, NOT `'step' in body`. The pass-through arm
- * declares `step: z.undefined()`, so a body carrying `step` as an own key is a
+ * declares `step: z.undefined().optional()`, so a body carrying `step` as an own key is a
  * LEGAL pass-through body (an SDK spreading an optional variable produces one,
  * and `undefined` survives superjson); a presence test routes it to
  * `resolveBlockStep`, which answers BAD_REQUEST. Same rule as
@@ -10897,13 +10914,15 @@ async function assertStepOrWorkflowInputsUsable(
       : isPassThroughStepBody(body)
       ? (['appBlocksPassThrough', body.input] as const)
       : (['appBlocksStep', body.params] as const);
-  // Only a registry step declares free text in its params (`freeTextParamPaths`, pinned against
-  // its param schema). A workflow or pass-through body is read whole: there any step can `$ref`
-  // any field, so a link in a text field may be wired into an image input.
+  // A registry step declares free text in its params (`freeTextParamPaths`, pinned against its
+  // param schema); a lone pass-through step by its `$type`. A workflow is read whole: there any
+  // step can `$ref` any field, so a link in a text field may be wired into an image input.
   const freeTextPaths =
-    body.kind === 'step' && !isPassThroughStepBody(body)
-      ? getStep(body.step)?.freeTextParamPaths
-      : undefined;
+    body.kind === 'workflow'
+      ? undefined
+      : isPassThroughStepBody(body)
+      ? PASS_THROUGH_FREE_TEXT_PATHS.get(foldStepTypeCase(body.$type))
+      : getStep(body.step)?.freeTextParamPaths;
   const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs, freeTextPaths);
   if (tooDeep) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input nests too deeply' });
@@ -10911,14 +10930,50 @@ async function assertStepOrWorkflowInputsUsable(
   if (tooLarge) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input is too large to check' });
   }
-  await assertGenerationInputsUsable({
-    urls,
-    userId,
-    entry,
-    isApiCaller: false,
-    opaqueInput: true,
-  });
+  try {
+    await assertGenerationInputsUsable({
+      urls,
+      userId,
+      entry,
+      isApiCaller: false,
+      opaqueInput: true,
+      appBlockLog: { appBlockId: claims.appBlockId, stepTypes: bodyStepTypes(body) },
+    });
+  } catch (error) {
+    if (!isAppSourcePendingError(error)) throw error;
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed',
+        error: (error as TRPCError).message,
+        errorCode: SOURCE_SCAN_PENDING_ERROR_CODE,
+      } satisfies BlockWorkflowSnapshot,
+    };
+  }
 }
+
+/** The step types a body runs, for a log line: a registry step's id, else each `$type`. */
+function bodyStepTypes(body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>) {
+  if (body.kind === 'step' && !isPassThroughStepBody(body)) return body.step;
+  const steps = body.kind === 'workflow' ? body.steps : [body];
+  return steps.map((step) => foldStepTypeCase(step.$type)).join(',');
+}
+
+/**
+ * Free-text fields of a pass-through step's orchestrator input, by case-folded `$type`: text the
+ * orchestrator never fetches (message text, tool schemas). A media part beside them is still read.
+ */
+const PASS_THROUGH_FREE_TEXT_PATHS: ReadonlyMap<string, readonly string[]> = new Map([
+  [
+    'chatcompletion',
+    [
+      'messages[].content',
+      'messages[].tool_calls.**',
+      'tools[].function.**',
+      'tools[].parameters.**',
+    ],
+  ],
+]);
 
 /**
  * Settle-time observability labels for a pass-through submit.

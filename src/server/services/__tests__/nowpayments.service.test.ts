@@ -66,7 +66,13 @@ vi.mock('~/utils/signal-client', () => ({
 // The hand-grant scan runs against a fake ledger in nowpayments-credit.service.test.ts.
 vi.mock('~/server/services/nowpayments-manual-credit', async (importOriginal) => ({
   ...(await importOriginal<typeof ManualCredit>()),
-  findHandGrantsForDeposit: vi.fn(async () => ({ covering: [], possible: [], overflowed: [] })),
+  findHandGrantsForDeposit: vi.fn(async () => ({
+    handPaid: [],
+    unreadable: [],
+    covering: [],
+    possible: [],
+    overflowed: [],
+  })),
 }));
 
 vi.mock('~/server/utils/distributed-lock', () => ({
@@ -853,6 +859,22 @@ describe('reconcileDeposits', () => {
     );
   });
 
+  it('skips a payment Support already paid by hand', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
+      data: [makePayment({ payment_id: 223 })],
+    });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'hand_paid',
+      buzzCredited: null,
+    });
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(result.alreadyProcessed).toBe(1);
+    expect(result.newlyProcessed).toBe(0);
+    expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+  });
+
   it('skips payments already granted buzz', async () => {
     mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
       data: [makePayment({ payment_id: 222 })],
@@ -1159,6 +1181,22 @@ describe('reconcileUserDeposits', () => {
     expect(peak).toBeGreaterThan(1);
     expect(peak).toBeLessThanOrEqual(3);
   });
+
+  it('skips a deposit Support already paid by hand', async () => {
+    mockDbRead.cryptoWallet.findMany.mockResolvedValueOnce([{ smartAccount: '999' }]);
+    mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue(
+      makePayment({ payment_id: 999, order_id: 'user:42' })
+    );
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValue({
+      status: 'hand_paid',
+      buzzCredited: null,
+    });
+
+    const result = await reconcileUserDeposits(42);
+
+    expect(result.processed).toBe(0);
+    expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+  });
 });
 
 // ─── Open deposits ───────────────────────────────────────────────────────────
@@ -1178,9 +1216,13 @@ function resetDepositMocks() {
   mockGetTransactionByExternalId.mockReset().mockResolvedValue(null);
   mockGetMultipliersForUser.mockReset().mockResolvedValue({ purchasesMultiplier: 1 });
   mockGrantBuzzPurchase.mockReset().mockResolvedValue('tx_123');
-  vi.mocked(findHandGrantsForDeposit)
-    .mockReset()
-    .mockResolvedValue({ covering: [], possible: [], overflowed: [] });
+  vi.mocked(findHandGrantsForDeposit).mockReset().mockResolvedValue({
+    handPaid: [],
+    unreadable: [],
+    covering: [],
+    possible: [],
+    overflowed: [],
+  });
 }
 
 type DepositRow = Record<string, unknown>;
@@ -1250,6 +1292,8 @@ describe('recordUnverifiedDeposit', () => {
 });
 
 const staffTipCitingPayment = {
+  handPaid: [],
+  unreadable: [],
   covering: [
     {
       ref: 'tip-1',
@@ -1675,11 +1719,15 @@ describe('watchOpenDeposits', () => {
     });
 
     const softMatch = {
+      handPaid: [],
+      unreadable: [],
       covering: [],
       possible: [{ strength: 'soft', ref: 'tx-tip', why: 'amount' }],
       overflowed: [],
     } as unknown as Awaited<ReturnType<typeof findHandGrantsForDeposit>>;
     const overflow = {
+      handPaid: [],
+      unreadable: [],
       covering: [],
       possible: [],
       overflowed: ['Tip'],
