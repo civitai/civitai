@@ -211,7 +211,7 @@ backfill to race.
       v1 insert copies an existing model `Thread`'s lock
 - [x] `toggleThreadMute` → `CommentMute`, `toggleSectionMute` → `CommentTopicMute`: carried by the
       `ThreadMute` mirror trigger (a reply thread's mute lands on the comment it hangs off, a
-      root thread's on the entity). The v2 toggles are deleted (built 2026-11-05, release 2, not deployed):
+      root thread's on the entity). The v2 toggles are deleted (built 2026-11-05, release 2, deployed by 2026-11-10):
       `commentv3/section.service.ts` writes `CommentMute`, `CommentTopicMute` and the topic lock
 - [x] Entity hard-delete paths seen to cascade through the partition FK into `CommentTopic` and
       `CommentV3` in the behaviour test (image with a reply tree, model with v1 comments, a
@@ -472,7 +472,7 @@ flip — these MUST land before the first Phase 4 write flip):
       as `notCommentMuted` (a `CommentTopicMute`
       probe plus a `CommentMute` join on `path @>`, and the clamped `replyToId`).
       `thread-chain.ts` is NOT deleted: the block-check write guard and the block hide sweep still
-      walk the old thread chain (the v2 lock check went with the v2 write path, built 2026-11-05, release 2, not deployed),
+      walk the old thread chain (the v2 lock check went with the v2 write path, built 2026-11-05, release 2, deployed by 2026-11-10),
       and they go in Phase 5
 - [x] `no-unmuteable-comment-processor` re-pointed at the v3 SQL in the same change, keeping the
       `new-mention` exemption; it also pins that no comment-family query reads an old table.
@@ -481,7 +481,7 @@ flip — these MUST land before the first Phase 4 write flip):
       `notCommentMuted` now
 - [x] `getThreadMuted` / `getSectionMuted` read the suppression's own predicate
       (`notCommentMuted`, and `CommentTopicMute` for the section), so the menu label cannot diverge
-      from behaviour. The v2 lookups went with the v2 toggles (built 2026-11-05, release 2, not deployed);
+      from behaviour. The v2 lookups went with the v2 toggles (built 2026-11-05, release 2, deployed by 2026-11-10);
       `commentv3/section.service.ts` is the only implementation
 - [x] Moderator app reads: `user-account.service.ts` (both comment lists and
       `commentParents`), `user-lookup.service.ts` (the two comment counts and the
@@ -506,7 +506,7 @@ flip — these MUST land before the first Phase 4 write flip):
 - [x] `/comments/[id].tsx` (canonical; `/comments/v2/[id].tsx` is an alias of it) resolves from the
       CommentV3 row (`comment-permalink.ts`); a tombstone 404s
 - [x] **(review)** `events/points/hooks.ts` counts the actor's remaining comments on CommentV3
-      (its thread lookup went with the v2 write path: built 2026-11-05, release 2, not deployed);
+      (its thread lookup went with the v2 write path: built 2026-11-05, release 2, deployed by 2026-11-10);
       `creator-score-self-activity.service.ts` and `bot-account-detection/cohort.ts` read
       CommentV3 (the v1 and v2 comment reads, visible and membership each, became one pair). Left for Phase 4, as writes:
       `scam-cleanup.service.ts` (hide and restore are UPDATEs), the reaction toggle reads, and
@@ -572,7 +572,7 @@ With the first write flip (the moderation items moved here from Phases 1 and 2):
       `mode.ts`/`types.ts`/`retention.ts`, `SCAM_ENTITY_TYPES` with a v3 cleanup, the
       `csam-hold-decision.ts` case, and `ReportEntity.CommentV3` with its `report.service.ts` maps
       (`CommentV3Report` keys on `commentId`, so `findReportToFoldInto` has a case like
-      `User`'s). `CommentV3` follows `CommentV2`'s rollout until given its own. Built 2026-10-29,
+      `User`'s). `CommentV3` has its own rollout (since 2026-11-10; it followed `CommentV2`'s until then). Built 2026-10-29,
       awaiting the stage B deploy
 - [x] No legal holds on comments (decided 2026-11-04, Briant, on the CSAM reviewer's word): every
       comment delete is a plain delete and an entity's delete takes its comments with it, on every
@@ -583,7 +583,7 @@ With the first write flip (the moderation items moved here from Phases 1 and 2):
       `EntityType` value `CommentV3` + `trg_moderation_commentv3`, firing only on direct writes
       (`20261211120000_comment_v3_moderation_trigger`, applied in prod 2026-10-30 in the same
       enabled state as `trg_moderation_commentv2`), the `entity-moderation.ts` queue and auto-mute
-      cleanup, and a `CLAVATA_TARGETS` entry owned on `CommentV2`'s rollout. Built for article
+      cleanup, and a `CLAVATA_TARGETS` entry owned on `CommentV3`'s own rollout (`CommentV2`'s until 2026-11-10). Built for article
       2026-10-30, awaiting the stage B deploy; after it,
       `POST /api/admin/temp/text-scan-clavata-cutover` (`{action:'disable', entityType:'CommentV3'}`)
       wherever `CommentV2` is cut over
@@ -594,16 +594,16 @@ Surface-specific extras:
       nothing to add, the article metrics job already counts from CommentV3 and purges it (checked
       2026-10-29); post still to do
 - [x] **image**: the `EntityMetric` (`metricType='Comment'`) writer is re-pointed: the image entry in
-      `commentv3/surfaces.ts` writes it on a v3 create, as v2 did (built 2026-11-04, release 1, not
-      deployed). The judge gate and `getJudgeCommentForImage` read CommentV3 since Phase 3
+      `commentv3/surfaces.ts` writes it on a v3 create, as v2 did (built 2026-11-04, release 1, deployed
+      by 2026-11-10). The judge gate and `getJudgeCommentForImage` read CommentV3 since Phase 3
 - [x] **comicChapter**: reads built 2026-11-03 (`CommentSection` on the comics page keyed by
       `ComicChapter.id`; `getChapterThread` removed). `createChapterComment` is removed and chapter
       comments write through the `commentv3` mutations, with block-hide resolving the chapter's
-      owner through its project (decided 2026-10-30; built 2026-11-05, release 2, not deployed)
+      owner through its project (decided 2026-10-30; built 2026-11-05, release 2, deployed by 2026-11-10)
 - [ ] **crucible**: `getCommentThreadCrucibleId` + `new-crucible-comment` notification
 - [ ] **storyline**: `getCommentThreadStorylineId` / `getCommentStorylineId` +
       `new-storyline-comment` notification
-- [x] **model** (last): reads and writes in one release (built 2026-11-06, not deployed;
+- [x] **model** (last): reads and writes in one release (built 2026-11-06, deployed by 2026-11-10;
       `docs/plans/comments-v3-model-flip.md`). The masonry cards and thread dialog read
       `commentv3` and every write goes through it; the v1 `comment` router is deleted. The model
       surface gates reads on the model's visibility and writes on `Model.locked`,
@@ -628,7 +628,7 @@ The old-row sync stayed until Phase 5, which removed it.
 
 ## Phase 5 — Post-flip cleanup
 
-- [ ] One-off purge of the old-table orphans the backfill skipped (found 2026-10-21; the FK
+- [x] One-off purge of the old-table orphans the backfill skipped (found 2026-10-21; the FK
       cascades predate them, nothing renders them, and the teardown would drop them anyway, so
       this only tidies the old side before Phase 6): v2 comments whose `Thread` row is gone (with
       their reactions, report links and the reply threads hanging off them), the dead-parent reply
@@ -663,7 +663,8 @@ The old-row sync stayed until Phase 5, which removed it.
       reply; with the mirror dropped, deleting one would remove only the old copies, not the v3
       rows, so those can be decided by hand or left for the Phase 6 drops. The `unmirrored` report
       went with the backfill endpoint, so re-run step 1 afterwards: `comments`, `reply_threads`,
-      `dead_parent_threads` and `v1_dead_parent` read zero
+      `dead_parent_threads` and `v1_dead_parent` read zero. Done on prod 2026-11-10: all four read
+      zero; `dead_parent_mirrored` is left for the Phase 6 drops
 
 (The read-side re-points that used to live here run in Phase 3 — see above. The purge above is
 safe at any time; everything below requires old write paths to be gone.)
@@ -675,7 +676,7 @@ Notifications:
       three model-page types, or a `new-thread-response`/`new-mention` with no `threadType`) by
       `legacyV1Id`, anything else by id (permanent shim)
 - [ ] Verify the detail fetcher against real historical notification rows of each version
-- [ ] Consolidate the per-entity notification queries into one parameterized builder — **no longer
+- [x] Consolidate the per-entity notification queries into one parameterized builder — **no longer
       optional**: one builder is one place the mute filter can go missing, instead of 14. Moved to
       Phase 5.5 (below)
 
@@ -683,15 +684,16 @@ Event-engine / metrics:
 
 - [x] CDC handler `comment-v3.ts` counts the comments of every surface in its `SURFACES` map
       (crucible and storyline deliberately not counted, as before); `comment-v2.ts`,
-      `COMMENT_V3_SURFACES` and its parity test are removed (Phase 5, built 2026-11-09, not
-      deployed; deploy the event engine with the main app). Code built 2026-10-29: `REPLICA IDENTITY FULL` (`scripts/sql/replica-identity.sql`),
+      `COMMENT_V3_SURFACES` and its parity test are removed (Phase 5, built 2026-11-09, deployed
+      by 2026-11-10; deploy the event engine with the main app). Code built 2026-10-29: `REPLICA IDENTITY FULL` (`scripts/sql/replica-identity.sql`),
       `public.CommentV3` in `apps/event-engine/src/config/index.ts` (the connector's
       `table.include.list`; tables are added to the publication by hand),
       `postgres.CommentV3` in `scripts/create-kafka-topics.ts`. CDC live in prod 2026-11-02:
       generated columns published, `REPLICA IDENTITY FULL`, table in the publication. Apply any
       change only through the script: without the published generated columns, Postgres 18
       refuses every write to the table
-- [ ] `ModelMetric.commentCount` stays **distinct commenters** — verify post-cutover
+- [x] `ModelMetric.commentCount` stays **distinct commenters** — verified on prod 2026-11-10, after
+      the batch-range fix (#8409) and its recount: every row matches a live distinct-commenter count
 - [ ] Comment-count event continuity verified (feeds `update-user-score.ts`, search indexes,
       stat caches); full search reindex only if a count source moved discontinuously
 - [ ] ClickHouse tracking sends explicit entityType + comment id; readers match old
@@ -700,41 +702,41 @@ Event-engine / metrics:
 
 Main app cleanup:
 
-- [ ] Unified exclusion helper (hidden/blocked/blockedBy + owner exemption) replaces the v1/v2
+- [x] Unified exclusion helper (hidden/blocked/blockedBy + owner exemption) replaces the v1/v2
       copies. Moved to Phase 5.5 (below)
 - [x] Reaction enum/controller collapse: `'commentOld'` removed with the model flip (built 2026-11-07)
 - [x] `ReportEntity` collapse; `ReportModal.tsx`: `comment` and `commentV2` are removed and new
-      reports on them are refused (Phase 5, built 2026-11-09, not deployed; old report rows keep their
+      reports on them are refused (Phase 5, built 2026-11-09, deployed by 2026-11-10; old report rows keep their
       type). The ClickHouse `reports.entityType` enum keeps `commentV3 = 22`
       (`2026-10-29-comment-v3-report-entity.sql`)
-- [ ] `goodContent.reward.ts` `typeToTable`, `src/utils/buzz.ts` labels,
-      `src/utils/string-helpers.ts` entries: they name the `CommentV2` Buzz entity type, so they move
-      with it (Group B, below)
+- [x] `goodContent.reward.ts` `typeToTable`, `src/utils/buzz.ts` labels,
+      `src/utils/string-helpers.ts` entries: they name the `CommentV2` Buzz entity type, which stays
+      (Group B, below)
 - [x] `resourceReview.service.ts` drops its eager `thread: { create: {} }` on review creation, and
-      a review's comment count reads CommentV3 (Phase 5, built 2026-11-09, not deployed)
+      a review's comment count reads CommentV3 (Phase 5, built 2026-11-09, deployed by 2026-11-10)
 - [ ] `strikes.tsx` URL map (+ fix its pre-existing dead `/comments/<id>` link)
 - [x] Mute UI ported: per-comment overflow item (`CommentsV3/CommentItem.tsx`) and section mute
-      (`CommentsV3/useSectionMute.tsx`), on `commentv3` (built 2026-11-05, release 2, not deployed)
+      (`CommentsV3/useSectionMute.tsx`), on `commentv3` (built 2026-11-05, release 2, deployed by 2026-11-10)
 - [ ] Mute copy says "thread": restate for exact subtree semantics
 - [x] `commentv2.router` mute procedures move to the v3 router, keeping one shared rate-limit
-      budget (`commentv3:mute`, was `commentv2.mute`; done early: built 2026-11-05, release 2, not deployed)
+      budget (`commentv3:mute`, was `commentv2.mute`; done early: built 2026-11-05, release 2, deployed by 2026-11-10)
 - [x] Mod endpoints `bulk-delete`/`remove-as-tos`/`restore-from-tos` take `commentIds` (one list of
-      CommentV3 ids) and return `{ deleted }` / `{ comments }` (Phase 5, built 2026-11-09, not
-      deployed; deploy the moderator app with the main app)
+      CommentV3 ids) and return `{ deleted }` / `{ comments }` (Phase 5, built 2026-11-09, deployed
+      by 2026-11-10; deploy the moderator app with the main app)
 
 - [x] `src/server/common/thread-chain.ts` deleted: `throwIfThreadChainLocked` went with the v2
       write path (built 2026-11-05, release 2); `block-check.service.ts` and
-      `block-hide-comments.service.ts` read CommentV3 alone (Phase 5, built 2026-11-09, not deployed)
+      `block-hide-comments.service.ts` read CommentV3 alone (Phase 5, built 2026-11-09, deployed by 2026-11-10)
 
 Moderator app cleanup (reads moved in Phases 3 and 4; this is the write/UX side):
 
 - [x] `report-entities.ts` drops the old `Comment`/`CommentV2` entries, leaving the `CommentV3` one;
-      the comment queue is `/reports/comment` (Phase 5, built 2026-11-09, not deployed)
+      the comment queue is `/reports/comment` (Phase 5, built 2026-11-09, deployed by 2026-11-10)
 - [x] `entity-url.ts` single builder (`commentUrl`); `CommentsPanel.svelte` single list
 - [x] `queue-thresholds.ts` key migration (`report:commentV3` reads the `comments` thresholds);
       `src/lib/reports.ts` labels
-- [ ] User Lookup's comment count and ToS/hidden flags cover every surface (built 2026-11-09, not
-      deployed); left: tell the mod team the counts rise
+- [ ] User Lookup's comment count and ToS/hidden flags cover every surface (built 2026-11-09, deployed
+      by 2026-11-10); left: tell the mod team the counts rise
 - [ ] Hand-off: moderator-DB `ModerationQueueMetrics.Comment/CommentV2` columns → external job owner
 
 Tooling / tests:
@@ -742,7 +744,7 @@ Tooling / tests:
 - [x] `scripts/local-dev/gen_seed.ts` rewritten for new tables (Phase 5, built 2026-11-09)
 - [ ] ~20 test files' mock shapes updated; SQL-assertion tests (`reports.sql.test.ts`,
       `reports.queries.explain.test.ts`) re-authored; `tests/preview-engagement.spec.ts` green. Done
-      (built 2026-11-05 and 2026-11-09, not deployed): the mock shapes and the SQL-assertion tests,
+      (built 2026-11-05 and 2026-11-09, deployed by 2026-11-10): the mock shapes and the SQL-assertion tests,
       and the Playwright specs (`tests/example.spec.ts`, `tests/preview-engagement.spec.ts`) call
       `commentv3.create`/`delete`. Left: run the Playwright specs green
 
@@ -760,21 +762,40 @@ test with its fixture.
 
 Refactors with no behaviour change, each with its own regression check:
 
-- [ ] One parameterized builder for the per-entity comment notification queries, verified by a
-      before/after shadow comparison on a prod snapshot
-- [ ] One exclusion helper (hidden, blocked, blocked-by, owner exemption) shared by the readers
+- [x] One parameterized builder for the per-entity comment notification queries, verified by a
+      before/after shadow comparison on a prod snapshot. `entityOwnerCommentQuery` in
+      `comment.notifications.ts` builds the 14 types addressed to the commented entity's owner
+      (top-level comments, and the model and 3D-model replies); the reply and thread types keep
+      their own queries. On the prod replica (2026-11-10, a 30-day window) each type returned the
+      same rows before and after. One deliberate difference: `new-review-response` now also
+      requires the review author's id > 0, as every other owner type does
+- [x] One exclusion helper (hidden, blocked, blocked-by, owner exemption) shared by the readers:
+      `getCommentExcludedUserIds` (`comment-exclusions.service.ts`), which the section, replies
+      and thread reads all take through `viewerFor` in `commentv3.controller.ts`; the v1/v2
+      copies went with Phase 5
 
 ## Deferred after Phase 5 (Group B)
 
-Still named for `CommentV2` after the Phase 5 PR, each needing a data or config change first:
+Names still carrying `CommentV2` after the Phase 5 PR. None blocks Phase 6: each lives outside the
+old Postgres tables.
 
-- [ ] ClickHouse `CommentV2_*` events: `reactions.type` is an enum with no CommentV3 value, and a
-      materialized view reads it, so the rename is a ClickHouse migration
-- [ ] Event points' `CommentV2:` source keys (`events/points/hooks.ts`)
-- [ ] Buzz entity type `'CommentV2'`: `goodContent.reward.ts`, the `src/utils/buzz.ts` and
-      `src/utils/string-helpers.ts` labels
-- [ ] `text-scan/mode.ts`'s fallback from `CommentV3` to the stored `CommentV2` rollout: give
-      `CommentV3` its own rollout first, or comment scanning stops
+- [ ] `text-scan/mode.ts`'s fallback from `CommentV3` to the stored `CommentV2` rollout, the one
+      name that changed behaviour. `CommentV3` has its own rollout on prod since 2026-11-10 (the
+      same 100/100 it read through the fallback), and the Phase 5.5 PR removes the fallback
+      (`rolloutFor`, the `CommentV2` read in `readTextScanRollouts`, the `hDel` in
+      `setTextScanRollout`). Left: delete the stale `Comment` and `CommentV2` fields of
+      `system:text-scan:modes` once it deploys. Closing condition: `CommentV2` greps empty in `text-scan/mode.ts` and `prompt.ts`, and the hash has
+      a `CommentV3` field and no `Comment` or `CommentV2` field
+
+Kept as permanent external labels (decided 2026-11-10): each names stored history in another
+system, so a rename would split that history across two names and every reader would have to
+accept both.
+
+- [x] ClickHouse `CommentV2_*` events: `reactions.type` keeps its `CommentV2` values, and the
+      materialized view reading it is untouched
+- [x] Event points' `CommentV2:` source keys (`events/points/hooks.ts`)
+- [x] Buzz entity type `'CommentV2'`: `goodContent.reward.ts` (with its `CommentV3` special case),
+      the `src/utils/buzz.ts` and `src/utils/string-helpers.ts` labels
 
 ## Phase 6 — Contract (teardown)
 
@@ -786,9 +807,10 @@ per-surface UI mounts). Remove it before the table drops below. Closing conditio
 symbol greps empty in `src/`, `apps/` and `scripts/` (for an item that moves or loses only an arm,
 the named arm is gone), and the transition-only tests are gone with them.
 
-After the last surface's write flip has soaked (all items below except the Kafka topics, the
-`goodContent.reward.ts` special case and `mode.ts`'s rollout fallback were removed with Phase 5,
-built 2026-11-09, not deployed; `docs/plans/comments-v3-phase5.md`):
+After the last surface's write flip has soaked (most items below were removed with Phase 5, built
+2026-11-09 and deployed 2026-11-10, `docs/plans/comments-v3-phase5.md`, or, for `mode.ts`'s rollout
+fallback, Phase 5.5; what is left is named in each item's "Left:", and the `goodContent.reward.ts`
+special case stays with the `CommentV2` Buzz entity type, Group B):
 
 - [x] Old-row sync: `syncOldRows` in `commentv3/write.service.ts` and its callers. With it and the
       reverse copy gone there is no rollback path to the old tables
@@ -799,10 +821,10 @@ built 2026-11-09, not deployed; `docs/plans/comments-v3-phase5.md`):
       The v2 arm of `useCommentMutations.ts` and the report-entity pick in `CommentItem.tsx` went
       in release 2
 - [x] Old-endpoint refusal: `isV3WriteTarget`, `V3_WRITE_TARGET_MESSAGE`, `throwIfV3WriteTarget`
-      and its call sites (done early: built 2026-11-05, release 2, not deployed, with the `commentv2` writes they guarded)
+      and its call sites (done early: built 2026-11-05, release 2, deployed by 2026-11-10, with the `commentv2` writes they guarded)
 - [x] Thread lock on the v3 router: `toggleSectionLock` (moderator-only in its handler) and
       `getSectionLock` on `commentv3`, `CommentsV3/ToggleLockComments` moved onto them, and
-      `toggleLockCommentsThread` / `getCommentsThreadDetails2` deleted (done early: built 2026-11-05, release 2, not deployed)
+      `toggleLockCommentsThread` / `getCommentsThreadDetails2` deleted (done early: built 2026-11-05, release 2, deployed by 2026-11-10)
 - [x] Reverse copy: `comment-v3-reverse-copy.service.ts`, the `reverse*` steps of
       `api/admin/temp/comment-v3-backfill.ts`, and `comment-v3-reverse-copy.sql.behavior.test.ts`
 
@@ -817,12 +839,13 @@ With the old tables (before the drops below):
       `reaction.controller.ts`'s CommentV2 tracking read; `hasV3SurfaceTwinSql` and its
       exclusions; the `CommentTopic` delete ahead of an article (the entity cascade covers it); the
       reverse copy's `removedByAuthor` carry. Left: the `goodContent.reward.ts` `CommentV3` special
-      case (Group B, with the Buzz entity type) and the `removedByAuthor` columns (a migration)
+      case (stays with the `CommentV2` Buzz entity type, Group B) and the `removedByAuthor` columns (a migration)
 - [ ] Text-scan: removed in Phase 5 — `comment.profile.ts` and `comment-v2.profile.ts` with the
       `Comment`/`CommentV2` entity types, their cases in `csam-hold-decision.ts` and the Clavata
       cutover set, and the scam adapter's `commentsV2` cleanup kind (now `comments`; a stored
-      `commentsV2` record still restores, until the hand-run SQL rewrites it). Left: `mode.ts`'s
-      fallback from `CommentV3` to the `CommentV2` rollout (give `CommentV3` its own first; Group B)
+      `commentsV2` record still restores; the hand-run SQL rewrote the stored ones on 2026-11-10). `mode.ts`'s
+      fallback from `CommentV3` to the `CommentV2` rollout went in Phase 5.5 (Group B tracks deleting
+      the stale Redis fields)
 - [ ] Event engine: removed in Phase 5, in one release — `comment-v2.ts` and its
       `handlers/index.ts` entry, `COMMENT_V3_SURFACES` and
       `src/server/common/__tests__/comment-v3-surfaces.parity.test.ts`; `public.Comment`/`public.CommentV2`
