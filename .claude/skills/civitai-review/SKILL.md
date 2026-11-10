@@ -24,15 +24,23 @@ add is Civitai-specific: *which* service, *which* component, *which* trap.
 
 ## 0. Recording, the PR and its base — before the review worktree
 
-**Recording is on whenever the `hq` CLI works.** Nothing needs configuring. Check once:
+**Recording is on whenever your `hq` token can record.** Nothing needs configuring. Check once:
 
 ```bash
-hq whoami        # exit 0: signed in, so record every lane you run (step 3a)
+hq --json whoami | jq -e '.token.scopes | any(. == "ack" or . == "bot" or . == "admin")'
+# true (exit 0): record every lane you run (step 3a)
 ```
 
-- `hq` not on PATH, or a non-zero exit (4: no token): review without recording, and **say so**.
+- `hq` not on PATH, a non-zero `whoami` exit (4: no token), or `false` (exit 1): review without
+  recording, and **say so**. `whoami` alone also succeeds for a `recordings` or `read` token, and
+  `record` needs `ack` or higher.
 - Only the HQ MCP tools, no CLI: the same. `hq pr-review record` has no MCP equivalent; it reads the
   lane files from the local clone.
+- The write grant on the record collections shows only at `record start` (a `403`), which needs a PR
+  number. With no PR yet, step 0 opens the draft first; if `start` then refuses, say that the draft
+  was opened for recording and nothing was recorded.
+
+Without recording, step 0 never pushes and never opens a PR for recording's sake.
 
 A recorded lane is imported by the hosted review instead of being run again there (correctness always
 re-runs hosted). An unrecorded local review means every lane runs twice on the shared usage, or HQ
@@ -43,35 +51,50 @@ Nothing here writes yet:
 
 ```bash
 git fetch origin
-gh pr view --json number,baseRefName,headRefName,headRefOid,isDraft,author   # none: no PR yet
+gh pr view --json number,state,baseRefName,headRefName,headRefOid,isDraft,author   # none: no PR yet
 git branch --show-current
 git status --porcelain
 ```
 
+`gh pr view` also finds a merged or closed PR for the branch. Only `state` `OPEN` is a usable PR.
+
+**What step 0 would write**, decided before anything runs. `<base>` is `baseRefName`, or the branch
+you will open the draft against; `<branch>` is `headRefName`, or the current branch with no PR:
+
+- Ready PR (`isDraft` false): nothing.
+- Draft: a rebase when `git rev-list --count HEAD..origin/<base>` is not 0, then a push when `HEAD`
+  differs from `headRefOid`.
+- No PR yet: a rebase when that count is not 0; when recording, also a push and a draft PR.
+
 🔴 **Stop and ask, changing nothing, when any of these holds.** This list gates EVERY write in step 0
 (the rebase, the push, opening the draft), so check all of it first:
 
-- `git status --porcelain` prints anything. Checked before any rebase, so `rebase.autoStash` never
-  stashes: the stash is shared by every worktree of the clone. Uncommitted changes cannot be recorded
-  either: ask whether to commit them, or to review without recording.
+- **The PR is merged or closed:** `state` is `MERGED` or `CLOSED`. Never push or record onto it.
+- **Step 0 would rebase or push, and `git status --porcelain` prints anything.** Checked before any
+  rebase, so `rebase.autoStash` never stashes: the stash is shared by every worktree of the clone.
+  When step 0 writes nothing, a dirty tree is no stop: the review may include uncommitted changes
+  (step 1). No commit holds them, so a review that includes them cannot be recorded: review without
+  recording, and say so.
 - `HEAD` is detached: `git branch --show-current` prints nothing.
 - **A PR exists and it is not yours:** the current branch is not `headRefName`, or `author.login` is
   not `gh api user -q .login`.
-- **No PR yet, and the current branch is not provably yours:** it is the default branch
-  (`gh repo view --json defaultBranchRef -q .defaultBranchRef.name`), the base you would open the PR
-  against, `main` or `master`, or a branch that an open PR uses as its base
-  (`gh pr list --base <branch> --json number -q length` is not 0). Never push onto a shared branch.
+- **No PR yet, and the branch is shared:** it is the default branch
+  (`gh repo view --json defaultBranchRef -q .defaultBranchRef.name`), `<base>`, `main` or `master`.
+- **A branch step 0 would rebase or push is the base of an open PR**, draft or not:
+  `gh pr list --base <branch> --json number -q length` is not 0. Rewriting it moves every child PR.
+- **No PR yet, and the branch is not provably yours.** A pushed branch can be a teammate's, so it is
+  yours only when nobody else has a copy (`origin/<branch>` does not exist) or every commit on it is
+  yours: `git log --format=%ae origin/<base>..HEAD | grep -cvxF "$(git config user.email)"` prints 0.
 - **The remote branch has commits `HEAD` lacks:** `git rev-list --count HEAD..origin/<branch>` is not 0
   (skip this when `origin/<branch>` does not exist yet, and on a ready PR, which step 0 never pushes).
   A teammate's push, or a reviewer's GitHub "Commit suggestion" click, lands there, and a rebase plus
   force-push would silently drop it.
 
-**Stale base.** Count what the head lacks: `git rev-list --count HEAD..origin/<base>`, where `<base>` is
-`baseRefName`, or the branch you will open the draft against.
+**Stale base.** The count above is what the head lacks.
 
-- **Ready PR (`isDraft` false): no rebase and no push.** Say how many commits behind its base it is,
-  and review it as is. The head under review is `headRefOid`; if your local `HEAD` differs, say that
-  the unpushed commits are not in this review.
+- **Ready PR: no rebase and no push.** Say how many commits behind its base it is, and review it as
+  is. The head under review is `headRefOid`; if your local `HEAD` differs, say that the unpushed
+  commits are not in this review.
 - **Draft, or no PR yet:** when the count is not 0, rebase:
 
   ```bash
@@ -90,6 +113,9 @@ git push --force-with-lease=<headRefName>:<headRefOid> origin HEAD:<headRefName>
 git push -u --force-with-lease=<branch>:<oid or empty> origin HEAD:<branch>
 ```
 
+A rejected push (`stale info`, or any non-zero exit) means the branch moved after you checked it:
+stop and ask. Never retry with a bare `--force-with-lease` or with `--force`.
+
 **No PR yet, and recording: then open a draft**, so the lanes record against its number. Base it per
 `CLAUDE.md` (the integration branch, `main` or `feat/…`, never another PR's branch). This repo is
 public: the title and body hold no infra details and no internal notes, as for any PR body here.
@@ -101,8 +127,10 @@ gh pr create --draft --head <branch> --base <base> --title "<title>" --body "<wh
 **Recording must start before a hosted round can.** The hosted review skips drafts, and can import
 only runs that have started.
 
-- Ready PR: step 0 pushed nothing, so step 3a's `record start` comes before anything that could
-  start a round.
+- Ready PR: the hosted review starts a round about 2 minutes after each push to a ready PR, so
+  `headRefOid` has usually been reviewed already, and a record at it will usually not be imported. It
+  is still HQ's record of this review: record it, and say that. For a fix-loop push, start the record
+  BEFORE the push (step 3a).
 - Draft: `record start` comes BEFORE the PR is marked ready. This skill never marks it ready: the
   draft stays a draft until the user says so (`gh pr ready <n>`).
 
@@ -113,7 +141,15 @@ Go straight on to 0a and step 3a's `start`.
 ## 0a. Set up the review worktree
 
 Review runs in its own throwaway worktree, detached at the head under review, and **nothing is written
-to it** — the implementer owns the tree the code was authored in.
+to it** — the implementer owns the tree the code was authored in. On a ready PR that head is
+`headRefOid` exactly, never the local branch; otherwise it is `HEAD` after step 0. Every command
+below names the review worktree by its absolute path, so none of them can act on whatever directory
+the shell is in:
+
+```bash
+git -C <review worktree> checkout --detach <head under review>
+WT=$(git -C <review worktree> rev-parse --show-toplevel)    # absolute
+```
 
 🔴 **If that head is based on an integration branch rather than `main`, this skill and its five agents
 do not exist in the tree.** They are tracked in the repo, so a worktree at a commit predating their
@@ -123,19 +159,22 @@ the normal case here, not the exception, so expect this rather than treating it 
 failure is upstream of anything this file can say — by the time you could read a workaround here, you
 would already have found the file.
 
-**When recording, always bring them in from `main`, and note the commit:**
+**When recording, always bring the lane definitions in from `main`, and note the commit:**
 
 ```bash
-git checkout origin/main -- .claude
-AGENTS_REF=$(git rev-parse origin/main)
+AGENTS_REF=$(git -C "$WT" rev-parse origin/main)
+git -C "$WT" checkout "$AGENTS_REF" -- .claude/agents
 ```
 
-The lanes then run under the default-branch definitions, which is the version the hosted review
-matches on, and a PR that edits a lane cannot review itself under its own edit. `record start`
-refuses a lane whose file in the tree differs from its bytes at `$AGENTS_REF`.
+Only `.claude/agents`: the lanes read the rest of the head's own `.claude/**` (rules, hooks, skills),
+which is what a PR that edits them changed. The lanes run under the default-branch definitions, which
+is the version the hosted review matches on, and a PR that edits a lane cannot review itself under its
+own edit. `record start` refuses a lane whose file in the tree differs from its bytes at `$AGENTS_REF`.
 
-**Not recording, and the head is based on `main`:** skip the checkout. The agents are already in the
-tree. Otherwise bring them in from `main` as above before spawning anything.
+**The head predates the skill** (`git -C "$WT" cat-file -e HEAD:.claude/skills/civitai-review/SKILL.md`
+fails): bring in all of `.claude` instead, recording or not, with `AGENTS_REF` set as above:
+`git -C "$WT" checkout "$AGENTS_REF" -- .claude`. **Not recording, and the head has the skill:** skip
+the checkout. The agents are already in the tree.
 
 The tree is detached and throwaway, so a dirty `.claude` in it costs nothing and can never reach a PR.
 Do not install the agents into `~/.claude/` instead: that is a second copy free to drift from the
@@ -143,16 +182,20 @@ repo's, and the repo's is the authoritative one.
 
 ⚠️ **That checkout STAGES the files, so the next `git checkout --detach` aborts** with local changes that
 would be overwritten — which is how you find out, halfway through moving the tree to the next review.
-Unstage them and put `.claude` back to the head's own files first (this also undoes a lane file,
-such as `comment-review.md`, that the checkout overwrote):
+Put `.claude` back to the head's own files first. This restores a lane file the checkout overwrote,
+such as `comment-review.md`, and deletes the ones it added, only under `$WT`:
 
 ```bash
-git reset -q
-git checkout -- .claude
-git ls-files -z --others --exclude-standard -- .claude | xargs -0 rm -f
-git checkout --detach <next-sha>
-git checkout origin/main -- .claude    # re-apply, if the new head predates the skill
+git -C "$WT" reset -q
+git -C "$WT" checkout -- .claude
+git -C "$WT" ls-files -z --others --exclude-standard -- .claude | xargs -0 -r -I{} rm -f -- "$WT/{}"
+git -C "$WT" checkout --detach <next-sha>
+# then this section's checkout again, for the new head
 ```
+
+The third line is `git clean -f -- .claude` written so that a guard that blocks `git clean` lets it
+through. 🔴 Never drop `"$WT/"` from it: `ls-files` prints paths relative to `$WT`, and a bare `rm`
+resolves them against the shell's directory, which deletes another checkout's files.
 
 ## 1. Scope the segment
 
@@ -174,7 +217,7 @@ git status --short
 
 A segment is one slice of work — a page, a router and its service, a feature. If the diff spans several
 unrelated slices, review them one at a time; findings from a mixed diff are hard to act on. Include
-uncommitted changes: the review exists to run *before* the commit.
+uncommitted changes: the review exists to run *before* the commit. Such a review is not recorded (step 0).
 
 Also locate the **intent doc** now, so the intent reviewer isn't the one to discover it's missing:
 `<INTENT_DIR>/<feature>.md`, where `INTENT_DIR` comes from your own instructions or the primary
@@ -384,13 +427,13 @@ permanent. They live in the conversation, and in HQ when recording (step 3a), un
 ## 3a. Record the review (when step 0 turned recording on)
 
 Write the record ONLY with `hq pr-review record`. It derives the keys the hosted review matches on.
-Run it in the review worktree, where the lane files are.
+Point it at the review worktree (`--repo-dir "$WT"`), where the lane files are.
 
 1. **Before spawning the lanes**, one call for every lane you will spawn:
 
    ```bash
-   hq pr-review record start --repo civitai/civitai --pr <n> --head "$(git rev-parse HEAD)" \
-     --lanes <lane,lane,…> --agents-ref "$AGENTS_REF" --repo-dir "$(pwd)"
+   hq pr-review record start --repo civitai/civitai --pr <n> --head "$(git -C "$WT" rev-parse HEAD)" \
+     --lanes <lane,lane,…> --agents-ref "$AGENTS_REF" --repo-dir "$WT"
    ```
 
    It prints one `run <id> running <lane> …` line per lane: keep each lane's run id. A non-zero exit
@@ -413,6 +456,21 @@ judgement. A push after the review is a new head, and nothing recorded at the ol
 each fix-loop or re-targeted re-run is a new `start` at the new head, with `$AGENTS_REF` taken again
 after step 0's fetch.
 
+🔴 **A fix-loop push to a ready PR: `start` BEFORE the push.** The hosted review starts a round about
+2 minutes after each push to a ready PR, so a record started after the push will usually not be
+imported, and every lane runs twice. In this order:
+
+1. The implementer commits the fix and does not push yet.
+2. With every lane idle, move the review worktree to that new local commit: step 0a's reset lines
+   with `<next-sha>` = `<new sha>`, then 0a's checkout again, with `$AGENTS_REF` taken after a fresh
+   `git fetch origin`.
+3. `record start` at `<new sha>`, for the lanes you will re-run.
+4. Only then does the implementer push, and it must be exactly `<new sha>`: a record at any other
+   head matches nothing.
+5. Run those lanes, and `finish` each as above.
+
+On a draft the order does not matter, as long as `start` comes before the PR is marked ready.
+
 When the user marks the draft ready, the hosted round imports the recorded lanes, if their head is
 still the PR's head.
 
@@ -430,7 +488,8 @@ message or file in this repo.
 2. **The implementer fixes them** — a different agent or a human, not the reviewer.
 3. Back to the reviewer, **against the updated diff only** — not a fresh read of the whole segment.
    Re-reviewing everything each round is slow and re-litigates settled findings. Re-run only the lanes
-   whose findings were touched, and launch those together in one message as in step 2.
+   whose findings were touched, and launch those together in one message as in step 2. When
+   recording on a ready PR, that re-run's `record start` comes before the implementer pushes (step 3a).
 4. Iterate.
 
 🔴 **Narrowing on re-review narrows *which lanes run*, never *what each running lane sees*.** Give every
@@ -474,15 +533,15 @@ Then re-target only the lanes whose subject those files touch — the same rule 
 
 **Move the tree only when every lane is idle**, and account for every lane by name first, per step 2 — an
 idle lane that never reported is still holding a read you are about to invalidate. That is the safe
-moment and the only one. After the checkout, re-apply step 0a:
+moment and the only one. Reset `.claude` and move it as in step 0a, then re-apply 0a's checkout:
 
 ```bash
-git checkout --detach origin/<branch>
-git checkout origin/main -- .claude    # the branch still predates the skill
+git -C "$WT" checkout --detach origin/<branch>     # after 0a's three reset lines
+git -C "$WT" checkout "$AGENTS_REF" -- .claude/agents   # whichever checkout 0a calls for
 ```
 
-Without that second line the agents disappear again mid-review, and the next fan-out fails to resolve
-them.
+Without that second line the agents disappear again mid-review (or, when recording, `record start`
+refuses the lanes), and the next fan-out fails to resolve them.
 
 ## 5. Close out — the implementer's step, not the reviewer's
 
