@@ -47,6 +47,11 @@ describe('the orchestrator service token as a bearer credential', () => {
     expect(dbMock.dbWrite.apiKey.findFirst).not.toHaveBeenCalled();
   });
 
+  it('skips the lookup for the token with surrounding whitespace, as the lookup trims it', async () => {
+    expect(await getSessionFromBearerToken(` ${SERVICE_TOKEN} `)).toBeNull();
+    expect(dbMock.dbWrite.apiKey.findFirst).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['one character off', `${SERVICE_TOKEN.slice(0, -1)}x`],
     ['with an extra character', `${SERVICE_TOKEN}x`],

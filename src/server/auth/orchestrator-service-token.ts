@@ -7,8 +7,8 @@ const digest = (value: string) => createHash('sha256').update(value).digest();
 
 /**
  * Whether `value` is the configured orchestrator service token. Always false when the token is
- * unset or blank. Compared as fixed-length digests, so neither the content nor the length of the
- * configured token shapes the timing.
+ * unset or blank. Compared as fixed-length digests, so how the value relates to the configured
+ * token, including its length, does not shape the timing.
  */
 export function isOrchestratorServiceToken(value: string): boolean {
   const configured = env.ORCHESTRATOR_SERVICE_TOKEN;

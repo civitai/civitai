@@ -36,7 +36,7 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
   if (key.includes(':')) return null;
   // The orchestrator service token is not an API key; answer as for any unknown key without the
   // lookup.
-  if (isOrchestratorServiceToken(key)) return null;
+  if (isOrchestratorServiceToken(key.trim())) return null;
   const token = generateSecretHash(key.trim());
 
   const now = new Date();
