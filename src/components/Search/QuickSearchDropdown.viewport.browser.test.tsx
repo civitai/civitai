@@ -1,7 +1,8 @@
 // The harness loads no Mantine CSS; without it the dropdown is not positioned at all.
 import '@mantine/core/styles.css';
 import { describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
+import { useState } from 'react';
 
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -105,7 +106,7 @@ describe('QuickSearchDropdown option list and the viewport', () => {
     // 600px tall with the input ~280px down: neither side has room for the 300px list.
     const { scroller, dropdown } = await openListAt({ width: 1280, height: 600 }, 280);
 
-    expect(inViewport(dropdown)).toBe(true);
+    await expect.poll(() => inViewport(dropdown)).toBe(true);
 
     scroller.scrollTop = scroller.scrollHeight;
     await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -124,4 +125,45 @@ describe('QuickSearchDropdown option list and the viewport', () => {
     // The rows overflow it, so the list scrolls rather than growing.
     expect(scroller.scrollHeight).toBeGreaterThanOrEqual(HITS.length * ROW_HEIGHT);
   });
+});
+
+// The list is kept mounted between opens, so the room measured last time must not carry over: Mantine
+// picks the side by measuring the list at its current height.
+test('reopened after the input moves, the list takes the roomier side again', async () => {
+  await page.viewport(1280, 500);
+  let moveInput: (top: number) => void = () => undefined;
+  function Harness() {
+    const [top, setTop] = useState(230);
+    moveInput = setTop;
+    return (
+      <div style={{ paddingTop: top, width: 600 }}>
+        <QuickSearchDropdown
+          disableInitialSearch
+          supportedIndexes={['users']}
+          startingIndex="users"
+          showIndexSelect={false}
+          dropdownItemLimit={25}
+          placeholder="Search"
+          onItemSelected={() => undefined}
+        />
+      </div>
+    );
+  }
+  renderWithProviders(<Harness />);
+  const input = page.getByPlaceholder('Search');
+  const dropdown = () =>
+    page.getByRole('listbox').element().closest('.mantine-Popover-dropdown') as HTMLElement;
+
+  // Cramped on both sides: the list opens below, shrunk.
+  await input.click();
+  await expect.poll(() => dropdown().dataset.position).toBe('bottom');
+  await userEvent.keyboard('{Escape}');
+  await expect.element(page.getByRole('listbox')).not.toBeInTheDocument();
+
+  // Now ~256px below and ~292px above: the full list fits neither, and above is roomier.
+  await page.viewport(1280, 600);
+  moveInput(300);
+  await input.click();
+  await expect.poll(() => dropdown().dataset.position).toBe('top');
+  expect(inViewport(dropdown())).toBe(true);
 });
