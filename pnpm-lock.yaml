@@ -2438,7 +2438,7 @@ packages:
       next: ^12.1.4 || ^13 || ^14
 
   '@civitai/orchestration-client@0.2.2':
-    resolution: {tarball: https://registry.npmjs.org/@civitai/orchestration-client/-/orchestration-client-0.2.2.tgz}
+    resolution: {integrity: sha512-0+o+tzNQeBwXritaN3geJ3nsI1bQ2eyKX1FxnPqpRaUzSlQDTRYY1Uk287UxFjuLRvBjCs0MfJsmbJTSdJ/j7Q==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/sdk@0.24.0':
