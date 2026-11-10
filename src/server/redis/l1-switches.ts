@@ -1,4 +1,5 @@
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
+import { L1_CACHE_BYTE_BUDGETS, L1_SWITCHED_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 
 /**
@@ -14,14 +15,17 @@ import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withs
 
 const readBasicTagsLong = readFliptSwitch(() => FLIPT_FEATURE_FLAGS.BASIC_TAGS_L1_LONG_TTL);
 const readCosmetics = readFliptSwitch(() => FLIPT_FEATURE_FLAGS.COSMETICS_L1);
+const readTagIdsLarge = readFliptSwitch(() => FLIPT_FEATURE_FLAGS.TAG_IDS_FOR_IMAGES_L1_LARGE);
 
 let basicTagsLongGate = createCachedFlagGate(readBasicTagsLong);
 let cosmeticsGate = createCachedFlagGate(readCosmetics);
+let tagIdsLargeGate = createCachedFlagGate(readTagIdsLarge);
 
 /** Tests only: forget the cached flag reads so the next fetch re-reads Flipt. */
 export function resetL1SwitchesForTests() {
   basicTagsLongGate = createCachedFlagGate(readBasicTagsLong);
   cosmeticsGate = createCachedFlagGate(readCosmetics);
+  tagIdsLargeGate = createCachedFlagGate(readTagIdsLarge);
 }
 
 /** `basic-tags` L1 TTL in seconds: 30 (as before), or 300 with BASIC_TAGS_L1_LONG_TTL on. */
@@ -33,3 +37,31 @@ export const basicTagsLocalTtl = () =>
 /** `cosmetics2` L1 TTL in seconds: none (as before), or 60 with COSMETICS_L1 on. */
 export const COSMETICS_L1_TTL = 60;
 export const cosmeticsLocalTtl = () => (cosmeticsGate() ? COSMETICS_L1_TTL : undefined);
+
+/**
+ * `tag-ids-for-images` L1 tiers. Off (as before): 180s, 50k entries, its base byte budget. On
+ * (TAG_IDS_FOR_IMAGES_L1_LARGE): 600s, 200k entries, its switched byte budget. The switch changes the
+ * caps as well as the TTL because a feed process can insert more distinct image ids per TTL window
+ * than the base tier's entry cap holds: such a tier is capacity-bound, not TTL-bound (entries are
+ * evicted before they expire), and a longer TTL alone would change little. A flip rebuilds the L1
+ * empty at the other tier's caps (`localLimits`), so the larger one only exists while on.
+ */
+export const TAG_IDS_FOR_IMAGES_L1 = {
+  ttl: 180,
+  max: 50_000,
+  maxBytes: L1_CACHE_BYTE_BUDGETS.tagIdsForImages,
+} as const;
+export const TAG_IDS_FOR_IMAGES_L1_LARGE = {
+  ttl: 600,
+  max: 200_000,
+  maxBytes: L1_SWITCHED_BYTE_BUDGETS.tagIdsForImages,
+} as const;
+export const tagIdsForImagesLocalTtl = () =>
+  tagIdsLargeGate() ? TAG_IDS_FOR_IMAGES_L1_LARGE.ttl : TAG_IDS_FOR_IMAGES_L1.ttl;
+export const tagIdsForImagesLocalLimits = (ttlSeconds: number) => {
+  const tier =
+    ttlSeconds === TAG_IDS_FOR_IMAGES_L1_LARGE.ttl
+      ? TAG_IDS_FOR_IMAGES_L1_LARGE
+      : TAG_IDS_FOR_IMAGES_L1;
+  return { max: tier.max, maxBytes: tier.maxBytes };
+};
