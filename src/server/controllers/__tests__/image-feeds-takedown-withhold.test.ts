@@ -72,6 +72,31 @@ const surfaces = [
         ctx: ctx(user, subject),
       }).then((result) => result.items),
   ],
+  // Post 100 is on version 10 and post 200 on version 20; review n is of version 10n.
+  [
+    'image.getInfinite by post',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getInfiniteImagesHandler({
+        input: feedInput({ postId: versionId * 10 }),
+        ctx: ctx(user, subject),
+      }).then((result) => result.items),
+  ],
+  [
+    'image.getInfinite by a page of posts',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getInfiniteImagesHandler({
+        input: feedInput({ postIds: [versionId * 10] }),
+        ctx: ctx(user, subject),
+      }).then((result) => result.items),
+  ],
+  [
+    'image.getInfinite by review',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getInfiniteImagesHandler({
+        input: feedInput({ reviewId: versionId / 10 }),
+        ctx: ctx(user, subject),
+      }).then((result) => result.items),
+  ],
   [
     'image.getImagesAsPostsInfinite',
     (user?: User, subject?: unknown, versionId = 10) =>
@@ -103,6 +128,27 @@ beforeEach(() => {
     where: { id: { in: number[] } };
   }) => where.id.in.map((id) => ({ userId: OWNER, mode: modes[id] ?? null }))) as never);
   dbMock.dbRead.resourceReview.findMany.mockResolvedValue([] as never);
+  dbMock.dbRead.post.findMany.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: { in: number[] } };
+  }) => where.id.in.map((id) => ({ id, modelVersionId: id / 10 }))) as never);
+  dbMock.dbRead.resourceReview.findUnique.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: number };
+  }) => ({ modelVersionId: where.id * 10 })) as never);
+});
+
+describe('image.getInfinite by a single selector that cannot be resolved', () => {
+  it('serves another user no images of a post not yet found', async () => {
+    dbMock.dbRead.post.findMany.mockResolvedValue([] as never);
+    const { items } = await getInfiniteImagesHandler({
+      input: feedInput({ postId: 300 }),
+      ctx: ctx({ id: 99 }),
+    });
+    expect(items).toEqual([]);
+  });
 });
 
 describe.each(surfaces)('%s on a taken-down model', (_name, run) => {

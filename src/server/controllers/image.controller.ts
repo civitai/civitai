@@ -365,10 +365,8 @@ const galleryOwnerId = (ctx: Context) =>
   ctx.user && isSessionOrFullUserKey(ctx) ? ctx.user.id : undefined;
 
 /** Whether the request's model gallery is withheld from this viewer (see `isModelGalleryWithheld`). */
-const isGalleryWithheldFrom = (
-  ctx: Context,
-  input: { modelId?: number | null; modelVersionId?: number | null }
-) => (moderatorView(ctx) ? false : isModelGalleryWithheld(input, galleryOwnerId(ctx)));
+const isGalleryWithheldFrom = (ctx: Context, input: Parameters<typeof isModelGalleryWithheld>[0]) =>
+  moderatorView(ctx) ? false : isModelGalleryWithheld(input, galleryOwnerId(ctx));
 
 export const getImagesForModelVersionHandler = async ({
   input,

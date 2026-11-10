@@ -6147,21 +6147,7 @@ export async function bustPostVersionCache(postIds: number[]) {
   if (postIds.length) await bustTwice(() => postVersionCache().bust(postIds));
 }
 
-/**
- * The level a request's images may be served at when it selects them by a minor or SFW-only
- * model: the intersection of each such model's held gallery level, or undefined when none is held.
- * The model comes from the version and the review as well as `modelId`, because those pick the
- * images ahead of `modelId`.
- */
-export async function getHeldGalleryLevel({
-  modelId,
-  modelIds: namedModelIds = [],
-  modelVersionId,
-  modelVersionIds = [],
-  reviewId,
-  postId,
-  postIds = [],
-}: {
+type ImageModelSelector = {
   modelId?: number | null;
   modelIds?: number[];
   modelVersionId?: number | null;
@@ -6169,11 +6155,24 @@ export async function getHeldGalleryLevel({
   reviewId?: number | null;
   postId?: number | null;
   postIds?: number[] | null;
-}) {
-  // The version, review or post a single selector names must resolve, or nothing is served: one not
-  // yet on the replica can still be found by the image query. Lists (a hub's versions, a page of
-  // posts) are not held to that, so one deleted entry does not empty them; what is gone serves no
-  // images anyway.
+};
+
+/**
+ * The models a request selects images by: those it names, and those of the versions, review and
+ * posts it names, which pick the images ahead of `modelId`. Null when a single named version,
+ * review or post cannot be found: one not yet on the replica can still be found by the image
+ * query, so nothing may be served. Lists (a hub's versions, a page of posts) are not held to that,
+ * so one deleted entry does not empty them; what is gone serves no images anyway.
+ */
+async function resolveImageModelIds({
+  modelId,
+  modelIds: namedModelIds = [],
+  modelVersionId,
+  modelVersionIds = [],
+  reviewId,
+  postId,
+  postIds = [],
+}: ImageModelSelector) {
   const requiredVersionIds = new Set<number>();
   if (modelVersionId) requiredVersionIds.add(modelVersionId);
   if (reviewId) {
@@ -6181,7 +6180,7 @@ export async function getHeldGalleryLevel({
       where: { id: reviewId },
       select: { modelVersionId: true },
     });
-    if (!review) return 0;
+    if (!review) return null;
     requiredVersionIds.add(review.modelVersionId);
   }
   const listedVersionIds = new Set(modelVersionIds);
@@ -6189,7 +6188,7 @@ export async function getHeldGalleryLevel({
     const ids = new Set(postIds);
     if (postId) ids.add(postId);
     const posts = await postVersionCache().fetch([...ids]);
-    if (postId && !posts[postId]) return 0;
+    if (postId && !posts[postId]) return null;
     // A post's version is not required: the replica gets the version before its posts, so a version
     // missing behind a post it has is one deleted since, which leaves the post on no model.
     for (const id of ids) {
@@ -6203,9 +6202,20 @@ export async function getHeldGalleryLevel({
   if (modelId) modelIds.add(modelId);
   if (versionIds.size) {
     const versions = await versionModelCache().fetch([...versionIds]);
-    for (const id of requiredVersionIds) if (!versions[id]) return 0;
+    for (const id of requiredVersionIds) if (!versions[id]) return null;
     for (const version of Object.values(versions)) modelIds.add(version.modelId);
   }
+  return modelIds;
+}
+
+/**
+ * The level a request's images may be served at when it selects them by a minor or SFW-only
+ * model: the intersection of each such model's held gallery level, or undefined when none is held.
+ * 0 (nothing) when a model it names through a single selector cannot be resolved.
+ */
+export async function getHeldGalleryLevel(selector: ImageModelSelector) {
+  const modelIds = await resolveImageModelIds(selector);
+  if (!modelIds) return 0;
 
   // Bounded: a hub can name dozens of models, and each settings miss rebuilds from the database.
   const galleries: Awaited<ReturnType<typeof getGallerySettingsByModelId>>[] = [];
@@ -6222,19 +6232,13 @@ export async function getHeldGalleryLevel({
 }
 
 /**
- * Whether a request that selects images by a model or model version names a taken-down model the
- * viewer does not own. Its images are withheld; moderators are the caller's to exempt.
+ * Whether a request's images come from a taken-down model the viewer does not own, resolved as for
+ * the gallery hold, so a version, review or post selects them too. Withheld when a single selector
+ * cannot be resolved. Moderators are the caller's to exempt.
  */
-export async function isModelGalleryWithheld(
-  { modelId, modelVersionId }: { modelId?: number | null; modelVersionId?: number | null },
-  viewerId?: number
-) {
-  const modelIds = new Set<number>();
-  if (modelId) modelIds.add(modelId);
-  if (modelVersionId) {
-    const version = (await versionModelCache().fetch([modelVersionId]))[modelVersionId];
-    if (version) modelIds.add(version.modelId);
-  }
+export async function isModelGalleryWithheld(selector: ImageModelSelector, viewerId?: number) {
+  const modelIds = await resolveImageModelIds(selector);
+  if (!modelIds) return true;
   if (!modelIds.size) return false;
   const models = await dbRead.model.findMany({
     where: { id: { in: [...modelIds] } },
