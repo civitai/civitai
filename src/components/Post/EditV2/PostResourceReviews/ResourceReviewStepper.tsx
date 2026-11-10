@@ -150,6 +150,12 @@ export function ResourceReviewStepper({
     />
   );
 
+  const closeButton = (
+    <ActionIcon variant="subtle" color="gray" aria-label="Close" onClick={dialog.onClose}>
+      <IconX size={18} />
+    </ActionIcon>
+  );
+
   const rail = (
     <Stack ref={railRef} gap={2} w={250} p="sm" className="shrink-0 overflow-y-auto">
       {reviews.map((review, i) => (
@@ -175,9 +181,9 @@ export function ResourceReviewStepper({
 
   const body = (
     <Stack gap="md" p="md" className="min-w-0 flex-1 overflow-y-auto">
-      <Group justify="space-between" wrap="nowrap">
-        <Stack gap={6} className="flex-1">
-          {!isMobile && (
+      {!isMobile && (
+        <Group justify="space-between" wrap="nowrap">
+          <Stack gap={6} className="flex-1">
             <>
               {reviews.length <= MAX_SEGMENTS ? (
                 <Group gap={4} wrap="nowrap">
@@ -202,12 +208,10 @@ export function ResourceReviewStepper({
                 {reviews.length > MAX_SEGMENTS && ` · ${ratedCount} rated`}
               </Text>
             </>
-          )}
-        </Stack>
-        <ActionIcon variant="subtle" color="gray" aria-label="Close" onClick={dialog.onClose}>
-          <IconX size={18} />
-        </ActionIcon>
-      </Group>
+          </Stack>
+          {closeButton}
+        </Group>
+      )}
 
       <div>
         <Title order={3}>{current.modelName}</Title>
@@ -293,6 +297,8 @@ export function ResourceReviewStepper({
       justify="space-between"
       p="md"
       pb={isMobile ? 'calc(env(safe-area-inset-bottom) + 12px)' : undefined}
+      // Site-wide floating buttons sit bottom-right above dialogs on phones.
+      pr={isMobile ? 72 : undefined}
       className="shrink-0 border-0 border-t border-solid border-gray-3 dark:border-dark-4"
     >
       <Button variant="subtle" color="gray" onClick={advance} disabled={busy}>
@@ -323,9 +329,10 @@ export function ResourceReviewStepper({
           body: { padding: 0, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 },
         }}
       >
-        <Box p="md" pb={0}>
-          {picker}
-        </Box>
+        <Group p="md" pb={0} gap="xs" wrap="nowrap">
+          <Box className="min-w-0 flex-1">{picker}</Box>
+          {closeButton}
+        </Group>
         {body}
         {footer}
       </Drawer>
