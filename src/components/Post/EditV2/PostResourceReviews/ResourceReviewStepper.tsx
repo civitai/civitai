@@ -112,8 +112,12 @@ export function ResourceReviewStepper({
     const draft = normalizeComment(form.getValues('details'));
     if (draft !== normalizeComment(saved)) {
       setSaving(true);
-      const result = await saveDetails(currentId, draft);
-      setSaving(false);
+      let result;
+      try {
+        result = await saveDetails(currentId, draft);
+      } finally {
+        setSaving(false);
+      }
       if (result !== 'saved') return;
     }
     drafts.current.delete(currentId);

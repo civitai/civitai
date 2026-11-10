@@ -135,4 +135,27 @@ describe('ResourceReviewStepper', () => {
     await userEvent.type(page.getByLabelText('Comment'), 'Broke my seeds');
     await expect.element(nudge).not.toBeInTheDocument();
   });
+
+  test('Save & next stays on the resource when saving the comment fails', async () => {
+    await open();
+    await button('Recommend').click();
+    upsert.mockRejectedValueOnce(new Error('nope'));
+    await userEvent.type(page.getByLabelText('Comment'), 'Great detail');
+    await button('Save & next').click();
+
+    await expect.element(button('Save & next')).toBeEnabled();
+    await expect.element(page.getByRole('heading', { name: 'Cool LoRA' })).toBeVisible();
+    await expect.element(page.getByLabelText('Comment')).toHaveValue('Great detail');
+  });
+
+  test('Save & next with an unchanged comment moves on without saving again', async () => {
+    await open();
+    await button('Recommend').click();
+    await expect.element(button('Save & next')).toBeEnabled();
+    expect(upsert).toHaveBeenCalledTimes(1);
+    await button('Save & next').click();
+
+    await expect.element(page.getByRole('heading', { name: 'Other Model' })).toBeVisible();
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
 });

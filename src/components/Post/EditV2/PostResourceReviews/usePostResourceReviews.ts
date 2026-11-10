@@ -24,14 +24,14 @@ const setPending = (key: string, on: boolean) => {
 export const resetPendingForTests = () => {
   pending.clear();
   pendingVersion++;
-  syncFetch = null;
+  syncFetches.clear();
 };
 const subscribe = (l: () => void) => {
   listeners.add(l);
   return () => void listeners.delete(l);
 };
-// The first load of a post's reviews. A rating waits for it instead of cancelling it.
-let syncFetch: Promise<unknown> | null = null;
+// The first load of each post's reviews. A rating waits for its own post's load instead of cancelling it.
+const syncFetches = new Map<number, Promise<unknown>>();
 const pendingKey = (postId: number, modelVersionId: number) => `${postId}:${modelVersionId}`;
 
 export type RateResult = 'saved' | 'ignored' | 'failed';
@@ -83,10 +83,10 @@ export function usePostResourceReviewsSync({
     if (!canReview || fetchedKey.current === resourceKey) return;
     fetchedKey.current = resourceKey;
     const fetch = refetch().finally(() => {
-      if (syncFetch === fetch) syncFetch = null;
+      if (syncFetches.get(postId) === fetch) syncFetches.delete(postId);
     });
-    syncFetch = fetch;
-  }, [resourceKey, canReview, refetch]);
+    syncFetches.set(postId, fetch);
+  }, [resourceKey, canReview, refetch, postId]);
 }
 
 export function PostResourceReviewsSync(props: { postId: number; ownerId: number }) {
@@ -121,48 +121,53 @@ export function usePostResourceReviews({ postId, ownerId }: { postId: number; ow
 
   const save = useCallback(
     async (modelVersionId: number, patch: ReviewPatch, body: SaveBody): Promise<RateResult> => {
-      if (syncFetch) await syncFetch.catch(() => undefined);
       const key = pendingKey(postId, modelVersionId);
-      const row = queryUtils.post.getResources
-        .getData({ id: postId })
-        ?.find((r) => r.modelVersionId === modelVersionId);
-      if (!canReview || !row?.modelId || pending.has(key)) return 'ignored';
+      if (!canReview || pending.has(key)) return 'ignored';
 
+      // Lock before waiting for the first load, so isPending covers the wait and clicks can't queue.
       setPending(key, true);
-      const previousReview: ReviewPatch = {
-        reviewId: row.reviewId,
-        reviewRating: row.reviewRating,
-        reviewRecommended: row.reviewRecommended,
-        reviewDetails: row.reviewDetails,
-        reviewCreatedAt: row.reviewCreatedAt,
-      };
-      const apply = (p: ReviewPatch) =>
-        queryUtils.post.getResources.setData({ id: postId }, (old) =>
-          old ? patchReview(old, modelVersionId, p) : old
-        );
       try {
-        await queryUtils.post.getResources.cancel({ id: postId });
-        apply(patch);
-        const input = { postId, modelId: row.modelId, modelVersionId, ...body };
-        let saved = await upsert({ ...input, id: row.reviewId ?? undefined });
-        // A create that lost the unique-constraint race returns the existing review untouched.
-        const differs =
-          saved.recommended !== body.recommended ||
-          saved.rating !== body.rating ||
-          (body.details !== undefined && saved.details !== body.details);
-        if (!row.reviewId && differs) {
-          saved = await upsert({ ...input, id: saved.id });
+        await syncFetches.get(postId)?.catch(() => undefined);
+        const row = queryUtils.post.getResources
+          .getData({ id: postId })
+          ?.find((r) => r.modelVersionId === modelVersionId);
+        if (!row?.modelId) return 'ignored';
+
+        const previousReview: ReviewPatch = {
+          reviewId: row.reviewId,
+          reviewRating: row.reviewRating,
+          reviewRecommended: row.reviewRecommended,
+          reviewDetails: row.reviewDetails,
+          reviewCreatedAt: row.reviewCreatedAt,
+        };
+        const apply = (p: ReviewPatch) =>
+          queryUtils.post.getResources.setData({ id: postId }, (old) =>
+            old ? patchReview(old, modelVersionId, p) : old
+          );
+        try {
+          await queryUtils.post.getResources.cancel({ id: postId });
+          apply(patch);
+          const input = { postId, modelId: row.modelId, modelVersionId, ...body };
+          let saved = await upsert({ ...input, id: row.reviewId ?? undefined });
+          // A create that lost the unique-constraint race returns the existing review untouched.
+          const differs =
+            saved.recommended !== body.recommended ||
+            saved.rating !== body.rating ||
+            (body.details !== undefined && saved.details !== body.details);
+          if (!row.reviewId && differs) {
+            saved = await upsert({ ...input, id: saved.id });
+          }
+          apply({ reviewId: saved.id, reviewCreatedAt: row.reviewCreatedAt ?? new Date() });
+          await queryUtils.resourceReview.getUserResourceReview.invalidate();
+          return 'saved';
+        } catch (error) {
+          apply(previousReview);
+          showErrorNotification({
+            title: 'Failed to save review',
+            error: error instanceof Error ? error : new Error('Unknown error'),
+          });
+          return 'failed';
         }
-        apply({ reviewId: saved.id, reviewCreatedAt: row.reviewCreatedAt ?? new Date() });
-        await queryUtils.resourceReview.getUserResourceReview.invalidate();
-        return 'saved';
-      } catch (error) {
-        apply(previousReview);
-        showErrorNotification({
-          title: 'Failed to save review',
-          error: error instanceof Error ? error : new Error('Unknown error'),
-        });
-        return 'failed';
       } finally {
         setPending(key, false);
       }

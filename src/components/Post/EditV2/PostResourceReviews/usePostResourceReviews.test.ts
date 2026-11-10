@@ -308,6 +308,24 @@ describe('usePostResourceReviews', () => {
     expect(rows[0]).toMatchObject({ reviewRecommended: true });
   });
 
+  it('marks a version pending as soon as it is rated, even while the first load is in flight', async () => {
+    upsert.mockResolvedValue({ id: 100, rating: 5, recommended: true });
+    const [hook] = renderHooks(() => {
+      usePostResourceReviewsSync({ postId: 1, ownerId: 7 });
+      return useSubject();
+    });
+    let done!: Promise<unknown>;
+    await act(async () => {
+      done = hook.current.rate(1, true);
+    });
+    expect(hook.current.isPending(1)).toBe(true);
+    await act(async () => {
+      await done;
+    });
+    expect(hook.current.isPending(1)).toBe(false);
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
   it('never fetches from a consumer alone', async () => {
     renderHooks(useSubject, 3);
     await settle();
