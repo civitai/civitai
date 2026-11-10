@@ -214,6 +214,9 @@ const carriesUrl = (value: string) => {
   return true;
 };
 
+/** A url's host, lower-cased; a fully-qualified host (`image.civitai.com.`) is the same server. */
+const normalisedHost = (parsed: URL) => parsed.host.toLowerCase().replace(/\.(?=(:\d+)?$)/, '');
+
 export function classifyGenerationInputUrl(raw: string): GenerationInputUrlClass {
   if (BARE_KEY.test(raw)) return 'key';
   if (hasUrlAmbiguousBytes(raw)) return 'invalid';
@@ -223,8 +226,7 @@ export function classifyGenerationInputUrl(raw: string): GenerationInputUrlClass
   } catch {
     return 'invalid';
   }
-  // A fully-qualified host (`image.civitai.com.`) resolves to the same server.
-  const host = parsed.host.toLowerCase().replace(/\.(?=(:\d+)?$)/, '');
+  const host = normalisedHost(parsed);
   const isCdn = imageCdnHosts().includes(host);
   const configuredOrigin = (() => {
     try {
@@ -546,7 +548,7 @@ function freeTextFieldsByList(paths: FreeTextPaths = []) {
 function namesOurImage(url: string, budget: DecodeBudget) {
   try {
     const parsed = new URL(url);
-    if (!imageCdnHosts().includes(parsed.host.toLowerCase()) && !isCivitaiHostname(parsed.hostname))
+    if (!imageCdnHosts().includes(normalisedHost(parsed)) && !isCivitaiHostname(parsed.hostname))
       return false;
   } catch {
     return false;
@@ -655,9 +657,8 @@ export function opaqueInputUrlsIn(value: unknown, freeTextPaths?: FreeTextPaths)
       }
       const protocol = parsedProtocol(parsed);
       if (text) {
-        // Free text: a link in it is words, not an input, so only a url naming one of our images
-        // is collected whole (checked as an image input, as anywhere else). Every key in it is
-        // collected as in any text, so another user's private image is still refused.
+        // Free text: only a url naming one of our images is collected whole; every key is still
+        // collected so a private image is refused.
         if (
           !controlInside &&
           isWholeFetchableValue(parsed, decoded, protocol) &&
