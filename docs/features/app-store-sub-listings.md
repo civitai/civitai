@@ -16,10 +16,12 @@ Two tables, created by `packages/civitai-db-schema/prisma/migrations/20261010120
   No row, or `enabled = false`, means the app cannot publish and the store shows none of its
   children. Parent rows are created by hand (the migration seeds the first).
 - `app_sub_listings` — one row per item, unique on `(parent_listing_id, item_key)`, where
-  `item_key` is the app's shared-storage row key (for an off-site parent, the item's id on its
-  platform). There is no URL column: an on-site card links to
-  `/apps/run/<parent slug>/<sub_path>?sl=<id>`, an off-site card to the parent's `link_template`
-  with `{id}` replaced by the item's id, both built server-side.
+  `item_key` is the key of the item's document in one of the app's item collections (see
+  [Which item a key names](#which-item-a-key-names)), the legacy shared-storage row key for an app
+  that declares no item collection, or, for an off-site parent, the item's id on its platform.
+  There is no URL column: an on-site card links to `/apps/run/<parent slug>/<sub_path>?sl=<id>`,
+  an off-site card to the parent's `link_template` with `{id}` replaced by the item's id, both
+  built server-side.
 
 Statuses: `pending` → `approved` by a moderator; `hidden` is a moderator lock the app cannot
 lift; `withdrawn` is set by the author (or the in-app withdraw) and returns on republish as
@@ -40,8 +42,9 @@ edit overwrites a staged one; an edit identical to the live version clears it.
 | `GET /api/v1/blocks/sub-listings/mine`      | —                                                             | the caller's items + status   |
 
 The parent is the calling app's own listing, from the token. A publish requires: an enabled
-parent row; a signed-in subject passing the shared-write trust check; an item that exists in the
-app's shared storage, is not hidden and was authored by the caller; a title (1–80) and tagline
+parent row; a signed-in subject passing the shared-write trust check; an `itemKey` (at most 64)
+naming an item that is not hidden and was authored by the caller, else 404 `item_not_found` or 403
+`not_your_item` ([Which item a key names](#which-item-a-key-names)); a title (1–80) and tagline
 (≤140) that pass cleaning and the shared text-safety check; an image the caller owns that is
 publicly visible (readable through `getImage` by an anonymous viewer, so reviewed) and in a
 published, non-private post, as the card requires, else 400 `image_not_public`; a `subPath`
@@ -53,9 +56,24 @@ race with another write to the same item answers 409 (`conflict`) after three at
 The scope is sensitive (manifests must justify it), consent-exempt (the checks above are the
 gate) and never minted for dev, tunnel or review tokens.
 
-An in-app author withdraw of the shared row withdraws the store item, and a moderator hide or
-delete of the shared row hides it (an item already withdrawn stays withdrawn), from the server
-and best-effort.
+### Which item a key names
+
+`readSharedItemForSubListing` resolves `itemKey` through `resolveSharedItem`
+(`src/server/services/apps/shared-item-key.ts`). If the app's approved manifest declares at least
+one item collection (`visibility: 'shared'` with `write` `own` or `anyone`:
+`collectionNeedsPublishScope` in `src/shared/constants/block-storage.constants.ts`), the document
+store alone decides. `itemKey` is a document key, not a collection name: it is looked up in every
+declared item collection, in the production namespace only (a dev or review document never
+resolves), among shared (`scope_uid = 0`) documents whose author is a user. A key found in more
+than one item collection is ambiguous and reads as not found. An app that declares no item
+collection, or an environment without a document store, resolves the key from its legacy
+`app_<slug>.shared_kv` rows. That lookup is not gated by `app-blocks-legacy-stores-removed`, but
+since 2026-11-10 the legacy stores answer 410, so no new legacy row can be created.
+
+The author deleting the document (in the production namespace) withdraws the store item, and a
+moderator hiding or deleting it hides the item (an item already withdrawn stays withdrawn); for
+an app on legacy shared storage the same holds for the in-app withdraw and the moderator hide or
+delete of its row. Both are from the server and best-effort.
 
 ## Catalog sync (off-site parents)
 
@@ -187,7 +205,7 @@ approve, hide (with a reason), restore, approve edit, reject edit; each records
 `moderated_by_id` / `moderated_at`. A decision carries the version of the row the moderator was
 shown, so an author edit that lands in between is refused (409) rather than approved unseen.
 Restoring an item that was never approved returns it to review, not to the store. An item whose
-shared row is hidden or gone in the app (e.g. hidden by the in-app moderation sync) cannot be
-restored (409) until the row is live again; an off-site parent's items have no shared row, so
-that check does not apply to them. For an off-site parent's item the queue shows the link the
-card opens instead of its path.
+document (or legacy shared row) is hidden or gone in the app (e.g. hidden by the in-app
+moderation sync), or now names another author, cannot be restored (409) until it is live again;
+an off-site parent's items have no such item, so that check does not apply to them. For an
+off-site parent's item the queue shows the link the card opens instead of its path.
