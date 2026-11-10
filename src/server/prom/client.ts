@@ -59,9 +59,10 @@ export * from '@civitai/telemetry/client';
 // stops compiling. That is the intended failure — wire the handle, do not widen the type below.
 //
 // The two per-command handles are the cheaper wrappers from @civitai/telemetry/redis-command-metrics:
-// same metrics, same labels, same values at every scrape. The in-flight gauge is always counted
-// locally and set at scrape; the duration histogram batches only while the
-// `redis-command-metrics-batched` Flipt switch is on (installed at boot by src/instrumentation.node.ts).
+// same metrics, same labels, same values at every scrape. Both follow the
+// `redis-command-metrics-batched` Flipt flag (wired at boot by src/instrumentation.node.ts): the
+// duration histogram batches while it reads on; the in-flight gauge is counted locally only if the
+// flag was on at the process's first Redis command, a mode latched for the life of the process.
 const redisMetricsBridge = {
   redisCommandsInflight: batchedInflightGauge(redisCommandsInflight),
   redisCommandDuration: batchedDurationHistogram(

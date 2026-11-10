@@ -58,10 +58,10 @@ export const cosmeticsLocalTtl = () => (cosmeticsGate() ? COSMETICS_L1_TTL : und
 /**
  * `tag-ids-for-images` L1 tiers. Off (as before): 180s, 50k entries, its base byte budget. On
  * (TAG_IDS_FOR_IMAGES_L1_LARGE): 600s, 200k entries, its switched byte budget. The switch changes the
- * caps as well as the TTL because the base tier is capacity-bound, not TTL-bound: measured in
- * production, a feed pod inserts well over 50k ids per 180s, so entries are evicted before they
- * expire and a longer TTL alone would change little. A flip rebuilds
- * the L1 empty at the other tier's caps (`localLimits`), so the larger one only exists while on.
+ * caps as well as the TTL because a feed process can insert more distinct image ids per TTL window
+ * than the base tier's entry cap holds: such a tier is capacity-bound, not TTL-bound (entries are
+ * evicted before they expire), and a longer TTL alone would change little. A flip rebuilds the L1
+ * empty at the other tier's caps (`localLimits`), so the larger one only exists while on.
  */
 export const TAG_IDS_FOR_IMAGES_L1 = {
   ttl: 180,

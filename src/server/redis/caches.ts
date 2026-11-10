@@ -101,17 +101,20 @@ export const tagIdsForImagesCache = createCachedObject<{
   staleWhileRevalidateTtl: CacheTTL.hour,
   // L1: image tag-ids are near-static display metadata (busted on scan/tag edits);
   // an 8h Redis TTL dwarfs the per-pod L1, which only delays a cross-pod tag edit by
-  // ≤localTtl. Not a visibility gate (feed SQL enforces that). This is the single
+  // ≤localTtl. Not a browsing-level gate (feed SQL enforces that). This is the single
   // largest driver of api-heavy's per-id Redis GET volume (feed streams distinct
   // imageIds), so the L1 was starved at localTtl=15s/localMax=10k. Enlarged to a
   // ~3min window + 50k hot entries so cross-user popular-image overlap + scroll-back
   // land as L1 hits. Strictly byte-bounded (see l1-cache-budget) — the byte cap, not
-  // the entry cap, is the binding heap guard. The longer localTtl is safe here BECAUSE
-  // this value gates nothing in the feed SQL (only delays a busted tag-list edit by ≤localTtl; the
-  // client's hidden-tag filter reads these ids, so that filter can lag a tag edit by as much).
+  // the entry cap, is the binding heap guard. The longer localTtl is acceptable for display and
+  // viewer-preference reads: the feed SQL never reads this value, and a busted tag-list edit reaches
+  // another process's L1 only after ≤localTtl, so the client's hidden-tag filter and the server-side
+  // `excludedTagIds` filter on model-feed images (model.service) can lag a tag edit by as much.
+  // 🔴 A caller that makes an access, moderation or payment decision from these ids must read past
+  // the L1 (`{ bypassLocal: true }`), as the gallery-promotion refusal (promotion.service) does.
   // `tag-ids-for-images-l1-large` switches to a larger tier (TTL and caps in l1-switches); off is the
-  // tier above. On the feed pools the off tier fills faster than it ages out, so its caps, not its
-  // TTL, bound its hit ratio.
+  // tier above. When a process inserts more distinct ids per TTL window than the off tier's entry
+  // cap, its caps, not its TTL, bound its hit ratio.
   localTtl: tagIdsForImagesLocalTtl,
   localLimits: tagIdsForImagesLocalLimits,
   localMax: TAG_IDS_FOR_IMAGES_L1.max,

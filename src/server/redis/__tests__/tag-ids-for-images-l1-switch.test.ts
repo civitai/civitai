@@ -10,8 +10,8 @@ import type * as FliptClient from '~/server/flipt/client';
  * the real cache definition, with the cache cluster faked as a store and the database mocked. Off,
  * its per-pod L1 keeps what it always had: 180s and 50,000 entries. On: 600s and 200,000 entries.
  *
- * The capacity cases are the point of the switch (the off tier is capacity-bound in production, not
- * TTL-bound), so they read 50,001 distinct ids and then the first one again, all inside the TTL: off,
+ * The capacity cases are the point of the switch (a process can fill the off tier faster than it
+ * ages out, so it is capacity-bound, not TTL-bound), so they read 50,001 distinct ids and then the first one again, all inside the TTL: off,
  * the first was evicted and Redis is read; on, it is still held.
  *
  * The L1 clock is a mocked `performance.now` (see letLruClockClear); the Redis fake reads `Date.now`,

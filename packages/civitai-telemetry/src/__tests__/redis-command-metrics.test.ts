@@ -1,10 +1,13 @@
 import client from 'prom-client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { REDIS_COMMAND_DURATION_BUCKETS, redisCommandDuration } from '../client';
 import {
   batchedDurationHistogram,
   batchedInflightGauge,
+  getRedisInflightGaugeMode,
+  resetRedisInflightGaugeModeForTests,
   setRedisCommandHistogramBatchGate,
+  setRedisInflightGaugeModeResolver,
 } from '../redis-command-metrics';
 
 /**
@@ -59,6 +62,7 @@ function histograms() {
 
 afterEach(() => {
   setRedisCommandHistogramBatchGate(undefined);
+  resetRedisInflightGaugeModeForTests();
   vi.restoreAllMocks();
 });
 
@@ -188,7 +192,124 @@ describe('batchedDurationHistogram', () => {
   });
 });
 
-describe('batchedInflightGauge', () => {
+const GAUGE_OPS: ['inc' | 'dec', string][] = [
+  ['inc', 'cluster'],
+  ['inc', 'cluster'],
+  ['inc', 'sys'],
+  ['inc', 'cluster'],
+  ['dec', 'cluster'],
+  ['dec', 'sys'],
+  ['dec', 'sys'], // an unmatched dec, as a prom gauge would show it
+];
+
+let g = 0;
+function gauges() {
+  const registry = new client.Registry();
+  const id = ++g;
+  const make = (name: string) =>
+    new client.Gauge({ name, help: 'g', labelNames: ['client'], registers: [registry] });
+  const direct = make(`gdirect_${id}`);
+  const batched = make(`gbatched_${id}`);
+  const text = async () => ({
+    direct: (await registry.getSingleMetricAsString(`gdirect_${id}`)).replaceAll(
+      `gdirect_${id}`,
+      'g'
+    ),
+    batched: (await registry.getSingleMetricAsString(`gbatched_${id}`)).replaceAll(
+      `gbatched_${id}`,
+      'g'
+    ),
+  });
+  return { direct, batched, text };
+}
+
+describe('batchedInflightGauge mode latch', () => {
+  it('off (resolver false): every inc/dec goes to prom-client per command, same text as before', async () => {
+    setRedisInflightGaugeModeResolver(() => false);
+    const gs = gauges();
+    const handle = batchedInflightGauge(gs.batched);
+    const inc = vi.spyOn(gs.batched, 'inc');
+    const dec = vi.spyOn(gs.batched, 'dec');
+    for (const [op, c] of GAUGE_OPS) {
+      handle[op]({ client: c });
+      gs.direct[op]({ client: c });
+    }
+    expect(getRedisInflightGaugeMode()).toBe('direct');
+    expect(inc).toHaveBeenCalledTimes(4);
+    expect(dec).toHaveBeenCalledTimes(3);
+    expect(inc).toHaveBeenCalledWith({ client: 'cluster' });
+    const t = await gs.text();
+    expect(t.direct).toContain('g{client="cluster"} 2');
+    expect(t.direct).toContain('g{client="sys"} -1');
+    expect(t.batched).toBe(t.direct);
+  });
+
+  it.each([
+    ['no resolver installed', undefined],
+    [
+      'a resolver that throws',
+      () => {
+        throw new Error('flag read failed');
+      },
+    ],
+    ['a resolver answering null (Flipt not ready)', () => null as unknown as boolean],
+  ])('%s latches direct', (_name, resolver) => {
+    setRedisInflightGaugeModeResolver(resolver);
+    const gs = gauges();
+    const handle = batchedInflightGauge(gs.batched);
+    const inc = vi.spyOn(gs.batched, 'inc');
+    handle.inc({ client: 'cluster' });
+    expect(getRedisInflightGaugeMode()).toBe('direct');
+    expect(inc).toHaveBeenCalledTimes(1);
+  });
+
+  it('the mode is read ONCE, at the first inc/dec, and never changes after, even if the flag flips', async () => {
+    for (const [first, then] of [
+      [true, false],
+      [false, true],
+    ] as const) {
+      resetRedisInflightGaugeModeForTests();
+      let flag: boolean = first;
+      const resolver = vi.fn(() => flag);
+      setRedisInflightGaugeModeResolver(resolver);
+      const gs = gauges();
+      const handle = batchedInflightGauge(gs.batched);
+      const inc = vi.spyOn(gs.batched, 'inc');
+      const dec = vi.spyOn(gs.batched, 'dec');
+      expect(getRedisInflightGaugeMode(), 'undecided before the first use').toBeUndefined();
+
+      handle.inc({ client: 'cluster' });
+      gs.direct.inc({ client: 'cluster' });
+      const latched = first ? 'local' : 'direct';
+      expect(getRedisInflightGaugeMode()).toBe(latched);
+
+      // The flag flips, and a different resolver is even installed: neither moves the latch.
+      flag = then;
+      setRedisInflightGaugeModeResolver(() => then);
+      for (const [op, c] of GAUGE_OPS) {
+        handle[op]({ client: c });
+        gs.direct[op]({ client: c });
+      }
+      // A second handle (another bundled copy, or a new wrap) shares the latch too.
+      const other = batchedInflightGauge(gs.batched);
+      other.dec({ client: 'cluster' });
+      gs.direct.dec({ client: 'cluster' });
+
+      expect(resolver).toHaveBeenCalledTimes(1);
+      expect(getRedisInflightGaugeMode()).toBe(latched);
+      // Every inc and dec went through the latched path: none of them, or all of them, per command.
+      expect(inc).toHaveBeenCalledTimes(first ? 0 : 5);
+      expect(dec).toHaveBeenCalledTimes(first ? 0 : 4);
+      const t = await gs.text();
+      expect(t.direct).toContain('g{client="cluster"} 2');
+      expect(t.batched).toBe(t.direct);
+    }
+  });
+});
+
+describe('batchedInflightGauge (mode local)', () => {
+  beforeEach(() => setRedisInflightGaugeModeResolver(() => true));
+
   it('the scraped value per client equals per-command inc/dec, including below zero', async () => {
     const registry = new client.Registry();
     const make = (name: string) =>

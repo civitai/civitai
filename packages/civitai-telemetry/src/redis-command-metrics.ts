@@ -7,14 +7,18 @@ import type { Gauge, Histogram } from 'prom-client';
  * calls would have produced.
  *
  * Why: a prom-client `inc`/`dec`/`observe` with labels validates the labels and hashes them into a
- * string key on every call. At the feed pools' Redis command rate that is three label hashes per
- * command, and it shows up in CPU profiles. These handles keep plain numbers per `client` label value
+ * string key on every call. On the busiest paths that is three label hashes per Redis command, which
+ * is enough to appear in a CPU profile. These handles keep plain numbers per `client` label value
  * on the hot path and hand them to prom-client once per scrape, from the metric's `collect()`.
  *
- *  - The in-flight gauge is ALWAYS counted locally (no switch). A gauge's exported value is the
- *    running sum of its incs and decs, which is exactly what the local integer holds, and the
- *    `collect()` sets it at scrape. A switch here would be unsafe rather than safe: a command inc'd
- *    on one path and dec'd on the other would leave the gauge off by one for good.
+ *  - The in-flight gauge is counted locally only if the gauge MODE latched `local`. A gauge's
+ *    exported value is the running sum of its incs and decs, which is exactly what the local integer
+ *    holds, and the `collect()` sets it at scrape. The mode is decided ONCE per process, on the
+ *    first inc or dec, from the resolver the app installs (`setRedisInflightGaugeModeResolver`), and
+ *    never changes after: a command inc'd on one path and dec'd on the other would leave the gauge
+ *    off by one for good, so a flag flip must not be able to move it. No resolver installed at that
+ *    first call, or one that throws or answers anything but `true`, latches `direct` (per-command
+ *    prom-client inc/dec, as before). Changing the mode therefore needs a process restart.
  *  - The duration histogram is accumulated locally only while the batch gate (a Flipt switch the
  *    app installs at boot) is on, and flushed into the histogram's own bucket/sum/count on the next
  *    scrape. Off, or with no gate installed, every observe goes straight to prom-client as before.
@@ -50,8 +54,14 @@ type HistogramState = {
   broken: boolean;
 };
 
+type InflightGaugeMode = 'local' | 'direct';
+
 type SharedState = {
   gate: (() => boolean) | undefined;
+  /** Decides the in-flight gauge mode; read once, at the first inc/dec of the process. */
+  gaugeModeResolver: (() => boolean) | undefined;
+  /** The latched in-flight gauge mode; `undefined` only until the first inc/dec. */
+  gaugeMode: InflightGaugeMode | undefined;
   gauges: WeakMap<object, Map<string, number>>;
   histograms: WeakMap<object, HistogramState>;
 };
@@ -63,6 +73,8 @@ declare global {
 
 const state: SharedState = (globalThis.__civitaiRedisCommandMetricsState ??= {
   gate: undefined,
+  gaugeModeResolver: undefined,
+  gaugeMode: undefined,
   gauges: new WeakMap(),
   histograms: new WeakMap(),
 });
@@ -85,7 +97,47 @@ function batchOn(): boolean {
   }
 }
 
-/** In-flight gauge handle: local integers per `client`, set on the gauge at scrape. */
+/**
+ * Install the resolver that decides the in-flight gauge mode (`true` = count locally). It is read
+ * exactly once per process, at the first inc or dec through any `batchedInflightGauge` handle, and
+ * the answer is latched for the life of the process; installing a resolver after that changes
+ * nothing. The app installs it once Flipt is initialized, before it serves traffic.
+ */
+export function setRedisInflightGaugeModeResolver(resolver: (() => boolean) | undefined): void {
+  state.gaugeModeResolver = resolver;
+}
+
+/** The latched in-flight gauge mode, or `undefined` before the first inc/dec. */
+export function getRedisInflightGaugeMode(): InflightGaugeMode | undefined {
+  return state.gaugeMode;
+}
+
+/** Test-only: forget the latched gauge mode and the resolver. Never called by app code. */
+export function resetRedisInflightGaugeModeForTests(): void {
+  state.gaugeMode = undefined;
+  state.gaugeModeResolver = undefined;
+}
+
+function latchGaugeMode(): InflightGaugeMode {
+  let local = false;
+  const resolver = state.gaugeModeResolver;
+  if (resolver !== undefined) {
+    try {
+      local = resolver() === true;
+    } catch {
+      local = false;
+    }
+  }
+  const mode: InflightGaugeMode = local ? 'local' : 'direct';
+  state.gaugeMode = mode;
+  console.log(`[redis-command-metrics] redis_commands_inflight mode latched: ${mode}`);
+  return mode;
+}
+
+/**
+ * In-flight gauge handle. Mode `local`: integers per `client`, set on the gauge at scrape. Mode
+ * `direct`: per-command prom-client inc/dec, as before. The mode is latched at the first call.
+ */
 export function batchedInflightGauge<L extends string>(gauge: Gauge<L>) {
   let counts = state.gauges.get(gauge);
   if (!counts) {
@@ -93,16 +145,27 @@ export function batchedInflightGauge<L extends string>(gauge: Gauge<L>) {
     counts = created;
     state.gauges.set(gauge, created);
     (gauge as unknown as { collect: () => void }).collect = () => {
+      // Direct mode: prom-client already holds the value. (Local integers are only ever written in
+      // local mode, and the mode never changes, so there is nothing to merge.)
+      if (state.gaugeMode !== 'local') return;
       for (const [client, n] of created) gauge.set({ client } as never, n);
     };
   }
   const local = counts;
   return {
     inc(labels: Labels) {
-      local.set(labels.client, (local.get(labels.client) ?? 0) + 1);
+      if ((state.gaugeMode ?? latchGaugeMode()) === 'local') {
+        local.set(labels.client, (local.get(labels.client) ?? 0) + 1);
+      } else {
+        gauge.inc(labels as never);
+      }
     },
     dec(labels: Labels) {
-      local.set(labels.client, (local.get(labels.client) ?? 0) - 1);
+      if ((state.gaugeMode ?? latchGaugeMode()) === 'local') {
+        local.set(labels.client, (local.get(labels.client) ?? 0) - 1);
+      } else {
+        gauge.dec(labels as never);
+      }
     },
   };
 }

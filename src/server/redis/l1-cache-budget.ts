@@ -9,8 +9,8 @@
  * invariant so adding/enlarging an L1 cache cannot silently exceed the ceiling.
  *
  * Heap safety: the dp-prod pods run with a 4096MB V8 old-space limit and a
- * >3200MB heap-headroom alert. The ceiling below (96MB) is <2.5% of old-space and
- * far under the alert threshold; `roughSizeOf` over-estimates retained bytes
+ * >3200MB heap-headroom alert. The ceiling below (160MB, the worst case with every
+ * switched tier at its larger size) is <4% of old-space and far under the alert threshold; `roughSizeOf` over-estimates retained bytes
  * (2× UTF-16 JSON length + fixed overhead, while ASCII strings cost ≤1 byte/char
  * internally and V8 dedupes), so the true resident footprint is lower still.
  */
@@ -63,9 +63,9 @@ export function worstCaseL1Bytes(): number {
  * tier). Enforced by `l1-cache-budget.test.ts`. Raise ONLY with proven heap headroom vs the 4096MB
  * old-space limit / >3200MB heap-headroom alert.
  *
- * Raised 96MB -> 160MB for the `tag-ids-for-images-l1-large` tier (worst case 84MB -> 150MB). Peak
- * heap measured in production on the feed pools sits well under half the old-space limit, so the
+ * Raised 96MB -> 160MB for the `tag-ids-for-images-l1-large` tier (worst case 84MB -> 150MB). The
  * extra ~66MB of budget (plus the larger LRU's preallocated slots, about 48 bytes x its entry cap)
- * stays far from the alert. It only exists while that flag is on.
+ * is under 2% of the old-space limit, and it only exists while that flag is on. Before turning the
+ * flag on anywhere, check that process's peak heap leaves that much room under the alert.
  */
 export const L1_TOTAL_BYTE_CEILING = 160 * MB;

@@ -1,4 +1,7 @@
-import { setRedisCommandHistogramBatchGate } from '@civitai/telemetry/redis-command-metrics';
+import {
+  setRedisCommandHistogramBatchGate,
+  setRedisInflightGaugeModeResolver,
+} from '@civitai/telemetry/redis-command-metrics';
 import {
   ensureFliptInitialized,
   FLIPT_FEATURE_FLAGS,
@@ -23,5 +26,30 @@ export function registerRedisCommandMetricsBatchGate(): void {
         void ensureFliptInitialized().catch(() => undefined);
       return on;
     })
+  );
+}
+
+/**
+ * Decide how `redis_commands_inflight` is counted, from the same `redis-command-metrics-batched`
+ * flag: on, locally (set on the gauge at scrape); off, per-command prom-client inc/dec as before.
+ *
+ * Unlike the histogram, the gauge's mode is LATCHED: @civitai/telemetry reads the resolver installed
+ * here once, at the process's first Redis command inc/dec, and never again, so every command's inc
+ * and dec go through the same path. A flip of the flag therefore reaches the gauge only on a process
+ * restart.
+ *
+ * Awaited at boot (src/instrumentation.node.ts) BEFORE the server takes traffic, so the resolver is
+ * in place and Flipt initialized when the first command latches the mode. Flipt init is bounded by
+ * its own init timeout and fails open; an uninitialized client, an unknown flag or a throw reads as
+ * off. A command that latches before this resolves (none is expected at boot) latches `direct`.
+ */
+export async function armRedisInflightGaugeMode(): Promise<void> {
+  try {
+    await ensureFliptInitialized();
+  } catch {
+    // Fail open: the resolver below reads null and latches `direct`.
+  }
+  setRedisInflightGaugeModeResolver(
+    () => isFliptSync(FLIPT_FEATURE_FLAGS.REDIS_COMMAND_METRICS_BATCHED) === true
   );
 }

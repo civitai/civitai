@@ -115,6 +115,24 @@ registerLivenessHeartbeat();
 // See src/server/eventloop-watchdog.ts.
 registerEventLoopWatchdog();
 
+// Arm the redis command metrics behind the `redis-command-metrics-batched` Flipt flag (dark until
+// it is on). Independent of OTEL: both metrics are prom-client. Dynamic, to keep the Flipt client out
+// of this module's static graph; a failure here must never affect boot — both metrics then keep
+// their per-command prom-client calls. See @civitai/telemetry/redis-command-metrics.
+//  - The duration histogram's gate is re-read (cached, 5s) on every command, so it follows the flag.
+//  - The in-flight gauge's mode is LATCHED at the process's first Redis command inc/dec and never
+//    changes (a command inc'd on one path and dec'd on the other would skew it for good), so a flag
+//    flip reaches it only on restart. AWAITED, and placed before the warmer kick, so Flipt is
+//    initialized and the resolver installed before the server takes traffic and the first command
+//    latches the mode. Bounded by Flipt's own init timeout; fail-open (latches per-command).
+try {
+  const m = await import('~/server/prom/redis-command-metrics-gate');
+  m.registerRedisCommandMetricsBatchGate();
+  await m.armRedisInflightGaugeMode();
+} catch (err) {
+  console.error('[instrumentation.node] redis command metrics gate failed (fail-open):', err);
+}
+
 // Kick the in-process route warmer (fire-and-forget). Next standalone
 // lazy-require()s each route on first hit; the dependency-only readiness probe
 // marks a pod Ready while every hot route is still cold, so the first real
@@ -134,17 +152,6 @@ void import('~/server/warmup')
   .then((m) => m.runWarmup())
   .catch((err) => {
     console.error('[instrumentation.node] warmup kick failed (fail-open):', err);
-  });
-
-// Arm the batched redis_command_duration_seconds handle (dark until the
-// `redis-command-metrics-batched` Flipt flag is on). Independent of OTEL: the histogram is
-// prom-client. Dynamic, like the warmer, to keep the Flipt client out of this module's static
-// graph; a failure here must never affect boot — the histogram simply keeps observing per command.
-// See @civitai/telemetry/redis-command-metrics.
-void import('~/server/prom/redis-command-metrics-gate')
-  .then((m) => m.registerRedisCommandMetricsBatchGate())
-  .catch((err) => {
-    console.error('[instrumentation.node] redis command metrics gate failed (fail-open):', err);
   });
 
 // Attach the OTel sink to the shared structured logger.
