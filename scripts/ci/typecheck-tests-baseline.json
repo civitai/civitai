@@ -286,7 +286,6 @@
     "src/server/jobs/__tests__/blob-retraction-writer-reachability.test.ts": 2,
     "src/server/jobs/__tests__/challenge-jobs-scale.test.ts": 1,
     "src/server/jobs/__tests__/collection-ai-review.test.ts": 1,
-    "src/server/jobs/__tests__/comment-v3-parity.test.ts": 2,
     "src/server/jobs/__tests__/confirm-pending-block-attributions.test.ts": 7,
     "src/server/jobs/__tests__/deliver-creator-compensation.test.ts": 1,
     "src/server/jobs/__tests__/evidence-hold-expiry-alert.test.ts": 2,

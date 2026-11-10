@@ -54,8 +54,6 @@ export const config = {
       'public.ImageReaction',
       'public.ResourceReview',
       'public.CollectionItem',
-      'public.Comment',
-      'public.CommentV2',
       'public.CommentV3',
       'public.ImageResourceNew',
       'public.BuzzTip',

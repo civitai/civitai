@@ -135,7 +135,6 @@ import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
 import { refreshFeaturedCollectionsEligibility } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { autoFeatureImages } from '~/server/jobs/auto-feature-images';
 import { autoFeatureHealthCheckJob } from '~/server/jobs/auto-feature-health-check';
-import { commentV3ParityJob } from '~/server/jobs/comment-v3-parity';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
 import { birthday2026IdleHatNudge } from '~/server/jobs/birthday2026-idle-hat-nudge';
@@ -228,7 +227,6 @@ export const jobs: Job[] = [
   refreshFeaturedCollectionsEligibility,
   autoFeatureImages,
   autoFeatureHealthCheckJob,
-  commentV3ParityJob,
   ...metricJobs,
   ...searchIndexJobs,
   searchIndexUserCleanupJob,

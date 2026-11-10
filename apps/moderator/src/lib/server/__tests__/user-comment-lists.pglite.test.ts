@@ -16,7 +16,7 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { getComments, getCommentsV2 } = await import('../user-account.service');
+const { getComments } = await import('../user-account.service');
 
 let db: PGlite;
 
@@ -43,17 +43,19 @@ afterEach(async () => {
   await db.close();
 });
 
-describe("a user's comment lists, which moderators bulk-delete and flag by id", () => {
-  it('lists every live model comment by its CommentV3 id, old or new, and no tombstone', async () => {
+describe("a user's comment list, which moderators bulk-delete and flag by id", () => {
+  it('lists every live comment on any surface by its CommentV3 id, newest first, and no tombstone', async () => {
     const { items } = await getComments(10);
-    expect(items.map((r) => [r.id, r.modelId])).toEqual([
-      [2, 70],
-      [1, 70],
+    expect(items.map((r) => [r.id, r.entityType, r.entityId])).toEqual([
+      [2, 'model', 70],
+      [3, 'image', 80],
+      [1, 'model', 70],
     ]);
   });
 
-  it('lists everything else under the other comments', async () => {
-    const { items } = await getCommentsV2(10);
-    expect(items.map((r) => [r.id, r.entityType])).toEqual([[3, 'image']]);
+  it('says when it stopped short', async () => {
+    const { items, truncated } = await getComments(10, 2);
+    expect(items.map((r) => r.id)).toEqual([2, 3]);
+    expect(truncated).toBe(true);
   });
 });

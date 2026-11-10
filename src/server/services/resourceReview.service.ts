@@ -80,7 +80,8 @@ export const getResourceReview = async ({
     if (blocked) throw throwNotFoundError();
   }
 
-  return result;
+  const commentCounts = await getReviewCommentCounts([id]);
+  return { ...result, thread: { commentCount: commentCounts.get(id) ?? 0 } };
 };
 
 export const getUserResourceReview = async ({
@@ -400,7 +401,7 @@ export const upsertResourceReview = async ({
   if (!data.id) {
     const ret = await dbWrite.resourceReview
       .create({
-        data: { ...data, userId, thread: { create: {} } },
+        data: { ...data, userId },
         select: resourceReviewSelect,
       })
       .catch(async (err) => {

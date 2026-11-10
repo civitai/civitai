@@ -14,7 +14,6 @@ import {
   deleteCommentsV3,
   setUserCommentsV3Tos,
 } from '~/server/services/commentv3/moderation.service';
-import { hasV3SurfaceTwinSql, v3WriteSurfaceSql } from '~/server/services/commentv3/write.service';
 
 import {
   accountHoldSql,
@@ -1770,9 +1769,6 @@ export const removeAllContent = async ({
   // sort deletes by least impactful to most impactful
   await dbWrite.imageReaction.deleteMany({ where: { userId: id } });
   await dbWrite.articleReaction.deleteMany({ where: { userId: id } });
-  await dbWrite.commentReaction.deleteMany({ where: { userId: id } });
-  await dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } });
-  // A reaction on a comment written to CommentV3 directly has no CommentV2Reaction row to mirror.
   await dbWrite.$executeRaw`DELETE FROM "CommentV3Reaction" WHERE "userId" = ${id}`;
   // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from, so an
   // unsettled payout is settled first and an open bounty's supporters are refunded.
@@ -1874,30 +1870,12 @@ export const removeAllContent = async ({
     const v3Ids = (
       await dbWrite.$queryRaw<{ id: number }[]>`
         SELECT id FROM "CommentV3"
-        WHERE "userId" = ${id} AND "deletedAt" IS NULL
-          AND ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))}`
+        WHERE "userId" = ${id} AND "deletedAt" IS NULL`
     ).map((r) => r.id);
     for (let i = 0; i < v3Ids.length; i += REMOVE_V3_COMMENTS_BATCH) {
       const batch = v3Ids.slice(i, i + REMOVE_V3_COMMENTS_BATCH);
       afterCommentsV3Deleted(await dbWrite.$transaction((tx) => deleteCommentsV3(tx, batch)));
     }
-    // Not the rows the CommentV3 pass handled: deleting a CommentV2 placeholder blanks it, and deleting
-    // a v1 row cascades to its replies' live CommentV3 rows. A v1 row the mirror never copied is
-    // removed by nothing else when its author's content is removed.
-    await dbWrite.$executeRaw`
-      DELETE FROM "CommentV2" c2
-      WHERE c2."userId" = ${id} AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
-    await dbWrite.$executeRaw`
-      DELETE FROM "Comment" c
-      WHERE c."userId" = ${id}
-        AND NOT EXISTS (SELECT 1 FROM "CommentV3" v WHERE v."legacyV1Id" = c.id)`;
-    // CommentV3 first, as every write on a surface that writes it locks it, before the cascade
-    // reaches CommentV2.
-    await dbWrite.$executeRaw`
-      DELETE FROM "CommentTopic"
-      WHERE ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))}
-        AND (("entityType" = 'article' AND "entityId" IN (${owned('Article')}))
-          OR ("entityType" = 'post' AND "entityId" IN (${owned('Post')})))`;
     await dbWrite.$executeRaw`DELETE FROM "Article" WHERE id IN (${owned('Article')})`;
     await dbWrite.$executeRaw`DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
     const formerOwnerHeld = heldModelIdsSql(
@@ -3007,24 +2985,8 @@ export const toggleBan = async ({
     }
 
     // Flagged, not deleted, and the ToS flag rather than `hidden` — `hidden` is a fold any viewer can
-    // reopen. See `bulkSetCommentV2TosViolation`.
+    // reopen.
     if (removeComments) {
-      try {
-        // Not a comment on a CommentV3-write surface: `setUserCommentsV3Tos` flags those, locking
-        // CommentV3 first as every write there does, so the two cannot deadlock.
-        await dbWrite.$executeRaw`
-          UPDATE "CommentV2" c2 SET "tosViolation" = true, "updatedAt" = now()
-          WHERE c2."userId" = ${id} AND NOT c2."tosViolation"
-            AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
-      } catch (error) {
-        logToAxiom({
-          type: 'error',
-          name: 'ban-user-remove-comments',
-          message: (error as Error).message,
-          error,
-        });
-      }
-      // Its own try, so a failure above still leaves these flagged.
       await setUserCommentsV3Tos(id).catch((error: Error) =>
         logToAxiom({
           type: 'error',
