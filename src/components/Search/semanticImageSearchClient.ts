@@ -17,7 +17,7 @@ type FacetRequests = Parameters<NonNullable<SearchClient['searchForFacetValues']
 type SearchInput = Parameters<typeof trpcVanilla.semanticImageSearch.search.query>[0];
 type SearchOutput = Awaited<ReturnType<typeof trpcVanilla.semanticImageSearch.search.query>>;
 
-type RequestParams = {
+export type RequestParams = {
   query?: string;
   page?: number;
   hitsPerPage?: number;
@@ -38,12 +38,12 @@ export function isImageSearchIndex(indexName: string) {
   return indexName === IMAGES_SEARCH_INDEX || indexName.startsWith(`${IMAGES_SEARCH_INDEX}:`);
 }
 
-function asList<T>(value: T | T[] | undefined): T[] {
+export function asList<T>(value: T | T[] | undefined): T[] {
   return value === undefined ? [] : Array.isArray(value) ? value : [value];
 }
 
 /** `facetFilters` → `{ attribute: values }`; an inner array is OR, each outer entry AND. */
-function readFacetFilters(facetFilters: RequestParams['facetFilters']) {
+export function readFacetFilters(facetFilters: RequestParams['facetFilters']) {
   const byAttribute = new Map<string, string[]>();
   for (const group of asList(facetFilters)) {
     for (const filter of asList(group)) {
@@ -73,13 +73,13 @@ function readPostedRange(numericFilters: RequestParams['numericFilters']) {
 }
 
 /** The browsing level `BrowsingLevelFilter` wrote into `filters` as `nsfwLevel=N OR …`. */
-function readBrowsingLevel(filters: string | undefined) {
+export function readBrowsingLevel(filters: string | undefined) {
   let flags = 0;
   for (const match of (filters ?? '').matchAll(BROWSING_LEVEL_CLAUSE)) flags |= Number(match[1]);
   return flags || undefined;
 }
 
-function emptyResult(indexName: string, params: RequestParams) {
+export function emptyResult(indexName: string, params: RequestParams) {
   return {
     index: indexName,
     hits: [],
