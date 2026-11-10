@@ -38,7 +38,7 @@ beforeEach(async () => {
 
 const base = {
   workspace: 'prompts' as const,
-  entityType: 'CommentV2' as const,
+  entityType: 'CommentV3' as const,
   expected: { scam: true },
   note: null,
   origin: 'try' as const,
@@ -52,7 +52,7 @@ describe('captureCase', () => {
       { ...base, setId, entityId: 71, fields: [{ heading: 'Comment', text: 'posted text' }] },
       MOD
     );
-    expect(compose).toHaveBeenCalledWith('CommentV2', [71]);
+    expect(compose).toHaveBeenCalledWith('CommentV3', [71]);
     const [stored] = await listCases(db, setId);
     expect(stored).toMatchObject({
       id: saved.caseId,

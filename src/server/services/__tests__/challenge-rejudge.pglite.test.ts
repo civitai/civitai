@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
-import type * as CommentsV2Service from '~/server/services/commentsv2.service';
+import type * as CommentModeration from '~/server/services/commentv3/moderation.service';
 import type * as JobLock from '~/server/jobs/job-lock';
 import type * as DailyChallengeUtils from '~/server/games/daily-challenge/daily-challenge.utils';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
@@ -15,7 +15,7 @@ const JUDGED_TAG = 11;
 const REVIEW_ME_TAG = 12;
 
 const { mockBulkDeleteComments, mockAcquireJobLock } = vi.hoisted(() => ({
-  mockBulkDeleteComments: vi.fn<typeof CommentsV2Service.bulkDeleteCommentsV2>(async () => ({
+  mockBulkDeleteComments: vi.fn<typeof CommentModeration.bulkDeleteComments>(async () => ({
     deleted: 0,
   })),
   mockAcquireJobLock: vi.fn(),
@@ -24,9 +24,9 @@ vi.mock('~/server/jobs/job-lock', async (importOriginal) => ({
   ...(await importOriginal<typeof JobLock>()),
   acquireJobLock: mockAcquireJobLock,
 }));
-vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof CommentsV2Service>()),
-  bulkDeleteCommentsV2: mockBulkDeleteComments,
+vi.mock('~/server/services/commentv3/moderation.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CommentModeration>()),
+  bulkDeleteComments: mockBulkDeleteComments,
 }));
 vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof DailyChallengeUtils>()),

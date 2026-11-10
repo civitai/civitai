@@ -100,13 +100,16 @@ export const getBuzzTransactionResponse = z.object({
   // its unnamed members differently; see `fromClickhouseTransactionType`. Collapsing every numeric
   // value to Tip labelled each daily license-fee payout as "Tip" on the Buzz Dashboard, which is all
   // a fee-earning creator saw.
-  type: z.any().transform((value): TransactionType => {
-    const numeric = /^\d+$/.test(String(value)) ? Number(value) : null;
-    if (numeric === null) return TransactionType[value as keyof typeof TransactionType];
-    // Reverse-mapped name exists => it's a real enum value. Unknown numbers keep the old Tip fallback
-    // rather than rendering blank.
-    return TransactionType[numeric] != null ? numeric : TransactionType.Tip;
-  }),
+  type: z
+    .any()
+    .optional()
+    .transform((value): TransactionType => {
+      const numeric = /^\d+$/.test(String(value)) ? Number(value) : null;
+      if (numeric === null) return TransactionType[value as keyof typeof TransactionType];
+      // Reverse-mapped name exists => it's a real enum value. Unknown numbers keep the old Tip fallback
+      // rather than rendering blank.
+      return TransactionType[numeric] != null ? numeric : TransactionType.Tip;
+    }),
   fromAccountId: z.coerce.number(),
   toAccountId: z.coerce.number(),
   fromAccountType: z.preprocess(preprocessAccountType, buzzAccountTypeFromApiValueSchema),
