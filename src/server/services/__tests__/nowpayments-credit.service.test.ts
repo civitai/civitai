@@ -445,6 +445,7 @@ describe('matchManualCredit', () => {
     accountType: 'yellow',
     fromAccountId: 0,
     externalTransactionId: null,
+    handPaidFor: null,
   };
   const ctx = {
     paymentId: PAYMENT_ID,
