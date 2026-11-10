@@ -462,6 +462,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // serves traffic.
   BOT_HTML_EDGE_CACHE = 'bot-html-edge-cache',
 
+  // On: `getImageMetricsObject` serves an image's cached `metrics:Image:<id>` hash straight from
+  // Redis, and hands entries past their refresh age to a per-pod, de-duplicated, concurrency-capped
+  // background refresher instead of reading through MetricService.fetch on the request
+  // (`~/server/services/image-metrics-swr`). Ids with no cached hash, or one older than the
+  // max-staleness bound, still take the MetricService read inline, as before. Off (and unknown,
+  // or a client that has not initialised): every id takes the MetricService read, as before.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
+  // serves traffic.
+  IMAGE_METRICS_SWR = 'image-metrics-swr',
+
   // Download links (`/api/download/l/<id>` and the mint at `/api/v1/download-links`). Off, unknown
   // or unreachable: every link answers 404 and no link is minted.
   //
