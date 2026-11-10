@@ -24,6 +24,7 @@ const MODEL_LIVE = 104;
 const MODEL_TAKEN_DOWN = 105;
 const IMAGE_ON_NO_MODEL = 106;
 const POST_ON_NO_MODEL = 107;
+const TAKEN_DOWN_THEN_LIVE = 108;
 
 let db: PGlite;
 
@@ -78,7 +79,9 @@ beforeAll(async () => {
       (${MODEL_LIVE}, ${OWNER}, NULL, NULL, ${LIVE}),
       (${MODEL_TAKEN_DOWN}, ${OWNER}, NULL, NULL, ${TAKEN_DOWN}),
       (${IMAGE_ON_NO_MODEL}, ${STRANGER}, 43, NULL, NULL),
-      (${POST_ON_NO_MODEL}, ${STRANGER}, NULL, 33, NULL);
+      (${POST_ON_NO_MODEL}, ${STRANGER}, NULL, 33, NULL),
+      (${TAKEN_DOWN_THEN_LIVE}, ${STRANGER}, NULL, 32, NULL),
+      (${TAKEN_DOWN_THEN_LIVE}, ${OWNER}, 40, NULL, NULL);
   `);
 });
 
@@ -109,5 +112,9 @@ describe('collection item covers', () => {
     ['a model item for a taken-down model', MODEL_TAKEN_DOWN],
   ])('takes no cover from %s', async (_, collectionId) => {
     expect(await coverOf(collectionId)).toEqual([null]);
+  });
+
+  it('skips only the taken-down item, so a later live item still gives a cover', async () => {
+    expect(await coverOf(TAKEN_DOWN_THEN_LIVE)).toEqual([null, 40]);
   });
 });

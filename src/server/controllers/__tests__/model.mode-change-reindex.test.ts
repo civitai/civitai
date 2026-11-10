@@ -41,12 +41,13 @@ beforeEach(() => {
     db.model.findFirst.mockImplementation((async () => row()) as never);
   }
   // The collections showing the model's images, by item or cover; nothing else is read raw here.
-  dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
-    const sql = strings.join('?');
-    if (sql.includes('pg_class')) return [{ present: true }];
-    if (sql.includes('"CollectionItem"')) return [{ collectionId: COLLECTION }];
-    return [];
-  }) as never);
+  for (const db of [dbMock.dbRead, dbMock.dbWrite])
+    db.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+      const sql = strings.join('?');
+      if (sql.includes('pg_class')) return [{ present: true }];
+      if (sql.includes('"CollectionItem"')) return [{ collectionId: COLLECTION }];
+      return [];
+    }) as never);
   dbMock.dbWrite.model.update.mockImplementation((async ({ data }: { data: object }) => ({
     id: MODEL,
     userId: OWNER,
@@ -75,16 +76,21 @@ const collectionRebuilt = () =>
     )
   );
 
+// The collection rebuild runs after the response; let it settle before reading what it queued.
+const settled = () => new Promise((resolve) => setTimeout(resolve, 20));
+
 describe("a change of a model's mode", () => {
   it('reindexes the model when a moderator takes it down', async () => {
     await changeModelModifierHandler({ input: { id: MODEL, mode: 'TakenDown' }, ctx: ctx(true) });
     expect(reindexed()).toBe(true);
+    await settled();
     expect(collectionRebuilt()).toBe(true);
   });
 
   it('reindexes the model when it is taken down in the moderator app', async () => {
     await takeDown.handler({ modelId: MODEL }, actor);
     expect(reindexed()).toBe(true);
+    await settled();
     expect(collectionRebuilt()).toBe(true);
   });
 
@@ -92,12 +98,25 @@ describe("a change of a model's mode", () => {
     mode = 'TakenDown';
     await bringBack.handler({ modelId: MODEL }, actor);
     expect(reindexed()).toBe(true);
+    await settled();
     expect(collectionRebuilt()).toBe(true);
   });
 
   it('does not reindex on an edit that leaves the mode alone', async () => {
     await setModelShowcaseCollection({ id: MODEL, collectionId: null, userId: OWNER });
+    await settled();
     expect(reindexed()).toBe(false);
+    expect(collectionRebuilt()).toBe(false);
+  });
+
+  it.each([
+    ['archives it', null, 'Archived'],
+    ['unarchives it', 'Archived', null],
+  ])('reindexes the model but not its collections when its owner %s', async (_, from, to) => {
+    mode = from;
+    await changeModelModifierHandler({ input: { id: MODEL, mode: to } as never, ctx: ctx() });
+    await settled();
+    expect(reindexed()).toBe(true);
     expect(collectionRebuilt()).toBe(false);
   });
 });

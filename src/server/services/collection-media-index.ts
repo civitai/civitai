@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { collectionsSearchIndex } from '~/server/search-index/collections.search-index';
 
@@ -362,8 +362,9 @@ export async function getCollectionIdsForModelCascade({
  * from any post on its versions, whoever posted it. A taken-down model's images leave every
  * collection cover, and a restored model's come back, so a change of mode rebuilds these.
  *
- * UNIONed legs, as in `getCollectionIdsForModelCascade`. Never throws: it runs after the mode
- * change has committed, and a failure here can only leave covers stale.
+ * UNIONed legs, as in `getCollectionIdsForModelCascade`, read from the replica: the images
+ * predate the mode change. Never throws: it runs after the mode change has committed, and a
+ * failure here can only leave covers stale.
  */
 export async function getCollectionIdsForModelImages({
   modelId,
@@ -385,6 +386,13 @@ export async function getCollectionIdsForModelImages({
       error
     );
   }
+  if (!withCover)
+    logToAxiom({
+      type: 'warning',
+      name: 'collection-media-index-cover-leg-skipped',
+      message: `${source}: "${COVER_INDEX_NAME}" is not present and valid, so collections whose COVER is one of the model's images are not being re-indexed. Apply the migration that creates it.`,
+      source,
+    }).catch(() => undefined);
   const modelImagesSql = Prisma.sql`
     SELECT i.id FROM "Image" i
     JOIN "Post" p ON p.id = i."postId"
@@ -396,7 +404,7 @@ export async function getCollectionIdsForModelImages({
         SELECT c.id AS "collectionId" FROM "Collection" c WHERE c."imageId" IN (${modelImagesSql})`
     : Prisma.empty;
   try {
-    const rows = await dbWrite.$queryRaw<{ collectionId: number }[]>`
+    const rows = await dbRead.$queryRaw<{ collectionId: number }[]>`
       SELECT DISTINCT x."collectionId" FROM (
         SELECT ci."collectionId" FROM "CollectionItem" ci WHERE ci."modelId" = ${modelId}
         UNION

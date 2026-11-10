@@ -2119,10 +2119,13 @@ export const updateModelById = async ({
   meta?: (stored: ModelMeta | null, row: LockedModelRow) => ModelMeta;
 }) => {
   let written = typeof data === 'function' ? undefined : data;
+  // The mode before this write; undefined when the write read no row.
+  let priorMode: ModelModifier | null | undefined;
   const model =
     meta || typeof data === 'function'
       ? await dbWrite.$transaction(async (tx) => {
           const row = await lockModelRow(tx, id);
+          priorMode = row?.mode ?? null;
           const fields = typeof data === 'function' ? data(row) : data;
           written = fields;
           return tx.model.update({
@@ -2161,13 +2164,18 @@ export const updateModelById = async ({
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
   // A taken-down model's search document carries no images, so a change of mode rewrites it.
-  // So do the collection documents whose covers come from its images.
   if (written && 'mode' in written) {
     await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-    await enqueueCollectionRebuild({
-      ...(await getCollectionIdsForModelImages({ modelId: id })),
-      source: 'model-mode-change',
-    });
+    // Collection covers drawn from its images change only when it enters or leaves TakenDown.
+    // Not awaited: the lookup reads every image on the model.
+    if (
+      written.mode === ModelModifier.TakenDown ||
+      priorMode === ModelModifier.TakenDown ||
+      priorMode === undefined
+    )
+      void getCollectionIdsForModelImages({ modelId: id })
+        .then((found) => enqueueCollectionRebuild({ ...found, source: 'model-mode-change' }))
+        .catch(() => undefined);
   }
 
   return withoutModeratorOnlyMeta(model);
