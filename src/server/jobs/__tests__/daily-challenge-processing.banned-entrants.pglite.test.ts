@@ -16,13 +16,15 @@ import '~/__tests__/mocks/logging.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { mockGenerateReview, mockGetActiveChallenges } = vi.hoisted(() => ({
+const { mockGenerateReview, mockGetActiveChallenges, mockSaveReviewState } = vi.hoisted(() => ({
   mockGenerateReview: vi.fn(),
   mockGetActiveChallenges: vi.fn(),
+  mockSaveReviewState: vi.fn(),
 }));
 
 const JUDGED_TAG = 11;
 const REVIEW_ME_TAG = 12;
+const OTHER_TAG = 13;
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof Flipt>()),
@@ -48,7 +50,7 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async (importOri
 vi.mock('~/server/games/daily-challenge/challenge-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof ChallengeHelpers>()),
   incrementOperationSpent: vi.fn().mockResolvedValue(undefined),
-  saveReviewState: vi.fn(),
+  saveReviewState: mockSaveReviewState,
 }));
 vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
   distributeParticipationPrizes: vi.fn().mockResolvedValue([]),
@@ -99,9 +101,9 @@ beforeAll(async () => {
       "entityType" text, "entityId" int, "parentId" int, "deletedAt" timestamp, "userId" int
     );
     INSERT INTO "User" VALUES (${CLEAN}, 'clean', NULL), (${BANNED}, 'banned', NULL);
-    INSERT INTO "Image" VALUES
-      (1, ${CLEAN}, 'u1', 1), (2, ${BANNED}, 'u2', 1),
-      (3, ${CLEAN}, 'u3', 1), (4, ${BANNED}, 'u4', 1);
+    -- Odd image ids belong to the clean entrant, even ones to the banned entrant.
+    INSERT INTO "Image" SELECT n, CASE WHEN n % 2 = 1 THEN ${CLEAN} ELSE ${BANNED} END, 'img-' || n, 1
+      FROM generate_series(1, 8) n;
     -- Already scored: in the judged field.
     INSERT INTO "CollectionItem" VALUES
       (100, 1, ${JUDGED_TAG}, '${note}', 'ACCEPTED', now()),
@@ -110,6 +112,14 @@ beforeAll(async () => {
     INSERT INTO "CollectionItem" VALUES
       (100, 3, ${REVIEW_ME_TAG}, NULL, 'ACCEPTED', now()),
       (100, 4, ${REVIEW_ME_TAG}, NULL, 'ACCEPTED', now());
+    -- Accepted since the last tick, untagged: the random sample.
+    INSERT INTO "CollectionItem" VALUES
+      (100, 5, NULL, NULL, 'ACCEPTED', now()),
+      (100, 6, NULL, NULL, 'ACCEPTED', now());
+    -- Owed a review from an earlier tick; outside the sample window.
+    INSERT INTO "CollectionItem" VALUES
+      (100, 7, ${OTHER_TAG}, NULL, 'ACCEPTED', now() - interval '1 day'),
+      (100, 8, ${OTHER_TAG}, NULL, 'ACCEPTED', now() - interval '1 day');
   `);
 });
 afterAll(() => db.close());
@@ -132,7 +142,7 @@ function routeQueries() {
         {
           allowedNsfwLevel: 1,
           judgeId: null,
-          metadata: null,
+          metadata: { pendingReview: { '7': 0, '8': 0 } },
           source: ChallengeSource.System,
           entryFee: 0,
           prizeMode: 'Fixed',
@@ -168,11 +178,12 @@ const judgedUserIds = async () =>
     .map((entry) => entry.userId)
     .sort();
 
-async function reviewedCreators() {
+async function reviewedImageIds() {
   mockGenerateReview.mockClear();
+  mockSaveReviewState.mockClear();
   await reviewEntries();
   return mockGenerateReview.mock.calls
-    .map(([args]) => (args as { creator: string }).creator)
+    .map(([args]) => Number(/img-(\d+)/.exec((args as { imageUrl: string }).imageUrl)?.[1]))
     .sort();
 }
 
@@ -185,7 +196,8 @@ beforeEach(() => {
     reaction: 'Like',
   });
   mockGetActiveChallenges.mockResolvedValue([
-    { challengeId: 1, collectionId: 100, date: new Date(), theme: 't', modelVersionIds: [] },
+    // The sample window opens at the challenge start.
+    { challengeId: 1, collectionId: 100, date: new Date(0), theme: 't', modelVersionIds: [] },
   ]);
   routeQueries();
 });
@@ -202,11 +214,21 @@ describe('banned entrants', () => {
     expect(await judgedUserIds()).toEqual([CLEAN, BANNED]);
   });
 
-  it('are not reviewed while banned, and are reviewed on the next tick once the ban is lifted', async () => {
+  it('are not reviewed while banned: requested, sampled or owed', async () => {
+    await setBanned(null);
+    expect(await reviewedImageIds()).toEqual([3, 4, 5, 6, 7, 8]);
+
     await setBanned(new Date());
-    expect(await reviewedCreators()).toEqual(['clean']);
+    expect(await reviewedImageIds()).toEqual([3, 5, 7]);
+    // A banned entrant's owed review is settled, not kept, so it can't hold completion back.
+    expect(mockSaveReviewState.mock.calls[0][0].resolved).toContain('8');
+  });
+
+  it('get a requested review on the next tick once the ban is lifted', async () => {
+    await setBanned(new Date());
+    expect(await reviewedImageIds()).not.toContain(4);
 
     await setBanned(null);
-    expect(await reviewedCreators()).toEqual(['banned', 'clean']);
+    expect(await reviewedImageIds()).toContain(4);
   });
 });
