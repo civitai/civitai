@@ -33,6 +33,7 @@ import {
   getScheduledPostsSchema,
   plannerPostIdSchema,
   plannerPublishNowSchema,
+  getPostResourceCoversSchema,
   plannerRescheduleSchema,
   plannerShiftSchema,
   plannerUnscheduleSchema,
