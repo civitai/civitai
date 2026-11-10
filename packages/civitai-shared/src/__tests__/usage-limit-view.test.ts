@@ -128,6 +128,32 @@ describe('describeUsageLimit', () => {
   });
 });
 
+describe('describeUsageLimit: a fixed free-tier window', () => {
+  it('at the limit says when everything resets, never "+1 at", which a fixed window does not do', () => {
+    const view = describeUsageLimit(
+      row({
+        window: 'fixed',
+        limit: 200,
+        used: 200,
+        remaining: 0,
+        nextAt: '2026-11-03T08:12:00Z',
+        resetAt: '2026-11-03T08:12:00Z',
+      }),
+      { now: NOW, timeZone: DENVER }
+    );
+    expect(view.when).toBe('resets 1:12 AM tomorrow');
+    expect(view.whenDetail).toBeNull();
+  });
+
+  it('before the first free request there is no reset time to show', () => {
+    const view = describeUsageLimit(row({ window: 'fixed', limit: 200, remaining: 200 }), {
+      now: NOW,
+      timeZone: DENVER,
+    });
+    expect(view).toMatchObject({ usedText: '0 of 200 used', when: null });
+  });
+});
+
 describe('formatWhen', () => {
   it('names a weekday within the week and a date beyond it', () => {
     expect(formatWhen(Date.parse('2026-11-05T16:00:00Z'), NOW, DENVER)).toBe('Thu 9:00 AM');

@@ -19,6 +19,7 @@ export function UsageLimitsPane() {
   const limits = trpc.user.getUsageLimits.useQuery(undefined, { staleTime: STALE_MS });
   const active = trpc.user.getActiveLimits.useQuery(undefined, { staleTime: STALE_MS });
   const appBuzz = trpc.user.getAppBuzzUsage.useQuery(undefined, {
+  const freeUsage = trpc.user.getOrchestrationFreeUsage.useQuery(undefined, {
     staleTime: STALE_MS,
     retry: false,
   });
@@ -36,6 +37,7 @@ export function UsageLimitsPane() {
       active={active.data ?? []}
       appBuzz={appBuzz.data ?? undefined}
       appStorage={<AppStorageCard flat />}
+      freeUsage={freeUsage.data ?? undefined}
     />
   );
 }
@@ -51,6 +53,8 @@ export type UsageLimitsViewProps = {
   appBuzz?: UsageLimitRow;
   /** The per-app storage card, which loads and gates itself. */
   appStorage?: ReactNode;
+  /** Free generation allowance per model; absent when it failed to load or no token is issued. */
+  freeUsage?: UsageLimitRow[];
 };
 
 export function UsageLimitsView({
@@ -62,6 +66,7 @@ export function UsageLimitsView({
   active,
   appBuzz,
   appStorage,
+  freeUsage,
 }: UsageLimitsViewProps) {
   const areas = useMemo(() => {
     const byArea = new Map<string, UsageLimitRow[]>();
@@ -101,6 +106,9 @@ export function UsageLimitsView({
       )}
       {appBuzz && <UsageLimitCard area="apps" rows={[appBuzz]} now={now} timeZone={timeZone} />}
       {appStorage}
+      {freeUsage && freeUsage.length > 0 && (
+        <UsageLimitCard area="generation" rows={freeUsage} now={now} timeZone={timeZone} />
+      )}
       <Paper withBorder radius="md" p="sm" className="bg-gray-0 dark:bg-dark-7">
         <Text size="xs" c="dimmed">
           For scripts: <Code>GET /api/v1/me/limits</Code> returns this as JSON. A limit error is
