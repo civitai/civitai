@@ -65,7 +65,8 @@ beforeEach(() => {
   });
 });
 
-const resourcesFor = (viewer: Viewer) => getPostResources({ id: POST_ID, ...viewer });
+const resourcesFor = ({ userId, isModerator }: Viewer) =>
+  getPostResources({ id: POST_ID, userId, isModerator });
 
 describe('post resources from images the viewer may not open', () => {
   it('drops a resource only the hidden image uses, for a stranger and signed out', async () => {

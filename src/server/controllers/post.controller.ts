@@ -905,7 +905,6 @@ export const getPostContestCollectionDetailsHandler = async ({
   ctx: Context;
 }) => {
   try {
-    // A post the viewer may not open answers as a missing post does.
     const visible = await assertPostVisibleToViewer({ ...input, user: ctx.user }).catch((e) => {
       if (e instanceof TRPCError && e.code === 'NOT_FOUND') return null;
       throw e;
