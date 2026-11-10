@@ -1,50 +1,63 @@
 import { PGlite } from '@electric-sql/pglite';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 /**
- * Runs the endpoint's real id queries against an in-process Postgres: it queues every indexed
- * taken-down model, and no other, and the collections showing any taken-down model's images.
+ * Runs the endpoint's real id queries against an in-process Postgres, through its real query
+ * schema. By default it queues every indexed taken-down model, and no other. With
+ * `target=collections` it queues, a page of taken-down models at a time, the collections showing
+ * their images, and reads them back from the queue.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { env, queueModelsReindex, collectionsOf, enqueueCollectionRebuild } = vi.hoisted(() => ({
-  env: {
-    WEBHOOK_TOKEN: 'test-token',
-    LOGGING: '',
-    NEXTAUTH_URL: 'https://example.test',
-    TRPC_ORIGINS: [] as string[],
-  },
-  queueModelsReindex: vi.fn(async (ids: number[]) => ({ ids: ids.length })),
-  // Model n's images show in collections 10n and 100 (shared, so it must be queued once).
-  collectionsOf: vi.fn(async ({ modelId }: { modelId: number }) => ({
-    collectionIds: [modelId * 10, 100],
-    truncated: false,
-  })),
-  enqueueCollectionRebuild: vi.fn(async () => ({ queued: 0, truncated: false })),
-}));
+const { env, queueModelsReindex, collectionsOf, enqueueCollectionRebuild, queuedCollections } =
+  vi.hoisted(() => {
+    const queuedCollections = new Set<number>();
+    return {
+      env: {
+        WEBHOOK_TOKEN: 'test-token',
+        LOGGING: '',
+        NEXTAUTH_URL: 'https://example.test',
+        TRPC_ORIGINS: [] as string[],
+      },
+      queueModelsReindex: vi.fn(async (ids: number[]) => ({ ids: ids.length })),
+      // Model n's images show in collections 10n and 100 (shared, so it must be queued once).
+      collectionsOf: vi.fn(
+        async ({
+          modelId,
+        }: {
+          modelId: number;
+        }): Promise<{
+          collectionIds: number[];
+          truncated: boolean;
+          failed?: boolean;
+        }> => ({ collectionIds: [modelId * 10, 100], truncated: false })
+      ),
+      enqueueCollectionRebuild: vi.fn(async ({ collectionIds }: { collectionIds: number[] }) => {
+        for (const id of collectionIds) queuedCollections.add(id);
+        return { queued: collectionIds.length, truncated: false };
+      }),
+      queuedCollections,
+    };
+  });
 
 vi.mock('~/env/server', () => ({ env }));
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
-// The queueing and its read-back are queue-paid-models-reindex-endpoint.test.ts's to pin.
-vi.mock('~/server/search-index/queue-models-reindex', () => ({
-  queueModelsReindex,
-  queueModelsReindexSchema: {
-    safeParse: (data: { dryRun?: string }) => ({
-      success: true,
-      data: { ...data, dryRun: data.dryRun !== 'false' },
-    }),
-  },
+// The models queueing and its read-back are queue-paid-models-reindex-endpoint.test.ts's to pin.
+vi.mock('~/server/search-index/queue-models-reindex', () => ({ queueModelsReindex }));
+// The collections queue, as the read-back sees it.
+vi.mock('~/server/search-index/SearchIndexUpdate', () => ({
+  SearchIndexUpdate: { getQueue: async () => ({ content: [...queuedCollections] }) },
 }));
-
 // The lookup's SQL is collection-media-index-model-images.behavior.test.ts's to pin.
 vi.mock('~/server/services/collection-media-index', () => ({
   getCollectionIdsForModelImages: collectionsOf,
   enqueueCollectionRebuild,
+  isCoverLegUsable: async () => true,
 }));
 
 const handler = (await import('~/pages/api/admin/temp/queue-takendown-models-reindex')).default;
@@ -74,15 +87,34 @@ beforeAll(async () => {
   );
 });
 
+beforeEach(() => {
+  vi.clearAllMocks();
+  queuedCollections.clear();
+});
+
+type Page = {
+  models: number;
+  nextAfterId: number | null;
+  collections: number;
+  failedModelIds: number[];
+  truncated: boolean;
+  dryRun: boolean;
+  landed?: number;
+};
+let body: Page = {} as Page;
 async function call(query: Record<string, string>) {
   const req = { method: 'POST', query: { token: 'test-token', ...query }, headers: {} } as never;
   let statusCode = 0;
+  body = {} as Page;
   const res = {
     status(code: number) {
       statusCode = code;
       return res;
     },
-    json: () => res,
+    json: (sent: Page) => {
+      body = sent;
+      return res;
+    },
     send: () => res,
     setHeader: () => res,
     end: () => res,
@@ -91,28 +123,92 @@ async function call(query: Record<string, string>) {
   return statusCode;
 }
 
+const lookedUp = () => collectionsOf.mock.calls.map(([arg]) => arg.modelId);
+const enqueued = () =>
+  enqueueCollectionRebuild.mock.calls.flatMap(([arg]) => arg.collectionIds).sort((a, b) => a - b);
+
 describe('/api/admin/temp/queue-takendown-models-reindex', () => {
-  it('queues every indexed taken-down model, and no other', async () => {
+  it('queues every indexed taken-down model, and no other, and no collection', async () => {
     expect(await call({ dryRun: 'false' })).toBe(200);
     const [ids] = queueModelsReindex.mock.calls.at(-1) as unknown as [number[]];
     expect([...ids].sort()).toEqual([1, 2]);
+    expect(collectionsOf).not.toHaveBeenCalled();
   });
 
-  it("queues the collections showing any taken-down model's images, indexed or not", async () => {
-    collectionsOf.mockClear();
-    enqueueCollectionRebuild.mockClear();
-    expect(await call({ dryRun: 'false' })).toBe(200);
-    const looked = collectionsOf.mock.calls.map(([arg]) => arg.modelId).sort();
-    expect(looked).toEqual([1, 2, 3, 4]);
-    const [{ collectionIds }] = enqueueCollectionRebuild.mock.calls.at(-1) as unknown as [
-      { collectionIds: number[] }
-    ];
-    expect([...collectionIds].sort((a, b) => a - b)).toEqual([10, 20, 30, 40, 100]);
-  });
+  describe('target=collections', () => {
+    it("queues the collections showing any taken-down model's images, indexed or not, once each", async () => {
+      expect(await call({ target: 'collections', dryRun: 'false' })).toBe(200);
+      expect(queueModelsReindex).not.toHaveBeenCalled();
+      expect(lookedUp()).toEqual([1, 2, 3, 4]);
+      expect(enqueued()).toEqual([10, 20, 30, 40, 100]);
+      expect(body).toMatchObject({
+        models: 4,
+        nextAfterId: null,
+        collections: 5,
+        landed: 5,
+        failedModelIds: [],
+        truncated: false,
+        dryRun: false,
+      });
+    });
 
-  it('queues no collection on a dry run', async () => {
-    enqueueCollectionRebuild.mockClear();
-    expect(await call({ dryRun: 'true' })).toBe(200);
-    expect(enqueueCollectionRebuild).not.toHaveBeenCalled();
+    it('takes a page of models at a time and says where the next page starts', async () => {
+      expect(await call({ target: 'collections', dryRun: 'false', take: '2' })).toBe(200);
+      expect(lookedUp()).toEqual([1, 2]);
+      expect(body).toMatchObject({ models: 2, nextAfterId: 2, collections: 3 });
+
+      collectionsOf.mockClear();
+      expect(await call({ target: 'collections', dryRun: 'false', take: '2', afterId: '2' })).toBe(
+        200
+      );
+      expect(lookedUp()).toEqual([3, 4]);
+      expect(body).toMatchObject({ models: 2, nextAfterId: 2 + 2 });
+
+      collectionsOf.mockClear();
+      expect(await call({ target: 'collections', dryRun: 'false', take: '2', afterId: '4' })).toBe(
+        200
+      );
+      expect(lookedUp()).toEqual([]);
+      expect(body).toMatchObject({ models: 0, nextAfterId: null });
+    });
+
+    it.each(['true', '1', 'yes'])(
+      'counts the collections and queues none on a dry run (dryRun=%s)',
+      async (dryRun) => {
+        expect(await call({ target: 'collections', dryRun })).toBe(200);
+        expect(lookedUp()).toEqual([1, 2, 3, 4]);
+        expect(enqueueCollectionRebuild).not.toHaveBeenCalled();
+        expect(body).toMatchObject({ models: 4, collections: 5, dryRun: true });
+        expect(body.landed).toBeUndefined();
+      }
+    );
+
+    it('queues nothing for a dryRun it cannot read', async () => {
+      expect(await call({ target: 'collections', dryRun: 'abc' })).toBe(400);
+      expect(enqueueCollectionRebuild).not.toHaveBeenCalled();
+    });
+
+    it('names a model whose lookup failed, and passes on a lookup cut short', async () => {
+      collectionsOf
+        .mockImplementationOnce(async () => ({ collectionIds: [], truncated: false, failed: true }))
+        .mockImplementationOnce(async ({ modelId }) => ({
+          collectionIds: [modelId * 10],
+          truncated: true,
+        }));
+      expect(await call({ target: 'collections', dryRun: 'false' })).toBe(200);
+      expect(body).toMatchObject({ failedModelIds: [1], truncated: true });
+      expect(enqueueCollectionRebuild).toHaveBeenCalledWith(
+        expect.objectContaining({ truncated: true })
+      );
+    });
+
+    it('reports what did not reach the queue', async () => {
+      enqueueCollectionRebuild.mockImplementationOnce(async () => ({
+        queued: 0,
+        truncated: false,
+      }));
+      expect(await call({ target: 'collections', dryRun: 'false' })).toBe(200);
+      expect(body).toMatchObject({ collections: 5, landed: 0 });
+    });
   });
 });

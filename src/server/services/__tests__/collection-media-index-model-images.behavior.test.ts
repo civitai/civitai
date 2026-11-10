@@ -97,13 +97,27 @@ describe('getCollectionIdsForModelImages', () => {
     }
   });
 
-  it('resolves nothing, rather than throwing, when the lookup fails', async () => {
+  it('resolves nothing and says it failed, rather than throwing, when the lookup fails', async () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('probe down'));
     dbMock.dbRead.$queryRaw.mockRejectedValueOnce(new Error('connection lost'));
     expect(await getCollectionIdsForModelImages({ modelId: MODEL })).toEqual({
       collectionIds: [],
       truncated: false,
+      failed: true,
     });
+  });
+
+  it('skips the cover leg when the caller has found it unusable, without checking again', async () => {
+    dbMock.dbWrite.$queryRaw.mockClear();
+    const { collectionIds } = await getCollectionIdsForModelImages({
+      modelId: MODEL,
+      withCover: false,
+    });
+    expect(collectionIds).not.toContain(BY_COVER);
+    const probes = dbMock.dbWrite.$queryRaw.mock.calls.filter((call) =>
+      (call[0] as string[]).join('?').includes('pg_class')
+    );
+    expect(probes).toHaveLength(0);
   });
 
   it('is not cut short at exactly the cap', async () => {

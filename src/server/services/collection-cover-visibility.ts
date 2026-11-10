@@ -21,9 +21,8 @@ const notOnTakenDownModelSql = Prisma.sql`NOT EXISTS (
  * Whether an image may be shown as a collection's cover to someone who doesn't own it, as SQL over
  * `"Image" i` with `"Post" p` LEFT JOINed on `i."postId"`. The image must be scanned, not awaiting
  * review and not removed. A posted image needs its post published, not Private and on no
- * taken-down model. A postless
- * image needs `postlessAllowed`: `coverUploadSql` for a collection's own cover, `itemUploadSql` for
- * a cover taken from an item.
+ * taken-down model. A postless image needs `postlessAllowed`: `coverUploadSql` for a collection's
+ * own cover, `itemUploadSql` for a cover taken from an item.
  */
 export function servableCollectionCoverSql({ postlessAllowed }: { postlessAllowed: Prisma.Sql }) {
   return Prisma.sql`(

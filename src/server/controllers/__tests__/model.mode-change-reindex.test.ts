@@ -10,8 +10,8 @@ vi.mock('~/server/utils/moderator-endpoint', async (importOriginal) => ({
 
 /**
  * A taken-down model's search document carries no images, nor do the collection covers drawn from
- * them, so every change of mode queues the model's document and those collections' to be rebuilt;
- * an edit that leaves the mode alone does not.
+ * them. Entering or leaving TakenDown queues the model's document and its collections; another
+ * change of mode queues the model's document only, and an edit that leaves the mode alone neither.
  */
 
 const { modelsSearchIndex, collectionsSearchIndex } = await import('~/server/search-index');
@@ -20,7 +20,9 @@ type ModHandler = { handler: (input: { modelId: number }, ctx: unknown) => Promi
 const takeDown = (await import('~/pages/api/mod/model/take-down')).default as unknown as ModHandler;
 const bringBack = (await import('~/pages/api/mod/model/bring-back'))
   .default as unknown as ModHandler;
-const { setModelShowcaseCollection } = await import('~/server/services/model.service');
+const { setModelShowcaseCollection, updateModelById } = await import(
+  '~/server/services/model.service'
+);
 
 const MODEL = 1;
 const OWNER = 5;
@@ -118,5 +120,27 @@ describe("a change of a model's mode", () => {
     await settled();
     expect(reindexed()).toBe(true);
     expect(collectionRebuilt()).toBe(false);
+  });
+
+  // Prisma's `{ set }` form says the same as a bare value.
+  it.each([
+    ['takes it down', 'TakenDown', true],
+    ['archives it', 'Archived', false],
+  ])('reads the set form when a locked write %s', async (_, to, rebuilt) => {
+    await updateModelById({
+      id: MODEL,
+      data: { mode: { set: to as never } },
+      meta: (stored) => stored ?? {},
+    });
+    await settled();
+    expect(reindexed()).toBe(true);
+    expect(collectionRebuilt()).toBe(rebuilt);
+  });
+
+  it('rebuilds the collections on an unlocked write, which reads no prior mode', async () => {
+    mode = 'TakenDown';
+    await updateModelById({ id: MODEL, data: { mode: { set: null } } });
+    await settled();
+    expect(collectionRebuilt()).toBe(true);
   });
 });

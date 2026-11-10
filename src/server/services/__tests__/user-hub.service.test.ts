@@ -578,7 +578,7 @@ describe('resolveHubSources source expansion', () => {
     expect(result?.heldBrowsingLevel).toBeUndefined();
   });
 
-  it("drops a taken-down model's versions, and holds only what is left", async () => {
+  it("drops a taken-down model's versions from the hub", async () => {
     findFirstHub.mockResolvedValue({
       sources: [
         { type: UserHubSourceType.Model, targetId: 20 },
@@ -593,7 +593,8 @@ describe('resolveHubSources source expansion', () => {
     // The viewer is passed on, so the model's owner keeps it.
     expect(withheldVersionsMock).toHaveBeenCalledWith(expect.arrayContaining([30, 31, 41]), 5);
     expect(result?.modelVersionIds).toEqual([41]);
-    expect(heldLevelMock).toHaveBeenCalledWith({ modelIds: [], modelVersionIds: [41] });
+    // The hold is read alongside, over every version the hub named.
+    expect(heldLevelMock).toHaveBeenCalledWith({ modelIds: [20], modelVersionIds: [41] });
   });
 
   it("keeps a taken-down model's versions for a viewer the caller exempts", async () => {

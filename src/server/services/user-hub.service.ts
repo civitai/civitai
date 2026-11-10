@@ -1471,20 +1471,21 @@ export async function resolveHubSources({
   const { getHeldGalleryLevel, getWithheldVersionIds } = await import(
     '~/server/services/model.service'
   );
-  // A taken-down model's versions leave the hub, except for its owner and moderators.
-  const withheldVersionIds = holdExempt
-    ? new Set<number>()
-    : await getWithheldVersionIds(cappedVersionIds, galleryOwnerId);
+  // Moderators are neither held nor withheld, when the caller says so: they must see what they may
+  // need to remove. A taken-down model's versions leave the hub, except for its owner. The hold is
+  // read over the versions before that, so the two run together; a withheld model can only narrow
+  // it. Versions expanded from a Model source already carry their model; only the rest are looked up.
+  const [withheldVersionIds, heldBrowsingLevel] =
+    cappedVersionIds.length && !holdExempt
+      ? await Promise.all([
+          getWithheldVersionIds(cappedVersionIds, galleryOwnerId),
+          getHeldGalleryLevel({
+            modelIds: [...new Set(cappedVersionIds.flatMap((id) => modelOfVersion.get(id) ?? []))],
+            modelVersionIds: cappedVersionIds.filter((id) => !modelOfVersion.has(id)),
+          }),
+        ])
+      : [new Set<number>(), undefined];
   const modelVersionIds = cappedVersionIds.filter((id) => !withheldVersionIds.has(id));
-  // Versions expanded from a Model source already carry their model; only the rest need looking up.
-  // Moderators are not held, when the caller says so: they must see what they may need to remove.
-  const heldBrowsingLevel =
-    modelVersionIds.length && !holdExempt
-      ? await getHeldGalleryLevel({
-          modelIds: [...new Set(modelVersionIds.flatMap((id) => modelOfVersion.get(id) ?? []))],
-          modelVersionIds: modelVersionIds.filter((id) => !modelOfVersion.has(id)),
-        })
-      : undefined;
 
   return {
     userIds: byType(UserHubSourceType.User),
