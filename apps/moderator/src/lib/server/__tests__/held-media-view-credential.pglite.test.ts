@@ -36,7 +36,7 @@ const { recordHeldView } = await import('../held-media');
 const { POST: opened } = await import('../../../routes/api/held-media/[imageId]/opened/+server');
 
 const MIGRATION = new URL(
-  '../../../../../../packages/civitai-db-schema/prisma/migrations/20261210120000_mod_activity_credential/migration.sql',
+  '../../../../../../packages/civitai-db-schema/prisma/migrations/20261231180000_mod_activity_credential/migration.sql',
   import.meta.url
 );
 
