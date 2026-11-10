@@ -13,7 +13,7 @@ import {
   Title,
   UnstyledButton,
 } from '@mantine/core';
-import { IconCircleDashed, IconPencil, IconX } from '@tabler/icons-react';
+import { IconCircleDashed, IconMessageCircle, IconX } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -56,8 +56,15 @@ const startIndex = (reviews: Review[], modelVersionId?: number) => {
   return unrated >= 0 ? unrated : 0;
 };
 
+function segmentColor(review: Review, current: boolean) {
+  if (current) return 'blue.6';
+  if (review.reviewRecommended === true) return 'success.6';
+  if (review.reviewRecommended === false) return 'red.6';
+  return 'dark.4';
+}
+
 function StateIcon({ review, current }: { review: Review; current: boolean }) {
-  if (current) return <IconPencil size={16} color="var(--mantine-color-blue-5)" />;
+  if (current) return <IconMessageCircle size={16} color="var(--mantine-color-blue-5)" />;
   if (review.reviewRecommended === true)
     return (
       <Text c="success.5" inline>
@@ -173,8 +180,18 @@ export function ResourceReviewStepper({
           onClick={() => goTo(i)}
           aria-current={i === index}
           className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-gray-1 hover:dark:bg-dark-5"
+          style={
+            i === index
+              ? {
+                  background: 'var(--mantine-color-blue-light)',
+                  boxShadow: 'inset 3px 0 0 var(--mantine-color-blue-filled)',
+                }
+              : undefined
+          }
         >
-          <StateIcon review={review} current={i === index} />
+          <span className="flex size-4 shrink-0 items-center justify-center">
+            <StateIcon review={review} current={i === index} />
+          </span>
           {!isMobile && (
             <ResourceCover image={covers?.[review.modelVersionId as number]} size={24} />
           )}
@@ -204,7 +221,7 @@ export function ResourceReviewStepper({
                       key={review.modelVersionId}
                       h={4}
                       className="flex-1 rounded-full"
-                      bg={i <= index || review.reviewRecommended != null ? 'blue.6' : 'dark.4'}
+                      bg={segmentColor(review, i === index)}
                     />
                   ))}
                 </Group>
@@ -212,6 +229,7 @@ export function ResourceReviewStepper({
                 <Progress
                   value={(ratedCount / reviews.length) * 100}
                   size={4}
+                  color="success"
                   aria-label="Resources rated"
                 />
               )}

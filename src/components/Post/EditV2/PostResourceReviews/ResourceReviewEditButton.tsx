@@ -1,5 +1,5 @@
 import { ActionIcon } from '@mantine/core';
-import { IconPencil } from '@tabler/icons-react';
+import { IconMessageCircle } from '@tabler/icons-react';
 import { openResourceReviewStepper } from '~/components/Post/EditV2/PostResourceReviews/openResourceReviewStepper';
 import { useStepperImagesGetter } from '~/components/Post/EditV2/PostResourceReviews/useStepperImages';
 import { usePostResourceReviews } from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
@@ -33,7 +33,7 @@ export function ResourceReviewEditButton({
         openResourceReviewStepper({ postId, ownerId, modelVersionId, images: getImages() })
       }
     >
-      <IconPencil size={18} />
+      <IconMessageCircle size={18} />
     </ActionIcon>
   );
 }
