@@ -28,12 +28,28 @@ const MOD = { id: 78, isModerator: true };
 
 let collectionRow: Record<string, unknown> | null;
 
-const route = (async (strings: TemplateStringsArray) => {
+// One accepted item added by the stranger, one by someone else.
+const OTHER_SUBMITTER = 500;
+const ITEMS = [
+  { id: 1, imageId: 5, addedById: OTHER_SUBMITTER },
+  { id: 2, imageId: 6, addedById: 77 },
+].map((item) => ({ ...item, modelId: null, postId: null, articleId: null, status: 'ACCEPTED' }));
+
+/** The `ci."addedById" = $n` fragment's value, when the query restricts to one submitter. */
+const addedByFilter = (values: unknown[]) => {
+  for (const v of values) {
+    const frag = v as { sql?: string; values?: unknown[] } | null;
+    if (frag?.sql?.includes('"addedById"')) return { value: frag.values?.[0] };
+  }
+  return undefined;
+};
+
+const route = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
   const sql = strings.join('?');
-  if (sql.includes('FROM "CollectionItem" ci'))
-    return [
-      { id: 1, imageId: 5, modelId: null, postId: null, articleId: null, status: 'ACCEPTED' },
-    ];
+  if (sql.includes('FROM "CollectionItem" ci')) {
+    const only = addedByFilter(values);
+    return only ? ITEMS.filter((item) => item.addedById === only.value) : ITEMS;
+  }
   if (sql.includes("c.metadata->'maxItemsPerUser'")) return collectionRow ? [{ total: 3 }] : [];
   if (sql.includes('FROM "CollectionItem"') && sql.includes('"addedById"'))
     return [{ status: 'ACCEPTED', count: 1 }];
@@ -68,7 +84,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation(route);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(route);
-  mockGetAllImages.mockResolvedValue({ items: [{ id: 5 }] });
+  mockGetAllImages.mockImplementation(async ({ ids }: { ids: number[] }) => ({
+    items: ids.map((id) => ({ id })),
+  }));
   collectionIs({});
 });
 
@@ -112,9 +130,27 @@ describe('collection items of a collection the viewer may not read', () => {
       }
   });
 
-  it('lists a Private collection anyone may add to (write), as collection.getById shows it', async () => {
+  const imageIdsOf = async (user?: object) =>
+    (await listItems(COLLECTION_ID, user)).items.map(
+      (item) => (item as unknown as { data: { id: number } }).data?.id
+    );
+
+  it.each([
+    ['open for submissions', 'Public'],
+    ['open for reviewed submissions', 'Review'],
+  ])("lists only the viewer's own items in a Private collection %s", async (_, write) => {
+    collectionIs({ read: 'Private', write });
+    expect(await imageIdsOf(STRANGER)).toEqual([6]);
+  });
+
+  it('answers a Private collection open for submissions as missing when signed out', async () => {
     collectionIs({ read: 'Private', write: 'Public' });
-    expect((await listItems(COLLECTION_ID, STRANGER)).items.length).toBeGreaterThan(0);
+    expect(await errorOf(listItems(COLLECTION_ID, undefined))).toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('lists every item to a reader (control)', async () => {
+    collectionIs({ read: 'Public', write: 'Public' });
+    expect((await imageIdsOf(STRANGER)).sort()).toEqual([5, 6]);
   });
 });
 

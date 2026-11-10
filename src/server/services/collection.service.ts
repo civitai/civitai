@@ -2045,8 +2045,13 @@ export const getCollectionItemsByCollectionId = async ({
     isModerator: user?.isModerator,
   });
 
-  if (requireRead && !permission.read && !permission.write && !permission.manage)
-    throw throwNotFoundError('Collection not found');
+  // Readers and managers see every item. A viewer who may only submit (the usual contest setup:
+  // anyone may add, entries hidden) sees only their own. Anyone else gets a missing collection.
+  const readsAll = permission.read || permission.manage;
+  const submitsOnly = !readsAll && (permission.write || permission.writeReview) && !!user?.id;
+  if (requireRead && !readsAll && !submitsOnly) throw throwNotFoundError('Collection not found');
+  const ownItemsCondition =
+    requireRead && !readsAll ? Prisma.sql`AND ci."addedById" = ${user?.id}` : Prisma.sql``;
 
   if (
     (forReview ||
@@ -2154,6 +2159,7 @@ export const getCollectionItemsByCollectionId = async ({
         ${tagCondition}
         ${awaitingHumanCondition}
         ${imageIngestionCondition}
+        ${ownItemsCondition}
         ${cursorCondition}
       ORDER BY "sortKey" DESC, ci.id DESC
       LIMIT ${limit + 1}
@@ -2249,6 +2255,7 @@ export const getCollectionItemsByCollectionId = async ({
         ${awaitingHumanCondition}
         ${imageIngestionCondition}
         ${reviewVisibleCondition}
+        ${ownItemsCondition}
         ${cursorCondition}
       ORDER BY ci."createdAt" ${Prisma.raw(sortDirection)}, ci.id DESC
       LIMIT ${limit + 1}
