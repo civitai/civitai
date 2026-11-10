@@ -1,5 +1,6 @@
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/client';
+import { AUDIO_FILE_EXTENSIONS } from '~/shared/constants/mime-types';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import { isDefined } from '~/utils/type-guards';
 
@@ -399,7 +400,6 @@ export function resolveEdgeImageUrl(
 }
 
 const videoTypeExtensions = ['.gif', '.mp4', '.webm'];
-const audioTypeExtensions = ['.mp3', '.wav'];
 
 export function getInferredMediaType(
   src: string,
@@ -408,6 +408,6 @@ export function getInferredMediaType(
   const fileName = options?.name || src;
   if (options?.type) return options.type;
   if (videoTypeExtensions.some((ext) => fileName?.endsWith(ext))) return 'video';
-  if (audioTypeExtensions.some((ext) => fileName?.endsWith(ext))) return 'audio';
+  if (AUDIO_FILE_EXTENSIONS.some((ext) => fileName?.endsWith(ext))) return 'audio';
   return 'image';
 }

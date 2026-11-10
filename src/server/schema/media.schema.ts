@@ -40,7 +40,6 @@ export const audioMetadataSchema = sharedMetadata.partial({ height: true, width:
   title: z.string().optional(),
   /** `t` is the offset in seconds, or null when the lyrics are not synced to the audio. */
   lyrics: z.array(z.object({ t: z.number().nullable(), text: z.string() })).optional(),
-  lyricsSynced: z.boolean().optional(),
   bpm: z.number().optional(),
   key: z.string().optional(),
   coverImageId: z.number().optional(),

@@ -1,26 +1,18 @@
 import type { AudioMetadata } from '~/server/schema/media.schema';
+import {
+  probeMediaElement,
+  releaseMediaElement,
+} from '~/utils/media-preprocessors/media-element-probe';
 
 const errorMessage = 'Failed to load audio. This may indicate that the file is not playable.';
-const LOAD_TIMEOUT_MS = 10000;
 
-const getAudioDuration = (src: string) =>
-  new Promise<number>((resolve, reject) => {
-    const audio = document.createElement('audio');
-    audio.preload = 'metadata';
-
-    const timeout = setTimeout(() => reject(new Error(errorMessage)), LOAD_TIMEOUT_MS);
-    audio.onloadedmetadata = () => {
-      clearTimeout(timeout);
-      if (Number.isFinite(audio.duration)) resolve(audio.duration);
-      else reject(new Error(errorMessage));
-    };
-    audio.onerror = () => {
-      clearTimeout(timeout);
-      reject(new Error(errorMessage));
-    };
-
-    audio.src = src;
-  });
+async function getAudioDuration(src: string) {
+  const probed = await probeMediaElement('audio', src);
+  if (!probed) throw new Error(errorMessage);
+  releaseMediaElement(probed.element);
+  if (probed.duration === undefined) throw new Error(errorMessage);
+  return probed.duration;
+}
 
 export const preprocessAudio = async (file: File) => {
   const objectUrl = URL.createObjectURL(file);

@@ -10,7 +10,6 @@ describe('audioMetadataSchema', () => {
         { t: 0, text: 'First line' },
         { t: null, text: 'Unsynced line' },
       ],
-      lyricsSynced: false,
       bpm: 120,
       key: 'A minor',
     });

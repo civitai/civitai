@@ -43,4 +43,15 @@ describe('getDataFromFile generation meta', () => {
     expect(data?.meta).toEqual(meta);
     expect(auditImageMeta).toHaveBeenCalledWith(meta, false);
   });
+
+  it('rejects audio, which the image pipeline cannot upload yet', async () => {
+    vi.mocked(preprocessFile).mockResolvedValueOnce({
+      type: 'audio',
+      name: 'song.mp3',
+      mimeType: 'audio/mpeg',
+      objectUrl: 'blob:fake',
+      metadata: { duration: 1, size: 1 },
+    } as never);
+    await expect(getDataFromFile(new File([], 'song.mp3'))).rejects.toThrow(/audio/i);
+  });
 });
