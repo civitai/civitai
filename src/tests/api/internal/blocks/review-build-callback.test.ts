@@ -122,6 +122,7 @@ import handler, {
   verifySignature,
   checkCallbackTimestamp,
   watchReviewApplyJob,
+  watchDirectPublishedReview,
 } from '~/pages/api/internal/blocks/review-build-callback';
 
 const SLUG = 'my-app';
@@ -751,5 +752,179 @@ describe('review-build-callback — structured signals', () => {
     await handler(req, res);
     expect(res.statusCode).toBe(200);
     expect(errorWritten()).toBe('review build failed at build (unknown)');
+  });
+});
+
+// DIRECT PUBLISH: the review build published the preview to the shared static server itself and
+// says so with `directPublish: true` in its signed callback. Success skips the review apply Job
+// and goes straight to the shared-route probe; everything without the field is unchanged.
+describe('review-build-callback with directPublish: true', () => {
+  const HOST = 'review-abc123def4567890.civit.ai';
+  const activeRow = {
+    deployDetail: JSON.stringify({ sha: SHA, host: HOST, url: `https://${HOST}/${SLUG}` }),
+    status: 'pending',
+    deployState: 'preview-building',
+  };
+  const directBody = (fields: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      mode: 'review',
+      slug: SLUG,
+      sha: SHA,
+      publishRequestId: PUBREQ,
+      imageRef: expectedReviewImageRef(SLUG, SHA),
+      status: 'Succeeded',
+      directPublish: true,
+      ...fields,
+    });
+
+  beforeEach(() => {
+    mockFlag.enabled = true;
+    mockFlag.sharedServer = false;
+    mockFindUnique.mockResolvedValue(activeRow);
+    mockSetNx.mockResolvedValue(true);
+    mockWaitReachable.mockResolvedValue(true);
+    mockMarkPreview.mockImplementation(async () => undefined);
+  });
+  afterEach(() => {
+    vi.clearAllMocks();
+    mockFindUnique.mockReset();
+    mockFindUnique.mockResolvedValue({
+      deployDetail: JSON.stringify({ url: 'https://x/y' }),
+      status: 'pending',
+      deployState: 'preview-building',
+    });
+  });
+
+  it('success: no review apply Job, and the response says it was a direct publish', async () => {
+    const { req, res } = makeReqRes(directBody());
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ ok: true, applied: true, directPublish: true });
+    expect(mockTriggerApplyReview).not.toHaveBeenCalled();
+  });
+
+  it('success: recorded as served by the shared server even while that flag reads off', async () => {
+    const { req, res } = makeReqRes(directBody());
+    await handler(req, res);
+    expect(mockMarkPreview).toHaveBeenCalledWith(
+      PUBREQ,
+      'preview-deploying',
+      expect.objectContaining({ sha: SHA, host: HOST, sharedServer: true }),
+      { requireActivePreview: true }
+    );
+  });
+
+  it('success: probes the shared route and marks the preview live, waiting on no Job', async () => {
+    const { req, res } = makeReqRes(directBody());
+    await handler(req, res);
+    await vi.waitFor(() =>
+      expect(mockMarkPreview).toHaveBeenCalledWith(
+        PUBREQ,
+        'preview-live',
+        expect.objectContaining({ host: HOST, sharedServer: true }),
+        { requireActivePreview: true, expectedSha: SHA }
+      )
+    );
+    expect(mockWaitReachable).toHaveBeenCalledWith(HOST, { sharedServer: true });
+    expect(mockWaitApply).not.toHaveBeenCalled();
+  });
+
+  it('failure: marks the preview failed like any failed build, no apply, no unpublish', async () => {
+    const { req, res } = makeReqRes(directBody({ status: 'Failed' }));
+    await handler(req, res);
+    expect(res.body).toMatchObject({ applied: false, reason: 'review build failed' });
+    expect(mockTriggerApplyReview).not.toHaveBeenCalled();
+    expect(mockReviewUnpublish).not.toHaveBeenCalled();
+    expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-failed', expect.anything(), {
+      requireActivePreview: true,
+    });
+  });
+
+  it('success for a preview torn down mid-build: unpublishes what the build just published', async () => {
+    mockFindUnique.mockResolvedValue({ deployDetail: null, status: 'pending', deployState: null });
+    const { req, res } = makeReqRes(directBody());
+    await handler(req, res);
+    expect(res.body).toMatchObject({ applied: false });
+    expect(mockReviewUnpublish).toHaveBeenCalledWith({
+      slug: SLUG,
+      sha: SHA,
+      publishRequestId: PUBREQ,
+    });
+    expect(mockTriggerApplyReview).not.toHaveBeenCalled();
+    expect(mockMarkPreview).not.toHaveBeenCalled();
+  });
+
+  it('a failed unpublish of that orphan does not fail the callback', async () => {
+    mockFindUnique.mockResolvedValue({ deployDetail: null, status: 'rejected', deployState: null });
+    mockReviewUnpublish.mockRejectedValueOnce(new Error('k8s down'));
+    const { req, res } = makeReqRes(directBody());
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(mockRelease).toHaveBeenCalledWith(PUBREQ, { sha: SHA });
+  });
+
+  // INVARIANT GUARDS (green before the change too): the old body is still the old path.
+  it('without the field, a torn-down preview is NOT unpublished by its build callback', async () => {
+    mockFindUnique.mockResolvedValue({ deployDetail: null, status: 'pending', deployState: null });
+    const { req, res } = makeReqRes(directBody({ directPublish: undefined }));
+    await handler(req, res);
+    expect(mockReviewUnpublish).not.toHaveBeenCalled();
+  });
+
+  it.each(['true', 1, 'yes'])(
+    'a non-boolean directPublish (%s) still runs the review apply Job',
+    async (v) => {
+      const { req, res } = makeReqRes(directBody({ directPublish: v }));
+      await handler(req, res);
+      expect(mockTriggerApplyReview).toHaveBeenCalledTimes(1);
+      expect(res.body).toMatchObject({ applied: true, jobName: 'review-apply-1' });
+    }
+  );
+});
+
+describe('watchDirectPublishedReview', () => {
+  const HOST = 'review-abc123def4567890.civit.ai';
+  const baseDetail = { sha: SHA, host: HOST, url: `https://${HOST}/${SLUG}` };
+  afterEach(() => vi.clearAllMocks());
+
+  it('host never answers: marks failed, frees the replay mark, never waits on an apply Job', async () => {
+    mockWaitReachable.mockResolvedValueOnce(false);
+    const onSettled = vi.fn();
+    await watchDirectPublishedReview({
+      publishRequestId: PUBREQ,
+      slug: SLUG,
+      sha: SHA,
+      baseDetail,
+      onSettled,
+    });
+    expect(mockWaitReachable).toHaveBeenCalledWith(HOST, { sharedServer: true });
+    expect(mockWaitApply).not.toHaveBeenCalled();
+    expect(mockRedisDel).toHaveBeenCalledWith(
+      `blocks:token-rate-limit:review-apply:${PUBREQ}:${SHA}`
+    );
+    expect(mockMarkPreview).toHaveBeenCalledWith(
+      PUBREQ,
+      'preview-failed',
+      expect.objectContaining({ error: expect.stringContaining('did not become reachable') }),
+      { requireActivePreview: true, expectedSha: SHA }
+    );
+    expect(onSettled.mock.calls).toEqual([[PUBREQ, false]]);
+  });
+
+  it('live-mark matching no row (torn down while probing): unpublishes the orphan', async () => {
+    mockWaitReachable.mockResolvedValueOnce(true);
+    mockMarkPreview.mockImplementationOnce((async () => 0) as never);
+    await watchDirectPublishedReview({
+      publishRequestId: PUBREQ,
+      slug: SLUG,
+      sha: SHA,
+      baseDetail,
+      onSettled: () => undefined,
+    });
+    expect(mockReviewUnpublish).toHaveBeenCalledWith({
+      slug: SLUG,
+      sha: SHA,
+      publishRequestId: PUBREQ,
+    });
   });
 });
