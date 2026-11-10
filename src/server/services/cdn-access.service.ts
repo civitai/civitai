@@ -1245,13 +1245,21 @@ type QueueRow = {
     /** Queued by `recordShopTakedownArtwork`, with the listing's artwork keys. */
     shopTakedown?: boolean;
     urls?: string[];
+    seq?: string;
+    deferred?: string | null;
+    retractFailures?: RetractFailures;
   } | null;
 };
+
+/** Consecutive failed retractions of a deferred row, for the `seq` they were counted under. */
+type RetractFailures = { seq: string | null; count: number; since: string; alerted: boolean };
 
 export const CDN_ACCESS_SYNC_BATCH = 500;
 const CALL_CONCURRENCY = 8;
 const QUEUE_AGE_ALERT_MS = 15 * 60 * 1000;
 const DEFERRED_AGE_ALERT_MS = 24 * 60 * 60 * 1000;
+const RETRACT_FAILING_ALERT_COUNT = 5;
+const RETRACT_FAILING_ALERT_MS = 60 * 60 * 1000;
 
 /**
  * A row whose retraction the per-run cap held back, and that has not been queued again since: the
@@ -1355,6 +1363,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     ].slice(0, maxRetracts)
   );
   let denyFailed = 0;
+  const retractFailed = new Set<string>();
   await limitConcurrency(
     planned.map((url) => async () => {
       let call: CdnCall | null = null;
@@ -1377,6 +1386,8 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
         pending.add(url);
         failed++;
         if ((call as CdnCall | null) === 'deny') denyFailed++;
+        if ((call as CdnCall | null) === 'retract' && !(error instanceof ClaimLostError))
+          retractFailed.add(url);
         logToAxiom({
           type: error instanceof RetractionNotDoneError ? 'warning' : 'error',
           name: 'cdn-access-sync',
@@ -1415,6 +1426,22 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     (q, i) =>
       !q.deferred && !urlsByRow[i].every(settled) && urlsByRow[i].every((url) => !pending.has(url))
   );
+  // Kept in the row's data under the current `seq`: a re-queue starts a new count, and a row whose
+  // retractions all go through is removed with it.
+  const failuresNext = new Map<QueueRow, RetractFailures>();
+  queue.forEach((q, i) => {
+    if (!q.data || !('deferred' in q.data)) return;
+    const seq = q.data.seq ?? null;
+    const prior = q.data.retractFailures?.seq === seq ? q.data.retractFailures : undefined;
+    if (urlsByRow[i].some((url) => retractFailed.has(url)))
+      failuresNext.set(q, {
+        seq,
+        count: (prior?.count ?? 0) + 1,
+        since: prior?.since ?? new Date().toISOString(),
+        alerted: prior?.alerted ?? false,
+      });
+  });
+
   for (const q of rotate) {
     await dbWrite.$executeRaw`
       UPDATE "JobQueue"
@@ -1435,6 +1462,36 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
         AND "entityId" = ${q.entityId}
         AND data IS NOT DISTINCT FROM ${q.data === null ? null : JSON.stringify(q.data)}::jsonb
     `;
+  }
+
+  // A failing url stays pending, so none of these rows was rotated or removed above.
+  let retractFailing = 0;
+  for (const [q, next] of failuresNext) {
+    const due =
+      !next.alerted &&
+      (next.count >= RETRACT_FAILING_ALERT_COUNT ||
+        Date.now() - new Date(next.since).getTime() > RETRACT_FAILING_ALERT_MS);
+    const written = await dbWrite.$executeRaw`
+      UPDATE "JobQueue"
+      SET data = data || jsonb_build_object(
+        'retractFailures', ${JSON.stringify({ ...next, alerted: next.alerted || due })}::jsonb
+      )
+      WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+        AND "entityType" = ${q.entityType}::"EntityType"
+        AND "entityId" = ${q.entityId}
+        AND data IS NOT DISTINCT FROM ${JSON.stringify(q.data)}::jsonb
+    `;
+    if (!due || !written) continue;
+    retractFailing++;
+    logToAxiom({
+      type: 'error',
+      name: 'cdn-access-sync-retract-failing',
+      message: 'a deferred takedown retraction keeps failing',
+      entityType: q.entityType,
+      entityId: q.entityId,
+      failures: next.count,
+      since: next.since,
+    }).catch(() => undefined);
   }
 
   // A row deferred before carries its first-deferral time and has the 24h bound below instead.
@@ -1484,6 +1541,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     retracts,
     deferred: deferred.size,
     removed: done.length,
+    retractFailing,
   };
 }
 

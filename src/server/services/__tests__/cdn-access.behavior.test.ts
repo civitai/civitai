@@ -3012,6 +3012,48 @@ describe('new rows before deferred ones', () => {
     ]);
   });
 
+  describe('a deferred retraction that keeps failing', () => {
+    const failingAlerts = () => errorLogs('cdn-access-sync-retract-failing');
+    const deferOne = async () => {
+      await blockRange(1, 16);
+      await syncCdnAccess();
+      expect((await row(16))?.data.deferred).toBeDefined();
+      respond = (c) => (kind(c) === 'retract' ? 503 : undefined);
+    };
+
+    it('alerts once at the fifth failure in a row, and again after a re-queue starts a new run', async () => {
+      await deferOne();
+      for (let run = 1; run <= 4; run++) await syncCdnAccess();
+      expect(failingAlerts()).toEqual([]);
+      await syncCdnAccess();
+      expect(failingAlerts()).toEqual([
+        expect.objectContaining({ entityType: 'Image', entityId: 16, failures: 5 }),
+      ]);
+      await syncCdnAccess();
+      await syncCdnAccess();
+      expect(failingAlerts()).toHaveLength(1);
+
+      await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+                VALUES (${MOD}, 'review', 'image', 16)`;
+      for (let run = 1; run <= 4; run++) await syncCdnAccess();
+      expect(failingAlerts()).toHaveLength(1);
+      await syncCdnAccess();
+      expect(failingAlerts()).toHaveLength(2);
+    });
+
+    it('alerts once a failure run passes an hour', async () => {
+      await deferOne();
+      await syncCdnAccess();
+      expect(failingAlerts()).toEqual([]);
+      const since = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      await sql`UPDATE "JobQueue"
+                SET data = jsonb_set(data, '{retractFailures,since}', to_jsonb(${since}::text))
+                WHERE type = 'CdnAccessSync' AND "entityId" = 16`;
+      await syncCdnAccess();
+      expect(failingAlerts()).toEqual([expect.objectContaining({ entityId: 16, failures: 2 })]);
+    });
+  });
+
   it('alerts on a retraction deferred for over 24 hours, not on a younger one that failed', async () => {
     await blockRange(1, 16);
     await syncCdnAccess();
