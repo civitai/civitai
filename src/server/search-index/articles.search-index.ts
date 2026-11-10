@@ -149,8 +149,31 @@ type Article = Prisma.ArticleGetPayload<{
   select: typeof articleSelect;
 }>;
 
+/** The articles the index holds. The semantic search sync copies it; a parity test pins the copy. */
+export const articleSearchEligibleWhere = {
+  publishedAt: { not: null },
+  status: ArticleStatus.Published,
+  ingestion: ArticleIngestionStatus.Scanned,
+  tosViolation: false,
+  availability: { not: Availability.Unsearchable },
+} satisfies Prisma.ArticleWhereInput;
+
+/**
+ * Which articles the semantic search may return: the Meilisearch rule narrowed to Public articles
+ * (a point's search_text holds the body, and the search service cannot tell who may read a Private
+ * one), minus unlisted articles and those whose owner is banned. The event-engine's
+ * ARTICLE_ELIGIBLE_SQL is its copy, held to it by article-eligibility.parity.test.ts.
+ */
+export const articleSemanticEligibleWhere = {
+  ...articleSearchEligibleWhere,
+  availability: Availability.Public,
+  unlisted: false,
+  user: { bannedAt: null },
+} satisfies Prisma.ArticleWhereInput;
+
 export const articlesSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
+  outboxEntity: 'Article',
   setup: onIndexSetup,
   prepareBatches: async ({ db }, lastUpdatedAt) => {
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
@@ -177,11 +200,7 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
     const articles = await db.article.findMany({
       select: articleSelect,
       where: {
-        publishedAt: { not: null },
-        status: ArticleStatus.Published,
-        ingestion: ArticleIngestionStatus.Scanned,
-        tosViolation: false,
-        availability: { not: Availability.Unsearchable },
+        ...articleSearchEligibleWhere,
         id: batch.type === 'update' ? { in: batch.ids } : { gte: batch.startId, lte: batch.endId },
       },
     });

@@ -70,7 +70,7 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
           />
         )}
         <Group gap={4} wrap="nowrap">
-          {comment.pinnedAt && (
+          {author && comment.pinnedAt && (
             <Tooltip label="Pinned">
               <ThemeIcon size="sm" color="orange">
                 <IconPinned size={16} stroke={2} />

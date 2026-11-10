@@ -10695,6 +10695,7 @@ enum OutboxEntity {
   Model
   Post
   ModelVersion
+  Comic
 }
 
 /// Transactional outbox for entity lifecycle events, consumed by the event-engine app via Debezium CDC

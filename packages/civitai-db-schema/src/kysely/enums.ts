@@ -1039,6 +1039,7 @@ export const OutboxEntity = {
   Model: 'Model',
   Post: 'Post',
   ModelVersion: 'ModelVersion',
+  Comic: 'Comic',
 } as const;
 export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];
 export const StorylineStatus = {

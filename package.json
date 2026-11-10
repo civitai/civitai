@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.471",
+  "version": "5.1.472",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -173,7 +173,7 @@
     "@google-cloud/recaptcha-enterprise": "^5.1.1",
     "@grafana/faro-web-sdk": "2.8.2",
     "@grafana/faro-web-tracing": "2.8.2",
-    "@grpc/grpc-js": "1.13.4",
+    "@grpc/grpc-js": "1.13.6",
     "@headlessui/react": "2.2",
     "@hookform/resolvers": "^5.1.1",
     "@mantine/core": "^7.17.7",
@@ -280,7 +280,7 @@
     "linkify-react": "^4.1.3",
     "linkifyjs": "^4.1.3",
     "lit": "^3.3.3",
-    "lodash-es": "^4.17.21",
+    "lodash-es": "^4.18.1",
     "lottie-react": "^2.4.1",
     "lru-cache": "^11.2.2",
     "mantine-react-table": "^2.0.0-beta.9",
@@ -352,6 +352,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.6",
+    "@electric-sql/pglite-socket": "0.1.6",
     "@faker-js/faker": "^9.0.3",
     "@ladle/react": "^5.1.1",
     "@playwright/test": "^1.57.0",
@@ -426,7 +427,10 @@
   "pnpm": {
     "overrides": {
       "eslint-config-next": "15",
-      "vite": "6.4.3",
+      "vite": "6.4.4",
+      "@opentelemetry/sdk-node>@opentelemetry/propagator-jaeger": "2.9.0",
+      "draft-js>immutable": "3.8.4",
+      "postcss": "^8.5.23",
       "protobufjs@7": "^7.5.6",
       "fast-xml-parser": "^5.9.3",
       "@aws-sdk/core>fast-xml-parser": "5.2.5",

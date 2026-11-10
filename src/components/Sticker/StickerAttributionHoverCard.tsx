@@ -131,7 +131,16 @@ export function StickerAttributionHoverCard({
     if (!openEl) return;
     const follow = () => {
       if (!openEl.isConnected) return setHovered(null);
-      setHovered((h) => (h ? { ...h, rect: openEl.getBoundingClientRect() } : h));
+      const rect = openEl.getBoundingClientRect();
+      setHovered((h) =>
+        !h ||
+        (h.rect.top === rect.top &&
+          h.rect.left === rect.left &&
+          h.rect.width === rect.width &&
+          h.rect.height === rect.height)
+          ? h
+          : { ...h, rect }
+      );
     };
     const observer = new ResizeObserver(follow);
     // Anything above the sticker that grows resizes one of its ancestors.
