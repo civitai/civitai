@@ -145,12 +145,22 @@ describe('describeUsageLimit: a fixed free-tier window', () => {
     expect(view.whenDetail).toBeNull();
   });
 
-  it('before the first free request there is no reset time to show', () => {
-    const view = describeUsageLimit(row({ window: 'fixed', limit: 200, remaining: 200 }), {
-      now: NOW,
-      timeZone: DENVER,
-    });
-    expect(view).toMatchObject({ usedText: '0 of 200 used', when: null });
+  it('part used: when it all resets, not "all free by", which only a rolling window means', () => {
+    const view = describeUsageLimit(
+      row({
+        window: 'fixed',
+        limit: 200,
+        used: 50,
+        remaining: 150,
+        resetAt: '2026-11-03T08:12:00Z',
+      }),
+      { now: NOW, timeZone: DENVER }
+    );
+    expect(view).toMatchObject({ when: 'resets 1:12 AM tomorrow', whenDetail: null });
+  });
+
+  it('labels the card a free allowance', () => {
+    expect(windowCaption([row({ window: 'fixed' })])).toBe('free allowance');
   });
 });
 

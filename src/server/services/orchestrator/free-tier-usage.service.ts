@@ -6,7 +6,7 @@ import { createOrchestratorClient } from '~/server/services/orchestrator/client'
 import { versionIdFromAir } from '~/shared/utils/air';
 import type { SessionUser } from '~/types/session';
 
-/** One free-tier window as a usage-limit row. `fixed`: it starts at first use and resets all at once. */
+/** One free-tier window as a usage-limit row. `fixed`: it resets all at once, not request by request. */
 export type FreeUsageRow = {
   id: string;
   area: 'generation';
@@ -78,7 +78,9 @@ export async function getMyOrchestrationFreeUsage(
       const seconds = timeSpanSeconds(window.duration);
       if (seconds === null) return [];
       const remaining = Math.max(0, window.remaining);
-      const resetAt = window.resetAt ?? null;
+      // The status read itself opens an unused window, unsaved, so its reset time moves between
+      // views until the first free request. Show one only once something is used.
+      const resetAt = remaining < window.limit ? window.resetAt ?? null : null;
       return [
         {
           id: `free.${model.key}.${seconds}`,

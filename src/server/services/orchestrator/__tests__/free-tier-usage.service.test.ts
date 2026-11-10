@@ -59,7 +59,7 @@ describe('getMyOrchestrationFreeUsage', () => {
         },
         {
           key: 'mystery-bucket',
-          airs: ['civitai/mystery'],
+          airs: ['urn:air:sd1:checkpoint:huggingface:mystery@123'],
           remaining: 5,
           windows: [{ duration: '7.00:00:00', limit: 5, remaining: 5 }],
         },
@@ -91,6 +91,35 @@ describe('getMyOrchestrationFreeUsage', () => {
     h.getOrchestratorToken.mockRejectedValue(new TRPCError({ code: 'FORBIDDEN' }));
     expect(await getMyOrchestrationFreeUsage(USER)).toBeNull();
     expect(freeTierMock).not.toHaveBeenCalled();
+  });
+
+  it('an unused window shows no reset time, though the orchestrator sends one', async () => {
+    freeTier({
+      enabled: true,
+      models: [
+        {
+          key: 'qwen3.8-chat',
+          airs: [AIR],
+          remaining: 200,
+          windows: [
+            { duration: '1.00:00:00', limit: 200, remaining: 200, resetAt: '2026-11-10T08:12:00Z' },
+            { duration: '01:00:00', limit: 20, remaining: 15, resetAt: '2026-11-09T22:00:00Z' },
+          ],
+        },
+      ],
+    });
+    const rows = await getMyOrchestrationFreeUsage(USER);
+    expect(rows?.map((r) => r.resetAt)).toEqual([null, '2026-11-09T22:00:00Z']);
+  });
+
+  it('a failure to get a token, other than a refusal, is an error, not "no free tier"', async () => {
+    h.getOrchestratorToken.mockRejectedValue(new Error('redis down'));
+    await expect(getMyOrchestrationFreeUsage(USER)).rejects.toThrow('redis down');
+  });
+
+  it('an orchestrator error is an error, not "free tier is off"', async () => {
+    freeTierMock.mockResolvedValue({ data: undefined, error: { status: 503 } } as never);
+    await expect(getMyOrchestrationFreeUsage(USER)).rejects.toThrow();
   });
 });
 
