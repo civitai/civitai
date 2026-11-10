@@ -228,6 +228,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
             }
             if (!data) return null;
             if (data.type === 'audio') {
+              URL.revokeObjectURL(data.objectUrl);
               showErrorNotification({
                 title: `Error: ${file.name}`,
                 error: new Error('Audio uploads are not supported yet.'),

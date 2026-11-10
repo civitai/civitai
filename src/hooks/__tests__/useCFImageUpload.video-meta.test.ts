@@ -52,6 +52,8 @@ describe('getDataFromFile generation meta', () => {
       objectUrl: 'blob:fake',
       metadata: { duration: 1, size: 1 },
     } as never);
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     await expect(getDataFromFile(new File([], 'song.mp3'))).rejects.toThrow(/audio/i);
+    expect(revoke).toHaveBeenCalledWith('blob:fake');
   });
 });

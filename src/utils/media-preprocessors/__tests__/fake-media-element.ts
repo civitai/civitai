@@ -9,17 +9,23 @@ type Behavior = 'load' | 'error' | 'never';
  */
 export function mockMediaElements(
   behavior: Behavior,
-  { duration = 12.3456, resolvedDuration }: { duration?: number; resolvedDuration?: number } = {}
+  {
+    duration = 12.3456,
+    resolvedDuration,
+    videoWidth = 16,
+  }: { duration?: number; resolvedDuration?: number; videoWidth?: number } = {}
 ) {
+  const created: (EventTarget & Record<string, unknown>)[] = [];
   const create = document.createElement.bind(document);
   vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
     if (tag !== 'audio' && tag !== 'video') return create(tag);
     const el = new EventTarget() as EventTarget & Record<string, unknown>;
     el.duration = duration;
-    el.videoWidth = 16;
+    el.videoWidth = videoWidth;
     el.videoHeight = 16;
-    el.removeAttribute = () => undefined;
-    el.load = () => undefined;
+    el.removeAttribute = vi.fn();
+    el.load = vi.fn();
+    created.push(el);
     Object.defineProperty(el, 'src', {
       set() {
         if (behavior === 'never') return;
@@ -37,4 +43,5 @@ export function mockMediaElements(
     });
     return el;
   }) as unknown as typeof document.createElement);
+  return created;
 }

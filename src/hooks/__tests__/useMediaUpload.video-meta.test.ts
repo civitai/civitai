@@ -174,7 +174,9 @@ describe('useMediaUpload with an on-site generated video', () => {
       objectUrl: 'blob:song',
       metadata: { duration: 1, size: 1 },
     } as never);
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const onComplete = await dropVideo();
+    expect(revoke).toHaveBeenCalledWith('blob:song');
     expect(showErrorNotification).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Error: clip.mp4' })
     );
