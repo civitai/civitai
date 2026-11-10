@@ -139,7 +139,7 @@ export const imageHub = defineGraph<RootCtx>()
     // floor and silently dropped the CEILING: `max` is the user's own
     // `limits.maxQuantity`, so a quantity written by a trusted ingestion from a wider
     // entitlement stayed above it and dead-submitted.
-    // MiniMax H3 Image takes at most 10 per request, below the top tier's limit.
+    // MiniMax H3 Image takes at most 4 per request, below the paid tiers' limits.
     const max =
       ecosystem === 'MiniMaxH3Image'
         ? Math.min(_ext.limits.maxQuantity, MINIMAX_H3_IMAGE_MAX_QUANTITY)

@@ -236,8 +236,8 @@ export const ECO = {
   Flux3Klein: 94,
   Flux3Klein_base: 95,
   MossImage: 96,
-  // MiniMax's hosted image model. Its own ecosystem, not a MiniMaxH3 version: H3 is video
-  // on our own weights, with LoRAs and training, none of which apply here.
+  // MiniMax's image model. Its own ecosystem, not a MiniMaxH3 version: separate weights, and
+  // H3 video LoRAs do not apply to it.
   MiniMaxH3Image: 97,
 
   // Root ecosystems - Audio models
@@ -1080,6 +1080,8 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Flux3Klein_base',
   // ComfyMossImage{Sft,Base}CreateImageInput
   'MossImage',
+  // ComfyMiniMaxH3{Create,Edit}ImageInput
+  'MiniMaxH3Image',
   // Flux2KleinImageGenInput
   'Flux2Klein_9B',
   'Flux2Klein_9B_base',
@@ -1299,7 +1301,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // build takes no resources); LORA training is AI Toolkit only
   { ecosystemId: ECO.MiniMaxH3, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.MiniMaxH3, supportType: 'training', modelTypes: loraOnly },
-  // MiniMax H3 Image - the hosted API only: checkpoint only, no training row.
+  // MiniMax H3 Image - checkpoint only, no training row: LoRAs and training are not wired yet.
   { ecosystemId: ECO.MiniMaxH3Image, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Kling - checkpoint only
@@ -2882,6 +2884,19 @@ export const licenses: LicenseRecord[] = [
     notice:
       'Tencent Hunyuan 3D 2.1 is licensed under the Tencent Hunyuan 3D 2.1 Community License Agreement, Copyright © 2025 Tencent. All Rights Reserved.',
   },
+  {
+    id: 55,
+    name: 'MiniMax-H3-Image Community License Agreement',
+    // Permalinked to the 10 Nov 2026 revision, as for id 41.
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/492fd8c4eca666f1085f57e30738c1e0d86b3439/LICENSE',
+    notice:
+      'MiniMax-H3-Image is licensed under the MiniMax-H3-Image Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved.',
+    // Section IV.2 wants exactly "MiniMax-H3-Image" on the UI, which the "MiniMax H3 Image"
+    // label does not match, so it is shown under the generate button.
+    attribution: 'MiniMax-H3-Image',
+    poweredBy: 'MiniMax-H3-Image',
+    requiresSameLicense: true,
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -4041,7 +4056,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.MiniMaxH3Image,
     hidden: true,
-    licenseId: 33,
+    licenseId: 55,
   },
 
   // Kling

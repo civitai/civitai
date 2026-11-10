@@ -925,10 +925,15 @@ const baseLicenses: Record<string, LicenseDetails> = {
     poweredBy: 'MiniMax H3',
     requiresSameLicense: true,
   },
-  'minimax tos': {
-    // The hosted API's terms; same text as licence 33 in basemodel.constants.
-    url: 'https://hailuoai.video/doc/terms-of-service.html',
-    name: 'MiniMax Hailuo AI Terms of Service',
+  'minimax h3 image': {
+    // Same text and permalink as licence 55 in basemodel.constants.
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/492fd8c4eca666f1085f57e30738c1e0d86b3439/LICENSE',
+    name: 'MiniMax-H3-Image Community License Agreement',
+    notice:
+      'MiniMax-H3-Image is licensed under the MiniMax-H3-Image Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved.',
+    attribution: 'MiniMax-H3-Image',
+    poweredBy: 'MiniMax-H3-Image',
+    requiresSameLicense: true,
   },
   'minimax music 3': {
     // Permalinked for the same reason as H3 above: section 5.2 lets MiniMax amend
@@ -1116,7 +1121,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Ideogram 4.5': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
-  'MiniMax H3 Image': baseLicenses['minimax tos'],
+  'MiniMax H3 Image': baseLicenses['minimax h3 image'],
   'Krea 2': baseLicenses['krea 2 community'],
   'Krea 2 Turbo': baseLicenses['krea 2 community'],
   Ernie: baseLicenses['apache 2.0'],

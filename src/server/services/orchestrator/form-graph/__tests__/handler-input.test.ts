@@ -366,67 +366,80 @@ describe('krea3.handler', () => {
 describe('minimax-h3-image.handler', () => {
   const MOD = { minimaxH3ImageGenerator: true };
 
-  it('create sends resolution and ratio, no images, and leaves enhancement on', async () => {
+  it('create sends a comfy createImage step at the 2K size for the ratio, with no images', async () => {
     const create = await dispatch({
       workflow: 'txt2img',
       ecosystem: 'MiniMaxH3Image',
       expectFlags: MOD,
       prompt: 'a cat',
-      resolution: '4K',
       aspectRatio: '16:9',
       quantity: 3,
+      seed: 42,
       images: [IMAGE],
     });
     expect(firstInput(create)).toEqual({
-      engine: 'minimax-h3-image',
+      engine: 'comfy',
+      ecosystem: 'h3-image',
+      operation: 'createImage',
       prompt: 'a cat',
+      width: 2784,
+      height: 1568,
       quantity: 3,
-      resolution: '4K',
-      aspectRatio: '16:9',
+      seed: 42,
+      diffusionModel: null,
     });
   });
 
-  it('turning enhancement off on create sends disablePromptEnhancement', async () => {
+  it('4K doubles both sides and stays inside the 4-20 MP canvas', async () => {
     const create = await dispatch({
       workflow: 'txt2img',
       ecosystem: 'MiniMaxH3Image',
       expectFlags: MOD,
       prompt: 'a cat',
-      enablePromptExpansion: false,
+      resolution: '4K',
+      aspectRatio: '3:1',
     });
-    expect(firstInput(create)).toMatchObject({
-      resolution: '1K',
-      aspectRatio: '1:1',
-      disablePromptEnhancement: true,
-    });
+    const { width, height } = firstInput(create) as { width: number; height: number };
+    expect([width, height]).toEqual([7104, 2368]);
+    expect(width * height).toBeLessThanOrEqual(20_971_520);
   });
 
-  it('edit sends the references in order with aspectRatio auto, and never disables enhancement', async () => {
+  it('a resolution the engine cannot render falls back to 2K', async () => {
+    const create = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MiniMaxH3Image',
+      expectFlags: MOD,
+      prompt: 'a cat',
+      resolution: '1K',
+    });
+    expect(firstInput(create)).toMatchObject({ width: 2048, height: 2048 });
+  });
+
+  it('edit switches operation and sends the references in order', async () => {
     const edit = await dispatch({
       workflow: 'img2img:edit',
       ecosystem: 'MiniMaxH3Image',
       expectFlags: MOD,
       prompt: 'a cat',
-      aspectRatio: '16:9',
-      enablePromptExpansion: false,
+      aspectRatio: '1:1',
       images: [IMAGE, IMAGE2],
     });
-    expect(firstInput(edit)).toEqual({
-      engine: 'minimax-h3-image',
-      prompt: 'a cat',
-      quantity: 1,
-      resolution: '1K',
-      aspectRatio: 'auto',
+    expect(firstInput(edit)).toMatchObject({
+      engine: 'comfy',
+      ecosystem: 'h3-image',
+      operation: 'editImage',
+      width: 2048,
+      height: 2048,
       images: [IMAGE.url, IMAGE2.url],
     });
   });
 
-  it('caps quantity at 10 even when the tier allows more', () => {
+  it('caps quantity at 4 even when the tier allows more', () => {
     const parsed = generationHub.parse(
       { workflow: 'txt2img', ecosystem: 'MiniMaxH3Image', prompt: 'a cat', quantity: 12 },
       { ...BASE, limits: { ...BASE.limits, maxQuantity: 12 }, flags: MOD }
     );
-    expect(parsed.success && (parsed.data as { quantity: number }).quantity).toBe(10);
+    expect(parsed.success && (parsed.data as { quantity: number }).quantity).toBe(4);
   });
 
   it('accepts sixteen references and no more', () => {
@@ -450,7 +463,7 @@ describe('minimax-h3-image.handler', () => {
     );
   });
 
-  // The flag is the only thing keeping it from everyone before whatIf prices it.
+  // The flag keeps it to moderators until the workers and pricing are confirmed.
   it('without the flag it is not offered, and a submission naming it never reaches it', () => {
     const input = { workflow: 'txt2img', ecosystem: 'MiniMaxH3Image', prompt: 'a cat' };
     const ecosystemOf = (ext: GenerationCtx) => {

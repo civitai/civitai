@@ -1,39 +1,45 @@
-/** MiniMax H3 Image handler: one imageGen step on MiniMax's hosted API. */
+/** MiniMax H3 Image handler: one comfy imageGen step on our own workers. */
 
 import type { ImageGenStepTemplate } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
+import { minimaxH3ImageResolutionScale } from '~/shared/form-graph/generation/image/minimax-h3-image.graph';
 import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
-// PENDING: the client ships no type for this engine yet, so the field names follow the
-// orchestrator's MiniMaxH3ImageGenInput (civitai/civitai-orchestration#582, unmerged).
-type MiniMaxH3ImageGenInput = {
-  engine: 'minimax-h3-image';
+// The client ships no type for this input yet (0.2.2); the shape is the orchestrator's
+// ComfyMiniMaxH3ImageGenInput (civitai/civitai-orchestration#586).
+type ComfyMiniMaxH3ImageInput = {
+  engine: 'comfy';
+  ecosystem: 'h3-image';
+  operation: 'createImage' | 'editImage';
   prompt: string;
+  width: number;
+  height: number;
   quantity: number;
-  resolution?: '1K' | '2K' | '4K';
-  aspectRatio?: string;
+  seed?: number;
   images?: string[];
-  disablePromptEnhancement?: boolean;
+  diffusionModel?: null;
 };
 
 export const createMinimaxH3ImageInput = defineHandler<
   EcosystemData<'MiniMaxH3Image'>,
   [ImageGenStepTemplate]
 >((data) => {
+  if (!data.aspectRatio) throw new Error('Aspect ratio is required');
   const isEdit = !(data.workflow ?? '').startsWith('txt');
-  const input: MiniMaxH3ImageGenInput = removeEmpty({
-    engine: 'minimax-h3-image' as const,
+  const scale = minimaxH3ImageResolutionScale[data.resolution ?? '2K'];
+  const input: ComfyMiniMaxH3ImageInput = removeEmpty({
+    engine: 'comfy' as const,
+    ecosystem: 'h3-image' as const,
+    operation: isEdit ? ('editImage' as const) : ('createImage' as const),
     prompt: data.prompt ?? '',
+    width: data.aspectRatio.width * scale,
+    height: data.aspectRatio.height * scale,
     quantity: data.quantity ?? 1,
-    resolution: data.resolution,
-    ...(isEdit
-      ? { aspectRatio: 'auto', images: data.images?.map((x) => x.url) ?? [] }
-      : {
-          aspectRatio: data.aspectRatio?.value,
-          // Valid only on text-to-image with a fixed ratio, which this always sends.
-          disablePromptEnhancement: data.enablePromptExpansion === false ? true : undefined,
-        }),
+    seed: data.seed,
+    images: isEdit ? data.images?.map((x) => x.url) ?? [] : undefined,
   });
-  return [{ $type: 'imageGen', input }];
+  // Null selects the engine's default weights. The site version's own AIR is not a
+  // checkpoint the engine can load.
+  return [{ $type: 'imageGen', input: { ...input, diffusionModel: null } }];
 });
