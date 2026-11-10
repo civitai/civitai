@@ -747,7 +747,9 @@ async function keptOffPlacementIds(
   const cosmeticIds = [...new Set(rows.map((row) => row.cosmeticId).filter(isDefined))];
   if (!cosmeticIds.length) return new Set<number>();
 
-  const cosmetics = await cosmeticCache.fetch(cosmeticIds);
+  // Past this pod's L1: a moderator's rating refreshes Redis at once, and hiding the sticker should
+  // not wait for another pod's L1 entry to expire.
+  const cosmetics = await cosmeticCache.fetch(cosmeticIds, { bypassLocal: true });
   const flagged = rows.filter(
     (row) =>
       row.cosmeticId != null &&
