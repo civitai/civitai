@@ -6,7 +6,12 @@ import {
   sensitiveScopeCount,
 } from '~/components/Apps/reviewQueueSignals';
 import { nextPendingRequestId, REJECT_REASON_CHIPS } from '~/components/Apps/reviewDecisionFlow';
-import { agentReviewDisplay, type AgentReviewSummary } from '~/shared/utils/agent-review-findings';
+import {
+  AGENT_REVIEW_LANE_BADGES,
+  agentReviewDisplay,
+  agentReviewLane,
+  type AgentReviewSummary,
+} from '~/shared/utils/agent-review-findings';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 
 describe('previewChipState — every lifecycle value, including the two not written yet', () => {
@@ -118,6 +123,63 @@ describe('agentReviewDisplay — finding COUNTS, never a verdict', () => {
       s({ status: 'failed' }),
     ];
     for (const i of inputs) expect(agentReviewDisplay(i).label).not.toMatch(/pass/i);
+  });
+});
+
+describe('agentReviewLane — the fast lane is positive evidence only', () => {
+  const clean: AgentReviewSummary = {
+    status: 'complete',
+    severities: [],
+    overBroad: 0,
+    underDeclared: 0,
+    inaccurate: 0,
+    sectionsOk: true,
+    impersonationCheck: 'complete',
+  };
+  const s = (over: Partial<AgentReviewSummary>): AgentReviewSummary => ({ ...clean, ...over });
+
+  it('🔴 a finished review, every analysis and the impersonation check complete, nothing found → agent-clean', () => {
+    expect(agentReviewLane(clean)).toEqual({ lane: 'agent-clean', reasons: [] });
+  });
+
+  it('low and info findings alone stay agent-clean (they are notes, not flags)', () => {
+    expect(agentReviewLane(s({ severities: ['low', 'info', 'INFO'] })).lane).toBe('agent-clean');
+  });
+
+  it.each([
+    [s({ severities: ['medium'] }), '1 finding to check'],
+    [s({ severities: ['high', 'critical'] }), '2 findings to check'],
+    [s({ severities: ['weird'] }), '1 finding to check'],
+    [s({ overBroad: 1 }), '1 scope flag'],
+    [s({ sectionsOk: false }), 'an analysis did not complete'],
+    [s({ sectionsOk: undefined }), 'an analysis did not complete'],
+    [s({ impersonationCheck: 'failed' }), 'the impersonation check did not complete'],
+    [s({ impersonationCheck: null }), 'the impersonation check has not run'],
+    [s({ impersonationCheck: undefined }), 'the impersonation check has not run'],
+    [s({ status: 'cost-capped' }), 'the agent review stopped at its cost cap'],
+    [s({ status: 'failed' }), 'the agent review failed'],
+  ] as const)('%o → flagged (%s)', (summary, reason) => {
+    const r = agentReviewLane(summary);
+    expect(r.lane).toBe('flagged');
+    expect(r.reasons).toContain(reason);
+  });
+
+  it.each([null, undefined, s({ status: 'running' }), s({ status: 'torn-down' })])(
+    '%o → waiting (no review result yet)',
+    (summary) => {
+      expect(agentReviewLane(summary)).toEqual({ lane: 'waiting', reasons: [] });
+    }
+  );
+
+  it('the badges say what to do next — never that the submission passed or is safe', () => {
+    expect(AGENT_REVIEW_LANE_BADGES).toEqual({
+      'agent-clean': { label: 'Fast lane: read the report, then decide', color: 'teal' },
+      flagged: { label: 'Agent flagged: read the findings first', color: 'orange' },
+    });
+    for (const b of Object.values(AGENT_REVIEW_LANE_BADGES)) {
+      expect(b.label).not.toMatch(/pass|safe|approved|verified|clean/i);
+      expect(b.color).not.toBe('green');
+    }
   });
 });
 

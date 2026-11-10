@@ -4,6 +4,7 @@ import {
   mergeReviewRows,
   offsiteRequestToUnifiedRow,
   onsiteRequestToUnifiedRow,
+  reviewRowLane,
   type OffsiteReviewRequest,
   type OnsiteReviewRequest,
   type UnifiedReviewRow,
@@ -824,5 +825,87 @@ describe('mergeReviewRows — the new fields changed NOTHING about merge/dedup/s
       'offsite:ord-b',
       'onsite:ord-a',
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The pending queue's fast lane
+// ---------------------------------------------------------------------------
+
+describe('fast lane — agent-clean submissions sort first on the pending queue', () => {
+  const cleanReview = {
+    status: 'complete',
+    severities: [],
+    overBroad: 0,
+    underDeclared: 0,
+    inaccurate: 0,
+    sectionsOk: true,
+    impersonationCheck: 'complete',
+  };
+  const pending = (id: string, at: string, agentReview: unknown, previewState = 'preview-live') =>
+    onsiteRequestToUnifiedRow(
+      onsite({ id, submittedAt: at, previewState, agentReview } as never),
+      vi.fn()
+    );
+
+  const oldFlagged = pending('old-flagged', '2026-01-01T00:00:00Z', {
+    ...cleanReview,
+    severities: ['high'],
+  });
+  const oldWaiting = pending('old-waiting', '2026-01-02T00:00:00Z', null);
+  const newClean = pending('new-clean', '2026-01-05T00:00:00Z', cleanReview);
+  const newerClean = pending('newer-clean', '2026-01-06T00:00:00Z', cleanReview);
+  const listingOnly = row('offsite:listing', '2026-01-03T00:00:00Z');
+
+  it('🔴 with fastLane, agent-clean rows lead (oldest first among them); the rest keep date order', () => {
+    expect(
+      mergeReviewRows(
+        [newerClean, oldFlagged, newClean, oldWaiting],
+        [listingOnly],
+        'asc',
+        undefined,
+        {
+          fastLane: true,
+        }
+      ).map((r) => r.key)
+    ).toEqual([
+      'onsite:new-clean',
+      'onsite:newer-clean',
+      'onsite:old-flagged',
+      'onsite:old-waiting',
+      'offsite:listing',
+    ]);
+  });
+
+  it('without fastLane (history tabs) the order is the plain date order', () => {
+    expect(
+      mergeReviewRows([newerClean, oldFlagged, newClean, oldWaiting], [listingOnly], 'asc').map(
+        (r) => r.key
+      )
+    ).toEqual([
+      'onsite:old-flagged',
+      'onsite:old-waiting',
+      'offsite:listing',
+      'onsite:new-clean',
+      'onsite:newer-clean',
+    ]);
+  });
+
+  it('a review preview that failed to build keeps an otherwise clean row out of the fast lane', () => {
+    const failedPreview = pending('fp', '2026-01-05T00:00:00Z', cleanReview, 'preview-failed');
+    expect(reviewRowLane(failedPreview)).toEqual({
+      lane: 'flagged',
+      reasons: ['the review preview failed to build'],
+    });
+    expect(reviewRowLane(newClean).lane).toBe('agent-clean');
+  });
+
+  it('a viewer without the agentic surface (no agentReview field) gets no lane', () => {
+    const noSurface = onsiteRequestToUnifiedRow(
+      onsite({ id: 'x', previewState: 'preview-live' } as never),
+      vi.fn()
+    );
+    expect(reviewRowLane(noSurface)).toEqual({ lane: 'waiting', reasons: [] });
+    expect(reviewRowLane(listingOnly)).toEqual({ lane: 'waiting', reasons: [] });
   });
 });

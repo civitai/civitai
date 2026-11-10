@@ -599,12 +599,16 @@ describe('agent review auto-start', () => {
     expect(m.startAgentReview).not.toHaveBeenCalled();
   });
 
-  it('a live preview triggers it; a failed one does not', async () => {
+  it('🔴 every settled review build triggers it — a failed preview too (the agent reads the bundle)', async () => {
     spend(0);
     await onReviewBuildSettled({ publishRequestId: PUBREQ, live: false });
-    expect(m.startAgentReview).not.toHaveBeenCalled();
-    await onReviewBuildSettled({ publishRequestId: PUBREQ, live: true });
     expect(m.startAgentReview).toHaveBeenCalledTimes(1);
+    await onReviewBuildSettled({ publishRequestId: 'pubreq_other', live: true });
+    expect(m.startAgentReview).toHaveBeenCalledTimes(2);
+    expect(m.startAgentReview).toHaveBeenLastCalledWith({
+      publishRequestId: 'pubreq_other',
+      modUserId: null,
+    });
   });
 
   it('a start failure is reported, never thrown', async () => {
