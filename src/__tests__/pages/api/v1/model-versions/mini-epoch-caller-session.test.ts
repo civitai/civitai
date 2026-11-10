@@ -42,68 +42,19 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ),
 }));
 
+import {
+  EPOCH_URL,
+  GRANTEE_ID,
+  SERVICE_TOKEN,
+  TRAINING_FILE,
+  VERSION_ID,
+  versionRow,
+} from './mini-epoch-fixtures';
+
 const handler = (await import('~/pages/api/v1/model-versions/mini/[id]')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse
 ) => Promise<void>;
-
-const VERSION_ID = 555;
-const OWNER_ID = 4242;
-const GRANTEE_ID = 7001;
-const SERVICE_TOKEN = 'test-service-token-0123456789abcdef';
-const EPOCH_URL =
-  'https://orchestration.civitai.com/v2/consumer/jobs/job-abc-123/assets/epoch-000010.safetensors';
-
-const versionRow = {
-  id: VERSION_ID,
-  versionName: 'v1',
-  availability: 'Private',
-  publishedAt: new Date('2024-01-01T00:00:00Z'),
-  modelId: 77,
-  modelName: 'Test Model',
-  baseModel: 'SD 1.5',
-  status: 'Published',
-  modelStatus: 'Published',
-  modelMode: null,
-  type: 'LORA',
-  requireAuth: false,
-  checkPermission: false,
-  covered: true,
-  isPromoted: false,
-  generationAlias: null,
-  minor: false,
-  sfwOnly: false,
-  usageControl: 'Download',
-  modelUserId: OWNER_ID,
-  poi: false,
-  licensingFee: null,
-  licensingFeeType: null,
-  licensingFeeSettlementCurrency: null,
-  isLicensingRoot: false,
-  licensingSourceVersionId: null,
-  sourceLicensingFeeRecipientUserId: null,
-  sourceModelType: null,
-  sourceBaseModel: null,
-  sourceLicensingFee: null,
-  sourceLicensingFeeType: null,
-  sourceLicensingFeeSettlementCurrency: null,
-  versionFlags: 0,
-  userFlags: 0,
-};
-
-const TRAINING_FILE = {
-  id: 404,
-  type: 'Model',
-  visibility: 'Private',
-  url: 'https://example.invalid/d.safetensors',
-  metadata: {
-    format: 'SafeTensor',
-    trainingResults: { epochs: [{ epoch_number: 10, model_url: EPOCH_URL }] },
-  },
-  sizeKB: 131_072,
-  name: 'epoch-000010.safetensors',
-  hashes: { SHA256: 'D'.repeat(64) },
-};
 
 const keySession = (userId: number, subject: 'apiKey' | 'oauth') => ({
   user: { id: userId, username: 'someone', bannedAt: null, isModerator: false },

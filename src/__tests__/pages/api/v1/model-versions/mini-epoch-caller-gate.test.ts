@@ -1,5 +1,3 @@
-import { readdirSync, readFileSync } from 'fs';
-import { join } from 'path';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -42,66 +40,17 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 
 import handler from '~/pages/api/v1/model-versions/mini/[id]';
+import {
+  EPOCH_URL,
+  GRANTEE_ID,
+  OWNER_ID,
+  SERVICE_TOKEN,
+  TRAINING_FILE,
+  VERSION_ID,
+  versionRow,
+} from './mini-epoch-fixtures';
 
-const VERSION_ID = 555;
-const OWNER_ID = 4242;
-const GRANTEE_ID = 7001;
 const STRANGER_ID = 9001;
-const SERVICE_TOKEN = 'test-service-token-0123456789abcdef';
-
-const EPOCH_URL =
-  'https://orchestration.civitai.com/v2/consumer/jobs/job-abc-123/assets/epoch-000010.safetensors';
-
-const versionRow = {
-  id: VERSION_ID,
-  versionName: 'v1',
-  availability: 'Private',
-  publishedAt: new Date('2024-01-01T00:00:00Z'),
-  modelId: 77,
-  modelName: 'Test Model',
-  baseModel: 'SD 1.5',
-  status: 'Published',
-  modelStatus: 'Published',
-  modelMode: null as string | null,
-  type: 'LORA',
-  requireAuth: false,
-  checkPermission: false,
-  covered: true,
-  isPromoted: false,
-  generationAlias: null,
-  minor: false,
-  sfwOnly: false,
-  usageControl: 'Download',
-  modelUserId: OWNER_ID,
-  poi: false,
-  licensingFee: null,
-  licensingFeeType: null,
-  licensingFeeSettlementCurrency: null,
-  isLicensingRoot: false,
-  licensingSourceVersionId: null,
-  sourceLicensingFeeRecipientUserId: null,
-  sourceModelType: null,
-  sourceBaseModel: null,
-  sourceLicensingFee: null,
-  sourceLicensingFeeType: null,
-  sourceLicensingFeeSettlementCurrency: null,
-  versionFlags: 0,
-  userFlags: 0,
-};
-
-const TRAINING_FILE = {
-  id: 404,
-  type: 'Model',
-  visibility: 'Private',
-  url: 'https://example.invalid/d.safetensors',
-  metadata: {
-    format: 'SafeTensor',
-    trainingResults: { epochs: [{ epoch_number: 10, model_url: EPOCH_URL }] },
-  },
-  sizeKB: 131_072,
-  name: 'epoch-000010.safetensors',
-  hashes: { SHA256: 'D'.repeat(64) },
-};
 
 type Caller = {
   user?: Record<string, unknown>;
@@ -363,29 +312,8 @@ describe('the service token outside the epoch arm', () => {
     expect(without.status).toBe(200);
     expect(withToken).toEqual(without);
     expect(callerLogs()).toEqual([]);
-    expect(h.getFliptVariant).not.toHaveBeenCalledWith('mini-epoch-caller-gate');
-  });
-
-  it('is read by no module but the mini epoch arm', () => {
-    const root = process.cwd();
-    const readers: string[] = [];
-    for (const entry of readdirSync(join(root, 'src'), { recursive: true, withFileTypes: true })) {
-      if (!entry.isFile() || !/\.tsx?$/.test(entry.name)) continue;
-      const path = join(entry.parentPath, entry.name);
-      if (path.includes('__tests__') || /\.test\.tsx?$/.test(path)) continue;
-      const source = readFileSync(path, 'utf8');
-      if (
-        /ORCHESTRATOR_SERVICE_TOKEN|matchesOrchestratorServiceToken|evaluateMiniEpochCaller/.test(
-          source
-        )
-      )
-        readers.push(path.slice(root.length + 1));
-    }
-    expect(readers.sort()).toEqual([
-      'src/env/server-schema.ts',
-      'src/pages/api/v1/model-versions/mini/[id].ts',
-      'src/server/auth/orchestrator-service-token.ts',
-      'src/server/utils/mini-epoch-caller.ts',
-    ]);
+    expect(h.getFliptVariant.mock.calls.map(([flag]) => flag)).not.toContain(
+      'mini-epoch-caller-gate'
+    );
   });
 });

@@ -1,6 +1,7 @@
 import type { NextApiRequest } from 'next';
 import type { Session } from '~/types/session';
 import { matchesOrchestratorServiceToken } from '~/server/auth/orchestrator-service-token';
+import { getRequestCredential } from '~/server/auth/request-credential';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -28,15 +29,13 @@ export async function getMiniEpochGateMode(): Promise<MiniEpochGateMode> {
   return variant === 'log' || variant === 'enforce' ? variant : 'off';
 }
 
-type RequestContext = { context?: { subject?: { type?: string } | null } };
-
 function credentialKind(
   req: NextApiRequest,
   user: Session['user'] | undefined,
   orchestrator: boolean
 ): MiniEpochCredential {
   if (orchestrator) return 'orchestrator';
-  const subject = (req as NextApiRequest & RequestContext).context?.subject?.type;
+  const subject = getRequestCredential(req).subject?.type;
   if (subject === 'oauth') return 'oauth';
   if (subject === 'apiKey') return 'api-key';
   if (req.headers?.authorization) return 'unrecognized';
