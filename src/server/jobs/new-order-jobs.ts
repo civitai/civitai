@@ -35,6 +35,7 @@ import {
   buildAbuseReport,
   type AbuseSuspect,
 } from '~/server/services/new-order-abuse-detection/report';
+import { loadV2AbuseSuspects } from '~/server/services/new-order-abuse-detection/v2-suspects';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -654,7 +655,6 @@ export async function runAbuseDetectionScan() {
   // Captured before the first await so the board's "when did this run" reading is
   // the producer's own start, not the instant the report happened to be built.
   const startedAt = new Date();
-  if (!clickhouse) return;
   log('AbuseDetection :: Scanning for suspicious rating patterns');
 
   // All tunable thresholds live in Redis, so the live operational values are not
@@ -682,33 +682,62 @@ export async function runAbuseDetectionScan() {
   const smiteDominantPct = asFinite(det.smiteDominantPct, 100);
   const smiteMaxUniqueRatings = asFinite(det.smiteMaxUniqueRatings, 1);
 
-  const suspects = await clickhouse.$query<AbuseSuspect>`
-      WITH user_dominant AS (
+  // Two independent sources. v1 (ClickHouse) is the old game and stays through the payout tail;
+  // v2 (Postgres votes) is report-only. A failing source is logged and skipped so the other's
+  // suspects are still filed; the run only fails when every source that ran failed. No ClickHouse
+  // client means v1 did not run, which is not a failure.
+  const loadV1Suspects = async (): Promise<AbuseSuspect[]> => {
+    if (!clickhouse) return [];
+    return await clickhouse.$query<AbuseSuspect>`
+        WITH user_dominant AS (
+          SELECT
+            userId,
+            topK(1)(rating)[1] as dominantRating
+          FROM knights_new_order_image_rating FINAL
+          WHERE createdAt >= now() - INTERVAL ${ABUSE_SCAN_WINDOW_HOURS} HOUR
+            AND rank != 'Acolyte'
+          GROUP BY userId
+        )
         SELECT
-          userId,
-          topK(1)(rating)[1] as dominantRating
-        FROM knights_new_order_image_rating FINAL
-        WHERE createdAt >= now() - INTERVAL ${ABUSE_SCAN_WINDOW_HOURS} HOUR
-          AND rank != 'Acolyte'
-        GROUP BY userId
-      )
-      SELECT
-        r.userId,
-        count() as totalRatings,
-        uniq(r.rating) as uniqueRatings,
-        d.dominantRating,
-        countIf(r.rating = d.dominantRating) / count() * 100 as dominantPct,
-        count() / greatest(uniq(toStartOfMinute(r.createdAt)), 1) as avgPerMinute
-      FROM knights_new_order_image_rating r FINAL
-      JOIN user_dominant d ON r.userId = d.userId
-      WHERE r.createdAt >= now() - INTERVAL ${ABUSE_SCAN_WINDOW_HOURS} HOUR
-        AND r.rank != 'Acolyte'
-      GROUP BY r.userId, d.dominantRating
-      HAVING totalRatings >= ${minTotalRatings}
-        AND (uniqueRatings <= ${smiteMaxUniqueRatings} OR dominantPct >= ${havingDominantPct} OR avgPerMinute > ${havingAvgPerMinute})
-      ORDER BY totalRatings DESC
-      LIMIT 50
+          r.userId,
+          count() as totalRatings,
+          uniq(r.rating) as uniqueRatings,
+          d.dominantRating,
+          countIf(r.rating = d.dominantRating) / count() * 100 as dominantPct,
+          count() / greatest(uniq(toStartOfMinute(r.createdAt)), 1) as avgPerMinute
+        FROM knights_new_order_image_rating r FINAL
+        JOIN user_dominant d ON r.userId = d.userId
+        WHERE r.createdAt >= now() - INTERVAL ${ABUSE_SCAN_WINDOW_HOURS} HOUR
+          AND r.rank != 'Acolyte'
+        GROUP BY r.userId, d.dominantRating
+        HAVING totalRatings >= ${minTotalRatings}
+          AND (uniqueRatings <= ${smiteMaxUniqueRatings} OR dominantPct >= ${havingDominantPct} OR avgPerMinute > ${havingAvgPerMinute})
+        ORDER BY totalRatings DESC
+        LIMIT 50
     `;
+  };
+  const [v1Result, v2Result] = await Promise.allSettled([
+    clickhouse ? loadV1Suspects() : Promise.resolve([] as AbuseSuspect[]),
+    loadV2AbuseSuspects({
+      minTotalRatings,
+      havingDominantPct,
+      havingAvgPerMinute,
+      smiteMaxUniqueRatings,
+    }),
+  ]);
+  for (const [name, result] of [
+    ['new-order-abuse-detection:v1-scan-failed', v1Result],
+    ['new-order-abuse-detection:v2-scan-failed', v2Result],
+  ] as const) {
+    if (result.status === 'rejected') handleLogError(result.reason as Error, name);
+  }
+  const ranSources = clickhouse ? [v1Result, v2Result] : [v2Result];
+  const failed = ranSources.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failed.length === ranSources.length) throw failed[0].reason;
+
+  const v1Suspects = v1Result.status === 'fulfilled' ? v1Result.value : [];
+  const v2Suspects = v2Result.status === 'fulfilled' ? v2Result.value : [];
+  const suspects = [...v1Suspects, ...v2Suspects];
 
   // The accounts this run wrote a smite ROW for — MEMBERSHIP, not selection, and keyed on the
   // durable write rather than on the smite call returning. The loop below swallows a per-player
@@ -742,10 +771,11 @@ export async function runAbuseDetectionScan() {
     // excluded from the smite filter — power users can spike during bursts.
     // The 3-active-smites rule in `smitePlayer` chains into the existing
     // `resetPlayer` flow on the third strike.
+    // v1 suspects only: v2 is report-only and never smited, whatever this flag says.
     if (config?.autoSmiteAbusers === true) {
-      const isStrictSignal = (s: (typeof suspects)[number]) =>
+      const isStrictSignal = (s: AbuseSuspect) =>
         s.uniqueRatings <= smiteMaxUniqueRatings || s.dominantPct >= smiteDominantPct;
-      const targets = suspects.filter(isStrictSignal);
+      const targets = v1Suspects.filter(isStrictSignal);
       log(`AbuseDetection :: Auto-smiting ${targets.length} strict-signal suspect(s)`);
 
       for (const s of targets) {

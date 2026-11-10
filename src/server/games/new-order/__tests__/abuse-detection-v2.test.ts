@@ -1,0 +1,177 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { clickhouseRef, mockClickhouseQuery, mockGetVotingRateLimitConfig, mockSmitePlayer } =
+  vi.hoisted(() => ({
+    clickhouseRef: { current: null as null | { $query: ReturnType<typeof vi.fn> } },
+    mockClickhouseQuery: vi.fn(),
+    mockGetVotingRateLimitConfig: vi.fn(),
+    mockSmitePlayer: vi.fn(),
+  }));
+const { mockHandleLogError, mockAbuseReport } = vi.hoisted(() => ({
+  mockHandleLogError: vi.fn(),
+  mockAbuseReport: vi.fn(),
+}));
+
+vi.mock('~/server/clickhouse/client', () => ({
+  get clickhouse() {
+    return clickhouseRef.current;
+  },
+}));
+vi.mock('~/server/games/new-order/utils', () => {
+  const counterStub = { key: 'stub' };
+  return {
+    allJudgmentsCounter: counterStub,
+    blessedBuzzCounter: counterStub,
+    correctJudgmentsCounter: counterStub,
+    expCounter: counterStub,
+    fervorCounter: counterStub,
+    pendingBuzzCounter: counterStub,
+    recentlyGrantedBuzzCounter: counterStub,
+    getActiveSlot: vi.fn(),
+    setActiveSlot: vi.fn(),
+    getVotingRateLimitConfig: mockGetVotingRateLimitConfig,
+    poolCounters: {},
+  };
+});
+vi.mock('~/server/services/games/new-order.service', () => ({
+  smitePlayer: mockSmitePlayer,
+  calculateFervor: vi.fn(),
+  cleanseSmite: vi.fn(),
+  processFinalRatings: vi.fn(),
+  clearRatedImages: vi.fn(),
+}));
+vi.mock('~/server/utils/errorHandling', () => ({ handleLogError: mockHandleLogError }));
+vi.mock('~/server/services/moderator-app.service', () => ({
+  moderatorApp: { abuseReport: mockAbuseReport },
+}));
+vi.mock('~/server/services/buzz.service', () => ({ createBuzzTransactionMany: vi.fn() }));
+vi.mock('~/server/utils/concurrency-helpers', () => ({ limitConcurrency: vi.fn() }));
+vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
+vi.mock('~/env/server', () => ({ env: { DISCORD_WEBHOOK_MOD_ALERTS: undefined } }));
+
+import { abuseReportInput, type AbuseReportInput } from '@civitai/moderation';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { runAbuseDetectionScan } from '~/server/jobs/new-order-jobs';
+
+const v1Row = (overrides: Record<string, number> = {}) => ({
+  userId: 100,
+  totalRatings: 200,
+  uniqueRatings: 1,
+  dominantRating: 1,
+  dominantPct: 100,
+  avgPerMinute: 5,
+  ...overrides,
+});
+// The raw shape the Postgres query returns, before the loader maps it.
+const v2Row = (overrides: Record<string, unknown> = {}) => ({
+  userId: 200,
+  totalRatings: 150,
+  uniqueRatings: 1,
+  dominantAnswer: '4',
+  dominantPct: 100,
+  avgPerMinute: 3,
+  ...overrides,
+});
+
+const filed = (): AbuseReportInput => {
+  expect(mockAbuseReport).toHaveBeenCalledTimes(1);
+  return abuseReportInput.parse(mockAbuseReport.mock.calls[0][0]);
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  clickhouseRef.current = { $query: mockClickhouseQuery };
+  mockClickhouseQuery.mockReset().mockResolvedValue([]);
+  mockGetVotingRateLimitConfig.mockReset().mockResolvedValue({ autoSmiteAbusers: true });
+  mockSmitePlayer
+    .mockReset()
+    .mockImplementation(async (a: { onSmiteCreated?: (s: { id: number }) => void }) => {
+      a.onSmiteCreated?.({ id: 1 });
+    });
+  mockAbuseReport.mockReset().mockResolvedValue(undefined);
+  dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([]);
+});
+
+describe('runAbuseDetectionScan v2 source', () => {
+  it('files v2 suspects as not actioned and never smites them, even with autoSmiteAbusers on', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([v2Row()]);
+
+    await runAbuseDetectionScan();
+
+    expect(mockSmitePlayer).not.toHaveBeenCalled();
+    const [finding] = filed().findings;
+    expect(finding).toMatchObject({ userId: 200, actioned: false });
+    expect(finding.action ?? null).toBeNull();
+    expect(finding.reason).toContain('Knights v2');
+  });
+
+  it('still smites and files v1 suspects as before, with no v2 label', async () => {
+    mockClickhouseQuery.mockResolvedValue([v1Row()]);
+
+    await runAbuseDetectionScan();
+
+    expect(mockSmitePlayer).toHaveBeenCalledTimes(1);
+    const [finding] = filed().findings;
+    expect(finding).toMatchObject({ userId: 100, actioned: true, action: 'smite' });
+    expect(finding.reason).not.toContain('Knights v2');
+  });
+
+  it('files an account in both games once per game, and only the v1 finding is actioned', async () => {
+    mockClickhouseQuery.mockResolvedValue([v1Row({ userId: 100 })]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([v2Row({ userId: 100 })]);
+
+    await runAbuseDetectionScan();
+
+    const findings = filed().findings;
+    expect(findings).toHaveLength(2);
+    expect(findings.map((f) => [f.actioned, f.reason.includes('Knights v2')])).toEqual([
+      [true, false],
+      [false, true],
+    ]);
+    expect(mockSmitePlayer).toHaveBeenCalledTimes(1);
+  });
+
+  it('still scans v2 when ClickHouse is unavailable', async () => {
+    clickhouseRef.current = null;
+    dbMock.dbRead.$queryRaw.mockResolvedValue([v2Row()]);
+
+    await runAbuseDetectionScan();
+
+    expect(filed().findings.map((f) => f.userId)).toEqual([200]);
+  });
+
+  it('files the v2 suspects when the v1 query fails', async () => {
+    mockClickhouseQuery.mockRejectedValue(new Error('clickhouse down'));
+    dbMock.dbRead.$queryRaw.mockResolvedValue([v2Row()]);
+
+    await runAbuseDetectionScan();
+
+    expect(filed().findings.map((f) => f.userId)).toEqual([200]);
+    expect(mockHandleLogError).toHaveBeenCalledWith(
+      expect.any(Error),
+      'new-order-abuse-detection:v1-scan-failed'
+    );
+  });
+
+  it('files and smites the v1 suspects when the v2 query fails', async () => {
+    mockClickhouseQuery.mockResolvedValue([v1Row()]);
+    dbMock.dbRead.$queryRaw.mockRejectedValue(new Error('pg down'));
+
+    await runAbuseDetectionScan();
+
+    expect(mockSmitePlayer).toHaveBeenCalledTimes(1);
+    expect(filed().findings.map((f) => f.userId)).toEqual([100]);
+    expect(mockHandleLogError).toHaveBeenCalledWith(
+      expect.any(Error),
+      'new-order-abuse-detection:v2-scan-failed'
+    );
+  });
+
+  it('fails the run, filing nothing, when every source that ran failed', async () => {
+    mockClickhouseQuery.mockRejectedValue(new Error('clickhouse down'));
+    dbMock.dbRead.$queryRaw.mockRejectedValue(new Error('pg down'));
+
+    await expect(runAbuseDetectionScan()).rejects.toThrow();
+    expect(mockAbuseReport).not.toHaveBeenCalled();
+  });
+});

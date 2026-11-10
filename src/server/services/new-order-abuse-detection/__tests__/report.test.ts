@@ -343,3 +343,25 @@ function reportOf(suspects: AbuseSuspect[], smitedUserIds: Set<number>) {
     finishedAt: new Date('2026-09-14T23:00:42Z'),
   });
 }
+
+describe('v2 suspects', () => {
+  it('are named in the reason and never filed as actioned, even if the account was smited for v1', () => {
+    const finding = toFinding(suspect({ source: 'v2' }), true);
+
+    expect(finding.actioned).toBe(false);
+    expect(finding.action ?? null).toBeNull();
+    expect(finding.reason).toContain('Knights v2');
+  });
+
+  it('build a report the contract accepts beside the same account smited for v1', () => {
+    const report = buildAbuseReport({
+      suspects: [suspect(), suspect({ source: 'v2' })],
+      smitedUserIds: new Set([100]),
+      startedAt: new Date('2026-11-10T23:00:00Z'),
+      finishedAt: new Date('2026-11-10T23:01:00Z'),
+    });
+
+    expect(abuseReportInput.parse(report).findings.map((f) => f.actioned)).toEqual([true, false]);
+    expect(report.counters).toMatchObject({ auto_smited: 1, filed_for_review: 1 });
+  });
+});

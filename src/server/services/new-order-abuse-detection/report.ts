@@ -63,6 +63,9 @@ export type AbuseSuspect = {
   /** 0..100. Share of this account's ratings that were the dominant value. */
   dominantPct: number;
   avgPerMinute: number;
+  /** Which game's votes this row came from; absent means v1. v2 rows are report-only: the scan
+   *  never smites them, and the contract has no source field, so the reason names the game. */
+  source?: 'v1' | 'v2';
 };
 
 type Finding = AbuseReportInput['findings'][number];
@@ -114,6 +117,7 @@ export function renderReason(suspect: AbuseSuspect, smited: boolean): string {
   const share = Math.floor(suspect.dominantPct);
   const pace = (Math.round(suspect.avgPerMinute * 10) / 10).toFixed(1);
   const parts = [
+    ...(suspect.source === 'v2' ? ['Knights v2.'] : []),
     `Account ${suspect.userId} cast ${suspect.totalRatings.toLocaleString()} ` +
       `${plural(suspect.totalRatings, 'rating')} in the last ${ABUSE_SCAN_WINDOW_HOURS}h using ` +
       `${suspect.uniqueRatings.toLocaleString()} distinct rating ` +
@@ -211,7 +215,9 @@ export function confidenceFor(suspect: AbuseSuspect): number {
  * The mechanism predates this flag and is not ours to change from here; the reason it is written
  * down is that "actioned: true" plus a smite that no longer exists reads as a bug in the board.
  */
-export function toFinding(suspect: AbuseSuspect, smited: boolean): Finding {
+export function toFinding(suspect: AbuseSuspect, wasSmited: boolean): Finding {
+  // v2 is report-only, so a v2 row is never actioned even when the same account was smited for v1.
+  const smited = wasSmited && suspect.source !== 'v2';
   const base = {
     userId: suspect.userId,
     confidence: confidenceFor(suspect),
