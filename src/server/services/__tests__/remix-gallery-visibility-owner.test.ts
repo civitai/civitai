@@ -99,6 +99,28 @@ beforeEach(() => {
     );
 });
 
+// Prisma's raw reads answered an id past int4 with no rows; through the pg pools the same
+// statements are a range error. The host image read and the has-entries probe skip it instead.
+describe('a host id past int4', () => {
+  it('still answers, without binding the id in any Kysely read', async () => {
+    const { rejectPastInt4 } = await import('~/test-utils/kysely-raw-fake');
+    hostOwnedBy('host-owner');
+    kysely.read.mockImplementation(async (strings: readonly string[], ...values: unknown[]) => {
+      rejectPastInt4(values);
+      return strings.join('?').includes('SELECT DISTINCT pl."targetId" AS "hostId"') ? [] : ONE_ROW;
+    });
+
+    await expect(
+      getRemixGalleryVisibility({
+        hostImageId: 2 ** 31,
+        browsingLevel: allBrowsingLevelsFlag,
+        domainLevels: allBrowsingLevelsFlag,
+      })
+    ).resolves.toMatchObject({ ownerId: OWNER, hasEntries: false });
+    expect(kysely.read).not.toHaveBeenCalled();
+  });
+});
+
 describe('the owner named by the gallery visibility query', () => {
   it('is the one read with the host image, with no user lookup of its own', async () => {
     hostOwnedBy('host-owner');

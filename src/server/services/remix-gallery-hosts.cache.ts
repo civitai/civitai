@@ -34,10 +34,11 @@ export const REMIX_GALLERY_HOSTS_TTL = CacheTTL.day;
 
 type HostWithEntries = { hostId: number };
 
-/** The ids among `hostIds` with any placement of this surface, from the replica. */
+/**
+ * The ids among `hostIds` with any placement of this surface, from the replica. Every id must fit
+ * int4 (`getRemixGalleryHostsWithEntries` drops the rest): one that does not fails the cast.
+ */
 export async function queryHostsWithEntries(hostIds: number[]): Promise<number[]> {
-  // An id past int4 is no image, so it has no placement; dropped rather than failing the cast.
-  hostIds = hostIds.filter(isPgInt4);
   if (!hostIds.length) return [];
   const { kyselyRead } = await loadKyselyDb();
   const rows = await queryPrismaSql<{ hostId: number }>(
@@ -81,7 +82,8 @@ function remixGalleryHostsCache() {
 
 /** The ids among `hostIds` that have any remix-gallery placement (see the module comment). */
 export async function getRemixGalleryHostsWithEntries(hostIds: number[]): Promise<Set<number>> {
-  // An id past int4 has no placement (see queryHostsWithEntries), and is not worth a cache key.
+  // An id past int4 is no image, so it has no placement: dropped here, before the cache and the
+  // lookup, where it would fail the `::int[]` cast (Prisma's raw read answered it with no rows).
   const ids = [...new Set(hostIds)].filter(isPgInt4);
   if (!ids.length) return new Set();
   const cached = await remixGalleryHostsCache().fetch(ids);
