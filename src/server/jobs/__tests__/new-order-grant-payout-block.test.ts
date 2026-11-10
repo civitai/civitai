@@ -45,7 +45,7 @@ vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
 vi.mock('~/env/server', () => ({ env: {} }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { runGrantBlessedBuzz } from '~/server/jobs/new-order-jobs';
+import { RELEASED_PAYOUT_CHUNK_SIZE, runGrantBlessedBuzz } from '~/server/jobs/new-order-jobs';
 
 const judgment = (userId: number) => ({ userId, balance: 10, totalExp: 100 });
 const player = (userId: number, extra: Record<string, unknown> = {}) => ({
@@ -190,5 +190,80 @@ describe('runGrantBlessedBuzz release catch-up', () => {
     await runGrantBlessedBuzz();
 
     expect(mockCreateBuzzMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('runGrantBlessedBuzz release catch-up in chunks', () => {
+  const releaseFrom = new Date('2026-10-10T00:00:00.000Z');
+  const playerCount = RELEASED_PAYOUT_CHUNK_SIZE + 1;
+  const releasedIds = Array.from({ length: playerCount }, (_, i) => i + 1);
+
+  const sqlOf = (strings: TemplateStringsArray, values: unknown[]) =>
+    strings.reduce((acc, s, i) => acc + s + (i < values.length ? String(values[i]) : ''), '');
+  const usersIn = (sql: string) =>
+    [...sql.matchAll(/userId = (\d+) AND createdAt >= parseDateTimeBestEffort/g)].map(([, id]) =>
+      Number(id)
+    );
+  const catchUpQueries: number[][] = [];
+  const stubCatchUp = (failWhenContains?: number) =>
+    mockClickhouseQuery.mockImplementation(
+      (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const sql = sqlOf(strings, values);
+        if (!sql.includes('dayMs')) return Promise.resolve([]);
+        const users = usersIn(sql);
+        catchUpQueries.push(users);
+        if (failWhenContains != null && users.includes(failWhenContains))
+          return Promise.reject(new Error('query rejected'));
+        return Promise.resolve(
+          users.map((userId) => ({
+            userId,
+            dayMs: releaseFrom.getTime(),
+            balance: 1,
+            totalExp: 10,
+          }))
+        );
+      }
+    );
+  const clearedIds = () =>
+    dbMock.dbWrite.newOrderPlayer.updateMany.mock.calls.flatMap(
+      ([args]) => (args as { where: { userId: { in: number[] } } }).where.userId.in
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    catchUpQueries.length = 0;
+    stubPlayers(
+      [],
+      releasedIds.map((id) => player(id, { payoutReleaseFrom: releaseFrom }))
+    );
+  });
+
+  it('pays and clears every released player across bounded queries', async () => {
+    stubCatchUp();
+
+    await runGrantBlessedBuzz();
+
+    expect(catchUpQueries.length).toBeGreaterThan(1);
+    for (const users of catchUpQueries)
+      expect(users.length).toBeLessThanOrEqual(RELEASED_PAYOUT_CHUNK_SIZE);
+    expect(grantedUserIds().sort((a, b) => a - b)).toEqual(releasedIds);
+    expect(clearedIds().sort((a, b) => a - b)).toEqual(releasedIds);
+  });
+
+  it('a failing chunk keeps its players held while the other chunk is paid and cleared', async () => {
+    stubCatchUp(1);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      await runGrantBlessedBuzz();
+    } finally {
+      consoleError.mockRestore();
+    }
+
+    const failed = catchUpQueries.find((users) => users.includes(1)) ?? [];
+    const paid = releasedIds.filter((id) => !failed.includes(id));
+    expect(paid.length).toBeGreaterThan(0);
+    expect(grantedUserIds().sort((a, b) => a - b)).toEqual(paid);
+    expect(clearedIds().sort((a, b) => a - b)).toEqual(paid);
   });
 });
