@@ -109,15 +109,23 @@ export const init: ServerInit = async () => {
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
   // The held-media sheet: its code exchange carries no session, and its scoped cookie stands in for
-  // the web session on the image route alone. Anywhere else the cookie is ignored.
+  // the web session on the image route alone, and only when there is no valid web session. Anywhere
+  // else the cookie is ignored.
   if (event.url.pathname === SHEET_EXCHANGE_PATH && event.request.method === 'POST')
     return resolve(event);
-  const sheetToken = parseCookieHeader(event.request.headers.get('cookie') ?? '')[SHEET_COOKIE];
+  const cookieHeader = event.request.headers.get('cookie') ?? '';
+  const sheetToken = parseCookieHeader(cookieHeader)[SHEET_COOKIE];
+  let webSession: Awaited<ReturnType<typeof guard.check>> | undefined;
   if (
     sheetToken !== undefined &&
     isSheetImagePath(event.url.pathname) &&
     (event.request.method === 'GET' || event.request.method === 'HEAD')
   ) {
+    webSession = await guard.check(cookieHeader, event.url.href, {
+      navigation: isNavigationRequest(event.request),
+    });
+  }
+  if (webSession && webSession.status !== 'ok') {
     const user = await resolveSheetSession(sheetToken).catch(() => {
       console.error('[held-sheet] session lookup failed');
       return undefined;
@@ -159,9 +167,11 @@ export const handle: Handle = async ({ event, resolve }) => {
     }
   }
 
-  const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href, {
-    navigation: isNavigationRequest(event.request),
-  });
+  const result =
+    webSession ??
+    (await guard.check(cookieHeader, event.url.href, {
+      navigation: isNavigationRequest(event.request),
+    }));
 
   if (result.status === 'login') {
     return new Response(null, { status: 302, headers: { location: result.redirect } });

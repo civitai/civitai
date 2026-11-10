@@ -366,7 +366,35 @@ describe('hook: the sheet cookie', () => {
     expect(res.status).toBe(299);
     expect(locals.user).toMatchObject({ id: 42 });
     expect(locals.heldCredential).toBe('sheet');
-    expect(guardCheck).not.toHaveBeenCalled();
+    // Asked first, and found no web session.
+    expect(guardCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a valid web session win over a sheet cookie on the image route', async () => {
+    const token = await signIn();
+    const webUser = { ...MOD, id: 77, username: 'web77' };
+    guardCheck.mockResolvedValue({ status: 'ok', user: webUser, setCookies: [] });
+    redis.get.mockClear();
+    const { res, locals } = await run('/api/held-media/7', `__Secure-held_sheet=${token}`);
+    expect(res.status).toBe(299);
+    expect(locals.user).toMatchObject({ id: 77 });
+    expect(locals.heldCredential).toBeUndefined();
+    expect(redis.get).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a valid web session, not 401, when the sheet cookie is dead', async () => {
+    guardCheck.mockResolvedValue({ status: 'ok', user: { ...MOD }, setCookies: [] });
+    const { res, locals } = await run('/api/held-media/7', `__Secure-held_sheet=${'x'.repeat(43)}`);
+    expect(res.status).toBe(299);
+    expect(locals.heldCredential).toBeUndefined();
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('asks the web guard once per request', async () => {
+    const token = await signIn();
+    guardCheck.mockResolvedValue({ status: 'ok', user: { ...MOD }, setCookies: [] });
+    await run('/api/held-media/7', `__Secure-held_sheet=${token}`);
+    expect(guardCheck).toHaveBeenCalledTimes(1);
   });
 
   it('answers 401 for an unknown or malformed cookie, and runs nothing', async () => {

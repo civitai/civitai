@@ -460,6 +460,17 @@ describe('the held-media sheet', () => {
     expect(res!.headers.get('set-cookie')).toBeNull();
   });
 
+  it('treats a web-session fetch carrying a sheet cookie as web: video served, Range honoured', async () => {
+    getHeldMedia.mockResolvedValue({ url: KEY, type: 'video', mimeType: 'video/mp4' });
+    fetchMock.mockResolvedValue(
+      upstream(206, { 'content-type': 'video/mp4', 'content-range': 'bytes 0-4/100' })
+    );
+    const { status } = await call('/api/held-media/7', { range: 'bytes=0-4' });
+    expect(status).toBe(206);
+    expect(new Headers(fetchMock.mock.calls[0][1].headers).get('range')).toBe('bytes=0-4');
+    expect(insertModActivity.mock.calls[0][0]).toMatchObject({ credential: 'web' });
+  });
+
   it('ignores a Range from the sheet, so every fetch is whole and audited', async () => {
     await call('/api/held-media/7', { range: 'bytes=1-' }, '7', 'GET', { token: TOKEN });
     expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get('range')).toBeNull();
