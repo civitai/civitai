@@ -310,6 +310,17 @@ describe('getCommentReplies', () => {
     const replies = await getCommentReplies(db, 1200, reader, { sort: ThreadSort.Oldest });
     expect(ids(replies).slice(0, 2)).toEqual([1201, 1202]);
     expect(item(replies, 1202)).toMatchObject({ deleted: true, pinnedAt: null });
+    // A later page still reaches it: it is paged as unpinned, not left to a first page it no longer leads.
+    const firstReply = await getCommentReplies(db, 1200, reader, {
+      sort: ThreadSort.Oldest,
+      limit: 1,
+    });
+    const nextReply = await getCommentReplies(db, 1200, reader, {
+      sort: ThreadSort.Oldest,
+      limit: 1,
+      cursor: firstReply.children[1200].nextCursor!,
+    });
+    expect(ids(nextReply)[0]).toBe(1202);
   });
 
   it('pages one comment’s replies and continues where the section stopped', async () => {

@@ -362,6 +362,7 @@ describe('comment v3 writes', () => {
     const root = await post(35, 1);
     await post(35, 2, root.id);
     await setCommentFlags(db, [root.id], { pinned: true });
+    expect((await getStoredComment(db, root.id))?.pinnedAt).not.toBeNull();
     await deleteComments(db, [root.id]);
     expect(await getStoredComment(db, root.id)).toMatchObject({ content: '', pinnedAt: null });
 
@@ -377,6 +378,7 @@ describe('comment v3 writes', () => {
       (await one<{ id: number }>(`SELECT id FROM "CommentV3" WHERE "legacyV1Id" = ${v1Root?.id}`))
         ?.id ?? 0;
     await setCommentFlags(db, [rootV3], { pinned: true });
+    expect((await getStoredComment(db, rootV3))?.pinnedAt).not.toBeNull();
     await deleteComments(db, [rootV3]);
     expect(await getStoredComment(db, rootV3)).toMatchObject({ content: '', pinnedAt: null });
     expect(await one(`SELECT content, "pinnedAt" FROM "Comment" WHERE id = ${v1Root?.id}`)).toEqual(
