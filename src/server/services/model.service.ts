@@ -2119,7 +2119,7 @@ export const updateModelById = async ({
   meta?: (stored: ModelMeta | null, row: LockedModelRow) => ModelMeta;
 }) => {
   let written = typeof data === 'function' ? undefined : data;
-  // The mode before this write; undefined when the write read no row.
+  // The mode before this write; undefined when the write locked no row to read it from.
   let priorMode: ModelModifier | null | undefined;
   const model =
     meta || typeof data === 'function'
@@ -2168,8 +2168,10 @@ export const updateModelById = async ({
     await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     // Collection covers drawn from its images change only when it enters or leaves TakenDown.
     // Not awaited: the lookup reads every image on the model.
+    const writtenMode =
+      written.mode && typeof written.mode === 'object' ? written.mode.set : written.mode;
     if (
-      written.mode === ModelModifier.TakenDown ||
+      writtenMode === ModelModifier.TakenDown ||
       priorMode === ModelModifier.TakenDown ||
       priorMode === undefined
     )
