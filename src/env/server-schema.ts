@@ -409,6 +409,8 @@ export const serverSchema = z
     // WEBHOOK_TOKEN. Unset or blank matches nothing.
     PROBE_TOKEN: z.string().optional(),
     SYSTEM_ACCOUNT_KEY_TOKEN: z.string().optional(),
+    // Header token for /api/admin/provider-download-token. Unset: the endpoint refuses everything.
+    PROVIDER_DOWNLOAD_TOKEN_ADMIN_TOKEN: z.string().optional(),
     SYSTEM_ACCOUNT_PROFILE_TOKEN: z.string().optional(),
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.

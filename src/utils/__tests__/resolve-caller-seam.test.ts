@@ -226,6 +226,7 @@ describe('storage-resolver attribution call-site ledger', () => {
         'orchestrator-preflight|internal',
         'orchestrator-preflight|internal',
       ],
+      'server/services/provider-download/provider-download.service.ts': ['download-route|internal'],
       'server/services/wildcard-set-provisioning.service.ts': ['wildcard|internal'],
     });
   });
