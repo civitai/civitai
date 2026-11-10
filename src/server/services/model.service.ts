@@ -5079,16 +5079,20 @@ export const publishModelById = async ({
       // public. Allowed transitions: NULL (Draft) -> set, or future
       // (Scheduled) -> reschedule. Republish of an already-public model is a
       // no-op for this column.
-      // Never later than the model's earliest live or scheduled version, so scheduling a later
-      // second version cannot hold back the first. Must run after the version writes.
+      // Never later than the model's earliest scheduled version, the one it goes live with. A live
+      // version may have been published at once, ahead of the model's date, so it neither sets the
+      // date nor lets another version push it later. Must run after the version writes.
       await tx.$executeRaw`
         UPDATE "Model" m
         SET "publishedAt" = LEAST(
           ${publishedAt},
           (
             SELECT MIN(mv."publishedAt") FROM "ModelVersion" mv
-            WHERE mv."modelId" = m.id AND mv.status IN ('Published', 'Scheduled')
-          )
+            WHERE mv."modelId" = m.id AND mv.status = 'Scheduled'
+          ),
+          CASE WHEN EXISTS (
+            SELECT 1 FROM "ModelVersion" mv WHERE mv."modelId" = m.id AND mv.status = 'Published'
+          ) THEN m."publishedAt" END
         )
         WHERE m.id = ${id}
         AND (m."publishedAt" IS NULL OR m."publishedAt" > NOW())

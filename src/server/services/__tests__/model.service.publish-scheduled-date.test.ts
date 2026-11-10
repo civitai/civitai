@@ -192,18 +192,19 @@ describe('publishModelById :: the date of a scheduled model', () => {
     expect(await modelDate()).toEqual(at(1));
   });
 
-  // The second reschedule path: the first version is already live, the second is moved again.
+  // The second reschedule path: the first version is already live, the second is moved again. The
+  // live one may have been published at once, so the model keeps the date its owner set.
   it('does not move the model to the second version’s new date once the first is live', async () => {
     await seed(at(3), [
       [V1, 'Published', at(-1)],
       [V2, 'Scheduled', at(3)],
     ]);
     await publishModelById({ id: MODEL_ID, versionIds: [V2], publishedAt: at(5) });
-    expect(await modelDate()).toEqual(at(-1));
+    expect(await modelDate()).toEqual(at(3));
   });
 
   it('leaves the date of a model already public', async () => {
-    await seed(at(-2), [[V1, 'Published', at(-1)]]);
+    await seed(at(-2), [[V1, 'Scheduled', at(1)]]);
     await publishModelById({ id: MODEL_ID, versionIds: [V2], publishedAt: at(3) });
     expect(await modelDate()).toEqual(at(-2));
   });

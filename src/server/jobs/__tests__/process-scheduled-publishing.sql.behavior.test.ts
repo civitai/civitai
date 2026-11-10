@@ -360,10 +360,25 @@ describe('processScheduledPublishing :: a model dated after its first version', 
     expect(after.status).toBe('Published');
     expect(after.publishedAt.getTime()).toBeLessThanOrEqual(Date.now());
     expect(engaged('model')).toEqual([1]);
+    expect(mockProcessEngagement).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: 'model', entityId: 1, userId: OWNER })
+    );
   });
 
   it('keeps the model Scheduled to its date when its first version was published at once', async () => {
     await modelDatedAfterFirstVersion({ v1Status: 'Published' });
+    await runJob();
+    expect(await model()).toEqual({ status: 'Scheduled', publishedAt: FUTURE });
+    expect(engaged('model')).toEqual([]);
+  });
+
+  // Selected as due but taken down before its UPDATE: it did not go live, so it releases nothing.
+  it('keeps the model Scheduled when its due version is taken down after the selects', async () => {
+    await modelDatedAfterFirstVersion({ v1Status: 'Published' });
+    await pg.db.query(`UPDATE "ModelVersion" SET "publishedAt" = $1 WHERE id = 11`, [PAST]);
+    await pg.db.query(`INSERT INTO "ModelFile" ("modelVersionId") VALUES (11)`);
+    beforeTx = () =>
+      pg.db.exec(`UPDATE "ModelVersion" SET status = 'UnpublishedViolation' WHERE id = 11`);
     await runJob();
     expect(await model()).toEqual({ status: 'Scheduled', publishedAt: FUTURE });
     expect(engaged('model')).toEqual([]);
