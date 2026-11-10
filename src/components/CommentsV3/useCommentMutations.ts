@@ -23,7 +23,7 @@ export function useCommentMutations() {
     onError: fail('Unable to remove comment'),
   });
   const lock = trpc.commentv3.toggleLock.useMutation({ onError: fail('Unable to lock replies') });
-  const mute = trpc.commentv3.toggleThreadMute.useMutation({
+  const mute = trpc.commentv3.toggleCommentMute.useMutation({
     onError: fail('Unable to update thread notifications'),
   });
 
@@ -84,11 +84,11 @@ export function useCommentMutations() {
     async toggleMute(comment: CommentV3Comment) {
       const result = await mute.mutateAsync({ commentId: comment.id });
       // The server answers what is left: a mute higher up can still be suppressing.
-      await utils.commentv3.getThreadMuted.invalidate({ commentId: comment.id });
+      await utils.commentv3.getCommentMuted.invalidate({ commentId: comment.id });
       showSuccessNotification({
         message: result.muted
-          ? "You won't be notified about replies in this thread"
-          : 'Your mute on this thread has been removed',
+          ? "You won't be notified about replies under this comment"
+          : 'Your mute on this comment has been removed',
       });
     },
   };

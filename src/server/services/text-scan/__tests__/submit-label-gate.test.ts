@@ -56,9 +56,9 @@ function csamMode(value: string | undefined) {
 
 /** The hash a profile without csam submits with: what every row carries before the gate opens. */
 async function baselineHash() {
-  registerTextScanProfile({ entityType: 'Comment', labels: ['scam'], load });
-  await scanEntity({ entityType: 'Comment', entityId: 3 });
-  registerTextScanProfile({ entityType: 'Comment', labels: ['scam', 'csam'], load });
+  registerTextScanProfile({ entityType: 'CommentV3', labels: ['scam'], load });
+  await scanEntity({ entityType: 'CommentV3', entityId: 3 });
+  registerTextScanProfile({ entityType: 'CommentV3', labels: ['scam', 'csam'], load });
   return lastHash();
 }
 
@@ -81,7 +81,7 @@ beforeEach(() => {
 describe('the csam gate at submit time', () => {
   it('drops csam while off: no csam prompt needed and the hash is the pre-gate hash', async () => {
     const before = await baselineHash();
-    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toEqual({
+    expect(await scanEntity({ entityType: 'CommentV3', entityId: 3 })).toEqual({
       status: 'submitted',
       workflowId: 'wf-1',
     });
@@ -93,7 +93,7 @@ describe('the csam gate at submit time', () => {
   it('treats an unparseable gate as off', async () => {
     const before = await baselineHash();
     csamMode('auto');
-    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toMatchObject({
+    expect(await scanEntity({ entityType: 'CommentV3', entityId: 3 })).toMatchObject({
       status: 'submitted',
     });
     expect(lastBody().metadata.labels).toEqual(['scam']);
@@ -104,7 +104,7 @@ describe('the csam gate at submit time', () => {
     const before = await baselineHash();
     redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
     resetTextScanRolloutCache();
-    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toMatchObject({
+    expect(await scanEntity({ entityType: 'CommentV3', entityId: 3 })).toMatchObject({
       status: 'submitted',
     });
     expect(lastBody().metadata.labels).toEqual(['scam']);
@@ -120,7 +120,7 @@ describe('the csam gate at submit time', () => {
       retryCount: 0,
       updatedAt: new Date(),
     } as never);
-    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toEqual({
+    expect(await scanEntity({ entityType: 'CommentV3', entityId: 3 })).toEqual({
       status: 'skipped',
       reason: 'unchanged',
     });
@@ -137,7 +137,7 @@ describe('the csam gate at submit time', () => {
     } as never);
     vi.mocked(getActiveTextScanPrompts).mockResolvedValue({ ...PROMPTS, ...CSAM_PROMPT });
     csamMode('review');
-    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toEqual({
+    expect(await scanEntity({ entityType: 'CommentV3', entityId: 3 })).toEqual({
       status: 'submitted',
       workflowId: 'wf-1',
     });
@@ -150,8 +150,8 @@ describe('the csam gate at submit time', () => {
 describe('csam in review without an active csam prompt', () => {
   it('skips a csam-only profile as off', async () => {
     csamMode('review');
-    registerTextScanProfile({ entityType: 'Comment', labels: ['csam'], load });
-    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toEqual({
+    registerTextScanProfile({ entityType: 'CommentV3', labels: ['csam'], load });
+    expect(await scanEntity({ entityType: 'CommentV3', entityId: 3 })).toEqual({
       status: 'skipped',
       reason: 'off',
     });
@@ -161,7 +161,7 @@ describe('csam in review without an active csam prompt', () => {
   it('still submits the other labels, with the hash they had before csam', async () => {
     const before = await baselineHash();
     csamMode('review');
-    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toEqual({
+    expect(await scanEntity({ entityType: 'CommentV3', entityId: 3 })).toEqual({
       status: 'submitted',
       workflowId: 'wf-1',
     });
@@ -179,16 +179,16 @@ describe('csam in a shadow scan', () => {
   });
 
   it('is never asked for, since nothing would hold its verdict', async () => {
-    registerTextScanProfile({ entityType: 'Comment', labels: ['scam', 'csam'], load });
-    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toMatchObject({
+    registerTextScanProfile({ entityType: 'CommentV3', labels: ['scam', 'csam'], load });
+    expect(await scanEntity({ entityType: 'CommentV3', entityId: 3 })).toMatchObject({
       status: 'submitted',
     });
     expect(lastBody().metadata.labels).toEqual(['scam']);
   });
 
   it('skips a csam-only profile as off', async () => {
-    registerTextScanProfile({ entityType: 'Comment', labels: ['csam'], load });
-    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toEqual({
+    registerTextScanProfile({ entityType: 'CommentV3', labels: ['csam'], load });
+    expect(await scanEntity({ entityType: 'CommentV3', entityId: 3 })).toEqual({
       status: 'skipped',
       reason: 'off',
     });
@@ -199,7 +199,7 @@ describe('csam in a shadow scan', () => {
 describe('a profile that narrows its labels per subject', () => {
   const narrowTo = (labels: ('scam' | 'csam')[]) =>
     registerTextScanProfile({
-      entityType: 'Comment',
+      entityType: 'CommentV3',
       labels: ['scam', 'csam'],
       load,
       labelsFor: () => labels,
@@ -209,7 +209,7 @@ describe('a profile that narrows its labels per subject', () => {
     vi.mocked(getActiveTextScanPrompts).mockResolvedValue({ ...PROMPTS, ...CSAM_PROMPT });
     csamMode('review');
     narrowTo(['csam']);
-    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toMatchObject({
+    expect(await scanEntity({ entityType: 'CommentV3', entityId: 3 })).toMatchObject({
       status: 'submitted',
     });
     expect(lastBody().metadata.labels).toEqual(['csam']);
@@ -218,7 +218,7 @@ describe('a profile that narrows its labels per subject', () => {
 
   it('submits nothing when the gate drops every label the subject keeps', async () => {
     narrowTo(['csam']);
-    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toEqual({
+    expect(await scanEntity({ entityType: 'CommentV3', entityId: 3 })).toEqual({
       status: 'skipped',
       reason: 'off',
     });
@@ -229,8 +229,8 @@ describe('a profile that narrows its labels per subject', () => {
 describe('the gate is read before the subject is loaded', () => {
   it('skips as off without loading when the gate drops every label', async () => {
     const csamOnlyLoad = vi.fn(load);
-    registerTextScanProfile({ entityType: 'Comment', labels: ['csam'], load: csamOnlyLoad });
-    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toEqual({
+    registerTextScanProfile({ entityType: 'CommentV3', labels: ['csam'], load: csamOnlyLoad });
+    expect(await scanEntity({ entityType: 'CommentV3', entityId: 3 })).toEqual({
       status: 'skipped',
       reason: 'off',
     });
@@ -240,11 +240,11 @@ describe('the gate is read before the subject is loaded', () => {
   it('reports a missing entity once a label survives the gate', async () => {
     csamMode('review');
     registerTextScanProfile({
-      entityType: 'Comment',
+      entityType: 'CommentV3',
       labels: ['csam'],
       load: async () => new Map(),
     });
-    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toEqual({
+    expect(await scanEntity({ entityType: 'CommentV3', entityId: 3 })).toEqual({
       status: 'skipped',
       reason: 'missing',
     });
@@ -253,7 +253,7 @@ describe('the gate is read before the subject is loaded', () => {
   it('clears every profile label when a narrowed subject is too short', async () => {
     csamMode('review');
     registerTextScanProfile({
-      entityType: 'Comment',
+      entityType: 'CommentV3',
       labels: ['scam', 'csam'],
       minChars: 50,
       load,
@@ -266,7 +266,7 @@ describe('the gate is read before the subject is loaded', () => {
       triggeredLabels: ['scam'],
       result: { version: 1 },
     } as never);
-    expect(await scanEntity({ entityType: 'Comment', entityId: 3 })).toEqual({
+    expect(await scanEntity({ entityType: 'CommentV3', entityId: 3 })).toEqual({
       status: 'skipped',
       reason: 'too-short',
     });

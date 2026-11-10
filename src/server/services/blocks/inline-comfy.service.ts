@@ -7,6 +7,7 @@ import { getResourceData } from '~/server/services/generation/generation.service
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { AIR_URN_PREFIX } from '~/server/services/blocks/steps';
+import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
 import type { ComfyGraph } from '~/server/services/blocks/recipes';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -633,6 +634,7 @@ export async function assertViewerEntitledToInlineResources(opts: {
     if (rawSeen.has(key)) throw badRequest(`duplicate resource declared: '${p.raw.slice(0, 200)}'`);
     rawSeen.add(key);
   }
+  assertNoRestrictedBaseModels({ airs: opts.airs });
 
   const versionIds = parsed
     .map((p) => p.versionId)
@@ -644,6 +646,7 @@ export async function assertViewerEntitledToInlineResources(opts: {
     generation: true,
   });
   const byId = new Map(resources.map((r) => [r.id, r]));
+  assertNoRestrictedBaseModels({ baseModels: resources.map((r) => r.baseModel) });
 
   for (const id of versionIds) {
     const resource = byId.get(id);
