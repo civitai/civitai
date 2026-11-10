@@ -1426,8 +1426,7 @@ describe('a chat App Block step, with the external-host refusal on', () => {
   });
 
   it('INVARIANT GUARD: a keyed CDN link with a trailing-dot host in message text is collected whole, and checked as an image input', async () => {
-    // Green before this change too (a civitai host is accepted by name); pins that the host
-    // normalisation shared with the classifier keeps it so.
+    // A civitai host is accepted by name, so the trailing dot must not change the outcome.
     const dotted = `https://image.civitai.com./x/${KEY}/original=true`;
     expect(opaqueInputUrlsIn(chat(dotted), chatPaths()).urls).toContain(dotted);
     await recordUploadKeyOwner(KEY, OTHER);

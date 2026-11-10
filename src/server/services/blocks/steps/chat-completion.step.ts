@@ -1539,12 +1539,13 @@ export const chatCompletionStep = {
   // The AIR scan above is a separate check and is NOT narrowed by this.
   //
   // `tools[].function.**`: a tool's name, description and JSON Schema `parameters` are text
-  // sent to the model, never fetched (orchestrator side, not enforced here) — a schema's `$schema`/`$id` url included, and a
-  // `{ $ref }`-shaped object in `parameters` only writes into the schema the model is shown
-  // (this arm's body has no `arguments` and no other step). Keys and links naming one of our
-  // images there are still checked. Sound because `chatToolSchema` is `.strict()` with `type`
-  // the literal 'function' (no server-side tool type, such as a web fetch, can be declared);
-  // pinned by "free-text param paths".
+  // sent to the model, so the gate does not read them as image inputs — a schema's
+  // `$schema`/`$id` url included (that nothing fetches them is the orchestrator's, as for
+  // `messages[].content`). A `{ $ref }`-shaped object in `parameters` only writes into the
+  // schema the model is shown (this arm's body has no `arguments` and no other step). Keys
+  // and links naming one of our images there are still checked. Sound because `chatToolSchema`
+  // is `.strict()` with `type` the literal 'function' (no server-side tool type, such as a web
+  // fetch, can be declared); pinned by "free-text param paths".
   freeTextParamPaths: ['messages[].content', 'tools[].function.**'],
   paramSchema: chatCompletionParamsSchema,
   // Models AS variants: the allowlist, the price key and the audit row's
