@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
+import { getEcosystemStates } from '~/shared/form-graph/generation/ecosystem-gates';
 import type { GenerationCtx } from '~/shared/generation/context';
 import type { GenerationHandlerCtx, GenerationData } from '../../orchestration-new.service';
 import type * as FliptClient from '~/server/flipt/client';
@@ -359,6 +360,125 @@ describe('krea3.handler', () => {
       expectFlags: { krea3Ultra: true },
     });
     expect(firstInput(at1k)).toMatchObject({ resolution: '1k', thinkingMode: 'instant' });
+  });
+});
+
+describe('minimax-h3-image.handler', () => {
+  const MOD = { minimaxH3ImageGenerator: true };
+
+  it('create sends a comfy createImage step at the 2K size for the ratio, with no images', async () => {
+    const create = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MiniMaxH3Image',
+      expectFlags: MOD,
+      prompt: 'a cat',
+      aspectRatio: '16:9',
+      quantity: 3,
+      seed: 42,
+      images: [IMAGE],
+    });
+    expect(firstInput(create)).toEqual({
+      engine: 'comfy',
+      ecosystem: 'h3-image',
+      operation: 'createImage',
+      prompt: 'a cat',
+      width: 2784,
+      height: 1568,
+      quantity: 3,
+      seed: 42,
+      diffusionModel: null,
+    });
+  });
+
+  it('4K doubles both sides and stays inside the 4-20 MP canvas', async () => {
+    const create = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MiniMaxH3Image',
+      expectFlags: MOD,
+      prompt: 'a cat',
+      resolution: '4K',
+      aspectRatio: '3:1',
+    });
+    const { width, height } = firstInput(create) as { width: number; height: number };
+    expect([width, height]).toEqual([7104, 2368]);
+    expect(width * height).toBeLessThanOrEqual(20_971_520);
+  });
+
+  it('a resolution the engine cannot render falls back to 2K', async () => {
+    const create = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'MiniMaxH3Image',
+      expectFlags: MOD,
+      prompt: 'a cat',
+      resolution: '1K',
+    });
+    expect(firstInput(create)).toMatchObject({ width: 2048, height: 2048 });
+  });
+
+  it('edit switches operation and sends the references in order', async () => {
+    const edit = await dispatch({
+      workflow: 'img2img:edit',
+      ecosystem: 'MiniMaxH3Image',
+      expectFlags: MOD,
+      prompt: 'a cat',
+      aspectRatio: '1:1',
+      images: [IMAGE, IMAGE2],
+    });
+    expect(firstInput(edit)).toMatchObject({
+      engine: 'comfy',
+      ecosystem: 'h3-image',
+      operation: 'editImage',
+      width: 2048,
+      height: 2048,
+      images: [IMAGE.url, IMAGE2.url],
+    });
+  });
+
+  it('caps quantity at 4 even when the tier allows more', () => {
+    const parsed = generationHub.parse(
+      { workflow: 'txt2img', ecosystem: 'MiniMaxH3Image', prompt: 'a cat', quantity: 12 },
+      { ...BASE, limits: { ...BASE.limits, maxQuantity: 12 }, flags: MOD }
+    );
+    expect(parsed.success && (parsed.data as { quantity: number }).quantity).toBe(4);
+  });
+
+  it('accepts sixteen references and no more', () => {
+    const images = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ ...IMAGE, url: `https://example.com/${i}.png` }));
+    const parse = (n: number) =>
+      generationHub.parse(
+        {
+          workflow: 'img2img:edit',
+          ecosystem: 'MiniMaxH3Image',
+          prompt: 'a cat',
+          images: images(n),
+        },
+        { ...BASE, flags: MOD }
+      );
+    const sixteen = parse(16);
+    expect(sixteen.success && (sixteen.data as { images: unknown[] }).images).toHaveLength(16);
+    const seventeen = parse(17);
+    expect(seventeen.success && (seventeen.data as { images: unknown[] }).images).not.toHaveLength(
+      17
+    );
+  });
+
+  // The flag keeps it to moderators until the workers and pricing are confirmed.
+  it('without the flag it is not offered, and a submission naming it never reaches it', () => {
+    const input = { workflow: 'txt2img', ecosystem: 'MiniMaxH3Image', prompt: 'a cat' };
+    const ecosystemOf = (ext: GenerationCtx) => {
+      const parsed = generationHub.parse(input, ext);
+      return parsed.success ? (parsed.data as { ecosystem: string }).ecosystem : undefined;
+    };
+    expect(ecosystemOf({ ...BASE, flags: MOD })).toBe('MiniMaxH3Image');
+    expect(ecosystemOf(BASE)).not.toBe('MiniMaxH3Image');
+
+    expect(getEcosystemStates('txt2img', { ...BASE, flags: MOD }).compatibleEcosystems).toContain(
+      'MiniMaxH3Image'
+    );
+    const off = getEcosystemStates('txt2img', BASE);
+    expect(off.compatibleEcosystems).not.toContain('MiniMaxH3Image');
+    expect(off.hiddenEcosystems).toContain('MiniMaxH3Image');
   });
 });
 

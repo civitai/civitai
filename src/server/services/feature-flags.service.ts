@@ -730,6 +730,10 @@ const featureFlags = createFeatureFlags({
   // launch. Off ⇒ Ultra is not offered and a submitted 'ultra' falls back to the
   // default (see `image/krea3.graph.ts`).
   krea3Ultra: { availability: ['mod'], fliptKey: 'krea3-ultra' },
+  // Gates the whole MiniMaxH3Image ecosystem: off ⇒ it is hidden from the picker and a
+  // submission naming it is refused (see `generation/ecosystem-gates.ts`). No Flipt key, so
+  // opening it past moderators is a code change.
+  minimaxH3ImageGenerator: { availability: ['mod'] },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
