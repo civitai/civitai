@@ -55,6 +55,10 @@ import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import { MoveImageToPostModal } from '~/components/Post/EditV2/MoveImageToPostModal';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
+import {
+  ResourceReviewCommentHint,
+  ResourceReviewThumbs,
+} from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewThumbs';
 import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImageTechnique';
 import { ImageTechniquesPopover } from '~/components/Post/EditV2/Techniques/PostImageTechniquesPopover';
 import {
@@ -536,6 +540,8 @@ const ResourceHeader = () => {
 const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) => {
   const { image, canAdd, otherImages } = useAddedImageContext();
   const [updateImage] = usePostEditStore((state) => [state.updateImage]);
+  const postId = usePostEditStore((state) => state.post?.id);
+  const ownerId = usePostEditStore((state) => state.post?.user.id);
 
   const { modelId, modelName, modelType, modelVersionId, modelVersionName, detected } = resource;
 
@@ -637,13 +643,29 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
             <Text lineClamp={1}>{modelName}</Text>
             <Text span c="dimmed" size="sm" lineClamp={1}>
               {modelVersionName}
+              {postId && ownerId && (
+                <ResourceReviewCommentHint
+                  postId={postId}
+                  ownerId={ownerId}
+                  modelVersionId={modelVersionId}
+                />
+              )}
             </Text>
           </Stack>
-          <Badge color="gray" size="md" variant="filled">
+          <Badge color="gray" size="md" variant="filled" visibleFrom="sm">
             {getDisplayName(modelType ?? 'unknown')}
           </Badge>
         </Box>
       </Link>
+
+      {postId && ownerId && (
+        <ResourceReviewThumbs
+          postId={postId}
+          ownerId={ownerId}
+          modelVersionId={modelVersionId}
+          modelName={modelName}
+        />
+      )}
 
       {!otherAvailableIDs.length ? (
         <></>
