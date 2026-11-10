@@ -350,7 +350,7 @@ describe('an App Blocks generation source', () => {
     ['flagged minor', { minor: true }, APP_SOURCE_UNUSABLE_MESSAGE],
     ['flagged poi', { poi: true }, APP_SOURCE_UNUSABLE_MESSAGE],
     ['still scanning', { ingestion: 'Pending' }, APP_SOURCE_PENDING_MESSAGE],
-    ['held for review', { needsReview: 'poi' }, APP_SOURCE_PENDING_MESSAGE],
+    ['held for review', { needsReview: 'poi' }, APP_SOURCE_UNUSABLE_MESSAGE],
   ])("refuses the caller's own image that is %s", async (_, over, message) => {
     await givenImage({ userId: CALLER, postId: null });
     for (const entry of APP_ENTRIES) expect(await check([CDN()], entry)).toBe('accepted');
@@ -360,10 +360,13 @@ describe('an App Blocks generation source', () => {
       expect(await check([CDN()], entry)).toBe(`refused: ${message}`);
   });
 
-  it("refuses another user's public image flagged minor or poi", async () => {
-    await givenImage({ minor: true });
+  it.each([
+    ['flagged minor', { minor: true }],
+    ['still scanning', { ingestion: 'Pending' }],
+  ])("refuses another user's public image that is %s, without saying why", async (_, over) => {
+    await givenImage(over);
     expect(await check([CDN()], 'appBlocksPassThrough')).toBe(
-      `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`
+      `refused: ${GENERATION_IMAGE_UNAVAILABLE_MESSAGE}`
     );
   });
 

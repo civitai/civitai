@@ -1328,7 +1328,7 @@ describe('the generation input gate runs on a CONFIRMED submit too', () => {
   function givenImage(owner: number, visible: boolean) {
     dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
       strings.join('').includes('FROM "Image" i')
-        ? [{ url: KEY, userId: owner, visible, blocked: false, scanned: true, flagged: false }]
+        ? [{ url: KEY, userId: owner, visible, blocked: false, scanComplete: true, held: false }]
         : []) as never);
   }
   beforeEach(() =>

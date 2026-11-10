@@ -10905,7 +10905,7 @@ async function assertStepOrWorkflowInputsUsable(
     body.kind === 'workflow'
       ? undefined
       : isPassThroughStepBody(body)
-      ? PASS_THROUGH_FREE_TEXT_PATHS[foldStepTypeCase(body.$type)]
+      ? PASS_THROUGH_FREE_TEXT_PATHS.get(foldStepTypeCase(body.$type))
       : getStep(body.step)?.freeTextParamPaths;
   const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs, freeTextPaths);
   if (tooDeep) {
@@ -10927,14 +10927,17 @@ async function assertStepOrWorkflowInputsUsable(
  * Free-text fields of a pass-through step's orchestrator input, by case-folded `$type`: text the
  * orchestrator never fetches (message text, tool schemas). A media part beside them is still read.
  */
-const PASS_THROUGH_FREE_TEXT_PATHS: Readonly<Record<string, readonly string[]>> = {
-  chatcompletion: [
-    'messages[].content',
-    'messages[].tool_calls.**',
-    'tools[].function.**',
-    'tools[].parameters.**',
+const PASS_THROUGH_FREE_TEXT_PATHS: ReadonlyMap<string, readonly string[]> = new Map([
+  [
+    'chatcompletion',
+    [
+      'messages[].content',
+      'messages[].tool_calls.**',
+      'tools[].function.**',
+      'tools[].parameters.**',
+    ],
   ],
-};
+]);
 
 /**
  * Settle-time observability labels for a pass-through submit.

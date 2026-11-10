@@ -62,8 +62,9 @@ type InputImageRow = {
   userId: number;
   visible: boolean;
   blocked: boolean;
-  scanned: boolean;
-  flagged: boolean;
+  scanComplete: boolean;
+  /** Held for review, or flagged minor or poi. */
+  held: boolean;
 };
 
 /** Shown to an app whose generation input names an image the scan has not finished. */
@@ -120,23 +121,28 @@ async function assertKeysUsable({
           (i.ingestion = 'Scanned' AND i."blockedFor" IS NULL AND i."needsReview" IS NULL
             AND NOT i."tosViolation" AND p."publishedAt" <= now()
             AND p.availability IN ('Public', 'Unsearchable') AND NOT p."tosViolation") IS TRUE AS visible,
-          (i.ingestion = 'Scanned' AND i."needsReview" IS NULL) IS TRUE AS scanned,
-          (i.minor IS TRUE OR i.poi IS TRUE) AS flagged
+          (i.ingestion = 'Scanned') AS "scanComplete",
+          (i."needsReview" IS NOT NULL OR i.minor IS TRUE OR i.poi IS TRUE) AS held
         FROM "Image" i
         LEFT JOIN "Post" p ON p.id = i."postId"
         WHERE i.url = ANY(${lookup.slice(i, i + MAX_KEYS)}::text[])
       `)
     );
   if (rows.some((r) => r.blocked)) throw generationImageUnavailableError();
-  if (appBlock && rows.some((r) => r.flagged)) throw appSourceUnusableError();
 
   // One pass over the rows (`keysIn` once each), not keys × rows.
   const rowsByKey = new Map(keys.map((key): [string, InputImageRow[]] => [key, []]));
   for (const row of rows)
     for (const key of new Set([row.url, ...keysIn(row.url)])) rowsByKey.get(key)?.push(row);
   for (const keyRows of rowsByKey.values()) {
-    if (appBlock && keyRows.some((r) => !r.scanned)) throw appSourcePendingError();
-    if (!keyRows.length || keyRows.some((r) => r.userId === userId)) continue;
+    const own = keyRows.some((r) => r.userId === userId);
+    if (appBlock && keyRows.some((r) => r.held || !r.scanComplete)) {
+      // Only the owner learns why: to anyone else the image is just unavailable.
+      if (!own) throw generationImageUnavailableError();
+      if (keyRows.some((r) => r.held)) throw appSourceUnusableError();
+      throw appSourcePendingError();
+    }
+    if (!keyRows.length || own) continue;
     if (!keyRows.every((r) => r.visible)) throw generationImageUnavailableError();
   }
 

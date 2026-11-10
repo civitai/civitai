@@ -1946,7 +1946,7 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
   function givenImage(owner: number, visible: boolean) {
     dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
       strings.join('').includes('FROM "Image" i')
-        ? [{ url: KEY, userId: owner, visible, blocked: false, scanned: true, flagged: false }]
+        ? [{ url: KEY, userId: owner, visible, blocked: false, scanComplete: true, held: false }]
         : []) as never);
   }
   afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
@@ -2126,6 +2126,49 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
         $type: 'videoGen',
         input: { engine: 'wan', prompt: 'x', images: ['https://example.com/a.png'] },
         maxBuzz: 30,
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('hosted outside Civitai'),
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  const chatWithWholeUrls = () => ({
+    model: 'm',
+    messages: [
+      { role: 'user', content: 'https://example.com/page' },
+      {
+        role: 'assistant',
+        tool_calls: [{ id: 'c1', arguments: 'https://example.com/args' }],
+      },
+    ],
+    tools: [
+      {
+        type: 'function',
+        function: {
+          name: 'f',
+          parameters: { $schema: 'https://json-schema.org/draft/2020-12/schema' },
+        },
+      },
+    ],
+  });
+
+  it('accepts whole external urls in a lone chat step’s message text, tool calls and tool schemas', async () => {
+    await estimate({
+      kind: 'step' as const,
+      $type: 'chatCompletion',
+      input: chatWithWholeUrls(),
+      maxBuzz: 30,
+    }).catch(() => undefined);
+    expect(whatifs().length).toBeGreaterThan(0);
+  });
+
+  it('CONTROL: the same chat input in a workflow is read whole, and refused', async () => {
+    await expect(
+      estimate({
+        kind: 'workflow' as const,
+        steps: [{ name: 'chat', $type: 'chatCompletion', input: chatWithWholeUrls() }],
       })
     ).rejects.toMatchObject({
       code: 'BAD_REQUEST',
