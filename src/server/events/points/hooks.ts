@@ -190,30 +190,6 @@ export async function onReactionRemoved(input: ReactionInput): Promise<void> {
 
 // #region comments
 
-// The Image or Article each thread hangs off, through `Thread.rootThreadId` for a reply's thread.
-// That column is server-derived from the parent comment on create; older rows written from client
-// input may point elsewhere, which here can only misattribute a reply's points, never grant more.
-async function commentRoots(threadIds: number[]) {
-  const threads = await dbWrite.thread.findMany({
-    where: { id: { in: threadIds } },
-    select: {
-      id: true,
-      rootThreadId: true,
-      imageId: true,
-      articleId: true,
-      rootThread: { select: { imageId: true, articleId: true } },
-    },
-  });
-  const roots = new Map<number, Entity>();
-  for (const thread of threads) {
-    const root = thread.rootThreadId ? thread.rootThread : thread;
-    if (root?.imageId) roots.set(thread.id, { entityType: 'Image', entityId: root.imageId });
-    else if (root?.articleId)
-      roots.set(thread.id, { entityType: 'Article', entityId: root.articleId });
-  }
-  return roots;
-}
-
 /** The actor's live comments on the entity, at any depth. On the primary: it runs right after a delete. */
 export async function liveCommentsOn(userId: number, { entityType, entityId }: Entity) {
   const row = await kyselyWrite
@@ -254,29 +230,6 @@ export async function onCommentCreated({
     else if (entityType === 'article') target = { entityType: 'Article', entityId };
     if (!target || !isHattedEntity(target.entityType, target.entityId)) return;
     await awardEventPoints([commentAction(userId, target, time)]);
-  } catch (error) {
-    swallow('event-points:comment')(error);
-  }
-}
-
-/** Deleted comments, as `{ userId, threadId }` of each removed row. */
-export async function onCommentsRemoved(
-  comments: { userId: number; threadId: number }[]
-): Promise<void> {
-  const time = new Date();
-  try {
-    if (!comments.length) return;
-    // One read for every thread, before any per-comment work.
-    const roots = await commentRoots([...new Set(comments.map(({ threadId }) => threadId))]);
-    const seen = new Set<string>();
-    for (const { userId, threadId } of comments) {
-      const root = roots.get(threadId);
-      if (!root) continue;
-      const action = commentAction(userId, root, time);
-      if (seen.has(action.sourceId)) continue;
-      seen.add(action.sourceId);
-      await removeIfLast(action, () => liveCommentsOn(userId, root));
-    }
   } catch (error) {
     swallow('event-points:comment')(error);
   }

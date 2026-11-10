@@ -11,19 +11,19 @@ const OWNER_TABLES = [
   'bounty',
   'bountyEntry',
   'resourceReview',
-  'commentV2',
   'challenge',
   'crucible',
   'storyline',
   'comicChapter',
   'model3D',
+  'model3DReview',
   'appListing',
 ] as const;
 
 const lookup = (table: (typeof OWNER_TABLES)[number]) => dbMock.dbRead[table].findUnique;
 const anyLookupCalled = () => OWNER_TABLES.some((t) => lookup(t).mock.calls.length > 0);
 
-import { getThreadEntityOwnerId, isViewerContentOwner } from '../commentsv2.service';
+import { getThreadEntityOwnerId, isViewerContentOwner } from '../comment-owner.service';
 
 describe('getThreadEntityOwnerId', () => {
   beforeEach(() => OWNER_TABLES.forEach((t) => lookup(t).mockReset()));
@@ -73,9 +73,20 @@ describe('getThreadEntityOwnerId', () => {
     });
   });
 
+  it('resolves the 3D model review author via userId', async () => {
+    lookup('model3DReview').mockResolvedValueOnce({ userId: 35 });
+    await expect(
+      getThreadEntityOwnerId({ entityType: 'model3dReview', entityId: 5 })
+    ).resolves.toBe(35);
+    expect(lookup('model3DReview')).toHaveBeenCalledWith({
+      where: { id: 5 },
+      select: { userId: true },
+    });
+  });
+
   it('returns null for entity types we cannot cheaply resolve', async () => {
     await expect(
-      getThreadEntityOwnerId({ entityType: 'model3dReview', entityId: 1 })
+      getThreadEntityOwnerId({ entityType: 'unknownSurface' as never, entityId: 1 })
     ).resolves.toBeNull();
     expect(anyLookupCalled()).toBe(false);
   });

@@ -22,7 +22,7 @@ export const liveV3Since = (lastSent: string) =>
 
 /**
  * The id a model-page notification addresses a comment by: its old Comment id when it has one, so
- * links and milestone keys sent before the model flip keep matching, else its own id. Details carry
+ * links and milestone keys already sent keep matching, else its own id. Details carry
  * version 4 so a reader can tell the two apart (`comment.detail-fetcher.ts`).
  */
 export const modelPageId = (alias: string) => `COALESCE(${alias}."legacyV1Id", ${alias}.id)`;
@@ -56,14 +56,10 @@ export const notOnHiddenModel = (alias: string, ownerMay?: string) => `NOT EXIST
 export const answeredId = (alias: string) => `COALESCE(${alias}."replyToId", ${alias}."parentId")`;
 
 /**
- * The comment whose replies a notification opens. A v3 section lists a comment's direct replies,
- * where a clamped reply hangs off its parent; a v2 section opens the answered comment's thread.
+ * The comment whose replies a notification opens: a section lists a comment's direct replies, where
+ * a clamped reply hangs off its parent.
  */
-export const deepLinkParentId = (alias: string) =>
-  `CASE WHEN ${alias}."entityType"::text = ANY(ARRAY[${constants.comments.v3ReadSurfaces
-    .map((t) => `'${t}'`)
-    .join(', ')}])
-     THEN ${alias}."parentId" ELSE ${answeredId(alias)} END`;
+export const deepLinkParentId = (alias: string) => `${alias}."parentId"`;
 
 /**
  * The two entities whose URL is not built from `entityId`: a comic chapter is addressed by its
