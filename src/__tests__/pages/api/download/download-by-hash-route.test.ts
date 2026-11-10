@@ -104,12 +104,16 @@ const candidate = (fileId: number) => ({
 async function run(
   route: typeof sha256Route,
   hash: unknown,
-  { browser = false, ip = '198.51.100.1' } = {}
+  {
+    browser = false,
+    ip = '198.51.100.1',
+    token,
+  }: { browser?: boolean; ip?: string; token?: string } = {}
 ) {
   const req = {
     method: 'GET',
-    url: `/api/download/sha256/${hash}`,
-    query: { hash },
+    url: `/api/download/sha256/${hash}${token ? `?token=${token}` : ''}`,
+    query: token ? { hash, token } : { hash },
     headers: { 'user-agent': browser ? 'Mozilla/5.0 Chrome/120' : 'python-requests/2.31' },
     socket: { remoteAddress: ip },
   } as unknown as NextApiRequest;
@@ -206,6 +210,17 @@ describe('/api/download/{sha256|blake3}/<hash>', () => {
 
     expect(res.status).toHaveBeenCalledWith(404);
     expect(res.json).toHaveBeenCalledWith({ error: 'File not found' });
+  });
+
+  it('refuses a per-provider token rather than serving its holder as anonymous', async () => {
+    const res = await run(sha256Route, HASH, { token: 'acme:secret' });
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'Provider tokens are not accepted on this URL',
+    });
+    expect(holder.params).toEqual([]);
+    expect(mockGetFileForModelVersion).not.toHaveBeenCalled();
   });
 
   it('applies the download IP blocklist', async () => {
