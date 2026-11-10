@@ -142,8 +142,6 @@ export enum FLIPT_FEATURE_FLAGS {
   BASIC_TAGS_L1_LONG_TTL = 'basic-tags-l1-long-ttl',
   // Gates an L1 in front of the `cosmetics2` catalog cache (cosmeticCache).
   COSMETICS_L1 = 'cosmetics-l1',
-  // Gates an L1 in front of `images-for-model-version-2` (imagesForModelVersionsCache).
-  MODEL_VERSION_IMAGES_L1 = 'model-version-images-l1',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
