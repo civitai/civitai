@@ -133,9 +133,13 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
  * Whether `key` is a file of a deleted or taken-down model the caller owns: those files are
  * moderators-only, as on the download route. Walks from the caller's models (indexed on userId),
  * so it never scans every file's url.
+ *
+ * `key` arrives decoded, but a stored url may percent-encode its name or its separators
+ * (`bucket/model%2F42%2Fname`), so the url is matched against each of those spellings.
  */
 async function isWithheldModelFile(userId: number, key: string) {
-  const suffix = `/${key}`;
+  const encoded = key.split('/').map(encodeURIComponent);
+  const suffixes = [...new Set([`/${key}`, `/${encoded.join('/')}`, `/${encoded.join('%2F')}`])];
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT mf.id
     FROM "Model" m
@@ -143,7 +147,10 @@ async function isWithheldModelFile(userId: number, key: string) {
     JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id
     WHERE m."userId" = ${userId}
       AND (m.mode = 'TakenDown' OR m.status = 'Deleted')
-      AND right(mf.url, length(${suffix})) = ${suffix}
+      AND EXISTS (
+        SELECT 1 FROM unnest(${suffixes}::text[]) AS s(suffix)
+        WHERE lower(right(mf.url, length(s.suffix))) = lower(s.suffix)
+      )
     LIMIT 1
   `;
   return rows.length > 0;

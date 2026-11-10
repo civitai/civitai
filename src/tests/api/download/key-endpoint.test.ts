@@ -407,18 +407,21 @@ describe('/api/download/[...key] — ownership scope', () => {
 
 describe('/api/download/[...key] — a deleted or taken-down model', () => {
   const KEY = ['model', '42', 'mine.safetensors'];
-  // A row only when the lookup scopes to the caller's own models in either state, for this key.
-  // The SQL itself was run against a dev database; this fake stands in for it.
-  const takenDown = () =>
+  // Stands in for the SQL, which was run against a dev database: a row only when the lookup is
+  // scoped to the caller's own models in either state and a suffix it sends ends the stored url
+  // (compared case-insensitively, as the SQL does).
+  const takenDown = (storedUrl = 'https://storage.example.com/bucket/model/42/mine.safetensors') =>
     mockQueryRaw.mockImplementation(((sql: TemplateStringsArray, ...values: unknown[]) => {
       const text = sql.join('?');
       const scoped =
         text.includes(`m."userId" = ?`) &&
         text.includes(`m.mode = 'TakenDown' OR m.status = 'Deleted'`) &&
         values.includes(42);
-      return Promise.resolve(
-        scoped && values.includes('/model/42/mine.safetensors') ? [{ id: 1 }] : []
+      const suffixes = values.flat().filter((v): v is string => typeof v === 'string');
+      const matches = suffixes.some((suffix) =>
+        storedUrl.toLowerCase().endsWith(suffix.toLowerCase())
       );
+      return Promise.resolve(scoped && matches ? [{ id: 1 }] : []);
     }) as never);
 
   beforeEach(() => {
@@ -439,6 +442,28 @@ describe('/api/download/[...key] — a deleted or taken-down model', () => {
 
     expect(res._getStatusCode()).toBe(404);
     expect(res._getJSONData()).toEqual({ error: 'Not found' });
+    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('refuses its owner a key whose stored url encodes the path separators', async () => {
+    takenDown('https://storage.example.com/bucket/model%2F42%2Fmine.safetensors');
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+    const { req, res } = createMocks({ key: KEY });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('refuses its owner a key whose stored url percent-encodes the name', async () => {
+    takenDown('https://storage.example.com/bucket/model/42/my%20file.safetensors');
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+    const { req, res } = createMocks({ key: ['model', '42', 'my file.safetensors'] });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
     expect(mockGetDownloadUrl).not.toHaveBeenCalled();
   });
 
@@ -471,7 +496,7 @@ describe('/api/download/[...key] — a deleted or taken-down model', () => {
     await handler(req, res);
     const [sql, ...values] = mockQueryRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
 
-    expect(sql.join('?')).toContain('right(mf.url, length(?))');
-    expect(values).not.toContain('/model/42/mine.safetensors'.length);
+    expect(sql.join('?')).toContain('right(mf.url, length(s.suffix))');
+    expect(values.flat().every((v) => typeof v !== 'number' || v === 42)).toBe(true);
   });
 });
