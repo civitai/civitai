@@ -428,7 +428,20 @@ describe('hook: the sheet cookie', () => {
     expect(warn).toHaveBeenCalledWith(
       '[held-sheet] sheet cookie refused beside a non-moderator session'
     );
+    const { logToAxiom } = await import('$lib/server/axiom');
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith({
+      name: 'held-sheet-refused-beside-session',
+      type: 'warning',
+      userId: 5,
+    });
     warn.mockRestore();
+  });
+
+  it('sends a signed-in non-moderator with no sheet cookie to the usual redirect', async () => {
+    guardCheck.mockResolvedValue({ status: 'forbidden', user: { id: 5 } });
+    const { res, resolve } = await run('/api/held-media/7', null);
+    expect(res.status).toBe(303);
+    expect(resolve).not.toHaveBeenCalled();
   });
 
   it('answers 401 to two sheet cookies, even when one is valid', async () => {

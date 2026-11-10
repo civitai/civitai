@@ -152,6 +152,11 @@ export const handle: Handle = async ({ event, resolve }) => {
   // A signed-in account that may not use this app never falls back to a sheet cookie.
   if (webSession?.status === 'forbidden') {
     console.warn('[held-sheet] sheet cookie refused beside a non-moderator session');
+    void logToAxiom({
+      name: 'held-sheet-refused-beside-session',
+      type: 'warning',
+      userId: webSession.user.id,
+    }).catch(() => undefined);
     return new Response(null, { status: 403, headers: { 'cache-control': 'no-store' } });
   }
   if (webSession && webSession.status !== 'ok') {
