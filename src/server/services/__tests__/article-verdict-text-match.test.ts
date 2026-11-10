@@ -56,6 +56,7 @@ const AUTHOR = 7;
 const OLD = { title: 'Title', content: '<p>Old body</p>' };
 const NEW = { title: 'Title', content: '<p>New body</p>' };
 const DAY = 24 * 60 * 60 * 1000;
+const AFTER_CUTOFF = new Date(ARTICLE_TEXT_VERDICT_HASHED_SINCE.getTime() + DAY);
 
 const xguardHash = (text: typeof OLD) =>
   hashContent(articleModerationText(text.title, text.content));
@@ -84,7 +85,7 @@ const xguardVerdict = (text: typeof OLD, extra: Partial<Row> = {}): Row => ({
   blocked: false,
   contentHash: xguardHash(text),
   result: { blocked: false, triggeredLabels: [], results: [] },
-  updatedAt: new Date(),
+  updatedAt: AFTER_CUTOFF,
   retryCount: 0,
   ...extra,
 });
@@ -93,6 +94,13 @@ const scanVerdict = (text: typeof OLD): Row => ({
   contentHash: 'composite-of-prompt-model-and-text',
   result: { version: 1, labels: {}, textHash: scanHash(text) },
 });
+
+/** The statement the recompute wrote the article's scan state with. */
+const writtenSql = () =>
+  dbMock.dbWrite.$executeRaw.mock.calls
+    .map(([strings, ...values]) => Prisma.sql(strings as TemplateStringsArray, ...values).sql)
+    .filter((sql) => sql.includes('SET ingestion ='))
+    .at(-1);
 
 /** The ingestion the recompute wrote, or undefined if it never ran. */
 const writtenIngestion = () =>
@@ -163,10 +171,12 @@ describe('the recompute counts a text verdict only for the text it judged', () =
     row = scanVerdict(NEW);
     await recomputeArticleIngestion(ARTICLE);
     expect(writtenIngestion()).toBe(ArticleIngestionStatus.Scanned);
+    expect(writtenSql()).toContain('status =');
   });
 
   it('an article already Scanned keeps what it has', async () => {
     article = { ...article, ingestion: ArticleIngestionStatus.Scanned };
+    // Would not count on the way in: no hash, and newer than the cutoff.
     row = xguardVerdict(OLD, { contentHash: null });
     await recomputeArticleIngestion(ARTICLE);
     expect(writtenIngestion()).toBe(ArticleIngestionStatus.Scanned);
@@ -186,18 +196,15 @@ describe('the recompute counts a text verdict only for the text it judged', () =
     });
 
     it('does not count when written after', async () => {
-      row = xguardVerdict(OLD, {
-        contentHash: null,
-        updatedAt: new Date(ARTICLE_TEXT_VERDICT_HASHED_SINCE.getTime() + DAY),
-      });
+      row = xguardVerdict(OLD, { contentHash: null });
       await recomputeArticleIngestion(ARTICLE);
       expect(writtenIngestion()).toBe(ArticleIngestionStatus.Pending);
     });
   });
 });
 
-describe('the hash a submit stores is the hash the recompute expects', () => {
-  it('XGuard: the text a save submits', async () => {
+describe('submitted text hashes to what the recompute compares', () => {
+  it('XGuard: the text an edit submits', async () => {
     vi.mocked(submitTextModerationOrScan).mockImplementation(async ({ xguard }) => xguard());
     article = {
       ...OLD,
@@ -206,7 +213,7 @@ describe('the hash a submit stores is the hash the recompute expects', () => {
     };
     await applyArticleContentChange({ id: ARTICLE, userId: AUTHOR, content: NEW.content });
     const submitted = vi.mocked(submitTextModeration).mock.calls[0][0].content;
-    // createXGuardModerationRequest stores hashContent of exactly the submitted text.
+    // createXGuardModerationRequest stores hashContent of the submitted text (no label overrides).
     expect(hashContent(submitted)).toBe(xguardHash(NEW));
   });
 
@@ -225,10 +232,14 @@ describe('the reconcile', () => {
 
   it('resubmits the stored text of an article whose verdict is for older text', async () => {
     row = xguardVerdict(OLD);
-    vi.mocked(submitTextModerationOrScan).mockResolvedValue({ id: 'wf' });
+    vi.mocked(submitTextModerationOrScan).mockImplementation(async ({ xguard }) => xguard());
     await reconcile();
     expect(writtenIngestion()).toBe(ArticleIngestionStatus.Pending);
     expect(submitTextModerationOrScan).toHaveBeenCalledOnce();
+    // Its verdict will then match.
+    expect(hashContent(vi.mocked(submitTextModeration).mock.calls[0][0].content)).toBe(
+      xguardHash(NEW)
+    );
   });
 
   it('positive control: leaves one whose verdict is for its text alone', async () => {
@@ -239,9 +250,9 @@ describe('the reconcile', () => {
   });
 });
 
-describe('a blocked verdict for text the article no longer has', () => {
-  it('still unpublishes, and is logged', async () => {
-    row = xguardVerdict(OLD, { blocked: true });
+describe('a blocked verdict', () => {
+  const block = async (judged: typeof OLD) => {
+    row = xguardVerdict(judged, { blocked: true });
     dbMock.dbWrite.$queryRaw.mockImplementation((async (
       query: TemplateStringsArray | { sql: string }
     ) =>
@@ -257,13 +268,24 @@ describe('a blocked verdict for text the article no longer has', () => {
       triggeredLabels: [],
       output: { blocked: true, triggeredLabels: [], results: [] } as never,
     });
+  };
+  const mismatchLogged = () =>
+    loggingMock.logToAxiom.mock.calls.some(
+      ([entry]) => (entry as { name?: string }).name === 'article-blocked-verdict-text-mismatch'
+    );
+
+  it('for text the article no longer has still unpublishes, and is logged', async () => {
+    await block(OLD);
     expect(dbMock.dbWrite.article.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: ArticleStatus.UnpublishedViolation }),
       })
     );
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'article-blocked-verdict-text-mismatch' })
-    );
+    expect(mismatchLogged()).toBe(true);
+  });
+
+  it('for its current text is not logged as a mismatch', async () => {
+    await block(NEW);
+    expect(mismatchLogged()).toBe(false);
   });
 });
