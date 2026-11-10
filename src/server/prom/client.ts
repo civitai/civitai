@@ -9,6 +9,7 @@ import {
   registerInstrumentationMetric,
   redisCommandsInflight,
   redisCommandDuration,
+  REDIS_COMMAND_DURATION_BUCKETS,
   packedCodecDuration,
   sysredisSentinelTopologyChangesCounter,
   sysredisSentinelClientErrorsCounter,
@@ -16,6 +17,10 @@ import {
   redisSelfHealDeadlineHitsWindow,
   redisRoutingRetryCounter,
 } from '@civitai/telemetry/client';
+import {
+  batchedDurationHistogram,
+  batchedInflightGauge,
+} from '@civitai/telemetry/redis-command-metrics';
 // Type-only: the CONSUMER's view of the bridge object published below. A `import type` cannot pull
 // any of @civitai/redis's runtime into this module's graph — it is erased at build.
 import type { RedisMetricsBridge } from '@civitai/redis';
@@ -52,9 +57,17 @@ export * from '@civitai/telemetry/client';
 //
 // So: add a field to `RedisMetricsBridge` in @civitai/redis without adding it here and this file
 // stops compiling. That is the intended failure — wire the handle, do not widen the type below.
+//
+// The two per-command handles are the cheaper wrappers from @civitai/telemetry/redis-command-metrics:
+// same metrics, same labels, same values at every scrape. The in-flight gauge is always counted
+// locally and set at scrape; the duration histogram batches only while the
+// `redis-command-metrics-batched` Flipt switch is on (installed at boot by src/instrumentation.node.ts).
 const redisMetricsBridge = {
-  redisCommandsInflight,
-  redisCommandDuration,
+  redisCommandsInflight: batchedInflightGauge(redisCommandsInflight),
+  redisCommandDuration: batchedDurationHistogram(
+    redisCommandDuration,
+    REDIS_COMMAND_DURATION_BUCKETS
+  ),
   packedCodecDuration,
   sysredisSentinelTopologyChangesCounter,
   sysredisSentinelClientErrorsCounter,

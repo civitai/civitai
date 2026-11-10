@@ -136,6 +136,17 @@ void import('~/server/warmup')
     console.error('[instrumentation.node] warmup kick failed (fail-open):', err);
   });
 
+// Arm the batched redis_command_duration_seconds handle (dark until the
+// `redis-command-metrics-batched` Flipt flag is on). Independent of OTEL: the histogram is
+// prom-client. Dynamic, like the warmer, to keep the Flipt client out of this module's static
+// graph; a failure here must never affect boot — the histogram simply keeps observing per command.
+// See @civitai/telemetry/redis-command-metrics.
+void import('~/server/prom/redis-command-metrics-gate')
+  .then((m) => m.registerRedisCommandMetricsBatchGate())
+  .catch((err) => {
+    console.error('[instrumentation.node] redis command metrics gate failed (fail-open):', err);
+  });
+
 // Attach the OTel sink to the shared structured logger.
 //
 // Registered from HERE, rather than imported by `~/server/logging/client`, because that
