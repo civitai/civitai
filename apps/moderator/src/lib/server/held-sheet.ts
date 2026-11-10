@@ -8,6 +8,7 @@ import {
   type SessionUser,
 } from '@civitai/auth';
 import { REDIS_SYS_KEYS, type RedisKeyTemplateSys } from '@civitai/redis';
+import { env } from '$env/dynamic/private';
 import { admitsModerator, isRevoked } from './auth';
 import { getSysRedis } from './redis';
 
@@ -19,7 +20,6 @@ import { getSysRedis } from './redis';
 
 export const SHEET_COOKIE = '__Secure-held_sheet';
 export const SHEET_COOKIE_PATH = '/api/held-media/';
-export const SHEET_REDIRECT = 'hubapp://held-media';
 export const CODE_TTL_SECONDS = 60;
 export const SHEET_IDLE_SECONDS = 15 * 60;
 export const SHEET_MAX_AGE_MS = 2 * 60 * 60 * 1000;
@@ -61,13 +61,32 @@ const codeKey = (code: string) =>
 const sessionKey = (token: string) =>
   `${REDIS_SYS_KEYS.APP.HELD_SHEET_SESSION}:${sha256(token)}` as RedisKeyTemplateSys;
 
+/**
+ * The one redirect the sheet may name: `HELD_SHEET_CALLBACK_URL`, an https URL with no query,
+ * fragment or credentials, written in its normalised form. Null when unset or not that.
+ */
+export function sheetCallbackUrl(): string | null {
+  const raw = env.HELD_SHEET_CALLBACK_URL?.trim();
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || url.search || url.hash || url.username || url.password)
+    return null;
+  return url.href === raw ? raw : null;
+}
+
 /** The start parameters, or null when any is missing or not exactly what the sheet sends. */
 export function parseStartParams(get: (name: string) => string | null): StartParams | null {
   const challenge = get('code_challenge') ?? '';
   const state = get('state') ?? '';
   const redirect = get('redirect_uri') ?? '';
   if (get('code_challenge_method') !== 'S256') return null;
-  if (!BASE64URL_43.test(challenge) || !STATE.test(state) || redirect !== SHEET_REDIRECT)
+  const callback = sheetCallbackUrl();
+  if (!BASE64URL_43.test(challenge) || !STATE.test(state) || !callback || redirect !== callback)
     return null;
   return { challenge, state, redirect };
 }

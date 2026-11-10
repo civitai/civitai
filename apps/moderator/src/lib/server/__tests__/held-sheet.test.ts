@@ -89,6 +89,7 @@ const exchange = await import('../../../routes/api/held-media/auth/exchange/+ser
 const { handle } = await import('../../../hooks.server');
 
 const ORIGIN = 'https://mod.test';
+const CALLBACK = 'https://sheet.test/held-media/callback';
 const VERIFIER = 'v'.repeat(20) + '-._~' + 'A1'.repeat(12);
 const CHALLENGE = createHash('sha256').update(VERIFIER).digest('base64url');
 const STATE = 'S'.repeat(24);
@@ -104,7 +105,7 @@ const startQuery = (overrides: Record<string, string | null> = {}) => {
     code_challenge: CHALLENGE,
     code_challenge_method: 'S256',
     state: STATE,
-    redirect_uri: 'hubapp://held-media',
+    redirect_uri: CALLBACK,
     ...overrides,
   };
   const u = new URLSearchParams();
@@ -153,6 +154,7 @@ async function signIn(): Promise<string> {
 }
 
 beforeEach(() => {
+  process.env.HELD_SHEET_CALLBACK_URL = CALLBACK;
   store.clear();
   vi.clearAllMocks();
   verifyToken.mockResolvedValue(CLAIMS);
@@ -197,13 +199,40 @@ describe('auth/start', () => {
     ['a short challenge', { code_challenge: 'abc' }],
     ['no state', { state: null }],
     ['a short state', { state: 'abc' }],
-    ['another redirect', { redirect_uri: 'hubapp://held-media/x' }],
-    ['an https redirect', { redirect_uri: 'https://evil.test/cb' }],
+    ['the custom scheme', { redirect_uri: 'hubapp://held-media' }],
+    ['another host', { redirect_uri: 'https://evil.test/held-media/callback' }],
+    ['a longer path', { redirect_uri: `${CALLBACK}/x` }],
+    ['a shorter path', { redirect_uri: 'https://sheet.test/held-media' }],
+    ['a query', { redirect_uri: `${CALLBACK}?a=1` }],
+    ['a fragment', { redirect_uri: `${CALLBACK}#a` }],
+    ['http', { redirect_uri: CALLBACK.replace('https:', 'http:') }],
+    ['a different case', { redirect_uri: CALLBACK.toUpperCase() }],
+    ['a port', { redirect_uri: 'https://sheet.test:8443/held-media/callback' }],
     ['no redirect', { redirect_uri: null }],
   ])('refuses %s with 400 and no code, on GET and POST', async (_n, overrides) => {
     expect((await startGet(startQuery(overrides))).status).toBe(400);
     expect((await startPost(startQuery(overrides))).status).toBe(400);
     expect(store.size).toBe(0);
+  });
+
+  it.each([
+    ['unset', undefined],
+    ['http', CALLBACK.replace('https:', 'http:')],
+    ['with a query', `${CALLBACK}?a=1`],
+    ['not normalised', 'https://SHEET.test/held-media/callback'],
+  ])('refuses every redirect when the callback setting is %s', async (_n, value) => {
+    if (value === undefined) delete process.env.HELD_SHEET_CALLBACK_URL;
+    else process.env.HELD_SHEET_CALLBACK_URL = value;
+    const query = startQuery(value === undefined ? {} : { redirect_uri: value });
+    expect((await startGet(query)).status).toBe(400);
+    expect((await startPost(query)).status).toBe(400);
+    expect(store.size).toBe(0);
+  });
+
+  it('lets the confirmed form go only to the callback origin', async () => {
+    const csp = (await startGet()).headers.get('content-security-policy')!;
+    expect(csp).toContain("form-action 'self' https://sheet.test;");
+    expect(csp).not.toContain('hubapp');
   });
 
   it('refuses a moderator without the held-media page', async () => {
@@ -217,7 +246,7 @@ describe('auth/start', () => {
     const res = await startPost();
     expect(res.status).toBe(303);
     const location = new URL(res.headers.get('location')!);
-    expect(`${location.protocol}//${location.host}`).toBe('hubapp://held-media');
+    expect(`${location.origin}${location.pathname}`).toBe(CALLBACK);
     expect(location.searchParams.get('state')).toBe(STATE);
     expect(location.searchParams.get('code')).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
@@ -230,7 +259,7 @@ describe('auth/start', () => {
     expect(JSON.parse(store.get(key)!.value)).toEqual({
       challenge: CHALLENGE,
       state: STATE,
-      redirect: 'hubapp://held-media',
+      redirect: CALLBACK,
       userId: 42,
       web: WEB,
     });

@@ -4,21 +4,23 @@ import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
 import {
   issueCode,
   parseStartParams,
-  SHEET_REDIRECT,
   type StartParams,
   webSessionClaims,
 } from '$lib/server/held-sheet';
 
 // The page and its redirect must not be framed, cached or sent on as a referrer.
-const HEADERS = {
+// `form-action` names the callback's origin too: the confirmed form ends in a redirect to it.
+const headers = (callback?: string) => ({
   'cache-control': 'no-store',
   'x-frame-options': 'DENY',
   // Not no-referrer: under it the form POST carries `Origin: null`, which the origin check refuses.
   'referrer-policy': 'same-origin',
-  'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' hubapp:; frame-ancestors 'none'; base-uri 'none'`,
-};
+  'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self'${
+    callback ? ` ${new URL(callback).origin}` : ''
+  }; frame-ancestors 'none'; base-uri 'none'`,
+});
 
-const status = (code: number) => new Response(null, { status: code, headers: HEADERS });
+const status = (code: number) => new Response(null, { status: code, headers: headers() });
 
 const escapeHtml = (text: string) =>
   text.replace(
@@ -53,7 +55,7 @@ export const GET: RequestHandler = ({ locals, url }) => {
   const params = parseStartParams((name) => url.searchParams.get(name));
   if (!params) return status(400);
   return new Response(page(locals.user.username ?? `#${locals.user.id}`, params), {
-    headers: { ...HEADERS, 'content-type': 'text/html; charset=utf-8' },
+    headers: { ...headers(params.redirect), 'content-type': 'text/html; charset=utf-8' },
   });
 };
 
@@ -73,6 +75,6 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     console.error('[held-sheet] could not store a sign-in code');
     return status(503);
   }
-  const location = `${SHEET_REDIRECT}?code=${code}&state=${encodeURIComponent(params.state)}`;
-  return new Response(null, { status: 303, headers: { ...HEADERS, location } });
+  const location = `${params.redirect}?code=${code}&state=${encodeURIComponent(params.state)}`;
+  return new Response(null, { status: 303, headers: { ...headers(params.redirect), location } });
 };
