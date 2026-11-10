@@ -110,6 +110,23 @@ describe('withSemanticImageSearch', () => {
     expect(search).not.toHaveBeenCalled();
   });
 
+  // An owner's picker (the showcase editor) scopes by username, which the semantic search cannot
+  // apply: it would offer everyone's images.
+  it('answers an images request scoped to one owner from the wrapped client', async () => {
+    const search = fakeSearch([{ ids: [1] }]);
+    const base = meili();
+    const client = withSemanticImageSearch(base as never, createSemanticImageSearch({ search }));
+    const scoped = imageRequest({ filters: '(user.username = "fox") AND (nsfwLevel=1)' });
+
+    const { results } = (await client.search([scoped] as never)) as {
+      results: { hits: { objectID: string }[] }[];
+    };
+
+    expect(results[0].hits[0].objectID).toBe('meili');
+    expect(base.search).toHaveBeenCalledWith([scoped]);
+    expect(search).not.toHaveBeenCalled();
+  });
+
   it('hands the spelling correction to the page', async () => {
     const search = fakeSearch([{ ids: [1], correctedQuery: 'batman' }]);
     const client = withSemanticImageSearch(meili() as never, createSemanticImageSearch({ search }));
