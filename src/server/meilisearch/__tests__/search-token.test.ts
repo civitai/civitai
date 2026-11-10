@@ -150,6 +150,35 @@ describe('buildSearchRules: the site content level', () => {
     }
   });
 
+  it.each([
+    [
+      'a signed-in viewer, capped to PG',
+      { id: 42, browsingLevelCap: publicBrowsingLevelsFlag },
+      '((poi != true OR user.id = 42) AND (availability != Private OR user.id = 42)) AND (nsfwLevel=1)',
+      '(poi != true) AND (nsfwLevel=1)',
+      'nsfwLevel IS NOT EMPTY AND nsfwLevel NOT IN [2, 4, 8, 16, 32]',
+    ],
+    [
+      'a moderator, capped to PG',
+      { id: 7, isModerator: true, browsingLevelCap: publicBrowsingLevelsFlag },
+      'nsfwLevel=1',
+      'nsfwLevel=1',
+      'nsfwLevel IS NOT EMPTY AND nsfwLevel NOT IN [2, 4, 8, 16, 32]',
+    ],
+    [
+      'a moderator with no cap (fails closed to SFW)',
+      { id: 7, isModerator: true },
+      'nsfwLevel=1 OR nsfwLevel=2',
+      'nsfwLevel=1 OR nsfwLevel=2',
+      'nsfwLevel IS NOT EMPTY AND nsfwLevel NOT IN [4, 8, 16, 32]',
+    ],
+  ])('pins the filters for %s', (_label, viewer, models, images, comics) => {
+    const rules = buildSearchRules(viewer, []);
+    expect(rules[MODELS_SEARCH_INDEX]).toEqual({ filter: models });
+    expect(rules[IMAGES_SEARCH_INDEX]).toEqual({ filter: images });
+    expect(rules[COMICS_SEARCH_INDEX]).toEqual({ filter: comics });
+  });
+
   it('pins the clause for a levelled index and none for an index with no level', () => {
     const rules = buildSearchRules({ browsingLevelCap: publicBrowsingLevelsFlag }, []);
     expect(rules[ARTICLES_SEARCH_INDEX]).toEqual({ filter: 'nsfwLevel=1' });
