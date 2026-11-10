@@ -15,7 +15,7 @@ LoRA training uses a distributed orchestration system:
 ### Available Engines
 ```typescript
 enum OrchEngineTypes {
-  Kohya = 'kohya',        // Traditional SD 1.5/SDXL training
+  Kohya = 'kohya',        // Studio: SD 1.5, SDXL, Flux.1 and Chroma
   Rapid = 'flux-dev-fast', // Rapid Flux training, FAL
   Musubi = 'musubi',      // Alternative training engine primarily for video
 }

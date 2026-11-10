@@ -1,3 +1,4 @@
+import { Air, type KohyaTrainingInput } from '@civitai/orchestration-client';
 import type {
   AiToolkitTrainingInput,
   Workflow,
@@ -181,29 +182,37 @@ const STATE_BY_STATUS: Record<WorkflowStatus, RunState> = {
   expired: 'failed',
 };
 
-/** The training step's input as we read it back: the SDK's ai-toolkit shape, so a field the
- *  orchestrator renames or retypes fails typecheck here rather than drifting silently, plus the
- *  ecosystem-specific and per-item fields the generic type leaves out. Read defensively — an older
- *  or foreign (main-app) workflow may not carry all of them. */
-type TrainingStepInput = Partial<AiToolkitTrainingInput> & {
-  /** Base checkpoint AIR, when the run pinned one. */
-  model?: string;
-  modelVariant?: string;
-  version?: string;
-  resolution?: number | null;
-  /** SD-family only. */
-  minSnrGamma?: number | null;
-  /** The fixed sample prompts (usually 3). Each epoch generates one image per prompt, positionally. */
-  samples?: { prompts?: string[]; sourceImages?: string[] };
-  /** The dataset the run trained on — blob-backed items (a blob `air`/key + its caption). Older or Flux.2
-   *  runs may carry a zip URL instead, in which case there are no per-image items to show. */
-  trainingData?: {
-    type?: string;
-    items?: Array<{ air?: string; caption?: string; path?: string }>;
+/** Missing fields are valid when reading older or foreign workflows. */
+type TrainingStepInput = Partial<
+  Omit<AiToolkitTrainingInput, 'engine' | 'optimizerType' | 'lrScheduler'>
+> &
+  Partial<
+    Omit<
+      KohyaTrainingInput,
+      'engine' | 'trainingData' | 'samples' | 'optimizerType' | 'lrScheduler'
+    >
+  > & {
+    engine?: string;
+    optimizerType?: AiToolkitTrainingInput['optimizerType'] | KohyaTrainingInput['optimizerType'];
+    lrScheduler?: AiToolkitTrainingInput['lrScheduler'] | KohyaTrainingInput['lrScheduler'];
+    /** Base checkpoint AIR, when the run pinned one. */
+    model?: string;
+    modelVariant?: string;
+    version?: string;
+    resolution?: number | null;
+    /** SD-family only. */
+    minSnrGamma?: number | null;
+    /** The fixed sample prompts (usually 3). Each epoch generates one image per prompt, positionally. */
+    samples?: { prompts?: string[]; sourceImages?: string[]; negativePrompt?: string | null };
+    /** The dataset the run trained on — blob-backed items (a blob `air`/key + its caption). Older or Flux.2
+     *  runs may carry a zip URL instead, in which case there are no per-image items to show. */
+    trainingData?: {
+      type?: string;
+      items?: Array<{ air?: string; caption?: string; path?: string }>;
+    };
+    /** An edit LoRA: `trainingData.items` are before/after pairs placed by `path`. */
+    isEditTraining?: boolean;
   };
-  /** An edit LoRA: `trainingData.items` are before/after pairs placed by `path`. */
-  isEditTraining?: boolean;
-};
 /** The weights-blob half of an epoch entry in the training step's output. `id` is the blob's
  *  orchestrator key — the handle continue/generate reference the checkpoint by (as a blob AIR);
  *  `url` is a signed download link. Shared with train-core so "does this epoch have usable weights,
@@ -290,8 +299,20 @@ function resolveWorkflow(w: Workflow) {
     w.steps?.find((s) => (s as { $type?: string }).$type === 'training') ??
     w.steps?.find((s) => (s as { $type?: string }).$type === 'imageResourceTraining') ??
     w.steps?.[0];
-  const input = ((step as { input?: TrainingStepInput } | undefined)?.input ??
+  const rawInput = ((step as { input?: TrainingStepInput } | undefined)?.input ??
     {}) as TrainingStepInput;
+  const input: TrainingStepInput =
+    rawInput.engine === 'kohya'
+      ? {
+          ...rawInput,
+          ecosystem: rawInput.model ? Air.parseSafe(rawInput.model)?.ecosystem : undefined,
+          epochs: rawInput.maxTrainEpochs,
+          batchSize: rawInput.trainBatchSize,
+          lr: rawInput.unetLR,
+          textEncoderLr: rawInput.textEncoderLR,
+          shuffleTokens: rawInput.shuffleCaption,
+        }
+      : rawInput;
   const output = ((step as { output?: TrainingStepOutput } | undefined)?.output ??
     {}) as TrainingStepOutput;
   const state: RunState | undefined = meta.published
@@ -497,6 +518,20 @@ const SETTINGS_INPUT_KEYS = [
   'flipAugmentation',
   'triggerWord',
   'continueFrom',
+  'maxTrainEpochs',
+  'numRepeats',
+  'trainBatchSize',
+  'unetLR',
+  'textEncoderLR',
+  'enableBucket',
+  'shuffleCaption',
+  'clipSkip',
+  'lrSchedulerNumCycles',
+  'seed',
+  'fp8Base',
+  'blocksToSwap',
+  'vParameterization',
+  'zeroTerminalSnr',
 ] as const satisfies readonly (keyof TrainingStepInput)[];
 
 /** A run's effective configuration, read off the workflow's training step — never rebuilt from UI
@@ -512,6 +547,7 @@ export interface TrainingSettingsExport {
   versionKey?: string;
   imageCount: number;
   samplePrompts: string[];
+  negativePrompt?: string;
   /** The training step's input, filtered to the run-describing fields. Keys are the orchestrator's
    *  own names (`lr`, `optimizerType`, …), not the form's. */
   training: Partial<Pick<TrainingStepInput, (typeof SETTINGS_INPUT_KEYS)[number]>>;
@@ -662,6 +698,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     ...(typeof meta.versionKey === 'string' ? { versionKey: meta.versionKey } : {}),
     imageCount: trainedCount || (typeof meta.imageCount === 'number' ? meta.imageCount : 0),
     samplePrompts: prompts,
+    ...(input.samples?.negativePrompt ? { negativePrompt: input.samples.negativePrompt } : {}),
     training,
   };
 

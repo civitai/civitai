@@ -223,3 +223,10 @@ needs a security sign-off before the embed ships.
 
 Stage 1–2 are refactors of this app with no behavior change; stage 3 is where the main-app work
 and the CORS verification land.
+
+
+## PR previews
+
+The main-app Docker image builds the Studio element from the same commit and serves it at
+`/training-studio/element/`. When `IS_PREVIEW=true`, the embedded page loads these local assets.
+Production uses `NEXT_PUBLIC_TRAINING_STUDIO_URL`; local development uses the Studio dev server.

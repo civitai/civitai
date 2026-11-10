@@ -42,7 +42,7 @@ enters the flow.
 - **Per-blob upload, no zip.** Scan on upload (same policy as generation). Auto-label over signals.
 - **Live training over signals** (step/checkpoint; near-real-time possible). Generate/Publish operate
   off the **workflow ID / AIR**, not a `ModelVersion`.
-- **AI-Toolkit only** (Kohya stays in the in-app trainer). Trigger word is **model-dependent** (large/
+- **AI Toolkit by default**, with Kohya available for SD 1.5, SDXL, Flux.1 and Chroma. Both use the `training` workflow step; Kohya uses its own generated input contract. Trigger word is **model-dependent** (large/
   video models can't train it — check per model before enforcing).
 
 - **Every submit calls the main app's trigger word check** (`POST /api/training-studio/check-text`,
