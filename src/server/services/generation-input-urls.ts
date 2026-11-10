@@ -134,7 +134,7 @@ async function assertKeysUsable({
             AND NOT i."tosViolation" AND p."publishedAt" <= now()
             AND p.availability IN ('Public', 'Unsearchable') AND NOT p."tosViolation") IS TRUE AS visible,
           (i.ingestion = 'Scanned') AS "scanComplete",
-          (i.ingestion IN ('Pending', 'Error', 'Rescan', 'PendingManualAssignment')) AS "scanPending",
+          (i.ingestion IN ('Pending', 'Rescan', 'PendingManualAssignment')) AS "scanPending",
           (i."needsReview" IS NOT NULL OR i.minor IS TRUE OR i.poi IS TRUE) AS held
         FROM "Image" i
         LEFT JOIN "Post" p ON p.id = i."postId"

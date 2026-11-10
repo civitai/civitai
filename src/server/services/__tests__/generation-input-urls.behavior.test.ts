@@ -427,12 +427,25 @@ describe('an App Blocks generation source', () => {
     expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain('secret-path');
   });
 
-  it("refuses the caller's own image the scan could not read as unusable, not as pending", async () => {
-    await givenImage({ userId: CALLER, postId: null, ingestion: 'NotFound' });
-    expect(await check([CDN()], 'appBlocksPassThrough')).toBe(
-      `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`
-    );
-  });
+  it.each(['Rescan', 'PendingManualAssignment'])(
+    "refuses the caller's own image in %s as still being scanned",
+    async (ingestion) => {
+      await givenImage({ userId: CALLER, postId: null, ingestion });
+      expect(await check([CDN()], 'appBlocksPassThrough')).toBe(
+        `refused: ${APP_SOURCE_PENDING_MESSAGE}`
+      );
+    }
+  );
+
+  it.each(['NotFound', 'Error'])(
+    "refuses the caller's own image in %s as unusable, not as pending",
+    async (ingestion) => {
+      await givenImage({ userId: CALLER, postId: null, ingestion });
+      expect(await check([CDN()], 'appBlocksPassThrough')).toBe(
+        `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`
+      );
+    }
+  );
 
   it('with app external refusal off: the txt2img arm still refuses, the step arms log, the general flag still refuses', async () => {
     holder.refuseExternalApp = false;
@@ -481,6 +494,17 @@ describe('an App Blocks generation source', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ reason: 'external', mode: 'refuse' })
     );
+  });
+
+  it('logs external urls once per host bucket in one call', async () => {
+    holder.refuseExternalApp = false;
+    loggingMock.logToAxiom.mockClear();
+    await check(['https://example.com/a.png', 'https://example.com/b.png'], 'appBlocksPassThrough');
+    expect(
+      loggingMock.logToAxiom.mock.calls.filter(
+        ([d]) => (d as { reason?: string }).reason === 'external'
+      )
+    ).toHaveLength(1);
   });
 
   it('refuses a key with one clean row and one held or pending row beside it', async () => {
