@@ -10,7 +10,9 @@ import { CosmeticFlag } from '~/shared/constants/cosmetic-flags.constants';
 /**
  * The `cosmetics2` catalog cache (cosmeticCache) behind COSMETICS_L1, through the real cache
  * definition with the cache cluster faked as a store. Off, it has no L1 (as before); on, a 60s
- * per-pod L1. Admin edits still refresh Redis, and the kept-off sticker check reads past the L1.
+ * per-pod L1. Admin edits still refresh Redis, and the kept-off sticker check and the day-long
+ * event-decoration cache read past the L1. The frame cache's per-wearer `lights` never land on
+ * the shared catalog entry.
  *
  * The cache is one module-level instance for the whole file, so each case uses its own cosmetic
  * ids. The L1 clock is `performance.now` (read per call by lru-cache); the Redis fake reads
@@ -30,7 +32,9 @@ vi.mock('@civitai/db-queries/placement', async (importOriginal) => ({
 }));
 
 const { isFliptSync } = await import('~/server/flipt/client');
-const { cosmeticCache } = await import('~/server/redis/caches');
+const { cosmeticCache, cosmeticEntityCaches, eventDecorationEntityCaches } = await import(
+  '~/server/redis/caches'
+);
 const { resetL1SwitchesForTests } = await import('~/server/redis/l1-switches');
 const { setStickerPlacementRating } = await import('~/server/services/cosmetic.service');
 const { getStickerPlacementCounts } = await import('~/server/services/sticker-placement.service');
@@ -149,6 +153,86 @@ describe('cosmeticCache L1: COSMETICS_L1', () => {
     expect((await cosmeticCache.fetch([2405]))[2405].flags).toBe(0);
     await advance(2);
     expect((await cosmeticCache.fetch([2405]))[2405].flags).toBe(CosmeticFlag.SfwPlacementsOnly);
+  });
+});
+
+// The frame cache's appendFn puts each wearer's `lights` on the frame it reads from cosmetics2.
+describe("cosmeticEntityCaches: a wearer's lights stay on that wearer", () => {
+  // equippedToId -> the userData its UserCosmetic row holds.
+  const wearing = (cosmeticId: number, userData: Record<number, unknown>) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      _s: unknown,
+      idList: { values: number[] }
+    ) =>
+      idList.values
+        .filter((id) => id in userData)
+        .map((id) => ({
+          cosmeticId,
+          equippedToId: id,
+          userData: userData[id],
+          createdById: null,
+        }))) as never);
+
+  // [switch, order, cosmetic id, first entity id]: every case its own ids (one module-level cache).
+  const cases = [
+    [true, 'lit first', 2601, 8_100],
+    [true, 'unlit first', 2602, 8_200],
+    [null, 'lit first', 2603, 8_300],
+    [null, 'unlit first', 2604, 8_400],
+  ] as const;
+
+  it.each(cases)('switch %s, %s: each wearer gets its own lights', async (on, order, cid, base) => {
+    flag = on;
+    const [lit3, lit5, unlit, later] = [base + 1, base + 2, base + 3, base + 4];
+    wearing(cid, { [lit3]: { lights: 3 }, [lit5]: { lights: 5 }, [unlit]: null, [later]: {} });
+    const catalog = { url: `u-${cid}` };
+    await cosmeticCache.fetch([cid]); // warm: with the switch on, the frame is now in the L1
+
+    const ids = order === 'lit first' ? [lit3, lit5, unlit] : [unlit, lit5, lit3];
+    const frames = await cosmeticEntityCaches.Image.fetch(ids);
+    expect(frames[lit3].data).toEqual({ ...catalog, lights: 3 });
+    expect(frames[lit5].data).toEqual({ ...catalog, lights: 5 });
+    expect(frames[unlit].data).toEqual(catalog);
+    // A later request, one wearer with no lights: nothing earlier left any on the frame.
+    expect((await cosmeticEntityCaches.Image.fetch([later]))[later].data).toEqual(catalog);
+
+    // The cached cosmetic itself is untouched, both this process's copy and Redis's.
+    expect((await cosmeticCache.fetch([cid]))[cid].data).toEqual(catalog);
+    expect((fs.peek(`${PREFIX}${cid}`) as { data: unknown }).data).toEqual(catalog);
+    expect(dbMock.dbRead.cosmetic.findMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('eventDecorationEntityCaches with COSMETICS_L1 on', () => {
+  it("builds a decoration from what Redis holds, not from this pod's older L1 copy", async () => {
+    flag = true;
+    const [cid, entity] = [2701, 8_501];
+    const hat = (url: string) => ({
+      id: cid,
+      name: `cosmetic-${cid}`,
+      type: 'ContentDecoration',
+      data: { type: 'hat', event: 'test-event', url },
+      source: 'Trophy',
+      flags: 0,
+    });
+    fs.plant(`${PREFIX}${cid}`, { ...hat('old'), cachedAt: new Date() }, 3600);
+    expect((await cosmeticCache.fetch([cid]))[cid].data).toMatchObject({ url: 'old' }); // L1 warm
+    // Another pod's edit refreshed the Redis entry; this pod's L1 still holds 'old'.
+    fs.plant(`${PREFIX}${cid}`, { ...hat('new'), cachedAt: new Date() }, 3600);
+    expect((await cosmeticCache.fetch([cid]))[cid].data).toMatchObject({ url: 'old' });
+    const readsBefore = catalogReads();
+
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { cosmeticId: cid, equippedToId: entity, userId: 9 },
+    ]);
+    const worn = await eventDecorationEntityCaches.Image.fetch([entity]);
+
+    expect(worn[entity].data).toMatchObject({ url: 'new' });
+    expect(catalogReads()).toBe(readsBefore + 1);
+    // And that is what the day-long entry holds.
+    expect(fs.peek(`packed:caches:cosmetics2:event:v2:Image:${entity}`)).toMatchObject({
+      data: { url: 'new' },
+    });
   });
 });
 

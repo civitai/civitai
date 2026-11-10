@@ -283,7 +283,10 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
   // the Redis entry at once and drop the id from the editing pod's L1, but there is no cross-pod L1
   // bust: OTHER pods can serve the previous value for up to 60s. That is accepted for display
   // (names, images, badges). The one reader that hides content on `flags` — the kept-off sticker
-  // check in sticker-placement.service — reads with `bypassLocal`, so it stays as fresh as today.
+  // check in sticker-placement.service — reads with `bypassLocal`, so it stays as fresh as today, and
+  // so does eventDecorationEntityCaches, which stores what it reads for a day. Readers that store it
+  // for longer without bypassing (search documents, the leaderboard and home-block caches) are
+  // filled on their own schedule, not by a cosmetics2 edit, so they lag by up to the L1 TTL more.
   localTtl: cosmeticsLocalTtl,
   localMax: 20000,
   localMaxBytes: L1_CACHE_BYTE_BUDGETS.cosmetics,
@@ -380,13 +383,13 @@ export const cosmeticEntityCaches = Object.fromEntries(
           record.id = rawRecord.cosmeticId;
           delete (record as any).cosmeticId;
 
-          // Add userData to the data field
-          record.data = cosmetic.data as ContentDecorationCosmetic['data'];
-          if (rawRecord.userData) {
-            const userData = rawRecord.userData as ContentDecorationCosmetic['data'];
-            if (userData.lights) record.data.lights = userData.lights;
-            delete (record as any).userData;
-          }
+          // Add userData to the data field. `cosmetic.data` is the cosmetics2 entry's own object,
+          // shared by every record in this batch that wears it and, while that cache's L1 is on, by
+          // every request this process serves, so a wearer's lights go on a copy, never on it.
+          const data = cosmetic.data as ContentDecorationCosmetic['data'];
+          const userData = rawRecord.userData as ContentDecorationCosmetic['data'] | null;
+          record.data = userData?.lights ? { ...data, lights: userData.lights } : data;
+          if (rawRecord.userData) delete (record as any).userData;
         }
       },
       ttl: CacheTTL.day,
@@ -425,7 +428,11 @@ export const eventDecorationEntityCaches = Object.fromEntries(
             AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
             AND jsonb_typeof(c.data->'event') = 'string';
         `;
-        const cosmetics = await cosmeticCache.fetch([...new Set(rows.map((x) => x.cosmeticId))]);
+        // Past this process's cosmetics2 L1: what this builds is cached for a day, so a copy up to
+        // the L1 TTL old would outlive the edit that a refresh of cosmetics2 already put in Redis.
+        const cosmetics = await cosmeticCache.fetch([...new Set(rows.map((x) => x.cosmeticId))], {
+          bypassLocal: true,
+        });
         const result: Record<number, WornEventDecoration> = {};
         for (const row of rows) {
           const cosmetic = cosmetics[row.cosmeticId];
