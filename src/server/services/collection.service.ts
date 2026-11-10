@@ -2199,20 +2199,20 @@ export const getCollectionItemsByCollectionId = async ({
     const cursorCondition = parsedCursor.id
       ? sortDirection === 'DESC'
         ? Prisma.sql`AND (
-            ci."createdAt" < (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+            ci."createdAt" < (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} AND "collectionId" = ${collectionId})
             OR (
-              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} AND "collectionId" = ${collectionId})
               AND ci.id < ${parsedCursor.id}
             )
             OR ci."createdAt" IS NULL
           )`
         : Prisma.sql`AND (
-            ci."createdAt" > (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+            ci."createdAt" > (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} AND "collectionId" = ${collectionId})
             OR (
-              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} AND "collectionId" = ${collectionId})
               AND ci.id < ${parsedCursor.id}
             )
-            OR (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id}) IS NULL
+            OR (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id} AND "collectionId" = ${collectionId}) IS NULL
           )`
       : Prisma.sql``;
 

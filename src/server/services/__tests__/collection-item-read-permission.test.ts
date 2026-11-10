@@ -154,6 +154,29 @@ describe('collection items of a collection the viewer may not read', () => {
   });
 });
 
+describe('the page cursor', () => {
+  it("reads the cursor item's position only from the requested collection", async () => {
+    await getCollectionItemsByCollectionId({
+      input: { collectionId: COLLECTION_ID, limit: 10, browsingLevel: 3, cursor: '123' } as never,
+      user: STRANGER as never,
+      requireRead: true,
+    });
+    const itemQuery = vi
+      .mocked(dbMock.dbRead.$queryRaw)
+      .mock.calls.find(([strings]) =>
+        (strings as unknown as string[]).join('?').includes('FROM "CollectionItem" ci')
+      )!;
+    const cursor = itemQuery
+      .slice(1)
+      .map((v) => v as { sql?: string; values?: unknown[] } | null)
+      .find((frag) => frag?.sql?.includes('SELECT "createdAt"'))!;
+    const lookups = cursor.sql!.match(/SELECT "createdAt" FROM "CollectionItem" WHERE[^)]*/g)!;
+    expect(lookups.length).toBeGreaterThan(0);
+    for (const lookup of lookups) expect(lookup).toContain('"collectionId" = ');
+    expect(cursor.values).toContain(COLLECTION_ID);
+  });
+});
+
 describe('entry count of a collection the viewer may not read', () => {
   const count = (user: { id: number; isModerator?: boolean }) =>
     getCollectionEntryCount({
