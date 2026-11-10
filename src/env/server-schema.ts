@@ -541,6 +541,8 @@ export const serverSchema = z
     ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
     ORCHESTRATOR_MODE: z.string().default('dev'),
     ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
+    // The orchestrator's own credential for the mini model-version endpoint's epoch arm. Unset: inert.
+    ORCHESTRATOR_SERVICE_TOKEN: z.string().optional(),
     // Local-dev opt-in for /api/training-studio/host to hand the shared ORCHESTRATOR_ACCESS_TOKEN
     // (the ORCHESTRATOR_MODE=dev arm of getOrchestratorToken) to the browser. Never set in prod.
     ALLOW_DEV_ORCHESTRATOR_TOKEN_PASSTHROUGH: zc.booleanString.optional().default(false),
@@ -562,6 +564,9 @@ export const serverSchema = z
     // The search service in front of Qdrant, behind semantic image search. Unset = the search page errors.
     SEARCH_SERVICE_URL: z.url().optional(),
     SEARCH_SERVICE_TOKEN: z.string().optional(),
+    // Entities whose search updates are forwarded to "Outbox" for the semantic search sync, e.g.
+    // "Article,Comic". Unset = none. Comic needs its OutboxEntity value applied first.
+    SEARCH_OUTBOX_FORWARD: commaDelimitedStringArray().default([]),
     // Candidate image-feed service for shadow comparisons; unset = shadow mode inert.
     FEED_SERVICE_URL: z.url().optional(),
     // Debounce window (ms) for flushing model-metric-affected ids into the

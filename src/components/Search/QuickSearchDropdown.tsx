@@ -51,6 +51,11 @@ import { searchHitName } from '~/shared/utils/model-sfw-face';
 // instead of an uncaught `MeiliSearchCommunicationError`. Fails quietly (no
 // banner) — the header quick-search just shows nothing during a blip.
 const meilisearch = withUserHydration(
+  createResilientSearchClient(createInstantMeiliSearch({ primaryKey: 'id' }))
+);
+// The semantic search is flag-protected on the server: without `imageSearch` it rejects, and the
+// resilient wrapper turns that into an empty dropdown. Images go to Meili for everyone else.
+const semanticMeilisearch = withUserHydration(
   createResilientSearchClient(
     withSemanticImageSearch(createInstantMeiliSearch({ primaryKey: 'id' }))
   )
@@ -147,6 +152,12 @@ export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   placeholder?: string;
   disableInitialSearch?: boolean;
   /**
+   * Keeps images on Meilisearch even when semantic image search is on. For a caller whose
+   * `filters` scope images to one owner: the semantic search ignores the `filters` string, so it
+   * would offer everyone's images, and it answers nothing for an empty query.
+   */
+  imagesFromIndex?: boolean;
+  /**
    * The ids currently on offer, whenever that set changes. OPTIONAL and inert by default.
    *
    * Exists so a caller whose selection GRANTS something can screen the candidates against the
@@ -163,6 +174,7 @@ const QuickSearchDropdownInner = ({
   startingIndex,
   disableInitialSearch,
   showIndexSelect = true,
+  imagesFromIndex,
   ...props
 }: QuickSearchDropdownProps) => {
   const features = useFeatureFlags();
@@ -277,7 +289,13 @@ const QuickSearchDropdownInner = ({
         // previous index's parameters: react-instantsearch sets the new index and searches in its
         // render body, before the children that own `filters` have re-rendered.
         key={indexName}
-        searchClient={disableInitialSearch ? searchClient : meilisearch}
+        searchClient={
+          disableInitialSearch
+            ? searchClient
+            : features.imageSearch && !imagesFromIndex
+            ? semanticMeilisearch
+            : meilisearch
+        }
         indexName={indexName}
         future={{ preserveSharedStateOnUnmount: true }}
       >

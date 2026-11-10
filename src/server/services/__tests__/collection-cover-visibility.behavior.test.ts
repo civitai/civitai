@@ -96,6 +96,8 @@ const OTHER_MANAGER_UPLOAD = 212; // postless upload by a manager of a different
 const PENDING_SCAN = 214; // stranger's image whose scan hasn't finished
 const OWNER_REMOVED = 215; // the collection owner's own removed upload
 const REMOVED_LEVEL = 213; // stranger's image, Scanned with no reason but rated at the removed level
+const TAKEN_DOWN_MODEL = 216; // stranger's image on a published post on a taken-down model
+const LIVE_MODEL = 217; // stranger's image on a published post on a model that is not taken down
 
 beforeAll(async () => {
   const schema = `
@@ -116,8 +118,12 @@ beforeAll(async () => {
     );
     CREATE TABLE "Post" (
       "id" integer PRIMARY KEY, "userId" integer NOT NULL, "publishedAt" timestamp,
-      "availability" text NOT NULL DEFAULT 'Public', "collectionId" integer, "metadata" jsonb
+      "availability" text NOT NULL DEFAULT 'Public', "collectionId" integer, "metadata" jsonb,
+      "modelVersionId" integer
     );
+    CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
+    CREATE TABLE "Model" ("id" integer PRIMARY KEY, "mode" "ModelModifier");
+    CREATE TABLE "ModelVersion" ("id" integer PRIMARY KEY, "modelId" integer NOT NULL);
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TABLE "CollectionContributor" (
       "collectionId" integer NOT NULL, "userId" integer NOT NULL,
@@ -144,6 +150,12 @@ beforeAll(async () => {
       (3, ${STRANGER}, NULL, 'Public'),
       (4, ${STRANGER}, now() + interval '1 day', 'Public'),
       (5, ${VIEWER}, now() - interval '1 day', 'Public');
+    INSERT INTO "Model" ("id", "mode") VALUES (70, 'TakenDown'), (71, 'Archived');
+    INSERT INTO "ModelVersion" ("id", "modelId") VALUES (80, 70), (81, 71);
+    INSERT INTO "Post" ("id", "userId", "publishedAt", "availability", "modelVersionId") VALUES
+      (6, ${STRANGER}, now() - interval '1 day', 'Public', 80),
+      (7, ${STRANGER}, now() - interval '1 day', 'Public', 81);
+    INSERT INTO "Image" ("id", "userId", "postId") VALUES (${TAKEN_DOWN_MODEL}, ${STRANGER}, 6), (${LIVE_MODEL}, ${STRANGER}, 7);
     INSERT INTO "Image" ("id", "userId", "postId", "ingestion", "blockedFor", "needsReview") VALUES
       (${PUBLISHED},         ${STRANGER}, 1,    'Scanned', NULL,        NULL),
       (${REMOVED},           ${STRANGER}, 1,    'Blocked', 'Moderated', NULL),
@@ -185,6 +197,7 @@ describe('which covers a stranger is shown', () => {
     ['an image on a published public post', PUBLISHED],
     ["the collection owner's own upload", OWNER_UPLOAD],
     ["a collection manager's upload", MANAGER_UPLOAD],
+    ['an image on a model that is not taken down', LIVE_MODEL],
   ])('shows %s', async (_, imageId) => {
     expect(await servable(imageId)).toBe(true);
   });
@@ -201,6 +214,7 @@ describe('which covers a stranger is shown', () => {
     ["the upload of another collection's manager", OTHER_MANAGER_UPLOAD],
     ['an image rated at the removed level', REMOVED_LEVEL],
     ['an image still being scanned', PENDING_SCAN],
+    ['an image on a taken-down model', TAKEN_DOWN_MODEL],
   ])('hides %s', async (_, imageId) => {
     expect(await servable(imageId)).toBe(false);
   });
