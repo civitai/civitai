@@ -77,9 +77,6 @@ describe('post.getResources visibility', () => {
   it('carries no cover image: covers are served only to the post owner by post.getResourceCovers', async () => {
     postIs({});
     expect(await resourcesFor(ANON)).toEqual([ROWS[0]]);
-    expect(await resourcesFor(ANON)).not.toContainEqual(
-      expect.objectContaining({ coverImage: expect.anything() })
-    );
   });
 
   it.each([

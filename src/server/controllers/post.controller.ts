@@ -870,7 +870,7 @@ export const getPostResourceCoversHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    // Held to the domain cap, as model.getAll is, with the SFW-domain backstop on top.
+    // The level comes from the client: without this clamp it could ask for covers above its domain's cap.
     const levels = { browsingLevel: input.browsingLevel };
     resolveRequestBrowsingLevels(levels, ctx);
     return await getPostResourceCovers({

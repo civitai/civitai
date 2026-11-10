@@ -25,8 +25,7 @@ export const postGenerationTour: StepWithData[] = [
     data: {
       onNext: async () => {
         // The rating thumbs don't render when the images carry no resources or the user
-        // is muted, so this wait can legitimately never resolve. Uncaught it froze the
-        // popover for the whole timeout first.
+        // is muted, so this wait can legitimately time out and must not reject.
         await waitForElement({
           selector: '[data-tour="post:rate-resource"]',
           timeout: 10000,

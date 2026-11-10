@@ -40,9 +40,6 @@ export function patchReview<T extends ReviewRow>(
 export const normalizeComment = (html: string | null | undefined) =>
   !html || html.replace(/<(?!img\b)[^>]*>/g, '').trim() === '' ? '' : html;
 
-/**
- * Whether the stepper nudges for a comment. Soft today; make saving depend on this to require one.
- */
 export const shouldNudgeForComment = ({
   recommended,
   comment,
