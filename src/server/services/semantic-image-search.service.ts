@@ -7,7 +7,6 @@ import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/servi
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { ImageSort } from '~/server/common/enums';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
-import { dbRead } from '~/server/db/client';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import {
   nsfwBrowsingLevelsArray,
@@ -18,6 +17,8 @@ import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
 import {
   collectPage,
+  resolveTagIds,
+  resolveUserIds,
   searchServiceSource,
   type CandidateFilter,
   type CandidateSource,
@@ -33,22 +34,6 @@ type HydratedImage = Awaited<ReturnType<typeof getAllImages>>['items'][number];
 const searchServiceCandidates = searchServiceSource(IMAGE_COLLECTION, {
   notFoundMessage: 'Image not found',
 });
-
-async function resolveTagIds(names: string[]) {
-  const tags = await dbRead.tag.findMany({
-    where: { name: { in: names.map((name) => name.toLowerCase()) } },
-    select: { id: true },
-  });
-  return tags.map((x) => x.id);
-}
-
-async function resolveUserIds(usernames: string[]) {
-  const users = await dbRead.user.findMany({
-    where: { username: { in: usernames } },
-    select: { id: true },
-  });
-  return users.map((x) => x.id);
-}
 
 export async function searchSemanticImages({
   input,
