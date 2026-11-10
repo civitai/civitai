@@ -312,6 +312,7 @@ import {
   ImageIngestionStatus,
   JobQueueType,
   MediaType,
+  ModelModifier,
   NewOrderRankType,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
@@ -7597,6 +7598,12 @@ export const getEntityCoverImage = async ({
     i."acceptableMinor" = FALSE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean
   )`;
 
+  // A taken-down model's images are its owner's and moderators' alone.
+  const modelNotWithheld = Prisma.sql`(
+    m.mode IS DISTINCT FROM ${ModelModifier.TakenDown}::"ModelModifier"
+    OR (${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean
+  )`;
+
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.
   const imagesRaw = await dbRead.$queryRaw<GetEntityImageRaw[]>`
@@ -7664,6 +7671,7 @@ export const getEntityCoverImage = async ({
           JOIN "Post" p ON mv.id = p."modelVersionId" AND p."userId" = m."userId"
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'Model'
+          AND ${modelNotWithheld}
           -- The version and post rules sit before DISTINCT ON so a hidden first version or post
           -- falls back to the next visible one rather than leaving the model without a cover.
           AND (
@@ -7704,6 +7712,7 @@ export const getEntityCoverImage = async ({
           JOIN "Post" p ON mv.id = p."modelVersionId" AND (p."userId" = m."userId" OR m."userId" = -1)
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'ModelVersion'
+          AND ${modelNotWithheld}
           -- canViewModelVersionStatus plus the private-version rule; access grantees are not resolved here.
           AND (
             (
