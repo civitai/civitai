@@ -17,7 +17,7 @@ const db = { pg: null as unknown as PGlite };
 beforeAll(async () => {
   db.pg = new PGlite();
   await db.pg.exec(`
-    CREATE TABLE "ModelFile" (id int PRIMARY KEY, type text, "sizeKB" float8, metadata jsonb);
+    CREATE TABLE "ModelFile" (id int PRIMARY KEY, type text, url text, "sizeKB" float8, metadata jsonb);
   `);
 });
 afterAll(async () => {
@@ -30,10 +30,11 @@ beforeEach(async () => {
   dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
 });
 
-async function seed(id: number, metadata: Record<string, unknown>, sizeKB = 0) {
+const EPOCH_URL = 'https://orch.example/e';
+async function seed(id: number, metadata: Record<string, unknown>, sizeKB = 0, url = EPOCH_URL) {
   await db.pg.query(
-    `INSERT INTO "ModelFile" (id, type, "sizeKB", metadata) VALUES ($1, 'Training Data', $2, $3::jsonb)`,
-    [id, sizeKB, JSON.stringify({ selectedEpochUrl: 'https://orch.example/e', ...metadata })]
+    `INSERT INTO "ModelFile" (id, type, url, "sizeKB", metadata) VALUES ($1, 'Training Data', $2, $3, $4::jsonb)`,
+    [id, url, sizeKB, JSON.stringify({ selectedEpochUrl: EPOCH_URL, ...metadata })]
   );
 }
 
@@ -55,5 +56,12 @@ describe('getPendingStudioDatasetFileIds', () => {
     await seed(1, { datasetArchiveAttempts: 1 });
 
     expect(await getPendingStudioDatasetFileIds(2)).toEqual([1]);
+  });
+
+  it('never returns a file the owner uploaded in place of the placeholder, even at size 0', async () => {
+    await seed(1, {});
+    await seed(2, {}, 0, 'https://storage.example/training-images/5/owner-data.zip');
+
+    expect(await getPendingStudioDatasetFileIds(25)).toEqual([1]);
   });
 });

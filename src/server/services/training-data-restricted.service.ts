@@ -28,11 +28,15 @@ export function trainingDataOwnerRestrictedSql(owner: Prisma.Sql): Prisma.Sql {
   ))`;
 }
 
-/** Whether the model version `versionId` (an int SQL expression) carries restricted content. */
+/**
+ * Whether the model version `versionId` (an int SQL expression) carries restricted content. A run a
+ * moderator paused or denied counts.
+ */
 export function trainingDataContentRestrictedSql(versionId: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`(EXISTS (
     SELECT 1 FROM "ModelVersion" hv JOIN "Model" hm ON hm.id = hv."modelId"
-    WHERE hv.id = ${versionId} AND (hm.poi OR hm.minor OR hm."tosViolation")
+    WHERE hv.id = ${versionId}
+      AND (hm.poi OR hm.minor OR hm."tosViolation" OR hv."trainingStatus" IN ('Paused', 'Denied'))
   ) OR EXISTS (
     SELECT 1 FROM "Post" hp JOIN "Image" hi ON hi."postId" = hp.id
     WHERE hp."modelVersionId" = ${versionId}
@@ -257,6 +261,25 @@ export async function versionHasStudioDataset(
   return rows.length > 0;
 }
 
+/**
+ * Makes every `Training Data` file on a Training Studio version Private, other than its Studio
+ * dataset row, which keeps its own rules. For writes that put files on a version without going
+ * through the upload and edit paths, such as a version merge. Returns the number of files changed.
+ */
+export async function keepTrainingDataPrivateOnStudioVersion(
+  db: Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>,
+  modelVersionId: number
+): Promise<number> {
+  if (!(await versionHasStudioDataset(db, modelVersionId))) return 0;
+  return db.$executeRaw`
+    UPDATE "ModelFile" SET visibility = 'Private'
+    WHERE "modelVersionId" = ${modelVersionId}
+      AND type = 'Training Data'
+      AND visibility <> 'Private'
+      AND NOT COALESCE(metadata ? 'selectedEpochUrl', false)
+  `;
+}
+
 /** A Training Studio dataset row: its sharing is decided by `studioDatasetVisibility`. */
 export function isStudioDataset(file: { type: string; metadata: unknown }) {
   return (
@@ -265,6 +288,20 @@ export function isStudioDataset(file: { type: string; metadata: unknown }) {
     typeof file.metadata === 'object' &&
     'selectedEpochUrl' in file.metadata
   );
+}
+
+/**
+ * Whether a Studio dataset row is still the placeholder the publish created: it holds the run's
+ * selected epoch as its url until the archive job swaps the zip in. A file the owner uploaded in its
+ * place has its own url, whatever its size.
+ */
+export function isStudioDatasetPlaceholder(file: {
+  url: string;
+  sizeKB: number;
+  metadata: unknown;
+}) {
+  const epochUrl = (file.metadata as { selectedEpochUrl?: unknown } | null)?.selectedEpochUrl;
+  return file.sizeKB === 0 && typeof epochUrl === 'string' && file.url === epochUrl;
 }
 
 /**

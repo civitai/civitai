@@ -20,7 +20,10 @@ import {
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
 } from '~/server/utils/archive-helpers';
 import { isTrainingModerationApproved } from '~/server/services/orchestrator/training/publish-from-workflow';
-import { studioDatasetVisibility } from '~/server/services/training-data-restricted.service';
+import {
+  isStudioDatasetPlaceholder,
+  studioDatasetVisibility,
+} from '~/server/services/training-data-restricted.service';
 import { bytesToKB } from '~/utils/number-helpers';
 import { getGetUrlByKey, getUploadBucket, getUploadS3Client } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
@@ -67,7 +70,9 @@ type FileMetadata = Record<string, unknown> & {
  * Placeholders still waiting for their dataset, newest first: the newest workflows are the ones
  * whose blobs are surest to still exist. All but the last condition are the partial index
  * `ModelFile_studio_dataset_pending_idx` verbatim, so the query stays an index read once the
- * backlog is empty; the last skips rows backing off after a failed service-token read.
+ * backlog is empty. A row still holds the run's epoch as its url only while it is the placeholder
+ * (`isStudioDatasetPlaceholder`); the last condition skips rows backing off after a failed
+ * service-token read.
  */
 export async function getPendingStudioDatasetFileIds(limit: number): Promise<number[]> {
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
@@ -76,6 +81,7 @@ export async function getPendingStudioDatasetFileIds(limit: number): Promise<num
       AND "sizeKB" = 0
       AND metadata ? 'selectedEpochUrl'
       AND NOT metadata ? 'datasetArchive'
+      AND url = metadata->>'selectedEpochUrl'
       AND (
         NOT metadata ? 'datasetArchiveRetryAfter'
         OR (metadata->>'datasetArchiveRetryAfter')::timestamptz < now()
@@ -290,6 +296,7 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
     where: { id: fileId },
     select: {
       id: true,
+      url: true,
       sizeKB: true,
       metadata: true,
       modelVersionId: true,
@@ -310,7 +317,8 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
   const metadata = (file?.metadata ?? {}) as FileMetadata;
   // Claimed by nobody else in the meantime: the job's lock keeps runs from overlapping, and a row
   // the owner replaced with a real file is no longer a placeholder.
-  if (!file || file.sizeKB !== 0 || metadata.datasetArchive) return { fileId, outcome: 'skipped' };
+  if (!file || !isStudioDatasetPlaceholder(file) || metadata.datasetArchive)
+    return { fileId, outcome: 'skipped' };
 
   const { model } = file.modelVersion;
   const markUnavailable = async (reason: string): Promise<StudioDatasetArchiveResult> => {
@@ -374,7 +382,9 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
       // the row still being the placeholder, so a file the owner swapped in meanwhile is not
       // overwritten; the zip it built is orphaned.
       const [row] = await tx.$queryRaw<{ metadata: FileMetadata | null }[]>`
-        SELECT metadata FROM "ModelFile" WHERE id = ${file.id} AND "sizeKB" = 0 FOR UPDATE`;
+        SELECT metadata FROM "ModelFile"
+        WHERE id = ${file.id} AND "sizeKB" = 0 AND url = metadata->>'selectedEpochUrl'
+        FOR UPDATE`;
       if (!row) return false;
       const current = row.metadata ?? {};
       await tx.modelFile.update({

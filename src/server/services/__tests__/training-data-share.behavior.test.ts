@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  keepTrainingDataPrivateOnStudioVersion,
   trainingDataListing,
   trainingDataShareRestricted,
   versionHasStudioDataset,
@@ -50,12 +51,13 @@ const SCHEMA = `
     "tosViolation" boolean NOT NULL DEFAULT false,
     meta jsonb
   );
-  CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+  CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL, "trainingStatus" text);
   CREATE TABLE "ModelFile" (
     id int PRIMARY KEY,
     "modelVersionId" int NOT NULL,
     type text NOT NULL,
-    metadata jsonb
+    metadata jsonb,
+    visibility text NOT NULL DEFAULT 'Public'
   );
   CREATE TABLE "Post" (
     id int PRIMARY KEY,
@@ -180,6 +182,16 @@ describe('trainingDataShareRestricted', () => {
     expect(await restricted(PLAIN)).toBe(true);
   });
 
+  it.each(['Paused', 'Denied'])('a run a moderator %s cannot share', async (status) => {
+    await db.exec(`UPDATE "ModelVersion" SET "trainingStatus" = '${status}' WHERE id = 101`);
+    expect(await restricted(PLAIN)).toBe(true);
+  });
+
+  it.each(['Approved', 'InReview', null])('a run in %s can share', async (status) => {
+    await db.query(`UPDATE "ModelVersion" SET "trainingStatus" = $1 WHERE id = 101`, [status]);
+    expect(await restricted(PLAIN)).toBe(false);
+  });
+
   it('fails closed when the check cannot be read', async () => {
     const broken = {
       $queryRaw: async () => {
@@ -226,6 +238,13 @@ describe('trainingDataListing', () => {
     await db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${PLAIN})`);
     expect(await listedFor(PLAIN)).toEqual([false, true]);
     // The owner and moderators still see it.
+    expect(await listedFor(PLAIN, { viewerManages: true })).toEqual([true, true]);
+  });
+
+  it('a run paused after sharing unlists the dataset for others, not for the owner or moderators', async () => {
+    await rate(PLAIN, { nsfwLevel: 1 });
+    await db.exec(`UPDATE "ModelVersion" SET "trainingStatus" = 'Paused' WHERE id = 101`);
+    expect(await listedFor(PLAIN)).toEqual([false, true]);
     expect(await listedFor(PLAIN, { viewerManages: true })).toEqual([true, true]);
   });
 
@@ -286,5 +305,61 @@ describe('versionHasStudioDataset', () => {
       `UPDATE "Model" SET meta = '{"trainingStudioWorkflowId": "wf"}' WHERE id = 100 + ${PLAIN}`
     );
     expect(await studio()).toBe(true);
+  });
+});
+
+describe('keepTrainingDataPrivateOnStudioVersion', () => {
+  const VERSION = versionOf(PLAIN);
+  const OTHER_VERSION = versionOf(SHARE_ONLY);
+  const executor = {
+    ...client,
+    $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const sql = Prisma.sql(strings, ...values);
+      return (await db.query(sql.text, sql.values)).affectedRows ?? 0;
+    },
+  } as unknown as Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>;
+  const insert = (id: number, version: number, type: string, metadata: object | null) =>
+    db.query(
+      `INSERT INTO "ModelFile" (id, "modelVersionId", type, metadata, visibility) VALUES ($1, $2, $3, $4, 'Public')`,
+      [id, version, type, metadata === null ? null : JSON.stringify(metadata)]
+    );
+  const visibilities = async () =>
+    (
+      await db.query<{ id: number; visibility: string }>(
+        `SELECT id, visibility FROM "ModelFile" ORDER BY id`
+      )
+    ).rows.map((r) => [r.id, r.visibility]);
+
+  beforeEach(async () => {
+    await insert(9101, VERSION, 'Training Data', { numImages: 3 });
+    await insert(9102, VERSION, 'Training Data', null);
+    await insert(9103, VERSION, 'Model', {});
+    await insert(9104, OTHER_VERSION, 'Training Data', {});
+  });
+
+  it('makes the other training data files on a Studio version Private, and nothing else', async () => {
+    await insert(9100, VERSION, 'Training Data', { selectedEpochUrl: 'x' });
+
+    expect(await keepTrainingDataPrivateOnStudioVersion(executor, VERSION)).toBe(2);
+    expect(await visibilities()).toEqual([
+      [9100, 'Public'], // the Studio dataset row keeps its own rules
+      [9101, 'Private'],
+      [9102, 'Private'],
+      [9103, 'Public'],
+      [9104, 'Public'],
+    ]);
+  });
+
+  it('applies on a version of a Studio model with no dataset row', async () => {
+    await db.exec(
+      `UPDATE "Model" SET meta = '{"trainingStudioWorkflowId": "wf"}' WHERE id = ${VERSION}`
+    );
+
+    expect(await keepTrainingDataPrivateOnStudioVersion(executor, VERSION)).toBe(2);
+  });
+
+  it('leaves a version that is not a Studio version alone', async () => {
+    expect(await keepTrainingDataPrivateOnStudioVersion(executor, VERSION)).toBe(0);
+    expect((await visibilities()).every(([, v]) => v === 'Public')).toBe(true);
   });
 });

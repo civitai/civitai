@@ -60,6 +60,7 @@ const placeholder = (
   owner: { bannedAt: Date | null; deletedAt: Date | null } = { bannedAt: null, deletedAt: null }
 ) => ({
   id: 7,
+  url: 'https://orch.example/v2/consumer/blobs/E.safetensors',
   sizeKB: 0,
   modelVersionId: 70,
   metadata: {
@@ -159,7 +160,9 @@ describe('archiveStudioDataset', () => {
     expect(where).toEqual({ id: 7 });
     // The row is locked only while it is still the placeholder.
     const [lockSql, ...lockValues] = dbMock.dbWrite.$queryRaw.mock.calls[0];
-    expect(lockSql.join('?')).toMatch(/WHERE id = \? AND "sizeKB" = 0 FOR UPDATE/);
+    expect(lockSql.join('?').replace(/\s+/g, ' ')).toMatch(
+      /WHERE id = \? AND "sizeKB" = 0 AND url = metadata->>'selectedEpochUrl' FOR UPDATE/
+    );
     expect(lockValues).toEqual([7]);
     expect(data).toMatchObject({
       url: expect.stringMatching(
@@ -220,6 +223,18 @@ describe('archiveStudioDataset', () => {
 
     await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'skipped' });
     expect(getWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('leaves alone a file the owner uploaded in its place, even one recorded at size 0', async () => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...placeholder(),
+      url: 'https://storage.example/bucket/training-images/5/owner-data.zip',
+    });
+
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'skipped' });
+    expect(getWorkflow).not.toHaveBeenCalled();
+    expect(uploads.stored).toHaveLength(0);
+    expect(swaps()).toHaveLength(0);
   });
 });
 

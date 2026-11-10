@@ -551,6 +551,89 @@ describe('mergeVersions training runs', () => {
   });
 });
 
+describe('mergeVersions training data visibility', () => {
+  const OWNER = 7;
+  const TARGET = 100;
+  const SOURCE = 101;
+  // Everything after the file move is out of scope: reaching a later step stops the run here.
+  const PAST_MOVE = 'reached the steps after the file move';
+  const studioTarget = vi.fn();
+  const executeRaw = vi.fn(async () => 1);
+  const queryRaw = vi.fn(async (strings: TemplateStringsArray) => {
+    const sql = strings.join('?');
+    if (sql.includes('FOR UPDATE'))
+      return [TARGET, SOURCE].map((id) => ({
+        id,
+        name: `v${id}`,
+        status: 'Published',
+        trainingStatus: null,
+        baseModel: 'SDXL 1.0',
+      }));
+    if (sql.includes('selectedEpochUrl')) return studioTarget();
+    return [];
+  });
+  const fileFindMany = vi.fn(async () => []);
+  const tx = new Proxy(
+    {
+      $queryRaw: queryRaw,
+      $executeRaw: executeRaw,
+      modelFile: { findMany: fileFindMany, updateMany: vi.fn(async () => ({ count: 1 })) },
+    },
+    {
+      get(target, key) {
+        if (key in target) return target[key as keyof typeof target];
+        throw new Error(PAST_MOVE);
+      },
+    }
+  );
+  const merge = () =>
+    mergeVersions({
+      modelId: 1,
+      targetVersionId: TARGET,
+      sourceVersionIds: [SOURCE],
+      appendDescriptions: false,
+      userId: OWNER,
+    } as any);
+  const capWrites = () =>
+    executeRaw.mock.calls.filter(([strings]) =>
+      (strings as unknown as string[]).join('?').includes('UPDATE "ModelFile" SET visibility')
+    );
+
+  beforeEach(() => {
+    executeRaw.mockClear();
+    studioTarget.mockReset();
+    mockDbRead.model.findUniqueOrThrow.mockResolvedValue({
+      userId: OWNER,
+      modelVersions: [TARGET, SOURCE].map((id) => ({
+        id,
+        name: `v${id}`,
+        description: '',
+        status: 'Published',
+        monetization: null,
+        meta: null,
+      })),
+    });
+    mockDbWrite.paidAccess.findMany.mockResolvedValue([]);
+    mockDbWrite.$transaction.mockImplementation(async (fn: (client: unknown) => unknown) => fn(tx));
+  });
+
+  it('makes moved training data Private when the target is a Training Studio version', async () => {
+    studioTarget.mockResolvedValue([{ id: 1 }]);
+
+    await expect(merge()).rejects.toThrow(PAST_MOVE);
+    const writes = capWrites();
+    expect(writes).toHaveLength(1);
+    expect(writes[0].slice(1)).toEqual([TARGET]);
+  });
+
+  it('changes no visibility when merging into a version that is not a Studio version', async () => {
+    studioTarget.mockResolvedValue([]);
+
+    await expect(merge()).rejects.toThrow(PAST_MOVE);
+    expect(capWrites()).toHaveLength(0);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Complexity review §1a — a SCHEDULED early-access version must materialize endsAt
 // ---------------------------------------------------------------------------

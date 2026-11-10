@@ -67,4 +67,24 @@ describe.each(['new-model', 'updated-model'] as const)('%s webhook payload', (ev
 
     expect(payload.modelVersions[0]?.files[0].metadata).toBeNull();
   });
+
+  it('leaves out training data files and keeps the model files', async () => {
+    const withDataset = model();
+    withDataset.modelVersions[0].files.push({
+      id: 6,
+      type: 'Training Data',
+      visibility: 'Public',
+      url: 'https://storage.example.test/training-images/7/data.zip',
+      metadata: { numImages: 12 } as never,
+    });
+    const [payload] = await modelWebhooks[event].getData({
+      lastSent: new Date(0),
+      prisma: { model: { findMany: vi.fn(async () => [withDataset]) } },
+    } as never);
+
+    const files = payload.modelVersions[0]?.files ?? [];
+    expect(files.map((f: { id: number }) => f.id)).toEqual([5]);
+    expect(files[0].url).toBe('https://storage.example.test/model/7/m.safetensors');
+    expect(JSON.stringify(payload)).not.toContain('training-images');
+  });
 });

@@ -10,6 +10,7 @@ import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
 
 const baseUrl = getBaseUrl();
 // Subscribers get a non-Public file's download link, never its storage url (see ownerOnlyFileUrls).
+// Training data files are left out: their availability is decided per viewer and host at download.
 export const modelWebhooks = createWebhookProcessor({
   'new-model': {
     displayName: 'New Models',
@@ -60,17 +61,19 @@ export const modelWebhooks = createWebhookProcessor({
 
             return {
               ...version,
-              files: castedFiles.map((file) => ({
-                ...file,
-                url: file.visibility === 'Public' ? file.url : undefined,
-                metadata: withoutEpochFields(file.metadata),
-                downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
-                  versionId: version.id,
-                  type: file.type,
-                  meta: file.metadata,
-                  primary: primaryFile.id === file.id,
-                })}`,
-              })),
+              files: castedFiles
+                .filter((file) => file.type !== 'Training Data')
+                .map((file) => ({
+                  ...file,
+                  url: file.visibility === 'Public' ? file.url : undefined,
+                  metadata: withoutEpochFields(file.metadata),
+                  downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
+                    versionId: version.id,
+                    type: file.type,
+                    meta: file.metadata,
+                    primary: primaryFile.id === file.id,
+                  })}`,
+                })),
               images: images
                 .filter((x) => x.modelVersionId === version.id)
                 .map(({ url, ...image }) => ({
@@ -128,17 +131,19 @@ export const modelWebhooks = createWebhookProcessor({
 
             return {
               ...version,
-              files: castedFiles.map((file) => ({
-                ...file,
-                url: file.visibility === 'Public' ? file.url : undefined,
-                metadata: withoutEpochFields(file.metadata),
-                downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
-                  versionId: version.id,
-                  type: file.type,
-                  meta: file.metadata,
-                  primary: primaryFile.id === file.id,
-                })}`,
-              })),
+              files: castedFiles
+                .filter((file) => file.type !== 'Training Data')
+                .map((file) => ({
+                  ...file,
+                  url: file.visibility === 'Public' ? file.url : undefined,
+                  metadata: withoutEpochFields(file.metadata),
+                  downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
+                    versionId: version.id,
+                    type: file.type,
+                    meta: file.metadata,
+                    primary: primaryFile.id === file.id,
+                  })}`,
+                })),
               images: images
                 .filter((x) => x.modelVersionId === version.id)
                 .map(({ url, ...image }) => ({

@@ -9,6 +9,7 @@ import {
   modelRowHeldSql,
   ownerHeld,
 } from '~/server/services/legal-hold.service';
+import { keepTrainingDataPrivateOnStudioVersion } from '~/server/services/training-data-restricted.service';
 import { TRPCError } from '@trpc/server';
 import { asResourceValue } from '~/shared/utils/resource.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
@@ -3856,6 +3857,9 @@ export const mergeVersions = async ({
         where: { modelVersionId: { in: sourceVersionIds } },
         data: { modelVersionId: targetVersionId },
       });
+      // The moved files skipped the upload path's cap, and a moved Studio dataset can make the
+      // target a Studio version.
+      await keepTrainingDataPrivateOnStudioVersion(tx, targetVersionId);
 
       // Capture any file rows that slipped past the move — those are the ones the
       // cascade in step 12 will actually orphan. Read inside the tx so the snapshot
