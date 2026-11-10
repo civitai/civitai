@@ -1282,6 +1282,8 @@ export const getDownloadCommandHandler = async ({
             name: true,
             type: true,
             metadata: true,
+            visibility: true,
+            replacedAt: true,
             hashes: { select: { hash: true }, where: { type: 'SHA256' } },
           },
         },
@@ -1297,6 +1299,11 @@ export const getDownloadCommandHandler = async ({
     const isOwner = ctx.user?.id === modelVersion.model.userId;
     const isDownloadable =
       modelVersion.usageControl === ModelUsageControl.Download || isOwner || ctx.user?.isModerator;
+    // The files the download route offers: never a replaced one, and only Public ones to anyone but
+    // the owner and moderators.
+    modelVersion.files = modelVersion.files.filter(
+      (f) => !f.replacedAt && (isOwner || ctx.user?.isModerator || f.visibility === 'Public')
+    );
 
     if (!isDownloadable) {
       throw throwAuthorizationError();

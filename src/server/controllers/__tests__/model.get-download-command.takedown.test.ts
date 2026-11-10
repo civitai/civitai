@@ -40,7 +40,11 @@ function call(user: { id: number; isModerator: boolean }) {
   } as unknown as Parameters<typeof getDownloadCommandHandler>[0]);
 }
 
-function givenModel(model: { status?: string; mode?: string | null }, usageControl = 'Download') {
+function givenModel(
+  model: { status?: string; mode?: string | null },
+  usageControl = 'Download',
+  files: object[] = [{ id: 10, type: 'Model', visibility: 'Public', replacedAt: null }]
+) {
   dbMock.dbRead.modelVersion.findFirst.mockResolvedValue({
     id: 123,
     status: 'Published',
@@ -58,16 +62,13 @@ function givenModel(model: { status?: string; mode?: string | null }, usageContr
       nsfw: false,
       ...model,
     },
-    files: [
-      {
-        id: 10,
-        url: 'https://example.invalid/model.safetensors',
-        name: 'model.safetensors',
-        type: 'Model',
-        metadata: {},
-        hashes: [{ hash: 'abc' }],
-      },
-    ],
+    files: files.map((f) => ({
+      url: 'https://example.invalid/model.safetensors',
+      name: 'model.safetensors',
+      metadata: {},
+      hashes: [{ hash: 'abc' }],
+      ...f,
+    })),
   } as never);
 }
 
@@ -120,5 +121,44 @@ describe('model.getDownloadCommand on a taken-down or deleted model', () => {
     givenModel({});
 
     expect((await call(user))?.commands).toHaveLength(1);
+  });
+});
+
+describe('model.getDownloadCommand offers the files the download route offers', () => {
+  const PRIVATE_MODEL = { id: 10, type: 'Model', visibility: 'Private', replacedAt: null };
+  const REPLACED_VAE = {
+    id: 12,
+    type: 'VAE',
+    visibility: 'Public',
+    replacedAt: new Date('2026-10-01T00:00:00Z'),
+  };
+
+  it('is not found for a non-owner when the model file is not Public', async () => {
+    givenModel({}, 'Download', [PRIVATE_MODEL]);
+
+    await expect(call(OTHER_USER)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(resolveDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['its owner', OWNER],
+    ['a moderator', MODERATOR],
+  ])('still gives %s a file that is not Public', async (_who, user) => {
+    givenModel({}, 'Download', [PRIVATE_MODEL]);
+
+    expect((await call(user))?.commands).toHaveLength(1);
+  });
+
+  it('never adds a replaced component, for anyone', async () => {
+    givenModel({}, 'Download', [
+      { id: 10, type: 'Model', visibility: 'Public', replacedAt: null },
+      REPLACED_VAE,
+    ]);
+
+    for (const user of [OTHER_USER, OWNER, MODERATOR]) {
+      vi.mocked(resolveDownloadUrl).mockClear();
+      expect((await call(user))?.commands).toHaveLength(1);
+      expect(vi.mocked(resolveDownloadUrl).mock.calls.map(([id]) => id)).toEqual([10]);
+    }
   });
 });

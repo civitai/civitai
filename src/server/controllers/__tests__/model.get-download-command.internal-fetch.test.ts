@@ -63,6 +63,8 @@ beforeEach(() => {
         url: 'https://example.invalid/model.safetensors',
         name: 'model.safetensors',
         type: 'Model',
+        visibility: 'Public',
+        replacedAt: null,
         metadata: {},
         hashes: [{ hash: 'abc' }],
       },
