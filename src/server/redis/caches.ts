@@ -24,7 +24,8 @@ import type { NsfwLevel } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { readImageTagsViaKysely, readImageTagsViaPrisma } from '~/server/redis/image-tags.reads';
+import { readImageTagsViaKysely } from '~/server/redis/image-tags.reads';
+import { userImageVideoCountQuery } from '~/server/redis/user-image-video-count.sql';
 import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REDIS_KEYS, redis, type RedisKeyTemplateCache } from '~/server/redis/client';
@@ -40,6 +41,7 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
+import { servableProfilePictureSql } from '~/server/services/profile-picture.sql';
 import {
   type ImageTagComposite,
   type ModelTagComposite,
@@ -47,10 +49,12 @@ import {
 } from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getWithheldCosmeticIds } from '~/server/services/creator-shop-withheld';
+import { visibleReviewSql } from '~/server/services/resourceReview.visibility';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { getImageTagRows } from '~/server/redis/image-tag-rows';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
+import { basicTagsLocalTtl, cosmeticsLocalTtl } from '~/server/redis/l1-switches';
 import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
 import { foldUserMultipliers } from '~/server/redis/user-multipliers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
@@ -274,35 +278,45 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
     return Object.fromEntries(cosmetics.map((x) => [x.id, x]));
   },
   ttl: CacheTTL.day,
+  // L1 only while COSMETICS_L1 is on. Admin edits refresh Redis and this process's L1 but there is
+  // no cross-process bust, so other processes can serve the previous value for up to the L1 TTL.
+  // Readers that hide content on `flags` or cache the result for long read with `bypassLocal`.
+  localTtl: cosmeticsLocalTtl,
+  localMax: 20000,
+  localMaxBytes: L1_CACHE_BYTE_BUDGETS.cosmetics,
 });
+
+/** A user whose profile picture may not be served gets no entry, the same as a user with none. */
+export async function lookupProfilePictures(ids: (number | undefined)[], fromWrite?: boolean) {
+  const goodIds = ids.filter(isDefined);
+  if (!goodIds.length) return {};
+  const db = fromWrite ? dbWrite : dbRead;
+  const profilePictures = await db.$queryRaw<ProfileImage[]>`
+    SELECT
+      i.id,
+      i.name,
+      i.url,
+      i."nsfwLevel",
+      i.hash,
+      i."userId",
+      i.ingestion,
+      i.type,
+      i.width,
+      i.height,
+      i.metadata
+    FROM "User" u
+    JOIN "Image" i ON i.id = u."profilePictureId"
+    WHERE u.id IN (${Prisma.join(goodIds)})
+      AND ${servableProfilePictureSql}
+  `;
+  return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
+}
 
 export const profilePictureCache = createCachedObject<ProfileImage>({
   key: REDIS_KEYS.CACHES.PROFILE_PICTURES,
   idKey: 'userId',
   staleWhileRevalidate: false, // To avoid delay in creator seeing their new profile picture
-  lookupFn: async (ids, fromWrite) => {
-    const goodIds = (ids as (number | undefined)[]).filter(isDefined);
-    if (!goodIds.length) return {};
-    const db = fromWrite ? dbWrite : dbRead;
-    const profilePictures = await db.$queryRaw<ProfileImage[]>`
-      SELECT
-        i.id,
-        i.name,
-        i.url,
-        i."nsfwLevel",
-        i.hash,
-        i."userId",
-        i.ingestion,
-        i.type,
-        i.width,
-        i.height,
-        i.metadata
-      FROM "User" u
-      JOIN "Image" i ON i.id = u."profilePictureId"
-      WHERE u.id IN (${Prisma.join(goodIds)})
-    `;
-    return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
-  },
+  lookupFn: (ids, fromWrite) => lookupProfilePictures(ids as (number | undefined)[], fromWrite),
   ttl: CacheTTL.day,
 });
 
@@ -318,7 +332,9 @@ export const cosmeticEntityCaches = Object.fromEntries(
     createCachedObject<ContentDecorationCosmetic>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
-      cacheNotFound: false,
+      // Caches "no frame" for an hour while FRAME_CACHE_NEGATIVE is on. Every writer that puts a frame on content must call refresh(), which overwrites or removes the marker; one that does not stays hidden up to an hour.
+      cacheNotFound: () => isFlipt(FLIPT_FEATURE_FLAGS.FRAME_CACHE_NEGATIVE),
+      notFoundTtl: CacheTTL.hour,
       staleWhileRevalidate: false,
       // Lookup reads the primary, so the bust window guards no replica read; keep it minimal.
       debounceTime: 1,
@@ -361,13 +377,13 @@ export const cosmeticEntityCaches = Object.fromEntries(
           record.id = rawRecord.cosmeticId;
           delete (record as any).cosmeticId;
 
-          // Add userData to the data field
-          record.data = cosmetic.data as ContentDecorationCosmetic['data'];
-          if (rawRecord.userData) {
-            const userData = rawRecord.userData as ContentDecorationCosmetic['data'];
-            if (userData.lights) record.data.lights = userData.lights;
-            delete (record as any).userData;
-          }
+          // Add userData to the data field. `cosmetic.data` is the cosmetics2 entry's own object,
+          // shared by every record in this batch that wears it and, while that cache's L1 is on, by
+          // every request this process serves, so a wearer's lights go on a copy, never on it.
+          const data = cosmetic.data as ContentDecorationCosmetic['data'];
+          const userData = rawRecord.userData as ContentDecorationCosmetic['data'] | null;
+          record.data = userData?.lights ? { ...data, lights: userData.lights } : data;
+          if (rawRecord.userData) delete (record as any).userData;
         }
       },
       ttl: CacheTTL.day,
@@ -406,7 +422,11 @@ export const eventDecorationEntityCaches = Object.fromEntries(
             AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
             AND jsonb_typeof(c.data->'event') = 'string';
         `;
-        const cosmetics = await cosmeticCache.fetch([...new Set(rows.map((x) => x.cosmeticId))]);
+        // Past this process's cosmetics2 L1: what this builds is cached for a day, so a copy up to
+        // the L1 TTL old would outlive the edit that a refresh of cosmetics2 already put in Redis.
+        const cosmetics = await cosmeticCache.fetch([...new Set(rows.map((x) => x.cosmeticId))], {
+          bypassLocal: true,
+        });
         const result: Record<number, WornEventDecoration> = {};
         for (const row of rows) {
           const cosmetic = cosmetics[row.cosmeticId];
@@ -621,22 +641,18 @@ export const tagCache = createCachedObject<TagLookup>({
     );
   },
   ttl: CacheTTL.day,
-  // L1: the tag catalog is a small, near-static, SHARED universe keyed by tag id, so a
-  // per-pod L1 sized to hold the hot catalog reaches a near-100% feed hit ratio and
-  // removes tagCache's per-id Redis GET fan-out. The 1d Redis TTL dwarfs a 30s L1.
-  // BEHAVIOR-AUDIT (2026-07): the value carries nsfwLevel + unlisted. Every reader was
-  // grepped — neither field feeds a HARD content-visibility gate on the feed. Readers
-  // use tag NAMES for display (getTagNamesForImages, search-index tagNames), tag id/name
-  // for category filtering (model.service), and `unlisted` ONLY in stripUnlistedTags —
-  // a non-moderator filter on the model VOTABLE-TAGS panel (a tag-label surface, not
-  // image/content visibility; the ImageTag SQL view already drops unlisted at the DB
-  // layer, and moderators bypass it). Image/model visibility is gated by the entity's
-  // OWN nsfwLevel, never the tag's. So a ≤30s L1 delay on a busted tag-level/unlisted
-  // edit is a cosmetic tag-label lag, not a moderation-visibility bug. localTtl kept
-  // conservative (30s) given that (minor) mod-adjacent surface; hit ratio is driven by
-  // catalog coverage (localMax), not localTtl. Busted per-id on mod tag-level changes
-  // (adjust-tag-level.ts) — dropped from THIS pod's L1, ≤30s cross-pod lag accepted.
-  localTtl: 30,
+  // L1: the tag catalog is small, near-static and shared by every reader, so an L1 sized to hold
+  // the hot catalog (localMax) removes tagCache's per-id Redis read fan-out.
+  //
+  // localTtl is 30s, or 300s while BASIC_TAGS_L1_LONG_TTL is on. A busted tag-level or unlisted
+  // edit (adjust-tag-level.ts, the only bust) is dropped from the editing process's L1 and reaches
+  // other processes after at most that long. Readers: tag names for display (getTagNamesForImages,
+  // the images search index), modelTagCache's tags (category filtering in model.service, and the
+  // model page's tag list, which drops `unlisted` tags), and stripUnlistedTags (`unlisted`, on the
+  // non-moderator votable-tags panel). These are label surfaces: image and model visibility is
+  // gated on the entity's own nsfwLevel, never the tag's. `type` also decides which Rekognition tag
+  // ids tagIdsForImagesCache keeps, a value that cache holds for hours.
+  localTtl: basicTagsLocalTtl,
   localMax: 100000,
   localMaxBytes: L1_CACHE_BYTE_BUDGETS.basicTags,
 });
@@ -944,65 +960,22 @@ export const userModel3DCountPublicCache = createUserContentCountCache<UserModel
 type UserImageVideoCount = { id: number; imageCount: number; videoCount: number };
 export const userImageVideoCountCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount',
-  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
-    SELECT
-      "userId" as id,
-      COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
-      COALESCE(SUM(IIF("type" = 'video', 1, 0)), 0)::INT as "videoCount"
-    FROM "Image"
-    WHERE "userId" IN (${Prisma.join(userIds)})
-      AND "ingestion" = 'Scanned'
-      AND "needsReview" IS NULL
-      AND "postId" NOT IN (
-        SELECT id
-        FROM "Post"
-        WHERE "userId" IN (${Prisma.join(userIds)})
-          AND ("publishedAt" IS NULL OR availability = 'Private' OR "publishedAt" > NOW())
-      )
-    GROUP BY "userId"
-  `
+  async (userIds, fromWrite) =>
+    (fromWrite ? dbWrite : dbRead).$queryRaw(userImageVideoCountQuery(userIds))
 );
 export const userImageVideoCountSfwCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount:sfw',
-  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
-    SELECT
-      "userId" as id,
-      COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
-      COALESCE(SUM(IIF("type" = 'video', 1, 0)), 0)::INT as "videoCount"
-    FROM "Image"
-    WHERE "userId" IN (${Prisma.join(userIds)})
-      AND "ingestion" = 'Scanned'
-      AND "needsReview" IS NULL
-      AND ("nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
-      AND "postId" NOT IN (
-        SELECT id
-        FROM "Post"
-        WHERE "userId" IN (${Prisma.join(userIds)})
-          AND ("publishedAt" IS NULL OR availability = 'Private' OR "publishedAt" > NOW())
-      )
-    GROUP BY "userId"
-  `
+  async (userIds, fromWrite) =>
+    (fromWrite ? dbWrite : dbRead).$queryRaw(
+      userImageVideoCountQuery(userIds, sfwBrowsingLevelsFlag)
+    )
 );
 export const userImageVideoCountPublicCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount:public',
-  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
-    SELECT
-      "userId" as id,
-      COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
-      COALESCE(SUM(IIF("type" = 'video', 1, 0)), 0)::INT as "videoCount"
-    FROM "Image"
-    WHERE "userId" IN (${Prisma.join(userIds)})
-      AND "ingestion" = 'Scanned'
-      AND "needsReview" IS NULL
-      AND ("nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0
-      AND "postId" NOT IN (
-        SELECT id
-        FROM "Post"
-        WHERE "userId" IN (${Prisma.join(userIds)})
-          AND ("publishedAt" IS NULL OR availability = 'Private' OR "publishedAt" > NOW())
-      )
-    GROUP BY "userId"
-  `
+  async (userIds, fromWrite) =>
+    (fromWrite ? dbWrite : dbRead).$queryRaw(
+      userImageVideoCountQuery(userIds, publicBrowsingLevelsFlag)
+    )
 );
 
 const userImageVideoCountVariants = [
@@ -1249,8 +1222,15 @@ export const userHasReceivedReviewsCache = createUserContentCountCache<UserHasRe
     INNER JOIN "ResourceReview" r ON r."modelId" = m.id
     WHERE m."userId" IN (${Prisma.join(userIds)})
       AND r."userId" != m."userId"
+      AND ${Prisma.raw(visibleReviewSql('r'))}
   `
 );
+
+/** For the model owners of reviews that were just released or hidden again. */
+export async function refreshHasReceivedReviews(reviews: { modelOwnerId: number }[]) {
+  const ownerIds = [...new Set(reviews.map((review) => review.modelOwnerId))];
+  if (ownerIds.length) await userHasReceivedReviewsCache.refresh(ownerIds);
+}
 
 type UserContentOverview = {
   id: number;
@@ -1802,15 +1782,11 @@ type ImageTagsCacheItem = {
 };
 
 /**
- * The rows behind `imageTagsCache`. With `kysely-hot-reads-2` on they read through Kysely, on the
- * same database: the primary for a write-triggered refresh, the replica otherwise.
+ * The rows behind `imageTagsCache`: the primary for a write-triggered refresh, the replica otherwise.
  */
 export async function readImageTagsForImages(ids: number[], fromWrite?: boolean) {
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2)) {
-    const { kyselyRead, kyselyWrite } = await loadKyselyDb();
-    return readImageTagsViaKysely(fromWrite ? kyselyWrite : kyselyRead, ids);
-  }
-  return readImageTagsViaPrisma(fromWrite ? dbWrite : dbRead, ids);
+  const { kyselyRead, kyselyWrite } = await loadKyselyDb();
+  return readImageTagsViaKysely(fromWrite ? kyselyWrite : kyselyRead, ids);
 }
 
 export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({

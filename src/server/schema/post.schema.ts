@@ -4,14 +4,16 @@ import {
   POST_BATCH_CHUNK_POSTS,
   POST_BATCH_MAX_POSTS,
 } from '@civitai/shared/post-scheduling';
-import { CacheTTL, constants, POST_IMAGE_LIMIT, POST_TAG_LIMIT } from '~/server/common/constants';
+import {
+  constants,
+  POST_IMAGE_LIMIT,
+  POST_TAG_LIMIT,
+  POST_TITLE_MAX_LENGTH,
+} from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
-import type { RateLimit } from '~/server/middleware.trpc';
+import { usageLimits } from '~/shared/constants/usage-limits';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
 import { jumpToMonthSchema } from '~/shared/utils/jump-to-month';
-import { toStringList } from '~/utils/array-helpers';
-import { isBetweenToday } from '~/utils/date-helpers';
-import { numberWithCommas } from '~/utils/number-helpers';
 import {
   imageInputSchema,
   imageMetaSchema,
@@ -19,122 +21,13 @@ import {
 } from '~/server/schema/image.schema';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
-import type { SessionUser } from '~/types/session';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray, numericStringArray } from '~/utils/zod-helpers';
 
-// Post creation was historically unthrottled (unlike comments/reactions/article
-// creation). The MCP/API "prompt-to-post" flow makes unlimited automated posting
-// trivial, so apply sane ceilings here. Moderators and dev/test are skipped by the
-// rateLimit() middleware.
-//
-// NOTE on the middleware: for a given period it keeps the HIGHEST limit among the
-// rules whose userReq passes. So a tighter cap for a sub-group can't share a period
-// with a looser base rule (the looser one would win). The new-account clamp therefore
-// lives on the `hour` period, which no base/established rule uses (mirrors
-// articleRateLimits). Daily ceilings tier UP by reputation, and members get
-// MEMBER_DAILY_POST_MULTIPLIER times each tier. That takes one member rule PER tier:
-// a single member rule would be one number, beaten by the higher reputation tiers.
-export const dailyPostTiers = [
-  { minScore: 0, limit: 20 },
-  { minScore: 1000, limit: 60 },
-  { minScore: 5000, limit: 150 },
-];
-export const MEMBER_DAILY_POST_MULTIPLIER = 2;
-
-const multiplierWords: Record<number, string> = { 2: 'double', 3: 'triple' };
-
-/** What the daily rule refusing this caller says: their own limit, and only the rises still ahead. */
-function dailyPostLimitMessage({
-  minScore,
-  limit,
-  member,
-}: {
-  minScore: number;
-  limit: number;
-  member: boolean;
-}) {
-  const higher = dailyPostTiers
-    .filter((tier) => tier.minScore > minScore)
-    .map((tier) => numberWithCommas(tier.minScore));
-  const rise = higher.length
-    ? `Limits rise at ${
-        higher.length === 1 ? 'a Creator Score' : 'Creator Scores'
-      } of ${toStringList(higher)}`
-    : undefined;
-  const memberShare = member
-    ? undefined
-    : `members get ${
-        multiplierWords[MEMBER_DAILY_POST_MULTIPLIER] ??
-        `${MEMBER_DAILY_POST_MULTIPLIER} times as many`
-      }`;
-  const ahead = [rise, memberShare].filter(isDefined).join(', and ');
-
-  return [
-    `You've reached today's limit of ${numberWithCommas(limit)} posts.`,
-    ahead && `${ahead.charAt(0).toUpperCase()}${ahead.slice(1)}.`,
-  ]
-    .filter(Boolean)
-    .join(' ');
-}
-
-const hasReputation = (user: SessionUser, minScore: number) =>
-  (user.meta?.scores?.total ?? 0) >= minScore;
-const isPaidMember = (user: SessionUser) => !!user.tier && user.tier !== 'free';
-
-/**
- * The daily post cap `postRateLimits` ends up applying to this user: the highest reputation tier
- * they meet, scaled by `MEMBER_DAILY_POST_MULTIPLIER` for members. Batch scheduling counts
- * scheduled posts against it on the day they go live (`validateBatchSchedule`), so it needs the
- * number, not the middleware's refusal.
- */
-export function getDailyPostLimit(user: SessionUser): number {
-  const tier = dailyPostTiers.reduce(
-    (best, candidate) =>
-      hasReputation(user, candidate.minScore) && candidate.limit > best.limit ? candidate : best,
-    dailyPostTiers[0]
-  );
-  return isPaidMember(user) ? tier.limit * MEMBER_DAILY_POST_MULTIPLIER : tier.limit;
-}
-
-export const postRateLimits: RateLimit[] = [
-  // Newly created accounts: tight hourly clamp for the rest of the calendar day
-  // they sign up (isBetweenToday = same-day membership, matching articleRateLimits).
-  // Not overridden because no other rule uses the hour period.
-  {
-    limit: 2,
-    period: CacheTTL.hour,
-    userReq: (user) => !!user.createdAt && isBetweenToday(user.createdAt),
-    errorMessage: 'New accounts have a lower hourly posting limit on their first day.',
-  },
-  // The minScore-0 tier must stay unconditional: a user matching no daily rule has
-  // no daily limit at all.
-  ...dailyPostTiers.flatMap(({ minScore, limit }): RateLimit[] => [
-    {
-      limit,
-      period: CacheTTL.day,
-      userReq: minScore > 0 ? (user) => hasReputation(user, minScore) : undefined,
-      errorMessage: dailyPostLimitMessage({ minScore, limit, member: false }),
-    },
-    {
-      limit: limit * MEMBER_DAILY_POST_MULTIPLIER,
-      period: CacheTTL.day,
-      userReq: (user) => isPaidMember(user) && hasReputation(user, minScore),
-      errorMessage: dailyPostLimitMessage({
-        minScore,
-        limit: limit * MEMBER_DAILY_POST_MULTIPLIER,
-        member: true,
-      }),
-    },
-  ]),
-];
-
-export function isDailyPostLimitMessage(message: string) {
-  return postRateLimits.some(
-    (rule) => rule.period === CacheTTL.day && rule.errorMessage === message
-  );
-}
+/** The one bucket every post-creating procedure counts against, and the usage-limits read reads. */
+export const POST_CREATE_RATE_LIMIT_KEY = 'post:create';
+export const postRateLimits = usageLimits('posts.hourly', 'posts.daily');
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
 export const postsFilterSchema = z.object({
@@ -148,6 +41,9 @@ export const postsFilterSchema = z.object({
 const postInclude = z.enum(['cosmetics']);
 export type ImageInclude = z.infer<typeof postInclude>;
 export type PostsQueryInput = z.infer<typeof postsQuerySchema>;
+export type GetPostResourceCoversInput = z.infer<typeof getPostResourceCoversSchema>;
+export const getPostResourceCoversSchema = baseQuerySchema.extend({ id: z.number() });
+
 export const postsQuerySchema = baseQuerySchema.merge(
   postsFilterSchema.extend({
     limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).default(100),
@@ -162,6 +58,9 @@ export const postsQuerySchema = baseQuerySchema.merge(
       .string()
       .transform((data) => postgresSlugify(data))
       .nullish(),
+    // Scopes to this account and wins over `username`: some older usernames hold characters the
+    // slug above strips, so their profile can only name them by id.
+    userId: z.number().int().positive().max(2147483647).optional(),
     modelVersionId: z.number().optional(),
     ids: z.array(z.number()).optional(),
     collectionId: z.number().optional(),
@@ -423,9 +322,15 @@ export const scheduleBatchImageSchema = addPostImageSchema
 export const scheduleBatchPostSchema = z.object({
   /** Stable for one post across every attempt to create it, so a retry is recognised. */
   clientKey: z.string().uuid().optional(),
-  title: z.string().trim().max(255).nullish(),
+  title: z.string().trim().max(POST_TITLE_MAX_LENGTH).nullish(),
   publishedAt: z.coerce.date(),
   images: z.array(scheduleBatchImageSchema).min(1).max(POST_IMAGE_LIMIT),
+});
+
+/** The upload keys a restored batch draft holds; at most the key-check cap (`MAX_KEYS`) at once. */
+export const BATCH_DRAFT_KEYS_PER_CHECK = 64;
+export const checkBatchDraftKeysSchema = z.object({
+  keys: z.array(z.string().uuid()).min(1).max(BATCH_DRAFT_KEYS_PER_CHECK),
 });
 
 export type ScheduleBatchInput = z.infer<typeof scheduleBatchSchema>;

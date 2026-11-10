@@ -8,5 +8,7 @@ import type { SessionKeys } from './session-registry';
 export const SESSION_REGISTRY_KEYS: SessionKeys = {
   tokenState: REDIS_SYS_KEYS.SESSION.TOKEN_STATE,
   all: REDIS_SYS_KEYS.SESSION.ALL,
+  familyState: REDIS_SYS_KEYS.SESSION.FAMILY_STATE,
+  userCut: REDIS_SYS_KEYS.SESSION.USER_CUT,
   userTokens: REDIS_KEYS.SESSION.USER_TOKENS,
 };

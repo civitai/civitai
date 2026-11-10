@@ -54,7 +54,10 @@ describe('390px: user text and labels cannot widen the page', () => {
     const texts = [
       'routes/ratings/RatingDisputeDetail.svelte',
       'routes/ratings/ScannedTextCard.svelte',
-    ].flatMap((file) => find(file, (t) => has(classOf(t), 'whitespace-pre-wrap')));
+    ].flatMap((file) =>
+      // HighlightedText renders the pre-wrapped text; its breaking class is passed in from here.
+      find(file, (t) => has(classOf(t), 'whitespace-pre-wrap') || t.name === 'HighlightedText')
+    );
     expect(texts.length).toBe(4);
     for (const { tag } of texts) expect(breaks(classOf(tag)), tag.raw).toBe(true);
   });

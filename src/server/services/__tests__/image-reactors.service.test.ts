@@ -1,16 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getBasicDataForUsers, getProfilePicturesForUsers } = vi.hoisted(() => ({
-  getBasicDataForUsers: vi.fn(async (..._a: unknown[]): Promise<Record<number, unknown>> => ({})),
-  getProfilePicturesForUsers: vi.fn(
-    async (..._a: unknown[]): Promise<Record<number, unknown>> => ({})
-  ),
-}));
+const { getBasicDataForUsers, getProfilePicturesForUsers, getMetricExcludedUserIds } = vi.hoisted(
+  () => ({
+    getBasicDataForUsers: vi.fn(async (..._a: unknown[]): Promise<Record<number, unknown>> => ({})),
+    getProfilePicturesForUsers: vi.fn(
+      async (..._a: unknown[]): Promise<Record<number, unknown>> => ({})
+    ),
+    getMetricExcludedUserIds: vi.fn(async (): Promise<number[]> => []),
+  })
+);
 
 vi.mock('~/server/services/user.service', () => ({
   getBasicDataForUsers,
   getProfilePicturesForUsers,
 }));
+
+vi.mock('~/server/services/metric-excluded-users.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof MetricExcludedUsers>()),
+  getMetricExcludedUserIds,
+}));
+
+import type * as MetricExcludedUsers from '~/server/services/metric-excluded-users.service';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
@@ -33,7 +43,8 @@ type Row = { userId: number; reaction: string };
  * `select`ed columns, so the access decision is made by the code under test, not by the fake, and a column the code
  * forgets to select arrives as undefined exactly as it would from Prisma. The reaction read binds `"imageId" =` from
  * the SQL and returns rows only for that image, so a query that loses or misbinds its image filter returns another
- * image's reactors and the tests below see them.
+ * image's reactors and the tests below see them. A `NOT ("userId" = ANY(...))` fragment drops those users, as
+ * Postgres would, so a query that forgets to apply it returns them.
  */
 function installFakeDb(
   rowsByImage: Record<number, Row[]>,
@@ -42,7 +53,13 @@ function installFakeDb(
     blockedFor: null,
   }
 ) {
-  const reactionReads: { text: string; imageId: unknown; filter: unknown; limit: unknown }[] = [];
+  const reactionReads: {
+    text: string;
+    imageId: unknown;
+    filter: unknown;
+    excluded: number[] | undefined;
+    limit: unknown;
+  }[] = [];
 
   dbMock.dbRead.image.findUnique.mockImplementation(
     async ({ where, select }: { where: { id: number }; select: Record<string, boolean> }) => {
@@ -57,13 +74,22 @@ function installFakeDb(
       const text = strings.join('?');
       let imageId: unknown;
       let filter: unknown;
+      let excluded: number[] | undefined;
       strings.forEach((s, i) => {
         if (/"imageId" = $/.test(s)) imageId = values[i];
         if (/reaction::text IN \($/.test(s)) filter = values[i];
       });
-      reactionReads.push({ text, imageId, filter, limit: values.at(-1) });
-      if (typeof imageId !== 'number') return Object.values(rowsByImage).flat();
-      return rowsByImage[imageId] ?? [];
+      for (const v of values) {
+        const fragment = v as { strings?: string[]; values?: unknown[] } | null;
+        if (fragment?.strings && /NOT \("userId" = ANY\(\s*$/.test(fragment.strings[0]))
+          excluded = fragment.values?.[0] as number[];
+      }
+      reactionReads.push({ text, imageId, filter, excluded, limit: values.at(-1) });
+      const rows =
+        typeof imageId !== 'number'
+          ? Object.values(rowsByImage).flat()
+          : rowsByImage[imageId] ?? [];
+      return rows.filter((r) => !excluded?.includes(r.userId)).slice(0, values.at(-1) as number);
     }
   );
   return { reactionReads };
@@ -76,6 +102,7 @@ beforeEach(() => {
   dbMock.dbRead.user.findUnique.mockResolvedValue(null);
   getBasicDataForUsers.mockResolvedValue({});
   getProfilePicturesForUsers.mockResolvedValue({});
+  getMetricExcludedUserIds.mockResolvedValue([]);
 });
 
 describe('getImageReactors — owner only, not for a removed image', () => {
@@ -87,6 +114,7 @@ describe('getImageReactors — owner only, not for a removed image', () => {
     });
     expect(reactionReads).toEqual([]);
     expect(getBasicDataForUsers).not.toHaveBeenCalled();
+    expect(getMetricExcludedUserIds).not.toHaveBeenCalled();
   });
 
   it('refuses a moderator who is not the owner: reactor identities are the owner’s alone', async () => {
@@ -216,6 +244,52 @@ describe('getImageReactors — owner only, not for a removed image', () => {
 
     const result = await getImageReactors({ imageId: IMAGE_ID, userId: OWNER });
     expect(result.map((r) => r.profilePicture)).toEqual([null, null]);
+  });
+});
+
+describe('getImageReactors — agrees with the reaction totals', () => {
+  const twoReactors = () => {
+    const fake = installFakeDb({
+      [IMAGE_ID]: [
+        { userId: 30, reaction: 'Like' },
+        { userId: 20, reaction: 'Heart' },
+      ],
+    });
+    getBasicDataForUsers.mockResolvedValue({
+      30: { id: 30, username: 'not-counted', deletedAt: null, image: null },
+      20: { id: 20, username: 'counted', deletedAt: null, image: null },
+    });
+    return fake;
+  };
+
+  it('leaves out a reactor not counted in the totals, and keeps one who is', async () => {
+    twoReactors();
+    getMetricExcludedUserIds.mockResolvedValue([30]);
+
+    const result = await getImageReactors({ imageId: IMAGE_ID, userId: OWNER });
+    expect(result.map((r) => r.username)).toEqual(['counted']);
+    expect(getBasicDataForUsers).toHaveBeenCalledWith([20]);
+  });
+
+  it('fills the page from below when the newest reactors are not counted', async () => {
+    // Every reactor used all four types, so the row LIMIT holds exactly the first page of users.
+    const rows = Array.from({ length: IMAGE_REACTORS_LIMIT + 3 }, (_, i) =>
+      IMAGE_REACTOR_TYPES.map((reaction) => ({ userId: 1000 - i, reaction }))
+    ).flat();
+    installFakeDb({ [IMAGE_ID]: rows });
+    getMetricExcludedUserIds.mockResolvedValue([1000, 999, 998]);
+
+    const result = await getImageReactors({ imageId: IMAGE_ID, userId: OWNER });
+    expect(result).toHaveLength(IMAGE_REACTORS_LIMIT);
+    expect(result.map((r) => r.userId)).not.toContain(1000);
+  });
+
+  it('lists everyone with an unfiltered query when the list is empty or unavailable', async () => {
+    const { reactionReads } = twoReactors();
+
+    const result = await getImageReactors({ imageId: IMAGE_ID, userId: OWNER });
+    expect(result.map((r) => r.username)).toEqual(['not-counted', 'counted']);
+    expect(reactionReads[0].excluded).toBeUndefined();
   });
 });
 

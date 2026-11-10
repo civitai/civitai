@@ -10,6 +10,7 @@ vi.hoisted(() => {
 });
 
 import { MetricService } from '../../../../event-engine-common/services/metrics';
+import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 
 // A `metrics:<type>:<id>` entry is a ClickHouse snapshot plus the watcher's live increments, and an
 // increment that never lands is never re-applied. Hot entries slide their TTL, so before this an
@@ -24,38 +25,39 @@ const lockKey = (id: number) => `metrics:lock:Image:${id}`;
 
 type Hash = Record<string, string>;
 
+// MetricService's scripts (the stampede lock, the stamped replace) run as real Lua.
 function fakeRedis() {
-  const hashes = new Map<string, Hash>();
   const strings = new Map<string, string>();
+  const lua = createLuaRedis(Date.now(), { strings });
+  const call = (command: string, key: string, ...args: string[]) =>
+    lua.eval(`return redis.call('${command}', KEYS[1], unpack(ARGV))`, {
+      keys: [key],
+      arguments: args,
+    });
   const client = {
-    hGetAll: vi.fn(async (key: string) => ({ ...(hashes.get(key) ?? {}) })),
+    hGetAll: vi.fn(async (key: string) => ({ ...(lua.hash(key) ?? {}) })),
     expire: vi.fn(async () => 1),
-    del: vi.fn(async (key: string) => Number(hashes.delete(key) || strings.delete(key))),
-    // The only script MetricService runs is the stampede lock's SET NX.
-    eval: vi.fn(
-      async (
-        script: string,
-        { keys, arguments: args }: { keys: string[]; arguments: string[] }
-      ) => {
-        if (!script.includes("'NX'")) throw new Error(`unexpected script: ${script}`);
-        if (strings.has(keys[0])) return 0;
-        strings.set(keys[0], args[0]);
-        return 1;
-      }
-    ),
+    del: vi.fn((key: string) => call('DEL', key)),
+    eval: lua.eval,
+    // hReplaceEx's pipeline, used for a miss with no ClickHouse row.
     multi: () => {
-      const ops: (() => void)[] = [];
+      const ops: (() => Promise<unknown>)[] = [];
       const multi = {
-        del: (key: string) => (ops.push(() => hashes.delete(key)), multi),
+        del: (key: string) => (ops.push(() => call('DEL', key)), multi),
         hSet: (key: string, fields: Hash) => (
-          ops.push(() => hashes.set(key, { ...(hashes.get(key) ?? {}), ...fields })), multi
+          ops.push(() => call('HSET', key, ...Object.entries(fields).flat())), multi
         ),
         expire: () => multi,
-        exec: async () => ops.map((op) => op()),
+        exec: async () => {
+          const results = [];
+          for (const op of ops) results.push(await op());
+          return results;
+        },
       };
       return multi;
     },
   };
+  const hashes = { get: lua.hash, set: lua.setHash };
   return { client: client as unknown as IRedisClient, hashes, strings };
 }
 

@@ -9,6 +9,8 @@ export enum FLIPT_FEATURE_FLAGS {
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   // Mirrors `ratingDispute`, for the scan-completion auto-approve of every other entity.
   RATING_DISPUTE = 'rating-dispute',
+  // Percentage rollout keyed on the image id: the share of scanned images sampled.
+  SHADOW_SEXUAL_PROMPT = 'shadow-sexual-prompt',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
@@ -19,6 +21,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Under FEED_SERVICE_PRIMARY, also serves hub feeds from the feed service. Off or
   // missing, a hub stays on Meilisearch while every other shape follows the flag above.
   FEED_SERVICE_HUBS = 'feed-service-hubs',
+  // The image feed without Meilisearch: every website and REST image-feed request goes to the feed
+  // service, whatever the three flags above say, and what the feed cannot serve is answered without
+  // the search index (an empty page, a retryable 503, or a 400 for a sort it does not have) instead
+  // of falling back. Off or missing, the flags above decide as before.
+  FEED_SERVICE_MEILI_OFF = 'feed-service-meili-off',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
   // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
@@ -44,54 +51,58 @@ export enum FLIPT_FEATURE_FLAGS {
   //    maps a pool timeout to TIMEOUT.
   // The ON window therefore also changes `pgDbRead` contention, not only query-engine CPU.
   KYSELY_IMAGE_REACTIONS = 'kysely-image-reactions',
-  // Reads the placement/sticker read family (packages/civitai-db-queries/src/placement.db.ts)
-  // through Kysely-over-pg instead of the Prisma query engine: the space resolution behind every
-  // placement surface, the price range, getCapTier, the free-placement display counts, the pending
-  // badge counts and the sticker listing/counts. DEFAULT-OFF, same semantics as
-  // KYSELY_IMAGE_REACTIONS above: boolean only, evaluated with no entityId.
-  //
-  // 🔴 Each read keeps its database: a `dbWrite` read (the target/owner lookup, the space rows and
-  // getCapTier, which decide whether a placement is allowed and what it costs) moves to
-  // `kyselyWrite` over the shared `pgDbWrite` pool; a `dbRead` read moves to `kyselyRead` over
-  // `pgDbRead`. The counts inside the free-placement claim transaction never switch — they decide
-  // under advisory locks on the Prisma `tx`.
+  // The reads in packages/civitai-db-queries/src/hot-reads-7.db.ts, through Kysely instead of Prisma.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
   // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
-  // this is evaluated on every image detail view's space resolution and every session's badge
-  // counts.
+  // several of these reads run on most feed pages.
   //
-  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` AND `pgDbWrite`. Their acquire wait is
-  // `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER (packages/civitai-db/src/env.ts), where
-  // Prisma's pool times out, so the environment must set a non-zero value before flipping. Failures
-  // surface as pg errors, not Prisma P2024/P1008, so `prismaErrorToTrpcCode` no longer maps a pool
-  // timeout to TIMEOUT. The ON window also changes contention on both pg pools, the writer's
-  // included, not only query-engine CPU.
-  KYSELY_PLACEMENT_READS = 'kysely-placement-reads',
-  // Reads two hot nested Prisma reads (packages/civitai-db-queries/src/hot-reads.db.ts) through
-  // Kysely-over-pg instead of the Prisma query engine, which fans each out into one query per
-  // relation: the model page's `modelWithDetailsSelect` read (`getModel`) and the creator card
-  // (`fetchUserCreator`); plus the image tags behind `imageTagsCache` and an image's comment-thread
-  // lookup (commentsv2.service). DEFAULT-OFF, same semantics as KYSELY_IMAGE_REACTIONS above:
-  // boolean only, evaluated with no entityId.
-  //
-  // 🔴 Each read keeps its database: the model read takes `getKyselyWithoutLag('model', id)`, the
-  // same lag decision `getDbWithoutLag('model', id)` made for Prisma; the image tags read the
-  // primary on a write-triggered refresh and the replica otherwise, as before; the creator card and
-  // the thread lookup read `kyselyRead`, as they read `dbRead`.
-  // Each read runs its statements one after another on ONE pooled connection (the model page up to
-  // four, the creator card two), and every VIEW ("UserStat", "ModelReportStat", "GenerationCoverage",
-  // "ImageTag") is filtered by its key as a parameter, never reached through a join.
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead`. Its acquire wait is
+  // `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER (packages/civitai-db/src/env.ts), so the
+  // environment must set a non-zero value before flipping. Failures surface as pg errors, not
+  // Prisma P2024/P1008.
+  KYSELY_HOT_READS_7 = 'kysely-hot-reads-7',
+  // The reads in packages/civitai-db-queries/src/hot-reads-8.db.ts, through Kysely instead of Prisma.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
-  // this is evaluated on every model page and every creator-card cache miss.
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // the storyline read runs on most feed pages.
   //
-  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (and `pgDbWrite` for a lag-flagged
-  // model). Their acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
-  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
-  // Failures surface as pg errors, not Prisma P2024/P1008.
-  KYSELY_HOT_READS_2 = 'kysely-hot-reads-2',
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead`. Its acquire wait is
+  // `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER (packages/civitai-db/src/env.ts), so the
+  // environment must set a non-zero value before flipping. Failures surface as pg errors, not
+  // Prisma P2024/P1008.
+  KYSELY_HOT_READS_8 = 'kysely-hot-reads-8',
+  // The user profile read (`getUserWithProfile`, userProfile.get) through
+  // packages/civitai-db-queries/src/hot-reads-9.db.ts: one Kysely statement in place of Prisma's
+  // one per relation. Evaluated with no entity id, once per call.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // this read runs on every profile page view.
+  //
+  // 🔴 ON MOVES THIS READ OFF PRISMA'S PRIMARY POOL ONTO `pgDbWrite` (kyselyWrite), keeping it on
+  // the primary as the Prisma read is. That pool's acquire wait is `DATABASE_CONNECTION_TIMEOUT`,
+  // default 0 = WAIT FOREVER (packages/civitai-db/src/env.ts), so the environment must set a
+  // non-zero value before flipping. Failures surface as pg errors, not Prisma P2024/P1008; a
+  // missing user still rejects with P2025 (NOT_FOUND).
+  KYSELY_HOT_READS_9 = 'kysely-hot-reads-9',
+  // The collection read (`getCollectionById`: collection.getById, the collection pages, home
+  // blocks, the v1 collection endpoints) through packages/civitai-db-queries/src/hot-reads-10.db.ts:
+  // one Kysely statement in place of Prisma's one per relation. Evaluated with no entity id, once
+  // per call.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // this read runs on every collection page view.
+  //
+  // 🔴 ON MOVES THIS READ OFF PRISMA'S POOLS ONTO `pgDbRead` (kyselyRead), or `pgDbWrite`
+  // (kyselyWrite) when the replication-lag check sent the Prisma read to the primary. Those pools'
+  // acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
+  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before
+  // flipping. Failures surface as pg errors, not Prisma P2024/P1008; a missing collection still
+  // throws NOT_FOUND.
+  KYSELY_HOT_READS_10 = 'kysely-hot-reads-10',
   // ON skips `getImagesForModelVersionCache`'s per-entry tag lookup, which is keyed by model
   // version ids as if they were image ids (so a hit attaches an unrelated image's tags) and whose
   // result no consumer reads. Evaluated without a user id on every call.
@@ -99,6 +110,38 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
   // key makes `evaluateBoolean` throw and log on every call.
   MODEL_VERSION_IMAGES_SKIP_TAGS = 'model-version-images-skip-tags',
+  // ON skips `getModelHandler`'s read of the owner's posts on the versions (`modelVersions[].posts`)
+  // when the viewer is neither the owner nor a moderator, returning `posts: []` on every version —
+  // what an owner with no posts gets. Every client reader of that field is owner- or
+  // moderator-only (the publish/republish buttons, the version list's problem icons and menu, the
+  // model wizard). Owners and moderators are unchanged. Boolean, evaluated with no entityId, and
+  // only for a viewer who is neither.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
+  // key makes `evaluateBoolean` throw and log on every call.
+  MODEL_GETBYID_SKIP_OWNER_POSTS = 'model-getbyid-skip-owner-posts',
+  // ON caches "this entity wears no frame" in the per-entity frame caches (`cosmeticEntityCaches`
+  // in ~/server/redis/caches) for an hour, instead of re-querying the primary for every frameless
+  // id on every page. OFF reads them uncached, as before, and ignores any marker
+  // written while it was on. Boolean, evaluated with no entity id, once per frame-cache fetch.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
+  // key makes `evaluateBoolean` throw and log on every call, on every feed page.
+  FRAME_CACHE_NEGATIVE = 'frame-cache-negative',
+  // ON serves `getImageContestCollectionDetails` from the shared Redis cache instead of the per-pod
+  // LRU. Boolean, evaluated with no entityId, so a per-user or percentage rollout is all-or-nothing.
+  //
+  // Needs its key in flag state (enabled: false) BEFORE this code serves traffic: a missing key
+  // makes evaluateBoolean throw and log on every call.
+  CONTEST_COLLECTION_ITEMS_REDIS_CACHE = 'contest-collection-items-redis-cache',
+  // Per-process (L1) cache switches, one per cache, so each can be A/B'd and rolled back alone.
+  // Read through `~/server/redis/l1-switches`, which holds their TTL values; a missing key reads as
+  // off. Add each key (enabled: false) to flag state before flipping it.
+  //
+  // Gates the longer `basic-tags` (tagCache) L1 TTL.
+  BASIC_TAGS_L1_LONG_TTL = 'basic-tags-l1-long-ttl',
+  // Gates an L1 in front of the `cosmetics2` catalog cache (cosmeticCache).
+  COSMETICS_L1 = 'cosmetics-l1',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -113,16 +156,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS because a two-flag order that nobody records is a
   // trap rather than a safeguard.
   TRAINING_DATA_PURGE_DRY_RUN = 'training-data-purge-dry-run',
-  IMAGE_TRAINING = 'image-training',
-  VIDEO_TRAINING = 'video-training',
   AI_TOOLKIT_SD15 = 'ai-toolkit-sd15',
   AI_TOOLKIT_SDXL = 'ai-toolkit-sdxl',
   AI_TOOLKIT_FLUX = 'ai-toolkit-flux',
-  AI_TOOLKIT_SD35 = 'ai-toolkit-sd35',
   AI_TOOLKIT_HUNYUAN = 'ai-toolkit-hunyuan',
   AI_TOOLKIT_WAN = 'ai-toolkit-wan',
-  AI_TOOLKIT_CHROMA = 'ai-toolkit-chroma',
-  QWEN_TRAINING = 'qwen-training',
   FLUX2_TRAINING = 'flux2-training',
   ZIMAGE_TURBO_TRAINING = 'zimage-turbo-training',
   ZIMAGE_BASE_TRAINING = 'zimage-base-training',
@@ -130,8 +168,6 @@ export enum FLIPT_FEATURE_FLAGS {
   LTX2_TRAINING = 'ltx2-training',
   LTX23_TRAINING = 'ltx23-training',
   LTX25_TRAINING = 'ltx25-training',
-  WAN22_TRAINING = 'wan22-training',
-  IMAGE_TRAINING_RESULTS = 'image-training-results',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
   // Gates every non-legacy judging engine. Default-off, so a challenge whose `judgingEngine`
   // column points at the pairwise ladder still runs the legacy absolute path until this is on.
@@ -172,6 +208,32 @@ export enum FLIPT_FEATURE_FLAGS {
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
   // no entity or context. See `responseWriteSerialize`.
   TRPC_FAST_SUPERJSON_WRITE = 'trpc-fast-superjson-write',
+  // Hands a full page load's server render the prefetched state it serialised into `trpcState`
+  // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
+  // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
+  // parse. Evaluated per request (user id, or one of a fixed set of anonymous buckets) so a
+  // percentage rollout splits traffic.
+  SSR_SKIP_TRPCSTATE_REPARSE = 'ssr-skip-trpcstate-reparse',
+  // Lets `withSpan` (@civitai/telemetry/otel-helpers) run its work without opening a span when the
+  // active parent is a local, unsampled span — that span could never be recorded or exported.
+  // DEFAULT-OFF: `isFliptSync` returns null for an unknown flag or an uninitialized client, which
+  // keeps today's behaviour. Global boolean, evaluated with no entity or context, and read at most
+  // once per refresh interval per process. See `src/server/utils/otel-withspan-gate.ts`.
+  //
+  // Add the key (enabled: false) to flag state before flipping it. A missing key just reads as off:
+  // `evaluateBoolean` throws and `isFliptSync` swallows it, at most once per refresh per process.
+  OTEL_WITHSPAN_SKIP_UNSAMPLED = 'otel-withspan-skip-unsampled',
+  // Picks how `getFeatureFlagsLazy` (feature-flags.service.ts) builds the per-request flag
+  // object: ON = one small instance of a class whose prototype carries the per-key getters,
+  // defined once at module load; OFF = a fresh object with one getter defined per flag key on
+  // every call, as before. Same value per key either way. DEFAULT-OFF: `isFliptSync` returns null
+  // for an unknown flag or an uninitialized client, which keeps the old object. Global boolean,
+  // evaluated with no entity or context, at most once per 5s per process.
+  //
+  // Add the key (enabled: false) to flag state before this code serves traffic. A missing key
+  // reads as off: `evaluateBoolean` throws (skipping the eval cache) and `isFliptSync` swallows it,
+  // at most once per 5s per process.
+  FEATURE_FLAGS_LAZY_PROTO = 'feature-flags-lazy-proto',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
   // returns false for an unknown flag or an unreachable Flipt, and for a path
@@ -214,6 +276,21 @@ export enum FLIPT_FEATURE_FLAGS {
   // store: the refusal and the block alert, no Report). Implies the scan — with
   // this on, the shadow flag no longer changes anything. Same evaluation as above. DEFAULT-OFF.
   APP_BLOCKS_SHARED_DATA_MODERATION_ENFORCE = 'app-blocks-shared-data-moderation-enforce',
+  // OPERATOR HOLD on App Storage schema-migration runs: while on for an app, its reserved runs stay
+  // `pending` (the start at approve and the resume job both skip them) and keep counting as open for
+  // the approve gate. Turning it off lets the job's next run take them. EVALUATED PER APP like the
+  // two above (entityId = the app block id, NO context): hold specific apps with an ENTITY_ID
+  // segment. DEFAULT-OFF — absent or Flipt unreachable holds nothing. See
+  // `storage-migration-run.service.ts`.
+  APP_BLOCKS_STORAGE_MIGRATION_HOLD = 'app-blocks-storage-migration-hold',
+  // Who may DECLARE an App Storage permission hook (`storage.collections.<c>.hook`): checked at
+  // submit, on the git-push path and at approve, for a hook that is new or changed against the
+  // approved manifest, on the actor who introduced it (the submitter, or the pusher on the git-push
+  // path). EVALUATED PER AUTHOR — entityId = the user id, context = `buildFliptContext(user)` — so
+  // ramp it with a cohort segment. DEFAULT-OFF: absent or Flipt unreachable refuses every hook
+  // declaration. 🔴 It gates declaring a hook and nothing else: no flag may skip a hook an approved
+  // version declares (that would fail open). See `storage-hooks.ts`.
+  APP_BLOCKS_STORAGE_HOOKS = 'app-blocks-storage-hooks',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
   // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
   TEXT_SCAN = 'text-scan',
@@ -233,6 +310,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
+  // Variant: `log` | `enforce`; any other answer is off. Read by mini-epoch-caller.ts.
+  MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
+  // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
+  // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
+  // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:
+  // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
+  // uncached primary read. Global boolean, evaluated with no entity or context. Every other
+  // caller of the space (anything that decides or charges) stays on the primary regardless. See
+  // `resolvePlacementSpaceForDisplay`.
+  //
+  // Add the key (enabled: false) to flag state before flipping it.
+  PLACEMENT_SPACE_READ_CACHE = 'placement-space-read-cache',
   // Early-adopter cohort gate. Segments on the `isEarlyAdopter` Flipt context property
   // that `buildFliptContext` emits from the user's opt-in setting, so background paths
   // (no request context) can gate on the same flag the request path does.
@@ -345,6 +434,55 @@ export enum FLIPT_FEATURE_FLAGS {
   // through `coverageAudience`, which is where it meets the tier.
   // docs/features/paid-model-loading-members-gate.md
   GENERATION_LOADING_OPEN_TO_ALL = 'generation-loading-open-to-all',
+  // On: a non-member may load a cold checkpoint by paying for a Download Boost, if the generator
+  // opts in (`acceptBoostRequired`). Off, unknown or unreachable: the members gate holds. Entity is
+  // the user id; read through `coverageAudience`.
+  GENERATION_LOADING_BOOST_FOR_FREE = 'generation-loading-boost-for-free',
+  // On: generateFromGraph / whatIfFromGraph refuse input urls on external hosts. Off (and unknown
+  // or unreachable): they are allowed and counted in generation_input_url_refusals_total{mode="log"}.
+  GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS = 'generation-input-refuse-external-hosts',
+  // On: App Blocks generation sources must be scanned Image rows, so orchestrator blob urls from
+  // apps are refused. Off (and unknown or unreachable): blob urls are accepted as before.
+  APP_BLOCK_SOURCE_SCANNED_ROWS = 'app-block-source-scanned-rows',
+  // On: App Blocks generation inputs on an external host are refused. Off (and unknown or
+  // unreachable): they are allowed and each one is logged as `app-block-source-refusal`.
+  APP_BLOCK_REFUSE_EXTERNAL_SOURCES = 'app-block-refuse-external-sources',
+
+  // On: the followed creator-announcements feed first narrows to authors this viewer follows who
+  // have a live announcement, and makes no feed query when there are none
+  // (`creator-announcement.service.ts`). Off (and unknown or unreachable): the feed query runs as
+  // before for every call. Same rows either way, except that an author who newly goes live can
+  // reach followers up to the live-author cache's TTL (30 s) later.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every bell load. The key must exist in
+  // flag state (enabled: false is fine) before this code serves traffic, for the reason given at
+  // KYSELY_IMAGE_REACTIONS.
+  CREATOR_FEED_SHORTCIRCUIT = 'creator-feed-shortcircuit',
+
+  // On: a verified crawler's page render may be stored by the origin cache and served to other
+  // crawlers (`~/server/bot-cache/bot-cache`). Off (and unknown, or a client that has not
+  // initialised): nothing is stored or served, as before. The key keeps its original name.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
+  // serves traffic.
+  BOT_HTML_EDGE_CACHE = 'bot-html-edge-cache',
+
+  // Download links (`/api/download/l/<id>` and the mint at `/api/v1/download-links`). Off, unknown
+  // or unreachable: every link answers 404 and no link is minted.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every mint and every link fetch. The key
+  // must exist in flag state (enabled: false) before this code serves traffic.
+  DOWNLOAD_LINKS_ENABLED = 'download-links-enabled',
+  // The standalone Training Studio's closed-beta gate (apps/training-studio/src/lib/server/flipt.ts),
+  // read here for its main-app endpoints. Evaluate with the user's Flipt context, or a segmented
+  // flag matches nobody.
+  TRAINING_STUDIO = 'trainingStudio',
+  // Gates sending the reporter's page capture to HQ.
+  FEEDBACK_HQ_SCREENSHOT = 'feedback-hq-screenshot',
+  // Gates storing a feedback report's page capture as a scanned image owned by the capture account.
+  // Evaluated with the reporter's id.
+  FEEDBACK_CAPTURE_SCAN = 'feedback-capture-scan',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
@@ -477,6 +615,7 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
 // the feedback gate, and the app-blocks store pair.
 export const isFlipt = flipt.isEnabled;
 export const getFliptVariant = flipt.getVariant;
+export const getFliptVariantDetailSync = flipt.getVariantDetailSync;
 export const getFliptBoolean = flipt.getBoolean;
 export const isFliptSync = flipt.isEnabledSync;
 export const ensureFliptInitialized = flipt.ensureInitialized;

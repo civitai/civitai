@@ -30,7 +30,15 @@ export function downloadBlob(blob: Blob, filename: string) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(href);
+  // Revoking in the same tick can cancel a large download before the browser has read it.
+  setTimeout(() => URL.revokeObjectURL(href), 40_000);
+}
+
+/** Extension from a blob's content type (`image/svg+xml` -> `svg`); `fallback` when the type is missing or `application/octet-stream`. */
+export function blobExtension(blob: Blob, fallback: string) {
+  const subtype = blob.type.split(';')[0]!.split('/')[1]?.split('+')[0]?.trim();
+  if (!subtype || subtype === 'octet-stream') return fallback;
+  return subtype === 'jpeg' ? 'jpg' : subtype;
 }
 
 export function blobToFile(

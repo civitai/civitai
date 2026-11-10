@@ -43,9 +43,14 @@ import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import {
+  CONSENT_NOTICE_NOT_DISMISSED,
+  consentNoticeHighlightPlayed,
+  dismissConsentNotice,
   resolveAdvertisedScopes,
+  resolveConsentNoticeAfterRefusal,
   resolveHostConsentNotice,
   resolveRequestConsent,
+  resolveSourcePublishConsentRequest,
   resolveUngrantableConsentNotice,
   resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
@@ -54,11 +59,17 @@ import { BlockConsentNotice } from './BlockConsentNotice';
 import { openBlockConsentModal } from './openBlockConsentModal';
 import { hideBlock } from './hiddenBlocks';
 import { isPageSlot } from '~/shared/constants/slot-registry';
+import { APP_STORAGE_PUBLISH_SCOPE } from '~/shared/constants/block-storage.constants';
 import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
 import type { ChromeGeometry } from './chromeGeometry';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { createBlockEventRecorder } from './blockEventBeacon';
+import {
+  reportAppSubmitError,
+  reportAppSubmitResult,
+  useAppSessionTelemetry,
+} from './appInAppTelemetry';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import {
@@ -86,6 +97,7 @@ import {
 import {
   classifyEntityReactionError,
   createReactionReplyLatch,
+  entityReactionRefusedScopes,
   resolveGetEntityReactionsRequest,
   resolveSetEntityReactionRequest,
 } from './reactionGate';
@@ -106,6 +118,7 @@ import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.sc
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openLoginPopup } from '~/utils/auth-helpers';
+import { appsRunBackTarget, type AppsRunOrigin } from '~/shared/utils/apps-run-origin';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 // The lazy-consent UI's dynamic import USED to live here, duplicated verbatim in
@@ -395,6 +408,7 @@ export function AppBlockChrome({
   slotId,
   hostSurface,
   canOpenPage = false,
+  launchOrigin = 'store',
 }: {
   blockInstanceId: string;
   /** The approved AppBlock id of the running app. When present, the ⋯ menu
@@ -443,6 +457,12 @@ export function AppBlockChrome({
   /** The host that mounted this chrome. Decides whether it offers app feedback
    *  (`APP_FEEDBACK_HOST_SURFACES`); omitted → no Feedback button. */
   hostSurface?: BlockHostSurface;
+  /** Where the full-page run was launched from (`?from=home`, read by the run page's
+   *  `getServerSideProps`). Decides where the breadcrumb's first crumb and the mobile back
+   *  chevron lead: `home` → "My apps" (`/apps`); anything else → "Marketplace"
+   *  (`/apps/store`). See `appsRunBackTarget`. Omitted → the store, which is what every
+   *  surface other than a home launch should say. */
+  launchOrigin?: AppsRunOrigin;
 }) {
   // Gate the platform-nav "Review" item with the SAME greppable predicate the
   // /apps/review page + its server gate use (isAppReviewer), so the run-nav
@@ -598,6 +618,9 @@ export function AppBlockChrome({
   // through the store. A narrow model sidebar therefore resolves `geometry.compact`
   // TRUE (it is genuinely narrow) and still renders exactly the chrome it always has.
   const compact = isPage && geometry.compact;
+  // The run chrome's way out, shared by the desktop crumb and the mobile back chevron so the
+  // two renderings can never name or link different places.
+  const back = appsRunBackTarget(launchOrigin);
   // The platform-nav destinations, authored ONCE and rendered into whichever surface
   // is carrying them: their own dropdown on a desktop-width bar, the ⋮ sheet below
   // `sm`. `ChromeSurfaceItem` is what makes one authoring serve both — see its header
@@ -640,9 +663,11 @@ export function AppBlockChrome({
           old href would have made every press from this menu a redirect hop, and
           removing the item outright would delete a door out of a running app for
           the app's own owner — which the ledger guard's own message warns against.
-          So it is repointed, keeping the label ("My apps" still names what an owner
-          arrives at: state C is their app list) and taking the subnav's glyph for
-          the row it now shares, `IconCode`.
+          So it was repointed (and has since been RELABELLED "My builds" — see below) and
+          takes the subnav's glyph for
+          the row it now shares, `IconCode`. It carries `?view=apps` (`MY_APPS_HREF`,
+          spelled literally because the chrome-nav ledger parses literal hrefs): an author
+          who also holds the App Assistant would otherwise land on the assistant.
 
           🔴 WHAT THAT DOES *NOT* DO IS DEFEAT A KILL SWITCH — and the previous
           version of this note is why the question has to be asked. `/apps/build`
@@ -661,8 +686,21 @@ export function AppBlockChrome({
           whereas these items stand alone over a running app and need the noun
           ("App activity"). "Marketplace" is the one label that is shared verbatim,
           because "Apps home" named a destination the store itself stopped calling
-          that. */}
-      <ChromeSurfaceItem href="/apps" leftSection={<IconBuildingStore size={14} stroke={1.5} />}>
+          that.
+
+          🔴 THE STORE MOVED TO `/apps/store`, and `/apps` is now the viewer's "My apps"
+          home — the launcher of the apps they have, and so the natural way out of a
+          running app. It leads this section with the subnav's own label and glyph. The
+          author's app list on `/apps/build?view=apps` was "My apps" too; it is now
+          "My builds" everywhere (owner decision), so the two never share a name. The item
+          set is pinned in `chromeNavAlignsWithSubNav.test.ts`. */}
+      <ChromeSurfaceItem href="/apps" leftSection={<IconApps size={14} stroke={1.5} />}>
+        My apps
+      </ChromeSurfaceItem>
+      <ChromeSurfaceItem
+        href="/apps/store"
+        leftSection={<IconBuildingStore size={14} stroke={1.5} />}
+      >
         Marketplace
       </ChromeSurfaceItem>
       <ChromeSurfaceItem
@@ -671,8 +709,11 @@ export function AppBlockChrome({
       >
         App activity
       </ChromeSurfaceItem>
-      <ChromeSurfaceItem href="/apps/build" leftSection={<IconCode size={14} stroke={1.5} />}>
-        My apps
+      <ChromeSurfaceItem
+        href="/apps/build?view=apps"
+        leftSection={<IconCode size={14} stroke={1.5} />}
+      >
+        My builds
       </ChromeSurfaceItem>
       {isModerator && (
         <ChromeSurfaceItem href="/apps/review" leftSection={<IconGavel size={14} stroke={1.5} />}>
@@ -841,19 +882,20 @@ export function AppBlockChrome({
               thing, and the thing it says ("up to the Marketplace") is exactly what a
               back chevron says in a third of the space. It is a real anchor
               (`NextLink`), so middle-click / long-press / keyboard all behave, and it
-              points at the SAME `/apps` the crumb did — the destination did not move,
-              only its rendering.
+              points at the SAME place the crumb does (`back`, from `appsRunBackTarget`:
+              `/apps` for a launch from the My apps home, `/apps/store` otherwise) — the
+              two renderings share one destination.
 
               `ActionIcon size="sm"` is not a style choice here: it is what keeps the
               row at its pinned 31px resting height (`CHROME_BAR_PX`), the same as the
               icon buttons the desktop bar has always used. */}
             <ActionIcon
               component={Link}
-              href="/apps"
+              href={back.href}
               variant="subtle"
               color="gray"
               size="sm"
-              aria-label="Back to Marketplace"
+              aria-label={`Back to ${back.label}`}
               data-testid="app-block-back"
               style={{ flexShrink: 0 }}
             >
@@ -896,6 +938,7 @@ export function AppBlockChrome({
             label={label}
             isPage={isPage}
             slug={slug}
+            back={back}
             onOpenReview={setReviewListingId}
           />
         )}
@@ -999,7 +1042,7 @@ export function AppBlockChrome({
 
 /**
  * The desktop bar's leading cluster: the platform-nav trigger, the badge app name and
- * the `Marketplace / <app name>` breadcrumb.
+ * the `Marketplace / <app name>` breadcrumb (`My apps / <app name>` after a home launch).
  *
  * 🔴 EXTRACTED PURELY TO KEEP THE COMPACT/DESKTOP BRANCH READABLE — every element
  * inside it is byte-for-byte what shipped, including the testids, the ARIA and the
@@ -1016,6 +1059,7 @@ function ChromeDesktopLeadingGroup({
   label,
   isPage,
   slug,
+  back,
   onOpenReview,
 }: {
   geometry: ChromeGeometry;
@@ -1026,6 +1070,8 @@ function ChromeDesktopLeadingGroup({
   label: string;
   isPage: boolean;
   slug: string | undefined;
+  /** The first crumb's destination and label — see `appsRunBackTarget`. */
+  back: ReturnType<typeof appsRunBackTarget>;
   onOpenReview: (appListingId: string) => void;
 }) {
   return (
@@ -1155,21 +1201,20 @@ function ChromeDesktopLeadingGroup({
                 and long-press all still behave. */}
             <Anchor
               component={Link}
-              href="/apps"
+              href={back.href}
               size="xs"
               underline="always"
               style={{ flexShrink: 0 }}
               data-testid="app-block-breadcrumb-apps"
               data-clickable="true"
             >
-              {/* Reads "Marketplace", not "Apps" — the destination `/apps` is what the
-                  store's own nav calls its first entry (`appsSections[0].label`), and a
-                  crumb that names the page differently from the page's own tab makes the
-                  trail look like it leads somewhere else. The testid deliberately keeps
-                  its `-apps` spelling: it addresses the crumb by its ROUTE, which has not
-                  moved, so a future copy change does not churn every test that reaches
-                  for it. */}
-              Marketplace
+              {/* Names its destination the way that page's own nav does: "Marketplace" for
+                  `/apps/store` (the `marketplace` row of `appsSections`, not "Apps"), or
+                  "My apps" for `/apps` when the run was launched from the home. A crumb that
+                  names the page differently from the page's own tab makes the trail look
+                  like it leads somewhere else. The testid keeps its historical `-apps`
+                  spelling, so tests that reach for it do not churn. */}
+              {back.label}
             </Anchor>
             <Text size="xs" c="dimmed" aria-hidden>
               /
@@ -1310,8 +1355,9 @@ export function IframeHost({
   // app rather than a bare boolean for the same reason PageBlockHost's is: the slot
   // can swap installs without unmounting, and a dismissal must not carry over to a
   // DIFFERENT app's permissions. Per-mount on purpose — nothing persists it, so a
-  // dismissal is "not now", not "never".
-  const [consentNoticeDismissedFor, setConsentNoticeDismissedFor] = useState<string | null>(null);
+  // dismissal is "not now", not "never" — and a refusal for a permission the viewer can
+  // still grant ends it early (`reviveConsentNoticeOnRefusal` below).
+  const [consentNotice, setConsentNotice] = useState(CONSENT_NOTICE_NOT_DISMISSED);
   const [iframeHeight, setIframeHeight] = useState<number>(
     install.manifest.iframe?.minHeight ?? 200
   );
@@ -1413,12 +1459,20 @@ export function IframeHost({
     [effectiveSandbox]
   );
 
+  // App_Session: one row per host session (see appInAppTelemetry.ts).
+  const { countSubmit: countAppSubmit, countMessage: countAppMessage } = useAppSessionTelemetry({
+    appBlockId: install.appBlockId,
+    host: 'iframe',
+    enabled: true,
+  });
+
   const { send, onMessage, reportNoToken } = usePostMessage({
     iframeRef,
     expectedOrigin,
     opaqueOrigin,
     host: 'IframeHost',
     appBlockId: install.appBlockId,
+    onInbound: countAppMessage,
   });
 
   // The last height the BLOCK ITSELF stated, before any clamping — stashed so a
@@ -1996,6 +2050,29 @@ export function IframeHost({
     // `status` deliberately absent — see the RESIZE_IFRAME deps note.
   }, [onMessage, readGateStatus]);
 
+  // A request the app made was refused for `refusedScopes`. Whether that brings a
+  // dismissed missing-permissions notice back is decided ONLY by
+  // `resolveConsentNoticeAfterRefusal`, shared with PageBlockHost; this is the wiring.
+  // A functional update, so it never reads a stale dismissal; `missingScopes` through a
+  // render-body mirror, so it reads the set current when the refusal LANDS (the server
+  // path resolves after an await, possibly across a token refresh) and the reaction
+  // listener does not re-subscribe on every refresh because of it.
+  const missingScopesRef = useRef(missingScopes);
+  missingScopesRef.current = missingScopes;
+  const reviveConsentNoticeOnRefusal = useCallback(
+    (refusedScopes: readonly string[]) => {
+      if (refusedScopes.length === 0) return;
+      setConsentNotice((current) =>
+        resolveConsentNoticeAfterRefusal(current, {
+          appBlockId: install.appBlockId,
+          refusedScopes,
+          missingScopes: missingScopesRef.current,
+        })
+      );
+    },
+    [install.appBlockId]
+  );
+
   /**
    * Open the host's consent UI for a set of withheld scopes.
    *
@@ -2039,6 +2116,16 @@ export function IframeHost({
       // `useRequestConsent`), its payload is `{ scopes? }` with NO requestId, and
       // there is no host→block reply message for it — so there is nothing to
       // reply TO and no promise to fail fast. Dropping it cannot hang the block.
+
+      // A request carrying `from` asks for `apps:storage:publish` in ANOTHER app, which only
+      // `PageBlockHost` prompts for. This host refuses it with the `CONSENT_UNAVAILABLE` push below
+      // and never reads it as a request for this app's own scopes.
+      // Why refuse rather than drop: the model slot has no source-publish prompt yet, and reading
+      // the request as an ordinary one would open THIS app's prompt for a scope in another app.
+      if (resolveSourcePublishConsentRequest(payload) !== null) {
+        send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: [APP_STORAGE_PUBLISH_SCOPE] });
+        return;
+      }
       const scopesToGrant = resolveRequestConsent(readGateStatus(), missingScopes ?? []);
       if (scopesToGrant != null) {
         openConsentModal(scopesToGrant);
@@ -2125,6 +2212,7 @@ export function IframeHost({
         typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
           ? raw.idempotencyKey
           : undefined;
+      countAppSubmit();
       try {
         const { snapshot } = await submitWorkflowMutation.mutateAsync({
           blockToken: token,
@@ -2132,8 +2220,10 @@ export function IframeHost({
           body: raw.body as never,
           ...(idempotencyKey ? { idempotencyKey } : {}),
         });
+        reportAppSubmitResult(install.appBlockId, 'submit', { snapshot });
         send('WORKFLOW_SUBMITTED', { requestId, snapshot });
       } catch (err) {
+        reportAppSubmitError(install.appBlockId, 'submit', err);
         send('WORKFLOW_SUBMITTED', {
           requestId,
           snapshot: failureSnapshot(err),
@@ -2141,7 +2231,7 @@ export function IframeHost({
       }
     });
     return off;
-  }, [onMessage, send, token, submitWorkflowMutation]);
+  }, [onMessage, send, token, submitWorkflowMutation, countAppSubmit, install.appBlockId]);
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
@@ -3240,6 +3330,10 @@ export function IframeHost({
       });
       if (gate.kind === 'drop') return;
       if (gate.kind === 'refuse') {
+        // A reaction refused for the missing `social:react:self` grant brings a
+        // dismissed notice back. SET only: GET_ENTITY_REACTIONS is a background read an
+        // app can make on every image, and reviving on it would undo every dismissal.
+        reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(gate.error));
         send('ENTITY_REACTION_RESULT', { requestId: gate.requestId, error: gate.error });
         return;
       }
@@ -3261,7 +3355,9 @@ export function IframeHost({
           });
           latch.reply({ result });
         } catch (err) {
-          latch.reply({ error: classifyEntityReactionError(err) });
+          const error = classifyEntityReactionError(err);
+          reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(error));
+          latch.reply({ error });
         }
       })();
     });
@@ -3275,6 +3371,7 @@ export function IframeHost({
     grantedScopes,
     trpcUtils,
     reportNoToken,
+    reviveConsentNoticeOnRefusal,
   ]);
 
   useEffect(() => {
@@ -3342,6 +3439,20 @@ export function IframeHost({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The missing-permissions notice's scopes for this render, or null for no notice.
+  // `status` DIRECTLY, not `readGateStatus()`. The ref exists so a message HANDLER can
+  // see a status React has not yet flushed an effect for; a render has the state
+  // itself, and a ref read cannot schedule the re-render that makes this notice
+  // appear. Reading the ref here would happen to work today (the render body writes it
+  // before `framed()` runs) for a reason that has nothing to do with why it is correct.
+  const consentNoticeScopes = resolveHostConsentNotice({
+    status,
+    needsConsent,
+    missingScopes,
+    dismissedFor: consentNotice.dismissedFor,
+    appBlockId: install.appBlockId,
+  });
+
   // W7 host trust frame: wraps the LOADING + READY states (rendered here,
   // around the iframe, not inside it — so a block can't fake/restyle/hide the
   // "App block" provenance chrome). Terminal-FAILURE states no longer render
@@ -3398,21 +3509,11 @@ export function IframeHost({
           "never grant scopes from the sandbox" gate belongs there, and passing a
           constant `false` here would only invite someone to wire it to the wrong
           thing. */}
-      {resolveHostConsentNotice({
-        // `status` DIRECTLY, not `readGateStatus()`. The ref exists so a message
-        // HANDLER can see a status React has not yet flushed an effect for; a render
-        // has the state itself, and a ref read cannot schedule the re-render that
-        // makes this notice appear. Reading the ref here would happen to work today
-        // (the render body writes it before `framed()` runs) for a reason that has
-        // nothing to do with why it is correct.
-        status,
-        needsConsent,
-        missingScopes,
-        dismissedFor: consentNoticeDismissedFor,
-        appBlockId: install.appBlockId,
-      }) != null && (
+      {consentNoticeScopes != null && (
         <BlockConsentNotice
           appName={install.manifest.name}
+          missingScopes={consentNoticeScopes}
+          highlight={consentNotice.revived}
           onReview={() => {
             // Recomputed at CLICK time, not captured at render: a TOKEN_REFRESH
             // between the two can shrink the missing set, and granting a scope the
@@ -3420,7 +3521,10 @@ export function IframeHost({
             const scopes = resolveRequestConsent(readGateStatus(), missingScopes ?? []);
             if (scopes != null) openConsentModal(scopes);
           }}
-          onDismiss={() => setConsentNoticeDismissedFor(install.appBlockId)}
+          onDismiss={() =>
+            setConsentNotice((current) => dismissConsentNotice(current, install.appBlockId))
+          }
+          onHighlightPlayed={() => setConsentNotice(consentNoticeHighlightPlayed)}
         />
       )}
       {children}

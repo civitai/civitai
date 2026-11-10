@@ -41,9 +41,14 @@ import { assertTrainingTriggerWordAllowed } from '~/server/services/orchestrator
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { throwBadRequestError, throwInternalServerError } from '~/server/utils/errorHandling';
+import {
+  CLASSIC_TRAINER_RETIRED_MESSAGE,
+  isClassicTrainerRetired,
+} from '~/shared/constants/training.constants';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { getGetUrl, getB2S3Client, isB2Url } from '~/utils/s3-utils';
 import { parseAIRSafe } from '~/utils/string-helpers';
@@ -54,8 +59,10 @@ import {
   isAiToolkitEnabled,
   isAudioTrainingBaseType,
   isKohyaEnabled,
+  isRetiredTrainingTarget,
   trainingModelInfo,
 } from '~/utils/training';
+import { modelUnavailability, unavailableModelMessage } from '~/utils/training-blocked-models';
 
 async function isSafeTensor(modelVersionId: number) {
   // it's possible we need to modify this if a model somehow has pickle and safetensor
@@ -364,13 +371,20 @@ export const createTrainingWorkflow = async ({
   if (!env.WEBHOOK_URL) throw throwInternalServerError('Missing webhook URL');
   const { id: userId, isModerator } = user;
 
+  // Only the classic trainer submits here; Training Studio has its own submit path.
+  if (isClassicTrainerRetired()) throw throwBadRequestError(CLASSIC_TRAINER_RETIRED_MESSAGE);
+
   const status = await getTrainingServiceStatus();
   if (!status.available && !isModerator)
     throw throwBadRequestError(status.message ?? 'Training is currently disabled');
 
-  const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
+  const modelVersions = await dbWrite.$queryRaw<
+    (TrainingRequest & { modelId: number; modelMeta: ModelMeta | null })[]
+  >`
     SELECT mv."trainingDetails",
            m.name      "modelName",
+           m.id        "modelId",
+           m.meta      "modelMeta",
            mv."trainedWords",
            m."userId",
            mf.url      "trainingUrl",
@@ -398,14 +412,26 @@ export const createTrainingWorkflow = async ({
 
   const baseModel = modelVersion.trainingDetails.baseModel;
   if (!baseModel) throw throwBadRequestError('Missing base model');
-  if ((status.blockedModels ?? []).includes(baseModel))
+  const unavailable = modelUnavailability(status, baseModel);
+  if (unavailable) {
+    const info = trainingModelInfo[baseModel as TrainingDetailsBaseModelList];
     throw throwBadRequestError(
-      'This model has been blocked from training - please try another one.'
+      info
+        ? unavailableModelMessage(info.pretty, unavailable.reason)
+        : 'This model has been blocked from training - please try another one.'
     );
+  }
   if (trainingModelInfo[baseModel as TrainingDetailsBaseModelList]?.disabled)
     throw throwBadRequestError('This base model is not available for training.');
 
   const baseModelType = modelVersion.trainingDetails.baseModelType ?? 'sd15';
+  if (
+    isRetiredTrainingTarget({
+      baseModelType,
+      ecosystem: 'ecosystem' in trainingParams ? trainingParams.ecosystem : undefined,
+    })
+  )
+    throw throwBadRequestError('This base model is not available for training.');
   const samplePrompts = modelVersion.trainingDetails.samplePrompts ?? ['', '', ''];
   const samplesOverrides = modelVersion.trainingDetails.samplesOverrides;
   const negativePrompt = modelVersion.trainingDetails.negativePrompt ?? '';
@@ -432,6 +458,24 @@ export const createTrainingWorkflow = async ({
 
   if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
     throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
+
+  // The ecosystem/variant in params is what gets trained, so for a catalog base model it must be
+  // the one that base maps to. A missing variant is tolerated: versions saved before the form sent
+  // one still resubmit (the same rule publish-from-workflow.ts uses to match a run to its base).
+  if (
+    trainingParams.engine === 'ai-toolkit' &&
+    Object.prototype.hasOwnProperty.call(trainingModelInfo, baseModel)
+  ) {
+    const expected = trainingModelInfo[baseModel as TrainingDetailsBaseModelList].aiToolkit;
+    if (
+      !expected ||
+      trainingParams.ecosystem !== expected.ecosystem ||
+      (trainingParams.modelVariant != null && trainingParams.modelVariant !== expected.modelVariant)
+    )
+      throw throwBadRequestError(
+        'The training settings do not match the selected base model. Please reselect the base model and submit again.'
+      );
+  }
 
   // The form stops offering Kohya when the flag is off, but a version saved earlier or a direct
   // API caller can still carry it, and no worker would claim the step.
@@ -468,6 +512,11 @@ export const createTrainingWorkflow = async ({
   await assertTrainingTriggerWordAllowed({
     triggerWord,
     log: { userId, source: 'trainer', modelVersionId },
+    model: {
+      id: modelVersion.modelId,
+      versionId: modelVersion.modelVersionId,
+      meta: modelVersion.modelMeta,
+    },
   });
 
   // Don't override the engine field in params - it needs to remain as the literal type

@@ -75,6 +75,7 @@ const useAdProviderStore = create<{
   consent: boolean;
   browserBlocked: boolean;
   gateBlocked: boolean;
+  pageNsfwLevel?: number;
 }>(() => ({
   ready: false,
   // Tri-state: undefined = detection pending, false = confirmed serving (loader onLoad / direct-ad
@@ -95,6 +96,24 @@ export function useAdGate(blocked: boolean) {
     useAdProviderStore.setState({ gateBlocked: true });
     return () => useAdProviderStore.setState({ gateBlocked: false });
   }, [blocked]);
+}
+
+/**
+ * The rating of the content a page shows, sent with direct ad requests alongside the viewer's
+ * browsing level (the ad server combines the two). Set by `Gated`; a store rather than context
+ * because the adhesive footer renders outside the page tree. Layout effect, so it lands before
+ * any ad unit's first request.
+ */
+export function useSetAdPageNsfwLevel(nsfwLevel: number) {
+  useIsomorphicLayoutEffect(() => {
+    if (!nsfwLevel) return;
+    useAdProviderStore.setState({ pageNsfwLevel: nsfwLevel });
+    return () => useAdProviderStore.setState({ pageNsfwLevel: undefined });
+  }, [nsfwLevel]);
+}
+
+export function useAdPageNsfwLevel() {
+  return useAdProviderStore((state) => state.pageNsfwLevel);
 }
 
 const blockedUrls: string[] = [
@@ -143,6 +162,8 @@ export function AdsProvider({
       consentAllowed &&
       (allowAds || !isMember) &&
       !blockedUrls.some((url) => router.asPath.includes(url)) &&
+      // The gift claim page holds a live gift code in its props, readable by any script on the page.
+      !router.pathname.startsWith('/gift/') &&
       !router.asPath.split('?')[0].endsWith('/edit');
 
   function handleLoadedError() {

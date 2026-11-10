@@ -1,5 +1,5 @@
 import { FliptClient } from '@flipt-io/flipt-client-js';
-import { fliptCacheKey, TtlCache, type TtlCacheStats } from './cache';
+import { fliptCacheKeySuffix, TtlCache, type TtlCacheStats } from './cache';
 import { loadFliptConnection, loadFliptTuning, type FliptConfig, type FliptTuning } from './env';
 
 export type FliptLogFn = (message: string, ...args: unknown[]) => void;
@@ -25,6 +25,14 @@ export type FliptOptions = Partial<FliptConfig> & {
   log?: FliptLogFn;
 };
 
+export type FliptVariantDetail = {
+  match: boolean;
+  variantKey: string | null;
+  segmentKeys: readonly string[];
+};
+
+export const LOCAL_OVERRIDE_SEGMENT = 'local-override';
+
 export type FliptFeatureFlags = {
   /** Boolean evaluation honoring local overrides. `false` when Flipt is unreachable or the flag is unknown. */
   isEnabled(flag: string, entityId?: string, context?: Record<string, string>): Promise<boolean>;
@@ -39,6 +47,17 @@ export type FliptFeatureFlags = {
     entityId?: string,
     context?: Record<string, string>
   ): Promise<string | null>;
+  /**
+   * Synchronous variant evaluation with the segments that matched, so a caller can tell a pinned
+   * segment from the general rollout. `null` until the client has initialized, or when the
+   * evaluation throws (an unknown flag key); `match: false` when the flag is disabled or no rule
+   * matched.
+   */
+  getVariantDetailSync(
+    flag: string,
+    entityId?: string,
+    context?: Record<string, string>
+  ): FliptVariantDetail | null;
   /**
    * Synchronous evaluation. Returns `boolean` if Flipt is ready, or `null` if the client hasn't
    * initialized yet (caller should fall back).
@@ -82,7 +101,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
   log(`[flipt] eval cache TTL: ${config.evalCacheTtlMs}ms (0 = disabled)`);
 
   const boolCache = new TtlCache<boolean>(config.evalCacheTtlMs, config.evalCacheMaxEntries);
-  const variantCache = new TtlCache<string | null>(
+  const variantCache = new TtlCache<FliptVariantDetail>(
     config.evalCacheTtlMs,
     config.evalCacheMaxEntries
   );
@@ -90,6 +109,22 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
   let instance: FliptClient | null = null;
   let initializing: Promise<FliptClient | null> | null = null;
   let lastFailureTime = 0;
+
+  // The context part of the cache key, built once per FROZEN context (as `buildFliptContext`
+  // returns) instead of once per flag: a caller evaluating every flag for one user passes the same
+  // object each time. Frozen only, because a frozen object cannot change after its key part was
+  // built; any other context builds it on every call, as before. Weak, so it lives as long as the
+  // context does (one request).
+  const keySuffixes = new WeakMap<object, { entityId: string; suffix: string }>();
+
+  function evalCacheKey(flag: string, entityId: string, context: Record<string, string>): string {
+    if (!Object.isFrozen(context)) return flag + fliptCacheKeySuffix(entityId, context);
+    const memo = keySuffixes.get(context);
+    if (memo && memo.entityId === entityId) return flag + memo.suffix;
+    const suffix = fliptCacheKeySuffix(entityId, context);
+    keySuffixes.set(context, { entityId, suffix });
+    return flag + suffix;
+  }
 
   async function getInstance(): Promise<FliptClient | null> {
     if (instance) return instance;
@@ -158,7 +193,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
       return client.evaluateBoolean({ flagKey: flag, entityId, context }).enabled;
     }
     const now = Date.now();
-    const key = fliptCacheKey(flag, entityId, context);
+    const key = evalCacheKey(flag, entityId, context);
     const cached = boolCache.get(key, now);
     if (cached.hit) return cached.value as boolean;
     const { enabled } = client.evaluateBoolean({ flagKey: flag, entityId, context });
@@ -166,22 +201,32 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
     return enabled;
   }
 
+  function evaluateVariantDetail(
+    client: FliptClient,
+    flag: string,
+    entityId: string,
+    context: Record<string, string>
+  ): FliptVariantDetail {
+    const evaluation = client.evaluateVariant({ flagKey: flag, entityId, context });
+    return Object.freeze({
+      match: evaluation.match,
+      variantKey: evaluation.match ? evaluation.variantKey : null,
+      segmentKeys: Object.freeze([...(evaluation.segmentKeys ?? [])]),
+    });
+  }
+
   function evalVariantCached(
     client: FliptClient,
     flag: string,
     entityId: string,
     context: Record<string, string>
-  ): string | null {
-    if (bypass.has(flag)) {
-      const evaluation = client.evaluateVariant({ flagKey: flag, entityId, context });
-      return evaluation.match ? evaluation.variantKey : null;
-    }
+  ): FliptVariantDetail {
+    if (bypass.has(flag)) return evaluateVariantDetail(client, flag, entityId, context);
     const now = Date.now();
-    const key = fliptCacheKey(flag, entityId, context);
+    const key = evalCacheKey(flag, entityId, context);
     const cached = variantCache.get(key, now);
-    if (cached.hit) return cached.value as string | null;
-    const evaluation = client.evaluateVariant({ flagKey: flag, entityId, context });
-    const result = evaluation.match ? evaluation.variantKey : null;
+    if (cached.hit) return cached.value as FliptVariantDetail;
+    const result = evaluateVariantDetail(client, flag, entityId, context);
     variantCache.set(key, result, now);
     return result;
   }
@@ -222,7 +267,21 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
       const client = await getInstance();
       if (!client) return null;
       try {
-        return evalVariantCached(client, flag, entityId, context);
+        return evalVariantCached(client, flag, entityId, context).variantKey;
+      } catch (e) {
+        onEvalError(e, flag);
+        return null;
+      }
+    },
+
+    getVariantDetailSync(flag, entityId = 'global', context = {}) {
+      const override = localOverrides[flag];
+      if (override !== undefined) {
+        return { match: true, variantKey: override, segmentKeys: [LOCAL_OVERRIDE_SEGMENT] };
+      }
+      if (!instance) return null;
+      try {
+        return evalVariantCached(instance, flag, entityId, context);
       } catch (e) {
         onEvalError(e, flag);
         return null;

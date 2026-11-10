@@ -2,9 +2,11 @@ import type { GrantableBox } from '$lib/server/mystery-box-builder.service';
 import type {
   GrantedBox as GrantedBoxRow,
   UserReview,
+  ReviewPage as ReviewPageRow,
   ReceivedReview as ReceivedReviewRow,
   UserBounty,
   UserBountyEntry,
+  UserComment,
 } from '$lib/server/user-account.service';
 import type { Jsonified } from '$lib/format';
 
@@ -17,30 +19,15 @@ import type { Jsonified } from '$lib/format';
 
 export type Review = Jsonified<UserReview>;
 
+export type ReviewPage = Jsonified<ReviewPageRow>;
+
 export type ReceivedReview = Jsonified<ReceivedReviewRow>;
 
 export type Bounty = Jsonified<UserBounty>;
 
 export type BountyEntry = Jsonified<UserBountyEntry>;
 
-export type Comment = {
-  id: number;
-  createdAt: string;
-  content: string;
-  nsfw: boolean | null;
-  tosViolation: boolean | null;
-  modelId: number | null;
-};
-
-export type CommentV2 = {
-  id: number;
-  createdAt: string;
-  content: string;
-  tosViolation: boolean | null;
-  threadId: number;
-  entityType: string | null;
-  entityId: number | null;
-};
+export type Comment = Jsonified<UserComment>;
 
 export type Cosmetic = {
   /** `${cosmeticId}:${claimKey}` — the cosmetic id alone repeats across claims. */
@@ -125,10 +112,8 @@ export type GrantedBox = Jsonified<GrantedBoxRow>;
 export type Capped<T> = { items: T[]; truncated: boolean };
 
 export type Account = {
-  reviews: Capped<Review>;
   receivedReviews: Capped<ReceivedReview>;
   comments: Capped<Comment>;
-  commentsV2: Capped<CommentV2>;
   cosmetics: Capped<Cosmetic>;
   trainings: { runs: TrainingRun[]; truncated: boolean; charges: TrainingCharges | null };
   bounties: Capped<Bounty>;
@@ -147,9 +132,25 @@ export async function fetchAccount(userId: number, version = 0): Promise<Account
   return r.json();
 }
 
-/** Review id → image count. Its own endpoint — see `/api/user-review-image-counts`. */
-export async function fetchReviewImageCounts(userId: number): Promise<Record<number, number>> {
-  const r = await fetch(`/api/user-review-image-counts/${userId}`);
+/** `query` is the page and filters, as `parseReviewQuery` reads them. `version` is in the URL for the
+ *  same reason as `fetchAccount`'s. */
+export async function fetchReviews(
+  userId: number,
+  query: URLSearchParams,
+  version: number
+): Promise<ReviewPage> {
+  const r = await fetch(`/api/user-reviews/${userId}?${query}&v=${version}`);
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
+
+/** Review id → image count for the same page. Its own endpoint — see `/api/user-review-image-counts`. */
+export async function fetchReviewImageCounts(
+  userId: number,
+  query: URLSearchParams,
+  version: number
+): Promise<Record<number, number>> {
+  const r = await fetch(`/api/user-review-image-counts/${userId}?${query}&v=${version}`);
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 }

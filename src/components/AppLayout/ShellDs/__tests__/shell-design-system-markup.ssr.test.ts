@@ -48,7 +48,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 });
 // A Mantine `Menu` and a client-only button; both stay on Mantine whatever the flag says.
 vi.mock('~/components/Support/SupportMenu', () => ({ SupportMenu: () => null }));
-vi.mock('~/components/Assistant/AssistantButton', () => ({ AssistantButton: () => null }));
+vi.mock('~/components/Assistant/FloatingHelpMenu', () => ({ FloatingHelpMenu: () => null }));
 
 const { AppFooter } = await import('~/components/AppLayout/AppFooter');
 

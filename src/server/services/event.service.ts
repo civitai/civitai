@@ -1,3 +1,5 @@
+import { getTurfEvent } from '~/server/events/turf/turf.service';
+import { Prisma } from '@prisma/client';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { pack } from 'msgpackr';
 import { CacheTTL } from '~/server/common/constants';
@@ -5,12 +7,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getEntityCoverImage } from '~/server/services/image.service';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
-import {
-  ArticleStatus,
-  CosmeticEntity,
-  ImageIngestionStatus,
-  ModelStatus,
-} from '~/shared/utils/prisma/enums';
+import { ArticleStatus, CosmeticEntity, ModelStatus } from '~/shared/utils/prisma/enums';
 import { eventEngine } from '~/server/events';
 import type { EventViewer } from '~/server/events/event-access';
 import {
@@ -27,6 +24,7 @@ import type {
   EventInput,
   PlaceableContentPageInput,
   RosterOptInInput,
+  ShowcaseHatInput,
   TeamRosterInput,
   TeamScoreHistoryInput,
   WornEventHatInput,
@@ -72,7 +70,16 @@ import {
   getUserSettings,
   patchUserSettings,
 } from '~/server/services/user.service';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  getShowcaseHatForUser,
+  refreshShowcaseHats,
+  resolveShowcaseHatIds,
+  SHOWCASE_EVENT,
+  SHOWCASE_OFF,
+  SHOWCASE_SETTING,
+} from '~/server/events/showcase-hat';
+import { bustUserCreator } from '~/server/services/user-creator.service';
 import { isDefined } from '~/utils/type-guards';
 
 // Every event read is gated on what the viewer may see (event-access.ts); a closed event reads as an
@@ -375,16 +382,19 @@ export async function getEventStandings({
 }: EventInput & Viewer & OnDegraded) {
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, viewer);
-    const [settled, live, engineOn] = await Promise.all([
+    const [settled, live, engineOn, turfEvent] = await Promise.all([
       getScoredEventStandings(scored, { onDegraded }),
       liveTeamPoints(scored, onDegraded),
       isEventPointsEnabled().catch(() => false),
+      // The live override applied: the turf board waits for the mode to go live.
+      getTurfEvent(scored.name).catch(() => undefined),
     ]);
     const standings = withLiveTeamPoints(settled, live);
     const userIds = [
       ...new Set([
         ...standings.topCosmetics.map((x) => x.userId),
         ...Object.values(standings.topUsers).flatMap((x) => x.map((u) => u.userId)),
+        ...(standings.topTurfPlayers ?? []).map((x) => x.userId),
       ]),
     ];
     const [basicUsers, profilePictures, userCosmetics, cosmeticDetails, teamHats] =
@@ -431,7 +441,17 @@ export async function getEventStandings({
     // Whether the team totals came from the live engine and it is running, so the page does not call
     // them hourly. With the kill switch off they are still read live but no longer move.
     const liveTotals = live !== null && engineOn;
-    return { ...standings, topCosmetics, teamsTopicId, liveTotals, users, cosmetics, teamHats };
+    const turfLive = turfEvent?.turf.mode === 'live';
+    return {
+      ...standings,
+      topCosmetics,
+      teamsTopicId,
+      liveTotals,
+      turfLive,
+      users,
+      cosmetics,
+      teamHats,
+    };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
@@ -686,9 +706,9 @@ export async function getPlaceableEventContentPage({
 
 const PLACEABLE_PER_TYPE = 24;
 
-// Published, scanned content only: equipping does not check publish state, so this is where a draft
-// is kept out. Images page by id (indexed with userId); a creator's models and articles are read
-// whole by userId and sorted either way, so they page by offset.
+// Published, scanned content only: equipping does not check publish state (the editors offer a hat on
+// a draft), so this is where a draft or a post scheduled for later is kept out. A creator's models
+// and articles are read whole by userId and sorted either way, so they page by offset.
 async function placeableIds(
   entityType: CosmeticEntity,
   userId: number,
@@ -697,18 +717,7 @@ async function placeableIds(
 ) {
   let ids: number[];
   if (entityType === CosmeticEntity.Image) {
-    const rows = await dbRead.image.findMany({
-      where: {
-        userId,
-        ingestion: ImageIngestionStatus.Scanned,
-        post: { publishedAt: { not: null } },
-        ...(cursor !== undefined && { id: { lt: cursor } }),
-      },
-      select: { id: true },
-      orderBy: { id: 'desc' },
-      take: take + 1,
-    });
-    ids = rows.map((r) => r.id);
+    ids = await placeableImageIds(userId, cursor, take + 1);
   } else if (entityType === CosmeticEntity.Model) {
     const rows = await dbRead.model.findMany({
       where: { userId, status: ModelStatus.Published },
@@ -738,6 +747,41 @@ async function placeableIds(
       ? page[page.length - 1]
       : (cursor ?? 0) + take,
   };
+}
+
+// Newest post first, not newest upload: a scheduled post's images are uploaded days before it goes
+// live, so by id they sit far below what the creator just posted. The cursor stays the last image
+// id shown (the wire contract older clients send); its post's publishedAt is the keyset's first half.
+async function placeableImageIds(userId: number, cursor: number | undefined, limit: number) {
+  const now = new Date();
+  let after = Prisma.empty;
+  if (cursor !== undefined) {
+    const [key] = await dbRead.$queryRaw<{ publishedAt: Date | null }[]>`
+      SELECT p."publishedAt"
+      FROM "Image" i
+      JOIN "Post" p ON p.id = i."postId"
+      WHERE i.id = ${cursor} AND i."userId" = ${userId}
+    `;
+    // The last image shown was deleted or unpublished since: no position to continue from.
+    if (!key?.publishedAt) return [];
+    after = Prisma.sql`
+      AND p."publishedAt" <= ${key.publishedAt}
+      AND (p."publishedAt", i.id) < (${key.publishedAt}, ${cursor})
+    `;
+  }
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT i.id
+    FROM "Post" p
+    JOIN "Image" i ON i."postId" = p.id
+    WHERE p."userId" = ${userId}
+      AND p."publishedAt" <= ${now}
+      AND i."userId" = ${userId}
+      AND i.ingestion = 'Scanned'
+      ${after}
+    ORDER BY p."publishedAt" DESC, i.id DESC
+    LIMIT ${limit}
+  `;
+  return rows.map((r) => r.id);
 }
 
 // Title and cover image for each entity, in the order given. An entity with no usable cover (still
@@ -925,7 +969,7 @@ export async function getTeamRoster({
       profilePictureCache.fetch(userIds),
       cosmeticCache.fetch([...new Set(page.rows.flatMap((r) => r.hats.map((h) => h.id)))]),
     ]);
-    const hatOf = ({ id, worn, price }: RosterHat) => {
+    const hatOf = ({ id, worn, price, picked }: RosterHat) => {
       const c = cosmetics[id];
       if (!c) return null;
       const data = (c.data ?? {}) as { url?: unknown; team?: unknown };
@@ -935,6 +979,7 @@ export async function getTeamRoster({
         url: typeof data.url === 'string' ? data.url : null,
         worn,
         price,
+        picked: picked === true,
       };
     };
     const items = page.rows.flatMap((row) => {
@@ -1002,6 +1047,73 @@ export async function setRosterOptIn({
     if (rosterEvent) await syncRosterMembersWith(rosterEvent, [user.id], defaultRosterSyncDeps());
     const team = await sysRedis.hGet(eventRosterKeys(scored.name).members, String(user.id));
     return { optedIn: optIn, listedTeam: rosterTeam(team) };
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+// The caller's showcase pick and the hat their avatar shows, from the primary: read right after they
+// pick. `pick` is null when they never picked, cleared it or turned the hat off.
+export async function getMyShowcaseHat({
+  event,
+  user,
+}: EventInput & { user: { id: number; isModerator?: boolean } }) {
+  try {
+    const scored = await eventEngine.getReadableScoredEvent(event, user);
+    const [settings, resolved] = await Promise.all([
+      getUserSettings(user.id),
+      resolveShowcaseHatIds(scored.name, [user.id], dbWrite),
+    ]);
+    const stored = settings[SHOWCASE_SETTING]?.[scored.name] ?? null;
+    const off = stored === SHOWCASE_OFF;
+    return {
+      pick: off ? null : stored,
+      showing: resolved.get(user.id) ?? null,
+      off,
+    };
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+// The hat the caller's avatar shows now, from the cache, for their own "You're on Team X" panels: the
+// homepage block is one of them, so no primary read. Null when it is not on show.
+export async function getMyShowcaseHatArt({ event, user }: EventInput & { user: { id: number } }) {
+  if (event !== SHOWCASE_EVENT.name) return null;
+  return getShowcaseHatForUser(user.id);
+}
+
+// Picks (or, with null, clears) the hat the caller's avatar shows during the event, or turns it off.
+// Only a hat of this event they hold now; it is a pointer, so nothing is copied, moved or scored.
+export async function setShowcaseHat({
+  event,
+  cosmeticId,
+  off,
+  user,
+}: ShowcaseHatInput & { user: { id: number; isModerator?: boolean } }) {
+  try {
+    if (event !== SHOWCASE_EVENT.name) throw throwBadRequestError('This event has no showcase hat');
+    await eventEngine.assertPlayable(event, user);
+    if (typeof cosmeticId === 'number') {
+      const owned = await dbWrite.$queryRaw<{ ok: number }[]>`
+        SELECT 1 AS ok
+        FROM "UserCosmetic" uc
+        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+        WHERE uc."userId" = ${user.id} AND uc."cosmeticId" = ${cosmeticId}
+          AND c.type = 'ContentDecoration' AND c.data ->> 'event' = ${event}
+        LIMIT 1
+      `;
+      if (!owned.length) throw throwBadRequestError("You don't have that hat");
+    }
+    await patchUserSettings(user.id, {
+      mergeInto: { [SHOWCASE_SETTING]: { [event]: off ? SHOWCASE_OFF : cosmeticId ?? null } },
+      location: 'event.service:setShowcaseHat',
+    });
+    await refreshShowcaseHats([user.id]);
+    // The creator card and profile header carry it; a listed member's roster card leads with it.
+    await bustUserCreator(user.id);
+    void syncEventRosterMember(user.id, { event, onlyIfListed: true });
+    return getMyShowcaseHat({ event, user });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

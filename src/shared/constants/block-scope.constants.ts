@@ -121,6 +121,13 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // rather than by the prefix alone.
   'apps:storage': SKIP_OAUTH_CHECK,
   'apps:storage:publish': SKIP_OAUTH_CHECK,
+  // apps:storage:import — reach the viewer's documents in ANOTHER app, as the viewer, through
+  // the imports the manifest declares (`storage.imports`). SENSITIVE and CONSENT-GATED like
+  // the publish scope, and narrower than the token: the storage route also requires a grant
+  // per (viewer, this app, source app) covering the import on every call
+  // (`storage-import-grant.service.ts`). In NO dev, tunnel, review or private-run allowlist,
+  // and the route refuses an import on a dev, hub or review token.
+  'apps:storage:import': SKIP_OAUTH_CHECK,
   // collections:read:self / collections:write:self — the App Blocks Collections
   // surface (discover + read public collections and the viewer's OWN collections;
   // follow/bookmark a collection on the viewer's behalf). Same no-OAuth-bit
@@ -569,6 +576,13 @@ export function resolvePerCallBuzzBudget(declared: unknown): number {
  */
 export const CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE = 'daily-limit-exceeded' as const;
 
+/**
+ * A generation input names the viewer's own upload before its scan has finished. Retry once the
+ * upload's scan completes. Returned by the estimate and the submit of `kind:'step'` and
+ * `kind:'workflow'` bodies as a failed snapshot's `errorCode`.
+ */
+export const SOURCE_SCAN_PENDING_ERROR_CODE = 'source-scan-pending' as const;
+
 /** Where a viewer sets, raises or removes their per-app daily Buzz limit. */
 export const APP_DAILY_LIMIT_SETTINGS_PATH = '/apps/activity';
 
@@ -766,135 +780,14 @@ export function isKnownBlockScope(scope: string): scope is BlockScopeString {
   return Object.prototype.hasOwnProperty.call(BLOCK_SCOPE_TO_OAUTH_BIT, scope);
 }
 
-/**
- * SENSITIVE block scopes — the subset of the vocabulary that carries elevated
- * privacy/financial risk to the VIEWER, and therefore warrants distinct,
- * warning-styled emphasis wherever scopes are surfaced (the mod review modal,
- * the consent/grant prompt, and the per-app "granted permissions" panels).
- *
- * A scope is sensitive when granting it lets the app do one of:
- *   - spend the viewer's Buzz          (`ai:write:budgeted`, `social:tip:self`)
- *   - read the viewer's Buzz balance   (`buzz:read:self`)
- *   - read the viewer's PRIVATE data   (`collections:read:private`)
- *   - write data OTHER users see       (`apps:storage:shared:write`,
- *                                       `apps:storage:publish`,
- *                                       `posts:write:self`,
- *                                       `apps:store:items:write`,
- *                                       `social:react:self`)
- *
- * This set does two things. (1) PRESENTATION — it drives the distinct,
- * warning-styled emphasis wherever scopes are surfaced. (2) ENFORCEMENT — it
- * now also gates MANIFEST VALIDITY: at submit time the manifest validator
- * REQUIRES a non-empty `scopeJustifications` entry for every declared sensitive
- * scope (see `block-manifest-validator.service.ts`), so a moderator always sees
- * WHY an elevated-risk permission was requested. It does NOT change whether a
- * granted scope is enforced at call time — that stays with the server-side
- * per-op gates + consent grant. Keeping it a set (not a per-scope flag on the
- * map) keeps the enforcement map and this classification decoupled.
- *
- * INVARIANT (guarded by a test): every entry must be a currently-known scope in
- * `BLOCK_SCOPE_TO_OAUTH_BIT`. If a scope is renamed/removed (as
- * `media:read:owned` / `block:settings:*` were in #3212) it must be updated
- * here too, so a sensitive scope can never silently drop out of the set.
- */
-export const SENSITIVE_BLOCK_SCOPES: ReadonlySet<string> = new Set([
-  'ai:write:budgeted',
-  'social:tip:self',
-  'buzz:read:self',
-  'collections:read:private',
-  'apps:storage:shared:write',
-  // The document store's successor to `apps:storage:shared:write`: documents in a shared
-  // collection, authored under the viewer's identity, read by every viewer of the app.
-  'apps:storage:publish',
-  // Writes PUBLIC, feed-visible, reward-earning content under the VIEWER'S name.
-  // The most consequential entry in this set: `apps:storage:shared:write` is
-  // visible to other viewers OF THAT APP, this one is visible to the whole site
-  // and carries the viewer's byline.
-  'posts:write:self',
-  // Spends the viewer's Buzz on an app's own catalog. The read half
-  // (`goods:read:self`) is not sensitive — it returns only what the calling app
-  // already sold to this viewer.
-  'goods:purchase:self',
-  // Writes store cards every visitor sees, under the viewer's name.
-  'apps:store:items:write',
-  // Sets a public, reward-paying reaction under the viewer's name.
-  'social:react:self',
-]);
-
-export function isSensitiveBlockScope(scope: string): boolean {
-  return SENSITIVE_BLOCK_SCOPES.has(scope);
-}
-
-/**
- * Manifest-shaped input for the sensitive-scope-justification gate. Only the two
- * fields the rule actually reads are needed, and both are `unknown` because
- * callers pass raw, not-yet-fully-validated manifests — the ZIP-extracted blob
- * at submit (`submitVersion`) and the stored/deep-validated manifest at
- * `validate`. Keeping the shape this loose is what lets ONE helper back both
- * enforcement sites.
- */
-export type SensitiveScopeManifestInput = {
-  scopes?: unknown;
-  scopeJustifications?: unknown;
-};
-
-/**
- * Returns the DECLARED sensitive scopes that lack a non-empty
- * `scopeJustifications` entry (deduped, in declaration order). Empty when the
- * manifest is compliant, declares no sensitive scope, or has a non-array
- * `scopes`. A justification "counts" only when it is a string with non-whitespace
- * content — an empty/whitespace value, a non-string value, or a missing key all
- * leave the sensitive scope unjustified.
- *
- * SINGLE SOURCE OF TRUTH for the "sensitive scopes must be justified" rule: the
- * manifest validator (`validate`) and the submit path (`submitVersion`) both
- * call this so the two enforcement sites can never drift. Pure + client-safe.
- */
-export function unjustifiedSensitiveScopes(manifest: SensitiveScopeManifestInput): string[] {
-  if (!Array.isArray(manifest.scopes)) return [];
-  const justifications =
-    manifest.scopeJustifications &&
-    typeof manifest.scopeJustifications === 'object' &&
-    !Array.isArray(manifest.scopeJustifications)
-      ? (manifest.scopeJustifications as Record<string, unknown>)
-      : {};
-  return [
-    ...new Set(
-      (manifest.scopes as unknown[])
-        .filter((s): s is string => typeof s === 'string')
-        .filter((scope) => isSensitiveBlockScope(scope))
-        .filter((scope) => {
-          const raw = justifications[scope];
-          return !(typeof raw === 'string' && raw.trim().length > 0);
-        })
-    ),
-  ];
-}
-
-/**
- * The exact operator-facing message both enforcement sites raise for an
- * unjustified sensitive scope. Single-sourced so the validator's
- * `errors.push(...)` string and `submitVersion`'s `throw` stay byte-identical.
- */
-export function sensitiveScopeJustificationError(unjustifiedScopes: string[]): string {
-  return `sensitive scopes require a justification — add a non-empty scopeJustifications entry for: ${unjustifiedScopes.join(
-    ', '
-  )}`;
-}
-
-/**
- * Throws (with `sensitiveScopeJustificationError`) when any declared sensitive
- * scope lacks a justification; a no-op when the manifest is compliant. This is
- * the imperative form used by `submitVersion` at submit time — the validator
- * uses `unjustifiedSensitiveScopes` directly so it can accumulate the message
- * into its `errors[]` alongside the other checks.
- */
-export function assertSensitiveScopesJustified(manifest: SensitiveScopeManifestInput): void {
-  const unjustifiedScopes = unjustifiedSensitiveScopes(manifest);
-  if (unjustifiedScopes.length > 0) {
-    throw new Error(sensitiveScopeJustificationError(unjustifiedScopes));
-  }
-}
+export {
+  SENSITIVE_BLOCK_SCOPES,
+  assertSensitiveScopesJustified,
+  isSensitiveBlockScope,
+  sensitiveScopeJustificationError,
+  unjustifiedSensitiveScopes,
+} from '@civitai/shared/sensitive-block-scopes';
+export type { SensitiveScopeManifestInput } from '@civitai/shared/sensitive-block-scopes';
 
 /**
  * Validates that every requested block scope either declares no OAuth-bit
@@ -968,3 +861,141 @@ export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): number
   }
   return bitmask;
 }
+
+/**
+ * The per-user storage scopes (`apps:storage:read` / `apps:storage:write`, the per-user
+ * KV, and `apps:storage`, the document store's base scope) are intentionally NOT
+ * consent-gated here — NOT the whole `apps:storage:*` family, since `apps:storage:publish`
+ * is gated (see its entry below). The per-user KV scopes are each
+ * an ambient-but-otherwise-gated scope with its own issuance-time / per-op check
+ * (resolveStorageContext). Subjecting them to per-user consent would make the
+ * publisher re-consent to their own block's storage on every version bump for
+ * no security gain. The remaining user-resource scopes (user/ai/buzz/
+ * social, models:write) flow through the consent gate.
+ *
+ * `apps:storage:shared:read` / `apps:storage:shared:write` (the SHARED, app-
+ * global / cross-user datastore) are ALSO exempt — and, unlike the per-user
+ * scopes, they are NOT publisher-only. Their governance is NOT a per-scope
+ * consent prompt but the SERVER-SIDE controls in `resolveSharedContext`
+ * (apps-shared.router.ts): a fail-closed min-trust gate (not-anon, not-banned,
+ * not-muted, onboarding-complete, email-verified, account age ≥ 7d) plus
+ * content moderation and one-vote / per-user-row / rate limits, all enforced at
+ * every read/write REGARDLESS of the token scope. `shared:read` is reading
+ * PUBLIC community data (anon-safe — the router allows anon reads by design);
+ * `shared:write` is trust-gated PUBLIC posting/voting (the resolver rejects anon
+ * and any ineligible caller before touching data, whether or not the scope is
+ * present). A per-scope consent prompt would add nothing that the trust gate +
+ * moderation don't already enforce — so, mirroring the per-user storage scopes,
+ * these sign without a grant. (Pre-GA consideration, NOT built here: an EXPLICIT
+ * shared-WRITE consent prompt if widening the audience beyond the trust gate.)
+ *
+ * `models:read:self` is ALSO exempt (allow-by-default): a low-sensitivity read
+ * of the viewer's OWN models, and a no-op for an anon viewer (no user → nothing
+ * to read), so it is safe in an anon token. Exempting it lets the block render
+ * fully for a logged-in viewer with no upfront consent prompt; the consent gate
+ * is reserved for the money / AI scopes (`ai:write:budgeted`, `buzz:read:self`),
+ * which the host requests lazily on the first buzz-spending action (Generate)
+ * rather than on load.
+ *
+ * `collections:read:self` / `collections:write:self` are exempt — but
+ * `collections:read:private` is DELIBERATELY NOT (the read split, below). The
+ * exempt pair's gate is SERVER-SIDE per op, not a per-scope consent prompt:
+ * read:self covers own-PUBLIC + any PUBLIC collection (public data — nothing
+ * sensitive to consent to), and the follow write is SELF-BOUND to the token
+ * subject (a bookmark on the caller's OWN account). A per-scope consent prompt
+ * would add nothing the visibility/ownership/subject checks don't already
+ * enforce. Exempting them is ALSO the #3090 fix: a page-app token that declared a
+ * consent-gated scope silently dropped it at mint (the user had no grant row) →
+ * every op 403'd; consent-exempt scopes flow through partitionByConsent
+ * unconditionally, so the minted PAGE token actually carries them end-to-end.
+ *
+ * `collections:read:private` (the subject's OWN PRIVATE collections) is the
+ * CONSENT-GATED half of the read split and is INTENTIONALLY absent from this set:
+ * reading a user's private collections IS sensitive, so it must flow through the
+ * gated branch — the host surfaces it as `needs_consent`, the user grants it, and
+ * only then does a token carry it. (This is the deliberate contrast to the #3090
+ * exemption above: read:self always mints; read:private mints only after consent.)
+ *
+ * `posts:write:self` (create a REAL Post on the viewer's profile from an app's
+ * own outputs) is likewise INTENTIONALLY ABSENT, for a strictly stronger version
+ * of the `collections:read:private` reason. It is the first block scope that
+ * writes PUBLIC, feed-visible, reward-earning content under the VIEWER'S name.
+ * No server-side visibility/ownership check can substitute for it, because the
+ * app IS acting on the subject's own account — ownership is satisfied by
+ * construction, which is exactly what makes it dangerous rather than safe. So it
+ * flows through the gated branch: the host surfaces it as `needs_consent`, the
+ * user grants it, and only then does a token carry it.
+ *
+ * ⚠️ THE GRANT IS NOT THE WHOLE CONSENT. A one-time grant cannot inform about
+ * content that differs on every call, so `blocks.createPostFromApp` is ALSO
+ * gated on a per-post host-chrome confirm rendering the HOST-RESOLVED title /
+ * detail / tags / image thumbnails / gallery target. Do NOT "simplify" that
+ * confirm away as redundant with this grant — they answer different questions
+ * ("may this app post as me at all" vs "may it post THIS").
+ *
+ * `social:react:self` (set the viewer's public, reward-paying reaction on an image) is
+ * INTENTIONALLY ABSENT as well, and unlike `posts:write:self` there is NO per-action confirm
+ * behind it — so this grant is the ONLY consent the reaction path has. Exempting it would mean
+ * an app could react as the viewer with no prompt at all. Revoking it stops future reactions;
+ * reactions already made stay (decision on civitai-app-starters#669).
+ *
+ * 🔴 MEMBERSHIP HERE MAKES A SCOPE UN-REVOKABLE, AND A REVOKE CONTROL ON ONE WOULD BE A
+ * LIE. `partitionByConsent` (scope-grant.service.ts) signs on `CONSENT_EXEMPT_SCOPES.has(scope) ||
+ * grantedScopes.has(scope)` — the exempt test comes FIRST and never consults the grant —
+ * so a suppression entry for a member of this set would be stored and enforce NOTHING.
+ * `blocks.revokeScopes` therefore REFUSES every member of this set with a specific error rather than
+ * accepting and silently doing nothing, and the permissions UI must not offer a control for
+ * them (ScopeConsentList shows them as fixed). Making revocation override exemption is deliberately NOT the design: each
+ * exemption above rests on its own server-side gate (min-trust, moderation,
+ * visibility/ownership, self-bound subject, rate limits), and removing the scope would
+ * not remove those gates' subject matter — it would only break the #3090 page-token fix.
+ * The scopes a revoke DOES reach are the gated ones: notably `ai:write:budgeted`,
+ * `collections:read:private`, `posts:write:self`, `social:react:self`.
+ */
+export const CONSENT_EXEMPT_SCOPES: ReadonlySet<string> = new Set([
+  // NOTE: block:settings:* is intentionally ABSENT — those scopes were removed
+  // from the block-scope registry (decorative/unenforced). Do NOT re-add them
+  // here: if a settings scope is ever reintroduced it must be reintroduced WITH
+  // an explicit consent decision, not silently exempted (a stale exempt entry
+  // would mint it consent-free the moment it re-entered the registry).
+  'apps:storage:read',
+  'apps:storage:write',
+  // SHARED (cross-user) storage — governed by resolveSharedContext's server-side
+  // min-trust gate + content moderation + rate limits, not per-scope consent.
+  'apps:storage:shared:read',
+  'apps:storage:shared:write',
+  // DOCUMENT STORE — `apps:storage` reaches only this app's own store: the viewer's private
+  // collections, reads of shared ones, marks and counters. Each is bounded by the app's
+  // reviewed `storage` declaration and by the server-side per-op checks of the storage
+  // routes. Its sibling `apps:storage:publish` is deliberately ABSENT: authoring documents
+  // other viewers read, under the viewer's identity, needs a grant — one prompt per app.
+  // (Unlike `apps:storage:shared:write` above, which signs consent-free today and which the
+  // publish scope replaces.)
+  'apps:storage',
+  'models:read:self',
+  // Collections — server-side visibility/ownership (read) + self-bound subject
+  // (follow) are the gate; see the block collections endpoints. #3090: exempting
+  // them guarantees they reach `claims.scopes` in the minted page token.
+  'collections:read:self',
+  'collections:write:self',
+  // goods:read:self — the app's OWN sales ledger, filtered to this viewer. The
+  // read is scoped to `claims.appBlockId` in the query, so it can only ever
+  // return what the calling app itself sold; there is no third-party data to
+  // consent to. Its sibling `goods:purchase:self` is deliberately ABSENT — money
+  // out of the viewer's balance always needs an explicit grant.
+  'goods:read:self',
+  // apps:store:items:write — gated per call server-side; a consent gate here would only drop
+  // the scope from tokens.
+  'apps:store:items:write',
+]);
+
+/**
+ * Whether a scope is signed WITHOUT a grant, and therefore cannot be revoked; see
+ * CONSENT_EXEMPT_SCOPES.
+ */
+export function isConsentExemptScope(scope: string): boolean {
+  return CONSENT_EXEMPT_SCOPES.has(scope);
+}
+
+/** `blocks.revokeScopes` takes at most this many scopes per call; the router schema and the client share it. */
+export const REVOKE_SCOPES_MAX_PER_CALL = 32;

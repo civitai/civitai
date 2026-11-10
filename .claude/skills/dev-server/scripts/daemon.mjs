@@ -23,9 +23,12 @@ import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
 import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
+import { openV6Forward } from './loopback-forward.mjs';
 import { LOCAL_MAIL_ENV, LOCAL_MAIL_LOG } from './local-mail.mjs';
 import { DB_KEYS, DEV_DB_LOG, appDatabaseEnv } from './dev-db.mjs';
 import { blankKeys, blankedKeyNames } from './blank-keys.mjs';
+import { sweepWorktreeCaches } from './dev-cache-sweep.mjs';
+import { listWorktrees } from './worktree.mjs';
 import { samePath, canonicalPath, resolvePrimaryCheckout } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
 import { DEFAULT_MAX_WORKERS, DEFAULT_RUN_TIMEOUT_MS, RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
@@ -72,7 +75,8 @@ function loadSkillConfig() {
     distCacheKeep: 4,
     distCacheMaxGb: 40,
     perBranchDistDir: false,
-    worktreeDevFsCache: false,
+    worktreeDevFsCache: true,
+    worktreeCacheMaxGb: 20,
     killOnBranchSwitch: false,
     autoInstall: true,
     // NOT empty by default. `_app` SSR-fetches /api/user/settings on every page render and gives
@@ -156,7 +160,10 @@ function loadSkillConfig() {
           config.perBranchDistDir = /^(true|1|yes|on)$/i.test(value);
           break;
         case 'WORKTREE_DEV_FS_CACHE':
-          config.worktreeDevFsCache = /^(true|1|yes|on)$/i.test(value);
+          if (value) config.worktreeDevFsCache = /^(true|1|yes|on)$/i.test(value);
+          break;
+        case 'WORKTREE_CACHE_MAX_GB':
+          if (value) config.worktreeCacheMaxGb = parseFloat(value);
           break;
         case 'KILL_ON_BRANCH_SWITCH':
           config.killOnBranchSwitch = /^(true|1|yes|on)$/i.test(value);
@@ -774,7 +781,7 @@ class DevSession {
     applyDevFsCacheDefault(envVars, {
       worktree: this.worktree,
       primary: primaryCheckout,
-      worktreeOptIn: skillConfig.worktreeDevFsCache,
+      worktreeCache: skillConfig.worktreeDevFsCache,
     });
 
     const env = spawnEnvFor(envVars, { blankedEnvDir: worktreeEnvDir(this.worktree, this.worktree) });
@@ -1542,6 +1549,7 @@ class AuthHub {
     this.startPromise = null;
     this.spawnedAtMs = null;
     this.spawnEnvCache = null;
+    this.closeV6Forward = null;
     this.stopping = false;
     this.status = 'stopped'; // stopped | starting | running | crashed | error | disabled
     this.ready = false;
@@ -1599,18 +1607,14 @@ class AuthHub {
     return null;
   }
 
-  // `::` (dual-stack), not a single literal. Bound to `127.0.0.1` these servers answered on v4 and
-  // nothing on [::1]; Windows resolves `localhost` to ::1 first, so a browser typing the same `localhost`
-  // URL the auth redirects use got connection-refused while curl — which falls back to v4 — reported the
-  // server perfectly healthy. `localhost` is not the fix either: it resolves to ::1 *only*, which just
-  // moves the outage onto every caller that hardcodes 127.0.0.1. `::` accepts v4-mapped addresses, so both
-  // spellings work, and it matches what `next dev` already binds for the main app on 3000.
+  // Loopback only, both spellings: Windows resolves localhost to ::1 first, other callers hardcode
+  // 127.0.0.1, and vite takes one --host. So vite binds 127.0.0.1 and openV6Forward serves [::1].
   //
   // `--strictPort` is what makes the port the daemon reserved the port the app actually binds.
   // Without it Vite drifts to the next free one on its own and the reservation stops meaning
   // anything — two apps would report ports neither of them is serving.
   spawnArgs() {
-    return ['exec', 'vite', 'dev', '--host', '::', '--port', String(this.port), '--strictPort'];
+    return ['exec', 'vite', 'dev', '--host', '127.0.0.1', '--port', String(this.port), '--strictPort'];
   }
 
   // `if (this.process)` used to be a sufficient guard because start() was synchronous. It is not any
@@ -1730,6 +1734,10 @@ class AuthHub {
     }
     this.process = proc;
     this.spawnedAtMs = Date.now();
+    this.closeV6Forward = openV6Forward(this.port, (level, message) => {
+      if (level === 'error') this.lastError = message;
+      this.addLog(level, message);
+    });
 
     this.startedAt = new Date().toISOString();
     this.stoppedAt = null;
@@ -1776,6 +1784,7 @@ class AuthHub {
         this.ready = false;
         this.stoppedAt = new Date().toISOString();
         this.process = null;
+        this.dropV6Forward();
       }
     });
 
@@ -1828,6 +1837,7 @@ class AuthHub {
     this.ready = false;
     this.status = 'stopped';
     this.stoppedAt = new Date().toISOString();
+    await this.dropV6Forward();
 
     await new Promise((resolve) => {
       proc.once('exit', resolve);
@@ -1854,6 +1864,12 @@ class AuthHub {
       `kill. Nothing tracks it; find and kill whatever is listening on ${this.port}.`;
     this.addLog('error', this.lastError);
     return this.getStatus();
+  }
+
+  dropV6Forward() {
+    const close = this.closeV6Forward;
+    this.closeV6Forward = null;
+    return close ? close() : Promise.resolve();
   }
 
   async restart() {
@@ -1967,8 +1983,8 @@ function worktreeEnvDir(worktree, dir) {
   return samePath(worktree, primaryCheckout) ? null : dir;
 }
 
-function applyDevFsCacheDefault(envVars, { worktree, primary, worktreeOptIn }) {
-  if (envVars.NEXT_DEV_FS_CACHE === undefined && !worktreeOptIn && !samePath(worktree, primary)) {
+function applyDevFsCacheDefault(envVars, { worktree, primary, worktreeCache }) {
+  if (envVars.NEXT_DEV_FS_CACHE === undefined && !worktreeCache && !samePath(worktree, primary)) {
     envVars.NEXT_DEV_FS_CACHE = 'false';
   }
   return envVars;
@@ -2112,6 +2128,25 @@ async function stopAppSessions() {
 
 // Session manager
 const sessions = new Map();
+
+// Worktrees accumulate several GB of Turbopack dev cache each; trim the idle ones to a total budget.
+function sweepDevCaches() {
+  try {
+    const busy = (path) =>
+      [...sessions.values(), ...appSessions.values()].some(
+        (s) => s.worktree && samePath(s.worktree, path)
+      );
+    sweepWorktreeCaches({
+      trees: listWorktrees(primaryCheckout),
+      primary: primaryCheckout,
+      isBusy: busy,
+      maxBytes: skillConfig.worktreeCacheMaxGb * 1024 ** 3,
+      log: (level, msg) => console.error(`[cache sweep] ${level}: ${msg}`),
+    });
+  } catch (e) {
+    console.error(`[cache sweep] skipped: ${e.message}`);
+  }
+}
 
 const testQueue = new TestQueue({
   concurrency: {
@@ -3226,6 +3261,8 @@ async function main() {
   server.listen(config.port, '127.0.0.1', () => {
     console.error(`\nDaemon running on http://127.0.0.1:${config.port}`);
     console.error(`\nReady.`);
+    // Off the startup path: it walks every worktree's cache synchronously.
+    setTimeout(sweepDevCaches, 5000).unref();
 
     if (skillConfig.rgbProxyEnabled) {
       console.error('RGB_PROXY_ENABLED=true — starting RGB proxy...');

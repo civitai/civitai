@@ -18,7 +18,8 @@
 // copy of its legacy rows finishing (run right after go-live), an old key does not resolve.
 //
 // "Declares an item collection" is taken to mean "has moved"; nothing else enforces it, and
-// the legacy shared-write routes stay open. Consequences, by design:
+// the legacy shared-write routes stay open until `app-blocks-legacy-stores-removed` closes
+// them for every app (this lookup is not gated by that flag). Consequences, by design:
 //   - once an app's approved manifest declares an item collection, the document store is the
 //     only source for key → item: legacy shared rows written afterwards (e.g. by an old open
 //     tab) never resolve;

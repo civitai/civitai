@@ -186,12 +186,48 @@ describe('feedback schema — context bounds', () => {
       expect(() => parse({ screenshotId: '' })).toThrow();
     });
 
+    // Written by the submit after it checks the capture; a client copy would pass a forged check.
+    it('drops a client-supplied capture row and check', () => {
+      const parsed = parse({
+        screenshotId: UUID_A,
+        screenshotImageId: 123,
+        screenshotCheck: 'not-owner',
+      });
+      expect(parsed.context).toEqual({ screenshotId: UUID_A });
+    });
+
     // Distinct fields, not one array: triage must be able to tell a rendered capture
     // of the reporter's own screen from a file they picked.
     it('is separate from images — both can travel on one submission', () => {
       const parsed = parse({ images: [UUID_A], screenshotId: UUID_B });
       expect(parsed.context?.images).toEqual([UUID_A]);
       expect(parsed.context?.screenshotId).toBe(UUID_B);
+    });
+  });
+
+  // Filed from a toast's "Report this". Undeclared, a z.object strips these and the report arrives
+  // with nothing triage can look up, so the round trip is the assertion.
+  describe('toast report fields', () => {
+    it('carries the server ref, orchestrator ids and toast text through', () => {
+      const context = {
+        errorRef: '0123456789ab',
+        workflowId: '20-20261102000000000000',
+        jobId: 'job_1',
+        toast: { title: 'Failed to auto tag', message: 'Could not complete.' },
+      };
+      expect(parse(context).context).toMatchObject(context);
+    });
+
+    // The moderator queue shows these as copyable text; the patterns keep them from being a URL.
+    it.each([
+      ['errorRef', { errorRef: '0123456789AB' }],
+      ['errorRef', { errorRef: '0123456789abc' }],
+      ['workflowId', { workflowId: 'https://attacker.example/x' }],
+      ['jobId', { jobId: 'a'.repeat(65) }],
+      ['jobId', { jobId: 'a b' }],
+      ['toast.message', { toast: { message: 'x'.repeat(301) } }],
+    ])('rejects a malformed %s', (_label, context) => {
+      expect(() => parse(context)).toThrow();
     });
   });
 
@@ -501,17 +537,24 @@ describe('feedback areas', () => {
     'site-bug-report',
     'app-block',
     'apps-platform',
+    'semantic-image-search',
+    'orchestration',
   ];
 
   // Both halves hand-typed. Reading the expectation out of FEEDBACK_AREAS would make
   // this test follow any future edit instead of pinning the set.
-  it('are exactly the five declared surfaces', () => {
+  it('are exactly the seven declared surfaces', () => {
     expect([...FEEDBACK_AREAS]).toEqual(areas);
   });
 
   // `app-block` and `apps-platform` are declared but are NOT generic-route areas: only their
   // dedicated procedures write them. Hand-typed, like `areas`.
-  const genericAreas = ['bitdex-image-feed', 'apps-marketplace', 'site-bug-report'];
+  const genericAreas = [
+    'bitdex-image-feed',
+    'apps-marketplace',
+    'site-bug-report',
+    'orchestration',
+  ];
 
   it.each(genericAreas)('accepts %s on the submit schema', (area) => {
     const parsed = createFeedbackSchema.parse({ area, message: 'something looked wrong' });

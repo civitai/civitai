@@ -186,6 +186,8 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...args: unknown[]) => mockCheckBlockCatalogRateLimit(...args),
+  checkBlockSubmitRateLimit: async () => ({ allowed: true }),
+  checkBlockSubmitUserRateLimit: async () => ({ allowed: true }),
 }));
 vi.mock('~/server/services/generation/generation.service', () => ({
   resolveCanGenerateForVersions: (...args: unknown[]) => mockResolveCanGenerateForVersions(...args),
@@ -327,6 +329,15 @@ function orchestratorQuoting(cost: number) {
 }
 
 beforeEach(() => {
+  // Only the submit's account-restriction read gets a row; other user reads keep the default.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   vi.clearAllMocks();
   // 🔴 `clearAllMocks` clears CALLS, not the `mockResolvedValueOnce` QUEUE. A test that
   // rejects before the real submit leaves its second queued value behind, and the NEXT

@@ -75,7 +75,7 @@ export function PlacementsPanel() {
 
   return (
     <>
-      <Meta title="Your placements" deIndex />
+      <Meta title="Placements" deIndex />
       <Container size="md" my="md">
         <Stack gap="md">
           <div className="flex flex-wrap items-start justify-between gap-2">

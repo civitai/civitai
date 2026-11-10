@@ -1,5 +1,13 @@
 import Router from 'next/router';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import type { StorylinePath } from '~/components/Storyline/storyline.queries';
@@ -36,6 +44,11 @@ export type ActiveStorylineMode = {
   images: ImagesInfiniteModel[];
   chapterIdOfImage: (imageId: number) => number | undefined;
   jumpToChapter: (chapterId: number) => void;
+  /**
+   * The mode moving the detail to an image. The URL alone cannot: it trails the carousel until it
+   * settles, so it may already name the image while another is on screen.
+   */
+  onSeek: (listener: (imageId: number) => void) => () => void;
   /**
    * Read on into another chapter. `from` is the chapter it continues, when that is not the end
    * of the path (a branch off an earlier stop), and `line` the reader's line it is on, the path by
@@ -163,6 +176,12 @@ export function StorylineModeProvider({
     [path?.chapters, images]
   );
 
+  const seekListeners = useRef(new Set<(imageId: number) => void>());
+  const onSeek = useCallback((listener: (imageId: number) => void) => {
+    seekListeners.current.add(listener);
+    return () => void seekListeners.current.delete(listener);
+  }, []);
+
   const enter = useCallback((id: number) => go({ chapterId: id }), [go]);
   const leave = useCallback(() => {
     setEndOpenFor(undefined);
@@ -187,6 +206,7 @@ export function StorylineModeProvider({
       setEndOpenFor(undefined);
       setDrawerOpen(false);
       go({ imageId, chapterId, via });
+      seekListeners.current.forEach((listener) => listener(imageId));
     },
     [walk, go, chapterId, via, path?.chapters]
   );
@@ -223,13 +243,22 @@ export function StorylineModeProvider({
     });
     if (next.kind === 'wait') return;
     setPendingChapterId(undefined);
-    if (next.kind === 'end') return setEndOpenFor(pendingChapterId);
+    if (next.kind === 'end') {
+      // The path shows a first image the walk lacks: ending here would strand the reader.
+      const at = path?.chapters.findIndex((stop) => stop.chapterId === pendingChapterId) ?? -1;
+      const stop = at >= 0 ? path?.chapters[at] : undefined;
+      if (stop?.firstImage) {
+        const link = storylineChapterLink(stop, routeVia(path?.chapters.slice(0, at + 1) ?? []));
+        if (link) return void Router.push(link.href);
+      }
+      return setEndOpenFor(pendingChapterId);
+    }
     setEndOpenFor(undefined);
     // The router updates synchronously and re-runs this before the cleared state lands; only
     // navigate once, or the two chase each other.
     if (routeImageId !== next.imageId)
       go({ imageId: next.imageId, chapterId: pendingChapterId, via });
-  }, [pendingChapterId, chapterId, pathEndId, imagesFetching, walk, go, routeImageId, via]);
+  }, [pendingChapterId, chapterId, pathEndId, imagesFetching, walk, go, routeImageId, via, path]);
 
   // The URL's chapter is trusted only for an image on its own path (not the previous chapter's,
   // still shown while this one loads), or for the image a reader was on when they took the
@@ -251,6 +280,7 @@ export function StorylineModeProvider({
       images,
       chapterIdOfImage: (imageId) => walk.chapterIdByImageId.get(imageId),
       jumpToChapter,
+      onSeek,
       continueTo,
       endOpen,
       setEndOpen,
@@ -266,6 +296,7 @@ export function StorylineModeProvider({
     enter,
     leave,
     jumpToChapter,
+    onSeek,
     continueTo,
     endOpen,
     drawerOpen,

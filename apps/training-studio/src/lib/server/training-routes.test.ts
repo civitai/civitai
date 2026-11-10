@@ -6,6 +6,7 @@ const train = vi.hoisted(() => ({
   submitTrainingBatch: vi.fn(),
   continueTraining: vi.fn(),
   continueTrainingWhatIf: vi.fn(),
+  MatureAckRequiredError: class extends Error {},
 }));
 vi.mock('$lib/server/train', () => train);
 vi.mock('$lib/server/token', () => ({ requireToken: async () => 'token' }));
@@ -16,6 +17,7 @@ vi.mock('@civitai/orchestration-client', () => ({}));
 import { POST as trainPost } from '../../routes/api/train/+server';
 import { POST as continuePost } from '../../routes/api/continue-training/+server';
 import { TrainingTextCheckError, TrainingTextRefusedError } from '$lib/training-text';
+import { TrainingBatchValidationError } from '$lib/train-core';
 
 function event(body: unknown) {
   return {
@@ -56,6 +58,16 @@ describe.each(routes)('POST /api/%s', (_name, run, submit, cookieArg) => {
   it("sends the check with the caller's session cookie", async () => {
     await run();
     expect(submit.mock.calls[0][cookieArg]).toBe('civ-token=x');
+  });
+
+  it('answers a run on a model that is down with 400 and the reason', async () => {
+    submit.mockRejectedValue(
+      new TrainingBatchValidationError('Krea 2 is temporarily unavailable for training.')
+    );
+    await expect(run()).rejects.toMatchObject({
+      status: 400,
+      body: { message: 'Krea 2 is temporarily unavailable for training.' },
+    });
   });
 
   it('answers a refused trigger word with 400 and its reason', async () => {

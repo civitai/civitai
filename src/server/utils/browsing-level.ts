@@ -1,4 +1,6 @@
+import type { NextApiRequest } from 'next';
 import type { Context } from '~/server/createContext';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import {
@@ -167,4 +169,9 @@ export function resolveRequestBrowsingLevels(
 
   const cap = requestDomainBrowsingLevelCap(ctx);
   if (cap !== undefined) clampRequestBrowsingLevels(input, cap);
+}
+
+/** The levels the public API v1 serves: every level, or only the safe ones in a restricted region. */
+export function apiBrowsingLevel(req: NextApiRequest) {
+  return isRegionRestricted(getRegion(req)) ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 }

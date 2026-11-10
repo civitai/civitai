@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as PlacementService from '~/server/services/placement.service';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
@@ -13,6 +14,20 @@ import { createFakeDb, type FakeDb } from './storyline-loop.fake-db';
  */
 
 const createMultiAccountBuzzTransaction = vi.fn();
+// The Kysely reads the real space resolver makes, answered from the in-memory tables
+// (`db.placementReads`, wired in `beforeEach`).
+const placementReads = vi.hoisted(() => ({
+  getChapterPlacementTarget: vi.fn(),
+  listPlacementSpacesFor: vi.fn(),
+  countPlacements: vi.fn(),
+}));
+// `getPlacementConfig`'s KeyValue read, through Kysely: no stored row, so the compiled defaults
+// apply.
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: vi.fn(async () => undefined),
+}));
+vi.mock('@civitai/db-queries/placement', () => placementReads);
 vi.mock('~/server/services/buzz.service', () => ({
   createMultiAccountBuzzTransaction,
   createBuzzTransaction: vi.fn(),
@@ -25,9 +40,13 @@ vi.mock('~/server/services/placement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementService>()),
   placementPriceRange: async () => ({ min: 0, max: 10_000, freeSlotCap: 0 }),
 }));
+const { onStorySparked } = vi.hoisted(() => ({
+  onStorySparked: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+}));
 vi.mock('~/server/events/points/hooks', () => ({
   onPlacementApproved: async () => undefined,
   onPlacementsTakenDown: async () => undefined,
+  onStorySparked,
 }));
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
@@ -149,6 +168,8 @@ beforeEach(() => {
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactionCount: 1 });
   db = createFakeDb();
   db.install();
+  for (const [name, read] of Object.entries(db.placementReads))
+    placementReads[name as keyof typeof placementReads].mockImplementation(read);
   for (const [id, username] of [
     [OWNER, 'storyteller'],
     [STRANGER, 'stranger'],
@@ -182,7 +203,11 @@ beforeEach(() => {
     userId: OWNER,
     depth: 0,
   });
-  db.insert('storylineCollaborator', { storylineId: STORY, userId: COLLABORATOR });
+  db.insert('storylineCollaborator', {
+    storylineId: STORY,
+    userId: COLLABORATOR,
+    acceptedAt: new Date(),
+  });
 });
 
 afterEach(() => vi.useRealTimers());
@@ -230,6 +255,8 @@ describe("the owner's chapter 1", () => {
     vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 2 * 3_600_000 });
     await expect(promotePendingChapter(DRAFT)).resolves.toMatchObject({ status: 'written' });
     expect(chapterOf(DRAFT)).toMatchObject({ depth: 0 });
+    // Event points: a story started from an image scores once chapter 1 is live.
+    expect(onStorySparked).toHaveBeenCalledExactlyOnceWith(EMPTY_STORY);
   });
 
   it('is not written when the scan refuses the post, and the link stays', async () => {
@@ -269,6 +296,7 @@ describe("the owner's chapter 1", () => {
     await expect(publish(OWNER)).resolves.toMatchObject({
       status: 'waiting',
       reason: 'aboveRating',
+      rating: { postLevel: R, maxNsfwLevel: PG },
     });
     expect(db.row('storyline', { id: EMPTY_STORY })).toMatchObject({ maxNsfwLevel: PG });
     expect(chapterOf(DRAFT)).toBeUndefined();
@@ -377,14 +405,27 @@ describe('the owner continuing their own story', () => {
       canon: true,
     });
     expect(link()).toBeUndefined();
+    expect(onStorySparked).not.toHaveBeenCalled();
   });
 
   it('leaves a continuation rated above the ceiling waiting, and raises nothing', async () => {
     draft(OWNER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER }, { nsfwLevel: R });
 
-    await expect(publish(OWNER)).resolves.toMatchObject({ reason: 'aboveRating' });
+    await expect(publish(OWNER)).resolves.toMatchObject({
+      reason: 'aboveRating',
+      rating: { postLevel: R, maxNsfwLevel: PG },
+    });
     expect(db.row('storyline', { id: STORY })).toMatchObject({ maxNsfwLevel: PG });
     expect(chapterOf(DRAFT)).toBeUndefined();
+  });
+
+  // Blocked is a moderation verdict, not a rating: naming it would tell the author the verdict.
+  it('refuses a Blocked-level continuation as unusable, not by its rating', async () => {
+    draft(OWNER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER }, { nsfwLevel: R | 32 });
+
+    const outcome = await publish(OWNER);
+    expect(outcome).toMatchObject({ status: 'waiting', reason: 'cannotSubmit' });
+    expect(outcome).not.toHaveProperty('rating', expect.anything());
   });
 
   it.each([

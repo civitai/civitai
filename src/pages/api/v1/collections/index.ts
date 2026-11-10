@@ -5,6 +5,7 @@ import * as z from 'zod';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { CollectionSort } from '~/server/common/enums';
 import { getAllCollections, getCollectionItemCount } from '~/server/services/collection.service';
+import { withServableCovers } from '~/server/services/collection-cover-visibility';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNextPage } from '~/server/utils/pagination-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
@@ -161,7 +162,9 @@ export default MixedAuthEndpoint(async function handler(
         nsfwLevel: true,
         userId: true,
         user: { select: { id: true, username: true } },
-        image: { select: { url: true, type: true, nsfwLevel: true, poi: true, minor: true } },
+        image: {
+          select: { id: true, url: true, type: true, nsfwLevel: true, poi: true, minor: true },
+        },
       },
     });
 
@@ -179,14 +182,15 @@ export default MixedAuthEndpoint(async function handler(
     if (firstUnconsumedId !== undefined) nextCursor = firstUnconsumedId;
     else if (rows.length === OVERFETCH) nextCursor = rows[rows.length - 1]?.id;
 
-    const ids = visible.map((c) => c.id);
+    const shown = await withServableCovers(visible);
+    const ids = shown.map((c) => c.id);
     const countRows = await getCollectionItemCount({
       collectionIds: ids,
       status: CollectionItemStatus.ACCEPTED,
     });
     const countMap = new Map(countRows.map((c) => [c.id, Number(c.count)]));
 
-    const items: CollectionListItem[] = visible.map((c) => ({
+    const items: CollectionListItem[] = shown.map((c) => ({
       id: c.id,
       name: c.name,
       description: c.description ?? null,

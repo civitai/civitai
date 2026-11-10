@@ -1,8 +1,12 @@
-import { Button, Text } from '@mantine/core';
+import { Button, Stack, Text } from '@mantine/core';
 import { IconArrowRight, IconShoppingBag } from '@tabler/icons-react';
 import React, { useState } from 'react';
+import type { ComponentProps } from 'react';
 import { useQueryWishlistedShopItems } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { useQueryCreatorShop } from '~/components/CreatorShop/creator-shop.util';
+import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
+import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
+import { storefrontSectionId, storefrontSectionKeys } from '~/components/CreatorShop/section-meta';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -10,7 +14,7 @@ import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import { ProfileSection, ProfileSectionPreview } from '~/components/Profile/ProfileSection';
 import classes from '~/components/Profile/ProfileSection.module.css';
 import { ShopItem } from '~/components/Shop/ShopItem';
-import { getShopRowColumns, pickShopRowItems } from './shop-section.utils';
+import { getShopRowColumns, pickShopRowItems, shopSectionHasItems } from './shop-section.utils';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { CreatorShopItem } from '~/components/CreatorShop/creator-shop.util';
@@ -59,10 +63,50 @@ export const ShopRow = ({
   );
 };
 
+// Same grid and column math as ShopRow, one row, so a service card sits level with the
+// cosmetic cards. The button goes to the storefront Services section, where Request lives.
+export const ServicesRow = ({
+  offerings,
+  href,
+}: {
+  offerings: (ComponentProps<typeof ServiceOfferingCard>['offering'] & { id: number })[];
+  href: string;
+}) => {
+  const [columns, setColumns] = useState(1);
+  const gridRef = useResizeObserver<HTMLDivElement>((entry) => {
+    setColumns(getShopRowColumns(entry.contentRect.width));
+  });
+
+  return (
+    <div
+      ref={gridRef}
+      style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+        marginTop: -8,
+      }}
+    >
+      {offerings.slice(0, columns).map((offering) => (
+        <div key={offering.id} style={{ margin: 8 }}>
+          <ServiceOfferingCard
+            offering={offering}
+            footer={
+              <Button component={Link} href={href} color="yellow" size="xs" mt="sm" fullWidth>
+                View service
+              </Button>
+            }
+          />
+        </div>
+      ))}
+    </div>
+  );
+};
+
 // Profile-overview section that showcases the creator's featured shop items so
 // visitors can jump straight into their shop. Renders one row: featured items first,
-// topped up from the creator's other cosmetics. Renders nothing unless the shop is
-// enabled and has something to sell. `shop.cosmetics` is already buyer-visible
+// topped up from the creator's other cosmetics, then the seller's Active services (linking
+// to the storefront's Services section). Renders nothing unless the shop is enabled and has
+// something to sell. `shop.cosmetics` is already buyer-visible
 // (published, listed, in its availability window) for every viewer, owner included,
 // so pending items never reach this list.
 export const ShopSection = ({ user }: ProfileSectionProps) => {
@@ -70,16 +114,30 @@ export const ShopSection = ({ user }: ProfileSectionProps) => {
   const [ref, inView] = useInViewDynamic({ id: 'profile-shop-section' });
   const { shop, isLoading } = useQueryCreatorShop(features.creatorShop ? user.id : undefined);
 
+  const { offerings, isLoading: servicesLoading } = useQueryShopServices(
+    user.id,
+    !!features.creatorShop && !!features.creatorServices
+  );
+
   if (!features.creatorShop) return null;
 
-  const hasItems =
-    shop?.settings.enabled === true && (shop.featured.length > 0 || shop.cosmetics.length > 0);
-  if (!isLoading && !hasItems) return null;
+  const servicesShown =
+    !!shop && storefrontSectionKeys(shop.settings.sections, features).includes('services');
+  const hasItems = shopSectionHasItems({
+    enabled: shop?.settings.enabled === true,
+    cosmeticCount: (shop?.featured.length ?? 0) + (shop?.cosmetics.length ?? 0),
+    activeServiceCount: offerings.length,
+    servicesShown,
+  });
+  const loading = isLoading || (!!features.creatorServices && servicesLoading);
+  if (!loading && !hasItems) return null;
+  const hasCosmetics = !!shop && shop.featured.length + shop.cosmetics.length > 0;
+  const showServices = servicesShown && offerings.length > 0;
 
   return (
     <div ref={ref} className={classes.profileSection}>
       {inView &&
-        (isLoading ? (
+        (loading ? (
           <ProfileSectionPreview />
         ) : (
           <ProfileSection
@@ -98,7 +156,17 @@ export const ShopSection = ({ user }: ProfileSectionProps) => {
               </Link>
             }
           >
-            {shop && hasItems && <ShopRow featured={shop.featured} cosmetics={shop.cosmetics} />}
+            <Stack gap="md">
+              {shop && hasCosmetics && (
+                <ShopRow featured={shop.featured} cosmetics={shop.cosmetics} />
+              )}
+              {showServices && (
+                <ServicesRow
+                  offerings={offerings}
+                  href={`/user/${user.username}/shop#${storefrontSectionId('services')}`}
+                />
+              )}
+            </Stack>
           </ProfileSection>
         ))}
     </div>

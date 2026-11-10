@@ -15,7 +15,6 @@ const {
   parseTextScanRollout,
   readTextScanRollouts,
   resetTextScanRolloutCache,
-  TEXT_SCAN_ENTITY_TYPES,
   textScanBucket,
   textScanEmEntityType,
   parseTextScanEmEntityType,
@@ -57,6 +56,14 @@ describe('getTextScanMode', () => {
     expect(await getTextScanMode('Post', 42)).toBe('shadow');
     expect(redisMock.sysRedis.hGetAll).toHaveBeenCalledWith('system:text-scan:modes');
     expect(redisMock.withSysReadDeadline).toHaveBeenCalled();
+  });
+
+  it('scans CommentV3 at the CommentV2 rollout until it is given its own', async () => {
+    hash({ CommentV2: '{"shadow":0,"active":100}' });
+    expect(await getTextScanMode('CommentV3', 7)).toBe('active');
+    resetTextScanRolloutCache();
+    hash({ CommentV2: '{"shadow":0,"active":100}', CommentV3: '{"shadow":0,"active":0}' });
+    expect(await getTextScanMode('CommentV3', 7)).toBe('off');
   });
 
   it('is active for every id at active 100, whatever shadow says', async () => {
@@ -109,7 +116,7 @@ describe('rollout percentages', () => {
 
   it('gives an id the same bucket every time, and spreads ids across buckets', () => {
     expect(textScanBucket('Model', 123)).toBe(textScanBucket('Model', 123));
-    const buckets = new Set(Array.from({ length: 1000 }, (_, i) => textScanBucket('Comment', i)));
+    const buckets = new Set(Array.from({ length: 1000 }, (_, i) => textScanBucket('CommentV3', i)));
     expect(buckets.size).toBeGreaterThan(90);
     for (const b of buckets) expect(b >= 0 && b < 100).toBe(true);
   });
@@ -129,14 +136,15 @@ describe('rollout percentages', () => {
 });
 
 describe('isTextScanEntityType', () => {
-  it('covers 17 entity types', () => expect(TEXT_SCAN_ENTITY_TYPES).toHaveLength(17));
-
   it.each([
     ['Post', true],
     ['UserProfile', true],
     ['Collection', true],
     ['Crucible', true],
     ['Storyline', true],
+    ['CommentV3', true],
+    ['Comment', false],
+    ['CommentV2', false],
     ['Tag', false],
     ['Post:shadow', false],
     ['constructor', false],

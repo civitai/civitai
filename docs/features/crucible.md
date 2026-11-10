@@ -89,6 +89,31 @@ The crucible card and page show how many different people have entered next to t
 
 The entry count on the crucible page is the number of entries its grid lists to the viewer. An entry whose image was deleted, is not yet scanned, is held for review, is unpublished or falls outside the viewer's browsing level is left out, as it is from the grid; the viewer's own entries still count unless their image was deleted. The crucible cards in the feed and the entry cap still count every entry.
 
+## Accepted entries
+
+Other features can act on an entry once it is accepted, for example an event that gives a team points for each entrant. An entry is accepted when judges can see it, checked every two minutes. Crucibles listed for an AI theme review (internal staff config) are not accepted by this check. Only crucibles carrying an event tag a subscriber listens for are swept. When an entry leaves the crucible, every subscriber is told to take it back: at once when a moderator or the owner removes it or the entrant withdraws it, and at the next check when its image or the entrant's account is deleted. An entry that stays in the crucible but is hidden another way (a ToS flag, a review hold, an unpublished post, a re-rating out of the crucible's levels) stays accepted; a subscriber that must not count it checks for that itself. Code: `src/server/services/crucible-entry-accepted.ts`.
+
+## AI theme review
+
+Staff can turn on an AI theme review for a crucible. It is internal for now: there is no setting in the UI, and the review's prompt is kept with the operator config, outside the repo. Every few minutes the review checks each new judgeable image entry against the crucible's theme, using the daily challenge's judge. It runs in one of three modes:
+
+- **Shadow:** verdicts are only recorded, and every entry is accepted.
+- **Flag:** an off-theme entry is reported to moderators and accepted. A moderator who agrees removes it, which takes back what it earned; one who keeps it has nothing to do.
+- **Enforce:** an off-theme entry is removed with the reason "Off-topic for this crucible", its fee is refunded, and the entrant is told the theme review removed it.
+
+An entry that passes is accepted. When the judge can't score an entry, or the review fails outright, it is tried again a few times; after that it is reported to moderators and accepted. Entries tried least go first, so ones that keep failing never hold up new entries. If a step fails partway (say the report is filed but the accept fails), the next run finishes the remaining steps without reviewing or reporting the entry again. Code: `src/server/services/crucible-theme-review.ts`.
+
+## Team points for entrants
+
+During an event, a crucible carrying the event's rally tag gives the entrant's team points for each accepted entrant, once per person per crucible. The entrant must hold the event's joined team cosmetic and be able to earn event points. The team total moves as soon as the person's first entry in the crucible is accepted. An accept writes an add to the event points ledger, and a revoke writes a remove. Each hourly settle recounts the points from the ledger. An award counts while its entry's latest row is an add, the entry is still in the crucible and judgeable, and its entrant is not banned, deleted or excluded. A person counts once per crucible, so a second entry keeps the award when the first leaves. The points come off at the next settle when:
+
+- a moderator or the owner removes the entry, or the entrant withdraws it;
+- the entry's image is deleted, or the entrant's account is deleted (which removes the entry);
+- the image is later hidden (a ToS flag, a review hold, an unpublished post, a re-rating out of the crucible's levels);
+- the entrant is banned.
+
+An entry hidden this way counts again once it is shown. The points never count toward a hat's or a person's points: the ledger type is one no scoring config lists. Code: `src/server/events/crucible-team-award.ts`.
+
 ## Notifications
 
 - **Creator:** new entries, and the end (with any seed refund).
@@ -110,4 +135,4 @@ The creator is notified of new comments from others ("New comments on your cruci
 
 ## Availability
 
-Crucible is behind a feature flag, currently limited to testers. The background jobs that start, close and pay out crucibles don't check it, so hiding the feature doesn't strand crucibles already in progress.
+Crucible is behind a feature flag. The background jobs that start, close and pay out crucibles don't check it, so hiding the feature doesn't strand crucibles already in progress.

@@ -129,12 +129,12 @@ export default function UserBuzzDashboard() {
 
   return (
     <>
-      <Meta title="Civitai | My Buzz Dashboard" deIndex />
+      <Meta title="Civitai | Buzz Dashboard" deIndex />
       <Container size="lg">
         <Stack gap="md">
           <Stack gap="md">
             <Group justify="space-between" align="center">
-              <Title order={1}>My Buzz Dashboard</Title>
+              <Title order={1}>Buzz Dashboard</Title>
 
               {/* Account Type Selector */}
               <SegmentedControl

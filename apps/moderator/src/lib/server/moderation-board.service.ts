@@ -27,7 +27,8 @@ export async function getRecentQueueActivity(): Promise<Map<string, QueueActivit
   // unactioning is also working the queue, and Retool counted it. `statusSetAt` is null on rows that
   // predate the column. The system user closes expired Clavata reports daily; it is not a person.
   const rows = await Promise.all(
-    REPORT_ENTITIES.map(async ({ label, reportTable }) => {
+    REPORT_ENTITIES.map(async (e) => {
+      const { type, label, reportTable } = e;
       const { rows: found } = await sql<{ statusSetAt: Date; username: string | null }>`
         SELECT r."statusSetAt", u."username"
         FROM "Report" r
@@ -40,9 +41,10 @@ export async function getRecentQueueActivity(): Promise<Map<string, QueueActivit
       `.execute(dbRead);
 
       const row = found[0];
+      // Keyed by type, not label: a label is not guaranteed unique.
       return row
         ? ([
-            label,
+            type,
             { type: `${label} reports`, at: row.statusSetAt, moderator: row.username },
           ] as const)
         : null;

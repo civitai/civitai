@@ -22,6 +22,7 @@ import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
 import { isWebClient } from '~/server/utils/client-version-saturation';
 import {
+  callsRemovedProcedure,
   clientNeedsUpdate,
   peekFreshClientConfig,
   peekSiteAlertsVersion,
@@ -29,7 +30,6 @@ import {
 import { SITE_ALERTS_VERSION_HEADER } from '~/shared/constants/site-alert.constants';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { applyApiRequestPolicy } from '~/server/middleware/api-request-policy';
-import { recordTrpcRouteRegionBlock } from '~/server/prom/trpc-proxy-skip.metrics';
 import {
   pinResponseWriteToSuperjson,
   responseWritesDevalue,
@@ -39,6 +39,8 @@ import { redactBlockTokens } from '~/server/logging/redact-block-token';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.metrics';
 import { setTrpcProcedureRegistry } from '~/server/prom/trpc-fast-superjson.metrics';
+import { rateLimitHeaders } from '~/server/trpc/rate-limit-headers';
+import { retryAfterHeader } from '~/server/trpc/retry-after-header';
 
 /**
  * The longest input an error log line carries: in JSON characters, and in values (so the measure
@@ -51,6 +53,8 @@ const LOGGED_INPUT_OVER_LIMIT = `[input over ${LOGGED_INPUT_MAX_CHARS} character
 export const config = {
   api: {
     bodyParser: {
+      // The ONLY body limit on this route: `/api/trpc` is outside the proxy matcher, so the
+      // proxy's 10 MiB body-clone cap (`proxyClientMaxBodySize`) no longer applies.
       sizeLimit: '17mb',
     },
   },
@@ -109,15 +113,25 @@ const trpcHandler = createNextApiHandler({
     }
 
     // Set here rather than in a middleware: on a streamed batch the head is written before any
-    // procedure finishes. Both read the CLIENT hash value needsUpdate already fetched; no Redis call.
+    // procedure finishes. Nothing here may await Redis; the CLIENT hash is read from this pod's cache.
     if (isWebClient(ctx?.req?.headers)) {
       // Never on a response the edge keeps: it would reach current bundles too.
       const client = peekFreshClientConfig();
-      if (!edgeCached && client && clientNeedsUpdate(ctx?.req?.headers, client))
+      const reqHeaders = ctx?.req?.headers;
+      if (
+        !edgeCached &&
+        ((client && clientNeedsUpdate(reqHeaders, client)) ||
+          callsRemovedProcedure(reqHeaders, info?.calls))
+      )
         headers['x-update-required'] = 'true';
       const alertsVersion = peekSiteAlertsVersion();
       if (alertsVersion) headers[SITE_ALERTS_VERSION_HEADER] = String(alertsVersion);
     }
+
+    const retryAfter = retryAfterHeader({ errors, info, paths });
+    if (retryAfter) headers['Retry-After'] = retryAfter;
+    // Per-caller counts must never reach a CDN-shared response.
+    if (!edgeCached) Object.assign(headers, rateLimitHeaders({ ctx, info, paths }));
 
     return Object.keys(headers).length > 0 ? { headers } : {};
   },
@@ -218,13 +232,14 @@ const trpcHandler = createNextApiHandler({
           if (measureJsonLength([input], LOGGED_INPUT_MAX_CHARS, { meter }) === 'over') {
             axInput = LOGGED_INPUT_OVER_LIMIT;
           } else {
-            // `blockToken` (a bearer credential) is replaced, key kept — see redactBlockTokens.
+            // Bearer fields (`blockToken`, `shareToken`) are replaced, key kept — see redactBlockTokens.
             // Stringify first and redact only when the key appears, so only an input that carries
             // one is serialized twice.
             const raw = JSON.stringify(input);
-            axInput = raw?.includes('"blockToken"')
-              ? JSON.stringify(redactBlockTokens(input))
-              : raw;
+            axInput =
+              raw?.includes('"blockToken"') || raw?.includes('"shareToken"')
+                ? JSON.stringify(redactBlockTokens(input))
+                : raw;
           }
         } catch {
           axInput = undefined;
@@ -295,14 +310,10 @@ const trpcHandler = createNextApiHandler({
 // handled natively by `allowMethodOverride: true` above (main), so no manual
 // restore step is needed here.
 export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
-  // Region block (451), default response headers and the verified-crawler request header: what
-  // the proxy middlewares do on /api/trpc, applied here too so this route does not depend on the
-  // proxy matcher. Idempotent when the proxy already ran; see `applyApiRequestPolicy`.
-  if (applyApiRequestPolicy(req, res)) {
-    // Only reachable when the proxy did not already answer the 451, i.e. the flag soak.
-    recordTrpcRouteRegionBlock();
-    return;
-  }
+  // Region block (451), default response headers and the verified-crawler request header: the
+  // API policy the proxy middlewares apply on `/api/v1`. `/api/trpc` is not in the proxy matcher,
+  // so this call is the ONLY place tRPC gets it; `trpc-route-api-policy.test.ts` pins that.
+  if (applyApiRequestPolicy(req, res)) return;
 
   // Observe batch width BEFORE delegating, so the histogram sees widths that tRPC is about to
   // reject — those requests resolve zero procedures and would otherwise leave no trace at all.

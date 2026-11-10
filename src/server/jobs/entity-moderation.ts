@@ -47,8 +47,7 @@ const tracker = new Tracker();
 
 const autoMuteCleanup: Partial<Record<AllModKeys, ScamCleanup>> = {
   Chat: 'chatMessages',
-  Comment: 'comments',
-  CommentV2: 'commentsV2',
+  CommentV3: 'comments',
 };
 
 /** The newest flagged message a sender wrote in one flagged chat group. */
@@ -145,13 +144,10 @@ Adding a new entry:
 // TODO possibly add modelVersion
 
 const queues = {
-  Comment: {
+  // Only plain columns, so the delegate is safe here; it drops `path`, which nothing reads.
+  CommentV3: {
     fields: { content: true },
-    selector: dbRead.comment,
-  },
-  CommentV2: {
-    fields: { content: true },
-    selector: dbRead.commentV2,
+    selector: dbRead.commentV3,
   },
   User: {
     fields: { username: true },
@@ -410,6 +406,9 @@ const runClavata = async ({
             message: 'Error creating moderation request',
             data: { error, type, id: metadata.id },
           });
+          // Gone, or not reportable as this type: a retry scans it again and fails the same way.
+          if (deleteJob && (error as { code?: string })?.code === 'NOT_FOUND')
+            await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
           continue;
         }
 

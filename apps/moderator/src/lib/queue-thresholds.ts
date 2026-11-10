@@ -23,7 +23,6 @@ const THRESHOLDS: Record<string, readonly number[]> = {
   ratings: [400, 300, 200, 100, 0],
   models: [35, 25, 15, 5, 0],
   comments: [2, 2, 1, 1, 0],
-  commentV2: [2, 2, 1, 1, 0],
   reviews: [2, 2, 1, 1, 0],
   articles: [2, 2, 1, 1, 0],
   posts: [20, 10, 5, 3, 0],
@@ -90,8 +89,7 @@ const COUNT_KEY_ALIASES: Record<string, string> = {
   newUser: 'newUsers',
   'report:image': 'reportedImages',
   'report:model': 'models',
-  'report:comment': 'comments',
-  'report:commentV2': 'commentV2',
+  'report:commentV3': 'comments',
   'report:resourceReview': 'reviews',
   'report:article': 'articles',
   'report:post': 'posts',
@@ -166,6 +164,35 @@ export function lastActionedBadge(
       : null;
   }
   return { at, class: ageSeverityClass(at, now), title: `Last actioned ${relativeTime(at)}` };
+}
+
+/**
+ * The sidebar's age badge: how long the queue has waited for a moderator. Timed from the later of its
+ * oldest waiting report and its last action, so a report filed into a quiet queue starts a fresh clock
+ * rather than inheriting days of idleness, and working the queue resets it. `null` for an empty or
+ * uncounted queue — nothing is waiting, so there is nothing to be late on — and for one the lookups
+ * do not cover.
+ */
+export function queueWaitBadge(
+  countKey: string | undefined,
+  lastActionedAt: string | undefined,
+  oldestAt: string | undefined,
+  count: number | null,
+  now = Date.now()
+): { at: string; class: string; title: string } | null {
+  if (!tracksLastActioned(countKey) || !count) return null;
+  const at =
+    lastActionedAt && oldestAt
+      ? Date.parse(lastActionedAt) > Date.parse(oldestAt)
+        ? lastActionedAt
+        : oldestAt
+      : lastActionedAt ?? oldestAt;
+  if (!at) return null;
+  const title =
+    at === lastActionedAt
+      ? `Last actioned ${relativeTime(at)}`
+      : `Oldest report waiting since ${relativeTime(at)}`;
+  return { at, class: ageSeverityClass(at, now), title };
 }
 
 /** How stale a "last worked" time is, on the `LAST_ACTIONED_HOURS` steps. */

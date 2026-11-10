@@ -27,6 +27,13 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * not vary with the caller's preferences.
  */
 
+// As in production: civitai.red is a blue alias and the red primary.
+vi.hoisted(() => {
+  process.env.SERVER_DOMAIN_BLUE = 'civitai.com';
+  process.env.SERVER_DOMAIN_BLUE_ALIASES = 'civitai.red';
+  process.env.SERVER_DOMAIN_RED = 'civitai.red';
+});
+
 const {
   mockQueryRaw,
   mockResolveCanGenerateForVersions,
@@ -240,7 +247,8 @@ type Body = {
 async function run(
   files: object[],
   query: Record<string, string> = {},
-  versionOverrides: Partial<typeof versionRow> = {}
+  versionOverrides: Partial<typeof versionRow> = {},
+  host = 'civitai.com'
 ) {
   // Call 1 = the version row, call 2 = the version's ModelFile rows.
   // Deep-clone so a handler that mutates the rows it was handed cannot leak that
@@ -257,7 +265,7 @@ async function run(
   const req = {
     method: 'GET',
     query: { id: String(VERSION_ID), ...query },
-    headers: { host: 'civitai.com' },
+    headers: { host },
   } as unknown as NextApiRequest;
 
   const json = vi.fn().mockReturnThis();
@@ -609,6 +617,48 @@ describe('GET /api/v1/model-versions/mini/[id] — the AIR handed to Air.stringi
   });
 });
 
+describe('GET /api/v1/model-versions/mini/[id] — the epoch url of a taken-down or deleted model', () => {
+  // The epoch url is the orchestrator's own link to the weights, outside the download route, so a
+  // taken-down or deleted model's is withheld from everyone but moderators; the rest stays.
+  type Row = Partial<typeof versionRow>;
+  const takenDown = {
+    availability: 'Private',
+    modelStatus: 'Published',
+    modelMode: 'TakenDown',
+  } as Row;
+  const deleted = { availability: 'Private', modelStatus: 'Deleted', modelMode: null } as Row;
+
+  it.each([
+    ['an anonymous caller', 'taken down', undefined, takenDown],
+    ['its owner', 'taken down', { id: OWNER_ID }, takenDown],
+    ['its owner', 'deleted', { id: OWNER_ID }, deleted],
+  ])('is withheld from %s when %s, and the rest kept', async (_who, _state, user, row) => {
+    currentUser.value = user;
+    const { status, body } = await run([TRAINING_FILE], {}, row);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([]);
+    expect(body.fileName).toBe(TRAINING_FILE.name);
+    expect(body.air).toEqual(expect.any(String));
+  });
+
+  it('is still given to a moderator', async () => {
+    currentUser.value = { id: 1, isModerator: true };
+    const { body } = await run([TRAINING_FILE], {}, takenDown);
+
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+
+  // The rows above are mocked, so this is what ties them to the real query.
+  it('reads the model status and mode in the version query', async () => {
+    await run([TRAINING_FILE], {}, takenDown);
+    const versionSql = (mockQueryRaw.mock.calls[0][0] as TemplateStringsArray).join('?');
+
+    expect(versionSql).toMatch(/\bm\.mode as "modelMode"/);
+    expect(versionSql).toMatch(/\bm\.status as "modelStatus"/);
+  });
+});
+
 describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch path', () => {
   /**
    * REGRESSION for the visibility gate being applied too early. A Private
@@ -893,5 +943,175 @@ describe('payoutEnabled and tipsEnabled', () => {
 
   it('a system-owned (-1) version gets no tips', async () => {
     expect((await payouts({ modelUserId: -1 })).tipsEnabled).toBe(false);
+  });
+});
+
+describe('non-commercial base models: no fee, no comp, no tips', () => {
+  const NON_COMMERCIAL = [
+    'Flux.2 Klein 9B',
+    'Flux.2 Klein 9B-base',
+    'Flux.3 Klein',
+    'Flux.3 Klein-base',
+    'Ideogram 4.0',
+    'Qwen 2.1',
+    'Flux.1 Krea',
+    'Flux.1 Kontext',
+    'Flux.2 D',
+    'Stable Cascade',
+  ];
+  type Fee = { role: string; amount: number; recipientModelVersionId: number };
+  const charged = async (overrides: Partial<typeof versionRow>) => {
+    const { body } = await run([SAFETENSOR], {}, overrides);
+    const { fees, payoutEnabled, tipsEnabled } = body as Body & {
+      fees: Fee[];
+      payoutEnabled: boolean;
+      tipsEnabled: boolean;
+    };
+    return { fees, payoutEnabled, tipsEnabled };
+  };
+  const OWN_FEE = { licensingFee: 5 as never, licensingFeeType: 'PerImageBuzz' as never };
+  const ROOT_FEE = { ...OWN_FEE, isLicensingRoot: true };
+  const SOURCE_FEE = {
+    licensingSourceVersionId: 900 as never,
+    sourceLicensingFee: 3 as never,
+    sourceLicensingFeeRecipientUserId: 31 as never,
+  };
+
+  const VARIANTS = {
+    'no fee': {},
+    'own fee': OWN_FEE,
+    'licensing-root fee': ROOT_FEE,
+    'lineage fee': { ...SOURCE_FEE, sourceBaseModel: 'SDXL 1.0' as never },
+  };
+  it.each(
+    NON_COMMERCIAL.flatMap((baseModel) =>
+      Object.entries(VARIANTS).map(([variant, fee]) => [baseModel, variant, fee] as const)
+    )
+  )('a %s version with %s sends no fee and turns comp and tips off', async (baseModel, _, fee) => {
+    expect(await charged({ baseModel, ...fee })).toEqual({
+      fees: [],
+      payoutEnabled: false,
+      tipsEnabled: false,
+    });
+  });
+
+  it('a commercial licensing root that charges its fee still opts out of creator comp', async () => {
+    expect(await charged({ baseModel: 'SDXL 1.0', ...ROOT_FEE })).toEqual({
+      fees: [
+        expect.objectContaining({
+          role: 'baseModel',
+          amount: 5,
+          recipientModelVersionId: VERSION_ID,
+        }),
+      ],
+      payoutEnabled: false,
+      tipsEnabled: true,
+    });
+  });
+
+  it('a Flux.1 D version still charges its own fee and keeps tips (control)', async () => {
+    const { fees, tipsEnabled } = await charged({ baseModel: 'Flux.1 D', ...OWN_FEE });
+    expect(fees).toEqual([expect.objectContaining({ amount: 5 })]);
+    expect(tipsEnabled).toBe(true);
+  });
+
+  it('a Flux.1 D version without a fee keeps creator comp and tips (control)', async () => {
+    expect(await charged({ baseModel: 'Flux.1 D' })).toEqual({
+      fees: [],
+      payoutEnabled: true,
+      tipsEnabled: true,
+    });
+  });
+
+  it('a commercial version without a fee keeps creator comp and tips', async () => {
+    expect(await charged({ baseModel: 'SDXL 1.0' })).toEqual({
+      fees: [],
+      payoutEnabled: true,
+      tipsEnabled: true,
+    });
+  });
+
+  it('drops a lineage fee owed to a non-commercial source version', async () => {
+    const { fees } = await charged({
+      baseModel: 'SDXL 1.0',
+      ...SOURCE_FEE,
+      ...OWN_FEE,
+      sourceBaseModel: 'Flux.2 Klein 9B' as never,
+    });
+    expect(fees.map((f) => f.role)).toEqual(['version']);
+  });
+
+  it('a Flux.2 Klein 4B version keeps its fee, comp and tips (control)', async () => {
+    expect(await charged({ baseModel: 'Flux.2 Klein 4B', ...OWN_FEE })).toEqual({
+      fees: [
+        expect.objectContaining({
+          role: 'version',
+          amount: 5,
+          recipientModelVersionId: VERSION_ID,
+        }),
+      ],
+      payoutEnabled: false,
+      tipsEnabled: true,
+    });
+    expect(await charged({ baseModel: 'Flux.2 Klein 4B' })).toEqual({
+      fees: [],
+      payoutEnabled: true,
+      tipsEnabled: true,
+    });
+    expect(
+      (
+        await charged({
+          baseModel: 'SDXL 1.0',
+          ...SOURCE_FEE,
+          sourceBaseModel: 'SDXL 1.0' as never,
+        })
+      ).fees
+    ).toEqual([
+      expect.objectContaining({ role: 'baseModel', amount: 3, recipientModelVersionId: 900 }),
+    ]);
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — a mature training dataset', () => {
+  const DATASET = {
+    id: 404,
+    type: 'Training Data',
+    visibility: 'Public',
+    url: 'https://example.invalid/data.zip',
+    metadata: { nsfwLevel: 4, fullyRated: true },
+    sizeKB: 1024,
+    name: 'data.zip',
+    hashes: {},
+  };
+  // Call 3 = the listing check's read of the dataset row.
+  const fetchDataset = (host: string) => {
+    mockQueryRaw.mockReset();
+    const pending = run([SAFETENSOR, DATASET], { modelFileId: String(DATASET.id) }, {}, host);
+    mockQueryRaw.mockResolvedValueOnce([
+      { id: DATASET.id, nsfwLevel: 4, fullyRated: true, restricted: false },
+    ]);
+    return pending;
+  };
+
+  it('is not offered on a host that is not red-capable', async () => {
+    const { status, body } = await fetchDataset('civitai.com');
+    expect(status).toBe(404);
+    expect(body).not.toHaveProperty('hashes');
+  });
+
+  it('is offered on a red-capable host', async () => {
+    const { status, body } = await fetchDataset('civitai.red');
+    expect(status).toBe(200);
+    expect(body.fileName).toBe(DATASET.name);
+  });
+
+  it.each([
+    ['its owner', { id: OWNER_ID }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('is still offered to %s on a host that is not red-capable', async (_, user) => {
+    currentUser.value = user;
+    const { status, body } = await fetchDataset('civitai.com');
+    expect(status).toBe(200);
+    expect(body.fileName).toBe(DATASET.name);
   });
 });

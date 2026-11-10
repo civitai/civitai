@@ -2,25 +2,27 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Button, Menu, Text, UnstyledButton } from '@mantine/core';
-import { IconChevronRight } from '@tabler/icons-react';
+import { Text, UnstyledButton } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
+import { IconChevronRight, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { createContext, useContext, useRef, useState } from 'react';
 import {
   AccountSwitcher,
+  BuzzBalances,
   UserMenuCtx,
   UserMenuFooter,
 } from '~/components/AppLayout/AppHeader/UserMenu';
 import { useGetCreator } from '~/components/AppLayout/AppHeader/hooks';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
-import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { UserBuzz } from '~/components/User/UserBuzz';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isPinnable, type ResolvedMenuItem, type ResolvedMenuNode } from './resolveUserMenu';
 import {
+  ACCOUNT_CARD_FRAME,
   BadgeMuteCtx,
   canMuteBadge,
   isMuteKey,
@@ -30,6 +32,7 @@ import {
   PinGlyph,
   PROFILE_PIN,
   pinMoveDirection,
+  useDismissClickGuard,
   useDragClickGuard,
   usePinActions,
   useTrackHeaderOpen,
@@ -44,13 +47,17 @@ import type { UserMenuShellProps } from './UserMenuV2';
  */
 export function UserMenuDesktop({ open, setOpen, pins, trigger }: UserMenuShellProps) {
   const [switching, setSwitching] = useState(false);
+  const dismissGuard = useDismissClickGuard();
 
   return (
     <Menu
       opened={open}
       onChange={(next) => {
         setOpen(next);
-        if (!next) setSwitching(false);
+        if (!next) {
+          setSwitching(false);
+          dismissGuard.onClose();
+        }
       }}
       position="bottom-end"
       width={260}
@@ -82,6 +89,7 @@ function DesktopBody({ pins }: { pins: Pins }) {
     opened: true,
     pins: pins.pins,
     muted: pins.mutedBadges,
+    mobile: false,
   });
   const { toggle, toggleMute, announce, region } = usePinActions(pins);
 
@@ -305,7 +313,7 @@ function DesktopGroup({
       onChange={setOpened}
       position="left-start"
       offset={4}
-      width={240}
+      width="max-content"
       shadow="md"
       // Inside the parent's dropdown, so a click in the flyout is not a click outside the menu;
       // fixed, so the parent's scroll box does not clip it.
@@ -351,7 +359,7 @@ function DesktopGroup({
       </Menu.Target>
       <Menu.Dropdown
         ref={dropdown}
-        className="p-1"
+        className="min-w-[240px] max-w-[22rem] p-1"
         onMouseEnter={() => window.clearTimeout(timer.current)}
         onMouseLeave={() => later(() => setOpened(false), HOVER_CLOSE_MS)}
       >
@@ -483,11 +491,11 @@ export function DesktopHeaderRows({
   if (!currentUser) return null;
 
   return (
-    <>
+    <div data-account-card className={clsx(ACCOUNT_CARD_FRAME, 'm-1 flex flex-col gap-1 p-1')}>
       <Menu.Item
         component={NextLink}
         href={`/user/${currentUser.username}`}
-        className="group"
+        className="group rounded-lg"
         aria-keyshortcuts={onTogglePin ? 'P' : undefined}
         rightSection={
           onTogglePin ? (
@@ -515,14 +523,13 @@ export function DesktopHeaderRows({
         <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
       </Menu.Item>
       <DesktopBuzzItem onOpen={() => trackHeader('buzz-dashboard')} />
-    </>
+    </div>
   );
 }
 
 function DesktopBuzzItem({ onOpen }: { onOpen: () => void }) {
   const features = useFeatureFlags();
   const onBuyBuzz = useBuyBuzz();
-  const [mainBuzzColor] = useAvailableBuzz();
   if (!features.buzz) return null;
 
   return (
@@ -531,40 +538,34 @@ function DesktopBuzzItem({ onOpen }: { onOpen: () => void }) {
       href="/user/buzz-dashboard"
       // Buy Buzz below stops its click, so it is not counted as an open.
       onClick={onOpen}
-      className="my-1 bg-gray-2 dark:bg-dark-4"
+      className="rounded-lg bg-gray-2 dark:bg-dark-7/60"
       rightSection={
-        <Button
+        <LegacyActionIcon
           component="div"
-          variant="white"
-          radius="xl"
-          px={12}
-          size="compact-xs"
+          role="button"
+          variant="light"
+          color="blue"
+          radius="md"
+          size={24}
+          aria-label="Buy Buzz"
+          title="Buy Buzz"
           onClick={(e: React.MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
             onBuyBuzz({});
           }}
         >
-          Buy Buzz
-        </Button>
+          <IconPlus size={16} />
+        </LegacyActionIcon>
       }
     >
       <span className="flex items-center gap-1">
-        <UserBuzz
+        <BuzzBalances
           animated={features.buzzSpendPop}
           iconSize={16}
           textSize="md"
           withAbbreviation
           withTooltip
-          accountTypes={['blue']}
-        />
-        <UserBuzz
-          animated={features.buzzSpendPop}
-          iconSize={16}
-          textSize="md"
-          withAbbreviation
-          withTooltip
-          accountTypes={[mainBuzzColor]}
         />
       </span>
     </Menu.Item>

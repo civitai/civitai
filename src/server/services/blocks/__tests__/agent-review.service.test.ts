@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * AGENTIC MOD CODE-REVIEW (App Blocks P1) — provisioning service.
@@ -263,6 +264,34 @@ describe('startAgentReview — ZIP path', () => {
     expect(post).toBeDefined();
     // pre-delete precedes the create.
     expect(calls.indexOf(del!)).toBeLessThan(calls.indexOf(post!));
+  });
+});
+
+describe('startAgentReview — audit trail', () => {
+  it.each([
+    [7, 'moderator'],
+    [null, 'system'],
+  ] as const)('a start by modUserId=%s is recorded as actor %s', async (modUserId, actor) => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    await startAgentReview({ publishRequestId: PUBREQ, modUserId });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'app-blocks.review.agent-start',
+        publishRequestId: PUBREQ,
+        reportId: 'arar_TEST',
+        actor,
+        modUserId,
+      }),
+      'webhooks'
+    );
+  });
+
+  it('a start whose provisioning fails records no start', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    stubFetch(false);
+    await expect(startAgentReview({ publishRequestId: PUBREQ, modUserId: null })).rejects.toThrow();
+    const names = loggingMock.logToAxiom.mock.calls.map((c) => (c[0] as { name?: string }).name);
+    expect(names).not.toContain('app-blocks.review.agent-start');
   });
 });
 

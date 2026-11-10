@@ -10,8 +10,8 @@ import {
   Table,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBan, IconTrashOff } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BackButton } from '~/components/BackButton/BackButton';

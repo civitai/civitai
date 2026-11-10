@@ -143,6 +143,15 @@ describe('getModelFlagDetail', () => {
     expect(memory.notes).toHaveBeenCalledWith(1, null);
   });
 
+  it('does not count as mod-unpublished a model kept when its owner was wiped', async () => {
+    await pg.exec(`
+      INSERT INTO "Model" ("id","name","userId","status","meta") VALUES
+        (90, 'kept', (SELECT "userId" FROM "Model" WHERE id = 10), 'UnpublishedViolation', '{"removedWithOwner": true}')
+    `);
+    const detail = await getModelFlagDetail({ modelId: 10 });
+    expect(detail).toMatchObject({ uploaderModUnpublished: 1 });
+  });
+
   it('ignores a sibling flag whose timestamp does not parse instead of failing the pane', async () => {
     await pg.exec(`
       INSERT INTO "Model" ("id","name","userId","meta") VALUES

@@ -14,6 +14,8 @@ export const MAX_ROUNDS = 10;
  *  allowance is the dollar cap. */
 export const DAILY_TOKEN_CAP = 10_000_000;
 export const TOOL_TIMEOUT_MS = 45_000;
+/** The forced final answer's own window when the turn deadline passed during the last lookups. */
+export const FINAL_ANSWER_GRACE_MS = 30_000;
 /** A whole turn; past this the in-flight model call is aborted. */
 export const TURN_DEADLINE_MS = 4 * 60_000;
 /**
@@ -51,6 +53,10 @@ export type AnyTool = {
   name: string;
   input: z.ZodType;
   run: (args: never, ctx: ToolContext) => Promise<ToolResult>;
+  /** Longer than `TOOL_TIMEOUT_MS` for a tool measured to need it. */
+  timeoutMs?: number;
+  /** Added to the timed-out result, so the model can say exactly what went unchecked. */
+  onTimeout?: (args: never) => Record<string, unknown>;
 };
 
 export type TurnOutcome = {
@@ -159,7 +165,12 @@ export async function runTurn(input: {
         messages,
         tools: input.specs,
         toolChoice: last ? 'none' : 'auto',
-        signal: abort.signal,
+        // The answer that reports what was and was not checked always gets at least a short window,
+        // even when the lookups before it ran up to or past the deadline; otherwise the turn ends
+        // with nothing for the moderator to read.
+        signal: last
+          ? AbortSignal.timeout(Math.max(deadline - now(), FINAL_ANSWER_GRACE_MS))
+          : abort.signal,
       });
       promptTokens += completion.usage.prompt;
       completionTokens += completion.usage.completion;
@@ -189,7 +200,7 @@ export async function runTurn(input: {
       messages.push({ role: 'assistant', content: completion.message.content, tool_calls: calls });
       const results = await Promise.all(calls.map((call) => callTool(call, input, now)));
       for (const r of results) {
-        toolCalls.push(r.log);
+        toolCalls.push({ ...r.log, round: round + 1 });
         for (const s of r.sources) sources.set(s.ref, s);
         messages.push({ role: 'tool', tool_call_id: r.id, content: r.content });
       }
@@ -218,10 +229,10 @@ async function callTool(
   const started = now();
   const name = call.function.name;
   let args: unknown = call.function.arguments;
-  const fail = (error: string) => {
+  const fail = (error: string, detail: Record<string, unknown> = {}) => {
     const log = { name, args, rows: 0, truncated: false, ms: now() - started, error };
     input.emit({ type: 'tool-done', name, rows: 0, error, ms: log.ms });
-    return { id: call.id, content: JSON.stringify({ error }), log, sources: [] };
+    return { id: call.id, content: JSON.stringify({ ...detail, error }), log, sources: [] };
   };
 
   // A model may name a tool it saw earlier or was told about by quoted text; it gets an error.
@@ -246,10 +257,10 @@ async function callTool(
     const result = await Promise.race([
       (tool.run as (a: unknown, c: ToolContext) => Promise<ToolResult>)(parsed.data, input.ctx),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(TIMED_OUT)), TOOL_TIMEOUT_MS);
+        timer = setTimeout(() => reject(new Error(TIMED_OUT)), tool.timeoutMs ?? TOOL_TIMEOUT_MS);
       }),
     ]);
-    const { json, trimmed } = fitJson(
+    const { json, trimmed, cuts } = fitJson(
       { data: result.data, truncated: result.truncated },
       MAX_TOOL_CHARS
     );
@@ -258,8 +269,10 @@ async function callTool(
       args: parsed.data,
       rows: result.rows,
       truncated: result.truncated || trimmed,
+      ...(cuts.length ? { cutForSize: cuts } : {}),
       ms: now() - started,
       error: null,
+      ...(result.emailsShown === undefined ? {} : { emailsShown: result.emailsShown }),
     };
     input.emit({ type: 'tool-done', name, rows: result.rows, error: null, ms: log.ms });
     return { id: call.id, content: json, log, sources: result.sources };
@@ -267,39 +280,77 @@ async function callTool(
     console.error(`[assistant] tool ${name} failed`, e);
     // 🔴 Never the error's own text: a ClickHouse error quotes the whole query, addresses included, and
     // this string reaches the model, the moderator's screen and the audit.
-    return fail(e instanceof Error && e.message === TIMED_OUT ? TIMED_OUT : 'The lookup failed.');
+    if (e instanceof Error && e.message === TIMED_OUT) {
+      let detail: Record<string, unknown> = {};
+      try {
+        detail = tool.onTimeout?.(parsed.data as never) ?? {};
+      } catch (inner) {
+        console.error(`[assistant] tool ${name} onTimeout failed`, inner);
+      }
+      return fail(TIMED_OUT, detail);
+    }
+    return fail('The lookup failed.');
   } finally {
     clearTimeout(timer);
   }
 }
 
+/** A list `fitJson` shortened: where it sits in the result, and how many of its items survived. */
+export type SizeCut = { at: string; kept: number; of: number };
+
+/**
+ * A paged list declares itself with `page: { list, offset, nextOffset }` beside it. When that list is
+ * cut for size, `nextOffset` is rewritten to follow the last item kept, so continuing from it skips
+ * nothing and repeats nothing.
+ */
+export type Page = { list: string; offset: number; nextOffset: number | null };
+
 /**
  * About `max` characters of JSON: the longest array is halved (up to 40 times), then the text is cut.
- * Either way the output carries `trimmedForSize`, so the model does not present a slice as the whole.
+ * Either way the output carries `trimmedForSize`: the lists cut, with `kept` of `of`, or `true` when the
+ * text itself was cut.
  */
-export function fitJson(value: unknown, max: number): { json: string; trimmed: boolean } {
+export function fitJson(
+  value: unknown,
+  max: number
+): { json: string; trimmed: boolean; cuts: SizeCut[] } {
   let json = JSON.stringify(value);
-  if (json.length <= max) return { json, trimmed: false };
+  if (json.length <= max) return { json, trimmed: false, cuts: [] };
   const copy = JSON.parse(json) as unknown;
+  const cuts = new Map<unknown[], SizeCut>();
   for (let i = 0; i < 40 && json.length > max; i++) {
     const longest = longestArray(copy);
-    if (!longest || longest.length <= 1) break;
-    longest.length = Math.ceil(longest.length / 2);
-    json = JSON.stringify({ trimmedForSize: true, result: copy });
+    if (!longest || longest.list.length <= 1) break;
+    const { list, at, key, parent } = longest;
+    const cut = cuts.get(list) ?? { at, kept: list.length, of: list.length };
+    list.length = Math.ceil(list.length / 2);
+    cut.kept = list.length;
+    cuts.set(list, cut);
+    const page = (parent as { page?: Page } | null)?.page;
+    if (page && page.list === key) page.nextOffset = page.offset + list.length;
+    json = JSON.stringify({ trimmedForSize: [...cuts.values()], result: copy });
   }
   if (json.length > max)
     json = JSON.stringify({ trimmedForSize: true, result: json.slice(0, max) });
-  return { json, trimmed: true };
+  return { json, trimmed: true, cuts: [...cuts.values()] };
 }
 
-function longestArray(value: unknown): unknown[] | null {
-  let best: unknown[] | null = null;
-  const visit = (v: unknown) => {
+type Found = { list: unknown[]; at: string; key: string; parent: object | null };
+
+function longestArray(value: unknown): Found | null {
+  let best: Found | null = null;
+  let bestSize = -1;
+  const visit = (v: unknown, at: string, key: string, parent: object | null) => {
     if (Array.isArray(v)) {
-      if (!best || JSON.stringify(v).length > JSON.stringify(best).length) best = v;
-      v.forEach(visit);
-    } else if (v && typeof v === 'object') Object.values(v).forEach(visit);
+      const size = JSON.stringify(v).length;
+      if (size > bestSize) {
+        best = { list: v, at, key, parent };
+        bestSize = size;
+      }
+      v.forEach((item, i) => visit(item, `${at}.${i}`, String(i), v));
+    } else if (v && typeof v === 'object')
+      for (const [k, item] of Object.entries(v)) visit(item, at ? `${at}.${k}` : k, k, v);
   };
-  visit(value);
+  visit(value, '', '', null);
   return best;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getShopRowColumns, pickShopRowItems } from './shop-section.utils';
+import { getShopRowColumns, pickShopRowItems, shopSectionHasItems } from './shop-section.utils';
 
 const items = (...ids: number[]) => ids.map((id) => ({ id }));
 const ids = (list: { id: number }[]) => list.map((i) => i.id);
@@ -45,5 +45,28 @@ describe('getShopRowColumns', () => {
     expect(getShopRowColumns(358)).toBe(1);
     expect(getShopRowColumns(1200)).toBe(4);
     expect(getShopRowColumns(4400)).toBe(15);
+  });
+});
+
+describe('shopSectionHasItems', () => {
+  const base = { enabled: true, cosmeticCount: 0, activeServiceCount: 0, servicesShown: true };
+
+  it('shows for a services-only shop with an Active service', () => {
+    expect(shopSectionHasItems({ ...base, activeServiceCount: 1 })).toBe(true);
+  });
+
+  it('hides when the only service is a Draft (the list holds Active ones only)', () => {
+    expect(shopSectionHasItems(base)).toBe(false);
+  });
+
+  it('hides services the storefront does not show, and unpublished shops', () => {
+    expect(shopSectionHasItems({ ...base, activeServiceCount: 1, servicesShown: false })).toBe(
+      false
+    );
+    expect(shopSectionHasItems({ ...base, activeServiceCount: 1, enabled: false })).toBe(false);
+  });
+
+  it('still shows for cosmetics alone', () => {
+    expect(shopSectionHasItems({ ...base, cosmeticCount: 2 })).toBe(true);
   });
 });

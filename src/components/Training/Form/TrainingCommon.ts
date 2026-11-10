@@ -16,6 +16,7 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import type { MyTrainingModelGetAll } from '~/types/router';
+import { ORCHESTRATION_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -162,9 +163,9 @@ export const useTrainingSignals = () => {
       // its own nudge when a training update lands.
       queryUtils.training.getRunState.invalidate({ modelVersionId: updated.modelVersionId }).then();
 
-      // Update select file page
+      // The model wizard's select-file step reads this entry.
       queryUtils.model.getById.setData(
-        { id: updated.modelId },
+        { id: updated.modelId, forEditor: true },
         produce((old) => {
           if (!old) return old;
           const mv = old.modelVersions.find((x) => x.id == updated.modelVersionId);
@@ -223,6 +224,7 @@ export const useOrchestratorUpdateSignal = () => {
         error: new Error('Could not complete. Please try again.'),
         title: 'Failed to auto label',
         autoClose: false,
+        report: { area: ORCHESTRATION_FEEDBACK_AREA },
       });
       setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
       return;

@@ -1,10 +1,16 @@
 import { error, redirect } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 import { SYNC_PARAM } from '@civitai/auth';
+import { parsePlainEmailAddress } from '@civitai/auth/plain-email';
+import { addressparser } from '@civitai/email';
 import type { RequestHandler } from './$types';
 import { normalizeEmailAddress } from '$lib/server/auth/blocklist';
 import { consumeVerificationToken } from '$lib/server/auth/email-tokens';
-import { findOrCreateUserByEmail } from '$lib/server/auth/users';
+import {
+  findOrCreateUserByEmail,
+  NoAccountForEmailError,
+  SystemAccountSignInError,
+} from '$lib/server/auth/users';
 import { establishSession } from '$lib/server/auth/session';
 import { buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
@@ -25,7 +31,13 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
   const valid = await consumeVerificationToken(email, token);
   if (!valid) redirect(302, '/login?error=Verification');
 
-  const user = await findOrCreateUserByEmail(email);
+  // Same rule as the send path: only a plain address may start a new account.
+  const allowCreate = parsePlainEmailAddress(email, addressparser) !== null;
+  const user = await findOrCreateUserByEmail(email, { allowCreate }).catch((e) => {
+    if (e instanceof SystemAccountSignInError) redirect(302, '/login?error=SystemAccount');
+    if (e instanceof NoAccountForEmailError) redirect(302, '/login?error=Verification');
+    throw e;
+  });
   await establishSession(cookies, user, { returnUrl });
 
   // Count the successful email login (best-effort; never blocks the redirect).

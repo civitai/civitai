@@ -107,8 +107,22 @@ const BULK_ACTION_LABELS: Record<FeedbackStatus, string> = {
   dismissed: 'Dismiss',
 };
 
-export const FEEDBACK_BULK_ACTIONS: ReadonlyArray<{ status: FeedbackStatus; label: string }> =
-  FEEDBACK_STATUSES.map((status) => ({ status, label: BULK_ACTION_LABELS[status] }));
+const BULK_ACTION_TIPS: Record<FeedbackStatus, string> = {
+  new: 'Move the selected reports back to New, where the default queue shows them.',
+  reviewed: 'Mark the selected reports as read. Nothing else changes.',
+  actioned: 'Mark the selected reports as handled: a fix or follow-up was made.',
+  dismissed: 'Close the selected reports as needing no action.',
+};
+
+export const FEEDBACK_BULK_ACTIONS: ReadonlyArray<{
+  status: FeedbackStatus;
+  label: string;
+  tip: string;
+}> = FEEDBACK_STATUSES.map((status) => ({
+  status,
+  label: BULK_ACTION_LABELS[status],
+  tip: BULK_ACTION_TIPS[status],
+}));
 
 const reports = (n: number) => `${n} report${n === 1 ? '' : 's'}`;
 

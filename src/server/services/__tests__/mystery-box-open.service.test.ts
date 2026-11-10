@@ -43,7 +43,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   refreshOwnedStickerCache: mocks.refreshStickers,
 }));
 
-import { modGrantSourceKey } from '@civitai/shared/mystery-box';
+import { modGrantSourceKey, packBoxSourceKey } from '@civitai/shared/mystery-box';
 import { openMysteryBox } from '../mystery-box.service';
 import { ITEM_HOLDER_BUSY_MESSAGE, ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
 import { modelQueryError, rawQueryError } from '~/test-utils/prismaLockTimeout';
@@ -103,6 +103,12 @@ let world: {
   owned: { userId: number; cosmeticId: number; claimKey: string; remaining?: number | null }[];
   items: ItemRow[];
   openings: Map<bigint, Opening>;
+  purchases: {
+    buzzTransactionId: string;
+    userId: number;
+    meta: unknown;
+    shopItem: { itemDefinitionId: number | null };
+  }[];
   log: string[];
   /** Runs inside the transaction once the holder lock is held. */
   onLock?: () => void;
@@ -245,6 +251,12 @@ const makeTx = (onLock: () => Promise<void>) => ({
       return row;
     },
   },
+  userCosmeticShopPurchases: {
+    findUnique: async ({ where }: { where: { buzzTransactionId: string } }) => {
+      world.log.push('read:purchase');
+      return world.purchases.find((p) => p.buzzTransactionId === where.buzzTransactionId) ?? null;
+    },
+  },
   item: {
     delete: async ({ where }: { where: { id: bigint } }) => {
       const index = world.items.findIndex((i) => i.id === where.id);
@@ -302,6 +314,7 @@ beforeEach(() => {
     owned: [],
     items: [holderBox()],
     openings: new Map(),
+    purchases: [],
     log: [],
   };
   lockTail = Promise.resolve();
@@ -393,6 +406,7 @@ describe('opening a mystery box', () => {
       tierPoolSize: 1,
       itemRoll: 0,
       rewardStatus: 'granted',
+      guaranteed: false,
       createdAt: expect.any(Date),
     });
     expect(world.items).toEqual([]);
@@ -406,6 +420,7 @@ describe('opening a mystery box', () => {
       rewardType: 'cosmetic',
       cosmeticId: 1003,
       odds: { tierWeight: 1, eligibleWeight: 4, tierPoolSize: 1 },
+      guaranteed: false,
       replayed: false,
     });
   });
@@ -610,6 +625,74 @@ describe('opening a mystery box', () => {
   it("a held box opens after its definition is archived: the box is the holder's", async () => {
     world.box.status = 'archived';
     await expect(open()).resolves.toMatchObject({ replayed: false });
+  });
+});
+
+describe("a pack's boxes", () => {
+  const PACK_TX = 'item-purchase-v1-1-77-packkey';
+  const SECOND_PACK_BOX = BOX_ITEM + BigInt(1);
+  const packBox = (id: bigint, n: number): ItemRow => ({
+    ...holderBox(id),
+    sourceKey: packBoxSourceKey(PACK_TX, n),
+  });
+  const packPurchase = (
+    meta: unknown,
+    userId = HOLDER,
+    itemDefinitionId: number | null = BOX_ID
+  ) => ({
+    buzzTransactionId: PACK_TX,
+    userId,
+    meta,
+    shopItem: { itemDefinitionId },
+  });
+  const PACK_META = { pack: { size: 10, guaranteedTierIds: [RARE] } };
+
+  beforeEach(() => {
+    world.items = [packBox(BOX_ITEM, 1), packBox(SECOND_PACK_BOX, 2)];
+    world.purchases = [packPurchase(PACK_META)];
+  });
+
+  it('the first box draws only from the guaranteed tiers, and the opening says so', async () => {
+    // A roll of 0 lands in Common over the whole box; over Rare alone it is Rare's only hat.
+    const result = await open();
+    expect(result).toMatchObject({ tierId: RARE, contentId: 3, guaranteed: true });
+    expect(world.openings.get(BOX_ITEM)).toMatchObject({
+      tierId: RARE,
+      tierWeight: 1,
+      eligibleWeight: 1,
+      tierPoolSize: 1,
+      guaranteed: true,
+    });
+    expect(mocks.randomInt.mock.calls).toEqual([[1], [1]]);
+  });
+
+  it('the guaranteed draw replays as guaranteed', async () => {
+    await open();
+    expect(await open()).toMatchObject({ replayed: true, guaranteed: true });
+  });
+
+  it('every other box of the pack draws from the whole box', async () => {
+    const result = await open({ boxItemId: SECOND_PACK_BOX });
+    expect(result).toMatchObject({ tierId: COMMON, guaranteed: false });
+    expect(mocks.randomInt.mock.calls[0]).toEqual([4]);
+  });
+
+  it('a first box draws from the whole box when the guaranteed tiers have nothing left for its holder', async () => {
+    world.owned.push({ userId: HOLDER, cosmeticId: 1003, claimKey: 'claimed' });
+    const result = await open();
+    expect(result).toMatchObject({ tierId: COMMON, guaranteed: false });
+    expect(world.openings.get(BOX_ITEM)).toMatchObject({ eligibleWeight: 3, guaranteed: false });
+  });
+
+  it.each([
+    ['a purchase of one box', packPurchase(null)],
+    ['a purchase whose pack terms do not parse', packPurchase({ pack: { size: 10 } })],
+    ["another user's purchase", packPurchase(PACK_META, OTHER_USER)],
+    ["another box's listing", packPurchase(PACK_META, HOLDER, BOX_ID + 1)],
+  ])('a key shaped like a first box is not guaranteed on %s', async (_label, purchase) => {
+    world.purchases = [purchase];
+    const result = await open();
+    expect(result).toMatchObject({ tierId: COMMON, guaranteed: false });
   });
 });
 

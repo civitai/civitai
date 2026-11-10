@@ -437,6 +437,21 @@ export async function isAppBlocksPipelineEnabled(): Promise<boolean> {
 }
 
 /**
+ * GLOBAL rollback switch for the per-app serving objects (Deployment, Service, IngressRoute,
+ * Middleware) that a production app deploy used to create in the apps namespace.
+ *
+ * Apps are served by the shared static server, so by default a deploy publishes there and creates
+ * none of them. This flag turns them back on without a code revert. OFF is the default on purpose:
+ * an absent flag or an unreachable Flipt evaluates `false`, which is the intended production state.
+ * Evaluated globally (no user), so it must be a plain base-`enabled` boolean to turn on.
+ */
+export const APP_BLOCKS_PER_APP_OBJECTS_FLAG = 'app-blocks-per-app-objects';
+
+export async function isAppBlocksPerAppObjectsEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_PER_APP_OBJECTS_FLAG);
+}
+
+/**
  * GLOBAL gate for the RUNTIME token-verification surface (Decision 4).
  *
  * Evaluates the dedicated `app-blocks-runtime-enabled` flag with no user
@@ -937,6 +952,56 @@ export async function isAppBlocksReviewSandboxEnabled(opts?: {
 }
 
 /**
+ * GLOBAL flag: start a review preview automatically when a version is submitted (ZIP or git
+ * push), instead of waiting for a moderator to press "Start preview". Machine-side, evaluated with
+ * no user, so it reads the flag's BASE value (see GLOBAL-EVAL SEMANTICS above): a plain boolean in
+ * Flipt. Off (or absent, or Flipt unreachable) leaves every submission exactly as before, waiting
+ * for a moderator. The manual button stays behind APP_BLOCKS_REVIEW_SANDBOX_FLAG.
+ */
+export const APP_BLOCKS_REVIEW_AUTODEPLOY_FLAG = 'app-blocks-review-autodeploy';
+
+export async function isAppBlocksReviewAutodeployEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_REVIEW_AUTODEPLOY_FLAG);
+}
+
+/**
+ * GLOBAL flag: start the agent code review automatically once a review preview goes live, within
+ * the platform-wide daily agent-review budget. Same base-value evaluation as
+ * APP_BLOCKS_REVIEW_AUTODEPLOY_FLAG. Manual starts stay behind APP_BLOCKS_AGENTIC_REVIEW_FLAG.
+ */
+export const APP_BLOCKS_AGENTIC_REVIEW_AUTOSTART_FLAG = 'app-blocks-agentic-review-autostart';
+
+export async function isAppBlocksAgenticReviewAutostartEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_AGENTIC_REVIEW_AUTOSTART_FLAG);
+}
+
+/**
+ * GLOBAL flag: publish review previews to the shared static server instead of rendering a
+ * per-preview Deployment/Service/route. ON: the review apply Job runs the smoke test then the
+ * review-lane publish; reachability is an origin probe through the shared route; teardown runs
+ * the review unpublish Job. OFF: a per-preview Deployment/Service/route. Base-value evaluation
+ * (no user), like the other machine-side flags.
+ */
+export const APP_BLOCKS_REVIEW_SHARED_SERVER_FLAG = 'app-blocks-review-shared-server';
+
+export async function isAppBlocksReviewSharedServerEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_REVIEW_SHARED_SERVER_FLAG);
+}
+
+/**
+ * GLOBAL flag: when a LIVE on-site app is delisted (moderator delist, moderator reset to
+ * pending, owner unpublish), also remove it from the shared static server so its subdomain stops
+ * serving; a relist puts it back. OFF: the block is only suspended and the subdomain keeps serving
+ * its last published build, though an app taken down while the flag was on is still put back on
+ * relist. Base-value evaluation (no user).
+ */
+export const APP_BLOCKS_LIVE_UNPUBLISH_FLAG = 'app-blocks-live-unpublish';
+
+export async function isAppBlocksLiveUnpublishEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_LIVE_UNPUBLISH_FLAG);
+}
+
+/**
  * Dedicated mod-segmented flag for the AGENTIC MOD CODE-REVIEW (App Blocks P1).
  *
  * When a moderator reviews a PENDING publish request they can dispatch an
@@ -1345,6 +1410,47 @@ async function resolveStoreVisibilityScopeUninstrumented(opts?: {
 }
 
 /**
+ * Dedicated flag for the App Blocks TESTER COHORT — the audience a listing at the
+ * `testers` visibility level admits ("users with app testing enabled").
+ *
+ * 🔴 WHY A DEDICATED FLAG, AND WHY IT MUST NEVER WIDEN TO EVERYONE. The cohort used to be
+ * read off `app-blocks-enabled`, on the assumption that the runtime gate stays
+ * cohort-segmented. It does not: civitai/flipt-state#263 widens `app-blocks-enabled` (and
+ * `app-listings`) to every user for the public apps launch, and from that moment every
+ * signed-in viewer would floor at `testers` and see listings their owner restricted to
+ * testers. Membership is a COHORT question, so it gets a flag whose only job is to answer
+ * it; the capability and surface flags can then widen freely without touching it. Widening
+ * THIS flag to all users is the same leak by another route — its rollout should only ever
+ * name tester segments.
+ *
+ * 🔴 FAIL-CLOSED, AND THAT IS DELIBERATE. When the flag is absent or Flipt is unreachable,
+ * `isFlipt` returns `false`, so a non-moderator is NOT a tester and floors at `public`.
+ * There is deliberately no fallback to `app-blocks-enabled` (the pattern
+ * `isAppListingsEnabled` uses): that fallback is exactly the signal that widens. The cost
+ * is borne only by the window between this code deploying and the flag existing — real
+ * testers temporarily stop seeing `testers`-level listings (moderators are unaffected).
+ * Create the flag in flipt-state first to avoid that window.
+ *
+ * Evaluated per-user only; see {@link resolveViewerAudienceFloor} for why there is no
+ * no-user branch.
+ */
+export const APP_BLOCKS_TESTERS_FLAG = 'app-blocks-testers';
+
+/**
+ * Is this SIGNED-IN viewer in the App Blocks tester cohort? Per-user eval of
+ * {@link APP_BLOCKS_TESTERS_FLAG} with the same entityId + context shape as every other
+ * per-user app flag. `user` is required: "is THIS subject a tester" has no subject-less
+ * answer, and a no-user eval would return the flag's BASE value rather than denying (see
+ * GLOBAL-EVAL SEMANTICS at the top of this file).
+ */
+export async function isAppBlocksTester(opts: { user: SessionUser }): Promise<boolean> {
+  const { user } = opts;
+  return (
+    (await isFlipt(APP_BLOCKS_TESTERS_FLAG, String(user.id), buildFliptContext(user))) === true
+  );
+}
+
+/**
  * Resolve the viewer's LISTING AUDIENCE FLOOR — the narrowest per-listing visibility level
  * that still admits them.
  *
@@ -1354,17 +1460,16 @@ async function resolveStoreVisibilityScopeUninstrumented(opts?: {
  * this viewer" — a cohort question. A listing at `public` is still invisible to a viewer
  * whose scope is `none`; nothing here can lift that.
  *
- * 🔴 THE TESTER COHORT IS READ OFF `app-blocks-enabled`, AND THAT CHOICE IS THE WHOLE
- * REASON THIS FEATURE NEEDS NO NEW FLAG. A level stores an ENUM and is mapped to a cohort
- * here, server-side, so no flag state is created, widened or referenced by key from the
- * database. The two existing flags already partition the population the way the levels
- * need:
- *   · `app-listings` is the SURFACE flag and is the one that widens to public at GA;
- *   · `app-blocks-enabled` is the runtime gate and stays mods + `app-dev-testers`
- *     segmented — this file says so where that flag is declared.
- * So post-GA a general viewer fails `app-blocks-enabled` and floors at `public`, while a
- * tester passes it and floors at `testers`, which is exactly the distinction the enum
- * draws.
+ * 🔴 THE TESTER COHORT IS READ OFF {@link APP_BLOCKS_TESTERS_FLAG}, AND ONLY THAT. It
+ * was previously read off `app-blocks-enabled`, which was safe only while that runtime gate
+ * stayed segmented to the tester cohorts; the public apps launch (civitai/flipt-state#263)
+ * widens it to every user. A level stores an ENUM and is mapped to a cohort here,
+ * server-side, so no flag state is created, widened or referenced by key from the
+ * database. The flags now partition the population the way the levels need:
+ *   · `app-listings` is the SURFACE flag (who sees the store);
+ *   · `app-blocks-enabled` is the RUNTIME gate (who may run blocks);
+ *   · `app-blocks-testers` is the COHORT flag (who counts as a tester) — the only one of
+ *     the three this function reads, and the only one that must stay narrow.
  *
  * ⚠️ ALL FOUR LEVELS ARE ALREADY DISTINGUISHABLE — an earlier revision of this paragraph
  * claimed `testers` and `public` "admit the same population pre-GA", and that was false in
@@ -1376,9 +1481,9 @@ async function resolveStoreVisibilityScopeUninstrumented(opts?: {
  *
  * 🔴 FAIL-CLOSED IS `public`, WHICH READS BACKWARDS AND IS CORRECT. The floor is the
  * NARROWEST level that admits the viewer, so the least-privileged answer is the WIDEST
- * level — `public`, which admits them to nothing a level has restricted. An absent flag or
- * an unreachable Flipt makes `isFlipt` return `false`, so an unknown viewer floors at
- * `public` and sees only listings their owner marked public.
+ * level — `public`, which admits them to nothing a level has restricted. An absent tester
+ * flag or an unreachable Flipt makes `isFlipt` return `false`, so an unknown viewer floors
+ * at `public` and sees only listings their owner marked public.
  *
  * Moderators short-circuit on the server-stamped session flag rather than on a flag eval,
  * for the same reason the private-run predicate does: a moderator is typically outside
@@ -1394,7 +1499,7 @@ export async function resolveViewerAudienceFloor(opts?: {
   // rather than denying (see GLOBAL-EVAL SEMANTICS at the top of this file). Answer the
   // least-privileged floor directly instead of asking a question that cannot refuse.
   if (!user) return 'public';
-  return (await isAppBlocksEnabled({ user })) ? 'testers' : 'public';
+  return (await isAppBlocksTester({ user })) ? 'testers' : 'public';
 }
 
 /** The three flags a `full` / `public-external` scope can come from. */

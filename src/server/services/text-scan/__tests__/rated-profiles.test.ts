@@ -13,7 +13,11 @@ const load = async (entityType: string, id = 1) => {
   };
 };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Persistent answers would otherwise carry a share link from one case into the next.
+  dbMock.dbWrite.accessToken.findMany.mockResolvedValue([]);
+});
 
 describe('rated-entity profiles', () => {
   it('registers the rated entities with the spec labels', () => {
@@ -149,6 +153,37 @@ describe('rated-entity profiles', () => {
       dbMock.dbWrite.article.findMany.mockResolvedValue([
         { id: 1, userId: 9, title: 'T', content: null, userNsfwLevel: 1, status, scheduledAt },
       ]);
+      expect(Boolean((await load('Article')).notPublic)).toBe(notPublic);
+    }
+  );
+
+  it.each([
+    ['Draft', 'an active', false],
+    ['Unpublished', 'an active', false],
+    ['UnpublishedViolation', 'an active', true],
+    ['Draft', 'an expired', true],
+    ['Draft', 'a revoked', true],
+  ])(
+    'Article: a %s article with %s share link is marked notPublic=%s',
+    async (status, state, notPublic) => {
+      const link = {
+        expiresAt: new Date(Date.now() + (state === 'an expired' ? -60_000 : 60_000)),
+        revokedAt: state === 'a revoked' ? new Date() : null,
+      };
+      dbMock.dbWrite.article.findMany.mockResolvedValue([
+        {
+          id: 1,
+          userId: 9,
+          title: 'T',
+          content: null,
+          userNsfwLevel: 1,
+          status,
+          scheduledAt: null,
+        },
+      ]);
+      dbMock.dbWrite.accessToken.findMany.mockResolvedValue([
+        { resourceId: 1, resourceType: 'Article', ...link },
+      ] as never);
       expect(Boolean((await load('Article')).notPublic)).toBe(notPublic);
     }
   );

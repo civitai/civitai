@@ -1,0 +1,65 @@
+name: Moderator boot smoke
+
+# Builds apps/moderator for production the way its Dockerfile does, starts `node build`, and fails
+# if the server exits or never answers HTTP. Typecheck and the unit suites never load the bundled
+# server, so a defect that exists only in the build output (a moderator release once crashed at
+# startup with `ReferenceError: sql is not defined`) passes both of them.
+#
+# A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
+# dispatches this workflow when the label is added. A push to `main` is unfiltered.
+on:
+  pull_request:
+    branches: [main, release]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'apps/moderator/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.npmrc'
+      - 'patches/**'
+      - 'scripts/ci/moderator-boot-smoke.mjs'
+      - '.github/workflows/moderator-boot.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: moderator-boot-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  boot:
+    name: Moderator build + boot
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 20
+    # The Dockerfile's build-stage placeholders. Nothing listens on this port: the server must
+    # come up without a database, as it does in the image before its first query.
+    env:
+      DATABASE_URL: postgres://build:build@localhost:5432/build
+      DATABASE_REPLICA_URL: postgres://build:build@localhost:5432/build
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      # The runtime image's Node major (apps/moderator/Dockerfile), not .nvmrc's.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      # The Dockerfile's install: only the app and its workspace deps, no root postinstall.
+      - name: Install
+        run: pnpm install --frozen-lockfile --filter @civitai/moderator-app... --ignore-scripts
+
+      - name: Build
+        run: pnpm --filter @civitai/moderator-app build
+
+      - name: Boot and answer HTTP
+        run: node scripts/ci/moderator-boot-smoke.mjs apps/moderator

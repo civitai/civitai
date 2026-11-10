@@ -39,6 +39,13 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: mocks.canOpenPages }),
   useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: mocks.canOpenPages }),
 }));
+// The creator is the shared `UserAvatar` (hover card), which needs providers the component setup does
+// not mount. Stubbed to a profile link carrying the username.
+vi.mock('~/components/UserAvatar/UserAvatar', () => ({
+  UserAvatar: (props: { user?: { username?: string | null } }) => (
+    <a href={`/user/${props.user?.username}`}>{props.user?.username}</a>
+  ),
+}));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -106,7 +113,8 @@ describe('store grid with sub-listings', () => {
         .querySelector('[data-testid="apps-sub-listing-cta"]')
         ?.closest('a')
         ?.getAttribute('href')
-    ).toBe(CHILD.runHref);
+      // The grid tags the launch with its acquisition surface (`App_Open.surface`).
+    ).toBe(`${CHILD.runHref}&src=sub_listing`);
   });
 
   test('client-side search matches a sub-listing by its own title', async () => {

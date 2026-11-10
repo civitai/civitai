@@ -6,34 +6,24 @@ import {
   IconClock,
   IconShieldHalf,
 } from '@tabler/icons-react';
-import clsx from 'clsx';
-import { useId } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import {
+  StorylinePostPicker,
+  type StorylineContinuePost,
+} from '~/components/Storyline/continue/StorylinePostPicker';
 import { StorylineThumb, type StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
+import type { StorylinePostPaging } from '~/components/Storyline/storyline.data';
 import { STORYLINE_QUEUE_SENT_URL } from '~/components/Placement/queue-routes';
 import {
   STORYLINE_CONTINUATION_EXPIRY_DAYS,
-  STORYLINE_CONTINUE_POST_LIMIT,
   storylinePriceLabel,
   storylineSubmitVerdict,
   type StorylineClosedReason,
 } from '~/components/Storyline/storyline-ui';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
-import { formatDate } from '~/utils/date-helpers';
-
-export type StorylineContinuePost = {
-  id: number;
-  title: string | null;
-  nsfwLevel: number;
-  publishedAt?: Date | null;
-  imageCount?: number;
-  cover?: StorylineThumbImage | null;
-};
+import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 export type StorylineSubmitOutcome = 'pending' | 'approved' | 'awaitingScan' | 'added';
-
-/** Sizes the tile's image request. */
-const TILE_WIDTH = 140;
 
 const refusalCopy = {
   ownStoryline: 'This is your storyline. Add your next chapter from the storyline page instead.',
@@ -54,13 +44,14 @@ export function StorylineContinueForm({
   postsLoading,
   postsError,
   alreadyChapters = 0,
-  morePosts,
+  paging,
   postId,
   onPostChange,
   onSubmit,
   onStartOwn,
   ownerAdd = false,
   inserting = false,
+  branch = false,
   submitting,
   outcome,
   error,
@@ -85,8 +76,7 @@ export function StorylineContinueForm({
   postsError?: boolean;
   /** The viewer's posts left out because they are already chapters. */
   alreadyChapters?: number;
-  /** Only the most recent posts are offered. */
-  morePosts?: boolean;
+  paging?: StorylinePostPaging;
   postId: number | null;
   onPostChange: (postId: number | null) => void;
   onSubmit: () => void;
@@ -95,6 +85,8 @@ export function StorylineContinueForm({
   ownerAdd?: boolean;
   /** The owner's post goes between two chapters, not after the last. */
   inserting?: boolean;
+  /** The parent already has a main-path chapter: this starts a branch. */
+  branch?: boolean;
   submitting?: boolean;
   outcome?: StorylineSubmitOutcome | null;
   error?: string | null;
@@ -111,7 +103,6 @@ export function StorylineContinueForm({
     asOwner: ownerAdd,
   });
 
-  const pickerLabelId = useId();
   // The same rule as the refusal below, so a tile is marked exactly when picking it would be refused.
   const isAboveCeiling = (postLevel: number) => {
     const tileVerdict = storylineSubmitVerdict({
@@ -126,10 +117,21 @@ export function StorylineContinueForm({
 
   if (outcome)
     return (
-      <StorylineSubmitted outcome={outcome} price={price} inserting={inserting} onLeave={onLeave} />
+      <StorylineSubmitted
+        outcome={outcome}
+        price={price}
+        inserting={inserting}
+        branch={branch}
+        onLeave={onLeave}
+      />
     );
 
-  if (!verdict.allowed && verdict.reason !== 'aboveRating' && verdict.reason !== 'notRated')
+  if (
+    !verdict.allowed &&
+    verdict.reason !== 'aboveRating' &&
+    verdict.reason !== 'notRated' &&
+    verdict.reason !== 'cannotSubmit'
+  )
     return (
       <Alert color="gray" icon={<IconAlertTriangle size={18} />}>
         <Text size="sm">{refusalCopy[verdict.reason]}</Text>
@@ -143,7 +145,9 @@ export function StorylineContinueForm({
         <Stack gap={6} className="min-w-0">
           <div>
             <Text fw={600} lineClamp={2}>
-              {ownerAdd
+              {branch
+                ? `Start a branch in ${storyline.title}`
+                : ownerAdd
                 ? `Add the next chapter to ${storyline.title}`
                 : `Continue ${storyline.title}`}
             </Text>
@@ -182,64 +186,28 @@ export function StorylineContinueForm({
         </Stack>
       </Group>
 
-      <Stack gap={6}>
-        <Text size="sm" fw={500} id={pickerLabelId}>
-          Your post
-        </Text>
-        {postsLoading ? (
-          <div className="grid grid-cols-3 gap-2">
-            {Array.from({ length: 6 }, (_, i) => (
-              <StorylineThumb key={i} image={undefined} width={TILE_WIDTH} fluid />
-            ))}
-          </div>
-        ) : postsError ? (
-          <Text size="sm" c="red">
-            Couldn&apos;t load your posts.
-          </Text>
-        ) : !posts.length ? (
-          <Text size="sm" c="dimmed">
-            {alreadyChapters
-              ? 'All your recent posts are already chapters. Make a new post to continue the story.'
-              : 'You have no published posts.'}{' '}
-            <Anchor component={Link} href="/posts/create">
-              Create a post
-            </Anchor>
-          </Text>
-        ) : (
-          <div
-            role="radiogroup"
-            aria-labelledby={pickerLabelId}
-            className="-m-1 grid max-h-[55vh] grid-cols-3 gap-2 overflow-y-auto p-1"
-          >
-            {posts.map((candidate) => (
-              <StorylinePostTile
-                key={candidate.id}
-                post={candidate}
-                ceiling={ceiling}
-                aboveCeiling={isAboveCeiling(candidate.nsfwLevel)}
-                selected={candidate.id === postId}
-                onSelect={() => onPostChange(candidate.id)}
-              />
-            ))}
-          </div>
-        )}
-        {alreadyChapters > 0 && posts.length > 0 && (
-          <Text size="xs" c="dimmed">
-            {alreadyChapters === 1
-              ? '1 of your posts is already a chapter, so it isn’t listed.'
-              : `${alreadyChapters} of your posts are already chapters, so they aren’t listed.`}
-          </Text>
-        )}
-        {morePosts && (
-          <Text size="xs" c="dimmed">
-            Your {STORYLINE_CONTINUE_POST_LIMIT} most recent published posts.
-          </Text>
-        )}
-      </Stack>
+      <StorylinePostPicker
+        posts={posts}
+        postsLoading={postsLoading}
+        postsError={postsError}
+        alreadyChapters={alreadyChapters}
+        allChaptersText="All your recent posts are already chapters. Make a new post to continue the story."
+        paging={paging}
+        postId={postId}
+        onPostChange={onPostChange}
+        ceiling={ceiling}
+        isAboveCeiling={isAboveCeiling}
+      />
 
       {post && !verdict.allowed && verdict.reason === 'notRated' && (
         <Alert color="red" icon={<IconAlertTriangle size={18} />}>
           <Text size="sm">This post has not been rated yet. Try again once it has been.</Text>
+        </Alert>
+      )}
+
+      {post && !verdict.allowed && verdict.reason === 'cannotSubmit' && (
+        <Alert color="red" icon={<IconAlertTriangle size={18} />}>
+          <Text size="sm">{STORYLINE_REFUSALS.cannotSubmit}.</Text>
         </Alert>
       )}
 
@@ -257,6 +225,8 @@ export function StorylineContinueForm({
         <Text size="sm" c="dimmed">
           {inserting
             ? 'It goes in here right away, and the chapters after it move down one. No review, no cost.'
+            : branch
+            ? 'It joins your storyline right away as a side path after this chapter. No review, no cost.'
             : 'It joins your storyline as the next chapter right away. No review, no cost.'}
         </Text>
       )}
@@ -300,77 +270,17 @@ export function StorylineContinueForm({
   );
 }
 
-function StorylinePostTile({
-  post,
-  ceiling,
-  aboveCeiling,
-  selected,
-  onSelect,
-}: {
-  post: StorylineContinuePost;
-  ceiling: string;
-  aboveCeiling: boolean;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const name = post.title || (post.publishedAt ? formatDate(post.publishedAt) : `Post ${post.id}`);
-  const rating = post.nsfwLevel ? getBrowsingLevelLabel(post.nsfwLevel) : 'Not rated yet';
-
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      aria-label={
-        aboveCeiling
-          ? `${name}, above this storyline's ${ceiling} limit`
-          : `${name}, ${post.nsfwLevel ? `rated ${rating}` : 'not rated yet'}`
-      }
-      onClick={onSelect}
-      className={clsx(
-        'flex min-w-0 flex-col gap-1 rounded-lg p-1 text-left outline-none',
-        'focus-visible:ring-2 focus-visible:ring-blue-5/50',
-        selected && 'ring-2 ring-blue-5 focus-visible:ring-blue-5'
-      )}
-    >
-      <StorylineThumb image={post.cover ?? null} width={TILE_WIDTH} fluid dimmed={aboveCeiling}>
-        {aboveCeiling && (
-          <span className="absolute inset-x-1 bottom-1 rounded-full bg-black/55 px-2 py-0.5 text-center text-xs font-semibold text-white backdrop-blur-sm">
-            Above {ceiling}
-          </span>
-        )}
-        {selected && (
-          <span className="absolute right-1 top-1 flex size-5 items-center justify-center rounded-full bg-blue-6 text-white">
-            <IconCheck size={14} stroke={3} />
-          </span>
-        )}
-      </StorylineThumb>
-      <Text size="xs" fw={500} lineClamp={1}>
-        {name}
-      </Text>
-      <div className="flex items-center gap-1.5">
-        <Badge variant="light" color="gray" size="xs" radius="xl">
-          {rating}
-        </Badge>
-        {!!post.imageCount && (
-          <Text size="xs" c="dimmed" lineClamp={1} data-testid="storyline-post-image-count">
-            {post.imageCount} {post.imageCount === 1 ? 'image' : 'images'}
-          </Text>
-        )}
-      </div>
-    </button>
-  );
-}
-
 function StorylineSubmitted({
   outcome,
   price,
   inserting,
+  branch,
   onLeave,
 }: {
   outcome: StorylineSubmitOutcome;
   price: number;
   inserting: boolean;
+  branch: boolean;
   onLeave?: () => void;
 }) {
   if (outcome === 'added')
@@ -379,6 +289,8 @@ function StorylineSubmitted({
         <Text size="sm">
           {inserting
             ? 'Inserted into your storyline.'
+            : branch
+            ? 'Added to your storyline as a branch.'
             : 'Added to your storyline as the next chapter.'}
         </Text>
       </Alert>

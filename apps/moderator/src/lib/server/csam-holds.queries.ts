@@ -6,6 +6,7 @@ import { PREVIEW_COUNT_CAP } from '$lib/minor-flags/model-detail';
 import { dbRead } from './db';
 import { escapeLike } from './like';
 import { MODEL_COVER_ORDER, modelCoverCount, modelCoverImages } from './model-covers';
+import { postCoverRows } from './post-covers';
 import { MAX_INT4 } from './users.service';
 
 export type CsamHoldRow = {
@@ -25,8 +26,6 @@ export type CsamHoldRow = {
   /** A chat hold's judged messages, and who sent them; empty and null for other types. */
   messageIds: number[];
   senderId: number | null;
-  /** The model a legacy `Comment` hold was posted on. */
-  commentModelId: number | null;
   title: string | null;
   live: boolean | null;
   status: string;
@@ -165,9 +164,6 @@ export async function listCsamHolds({
     .leftJoin('Model as m', (join) =>
       join.onRef('m.id', '=', 'h.entityId').on('h.entityType', '=', 'Model')
     )
-    .leftJoin('Comment as lc', (join) =>
-      join.onRef('lc.id', '=', 'h.entityId').on('h.entityType', '=', 'Comment')
-    )
     .select([
       'h.id',
       'h.entityType',
@@ -189,7 +185,6 @@ export async function listCsamHolds({
       'ph.status as priorStatus',
       'ph.decidedAt as priorDecidedAt',
       'pd.username as priorDecidedByUsername',
-      'lc.modelId as commentModelId',
       sql<number>`case when h.status = 'Pending' and h."userId" is not null then (
         select count(*)::int from "TextScanHold" x
         where x."userId" = h."userId" and x.label = 'csam' and x.status = 'Pending' and x.id <> h.id
@@ -255,7 +250,6 @@ export async function listCsamHolds({
       chatId: typeof chatId === 'number' ? chatId : null,
       messageIds: chatMessageIds(messageIds),
       senderId: typeof senderId === 'number' ? senderId : null,
-      commentModelId: row.commentModelId ?? null,
       decision: typeof decision === 'string' ? decision : null,
     };
   });
@@ -429,7 +423,7 @@ export type CsamHoldCovers = { images: CsamHoldImage[]; total: number };
 
 export const HOLD_IMAGE_LIMIT = 4;
 
-type CoverRow = CsamHoldImage & { entityId: number; total: string };
+type CoverRow = CsamHoldImage & { entityId: number; total: number | string };
 
 const toCovers = (rows: CoverRow[]): Map<number, CsamHoldCovers> => {
   const byEntity = new Map<number, CsamHoldCovers>();
@@ -443,27 +437,12 @@ const toCovers = (rows: CoverRow[]): Map<number, CsamHoldCovers> => {
 
 /** A post's first images and videos in post order (lowest `index`, then id). */
 async function getPostCovers(postIds: number[]): Promise<Map<number, CsamHoldCovers>> {
-  const { rows } = await sql<CoverRow>`
-    select p.id as "entityId", c.id, c.url, c."nsfwLevel", c.type::text as type, c.minor, c."acceptableMinor", n.total
-    from "Post" p
-    cross join lateral (
-      select i.id, i.url, i."nsfwLevel", i.type, i.minor, i."acceptableMinor", i.index
-      from "Image" i
-      where i."postId" = p.id and i.type::text in ('image', 'video')
-      order by i.index asc nulls last, i.id asc
-      limit ${sql.raw(String(HOLD_IMAGE_LIMIT))}
-    ) c
-    cross join lateral (
-      select count(*)::int as total
-      from (
-        select 1 from "Image" i
-        where i."postId" = p.id and i.type::text in ('image', 'video')
-        limit ${sql.raw(String(PREVIEW_COUNT_CAP + 1))}
-      ) capped
-    ) n
-    where p.id in (${sql.join(postIds)})
-    order by p.id, c.index asc nulls last, c.id asc`.execute(dbRead);
-  return toCovers(rows);
+  const rows = await postCoverRows(postIds, {
+    limit: HOLD_IMAGE_LIMIT,
+    mediaTypes: ['image', 'video'],
+    countCap: PREVIEW_COUNT_CAP + 1,
+  });
+  return toCovers(rows.map(({ postId, ...row }) => ({ entityId: postId, ...row })));
 }
 
 /** A model's first images and videos, chosen as the model flags queues choose theirs (`modelCoverImages`). One

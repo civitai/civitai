@@ -7,6 +7,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
+import { isMeiliOff } from '~/server/services/feed-primary.service';
 import {
   getAllImages,
   getImagesFromFeedSearch,
@@ -21,6 +22,8 @@ import {
   NsfwLevelDeprecated,
 } from '~/shared/constants/browsingLevel.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import { Flags } from '~/shared/utils/flags';
+import { isDefined } from '~/utils/type-guards';
 
 /**
  * Shared image-search + response-shaping body extracted verbatim from
@@ -194,7 +197,12 @@ export async function runImageSearch(
       : !!(data as { modelId?: unknown }).modelId &&
         !(data as { modelVersionId?: unknown }).modelVersionId;
 
-  if (!useLegacyMethod) assertFeedOffsetCursor(cursor, !!feedService);
+  // Under FEED_SERVICE_MEILI_OFF every caller takes the feed service, opted in or not.
+  const meiliOff =
+    !useLegacyMethod &&
+    (await isMeiliOff({ currentUserId: user?.id, isModerator: user?.isModerator }));
+  const viaFeedService = !!feedService || meiliOff;
+  if (!useLegacyMethod) assertFeedOffsetCursor(cursor, viaFeedService);
 
   // ATTRIBUTION surface: this feeds the anonymous search-actor hash, whose only
   // job is to keep distinct callers in distinct actor labels. The fail-closed
@@ -288,10 +296,11 @@ export async function runImageSearch(
   // pages don't write the per-image caches; first pages, which pollers repeat, still do.
   const cacheWriteBack = parseFeedCursor(cursor) === undefined;
   const fromFeedService =
-    feedService && !useLegacyMethod
+    viaFeedService && !useLegacyMethod
       ? await getImagesFromFeedServiceForRest(
           { ...searchQuery, headers: { src: '/api/v1/images' } },
-          { ...dbQuery, cacheWriteBack }
+          { ...dbQuery, cacheWriteBack },
+          { meiliOff }
         )
       : undefined;
   const { items, nextCursor } = useLegacyMethod
@@ -368,4 +377,22 @@ export async function runImageSearch(
   });
 
   return { items: shaped, nextCursor };
+}
+
+/**
+ * Leaves out the images above the held gallery level of their post's minor or SFW-only model, for
+ * searches that pick images by id and so name no model to hold them by.
+ */
+export async function withoutHeldImages<T extends Pick<ShapedImage, 'postId' | 'browsingLevel'>>(
+  items: T[]
+) {
+  // Loaded on demand: the model service's import graph is large.
+  const { getHeldLevelsByPost } = await import('~/server/services/model.service');
+  const postIdOf = (image: T) => (typeof image.postId === 'number' ? image.postId : undefined);
+  const held = await getHeldLevelsByPost(items.map(postIdOf).filter(isDefined));
+  return items.filter((image) => {
+    const postId = postIdOf(image);
+    const hold = postId ? held.get(postId) : undefined;
+    return !hold || Flags.intersects(hold.level, image.browsingLevel);
+  });
 }

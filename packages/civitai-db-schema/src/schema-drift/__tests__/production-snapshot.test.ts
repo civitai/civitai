@@ -213,7 +213,12 @@ describe('production catalog snapshot (2026-10-20)', () => {
     // The accepted batch is declared `ON UPDATE Cascade` against a database `NoAction` on
     // hand-written foreign keys (App Blocks, mystery box). Inert while ids are never updated. An
     // ON DELETE disagreement is a different, live hazard and must not hide inside this batch.
-    const actions = currentReport.findings.filter((f) => f.kind === 'referential-action');
+    // Exception: `StorylineReport.storylineId` turns ON DELETE Cascade into SetNull in the
+    // hand-applied `20261222120000_held_storyline`. Remove it when the catalog is recaptured after it.
+    const inFlight = new Set(['StorylineReport.storylineId']);
+    const actions = currentReport.findings.filter(
+      (f) => f.kind === 'referential-action' && !inFlight.has(`${f.table}.${f.columns.join('+')}`)
+    );
     const onDelete = (s: string) => /ON DELETE (\w+)/.exec(s)?.[1];
     const onUpdate = (s: string) => /ON UPDATE (\w+)/.exec(s)?.[1];
     expect(actions.length).toBeGreaterThan(0);
@@ -257,7 +262,25 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   the four `ServiceDealFile.malwareScan*` columns: `20261128150000_creator_service_final_malware_scan`
     //   `ApiKey.workerDeviceId`: `20261130120000_worker_identity`
     //   `ServiceOffering.sellerAffirmation`: `20261202120000_service_offering_seller_affirmation`
+    //   `Collection.archivedAt`: `20260831000000_collection_archived_at`
+    //   `ModActivity.host`: `20261205120000_mod_activity_host`
+    //   `OauthClient.skipConsent` / `OauthClient.tokenRateLimit`: `20261026173940_oauth_client_trusted_settings`
+    //   `Comment.removedByAuthor`: `20261210120000_comment_removed_by_author`
+    //   `StorylineCollaborator.acceptedAt`: `20261215120000_storyline_collaborator_accepted`
+    //   the four `Crucible` takedown columns: `20261203120000_crucible_takedown`
+    //   `Crucible.ownerRemovalCount`: `20261216120000_crucible_owner_removal_count`
+    //   the two `app_blocks.storage_*` columns: `20261218120000_app_block_storage_deleted_at`
+    //   `Storyline.sparkImageId`: `20261220120000_storyline_spark_image`
+    //   `StorylineReport.heldStorylineId` / `.storylineTitle`: `20261222120000_held_storyline`
+    //   `app_listings.is_official`: `20261224120200_app_listing_official`
+    //   `ServiceDealFile.removedAt`: `20261224150000_service_deal_file_removed_at`
+    //   `ServiceDealFile.attestedAt`: `20261224150100_service_deal_file_attachment`
+    //   `Article.bannerId`: `20261225120100_article_banner_image`
+    //   `UserProfile.showcaseSections`: `20261106005437_user_profile_showcase_sections`
+    //   `ResourceReview.postId` / `.releasedAt`: `20261231130000_resource_review_post_id`
+    //   `BoxOpening.guaranteed`: `20261231000000_box_opening_guaranteed`
     const inFlightColumns = new Set([
+      'BoxOpening.guaranteed',
       'CsamReport.sendClaimId',
       'CsamReport.sendClaimedAt',
       'Thread.storylineId',
@@ -275,6 +298,30 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ServiceDealFile.malwareScanAttempts',
       'ApiKey.workerDeviceId',
       'ServiceOffering.sellerAffirmation',
+      'Collection.archivedAt',
+      'ModActivity.host',
+      'OauthClient.skipConsent',
+      'OauthClient.tokenRateLimit',
+      'Comment.removedByAuthor',
+      'StorylineCollaborator.acceptedAt',
+      'Crucible.takenDownAt',
+      'Crucible.takenDownById',
+      'Crucible.takedownReason',
+      'Crucible.takedownRefundsCreator',
+      'Crucible.ownerRemovalCount',
+      'app_blocks.storage_deleted_at',
+      'app_blocks.storage_purged_at',
+      'Storyline.sparkImageId',
+      'StorylineReport.heldStorylineId',
+      'StorylineReport.storylineTitle',
+      'app_listings.is_official',
+      'UserProfile.showcaseSections',
+      'Placement.track',
+      'ServiceDealFile.removedAt',
+      'ServiceDealFile.attestedAt',
+      'Article.bannerId',
+      'ResourceReview.postId',
+      'ResourceReview.releasedAt',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

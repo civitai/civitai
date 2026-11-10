@@ -47,6 +47,12 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn(),
 }));
 
+// Runs as a developer who has accepted the App Developer Terms.
+vi.mock('~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox', () => ({
+  AppDeveloperTermsCheckbox: () => null,
+  useAppDeveloperTermsAccepted: () => true,
+}));
+
 // Spread the REAL module and override only `trpc` (per `local-rules/no-wholesale-module-mock`):
 // a hand-written replacement silently drops any export a transitive importer needs, and the
 // whole file then fails to load as "0 tests collected" — green for the worst possible reason.

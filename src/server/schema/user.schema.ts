@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { EVENT_POINT_POPS } from '~/shared/constants/event-point-pops.constants';
 import { banReasonDetails } from '~/server/common/constants';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema, paginationSchema } from '~/server/schema/base.schema';
@@ -27,11 +28,14 @@ import {
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
+import { remixAppSlugSchema } from '~/shared/remix-apps/row.schema';
+import { REMIX_PINS_MAX } from '~/shared/remix-apps/menu';
 import {
   commaDelimitedEnumArray,
   commaDelimitedNumberArray,
   numericString,
 } from '~/utils/zod-helpers';
+import { HIDDEN_APP_SLUG_MAX, HIDDEN_APPS_MAX } from '~/shared/utils/my-apps-hidden';
 
 export const userTierSchema = z.enum(userTiers);
 export type UserTier = z.infer<typeof userTierSchema>;
@@ -197,6 +201,10 @@ export const batchBlockTagsSchema = z.object({ tagIds: z.array(z.number()) });
 export type BatchBlockTagsSchema = z.infer<typeof batchBlockTagsSchema>;
 
 export const getByUsernameSchema = z.object({ username: usernameSchema });
+
+export const getUsageLimitsSchema = z
+  .object({ ids: z.array(z.string().max(64)).max(20).optional() })
+  .optional();
 export type GetByUsernameSchema = z.infer<typeof getByUsernameSchema>;
 
 export const getUserListSchema = paginationSchema.extend({
@@ -211,6 +219,8 @@ export const deleteUserSchema = z.object({
   username: usernameSchema.optional(),
   removeModels: z.boolean().optional(),
   removeImages: z.boolean().optional(),
+  /** Also delete the account's App Blocks document-store data (`remove-deleted-account-app-data`). */
+  removeAppData: z.boolean().optional(),
 });
 
 export type RestoreUserInput = z.infer<typeof restoreUserSchema>;
@@ -347,10 +357,30 @@ export const userMenuSettingsSchema = z.object({
     .optional(),
 });
 
+/** An object for the same reason as `userMenuSettingsSchema`: an empty pin list must survive. */
+export const remixAppsSettingsSchema = z.object({
+  pinned: z
+    .array(remixAppSlugSchema)
+    .max(REMIX_PINS_MAX)
+    .refine((slugs) => new Set(slugs).size === slugs.length, 'An app cannot be pinned twice'),
+});
+
+/** `hiddenApps` — see the key in `userSettingsSchema`. */
+export const hiddenAppsSettingSchema = z
+  .record(z.string().min(1).max(HIDDEN_APP_SLUG_MAX), z.iso.datetime())
+  .refine((m) => Object.keys(m).length <= HIDDEN_APPS_MAX, {
+    message: `At most ${HIDDEN_APPS_MAX} hidden apps`,
+  });
+
 export const userSettingsSchema = z.object({
+  /** Off hides every event cosmetic (worn hats) and all of Hat Turf, for this viewer only. */
+  showEventCosmetics: z.boolean().optional(),
+  /** Which event-point pops this viewer sees: from their own actions only, or all their points. */
+  eventPointPops: z.enum(EVENT_POINT_POPS).optional(),
   newsletterDialogLastSeenAt: z.coerce.date().nullish(),
   navigation: navigationSettingsSchema.optional(),
   userMenu: userMenuSettingsSchema.optional(),
+  remixApps: remixAppsSettingsSchema.optional(),
   features: z.record(z.string(), z.boolean()).optional(),
   newsletterSubscriber: z.boolean().optional(),
   dismissedAlerts: z.array(z.string()).optional(),
@@ -379,6 +409,7 @@ export const userSettingsSchema = z.object({
   // they hold is reading one of the two, not the sum. NOT a filter for earned buzz — yellow and
   // green are `purchasable`, so the remaining balance still mixes earned and bought.
   hideBlueBuzzInHeader: z.boolean().optional(),
+  fitPostImagesToScreen: z.boolean().optional(),
   hideFromCreatorShowcase: z.boolean().optional(),
   // Opt-out: leave me out of every "who reacted" / "who collected" list shown to someone else (image and
   // comment reactions, Creator Studio). Counts still include me. Filtered in SQL via HIDE_FROM_REACTION_LISTS_KEY.
@@ -389,6 +420,22 @@ export const userSettingsSchema = z.object({
   // Opt-in, per event name: list me on my team's roster (events/points/roster.ts). The durable record
   // the Redis roster is rebuilt from; absent means hidden. Written only by event.setRosterOptIn.
   eventRosterOptIn: z.record(z.string(), z.boolean()).optional(),
+  // Opt-in, per event name: take part in Hat Turf (events/turf). Placing needs it. Written only by
+  // hatTurf.setOptIn.
+  eventTurfOptIn: z.record(z.string(), z.boolean()).optional(),
+  // Per event name: keep Hat Turf off my images (events/turf): no new stickers, and those placed are
+  // neither drawn nor counted while it is true. Written only by hatTurf.setOwnerOff.
+  eventTurfOwnerOff: z.record(z.string(), z.boolean()).optional(),
+  // Per event name: the hat the user picked to show on their avatar (events/showcase-hat.ts); null
+  // or absent means the default, 'off' means none. Written only by event.setShowcaseHat.
+  eventShowcaseHat: z
+    .record(z.string(), z.union([z.number().int(), z.literal('off')]).nullable())
+    .optional(),
+  // "Remove from My apps" on the `/apps` home: listing slug -> ISO time of the removal. An app
+  // stays off the home until it is used after that time (`isHiddenFromHome`,
+  // shared/utils/my-apps-hidden.ts). Written only by appListings.hideMyApp / unhideMyApp, as an
+  // atomic per-slug merge/remove; capped at HIDDEN_APPS_MAX entries, oldest dropped.
+  hiddenApps: hiddenAppsSettingSchema.optional(),
   // Opt-out: the arrival pop and idle sway on placed stickers. Animation that
   // never ends is the kind a viewer wants a way out of, and `prefers-reduced-motion`
   // only covers people who set it at the OS level.
@@ -465,6 +512,7 @@ export const setUserSettingsInput = z.object({
   swipeGalleryCards: z.boolean().optional(),
   disableStickerMotion: z.boolean().optional(),
   hideBlueBuzzInHeader: z.boolean().optional(),
+  fitPostImagesToScreen: z.boolean().optional(),
   hideFromCreatorShowcase: z.boolean().optional(),
   hideFromReactionLists: z.boolean().optional(),
   showPreLaunchReactions: z.boolean().optional(),
@@ -481,6 +529,8 @@ export const setUserSettingsInput = z.object({
   navigation: navigationSettingsSchema.optional(),
   // Whole-object writes, like `navigation`: the menu always sends the full pin order and muted counts.
   userMenu: userMenuSettingsSchema.optional(),
+  // Whole-object writes: the Remix menu sends every pin.
+  remixApps: remixAppsSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),
   assistantPersonality: userAssistantPersonality.optional(),
   tosLastSeenDate: z.date().optional(),
@@ -570,6 +620,8 @@ export const userMeta = z.object({
   muteReason: z.string().optional(),
   mutedBy: z.number().optional(),
   imageRemoval: z.enum(['grace', 'immediate']).optional(),
+  // Read by `remove-deleted-account-app-data`.
+  appDataRemoval: z.literal('requested').optional(),
   // Stamped at onboarding when the account ends up without a verified address. Read by
   // `requiresEmailVerification`; see the 🔴 there for why the gate is a stamp and not a date.
   emailVerificationRequired: z.boolean().optional(),
@@ -582,6 +634,10 @@ export const userMeta = z.object({
       lastError: z.string().optional(),
     })
     .optional(),
+  // Cleared whenever a ban or deletion is applied anew.
+  tokenRevocation: z
+    .object({ confirmedAt: z.string().optional(), alertedAt: z.string().optional() })
+    .optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 
@@ -593,6 +649,8 @@ export const updateContentSettingsSchema = z.object({
   disableHidden: z.boolean().optional(),
   allowAds: z.boolean().optional(),
   autoplayGifs: z.boolean().optional(),
+  showEventCosmetics: z.boolean().optional(),
+  eventPointPops: z.enum(EVENT_POINT_POPS).optional(),
 });
 
 /** A reason a moderator can ban for. A system-only reason is set by its own flow, never by hand. */

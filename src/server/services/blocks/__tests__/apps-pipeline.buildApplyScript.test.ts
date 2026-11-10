@@ -22,11 +22,17 @@ import { describe, expect, it } from 'vitest';
  * Pure function → no mocks needed.
  */
 
-import { buildApplyScript } from '~/server/services/blocks/apps-pipeline.service';
+import {
+  buildApplyReviewScript,
+  buildApplyScript,
+} from '~/server/services/blocks/apps-pipeline.service';
 
 describe('buildApplyScript', () => {
   const NS = 'civitai-apps';
-  const script = buildApplyScript(NS);
+  // The rollback shape, which has every step. The production shape (no
+  // per-app objects) and what each one DOES are in apps-pipeline.applyScript.exec.test.ts.
+  const script = buildApplyScript(NS, { perAppObjects: true });
+  const noPerApp = buildApplyScript(NS, { perAppObjects: false });
 
   it('is strict-mode bash so a failed step aborts the apply', () => {
     expect(script).toContain('#!/usr/bin/env bash');
@@ -64,8 +70,21 @@ describe('buildApplyScript', () => {
     expect(invocations.filter((inv) => inv.startsWith(`-n ${NS} `)).length).toBeGreaterThanOrEqual(4);
   });
 
+  it('without per-app objects, namespaces every kubectl command and applies no manifest', () => {
+    const invocations = [
+      ...noPerApp
+        .split('\n')
+        .filter((line: string) => !/^\s*#/.test(line))
+        .join('\n')
+        .matchAll(/kubectl\s+([^\n]*)/g),
+    ].map((m) => m[1].trim());
+    expect(invocations.length).toBeGreaterThanOrEqual(4);
+    expect(invocations.filter((inv) => !inv.startsWith(`-n ${NS} `))).toEqual([]);
+    expect(noPerApp).not.toContain('app.yaml.tmpl');
+  });
+
   it('routes a distinct namespace argument through unchanged (no hardcoded ns)', () => {
-    const other = buildApplyScript('some-other-ns');
+    const other = buildApplyScript('some-other-ns', { perAppObjects: true });
     expect(other).toContain('kubectl -n some-other-ns run');
     expect(other).not.toContain('kubectl -n civitai-apps');
   });
@@ -104,6 +123,12 @@ describe('buildApplyScript', () => {
     // The mixed-content port-leak guard rejects any :8080 in a redirect Location.
     expect(script).toContain("grep -q ':8080'");
     expect(script).toContain('leaks the in-pod port');
+  });
+
+  // INVARIANT guard, not regression coverage: the review script never ran the
+  // step. It pins that a future edit does not add it there.
+  it('never publishes a mod-review build (invariant)', () => {
+    expect(buildApplyReviewScript(NS)).not.toContain('publish.sh');
   });
 
   it('applies the rendered manifest and waits for the rollout last', () => {

@@ -1317,6 +1317,11 @@ export type ResolvedHubSources = {
   /** The hub's stored browsing-level cap. 0 means the hub imposes none. */
   forcedBrowsingLevel: number;
   /**
+   * The held gallery level of the minor or SFW-only models the hub serves, which caps the whole
+   * feed. Undefined when none is held.
+   */
+  heldBrowsingLevel?: number;
+  /**
    * What the hub refuses. Never truncated, unlike the positive sets above: a
    * trimmed inclusion shows less than the owner asked for, where a trimmed
    * exclusion shows content they said to keep out. `exclusionsPerHub` is what
@@ -1333,10 +1338,16 @@ export async function resolveHubSources({
   hubId,
   userId,
   isModerator,
+  holdExempt,
+  galleryOwnerId,
   excludedSources,
 }: {
   hubId: number;
   excludedSources?: HubSourceExclusionInput[];
+  /** Not held by the hub's held models: a moderator on a session or a full-access key. */
+  holdExempt?: boolean;
+  /** The viewer a taken-down model's images still show to when it is theirs, on the same credentials. */
+  galleryOwnerId?: number;
 } & HubViewer): Promise<ResolvedHubSources | null> {
   const hub = await dbRead.userHub.findFirst({
     where: { id: hubId, ...hubViewerWhere({ userId, isModerator }) },
@@ -1426,6 +1437,7 @@ export async function resolveHubSources({
   // is quietly missing content looks exactly like a feed.
   let truncated = false;
   const versionIdsOfModels: number[] = [];
+  const modelOfVersion = new Map<number, number>();
   if (modelIds.length && perModel > 0) {
     // One round trip, and the row count is bounded by the share rather than by how
     // many versions the models happen to have. The extra rank is only read to tell
@@ -1442,7 +1454,10 @@ export async function resolveHubSources({
     `;
     for (const row of ranked) {
       if (Number(row.rn) > perModel) truncated = true;
-      else versionIdsOfModels.push(row.id);
+      else {
+        versionIdsOfModels.push(row.id);
+        modelOfVersion.set(row.id, row.modelId);
+      }
     }
   } else if (modelIds.length) {
     truncated = true;
@@ -1450,8 +1465,27 @@ export async function resolveHubSources({
 
   const excluded = await excludedPromise;
   const allVersionIds = [...new Set([...explicitVersionIds, ...versionIdsOfModels])];
-  const modelVersionIds = allVersionIds.slice(0, hubLimits.resolvedVersionIds);
-  if (allVersionIds.length > modelVersionIds.length) truncated = true;
+  const cappedVersionIds = allVersionIds.slice(0, hubLimits.resolvedVersionIds);
+  if (allVersionIds.length > cappedVersionIds.length) truncated = true;
+  // Loaded on demand: the model service imports the image service, which imports this one.
+  const { getHeldGalleryLevel, getWithheldVersionIds } = await import(
+    '~/server/services/model.service'
+  );
+  // Moderators are neither held nor withheld, when the caller says so: they must see what they may
+  // need to remove. A taken-down model's versions leave the hub, except for its owner. The hold is
+  // read over the versions before that, so the two run together; a withheld model can only narrow
+  // it. Versions expanded from a Model source already carry their model; only the rest are looked up.
+  const [withheldVersionIds, heldBrowsingLevel] =
+    cappedVersionIds.length && !holdExempt
+      ? await Promise.all([
+          getWithheldVersionIds(cappedVersionIds, galleryOwnerId),
+          getHeldGalleryLevel({
+            modelIds: [...new Set(cappedVersionIds.flatMap((id) => modelOfVersion.get(id) ?? []))],
+            modelVersionIds: cappedVersionIds.filter((id) => !modelOfVersion.has(id)),
+          }),
+        ])
+      : [new Set<number>(), undefined];
+  const modelVersionIds = cappedVersionIds.filter((id) => !withheldVersionIds.has(id));
 
   return {
     userIds: byType(UserHubSourceType.User),
@@ -1460,6 +1494,7 @@ export async function resolveHubSources({
     collectionIds: byType(UserHubSourceType.Collection),
     tagGroups: groupTagIds(positiveSources),
     forcedBrowsingLevel: hub.forcedBrowsingLevel,
+    heldBrowsingLevel,
     excluded,
   };
 }
@@ -1546,12 +1581,16 @@ export function groupTagIds(sources: HubSourceRow[]) {
  * from one of them is a hub quietly serving past its own setting.
  */
 export function hubBrowsingLevel(browsingLevel: number | undefined, sources: ResolvedHubSources) {
-  if (!sources.forcedBrowsingLevel) return browsingLevel;
+  const { forcedBrowsingLevel, heldBrowsingLevel } = sources;
+  if (!forcedBrowsingLevel && heldBrowsingLevel === undefined) return browsingLevel;
   // An absent level means PG here, exactly as it does in the level block each
   // caller runs next. Defaulting to "every level" instead would let a hub's cap
   // WIDEN a request that asked for no level at all, which is the opposite of what
   // a cap is for.
-  return (browsingLevel || NsfwLevel.PG) & sources.forcedBrowsingLevel;
+  let level = browsingLevel || NsfwLevel.PG;
+  if (forcedBrowsingLevel) level &= forcedBrowsingLevel;
+  if (heldBrowsingLevel !== undefined) level &= heldBrowsingLevel;
+  return level;
 }
 
 // Collection sources are served by the indexed `collectionIds` field, which only

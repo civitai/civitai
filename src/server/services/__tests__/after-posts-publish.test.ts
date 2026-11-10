@@ -4,6 +4,12 @@ import type * as ImageService from '~/server/services/image.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks';
 
+const { onStorySparkPostsRestored } = vi.hoisted(() => ({ onStorySparkPostsRestored: vi.fn() }));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  onStorySparkPostsRestored,
+}));
+
 const postCountRefresh = vi.fn();
 const imageVideoCountRefresh = vi.fn();
 const queueImageSearchIndexUpdate = vi.fn();
@@ -19,7 +25,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   queueImageSearchIndexUpdate,
 }));
 
-const { afterPostsPublish } = await import('~/server/services/post.service');
+const { afterPostsPublish, afterPostsUnpublish } = await import('~/server/services/post.service');
 
 const findImages = dbMock.dbWrite.image.findMany;
 
@@ -69,5 +75,35 @@ describe('afterPostsPublish', () => {
     expect(findImages).not.toHaveBeenCalled();
     expect(postCountRefresh).not.toHaveBeenCalled();
     expect(imageVideoCountRefresh).not.toHaveBeenCalled();
+  });
+});
+
+describe('afterPostsUnpublish', () => {
+  it("takes every post's images out of search and refreshes each owner's counts once", async () => {
+    await afterPostsUnpublish([
+      { postId: 300, userId: 10 },
+      { postId: 301, userId: 10 },
+    ]);
+
+    expect(findImages).toHaveBeenCalledWith({
+      where: { postId: { in: [300, 301] } },
+      select: { id: true },
+    });
+    expect(queueImageSearchIndexUpdate).toHaveBeenCalledWith({
+      ids: [7, 8, 9],
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+    expect(postCountRefresh).toHaveBeenCalledWith([10]);
+    expect(imageVideoCountRefresh).toHaveBeenCalledWith([10]);
+  });
+});
+
+describe('afterPostsPublish and story sparks', () => {
+  it('gives back the spark of a story whose chapter 1 is published again', async () => {
+    await afterPostsPublish([
+      { postId: 300, userId: 10 },
+      { postId: 301, userId: 11 },
+    ]);
+    expect(onStorySparkPostsRestored).toHaveBeenCalledExactlyOnceWith({ postIds: [300, 301] });
   });
 });

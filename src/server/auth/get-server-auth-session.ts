@@ -3,15 +3,18 @@ import type { GetServerSidePropsContext, NextApiRequest, NextApiResponse } from 
 // `next-auth` dependency is dropped. This is the only remaining next-auth reference here, and it's type-only.
 import type { Session } from '~/types/session';
 import {
-  sessionCookieName,
-  deviceCookieName,
   decodeLegacySessionCookie,
   legacySessionCookieName,
+  readDeviceId,
+  readSessionToken,
+  rollSlot,
 } from '@civitai/auth';
 import { env } from '~/env/server';
+import { matchWebhookToken } from '~/server/utils/webhook-token';
 import { isPreview } from '~/env/other';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
+import { refuseModerationAccountSession } from './moderation-account';
 import { observeLegacyDecode } from './session-metrics';
 import {
   getHubSession,
@@ -37,7 +40,9 @@ async function getLegacySession(req: AuthRequest): Promise<Session | null> {
   const claims = await decodeLegacySessionCookie(token, secret);
   const userId = Number(claims?.sub ?? claims?.user?.id);
   if (!Number.isFinite(userId)) return null;
+  if (refuseModerationAccountSession(userId, 'legacy-cookie')) return null;
   const user = await sessionClient.getSessionUserById(userId);
+  if (user && refuseModerationAccountSession(user, 'legacy-cookie')) return null;
   if (user) return { user } as Session;
   // PREVIEW-ONLY fallback. getSessionUserById resolves a user from the shared
   // session cache then the centralized hub (auth.civitai.com) — both of which read
@@ -69,7 +74,7 @@ export const getServerAuthSession = async ({
   if (req.headers.authorization) token = req.headers.authorization.split(' ')[1];
   else if (req.url) {
     const url = new URL(req.url, getBaseUrl());
-    if (url.searchParams.get('token') !== env.WEBHOOK_TOKEN)
+    if (!matchWebhookToken(url.searchParams.get('token')))
       token = url.searchParams.get('token') || undefined;
   }
 
@@ -93,9 +98,12 @@ export const getServerAuthSession = async ({
   const hub = await getHubSession(req).catch(() => null);
   if (hub) {
     req.context.session = hub;
-    const civ = req.cookies?.[sessionCookieName()];
-    const device = req.cookies?.[deviceCookieName()];
-    if (civ) await maybeRollHubCookie(civ, device, res, req.headers.host);
+    const civ = readSessionToken(req.cookies);
+    const slot = civ && rollSlot(civ);
+    const device = readDeviceId(req.cookies)?.value;
+    if (civ && slot) {
+      await maybeRollHubCookie(civ.value, device, res, req.headers.host, slot, req.cookies);
+    }
     return hub;
   }
 
@@ -110,8 +118,10 @@ export const getServerAuthSession = async ({
     // whether the upgrade-on-read path still matters at all.
     observeLegacyDecode();
     const legacyToken = req.cookies?.[legacySessionCookieName()];
-    const device = req.cookies?.[deviceCookieName()];
-    await maybeUpgradeLegacySession(legacyToken, device, res, req.headers.host).catch(() => {});
+    const device = readDeviceId(req.cookies)?.value;
+    await maybeUpgradeLegacySession(legacyToken, device, res, req.headers.host, req.cookies).catch(
+      () => undefined
+    );
   }
   return legacy;
 };

@@ -16,7 +16,14 @@ import {
   endPaidAccessNow,
   getPaidAccess,
 } from '~/server/services/paid-access.service';
-import { bustMvCache } from '~/server/services/model-version.service';
+import {
+  assertSellableInDomainCurrency,
+  bustMvCache,
+} from '~/server/services/model-version.service';
+import {
+  isNonCommercialBaseModel,
+  notCommerciallyAvailableMessage,
+} from '~/server/common/constants';
 import { queueModelEarlyAccessReindex } from '~/server/services/model.service';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -251,6 +258,17 @@ export const donateToGoal = async ({
 
   if (goal.userId === userId) {
     throw new Error('User cannot donate to their own goal');
+  }
+
+  if (goal.entityType === 'ModelVersion' && goal.entityId != null) {
+    const version = await dbRead.modelVersion.findUnique({
+      where: { id: goal.entityId },
+      select: { baseModel: true, modelId: true },
+    });
+    if (version && isNonCommercialBaseModel(version.baseModel)) {
+      throw new Error(notCommerciallyAvailableMessage(version.baseModel));
+    }
+    if (version) await assertSellableInDomainCurrency({ modelId: version.modelId, buzzType });
   }
 
   let performedTransaction = false;

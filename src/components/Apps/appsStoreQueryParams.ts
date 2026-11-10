@@ -6,12 +6,14 @@ import {
   type ListingSort,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import {
+  isMarketplaceCategory,
   MARKETPLACE_CATEGORIES,
   type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import { APPS_STORE_HREF } from '~/shared/constants/apps-routes.constants';
 
 /**
- * `/apps` store URL STATE — the zod schema + the pure parse/serialise/count
+ * `/apps/store` URL STATE — the zod schema + the pure parse/serialise/count
  * helpers behind `?kind=…&category=…&sort=…&query=…`.
  *
  * Why the store's filters live in the URL at all: they were `useState`, so
@@ -44,11 +46,13 @@ import {
  * the body pre- and post-mount with params seeded and asserts they match.
  */
 
-/** The store's default filter/sort state — what a bare `/apps` renders. */
+/** The store's default filter/sort state — what a bare `/apps/store` renders. */
 export const APPS_STORE_DEFAULTS = {
   kind: 'all',
   category: null,
-  sort: 'top-rated',
+  // `popular` until listings carry reviews: with no thumbs to rank on, `top-rated`
+  // falls through to install count. Revisit once reviews exist.
+  sort: 'popular',
   query: '',
 } as const satisfies AppsStoreFilters;
 
@@ -127,11 +131,11 @@ export type AppsStoreQueryPatch = {
  * `undefined`, which `removeEmpty` (in `useZodRouteParams`) strips from the
  * query string.
  *
- * Why not just write every value: `/apps` is the entry point in the sub-nav, and
- * a nav that lands you on `/apps?kind=all&category=&sort=top-rated&query=` looks
- * like state you have to clear even though it is the default view. Only
+ * Why not just write every value: `/apps/store` is the entry point in the sub-nav,
+ * and a nav that lands you on `/apps/store?kind=all&category=&sort=top-rated&query=`
+ * looks like state you have to clear even though it is the default view. Only
  * NON-default filters appear, so a shared link carries exactly the filters the
- * sharer had applied and a cleared store returns to a bare `/apps`.
+ * sharer had applied and a cleared store returns to a bare `/apps/store`.
  */
 export function appsStoreFiltersToQuery(filters: Partial<AppsStoreFilters>): AppsStoreQueryPatch {
   const out: AppsStoreQueryPatch = {};
@@ -177,4 +181,35 @@ export function hasActiveAppsStoreFilters(
   filters: Pick<AppsStoreFilters, 'kind' | 'category' | 'query'>
 ): boolean {
   return countActiveAppsStoreFilters(filters) > 0 || filters.query.trim().length > 0;
+}
+
+/**
+ * The query keys the store reads, derived from the schema so a new filter field is a store
+ * param here automatically. `/apps` (the home) uses this to recognise an old store link —
+ * `/apps?category=…` from before the store moved to `/apps/store` — and redirect it there.
+ */
+export const APPS_STORE_QUERY_KEYS = Object.keys(
+  appsStoreQuerySchema.shape
+) as readonly (keyof AppsStoreQueryPatch)[];
+
+/** True when `query` carries at least one store filter key (any value, even an invalid one). */
+export function hasAppsStoreQueryParams(query: Record<string, unknown>): boolean {
+  return APPS_STORE_QUERY_KEYS.some((key) => query[key] !== undefined);
+}
+
+/**
+ * The `/apps/store` URL filtered to ONE category — what a listing's category links to.
+ *
+ * Built through {@link appsStoreFiltersToQuery}, the same serialiser the store writes its own
+ * URL with, so the link is byte-for-byte the URL a viewer gets by picking that category in the
+ * Filters dropdown, and {@link parseAppsStoreFilters} reads it back as exactly that filter.
+ *
+ * `null` for a value outside `MARKETPLACE_CATEGORIES`: the store's schema degrades an unknown
+ * `category` to "no category", so a link there would land on the UNFILTERED grid while reading
+ * as a filter. The caller renders the category as plain text instead.
+ */
+export function appsStoreCategoryHref(category: string | null | undefined): string | null {
+  if (!isMarketplaceCategory(category)) return null;
+  const { category: param } = appsStoreFiltersToQuery({ category });
+  return param ? `${APPS_STORE_HREF}?${new URLSearchParams({ category: param }).toString()}` : null;
 }

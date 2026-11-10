@@ -12,11 +12,13 @@ import type {
   StudioLocation,
 } from '$lib/host';
 import { UploadError } from '$lib/upload';
+import { AutoLabelRefusedError } from '$lib/autolabel-errors';
 import { computeFromPrices } from '$lib/pricing-core';
-import * as label from '$lib/autolabel-core';
 import * as orch from '$lib/orchestrator-core';
 import type { OrchestratorClient } from '$lib/orchestrator-core';
 import * as train from '$lib/train-core';
+import * as edit from '$lib/edit-helpers-core';
+import type { TrainingTextCheckInput } from '$lib/training-text';
 import { parseServiceStatus } from '$lib/service-status-core';
 
 /** What an embedding page must inject into <civitai-training-studio> (as a JS property, never an
@@ -24,17 +26,32 @@ import { parseServiceStatus } from '$lib/service-status-core';
 export interface StudioElementHost {
   /** Called per request and again after a 401 — the host mints server-side and returns the raw token. */
   getOrchestratorToken(): Promise<string>;
-  /** The main app's trigger word check for one run, called before anything is submitted. Resolves
-   *  `{ ok: false, error }` on a refusal; rejects when the check could not run. A host without it
-   *  cannot start training: the element refuses rather than submit unchecked. */
-  checkTrainingText?(input: {
-    triggerWord: string;
-  }): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** The main app's check, called before anything is submitted: a run's trigger word, or the
+   *  prompt of an edit the element is about to generate. Resolves `{ ok: false, error }` on a
+   *  refusal; rejects when the check could not run. A host without it cannot start training or
+   *  generate an edit: the element refuses rather than submit unchecked. */
+  checkTrainingText?(
+    input: TrainingTextCheckInput
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** Whether the run's model still counts for this user (not missing, not deleted by its owner),
+   *  answered by the host's server; it should settle (time out) on its own. Omit and a run links
+   *  its stored modelId unchecked. */
+  modelLive?(modelId: number): Promise<boolean>;
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;
-  /** The main app's `training.getStatus` (available + moderator message). Omit (or resolve null)
-   *  and the element shows no status banner and leaves Start enabled. */
-  getTrainingStatus?(): Promise<{ available: boolean; message?: string | null } | null>;
+  /** The main app's `training.getStatus` (available, moderator message, blocked models). Omit (or
+   *  resolve null) and the element shows no status banner, no unavailable cards, and leaves Start enabled. */
+  getTrainingStatus?(): Promise<{
+    available: boolean;
+    message?: string | null;
+    blockedModels?: string[];
+    blockedModelReasons?: Record<string, string>;
+  } | null>;
+  /** Auto-label is free to the user, so it must run on the host's system-paid path: a workflow
+   *  submitted with the user's token is charged to the user. A host without these makes
+   *  auto-label unavailable rather than charge for it. */
+  autoLabelSubmit?: StudioBackend['autoLabelSubmit'];
+  autoLabelPoll?: StudioBackend['autoLabelPoll'];
   config: {
     orchestratorEndpoint: string;
     orchestratorMode?: 'dev' | 'prod';
@@ -57,6 +74,11 @@ export interface StudioElementHost {
     /** The host's membership-plans page, linked from that explanation. Relative = same-tab
      *  in-host navigation, absolute = new tab. Omit to render the explanation without a link. */
     pricingUrl?: string;
+    /** The host's support ticket portal, offered on a run held for review past the raise
+     *  threshold. Opens in a new tab. Omit to render the panel without a link. */
+    supportUrl?: string;
+    /** The host's dataset storage policy, linked beside the dataset-sharing choice. */
+    dataPolicyUrl?: string;
     /** The per-model catalog gates (`ModelCard.flagKey`) this user may see — the embed's stand-in
      *  for the shell's server-side `allowedModelFlags`. Omitted => every gated model stays hidden. */
     enabledModelFlags?: string[];
@@ -82,6 +104,11 @@ export interface StudioElementHost {
 }
 
 class UnauthorizedError extends Error {}
+
+const AUTO_LABEL_UNAVAILABLE = 'Auto-labeling is unavailable right now.';
+// Nothing was sent, so the image keeps its cap slot.
+const autoLabelUnavailable = () =>
+  Promise.reject(new AutoLabelRefusedError(AUTO_LABEL_UNAVAILABLE));
 
 export function elementBackend(host: StudioElementHost): StudioBackend {
   // Orchestrator tokens are short-lived and a watched training outlives them, so a 401 anywhere in a
@@ -123,9 +150,16 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     if (!result.ok) throw new train.TrainingTextRefusedError(result.error);
   };
 
-  const submitOpts = (): train.SubmitOptions => ({
+  // Read fresh before each submit so a model blocked after the page loaded is refused. This is the
+  // browser's own check: the element submits straight to the orchestrator, so no server of ours sees it.
+  const hostStatus = async () => {
+    const raw = host.getTrainingStatus ? await host.getTrainingStatus() : null;
+    return raw ? parseServiceStatus(raw) : null;
+  };
+  const submitOpts = async (): Promise<train.SubmitOptions> => ({
     // No signal callbacks: the element runs on polling alone (signalsEndpoint is null there).
     traceMode: host.config.traceMode ?? 'events',
+    status: await hostStatus().catch(() => null),
   });
 
   return {
@@ -137,6 +171,9 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
         if (!detail) throw new Error('Training not found.');
         return detail;
       }),
+
+    // No hook: the stored link stands unchecked.
+    modelLive: (modelId) => (host.modelLive ? host.modelLive(modelId) : Promise.resolve(true)),
 
     getRunDataset: (workflowId) => call((client) => orch.getRunDataset(client, workflowId)),
 
@@ -166,16 +203,38 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     },
 
     autoLabelSubmit: (items, mode, media) =>
-      call(async (client) => ({
-        workflowId: await label.submitAutoLabel(client, mode, media, items),
-      })),
+      host.autoLabelSubmit ? host.autoLabelSubmit(items, mode, media) : autoLabelUnavailable(),
 
-    autoLabelPoll: (workflowId) => call((client) => label.pollAutoLabel(client, workflowId)),
+    autoLabelPoll: (workflowId, signal) =>
+      host.autoLabelPoll
+        ? host.autoLabelPoll(workflowId, signal)
+        : Promise.reject(new Error(AUTO_LABEL_UNAVAILABLE)),
 
-    submitTraining: (runs) =>
-      call((client) =>
-        train.submitTrainingBatch(client, runs, { ...submitOpts(), checkText: hostTextCheck })
-      ),
+    submitTraining: async (runs) => {
+      const opts = await submitOpts();
+      return call((client) =>
+        train.submitTrainingBatch(client, runs, { ...opts, checkText: hostTextCheck })
+      );
+    },
+
+    listEditGenerations: () => call((client) => edit.listEditGenerations(client)),
+
+    editImageQuote: (imageUrl) => call((client) => edit.editImageQuote(client, imageUrl)),
+
+    editImageSubmit: async (req) => {
+      await hostTextCheck({ editPrompt: req.prompt, inputImages: [req.imageUrl] });
+      return { workflowId: await call((client) => edit.submitEditImage(client, req)) };
+    },
+
+    editImagePoll: (workflowId) => call((client) => edit.pollEditImage(client, workflowId)),
+
+    suggestQuote: () => call((client) => edit.suggestQuote(client)),
+
+    suggestSubmit: async (req) => ({
+      workflowId: await call((client) => edit.submitSuggest(client, req)),
+    }),
+
+    suggestPoll: (workflowId) => call((client) => edit.pollSuggest(client, workflowId)),
 
     rename: (workflowId, name) => call((client) => train.renameTraining(client, workflowId, name)),
 
@@ -183,23 +242,23 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
       call((client) => orch.createEpochArchive(client, workflowId, kind)),
     deleteTraining: (workflowId) => call((client) => train.deleteTraining(client, workflowId)),
 
-    continueQuote: (workflowId, fromEpoch, addEpochs, currencies) =>
-      call((client) =>
-        train.continueTrainingWhatIf(
-          client,
-          { workflowId, fromEpoch, addEpochs, currencies },
-          submitOpts()
-        )
-      ),
+    continueQuote: async (workflowId, fromEpoch, addEpochs, currencies) => {
+      const opts = await submitOpts();
+      return call((client) =>
+        train.continueTrainingWhatIf(client, { workflowId, fromEpoch, addEpochs, currencies }, opts)
+      );
+    },
 
-    continueRun: (workflowId, fromEpoch, addEpochs, currencies) =>
-      call((client) =>
+    continueRun: async (workflowId, fromEpoch, addEpochs, currencies, matureAck) => {
+      const opts = await submitOpts();
+      return call((client) =>
         train.continueTraining(
           client,
-          { workflowId, fromEpoch, addEpochs, currencies },
-          { ...submitOpts(), checkText: hostTextCheck }
+          { workflowId, fromEpoch, addEpochs, currencies, matureAck },
+          { ...opts, checkText: hostTextCheck }
         )
-      ),
+      );
+    },
 
     getFromPrices: () => call((client) => computeFromPrices(client)),
 
@@ -207,9 +266,6 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
 
     getBuzz: async () => (host.getBuzzBalances ? host.getBuzzBalances() : null),
 
-    getServiceStatus: async () => {
-      const raw = host.getTrainingStatus ? await host.getTrainingStatus() : null;
-      return raw ? parseServiceStatus(raw) : null;
-    },
+    getServiceStatus: hostStatus,
   };
 }

@@ -26,11 +26,15 @@ export const eventCosmeticScoresSchema = eventSchema.extend({
 });
 
 // Live topics a client has on screen: hat topic ids (16 hex) or 'teams'. Anything else is dropped
-// by the service; the bounds here only keep an oversized request out.
+// by the service; the bounds here only keep an oversized request out. `self` marks the signed-in
+// caller's own total.
 export type WatchEventPointsInput = z.infer<typeof watchEventPointsSchema>;
-export const watchEventPointsSchema = eventSchema.extend({
-  topics: z.array(z.string().max(32)).min(1).max(50),
-});
+export const watchEventPointsSchema = eventSchema
+  .extend({
+    topics: z.array(z.string().max(32)).max(50),
+    self: z.boolean().optional(),
+  })
+  .refine((input) => input.topics.length > 0 || input.self, { message: 'Nothing to watch' });
 
 export type WornEventHatInput = z.infer<typeof wornEventHatSchema>;
 export const wornEventHatSchema = eventSchema.extend({
@@ -50,9 +54,21 @@ export const teamRosterSchema = eventSchema.extend({
 export type PlaceableContentPageInput = z.infer<typeof placeableContentPageSchema>;
 export const placeableContentPageSchema = eventSchema.extend({
   entityType: z.enum(CosmeticEntity),
-  // Images: the id to page below. Models and articles: an offset into the caller's own list.
+  // Images: the last image id shown. Models and articles: an offset into the caller's own list.
   cursor: z.number().int().min(0).optional(),
 });
 
 export type RosterOptInInput = z.infer<typeof rosterOptInSchema>;
 export const rosterOptInSchema = eventSchema.extend({ optIn: z.boolean() });
+
+export type ShowcaseHatInput = z.infer<typeof showcaseHatSchema>;
+// Either a pick (null clears it, so the avatar shows the default hat again) or the on/off switch.
+// Off shows no hat; back on is the default, not the last pick.
+export const showcaseHatSchema = eventSchema
+  .extend({
+    cosmeticId: z.number().int().positive().nullable().optional(),
+    off: z.boolean().optional(),
+  })
+  .refine((x) => (x.cosmeticId === undefined) !== (x.off === undefined), {
+    message: 'Send a cosmeticId or off, not both',
+  });

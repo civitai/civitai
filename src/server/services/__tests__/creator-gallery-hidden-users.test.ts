@@ -421,6 +421,7 @@ describe('creator gallery hidden users', () => {
       hiddenImages: {},
       level: 31,
       pinnedPosts: {},
+      sfwHeld: false,
     };
     redisMock.redis.get.mockResolvedValue(JSON.stringify(cached));
     dbMock.dbRead.model.findFirst.mockClear();

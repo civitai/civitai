@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { DEFAULT_CANVAS } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
@@ -38,6 +39,7 @@ import {
 } from '~/server/services/creator-shop-withheld';
 import { bustUserCreatorCache } from '~/server/services/user-creator.service';
 import { syncEventRosterMember, syncEventRosterMembers } from '~/server/events/points/roster-sync';
+import { refreshShowcaseHats } from '~/server/events/showcase-hat';
 import { syncOwnerEventHats, syncOwnersEventHats } from '~/server/events/points/sync';
 import {
   getEventDecorationDefinition,
@@ -343,9 +345,10 @@ export async function equipCosmeticToEntity({
       action: SearchIndexUpdateQueueAction.Update,
     });
   if (equippedToType === 'Article')
-    await articlesSearchIndex.queueUpdate([
-      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
-    ]);
+    await articlesSearchIndex.queueUpdate(
+      [{ id: equippedToId, action: SearchIndexUpdateQueueAction.Update }],
+      { reason: 'cosmetic' }
+    );
 
   // Clear cache for previous entity if it was equipped
   if (userCosmetic.equippedToId && userCosmetic.equippedToType) {
@@ -388,9 +391,10 @@ export async function unequipCosmetic({
       action: SearchIndexUpdateQueueAction.Update,
     });
   if (equippedToType === 'Article')
-    await articlesSearchIndex.queueUpdate([
-      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
-    ]);
+    await articlesSearchIndex.queueUpdate(
+      [{ id: equippedToId, action: SearchIndexUpdateQueueAction.Update }],
+      { reason: 'cosmetic' }
+    );
 
   return updated;
 }
@@ -798,6 +802,8 @@ async function afterHoldingsRemoved(userIds: number[], equipped: RemovedEquipped
   const hatSync = writeThroughRemovedEventHats(equipped);
 
   await userCosmeticCache.refresh(userIds);
+  // `equipped` holds placed holdings only; a showcased hat need not be placed.
+  await refreshShowcaseHats(userIds);
   await refreshOwnedStickerCache(userIds);
 
   const equippedByType = new Map<CosmeticEntity, number[]>();
@@ -818,7 +824,8 @@ async function afterHoldingsRemoved(userIds: number[], equipped: RemovedEquipped
       await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
     if (type === 'Article')
       await articlesSearchIndex.queueUpdate(
-        ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+        ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
+        { reason: 'cosmetic' }
       );
   }
   return { hatSync };
@@ -1044,6 +1051,19 @@ export async function updateCosmetic({
  * so a save can never drop the art's measured shape, nor a field another moderator just set.
  */
 export async function updateEventHatFit({ id, fit }: UpdateEventHatFitInput) {
+  if (fit.brim) {
+    const [row] = await dbWrite.$queryRaw<{ canvas: Prisma.JsonValue }[]>`
+      SELECT data->'fit'->'canvas' AS canvas FROM "Cosmetic" WHERE id = ${id}
+    `;
+    const canvas = row?.canvas;
+    const [width, height] =
+      Array.isArray(canvas) && canvas.length === 2 && canvas.every((x) => typeof x === 'number')
+        ? (canvas as [number, number])
+        : DEFAULT_CANVAS;
+    const [, right, y] = fit.brim;
+    if (right > width || y > height)
+      throw throwBadRequestError(`The brim must lie inside the art (${width}×${height})`);
+  }
   const fields = Object.entries(fit).filter(([, value]) => value !== undefined);
   const set = Object.fromEntries(fields.filter(([, value]) => value !== null));
   const unset = fields.filter(([, value]) => value === null).map(([key]) => key);

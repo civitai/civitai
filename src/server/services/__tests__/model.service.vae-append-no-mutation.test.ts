@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
-import type * as RedisClient from '~/server/redis/client';
 
 /**
  * 🔴 CALL-SITE coverage for the VAE-append mutation — the half of this fix that the
@@ -104,14 +103,14 @@ vi.mock('~/server/redis/caches', () => ({
   userBasicCache: { fetch: vi.fn().mockResolvedValue({}), bust: vi.fn() },
   userModelCountCache: { fetch: vi.fn(), bust: vi.fn() },
 }));
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof RedisClient>();
-  return {
-    ...actual,
-    redis: { packed: { get: async () => null, set: async () => undefined } },
-    sysRedis: {},
-  };
-});
+// The package, not `importOriginal`: the shim connects real clients when it loads. Same spread as
+// the global mock in src/__tests__/setup.ts.
+vi.mock('~/server/redis/client', async () => ({
+  ...(await import('@civitai/redis/client')),
+  ...(await import('~/server/redis/sys-read-deadline')),
+  redis: { packed: { get: async () => null, set: async () => undefined } },
+  sysRedis: {},
+}));
 
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { dataForModelsCache } from '~/server/redis/caches';
@@ -255,4 +254,29 @@ describe('getModelsWithVersions — the linked-VAE append does NOT mutate the ca
   // freshly allocated array on every path — that assertion passes even with the `push` mutant
   // restored (measured), i.e. it is vacuous. The array identity that matters is the INPUT one,
   // which is what the test above pins.
+});
+
+// Shares this file's scaffold: the same getModelsRaw read feeds the browse feed, associated
+// resources and /api/v1/models, whose `flags` is a published field.
+describe('getModelsWithVersions serves flags without the partner bits', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each([
+    [0, 0],
+    [8, 8],
+    [32 | 64 | 8, 8],
+    [32 | 2, 2],
+  ])('stored %s is served as %s', async (stored, served) => {
+    primeOneModelWithALinkedVae();
+    const cached = (await dataForModelsCache.fetch([MODEL_ID])) as never as Record<
+      number,
+      { versions: Record<string, unknown>[] }
+    >;
+    cached[MODEL_ID].versions[0].flags = stored;
+    vi.mocked(dataForModelsCache.fetch).mockResolvedValue(cached as never);
+
+    const { items } = await callGetModelsWithVersions();
+    expect(items).toHaveLength(1);
+    expect(items[0].modelVersions[0].flags).toBe(served);
+  });
 });

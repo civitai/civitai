@@ -35,11 +35,6 @@ export const resourceReviewSelect = Prisma.validator<Prisma.ResourceReviewSelect
   //     imageCount: true,
   //   },
   // },
-  thread: {
-    select: {
-      commentCount: true,
-    },
-  },
 });
 
 const resourceReview = Prisma.validator<Prisma.ResourceReviewFindManyArgs>()({

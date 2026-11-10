@@ -22,6 +22,11 @@ vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanSubmit>()),
   scanEntityInBackground: vi.fn(),
 }));
+const { syncReviewsOfMovedPosts } = vi.hoisted(() => ({ syncReviewsOfMovedPosts: vi.fn() }));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  syncReviewsOfMovedPosts,
+}));
 vi.mock('~/server/services/job-queue.service', () => ({
   enqueueJobs: vi.fn(async () => undefined),
 }));
@@ -81,11 +86,12 @@ const runOnPglite = async (strings: TemplateStringsArray, values: unknown[]) => 
 };
 
 // Only the post writes reach the database; everything else upsertCollection touches is mocked.
-const routeRaw = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
-  if (!strings.join('').includes('UPDATE "Post"')) return [];
-  const result = await runOnPglite(strings, values);
-  return result.affectedRows ?? 0;
-}) as never;
+const routeRaw = (as: 'count' | 'rows') =>
+  (async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    if (!strings.join('').includes('UPDATE "Post"')) return as === 'rows' ? [] : 0;
+    const result = await runOnPglite(strings, values);
+    return as === 'rows' ? result.rows : result.affectedRows ?? 0;
+  }) as never;
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -98,11 +104,12 @@ beforeEach(async () => {
     -- Not a user id; must be ignored rather than break the lookup.
     INSERT INTO "CsamReport" ("userId", details) VALUES (NULL, '{"secondaryUserId": "n/a"}');
   `);
-  vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(routeRaw);
-  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(routeRaw);
+  vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(routeRaw('count'));
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(routeRaw('rows'));
 });
 
-async function setRead(from: 'Public' | 'Private', to: 'Public' | 'Private') {
+// `by` other than the owner saves as a co-manager, whose `read` the service ignores.
+async function setRead(from: 'Public' | 'Private', to: 'Public' | 'Private', by = OWNER) {
   dbMock.dbRead.$queryRaw.mockResolvedValue([
     {
       id: COLLECTION_ID,
@@ -111,8 +118,9 @@ async function setRead(from: 'Public' | 'Private', to: 'Public' | 'Private') {
       userId: OWNER,
       type: 'Post',
       mode: null,
-      contributorPermissions: null,
+      contributorPermissions: by === OWNER ? null : ['VIEW', 'ADD', 'MANAGE'],
       collaborationDisabledAt: null,
+      hasAcceptedSeat: by !== OWNER,
     },
   ] as never);
   dbMock.dbWrite.collection.findUnique.mockResolvedValue({
@@ -128,18 +136,22 @@ async function setRead(from: 'Public' | 'Private', to: 'Public' | 'Private') {
       collection: { update: dbMock.dbWrite.collection.update },
       tagsOnCollection: { deleteMany: vi.fn(), createMany: vi.fn() },
     })) as never);
-  dbMock.dbWrite.collection.update.mockResolvedValue({
+  dbMock.dbWrite.collection.update.mockImplementation((async ({
+    data,
+  }: {
+    data: { read?: string };
+  }) => ({
     id: COLLECTION_ID,
-    read: to,
+    read: data.read ?? from,
     write: 'Private',
     userId: OWNER,
     mode: null,
     image: null,
-  } as never);
+  })) as never);
   dbMock.dbWrite.collectionInvite.findMany.mockResolvedValue([] as never);
 
   await upsertCollection({
-    input: { id: COLLECTION_ID, name: 'c', read: to, userId: OWNER, isMember: true },
+    input: { id: COLLECTION_ID, name: 'c', read: to, userId: by, isMember: true },
   } as never);
 }
 
@@ -212,6 +224,34 @@ describe('collection privacy toggle and its posts', () => {
     expect(await post(2)).toEqual({ publishedAt: PUBLISHED_AT, metadata: {} });
     expect(await post(3)).toEqual({ publishedAt: PUBLISHED_AT, metadata: {} });
   });
+
+  it('recounts the reviews of the posts it hides, and releases those it restores as restores', async () => {
+    await insertPost(1);
+    await insertPost(2, { publishedAt: null, metadata: modelUnpublishStamps });
+
+    await setRead('Public', 'Private');
+    expect(syncReviewsOfMovedPosts).toHaveBeenLastCalledWith(
+      expect.objectContaining({ change: 'unpublish', postIds: [1] })
+    );
+
+    await setRead('Private', 'Public');
+    expect(syncReviewsOfMovedPosts).toHaveBeenLastCalledWith(
+      expect.objectContaining({ change: 'publish', postIds: [1] })
+    );
+  });
+
+  it.each(['Public', 'Private'] as const)(
+    "a co-manager's save of a Public collection (read sent as %s) hides none of its posts",
+    async (sent) => {
+      await insertPost(1);
+      await insertPost(2, { userId: OTHER });
+
+      await setRead('Public', sent, OTHER);
+
+      expect((await post(1)).publishedAt).toBe(PUBLISHED_AT);
+      expect((await post(2)).publishedAt).toBe(PUBLISHED_AT);
+    }
+  );
 
   it('leaves moderator-unpublished, model-unpublished and draft posts untouched both ways', async () => {
     await insertPost(1, { publishedAt: null, metadata: moderatorStamps });

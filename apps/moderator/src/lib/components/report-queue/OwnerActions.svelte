@@ -7,6 +7,8 @@
   import { STRIKE_REASONS } from '$lib/moderation-reasons';
   import { FormState } from '$lib/form-state.svelte';
   import { userLookupUrl } from '$lib/entity-url';
+  import { page } from '$app/state';
+  import MessageAsCivitai from '$lib/components/MessageAsCivitai.svelte';
 
   /**
    * A strike or a notification for the account a reported item belongs to, posting to the shared
@@ -19,9 +21,11 @@
   let {
     userId,
     heading = 'Act on the owner',
+    reportId,
   }: {
     userId: number;
     heading?: string;
+    reportId?: number;
   } = $props();
 
   let open = $state<'strike' | 'notify' | null>(null);
@@ -89,6 +93,12 @@
       {/if}
     </div>
   </div>
+  <MessageAsCivitai
+    {userId}
+    {reportId}
+    canAct={!!page.data.grants?.['user.message.asCivitai']}
+    action="?/messageAsCivitai"
+  />
   <p class="m-0 text-xs text-muted-foreground">
     Muting, banning and the rest are in
     <a href={userLookupUrl(userId)} class="link">User Lookup</a>.

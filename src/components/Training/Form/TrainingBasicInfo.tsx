@@ -9,8 +9,8 @@ import {
   Radio,
   Stack,
   Text,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconMusic, IconPhoto, IconVideo } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import * as z from 'zod';
@@ -441,8 +441,8 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
           >
             <Stack gap={4}>
               <Text size="sm">
-                Our new training experience, <b>Training Studio</b> (Beta), lets you train ACE-Step
-                audio LoRAs — teach a genre, a voice, or an artist&rsquo;s sound from a few tracks —
+                Our new training experience, <b>Training Studio</b>, lets you train ACE-Step audio
+                LoRAs — teach a genre, a voice, or an artist&rsquo;s sound from a few tracks —
                 alongside a redesigned flow for image and video training.
               </Text>
               <Text size="sm">

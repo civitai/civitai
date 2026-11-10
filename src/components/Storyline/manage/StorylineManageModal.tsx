@@ -1,4 +1,5 @@
-import { Alert, Badge, Button, Group, Loader, Modal, Tabs, Text } from '@mantine/core';
+import { Alert, Badge, Button, Group, Loader, Modal, Tabs, Text, TextInput } from '@mantine/core';
+import { useEffect, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { STORYLINE_QUEUE_RECEIVED_URL } from '~/components/Placement/queue-routes';
 import { StorylineCollaboratorsPanel } from '~/components/Storyline/manage/StorylineCollaboratorsPanel';
@@ -29,8 +30,9 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
     isError,
   } = trpc.storyline.getById.useQuery({ id: storylineId }, { enabled: !!features.storylines });
   const isOwner = !!currentUser && storyline?.userId === currentUser.id;
-  const space = useStorylineSpace(storylineId, { enabled: isOwner });
-  const chapterLevels = useStorylineChapterLevels(storylineId, { enabled: isOwner });
+  const canManage = isOwner || (!!storyline && !!currentUser?.isModerator);
+  const space = useStorylineSpace(storylineId, { enabled: canManage });
+  const chapterLevels = useStorylineChapterLevels(storylineId, { enabled: canManage });
 
   const invalidate = () => utils.storyline.getById.invalidate({ id: storylineId });
   const update = trpc.storyline.update.useMutation({
@@ -40,13 +42,12 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
   });
   const addCollaborator = trpc.storyline.addCollaborator.useMutation({
     onSuccess: invalidate,
-    onError: showError("Couldn't endorse them"),
+    onError: showError("Couldn't invite them"),
   });
   const removeCollaborator = trpc.storyline.removeCollaborator.useMutation({
     onSuccess: invalidate,
     onError: showError("Couldn't remove them"),
   });
-
   return (
     <Modal
       {...dialog}
@@ -71,7 +72,7 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
         </Group>
       ) : isError || !storyline ? (
         <Alert color="red">This storyline could not be loaded.</Alert>
-      ) : !isOwner ? (
+      ) : !canManage ? (
         <Alert color="gray">Only the storyline&apos;s creator can manage it.</Alert>
       ) : (
         <Tabs defaultValue="settings" keepMounted={false}>
@@ -92,6 +93,11 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
           </Tabs.List>
 
           <Tabs.Panel value="settings">
+            <StorylineTitleField
+              title={storyline.title}
+              saving={update.isPending}
+              onSave={(title) => update.mutate({ id: storylineId, title })}
+            />
             <StorylineSettingsForm
               coverRow={<StorylineCoversRow storylineId={storylineId} />}
               status={storyline.status}
@@ -107,6 +113,7 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
               }
               onPriceChange={space.save}
               priceUnavailable={space.unavailable}
+              priceReadOnly={!isOwner}
             />
           </Tabs.Panel>
 
@@ -114,7 +121,8 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
             <StorylineCollaboratorsPanel
               ownerId={storyline.userId}
               collaborators={storyline.collaborators}
-              canManage
+              pending={storyline.pendingCollaborators}
+              canEndorse={isOwner}
               adding={addCollaborator.isPending}
               removingId={
                 removeCollaborator.isPending ? removeCollaborator.variables?.userId : undefined
@@ -124,10 +132,12 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
             />
           </Tabs.Panel>
 
-          <Group justify="space-between" mt="lg">
-            <Button component="a" href={STORYLINE_QUEUE_RECEIVED_URL} variant="light">
-              Review continuations
-            </Button>
+          <Group justify={isOwner ? 'space-between' : 'flex-end'} mt="lg">
+            {isOwner && (
+              <Button component="a" href={STORYLINE_QUEUE_RECEIVED_URL} variant="light">
+                Review continuations
+              </Button>
+            )}
             <Button variant="default" onClick={dialog.onClose}>
               Done
             </Button>
@@ -135,5 +145,46 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
         </Tabs>
       )}
     </Modal>
+  );
+}
+
+function StorylineTitleField({
+  title,
+  saving,
+  onSave,
+}: {
+  title: string;
+  saving: boolean;
+  onSave: (title: string) => void;
+}) {
+  const [value, setValue] = useState(title);
+  useEffect(() => setValue(title), [title]);
+  const trimmed = value.trim();
+
+  return (
+    <form
+      className="mb-4 flex items-end gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (trimmed && trimmed !== title) onSave(trimmed);
+      }}
+    >
+      <TextInput
+        label="Title"
+        className="flex-1"
+        value={value}
+        onChange={(e) => setValue(e.currentTarget.value)}
+        maxLength={255}
+        required
+      />
+      <Button
+        type="submit"
+        variant="light"
+        disabled={!trimmed || trimmed === title}
+        loading={saving}
+      >
+        Save
+      </Button>
+    </form>
   );
 }

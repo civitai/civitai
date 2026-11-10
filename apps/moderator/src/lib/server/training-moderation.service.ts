@@ -20,6 +20,8 @@ import { getClickhouse } from './clickhouse';
 import { TRAINING_STEP_TYPES } from './training-orchestration.service';
 import { usersByIds } from './users.service';
 import { mapBounded, someBounded } from './bounded';
+import { MAX_INT4, parseWorkflowId, type ParsedWorkflowId } from './workflow-id';
+export { parseWorkflowId, type ParsedWorkflowId };
 
 export const TRAINING_DATA_FILE_TYPE = 'Training Data';
 const ANNOUNCEMENT_KEY = 'training-announcement';
@@ -78,6 +80,7 @@ function pickBestTrainingFile<T extends { metadata: unknown }>(files: T[]): T | 
 export type TrainingFeedQuery = {
   limit: number;
   cursor?: number;
+  modelId?: number;
   username?: string;
   workflowId?: string;
   dateFrom?: Date;
@@ -126,7 +129,7 @@ export async function getTrainingModelsFeed(query: TrainingFeedQuery): Promise<{
   items: TrainingFeedModel[];
   nextCursor?: number;
 }> {
-  const { limit, cursor, username, workflowId, dateFrom, dateTo, cannotPublish } = query;
+  const { limit, cursor, modelId, username, workflowId, dateFrom, dateTo, cannotPublish } = query;
 
   const models = await dbRead
     .selectFrom('Model as m')
@@ -134,6 +137,7 @@ export async function getTrainingModelsFeed(query: TrainingFeedQuery): Promise<{
     .where('m.uploadType', '=', 'Trained')
     .where('m.deletedAt', 'is', null)
     .$if(cursor != null, (qb) => qb.where('m.id', '<', cursor!))
+    .$if(modelId != null, (qb) => qb.where('m.id', '=', modelId!))
     // Exact match, as the main app's feed does — a `contains` here would quietly widen a moderator's
     // "show me this account" into every account whose name contains it.
     .$if(!!username, (qb) => qb.where('u.username', '=', username!))
@@ -258,8 +262,12 @@ export async function getModelOwner(modelId: number): Promise<{ userId: number }
   return row ?? null;
 }
 
-/** Toggles `meta.cannotPublish`, which the main app's publish path reads. The merge is a jsonb `||` so
- *  the rest of `meta` — minor-flag snapshots, scan state — survives the write. */
+/** The jsonb `||` merge that sets `meta.cannotPublish` and leaves the rest of `meta` — minor-flag
+ *  snapshots, scan state — as it was. */
+const withCannotPublish = (value: boolean) =>
+  sql`COALESCE("meta", '{}'::jsonb) || jsonb_build_object('cannotPublish', ${value}::boolean)`;
+
+/** Toggles `meta.cannotPublish`, which the main app's publish path reads. */
 export async function toggleCannotPublish(
   modelId: number
 ): Promise<{ ok: true; cannotPublish: boolean } | { ok: false; error: string }> {
@@ -276,9 +284,7 @@ export async function toggleCannotPublish(
   const next = !model.cannotPublish;
   const result = await dbWrite
     .updateTable('Model')
-    .set({
-      meta: sql`COALESCE("meta", '{}'::jsonb) || jsonb_build_object('cannotPublish', ${next}::boolean)`,
-    })
+    .set({ meta: withCannotPublish(next) })
     .where('id', '=', modelId)
     .executeTakeFirst();
 
@@ -286,6 +292,28 @@ export async function toggleCannotPublish(
 
   await syncSearchIndex({ entityType: 'model', entityId: modelId, action: 'update' });
   return { ok: true, cannotPublish: next };
+}
+
+/**
+ * Sets `meta.cannotPublish` to `value`, in one UPDATE that matches only when the stored state differs,
+ * so two writers asking for the same state cannot both think they made the change. Returns whether a
+ * write happened: false when the model is deleted or missing, or already in that state.
+ */
+export async function setCannotPublish(modelId: number, value: boolean): Promise<boolean> {
+  const result = await dbWrite
+    .updateTable('Model')
+    .set({ meta: withCannotPublish(value) })
+    .where('id', '=', modelId)
+    .where('deletedAt', 'is', null)
+    .where(
+      sql<boolean>`COALESCE("meta"->'cannotPublish' = 'true'::jsonb, false) <> ${value}::boolean`
+    )
+    .executeTakeFirst();
+
+  if (Number(result.numUpdatedRows) === 0) return false;
+
+  await syncSearchIndex({ entityType: 'model', entityId: modelId, action: 'update' });
+  return true;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -681,37 +709,6 @@ async function notifyTrainingWebhook(
 // `ModelVersion` row exists and nothing above can reach them: the Paused queue is a Postgres query, and
 // `moderateTrainingData` refuses a workflow without a `modelVersion:<id>` tag. Everything here is keyed
 // by the WORKFLOW id instead, and reads the run from the orchestrator rather than from our database.
-//
-// The workflow id is assigned by the orchestrator and begins with the submitter's user id. The owner is
-// read from THAT, never from `metadata` or `tags`, which the submitter writes.
-
-const WORKFLOW_ID_PATTERN = /^(\d{1,10})-(\d{14})\d{0,6}(?:-[a-z0-9]{1,32})?$/;
-const MAX_INT4 = 2_147_483_647;
-
-export type ParsedWorkflowId = { ownerId: number; submittedAt: Date };
-
-/** The submitter and submit instant carried by an orchestrator workflow id, or null when the id is not
- *  one. Doubles as the input guard: nothing that fails this reaches a URL or a query. */
-export function parseWorkflowId(raw: string | null | undefined): ParsedWorkflowId | null {
-  if (typeof raw !== 'string') return null;
-  const match = WORKFLOW_ID_PATTERN.exec(raw);
-  if (!match) return null;
-  const ownerId = Number(match[1]);
-  if (!Number.isInteger(ownerId) || ownerId <= 0 || ownerId > MAX_INT4) return null;
-  const s = match[2];
-  const submittedAt = new Date(
-    Date.UTC(
-      +s.slice(0, 4),
-      +s.slice(4, 6) - 1,
-      +s.slice(6, 8),
-      +s.slice(8, 10),
-      +s.slice(10, 12),
-      +s.slice(12, 14)
-    )
-  );
-  if (Number.isNaN(submittedAt.getTime())) return null;
-  return { ownerId, submittedAt };
-}
 
 /**
  * Step types that are a training run, as the workflow JSON names them (`$type`). Not the ClickHouse

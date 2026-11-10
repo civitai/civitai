@@ -291,7 +291,11 @@ describe('attribution never breaks a request', () => {
 describe('the access-denied bounce', () => {
   it('carries the WHOLE requested path, query included, and the dashboard reads it back intact', async () => {
     const { safeReturnPath } = await import('$lib/return-path');
-    guardCheck.mockResolvedValue({ status: 'ok', user: { id: 7, roles: ['moderator:cm-high'] } });
+    guardCheck.mockResolvedValue({
+      status: 'ok',
+      user: { id: 7, roles: ['moderator:cm-high'] },
+      setCookies: [],
+    });
     const requested = '/decisions/support/g_77?version=v0.9-x';
     const event = eventFor({ path: requested });
     event.route.id = '/decisions/support/[groupKey]';
@@ -324,7 +328,11 @@ describe('moved views', () => {
   ])(
     'redirects %s before the grant check, even for a role holding neither old page',
     async (from, to) => {
-      guardCheck.mockResolvedValue({ status: 'ok', user: { id: 7, roles: ['moderator:nobody'] } });
+      guardCheck.mockResolvedValue({
+        status: 'ok',
+        user: { id: 7, roles: ['moderator:nobody'] },
+        setCookies: [],
+      });
       const path = from.split('?')[0];
       const event = eventFor({ path });
       event.url.search = from.split('?')[1];

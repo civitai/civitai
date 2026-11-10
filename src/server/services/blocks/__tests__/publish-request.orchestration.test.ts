@@ -1,8 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ManifestSubmitValidation from '~/server/services/blocks/manifest-submit-validation';
+// Submit-time deep manifest validation is pinned in publish-request.submitValidation.test.ts;
+// this file's fixtures are not full manifests, so that seam is a no-op here (approve's own
+// validator is untouched).
+vi.mock('~/server/services/blocks/manifest-submit-validation', async (importOriginal) => ({
+  ...(await importOriginal<typeof ManifestSubmitValidation>()),
+  assertManifestValidAtSubmit: vi.fn(async () => undefined),
+}));
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
+import type * as ReviewAutodeployService from '~/server/services/blocks/review-autodeploy.service';
 import JSZip from 'jszip';
 
 import { NsfwLevel } from '~/server/common/enums';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * Orchestration coverage for the W1 publish-request service. The existing
@@ -68,6 +88,12 @@ const {
       // `findUnique` added: recordPendingFromPush resolves the app owner's
       // userId via dbRead.appBlock.findUnique({ app: { userId } }).
       appBlock: { findFirst: vi.fn(), findUnique: vi.fn() },
+      // submitVersion's owner gate: resolveAppAccess looks an editor's seat up here.
+      // `findMany`: /apps/mine (`listMyAppListings`) reads a user's accepted seats here.
+      appCollaborator: { findFirst: vi.fn(), findMany: vi.fn<DelegateMock>(async () => []) },
+      // /apps/mine's batched asset-scan read (`loadListingAssetScansBatch`).
+      appListingScreenshot: { findMany: vi.fn<DelegateMock>(async () => []) },
+      image: { findMany: vi.fn<DelegateMock>(async () => []) },
       // Added 2026-05-28 for C-2 fix: approveRequest now reads the
       // OauthClient row after a P2002 collision to recover the existing
       // client on retry.
@@ -111,6 +137,8 @@ const {
         updateMany: vi.fn(),
         findUnique: vi.fn(),
         findFirst: vi.fn(),
+        // The storage-migration history (`loadStorageMigrationBaseline`, on the PRIMARY).
+        findMany: vi.fn<DelegateMock>(async () => []),
       },
       // `findUnique` added (W13 auto-create-on-approve): approveRequest re-reads
       // the freshly-approved AppBlock's own columns off the PRIMARY to map it into
@@ -124,6 +152,8 @@ const {
         update: vi.fn(),
         updateMany: vi.fn(),
         findUnique: vi.fn(),
+        // The enforced manifest (`loadStorageMigrationBaseline`, on the PRIMARY): none.
+        findFirst: vi.fn<DelegateMock>(async () => null),
       },
       // `update` added 2026-06-02 (audit A1 fix): approveRequest now re-caps
       // the app-block OauthClient's allowedScopes to the manifest-derived
@@ -218,6 +248,22 @@ const {
   async (cb: (tx: unknown) => Promise<unknown>) => cb(mockDbWrite)
 );
 
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
+}));
+
+// What follows a NEW pending request (moderator alert + automatic preview) is its own module,
+// pinned in review-autodeploy.service.test.ts; here only WHEN it is called, and that a throw from
+// it cannot fail the push.
+const { mockOnNewPendingSubmission, mockDeleteReviewResources } = vi.hoisted(() => ({
+  mockOnNewPendingSubmission: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+  mockDeleteReviewResources: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/review-autodeploy.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReviewAutodeployService>()),
+  onNewPendingSubmission: (...a: unknown[]) => mockOnNewPendingSubmission(...a),
+}));
+
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   dbWrite: mockDbWrite,
@@ -249,6 +295,8 @@ vi.mock('~/server/services/blocks/forgejo.service', () => mockForgejo);
 // triggers builds). Mock the resolved absolute id the service sees.
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerBuild: mockTriggerBuild,
+  // A superseded request's review preview is torn down by label (teardownReviewForRequest).
+  deleteReviewResources: (...a: unknown[]) => mockDeleteReviewResources(...a),
 }));
 
 // approveRequest does `await import('~/server/services/apps/storage-provision.service')`
@@ -462,9 +510,126 @@ describe('submitVersion', () => {
     expect(putCalls).toHaveLength(1);
   });
 
+  /**
+   * The existing app for the slug, owned (its OauthClient's userId) by `ownerUserId`, with its
+   * listing's collaborator rows: the seat lookup answers as the database would, by every field the
+   * query names (so a query that stops filtering on status sees a pending seat).
+   */
+  const existingAppOwnedBy = (
+    ownerUserId: number,
+    seats: { userId: number; status: string }[] = []
+  ) => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      app: { userId: ownerUserId },
+    });
+    mockDbRead.appBlock.findUnique.mockResolvedValue({
+      id: 'apb_existing',
+      app: { userId: ownerUserId },
+      appListing: { id: 'apl_existing' },
+    });
+    const rows = seats.map((seat) => ({ appListingId: 'apl_existing', ...seat }));
+    mockDbRead.appCollaborator.findFirst.mockImplementation(
+      async ({ where }: { where: Record<string, unknown> }) =>
+        rows.find((row) =>
+          Object.entries(where).every(
+            ([key, value]) => (row as Record<string, unknown>)[key] === value
+          )
+        ) ?? null
+    );
+  };
+
+  it('lets an ACCEPTED editor of the app queue a version of it', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    existingAppOwnedBy(7, [{ userId: 42, status: 'accepted' }]);
+    const buf = await makeValidBundle();
+    await submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: false });
+    expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledOnce();
+    expect(mockDbWrite.appBlockPublishRequest.create.mock.calls[0][0].data.appBlockId).toBe(
+      'apb_existing'
+    );
+  });
+
+  it('🔴 refuses an accepted editor while the OWNER has not accepted the App Developer Terms, inserting nothing', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 7
+    );
+    try {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(7, [{ userId: 42, status: 'accepted' }]);
+      const buf = await makeValidBundle();
+      await expect(
+        submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: false })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
+  });
+
+  it("checks the listing's canonical owner, not the block's, when the two differ", async () => {
+    // An off-site listing backed by a block: its owner is the listing column (8), which a
+    // transfer moves while the block's OauthClient (7) stays put.
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 8
+    );
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: { where: unknown }) =>
+      JSON.stringify(args.where) === JSON.stringify({ appBlockId: 'apb_existing' })
+        ? { kind: 'offsite', userId: 8 }
+        : null
+    );
+    try {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(7, [{ userId: 42, status: 'accepted' }]);
+      const buf = await makeValidBundle();
+      await expect(
+        submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: false })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
+  });
+
+  it.each(['pending', 'declined'])(
+    '🔴 refuses a collaborator whose seat is %s, as any non-owner',
+    async (status) => {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(7, [{ userId: 42, status }]);
+      const buf = await makeValidBundle();
+      await expect(
+        submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: false })
+      ).rejects.toThrow('app hello is owned by another user; choose a different blockId');
+      expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it('🔴 refuses a version of an existing app from a non-owner, inserting nothing and saying nothing of pending state', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    existingAppOwnedBy(7);
+    const buf = await makeValidBundle();
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: false })
+    ).rejects.toThrow('app hello is owned by another user; choose a different blockId');
+    expect(mockDbRead.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator queue a version of an app someone else owns', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    existingAppOwnedBy(7);
+    const buf = await makeValidBundle();
+    await submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: true });
+    expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledOnce();
+  });
+
   it('happy path — subsequent version links to existing AppBlock', async () => {
     const { submitVersion } = await import('../publish-request.service');
-    mockDbRead.appBlock.findFirst.mockResolvedValue({ id: 'apb_existing', appId: 'oc_existing' });
+    // The submitter owns the app.
+    existingAppOwnedBy(42);
     // Pretend prior approved publish_request exists with a stored file map.
     const priorFiles = [
       { path: 'Dockerfile', sha256: 'oldhash', sizeBytes: 100 },
@@ -795,6 +960,246 @@ describe('submitVersion', () => {
         submittedByUserId: 42,
       })
     ).rejects.toThrow(/connection reset/);
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 WARN AT SUBMIT (operator ruling 2026-10-30). The submit still succeeds — the
+  // developer can add art while it waits — but its result carries the store listing's
+  // readiness, so the App Assistant card and the CLI can say what a moderator will refuse on.
+  // -------------------------------------------------------------------------
+  describe('listing readiness in the submit result', () => {
+    /** One listing row, answering only the lookup `which` names. */
+    const listingRow = (over: Record<string, unknown> = {}) => ({
+      id: 'apl_ready_1',
+      kind: 'onsite',
+      status: 'draft',
+      iconId: null,
+      coverId: null,
+      description: 'Rolls prompts.',
+      tagline: 'Random prompts',
+      category: 'utility',
+      contentRating: 'g',
+      _count: { screenshots: 0 },
+      ...over,
+    });
+    /** Answers with only the columns the lookup SELECTS, so a dropped column is seen. */
+    const answer = (which: 'draft' | 'live' | 'reset', row: Record<string, unknown>) =>
+      mockDbWrite.appListing.findFirst.mockImplementation(
+        async (args: { where?: Record<string, unknown>; select?: Record<string, unknown> }) => {
+          const w = args?.where ?? {};
+          const hit =
+            (which === 'draft' && w.status === 'draft' && w.appBlockId === null) ||
+            (which === 'live' && w.appBlockId === 'apb_existing' && w.status === undefined) ||
+            (which === 'reset' && w.appBlockId === 'apb_existing' && w.status === 'pending');
+          if (!hit) return null;
+          const select = args?.select;
+          return select ? Object.fromEntries(Object.entries(row).filter(([k]) => select[k])) : row;
+        }
+      );
+
+    it('🔴 a FIRST version whose draft has no icon or cover: approval blocked, next step in plain words, every problem listed', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      answer('draft', listingRow());
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle(),
+        submittedByUserId: 42,
+      });
+
+      // The submit itself went through.
+      expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledOnce();
+      expect(result.listing).toEqual({
+        approvalBlocked: true,
+        missing: ['icon', 'cover'],
+        nextStep:
+          "Add an icon and a cover on your listing's Media tab before a moderator can approve it.",
+        problems: [
+          {
+            code: 'missing-icon',
+            label: 'Missing icon (required before publishing)',
+            severity: 'blocking',
+          },
+          {
+            code: 'missing-cover',
+            label: 'Missing cover image (required before publishing)',
+            severity: 'blocking',
+          },
+          {
+            code: 'no-screenshots',
+            label: 'No screenshots (recommended, optional)',
+            severity: 'advisory',
+          },
+        ],
+      });
+    });
+
+    it('🔴 names only what is missing: a draft with an icon but no cover', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      answer('draft', listingRow({ iconId: 71, _count: { screenshots: 2 } }));
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle(),
+        submittedByUserId: 42,
+      });
+      expect(result.listing).toMatchObject({
+        approvalBlocked: true,
+        missing: ['cover'],
+        nextStep: "Add a cover on your listing's Media tab before a moderator can approve it.",
+      });
+      expect(result.listing!.problems.map((p) => p.code)).toEqual(['missing-cover']);
+    });
+
+    it('a draft with both: not blocked, no next step', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      answer('draft', listingRow({ iconId: 71, coverId: 73, _count: { screenshots: 1 } }));
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle(),
+        submittedByUserId: 42,
+      });
+      expect(result.listing).toEqual({
+        approvalBlocked: false,
+        missing: [],
+        nextStep: null,
+        problems: [],
+      });
+    });
+
+    it('an UPDATE to an app with a live listing that has both: not blocked (the normal update path)', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(42);
+      answer('live', listingRow({ status: 'approved', iconId: 81, coverId: 83 }));
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle({ version: '0.2.0' }),
+        submittedByUserId: 42,
+      });
+      expect(result.listing).toMatchObject({ approvalBlocked: false, missing: [], nextStep: null });
+    });
+
+    it('an UPDATE to a live listing that went live art-less is reported, but NOT as blocking approval (the version approve does not publish it)', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(42);
+      answer('live', listingRow({ status: 'approved', coverId: 83 }));
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle({ version: '0.2.0' }),
+        submittedByUserId: 42,
+      });
+      expect(result.listing).toMatchObject({
+        approvalBlocked: false,
+        missing: ['icon'],
+        nextStep: null,
+      });
+      expect(result.listing!.problems.map((p) => p.code)).toContain('missing-icon');
+    });
+
+    it('🔴 an UPDATE whose listing a moderator RESET (pending, art-less) is NOT blocked — resets are exempt', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(42);
+      answer('reset', listingRow({ status: 'pending', coverId: 83 }));
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle({ version: '0.2.0' }),
+        submittedByUserId: 42,
+      });
+      expect(result.listing).toMatchObject({
+        approvalBlocked: false,
+        missing: ['icon'],
+        nextStep: null,
+      });
+    });
+
+    it('🔴 no listing row at all: icon and cover reported missing with a next step, not null', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      // Every listing lookup answers nothing: a draft create that failed, or an app whose
+      // listing was never minted. The approve's legacy create then mints one with no art.
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle(),
+        submittedByUserId: 42,
+      });
+      expect(result.listing).toEqual({
+        approvalBlocked: false,
+        missing: ['icon', 'cover'],
+        nextStep:
+          "Your app has no store listing yet. Once it is approved, add an icon and a cover on its listing's Media tab.",
+        problems: [
+          {
+            code: 'missing-icon',
+            label: 'Missing icon (required before publishing)',
+            severity: 'blocking',
+          },
+          {
+            code: 'missing-cover',
+            label: 'Missing cover image (required before publishing)',
+            severity: 'blocking',
+          },
+        ],
+      });
+    });
+
+    it('🔴 an UPDATE to an app with no on-site listing row: null, not the first-version "no store listing yet" step', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      // The app is already live, so "once it is approved" would be wrong, and listMyPublishRequests
+      // reports no problems for a keyed request with no on-site listing.
+      existingAppOwnedBy(42);
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle({ version: '0.2.0' }),
+        submittedByUserId: 42,
+      });
+      expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledOnce();
+      expect(result.listing).toBeNull();
+    });
+
+    it('🔴 reports the same problems /apps/mine shows for the same listing, blocked and scanning media included', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      const { listMyAppListings } = await import('../app-access.service');
+      const row = listingRow({ iconId: 7, coverId: 9, _count: { screenshots: 1 } });
+      answer('draft', row);
+      const shots = async () => [{ appListingId: 'apl_ready_1', imageId: 31 }];
+      const images = async (args: { where?: { id?: { in?: number[] } } }) =>
+        [
+          { id: 7, ingestion: 'Blocked', nsfwLevel: null },
+          { id: 9, ingestion: 'Pending', nsfwLevel: null },
+          { id: 31, ingestion: 'Scanned', nsfwLevel: null },
+        ].filter((i) => args?.where?.id?.in?.includes(i.id) ?? true);
+      // Both reads see the same assets: the submit reads the primary, /apps/mine the replica.
+      mockDbWrite.appListingScreenshot.findMany.mockImplementation(shots);
+      mockDbWrite.image.findMany.mockImplementation(images);
+      mockDbRead.appListingScreenshot.findMany.mockImplementation(shots);
+      mockDbRead.image.findMany.mockImplementation(images);
+
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle(),
+        submittedByUserId: 42,
+      });
+      // The same row as /apps/mine reads it: its access probe and its hydrate.
+      mockDbRead.appListing.findMany.mockResolvedValue([
+        { ...row, slug: 'hello', name: 'Hello World', appBlockId: null, appBlock: null },
+      ]);
+      const mine = await listMyAppListings({ userId: 42 });
+
+      expect(mine.map((m) => m.appListingId)).toEqual(['apl_ready_1']);
+      expect(mine[0].problems).toEqual([
+        {
+          code: 'blocked-media',
+          label: 'Replace the blocked icon before it can publish',
+          severity: 'blocking',
+        },
+        { code: 'scanning-media', label: 'Cover is still being scanned', severity: 'advisory' },
+      ]);
+      expect(result.listing!.problems).toEqual(mine[0].problems);
+    });
+
+    it('a failing readiness read never fails the submit (listing: null)', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      mockDbWrite.appListing.findFirst.mockRejectedValue(new Error('replica went away'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const result = await submitVersion({
+          bundleBuffer: await makeValidBundle(),
+          submittedByUserId: 42,
+        });
+        expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledOnce();
+        expect(result.listing).toBeNull();
+      } finally {
+        warn.mockRestore();
+      }
+    });
   });
 });
 
@@ -1526,7 +1931,25 @@ describe('approveRequest', () => {
     }
   );
 
-  it.each(['my-app', 'a-b-c', 'plainapp'])('approves a first version of %s', async (slug) => {
+  it('refuses a first version with a reserved blockId before creating the OAuth client, repo or app block', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({ slug: 'review-0123456789abcdef' })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(
+      'Cannot approve: blockId "review-0123456789abcdef" is reserved: ids starting with "review-"'
+    );
+    expect(mockDbWrite.oauthClient.create).not.toHaveBeenCalled();
+    expect(mockForgejo.createRepoFromTemplate).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
+  });
+
+  it.each(['my-app', 'ab-c-d', 'plainapp'])('approves a first version of %s', async (slug) => {
     const { approveRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest({ slug }));
     mockDbRead.appBlock.findFirst.mockResolvedValue(null);
@@ -1536,6 +1959,46 @@ describe('approveRequest', () => {
       approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
     ).resolves.toMatchObject({ isFirstVersion: true });
     expect(mockDbWrite.appBlock.create).toHaveBeenCalledOnce();
+  });
+
+  // approveRequest resets the request's deploy state (clearing its detail) before it tears the
+  // preview down, so the teardown must use the detail read before that write: the preview's sha
+  // and serving mode. The DB fake below clears the detail once the 'building' write lands, as the
+  // real row does.
+  it('approving a request with a shared-server preview unpublishes THAT preview', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    const PREVIEW_SHA = 'b'.repeat(40);
+    let reset = false;
+    mockDbWrite.appBlockPublishRequest.updateMany.mockImplementation((async (a: {
+      data?: { deployState?: string };
+    }) => {
+      if (a?.data?.deployState === 'building') reset = true;
+      return { count: 1 };
+    }) as never);
+    mockDbRead.appBlockPublishRequest.findUnique.mockImplementation((async () =>
+      pendingRequest(
+        reset
+          ? { deployState: 'building', deployDetail: null }
+          : {
+              deployState: 'preview-live',
+              deployDetail: JSON.stringify({ sha: PREVIEW_SHA, sharedServer: true }),
+            }
+      )) as never);
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+    mockDeleteReviewResources.mockClear();
+
+    await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+    await vi.waitFor(() => expect(mockDeleteReviewResources).toHaveBeenCalled(), {
+      timeout: 15_000,
+    });
+    expect(reset).toBe(true);
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'hello',
+      sha: PREVIEW_SHA,
+      publishRequestId: 'pubreq_1',
+      sharedServer: true,
+    });
   });
 
   it('approves a new version of an EXISTING app whose blockId contains consecutive hyphens', async () => {
@@ -1677,6 +2140,78 @@ describe('approveRequest', () => {
     expect((abArg.manifest as any).iframe.src).toBe('https://hello.civit.ai/');
   });
 
+  it('🔴 refuses to approve while the app owner has not accepted the App Developer Terms; nothing ships', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 7
+    );
+    try {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
+      });
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+      expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
+      expect(mockDbWrite.oauthClient.update).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
+  });
+
+  it("approve checks the listing's canonical owner, not the block's, when the two differ", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 8
+    );
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: { where: unknown }) =>
+      JSON.stringify(args.where) === JSON.stringify({ appBlockId: 'apb_existing' })
+        ? { kind: 'offsite', userId: 8 }
+        : null
+    );
+    try {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
+      });
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
+  });
+
+  it('a first version, with no app yet, checks the submitter; nothing ships', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms)
+      .mockClear()
+      .mockImplementation(async (userId) => userId !== 42);
+    try {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(terms.hasAcceptedAppDeveloperTerms).toHaveBeenCalledWith(42);
+      expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+      expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
+  });
+
   it('🔴 W13 onsite reset re-approve (SUBSEQUENT-version): restores the listing AND UN-SUSPENDS the block', async () => {
     // The real reset scenario: the block ALREADY exists (isFirstVersion=false), so the
     // approve takes the subsequent-version `appBlock.update` branch — which refreshes
@@ -1734,7 +2269,8 @@ describe('approveRequest', () => {
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     // The reset listing exists + is pending (found by id), but its icon is still
     // scanning (the shared wrapper re-reads icon/cover by id, then the scan gate).
-    mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset' });
+    // icon + cover set: the publish floor every go-live checks up front.
+    mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset', iconId: 1, coverId: 2 });
     mockDbWrite.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2 });
     mockDbWrite.image.findMany.mockImplementation(
       async (args: { where?: { id?: { in?: number[] } } }) =>
@@ -1781,7 +2317,8 @@ describe('approveRequest', () => {
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     // The reset listing exists (found by id) with all-Scanned icon+cover → gate passes.
-    mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset' });
+    // icon + cover set: the publish floor every go-live checks up front.
+    mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset', iconId: 1, coverId: 2 });
     mockDbWrite.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2 });
     // Re-stage the clean image impl (clearAllMocks doesn't reset a prior test's impl).
     mockDbWrite.image.findMany.mockImplementation(
@@ -1831,7 +2368,7 @@ describe('approveRequest', () => {
   // fails the control rather than passing it.
   // -------------------------------------------------------------------------
   const wireResetListingLookup = (opts: { openListingReview: boolean }) => {
-    const row = { id: 'apl_reset', contentRating: 'g' };
+    const row = { id: 'apl_reset', contentRating: 'g', iconId: 1, coverId: 2 };
     // What sits on `AppListing.publishRequests` for the fake row.
     const requests: Record<string, unknown>[] = opts.openListingReview
       ? [{ status: 'pending', kind: 'onsite' }]
@@ -1967,7 +2504,9 @@ describe('approveRequest', () => {
     // would run that branch too, and its hand-off to the history would stand in for this one.
     mockDbWrite.appListing.findFirst.mockImplementation(
       async (args: { where?: { status?: string } }) =>
-        args?.where?.status === 'pending' ? { id: 'apl_reset', contentRating: 'g' } : null
+        args?.where?.status === 'pending'
+          ? { id: 'apl_reset', contentRating: 'g', iconId: 1, coverId: 2 }
+          : null
     );
     mockDbWrite.appListing.findUnique.mockResolvedValue({
       iconId: 1,
@@ -2018,7 +2557,12 @@ describe('approveRequest', () => {
       app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
-    mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset', contentRating: 'r' });
+    mockDbWrite.appListing.findFirst.mockResolvedValue({
+      id: 'apl_reset',
+      contentRating: 'r',
+      iconId: 1,
+      coverId: 2,
+    });
     mockDbWrite.appListing.findUnique.mockResolvedValue({
       iconId: 1,
       coverId: 2,
@@ -3573,10 +4117,109 @@ describe('recordPendingFromPush', () => {
     mockForgejo.listRepoTreeAtRef.mockResolvedValue(new Map());
     mockForgejo.getBlobContent.mockResolvedValue(Buffer.from(''));
     mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 0 });
+    // The supersede read: no other pending request for the slug.
+    mockDbWrite.appBlockPublishRequest.findMany.mockResolvedValue([]);
+    mockOnNewPendingSubmission.mockReset();
+    mockOnNewPendingSubmission.mockResolvedValue(undefined);
+    mockDeleteReviewResources.mockClear();
   }
+
+  /** Let the fire-and-forget follow-ups (dynamic import → call) settle. */
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it('a NEW pending request announces itself once (moderator alert + automatic preview), attributed to the owner', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockResolvedValue(undefined);
+
+    const res = await recordPendingFromPush(pushArgs);
+    await flush();
+
+    expect(mockOnNewPendingSubmission).toHaveBeenCalledTimes(1);
+    expect(mockOnNewPendingSubmission).toHaveBeenCalledWith({
+      publishRequestId: res.publishRequestId,
+      slug: 'hello',
+      version: '0.1.0',
+      appName: 'Hello World',
+      submittedByUserId: 777,
+      origin: 'push',
+    });
+  });
+
+  it('a refresh of an already-pending sha announces nothing (one alert per new request)', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ app: { userId: 7 } });
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce({
+      id: 'pubreq_existing_sha',
+    });
+    mockDbWrite.appBlockPublishRequest.update.mockResolvedValue(undefined);
+
+    await recordPendingFromPush(pushArgs);
+    await flush();
+
+    expect(mockOnNewPendingSubmission).not.toHaveBeenCalled();
+  });
+
+  it('a throw from the follow-ups cannot fail the push', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockOnNewPendingSubmission.mockImplementation(() => {
+      throw new Error('discord down');
+    });
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockResolvedValue(undefined);
+
+    await expect(recordPendingFromPush(pushArgs)).resolves.toMatchObject({
+      publishRequestId: expect.stringMatching(/^pubreq_/),
+    });
+    await flush();
+    expect(mockOnNewPendingSubmission).toHaveBeenCalledTimes(1);
+  });
+
+  it('superseding a pending request tears down ITS review preview (and only a request that had one)', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    const OLD_SHA = 'f'.repeat(40);
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null);
+    mockDbWrite.appBlockPublishRequest.findMany.mockResolvedValue([
+      { id: 'pubreq_old_preview', deployState: 'preview-live' },
+      { id: 'pubreq_old_none', deployState: null },
+    ]);
+    // teardownReviewForRequest re-reads each request it tears down.
+    mockDbRead.appBlockPublishRequest.findUnique.mockImplementation(
+      async (args: { where: { id: string } }) =>
+        args.where.id === 'pubreq_old_preview'
+          ? {
+              slug: 'hello',
+              deployState: 'preview-live',
+              deployDetail: JSON.stringify({ sha: OLD_SHA }),
+            }
+          : { slug: 'hello', deployState: null, deployDetail: null }
+    );
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockResolvedValue(undefined);
+
+    await recordPendingFromPush(pushArgs);
+    await vi.waitFor(() => expect(mockDeleteReviewResources).toHaveBeenCalled(), {
+      timeout: 15_000,
+    });
+    await flush();
+
+    expect(mockDeleteReviewResources).toHaveBeenCalledTimes(1);
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'hello',
+      sha: OLD_SHA,
+      publishRequestId: 'pubreq_old_preview',
+    });
+  });
 
   it('(a) existingForSha refresh path — updates the existing (slug,sha) pending row, no create', async () => {
     const { recordPendingFromPush } = await import('../publish-request.service');
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ app: { userId: 7 } });
     // A pending row for THIS exact (slug, sha) already exists → refresh + done.
     mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce({
       id: 'pubreq_existing_sha',
@@ -3598,9 +4241,9 @@ describe('recordPendingFromPush', () => {
       })
     );
     expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
-    // No supersede, no owner lookup — the early-return short-circuits them.
+    // No supersede: the early-return short-circuits it. The owner IS looked up first, because the
+    // App Developer Terms gate (keyed on the owner) must cover a refresh too.
     expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
-    expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
   });
 
   it('(b) supersede-then-create happy path — no existing row → supersedes other pending, then creates', async () => {

@@ -124,7 +124,15 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
         marks: { vote: 1 },
       });
       expect(await store.get(m1, TALLIES, 'g')).toMatchObject({ counters: { plays: 3 } });
-      expect((await store.usage(m1)).viewer).toEqual((await store.usage(m1)).app);
+      // The app's usage is the shared data (board, post, counter doc); moderator 1's own row adds
+      // their private doc, which the app's ceiling does not carry.
+      const m1Usage = await store.usage(m1);
+      expect({ app: m1Usage.app.docs, viewer: m1Usage.viewer?.docs }).toEqual({
+        app: 3,
+        viewer: 4,
+      });
+      // `{"who": 1}` is 10 bytes of jsonb text.
+      expect(m1Usage.viewer!.bytes - m1Usage.app.bytes).toBe(10);
       for (const uid of [MOD_1, MOD_2]) {
         await assertUsageConsistent(h, pr, reviewNamespace(pr, uid));
       }

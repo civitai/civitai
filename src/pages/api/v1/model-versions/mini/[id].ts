@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import { DEFAULT_GENERATION_TRIAL_LIMIT } from '@civitai/buzz';
 import { lowerFirst } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -6,7 +7,9 @@ import type { Session } from '~/types/session';
 import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { dbWrite } from '~/server/db/client';
+import { isNonCommercialBaseModel, stopsCreatorEarnings } from '~/server/common/constants';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import {
   getShouldChargeForResources,
   resolveCanGenerateForVersions,
@@ -26,12 +29,14 @@ import type {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { Availability, ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { evaluateMiniEpochCaller, getMiniEpochGateMode } from '~/server/utils/mini-epoch-caller';
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -70,6 +75,8 @@ type VersionRow = {
   sfwOnly: boolean;
   usageControl: ModelUsageControl;
   modelUserId: number;
+  modelStatus: string;
+  modelMode: string | null;
   poi: boolean;
   licensingFee: number | null;
   licensingFeeType: LicensingFeeType | null;
@@ -131,6 +138,8 @@ export default MixedAuthEndpoint(async function handler(
       m.minor,
       m."sfwOnly",
       m."userId" as "modelUserId",
+      m.status as "modelStatus",
+      m.mode as "modelMode",
       m.poi,
       pa."endsAt" AS "earlyAccessEndsAt",
       mv."requireAuth",
@@ -252,8 +261,13 @@ export default MixedAuthEndpoint(async function handler(
   // url shape applies, and only then apply the gate to the download-route path.
   const isOwner = !!user?.id && user.id === modelVersion.modelUserId;
   const isMod = !!user?.isModerator;
-  const visibleFiles =
-    isOwner || isMod ? files : files.filter((f) => f.visibility === ModelFileVisibility.Public);
+  const listed = await trainingDataListing(dbRead, [{ id, files }], {
+    redCapable: isRedCapableHost(req.headers.host),
+    viewerManages: isOwner || isMod,
+  });
+  const visibleFiles = files.filter(
+    (f) => (isOwner || isMod || f.visibility === ModelFileVisibility.Public) && listed(f)
+  );
 
   // The download route merges the requesting user's `filePreferences` into
   // `getPrimaryFile` (see `getFileForModelVersion` in file.service.ts). Pinning
@@ -303,6 +317,8 @@ export default MixedAuthEndpoint(async function handler(
   // narrows for the block below.
   const trainingResults = useEpochUrl ? targetFile.metadata.trainingResults : undefined;
 
+  let withheldFromCaller = false;
+
   if (trainingResults) {
     const epoch =
       trainingResults.epochs?.find((e) => {
@@ -336,6 +352,20 @@ export default MixedAuthEndpoint(async function handler(
       modelId: jobId,
       id: fileName,
     });
+
+    const mode = await getMiniEpochGateMode();
+    if (mode !== 'off') {
+      // The body now depends on the caller, so no shared cache may hold it.
+      res.setHeader('Cache-Control', 'private, no-store');
+      const caller = await evaluateMiniEpochCaller({
+        req,
+        user,
+        modelVersionId: modelVersion.id,
+        ownerId: modelVersion.modelUserId,
+        mode,
+      });
+      withheldFromCaller = caller.withhold;
+    }
   } else {
     // this does not work for things like Flux
     // if (targetFile.type !== 'Model') return res.status(404).json({ error: 'File is not a model' });
@@ -424,7 +454,10 @@ export default MixedAuthEndpoint(async function handler(
   //      (a checkpoint built on Turbo inherits the Turbo rate).
   //   Otherwise there is no lineage fee — a null source is NOT a fallback to a
   //   (baseModel, modelType) default; derivatives carry an explicit parent.
+  const nonCommercial = isNonCommercialBaseModel(modelVersion.baseModel);
+  const earningsStopped = stopsCreatorEarnings(modelVersion.baseModel);
   const isLicensingRoot =
+    !nonCommercial &&
     modelVersion.isLicensingRoot &&
     modelVersion.licensingFee != null &&
     modelVersion.licensingFee > 0;
@@ -433,6 +466,8 @@ export default MixedAuthEndpoint(async function handler(
   // worse than no fee — the orchestrator would stamp a null owner onto
   // ResourceCompensation. Dropping the component degrades safely instead.
   const hasSourceRule =
+    !nonCommercial &&
+    !isNonCommercialBaseModel(modelVersion.sourceBaseModel) &&
     !isLicensingRoot &&
     modelVersion.licensingSourceVersionId != null &&
     modelVersion.sourceLicensingFee != null &&
@@ -442,7 +477,10 @@ export default MixedAuthEndpoint(async function handler(
   // root), its own fee IS that component — don't double-count it as a surcharge.
   const isBaseRecipientItself = isLicensingRoot;
   const hasOwnFee =
-    modelVersion.licensingFee != null && modelVersion.licensingFee > 0 && !isBaseRecipientItself;
+    !nonCommercial &&
+    modelVersion.licensingFee != null &&
+    modelVersion.licensingFee > 0 &&
+    !isBaseRecipientItself;
 
   // `recipientUserId` is the owner of `recipientModelVersionId` at request time, so
   // payouts and the orchestrator's ResourceCompensation records follow ownership
@@ -485,16 +523,30 @@ export default MixedAuthEndpoint(async function handler(
     });
   }
 
-  // A version charging its own fee earns through that channel instead of creator comp. The
-  // lineage fee (hasSourceRule) settles to a different creator, so it doesn't opt THIS one out.
+  // Only a fee that is actually charged opts a version out of creator comp; a stored fee that isn't
+  // charged must not also cost the creator comp. The lineage fee (hasSourceRule) settles to a
+  // different creator, so it doesn't opt THIS one out.
   const payoutEnabled =
+    !earningsStopped &&
     !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&
-    !(modelVersion.licensingFee != null && modelVersion.licensingFee > 0);
+    !(isLicensingRoot || hasOwnFee);
   // Independent of the fee: a fee creator still gets their share of the creator tip.
-  const tipsEnabled = isCreatorTipEligible({
-    ownerId: modelVersion.modelUserId,
-    ownerFlags: modelVersion.userFlags,
-  });
+  const tipsEnabled =
+    !earningsStopped &&
+    isCreatorTipEligible({
+      ownerId: modelVersion.modelUserId,
+      ownerFlags: modelVersion.userFlags,
+    });
+
+  // An epoch url is the orchestrator's own link to the weights, outside the download route's
+  // gates: a deleted or taken-down model's is moderators-only, as its files are.
+  const gated = {
+    status: modelVersion.status,
+    model: { status: modelVersion.modelStatus, mode: modelVersion.modelMode },
+  };
+  const withholdEpochUrl =
+    withheldFromCaller ||
+    (!!trainingResults && !user?.isModerator && (isModelDeleted(gated) || isModelTakenDown(gated)));
 
   const data = {
     air,
@@ -510,7 +562,7 @@ export default MixedAuthEndpoint(async function handler(
     fileName: targetFile.name,
     // nullable - hashes (all available hash types)
     hashes: targetFile.hashes,
-    downloadUrls: [downloadUrl], // nullable
+    downloadUrls: withholdEpochUrl ? [] : [downloadUrl], // nullable
     format, // nullable
     canGenerate,
     isFeatured,

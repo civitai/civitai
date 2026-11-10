@@ -6,6 +6,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { crucibleEloRedis } from '~/server/redis/crucible-elo.redis';
+import {
+  fitCrucibleScores,
+  usesBradleyTerryRanking,
+} from '~/server/services/crucible-bradley-terry';
 
 const BATCH_SIZE = 50;
 
@@ -16,15 +20,8 @@ const logJob = (data: MixedObject) => {
 };
 
 /**
- * Sync crucible scores from Redis to PostgreSQL
- *
- * This job runs every 5 minutes to:
- * 1. Query active crucibles
- * 2. Fetch ELO scores and vote counts from Redis
- * 3. Update CrucibleEntry records in PostgreSQL
- *
- * This provides data loss protection in case Redis restarts,
- * ensuring competition progress is preserved in the database.
+ * Copies active crucibles' scores from Redis to Postgres, so a Redis restart loses no progress.
+ * Where `usesBradleyTerryRanking` covers a crucible, the displayed score is the fit, not Elo.
  */
 export const syncCrucibleScoresJob = createJob(
   'sync-crucible-scores',
@@ -40,6 +37,8 @@ export const syncCrucibleScoresJob = createJob(
       select: {
         id: true,
         name: true,
+        startAt: true,
+        createdAt: true,
       },
     });
 
@@ -65,6 +64,18 @@ export const syncCrucibleScoresJob = createJob(
           crucibleEloRedis.getAllElos(crucible.id),
           crucibleEloRedis.getAllVoteCounts(crucible.id),
         ]);
+        // An entry ClickHouse has not caught up on keeps its Elo until the next run.
+        if (usesBradleyTerryRanking(crucible)) {
+          const fitted = await fitCrucibleScores(crucible.id).catch((error: unknown) => {
+            logJob({
+              message: 'Bradley-Terry fit failed, synced Elo',
+              data: { crucibleId: crucible.id, error: String(error) },
+            });
+            return new Map<number, number>();
+          });
+          for (const [entryId, score] of fitted)
+            if (entryId in eloScores) eloScores[entryId] = score;
+        }
 
         const entryIds = Object.keys(eloScores).map(Number);
 

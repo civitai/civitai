@@ -1,6 +1,7 @@
 export enum UploadType {
   Image = 'image',
   TrainingImages = 'training-images',
+  // A B2 lifecycle rule hides this prefix 7 days after upload; never use it for anything durable.
   TrainingImagesTemp = 'training-images-temp',
   Model = 'model',
   Default = 'default',
@@ -37,16 +38,6 @@ export enum ReviewSort {
 export enum ReviewFilter {
   NSFW = 'nsfw',
   IncludesImages = 'includes-images',
-}
-
-export enum QuestionSort {
-  Newest = 'Newest',
-  MostLiked = 'Most Liked',
-}
-
-export enum QuestionStatus {
-  Answered = 'Answered',
-  Unanswered = 'Unanswered',
 }
 
 export enum ImageSort {
@@ -109,11 +100,6 @@ export enum ImageScanType {
   SpineRating = 9,
 }
 
-// export enum CommentV2Sort {
-//   Newest = 'Newest',
-//   Oldest = 'Oldest',
-// }
-
 export enum ArticleSort {
   MostBookmarks = 'Most Bookmarks',
   MostReactions = 'Most Reactions',
@@ -166,6 +152,8 @@ export enum SignalMessages {
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   WorkflowUpdate = 'orchestrator:workflow-update',
+  /** Also sent for a remix-app workflow's steps, so the remix tray need not watch every generation. */
+  RemixAppUpdate = 'orchestrator:remix-app-update',
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
   ResourceLoadUpdate = 'resource-load:update',
@@ -193,6 +181,9 @@ export enum SignalMessages {
   EventPointsHat = 'event-points:hat',
   EventPointsTeams = 'event-points:teams',
   EventPointsOwner = 'event-points:owner',
+  // To one user only: their own live total, while they watch it (watch.ts selfWatchMember).
+  EventPointsSelf = 'event-points:self',
+  EventPointsTurf = 'event-points:turf',
 }
 
 export enum BountySort {

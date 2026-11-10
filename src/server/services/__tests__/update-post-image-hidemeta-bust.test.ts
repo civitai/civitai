@@ -38,6 +38,10 @@ const { mockBustImageDeliveryMetadataCache, mockInvalidateHiddenImageMetadata } 
 // which supplies redis/sysRedis plus the REAL key tables. The local stub this replaces returned a
 // self-vivifying proxy for every REDIS_*_KEYS lookup, so any key the code composed came back as the
 // same placeholder — nothing here asserts a key, so the swap changes no assertion.
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparkLost: vi.fn(),
+  onStorySparkPostsHidden: vi.fn(),
+}));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('@civitai/db', () => ({
   createLagTracker: vi.fn(() => ({})),
@@ -80,6 +84,8 @@ const { mockPurgeResizeCache } = vi.hoisted(() => ({
 const mockFindUniqueOrThrow = dbMock.dbWrite.image.findUniqueOrThrow;
 const mockImageUpdate = dbMock.dbWrite.image.update;
 
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+
 // The heavy image.service graph — replaced wholesale with the named exports post.service
 // imports. `purgeResizeCache` is spied so we can assert the hide-only path independently.
 vi.mock('~/server/services/image.service', () => ({
@@ -91,7 +97,6 @@ vi.mock('~/server/services/image.service', () => ({
   imagesForModelVersionsCache: { refresh: vi.fn() },
   enqueueImageIngestion: vi.fn(),
   invalidateManyImageExistence: vi.fn(),
-  purgeImageGenerationDataCache: vi.fn(),
   purgeResizeCache: mockPurgeResizeCache,
   queueImageSearchIndexUpdate: vi.fn(),
 }));

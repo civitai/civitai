@@ -9,8 +9,8 @@ import { applyRunEvent } from '@civitai/components-chat/runner-protocol';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { signGrant, testKeys } from '../test-support/keys';
-import { freshDatabase, TEST_DATABASE_URL } from '../test-support/pg';
-import { readEvents } from '../test-support/sse';
+import { freshDatabase, TEST_DATABASE_URL } from '../core/test-support/pg';
+import { readEvents } from '../core/test-support/sse';
 
 const describePg = TEST_DATABASE_URL ? describe : describe.skip;
 if (process.env.CI && !TEST_DATABASE_URL)

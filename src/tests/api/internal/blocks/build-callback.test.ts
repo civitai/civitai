@@ -26,6 +26,7 @@ const {
   mockSetCommitStatus,
   mockAppBlockUpdate,
   mockMarkDeploy,
+  mockAfterDeploy,
   attempts,
 } = vi.hoisted(() => {
   /**
@@ -70,7 +71,7 @@ const {
     // BLOCK_BUILD_CALLBACK_SECRET[_NEXT] per case. Defaults to the single
     // current secret so the existing handler tests are unchanged.
     mockEnvStore: { BLOCK_BUILD_CALLBACK_SECRET: SECRET } as Record<string, unknown>,
-    mockFlag: { enabled: true },
+    mockFlag: { enabled: true, perAppObjects: false },
     mockRedis,
     // mirrors redis.setNxKeepTtlWithEx(key, value, ttl): Promise<boolean>
     mockSetNx: vi.fn(async () => {
@@ -82,6 +83,7 @@ const {
       name: 'apply-job-1',
     })),
     mockWaitApply: vi.fn<(...a: any[]) => Promise<string>>(async () => 'succeeded'),
+    mockAfterDeploy: vi.fn(async (_slug: string) => 'not-suspended'),
     mockSetCommitStatus: vi.fn(async () => undefined),
     mockAppBlockUpdate: vi.fn(async () => undefined),
     mockMarkDeploy: vi.fn<(...a: any[]) => Promise<void>>(async () => undefined),
@@ -117,9 +119,11 @@ vi.mock('~/server/db/client', () => ({
 // user flag is hard-false so a regression that repoints back to it would 503
 // even with the pipeline "on".
 vi.mock('~/server/flipt/client', () => ({
-  isFlipt: vi.fn(async (flag: string) =>
-    flag === 'app-blocks-pipeline-enabled' ? mockFlag.enabled : false
-  ),
+  isFlipt: vi.fn(async (flag: string) => {
+    if (flag === 'app-blocks-pipeline-enabled') return mockFlag.enabled;
+    if (flag === 'app-blocks-per-app-objects') return mockFlag.perAppObjects;
+    return false;
+  }),
 }));
 vi.mock('~/server/redis/client', () => ({
   redis: { setNxKeepTtlWithEx: mockSetNx, del: mockRedisDel },
@@ -142,6 +146,9 @@ vi.mock('~/server/services/blocks/forgejo.service', () => ({
 // helper so we can assert the transitions (the real one writes to the DB).
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   markRequestDeployState: mockMarkDeploy,
+}));
+vi.mock('~/server/services/blocks/live-unpublish.service', () => ({
+  afterLiveDeploy: (slug: string) => mockAfterDeploy(slug),
 }));
 
 import {
@@ -343,6 +350,7 @@ describe('build-callback handler — flag gate + replay guard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFlag.enabled = true;
+    mockFlag.perAppObjects = false;
     mockRedis.nxResult = true; // default: newly set → first time → apply
     mockRedis.nxThrows = false;
     mockTriggerApply.mockResolvedValue({ name: 'apply-job-1' });
@@ -406,6 +414,23 @@ describe('build-callback handler — flag gate + replay guard', () => {
       '1',
       600
     );
+  });
+
+  // The `app-blocks-per-app-objects` Flipt flag is the rollback switch: absent or off, the apply
+  // Job creates no per-app objects; on, it creates them again. No code revert needed.
+  it('asks the apply Job for no per-app objects while the per-app flag is off or absent', async () => {
+    const res = makeRes();
+    await invoke(signedReq(validSuccessBody()), res);
+    expect(mockTriggerApply).toHaveBeenCalledTimes(1);
+    expect(mockTriggerApply.mock.calls[0][0]).toMatchObject({ perAppObjects: false });
+  });
+
+  it('asks the apply Job for the per-app objects once the per-app flag is turned on', async () => {
+    mockFlag.perAppObjects = true;
+    const res = makeRes();
+    await invoke(signedReq(validSuccessBody()), res);
+    expect(mockTriggerApply).toHaveBeenCalledTimes(1);
+    expect(mockTriggerApply.mock.calls[0][0]).toMatchObject({ perAppObjects: true });
   });
 
   it('short-circuits a replayed success callback without re-triggering apply', async () => {
@@ -478,6 +503,28 @@ describe('build-callback handler — flag gate + replay guard', () => {
     // Phase 2: the request transitions 'deploying' (apply trigger) → 'live' (watcher).
     expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'deploying');
     expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'live');
+  });
+
+  // A delist while this deploy ran: its unpublish may finish before this publish writes the
+  // pointer back, so a successful deploy re-checks the block (live-unpublish.service).
+  it('a successful deploy re-checks the block for a takedown that raced it; a failed one does not', async () => {
+    mockAfterDeploy.mockClear();
+    mockWaitApply.mockResolvedValue('succeeded');
+    await invoke(signedReq(validSuccessBody()), makeRes());
+    await flush();
+    await vi.waitFor(() => expect(mockAfterDeploy).toHaveBeenCalledWith(SLUG));
+
+    mockAfterDeploy.mockClear();
+    mockMarkDeploy.mockClear();
+    mockWaitApply.mockResolvedValue('failed');
+    mockSetNx.mockClear();
+    await invoke(signedReq(validSuccessBody()), makeRes());
+    // The watcher's last write on a failed deploy: it has run to its end before the check below.
+    await vi.waitFor(() =>
+      expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Deploy failed')
+    );
+    await flush();
+    expect(mockAfterDeploy).not.toHaveBeenCalled();
   });
 
   it('clears the replay slot when triggerApply itself throws — no watcher runs, so the catch must free it', async () => {

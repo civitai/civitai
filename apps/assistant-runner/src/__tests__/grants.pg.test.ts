@@ -2,16 +2,13 @@ import { DBOS } from '@dbos-inc/dbos-sdk';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import {
-  AdvisoryLock,
-  OrchestrationConversationStore,
-  type ConversationLock,
-} from '../conversation-store';
-import { startTurn, withPatch } from '../head';
+import { OrchestrationConversationStore } from '../conversation-store';
+import { AdvisoryLock, type ConversationLock } from '../core/advisory-lock';
+import { startTurn, withPatch } from '../core/head';
 import { RunGrants } from '../grants';
 import { OrchestrationClient } from '../orchestration';
 import { FakeOrchestration } from '../test-support/fake-orchestration';
-import { freshDatabase, TEST_DATABASE_URL } from '../test-support/pg';
+import { freshDatabase, TEST_DATABASE_URL } from '../core/test-support/pg';
 
 const describePg = TEST_DATABASE_URL ? describe : describe.skip;
 if (process.env.CI && !TEST_DATABASE_URL)

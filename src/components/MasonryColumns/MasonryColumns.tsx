@@ -1,5 +1,3 @@
-import OneKeyMap from '@essentials/one-key-map';
-import trieMemoize from 'trie-memoize';
 import React from 'react';
 import { useMasonryColumns } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
@@ -59,6 +57,7 @@ export function MasonryColumns<TData>({
         >
           {staticItem?.({ columnWidth, height: 450 })}
           {items.map(({ height, data }, index) => {
+            if (!data) return null;
             switch (data.type) {
               case 'data':
                 return (
@@ -85,11 +84,3 @@ export function MasonryColumns<TData>({
     </div>
   );
 }
-
-// supposedly ~5.5x faster than createElement without the memo
-const createRenderElement = trieMemoize(
-  [OneKeyMap, {}, WeakMap, OneKeyMap, OneKeyMap],
-  (RenderComponent, index, data, columnWidth, columnHeight) => (
-    <RenderComponent index={index} data={data} width={columnWidth} height={columnHeight} />
-  )
-);

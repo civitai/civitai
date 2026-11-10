@@ -1,15 +1,19 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import * as z from 'zod';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import { dbRead } from '~/server/db/client';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import { ModelSort } from '~/server/common/enums';
 import {
   createModelFileDownloadUrl,
   createSerializedFileDownloadUrl,
 } from '~/server/common/model-helpers';
 import { getDownloadFilename } from '~/server/services/file.service';
+import { publicFileMetadata } from '~/server/utils/public-file-metadata';
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { publicModelResponseKey } from '~/server/services/model-version.service';
 import { PublicEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
@@ -17,13 +21,9 @@ import type { BlockScopedNextApiRequest } from '~/server/middleware/block-scope.
 import { withBlockScope } from '~/server/middleware/block-scope.middleware';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import {
-  allBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
-import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { apiBrowsingLevel } from '~/server/utils/browsing-level';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -120,7 +120,7 @@ async function buildPublicModelResponse(
                 .filter((file) => file.visibility === ModelFileVisibility.Public)
                 .map(({ hashes, metadata, modelVersionId, ...file }) => ({
                   ...file,
-                  metadata: removeEmpty(metadata),
+                  metadata: removeEmpty(publicFileMetadata(file.type, metadata)),
                   name: safeDecodeURIComponent(
                     getDownloadFilename({
                       model,
@@ -188,9 +188,7 @@ const baseHandler = PublicEndpoint(async function handler(
       error: z.prettifyError(parsedParams.error) ?? `Invalid id`,
     });
 
-  const region = getRegion(req);
-  const isRestricted = isRegionRestricted(region);
-  const browsingLevel = isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  const browsingLevel = apiBrowsingLevel(req);
   const { id } = parsedParams.data;
 
   // Bypass the origin cache when this request is taking the block-scoped path
@@ -236,11 +234,29 @@ const baseHandler = PublicEndpoint(async function handler(
     // stored.
     if (body === null) return res.status(404).json({ error: `No model with id ${id}` });
 
-    return res.status(200).json(body);
+    return res
+      .status(200)
+      .json(await withListableTrainingData(body, isRedCapableHost(req.headers.host)));
   } catch (error) {
     return handleEndpointError(res, error);
   }
 });
+
+type BodyFile = { id: number; type: string; visibility: string };
+
+/** Applied after the origin cache, which keys on neither the host nor a restriction placed since. */
+async function withListableTrainingData(body: Record<string, unknown>, redCapable: boolean) {
+  const versions = (body.modelVersions ?? []) as { id: number; files?: BodyFile[] }[];
+  const listed = await trainingDataListing(
+    dbRead,
+    versions.map((v) => ({ id: v.id, files: v.files ?? [] })),
+    { redCapable }
+  );
+  return {
+    ...body,
+    modelVersions: versions.map((v) => (v.files ? { ...v, files: v.files.filter(listed) } : v)),
+  };
+}
 
 // Positive-only origin cache for the public body.
 //

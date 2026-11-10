@@ -1,13 +1,13 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
-// The placement / sticker read family, ported from the Prisma reads in placement-space.service.ts,
-// placement.service.ts, subscriptions.service.ts (getCapTier), free-placement.service.ts and
-// sticker-placement.service.ts. Every function returns what the Prisma read returned after the
-// caller's own mapping: counts as JS numbers, timestamps as UTC Dates (the pg parsers registered by
-// @civitai/db/kysely), enums and JSON exactly as pg decodes them. Row parity against a real
-// database is written in <civitai>/src/server/services/__tests__/placement-reads.kysely-parity.test.ts,
-// which is opt-in (KYSELY_PARITY_DATABASE_URL) and does NOT run in CI.
+// The placement / sticker read family, ported from (and now replacing) the Prisma reads in
+// placement-space.service.ts, placement.service.ts, subscriptions.service.ts (getCapTier),
+// free-placement.service.ts and sticker-placement.service.ts. Every function returns what the Prisma
+// read returned after the caller's own mapping: counts as JS numbers, timestamps as UTC Dates (the pg
+// parsers registered by @civitai/db/kysely), enums and JSON exactly as pg decodes them. Those values,
+// captured from the Prisma reads against a real database, are pinned in
+// <civitai>/src/server/services/__tests__/placement-reads.kysely-parity.test.ts, which runs in CI.
 //
 // None of these may run inside the free-placement claim transaction: those counts decide under an
 // advisory lock and stay on the Prisma `tx`.
@@ -86,7 +86,10 @@ type Scalar = string | number | boolean;
  * count on the Kysely path only.
  */
 export type PlacementCountWhere = Partial<
-  Record<PlacementColumn, Scalar | { in: readonly Scalar[] } | { gte: Date }>
+  Record<
+    PlacementColumn,
+    Scalar | { in: readonly Scalar[] } | { gte: Date } | { path: readonly string[]; equals: string }
+  >
 >;
 
 /**
@@ -112,6 +115,16 @@ export async function countPlacements(db: Kysely<DB>, where: PlacementCountWhere
       else query = query.where(ref, 'in', [...condition.in]);
     } else if (operators.length === 1 && 'gte' in condition && condition.gte instanceof Date) {
       query = query.where(ref, '>=', sql<Date>`${condition.gte.toISOString()}::timestamp`);
+    } else if (
+      operators.length === 2 &&
+      'path' in condition &&
+      'equals' in condition &&
+      condition.path.length === 1 &&
+      typeof condition.equals === 'string'
+    ) {
+      // Prisma's JSON path filter on one top-level key, matched as text. A row without the key
+      // compares NULL and is not counted, as in Prisma.
+      query = query.where(sql<string>`${ref}->>${condition.path[0]}`, '=', condition.equals);
     } else {
       throw new Error(
         `countPlacements: unsupported condition on "${column}": ${JSON.stringify(condition)}`
@@ -259,6 +272,22 @@ export async function listStickerPlacementRows(
       ])
     )
     .orderBy('createdAt', 'asc')
+    .execute();
+}
+
+/** Tracks of the approved placements on one image. Never joined to the listing: a track dwarfs its row. */
+export async function listPlacementTrackRows(
+  db: Kysely<DB>,
+  input: { surface: string; targetType: string; targetId: number }
+) {
+  return db
+    .selectFrom('Placement')
+    .select(['id', 'targetId', 'data', 'track'])
+    .where('surface', '=', input.surface)
+    .where('targetType', '=', input.targetType)
+    .where('targetId', '=', input.targetId)
+    .where('status', '=', 'approved')
+    .where('track', 'is not', null)
     .execute();
 }
 

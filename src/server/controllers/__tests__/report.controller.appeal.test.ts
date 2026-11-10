@@ -8,13 +8,13 @@ const {
   mockGetLatestAppeal,
   mockCreateEntityAppeal,
   mockReopenAppeal,
-  mockIsAppealBlockedByHoldMarker,
+  mockIsImageAppealRefused,
 } = vi.hoisted(() => ({
   mockGetImageById: vi.fn(),
   mockGetLatestAppeal: vi.fn(),
   mockCreateEntityAppeal: vi.fn(),
   mockReopenAppeal: vi.fn(),
-  mockIsAppealBlockedByHoldMarker: vi.fn(),
+  mockIsImageAppealRefused: vi.fn(),
 }));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
@@ -29,7 +29,7 @@ vi.mock('~/server/services/report.service', async (importOriginal) => ({
   getLatestAppeal: mockGetLatestAppeal,
   createEntityAppeal: mockCreateEntityAppeal,
   reopenAppeal: mockReopenAppeal,
-  isAppealBlockedByHoldMarker: mockIsAppealBlockedByHoldMarker,
+  isImageAppealRefused: mockIsImageAppealRefused,
 }));
 
 import { createEntityAppealHandler } from '../report.controller';
@@ -56,7 +56,10 @@ beforeEach(() => {
   mockGetLatestAppeal.mockResolvedValue(null);
   mockCreateEntityAppeal.mockResolvedValue({ id: 1 });
   mockReopenAppeal.mockResolvedValue({ id: 1, status: 'Pending' });
-  mockIsAppealBlockedByHoldMarker.mockResolvedValue(false);
+  mockIsImageAppealRefused.mockResolvedValue(false);
+  dbMock.dbRead.appeal.findFirst.mockResolvedValue(null);
+  dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
 });
 
 describe('createEntityAppealHandler — Model ownership + flag gates', () => {
@@ -120,7 +123,7 @@ describe('createEntityAppealHandler — Model re-request', () => {
   });
 
   it('throws BAD_REQUEST when a request is already under review', async () => {
-    mockGetLatestAppeal.mockResolvedValue({ id: 7, status: 'Pending', resolvedAt: null });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 7, context: null }] as never);
 
     await expect(
       createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) })
@@ -132,13 +135,15 @@ describe('createEntityAppealHandler — Model re-request', () => {
 
   it('reopens a rejected request rather than creating a second row', async () => {
     mockGetLatestAppeal.mockResolvedValue({ id: 7, status: 'Rejected', resolvedAt: new Date() });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 7, status: 'Rejected' }] as never);
 
     const result = await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) });
 
-    expect(mockGetLatestAppeal).toHaveBeenCalledWith(
-      expect.objectContaining({ entityType: EntityType.Model, entityId: 2186217, userId: 602767 })
-    );
-    expect(mockReopenAppeal).toHaveBeenCalledWith({ id: 7, message: baseInput.message });
+    expect(mockReopenAppeal).toHaveBeenCalledWith({
+      id: 7,
+      message: baseInput.message,
+      context: undefined,
+    });
     expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
     expect(result).toMatchObject({ status: 'Pending' });
   });
@@ -146,6 +151,7 @@ describe('createEntityAppealHandler — Model re-request', () => {
   // An approved appeal unflags the model, but a later re-upload can flag it again.
   it('reopens an approved request when the model has been flagged again', async () => {
     mockGetLatestAppeal.mockResolvedValue({ id: 7, status: 'Approved', resolvedAt: new Date() });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 7, status: 'Approved' }] as never);
 
     await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) });
 
@@ -389,8 +395,9 @@ describe('createEntityAppealHandler — Storyline', () => {
   });
 });
 
-// A hold marker's kept image reads as a moderator block. The image cases above are the control.
-describe('createEntityAppealHandler — an image under a hold marker', () => {
+// A hold marker's kept image, or one a CSAM report names, reads as a moderator block. The image
+// cases above are the control.
+describe('createEntityAppealHandler — an image a hold keeps or a CSAM report names', () => {
   it('refuses, before any charge, in the usual words', async () => {
     mockGetImageById.mockResolvedValue({
       id: 99,
@@ -398,7 +405,7 @@ describe('createEntityAppealHandler — an image under a hold marker', () => {
       blockedFor: 'moderated',
       needsReview: null,
     });
-    mockIsAppealBlockedByHoldMarker.mockResolvedValue(true);
+    mockIsImageAppealRefused.mockResolvedValue(true);
 
     await expect(
       createEntityAppealHandler({
@@ -406,7 +413,7 @@ describe('createEntityAppealHandler — an image under a hold marker', () => {
         ctx: ctxUser(602767),
       })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: IMAGE_NOT_APPEALABLE });
-    expect(mockIsAppealBlockedByHoldMarker).toHaveBeenCalledWith({ imageId: 99, userId: 602767 });
+    expect(mockIsImageAppealRefused).toHaveBeenCalledWith({ imageId: 99, userId: 602767 });
     expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
   });
 });

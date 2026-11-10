@@ -124,13 +124,45 @@ describe('refundAllLegsByPrefix', () => {
   it('counts a leg another attempt refunded between the lookup and the refund as settled', async () => {
     refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(409, 'Conflict'));
     refundsExistFor('tx-a', 'tx-b');
-    refundTransaction.mockRejectedValue(mapped(409));
+    refundTransaction.mockImplementation(async (transactionId: string) => {
+      refundsExistFor('tx-a', 'tx-b', transactionId);
+      throw mapped(409);
+    });
 
     await expect(refundAllLegsByPrefix(input)).resolves.toEqual({
       refundedLegs: 0,
       refundedAmount: 0,
       alreadyRefundedLegs: 3,
     });
+  });
+
+  it('throws when a leg refund is refused as a conflict but no refund is on the ledger', async () => {
+    refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(409, 'Conflict'));
+    refundsExistFor('tx-a', 'tx-b');
+    refundTransaction.mockRejectedValue(mapped(409));
+
+    await expect(refundAllLegsByPrefix(input)).rejects.toThrow(
+      /left 1 of 3 transactions unreversed \(tx-c: /
+    );
+  });
+
+  it('throws when a leg refund is refused and its refund lookup fails, after trying the others', async () => {
+    refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(409, 'Conflict'));
+    refundTransaction.mockImplementation(async (transactionId: string) => {
+      if (transactionId === 'tx-a') throw mapped(409);
+      return { transactionId };
+    });
+    // No leg is refunded yet; the read of tx-a's refund after its 409 is the one that fails.
+    let txaReads = 0;
+    getTransactionByExternalId.mockImplementation(async (externalId: string) => {
+      if (externalId === 'refund-tx-a' && ++txaReads > 1) throw new Error('ledger down');
+      return null;
+    });
+
+    await expect(refundAllLegsByPrefix(input)).rejects.toThrow(
+      /left 1 of 3 transactions unreversed \(tx-a: ledger, and its refund lookup failed: ledger down\)/
+    );
+    expect(refundTransaction.mock.calls.map(([id]) => id)).toEqual(['tx-a', 'tx-b', 'tx-c']);
   });
 
   it('throws when a missing leg cannot be refunded, after trying the others', async () => {
@@ -205,6 +237,7 @@ describe('refundTransactionOnce', () => {
 
     await expect(refundTransactionOnce('tx-a', 'why', { k: 1 })).resolves.toEqual({
       transactionId: 'tx-a',
+      created: true,
     });
     expect(refundTransaction).toHaveBeenCalledWith('tx-a', 'why', { k: 1 });
     expect(getTransactionByExternalId).not.toHaveBeenCalled();
@@ -217,8 +250,33 @@ describe('refundTransactionOnce', () => {
     refundTransaction.mockRejectedValue(error());
     refundsExistFor('tx-a');
 
-    await expect(refundTransactionOnce('tx-a')).resolves.toEqual({ transactionId: 'tx-a' });
+    await expect(refundTransactionOnce('tx-a')).resolves.toEqual({
+      transactionId: 'tx-a',
+      created: false,
+    });
     expect(getTransactionByExternalId).toHaveBeenCalledWith('refund-tx-a');
+  });
+
+  describe('readLedgerFirst — for a caller that must not count a refund it did not make', () => {
+    it('a refund already on the ledger is created:false, and Buzz is not called', async () => {
+      // Buzz would answer this repeat 200, which on its own reads as a refund made now.
+      refundTransaction.mockResolvedValue({ transactionId: 'tx-a' });
+      refundsExistFor('tx-a');
+
+      await expect(
+        refundTransactionOnce('tx-a', 'why', undefined, { readLedgerFirst: true })
+      ).resolves.toEqual({ transactionId: 'tx-a', created: false });
+      expect(refundTransaction).not.toHaveBeenCalled();
+    });
+
+    it('control: with nothing on the ledger it refunds, created:true', async () => {
+      refundTransaction.mockResolvedValue({ transactionId: 'tx-a' });
+
+      await expect(
+        refundTransactionOnce('tx-a', 'why', undefined, { readLedgerFirst: true })
+      ).resolves.toEqual({ transactionId: 'tx-a', created: true });
+      expect(refundTransaction).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('rethrows a 409 when no refund of this transaction is on the ledger', async () => {
@@ -227,6 +285,13 @@ describe('refundTransactionOnce', () => {
     refundsExistFor('tx-other');
 
     await expect(refundTransactionOnce('tx-a')).rejects.toBe(error);
+  });
+
+  it('throws when the ledger cannot be read after a 409', async () => {
+    refundTransaction.mockRejectedValue(mapped(409));
+    getTransactionByExternalId.mockRejectedValue(new Error('ledger down'));
+
+    await expect(refundTransactionOnce('tx-a')).rejects.toThrow('ledger down');
   });
 
   it.each([400, 404, 500])('rethrows a %s without reading the ledger', async (status) => {

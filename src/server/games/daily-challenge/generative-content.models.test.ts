@@ -36,13 +36,13 @@ describe('generateWinners model', () => {
     expect(router.getJsonCompletionWithUsage).not.toHaveBeenCalled();
   });
 
-  it('falls back to GPT-4o Mini on OpenRouter when the default model fails, and logs why', async () => {
+  it('falls back to GPT-6 Luna on OpenRouter when the default model fails, and logs why', async () => {
     llm.getJsonCompletion.mockRejectedValue(new Error('Civitai LLM error 504'));
     router.getJsonCompletionWithUsage.mockResolvedValue({ content: picks, usage: {} });
 
     const result = await generateWinners(input);
 
-    expect(result.model).toBe('openai/gpt-4o-mini');
+    expect(result.model).toBe('openai/gpt-6-luna');
     expect(result.winners).toEqual(picks.winners);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -82,7 +82,7 @@ describe('content stages model', () => {
     expect(router.getJsonCompletion).not.toHaveBeenCalled();
   });
 
-  it('falls back to GPT-4o Mini when the default model fails', async () => {
+  it('falls back to GPT-6 Luna when the default model fails', async () => {
     llm.getJsonCompletion.mockRejectedValue(new Error('Input image may violate our terms'));
     router.getJsonCompletion.mockResolvedValue({ name: 'n', description: 'd' });
 
@@ -90,7 +90,7 @@ describe('content stages model', () => {
 
     expect(result).toEqual({ name: 'n', description: 'd' });
     expect(router.getJsonCompletion).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'openai/gpt-4o-mini' })
+      expect.objectContaining({ model: 'openai/gpt-6-luna' })
     );
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'daily-challenge-collection-fallback' })

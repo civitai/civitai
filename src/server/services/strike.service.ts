@@ -1,10 +1,13 @@
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
-import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
 import { createNotification } from '~/server/services/notification.service';
 import { releaseMuteInTransaction, releaseUserMute } from '~/server/services/mute-release.service';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -536,6 +539,13 @@ export async function evaluateStrikeEscalation(
   if (action === 'none') return { totalPoints, action };
 
   userUpdateCounter?.inc({ location: 'strike.service:evaluateStrikeEscalation' });
+  const { afterAccountStandingChanged } = await import(
+    '~/server/services/account-standing.service'
+  );
+  await afterAccountStandingChanged(userId, {
+    kind: action === 'unmuted' ? 'refresh' : 'invalidate',
+    caller: 'strike',
+  });
 
   if (notify && !silent) {
     await createNotification(
@@ -557,9 +567,6 @@ export async function evaluateStrikeEscalation(
           }
     );
   }
-
-  if (action === 'unmuted') await refreshSession(userId, { caller: 'strike' });
-  else await invalidateSession(userId, 'strike');
 
   return { totalPoints, action };
 }
@@ -648,8 +655,11 @@ export async function releaseStrikeMuteOnTosAcceptance(
 
   if (!result.unmuted) return result;
 
+  const { afterAccountStandingChanged } = await import(
+    '~/server/services/account-standing.service'
+  );
+  await afterAccountStandingChanged(userId, { kind: 'refresh', caller: 'strike' });
   userUpdateCounter?.inc({ location: 'strike.service:acceptTosAfterMute' });
-  await refreshSession(userId, { caller: 'strike' });
   return result;
 }
 
@@ -685,6 +695,8 @@ export async function createStrike(
     notifyUser = true,
     onCreated,
   } = input;
+  if (isFeedbackCaptureOwner(userId))
+    throw new TRPCError({ code: 'BAD_REQUEST', message: FEEDBACK_CAPTURE_OWNER_REFUSAL });
 
   const userArgs = { where: { id: userId }, select: { id: true } } as const;
   // An automated strike can land seconds after the account was created, ahead of the replica.

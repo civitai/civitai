@@ -3,12 +3,17 @@ import {
   Badge,
   Button,
   CloseButton,
+  Divider,
+  Group,
+  Kbd,
   Progress,
   Skeleton,
   Text,
   Title,
   UnstyledButton,
 } from '@mantine/core';
+import { modals, openConfirmModal } from '@mantine/modals';
+import { useRouter } from 'next/router';
 import {
   IconArrowRight,
   IconCrown,
@@ -19,13 +24,17 @@ import {
   IconRoute,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { useEffect } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StorylineEarlyAccessModal } from '~/components/Storyline/StorylineEarlyAccessModal';
 import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterImage';
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { StorylineChild } from '~/components/Storyline/storyline.queries';
+import { useSetStorylineMainPath } from '~/components/Storyline/storyline.data';
 import {
+  useStorylineCanonAhead,
   useStorylineChildren,
   useStorylineContinueTerms,
   useStorylineForkShares,
@@ -39,6 +48,8 @@ import {
 } from '~/components/Storyline/storyline-mode.utils';
 import { storylineContinueUrl } from '~/components/Storyline/storyline-routes';
 import { storylinePriceLabel } from '~/components/Storyline/storyline-ui';
+import { useHasCoarsePointer, useIsMobile } from '~/hooks/useIsMobile';
+import { STORYLINE_PATH_LIMIT } from '~/shared/utils/storyline';
 
 export function openStorylineEarlyAccess({
   chapterId,
@@ -65,6 +76,7 @@ export function StorylineEndOfChapter({
   chapterTombstone,
   parentPostId,
   isOwner = false,
+  onMain = true,
   layout = 'overlay',
   onContinue,
   onClose,
@@ -80,14 +92,40 @@ export function StorylineEndOfChapter({
   parentPostId?: number;
   /** The reader made this storyline: they add chapters directly, never by continuing it. */
   isOwner?: boolean;
+  /** The chapter is on the owner's main route; otherwise the reader is on a branch. */
+  onMain?: boolean;
   layout?: 'overlay' | 'section';
 }) {
+  const currentUser = useCurrentUser();
   const { data: children, isLoading } = useStorylineChildren(chapterId);
   const { data: forkShares } = useStorylineForkShares(chapterId);
   const tracking = useStorylineTracking();
   // The owner is never "closed out" of their own storyline, so their terms are not read.
   const terms = useStorylineContinueTerms(isOwner ? undefined : parentPostId);
   const canWrite = !!parentPostId && (isOwner || !!terms?.open);
+  const setMainPath = useSetStorylineMainPath();
+  // The server refuses a removed chapter. A moderator is not shown one as removed, so is offered it
+  // and sees the refusal. A deleted chapter has no post left to lead to.
+  const makeMainFor = (child: StorylineChild) =>
+    (isOwner || currentUser?.isModerator) &&
+    child.rank !== 'canon' &&
+    child.tombstone !== 'removed' &&
+    child.tombstone !== 'deleted'
+      ? () =>
+          openConfirmModal({
+            title: 'Make this the main path',
+            children: (
+              <Text size="sm">
+                Make <strong>{getStorylineChapterName(child, { inSentence: true })}</strong> the
+                main path after chapter {chapterDepth + 1}? Readers are sent this way first. The
+                current main path stays, as one of the other paths.
+              </Text>
+            ),
+            labels: { confirm: 'Make main path', cancel: 'Cancel' },
+            onConfirm: () =>
+              setMainPath.mutate({ chapterId: child.chapterId, parentChapterId: chapterId }),
+          })
+      : undefined;
 
   // Numbered from this chapter, not by their own depth, which a rejoined chapter takes from another branch.
   const [main, ...others] = (children ?? []).map((child) => ({
@@ -95,6 +133,108 @@ export function StorylineEndOfChapter({
     depth: chapterDepth + 1,
   })) as StorylineChild[];
   const ended = !children?.length && !isLoading;
+
+  // Mid-story: the chapter already has a main-path chapter after it, so writing after it starts a
+  // branch. The way on is to the end of the path instead, named so the reader sees where they land.
+  const midStory = main?.rank === 'canon';
+  const canonAhead = useStorylineCanonAhead(midStory ? chapterId : undefined, {
+    enabled: midStory,
+    forks: false,
+  });
+  const pathEnd = canonAhead.ahead.at(-1);
+  // Not offered when the end is hidden from this reader, or past the read's cap (its last chapter
+  // would not be the end): continuing an earlier one would make a branch.
+  const endTarget =
+    midStory && pathEnd?.post && canonAhead.ahead.length < STORYLINE_PATH_LIMIT - 1
+      ? { chapterId: pathEnd.chapterId, depth: pathEnd.depth, post: pathEnd.post }
+      : undefined;
+  // Nothing to write until the ways on are read (and, mid-story, the end): before then an action
+  // would continue this chapter, which is the accidental branch. A failed read offers none.
+  const writeReady = children !== undefined && (!midStory || canonAhead.isSuccess);
+  // Priced against the chapter the continuation is placed on: the end, not the one on screen.
+  const endTerms = useStorylineContinueTerms(isOwner ? undefined : endTarget?.post.id);
+  const mainWay = endTarget && (isOwner || endTerms?.open) ? endTarget : undefined;
+  const router = useRouter();
+  // Three actions, so not openConfirmModal: its footer has two.
+  const confirmBranch = (postId: number) =>
+    modals.open({
+      title: 'Start a branch?',
+      children: (
+        <div className="flex flex-col gap-4">
+          <Text size="sm">
+            Start a side path after chapter {chapterDepth + 1}? Readers will see it as one of the
+            other paths.
+          </Text>
+          <Group justify="flex-end" gap="xs">
+            <Button variant="default" onClick={() => modals.closeAll()}>
+              Cancel
+            </Button>
+            <Button
+              variant="default"
+              onClick={() => {
+                modals.closeAll();
+                openStorylineContinueModal(
+                  isOwner
+                    ? { parentPostId: postId, parentChapterId: chapterId, branch: true }
+                    : { parentPostId: postId, branch: true }
+                );
+              }}
+              data-testid="storyline-branch-use-post"
+            >
+              Use a post
+            </Button>
+            <Button
+              color="violet"
+              onClick={() => {
+                modals.closeAll();
+                tracking.trackCreateClick({ chapterId });
+                router.push(
+                  storylineContinueUrl({
+                    parentChapterId: chapterId,
+                    chapterNumber: chapterDepth + 2,
+                  })
+                );
+              }}
+              data-testid="storyline-branch-write"
+            >
+              Write a branch
+            </Button>
+          </Group>
+        </div>
+      ),
+    });
+
+  // With one way on, → takes it. Desktop only: the reader's overlay, never a narrow stage or a touch screen.
+  const stageIsNarrow = useIsMobile({ breakpoint: 'md', type: 'media' });
+  const touchScreen = useHasCoarsePointer();
+  const arrowContinues =
+    layout === 'overlay' &&
+    !stageIsNarrow &&
+    !touchScreen &&
+    !isLoading &&
+    others.length === 0 &&
+    !!main?.post &&
+    !main.tombstone;
+  useEffect(() => {
+    if (!arrowContinues || !main) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'ArrowRight' || event.defaultPrevented) return;
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+      )
+        return;
+      // The window's capture phase comes before the carousel's own arrow handler, which would
+      // otherwise reopen this card on the chapter we are leaving.
+      event.preventDefault();
+      event.stopPropagation();
+      onContinue(main);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [arrowContinues, main, onContinue]);
 
   return (
     <div
@@ -132,7 +272,16 @@ export function StorylineEndOfChapter({
           <LeadSkeleton />
         ) : (
           <>
-            {main && <LeadFork child={main} shares={forkShares} onContinue={onContinue} />}
+            {main && (
+              <LeadFork
+                child={main}
+                shares={forkShares}
+                onContinue={onContinue}
+                hotkey={arrowContinues}
+                onMakeMain={makeMainFor(main)}
+                makingMain={setMainPath.isPending}
+              />
+            )}
             {others.length > 0 && (
               <>
                 <Text component="div" className="flex items-center gap-1.5 font-bold">
@@ -149,6 +298,8 @@ export function StorylineEndOfChapter({
                       child={child}
                       shares={forkShares}
                       onContinue={onContinue}
+                      onMakeMain={makeMainFor(child)}
+                      makingMain={setMainPath.isPending}
                     />
                   ))}
                 </div>
@@ -171,43 +322,108 @@ export function StorylineEndOfChapter({
           </div>
           <div className="flex flex-col gap-3 @md:flex-row @md:items-start @md:justify-between">
             <div className="flex flex-col items-stretch gap-2 @md:items-start">
-              {canWrite && (
-                <Button
-                  component={Link}
-                  href={storylineContinueUrl({
-                    parentChapterId: chapterId,
-                    chapterNumber: chapterDepth + 2,
-                  })}
-                  color="violet"
-                  leftSection={<IconPencil size={16} />}
-                  onClick={() => tracking.trackCreateClick({ chapterId })}
-                  data-testid="storyline-write-next"
-                >
-                  Write the next chapter
-                </Button>
-              )}
-              {canWrite && !isOwner && terms && (
-                <Text size="xs" c="dimmed" data-testid="storyline-write-next-price">
-                  {terms.price > 0
-                    ? `${storylinePriceLabel(terms.price)} when you publish`
-                    : 'Free to submit'}
-                </Text>
-              )}
-              {parentPostId && (
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                  {isOwner ? (
-                    <>
+              {!writeReady ? null : midStory ? (
+                <>
+                  {mainWay && (
+                    <div className="flex flex-col items-stretch gap-1 @md:items-start">
+                      <Button
+                        component={Link}
+                        href={storylineContinueUrl({
+                          parentChapterId: mainWay.chapterId,
+                          chapterNumber: mainWay.depth + 2,
+                        })}
+                        color="violet"
+                        leftSection={<IconPencil size={16} />}
+                        onClick={() => tracking.trackCreateClick({ chapterId: mainWay.chapterId })}
+                        data-testid="storyline-continue-path-end"
+                      >
+                        {onMain ? 'Continue the main path' : 'Continue this path'}
+                      </Button>
+                      <Text size="xs" c="dimmed" data-testid="storyline-path-end-name">
+                        after Chapter {mainWay.depth + 1}
+                        {mainWay.post.title ? ` · ${mainWay.post.title}` : ''}
+                        {!isOwner && endTerms
+                          ? endTerms.price > 0
+                            ? ` · ${storylinePriceLabel(endTerms.price)} when you publish`
+                            : ' · Free to submit'
+                          : ''}
+                      </Text>
+                      {isOwner ? (
+                        <Anchor
+                          component="button"
+                          type="button"
+                          size="sm"
+                          onClick={() =>
+                            openStorylineContinueModal({
+                              parentPostId: mainWay.post.id,
+                              parentChapterId: mainWay.chapterId,
+                              atEnd: onMain,
+                            })
+                          }
+                          data-testid="storyline-add-own-chapter"
+                        >
+                          or use a post you already made (after Chapter {mainWay.depth + 1})
+                        </Anchor>
+                      ) : (
+                        <StorylineContinueWithPost
+                          parentPostId={mainWay.post.id}
+                          afterChapter={mainWay.depth + 1}
+                        />
+                      )}
+                    </div>
+                  )}
+                  {mainWay && canWrite && parentPostId && (
+                    <Divider label="or" labelPosition="center" className="self-stretch" />
+                  )}
+                  {canWrite && parentPostId && (
+                    <div className="flex flex-col gap-0.5">
                       <Anchor
                         component="button"
                         type="button"
                         size="sm"
-                        onClick={() =>
-                          openStorylineContinueModal({ parentPostId, parentChapterId: chapterId })
-                        }
-                        data-testid="storyline-add-own-chapter"
+                        className="flex items-center gap-1 self-start"
+                        onClick={() => confirmBranch(parentPostId)}
+                        data-testid="storyline-start-branch"
                       >
-                        or use a post you already made
+                        <IconGitFork size={14} /> Start a branch from here
                       </Anchor>
+                      <Text size="xs" c="dimmed" data-testid="storyline-start-branch-note">
+                        A side path after this chapter. The {onMain ? 'main path' : 'path'} still
+                        goes on to{' '}
+                        {main
+                          ? getStorylineChapterName(main, { inSentence: true })
+                          : 'the next chapter'}
+                        .
+                      </Text>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {canWrite && (
+                    <Button
+                      component={Link}
+                      href={storylineContinueUrl({
+                        parentChapterId: chapterId,
+                        chapterNumber: chapterDepth + 2,
+                      })}
+                      color="violet"
+                      leftSection={<IconPencil size={16} />}
+                      onClick={() => tracking.trackCreateClick({ chapterId })}
+                      data-testid="storyline-write-next"
+                    >
+                      {onMain ? 'Write the next chapter' : 'Continue this path'}
+                    </Button>
+                  )}
+                  {canWrite && !isOwner && terms && (
+                    <Text size="xs" c="dimmed" data-testid="storyline-write-next-price">
+                      {terms.price > 0
+                        ? `${storylinePriceLabel(terms.price)} when you publish`
+                        : 'Free to submit'}
+                    </Text>
+                  )}
+                  {parentPostId &&
+                    (isOwner ? (
                       <Anchor
                         component="button"
                         type="button"
@@ -216,18 +432,36 @@ export function StorylineEndOfChapter({
                           openStorylineContinueModal({
                             parentPostId,
                             parentChapterId: chapterId,
-                            mode: 'join',
+                            atEnd: onMain,
                           })
                         }
-                        data-testid="storyline-join-existing-chapter"
+                        data-testid="storyline-add-own-chapter"
                       >
-                        Join an existing chapter
+                        or use a post you already made
                       </Anchor>
-                    </>
-                  ) : (
-                    <StorylineContinueWithPost parentPostId={parentPostId} />
-                  )}
-                </div>
+                    ) : (
+                      <StorylineContinueWithPost parentPostId={parentPostId} />
+                    ))}
+                </>
+              )}
+              {parentPostId && (isOwner || currentUser?.isModerator) && (
+                <Anchor
+                  component="button"
+                  type="button"
+                  size="sm"
+                  onClick={() =>
+                    openStorylineContinueModal({
+                      parentPostId,
+                      parentChapterId: chapterId,
+                      mode: 'join',
+                      // Unread ways on are not "no main-path chapter": checked only once known.
+                      atEnd: onMain && children !== undefined && !midStory,
+                    })
+                  }
+                  data-testid="storyline-join-existing-chapter"
+                >
+                  Join an existing chapter
+                </Anchor>
               )}
             </div>
             <Anchor
@@ -284,6 +518,23 @@ function ShareBar({ percent, hidden }: { percent: number; hidden?: boolean }) {
   );
 }
 
+/** Above the card's own opener, so it is not read as opening the chapter. */
+function MakeMainButton({ onClick, loading }: { onClick: () => void; loading: boolean }) {
+  return (
+    <Button
+      variant="subtle"
+      size="compact-xs"
+      leftSection={<IconCrown size={12} />}
+      onClick={onClick}
+      loading={loading}
+      className="relative z-10 self-start"
+      data-testid="storyline-make-main"
+    >
+      Make main path
+    </Button>
+  );
+}
+
 /** Author, plus the chapter number unless an untitled chapter's name already is it. */
 function byline(child: StorylineChild) {
   const author = child.post?.username ? `by ${child.post.username}` : '';
@@ -305,10 +556,18 @@ function LeadFork({
   child,
   shares,
   onContinue,
+  hotkey,
+  onMakeMain,
+  makingMain = false,
 }: {
   child: StorylineChild;
   shares: StorylineShares;
   onContinue: (child: StorylineChild) => void;
+  /** → also takes this way, so the button says so. */
+  hotkey?: boolean;
+  /** Offered to the owner and moderators when this way is not already the main path. */
+  onMakeMain?: () => void;
+  makingMain?: boolean;
 }) {
   const hidden = !child.post;
   const share = getForkShare(shares, child.chapterId);
@@ -383,7 +642,15 @@ function LeadFork({
         ) : (
           <Button
             size="lg"
-            rightSection={<IconArrowRight size={18} />}
+            rightSection={
+              hotkey ? (
+                <Kbd size="xs" aria-hidden data-testid="storyline-read-next-hotkey">
+                  →
+                </Kbd>
+              ) : (
+                <IconArrowRight size={18} />
+              )
+            }
             onClick={() => onContinue(child)}
             className="w-full @md:w-auto @md:self-start"
             data-testid="storyline-read-next"
@@ -391,6 +658,7 @@ function LeadFork({
             Read chapter {child.depth + 1}
           </Button>
         )}
+        {onMakeMain && <MakeMainButton onClick={onMakeMain} loading={makingMain} />}
       </div>
     </div>
   );
@@ -400,10 +668,14 @@ function OtherFork({
   child,
   shares,
   onContinue,
+  onMakeMain,
+  makingMain = false,
 }: {
   child: StorylineChild;
   shares: StorylineShares;
   onContinue: (child: StorylineChild) => void;
+  onMakeMain?: () => void;
+  makingMain?: boolean;
 }) {
   const hidden = !child.post;
   const share = getForkShare(shares, child.chapterId);
@@ -453,6 +725,7 @@ function OtherFork({
             </Text>
           </div>
         )}
+        {onMakeMain && <MakeMainButton onClick={onMakeMain} loading={makingMain} />}
       </div>
       <ForkOpener child={child} name={name} onContinue={onContinue} />
     </div>
@@ -503,7 +776,14 @@ const closedCopy = {
   collaboratorsOnly: 'Collaborators only',
 } as const;
 
-export function StorylineContinueWithPost({ parentPostId }: { parentPostId: number }) {
+export function StorylineContinueWithPost({
+  parentPostId,
+  afterChapter,
+}: {
+  parentPostId: number;
+  /** Names the chapter it continues, where a branch action sits beside it. */
+  afterChapter?: number;
+}) {
   const terms = useStorylineContinueTerms(parentPostId);
   if (!terms) return null;
   if (!terms.open)
@@ -530,6 +810,7 @@ export function StorylineContinueWithPost({ parentPostId }: { parentPostId: numb
       data-testid="storyline-continue-with-post"
     >
       or use a post you already made
+      {afterChapter !== undefined ? ` (after Chapter ${afterChapter})` : ''}
     </Anchor>
   );
 }

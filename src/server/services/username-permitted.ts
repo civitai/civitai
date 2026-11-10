@@ -1,9 +1,11 @@
+import { resemblesReservedModerationUsername } from '~/server/auth/moderation-account';
 import { BlocklistType } from '~/server/common/enums';
 import { getBlocklistData } from '~/server/services/blocklist.service';
 import { isUsernameBlocked } from '~/server/utils/username-blocklist';
 import blockedUsernames from '~/utils/blocklist-username.json';
 
 export const isUsernamePermitted = async (username: string): Promise<boolean> => {
+  if (resemblesReservedModerationUsername(username)) return false;
   if (isUsernameBlocked(username, blockedUsernames)) return false;
 
   const [exact, partial] = await Promise.all([

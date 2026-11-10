@@ -1,25 +1,26 @@
 import { TRPCError } from '@trpc/server';
-import { pack } from 'msgpackr';
 import superjson from 'superjson';
-import { isDev, isPreview, isProd, isTest } from '~/env/other';
+import { isProd } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { hSetWithTTL, sAddCappedWithExpireGe, sAddWithExpireGe } from '~/server/redis/atomic';
+import { sAddCappedWithExpireGe, sAddWithExpireGe } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { Context } from '~/server/createContext';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { ITEM_HOLDER_BUSY_MESSAGE } from '~/server/services/item-holder-lock';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
+import { isUsageLimitRef, type UsageLimitRef } from '~/shared/constants/usage-limits';
 import { middleware } from '~/server/trpc';
-import { resolveClientIp } from '~/server/utils/client-ip';
+import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
 import { acquireConcurrencySlot, type ConcurrencySlot } from '~/server/utils/concurrency-slots';
+import type { RateLimit } from '~/server/utils/rate-limit-window';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { getRequestBoardDomainColor, getRequestDomainColor } from '~/server/utils/server-domain';
-import type { SessionUser } from '~/types/session';
 import { withSpan } from '~/server/utils/otel-helpers';
-import { hashifyObject, slugit } from '~/utils/string-helpers';
+import { slugit } from '~/utils/string-helpers';
+import { cacheItKeyHash } from '~/server/utils/query-cache-key';
 import { booleanString } from '~/utils/zod-helpers';
 
 export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
@@ -83,7 +84,7 @@ export function cacheIt<TInput extends object>({
       for (const [key, value] of Object.entries(_input)) {
         if (excludeKeys?.includes(key as keyof TInput)) continue;
         if (Array.isArray(value)) cacheKeyObj[key] = [...new Set(value)].sort();
-        else if (value) cacheKeyObj[key] = value;
+        else if (value !== undefined) cacheKeyObj[key] = value;
       }
     }
     for (const [varyKey, varyValue] of Object.entries(varyBy?.(ctx) ?? {})) {
@@ -91,7 +92,7 @@ export function cacheIt<TInput extends object>({
         throw new Error(`cacheIt: varyBy key "${varyKey}" collides with an input key on ${path}`);
       cacheKeyObj[varyKey] = varyValue;
     }
-    const hash = withSpan('trpc:middleware:cacheIt:hash', () => hashifyObject(cacheKeyObj));
+    const hash = withSpan('trpc:middleware:cacheIt:hash', () => cacheItKeyHash(cacheKeyObj));
     const cacheKey = `${REDIS_KEYS.TRPC.BASE}:${key ?? path.replace('.', ':')}:${hash}` as const;
     const cached = await redis.packed.get(cacheKey);
     if (cached) {
@@ -136,12 +137,7 @@ export function cacheIt<TInput extends object>({
   });
 }
 
-export type RateLimit = {
-  limit: number;
-  period: number; // seconds
-  userReq?: (user: SessionUser) => boolean;
-  errorMessage?: string;
-};
+export type { RateLimit } from '~/server/utils/rate-limit-window';
 export type RateLimitOptions = {
   // When true, an attempt is only counted toward the limit after the procedure
   // succeeds. Failed calls (validation errors, server hiccups, etc.) won't burn
@@ -152,118 +148,33 @@ export type RateLimitOptions = {
   // post.createWithImages both posting against a single per-user post ceiling.
   sharedKey?: string;
 };
+/**
+ * `rateLimits` is a fixed rule list, or `usageLimits(...ids)`: registry entries whose numbers are
+ * resolved per request from the KeyValue-backed usage-limit config.
+ */
 export function rateLimit<TInput = any>(
-  rateLimits?: RateLimit | RateLimit[],
+  rateLimits?: RateLimit | RateLimit[] | UsageLimitRef,
   condition?: (input: TInput) => boolean,
   options?: RateLimitOptions
 ) {
-  if (!rateLimits) rateLimits = { limit: 10, period: CacheTTL.md };
-  if (!Array.isArray(rateLimits)) rateLimits = [rateLimits];
+  const rules: RateLimit[] | UsageLimitRef = isUsageLimitRef(rateLimits)
+    ? rateLimits
+    : !rateLimits
+    ? [{ limit: 10, period: CacheTTL.md }]
+    : Array.isArray(rateLimits)
+    ? rateLimits
+    : [rateLimits];
 
   return middleware(async ({ ctx, input, next, path }) => {
-    // Skip if user is a moderator, or in a non-prod env (dev/test/preview).
-    // Preview runs on the shared dev DB with a small set of CI smoke accounts, so
-    // per-account daily quotas (e.g. the new-post limit) get exhausted across many
-    // PR runs and the smoke suite fails deterministically — see civitai#2592.
-    if (ctx.user?.isModerator || isDev || isTest || isPreview) return await next();
+    if (condition && !condition(input as TInput)) return await next();
 
-    // Skip rate limiting if condition is provided and not met
-    if (condition && !condition(input as TInput)) {
-      return await next();
-    }
-
-    // Get valid limits
-    const validLimits: RateLimit[] = [];
-    for (const rateLimit of rateLimits) {
-      const matchedPeriod = validLimits.find((x) => x.period === rateLimit.period);
-      if (matchedPeriod?.limit && matchedPeriod.limit > rateLimit.limit) continue;
-      if (!rateLimit.userReq || (ctx.user && rateLimit.userReq(ctx.user))) {
-        // Replace the existing limit if it exists
-        if (matchedPeriod) {
-          validLimits.splice(validLimits.indexOf(matchedPeriod), 1, rateLimit);
-        } else {
-          validLimits.push(rateLimit);
-        }
-      }
-    }
-
-    // Get user's attempts. options.sharedKey lets multiple procedures share one
-    // quota; otherwise key on the tRPC path.
-    const keyName = options?.sharedKey ?? path.replace('.', ':');
-    const cacheKey = `${REDIS_KEYS.TRPC.LIMIT.BASE}:${keyName}` as const;
-    // Anonymous callers bucket by client IP, authenticated ones by user id. The
-    // IP comes from the SHARED predicate in `~/server/utils/client-ip` rather
-    // than the general-purpose `ctx.ip`, so this limiter and the public REST
-    // limiter derive the bucket the same way — see that module's doc for which
-    // predicate suits which surface.
-    //
-    // NAMESPACE THE FIELD. User ids and addresses are two different namespaces
-    // and both are written into one hash, where equal strings are one bucket.
-    // The prefix makes the two key spaces disjoint by construction rather than
-    // by whichever values happen not to overlap. Same shape as the public REST
-    // limiter (`~/server/utils/public-api-rate-limit`), deliberately.
-    // `!= null` and not a truthiness test: it must match the nullish semantics of
-    // the `??` this replaced, or a user id of 0 would silently route to the IP
-    // branch. Pinned by the id-0 case in
-    // `src/server/__tests__/middleware.trpc.rate-limit-key.test.ts`.
-    const hashKey = ctx.user?.id != null ? `user:${ctx.user.id}` : `ip:${resolveClientIp(ctx.req)}`;
-    const attempts = (await redis.packed.hGet<number[]>(cacheKey, hashKey)) ?? [];
-
-    // Check if user can proceed and find the failing limit
-    let failedLimit: RateLimit | undefined = undefined;
-    let canProceed = true;
-
-    for (const rateLimitRule of validLimits) {
-      const { limit, period } = rateLimitRule;
-      if (limit === 0) {
-        failedLimit = rateLimitRule;
-        canProceed = false;
-        break;
-      }
-
-      const cutoff = Date.now() - period! * 1000;
-      const relevantAttempts = attempts.filter((x) => x > cutoff).length;
-      if (relevantAttempts > limit!) {
-        failedLimit = rateLimitRule;
-        canProceed = false;
-        break;
-      }
-    }
-
-    // Throw if rate limit exceeded
-    if (!canProceed && failedLimit) {
-      const errorMessage = failedLimit.errorMessage ?? `You're doing that too much...`;
-      throw new TRPCError({
-        code: 'TOO_MANY_REQUESTS',
-        message: errorMessage,
-      });
-    }
-
-    // Record this attempt against the user's quota
-    const recordAttempt = async () => {
-      attempts.push(Date.now());
-      const longestPeriod = Math.max(...validLimits.map((x) => x.period!));
-      const updatedAttempts = attempts.filter((x) => x > Date.now() - longestPeriod * 1000);
-      // Atomic packed-write: single EVAL replaces racy Promise.all([hSet, hExpire]).
-      //
-      // Fail-open wrapper (PR #2332 round-4 audit fix): without this
-      // try/catch, an in-flight EVAL throw during a sysRedis (cache
-      // client) failover would 500 every authed mutation that flows
-      // through this middleware. Trade-off documented under the
-      // `rate-limit-write-degraded` subtype: the current request is
-      // allowed through and the sliding-window quota under-counts the
-      // attempt until the next successful write. A sustained spike on
-      // that subtype = abuse-prevention effectively disabled, which
-      // ops should dashboard separately from generic write-degraded.
-      try {
-        await hSetWithTTL(redis, cacheKey, hashKey, pack(updatedAttempts), CacheTTL.day * 1000);
-      } catch (error) {
-        logSysRedisFailOpen('rate-limit-write-degraded', 'middleware.trpc.recordAttempt', error, {
-          cacheKey,
-          hashKey,
-        });
-      }
-    };
+    // options.sharedKey lets multiple procedures share one quota; otherwise key on the tRPC path.
+    const recordAttempt = await claimRateLimitAttempt({
+      rules,
+      keyName: options?.sharedKey ?? path.replace('.', ':'),
+      user: ctx.user,
+      req: ctx.req,
+    });
 
     // When onlyCountSuccess is set, defer recording until the procedure succeeds
     // so failed calls don't burn a slot.

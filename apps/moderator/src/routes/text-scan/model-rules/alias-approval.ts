@@ -1,3 +1,4 @@
+import type { ModelRuleReference } from '@civitai/moderation/model-rules';
 import { appendAliases, parseAliases } from '$lib/model-rules';
 
 type ApprovalRule = {
@@ -6,6 +7,8 @@ type ApprovalRule = {
   description: string;
   note: string;
   aliases: readonly string[];
+  category?: string;
+  references: readonly ModelRuleReference[];
   updatedAt: Date | string;
 };
 
@@ -30,6 +33,8 @@ export function buildApprovalPayload(
         subject: rule.subject,
         description: rule.description,
         aliases: appendAliases(rule.aliases.join('\n'), added),
+        category: rule.category ?? '',
+        references: rule.references,
         note: rule.note,
         baseUpdatedAt: new Date(rule.updatedAt).toISOString(),
       },

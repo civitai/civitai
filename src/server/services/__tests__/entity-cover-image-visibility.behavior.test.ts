@@ -42,14 +42,15 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text, "nsfwLevel" int DEFAULT 1, width int, height int,
       hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
       "mimeType" text, type text DEFAULT 'image', metadata jsonb, "scannedAt" timestamp,
-      "needsReview" text, "userId" int DEFAULT ${OWNER}, index int DEFAULT 0, "postId" int,
+      "needsReview" text, "blockedFor" text, "userId" int DEFAULT ${OWNER}, index int DEFAULT 0, "postId" int,
       poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "modelRestricted" boolean DEFAULT false, "nsfwLevelLocked" boolean DEFAULT false,
-      "scanJobs" jsonb
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int DEFAULT ${OWNER}, "modelVersionId" int,
@@ -57,11 +58,11 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "userId" int DEFAULT ${OWNER}, status text,
-      "publishedAt" timestamp, ingestion text DEFAULT 'Scanned'
+      "publishedAt" timestamp, ingestion text DEFAULT 'Scanned', "bannerId" int
     );
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int DEFAULT ${OWNER}, status text,
-      availability "Availability" DEFAULT 'Public'
+      availability "Availability" DEFAULT 'Public', mode "ModelModifier"
     );
     CREATE TABLE "ModelVersion" (
       id int PRIMARY KEY, "modelId" int, index int DEFAULT 0, status text, "publishedAt" timestamp,
@@ -72,6 +73,11 @@ beforeAll(async () => {
     );
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "CollectionItem" (
+      id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "addedById" int,
+      status text NOT NULL
+    );
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
     );
@@ -201,6 +207,7 @@ beforeAll(async () => {
     INSERT INTO "Image" (id, "postId") VALUES
       (1031, 1021), (1032, 1022), (1033, 1023), (1071, 1061), (1072, 1062);
     INSERT INTO "Image" (id) VALUES (1051), (1052), (1053), (1054), (111), (112);
+    INSERT INTO "Image" (id, "userId") VALUES (1081, -1), (1082, 0);
     INSERT INTO "Article" (id, "coverId", "userId", status, "publishedAt") VALUES
       (1041, 1051, -1, 'Draft', null), (1042, 1052, 0, 'Draft', null),
       (1043, null, -1, 'Draft', null), (1044, null, 0, 'Draft', null);
@@ -218,6 +225,39 @@ beforeAll(async () => {
     -- A connection under an entity type no rule covers.
     INSERT INTO "Image" (id) VALUES (801);
     INSERT INTO "ImageConnection" VALUES (801, 9, 'Collection');
+
+    -- Flagged images: post 1201's only image; post 1202's first, ahead of a clean one; the first
+    -- image of public model 1301; article 1401's cover.
+    INSERT INTO "Post" (id, "publishedAt") VALUES
+      (1201, now() - interval '1 day'), (1202, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", index, "acceptableMinor") VALUES
+      (1211, 1201, 0, true), (1212, 1202, 0, true), (1213, 1202, 1, false);
+    INSERT INTO "Model" (id, status) VALUES (1301, 'Published');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES (1311, 1301, 'Published');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
+      (1321, 1311, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", index, "acceptableMinor") VALUES
+      (1331, 1321, 0, true), (1332, 1321, 1, false);
+    INSERT INTO "Image" (id, "acceptableMinor") VALUES (1411, true);
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (1401, 1411, 'Published', now());
+    -- Flagged images connected to public bounties, an entry and a published article: 1531 is the
+    -- only image of bounty 1521; entry 1523 and article 1541 have a flagged image ahead of a clean one.
+    INSERT INTO "Bounty" VALUES (1521, ${OWNER}, 'Public'), (1522, ${OWNER}, 'Public');
+    INSERT INTO "BountyEntry" VALUES (1523, 1522, ${OWNER});
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (1541, null, 'Published', now());
+    INSERT INTO "Image" (id, "acceptableMinor") VALUES
+      (1531, true), (1533, true), (1534, false), (1551, true), (1552, false);
+    INSERT INTO "ImageConnection" VALUES
+      (1531, 1521, 'Bounty'), (1533, 1523, 'BountyEntry'), (1534, 1523, 'BountyEntry'),
+      (1551, 1541, 'Article'), (1552, 1541, 'Article');
+    -- Taken-down model 1601 with its version 1611, and archived model 1602 with version 1612.
+    INSERT INTO "Model" (id, status, mode) VALUES
+      (1601, 'Published', 'TakenDown'), (1602, 'Published', 'Archived');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES
+      (1611, 1601, 'Published'), (1612, 1602, 'Published');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
+      (1621, 1611, now() - interval '1 day'), (1622, 1612, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId") VALUES (1631, 1621), (1632, 1622);
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -231,6 +271,14 @@ const coverOf = async (entityType: string, entityId: number, viewer: Viewer) => 
 
 const hidden: [string, string, number, number][] = [
   ['a Private bounty', 'Bounty', 1, 101],
+  ['a taken-down model', 'Model', 1601, 1631],
+  ["a taken-down model's version", 'ModelVersion', 1611, 1631],
+  ["a taken-down model's image", 'Image', 1631, 1631],
+  ["a post on a taken-down model's version", 'Post', 1621, 1631],
+  ['a flagged image', 'Image', 1211, 1211],
+  ['a post whose only image is flagged', 'Post', 1201, 1211],
+  ['an article whose cover is flagged', 'Article', 1401, 1411],
+  ['a public bounty whose only image is flagged', 'Bounty', 1521, 1531],
   ['an entry on a Private bounty', 'BountyEntry', 3, 103],
   ['an image on a scheduled post', 'Image', 212, 212],
   ['an image on a draft post', 'Image', 213, 213],
@@ -265,6 +313,11 @@ const fallback: [string, string, number, number, number][] = [
   ['a public model whose first post is a draft', 'Model', 604, 648, 647],
   ['a public model whose first post is Private', 'Model', 605, 650, 649],
   ['a public model whose first post is scheduled', 'Model', 606, 652, 651],
+  ['a post whose first image is flagged', 'Post', 1202, 1213, 1212],
+  ['a public model whose first image is flagged', 'Model', 1301, 1332, 1331],
+  ['a version whose first image is flagged', 'ModelVersion', 1311, 1332, 1331],
+  ['an entry on a public bounty whose first image is flagged', 'BountyEntry', 1523, 1534, 1533],
+  ['a published article whose first content image is flagged', 'Article', 1541, 1552, 1551],
 ];
 
 const visible: [string, string, number, number][] = [
@@ -299,6 +352,8 @@ const placeholderOwned: [string, string, number, number, number][] = [
   ['a Private bounty owned by 0', 'Bounty', 12, 112, 0],
   ['a draft article with content images only, owned by -1', 'Article', 1043, 1053, -1],
   ['a draft article with content images only, owned by 0', 'Article', 1044, 1054, 0],
+  ['a postless image owned by -1', 'Image', 1081, 1081, -1],
+  ['a postless image owned by 0', 'Image', 1082, 1082, 0],
 ];
 
 describe('getEntityCoverImage respects the parent entity visibility', () => {
@@ -363,6 +418,16 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
       expect(await coverOf(entityType, entityId, viewers[who])).toBe(imageId);
     });
   });
+
+  it.each(['anonymous', 'stranger'] as const)(
+    'keeps the covers of an archived model, its version, image and post for a %s viewer',
+    async (who) => {
+      expect(await coverOf('Model', 1602, viewers[who])).toBe(1632);
+      expect(await coverOf('ModelVersion', 1612, viewers[who])).toBe(1632);
+      expect(await coverOf('Image', 1632, viewers[who])).toBe(1632);
+      expect(await coverOf('Post', 1622, viewers[who])).toBe(1632);
+    }
+  );
 
   it('treats a missing viewer as anonymous', async () => {
     const covers = await getEntityCoverImage({

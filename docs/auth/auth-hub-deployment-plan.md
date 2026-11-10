@@ -73,7 +73,7 @@ contract: [`apps/auth/.env.example`](../../apps/auth/.env.example). Deployment-c
 | `AUTH_JWT_KID` | ✅ | — | — | **Must not change during cutover** — changing `kid` (or the cookie name) logs everyone out. |
 | `AUTH_JWT_ISSUER` | ✅ | ✅ | ✅ | `https://auth.civitai.com`. JWT `iss`, hub origin every spoke targets, **and** the cookie `__Secure-`/Domain fallback. Empty → cookie loses its prefix + Domain → redirect loop (see §5). |
 | `AUTH_JWKS_URI` | ✅ | ✅ | ✅ | `https://auth.civitai.com/api/auth/jwks` — spoke verify key source. |
-| `AUTH_INTERNAL_TOKEN` | ✅ | ✅ | opt | Service secret for `POST /api/auth/identity` (cache bust) + legacy upgrade-on-read. **Identical hub↔main.** Mismatch = legacy→civ-token migration silently skipped (soft gate). |
+| `AUTH_INTERNAL_TOKEN` | ✅ | ✅ | ✅ | Service secret for `POST /api/auth/identity` (cache bust), legacy upgrade-on-read, and the calls an app makes to the hub on a user's behalf (refresh, session exchange, switch, accounts, impersonate, logout). **Identical on the hub, main and every spoke.** `auth_internal_parity` reports a mismatch; until the hub confirms the value, an app keeps sending those calls in the older shape. |
 | `NEXTAUTH_SECRET` | ✅ | ✅ | — | Salt for **all active** API-key/OAuth-token hashing + email-token hash + legacy JWE decode. **Identical hub↔main** or all token auth 401s. |
 | `AUTH_COOKIE_DOMAIN` | ✅ | ✅ | — | Prod = `.civitai.com`; localhost = empty (host-only). |
 | `AUTH_ADMIN_USER_IDS` | ✅ | — | — | Comma list; `/admin` (TrustedSpokeDomain editor). **Fail-closed** (unset = locked). |

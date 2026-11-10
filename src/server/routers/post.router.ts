@@ -9,6 +9,7 @@ import {
   deletePostHandler,
   getPostContestCollectionDetailsHandler,
   getPostHandler,
+  getPostResourceCoversHandler,
   getPostResourcesHandler,
   getPostsInfiniteHandler,
   getPostTagsHandler,
@@ -32,11 +33,13 @@ import {
   getScheduledPostsSchema,
   plannerPostIdSchema,
   plannerPublishNowSchema,
+  getPostResourceCoversSchema,
   plannerRescheduleSchema,
   plannerShiftSchema,
   plannerUnscheduleSchema,
   postAddImageInput,
   postCreateSchema,
+  POST_CREATE_RATE_LIMIT_KEY,
   postRateLimits,
   postsQuerySchema,
   postUpdateSchema,
@@ -44,6 +47,7 @@ import {
   removeResourceFromPostImageInput,
   reorderPostImagesSchema,
   scheduleBatchSchema,
+  checkBatchDraftKeysSchema,
   updatePostCollectionTagIdInput,
   updatePostImageSchema,
   validateBatchScheduleSchema,
@@ -58,6 +62,7 @@ import {
   unschedulePlannerPosts,
 } from './../services/post-planner.service';
 import { scheduleBatch, validateBatchSchedule } from './../services/post-batch.service';
+import { clientKeysToReupload } from '~/server/services/image-url-ownership';
 import { guardedProcedure, isFlagProtected, publicProcedure, verifiedProcedure } from './../trpc';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -133,12 +138,12 @@ export const postRouter = router({
   create: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(postCreateSchema)
-    .use(rateLimit(postRateLimits, undefined, { sharedKey: 'post:create' }))
+    .use(rateLimit(postRateLimits, undefined, { sharedKey: POST_CREATE_RATE_LIMIT_KEY }))
     .mutation(createPostHandler),
   createWithImages: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(createPostWithImagesSchema)
-    .use(rateLimit(postRateLimits, undefined, { sharedKey: 'post:create' }))
+    .use(rateLimit(postRateLimits, undefined, { sharedKey: POST_CREATE_RATE_LIMIT_KEY }))
     .mutation(createPostWithImagesHandler),
   update: verifiedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
@@ -214,6 +219,10 @@ export const postRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(getPostResourcesHandler),
+  getResourceCovers: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getPostResourceCoversSchema)
+    .query(getPostResourceCoversHandler),
   getContestCollectionDetails: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
@@ -276,6 +285,15 @@ export const postRouter = router({
     .input(validateBatchScheduleSchema)
     .use(isFlagProtected('batchPostScheduling'))
     .query(({ ctx, input }) => validateBatchSchedule({ input, user: ctx.user })),
+  /** The keys of a restored batch draft that must be uploaded again; nothing else about them. */
+  checkBatchDraftKeys: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .input(checkBatchDraftKeysSchema)
+    .use(isFlagProtected('batchPostScheduling'))
+    .use(rateLimit({ limit: 60, period: CacheTTL.hour }))
+    .mutation(async ({ ctx, input }) => ({
+      reupload: await clientKeysToReupload({ keys: input.keys, userId: ctx.user.id }),
+    })),
   scheduleBatch: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(scheduleBatchSchema)

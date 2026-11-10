@@ -21,7 +21,6 @@
     truncated,
     userId,
     canBulkAct,
-    field,
     link,
     badges,
   }: {
@@ -30,7 +29,6 @@
     truncated: boolean;
     userId: number;
     canBulkAct: boolean;
-    field: 'commentIds' | 'commentV2Ids';
     link: Snippet<[T]>;
     badges?: Snippet<[T]>;
   } = $props();
@@ -73,11 +71,8 @@
       // A short count means some ids did not take, and the endpoints report how many rather than which.
       // Marking all of them would fabricate the difference: on a delete, rows that still exist vanish;
       // on a ToS op, comments that were never flagged wear the badge. Mark nothing, say so, reload.
-      const kept = typeof data?.retainedHidden === 'number' ? data.retainedHidden : 0;
       if (affected < acted.length) {
-        partial = kept
-          ? `${affected} of ${acted.length} deleted, ${kept} kept hidden for review — reload to see which.`
-          : `${affected} of ${acted.length} went through — reload to see which.`;
+        partial = `${affected} of ${acted.length} went through — reload to see which.`;
         return;
       }
       partial = null;
@@ -143,7 +138,7 @@
       <!-- Posted from the selection rather than from the row checkboxes, so a select-all still acts on
            the rows the card has not expanded to yet. -->
       {#each posting as id (id)}
-        <input type="hidden" name={field} value={id} />
+        <input type="hidden" name="commentIds" value={id} />
       {/each}
       <ul class="space-y-2 text-sm">
         {#each shown.slice(0, limit) as c (c.id)}

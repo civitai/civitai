@@ -108,11 +108,13 @@ Re-read off the live ticket 2026-08-21; the section above had captured the middl
       rather than a `fetch` to `/api/mod/comment/remove-as-tos`: no main-app component calls an
       `/api/mod/*` endpoint today, and the two precedents are both procedures.
       ⚠️ **Built but not clicked** — this needs a signed-in moderator session in a browser before it
-      counts as done by `apps/moderator/CLAUDE.md`'s own standard.
+      counts as done by `apps/moderator/CLAUDE.md`'s own standard. Since replaced by
+      `commentv3.setTosViolation`: the `commentv2` router was deleted 2026-11-05 (release 2 of the write
+      flip, not deployed).
 
       *Filed until 2026-08-24 as "CommentV2 has no ToS field — main-app schema change", which sent
       three status passes past it as blocked. It had one: `CommentV2.tosViolation`
-      (`schema.full.prisma:3910`) and `bulkSetCommentV2TosViolation` (`commentsv2.service.ts:412`) were
+      (`schema.full.prisma:3910`) and `bulkSetCommentV2TosViolation` (`commentsv2.service.ts`) were
       both already there, doing the flag, the report actioning, the reward and the notification. Only
       the control the ask actually named — one on civitai.com — was missing.*
 - [x] **Unpublishing toggle — the MINOR half.** `UnpublishModal` offers "Also mark this model as
@@ -299,27 +301,31 @@ findings are done — see the parity checklist.
       parameter types, so the server infers int4 and resolution succeeds. The comment is what makes the
       next person reach for `sql.raw` on a value — which is the shape that turns a value into SQL.
 - [ ] **ClickHouse `comments.entityId` is the comment's own id, not the thing commented on.**
-      `commentv2.controller.ts` tracks `entityId: result.id` (the new `CommentV2` row), while the legacy
-      `comment.controller.ts` tracks `entityId: comment.modelId` (a real target). So for Image, Post,
+      `commentv3.controller.ts` tracks `entityId: row.id` (the new `CommentV3` row, as the deleted
+      `commentv2.controller.ts` did), while a model comment's `trackAs` (`commentv3/surfaces.ts`)
+      tracks `entityId: <modelId>` (a real target, as the deleted v1 `comment.controller.ts` did). So for Image, Post,
       Comment, Review, Bounty and BountyEntry — ~73% of comment volume — `uniq(entityId)` equals
       `count()` and any "distinct targets" measure is meaningless. Verified over 7 days: Image 18,717
       rows / 18,700 "distinct" against Model 8,987 / 3,261. It cost the comment-spam signature a
       condition (2026-08-24) and would silently mislead anything else that groups on it. Fixing it is a
       one-line tracker change, and only helps from that point forward — the history stays wrong.
       Two further gaps found at the same time: **article and challenge comments are never tracked at
-      all** (`commentv2.controller.ts` guards them out), and **editing a model comment emits a second
-      event**, inflating counts.
+      all** (`commentTrackTypes` in `clickhouse/tracker.ts` has no type for them), and editing a model
+      comment emitted a second event, inflating counts (the v1 path; gone with the model flip, 2026-11-06).
 - [ ] **`getJudgeCommentForImage` returns comment content with no ToS predicate.**
-      `commentsv2.service.ts` reads a challenge judge's comment by raw SQL and returns the body. Every
+      `challenge-judge-review.service.ts` (moved from `commentsv2.service.ts`, deleted in CommentV3
+      Phase 5) reads a challenge judge's comment from CommentV3 by raw SQL and returns the body. Every
       other v2 read filters `tosViolation` for non-moderators as of 2026-08-24; this one does not. The
       authors are challenge judges, so the exposure is small — filed rather than fixed, and it is the
       one v2 content read left unfiltered.
-- [ ] **Comic chapter comments are written outside `upsertComment`.** `createChapterComment` builds the
+- [x] **Comic chapter comments are written outside `upsertComment`.** `createChapterComment` builds the
       `CommentV2` row itself, so every comment guard has to be hand-copied onto it — the link-domain
       check, the message-pattern report and (2026-08-24) the mute check and rate limit were all added
       one at a time, after the fact. Routing it through the service would delete the copies and inherit
-      `commentsv2.blockCheck.service.test.ts`; the obstacle is that a chapter thread is keyed on
-      (project, chapter position) rather than a single entity id.
+      the block-check coverage; the obstacle is that a chapter thread is keyed on
+      (project, chapter position) rather than a single entity id. Superseded 2026-10-30: the procedure was
+      removed, not rerouted, when chapter comments moved to the v3 write path (built 2026-11-05,
+      release 2, not deployed; see `docs/plans/comments-v3-write-flip.md`).
 - [ ] **No way back from a ToS flag on a comment.** Setting it is a one-way door: nothing in the main
       app or the spoke clears `tosViolation` on `Comment` or `CommentV2`, and there is no comment
       equivalent of `restoreImages`. That was survivable while the flag did nothing on v2 threads; as of

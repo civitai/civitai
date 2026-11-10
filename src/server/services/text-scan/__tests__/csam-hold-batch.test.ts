@@ -8,8 +8,6 @@ const mocks = vi.hoisted(() => ({ decide: vi.fn() }));
 // Hand-listed: the loop under test never reaches a removal, only the module's imports do.
 vi.mock('~/server/services/article.service', () => ({ unpublishArticleById: vi.fn() }));
 vi.mock('~/server/services/chat.service', () => ({ deleteChatMessage: vi.fn() }));
-vi.mock('~/server/services/comment.service', () => ({ bulkSetCommentTosViolation: vi.fn() }));
-vi.mock('~/server/services/commentsv2.service', () => ({ bulkSetCommentV2TosViolation: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({
   toggleBan: vi.fn(),
   clearUserProfileFields: vi.fn(),
@@ -102,8 +100,11 @@ describe('resolveCsamHoldInput', () => {
   const hold = (holdId: number) => ({ holdId, textHash: `h${holdId}` });
 
   it('keeps the single-hold shape', () => {
+    expect(
+      resolveCsamHoldInput.safeParse({ holdId: 1, textHash: 'h1', decision: 'remove_ban' }).success
+    ).toBe(true);
     expect(resolveCsamHoldInput.safeParse({ holdId: 1, decision: 'remove_ban' }).success).toBe(
-      true
+      false
     );
   });
 

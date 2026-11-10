@@ -6,6 +6,10 @@ import { isEqual } from 'lodash-es';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
+import {
+  recordShopTakedownArtwork,
+  type ShopTakedownArtwork,
+} from '~/server/services/cdn-access.service';
 import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import {
   excludeDeletedShopListing,
@@ -22,11 +26,16 @@ import { removePlacementsByCosmetic } from '~/server/services/placement-moderati
 import {
   claimBoxRefundsForCosmetic,
   listOwedBoxRefunds,
+  listOwedPackBoxRefunds,
   markBoxRefundPaid,
+  markPackBoxRefundPaid,
   pullCosmeticFromBoxes,
   type OwedBoxRefund,
+  type OwedPackBoxRefund,
 } from '~/server/services/mystery-box-takedown.service';
+import { boxPackTermsOf, parsePackBoxSourceKey } from '@civitai/shared/mystery-box';
 import { getPrefixRefundState, refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
+import { detectEmptyLoopSeam } from '~/server/utils/animation-loop-seam';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { isAllowedImageScanUrl, normalizeImageScanUrl } from '~/server/utils/image-scan-url';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
@@ -34,6 +43,7 @@ import { constants } from '~/server/common/constants';
 import {
   REJECTED_IS_FINAL,
   appendItemHistory,
+  awaitsRequestedChanges,
   buildCosmeticData,
   changesDisplay,
   creatorGrantRemaining,
@@ -60,6 +70,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   createBuzzTransaction,
+  getMultiAccountTransactionsByPrefix,
   refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
@@ -79,6 +90,8 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { logToAxiom } from '~/server/logging/client';
+import { Tracker } from '~/server/clickhouse/client';
+import { logSectionPlacements } from '~/server/services/cosmetic-shop-featured-log.service';
 import {
   CosmeticShopItemStatus,
   CosmeticSource,
@@ -121,6 +134,8 @@ import {
   MAX_ANIMATION_FPS,
   MAX_ANIMATION_FRAMES,
   MIN_ANIMATION_FRAME_DELAY_MS,
+  LOOP_SEAM_CHECK_LABEL,
+  LOOP_SEAM_FIX_HINT,
   PRICE_REVIEW_THRESHOLD,
   RIGHTS_AFFIRMATION_STATEMENT,
   RIGHTS_AFFIRMATION_VERSION,
@@ -150,6 +165,10 @@ import type {
 } from '~/server/schema/creator-shop.schema';
 import { type ModelVersionTerms } from '@civitai/buzz';
 import { getPaidAccess, getViewerMonetization } from '~/server/services/paid-access.service';
+import {
+  assertClientImageUrlsUsable,
+  assertShopArtworkKeysIssued,
+} from '~/server/services/image-url-ownership';
 
 // Shop surfaces hide stickers until the flag is on. Rendering is never gated —
 // an owned sticker in a comment or DM shows for everyone regardless.
@@ -377,6 +396,7 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   let imageHash = '';
   let frames = 1;
   let minFrameDelay = Infinity;
+  let buffer: Buffer | undefined;
   try {
     // `normalizeImageScanUrl` is a no-op on a relative key (it only re-emits the parsed href
     // of a passthrough url, and the guard above rejected every one of those). It is kept so
@@ -429,7 +449,7 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
     if (Number.isFinite(declaredLength) && declaredLength > ARTWORK_MAX_BYTES) {
       throw new Error(`artwork too large: ${declaredLength} bytes`);
     }
-    const buffer = await readBounded(res, ARTWORK_MAX_BYTES);
+    buffer = await readBounded(res, ARTWORK_MAX_BYTES);
     imageHash = createHash('sha256').update(buffer).digest('hex');
     const meta = await sharp(buffer).metadata();
     width = meta.width ?? 0;
@@ -475,6 +495,17 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
         ? `~${Math.round(1000 / Math.max(1, minFrameDelay))} fps peak`
         : undefined,
     });
+    if (buffer && hasTransparency && checks.every((c) => c.passed)) {
+      // A decode failure or timeout skips this check rather than rejecting otherwise valid art.
+      const emptyLoopSeam = await detectEmptyLoopSeam(buffer, frames).catch(() => null);
+      if (emptyLoopSeam !== null)
+        checks.push({
+          key: 'loopSeam',
+          label: LOOP_SEAM_CHECK_LABEL,
+          passed: !emptyLoopSeam,
+          detail: emptyLoopSeam ? LOOP_SEAM_FIX_HINT : undefined,
+        });
+    }
   }
 
   const imageMeta: CosmeticImageMeta = { width, height, hasTransparency };
@@ -582,6 +613,8 @@ export const submitCreatorShopItem = async ({
   const { checks, imageMeta, imageHash, allPassed } = await validateArtwork(imageUrl, cosmeticType);
   if (!allPassed)
     throw throwBadRequestError('Artwork does not meet the requirements for this cosmetic type');
+  await assertClientImageUrlsUsable({ urls: [imageUrl], userId, shopRow: {} });
+  await assertShopArtworkKeysIssued({ urls: [imageUrl], userId });
 
   // Reject duplicate artwork before charging the fee.
   if (await findDuplicateArtwork(imageHash))
@@ -870,6 +903,16 @@ export const updateCreatorShopItem = async ({
     );
     if (!allPassed)
       throw throwBadRequestError('Artwork does not meet the requirements for this cosmetic type');
+    await assertClientImageUrlsUsable({
+      urls: [imageUrl],
+      userId: existing.cosmetic.createdById ?? userId,
+      shopRow: { cosmeticId: existing.cosmeticId },
+    });
+    await assertShopArtworkKeysIssued({
+      urls: [imageUrl],
+      userId,
+      alsoIssuedTo: isModerator ? existing.cosmetic.createdById ?? undefined : undefined,
+    });
     if (await findDuplicateArtwork(imageHash, id))
       throw throwBadRequestError('This artwork has already been submitted to the shop.');
     checks.push({ key: 'duplicate', label: 'Original artwork', passed: true });
@@ -957,6 +1000,9 @@ export const updateCreatorShopItem = async ({
     recordChange('sellableByOthers', yesNo(meta.sellableByOthers), yesNo(nextSellableByOthers));
     recordChange('sellerShare', meta.sellerShare ?? 0, nextSellerShare);
   }
+  // Without this a save with nothing changed resubmits the item unaltered.
+  if (existing.status === CosmeticShopItemStatus.RequestedChanges && !changes.length)
+    throw throwBadRequestError('Make the requested changes before resubmitting');
 
   const reviewNote = !backToReview
     ? undefined
@@ -1245,11 +1291,16 @@ export const setCreatorShopItemListed = async ({
     if (current.status === CosmeticShopItemStatus.Rejected)
       throw throwBadRequestError(REJECTED_IS_FINAL);
     const meta = current.meta as CosmeticShopItemMeta | null;
+    // Still waiting on the creator: listing again must not put it back in the queue unaltered. A
+    // pack stays RequestedChanges through a cover or text edit, so the history decides.
+    const keepsVerdict =
+      current.status === CosmeticShopItemStatus.RequestedChanges &&
+      (!meta?.history?.length || awaitsRequestedChanges(meta.history));
     return tx.cosmeticShopItem.update({
       where: { id },
       data: {
         listed,
-        ...(listed
+        ...(listed && !keepsVerdict
           ? {
               status: CosmeticShopItemStatus.PendingReview,
               rejectionReason: null,
@@ -1322,16 +1373,22 @@ export const unarchiveCreatorShopItem = async ({
     const rejectionUnprovable = !meta.history?.length && !!current.rejectionReason;
     if (wasLastReviewARejection(meta.history) || (rejectionUnprovable && !isModerator))
       throw throwBadRequestError(REJECTED_IS_FINAL);
+    // An item archived while it waited on requested changes comes back still waiting on them.
+    const keepsVerdict = awaitsRequestedChanges(meta.history);
     return tx.cosmeticShopItem.update({
       where: { id },
       data: {
         // Same rule as re-listing: archiving ended this item's resale listings, so
         // bringing it back is a fresh submission, not an undo.
-        status: CosmeticShopItemStatus.PendingReview,
         archivedAt: null,
-        rejectionReason: null,
-        reviewedById: null,
-        reviewedAt: null,
+        ...(keepsVerdict
+          ? { status: CosmeticShopItemStatus.RequestedChanges }
+          : {
+              status: CosmeticShopItemStatus.PendingReview,
+              rejectionReason: null,
+              reviewedById: null,
+              reviewedAt: null,
+            }),
         meta: {
           ...meta,
           displayApproved: recordedDisplayVerdict({
@@ -2041,6 +2098,18 @@ export const getCreatorShopResaleStats = async ({ userId }: { userId: number }) 
 // Moderator: review queue
 // ---------------------------------------------------------------------------
 
+// Pending items have no verdict yet, so they go by submission; anything reviewed goes by when it
+// was approved or sent back. `id` breaks ties so a page boundary can't drop or repeat an item.
+export const reviewQueueOrder = (
+  sort: GetReviewQueueInput['sort'],
+  status: GetReviewQueueInput['status']
+): Prisma.CosmeticShopItemOrderByWithRelationInput[] => {
+  const dir = sort === 'newest' ? 'desc' : 'asc';
+  return status === CosmeticShopItemStatus.PendingReview
+    ? [{ createdAt: dir }, { id: dir }]
+    : [{ reviewedAt: { sort: dir, nulls: 'last' } }, { createdAt: dir }, { id: dir }];
+};
+
 export const getCreatorShopReviewQueue = async ({
   limit,
   page,
@@ -2130,12 +2199,7 @@ export const getCreatorShopReviewQueue = async ({
       where,
       take,
       skip,
-      // `id` breaks ties so a page boundary can't drop or repeat an item when
-      // two submissions share a createdAt.
-      orderBy: [
-        { createdAt: sort === 'newest' ? 'desc' : 'asc' },
-        { id: sort === 'newest' ? 'desc' : 'asc' },
-      ],
+      orderBy: reviewQueueOrder(sort, status),
       select: {
         ...creatorShopItemSelect,
         // A pack has no cosmetic, so its author is the lister — without this the
@@ -2389,8 +2453,11 @@ export const reviewCreatorShopItem = async ({
 };
 
 type TakedownFailure = {
-  /** `box`: a box still holds the cosmetic, or an opening that drew it was left unrefunded. */
-  stage: 'refund' | 'clawback' | 'box';
+  /**
+   * `box`: a box still holds the cosmetic, or an opening that drew it was left unrefunded. `cdn`:
+   * recording its artwork for the image CDN failed; a retry records it.
+   */
+  stage: 'refund' | 'clawback' | 'box' | 'cdn';
   /** 0 for a box that could not be pulled, or a payout whose key names no recipient. */
   userId: number;
   amount?: number;
@@ -2411,6 +2478,62 @@ const takedownMoneyMove = <T>(fn: () => Promise<T>) =>
   withRetries(fn, TAKEDOWN_MONEY_RETRIES, TAKEDOWN_RETRY_DELAY_MS);
 
 type PrefixRefund = Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
+
+/**
+ * One pack box's share of the pack charge, or null when the purchase records no usable pack terms.
+ * The last box also takes the rounding remainder, so a whole pack taken down returns exactly its price.
+ */
+function packBoxShareOf(owed: OwedPackBoxRefund) {
+  let pack: ReturnType<typeof boxPackTermsOf>;
+  try {
+    pack = boxPackTermsOf(owed.purchaseMeta);
+  } catch {
+    return null;
+  }
+  if (!pack) return null;
+  const share = Math.floor(owed.unitAmount / pack.size);
+  const isLastBox = parsePackBoxSourceKey(owed.boxSourceKey)?.n === pack.size;
+  return isLastBox ? owed.unitAmount - share * (pack.size - 1) : share;
+}
+
+/**
+ * Pays one pack box its share of the pack's charge, into the account the charge came from. Its
+ * external id is the box's own, so a retry after a landed attempt is refused as a duplicate (409),
+ * which is read as paid; it doesn't start with the charge's prefix, so it is never listed as part of
+ * the charge. Returns the Buzz paid.
+ */
+async function refundPackBoxShare(owed: OwedPackBoxRefund, title: string) {
+  const amount = packBoxShareOf(owed);
+  if (amount === null) throw new Error(`Purchase ${owed.buzzTransactionId} records no pack terms`);
+  if (amount <= 0) return 0;
+  const accountTypes = new Set(
+    (await getMultiAccountTransactionsByPrefix(owed.buzzTransactionId)).map(
+      (leg) => leg.accountType
+    )
+  );
+  // A pack is paid from one account; a split charge has no single place to return a share to.
+  if (accountTypes.size !== 1)
+    throw new Error(
+      `Pack charge ${owed.buzzTransactionId} has ${accountTypes.size} account types; refund it by hand`
+    );
+  const [toAccountType] = [...accountTypes];
+  try {
+    await takedownMoneyMove(() =>
+      createBuzzTransaction({
+        fromAccountId: 0,
+        toAccountId: owed.userId,
+        toAccountType,
+        amount,
+        type: TransactionType.Refund,
+        description: `Cosmetic removed - ${title}`,
+        externalTransactionId: `takedown-pack-share:${owed.boxSourceKey}`,
+      })
+    );
+  } catch (error) {
+    if (getBuzzApiStatus(error) !== 409) throw error;
+  }
+  return amount;
+}
 
 /**
  * A purchase's refund, finished when an earlier attempt reversed part of it: a lost response, or a
@@ -2496,6 +2619,7 @@ export const takedownCosmeticShopItem = async ({
 
   let retried = false;
   let note = reason;
+  let artwork: ShopTakedownArtwork | undefined;
   // Stop sales first so nothing can be bought while the refunds run.
   const archive = async () => {
     // Under the row lock, not from the read above: the refund this waited on, or an edit, appends
@@ -2530,9 +2654,28 @@ export const takedownCosmeticShopItem = async ({
         select: creatorShopItemSelect,
       });
     });
+    // The image CDN stops serving the artwork; the stored original stays, as the label's evidence.
+    // A retry records it again.
+    try {
+      artwork = await recordShopTakedownArtwork(id);
+    } catch (error) {
+      failures.push({ stage: 'cdn', userId: 0, error: errorMessage(error) });
+    }
     // Official-shop placements are curated rows, not a status filter — drop them
     // or the item keeps rendering in its section.
+    const placements = await dbWrite.cosmeticShopSectionItem.findMany({
+      where: { shopItemId: id },
+      select: { shopSectionId: true },
+    });
     await dbWrite.cosmeticShopSectionItem.deleteMany({ where: { shopItemId: id } });
+    const tracker = new Tracker();
+    for (const { shopSectionId } of placements)
+      await logSectionPlacements({
+        tracker,
+        sectionId: shopSectionId,
+        removed: [id],
+        reason: 'takedown',
+      });
     await endResaleListings({ shopItemId: id, title: item.title });
 
     if (item.addedById) {
@@ -2840,6 +2983,49 @@ export const takedownCosmeticShopItem = async ({
           error: `Box purchase ${purchase.buzzTransactionId} has no recorded payouts; the creator's share cannot be re-derived`,
         });
     }
+
+    let owedPackBoxes: OwedPackBoxRefund[] = [];
+    try {
+      owedPackBoxes = await listOwedPackBoxRefunds({ cosmeticId, shopItemId: id });
+    } catch (error) {
+      failures.push({
+        stage: 'box',
+        userId: 0,
+        error: `Pack box refunds not read: ${errorMessage(error)}`,
+      });
+    }
+    for (const owed of owedPackBoxes) {
+      let amount = 0;
+      try {
+        amount = await refundPackBoxShare(owed, item.title);
+      } catch (error) {
+        // Still owed: "Retry takedown" pays it, on the same external id.
+        failures.push({
+          stage: 'refund',
+          userId: owed.userId,
+          amount: packBoxShareOf(owed) ?? owed.unitAmount,
+          error: `Pack box ${owed.boxItemId}: ${errorMessage(error)}`,
+        });
+        await logTakedown('error', 'Pack box buyer refund failed', {
+          shopItemId: id,
+          userId: owed.userId,
+          buzzTransactionId: owed.buzzTransactionId,
+          boxItemId: owed.boxItemId.toString(),
+          error: errorMessage(error),
+        });
+        continue;
+      }
+      await markPackBoxRefundPaid(owed.buzzTransactionId, owed.boxItemId).catch((error) =>
+        logTakedown('error', 'Pack box refund paid but not marked', {
+          shopItemId: id,
+          buzzTransactionId: owed.buzzTransactionId,
+          boxItemId: owed.boxItemId.toString(),
+          error: errorMessage(error),
+        })
+      );
+      boxRefundedUserIds.push(owed.userId);
+      boxRefundedValue += amount;
+    }
   }
 
   let clawedBack = clawedBackFromLedger + reversedWithPurchase;
@@ -3081,6 +3267,7 @@ export const takedownCosmeticShopItem = async ({
     boxRefundedValue,
     failures,
     leftToWithdrawnRefund,
+    artwork,
   });
 
   await recordShopTakedownLabel(id, {
@@ -3109,6 +3296,8 @@ export const takedownCosmeticShopItem = async ({
     boxOpeningsRefunded: boxRefundedUserIds.length,
     boxRefundedValue,
     failures,
+    /** Artwork keys this takedown did not record for the image CDN, left for a moderator. */
+    artworkLeftServing: artwork ? artwork.unproven + artwork.otherOwner + artwork.inUse : 0,
   };
 };
 

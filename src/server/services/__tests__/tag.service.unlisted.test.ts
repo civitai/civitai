@@ -105,6 +105,17 @@ import {
 import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import type { SessionUser } from '~/types/session';
 
+// assertImageVisibleToViewer reads through Kysely, not Prisma's `$queryRaw`. Its statements get the
+// answers this file's `$queryRaw` fakes give, without counting as `$queryRaw` calls (answerLike).
+vi.mock('~/server/db/kyselyDb.lazy', async () => {
+  const { fakeKyselyDbLazy, answerLike } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock } = await import('~/__tests__/mocks/db.mock');
+  return fakeKyselyDbLazy(
+    answerLike(dbMock.dbRead.$queryRaw),
+    answerLike(dbMock.dbWrite.$queryRaw)
+  );
+});
+
 const WRONG_TIER =
   'ported read was handed a client other than kyselyRead (kyselyWrite / kyselyReadLong routes it ' +
   'at the wrong tier); note kyselyRead and kyselyWrite are deep-equal, so only toBe catches this';

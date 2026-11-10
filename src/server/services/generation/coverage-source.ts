@@ -9,9 +9,15 @@ import { isGeneratorReady } from '~/shared/generation/generator-readiness';
  * Read it ONCE per request and pass the answer down: a value that changed mid-request would have one
  * reader covering a version another refused.
  */
+/** Boost-to-load is the generator's opt-in only: API callers keep the members gate. */
+export const generatorAcceptsBoostRequired = (value: unknown, ctx: { apiKeyId?: unknown }) =>
+  value === true && ctx.apiKeyId == null;
+
 export async function nextCoverageEnabled() {
   return isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_COVERAGE_NEXT);
 }
+
+export type CoverageAudience = { next: boolean; member: boolean; boostAdmits?: boolean };
 
 /**
  * The coverage rule AND the audience for it, resolved once per request.
@@ -19,20 +25,27 @@ export async function nextCoverageEnabled() {
  * `member` reads true while the expansion is off, where it is meaningless: every consumer takes
  * the live rule regardless.
  */
-export async function coverageAudience(user?: {
-  id?: number;
-  tier?: string;
-  isModerator?: boolean;
-}) {
+export async function coverageAudience(
+  user?: {
+    id?: number;
+    tier?: string;
+    isModerator?: boolean;
+  },
+  /**
+   * The generator's opt-in to boost-to-load: a non-member may then start a cold expansion
+   * checkpoint's download by paying for a Download Boost. Leave unset on every non-generator surface.
+   */
+  { acceptBoostRequired = false }: { acceptBoostRequired?: boolean } = {}
+): Promise<CoverageAudience> {
   const next = await nextCoverageEnabled();
   if (!next) return { next, member: true };
-  const openToAll = await isFlipt(
-    FLIPT_FEATURE_FLAGS.GENERATION_LOADING_OPEN_TO_ALL,
-    String(user?.id ?? 0)
-  );
+  const entity = String(user?.id ?? 0);
+  const openToAll = await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_LOADING_OPEN_TO_ALL, entity);
   // Moderators keep it whatever their tier, matching `isGatedFor.members` in gates.ts.
-  const member = !!user?.isModerator || (user?.tier ?? 'free') !== 'free';
-  return { next, member: openToAll || member };
+  const member = openToAll || !!user?.isModerator || (user?.tier ?? 'free') !== 'free';
+  if (member || !acceptBoostRequired || !user?.id) return { next, member };
+  const boostAdmits = await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_LOADING_BOOST_FOR_FREE, entity);
+  return { next, member, boostAdmits };
 }
 
 export function coverageColumn(next: boolean) {
@@ -64,13 +77,29 @@ export function pickCovered(
 export function coveredForUser(
   row: (CoverageColumns & VersionReadiness) | null | undefined,
   next: boolean,
-  audience: { member: boolean; isCheckpoint: boolean }
+  audience: { member: boolean; isCheckpoint: boolean; boostAdmits?: boolean }
 ): boolean | null {
   if (!next || audience.member || !audience.isCheckpoint) return pickCovered(row, next);
   const live = pickCovered(row, false);
   if (live) return true;
-  if (row?.coveredNext && isGeneratorReady(row)) return true;
+  if (row?.coveredNext && (isGeneratorReady(row) || audience.boostAdmits)) return true;
   return live;
+}
+
+/**
+ * True when `coveredForUser` admits the row ONLY because of `boostAdmits`: a cold expansion
+ * checkpoint a non-member may load by paying for a boost. That submit must then go out boosted.
+ */
+export function boostRequiredFor(
+  row: (CoverageColumns & VersionReadiness) | null | undefined,
+  next: boolean,
+  audience: { member: boolean; isCheckpoint: boolean; boostAdmits?: boolean }
+) {
+  if (!audience.boostAdmits) return false;
+  return (
+    !coveredForUser(row, next, { ...audience, boostAdmits: false }) &&
+    !!coveredForUser(row, next, audience)
+  );
 }
 
 /**
@@ -153,6 +182,23 @@ export function coveredByForUser(
 export function coveragePair(row: CoverageColumns | null | undefined, next: boolean) {
   return {
     covered: pickCovered(row, next) ?? false,
+    coveredLive: pickCovered(row, false) ?? false,
+  };
+}
+
+/**
+ * `coveragePair` where the audience gate applies, for coverage columns whose readiness was read
+ * separately. No readiness reads as cold. The row's own coverage wins over any the readiness
+ * source also carries.
+ */
+export function coveragePairWithReadiness(
+  row: CoverageColumns,
+  readiness: VersionReadiness | undefined,
+  next: boolean,
+  audience: { member: boolean; isCheckpoint: boolean }
+) {
+  return {
+    covered: coveredForUser({ ...readiness, ...row }, next, audience) ?? false,
     coveredLive: pickCovered(row, false) ?? false,
   };
 }

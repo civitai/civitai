@@ -2,8 +2,13 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { config } from '@/config';
 import { createEngineCluster } from '@/services/redis-cluster-client';
 
+/** Runtime limits an operator sets on a running backfill; each is clamped to its env value. */
+export type RunLimits = { inFlight?: number; stepsPerSecond?: number };
+
 /** Where a long run keeps its position and pause flag, so a restart or deploy resumes it. */
 export interface RunState {
+  getLimits(): Promise<RunLimits>;
+  setLimit(name: keyof RunLimits, value: number | null): Promise<void>;
   getCursor(): Promise<number | null>;
   setCursor(id: number): Promise<void>;
   isPaused(): Promise<boolean>;
@@ -29,7 +34,21 @@ export async function redisRunState(name: string): Promise<RunState> {
   await redis.connect();
   // One hash tag so both keys live on the same cluster slot.
   const key = (k: string) => `vector-sync:{${name}}:${k}`;
+  const limitKey = (name: keyof RunLimits) => key(`limit:${name}`);
+  // A hand-set bad value is ignored rather than becoming NaN capacity.
+  const num = (v: string | null) => {
+    const n = Number(v);
+    return v !== null && Number.isInteger(n) && n >= 1 ? n : undefined;
+  };
   return {
+    getLimits: async () => ({
+      inFlight: num(await redis.get(limitKey('inFlight'))),
+      stepsPerSecond: num(await redis.get(limitKey('stepsPerSecond'))),
+    }),
+    setLimit: async (name, value) =>
+      void (value === null
+        ? await redis.del(limitKey(name))
+        : await redis.set(limitKey(name), String(value))),
     getCursor: async () => {
       const v = await redis.get(key('cursor'));
       return v === null ? null : Number(v);
@@ -38,7 +57,13 @@ export async function redisRunState(name: string): Promise<RunState> {
     isPaused: async () => (await redis.get(key('paused'))) === '1',
     setPaused: async (paused) =>
       void (paused ? await redis.set(key('paused'), '1') : await redis.del(key('paused'))),
-    reset: async () => void (await redis.del([key('cursor'), key('paused')])),
+    reset: async () =>
+      void (await redis.del([
+        key('cursor'),
+        key('paused'),
+        limitKey('inFlight'),
+        limitKey('stepsPerSecond'),
+      ])),
     close: async () => void (await redis.quit()),
     acquireLease: async (owner, ttlMs) =>
       (await redis.set(key('lease'), owner, {
@@ -56,12 +81,22 @@ export async function redisRunState(name: string): Promise<RunState> {
 
 /** A JSON file, for local runs without Redis. */
 export function fileRunState(path: string): RunState {
-  type State = { cursor?: number; paused?: boolean; lease?: { owner: string; until: number } };
+  type State = {
+    cursor?: number;
+    paused?: boolean;
+    limits?: RunLimits;
+    lease?: { owner: string; until: number };
+  };
   const read = async (): Promise<State> =>
     JSON.parse(await readFile(path, 'utf8').catch(() => '{}'));
   const write = async (patch: State) =>
     writeFile(path, JSON.stringify({ ...(await read()), ...patch }));
   return {
+    getLimits: async () => (await read()).limits ?? {},
+    setLimit: async (name, value) => {
+      const limits = { ...(await read()).limits, [name]: value ?? undefined };
+      await write({ limits });
+    },
     getCursor: async () => (await read()).cursor ?? null,
     setCursor: (cursor) => write({ cursor }),
     isPaused: async () => !!(await read()).paused,

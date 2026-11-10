@@ -151,10 +151,17 @@ type BlocksCaller = ReturnType<typeof blocksRouter.createCaller>;
  * `tier: 'free'` / `isMember: 'false'` / `isEarlyAdopter: 'false'` here. If one of them
  * ever gates a block-reachable path, widen this — do not assume it is already covered.
  *
- * Cost: one `getUserById` per request. The two spend procedures hydrate the same user
- * again internally, so on submit/estimate this is a second read of a row that is already
- * being fetched; accepted rather than plumbed through, because the alternative couples
- * this seam to the procedures' internals.
+ * `appBuilderApproved` IS supplied: it gates the App Blocks builder flags (the
+ * `app-builder-approved` segment) through a relation select over the approved
+ * `AppAccessRequest` rows on the same `getUserById` call, the same predicate the auth hub's
+ * session producer applies. That select is NOT free: the schema enables no `relationJoins`
+ * preview feature, so Prisma runs the nested select as a separate query (one indexed
+ * `take: 1` lookup) after the `User` read.
+ *
+ * Cost: one `getUserById` per request, which is two queries with the relation select. The
+ * two spend procedures hydrate the same user again internally, so on submit/estimate this
+ * is a second read of a row that is already being fetched; accepted rather than plumbed
+ * through, because the alternative couples this seam to the procedures' internals.
  */
 async function blockFliptUser(req: NextApiRequest): Promise<SessionUser | undefined> {
   const claims = (req as { blockClaims?: { sub?: string } }).blockClaims;
@@ -167,8 +174,21 @@ async function blockFliptUser(req: NextApiRequest): Promise<SessionUser | undefi
   // Anon subjects have no user id — `{ isLoggedIn: 'false' }` is then CORRECT, and is
   // what the bridge produces for the same caller.
   if (userId == null) return undefined;
-  const row = await getUserById({ id: userId, select: { id: true, isModerator: true } });
-  return row ? (row as unknown as SessionUser) : undefined;
+  const row = await getUserById({
+    id: userId,
+    select: {
+      id: true,
+      isModerator: true,
+      appAccessRequests: { where: { status: 'approved' }, select: { id: true }, take: 1 },
+    },
+  });
+  if (!row) return undefined;
+  const { appAccessRequests, ...user } = row;
+  // `?.`: a row without the relation (a partial stub) reads as not approved rather than a 500.
+  return {
+    ...user,
+    appBuilderApproved: (appAccessRequests?.length ?? 0) > 0,
+  } as unknown as SessionUser;
 }
 
 /**

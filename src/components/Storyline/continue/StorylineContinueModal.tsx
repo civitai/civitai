@@ -1,29 +1,22 @@
 import { Alert, Group, Loader, Modal, SegmentedControl } from '@mantine/core';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   StorylineContinueForm,
   type StorylineSubmitOutcome,
 } from '~/components/Storyline/continue/StorylineContinueForm';
 import { StorylineJoinChapterForm } from '~/components/Storyline/continue/StorylineJoinChapterForm';
-import {
-  STORYLINE_CONTINUE_POST_LIMIT,
-  storylineContinuePostOptions,
-  storylineWithoutChapters,
-  storylineSubmitInput,
-} from '~/components/Storyline/storyline-ui';
+import { storylineSubmitInput } from '~/components/Storyline/storyline-ui';
 import { getStorylineChapterName } from '~/components/Storyline/storyline-mode.utils';
 import {
   useAddOwnerStorylineChapter,
+  useOwnStorylinePosts,
   useInsertStorylineChapter,
   useStorylineContinueTerms,
   useSubmitStorylineContinuation,
 } from '~/components/Storyline/storyline.data';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { PostSort } from '~/server/common/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
 export type StorylineContinueModalProps = {
@@ -42,6 +35,13 @@ export type StorylineContinueModalProps = {
   insertBeforeChapterId?: number;
   /** Which way the owner's picker opens; they can switch. */
   mode?: 'post' | 'join';
+  /** The parent already has a main-path chapter: this starts a branch, and says so. */
+  branch?: boolean;
+  /**
+   * `parentChapterId` was read as the main path's end. The owner's post goes at the end found when
+   * it is added; a join is refused if the end has moved. Either would otherwise make a branch.
+   */
+  atEnd?: boolean;
 };
 
 export default function StorylineContinueModal({
@@ -50,6 +50,8 @@ export default function StorylineContinueModal({
   parentChapterId,
   insertBeforeChapterId,
   mode: initialMode = 'post',
+  branch = false,
+  atEnd = false,
 }: StorylineContinueModalProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
@@ -69,53 +71,24 @@ export default function StorylineContinueModal({
     { id: storylineId ?? 0 },
     { enabled: !!storylineId }
   );
-  // Every level: a post above the storyline's ceiling has to be listed to be refused out loud.
-  // Newest, all time: the default sort lists only posts that already have reactions, which leaves
-  // out the post just made to continue the story.
-  const {
-    data: postPages,
-    isLoading: postsLoading,
-    isError: postsError,
-  } = trpc.post.getInfinite.useInfiniteQuery(
-    {
-      username: currentUser?.username,
-      browsingLevel: allBrowsingLevelsFlag,
-      limit: STORYLINE_CONTINUE_POST_LIMIT,
-      sort: PostSort.Newest,
-      period: MetricTimeframe.AllTime,
-    },
-    { enabled: enabled && !!currentUser?.username, getNextPageParam: (page) => page.nextCursor }
-  );
   const { data: parentPost } = trpc.post.get.useQuery({ id: parentPostId }, { enabled });
   const terms = useStorylineContinueTerms(parentPostId, { enabled });
   const submit = useSubmitStorylineContinuation({ onSuccess: setOutcome });
   const addOwn = useAddOwnerStorylineChapter({ onSuccess: () => setOutcome('added') });
   const insert = useInsertStorylineChapter({ onSuccess: () => setOutcome('added') });
-  const ownerAdd =
-    !!currentUser && !!storyline && !!parentChapterId && storyline.userId === currentUser.id;
+  const inserting = insertBeforeChapterId !== undefined;
+  const isOwner = !!currentUser && !!storyline && storyline.userId === currentUser.id;
+  // A moderator inserts and joins for the owner; continuing as themselves stays theirs.
+  const managing = isOwner || (!!storyline && !!currentUser?.isModerator);
+  const ownerAdd = !!parentChapterId && (isOwner || (managing && inserting));
+  const actingAsOwner = ownerAdd && !isOwner;
+  const joining = managing && !!parentChapterId && mode === 'join';
 
-  const firstPage = postPages?.pages[0];
-  const ownPosts = useMemo(
-    () =>
-      currentUser
-        ? storylineContinuePostOptions(firstPage?.items ?? [], {
-            viewerId: currentUser.id,
-            parentPostId,
-          })
-        : [],
-    [currentUser, firstPage, parentPostId]
-  );
-  // Which of them are already chapters; the author is told whatever the post's level.
-  const ownPostIds = useMemo(() => ownPosts.map((post) => post.id), [ownPosts]);
-  const { data: ownChapters, isLoading: ownChaptersLoading } = trpc.storyline.getForPosts.useQuery(
-    { postIds: ownPostIds, browsingLevel: allBrowsingLevelsFlag },
-    // Keep the last answer while a refetch adds a post, so the grid does not blink to skeletons.
-    { enabled: enabled && ownPostIds.length > 0, placeholderData: (previous) => previous }
-  );
-  const { posts, alreadyChapters } = storylineWithoutChapters(
-    ownPosts,
-    new Set(Object.keys(ownChapters ?? {}).map(Number))
-  );
+  const { posts, alreadyChapters, postsLoading, postsError, paging } = useOwnStorylinePosts({
+    enabled: enabled && !!storyline,
+    excludePostId: parentPostId,
+    author: actingAsOwner && storyline ? storyline.user : undefined,
+  });
 
   const parentName =
     parentChapter && parentPost
@@ -131,7 +104,6 @@ export default function StorylineContinueModal({
         })
       : null;
 
-  const inserting = insertBeforeChapterId !== undefined;
   const ownerPending = inserting ? insert.isPending : addOwn.isPending;
   const ownerError = inserting ? insert.error : addOwn.error;
 
@@ -141,7 +113,13 @@ export default function StorylineContinueModal({
     <Modal
       {...dialog}
       title={
-        inserting ? 'Insert a chapter' : ownerAdd ? 'Add the next chapter' : 'Continue the story'
+        inserting
+          ? 'Insert a chapter'
+          : branch
+          ? 'Start a branch'
+          : ownerAdd
+          ? 'Add the next chapter'
+          : 'Continue the story'
       }
       size="md"
     >
@@ -155,9 +133,9 @@ export default function StorylineContinueModal({
         </Group>
       ) : !storylineId || !storyline ? (
         <Alert color="gray">This chapter is not part of a storyline you can continue.</Alert>
-      ) : !ownerAdd && terms.unavailable ? (
+      ) : !ownerAdd && !joining && terms.unavailable ? (
         <Alert color="gray">Continuing storylines is not open yet.</Alert>
-      ) : !ownerAdd && !terms.data ? (
+      ) : !ownerAdd && !joining && !terms.data ? (
         <Alert color="red">Couldn&apos;t load what continuing this storyline costs.</Alert>
       ) : (
         <>
@@ -174,15 +152,16 @@ export default function StorylineContinueModal({
               data-testid="storyline-add-mode"
             />
           )}
-          {ownerAdd && parentChapterId && mode === 'join' ? (
+          {joining && parentChapterId ? (
             <StorylineJoinChapterForm
               parentChapterId={parentChapterId}
               parentName={parentName}
+              atEnd={atEnd}
               onClose={dialog.onClose}
             />
           ) : (
             <StorylineContinueForm
-              viewerId={currentUser.id}
+              viewerId={actingAsOwner ? storyline.userId : currentUser.id}
               storyline={storyline}
               cover={storyline.coverImage}
               parentName={parentName}
@@ -190,13 +169,13 @@ export default function StorylineContinueModal({
               price={terms.data?.price ?? 0}
               ownerAdd={ownerAdd}
               inserting={inserting}
+              branch={branch}
               isCollaborator={storyline.collaborators.some((user) => user.id === currentUser.id)}
               posts={posts}
-              postsLoading={postsLoading || (ownPostIds.length > 0 && ownChaptersLoading)}
+              postsLoading={postsLoading}
               alreadyChapters={alreadyChapters}
-              // A failed refetch keeps the posts already shown.
-              postsError={postsError && !firstPage}
-              morePosts={!!firstPage?.nextCursor}
+              postsError={postsError}
+              paging={paging}
               postId={postId}
               onPostChange={setPostId}
               submitting={ownerAdd ? ownerPending : submit.isPending}
@@ -214,6 +193,8 @@ export default function StorylineContinueModal({
                       childChapterId: insertBeforeChapterId,
                       postId: post.id,
                     });
+                  else if (atEnd)
+                    addOwn.mutateAtEnd({ storylineId: storyline.id, postId: post.id });
                   else addOwn.mutate({ parentChapterId, postId: post.id });
                   return;
                 }

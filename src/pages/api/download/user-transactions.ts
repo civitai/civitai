@@ -166,5 +166,6 @@ export default AuthedEndpoint(
 
     return res.end();
   },
-  ['GET']
+  ['GET'],
+  { allowBanned: true }
 );

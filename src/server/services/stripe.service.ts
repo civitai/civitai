@@ -49,6 +49,16 @@ import { userUpdateCounter } from '~/server/prom/client';
 const baseUrl = getBaseUrl('green'); // Stripe lives in civitai green
 const log = createLogger('stripe', 'blue');
 
+// A label on `cancellation_details.comment` for people reading the subscription. It decides nothing:
+// Stripe keeps the comment through later updates, and the billing portal's survey writes there too.
+const MODERATION_CANCELLATION = 'civitai-moderation-cancel';
+// The `canceled_at` of the cancel a ban / restriction flow made. reinstateSubscription resumes only
+// while it matches: a member's own later cancel gets a new `canceled_at`.
+export const MODERATION_CANCEL_MARK = 'civitai_moderation_cancel';
+// A gift subscription's own `cancel_at` (the end of all its gifted months), saved when a moderation
+// cancel cuts it to the current period so a reinstate can put it back.
+const MODERATION_PREV_CANCEL_AT = 'civitai_moderation_prev_cancel_at';
+
 export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) => {
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
@@ -870,11 +880,7 @@ export const upsertSubscription = async (
   await invalidateSubscriptionCaches(user.id);
 };
 
-export const toDateTime = (secs: number) => {
-  const t = new Date('1970-01-01T00:30:00Z'); // Unix epoch start.
-  t.setSeconds(secs);
-  return t;
-};
+export const toDateTime = (secs: number) => new Date(secs * 1000);
 
 export const upsertProductRecord = async (product: Stripe.Product) => {
   const productData = {
@@ -1363,6 +1369,7 @@ export const cancelSubscription = async ({
           in: ['active', 'past_due', 'trialing'],
         },
       },
+      orderBy: { createdAt: 'desc' },
       select: { id: true },
     });
     if (!subscription) return;
@@ -1374,7 +1381,24 @@ export const cancelSubscription = async ({
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
   if (atPeriodEnd) {
-    await stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: true });
+    // A cancellation already due by period end is the member's own (or a gift's last month): leave
+    // it and don't mark it, or reinstating would resume a membership they chose to end.
+    const live = await stripe.subscriptions.retrieve(subscriptionId);
+    if (live.cancel_at_period_end) return;
+    if (live.cancel_at && live.cancel_at <= live.current_period_end) return;
+    const cancelled = await stripe.subscriptions.update(subscriptionId, {
+      cancel_at_period_end: true,
+      cancellation_details: { comment: MODERATION_CANCELLATION },
+      // Always written: a date left from an earlier cut would make reinstate treat this as a gift.
+      metadata: { [MODERATION_PREV_CANCEL_AT]: live.cancel_at ? String(live.cancel_at) : '' },
+    });
+    // canceled_at exists only once the cancel is written, hence a second update. If it fails, the
+    // cancel stands unmarked and is never resumed.
+    if (cancelled.canceled_at) {
+      await stripe.subscriptions.update(subscriptionId, {
+        metadata: { [MODERATION_CANCEL_MARK]: String(cancelled.canceled_at) },
+      });
+    }
     return;
   }
 
@@ -1393,19 +1417,25 @@ export const cancelSubscription = async ({
   if (userId) await invalidateSubscriptionCaches(userId);
 };
 
-// Reverses a cancel_at_period_end cancellation while the subscription is still
-// within its paid period (used when a ban is lifted or a restriction is
-// overturned). No-op if the user has no still-active Stripe subscription
-// pending cancellation — once the period has lapsed the subscription is gone
-// and the user must re-subscribe.
+// Reverses a cancel_at_period_end cancellation that a ban / restriction flow made, once
+// the account is no longer banned or muted. A cancellation without our mark stays: the
+// member's own, or one we made before the mark existed (they renew themselves rather
+// than being billed against a cancel they may have chosen).
 export const reinstateSubscription = async ({ userId }: { userId: number }) => {
+  const user = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { bannedAt: true, muted: true },
+  });
+  if (!user || user.bannedAt || user.muted) return;
+
   const subscription = await dbWrite.customerSubscription.findFirst({
     where: {
       userId,
       product: { provider: 'Stripe' },
       status: { in: ['active', 'past_due', 'trialing'] },
-      cancelAtPeriodEnd: true,
     },
+    // A lagging row can still say false, so this only prefers the cancelling row; Stripe decides.
+    orderBy: [{ cancelAtPeriodEnd: 'desc' }, { createdAt: 'desc' }],
     select: { id: true },
   });
   if (!subscription) return;
@@ -1413,7 +1443,29 @@ export const reinstateSubscription = async ({ userId }: { userId: number }) => {
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
-  await stripe.subscriptions.update(subscription.id, { cancel_at_period_end: false });
+  // Stripe's copy decides, not our row: the row lags the webhook and does not carry the mark.
+  const live = await stripe.subscriptions.retrieve(subscription.id);
+  if (!live.cancel_at_period_end || !live.canceled_at) return;
+  if (live.metadata?.[MODERATION_CANCEL_MARK] !== String(live.canceled_at)) return;
+  const unmark = { [MODERATION_CANCEL_MARK]: '', [MODERATION_PREV_CANCEL_AT]: '' };
+
+  const prevCancelAt = Number(live.metadata?.[MODERATION_PREV_CANCEL_AT]);
+  if (prevCancelAt) {
+    // A gift: restore its own end date. Clearing the cancel would renew it into paid billing.
+    if (prevCancelAt <= live.current_period_end) return;
+    await stripe.subscriptions.update(subscription.id, {
+      cancel_at: prevCancelAt,
+      proration_behavior: 'none',
+      // Unmarked, the gift's own last-period cancel (cap true) is never resumed into paid.
+      metadata: unmark,
+    });
+    return;
+  }
+
+  await stripe.subscriptions.update(subscription.id, {
+    cancel_at_period_end: false,
+    metadata: unmark,
+  });
 };
 
 // NOTE: The Price rows returned here are the source of truth for the buzz
@@ -1460,13 +1512,16 @@ export const getBuzzPackages = async () => {
   });
 };
 
-const futureUsageNotSupportedPaymentMethods = ['customer_balance', 'wechat_pay'];
+// Buzz is credited the moment the PaymentIntent succeeds, and a bank debit can be returned days
+// later, so the methods are fixed here rather than left to the dashboard or the client.
+// Cash App Pay only takes USD.
+const buzzPaymentMethodTypes = (currency: Currency) =>
+  currency === Currency.USD ? ['card', 'link', 'cashapp'] : ['card', 'link'];
 
 export const getPaymentIntent = async ({
   unitAmount,
   currency = Currency.USD,
   metadata,
-  paymentMethodTypes,
   customerId,
   user,
   domain,
@@ -1576,17 +1631,9 @@ export const getPaymentIntent = async ({
   const paymentIntent = await stripe.paymentIntents.create({
     amount: unitAmount,
     currency,
-    automatic_payment_methods:
-      !paymentMethodTypes && setupFuturePayment
-        ? {
-            enabled: true,
-          }
-        : undefined,
     customer: customerId,
     metadata: { ...(validatedMetadata as MetadataParam), buzzType },
-    payment_method_types: setupFuturePayment
-      ? paymentMethodTypes || undefined
-      : futureUsageNotSupportedPaymentMethods,
+    payment_method_types: buzzPaymentMethodTypes(currency),
     setup_future_usage: setupFuturePayment ? 'off_session' : undefined,
   });
 
@@ -1626,38 +1673,55 @@ export const getPaymentIntentsForBuzz = async ({
       unixStartingAt || unixEndingAt ? { gte: unixStartingAt, lte: unixEndingAt } : undefined,
   });
 
-  const filteredPayments = paymentIntents.data.filter(
+  const pendingPayments = paymentIntents.data.filter(
     (intent) =>
       intent.status === 'succeeded' &&
       intent.metadata.type === 'buzzPurchase' &&
       !intent.metadata.transactionId
   );
-  const batches = chunk(filteredPayments, 10);
+  // Without a recorded buyer there is no one to verify the credit against, so these are left to
+  // an engineer rather than credited to whoever the query names.
+  const legacyPaymentIntentIds = pendingPayments
+    .filter((intent) => !intent.metadata.userId)
+    .map((intent) => intent.id);
+  for (const stripePaymentIntentId of legacyPaymentIntentIds) {
+    logToAxiom(
+      {
+        name: 'buzz-purchase-completion-rejected',
+        type: 'warning',
+        reason: 'legacy purchase without userId',
+        userId,
+        stripePaymentIntentId,
+      },
+      'webhooks'
+    ).catch(() => null);
+  }
+  const batches = chunk(
+    pendingPayments.filter((intent) => intent.metadata.userId),
+    10
+  );
 
   const processedPurchases: Array<{ transactionId: string }> = [];
+  const failedPaymentIntentIds: string[] = [];
   for (const batch of batches) {
-    const processed = await Promise.all(
+    const results = await Promise.allSettled(
       batch.map((intent) => {
         const metadata = intent.metadata as Schema.PaymentIntentMetadataSchema;
 
         return completeStripeBuzzTransaction({
-          amount: metadata.buzzAmount ?? intent.amount * 10,
+          amount: metadata.buzzAmount,
           stripePaymentIntentId: intent.id,
-          details: {
-            userId,
-            unitAmount: intent.amount,
-            buzzAmount: intent.amount * 10,
-            type: 'buzzPurchase',
-            ...intent.metadata,
-          },
-          userId: metadata.userId ?? userId,
+          userId: metadata.userId,
         });
       })
     );
-    processedPurchases.concat(processed);
+    results.forEach((result, i) => {
+      if (result.status === 'fulfilled') processedPurchases.push(result.value);
+      else failedPaymentIntentIds.push(batch[i].id);
+    });
   }
 
-  return processedPurchases;
+  return { processed: processedPurchases, legacyPaymentIntentIds, failedPaymentIntentIds };
 };
 
 export const getSetupIntent = async ({

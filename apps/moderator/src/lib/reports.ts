@@ -5,8 +5,7 @@ export { ReportReason, ReportStatus };
 
 export const ReportEntity = {
   Model: 'model',
-  Comment: 'comment',
-  CommentV2: 'commentV2',
+  CommentV3: 'commentV3',
   Image: 'image',
   ResourceReview: 'resourceReview',
   Article: 'article',
@@ -29,6 +28,10 @@ export const ReportEntity = {
 export type ReportEntity = (typeof ReportEntity)[keyof typeof ReportEntity];
 
 export const reportEntities = Object.values(ReportEntity);
+
+export const isReportEntity = (v: string): v is ReportEntity =>
+  (reportEntities as readonly string[]).includes(v);
+
 export const reportStatuses = Object.values(ReportStatus);
 export const reportReasons = Object.values(ReportReason);
 
@@ -88,8 +91,7 @@ export const DEFAULT_REPORT_REASONS: ReportReason[] = reportReasons.filter(
 
 export const reportEntityLabels: Record<ReportEntity, string> = {
   model: 'Model',
-  comment: 'Model Comment',
-  commentV2: 'Comment',
+  commentV3: 'Comment',
   image: 'Image',
   resourceReview: 'Review',
   article: 'Article',
@@ -114,8 +116,8 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
 // against — renaming one breaks saved links, so extend rather than reshuffle.
 export const reportEntitySlugs: Record<ReportEntity, string> = {
   model: 'model',
-  comment: 'model-comment',
-  commentV2: 'comment',
+  // Keeps the slug of the retired CommentV2 queue, so saved links still open it.
+  commentV3: 'comment',
   image: 'image',
   resourceReview: 'review',
   article: 'article',

@@ -135,7 +135,12 @@ export async function queryWorkflows({
   fromDate,
   toDate,
   ...query
-}: z.output<typeof workflowQuerySchema> & { token: string; hideMatureContent: boolean }) {
+}: z.output<typeof workflowQuerySchema> & {
+  token: string;
+  hideMatureContent: boolean;
+  /** Workflows carrying any of these tags are left out. Server-set only, never client input. */
+  excludeTags?: string[];
+}) {
   const client = createOrchestratorClient(token);
 
   // Additive read instrumentation: time ONLY the orchestrator client network call (not the whole handler) and
@@ -769,12 +774,14 @@ export async function setWorkflowDownloadPriority({
 }
 
 function orchestratorErrorMessage(error: unknown) {
-  const { messages } = (
+  const errors =
     typeof error !== 'string' && error
-      ? (error as { errors?: { messages?: string[] } }).errors ?? {}
-      : {}
-  ) as { messages?: string[] };
-  return messages?.length
+      ? (error as { errors?: Record<string, string[]> }).errors
+      : undefined;
+  // The orchestrator keys each error by the request field it concerns; the keys' brackets would fail
+  // `isLikelySafeMessage`, so only the messages are forwarded.
+  const messages = Object.values(errors ?? {}).flat();
+  return messages.length
     ? messages.join(',\n')
     : handleError(error as Parameters<typeof handleError>[0]);
 }

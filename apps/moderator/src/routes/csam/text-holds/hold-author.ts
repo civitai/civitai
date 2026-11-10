@@ -1,14 +1,27 @@
 import type { Jsonified } from '$lib/format';
 import type { AuthorHoldSummary } from '$lib/server/csam-holds.queries';
+import type { ReportEntity } from '$lib/reports';
 import type { ReportedContent, UserCard, UserCounts } from '$lib/server/user-lookup.service';
+
+/** A report as the card shows it, with none of the internal notes or reporter identities. */
+export type HoldAuthorReport = {
+  id: number;
+  type: ReportEntity;
+  entityType: string;
+  entityId: number | null;
+  /** The label for the report, from `reportReasonLabel`. */
+  reason: string;
+  createdAt: string;
+};
 
 /** The payload of `/api/csam-hold-author/[holdId]`. */
 export type HoldAuthor = {
   userId: number;
-  /** Null for a moderator who cannot open User Lookup: the card carries an email and the account's standing. */
+  /** Null when the moderator cannot open User Lookup, or the lookup failed. */
   card: Jsonified<UserCard> | null;
   counts: Jsonified<UserCounts> | null;
   reportedContent: ReportedContent[] | null;
+  recentReports: HoldAuthorReport[] | null;
   holds: {
     /** Every other hold of the author, counting the decided ones past `others`. */
     total: number;

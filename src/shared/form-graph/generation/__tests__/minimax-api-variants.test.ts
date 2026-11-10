@@ -57,11 +57,60 @@ describe('minimax H3 Max and HeyGen variants', () => {
     expect(min(minimaxVersionIds.max)).toBe(4);
   });
 
+  it('the API build offers only the resolutions each tier supports', () => {
+    const store = storeOn('txt2vid', minimaxVersionIds['v1.0']);
+    const resolutions = () =>
+      (store.getField('resolution')?.meta as { options: { value: string }[] }).options.map(
+        (o) => o.value
+      );
+
+    expect(store.getField('mode')?.value).toBe('standard');
+    expect(store.getField('resolution')?.value).toBe('2K');
+    expect(resolutions()).toEqual(['768P', '2K']);
+
+    store.set({ mode: 'lite' });
+    expect(resolutions()).toEqual(['480P', '768P']);
+    expect(store.getField('resolution')?.value).toBe('768P');
+
+    store.set({ mode: 'highspeed' });
+    expect(resolutions()).toEqual(['768P']);
+  });
+
+  it('HeyGen offers 2K', () => {
+    const options = storeOn('txt2vid', minimaxVersionIds.heygen).getField('resolution')?.meta as {
+      options: { value: string }[];
+    };
+
+    expect(options.options.map((o) => o.value)).toContain('2K');
+  });
+
   it('a 4s duration picked on comfy does not reach HeyGen', () => {
     const store = storeOn('txt2vid', minimaxVersionIds.comfy);
     store.set({ duration: 4 });
     store.set({ model: { id: minimaxVersionIds.heygen } });
 
     expect(store.getField('duration')?.value).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe('minimax H3 custom checkpoints', () => {
+  const CUSTOM_ID = 9_999_001;
+
+  it('keeps a custom checkpoint and runs it on the comfy build', () => {
+    const store = storeOn('txt2vid', CUSTOM_ID);
+
+    expect((store.getField('model')?.value as { id: number }).id).toBe(CUSTOM_ID);
+    expect(store.getField('minimaxVariant')?.value).toBe('comfy');
+    expect(store.getField('resources')).not.toBeNull();
+    expect(store.getField('steps')).not.toBeNull();
+  });
+
+  it('offers a custom checkpoint the comfy build aspect ratios', () => {
+    const options = (modelId: number) =>
+      (store(modelId).getField('aspectRatio')?.meta as { options?: unknown[] })?.options;
+    const store = (modelId: number) => storeOn('txt2vid', modelId);
+
+    expect(options(CUSTOM_ID)).toEqual(options(minimaxVersionIds.comfy));
+    expect(options(CUSTOM_ID)).not.toEqual(options(minimaxVersionIds['v1.0']));
   });
 });

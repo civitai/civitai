@@ -1,12 +1,5 @@
 import { shortAge } from '$lib/format';
-import {
-  chatAuditChatUrl,
-  commentV2Url,
-  entityUrl,
-  modelCommentUrl,
-  userLookupUrl,
-  userUrl,
-} from '$lib/entity-url';
+import { chatAuditChatUrl, commentUrl, entityUrl, userLookupUrl, userUrl } from '$lib/entity-url';
 
 export const NOTE_MAX_LENGTH = 500;
 
@@ -16,8 +9,7 @@ export const CSAM_HOLD_ENTITY_TYPES = [
   'Post',
   'Article',
   'ChatMessage',
-  'Comment',
-  'CommentV2',
+  'CommentV3',
   'UserProfile',
 ] as const;
 
@@ -28,8 +20,7 @@ export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   Post: 'Post',
   Article: 'Article',
   ChatMessage: 'Chat message',
-  Comment: 'Model comment',
-  CommentV2: 'Comment',
+  CommentV3: 'Comment',
   UserProfile: 'Profile',
 };
 
@@ -77,8 +68,7 @@ export function decisionLabel(hold: { status: string; decision: string | null })
 /** The types the main app can remove without destroying them; a type outside the list only gets "do nothing". */
 const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'ChatMessage',
-  'Comment',
-  'CommentV2',
+  'CommentV3',
   'UserProfile',
   'Post',
   'Model',
@@ -147,29 +137,6 @@ export const CSAM_HOLD_CONFIRMS: Partial<
   },
 };
 
-const MIN_PHRASE = 2;
-// A quote that never closes would otherwise run on to the next quote mark and highlight the text between.
-const MAX_PHRASE = 120;
-const WORD = '\\p{L}\\p{N}';
-// A quote opens after a non-word character and closes before one, so an apostrophe inside a word
-// ("author's", "isn't") is not one.
-const QUOTED = [
-  `(?<![${WORD}])'([^'\\n]{1,${MAX_PHRASE}}?)'(?![${WORD}])`,
-  `"([^"\\n]{1,${MAX_PHRASE}}?)"`,
-  `“([^”\\n]{1,${MAX_PHRASE}}?)”`,
-  `(?<![${WORD}])‘([^’\\n]{1,${MAX_PHRASE}}?)’(?![${WORD}])`,
-];
-
-export function quotedPhrases(reason: string): string[] {
-  const found = new Set<string>();
-  for (const source of QUOTED)
-    for (const match of reason.matchAll(new RegExp(source, 'gu'))) {
-      const phrase = match[1].trim();
-      if (phrase.length >= MIN_PHRASE) found.add(phrase);
-    }
-  return [...found];
-}
-
 export function holdTitle(hold: {
   entityType: string;
   entityId: number;
@@ -180,8 +147,7 @@ export function holdTitle(hold: {
   switch (hold.entityType) {
     case 'ChatMessage':
       return 'Chat';
-    case 'Comment':
-    case 'CommentV2':
+    case 'CommentV3':
       return 'Comment';
     case 'UserProfile':
       return hold.username ?? (hold.userId ? `user #${hold.userId}` : 'Profile');
@@ -223,18 +189,13 @@ type HoldRef = {
   userId: number | null;
   username: string | null;
   chatId: number | null;
-  commentModelId?: number | null;
 };
 
-/** Where the held text lives. Null for a legacy model `Comment` whose model could not be read. */
+/** Where the held text lives. */
 export function holdEntityHref(civitaiUrl: string, hold: HoldRef): string | null {
   switch (hold.entityType) {
-    case 'CommentV2':
-      return commentV2Url(civitaiUrl, hold.entityId);
-    case 'Comment':
-      return hold.commentModelId
-        ? modelCommentUrl(civitaiUrl, hold.commentModelId, hold.entityId)
-        : null;
+    case 'CommentV3':
+      return commentUrl(civitaiUrl, hold.entityId);
     case 'ChatMessage':
       return hold.chatId ? chatAuditChatUrl(hold.chatId) : null;
     case 'UserProfile':

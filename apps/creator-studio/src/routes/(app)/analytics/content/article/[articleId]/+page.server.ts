@@ -3,10 +3,10 @@ import type { PageServerLoad } from './$types';
 import { getArticleViewDetail } from '$lib/server/analytics';
 import { readAnalyticsPeriod } from '$lib/server/analytics-period';
 
-export const load: PageServerLoad = async ({ locals, params, cookies }) => {
+export const load: PageServerLoad = async ({ locals, params, cookies, url }) => {
   const articleId = Number(params.articleId);
   if (!Number.isInteger(articleId) || articleId <= 0) throw error(400, 'Invalid article id');
-  const { range, compare: baseline } = readAnalyticsPeriod(cookies);
+  const { range, compare: baseline } = readAnalyticsPeriod(cookies, url.searchParams.get('month'));
   const compare = baseline.range;
 
   // Ownership is enforced inside the read; a miss is indistinguishable from a deleted article by design.

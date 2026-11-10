@@ -9,10 +9,10 @@ import {
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
   UnstyledButton,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconCategory,
   IconFileText,
@@ -99,7 +99,7 @@ export const SearchHeader = () => {
       ),
       value: MODELS_SEARCH_INDEX,
     },
-    features.imageSearchEntry
+    features.imageSearch
       ? {
           label: (
             <Group align="center" gap={8} wrap="nowrap">

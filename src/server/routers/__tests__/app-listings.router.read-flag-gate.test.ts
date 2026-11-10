@@ -26,11 +26,15 @@ const {
   mockResolveStoreVisibilityScope,
   mockListAvailableListings,
   mockGetListingDetail,
+  mockGetListingCard,
   mockListAppListingReviews,
+  mockGetHidden,
 } = vi.hoisted(() => ({
+  mockGetHidden: vi.fn(),
   mockResolveStoreVisibilityScope: vi.fn(),
   mockListAvailableListings: vi.fn(),
   mockGetListingDetail: vi.fn(),
+  mockGetListingCard: vi.fn(),
   mockListAppListingReviews: vi.fn(),
 }));
 
@@ -49,6 +53,8 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 vi.mock('~/server/services/blocks/app-listing.service', () => ({
   listAvailableListings: (...a: unknown[]) => mockListAvailableListings(...a),
   getListingDetail: (...a: unknown[]) => mockGetListingDetail(...a),
+  getListingCard: (...a: unknown[]) => mockGetListingCard(...a),
+  getListingHiddenByBrowsingLevel: (...a: unknown[]) => mockGetHidden(...a),
 }));
 vi.mock('~/server/services/blocks/app-listing-review.service', () => ({
   listAppListingReviews: (...a: unknown[]) => mockListAppListingReviews(...a),
@@ -340,6 +346,96 @@ describe('the viewer handed to the store reads (for the viewer-scoped `restricte
     expect(mockGetListingDetail).toHaveBeenLastCalledWith(
       expect.anything(),
       expect.objectContaining({ viewer: { userId: null, isModerator: false } })
+    );
+  });
+});
+
+describe('appListings.getAppCard — scope gate', () => {
+  it('anonymous (none): NOT_FOUND, service NOT consulted', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(undefined) as never);
+    await expect(caller.getAppCard({ slug: 'foo' })).rejects.toBeInstanceOf(TRPCError);
+    expect(mockGetListingCard).not.toHaveBeenCalled();
+  });
+
+  it('moderator (full): card served with scope=full', async () => {
+    mockGetListingCard.mockResolvedValue({ id: 'apl_1' });
+    const caller = appListingsRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.getAppCard({ slug: 'foo' })).resolves.toMatchObject({ id: 'apl_1' });
+    expect(mockGetListingCard).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: 'full' })
+    );
+  });
+
+  it('a listing the service refuses (null): NOT_FOUND', async () => {
+    mockGetListingCard.mockResolvedValue(null);
+    const caller = appListingsRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.getAppCard({ slug: 'hidden' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('public-external: served with scope=public-external', async () => {
+    publicExternal = true;
+    mockGetListingCard.mockResolvedValue({ id: 'apl_1' });
+    const caller = appListingsRouter.createCaller(fakeCtx(undefined) as never);
+    await caller.getAppCard({ slug: 'ext' });
+    expect(mockGetListingCard).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: 'public-external' })
+    );
+  });
+
+  it('hands the service the session viewer and the request browsing level', async () => {
+    mockGetListingCard.mockResolvedValue({ id: 'apl_1' });
+    const caller = appListingsRouter.createCaller(
+      fakeCtx({ ...modUser, showNsfw: false, browsingLevel: 7 }, { canViewNsfw: true }) as never
+    );
+    await caller.getAppCard({ slug: 'foo' });
+    expect(mockGetListingCard).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ viewer: { userId: 1, isModerator: true }, viewerBrowsingLevel: 1 })
+    );
+  });
+});
+
+/**
+ * `appListings.getAppHiddenState` — why the detail page has nothing to show, when the reason is
+ * only the viewer's browsing level. Behind the same read gate as `getAppDetail`: a dark scope gets
+ * `null` without the service being asked.
+ */
+describe('appListings.getAppHiddenState — scope gate', () => {
+  beforeEach(() => {
+    mockGetHidden.mockReset();
+    mockGetHidden.mockResolvedValue({ contentRating: 'r' });
+  });
+
+  it('anonymous (none): null, service NOT consulted', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(undefined) as never);
+    await expect(caller.getAppHiddenState({ slug: 'foo' })).resolves.toBeNull();
+    expect(mockGetHidden).not.toHaveBeenCalled();
+  });
+
+  it('moderator (full): the service answer, asked with scope=full and the request level', async () => {
+    const caller = appListingsRouter.createCaller(
+      fakeCtx({ ...modUser, showNsfw: true, browsingLevel: 5 }, { canViewNsfw: true }) as never
+    );
+    await expect(caller.getAppHiddenState({ slug: 'foo' })).resolves.toEqual({
+      contentRating: 'r',
+    });
+    expect(mockGetHidden).toHaveBeenLastCalledWith(
+      { slug: 'foo' },
+      expect.objectContaining({ scope: 'full', viewerBrowsingLevel: 5 })
+    );
+  });
+
+  it('public-external: asked with scope=public-external', async () => {
+    publicExternal = true;
+    const caller = appListingsRouter.createCaller(fakeCtx(undefined) as never);
+    await caller.getAppHiddenState({ slug: 'ext' });
+    expect(mockGetHidden).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: 'public-external' })
     );
   });
 });

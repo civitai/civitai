@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconArrowBackUp, IconPhotoUp } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -83,7 +83,7 @@ function GeneratedOutputRemixMenuContent({
         createPost: () => createPost.mutateAsync({}),
       });
     } catch (e) {
-      showCreatePostError((e as Error).message);
+      showCreatePostError(e as Error);
     }
   };
 

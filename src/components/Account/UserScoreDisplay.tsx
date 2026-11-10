@@ -1,4 +1,5 @@
-import { ColorSwatch, Divider, Group, Paper, Progress, Stack, Text, Tooltip } from '@mantine/core';
+import { ColorSwatch, Divider, Group, Paper, Progress, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAward, IconFlag, IconInfoCircle, IconShieldCheck } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import {

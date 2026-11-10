@@ -45,9 +45,15 @@ vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
   },
 }));
 
+// Off by default; the upload-request IP case switches it on.
+const ch = vi.hoisted(() => ({
+  client: undefined as { $query: (sql: string) => unknown } | undefined,
+}));
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
-  clickhouse: undefined,
+  get clickhouse() {
+    return ch.client;
+  },
 }));
 
 // The sent-state update is written only in production.
@@ -79,6 +85,7 @@ import {
   processCsamReport as processClaimedReport,
 } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
+import { UPLOAD_REQUEST_IP_NOTE } from '~/server/services/image-upload-action.service';
 
 const stored = Buffer.from('the bytes the user uploaded');
 const sha256 = (data: Buffer) => createHash('sha256').update(data).digest('hex');
@@ -124,6 +131,25 @@ const stamps = () =>
     .map(([args]) => args.data)
     .filter((data) => data.reportSentAt);
 const sentUpdate = () => stamps()[0];
+/** Every write of the report's details on their own, apart from the claim and the sent stamp. */
+const detailWrites = () =>
+  dbMock.dbWrite.csamReport.updateMany.mock.calls
+    .map(([args]) => args.data)
+    .filter((data) => Object.keys(data).join() === 'details');
+/** Report reads return what the run has written so far, as the database would. */
+const persistWrites = () => {
+  dbMock.dbWrite.csamReport.updateMany.mockImplementation(async ({ data }) => {
+    if (filed && data.details) filed = { ...filed, details: data.details };
+    return { count: 1 };
+  });
+};
+const uploadRow = { ip: '203.0.113.5', key: 'stored-key-501', time: '2025-12-31 23:59:00' };
+const uploadEvent = {
+  ip: uploadRow.ip,
+  time: uploadRow.time,
+  type: 'Upload',
+  details: { type: 'image-upload-request', id: 501 },
+};
 const claimId = () => dbMock.dbWrite.csamReport.updateMany.mock.calls[0]?.[0]?.data.sendClaimId;
 const lines = (subType: string) =>
   vi
@@ -134,6 +160,7 @@ const lines = (subType: string) =>
 describe('NCMEC image upload', () => {
   beforeEach(() => {
     vi.mocked(logToAxiom).mockClear();
+    ch.client = undefined;
     submitReport.mockReset().mockResolvedValue({ data: { reportId: 99 } });
     uploadFile.mockReset().mockResolvedValue({ data: { fileId: 'file-1', hash: 'ncmec-md5' } });
     submitFileDetails.mockReset().mockResolvedValue({});
@@ -171,6 +198,89 @@ describe('NCMEC image upload', () => {
     expect(Buffer.from(await file.arrayBuffer()).equals(stored)).toBe(true);
     expect(file.type).toBe('image/webp');
     expect(submitReport.mock.calls[0][0]).not.toHaveProperty('additionalInfo');
+  });
+
+  it("sends the image's upload-request IP, with the note that explains it", async () => {
+    ch.client = {
+      $query: async (sql: string) => (sql.includes('FROM imageUploadRequests') ? [uploadRow] : []),
+    };
+
+    await processCsamReport(report);
+
+    const reported = submitReport.mock.calls[0][0].personOrUserReported;
+    expect(reported.ipCaptureEvent).toEqual([
+      expect.objectContaining({ ipAddress: '203.0.113.5', eventName: 'Upload' }),
+    ]);
+    expect(reported.additionalInfo).toBe(`Email: user@example.invalid\n${UPLOAD_REQUEST_IP_NOTE}`);
+  });
+
+  // The upload-request rows expire; the report's own copy is the evidence that outlives them.
+  it('keeps the IP events on the report before it is sent', async () => {
+    ch.client = {
+      $query: async (sql: string) => (sql.includes('FROM imageUploadRequests') ? [uploadRow] : []),
+    };
+    submitReport.mockRejectedValue(new Error('NCMEC down'));
+
+    await processCsamReport(report).catch(() => undefined);
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    expect(detailWrites()).toEqual([{ details: { userActivity: [uploadEvent] } }]);
+  });
+
+  it('still sends the IP events the report kept once the rows have expired', async () => {
+    ch.client = { $query: async () => [] };
+
+    await processCsamReport({ ...report, details: { userActivity: [uploadEvent] } } as never);
+
+    expect(submitReport.mock.calls[0][0].personOrUserReported.ipCaptureEvent).toEqual([
+      expect.objectContaining({ ipAddress: '203.0.113.5', eventName: 'Upload' }),
+    ]);
+    // Nothing new to keep, so nothing is written.
+    expect(detailWrites()).toEqual([]);
+  });
+
+  it('sends and keeps an event the report already holds only once', async () => {
+    const later = { ...uploadRow, time: '2026-01-01 00:00:00' };
+    ch.client = {
+      $query: async (sql: string) =>
+        sql.includes('FROM imageUploadRequests') ? [uploadRow, later] : [],
+    };
+
+    await processCsamReport({ ...report, details: { userActivity: [uploadEvent] } } as never);
+
+    expect(
+      submitReport.mock.calls[0][0].personOrUserReported.ipCaptureEvent.map(
+        (e: { dateTime: Date }) => e.dateTime.toISOString()
+      )
+    ).toEqual(['2025-12-31T23:59:00.000Z', '2026-01-01T00:00:00.000Z']);
+    expect(detailWrites()).toEqual([
+      { details: { userActivity: [uploadEvent, { ...uploadEvent, time: later.time }] } },
+    ]);
+  });
+
+  it('sends nothing when the claim is lost while keeping the IP events', async () => {
+    ch.client = {
+      $query: async (sql: string) => (sql.includes('FROM imageUploadRequests') ? [uploadRow] : []),
+    };
+    dbMock.dbWrite.csamReport.updateMany.mockImplementation(async ({ data }) => ({
+      count: Object.keys(data).join() === 'details' ? 0 : 1,
+    }));
+
+    await processCsamReport(report);
+
+    expect(submitReport).not.toHaveBeenCalled();
+    expect(lines('send-claim-lost')).toHaveLength(1);
+  });
+
+  it('marks the report sent without dropping the IP events it kept', async () => {
+    ch.client = {
+      $query: async (sql: string) => (sql.includes('FROM imageUploadRequests') ? [uploadRow] : []),
+    };
+    persistWrites();
+
+    await processCsamReport(report);
+
+    expect(sentUpdate().details.userActivity).toEqual([uploadEvent]);
   });
 
   it('records the sha256 in the same update that marks the report sent', async () => {

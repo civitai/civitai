@@ -9,9 +9,13 @@ import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { TipaltiStatus } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
-import { updateCashWithdrawal, userCashCache } from '~/server/services/creator-program.service';
+import {
+  findCashWithdrawalByRefCode,
+  updateCashWithdrawal,
+  userCashCache,
+} from '~/server/services/creator-program.service';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
-import { parseRefCodeToWithdrawalId } from '~/server/utils/creator-program.utils';
+import { hasPayoutHold } from '~/server/services/creator-program-prepayout-review/hold';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 import { BuzzWithdrawalRequestStatus, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 
@@ -307,26 +311,30 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
     case 'paymentGroupApproved':
     case 'paymentGroupDeclined': {
       const payment = event.eventData.payments[0] as { refCode: string; paymentStatus: string };
-      const { userId, idPart } = parseRefCodeToWithdrawalId(payment.refCode);
+      const cashWithdrawal = await findCashWithdrawalByRefCode(payment.refCode);
 
-      if (!userId || !idPart) {
-        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
-        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
-      }
-
-      const cashWithdrawal = await dbWrite.cashWithdrawal.findFirst({
-        where: {
-          userId,
-          id: {
-            startsWith: idPart,
-          },
-        },
-      });
-
-      if (!cashWithdrawal) {
-        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
-        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
-      }
+      // Alert only: Tipalti has already approved, so a failed hold read must not stop recording it.
+      if (
+        event.type === 'paymentGroupApproved' &&
+        (await hasPayoutHold(cashWithdrawal.userId).catch(async (e: unknown) => {
+          await logToAxiom({
+            name: 'creator-program-payout-hold-unchecked',
+            type: 'error',
+            userId: cashWithdrawal.userId,
+            withdrawalId: cashWithdrawal.id,
+            refCode: payment.refCode,
+            message: e instanceof Error ? e.message : String(e),
+          }).catch(() => undefined);
+          return false;
+        }))
+      )
+        await logToAxiom({
+          name: 'creator-program-payout-approved-while-held',
+          type: 'error',
+          userId: cashWithdrawal.userId,
+          withdrawalId: cashWithdrawal.id,
+          refCode: payment.refCode,
+        });
 
       // Update the status of the withdrawal request:
       const status =
@@ -361,26 +369,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
     case 'paymentDeferred':
     case 'paymentCanceled': {
       const payment = event.eventData as { refCode: string; paymentStatus: string };
-      const { userId, idPart } = parseRefCodeToWithdrawalId(payment.refCode);
-
-      if (!userId || !idPart) {
-        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
-        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
-      }
-
-      const cashWithdrawal = await dbWrite.cashWithdrawal.findFirst({
-        where: {
-          userId,
-          id: {
-            startsWith: idPart,
-          },
-        },
-      });
-
-      if (!cashWithdrawal) {
-        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
-        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
-      }
+      const cashWithdrawal = await findCashWithdrawalByRefCode(payment.refCode);
 
       // Update the status of the withdrawal request:
       const status =
@@ -425,26 +414,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
     }
     case 'paymentError': {
       const payment = event.eventData as { refCode: string; paymentStatus: string };
-      const { userId, idPart } = parseRefCodeToWithdrawalId(payment.refCode);
-
-      if (!userId || !idPart) {
-        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
-        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
-      }
-
-      const cashWithdrawal = await dbWrite.cashWithdrawal.findFirst({
-        where: {
-          userId,
-          id: {
-            startsWith: idPart,
-          },
-        },
-      });
-
-      if (!cashWithdrawal) {
-        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
-        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
-      }
+      const cashWithdrawal = await findCashWithdrawalByRefCode(payment.refCode);
 
       const paymentRecord = await client.getPaymentByRefCode(payment.refCode);
 

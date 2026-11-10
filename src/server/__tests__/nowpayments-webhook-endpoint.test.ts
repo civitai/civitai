@@ -87,7 +87,7 @@ describe('nowpayments webhook endpoint', () => {
     expect(processDeposit).toHaveBeenCalledWith(12345, 'failed', expect.any(Object));
   });
 
-  it.each(['confirming', 'finished', 'partially_paid'])(
+  it.each(['confirming', 'confirmed', 'sending', 'finished', 'partially_paid'])(
     'routes a %s event to processDeposit',
     async (status) => {
       await run(status);

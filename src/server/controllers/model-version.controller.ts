@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { toPublicApiVersionFlags } from '~/shared/constants/model-version-flags.constants';
 import {
   coverageAudience,
   coveragePairForUser,
@@ -49,6 +50,8 @@ import type {
 } from '~/server/schema/model.schema';
 import type { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
+import { readModelVersionOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
 import { getStaticContent } from '~/server/services/content.service';
 import { resolveCanGenerateForVersions } from '~/server/services/generation/generation.service';
 import {
@@ -89,7 +92,10 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import {
   Availability,
   LicensingFeeSettlementCurrency,
@@ -104,6 +110,7 @@ import { getMetaMetricVisibility } from '~/server/utils/model-metric-privacy';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
+import { getLinkedFileData } from '~/server/services/linked-file-data.service';
 import { assertBountyEntryFileUrlAllowed } from '~/server/utils/model-file-url-bound';
 import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
@@ -117,6 +124,7 @@ import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-ru
 import { scanModelAndRules } from '~/server/services/text-scan/submit';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -175,6 +183,7 @@ const loadModelVersion = async ({
           select: {
             id: true,
             name: true,
+            sfwName: true,
             type: true,
             status: true,
             mode: true,
@@ -231,23 +240,7 @@ const loadModelVersion = async ({
         linkedComponentResources.map((r) => (r.settings as LinkedComponentSettings).fileId)
       ),
     ].filter(Boolean);
-    const linkedFileDataMap = new Map<
-      number,
-      { name: string; sizeKB: number; type: string; metadata: Record<string, unknown> | null }
-    >();
-    if (linkedFileIds.length > 0) {
-      const fileData = await dbRead.modelFile.findMany({
-        where: { id: { in: linkedFileIds } },
-        select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
-      });
-      for (const f of fileData)
-        linkedFileDataMap.set(f.id, {
-          name: f.name,
-          sizeKB: f.sizeKB,
-          type: f.type,
-          metadata: f.metadata as Record<string, unknown> | null,
-        });
-    }
+    const linkedFileDataMap = await getLinkedFileData(linkedFileIds);
 
     const linkedComponents = selectLiveLinkedComponents(
       linkedComponentResources.map((r) => {
@@ -264,9 +257,7 @@ const loadModelVersion = async ({
           fileName: fileData?.name ?? s.fileName,
           sizeKB: fileData?.sizeKB,
           fileType: fileData?.type,
-          fileMetadata: fileData?.metadata as
-            | { format?: string | null; size?: string | null; fp?: string | null }
-            | undefined,
+          fileMetadata: fileData?.metadata ?? undefined,
           isRequired: s.isRequired,
         };
       }),
@@ -274,8 +265,10 @@ const loadModelVersion = async ({
     );
 
     const recommendedResourceIds = regularResources.map((x) => x.resource.id);
+    const browsingLevel = getRequestBrowsingLevel(ctx);
     const generationResources = await getResourceData(recommendedResourceIds, {
       user: ctx?.user,
+      browsingLevel,
     }).then((data) =>
       data.map((item) => {
         return withPairedStrength(
@@ -350,10 +343,19 @@ const loadModelVersion = async ({
     const editorModelMeta: ModelMeta | null = isOwnerOrMod
       ? { metricVisibility: getMetaMetricVisibility(modelMeta) }
       : null;
+    // As on the model page: owners and moderators keep the .red listing, since this seeds the editor.
+    const withSfwFace = !isOwnerOrMod && model.sfwName != null && showsSfwFace(browsingLevel);
 
     return {
       ...version,
-      model: { ...model, meta: editorModelMeta, ownerMetricPrivacyDefaults },
+      flags: ctx?.user?.isModerator ? version.flags : toPublicApiVersionFlags(version.flags),
+      // A .com face has no per-version description; the .red one is not shown in its place.
+      description: withSfwFace ? null : version.description,
+      model: {
+        ...resolveModelFace(model, withSfwFace),
+        meta: editorModelMeta,
+        ownerMetricPrivacyDefaults,
+      },
       licensingFee,
       canGenerate,
       wildcardSetId,
@@ -885,7 +887,8 @@ export const publishModelVersionHandler = async ({
     if (
       !ctx.user.isModerator &&
       (constants.modPublishOnlyStatuses.includes(version.status) ||
-        constants.modPublishOnlyStatuses.includes(version.model.status))
+        constants.modPublishOnlyStatuses.includes(version.model.status) ||
+        isRemovedWithOwner(version.model.meta))
     ) {
       throw throwAuthorizationError('You are not authorized to publish this model version');
     }
@@ -1043,7 +1046,7 @@ export const unpublishModelVersionHandler = async ({
     if (scope.kind === 'model') {
       const model = await getModel({
         id: scope.modelId,
-        select: { meta: true, nsfw: true },
+        select: { nsfw: true },
       });
       if (!model) throw throwNotFoundError(`No model with id ${scope.modelId}`);
 
@@ -1052,7 +1055,6 @@ export const unpublishModelVersionHandler = async ({
       await unpublishModelById({
         ...input,
         id: scope.modelId,
-        meta: (model.meta as ModelMeta | null) ?? undefined,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       });
@@ -1289,7 +1291,7 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
 }) => {
   const { payWithBlue, ...rest } = input;
   try {
-    return earlyAccessPurchase({
+    return await earlyAccessPurchase({
       ...rest,
       userId: ctx.user.id,
       buzzType: payWithBlue ? 'blue' : getAllowedAccountTypes(ctx.features)[0],
@@ -1324,10 +1326,17 @@ export const modelVersionDonationGoalHandler = async ({
 };
 
 export async function getModelVersionOwnerHandler({ input }: { input: GetByIdInput }) {
-  const version = await getVersionById({
-    ...input,
-    select: { model: { select: { user: { select: userWithCosmeticsSelect } } } },
-  });
+  // No Kysely row (a missing version, or an orphaned model or user) runs the Prisma read, so a
+  // missing version is still NOT_FOUND and an orphan still throws as Prisma throws.
+  const version =
+    (await readModelVersionOwnerViaKysely(
+      await getKyselyWithoutLag('modelVersion', input.id),
+      input.id
+    )) ??
+    (await getVersionById({
+      ...input,
+      select: { model: { select: { user: { select: userWithCosmeticsSelect } } } },
+    }));
   if (!version) throw throwNotFoundError();
   return version.model.user;
 }
@@ -1436,7 +1445,8 @@ export async function publishPrivateModelVersionHandler({
   if (
     !ctx.user.isModerator &&
     (constants.modPublishOnlyStatuses.includes(version.status) ||
-      constants.modPublishOnlyStatuses.includes(version.model.status))
+      constants.modPublishOnlyStatuses.includes(version.model.status) ||
+      isRemovedWithOwner(version.model.meta))
   ) {
     throw throwAuthorizationError('You are not authorized to publish this model version');
   }
@@ -1462,6 +1472,7 @@ export async function publishPrivateModelVersionHandler({
   if (!selectedEpochUrl) {
     throw throwBadRequestError('No selected epoch found');
   }
+  await assertNoFailedScanFiles({ id: version.id });
 
   if (!version.posts.length) {
     const post = await createModelVersionPostFromTraining({

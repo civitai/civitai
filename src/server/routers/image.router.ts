@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import {
   deleteImageHandler,
+  getImagesForModelVersionHandler,
   handleUpdateImageNsfwLevel,
   moderateImageHandler,
   setTosViolationHandler,
@@ -17,7 +18,6 @@ import {
   getImageDetail,
   getImageGenerationData,
   getImagesByUserIdForModeration,
-  getImagesForModelVersionCache,
   getMyImages,
   ingestImageById,
   removeImageResource,
@@ -40,11 +40,13 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getApprovedImageAppeal } from '~/server/services/image-removal-hold.service';
+import { canAppealOwnImage } from '~/server/services/report.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   getEntitiesCoverImageHandler,
   getImageContestCollectionDetailsHandler,
   getImageHandler,
+  getImagePublishedWithAppHandler,
   getImageResourcesHandler,
   getImagesAsPostsInfiniteHandler,
   getInfiniteImagesHandler,
@@ -108,7 +110,9 @@ export const imageRouter = router({
   getDetail: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
-    .query(({ input }) => getImageDetail({ ...input })),
+    .query(({ input, ctx }) =>
+      getImageDetail({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator })
+    ),
   getInfinite: heavyProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteImagesSchema)
@@ -116,7 +120,7 @@ export const imageRouter = router({
   getImagesForModelVersion: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
-    .query(({ input }) => getImagesForModelVersionCache([input.id])),
+    .query(getImagesForModelVersionHandler),
   getImagesAsPostsInfinite: heavyProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteImagesSchema)
@@ -125,6 +129,12 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getImageSchema)
     .query(getImageHandler),
+  // The image page's "Published with <app>" credit. Per viewer (store-scope gated), so
+  // deliberately NO `edgeCacheIt` — see `getImagePublishedWithAppHandler`.
+  getPublishedWithApp: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getByIdSchema)
+    .query(getImagePublishedWithAppHandler),
   getResources: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
@@ -225,6 +235,12 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getMyImagesInput)
     .query(({ input, ctx }) => getMyImages({ ...input, userId: ctx.user.id })),
+  getAppealState: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getByIdSchema)
+    .query(async ({ input, ctx }) => ({
+      canAppeal: await canAppealOwnImage({ imageId: input.id, userId: ctx.user.id }),
+    })),
   toggleImageFlag: moderatorProcedure
     .input(toggleImageFlagSchema)
     .mutation(({ input, ctx }) => toggleImageFlag({ ...input })),

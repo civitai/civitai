@@ -5,7 +5,6 @@ import type { UrlObject } from 'url';
 // import {
 //   ImageDetailModal,
 //   CollectionEditModal,
-//   HiddenCommentsModal,
 //   ResourceReviewModal,
 //   FilesEditModal,
 //   CommentEditModal,
@@ -26,10 +25,8 @@ export const CollectionEditModal = dynamic(
   }
 );
 export const HiddenCommentsModal = dynamic(
-  () => import('~/components/CommentsV2/HiddenCommentsModal'),
-  {
-    ssr: false,
-  }
+  () => import('~/components/Model/ModelDiscussion/HiddenCommentsModal'),
+  { ssr: false }
 );
 export const ResourceReviewModal = dynamic(
   () => import('~/components/ResourceReview/ResourceReviewModal'),
@@ -88,9 +85,7 @@ export const dialogs = createDialogDictionary({
   },
   hiddenComments: {
     component: HiddenCommentsModal,
-    resolve: (query, { entityType, entityId }) => ({
-      query: { ...query, entityType, entityId },
-    }),
+    resolve: (query, { modelId }) => ({ query: { ...query, modelId } }),
   },
   resourceReview: {
     component: ResourceReviewModal,
@@ -107,9 +102,7 @@ export const dialogs = createDialogDictionary({
   },
   commentEdit: {
     component: CommentEditModal,
-    resolve: (query, { commentId }) => ({
-      query: { ...query, commentId },
-    }),
+    resolve: (query) => ({ query }),
   },
   commentThread: {
     component: CommentThreadModal,

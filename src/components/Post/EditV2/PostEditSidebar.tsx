@@ -1,16 +1,7 @@
 import { PlacementSpaceToggle } from '~/components/Sticker/PlacementSpaceToggle';
 import type { TooltipProps } from '@mantine/core';
-import {
-  Alert,
-  Anchor,
-  Badge,
-  Button,
-  Stack,
-  Text,
-  ThemeIcon,
-  Title,
-  Tooltip,
-} from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertCircle, IconClock, IconTrash } from '@tabler/icons-react';
 import { showNotification } from '@mantine/notifications';
 import { useIsMutating } from '@tanstack/react-query';
@@ -21,6 +12,7 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
+import { ResourceReviewProgressCard } from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewProgressCard';
 import { PostEditEventCard } from '~/components/Post/EditV2/PostEditEventCard';
 import { PostEditModelLink } from '~/components/Post/EditV2/PostEditModelLink';
 import { postEditEventCard } from '~/components/Post/EditV2/post-edit-event-card.utils';
@@ -198,6 +190,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           if (result?.storyline) {
             const { link, message, ...said } = storylinePublishMessage(result.storyline, {
               chapterNumber: storylineChapterNumber,
+              startsBranch: storylineDraft?.parentChapter?.startsBranch,
             });
             showNotification({
               ...said,
@@ -519,6 +512,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </Text>
       )}
 
+      <ResourceReviewProgressCard postId={post.id} ownerId={post.user.id} />
+
       {eventCard && <PostEditEventCard {...eventCard} />}
 
       {!post.publishedAt && !isUnpublishedByParent && !deleted && (
@@ -545,14 +540,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       {images.length > 0 && (
         <Button
           onClick={() => {
-            const [image] = images;
-            if (images.length > 1) {
-              if (collectionId) router.replace(`/posts/${post.id}`);
-              else router.push(`/posts/${post.id}`);
-            } else if (images.length === 1 && image && 'id' in image.data) {
-              if (collectionId) router.replace(`/images/${image.data.id}`);
-              else router.push(`/images/${image.data.id}`);
-            }
+            if (collectionId) router.replace(`/posts/${post.id}`);
+            else router.push(`/posts/${post.id}`);
           }}
           variant="outline"
           color="blue"

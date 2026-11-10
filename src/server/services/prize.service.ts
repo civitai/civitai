@@ -1,5 +1,7 @@
 import type { Prize, PrizeSourceType } from '@prisma/client';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { countUnclaimedPrizesViaKysely } from '~/server/services/hot-reads-5.reads';
 import { logToAxiom } from '~/server/logging/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -135,7 +137,7 @@ export async function payPrize(prize: Prize): Promise<boolean> {
  * A banned winner's prize is held, not voided: it can't be claimed or auto-paid while the ban
  * stands, and pays normally once it is lifted. Muted winners are paid as usual.
  */
-async function getBannedUserIds(userIds: number[]) {
+export async function getBannedUserIds(userIds: number[]) {
   if (!userIds.length) return new Set<number>();
   const banned = await dbWrite.user.findMany({
     where: { id: { in: [...new Set(userIds)] }, bannedAt: { not: null } },
@@ -282,7 +284,7 @@ export async function getPrize({
 }
 
 export async function countUnclaimedPrizes(userId: number) {
-  return dbRead.prize.count({ where: { userId, claimedAt: null, voidedAt: null } });
+  return countUnclaimedPrizesViaKysely((await loadKyselyDb()).kyselyRead, userId);
 }
 
 export async function getMyPrizes({

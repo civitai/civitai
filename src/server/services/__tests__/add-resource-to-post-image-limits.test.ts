@@ -17,6 +17,10 @@ import { manualResourceLimitMessages } from '~/utils/manual-image-resources';
  * The module scaffold mirrors update-post-image-hidemeta-bust.test.ts.
  */
 
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparkLost: vi.fn(),
+  onStorySparkPostsHidden: vi.fn(),
+}));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('@civitai/db', () => ({
   createLagTracker: vi.fn(() => ({})),
@@ -49,6 +53,7 @@ vi.mock('~/server/redis/caches', () => {
     userPostCountCache: cacheStub(),
   };
 });
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
   createImage: vi.fn(),
   createImageResources: vi.fn(),
@@ -58,7 +63,6 @@ vi.mock('~/server/services/image.service', () => ({
   imagesForModelVersionsCache: { refresh: vi.fn() },
   enqueueImageIngestion: vi.fn(),
   invalidateManyImageExistence: vi.fn(),
-  purgeImageGenerationDataCache: vi.fn(),
   purgeResizeCache: vi.fn(),
   queueImageSearchIndexUpdate: vi.fn(),
 }));

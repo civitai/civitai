@@ -15,3 +15,49 @@
   gap: 6px;
   padding: var(--mantine-spacing-xs);
 }
+
+// Padding is on this wrapper, not the rows, so the :has() rule below can hide it when nothing rendered.
+.actionsFooter {
+  // --footer-height is getImagesCardFooterHeight(width): the masonry reserves exactly that, and a
+  // taller footer takes its excess from the picture.
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: var(--footer-height);
+  padding: 6px 8px;
+
+  &:not(:has(:is(button, [class*='mantine-Badge-root']))) {
+    display: none;
+  }
+
+  // The shared bar is a dark pill because ImageCard paints it over the image. Here the row sits
+  // on the card's own background, where that pill would grey out the counts.
+  & .bar {
+    background: none;
+    box-shadow: none;
+  }
+}
+
+// One-row footer, used only on cards wide enough for every reaction beside the tip and badges
+// (IMAGES_CARD_ONE_ROW_MIN_WIDTH). Narrower cards take the shared two-row footer instead.
+.actionsFooter .fitRow {
+  flex-wrap: nowrap;
+}
+
+.actionsFooter .fitRow .fitReactions {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 22px;
+  overflow: hidden;
+  justify-content: flex-start !important; // beats the bar's justify-center utility
+
+  & > * {
+    flex: none;
+  }
+}
+
+// The tip and the badges, which sit one level down because the rows are `display: contents`.
+.actionsFooter .fitRow > * > :not(.fitReactions) {
+  flex: none;
+}

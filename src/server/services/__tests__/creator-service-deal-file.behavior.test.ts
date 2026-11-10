@@ -5,7 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import '~/__tests__/mocks/logging.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
@@ -29,6 +29,10 @@ const buzz = vi.hoisted(() => ({
   getMultiAccountTransactionsByPrefix: vi.fn(),
   getTransactionByExternalId: vi.fn(),
   refundTransaction: vi.fn(),
+}));
+// The deal flows notify buyer and seller; accept the call without asserting on it.
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
 }));
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -110,6 +114,7 @@ const MIGRATIONS = [
   '20261028170000_creator_service_offering_takedown',
   '20261029140000_creator_service_deal_file_delivery',
   '20261128150000_creator_service_final_malware_scan',
+  '20261224150000_service_deal_file_removed_at',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -136,6 +141,7 @@ type FileRecord = {
   watermarkedKey: string | null;
   nsfwLevel: number | null;
   processingAt: Date | null;
+  removedAt: Date | null;
 };
 
 const fileRow = async (id: number) =>
@@ -213,10 +219,11 @@ const download = (fileId: number, userId: number, isModerator = false) =>
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
     CREATE TABLE "Report" (id serial PRIMARY KEY);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1);
@@ -612,7 +619,7 @@ describe('deleting', () => {
     expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toHaveLength(1);
   });
 
-  it('takes the hidden scan copy of a preview deleted mid-scan with it', async () => {
+  it('keeps a preview deleted mid-scan, and its hidden copy', async () => {
     const dealId = await accepted();
     const fileId = await uploaded(dealId, {
       kind: 'Preview',
@@ -634,8 +641,61 @@ describe('deleting', () => {
     await files.startPreviewScans();
     expect((await fileRow(fileId)).imageId).toBe(321);
 
+    const { s3Key } = await fileRow(fileId);
+    await files.deleteServiceDealFile({ fileId, userId: SELLER });
+    expect(images.deleteImageById).not.toHaveBeenCalled();
+    expect(s3.deleteObject.mock.calls.map((call) => call[1])).not.toContain(s3Key);
+    expect(await fileRow(fileId)).toMatchObject({
+      imageId: 321,
+      s3Key,
+      removedAt: expect.any(Date),
+    });
+  });
+
+  it('keeps the scan copy of a preview deleted while the copy was being made', async () => {
+    const dealId = await accepted();
+    const fileId = await uploaded(dealId, {
+      kind: 'Preview',
+      fileName: 'p.png',
+      mimeType: 'image/png',
+      size: 500,
+    });
+    s3.send.mockResolvedValue(body(Buffer.from('original bytes')));
+    preview.scanCopy.mockResolvedValue({
+      data: Buffer.from('c'),
+      mimeType: 'image/webp',
+      width: 10,
+      height: 10,
+      frames: 1,
+    });
+    s3.uploadImageBufferToStore.mockResolvedValue({ key: 'scan-copy-key' });
+    images.createImage.mockImplementation(async () => {
+      // The seller removes the preview between the copy and its Image row being linked.
+      await files.deleteServiceDealFile({ fileId, userId: SELLER });
+      return { id: 321 };
+    });
+    await files.startPreviewScans();
+    expect(await fileRow(fileId)).toMatchObject({ imageId: 321, removedAt: expect.any(Date) });
+  });
+
+  it('deletes a preview whose own scan passed, copy and all, with no hold', async () => {
+    const dealId = await accepted();
+    const fileId = await uploaded(dealId, {
+      kind: 'Preview',
+      fileName: 'p.png',
+      mimeType: 'image/png',
+      size: 500,
+    });
+    await q(
+      `UPDATE "ServiceDealFile" SET "imageId" = 321, "scanStatus" = 'Passed', "processingAt" = NULL WHERE id = $1`,
+      [fileId]
+    );
+    const { s3Key } = await fileRow(fileId);
+    images.deleteImageById.mockResolvedValue(undefined);
     await files.deleteServiceDealFile({ fileId, userId: SELLER });
     expect(images.deleteImageById).toHaveBeenCalledWith({ id: 321, updatePost: false });
+    expect(s3.deleteObject.mock.calls.map((call) => call[1])).toContain(s3Key);
+    expect(await fileRow(fileId)).toBeUndefined();
   });
 
   it('leaves a delivered round alone: after a revision its files can be neither completed nor removed', async () => {
@@ -852,9 +912,11 @@ describe('who can download what', () => {
     await complete(dealId);
     const target = await download(finalId, BUYER);
     expect(target).toMatchObject({ bucket: 'bucket', fileName: 'result.zip' });
-    expect(await files.getServiceDealFileDownloadUrl(target!)).toMatch(
-      /^https:\/\/get\/service-deals\//
-    );
+    expect(
+      await files.getServiceDealFileDownloadUrl(target!, {
+        serviceDealFileAccess: async () => true,
+      })
+    ).toMatch(/^https:\/\/get\/service-deals\//);
     expect(s3.getGetUrlByKey).toHaveBeenCalledWith(
       target!.key,
       expect.objectContaining({ expiresIn: 300, fileName: 'result.zip' })
@@ -1425,5 +1487,167 @@ describe('a scanner verdict on a final', () => {
     await files.deleteServiceDealFile({ fileId: finalId, userId: SELLER });
     await uploaded(dealId, { fileName: 'fixed.zip' });
     await files.deliverServiceDeal({ dealId, userId: SELLER });
+  });
+});
+
+describe('recording who took a file', () => {
+  async function completedDeal() {
+    const dealId = await accepted();
+    const finalId = await uploaded(dealId);
+    await readyPreview(dealId);
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    await q(
+      `UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed', "malwareScanStatus" = 'Passed',
+        "deliveryKey" = 'service-deals/delivered/k', "repackedAt" = now() WHERE id = $1`,
+      [finalId]
+    );
+    await deals.acceptServiceDealDelivery({ dealId, userId: BUYER });
+    return { dealId, finalId };
+  }
+  const tracker = { serviceDealFileAccess: vi.fn(async () => true) };
+  beforeEach(() => {
+    tracker.serviceDealFileAccess.mockReset().mockResolvedValue(true);
+  });
+  const take = async (target: Awaited<ReturnType<typeof download>>) =>
+    files.getServiceDealFileDownloadUrl(target!, tracker);
+  const tracked = () => tracker.serviceDealFileAccess.mock.calls.map(([access]) => access);
+
+  it("tracks the buyer's download of a final", async () => {
+    const { dealId, finalId } = await completedDeal();
+    await take(await download(finalId, BUYER));
+    expect(tracked()).toEqual([
+      { dealId, fileId: finalId, userId: BUYER, role: 'Buyer', kind: 'Download' },
+    ]);
+    // Waits for delivery off the request path, so a lost row reaches the failure log.
+    expect(tracker.serviceDealFileAccess).toHaveBeenCalledWith(expect.anything(), {
+      awaitDelivery: true,
+    });
+  });
+
+  describe('a removed file', () => {
+    async function removedTarget() {
+      const { finalId } = await completedDeal();
+      await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [finalId]);
+      const target = await files.resolveServiceDealFileDownload({
+        fileId: finalId,
+        userId: MOD,
+        isModerator: true,
+        canReviewCsam: true,
+      });
+      expect(target).toMatchObject({ removed: true });
+      s3.getGetUrlByKey.mockClear();
+      return target!;
+    }
+
+    it('is signed only after its access is recorded', async () => {
+      const target = await removedTarget();
+      let signedBeforeRecorded = false;
+      tracker.serviceDealFileAccess.mockImplementation(async () => {
+        signedBeforeRecorded = s3.getGetUrlByKey.mock.calls.length > 0;
+        return true;
+      });
+      expect(await take(target)).toMatch(/^https:\/\/get\//);
+      expect(signedBeforeRecorded).toBe(false);
+      expect(tracked()).toEqual([expect.objectContaining({ userId: MOD, role: 'Moderator' })]);
+    });
+
+    it.each([
+      ['fails', () => Promise.reject(new Error('tracker down'))],
+      ['is switched off', () => Promise.resolve(false)],
+    ])('is refused when the access write %s', async (_, write) => {
+      const target = await removedTarget();
+      tracker.serviceDealFileAccess.mockImplementation(write);
+      await expect(take(target)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+      expect(s3.getGetUrlByKey).not.toHaveBeenCalled();
+    });
+  });
+
+  it('still signs a live file when the access write fails', async () => {
+    const { finalId } = await completedDeal();
+    tracker.serviceDealFileAccess.mockRejectedValue(new Error('tracker down'));
+    expect(await take(await download(finalId, BUYER))).toMatch(/^https:\/\/get\//);
+  });
+
+  it('tracks a moderator who is the buyer, fetching through the dispute tool, as the buyer', async () => {
+    const { finalId } = await completedDeal();
+    await take(
+      await files.resolveServiceDealFileDownload({
+        fileId: finalId,
+        userId: BUYER,
+        isModerator: true,
+        moderatorFetch: true,
+      })
+    );
+    expect(tracked().map((a) => [a.role, a.kind])).toEqual([['Buyer', 'ModeratorFetch']]);
+  });
+
+  it('tracks the seller and a non-party moderator apart from the buyer', async () => {
+    const { finalId } = await completedDeal();
+    await take(await download(finalId, SELLER));
+    await take(
+      await files.resolveServiceDealFileDownload({
+        fileId: finalId,
+        userId: MOD,
+        isModerator: true,
+        moderatorFetch: true,
+      })
+    );
+    expect(tracked().map((a) => [a.role, a.kind])).toEqual([
+      ['Seller', 'Download'],
+      ['Moderator', 'ModeratorFetch'],
+    ]);
+  });
+
+  it.each([
+    ['rejects', () => tracker.serviceDealFileAccess.mockRejectedValue(new Error('down'))],
+    [
+      'throws',
+      () =>
+        tracker.serviceDealFileAccess.mockImplementation(() => {
+          throw new Error('down');
+        }),
+    ],
+  ])('still hands out the link when tracking %s, and logs it', async (_, fail) => {
+    const { finalId } = await completedDeal();
+    const target = await download(finalId, BUYER);
+    fail();
+    expect(await take(target)).toBe('https://get/service-deals/delivered/k');
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'creator-service-file-access', role: 'Buyer' })
+      )
+    );
+  });
+
+  it('logs a download the tracker did not write because it is switched off', async () => {
+    const { finalId } = await completedDeal();
+    tracker.serviceDealFileAccess.mockResolvedValue(false);
+    await take(await download(finalId, BUYER));
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'creator-service-file-access', role: 'Buyer' })
+      )
+    );
+  });
+
+  it('logs nothing when the row is delivered', async () => {
+    const { finalId } = await completedDeal();
+    await take(await download(finalId, BUYER));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'creator-service-file-access' })
+    );
+  });
+
+  it('does not wait for the tracker before handing out the link', async () => {
+    const { finalId } = await completedDeal();
+    const target = await download(finalId, BUYER);
+    tracker.serviceDealFileAccess.mockReturnValue(new Promise(() => undefined));
+    const waited = new Promise((resolve) =>
+      setTimeout(() => resolve('waited on the tracker'), 1000)
+    );
+    expect(await Promise.race([take(target), waited])).toBe(
+      'https://get/service-deals/delivered/k'
+    );
   });
 });

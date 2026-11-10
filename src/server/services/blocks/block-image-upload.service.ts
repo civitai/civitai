@@ -67,12 +67,20 @@ export async function persistBlockUploadImage(opts: {
     const { readEmbeddedImageMeta } = await import('~/server/services/blocks/embedded-image-meta');
     meta = await readEmbeddedImageMeta(bytes);
   }
+  // The blurhash placeholder an on-site upload gets from the browser preprocessor. Computed from
+  // the same measured bytes; a failure only loses the placeholder, never the upload.
+  const { tryComputeImageBlurhash, blurhashMetadata } = await import(
+    '~/server/utils/image-blurhash'
+  );
+  const blur = await tryComputeImageBlurhash(bytes, { source: 'block-upload' });
   const { createImage } = await import('~/server/services/image.service');
   const image = await createImage({
     url: input.url,
+    clientUrl: true,
     name: input.name ?? undefined,
     type: 'image',
     meta,
+    hash: blur?.hash,
     width: measured.width,
     height: measured.height,
     mimeType: measured.mimeType,
@@ -80,7 +88,11 @@ export async function persistBlockUploadImage(opts: {
     // entity tag records which stored object they were measured from — a row from
     // here is attachable as listing media, so it must carry the same evidence the
     // listing attach gate re-checks.
-    metadata: { size: measured.sizeBytes, ...storedObjectEtagMetadata(measured.etag) },
+    metadata: {
+      size: measured.sizeBytes,
+      ...storedObjectEtagMetadata(measured.etag),
+      ...blurhashMetadata(blur),
+    },
     // A server-owned provenance key: `createImage` drops any copy in `metadata`, so this
     // argument is the only way the stamp reaches the row.
     blockProvenance: uploadedByAppId
@@ -254,6 +266,61 @@ export async function fetchGenerationOutputImage(
 }
 
 /**
+ * A generation output's bytes, fetched by {@link fetchGenerationOutputImage} and landed in the
+ * image store, as the fields `createImage` (or `addPostImage`) takes for them. Nothing is written
+ * to the database.
+ *
+ * `width` / `height` are the orchestrator's own projection, never a caller claim. When it did not
+ * supply the pair, it is measured from the bytes: ingestion writes scan state only and never
+ * re-derives geometry, so this is the only place a missing pair can be filled (issue #3770).
+ */
+export async function stageGenerationOutputImage({
+  imageUrl,
+  width,
+  height,
+  source,
+  transform,
+}: {
+  imageUrl: string;
+  width: number | null;
+  height: number | null;
+  /** Names the caller in the blurhash failure log. */
+  source: string;
+  /** Rewrites the bytes before they are stored; `width` / `height` are then measured from the result. */
+  transform?: (bytes: Buffer) => Promise<Buffer>;
+}) {
+  const fetched = await fetchGenerationOutputImage(imageUrl);
+  const bytes = transform ? await transform(fetched.bytes) : fetched.bytes;
+  const contentType = transform ? sniffSupportedImage(bytes) : fetched.contentType;
+  if (!contentType)
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'generation output is not a supported image',
+    });
+
+  // The store the browser-direct upload path uses, so the scanner can read it; `key` is a fresh
+  // uuid (satisfies `imageSchema.url`).
+  const { key } = await uploadImageBufferToStore(bytes, { contentType });
+
+  // The placeholder an on-site upload gets from the browser preprocessor; without it `MediaHash`
+  // draws nothing while the image loads. A failure only loses the placeholder.
+  const { tryComputeImageBlurhash, blurhashMetadata } = await import(
+    '~/server/utils/image-blurhash'
+  );
+  const blur = await tryComputeImageBlurhash(bytes, { source });
+  const useOrchestratorDims = !transform && width != null && height != null;
+
+  return {
+    url: key,
+    mimeType: contentType,
+    hash: blur?.hash,
+    width: useOrchestratorDims ? width : blur?.width,
+    height: useOrchestratorDims ? height : blur?.height,
+    metadata: { size: bytes.byteLength, ...blurhashMetadata(blur) },
+  };
+}
+
+/**
  * App Blocks (Phase-1 seam) — SERVER-SIDE sibling of {@link persistBlockUploadImage}
  * whose byte source is a BLOCK-OWNED WORKFLOW OUTPUT (a raw, never-scanned
  * orchestrator URL) instead of a user file upload. Used by
@@ -295,24 +362,22 @@ export async function persistBlockWorkflowOutputImage(opts: {
 }): Promise<{ imageId: number }> {
   const { imageUrl, width, height, userId, appId } = opts;
 
-  const { bytes, contentType } = await fetchGenerationOutputImage(imageUrl);
-
-  // Land the bytes in the SAME store the browser-direct upload path uses so the
-  // scanner can read them; `key` is a fresh uuid (satisfies `imageSchema.url`).
-  const { key } = await uploadImageBufferToStore(bytes, { contentType });
+  const staged = await stageGenerationOutputImage({
+    imageUrl,
+    width,
+    height,
+    source: 'block-workflow-output',
+  });
 
   const { createImage } = await import('~/server/services/image.service');
   const image = await createImage({
-    url: key,
+    url: staged.url,
     type: 'image',
-    mimeType: contentType,
-    // Server-side values from the orchestrator's own workflow projection, never a
-    // caller claim — they may be null when the orchestrator hasn't populated them.
-    // Nothing downstream re-derives them: ingestion writes scan state only, so an
-    // absent pair stays absent (issue #3770).
-    width: width ?? undefined,
-    height: height ?? undefined,
-    metadata: { size: bytes.byteLength },
+    mimeType: staged.mimeType,
+    hash: staged.hash,
+    width: staged.width,
+    height: staged.height,
+    metadata: staged.metadata,
     blockProvenance: { key: BLOCK_PUBLISHED_APP_ID_META_KEY, appId },
     userId,
     // NO postId, NO modelVersionId, NO skipIngestion → a bare, real-scanned Image row.

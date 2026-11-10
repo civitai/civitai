@@ -15,10 +15,26 @@
 //   [c]                              GET    list            POST create
 //   ['_get', c]                      POST   get many  { keys }
 //   [c, key]                         GET    get     PUT put     DELETE delete
-//   [c, key, 'counters', name]       POST   increment
-//   [c, key, 'marks', name]          PUT    mark    DELETE unmark
+//                                    PATCH  one update operator: $inc, $mark or $unmark
+//   [c, key, 'counters', name]       POST   increment         (deprecated: PATCH $inc)
+//   [c, key, 'marks', name]          PUT    mark    DELETE unmark  (deprecated: PATCH $mark/$unmark)
 // `_get` is a POST with a body (not a GET query) because 100 keys of 128 characters do not
 // fit in a URL every proxy accepts.
+//
+// TALLIES AS UPDATE OPERATORS. A counter or a mark is an update operator on the document:
+// `PATCH /:c/:key` with exactly one of `{"$inc":{"<counter>":<by>}}`, `{"$mark":"<name>"}` or
+// `{"$unmark":"<name>"}` (`parseTallyPatch`). The PATCH is TRANSLATED into the per-tally route
+// the deprecated paths match and runs through the very same operation below, so every gate,
+// budget, moderation scan, import rule and reply is one code path for both. A tally never
+// touches a document's `data` or `version`. A PATCH carrying plain fields is refused: a
+// merge-patch of `data` is reserved for later. The deprecated routes answer exactly as before,
+// with `Deprecation` and `Link` headers (`LEGACY_TALLY_HEADERS`); no `Sunset` is set yet.
+//
+// IMPORTS. Every collection route takes an optional `?from=<source blockId>`: the call then runs
+// in that SOURCE app, as the same viewer, through an import the caller's manifest declares
+// (`resolveImportAccess` in `doc-store-access.ts`). The call is first charged to the CONSUMER's
+// read bucket for the viewer, before it is resolved. Everything after that — gates, budgets, rate
+// limits, moderation, ceilings — reads the source's access, so it applies as the source.
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { sessionClient } from '~/server/auth/session-client';
@@ -30,7 +46,13 @@ import type {
   BlockScopeRefusal,
   BlockScopeRefusalKind,
 } from '~/server/middleware/block-scope.middleware';
-import type { AppBlockEndpoint } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  markBlockRequestReadMiss,
+  recordDocStoreError,
+  recordStorageTallyOp,
+  type DocStoreEndpoint,
+  type StorageTallyOp,
+} from '~/server/metrics/app-block-runtime.metrics';
 import {
   hasLinkedOAuthAccount,
   sharedWriteTrustRefusal,
@@ -42,9 +64,16 @@ import {
   refuseReportWithdrawal,
   type DocStore,
 } from '~/server/services/apps/doc-store';
-import { resolveStorageAccess, type StorageAccess } from '~/server/services/apps/doc-store-access';
+import {
+  resolveImportAccess,
+  resolveStorageAccess,
+  type ImportOp,
+  type StorageAccess,
+} from '~/server/services/apps/doc-store-access';
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
 import { assertOwnedModelVersions } from '~/server/services/apps/doc-store-ownership';
+import { validateDocAgainstCollectionSchema } from '~/server/services/apps/doc-store-schema';
+import { resolveSchemaMajor } from '~/server/services/apps/doc-store-schema-major';
 import type {
   DocAuthor,
   DocCollection,
@@ -110,7 +139,13 @@ export type StorageRoute =
   | { op: 'getMany'; collection: string }
   | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
   | { op: 'increment'; collection: string; key: string; name: string }
-  | { op: 'mark' | 'unmark'; collection: string; key: string; name: string };
+  | { op: 'mark' | 'unmark'; collection: string; key: string; name: string }
+  // An update operator on one document; translated by `parseTallyPatch` before it runs.
+  | { op: 'patch'; collection: string; key: string };
+
+/** A route `run` executes: every route but `patch`, which is translated into one of these first. */
+type OperationRoute = Exclude<StorageRoute, { op: 'patch' }>;
+type TallyRoute = Extract<StorageRoute, { op: 'increment' | 'mark' | 'unmark' }>;
 
 type Match = { route: StorageRoute } | { methods: string[] } | null;
 
@@ -135,6 +170,7 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
         GET: { op: 'get', collection: a, key: b },
         PUT: { op: 'put', collection: a, key: b },
         DELETE: { op: 'delete', collection: a, key: b },
+        PATCH: { op: 'patch', collection: a, key: b },
       });
     case 4:
       if (a.startsWith('_')) return null;
@@ -154,12 +190,13 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
 }
 
 /** The metrics label for a request, from its method and path shape only. */
-export function storageEndpointLabel(req: NextApiRequest): AppBlockEndpoint {
+export function storageEndpointLabel(req: NextApiRequest): DocStoreEndpoint {
   const m = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
   const op = m && 'route' in m ? m.route.op : 'info';
   if (op === 'info') return 'storage_info';
   if (op === 'list' || op === 'get' || op === 'getMany') return 'storage_read';
   if (op === 'create' || op === 'put' || op === 'delete') return 'storage_write';
+  // increment, mark, unmark, and `patch` (whose only operators are tallies).
   return 'storage_tally';
 }
 
@@ -178,10 +215,13 @@ export type StorageApiCode = DocStoreErrorCode | 'internal_error' | 'method_not_
 export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   invalid_request: 400,
   index_not_declared: 400,
+  schema_violation: 400,
   unauthenticated: 401,
   sign_in_required: 401,
   insufficient_scope: 403,
   consent_required: 403,
+  import_not_declared: 403,
+  not_exportable: 403,
   not_eligible: 403,
   not_author: 403,
   write_policy: 403,
@@ -219,6 +259,8 @@ export type StorageErrorBody = {
  */
 const CLIENT_MESSAGE: Partial<Record<StorageApiCode, string>> = {
   storage_disabled: 'document storage is unavailable',
+  // The store's connection-fault message names the driver error (`doc-store.ts`).
+  service_unavailable: 'storage is temporarily unavailable',
 };
 
 function envelope(code: StorageApiCode, message: string, details?: Record<string, unknown>) {
@@ -227,7 +269,26 @@ function envelope(code: StorageApiCode, message: string, details?: Record<string
   return body;
 }
 
-function sendError(res: NextApiResponse, err: unknown): void {
+/**
+ * Every error envelope this route sends leaves through here or `storageRefusalBody`, and both
+ * count it in `civitai_app_block_doc_store_errors_total` under the envelope's own code.
+ */
+function sendEnvelope(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  status: number,
+  body: StorageErrorBody
+): void {
+  recordDocStoreError(storageEndpointLabel(req), body.code);
+  res.status(status).json(body);
+}
+
+/** True for a document-store READ of a key that does not exist (see `sendError`). */
+export function isDocumentReadMiss(req: NextApiRequest, code: StorageApiCode): boolean {
+  return code === 'not_found' && storageEndpointLabel(req) === 'storage_read';
+}
+
+function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): void {
   if (!(err instanceof DocStoreError)) {
     logToAxiom(
       {
@@ -238,17 +299,23 @@ function sendError(res: NextApiResponse, err: unknown): void {
       },
       'app-blocks'
     ).catch(() => undefined);
-    res.status(500).json(envelope('internal_error', GENERIC_SERVER_ERROR_MESSAGE));
+    sendEnvelope(req, res, 500, envelope('internal_error', GENERIC_SERVER_ERROR_MESSAGE));
     return;
   }
   const body = envelope(err.code, CLIENT_MESSAGE[err.code] ?? err.message, err.details);
+  // A document GET for a key that does not exist yet is a READ MISS: an app's first read of a key
+  // it has never written lands here by contract. Marked so the per-app REST counter reports it as
+  // `result="not_found"` instead of `client_error`. On `storage_read` this code comes only from the
+  // `get` op; the other `not_found` (an unmatched route) is labelled `storage_info` and stays an
+  // error. The envelope itself, and `doc_store_errors_total{code="not_found"}`, are unchanged.
+  if (isDocumentReadMiss(req, err.code)) markBlockRequestReadMiss(res);
   // Every refusal that names a retry delay (a 429, or a retryable 503) says so in the header.
   const retryAfter = err.details?.retryAfter;
   if (typeof retryAfter === 'number') {
     res.setHeader('Retry-After', String(retryAfter));
     if (err.code === 'rate_limited') body.rateLimit = rateLimitMetaFor(retryAfter);
   }
-  res.status(STORAGE_ERROR_STATUS[err.code]).json(body);
+  sendEnvelope(req, res, STORAGE_ERROR_STATUS[err.code], body);
 }
 
 /**
@@ -268,8 +335,13 @@ const MIDDLEWARE_REFUSAL: Record<BlockScopeRefusalKind, { code: StorageApiCode; 
     context_binding: { code: 'not_eligible', reason: 'context_binding' },
   };
 
-export function storageRefusalBody(refusal: BlockScopeRefusal): StorageErrorBody {
+export function storageRefusalBody(
+  refusal: BlockScopeRefusal,
+  req: NextApiRequest
+): StorageErrorBody {
   const { code, reason } = MIDDLEWARE_REFUSAL[refusal.kind];
+  // The middleware sends this body; it is counted here, the one place it is built.
+  recordDocStoreError(storageEndpointLabel(req), code);
   return envelope(code, refusal.error, reason ? { reason } : undefined);
 }
 
@@ -299,9 +371,9 @@ export const STORAGE_BODY_LIMIT_BYTES = DOC_STORE_BOUNDS.docBytes + 16 * 1024;
 /** The request body stopped arriving (the client disconnected). Answered quietly. */
 class BodyAbortedError extends Error {}
 
-/** Read and parse a JSON request body; `undefined` when there is none. Only POST and PUT. */
+/** Read and parse a JSON request body; `undefined` when there is none. Only POST, PUT and PATCH. */
 async function readJsonBody(req: NextApiRequest): Promise<unknown> {
-  if (req.method !== 'POST' && req.method !== 'PUT') return undefined;
+  if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'PATCH') return undefined;
   const tooLarge = () =>
     new DocStoreError('too_large', `request body exceeds ${STORAGE_BODY_LIMIT_BYTES} bytes`, {
       limit: STORAGE_BODY_LIMIT_BYTES,
@@ -341,6 +413,140 @@ function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   return parsed.data;
 }
 
+// ---------------------------------------------------------------------------
+// Update operators (PATCH)
+// ---------------------------------------------------------------------------
+
+/** The update operators a PATCH may carry, and the tally route each one runs as. */
+const TALLY_OPERATORS = {
+  $inc: 'increment',
+  $mark: 'mark',
+  $unmark: 'unmark',
+} as const satisfies Record<string, TallyRoute['op']>;
+type TallyOperator = keyof typeof TALLY_OPERATORS;
+
+/**
+ * Why a PATCH body was refused, in `details.reason` of an `invalid_request`: one stable value per
+ * refusal, so a client can tell them apart without parsing the message.
+ */
+export type TallyPatchRefusal =
+  | 'empty_patch'
+  | 'unknown_operator'
+  | 'multiple_operators'
+  | 'merge_patch_unsupported'
+  | 'malformed_operator';
+
+const isOperator = (field: string): field is TallyOperator =>
+  Object.prototype.hasOwnProperty.call(TALLY_OPERATORS, field);
+
+const patchRefusal = (
+  reason: TallyPatchRefusal,
+  message: string,
+  extra?: Record<string, unknown>
+) => invalid(message, { reason, ...extra });
+
+/**
+ * A PATCH body → the tally route it runs as, and the body that route's own parser reads. Only the
+ * operator's SHAPE is checked here; every value (`by`, the counter or mark name, a report
+ * withdrawal) is left to the operation, so it is validated by exactly the parser and the store
+ * checks the deprecated routes use, in the same order.
+ *
+ * Refused (`invalid_request`, `details.reason`): no body or `{}` (`empty_patch`); a `$` key that
+ * is not an operator (`unknown_operator`); two operators (`multiple_operators`); plain fields only
+ * (`merge_patch_unsupported`, reserved for a merge-patch of `data`); and every other shape error
+ * (`malformed_operator`): a JSON body that is not an object, an operator beside any other field (a
+ * mark carries no payload, `report` included), `$inc` naming other than exactly one counter, and a
+ * `$mark`/`$unmark` name that is not a string.
+ */
+export function parseTallyPatch(
+  route: { collection: string; key: string },
+  body: unknown
+): { route: TallyRoute; body: unknown } {
+  if (body === undefined) throw patchRefusal('empty_patch', 'PATCH needs an update operator');
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw patchRefusal(
+      'malformed_operator',
+      'PATCH body must be an object holding one update operator'
+    );
+  }
+  const fields = Object.keys(body);
+  if (fields.length === 0) throw patchRefusal('empty_patch', 'PATCH needs an update operator');
+  const unknown = fields.find((f) => f.startsWith('$') && !isOperator(f));
+  if (unknown !== undefined) {
+    throw patchRefusal('unknown_operator', `unknown update operator ${unknown}`, {
+      operator: unknown,
+    });
+  }
+  const operators = fields.filter(isOperator);
+  if (operators.length > 1) {
+    throw patchRefusal('multiple_operators', 'PATCH takes exactly one update operator', {
+      operators,
+    });
+  }
+  if (operators.length === 0) {
+    throw patchRefusal(
+      'merge_patch_unsupported',
+      'PATCH takes an update operator ($inc, $mark or $unmark); to change data, PUT the document'
+    );
+  }
+  const [operator] = operators;
+  if (fields.length > 1) {
+    throw patchRefusal('malformed_operator', `${operator} cannot be combined with other fields`, {
+      operator,
+    });
+  }
+  const value = (body as Record<string, unknown>)[operator];
+  const at = { collection: route.collection, key: route.key };
+  if (operator === '$inc') {
+    const counters =
+      value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? Object.entries(value)
+        : [];
+    if (counters.length !== 1) {
+      throw patchRefusal('malformed_operator', '$inc names exactly one counter: {"<counter>": by}');
+    }
+    const [[name, by]] = counters;
+    // The deprecated route's own body, `{ by }`, read by its own parser in the operation.
+    return { route: { op: 'increment', ...at, name }, body: { by } };
+  }
+  if (typeof value !== 'string') {
+    throw patchRefusal('malformed_operator', `${operator} takes a mark name`, { operator });
+  }
+  // A mark's body is empty on the deprecated route too.
+  return { route: { op: TALLY_OPERATORS[operator], ...at, name: value }, body: undefined };
+}
+
+// The per-tally routes are deprecated as of 2026-11-09T00:00:00Z (RFC 9745 `@<unix-seconds>`).
+export const LEGACY_TALLY_DEPRECATED_AT = '@1794182400';
+
+/**
+ * Sent on every response this handler gives for a deprecated per-tally PATH, whatever the method
+ * (a 405 included). Not on the token middleware's own refusals (401/403/429), which are sent
+ * before the handler runs. No `Sunset`: removal waits for the usage
+ * `civitai_app_block_doc_store_tally_ops_total{route="legacy"}` shows.
+ */
+export const LEGACY_TALLY_HEADERS = {
+  Deprecation: LEGACY_TALLY_DEPRECATED_AT,
+  Link: '<https://developer.civitai.com/apps/guide/storage>; rel="deprecation"',
+} as const;
+
+const TALLY_METRIC_OP: Record<TallyRoute['op'], StorageTallyOp> = {
+  increment: 'inc',
+  mark: 'mark',
+  unmark: 'unmark',
+};
+
+/** A path the deprecated per-tally routes own: `[c, key, 'counters' | 'marks', name]`. */
+function isLegacyTallyPath(segments: readonly string[]): boolean {
+  return (
+    segments.length === 4 && (segments[2] === COUNTERS_SEGMENT || segments[2] === MARKS_SEGMENT)
+  );
+}
+
+function isTallyRoute(route: StorageRoute): route is TallyRoute {
+  return route.op === 'increment' || route.op === 'mark' || route.op === 'unmark';
+}
+
 const LIST_PARAMS = new Set(['sort', 'author', 'markedBy', 'mark', 'keyPrefix', 'limit', 'cursor']);
 const WHERE_PARAM = /^where\[([^\]]+)\]$/;
 
@@ -348,7 +554,8 @@ const WHERE_PARAM = /^where\[([^\]]+)\]$/;
 function parseListQuery(req: NextApiRequest, decl: DeclaredStorageCollection): DocListQuery {
   const q: DocListQuery = {};
   for (const [name, raw] of Object.entries(req.query)) {
-    if (name === 'path') continue; // the catch-all's own route parameter
+    // The catch-all's own route parameter, and the import selector (read by the handler).
+    if (name === 'path' || name === FROM_PARAM) continue;
     if (Array.isArray(raw) || raw === undefined) throw invalid(`${name} must be given once`);
     const where = WHERE_PARAM.exec(name);
     if (where) {
@@ -488,6 +695,21 @@ function collectionOf(access: StorageAccess, name: string): DocCollection {
   return coll;
 }
 
+/**
+ * `coll` with the schema major a write of a document body is stamped with
+ * (`DocCollection.schemaMajor`): the collection's current major in production, derived from the
+ * app's manifest history; `null` when it cannot be. Development and review data are not stamped.
+ */
+async function withSchemaMajor(access: StorageAccess, coll: DocCollection): Promise<DocCollection> {
+  if (access.ctx.ns !== PUBLISHED_NS) return coll;
+  const schemaMajor = await resolveSchemaMajor({
+    appBlockId: access.ctx.appId,
+    head: access.enforcedManifest,
+    collection: coll.name,
+  });
+  return { ...coll, schemaMajor };
+}
+
 function requireViewer(access: StorageAccess): number {
   if (access.ctx.viewerUid === null) {
     throw new DocStoreError('sign_in_required', 'sign in required');
@@ -495,18 +717,45 @@ function requireViewer(access: StorageAccess): number {
   return access.ctx.viewerUid;
 }
 
-/** Creating, editing or deleting a document other viewers read needs the consent-gated scope. */
+/**
+ * Creating, editing or deleting a document other viewers read needs the consent-gated scope.
+ * Through an import it is the viewer's grant in the SOURCE app (`resolveImportAccess`), and the
+ * refusal names the source in `details.from`.
+ */
 function assertPublishScope(access: StorageAccess, coll: DocCollection): void {
   if (!collectionNeedsPublishScope(coll.config)) return;
   if (access.scopes.includes(APP_STORAGE_PUBLISH_SCOPE)) return;
+  throw publishRefusal(access);
+}
+
+/**
+ * A counter or mark on one of the SOURCE's shared collections, through an import: it changes
+ * state other viewers of the source see, so it needs the viewer's publish consent there exactly
+ * as a create or put does — whatever the collection's write policy, `none` included. An app's
+ * own tallies are unchanged (`apps:storage` covers them); a private collection has none.
+ */
+function assertImportTallyPublishScope(access: StorageAccess, shared: boolean): void {
+  if (access.importedFrom === undefined || !shared) return;
+  if (access.scopes.includes(APP_STORAGE_PUBLISH_SCOPE)) return;
+  throw publishRefusal(access);
+}
+
+function publishRefusal(access: StorageAccess): DocStoreError {
   if (access.consentUnavailable) {
-    throw new DocStoreError('consent_unavailable', 'permission state is temporarily unavailable', {
+    return new DocStoreError('consent_unavailable', 'permission state is temporarily unavailable', {
       retryAfter: 1,
     });
   }
-  throw new DocStoreError('consent_required', `${APP_STORAGE_PUBLISH_SCOPE} has not been granted`, {
-    scope: APP_STORAGE_PUBLISH_SCOPE,
-  });
+  return new DocStoreError(
+    'consent_required',
+    access.importedFrom === undefined
+      ? `${APP_STORAGE_PUBLISH_SCOPE} has not been granted`
+      : `${APP_STORAGE_PUBLISH_SCOPE} has not been granted in ${access.importedFrom}`,
+    {
+      scope: APP_STORAGE_PUBLISH_SCOPE,
+      ...(access.importedFrom === undefined ? {} : { from: access.importedFrom }),
+    }
+  );
 }
 
 /** The min-trust gate, on every viewer write into a shared collection. Returns the subject. */
@@ -645,7 +894,8 @@ async function moderate(
  * charges a raw error from its INSERT/UPDATE, because a value can make those fail. Here a raw
  * error is refunded, which is sound only because the store validates a document fully before
  * any SQL runs and `translatePgError` (`doc-store.ts`) maps the one value-reachable database
- * error (the stored-size CHECK) to `too_large`. A new constraint a value can violate must be
+ * error (the stored-size CHECK) to `too_large`, and connection faults to `service_unavailable`
+ * (refunded above). A new constraint a value can violate must be
  * mapped there too, or every such failure becomes a free retry of the moderation scan.
  */
 function isOurFault(err: unknown): boolean {
@@ -653,6 +903,8 @@ function isOurFault(err: unknown): boolean {
   if (err.code === 'rate_limited') return err.details?.reason === 'contention';
   return (
     err.code === 'storage_disabled' ||
+    // The store's database could not be reached (`translatePgError`), or a gate's read failed.
+    err.code === 'service_unavailable' ||
     err.code === 'moderation_unavailable' ||
     err.code === 'consent_unavailable'
   );
@@ -696,13 +948,15 @@ type Reply = { status: number; body: unknown };
 async function run(
   req: NextApiRequest,
   body: unknown,
-  route: StorageRoute,
+  route: OperationRoute,
   access: StorageAccess,
   store: DocStore
 ): Promise<Reply> {
   const { ctx } = access;
   const ok = (body: unknown, status = 200): Reply => ({ status, body });
-  // Info is signed-in only: its body carries the app-wide usage (documents, bytes).
+  // Info is signed-in only: its body carries the app-wide usage (documents, bytes) — the app's
+  // SHARED documents, which is what `appBytes`/`appDocs` bound; private documents count toward
+  // the viewer's own usage and `viewerBytes`/`viewerDocs` only (`DocStoreUsage`).
   // Every read is charged first, so a read of an undeclared collection is limited too.
   // Writes are charged below, once the collection says which bucket they spend.
   if (route.op === 'info') requireViewer(access);
@@ -776,13 +1030,17 @@ async function run(
       // the write budget and the moderation scan — the manifest schema documents a refusal as
       // spending no write budget and no scan.
       const newData = created?.data ?? putIn?.data;
+      // The collection's schema first: the store checks it again itself (any caller), but here a
+      // refusal also spends no ownership lookup. A put replaces the whole body, so `newData` IS
+      // the resulting document.
+      if (newData) validateDocAgainstCollectionSchema(ctx, coll, newData);
       if (newData) await assertOwnedModelVersions(decl, newData, uid);
       const write = async (user: SessionUser | null, landed: () => void): Promise<Reply> => {
         if (created) {
           const afterCommit = user
             ? await moderate(access, user, 'append', '', { data: created.data })
             : nothingAfterCommit;
-          const doc = await store.create(ctx, coll, created.data);
+          const doc = await store.create(ctx, await withSchemaMajor(access, coll), created.data);
           landed();
           afterCommit(doc.key);
           return ok(await presentDoc(doc, decl), 201);
@@ -792,7 +1050,9 @@ async function run(
           const afterCommit = user
             ? await moderate(access, user, 'update', route.key, { data, key: route.key })
             : nothingAfterCommit;
-          const doc = await store.put(ctx, coll, route.key, data, { ifVersion });
+          const doc = await store.put(ctx, await withSchemaMajor(access, coll), route.key, data, {
+            ifVersion,
+          });
           landed();
           afterCommit();
           return ok(await presentDoc(doc, decl));
@@ -820,6 +1080,7 @@ async function run(
     }
     case 'increment': {
       const uid = requireViewer(access);
+      assertImportTallyPublishScope(access, shared);
       const { by } = parseBody(incrementBody, body);
       // The bucket first: a refused request costs no subject lookup.
       await charge('tally', access, req);
@@ -830,7 +1091,9 @@ async function run(
         user && decl.write === 'none'
           ? await moderate(access, user, 'counter', route.key, { key: route.key })
           : nothingAfterCommit;
-      const counted = await store.increment(ctx, coll, route.key, route.name, by);
+      // Only under `write: 'none'` can an increment create (and so stamp) a document.
+      const incremented = decl.write === 'none' ? await withSchemaMajor(access, coll) : coll;
+      const counted = await store.increment(ctx, incremented, route.key, route.name, by);
       afterCommit();
       return ok(counted);
     }
@@ -839,6 +1102,7 @@ async function run(
       // Before any budget or trust lookup: a withdrawal is a 400 for everyone.
       if (route.op === 'unmark') refuseReportWithdrawal(route.name);
       const uid = requireViewer(access);
+      assertImportTallyPublishScope(access, shared);
       if (route.op === 'mark') parseBody(markBody, body);
       await charge('tally', access, req);
       if (route.op === 'mark' && route.name === REPORT_MARK) await charge('report', access, req);
@@ -866,10 +1130,32 @@ function deleteIfVersion(req: NextApiRequest): number | undefined {
   return Number(raw);
 }
 
+const FROM_PARAM = 'from';
+
+/** The import selector, or null. Only collection routes take one; `info` refuses it as stray. */
+function importSourceOf(req: NextApiRequest): string | null {
+  const raw = req.query[FROM_PARAM];
+  if (raw === undefined) return null;
+  if (Array.isArray(raw)) throw invalid(`${FROM_PARAM} must be given once`);
+  return raw;
+}
+
+/**
+ * What an operation does, for an import: a read; a delete; or an authoring write (create, put,
+ * a counter or a mark), the only kind that can need the viewer's publish consent in the source.
+ * Every one but a read is refused through a read-only import.
+ */
+function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): ImportOp {
+  if (route.op === 'list' || route.op === 'get' || route.op === 'getMany') return 'read';
+  // `patch` carries only tally operators, each an authoring write like the routes it replaces.
+  return route.op === 'delete' ? 'delete' : 'author';
+}
+
 /** Query parameters other than the route's own are refused everywhere except a list. */
 function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute): void {
   if (route.op === 'list') return;
-  const allowed = route.op === 'delete' ? ['path', 'ifVersion'] : ['path'];
+  const own = route.op === 'delete' ? ['path', 'ifVersion'] : ['path'];
+  const allowed = route.op === 'info' ? own : [...own, FROM_PARAM];
   const stray = Object.keys(req.query).find((k) => !allowed.includes(k));
   if (stray) throw invalid(`unknown query parameter ${stray}`);
 }
@@ -885,32 +1171,59 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
     try {
       const match = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
       if (!match) throw new DocStoreError('not_found', 'no such storage route');
+      // A deprecated per-tally path says so on every response the handler gives, a refusal and a
+      // wrong method's 405 included.
+      if (isLegacyTallyPath(pathSegments(req))) {
+        for (const [name, value] of Object.entries(LEGACY_TALLY_HEADERS)) {
+          res.setHeader(name, value);
+        }
+      }
       if ('methods' in match) {
         res.setHeader('Allow', match.methods.join(', '));
-        res
-          .status(STORAGE_ERROR_STATUS.method_not_allowed)
-          .json(envelope('method_not_allowed', 'method not allowed'));
+        sendEnvelope(
+          req,
+          res,
+          STORAGE_ERROR_STATUS.method_not_allowed,
+          envelope('method_not_allowed', 'method not allowed')
+        );
         return;
       }
       const claims = (req as BlockScopedNextApiRequest).blockClaims;
       if (!claims) throw new DocStoreError('unauthenticated', 'a block token is required');
       assertNoStrayQuery(req, match.route);
-      const access = await resolveStorageAccess(claims, {
+      const own = await resolveStorageAccess(claims, {
         consentUnavailable: (req as BlockScopedNextApiRequest).blockConsentUnavailable === true,
       });
-      const body = await readJsonBody(req);
-      const reply = await run(req, body, match.route, access, deps.store());
+      const route = match.route;
+      const from = route.op === 'info' ? null : importSourceOf(req);
+      if (from !== null) await charge('read', own, req);
+      const access =
+        from === null || route.op === 'info'
+          ? own
+          : await resolveImportAccess(own, {
+              from,
+              collection: route.collection,
+              op: importOpOf(route),
+            });
+      const raw = await readJsonBody(req);
+      // A PATCH runs as the tally route its operator names, with that route's own body.
+      const { route: op, body }: { route: OperationRoute; body: unknown } =
+        route.op === 'patch' ? parseTallyPatch(route, raw) : { route, body: raw };
+      if (isTallyRoute(op)) {
+        recordStorageTallyOp(TALLY_METRIC_OP[op.op], route.op === 'patch' ? 'v2' : 'legacy');
+      }
+      const reply = await run(req, body, op, access, deps.store());
       res.status(reply.status).json(reply.body);
     } catch (err) {
       if (err instanceof BodyAbortedError) {
         // A client abort is not a server fault: no error log, and nothing written to a
         // connection that is already gone. A still-open one gets a plain refusal.
         if (!req.destroyed && !res.destroyed && !res.writableEnded) {
-          res.status(400).json(envelope('invalid_request', 'request body was not received'));
+          sendEnvelope(req, res, 400, envelope('invalid_request', 'request body was not received'));
         }
         return;
       }
-      sendError(res, err);
+      sendError(req, res, err);
     }
   };
 }

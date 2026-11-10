@@ -8,6 +8,7 @@ import { recordModActivity } from './mod-activity';
 import { REPORT_ENTITIES, reportEntity } from './report-entities';
 import { SYSTEM_USER_ID, usersByIds } from './users.service';
 import { rewardReportReporters } from './rewards';
+import { ENQUEUE_SOURCE } from './unpublished-version-posts';
 import {
   DEFAULT_REPORT_REASONS,
   DEFAULT_REPORT_STATUSES,
@@ -47,8 +48,8 @@ export type ModeratorReportRow = {
   statusSetAt: Date | null;
   statusSetByUsername: string | null;
   entityId: number | null;
-  /** Site-relative path for report types whose entity has no page of its own. Only comments set it —
-   *  see `commentContextUrl`. `null` everywhere else, where `entityUrl` already answers. */
+  /** Site-relative path for report types whose entity has no page of its own. Set for the types in
+   *  `CONTEXT_RESOLVERS`; `null` everywhere else, where `entityUrl` already answers. */
   contextUrl: string | null;
 };
 
@@ -61,51 +62,17 @@ export type ModeratorReportRow = {
  * only way to the words being reported was to search for them.
  *
  * Resolved in SQL because every parent is a join away and the queue already pays for one.
- *
- * `commentV2` threads carry the parent as one of a dozen nullable columns, and a REPLY carries none of
- * them — its thread's parent is the comment above it — so the resolution falls back to `rootThreadId`
- * (6,429 of the 6,785 reported replies on the dev clone). `bountyEntryId` threads never carry the
- * `bountyId` the URL needs (248 of 248), hence the join. `highlight` is what scrolls to and marks the
- * comment once the page opens, and is the whole point of linking rather than landing on the entity.
  */
 type ContextResolver = (
   entityId: ReturnType<typeof sql<number | null>>
 ) => ReturnType<typeof sql<string | null>>;
 
 const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
-  comment: (entityId) =>
+  // The main app's comment permalink resolves a live `CommentV3` row to its thread; a deleted one
+  // gets no link rather than a dead one.
+  commentV3: (entityId) =>
     sql<string | null>`(
-      SELECT '/models/' || c."modelId" || '?dialog=commentThread&commentId=' ||
-             coalesce(c."parentId", c.id) || '&highlight=' || c.id
-      FROM "Comment" c WHERE c.id = ${entityId} AND c."modelId" IS NOT NULL
-    )`,
-
-  commentV2: (entityId) =>
-    sql<string | null>`(
-      SELECT coalesce(CASE
-        WHEN p."imageId"       IS NOT NULL THEN '/images/'   || p."imageId"
-        WHEN p."postId"        IS NOT NULL THEN '/posts/'    || p."postId"
-        WHEN p."articleId"     IS NOT NULL THEN '/articles/' || p."articleId"
-        WHEN p."reviewId"      IS NOT NULL THEN '/reviews/'  || p."reviewId"
-        WHEN p."bountyEntryId" IS NOT NULL THEN '/bounties/' || be."bountyId" || '/entries/' || p."bountyEntryId"
-        WHEN p."bountyId"      IS NOT NULL THEN '/bounties/' || p."bountyId"
-        WHEN p."challengeId"   IS NOT NULL THEN '/challenges/' || p."challengeId"
-        WHEN p."modelId"       IS NOT NULL THEN '/models/'   || p."modelId"
-        WHEN p."comicProjectId" IS NOT NULL THEN '/comics/'  || p."comicProjectId"
-        WHEN p."model3dId"     IS NOT NULL THEN '/3d-models/' || p."model3dId"
-        -- Threads with no parent column at all are the remainder (3,519 on the dev clone). They are
-        -- orphaned rows, not a missing mapping: one carries 110 comments and no entity of any kind.
-        -- /comments/v2/:id is the main app resolving the thread itself, the only thing left that can
-        -- find the comment — better than the dead text this used to render.
-        ELSE NULL
-      END || '?highlight=' || cv.id, '/comments/v2/' || cv.id)
-      FROM "CommentV2" cv
-      JOIN "Thread" t ON t.id = cv."threadId"
-      -- A reply's own thread hangs off a comment; the entity is on the root.
-      LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
-      JOIN LATERAL (SELECT * FROM "Thread" x WHERE x.id = CASE WHEN t."commentId" IS NULL THEN t.id ELSE coalesce(root.id, t.id) END) p ON true
-      LEFT JOIN "BountyEntry" be ON be.id = p."bountyEntryId"
-      WHERE cv.id = ${entityId}
+      SELECT '/comments/' || c.id FROM "CommentV3" c WHERE c.id = ${entityId} AND c."deletedAt" IS NULL
     )`,
 
   // A bounty entry lives under its bounty, and the id is only on the entry's own row.
@@ -137,10 +104,10 @@ const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
       WHERE a.id = ${entityId} AND u.username IS NOT NULL
     )`,
 
-  // An offering has no page of its own; it is listed in its seller's shop.
+  // An offering has no page of its own; its card in the seller's shop carries the `service-<id>` anchor.
   serviceOffering: (entityId) =>
     sql<string | null>`(
-      SELECT '/user/' || u.username || '/shop'
+      SELECT '/user/' || u.username || '/shop#service-' || o.id
       FROM "ServiceOffering" o JOIN "User" u ON u.id = o."sellerId"
       WHERE o.id = ${entityId} AND u.username IS NOT NULL
     )`,
@@ -162,21 +129,22 @@ function reportContextUrl(type: ReportEntity, entityId: ReturnType<typeof sql<nu
 
 /** Whether the report page can still open this report (it finds one only through the entity's report
  *  join row, deleted with the entity), plus the content's context URL. Null when the lookup failed:
- *  read it as unknown, never as gone. */
+ *  read it as unknown, never as gone. The entity is read from that join row rather than taken from
+ *  the caller: a snapshot taken before the comment tables merged holds a v1 comment's old id. */
 export async function reportReachability(
   type: ReportEntity,
-  entityId: number | null,
   reportId: number
 ): Promise<{ reachable: boolean; contextUrl: string | null } | null> {
   const join = reportEntity(type);
   try {
     const { rows } = await sql<{ reachable: boolean; url: string | null }>`
       SELECT EXISTS (
-               SELECT 1 FROM ${sql.table(join.reportTable)} WHERE "reportId" = ${reportId}
+               SELECT 1 FROM ${sql.table(join.reportTable)} er WHERE er."reportId" = ${reportId}
              ) AS reachable,
-             ${
-               entityId ? reportContextUrl(type, sql<number>`${entityId}::int`) : sql`null::text`
-             } AS url
+             (SELECT ${reportContextUrl(type, sql<number>`er.${sql.ref(join.fk)}`)}
+              FROM ${sql.table(
+                join.reportTable
+              )} er WHERE er."reportId" = ${reportId} LIMIT 1) AS url
     `.execute(dbRead);
     return rows[0] ? { reachable: Boolean(rows[0].reachable), contextUrl: rows[0].url } : null;
   } catch {
@@ -205,6 +173,8 @@ export type GetReportsParams = {
   /** Every report about one item — the account or model a queue page has open, which lists them all
    *  rather than the ones that happen to sit on the current page of the queue. */
   entityId?: number;
+  /** Only the reports `unpublished-version-posts` filed for this unpublish reason. */
+  unpublishedReason?: string;
 };
 
 /**
@@ -219,6 +189,7 @@ function reportQueueBase({
   to,
   reportId,
   entityId,
+  unpublishedReason,
 }: Omit<GetReportsParams, 'statuses' | 'page' | 'limit'>) {
   const join = reportEntity(type);
   const entityExists =
@@ -243,7 +214,25 @@ function reportQueueBase({
   if (from) base = base.where('Report.createdAt', '>=', from);
   if (to) base = base.where('Report.createdAt', '<', to);
   if (reportId) base = base.where('Report.id', '=', reportId);
+  if (unpublishedReason)
+    base = base
+      .where(sql<string>`"Report".details ->> 'source'`, '=', ENQUEUE_SOURCE)
+      .where(sql<string>`"Report".details ->> 'unpublishedReason'`, '=', unpublishedReason);
   return base;
+}
+
+/** Open reports `unpublished-version-posts` filed, per unpublish reason, for the post queue's chips. */
+export async function getUnpublishedSourceCounts(): Promise<Record<string, number>> {
+  const reason = sql<string>`"Report".details ->> 'unpublishedReason'`;
+  const rows = await dbRead
+    .selectFrom('Report')
+    .where('Report.status', 'in', DEFAULT_REPORT_STATUSES)
+    .where('Report.userId', '=', SYSTEM_USER_ID)
+    .where(sql<string>`"Report".details ->> 'source'`, '=', ENQUEUE_SOURCE)
+    .select([reason.as('reason'), (eb) => eb.fn.countAll<number>().as('count')])
+    .groupBy(reason)
+    .execute();
+  return Object.fromEntries(rows.filter((r) => r.reason).map((r) => [r.reason, Number(r.count)]));
 }
 
 /**
@@ -278,6 +267,7 @@ export async function getReports({
   to,
   reportId,
   entityId: forEntity,
+  unpublishedReason,
 }: GetReportsParams): Promise<{
   items: ModeratorReportRow[];
   totalItems: number;
@@ -300,6 +290,7 @@ export async function getReports({
     to,
     reportId,
     entityId: forEntity,
+    unpublishedReason,
   });
   if (statuses !== 'all') base = base.where('Report.status', 'in', statuses);
 
@@ -456,6 +447,32 @@ export async function getReportLastActioned(): Promise<Record<string, LastAction
   );
 }
 
+export type QueueWorker = { by: string | null; at: string; count: number };
+
+/**
+ * Each moderator who reviewed a report of this type inside the window, most recent first: when they
+ * last did and how many they reviewed. Reads the same rows as `getReportLastActioned`, so its first
+ * entry is that queue's last-actioned badge. A report counts for whoever set its status last.
+ */
+export async function getReportQueueWorkers(type: ReportEntity): Promise<QueueWorker[]> {
+  const join = reportEntity(type);
+  const { rows } = await sql<{ by: number; at: Date; count: number }>`
+    select r."statusSetBy" as "by", max(r."statusSetAt") as "at", count(*)::int as "count"
+    from "Report" r
+    join ${sql.table(join.reportTable)} er on er."reportId" = r."id"
+    where r."statusSetAt" > now() - make_interval(days => ${sql.lit(LAST_ACTIONED_WINDOW_DAYS)})
+      and r."statusSetBy" <> ${sql.lit(SYSTEM_USER_ID)}
+      and r."status" in (${sql.join(REVIEWED_REPORT_STATUSES.map((s) => sql.lit(s)))})
+    group by r."statusSetBy"
+    order by "at" desc`.execute(dbRead);
+  const users = await usersByIds(rows.map((r) => r.by));
+  return rows.map((r) => ({
+    by: users.get(r.by)?.username ?? null,
+    at: new Date(r.at).toISOString(),
+    count: r.count,
+  }));
+}
+
 /** When the oldest new report of each type was filed, keyed like `getReportCounts`, as ISO strings. */
 export async function getReportOldestOpen(): Promise<Record<string, string>> {
   const statuses = sql.join(NEW_REPORT_STATUSES.map((s) => sql.lit(s)));
@@ -482,8 +499,8 @@ async function perReportType<V>(
   value: RawBuilder<V>
 ): Promise<[string, V][]> {
   const branches = REPORT_ENTITIES.map(
-    ({ type, reportTable }) => sql`select ${sql.lit(type)} as type, ${value} as value
-      from ${sql.table(reportTable)} er
+    (e) => sql`select ${sql.lit(e.type)} as type, ${value} as value
+      from ${sql.table(e.reportTable)} er
       join matched r on r."id" = er."reportId"`
   );
   const { rows } = await sql<{ type: string; value: V }>`with matched as materialized (${reports})
@@ -609,7 +626,7 @@ export type MostReportedRow = {
   /** `other` only when the report has no row in ANY report table. */
   entity: ReportEntity | 'other';
   entityId: number | null;
-  /** Site-relative deep link for entities with no page of their own — see `commentContextUrl`. */
+  /** Site-relative deep link for entities with no page of their own — see `CONTEXT_RESOLVERS`. */
   contextUrl: string | null;
   reportedByUsername: string | null;
   /** See `getOwnerFlaggedMinorModelIds`. Always false for anything but a model. */
@@ -907,6 +924,8 @@ export type ReportedModelState = {
   unpublishedReason: string | null;
   unpublishedAt: string | null;
   takenDownAt: string | null;
+  /** Kept when its owner's content was removed, in the violation status without a take-down. */
+  removedWithOwner: boolean;
 };
 
 const metaString = (meta: unknown, key: string): string | null => {
@@ -938,6 +957,10 @@ export async function getReportedModelStates(ids: number[]): Promise<ReportedMod
     unpublishedReason: metaString(meta, 'unpublishedReason'),
     unpublishedAt: metaString(meta, 'unpublishedAt'),
     takenDownAt: metaString(meta, 'takenDownAt'),
+    removedWithOwner:
+      !!meta &&
+      typeof meta === 'object' &&
+      (meta as Record<string, unknown>).removedWithOwner === true,
   }));
 }
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ClickhouseClient from '~/server/clickhouse/client';
 
 /**
  * The download route is thin: it must send an allowed user to a signed URL, answer every refusal
@@ -10,10 +11,21 @@ const service = vi.hoisted(() => ({
   getServiceDealFileDownloadUrl: vi.fn(),
 }));
 vi.mock('~/server/services/creator-service-deal-file.service', () => service);
+const flags = vi.hoisted(() => ({ getFeatureFlags: vi.fn(() => ({ csamReports: false })) }));
+vi.mock('~/server/services/feature-flags.service', () => flags);
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   AuthedEndpoint: (handler: unknown) => handler,
 }));
 
+const trackers = vi.hoisted(() => [] as unknown[][]);
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickhouseClient>()),
+  Tracker: class {
+    constructor(...args: unknown[]) {
+      trackers.push(args);
+    }
+  },
+}));
 const { default: handler } = (await import(
   '../../../pages/api/service-deals/files/[fileId]/download'
 )) as unknown as {
@@ -45,9 +57,11 @@ const response = () => {
   return res;
 };
 
+let lastReq: unknown;
 const call = (fileId: unknown, user = { id: 7, isModerator: false }) => {
   const res = response();
-  return handler({ query: { fileId } }, res, user).then(() => res);
+  lastReq = { query: { fileId }, headers: {} };
+  return handler(lastReq, res, user).then(() => res);
 };
 
 beforeEach(() => {
@@ -66,10 +80,17 @@ describe('download route', () => {
     const res = await call('12');
     expect(res.redirected).toBe('https://signed/url');
     expect(res.headers['Cache-Control']).toMatch(/no-store/);
+    // The tracker is built from this request, so the row carries its session and client.
+    expect(trackers.at(-1)).toEqual([lastReq, res]);
+    expect(service.getServiceDealFileDownloadUrl).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'k' }),
+      expect.anything()
+    );
     expect(service.resolveServiceDealFileDownload).toHaveBeenCalledWith({
       fileId: 12,
       userId: 7,
       isModerator: false,
+      canReviewCsam: false,
     });
   });
 
@@ -84,7 +105,17 @@ describe('download route', () => {
       fileId: 12,
       userId: 9,
       isModerator: true,
+      canReviewCsam: false,
     });
+  });
+
+  it("passes the caller's csamReports permission through", async () => {
+    service.resolveServiceDealFileDownload.mockResolvedValue(null);
+    flags.getFeatureFlags.mockReturnValueOnce({ csamReports: true });
+    await call('12', { id: 9, isModerator: true });
+    expect(service.resolveServiceDealFileDownload).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 9, canReviewCsam: true })
+    );
   });
 
   it('answers a refusal with the same 404 as a file that does not exist, and signs nothing', async () => {

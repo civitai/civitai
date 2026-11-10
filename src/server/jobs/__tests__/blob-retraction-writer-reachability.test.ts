@@ -110,6 +110,10 @@ const { mockDeleteImages, mockPersistDeletedTakedowns } = vi.hoisted(() => ({
 // loses an export it imports. The job short-circuits before deleting anything when it is false.
 // The re-removal hold reads through Kysely, which this file does not route to PGlite; no image here
 // has an approved appeal, so the hold lets everything through (covered by its own tests).
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
+}));
+
 vi.mock('~/server/services/image-removal-hold.service', () => ({
   canConfirmReRemoval: async () => false,
   holdRemovals: async (requests: { imageId: number }[]) => ({
@@ -262,13 +266,46 @@ function presenceTest(sql: string, key: string) {
     doubleArrow ? metadata[key] !== null && metadata[key] !== undefined : key in metadata;
 }
 
+/** `writeModeratorBlock`, returning the rows it blocked. */
+function moderatorBlock(values: unknown[]) {
+  const [nsfwLevel, kept, reason, ids] = values as [number, string, string, number[]];
+  const blocked: { id: number; held: boolean }[] = [];
+  for (const row of store.images) {
+    if (!ids.includes(row.id)) continue;
+    row.ingestion = 'Blocked';
+    row.nsfwLevel = nsfwLevel;
+    row.blockedFor = row.blockedFor === kept ? kept : reason;
+    fireQueueTrigger(row);
+    blocked.push({ id: row.id, held: row.blockedFor === kept });
+  }
+  return blocked;
+}
+
 function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // The legal-hold lookup arrives as one `Prisma.sql` value rather than a template.
   const sql = Array.isArray(strings)
     ? strings.join('?')
     : (strings as unknown as { sql: string }).sql;
 
+  if (sql.includes('"blockedFor" = CASE')) return moderatorBlock(values);
+
   if (sql.includes('FROM "CsamReport"')) return [];
+
+  // remove-blocked-images: its two queue reads, each passed as one `Prisma.sql` value.
+  if (sql.includes('FROM "JobQueue" j')) {
+    const bound = Array.isArray(strings)
+      ? values
+      : (strings as unknown as { values: unknown[] }).values;
+    const ids = (bound.find(Array.isArray) as number[] | undefined) ?? [];
+    if (sql.includes('AND EXISTS (SELECT 1 FROM unnest(')) {
+      const cutoff = bound.find((v) => v instanceof Date) as Date;
+      return store.queue.filter((q) => ids.includes(q.entityId) && q.createdAt <= cutoff);
+    }
+    return store.queue
+      .filter((q) => !ids.includes(q.entityId))
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
+
   // The hold marker's view exists, as on prod, and holds nobody.
   if (sql.includes('SELECT to_regclass(')) return [{ present: true }];
   if (sql.includes('FROM "EvidenceHeldUser"')) return [];
@@ -435,11 +472,6 @@ beforeEach(async () => {
   dbMock.dbWrite.image.updateMany.mockImplementation(applyUpdate as never);
   dbMock.dbWrite.image.update.mockImplementation((async (args: any) =>
     applyUpdate({ where: args.where, data: args.data })) as never);
-
-  dbMock.dbRead.jobQueue.findMany.mockImplementation(async ({ where }: any) => {
-    const excluded = where?.entityId?.notIn ?? [];
-    return store.queue.filter((q) => !excluded.includes(q.entityId));
-  });
 
   // The shared db mock only defaults the READ verbs; `toggleBan` fires several fire-and-forget
   // writes whose result it immediately `.catch()`es, and an undefined return throws before the

@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
   IconBan,
@@ -7,6 +7,7 @@ import {
   IconFlag,
   IconPencil,
   IconRadar2,
+  IconSparkles,
   IconTrash,
 } from '@tabler/icons-react';
 import Router from 'next/router';
@@ -41,6 +42,7 @@ import {
 } from '~/shared/constants/moderator-app';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { RemixGalleryMenuItems } from '~/components/RemixGallery/RemixGalleryMenuItems';
+import { StartStorylineFromImageMenuItem } from '~/components/Storyline/StartStorylineFromImageMenuItem';
 
 export type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
@@ -132,11 +134,35 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
           View Post
         </Menu.Item>
       )}
+      {features.imageSearch && isImage && image.type === 'image' && (
+        <Menu.Item
+          component={NextLink}
+          href={`/search/semantic?imageId=${imageId}`}
+          leftSection={<IconSparkles size={14} stroke={1.5} />}
+        >
+          More like this
+        </Menu.Item>
+      )}
       <RemixGalleryMenuItems
         imageId={imageId}
         isOwner={!!isOwner}
         published={!!image.publishedAt}
       />
+      {isImage && image.type === 'image' && (
+        <StartStorylineFromImageMenuItem
+          image={{
+            id: imageId,
+            url: image.url,
+            type: image.type,
+            nsfwLevel: image.nsfwLevel,
+            hash: image.hash,
+            width: image.width,
+            height: image.height,
+            userId: _userId,
+            username: user?.username ?? null,
+          }}
+        />
+      )}
       {!isOwner && (
         <>
           <LoginRedirect reason="report-content">

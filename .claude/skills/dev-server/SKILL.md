@@ -192,6 +192,7 @@ node .claude/skills/dev-server/scripts/db-host.selftest.mjs            # the DB 
 node .claude/skills/dev-server/scripts/cli-verbs.selftest.mjs          # every dispatch target in cli.mjs exists
 node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs       # HEAD watching + the restart decision
 node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
+node .claude/skills/dev-server/scripts/loopback-bind.selftest.mjs      # apps answer on 127.0.0.1 and [::1], nothing else
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
 node .claude/skills/dev-server/scripts/worktree.selftest.mjs           # what `wt stale` / `wt rm` say about a PR, a prune, and the daemon's home
 node .claude/skills/dev-server/scripts/skill-env.selftest.mjs          # `wt new`/`wt env` never overwrite a credential a tree already has
@@ -550,15 +551,15 @@ anyone in without it. The **main app is not** started: the apps reach it over RE
 and a cold Next.js compile is not something to trigger on someone's behalf. Start it yourself if the
 page you are looking at needs it.
 
-### They bind `::`, deliberately
+### They listen on loopback only, under both spellings
 
-The daemon starts every vite sidecar with `--host ::`. Bound to `127.0.0.1` they answered on v4 and
-nothing on `[::1]`; Windows resolves `localhost` to `::1` first, so the browser got
-connection-refused while curl — which falls back to v4 — reported the server perfectly healthy.
-`--host localhost` is **not** the fix either: it resolves to `::1` only, moving the outage onto every
-caller that hardcodes `127.0.0.1`. `::` accepts v4-mapped addresses, so `localhost`, `127.0.0.1` and
-`[::1]` all answer, and it matches what `next dev` already binds on 3000. Tradeoff: `::` also listens
-on LAN interfaces, where the old bind was loopback-only.
+The daemon starts every vite sidecar with `--host 127.0.0.1` and serves `[::1]` on the same port with
+a forward that opens and closes with the app. Both are needed: Windows resolves `localhost` to `::1`
+first, while other callers hardcode `127.0.0.1`, and vite accepts a single `--host`. Without the
+`[::1]` side, the browser got connection-refused while curl, which falls back to v4, reported the
+server healthy. `localhost`, `127.0.0.1` and `[::1]` all answer where the machine has IPv6 loopback;
+otherwise the daemon logs that `[::1]` is not served. Apps see `[::1]` clients as `127.0.0.1` in
+`getClientAddress()`.
 
 ### First request is slow
 
@@ -596,7 +597,7 @@ AUTH_HUB_PORT=5173         # hub dev port (matches AUTH_JWT_ISSUER)
 
 ### One-time env setup
 
-The hub reads its **own** `apps/auth/.env` (Vite loads it — the daemon does not inject). It's already been generated for local dev, reusing the main app's dev DB / redis / secret / provider creds, with a fresh EC P-256 (ES256) signing keypair. Two files matter:
+The hub reads its **own** `apps/auth/.env` (Vite loads it — the daemon does not inject). It was generated for local dev with the main app's redis / secret / provider creds and a fresh EC P-256 (ES256) signing keypair. **Its `DATABASE_URL` / `DATABASE_REPLICA_URL` are whatever that file says, and nothing syncs or checks them:** they must name the same database as the primary root `.env` (the dev clone), or every session signs in against a different database than the app reads. Check the host before relying on a login (`DATABASE_URL` host:port in both files should match), and restart the hub (`auth restart`) after changing it. Two files matter:
 
 - `apps/auth/.env` — hub signing keypair (`AUTH_JWT_PRIVATE_KEY`/`_PUBLIC_KEY`, PKCS8/SPKI), `AUTH_JWT_ISSUER=http://localhost:5173`, shared `NEXTAUTH_SECRET` + `AUTH_INTERNAL_TOKEN`, DB/redis, providers, email.
 - root `.env` — spoke side: `AUTH_JWT_ISSUER` + `AUTH_JWKS_URI` (→ `localhost:5173`) + a matching `AUTH_INTERNAL_TOKEN`.
@@ -678,11 +679,13 @@ The first route compiled drags in the whole shared graph — the pages-router `_
 
 So the working set for this app is roughly **2.5-4 GB per branch**, and it is real data, not a leak. It's large because the graph is large (3.4M cache keys, ~210k files in `node_modules`). Source maps are not the driver — they are 0.3% of a sampled segment.
 
-It earns the space only in a long-lived checkout: **45.8s cold vs 4.3s warm** on the same route after a restart. **Worktree sessions start with it off** (`NEXT_DEV_FS_CACHE=false`, which `next.config.mjs` maps to `turbopackFileSystemCacheForDev`); the primary checkout keeps it. Across 18 worktrees it reached 80 GB, and a session stopped soon after compiling (the stop is `taskkill /f`) loses the cache anyway: the next start discards it and rebuilds. Measured on one worktree, first page `/models`: cache on, `.next` 2.5 GB and 17s after a restart (65-73s cold); cache off, 1.1 GB and ~60-70s every start. Keep it for every worktree with `WORKTREE_DEV_FS_CACHE=true` in the skill `.env`, or for one with `NEXT_DEV_FS_CACHE=true` in that worktree's `.env`; the log line `Turbopack dev FS cache: on|off` says which a session got.
+It earns the space in any checkout you restart: **45.8s cold vs 4.3s warm** on the same route after a restart. It also bounds memory. Turbopack only evicts in-memory task data after it has persisted a snapshot (Next documents `turbopackMemoryEviction` as effective only with `turbopackFileSystemCacheForDev` on), so with the cache off the dev server's RSS only climbs. Same commit, `/leaving`, 20 edits: cache off 6.0 to 8.5 GB, cache on 4.2 to 6.4 GB (one run each, whole process tree). **Worktree sessions therefore start with it on**, like the primary checkout. The cost is disk: across 18 worktrees it reached 80 GB. A session stopped soon after compiling (the stop is `taskkill /f`) loses the cache anyway: the next start discards it and rebuilds. Measured on one worktree, first page `/models`: cache on, `.next` 2.5 GB and 17s after a restart (65-73s cold); cache off, 1.1 GB and ~60-70s every start. Turn it off for every worktree with `WORKTREE_DEV_FS_CACHE=false` in the skill `.env`, or for one with `NEXT_DEV_FS_CACHE=false` in that worktree's `.env`; the log line `Turbopack dev FS cache: on|off` says which a session got.
+
+**Idle worktree caches are swept.** When the daemon starts (after a 5s delay) it adds up `.next/dev/cache` (and the per-branch twins under `.next/branches/*`) across every worktree except the primary, and if the total is over `WORKTREE_CACHE_MAX_GB` (default 20, about five working sets; 0 turns it off) it deletes the oldest until it is under. It skips any worktree the daemon has a session or app in, and any cache written in the last 10 minutes (a server the daemon does not know about). Only `.next/dev/cache` goes, so a deleted cache costs one cold first compile. `wt stale` prints each tree's cache size when it is over 100 MB; `wt rm` still deletes the whole tree. A server started outside the daemon in a worktree is protected only by the 10-minute rule.
 
 Dirs are evicted LRU on every start against **both** budgets: the `DIST_CACHE_KEEP` most recent (default 4) and `DIST_CACHE_MAX_GB` total (default 40). The size cap does the real work — with a ~4 GB working set per branch, a count cap alone lets four branches reach ~16 GB. The active branch is never evicted; if it alone blows the budget the daemon logs a warning instead.
 
-Knobs live in `.claude/skills/dev-server/.env`, which is gitignored — copy `.env.example`, which documents all of them: `BRANCH_WATCH_ENABLED`, `BRANCH_WATCH_INTERVAL`, `BRANCH_SWITCH_DEBOUNCE`, `KILL_ON_BRANCH_SWITCH`, `AUTO_INSTALL`, `PREWARM_ROUTES`, `PREWARM_TIMEOUT`, `PER_BRANCH_DIST_DIR`, `DIST_CACHE_KEEP`, `DIST_CACHE_MAX_GB`, `WORKTREE_DEV_FS_CACHE`.
+Knobs live in `.claude/skills/dev-server/.env`, which is gitignored — copy `.env.example`, which documents all of them: `BRANCH_WATCH_ENABLED`, `BRANCH_WATCH_INTERVAL`, `BRANCH_SWITCH_DEBOUNCE`, `KILL_ON_BRANCH_SWITCH`, `AUTO_INSTALL`, `PREWARM_ROUTES`, `PREWARM_TIMEOUT`, `PER_BRANCH_DIST_DIR`, `DIST_CACHE_KEEP`, `DIST_CACHE_MAX_GB`, `WORKTREE_DEV_FS_CACHE`, `WORKTREE_CACHE_MAX_GB`.
 
 ## Worktrees
 
@@ -727,6 +730,7 @@ What's already handled:
   node .claude/skills/dev-server/cli.mjs wt env                 # state per skill, never a value
   node .claude/skills/dev-server/cli.mjs wt env <worktree>      # fill another tree's gaps
   node .claude/skills/dev-server/cli.mjs wt env <worktree> --refresh  # …and re-copy env files the primary edited since
+  node .claude/skills/dev-server/cli.mjs wt env <worktree> --force    # …and re-copy them over the tree's own edits too
   node .claude/skills/dev-server/cli.mjs wt env --backup        # copy them OUTSIDE the repo
   node .claude/skills/dev-server/cli.mjs wt env --restore       # bring back what this tree lacks
   ```
@@ -739,8 +743,11 @@ What's already handled:
   a tree also works for a bare `pnpm`/`prisma` command that reads `.env` itself, never inherits an
   app `.env` pointed at another database, and never carries storage credentials for the restricted
   bucket. A copy is a snapshot: when the primary's file changes, `wt env <worktree> --refresh`
-  re-copies every one the primary edited more recently, over the tree's version. Without
-  `--refresh`, existing files are left alone apart from those database and `CSAM_*` keys, which
+  re-copies every one the tree has not edited since it was last written, whatever the mtimes say.
+  An edit is a file whose sha256 differs from the one recorded at that write (kept in the tree's
+  git dir, `dev-server-app-env.json`); a tree copied before that record existed counts a file that
+  differs from the primary as edited. `--refresh` skips both and names `--force`, which re-copies
+  them anyway (and implies `--refresh`). Without `--refresh`, existing files are left alone apart from those database and `CSAM_*` keys, which
   `wt env` (with or without `--refresh`) rewrites in place, mtime kept: run it to repair a tree
   copied before either existed. Env files only the tree has (a hand-made `.env.local`) get their
   `CSAM_*` keys emptied too; their database lines stay as written. A hand edit to a tree's app

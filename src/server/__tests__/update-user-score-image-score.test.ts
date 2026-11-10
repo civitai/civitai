@@ -101,6 +101,23 @@ describe('foldImageDeltasOntoStored', () => {
     const stored = new Map<number, number>();
     expect(foldImageDeltasOntoStored(delta, stored)).toEqual(new Map([[5, 40]]));
   });
+
+  it('floors at 0 when a negative delta exceeds the stored score', () => {
+    const delta = new Map([
+      [1, -50],
+      [2, -10],
+    ]);
+    const stored = new Map([
+      [1, 10],
+      [2, 30],
+    ]);
+    expect(foldImageDeltasOntoStored(delta, stored)).toEqual(
+      new Map([
+        [1, 0],
+        [2, 20],
+      ])
+    );
+  });
 });
 
 function fakeQuery<T>(rows: T[]) {

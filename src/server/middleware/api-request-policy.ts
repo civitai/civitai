@@ -10,21 +10,10 @@ import { getRegion, isAPIAccessBlocked, type RegionInfo } from '~/server/utils/r
  * `botDetectionMiddleware` (the verified-crawler request header). The middlewares call these,
  * and so does the tRPC route through `applyApiRequestPolicy`, so the two cannot drift.
  *
- * The route applies them on EVERY request, whether or not the proxy already did. Each is
- * idempotent: a request the proxy blocked never reaches the route, the headers are set to the
- * same values, and the bot header is re-derived from the same user agent and client IP. That is
- * what lets the proxy stop running on `/api/trpc` (see `TRPC_SKIP_PROXY_MIDDLEWARE_FLAG`)
- * without the route's behaviour depending on which one ran.
+ * `/api/trpc` is not in the proxy matcher (`src/proxy.ts`), so on tRPC the route is the ONLY
+ * place this policy is applied. Each step is still idempotent, so a route that also sits behind
+ * the proxy gets the same result whether or not the proxy ran first.
  */
-
-/**
- * Flipt key (global boolean, no entity or context). ON: the proxy returns a bare passthrough for
- * `/api/trpc/*` and the route alone applies this policy. OFF, missing, or Flipt not ready: the
- * proxy runs its middlewares as before. Read by `proxy.ts`.
- */
-export const TRPC_SKIP_PROXY_MIDDLEWARE_FLAG = 'trpc-skip-proxy-middleware';
-
-export const TRPC_PATH_PREFIX = '/api/trpc/';
 
 // --- region block -----------------------------------------------------------------------------
 

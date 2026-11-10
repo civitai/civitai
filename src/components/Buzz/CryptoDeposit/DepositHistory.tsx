@@ -4,16 +4,15 @@ import {
   Badge,
   Button,
   Group,
-  HoverCard,
   Pagination,
   Paper,
-  Popover,
   Skeleton,
   Stack,
   Text,
   Title,
   UnstyledButton,
 } from '@mantine/core';
+import { HoverCard, Popover } from '~/components/MantineOverlays';
 import {
   IconCheck,
   IconClock,
@@ -554,7 +553,7 @@ function CheckDepositsNotice({ reconcile }: { reconcile: Reconcile }) {
   );
 }
 
-function DepositStatusBadge({ status }: { status: string }) {
+export function DepositStatusBadge({ status }: { status: string }) {
   if (status === 'finished') {
     return (
       <Badge color="green" variant="light" size="sm" leftSection={<IconCheck size={12} />}>
@@ -565,6 +564,8 @@ function DepositStatusBadge({ status }: { status: string }) {
 
   switch (status) {
     case 'confirming':
+    case 'confirmed':
+    case 'sending':
       return (
         <Badge color="yellow" variant="light" size="sm" leftSection={<IconLoader size={12} />}>
           Confirming
@@ -580,6 +581,13 @@ function DepositStatusBadge({ status }: { status: string }) {
       return (
         <Badge color="orange" variant="light" size="sm" leftSection={<IconRefresh size={12} />}>
           Processing
+        </Badge>
+      );
+    case 'held':
+    case 'hand_paid':
+      return (
+        <Badge color="green" variant="light" size="sm" leftSection={<IconCheck size={12} />}>
+          Credited by support
         </Badge>
       );
     default:

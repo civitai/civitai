@@ -1,20 +1,21 @@
 import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { onStorySparked } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import { contentRestriction } from '~/server/common/content-restriction';
 import { createNotification } from '~/server/services/notification.service';
 import {
   checkStorylineContinuationAtPublish,
-  continuationPostSelect,
-  continuationReadiness,
   createStorylinePlacement,
   isRefusal,
 } from '~/server/services/storyline-placement.service';
 import {
   assertCanContinueStoryline,
   assertPostCanBeChapter,
+  continuationPostSelect,
+  continuationReadiness,
   createRootChapter,
-  firstChapterFloor,
+  firstChapterMaxNsfwLevel,
   isUniqueViolation,
   storylineCeilingSql,
   writeOwnerChapter,
@@ -22,12 +23,15 @@ import {
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
-  isStorylineCeilingLevel,
   STORYLINE_MINOR_CEILING,
   storylineCeiling,
   storylineLevelAllowed,
 } from '~/shared/utils/storyline';
-import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import {
+  STORYLINE_REFUSALS,
+  storylineRatingGap,
+  type StorylineRatingGap,
+} from '~/shared/utils/storyline-placement';
 
 /**
  * A post drafted from the storyline flow (`StorylinePendingChapter`) becomes a chapter when it is
@@ -51,7 +55,7 @@ export type StorylinePublishContext = {
 export type StorylinePublishOutcome = { storylineId: number } & (
   | { status: 'chapterWritten'; chapterId: number; ceilingRaisedTo?: number }
   /** The owner's chapter, written once the post is live and rated. */
-  | { status: 'waiting'; reason: PendingChapterWait }
+  | { status: 'waiting'; reason: PendingChapterWait; rating?: StorylineRatingGap }
   | { status: 'submitted'; placementId: number }
   /** Published as a post of its own; the draft is no longer linked to the storyline. */
   | { status: 'dropped'; reason: string }
@@ -164,7 +168,7 @@ export async function finishStorylinePublish(
         };
       }
       if (result.status === 'waiting')
-        return { storylineId, status: 'waiting', reason: result.reason };
+        return { storylineId, status: 'waiting', reason: result.reason, rating: result.rating };
       const written = await dbWrite.storylineChapter.findUnique({
         where: { postId },
         select: { id: true },
@@ -218,9 +222,16 @@ type PendingChapterPromotion =
       ceilingRaisedTo?: number;
     }
   /** The link stays: the post is not live and rated yet, a scan refused it, or it is rated too high. */
-  | { status: 'waiting'; reason: PendingChapterWait }
+  | { status: 'waiting'; reason: PendingChapterWait; rating?: StorylineRatingGap }
   /** No link: another writer promoted it first. */
   | { status: 'gone' };
+
+const aboveRatingWait = (gap: StorylineRatingGap): PendingChapterPromotion => {
+  const rating = storylineRatingGap(gap);
+  return rating
+    ? { status: 'waiting', reason: 'aboveRating', rating }
+    : { status: 'waiting', reason: 'cannotSubmit' };
+};
 
 /**
  * Writes the storyline owner's drafted post as its chapter, once the post is live (published, not
@@ -234,8 +245,9 @@ type PendingChapterPromotion =
  * it, except past the safe-for-work cap of a minor-flagged title.
  */
 export async function promotePendingChapter(postId: number): Promise<PendingChapterPromotion> {
+  let root = false;
   try {
-    return await dbWrite.$transaction(async (tx): Promise<PendingChapterPromotion> => {
+    const result = await dbWrite.$transaction(async (tx): Promise<PendingChapterPromotion> => {
       const [link] = await tx.$queryRaw<
         { storylineId: number; parentChapterId: number | null; userId: number }[]
       >`
@@ -278,23 +290,14 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
       let ceilingRaisedTo: number | undefined;
       if (link.parentChapterId == null) {
         if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
-        let { maxNsfwLevel } = storyline;
-        if (
-          !storylineLevelAllowed({
+        const maxNsfwLevel = firstChapterMaxNsfwLevel(storyline, post);
+        if (maxNsfwLevel === null)
+          return aboveRatingWait({
             postLevel: post.nsfwLevel,
             maxNsfwLevel: storylineCeiling(storyline),
-          })
-        ) {
-          const needed = firstChapterFloor(post);
-          const fits =
-            needed !== null &&
-            isStorylineCeilingLevel(needed) &&
-            storylineLevelAllowed({
-              postLevel: post.nsfwLevel,
-              maxNsfwLevel: storylineCeiling({ ...storyline, maxNsfwLevel: needed }),
-            });
-          if (!fits) return { status: 'waiting', reason: 'aboveRating' };
-          maxNsfwLevel = ceilingRaisedTo = needed;
+          });
+        if (maxNsfwLevel !== storyline.maxNsfwLevel) {
+          ceilingRaisedTo = maxNsfwLevel;
           await tx.storyline.update({ where: { id: link.storylineId }, data: { maxNsfwLevel } });
         }
         await assertPostCanBeChapter(tx, {
@@ -307,6 +310,7 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
           postId,
           userId: link.userId,
         }));
+        root = true;
       } else {
         const parentChapter = await tx.storylineChapter.findUnique({
           where: { id: link.parentChapterId },
@@ -318,13 +322,9 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
           { parentPostId: parentChapter.postId, placerId: link.userId },
           tx
         );
-        if (
-          !storylineLevelAllowed({
-            postLevel: post.nsfwLevel,
-            maxNsfwLevel: storylineCeiling(parent.storyline),
-          })
-        )
-          return { status: 'waiting', reason: 'aboveRating' };
+        const maxNsfwLevel = storylineCeiling(parent.storyline);
+        if (!storylineLevelAllowed({ postLevel: post.nsfwLevel, maxNsfwLevel }))
+          return aboveRatingWait({ postLevel: post.nsfwLevel, maxNsfwLevel });
         ({ chapterId } = await writeOwnerChapter(tx, {
           parentChapterId: link.parentChapterId,
           postId,
@@ -342,6 +342,8 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
         ceilingRaisedTo,
       };
     });
+    if (root && result.status === 'written') void onStorySparked(result.storylineId);
+    return result;
   } catch (error) {
     // The post's chapter row, or the storyline's chapter 1, committed by a writer that got there
     // between this one's checks and its insert.

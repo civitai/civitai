@@ -50,6 +50,12 @@ const mocks = vi.hoisted(() => ({
   currentUser: null as null | { id: number; username: string; isModerator?: boolean },
 }));
 
+// Runs as a developer who has accepted the App Developer Terms.
+vi.mock('~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox', () => ({
+  AppDeveloperTermsCheckbox: () => null,
+  useAppDeveloperTermsAccepted: () => true,
+}));
+
 // Only the `trpc` client itself is overridden — every other `~/utils/trpc` export
 // (trpcVanilla, queryClient, setTrpcBatchingEnabled, ...) is kept real via
 // importOriginal. A wholesale factory silently breaks this whole FILE (0 tests
@@ -800,7 +806,7 @@ describe('ExternalSubmitForm — Cancel confirms before discarding', () => {
     await cancel.click();
 
     // It navigated…
-    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/build'));
+    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/build?view=apps'));
     // …and the modal was never raised. Asserted AFTER the navigation settled, so this
     // is a real absence in a mounted tree rather than a first-empty-observation pass.
     await expect.element(page.getByTestId('apps-offsite-discard-confirm')).not.toBeInTheDocument();
@@ -843,7 +849,7 @@ describe('ExternalSubmitForm — Cancel confirms before discarding', () => {
     await page.getByTestId('apps-offsite-wizard-cancel').click();
     await page.getByTestId('apps-offsite-discard-confirm').click();
 
-    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/build'));
+    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/build?view=apps'));
   });
 
   /**

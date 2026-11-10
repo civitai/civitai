@@ -33,6 +33,9 @@ const router = {
 };
 /** Every cookie the referral provider writes, in order. */
 const { cookieWrites } = vi.hoisted(() => ({ cookieWrites: [] as [string, unknown][] }));
+/** Faro's pause, observed: an abandoned shell must stop its RUM beacons before it leaves. */
+const { pauseRum } = vi.hoisted(() => ({ pauseRum: vi.fn() }));
+vi.mock('~/utils/faro/pauseRum', () => ({ pauseRum }));
 vi.mock('~/utils/cookies-helpers', async (importOriginal) => {
   const actual = await importOriginal<typeof CookiesHelpersModule>();
   return {
@@ -125,6 +128,18 @@ const SETTINGS = {
 const FOLLOWING = [11, 12];
 const CHAT_SETTINGS = { muteSounds: true, replaceBadWords: false, acknowledged: true };
 const NAV_BANNERS = [{ id: 'event:fixture', title: 'Fixture event', href: '/events/fixture' }];
+const EVENT_COSMETIC = {
+  available: true,
+  obtained: true,
+  equipped: false,
+  data: {},
+  cosmetic: null,
+};
+const EVENT_SEEDS = [
+  { event: 'fixture', access: 'open', cosmetic: EVENT_COSMETIC },
+  // No cosmetic read: its query is left for the client.
+  { event: 'other', access: 'closed' },
+];
 // The overlay overrides one host flag (`chat`), so a merge in the wrong order shows.
 const FLAGS = { shellImages: true, canViewNsfw: false, chat: true };
 const USER_FLAGS = { chat: false, fixtureToggle: true };
@@ -170,6 +185,7 @@ function payload(over: Record<string, unknown> = {}) {
     following: FOLLOWING,
     liveNow: true,
     navBanners: NAV_BANNERS,
+    eventSeeds: EVENT_SEEDS,
     flags: FLAGS,
     userFeatureFlags: USER_FLAGS,
     chatSettings: CHAT_SETTINGS,
@@ -211,6 +227,7 @@ function fullRenderPageProps(data: ReturnType<typeof payload>) {
     following: data.following,
     chatSettings: data.chatSettings,
     navBanners: data.navBanners,
+    eventSeeds: data.eventSeeds,
     tosMeta: data.tosMeta,
     siteAlerts: data.siteAlerts,
     liveNow: data.liveNow,
@@ -312,6 +329,7 @@ function ShellApp({ pageProps, withAds = false }: { pageProps: PageProps; withAd
     liveNow = false,
     chatSettings,
     navBanners,
+    eventSeeds,
     tosMeta,
     siteAlerts,
     region,
@@ -348,6 +366,7 @@ function ShellApp({ pageProps, withAds = false }: { pageProps: PageProps; withAd
       liveNow,
       chatSettings,
       navBanners,
+      eventSeeds,
       tosMeta,
       siteAlerts,
       region,
@@ -473,6 +492,12 @@ const cached = () => ({
   getNavBanners: queryClient.getQueryData(
     getQueryKey(trpc.event.getNavBanners, undefined, 'query')
   ),
+  eventGetAccess: ['fixture', 'other'].map((event) =>
+    queryClient.getQueryData(getQueryKey(trpc.event.getAccess, { event }, 'query'))
+  ),
+  eventGetCosmetic: ['fixture', 'other'].map((event) =>
+    queryClient.getQueryData(getQueryKey(trpc.event.getCosmetic, { event }, 'query'))
+  ),
   imageGet: queryClient.getQueryData(imageKey),
 });
 
@@ -506,6 +531,7 @@ beforeEach(() => {
   pageDataAnswer = async () => json(payload());
   stubFetch();
   navigate = vi.spyOn(shellNavigation, 'replace').mockImplementation(() => undefined);
+  pauseRum.mockClear();
 });
 
 afterEach(() => {
@@ -564,6 +590,8 @@ describe('a shell boot adopts the page data into the state a full render would h
       getFollowingUsers: FOLLOWING,
       chatGetUserSettings: CHAT_SETTINGS,
       getNavBanners: NAV_BANNERS,
+      eventGetAccess: ['open', 'closed'],
+      eventGetCosmetic: [EVENT_COSMETIC, undefined],
       imageGet: IMAGE,
     });
     // Revived by the client transformer, not left as the JSON string.
@@ -812,6 +840,9 @@ describe('a page-data answer other than 200 leaves the shell exactly once', () =
     await render(shellPageProps(), { strict: true });
     expect(navigate.mock.calls).toEqual([[to]]);
     expect(last().shellReady).toBe(false);
+    // RUM is paused once, BEFORE the navigation, so the abandoned shell sends no more beacons.
+    expect(pauseRum).toHaveBeenCalledTimes(1);
+    expect(pauseRum.mock.invocationCallOrder[0]).toBeLessThan(navigate.mock.invocationCallOrder[0]);
   });
 
   it('keeps the query string when it adds the bypass', async () => {
@@ -867,6 +898,8 @@ describe('a page-data answer other than 200 leaves the shell exactly once', () =
     pageDataAnswer = async () => json({}, 500);
     await render(shellPageProps());
     expect(navigate).not.toHaveBeenCalled();
+    // The page stays, so its RUM keeps running.
+    expect(pauseRum).not.toHaveBeenCalled();
     expect(last()).toMatchObject({ shellReady: false, adsGated: true, flagsReady: false });
     expect(last().consent.allowed).toBe(false);
   });

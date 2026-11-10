@@ -122,6 +122,15 @@ async function findFirst({ where }: { where: Where }) {
   return rows[0] ?? null;
 }
 
+async function findMany({ where }: { where: Where }) {
+  const params: unknown[] = [];
+  const { rows } = await db.pg.query(
+    `SELECT * FROM "CsamReport" WHERE ${whereSql(where, params)} ORDER BY id`,
+    params
+  );
+  return rows;
+}
+
 async function create({ data }: { data: Record<string, unknown> }) {
   const entries = Object.entries(data).filter(([, value]) => value !== undefined);
   const { rows } = await db.pg.query(
@@ -175,6 +184,14 @@ beforeAll(async () => {
       "images" JSONB NOT NULL DEFAULT '[]',
       "type" "CsamReportType" NOT NULL DEFAULT 'Image'
     );
+    CREATE TABLE "ModActivity" (
+      "id" SERIAL PRIMARY KEY,
+      "userId" INTEGER,
+      "activity" TEXT NOT NULL,
+      "entityType" TEXT,
+      "entityId" INTEGER,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
   await db.pg.exec(readFileSync(migration('20261112120000_csam_report_append_only'), 'utf8'));
   await db.pg.exec(readFileSync(migration('20261123120000_csam_report_send_claim'), 'utf8'));
@@ -212,6 +229,7 @@ beforeEach(() => {
   dbMock.dbWrite.csamReport.update.mockReset().mockImplementation(applyUpdate as never);
   dbMock.dbWrite.csamReport.updateMany.mockReset().mockImplementation(applyUpdate as never);
   dbMock.dbWrite.csamReport.findFirst.mockReset().mockImplementation(findFirst as never);
+  dbMock.dbWrite.csamReport.findMany.mockReset().mockImplementation(findMany as never);
   dbMock.dbWrite.csamReport.deleteMany.mockReset().mockImplementation(deleteMany as never);
   dbMock.dbWrite.csamReport.create.mockReset().mockImplementation(create as never);
   dbMock.dbWrite.$queryRaw.mockReset().mockImplementation(queryRaw as never);

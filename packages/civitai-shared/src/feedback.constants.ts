@@ -35,6 +35,8 @@ export const FEEDBACK_AREAS = [
   'site-bug-report',
   'app-block',
   'apps-platform',
+  'semantic-image-search',
+  'orchestration',
 ] as const;
 
 /**
@@ -43,6 +45,12 @@ export const FEEDBACK_AREAS = [
  * `context.path` is the only thing that says where the report came from.
  */
 export const SITE_BUG_REPORT_AREA: FeedbackArea = 'site-bug-report';
+
+/**
+ * Generation and training failures, filed from a toast or alert's "Report this" action by a caller
+ * that knows the failure is the orchestrator's. Never inferred from an error's text.
+ */
+export const ORCHESTRATION_FEEDBACK_AREA: FeedbackArea = 'orchestration';
 
 /** Private per-app feedback from the App Block chrome — see the `app-block` note on FEEDBACK_AREAS. */
 export const APP_BLOCK_FEEDBACK_AREA: FeedbackArea = 'app-block';
@@ -134,6 +142,16 @@ export const FEEDBACK_PATH_MAX_LENGTH = 300;
 export const FEEDBACK_SESSION_ID_MAX_LENGTH = 64;
 
 /**
+ * The reference a masked server fault shows the user, "(ref: <12 hex>)", and the key its full error
+ * is logged under (`getClientSafeError`). Reported so triage can find that log line.
+ */
+export const FEEDBACK_ERROR_REF_PATTERN = /^[0-9a-f]{12}$/;
+/** Orchestrator workflow and job ids, as a reporter's browser claims them. */
+export const FEEDBACK_ORCHESTRATOR_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+/** Each of the title and message of the toast a report was filed from. */
+export const FEEDBACK_TOAST_TEXT_MAX_LENGTH = 300;
+
+/**
  * Length ceiling on ONE value inside `context.filters`.
  *
  * Named rather than left inline in the schema because a caller has to TRUNCATE to it,
@@ -199,5 +217,22 @@ export const FEEDBACK_NETWORK_URL_MAX_LENGTH = 300;
  * submission on the surface that exists to collect reports.
  */
 export const FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH = 20;
+
+/**
+ * Failed tRPC calls. A batched call fails inside an HTTP 200 response, so the network buffer above
+ * never sees it. Each entry is the procedure path, the tRPC error code and status, and a time:
+ * never the input, never the error message (a message can echo what the user typed).
+ */
+export const FEEDBACK_TRPC_ERROR_MAX_COUNT = 10;
+export const FEEDBACK_TRPC_PATH_MAX_LENGTH = 100;
+/** A procedure path is dotted identifiers (`model.getById`). Anything else is not recorded. */
+export const FEEDBACK_TRPC_PATH_PATTERN = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$/;
+/** tRPC codes are SCREAMING_SNAKE (`NOT_FOUND`, `INTERNAL_SERVER_ERROR`). */
+export const FEEDBACK_TRPC_CODE_PATTERN = /^[A-Z_]{1,40}$/;
+
+/** Bounds on the environment the client reports: build id, short device strings, user agent. */
+export const FEEDBACK_BUILD_MAX_LENGTH = 64;
+export const FEEDBACK_DEVICE_TEXT_MAX_LENGTH = 64;
+export const FEEDBACK_USER_AGENT_MAX_LENGTH = 400;
 
 export const feedbackAreaFlagKey = (area: FeedbackArea) => `feedback-area-${area}`;

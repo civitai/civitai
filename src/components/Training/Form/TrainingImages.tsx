@@ -23,9 +23,9 @@ import {
   TextInput,
   ThemeIcon,
   Title,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { FileWithPath } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
 import type { NotificationData } from '@mantine/notifications';
@@ -45,7 +45,6 @@ import {
   IconZoomOut,
 } from '@tabler/icons-react';
 import { clsx } from 'clsx';
-import { saveAs } from 'file-saver';
 import { capitalize, isEqual } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import pLimit from 'p-limit';
@@ -89,7 +88,7 @@ import {
   VIDEO_MIME_TYPE,
   ZIP_MIME_TYPE,
 } from '~/shared/constants/mime-types';
-import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import { trainingDataVisibility } from '~/shared/utils/training-data-visibility';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import {
   type AutoLabelType,
@@ -101,13 +100,16 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import type { TrainingModelData } from '~/types/router';
+import { downloadBlob } from '~/utils/file-utils';
 import { createImageElement } from '~/utils/image-utils';
 import { getJSZip } from '~/utils/lazy';
 import {
   showErrorNotification,
   showSuccessNotification,
   showWarningNotification,
+  withReportAction,
 } from '~/utils/notifications';
+import { ORCHESTRATION_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -373,6 +375,18 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     autoClose: false,
     loading: false,
   };
+  // A failed upload of training data is the orchestration team's to triage.
+  const notifyUploadFailed = (message = 'Please try again (or contact us if it continues)') =>
+    updateNotification({
+      ...notificationFailBase,
+      message: withReportAction({
+        id: notificationId,
+        message,
+        title: 'Failed to upload archive',
+        text: message,
+        report: { area: ORCHESTRATION_FEEDBACK_AREA },
+      }),
+    });
 
   const mediaExts = isAudio ? audioExts : isVideo ? { ...imageExts, ...videoExts } : imageExts;
   const allowedDropTypes = isAudio
@@ -974,10 +988,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     },
     onError(error) {
       setZipping(false);
-      updateNotification({
-        ...notificationFailBase,
-        message: error.message,
-      });
+      notifyUploadFailed(error.message);
     },
   });
 
@@ -988,6 +999,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         error: new Error(error.message),
         title: 'Failed to auto tag',
         autoClose: false,
+        report: { area: ORCHESTRATION_FEEDBACK_AREA },
       });
       setAutoLabeling(model.id, thisMediaType, { ...thisDefaultTrainingState.autoLabeling });
     },
@@ -999,6 +1011,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         error: new Error(error.message),
         title: 'Failed to auto caption',
         autoClose: false,
+        report: { area: ORCHESTRATION_FEEDBACK_AREA },
       });
       setAutoLabeling(model.id, thisMediaType, { ...thisDefaultTrainingState.autoLabeling });
     },
@@ -1139,7 +1152,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     const fileName = `${thisModelVersion.id}_training_data.zip`;
 
     if (dlOnly) {
-      saveAs(content, fileName);
+      downloadBlob(content, fileName);
       setZipping(false);
       return;
     }
@@ -1207,22 +1220,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 sizeKB: bytesToKB(size),
                 modelVersionId: versionId,
                 type: 'Training Data',
-                visibility:
-                  ownRights && shareDataset
-                    ? ModelFileVisibility.Public
-                    : ownRights
-                    ? ModelFileVisibility.Sensitive
-                    : ModelFileVisibility.Private,
+                visibility: trainingDataVisibility({ ownRights, shareDataset }),
                 metadata,
                 ...(result.backend === 'b2' ? { s3Path: result.key } : {}),
               });
             } catch (e: unknown) {
               setZipping(false);
               // Keep the server's reason (onError above set it), not a generic retry prompt.
-              updateNotification({
-                ...notificationFailBase,
-                ...(e instanceof Error && e.message ? { message: e.message } : {}),
-              });
+              notifyUploadFailed(e instanceof Error && e.message ? e.message : undefined);
             }
           } else {
             throw new Error('Missing version data.');
@@ -1231,21 +1236,17 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       );
       if (!uploadResp) {
         setZipping(false);
-        updateNotification({
-          ...notificationFailBase,
-        });
+        notifyUploadFailed();
       }
     } catch (e) {
       setZipping(false);
-      updateNotification({
-        ...notificationFailBase,
-        message:
-          e instanceof Error
-            ? e.message.startsWith('Unexpected token')
-              ? 'Server error :('
-              : e.message
-            : '',
-      });
+      notifyUploadFailed(
+        e instanceof Error
+          ? e.message.startsWith('Unexpected token')
+            ? 'Server error :('
+            : e.message
+          : undefined
+      );
     }
   };
 
@@ -1273,12 +1274,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         await updateFileMutation.mutateAsync({
           id: modelFileId!,
           metadata: { ...existingMetadata!, ownRights, shareDataset, labelType },
-          visibility:
-            ownRights && shareDataset
-              ? ModelFileVisibility.Public
-              : ownRights
-              ? ModelFileVisibility.Sensitive
-              : ModelFileVisibility.Private,
+          visibility: trainingDataVisibility({ ownRights, shareDataset }),
         });
         setZipping(false);
       }
@@ -1960,7 +1956,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     .
                   </Text>
                   <Checkbox
-                    label="I own the rights to all these files"
+                    label="I have the right, or the rightholder’s explicit permission, to redistribute these files"
                     checked={ownRights}
                     onChange={(event) => {
                       setOwnRights(model.id, thisMediaType, event.currentTarget.checked);

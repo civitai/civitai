@@ -1,4 +1,5 @@
-import { Menu, useMantineTheme } from '@mantine/core';
+import { useMantineTheme } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import {
   IconEdit,
   IconFlag,
@@ -15,7 +16,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { GalleryPromotionModal } from '~/components/Promotion/GalleryPromotionModal';
 import type { StorylineSourcePost } from '~/components/Storyline/storyline.utils';
-import { OpenStorylineMenuItem } from '~/components/Storyline/OpenStorylineMenuItem';
+import { StartStorylineMenuItem } from '~/components/Storyline/StartStorylineMenuItem';
 import { isPublished } from '~/components/Storyline/storyline.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -101,7 +102,7 @@ export function PostControls({
           </Menu.Item>
         )}
         {isOwner && features.storylines && storylinePost && isPublished(storylinePost) && (
-          <OpenStorylineMenuItem post={storylinePost} />
+          <StartStorylineMenuItem post={storylinePost} />
         )}
         {(!isOwner || !currentUser) && (
           <LoginRedirect reason="report-content">

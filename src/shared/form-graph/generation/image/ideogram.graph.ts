@@ -31,12 +31,8 @@ export const ideogramVersionIds = {
   'v4.5': 3375798,
 } as const;
 
-const ideogramTxt2ImgVersionOptions = [
-  { label: 'v4.0', value: ideogramVersionIds['v4.0'] },
-  { label: 'v4.5', value: ideogramVersionIds['v4.5'] },
-];
-
-const ideogramImg2ImgVersionOptions = [{ label: 'v4.5', value: ideogramVersionIds['v4.5'] }];
+// 4.0 is off for generation (supportOverrides); its branch stays so past 4.0 runs still resolve.
+const ideogramVersionOptions = [{ label: 'v4.5', value: ideogramVersionIds['v4.5'] }];
 
 /** fal accepts only an explicit list of custom sizes; these are its ~4MP entries. */
 const ideogram45AspectRatios = [
@@ -105,13 +101,12 @@ const versions = branch(
 
 export const ideogram = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) => {
-    const isEdit = _ext.workflow.startsWith('img2img:edit');
     return checkpointDef({
       ecosystem: _ext.ecosystem,
       workflow: _ext.workflow,
       ext: _ext,
-      versions: { options: isEdit ? ideogramImg2ImgVersionOptions : ideogramTxt2ImgVersionOptions },
-      defaultModelId: isEdit ? ideogramVersionIds['v4.5'] : ideogramVersionIds['v4.0'],
+      versions: { options: ideogramVersionOptions },
+      defaultModelId: ideogramVersionIds['v4.5'],
     });
   })
   .use(versions)

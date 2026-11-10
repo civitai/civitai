@@ -41,6 +41,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import {
+  assertClientImageUrlsUsable,
+  assertShopArtworkKeysIssued,
+} from '~/server/services/image-url-ownership';
 
 type ResolvedMember = PackMemberPricing & {
   name: string;
@@ -145,15 +149,13 @@ const assertStickerMembersAllowed = (members: ResolvedMember[], stickersEnabled?
 
 /**
  * Who may bundle a member. A creator bundles their own work freely; another
- * creator's only when its listing opted into resale (`sellableByOthers`) — the
- * same consent the official shop enforces in `upsertCosmeticShopSection`. A pack
- * is somebody else selling the item, so an opt-out has to block it here too.
+ * creator's only when its listing opted into resale (`sellableByOthers`). A pack
+ * is somebody else selling the item, so an opt-out has to block it here. An
+ * official shop section is not a resale, so it does not ask.
  *
  * A member with no creator is a platform cosmetic, which the resale-consent rule
- * doesn't govern — the official shop scopes its check to `createdById != null`
- * for the same reason, so this stays in step with it. `resolvePackMembers`
- * already restricts to Published, non-archived listings, so those guards aren't
- * repeated here.
+ * doesn't govern. `resolvePackMembers` already restricts to Published, non-archived
+ * listings, so those guards aren't repeated here.
  */
 export const isBundlableBy = (
   member: { createdById: number | null; sellableByOthers: boolean },
@@ -217,6 +219,10 @@ export const submitCreatorShopPack = async ({
   // supplied — the members were each affirmed when they were submitted.
   if (imageUrl && !rightsAffirmed)
     throw throwBadRequestError('You must confirm you have the rights to sell this artwork');
+  if (imageUrl) {
+    await assertClientImageUrlsUsable({ urls: [imageUrl], userId, shopRow: {} });
+    await assertShopArtworkKeysIssued({ urls: [imageUrl], userId });
+  }
 
   const members = withOwnership(await resolvePackMembers(memberCosmeticIds), userId);
   assertMembersBundlable(memberCosmeticIds, members);
@@ -353,6 +359,18 @@ export const updateCreatorShopPack = async ({
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const memberIds = memberCosmeticIds ?? existing.members.map((m) => m.cosmeticId);
   const packOwnerId = existing.addedById ?? userId;
+  if (imageUrl && imageUrl !== meta.coverUrl) {
+    await assertClientImageUrlsUsable({
+      urls: [imageUrl],
+      userId: packOwnerId,
+      shopRow: { shopItemId: existing.id },
+    });
+    await assertShopArtworkKeysIssued({
+      urls: [imageUrl],
+      userId,
+      alsoIssuedTo: isModerator ? packOwnerId : undefined,
+    });
+  }
   const membershipSupplied = memberCosmeticIds !== undefined;
   const repriced = price !== undefined;
   // Re-snapshot whenever the price moves, not only when the contents do. The

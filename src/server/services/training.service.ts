@@ -14,6 +14,7 @@ import {
   handleError,
   submitWorkflow as clientSubmitWorkflow,
 } from '@civitai/orchestration-client';
+import { UploadType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -47,19 +48,21 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
+import { env as clientEnv } from '~/env/client';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
-  deleteObject,
   getB2S3Client,
   getGetUrl,
   getPutUrl,
   getS3Client,
+  getUploadBucket,
   isB2Url,
   parseKey,
 } from '~/utils/s3-utils';
 import { generateToken } from '~/utils/string-helpers';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import type { Orchestrator } from '../http/orchestrator/orchestrator.types';
+import { isBaseModelKey, mergeBlockedModels } from '~/utils/training-blocked-models';
 
 export type TrainingRequest = {
   trainingDetails: TrainingDetailsObj;
@@ -250,6 +253,9 @@ export async function getTrainingServiceStatus() {
 export async function setTrainingServiceStatus(input: {
   available: boolean;
   message?: string | null;
+  /** The blocked base-model keys (`trainingModelInfo`); omitted leaves the list as it is. */
+  blockedModels?: string[];
+  blockedModelReasons?: Record<string, string> | null;
 }) {
   // Read raw and throw on sysRedis error. We MUST NOT use the fail-open
   // getTrainingServiceStatus() here: if its read failed open and the
@@ -263,6 +269,13 @@ export async function setTrainingServiceStatus(input: {
     ...current,
     available: input.available,
     message: input.message ?? null,
+    ...(input.blockedModels
+      ? mergeBlockedModels(
+          current.blockedModels,
+          { blockedModels: input.blockedModels, blockedModelReasons: input.blockedModelReasons },
+          isBaseModelKey
+        )
+      : {}),
   };
   await sysRedis.hSet(
     REDIS_SYS_KEYS.SYSTEM.FEATURES,
@@ -311,6 +324,18 @@ export type AutoCaptionResponse = {
   [key: string]: string;
 };
 
+// The auto-label input is the zip the client just uploaded via /api/upload, whose keys are
+// `${type}/${userId}/...` (see buildUploadKey).
+function assertOwnTrainingTempUpload(url: string, userId: number) {
+  const { key, bucket } = parseKey(url);
+  if (
+    !bucket ||
+    bucket !== getUploadBucket(isB2Url(url) ? 'b2' : 'default') ||
+    !key.startsWith(`${UploadType.TrainingImagesTemp}/${userId}/`)
+  )
+    throw throwBadRequestError('Invalid URL');
+}
+
 export const autoTagHandler = async ({
   url,
   modelId,
@@ -318,11 +343,10 @@ export const autoTagHandler = async ({
 }: AutoTagInput & {
   userId: number;
 }) => {
+  assertOwnTrainingTempUpload(url, userId);
   const { url: getUrl } = isB2Url(url)
     ? await getGetUrl(url, { s3: getB2S3Client() })
     : await getGetUrl(url);
-  const { key, bucket } = parseKey(url);
-  if (!bucket) throw throwBadRequestError('Invalid URL');
 
   // todo check if this property comes through
 
@@ -337,15 +361,11 @@ export const autoTagHandler = async ({
     payload,
   });
 
-  console.log(response, payload);
-
   if (response.status === 429) {
-    deleteObject(bucket, key).catch();
     throw throwRateLimitError();
   }
 
   if (!response.ok) {
-    deleteObject(bucket, key).catch();
     throw throwBadRequestError(
       'We are not able to process your request at this time. Please try again later.'
     );
@@ -363,11 +383,10 @@ export const autoCaptionHandler = async ({
 }: AutoCaptionInput & {
   userId: number;
 }) => {
+  assertOwnTrainingTempUpload(url, userId);
   const { url: getUrl } = isB2Url(url)
     ? await getGetUrl(url, { s3: getB2S3Client() })
     : await getGetUrl(url);
-  const { key, bucket } = parseKey(url);
-  if (!bucket) throw throwBadRequestError('Invalid URL');
 
   const payload: Orchestrator.Training.ImageAutoCaptionJobPayload = {
     mediaUrl: getUrl,
@@ -384,12 +403,10 @@ export const autoCaptionHandler = async ({
   });
 
   if (response.status === 429) {
-    deleteObject(bucket, key).catch();
     throw throwRateLimitError();
   }
 
   if (!response.ok) {
-    deleteObject(bucket, key).catch();
     throw throwBadRequestError(
       'We are not able to process your request at this time. Please try again later.'
     );
@@ -435,6 +452,14 @@ export type TrainingWorkflowUpdateResult = {
   username: string | null;
   fileMetadata: FileMetadata;
 };
+
+/** Debits minus credits (refunds) across a workflow's transactions. */
+const netTransactionCharge = (transactions: TrainingResultsV2['transactionData'] | null) =>
+  (transactions ?? []).reduce(
+    (sum, { type, amount }) =>
+      type === 'debit' ? sum + amount : type === 'credit' ? sum - amount : sum,
+    0
+  );
 
 /**
  * Updates the model file metadata and model version training status based on workflow data.
@@ -495,9 +520,8 @@ export async function updateTrainingWorkflowRecords(
   // Read, never derived: createTrainingWorkflow stamps this at submit, and this runs again on any
   // re-sync of a finished run. Deriving it here would renumber one — and generation binds an epoch
   // by value, where getTrainingFileEpochNumberDetails answers a miss with the newest epoch rather
-  // than an error, so those bindings would silently move to other weights. Not enforced, though:
-  // `modelFileMetadataSchema` takes `trainingResults` from the client, so an owner can seed any
-  // offset on their own run.
+  // than an error, so those bindings would silently move to other weights. modelFile writes drop
+  // client `trainingResults`, but a file saved before that may carry any offset.
   const epochData = offsetEpochNumbers(derivedEpochs, trainingResults.epochOffset);
 
   const resolvedStartedAt = trainingResults.startedAt ?? derived.startedAt;
@@ -525,6 +549,34 @@ export async function updateTrainingWorkflowRecords(
     ).catch();
   }
 
+  // The run was priced and debited at submit, so its net charge should never grow afterwards. The
+  // orchestrator can re-price a re-created job (gate release, retry) and debit again; nothing else
+  // here would notice, so flag it. Only within one workflow: a resubmit legitimately starts over.
+  const storedCharge = netTransactionCharge(trainingResults.transactionData);
+  const currentCharge = netTransactionCharge(derived.transactionData);
+  if (
+    storedCharge > 0 &&
+    currentCharge > storedCharge &&
+    trainingResults.workflowId === derived.workflowId
+  ) {
+    logToAxiom(
+      {
+        name: 'training-charge-increased',
+        type: 'error',
+        message: 'Training charge grew after submit',
+        data: {
+          workflowId: derived.workflowId,
+          modelFileId,
+          userId: model.user.id,
+          status: trainingStatus,
+          storedCharge,
+          currentCharge,
+        },
+      },
+      'webhooks'
+    ).catch();
+  }
+
   const newTrainingResults: TrainingResultsV2 = {
     ...trainingResults,
     version: 2,
@@ -539,6 +591,8 @@ export async function updateTrainingWorkflowRecords(
     history,
     sampleImagesPrompts: derived.sampleImagesPrompts,
     transactionData: derived.transactionData ?? trainingResults.transactionData ?? [],
+    // Rewritten on every sync, so it clears once the hold ends.
+    heldForReview: derived.underReview || undefined,
   };
 
   const newMetadata: FileMetadata = {
@@ -644,7 +698,7 @@ type AutoLabelStepMetadata = {
 // ⚠ Deliberate NARROWING that comes with it: `isPublicHttpsUrl` also refuses *public* bare
 // IPv4/IPv6 literals and dot-less hostnames. A legitimate media URL is a DNS name, and the
 // canonical helper makes the same call for App Blocks manifests, so the two now agree.
-function assertSafeMediaUrls(urls: string[]) {
+export function assertSafeMediaUrls(urls: string[]) {
   for (const raw of urls) {
     let parsed: URL;
     try {
@@ -664,6 +718,29 @@ function assertSafeMediaUrls(urls: string[]) {
     if (!lexical.ok) {
       throw throwBadRequestError('mediaUrl host is not reachable');
     }
+  }
+}
+
+// For submits on the system orchestrator token: only media on Civitai's orchestrator, where uploads
+// land. The raw string is forwarded, so it must already be canonical (which also refuses the
+// backslash and control bytes WHATWG rewrites); the host judged here is then the host any parser
+// sees. `@` is refused anywhere: a parser splitting the authority on the last `@` would read the
+// host from the query. Both host comparisons include the port.
+export function assertCivitaiMediaUrls(urls: string[]) {
+  const publicHost = new URL(clientEnv.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT).host;
+  for (const raw of urls) {
+    const parsed = URL.canParse(raw) ? new URL(raw) : null;
+    const ok =
+      parsed &&
+      parsed.href === raw &&
+      !parsed.hash &&
+      !raw.includes('@') &&
+      (isTrustedOrchestratorUrl(raw) ||
+        (parsed.protocol === 'https:' && parsed.host === publicHost));
+    if (!ok)
+      throw throwBadRequestError(
+        'Auto-label only accepts media uploaded to Civitai. Upload the file, then try again.'
+      );
   }
 }
 

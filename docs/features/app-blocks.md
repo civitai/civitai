@@ -183,6 +183,48 @@ block-token-authed routes also live under `/api/v1/blocks/*` (the catalog reads
 noted above, among others) and the set moves. `src/pages/api/v1/` is the
 authority.
 
+### Document store: collection schemas
+
+A collection declared under `storage.collections` (route `/api/v1/blocks/storage/*`)
+may also declare `schema`: a JSON Schema subset that every document's `data` must
+match. It is opt-in; a collection without one is not checked.
+
+- **Keywords:** `type` (`object`, `array`, `string`, `number`, `integer`, `boolean`,
+  `null`, or a list of them), `properties`, `required`, `additionalProperties`
+  (boolean or a schema), `items` (one schema), `enum`, `const`, `minLength`,
+  `maxLength`, `pattern`, `minimum`, `maximum`, `minItems`, `maxItems`,
+  `description`. Submit refuses any other keyword and names it.
+- **Bounds:** at most 16 nested schemas, 16384 bytes of JSON and 16 patterns per
+  collection schema, and 32 patterns across all of a manifest's collection schemas
+  (`APP_STORAGE_MANIFEST_MAX_PATTERNS`: each analysis blocks the event loop at
+  submit). A `pattern` is at most 256 characters, needs a `maxLength` of at most
+  1000 on the same schema, and is refused at submit if recheck finds it can
+  backtrack catastrophically (`validateSubmission`). recheck analyses it with the
+  `u` flag the store compiles it with (`APP_STORAGE_SCHEMA_PATTERN_FLAGS`; a setting's
+  pattern has no flags), and each distinct pattern once. Not allowed on a
+  `write: "none"` collection, which has no document bodies.
+- **Enforcement:** the store checks every create and put (`writeDoc` in
+  `doc-store.ts`), and the REST layer checks again before the ownership check, the
+  trust gate, the write budget and moderation, so a refused write spends none of
+  them. A put replaces the whole body, so the check always sees the resulting
+  document. Counters and marks are not checked. A refusal is 400
+  `schema_violation`, and its message and `details.pointer` name the first failing
+  JSON pointer into `data`.
+- **Semantics** (any other evaluator, the CLI's included, must match them):
+  keywords for another type are ignored, `integer` is a number with no fraction,
+  lengths count code points, `pattern` is an unanchored JavaScript regex with the
+  `u` flag, and `enum`/`const` compare JSON values. Order of "first": `type`,
+  `const`, `enum`, the string/number/array keywords (`maxLength` before
+  `pattern`), `required` in declared order, then own keys in ascending order.
+- **Changing a schema** does not re-check stored documents; each is checked the
+  next time it is written.
+
+Code: `src/shared/constants/block-storage.constants.ts` (`parseCollectionSchema`),
+`src/server/services/apps/doc-store-schema.ts`
+(`validateDocAgainstCollectionSchema`, compiled validators cached per app,
+collection and schema text). The published shape is the `storage.collections.*.schema`
+property of `public/schemas/app-block/v1.json` (`$defs.storageCollectionSchema`).
+
 ## Feature flag
 
 `appBlocks` (Flipt key: `app-blocks-enabled`) gates the BlockSlot mount
@@ -714,6 +756,21 @@ cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
 - **Post-paid jobs reserve the CEILING and settle to actual**, on this counter exactly
   as on the platform one — so a job that reserves 5,000 and bills 200 gives back 4,800
   when it reaches a terminal state.
+
+### Generation input images (`kind: 'step'` and `kind: 'workflow'`)
+
+An image a generation input names must be an image stored on Civitai that has finished its
+scan and may be used as a source, the viewer's own uploads included.
+
+- **Still being scanned.** An upload whose scan has not finished is refused by the estimate
+  and the submit with a failed snapshot whose `errorCode` is `'source-scan-pending'`, before
+  anything is reserved. Retry once the upload's scan completes: with `OPEN_IMAGE_UPLOAD`
+  `asyncScan`, wait for the `scanned` verdict before using the image as a source.
+- **Not usable as a source.** An image the scan did not clear is refused with
+  `that image can’t be used as a generation source`. Choose a different image.
+- **External hosts.** Image urls on hosts outside Civitai are being phased out of
+  generation inputs; upload the image instead. Free text in a chat step's messages and tool
+  schemas is not an image input.
 
 ### Training runs (`kind: 'training'`)
 

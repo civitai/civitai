@@ -1,4 +1,5 @@
-import { Anchor, Avatar, Badge, Group, Popover, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Anchor, Avatar, Badge, Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';

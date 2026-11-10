@@ -2,14 +2,15 @@ import type { AutocompleteProps, ComboboxData } from '@mantine/core';
 import {
   Code,
   Group,
-  HoverCard,
   Select,
   Stack,
   Text,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
+import { HoverCard } from '~/components/MantineOverlays';
+import { getHotkeyHandler, useDebouncedValue } from '@mantine/hooks';
+import { useSearchFocusHotkeys } from '~/hooks/useSearchFocusHotkeys';
 import { IconChevronDown, IconSearch } from '@tabler/icons-react';
 import type { Hit } from 'instantsearch.js';
 import { useRouter } from 'next/router';
@@ -26,7 +27,9 @@ import type { InstantSearchProps, SearchBoxProps } from 'react-instantsearch';
 import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsearch';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { slugit } from '~/utils/string-helpers';
-import { createInstantMeiliSearch } from '~/components/Search/search-api-key';
+import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
+import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
+import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import {
@@ -55,8 +58,7 @@ import { paired } from '~/utils/type-guards';
 import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
 import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
 import { buildAutocompleteBaseFilters } from '~/components/AutocompleteSearch/autocomplete-filters';
-import { IMAGE_SEARCH_MAINTENANCE_MESSAGE } from '~/components/Search/ImageSearchMaintenance';
-import { emptyMeiliResults, emptySearchClient } from '~/components/Search/emptySearchClient';
+import { emptyMeiliResults } from '~/components/Search/emptySearchClient';
 import { resolveSearchTarget } from '~/components/Search/search-target';
 import {
   buildSearchPageUrl,
@@ -93,19 +95,21 @@ type Props = Omit<AutocompleteProps, 'data' | 'onSubmit'> & {
 // never reaches `useInstantSearch().status`, so we can't key off that).
 const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
   createResilientSearchClient(
-    {
-      ...meilisearch,
-      search(requests) {
-        // Prevent making a request if there is no query
-        // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
-        // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
-        if (requests.every(({ params }) => !params?.query)) {
-          return Promise.resolve(emptyMeiliResults(requests));
-        }
+    withSemanticArticleSearch(
+      withSemanticImageSearch({
+        ...meilisearch,
+        search(requests) {
+          // Prevent making a request if there is no query
+          // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
+          // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
+          if (requests.every(({ params }) => !params?.query)) {
+            return Promise.resolve(emptyMeiliResults(requests));
+          }
 
-        return meilisearch.search(requests);
-      },
-    },
+          return meilisearch.search(requests);
+        },
+      })
+    ),
     {
       onError: () => autocompleteAvailability.setUnavailable(true),
       onSuccess: () => autocompleteAvailability.setUnavailable(false),
@@ -176,18 +180,12 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
 
   const resolvedIndexName = searchIndexMap[targetIndex as keyof typeof searchIndexMap];
 
-  // Images is selectable while image search is retired whenever `imageSearchEntry` offers it, but
-  // images_v6 is empty and declares no filterable attributes — swap to a client that never reaches
-  // the network so the on-mount search can't query it. 🔴 The index EXISTS; this swap is the
-  // protection for that flag combination, not dead belt-and-braces.
-  const imageSearchMaintenance = targetIndex === 'images' && !features.imageSearch;
-
   // The options the selector OFFERS: every target, narrowed by feature flag. Computed once here
   // because the render below reads it twice — as `data`, and in the `value` expression that
   // blanks the label when the target is not one of these.
   const enabledTargets = targetData.filter(
     ({ value }) =>
-      (features.imageSearchEntry ? true : value !== 'images') &&
+      (features.imageSearch ? true : value !== 'images') &&
       (features.bounties ? true : value !== 'bounties') &&
       (features.articles ? true : value !== 'articles') &&
       (features.toolSearch ? true : value !== 'tools') &&
@@ -239,7 +237,7 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
         // previous index's parameters: react-instantsearch sets the new index and searches in its
         // render body, before the children that own `filters` have re-rendered.
         key={resolvedIndexName}
-        searchClient={imageSearchMaintenance ? emptySearchClient : searchClient}
+        searchClient={searchClient}
         indexName={resolvedIndexName}
         future={{ preserveSharedStateOnUnmount: false }}
       >
@@ -287,7 +285,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const isMobile = useIsMobile();
   const inputRef = useRef<HTMLInputElement>(null);
   const domainColor = useDomainColor();
-  const features = useFeatureFlags();
 
   const { status } = useInstantSearch({
     catchError: true,
@@ -298,11 +295,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const indexName = results?.index
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
     : indexNameProp;
-
-  // Images stays selectable while image search is retired, but the images_v6 index is empty and
-  // declares no filterable attributes — so show a maintenance notice in place and never refine the
-  // query against it. The index still exists; this branch is load-bearing, not dead code.
-  const imageSearchMaintenance = indexName === 'images' && !features.imageSearch;
 
   const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);
   const [search, setSearch, clearDisplayedText] = useCarriedSearchText(carriedSearchText, query);
@@ -344,17 +336,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const isProfaneSearch = profanityAnalysis.hasProfanity;
 
   const items = useMemo(() => {
-    if (imageSearchMaintenance) {
-      return [
-        {
-          key: 'image-maintenance',
-          value: debouncedSearch,
-          hit: null as any,
-          label: 'Maintenance',
-        },
-      ];
-    }
-
     const isIllegalQuery = debouncedSearch
       ? includesInappropriate({ prompt: auditedSearch }) === 'minor'
       : false;
@@ -444,15 +425,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       items.push({ key: 'view-more', value: query, hit: null as any, label: 'View more results' });
 
     return items;
-  }, [
-    status,
-    searchErrorState,
-    filtered,
-    results?.nbHits,
-    query,
-    imageSearchMaintenance,
-    showSfwFace,
-  ]);
+  }, [status, searchErrorState, filtered, results?.nbHits, query, showSfwFace]);
 
   // Track profanity search separately to avoid side effects in useMemo
   useEffect(() => {
@@ -558,8 +531,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       item.key === 'profanity' ||
       item.key === 'disabled' ||
       item.key === 'blocked-words' ||
-      item.key === 'error' ||
-      item.key === 'image-maintenance'
+      item.key === 'error'
     ) {
       // Do not allow to click on blocked / notice items
       return;
@@ -578,15 +550,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     onSubmit?.();
   };
 
-  useHotkeys([
-    ['/', focusInput],
-    ['mod+k', focusInput],
-  ]);
+  useSearchFocusHotkeys(focusInput);
 
   useEffect(() => {
-    // Image search is retired and its index deleted — never send a query to it.
-    if (imageSearchMaintenance) return;
-
     // Only set the query when the debounced search changes
     // and user didn't select from the list
     if (!shouldRefineSearchQuery(debouncedSearch, query, !!selectedItem || searchErrorState))
@@ -609,7 +575,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     // was unavailable restores the typed text, returns early, and then never refines when the
     // flag clears — the box reads as populated while the fresh helper's query is still empty.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, query, indexName, searchErrorState, imageSearchMaintenance]);
+  }, [debouncedSearch, query, indexName, searchErrorState]);
 
   // Clear selected item after search changes
   useEffect(() => {
@@ -666,7 +632,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         onBlur={handleBlur}
         onClear={handleClear}
         onKeyDown={getHotkeyHandler([
-          ['Escape', blurAndDiscardCarriedText],
+          ['esc', blurAndDiscardCarriedText],
           ['Enter', handleSubmit],
         ])}
         onOptionSubmit={handleItemClick}
@@ -733,15 +699,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
                 </Text>
                 <Text size="xs" align="center">
                   Please try again later
-                </Text>
-              </Stack>
-            );
-          }
-          if (key === 'image-maintenance') {
-            return (
-              <Stack gap="xs" align="center">
-                <Text size="sm" align="center">
-                  {IMAGE_SEARCH_MAINTENANCE_MESSAGE}
                 </Text>
               </Stack>
             );

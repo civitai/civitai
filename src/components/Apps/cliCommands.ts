@@ -1,7 +1,8 @@
 /**
  * Canonical Civitai App-Blocks CLI commands + ecosystem links — the SINGLE
- * source within civitai-web for the get-started page (`GetStartedBody`) and the
- * submit CTA (`CliSubmitCta`), so the two surfaces can't drift.
+ * source within civitai-web for the submit CTA (`CliSubmitCta`), the get-started
+ * page's toolkit links (`GetStartedBody`) and the agent prompt (`AgentOnboardingCard`).
+ * `/apps/build` itself shows no CLI commands any more.
  *
  * SOURCE OF TRUTH is the `civitai/cli` repo (its README "## Quickstart" +
  * `internal/cmd/app_init.go` printed next-steps). The CLI exposes no
@@ -11,32 +12,8 @@
  */
 
 // --- Ecosystem links ---
-/**
- * Where the `/apps/build` pitch's "Request access" CTA points.
- *
- * 🔴 THIS IS THE COMMUNITY DISCORD, NOT A REQUEST-ACCESS ENDPOINT, AND THE DIFFERENCE
- * IS DELIBERATELY NOT PAPERED OVER. `appBlocksAuthor` is a Flipt flag with no self-serve
- * path: there is no DB row, no invite mechanism, no form, and no queue. A "Request-access
- * link" has never existed. This note used to cite the `appBlocksGetStarted` comment in
- * `feature-flags.service.ts` as saying the get-started widen was blocked on one; `f5ad1d6deb`
- * rewrote that comment for a different reason and the sentence is gone, so the claim now has
- * NO citation anywhere in the repo — do not read one back in. So rather than fabricate a URL
- * nothing serves, this points at the one channel the repo ALREADY treats as the place a
- * person asks a human for something: `/discord`.
- *
- * `/discord` rather than a raw `discord.gg` URL because it is a real, permanent redirect
- * defined in `next.config.mjs` and asserted to exist by
- * `src/__tests__/pages/apps-build-redirects.test.ts` (which absorbed the retired
- * `apps-my-submissions-redirect.test.ts` this note used to cite), and it is already the
- * community-help CTA in `~/components/Support/SupportContent`. That makes it the
- * canonical in-repo spelling, and it survives the invite link being rotated.
- *
- * 🔴 REPOINT THIS when a real access flow lands — that is the whole reason it is a named
- * constant with this note rather than an inline `href`. The CTA's copy is deliberately
- * "Ask about access" rather than "Request access", so the button does not promise a
- * mechanism that is not behind it.
- */
-export const APPS_REQUEST_ACCESS_HREF = '/discord';
+// No request-access link: the /apps/build pitch opens an in-page form (AppAccessRequestPanel).
+
 export const CIVITAI_CLI_GITHUB_URL = 'https://github.com/civitai/cli';
 export const BLOCKS_REACT_NPM_URL = 'https://www.npmjs.com/package/@civitai/blocks-react';
 export const APP_SDK_NPM_URL = 'https://www.npmjs.com/package/@civitai/app-sdk';
@@ -57,7 +34,7 @@ export const APP_SDK_NPM_URL = 'https://www.npmjs.com/package/@civitai/app-sdk';
  *  - releases — the release carries `windows_amd64` / `windows_arm64` (.exe + .zip)
  *               alongside linux/darwin × amd64/arm64, so a no-toolchain download is a
  *               real Windows route and is named as one.
- *  - go       — from source, Go 1.25+ (already used by the get-started page).
+ *  - go       — from source, Go 1.25+.
  *
  * The CLI publishes no machine-readable manifest, so these stay MANUALLY in sync;
  * the `*.browser.test.tsx` suites pin the exact strings so a change is deliberate.
@@ -71,12 +48,6 @@ export const CIVITAI_CLI_RELEASES_URL = 'https://github.com/civitai/cli/releases
 // --- Author / run / submit ---
 /** Bare `civitai app create` (the submit CTA's form). */
 export const CLI_CREATE_COMMAND = 'civitai app create';
-/** With-sample-name form the manual setup uses. */
-export const CLI_CREATE_SAMPLE_COMMAND = 'civitai app create my-app';
-// The CLI does NOT install deps on `create`; its own next-step prompt is
-// `cd <dir> && npm install && npm run dev:harness`. `dev:harness` serves a MOCK
-// host at localhost:5186 (plain `npm run dev` shows a blank screen — no host).
-export const CLI_RUN_COMMAND = 'cd my-app && npm install && npm run dev:harness';
 export const CLI_SUBMIT_COMMAND = 'civitai app submit';
 
 // --- Agent onboarding (the "let your agent build it" prompt) ---

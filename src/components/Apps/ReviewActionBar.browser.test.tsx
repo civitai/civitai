@@ -1,3 +1,4 @@
+import superjson from 'superjson';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcMod from '~/utils/trpc';
@@ -149,6 +150,57 @@ describe('ReviewActionBar — approve', () => {
     await page.getByRole('button', { name: 'Approve + build' }).click();
     expect(showError).toHaveBeenCalledWith(expect.objectContaining({ title: 'Approve failed' }));
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 PUBLISH FLOOR. The server refuses an approve whose store listing has no icon or no cover
+ * (`approveRequest`), and says which via `approveFloorMissing`. The bar must not offer an
+ * Approve the server will refuse: it is disabled and the reason shown. Reject stays usable.
+ */
+describe('ReviewActionBar — publish floor (icon + cover)', () => {
+  test('🔴 a listing missing its cover: Approve disabled, the reason shown, Reject still offered', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{ request: { ...PENDING, approveFloorMissing: ['cover'] }, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
+    await expect
+      .element(page.getByTestId('apps-review-approve-floor'))
+      .toHaveTextContent(
+        "Cannot approve yet: the store listing this approve publishes has no cover. Every listing needs an icon and a cover before it goes live — the developer adds them on the listing's Media tab, then you can approve."
+      );
+    await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeEnabled();
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  test('🔴 both missing: the reason names both', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{
+          request: { ...PENDING, approveFloorMissing: ['icon', 'cover'] },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
+    await expect
+      .element(page.getByTestId('apps-review-approve-floor'))
+      .toHaveTextContent(/has no icon or cover\./);
+  });
+
+  test('nothing missing: Approve enabled, no floor notice', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{ request: { ...PENDING, approveFloorMissing: [] }, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+    expect(page.getByTestId('apps-review-approve-floor').elements()).toHaveLength(0);
   });
 });
 
@@ -468,5 +520,62 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
       approvalNotes: undefined,
       mediaSplit: 'rate-mature',
     });
+  });
+});
+
+describe('🔴 "Approve & next" survives the tab closing (keepalive)', () => {
+  /**
+   * Closing the tab inside the undo window commits the pending approval from `pagehide`
+   * (`bindPendingApprovalLifecycle`). A plain fetch started there is cancelled with the page, so
+   * the send must be a `keepalive` request — to the same procedure, carrying the same input.
+   * This drives the REAL path: the bar's commit closure, the real queue + lifecycle binding,
+   * and the real tRPC link down to `fetch`. Only `fetch` itself is stubbed.
+   */
+  test('pagehide sends the pending approval as a keepalive POST to blocks.approveRequest', async () => {
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const sent: { url: string; init: RequestInit | undefined }[] = [];
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (!url.includes('/api/trpc/')) return realFetch(input, init);
+      sent.push({ url, init });
+      return new Response(JSON.stringify({ result: { data: { json: { ok: true } } } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    try {
+      const request = { ...PENDING, id: 'req-keepalive' };
+      const onClose = vi.fn();
+      renderWithProviders(
+        <ReviewActionBar
+          selection={{ request, mode: 'pending' }}
+          onClose={onClose}
+          approveAndNext
+        />
+      );
+      await page.getByTestId('apps-review-approve-next').click();
+      expect(onClose).toHaveBeenCalledTimes(1);
+      // Nothing is sent inside the undo window…
+      expect(sent).toHaveLength(0);
+
+      // …until the tab goes away.
+      window.dispatchEvent(new PageTransitionEvent('pagehide'));
+      await vi.waitFor(() => expect(sent).toHaveLength(1));
+      const [{ url, init }] = sent;
+      expect(new URL(url, window.location.href).pathname).toBe('/api/trpc/blocks.approveRequest');
+      expect(init?.method).toBe('POST');
+      expect(init?.keepalive).toBe(true);
+      // The client's superjson wire format (`{ json, meta? }`), carrying the approval's input.
+      expect(superjson.deserialize(JSON.parse(String(init?.body)))).toEqual({
+        publishRequestId: 'req-keepalive',
+        approvalNotes: undefined,
+      });
+      const { reviewApprovalQueue } = await import('./pendingApprovalQueue');
+      await vi.waitFor(() =>
+        expect(reviewApprovalQueue.get('req-keepalive')?.status).toBe('committed')
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

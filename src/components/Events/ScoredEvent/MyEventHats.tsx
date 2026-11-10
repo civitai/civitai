@@ -1,4 +1,4 @@
-import { SimpleGrid, Stack, Text } from '@mantine/core';
+import { Button, Center, Group, Paper, SimpleGrid, Stack, Text } from '@mantine/core';
 import { IconHanger, IconPlus } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
@@ -7,6 +7,7 @@ import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectio
 import type { MyHat } from '~/components/Events/ScoredEvent/MyHatCard';
 import { MyHatCard } from '~/components/Events/ScoredEvent/MyHatCard';
 import PlaceHatModal from '~/components/Events/ScoredEvent/PlaceHatModal';
+import { ShowcaseHatButton } from '~/components/Events/ScoredEvent/ShowcaseHatPicker';
 import { minutesUntilMovable } from '~/components/Events/ScoredEvent/scored-event.utils';
 import { MysteryBoxCard } from '~/components/MysteryBox/MysteryBoxCard';
 import { useEventMysteryBoxes } from '~/components/MysteryBox/useEventMysteryBoxes';
@@ -17,6 +18,9 @@ import { numberWithCommas } from '~/utils/number-helpers';
 // rather than reach past it.
 const HAT_ROOM =
   'calc(max(0px, (100cqw - var(--container-size-lg)) / 2) + var(--mantine-spacing-md))';
+
+// Some players hold 200 hats; the grid shows this many more per press. The heading counts them all.
+export const HATS_PAGE_SIZE = 30;
 
 export function MyEventHats({
   event,
@@ -39,6 +43,7 @@ export function MyEventHats({
   const heldBoxes = ended ? boxes.filter((box) => box.heldBoxItemIds.length) : [];
   // Re-reads the clock every half minute, so a hat's Move button unlocks when its cooldown ends.
   const [now, setNow] = useState(() => new Date());
+  const [shown, setShown] = useState(HATS_PAGE_SIZE);
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(timer);
@@ -48,6 +53,10 @@ export function MyEventHats({
       component: PlaceHatModal,
       props: { event, hat, myHats: hats },
     });
+  const minutesLeft = (hat: MyHat) =>
+    minutesUntilMovable(hat.moveCooldownLeftMs, now.getTime() - fetchedAt);
+  const idleHat =
+    !ended && hats.every((h) => !h.placedOn) ? hats.find((h) => minutesLeft(h) === 0) : undefined;
 
   return (
     <Stack gap="md">
@@ -64,7 +73,35 @@ export function MyEventHats({
             points for your team
           </>
         }
-      />
+      >
+        {!ended && <ShowcaseHatButton event={event} color={teamColor} />}
+      </EventSectionHeading>
+
+      {idleHat && (
+        <Paper
+          withBorder
+          p="md"
+          radius="md"
+          style={{ borderColor: teamColor }}
+          data-testid="idle-hat-cta"
+        >
+          <Group justify="space-between" wrap="wrap" gap="sm">
+            <Stack gap={2}>
+              <Text fw={700}>Put your hat on something</Text>
+              <Text size="sm" c="dimmed">
+                A hat scores for your team once it&apos;s on one of your images, models or articles.
+              </Text>
+            </Stack>
+            <Button
+              color={teamColor}
+              leftSection={<IconHanger size={16} />}
+              onClick={() => openPicker(idleHat)}
+            >
+              Place your hat
+            </Button>
+          </Group>
+        </Paper>
+      )}
 
       {heldBoxes.map((box) => (
         <MysteryBoxCard key={box.boxDefinitionId} event={event} view={box} color={teamColor} />
@@ -77,12 +114,12 @@ export function MyEventHats({
         style={{ gridAutoRows: '1fr', '--event-decoration-allowance': HAT_ROOM } as CSSProperties}
         data-testid="my-hats-grid"
       >
-        {hats.map((hat) => (
+        {hats.slice(0, shown).map((hat) => (
           <MyHatCard
             key={`${hat.cosmeticId}:${hat.claimKey}`}
             hat={hat}
             color={teamColor}
-            minutesLeft={minutesUntilMovable(hat.moveCooldownLeftMs, now.getTime() - fetchedAt)}
+            minutesLeft={minutesLeft(hat)}
             onPlace={() => openPicker(hat)}
           />
         ))}
@@ -107,6 +144,13 @@ export function MyEventHats({
           </a>
         )}
       </SimpleGrid>
+      {hats.length > shown && (
+        <Center>
+          <Button variant="subtle" size="sm" onClick={() => setShown((n) => n + HATS_PAGE_SIZE)}>
+            Show more
+          </Button>
+        </Center>
+      )}
     </Stack>
   );
 }

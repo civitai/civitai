@@ -1,11 +1,15 @@
 import { BuzzApiError } from '@civitai/buzz';
+import { PGlite } from '@electric-sql/pglite';
 import { TRPCError } from '@trpc/server';
 import { describe, it, expect, vi, beforeEach, afterAll, afterEach, beforeAll } from 'vitest';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import { CacheTTL } from '~/server/common/constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { BANKABLE_CUTOVER, MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
 import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
+import { CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import {
   PEAK_EARNING_PREDICATE_SQL,
   PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
@@ -120,6 +124,7 @@ vi.mock('~/server/utils/errorHandling', async (importOriginal) => ({
 // ── Import the service under test ──────────────────────────────────────────────
 import {
   bankBuzz,
+  ensureWithdrawalRefCode,
   extractBuzz,
   getBankCap,
   getBanked,
@@ -128,11 +133,18 @@ import {
   getPoolParticipantsV2,
   getUserCapCache,
   joinCreatorsProgram,
+  updateCashWithdrawal,
   withdrawCash,
 } from '~/server/services/creator-program.service';
 import { getCurrentValue, getForecastedValue } from '~/server/utils/creator-program.utils';
 import { creatorScoreCategorySumSql } from '~/shared/utils/creator-score';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import {
+  decidePayoutReview,
+  openPayoutHold,
+} from '~/server/services/creator-program-prepayout-review/hold';
+import { installPayoutReviewTable } from '~/server/services/creator-program-prepayout-review/__tests__/payout-review-fake';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 // Globally stubbed in `src/__tests__/setup.ts` — imported here only to drive its rejection.
 import { refreshSession } from '~/server/auth/session-invalidation';
@@ -219,6 +231,18 @@ describe('userCapCache peak-earning query', () => {
     expect(sql).not.toMatch(/'tip'/);
   });
 
+  it('counts user-paid tips and generation tips from the cutover', async () => {
+    vi.setSystemTime(BANKABLE_CUTOVER);
+    try {
+      const { sql } = await runLookup([userId]);
+
+      expect(sql).toMatch(/type = 'tip' AND fromAccountId != 0 AND fromAccountId != toAccountId/);
+      expect(sql).toMatch(/startsWith\(externalTransactionId, 'generation-tip-'\)/);
+    } finally {
+      vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
+    }
+  });
+
   it('counts license fees and early-access purchases', async () => {
     const { sql } = await runLookup([userId]);
 
@@ -239,7 +263,10 @@ describe('userCapCache peak-earning query', () => {
       const { sql, result } = await runLookup([userId]);
 
       expect(sql).toContain(`WHERE ${PEAK_EARNING_PREDICATE_SQL}\n`);
-      expect(sql).not.toContain('compensation');
+      // Only generation tips, never the generation price itself.
+      expect(sql).not.toMatch(
+        /'compensation'(?! AND fromAccountId = 0 AND startsWith\(externalTransactionId, 'generation-tip-'\))/
+      );
       expect(result[userId].countsCompensation).toBe(false);
     } finally {
       vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
@@ -585,10 +612,21 @@ describe('bankBuzz', () => {
       const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:creator-program:bank:${userId}`;
       const { set, eval: evalScript } = redisMock.redis;
       const acquire = set.mock.calls.findIndex(([key]: [string]) => key === lockKey);
-      const release = evalScript.mock.calls.findIndex(
-        ([script, opts]: [string, { keys: string[] }]) =>
-          script.includes('"del"') && opts.keys[0] === lockKey
-      );
+      // The release is the script on the lock's key that, run for real against a lock held with
+      // its own value, deletes it (a renewal on the same key leaves it).
+      let release = -1;
+      for (const [i, [script, opts]] of (
+        evalScript.mock.calls as [string, { keys: string[]; arguments: string[] }][]
+      ).entries()) {
+        if (opts.keys[0] !== lockKey) continue;
+        const lua = createLuaRedis(0);
+        lua.setString(lockKey, opts.arguments[0]!);
+        await lua.eval(script, opts);
+        if (lua.string(lockKey) === undefined) {
+          release = i;
+          break;
+        }
+      }
       expect(acquire, 'lock acquired under the per-user key').toBeGreaterThanOrEqual(0);
       expect(release, 'lock released under the per-user key').toBeGreaterThanOrEqual(0);
       const acquiredAt = set.mock.invocationCallOrder[acquire];
@@ -1103,6 +1141,8 @@ describe('withdrawCash', () => {
       tipaltiWithdrawalMethod: 'Wire',
     });
     mockDbWrite.cashWithdrawal.create.mockResolvedValue({ id: 'withdrawal-1' });
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue({ metadata: {} });
+    mockDbWrite.$executeRaw.mockResolvedValue(1);
   });
 
   it('rejects banned users', async () => {
@@ -1147,6 +1187,53 @@ describe('withdrawCash', () => {
     });
 
     await expect(withdrawCash(userId, 10000)).rejects.toThrow('not payable');
+  });
+
+  describe('with a payout-review hold', () => {
+    let table: ReturnType<typeof installPayoutReviewTable>;
+    beforeEach(() => {
+      table = installPayoutReviewTable();
+      mockDbWrite.user.findUnique.mockResolvedValueOnce({ id: userId });
+      mockCachedObject.fetch.mockResolvedValue({
+        [userId]: {
+          id: userId,
+          status: 'ready',
+          ready: 100000,
+          pending: 0,
+          withdrawn: 0,
+          paymentMethod: 'ACH',
+        },
+      });
+      // WITHDRAWAL_FEES has no 'Wire' entry, so the success half needs a supported method.
+      mockDbWrite.userPaymentConfiguration.findUnique.mockResolvedValue({
+        userId,
+        tipaltiPaymentsEnabled: true,
+        tipaltiWithdrawalMethod: 'ACH',
+      });
+      mockPayToTipaltiAccount.mockResolvedValue({ paymentBatchId: 'b-1', paymentRefCode: 'r-1' });
+    });
+    afterEach(() => table.uninstall());
+
+    it('refuses while the hold is open and pays out once it is cleared', async () => {
+      const hold = await openPayoutHold(
+        { userId, ground: 'investigation', reason: 'test hold' },
+        'user:1'
+      );
+
+      await expect(withdrawCash(userId, 10000)).rejects.toThrow('on hold');
+      expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
+      expect(mockDbWrite.cashWithdrawal.create).not.toHaveBeenCalled();
+      expect(mockPayToTipaltiAccount).not.toHaveBeenCalled();
+
+      await decidePayoutReview(
+        { id: hold.id, userId, period: hold.period, action: 'clear', version: hold.version },
+        'user:1'
+      );
+
+      await withdrawCash(userId, 10000);
+      expect(mockDbWrite.cashWithdrawal.create).toHaveBeenCalledTimes(1);
+      expect(mockPayToTipaltiAccount).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('when the Tipalti payment fails after the burn', () => {
@@ -1211,6 +1298,444 @@ describe('withdrawCash', () => {
 
       expect(canceled()).toBe(false);
     });
+  });
+});
+
+// ─── updateCashWithdrawal refunds ─────────────────────────────────────────────────
+// Fakes the Buzz ledger (by external id). The CashWithdrawal row lives in an in-process Postgres, so
+// the shipped claim, release and status SQL decide who refunds.
+describe('updateCashWithdrawal refunds', () => {
+  type Row = { status: string; note: string | null; metadata: Record<string, unknown> };
+  let pg: PGlite;
+  let ledger: Set<string>;
+  let writes: { status: string; metadata: Record<string, unknown> }[];
+  const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
+
+  const stored = async () =>
+    (
+      await pg.query<Row>(
+        `SELECT status, note, metadata FROM "CashWithdrawal" WHERE id = 'withdrawal-1'`
+      )
+    ).rows[0];
+  const seed = async (
+    status: string,
+    metadata: Record<string, unknown> = {},
+    note: string | null = null
+  ) => {
+    await pg.query(`DELETE FROM "CashWithdrawal"`);
+    await pg.query(
+      `INSERT INTO "CashWithdrawal" (id, "userId", "transactionId", amount, status, note, metadata)
+       VALUES ('withdrawal-1', $1, 'tx-burn', 9500, $2, $3, $4)`,
+      [userId, status, note, JSON.stringify(metadata)]
+    );
+  };
+  const setStoredClaim = (at: string | null) =>
+    at
+      ? pg.query(
+          `UPDATE "CashWithdrawal" SET metadata = metadata || jsonb_build_object('refundClaimedAt', $1::text)`,
+          [at]
+        )
+      : pg.query(`UPDATE "CashWithdrawal" SET metadata = metadata - 'refundClaimedAt'`);
+  const refunds = () =>
+    mockCreateBuzzTransaction.mock.calls.filter(
+      ([input]) => (input as { type?: TransactionType }).type === TransactionType.Refund
+    );
+  const recordedStatus = () => writes.map((w) => w.status);
+
+  beforeAll(async () => {
+    pg = new PGlite();
+    const statuses = Object.values(CashWithdrawalStatus)
+      .map((s) => `'${s}'`)
+      .join(', ');
+    await pg.exec(`
+      CREATE TYPE "CashWithdrawalStatus" AS ENUM (${statuses});
+      CREATE TABLE "CashWithdrawal" (
+        id text PRIMARY KEY, "userId" int NOT NULL, "transactionId" text UNIQUE, amount int NOT NULL,
+        status "CashWithdrawalStatus" NOT NULL, note text, metadata jsonb NOT NULL DEFAULT '{}',
+        "updatedAt" timestamp(3)
+      );
+    `);
+  });
+  afterAll(() => pg.close());
+
+  beforeEach(() => {
+    ledger = new Set();
+    writes = [];
+    mockGetTransactionByExternalId
+      .mockReset()
+      .mockImplementation(async (id: string) =>
+        ledger.has(id) ? { externalTransactionId: id } : null
+      );
+    mockCreateBuzzTransaction.mockImplementation(
+      async (input: { type?: TransactionType; externalTransactionId?: string }) => {
+        if (input.type !== TransactionType.Refund) return { transactionId: 'tx-burn' };
+        if (input.externalTransactionId) ledger.add(input.externalTransactionId);
+        return { transactionId: 'tx-refund' };
+      }
+    );
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockImplementation(
+      async ({ where }: { where: { id: string } }) =>
+        (
+          await pg.query(
+            `SELECT id, "userId", status, "transactionId", amount, metadata
+             FROM "CashWithdrawal" WHERE id = $1`,
+            [where.id]
+          )
+        ).rows[0] ?? null
+    );
+    const raw = pgliteRaw(pg);
+    mockDbWrite.$executeRaw.mockImplementation(
+      async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const affected = await raw.executeRaw(strings, ...values);
+        if (strings.join('').includes('::"CashWithdrawalStatus"')) {
+          const { status, metadata } = await stored();
+          writes.push({ status, metadata });
+        }
+        return affected;
+      }
+    );
+  });
+
+  afterEach(() => {
+    mockCreateBuzzTransaction.mockReset().mockResolvedValue({ transactionId: 'tx-123' });
+    mockDbWrite.$executeRaw.mockReset();
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockReset();
+    mockGetTransactionByExternalId.mockReset().mockResolvedValue(null);
+    mockRefundTransaction.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('claims and refunds a withdrawal no caller has claimed yet', async () => {
+    await seed('Scheduled');
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
+
+    expect(refunds()).toHaveLength(1);
+    expect((await stored()).metadata.refundClaimedAt).toEqual(expect.any(String));
+  });
+
+  it('refunds once when a send that failed is later errored by Tipalti', async () => {
+    // The send times out; withdrawCash refunds through Buzz's refund endpoint, which records
+    // refund-<transactionId>.
+    mockCachedObject.fetch.mockResolvedValue({
+      [userId]: { id: userId, status: 'ready', ready: 100000, pending: 0, withdrawn: 0 },
+    });
+    mockDbWrite.user.findFirstOrThrow.mockResolvedValue(mockUser());
+    mockDbWrite.userPaymentConfiguration.findUnique.mockResolvedValue({
+      userId,
+      tipaltiPaymentsEnabled: true,
+      tipaltiWithdrawalMethod: 'ACH',
+    });
+    mockDbWrite.cashWithdrawal.create.mockResolvedValue({ id: 'withdrawal-1' });
+    await seed('InternalValue');
+    mockPayToTipaltiAccount.mockRejectedValueOnce(new Error('timeout'));
+    mockRefundTransaction.mockImplementation(async (id: string) => {
+      ledger.add(`refund-${id}`);
+      return { transactionId: id };
+    });
+    await expect(withdrawCash(userId, 10000)).rejects.toThrow('timeout');
+    expect(mockRefundTransaction.mock.calls.map(([id]) => id)).toEqual(['tx-burn']);
+
+    // Tipalti had accepted the payment after all, approved and scheduled it, then it failed.
+    await seed('Scheduled');
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
+
+    expect(refunds()).toEqual([]);
+    expect(recordedStatus()).toEqual(['Rejected']);
+  });
+
+  it('does not refund again a withdrawal whose row records an earlier refund', async () => {
+    // Rows refunded under the old bare-id key always stored refundTransactionId; that stored
+    // value alone must stop a second refund.
+    await seed('Paid', { refundTransactionId: 'tx-old-refund' });
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' });
+
+    expect(refunds()).toEqual([]);
+    expect(recordedStatus()).toEqual(['Canceled']);
+  });
+
+  // Deliberate: the ledger lookup route may also resolve a transaction by its own id, so asking
+  // it for the bare burn id could read every burn as refunded and withhold every refund.
+  it('never asks the ledger about the bare burn transaction id', async () => {
+    await seed('Scheduled');
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
+
+    expect(mockGetTransactionByExternalId.mock.calls.map(([id]) => id)).not.toContain('tx-burn');
+    expect(refunds()).toHaveLength(1);
+  });
+
+  it('records a move from Rejected to Canceled without a second refund', async () => {
+    await seed('Scheduled');
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' });
+
+    expect(refunds()).toHaveLength(1);
+    expect(recordedStatus()).toEqual(['Rejected', 'Canceled']);
+    expect(writes[0].metadata.refundTransactionId).toBe('tx-refund');
+  });
+
+  it('refunds once when two cancels arrive together, and refuses the other', async () => {
+    await seed('Scheduled');
+
+    const results = await Promise.allSettled([
+      updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' }),
+      updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' }),
+    ]);
+
+    // Both read the ledger before either refunded, so only the claim can stop the second.
+    expect(mockGetTransactionByExternalId).toHaveBeenCalledTimes(2);
+    expect(refunds()).toHaveLength(1);
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+  });
+
+  it('releases the claim when the refund fails, so a retry can refund', async () => {
+    await seed('Scheduled');
+    mockCreateBuzzTransaction.mockRejectedValueOnce(new Error('buzz down'));
+
+    await expect(
+      updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' })
+    ).rejects.toThrow('buzz down');
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' });
+
+    expect(refunds()).toHaveLength(2);
+    expect(ledger.has('refund-tx-burn')).toBe(true);
+  });
+
+  it('takes over a claim left by a caller that died, and refuses a live one', async () => {
+    await seed('Scheduled', { refundClaimedAt: minutesAgo(1) });
+    await expect(
+      updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' })
+    ).rejects.toThrow('already in progress');
+    expect(refunds()).toEqual([]);
+
+    await seed('Scheduled', { refundClaimedAt: minutesAgo(20) });
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' });
+    expect(refunds()).toHaveLength(1);
+  });
+
+  it('does not write back a claim it read but did not take', async () => {
+    // Read while another caller held the claim; that caller then failed and released it.
+    await seed('Scheduled', { refundClaimedAt: minutesAgo(1) });
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockImplementationOnce(async () => {
+      const read = { id: 'withdrawal-1', userId, status: 'Scheduled', transactionId: 'tx-burn' };
+      await setStoredClaim(null);
+      return { ...read, amount: 9500, metadata: { refundClaimedAt: minutesAgo(1) } };
+    });
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Submitted' });
+
+    expect((await stored()).metadata).not.toHaveProperty('refundClaimedAt');
+  });
+
+  // An overwrite here would wipe a refund claim another caller stored after this one read the row.
+  it('keeps a claim stored between the read and the status write', async () => {
+    await seed('Scheduled');
+    const claimedAt = minutesAgo(0);
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockImplementationOnce(async () => {
+      await setStoredClaim(claimedAt);
+      return {
+        id: 'withdrawal-1',
+        userId,
+        status: 'Scheduled',
+        transactionId: 'tx-burn',
+        amount: 9500,
+        metadata: {},
+      };
+    });
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Submitted' });
+
+    expect((await stored()).metadata.refundClaimedAt).toBe(claimedAt);
+  });
+
+  it('keeps the stored note when the update omits one', async () => {
+    await seed('Scheduled', {}, 'held for review');
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Submitted' });
+
+    expect(await stored()).toMatchObject({ status: 'Submitted', note: 'held for review' });
+  });
+
+  it('refunds even when the caller passes a refund id in metadata', async () => {
+    await seed('Scheduled');
+
+    await updateCashWithdrawal({
+      withdrawalId: 'withdrawal-1',
+      status: 'Rejected',
+      metadata: { refundTransactionId: 'forged' },
+    });
+
+    expect(refunds()).toHaveLength(1);
+    expect(writes[0].metadata.refundTransactionId).toBe('tx-refund');
+  });
+
+  it('refunds the withdrawal less Tipalti fees and records the fees once', async () => {
+    await seed('Scheduled');
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected', fees: 100 });
+
+    expect(refunds().map(([input]) => (input as { amount: number }).amount)).toEqual([9400]);
+    expect(mockDbWrite.cashWithdrawal.create).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.cashWithdrawal.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: 'FailedFee',
+        amount: 100,
+        transactionId: 'tx-refund',
+      }),
+    });
+  });
+
+  // withdrawCash's failure path refunds the same burn through Buzz's refund endpoint, recorded
+  // as refund-<transactionId>. Both paths must use that one id. Do not change it without
+  // changing that path and isWithdrawalBurnRefunded too.
+  it('refunds under the same external id as the withdrawCash failure path', async () => {
+    await seed('InternalValue');
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
+
+    expect(
+      refunds().map(([input]) => (input as { externalTransactionId: string }).externalTransactionId)
+    ).toEqual(['refund-tx-burn']);
+  });
+
+  it('logs an error when a refunded withdrawal is later reported paid', async () => {
+    // Refunded by withdrawCash, then approved and scheduled before Tipalti reports it paid.
+    ledger.add('refund-tx-burn');
+    await seed('Scheduled');
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Paid' });
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'cash-withdrawal-paid-after-refund',
+        withdrawalId: 'withdrawal-1',
+      })
+    );
+    expect(recordedStatus()).toEqual(['Paid']);
+  });
+
+  it('still records Paid when the ledger cannot be read for the paid-after-refund check', async () => {
+    await seed('Scheduled');
+    mockGetTransactionByExternalId.mockRejectedValue(new Error('buzz down'));
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Paid' });
+
+    expect((await stored()).status).toBe('Paid');
+  });
+
+  it('does not log paid-after-refund when a withdrawal that was never refunded is paid', async () => {
+    await seed('Scheduled');
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Paid' });
+
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'cash-withdrawal-paid-after-refund' })
+    );
+    expect(recordedStatus()).toEqual(['Paid']);
+  });
+});
+
+// ─── ensureWithdrawalRefCode ───────────────────────────────────────────────────
+// Tipalti refuses a second payment under a refCode it has seen; that guard only holds if a
+// withdrawal is always sent under the code it was first given. Do not make this regenerate.
+describe('ensureWithdrawalRefCode', () => {
+  let storedCode: string | undefined;
+  const isRefCodeWrite = (strings: unknown) =>
+    (strings as string[]).join('?').includes("'paymentRefCode'");
+
+  beforeEach(() => {
+    storedCode = undefined;
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockImplementation(async () => ({
+      metadata: storedCode ? { paymentRefCode: storedCode } : {},
+    }));
+    mockDbWrite.cashWithdrawal.count.mockResolvedValue(0);
+    mockDbWrite.$executeRaw.mockImplementation(async (strings: unknown, ...values: unknown[]) => {
+      if (!isRefCodeWrite(strings) || storedCode) return 0;
+      storedCode = values[0] as string;
+      return 1;
+    });
+  });
+
+  it('gives a second send for one withdrawal the identical code', async () => {
+    const first = await ensureWithdrawalRefCode('withdrawal-1', 1234567);
+    const second = await ensureWithdrawalRefCode('withdrawal-1', 1234567);
+
+    expect(second).toBe(first);
+    expect(mockDbWrite.$executeRaw.mock.calls.filter(([s]) => isRefCodeWrite(s))).toHaveLength(1);
+  });
+
+  it('stores a code only on a row that has none, so a code already sent is never replaced', async () => {
+    await ensureWithdrawalRefCode('withdrawal-1', 1234567);
+
+    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls.find(([s]) =>
+      isRefCodeWrite(s)
+    )!;
+    const text = (strings as unknown as string[]).join('?');
+    expect(text).toMatch(/WHERE id = \? AND \(metadata->>'paymentRefCode'\) IS NULL/);
+    expect(values).toContain('withdrawal-1');
+  });
+
+  it('uses the code a concurrent caller stored first when its own write loses', async () => {
+    const winner = 'CW1234567_win00';
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow
+      .mockResolvedValueOnce({ metadata: {} })
+      .mockResolvedValueOnce({ metadata: { paymentRefCode: winner } });
+    mockDbWrite.$executeRaw.mockResolvedValueOnce(0);
+
+    await expect(ensureWithdrawalRefCode('withdrawal-1', 1234567)).resolves.toBe(winner);
+  });
+
+  it('reuses a code already stored on the row without generating one', async () => {
+    storedCode = 'CW1234567_cm7o3q';
+
+    await expect(ensureWithdrawalRefCode('withdrawal-1', 1234567)).resolves.toBe(storedCode);
+    expect(mockDbWrite.cashWithdrawal.count).not.toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it("draws again when the candidate is already one of the user's codes", async () => {
+    mockDbWrite.cashWithdrawal.count.mockResolvedValueOnce(1).mockResolvedValue(0);
+
+    const code = await ensureWithdrawalRefCode('withdrawal-1', 1234567);
+
+    const checked = mockDbWrite.cashWithdrawal.count.mock.calls.map(
+      ([arg]) => (arg as { where: { userId: number; metadata: { equals: string } } }).where
+    );
+    expect(checked.map((where) => where.userId)).toEqual([1234567, 1234567]);
+    expect(code).toBe(checked[1].metadata.equals);
+  });
+
+  it('withdrawCash stores the code before sending it to Tipalti', async () => {
+    mockCachedObject.fetch.mockResolvedValue({
+      [userId]: {
+        id: userId,
+        status: 'ready',
+        ready: 100000,
+        pending: 0,
+        withdrawn: 0,
+        paymentMethod: 'ACH',
+      },
+    });
+    mockDbWrite.user.findFirstOrThrow.mockResolvedValue(mockUser());
+    mockDbWrite.userPaymentConfiguration.findUnique.mockResolvedValue({
+      userId,
+      tipaltiPaymentsEnabled: true,
+      tipaltiWithdrawalMethod: 'ACH',
+    });
+    mockDbWrite.cashWithdrawal.create.mockResolvedValue({ id: 'withdrawal-1' });
+    let sentCode: string | undefined;
+    let storedWhenSent: string | undefined;
+    mockPayToTipaltiAccount.mockImplementationOnce(async ({ requestId }: { requestId: string }) => {
+      sentCode = requestId;
+      storedWhenSent = storedCode;
+      return { paymentBatchId: 'batch-1', paymentRefCode: requestId };
+    });
+
+    await withdrawCash(userId, 10000);
+
+    expect(sentCode).toBeDefined();
+    expect(storedWhenSent).toBe(sentCode);
   });
 });
 

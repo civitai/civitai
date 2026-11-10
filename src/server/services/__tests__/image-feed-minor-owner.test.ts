@@ -1,8 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import type * as PromClient from '~/server/prom/client';
 import type * as DbHelpers from '~/server/db/db-helpers';
 import type * as MeilisearchClient from '~/server/meilisearch/client';
+import type * as ImageVisibility from '~/server/common/image-visibility';
 
 // The minor exclusion exempts the VIEWER's own images, matched by user id. Every image-feed
 // builder has two ids in scope — the viewer and the profile being browsed — and exempting the
@@ -12,10 +13,28 @@ import type * as MeilisearchClient from '~/server/meilisearch/client';
 // Mock recipe follows image-db-unpublished-authorization.test.ts and
 // image-search-scheduled-owner.test.ts.
 
-const { queryWithTimeoutMock, fetchDocumentsAbortableMock } = vi.hoisted(() => ({
-  queryWithTimeoutMock: vi.fn(),
-  fetchDocumentsAbortableMock: vi.fn(),
-}));
+const { queryWithTimeoutMock, fetchDocumentsAbortableMock, pendingOthersMock, pendingLevelMock } =
+  vi.hoisted(() => ({
+    queryWithTimeoutMock: vi.fn(),
+    fetchDocumentsAbortableMock: vi.fn(),
+    pendingOthersMock: vi.fn(),
+    pendingLevelMock: vi.fn(),
+  }));
+
+vi.mock('~/server/common/image-visibility', async (importOriginal) => {
+  const actual = await importOriginal<typeof ImageVisibility>();
+  pendingOthersMock.mockImplementation(actual.pendingOthersImageConditions);
+  pendingLevelMock.mockImplementation(actual.pendingLevelImageSql);
+  return {
+    ...actual,
+    pendingOthersImageConditions: pendingOthersMock,
+    pendingLevelImageSql: pendingLevelMock,
+  };
+});
+
+vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
+  (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
+);
 
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<typeof PromClient>();
@@ -48,6 +67,7 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 
 import {
   getAllImages,
+  getImagesForModelVersion,
   getImagesForPosts,
   getImagesFromSearchPostFilter,
   getImagesFromSearchPreFilter,
@@ -173,5 +193,82 @@ describe('getImagesForPosts minor exclusion', () => {
 
   it('exempts no one for a signed-out viewer', async () => {
     expect((await postImagesMinor(undefined)).exemptedId).toBeNull();
+  });
+});
+
+// What the conditions keep and drop is run against rows in pending-viewer-image.sql.behavior.test.ts;
+// here, only that each read applies them for the viewer.
+describe.each([
+  [
+    'getImagesForPosts',
+    (isModerator = false) =>
+      getImagesForPosts({
+        postIds: [1],
+        pending: true,
+        browsingLevel: 1,
+        user: { id: STRANGER, isModerator } as never,
+      }),
+  ],
+  [
+    'getImagesForModelVersion',
+    (isModerator = false) =>
+      getImagesForModelVersion({
+        modelVersionIds: [1],
+        pending: true,
+        browsingLevel: 1,
+        user: { id: STRANGER, isModerator } as never,
+      }),
+  ],
+] as const)('%s pending read', (name, read) => {
+  let restoreOthers: ReturnType<typeof pendingOthersMock.getMockImplementation>;
+  let restoreLevel: ReturnType<typeof pendingLevelMock.getMockImplementation>;
+  beforeEach(() => {
+    restoreOthers = pendingOthersMock.getMockImplementation();
+    restoreLevel = pendingLevelMock.getMockImplementation();
+    pendingOthersMock.mockClear();
+    pendingLevelMock.mockClear();
+    pendingOthersMock.mockImplementation((userId: number) => [
+      Prisma.sql`pending_others_marker(${userId})`,
+    ]);
+    pendingLevelMock.mockImplementation(
+      (userId: number, level: number) => Prisma.sql`pending_level_marker(${userId}, ${level})`
+    );
+  });
+  afterEach(() => {
+    pendingOthersMock.mockImplementation(restoreOthers!);
+    pendingLevelMock.mockImplementation(restoreLevel!);
+  });
+
+  async function pendingStatement(isModerator = false) {
+    dbMock.dbRead.$queryRaw.mockClear();
+    await read(isModerator);
+    const call = dbMock.dbRead.$queryRaw.mock.calls.at(-1);
+    expect(call, `${name} no longer reaches dbRead.$queryRaw`).toBeDefined();
+    const [first, ...values] = call as unknown as [TemplateStringsArray | Prisma.Sql, ...unknown[]];
+    // getImagesForPosts tags the template; getImagesForModelVersion passes a built Prisma.Sql.
+    return Array.isArray(first)
+      ? Prisma.sql(first as TemplateStringsArray, ...(values as Prisma.Sql[]))
+      : (first as Prisma.Sql);
+  }
+
+  it('applies the per-image conditions and the level check for a signed-in non-moderator, bound to the viewer', async () => {
+    const stmt = await pendingStatement();
+    const others = stmt.text.match(/pending_others_marker\(\$(\d+)\)/);
+    expect(others, 'the conditions are not in the read').not.toBeNull();
+    expect(stmt.values[Number(others![1]) - 1]).toBe(STRANGER);
+    const level = stmt.text.match(/pending_level_marker\(\$(\d+), \$(\d+)\)/);
+    expect(level, 'the level check is not in the read').not.toBeNull();
+    expect(stmt.values[Number(level![1]) - 1]).toBe(STRANGER);
+    expect(stmt.values[Number(level![2]) - 1]).toBe(1);
+    expect(pendingOthersMock).toHaveBeenCalledTimes(1);
+    expect(pendingLevelMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives a moderator's pending read the level check but not the per-image conditions", async () => {
+    const stmt = await pendingStatement(true);
+    expect(stmt.text).not.toContain('pending_others_marker');
+    expect(stmt.text).not.toContain('pending_level_marker');
+    // A moderator's pending read still checks the level.
+    expect(stmt.text).toMatch(/\(\(i\."nsfwLevel" & \$\d+\) != 0 OR i\."nsfwLevel" = 0\)/);
   });
 });

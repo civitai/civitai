@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { constants } from '~/server/common/constants';
-import '~/server/services/text-scan/profiles/comment.profile';
-import '~/server/services/text-scan/profiles/comment-v2.profile';
+import '~/server/services/text-scan/profiles/comment-v3.profile';
 import '~/server/services/text-scan/profiles/resource-review.profile';
 import '~/server/services/text-scan/profiles/user.profile';
 import '~/server/services/text-scan/profiles/user-profile.profile';
@@ -109,6 +109,42 @@ describe('scamEligibleAuthors', () => {
     expect(dbMock.dbWrite.user.findMany.mock.calls[0][0].where.createdAt).toBeUndefined();
   });
 
+  it('drops system accounts before submit, but not a lookalike or another holder of the name', async () => {
+    setEnv({ CIVITAI_MODERATION_USER_ID: 20 });
+    dbMock.dbWrite.user.findMany.mockResolvedValue([
+      account(5),
+      account(20, { username: 'Renamed' }),
+      account(21, { username: 'CivitaiModeration' }),
+      account(22, { meta: { systemAccount: true } }),
+      account(23, { username: 'CivitaiModerati0n' }),
+    ]);
+    dbMock.dbWrite.challengeJudge.findMany.mockResolvedValue([]);
+    try {
+      const ids = await scamEligibleAuthors([5, 20, 21, 22, 23]);
+      expect([...ids].sort((a, b) => a - b)).toEqual([5, 21, 23]);
+      expect(dbMock.dbWrite.user.findMany.mock.calls[0][0].select).toMatchObject({
+        username: true,
+        meta: true,
+      });
+    } finally {
+      resetEnv();
+    }
+  });
+
+  it('drops the reserved name only when no moderation account id is configured', async () => {
+    setEnv({ CIVITAI_MODERATION_USER_ID: undefined });
+    dbMock.dbWrite.user.findMany.mockResolvedValue([
+      account(5),
+      account(21, { username: 'civitaimoderation' }),
+    ]);
+    dbMock.dbWrite.challengeJudge.findMany.mockResolvedValue([]);
+    try {
+      expect([...(await scamEligibleAuthors([5, 21]))]).toEqual([5]);
+    } finally {
+      resetEnv();
+    }
+  });
+
   it('reads nothing for an empty or system-only list', async () => {
     expect((await scamEligibleAuthors([-1, 0])).size).toBe(0);
     expect(dbMock.dbWrite.user.findMany).not.toHaveBeenCalled();
@@ -117,8 +153,7 @@ describe('scamEligibleAuthors', () => {
 
 describe('scam profiles', () => {
   it.each([
-    ['Comment', ['scam', 'csam']],
-    ['CommentV2', ['scam', 'csam']],
+    ['CommentV3', ['scam', 'csam']],
     ['UserProfile', ['scam', 'csam']],
     ['ResourceReview', ['scam']],
     ['User', ['scam']],
@@ -126,41 +161,36 @@ describe('scam profiles', () => {
     expect(getTextScanProfile(entityType)?.labels).toEqual(labels)
   );
 
-  it.each([
-    ['Comment', 'comment'],
-    ['CommentV2', 'commentV2'],
-  ] as const)(
-    '%s reads the primary, names the author and dates the content by its last edit',
-    async (entityType, model) => {
-      dbMock.dbWrite[model].findMany.mockResolvedValue([
-        {
-          id: 1,
-          userId: 9,
-          updatedAt: EDITED,
-          content: '<p>hello <a href="https://x.example">there</a></p>',
-        },
-      ]);
-      eligible(9);
-      const subject = (await load(entityType, [1])).get(1);
-      expect(subject).toEqual({
-        fields: [{ heading: 'Comment', text: 'hello [link: https://x.example] there' }],
-        declared: {},
+  it('CommentV3 reads live comments on the primary, names the author and dates the content by its last edit', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
+      {
+        id: 1,
         userId: 9,
-        meta: { subjectUserId: 9, contentAt: EDITED.toISOString() },
-      });
-      expect(dbMock.dbRead[model].findMany).not.toHaveBeenCalled();
-    }
-  );
+        updatedAt: EDITED,
+        content: '<p>hello <a href="https://x.example">there</a></p>',
+      },
+    ] as never);
+    eligible(9);
+    const subject = (await load('CommentV3', [1])).get(1);
+    expect(subject).toEqual({
+      fields: [{ heading: 'Comment', text: 'hello [link: https://x.example] there' }],
+      declared: {},
+      userId: 9,
+      meta: { subjectUserId: 9, contentAt: EDITED.toISOString() },
+    });
+    const sql = (dbMock.dbWrite.$queryRaw.mock.calls[0][0] as string[]).join('?');
+    expect(sql).toContain('FROM "CommentV3"');
+    expect(sql).toContain('WHERE id = ANY');
+    expect(sql).toContain('"deletedAt" IS NULL');
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
 
-  it.each([
-    ['Comment', 'comment'],
-    ['CommentV2', 'commentV2'],
-  ] as const)('%s drops an author outside the scam window', async (entityType, model) => {
-    dbMock.dbWrite[model].findMany.mockResolvedValue([
+  it('CommentV3 drops an author outside the scam window', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
       { id: 1, userId: 9, updatedAt: EDITED, content: 'x' },
-    ]);
+    ] as never);
     eligible();
-    expect((await load(entityType, [1])).size).toBe(0);
+    expect((await load('CommentV3', [1])).size).toBe(0);
   });
 
   it('ResourceReview scans details and skips short ones', async () => {
@@ -196,9 +226,18 @@ describe('scam profiles', () => {
     expect(dbMock.dbWrite.user.findMany.mock.calls[1][0].where.createdAt).toBeUndefined();
   });
 
-  it('UserProfile scans both bios and both announcements, keyed by user', async () => {
+  it('UserProfile scans both bios, both announcements and showcase text, keyed by user', async () => {
     dbMock.dbWrite.userProfile.findMany.mockResolvedValue([
-      { userId: 7, bio: 'b', message: 'm', sfwBio: 'sb', sfwMessage: null },
+      {
+        userId: 7,
+        bio: 'b',
+        message: 'm',
+        sfwBio: 'sb',
+        sfwMessage: null,
+        showcaseSections: [
+          { id: 'a', type: 'Model', title: 'T', items: [1], button: { label: 'L', url: '/u' } },
+        ],
+      },
     ]);
     eligible(7);
     const subject = (await load('UserProfile', [7])).get(7);
@@ -207,6 +246,7 @@ describe('scam profiles', () => {
       { heading: 'Profile announcement', text: 'm' },
       { heading: 'Bio (SFW domain)', text: 'sb' },
       { heading: 'Profile announcement (SFW domain)', text: '' },
+      { heading: 'Showcase sections', text: 'T\nL\n/u' },
     ]);
     expect(subject?.userId).toBe(7);
     expect(subject?.meta).toEqual({ subjectUserId: 7 });

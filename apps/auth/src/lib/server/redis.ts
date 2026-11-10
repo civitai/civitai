@@ -1,5 +1,11 @@
-import { createCacheRedis, createSysRedis, type RedisCacheClient, type RedisSysClient } from '@civitai/redis';
+import {
+  createCacheRedis,
+  createSysRedis,
+  type RedisCacheClient,
+  type RedisSysClient,
+} from '@civitai/redis';
 import { env } from '$env/dynamic/private';
+import type { EvalCapableClient } from './oauth/redis-atomic';
 
 // The hub's two Redis clients, each lazy and memoized HERE so the whole app shares ONE cache + ONE sys
 // connection (the registry + session producer both go through getSysRedis). Built on first use, never at
@@ -24,4 +30,10 @@ export function getSysRedis(): RedisSysClient | null {
   if (_sysRedis !== undefined) return _sysRedis;
   if (!env.REDIS_SYS_URL) return (_sysRedis = null);
   return (_sysRedis = createSysRedis());
+}
+
+/** Run a Lua script on the sys redis (its typed facade doesn't expose `eval`). Null when it isn't configured. */
+export async function evalSys(script: string, keys: string[], args: string[]): Promise<unknown> {
+  const sys = getSysRedis() as unknown as EvalCapableClient | null;
+  return sys ? sys.eval(script, { keys, arguments: args }) : null;
 }

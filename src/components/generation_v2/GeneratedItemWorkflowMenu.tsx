@@ -7,7 +7,8 @@
  */
 
 import React from 'react';
-import { Menu, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import {

@@ -42,18 +42,12 @@ export function entityUrl(
   return entityId && segment ? `${civitaiUrl}/${segment}/${entityId}` : null;
 }
 
-// Linking a comment to its ENTITY leaves the moderator scrolling a thread for the row they were already
-// looking at. Both comment tables have a deep link and neither is derivable from `entityUrl`.
-
-/** Legacy `Comment` (model threads): opens the thread dialog with the row highlighted. */
-export const modelCommentUrl = (civitaiUrl: string, modelId: number, commentId: number) =>
-  `${civitaiUrl}/models/${modelId}?dialog=commentThread&highlight=${commentId}`;
-
-/** `CommentV2` (image, article, post, bounty, …). The main app resolves the thread server-side and
+/** A comment by its `CommentV3` id. Linking to its ENTITY instead leaves the moderator scrolling a
+ *  thread for the row they were already looking at. The main app resolves the thread server-side and
  *  redirects with the comment pinned, so this works for entity types that have no standalone page and
  *  for replies buried past the first page of a thread — neither of which a built URL can reach. */
-export const commentV2Url = (civitaiUrl: string, commentId: number) =>
-  `${civitaiUrl}/comments/v2/${commentId}`;
+export const commentUrl = (civitaiUrl: string, commentId: number) =>
+  `${civitaiUrl}/comments/${commentId}`;
 
 /** A user's profile, optionally a section of it (`models`, `images`, `posts`, …). Encoded — usernames
  *  allow characters that change the path when left raw, which the previous `$lib/articles` copy did. */
@@ -65,6 +59,25 @@ export function userUrl(civitaiUrl: string, username: string, section?: string |
 /** The main site's account-level CSAM report for a user. */
 export const csamReportUrl = (civitaiUrl: string, userId: number) =>
   `${civitaiUrl}/moderator/csam/${userId}`;
+
+/** The main site's generator evidence page for a user, with one restriction's triggers preselected. */
+export const csamGeneratorEvidenceUrl = (
+  civitaiUrl: string,
+  userId: number,
+  restrictionId: number
+) => `${civitaiUrl}/moderator/csam/generator/${userId}?restrictionId=${restrictionId}`;
+
+/** The same page filing a report that supplements `priorReportId`, with `imageIds` preselected. */
+export function csamSupplementalReportUrl(
+  civitaiUrl: string,
+  userId: number,
+  priorReportId: number,
+  imageIds: number[] = []
+): string {
+  const params = new URLSearchParams({ supplementalOf: String(priorReportId) });
+  if (imageIds.length) params.set('imageIds', imageIds.join(','));
+  return `${csamReportUrl(civitaiUrl, userId)}?${params}`;
+}
 
 /** A workflow-only training run's review page. */
 export const trainingWorkflowReviewUrl = (workflowId: string) =>
@@ -113,6 +126,10 @@ export const chatAuditUserUrl = (username: string) =>
  *  point on the moderation pages, and dropping it lands the reviewer on whichever version is current. */
 export const modelVersionUrl = (civitaiUrl: string, modelId: number, versionId: number) =>
   `${civitaiUrl}/models/${modelId}?modelVersionId=${versionId}`;
+
+/** A bounty on the site. */
+export const bountyUrl = (civitaiUrl: string, bountyId: number) =>
+  `${civitaiUrl}/bounties/${bountyId}`;
 
 /** A bounty entry on the site. Entries have no page of their own outside their bounty, so `entityUrl`
  *  has no entry for them. */

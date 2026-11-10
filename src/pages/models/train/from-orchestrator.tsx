@@ -1,4 +1,4 @@
-import { Anchor, Center, Loader, Stack, Text } from '@mantine/core';
+import { Anchor, Button, Center, Group, Loader, Stack, Text } from '@mantine/core';
 import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { useRouter } from 'next/router';
@@ -18,6 +18,13 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbWrite } from '~/server/db/client';
 import { getLoginLink } from '~/utils/login-helpers';
 import { Flags } from '~/shared/utils/flags';
+import type { TrainingDataShare } from '~/server/services/training-data-share.service';
+import {
+  getStudioDatasetShare,
+  raisesTrainingDataShare,
+  setStudioDatasetShare,
+  trainingDataShareFromQuery,
+} from '~/server/services/training-data-share.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { getConsumerBlobId } from '~/shared/orchestrator/blob-url';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
@@ -26,6 +33,7 @@ import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { getModelFileFormat } from '~/utils/file-helpers';
 import { bytesToKB } from '~/utils/number-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 // The MODEL wizard, not the model-version wizard: for trained uploads its steps are
@@ -47,7 +55,12 @@ type PrepareProps = {
 type Refusal = PublishRefusalReason | 'not-found' | 'unavailable';
 type RefusalProps = { refusal: Refusal };
 
-type PageProps = { session: Session } & (PrepareProps | RefusalProps);
+/** The publish link asked to share more than the owner has confirmed on this site. */
+type ConfirmShareProps = {
+  confirmShare: TrainingDataShare & { modelVersionId: number; continueUrl: string };
+};
+
+type PageProps = { session: Session } & (PrepareProps | RefusalProps | ConfirmShareProps);
 
 export const getServerSideProps = createServerSideProps<PageProps>({
   useSession: true,
@@ -57,8 +70,12 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         redirect: { destination: getLoginLink({ returnUrl: ctx.resolvedUrl }), permanent: false },
       };
 
-    // Mirror `guardedProcedure`: a muted or not-yet-onboarded user can't create a model.
-    if (session.user.muted || !Flags.hasFlag(session.user.onboarding, OnboardingSteps.Buzz))
+    // A banned, muted or not-yet-onboarded user can't create a model.
+    if (
+      session.user.bannedAt ||
+      session.user.muted ||
+      !Flags.hasFlag(session.user.onboarding, OnboardingSteps.Buzz)
+    )
       return { redirect: { destination: '/models', permanent: false } };
 
     const workflowId = typeof ctx.query.workflowId === 'string' ? ctx.query.workflowId : undefined;
@@ -68,10 +85,17 @@ export const getServerSideProps = createServerSideProps<PageProps>({
 
     const refuse = (refusal: Refusal) => ({ props: { session, refusal } });
 
-    const token = await getOrchestratorToken(session.user.id, {
-      req: ctx.req as unknown as NextApiRequest,
-      res: ctx.res as unknown as NextApiResponse,
-    });
+    let token: string;
+    try {
+      token = await getOrchestratorToken(session.user.id, {
+        req: ctx.req as unknown as NextApiRequest,
+        res: ctx.res as unknown as NextApiResponse,
+      });
+    } catch (e) {
+      if (e instanceof TRPCError && e.code === 'FORBIDDEN')
+        return { redirect: { destination: '/models', permanent: false } };
+      throw e;
+    }
     // A workflow the caller doesn't own returns NOT_FOUND from the orchestrator — that IS the ownership
     // check. A transient upstream fault (503) is NOT "not found" — let it surface as an error page the
     // user can retry, rather than telling them the run doesn't exist.
@@ -98,6 +122,28 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     }
 
     await stampWorkflowDraftModel({ token, workflow, modelId, modelVersionId });
+
+    // A link can be crafted by anyone, so the share it carries is applied only as far as it lowers
+    // the stored one; anything more waits for the owner's click on this page.
+    const requested = trainingDataShareFromQuery(ctx.query);
+    if (requested) {
+      await setStudioDatasetShare(modelVersionId, requested);
+      const stored = await getStudioDatasetShare(modelVersionId);
+      if (stored && raisesTrainingDataShare(stored, requested))
+        return {
+          props: {
+            session,
+            confirmShare: {
+              ...requested,
+              modelVersionId,
+              continueUrl: `/models/train/from-orchestrator?${new URLSearchParams({
+                workflowId,
+                epoch: String(epoch),
+              })}`,
+            },
+          },
+        };
+    }
 
     const [version, existingModelFile] = await Promise.all([
       dbWrite.modelVersion.findUnique({
@@ -148,8 +194,11 @@ export const getServerSideProps = createServerSideProps<PageProps>({
   },
 });
 
-export default function TrainFromOrchestratorPage(props: PrepareProps | RefusalProps) {
+export default function TrainFromOrchestratorPage(
+  props: PrepareProps | RefusalProps | ConfirmShareProps
+) {
   if ('refusal' in props) return <PublishRefused refusal={props.refusal} />;
+  if ('confirmShare' in props) return <ConfirmShare {...props.confirmShare} />;
   return <PrepareModel {...props} />;
 }
 
@@ -163,6 +212,53 @@ const refusalMessages: Record<Refusal, string> = {
   'not-found': 'We couldn’t find this training run on your account.',
   unavailable: 'We couldn’t create a model page from this training run. Please try again later.',
 };
+
+function ConfirmShare({
+  modelVersionId,
+  ownRights,
+  shareDataset,
+  continueUrl,
+}: ConfirmShareProps['confirmShare']) {
+  const router = useRouter();
+  const setShare = trpc.training.setStudioDatasetShare.useMutation({
+    onSuccess: () => router.replace(continueUrl),
+    onError: (error) => showErrorNotification({ title: 'Could not save your choice', error }),
+  });
+  const confirm = () => setShare.mutate({ modelVersionId, ownRights, shareDataset });
+
+  return (
+    <>
+      <Meta title="Share your training dataset?" deIndex />
+      <Center h="60vh">
+        <Stack align="center" gap="md" maw={480}>
+          <Text ta="center" fw={600}>
+            {shareDataset ? 'Share your training dataset?' : 'Confirm your rights to this dataset'}
+          </Text>
+          <Text ta="center" size="sm">
+            {shareDataset
+              ? 'You have the right, or the rightholder’s explicit permission, to redistribute all the files in this dataset, and you want it shared with the published model. Shared datasets can be downloaded from the model page once it’s published.'
+              : 'You have the right, or the rightholder’s explicit permission, to use all the files in this dataset for training. It stays available only to you.'}{' '}
+            <Anchor href="/content/training/data-policy" target="_blank" rel="noopener">
+              Dataset storage policy
+            </Anchor>
+          </Text>
+          <Group justify="center">
+            <Button onClick={confirm} loading={setShare.isPending}>
+              {shareDataset ? 'Share dataset and continue' : 'Confirm and continue'}
+            </Button>
+            <Button
+              variant="default"
+              disabled={setShare.isPending}
+              onClick={() => router.replace(continueUrl)}
+            >
+              Continue without {shareDataset ? 'sharing' : 'confirming'}
+            </Button>
+          </Group>
+        </Stack>
+      </Center>
+    </>
+  );
+}
 
 function PublishRefused({ refusal }: RefusalProps) {
   return (

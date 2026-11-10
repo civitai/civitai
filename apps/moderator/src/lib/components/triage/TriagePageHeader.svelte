@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
   import { IconSearch } from '@tabler/icons-svelte';
   import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -12,12 +12,15 @@
     subtitle,
     placeholder,
     searchLabel,
+    meta,
   }: {
     title: string;
     subtitle?: string;
     /** Both this and `searchLabel` render a search box that writes `?q=`; without them the page has none. */
     placeholder?: string;
     searchLabel?: string;
+    /** A line under the title, after `subtitle`. */
+    meta?: Snippet;
   } = $props();
 
   const q = $derived(page.url.searchParams.get('q') ?? '');
@@ -45,6 +48,7 @@
   <div class="min-w-0 flex-1">
     <h1 class="m-0 text-xl font-semibold text-white">{title}</h1>
     {#if subtitle}<p class="m-0 mt-0.5 text-[13px] text-dark-2">{subtitle}</p>{/if}
+    {@render meta?.()}
   </div>
   {#if placeholder && searchLabel}
     <form

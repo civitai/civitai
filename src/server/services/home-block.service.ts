@@ -1,11 +1,18 @@
 import type { Prisma } from '@prisma/client';
 import type { SessionUser } from '~/types/session';
+import type { CoverageAudience } from '~/server/services/generation/coverage-source';
 import { CacheTTL } from '~/server/common/constants';
 import { CrucibleSort, ImageSort, ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { isFliptPublic } from '~/server/flipt/tester-segment';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import {
+  homeBlockByIdSelect,
+  readHomeBlockViaKysely,
+  readHomeBlockViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   GetHomeBlockByIdInputSchema,
@@ -55,13 +62,18 @@ import {
 } from '~/server/utils/errorHandling';
 import {
   allBrowsingLevelsFlag,
-  hasSafeBrowsingLevel,
+  hasPublicBrowsingLevel,
+  isPublicOnlyBrowsingLevel,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { HOME_BLOCK_ITEMS_PER_ROW } from '~/shared/constants/home-block.constants';
 import { capPerUser } from '~/shared/utils/cap-per-user';
-import { rotateShopSectionItems, shopBlockMaxItems } from '~/shared/utils/cosmetic-shop-rotation';
+import {
+  COSMETIC_SHOP_ROTATION_DEFAULTS,
+  rotateShopSectionItems,
+  shopBlockMaxItems,
+} from '~/shared/utils/cosmetic-shop-rotation';
 import { CrucibleStatus, HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { normalizeCrucibleEventTag } from '~/shared/constants/crucible.constants';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
@@ -221,21 +233,25 @@ export const getHomeBlockById = async ({
   viewer: EventViewer;
 }) => {
   const homeBlockFindArgs = {
-    select: {
-      id: true,
-      metadata: true,
-      type: true,
-      userId: true,
-      sourceId: true,
-    },
+    select: homeBlockByIdSelect,
     where: {
       id,
     },
   } as const;
-  const homeBlock = await dbRead.homeBlock.findUniqueOrThrow(homeBlockFindArgs).catch(() => {
+  // A miss (a missing row, or any error) on the replica falls back to the primary, through Prisma,
+  // so its not-found throw is unchanged. A call with no `id` (the input allows it) stays on Prisma,
+  // which rejects it as before.
+  const fallback = () => {
     dbReadFallbackCounter.inc({ entity: 'homeBlock', caller: 'getHomeBlockById' });
     return dbWrite.homeBlock.findUniqueOrThrow(homeBlockFindArgs);
-  });
+  };
+  const homeBlock =
+    id !== undefined
+      ? await readHomeBlockViaKysely((await loadKyselyDb()).kyselyRead, id).then(
+          (row) => row ?? fallback(),
+          fallback
+        )
+      : await readHomeBlockViaPrisma(dbRead, id).catch(fallback);
 
   if (!homeBlock) {
     return null;
@@ -249,10 +265,13 @@ export const getHomeBlockById = async ({
   const rotation = metadata.cosmeticShopSection;
   if (!block?.cosmeticShopSection || !rotation?.random) return block;
 
+  const visible = shopBlockMaxItems(rotation) ?? COSMETIC_SHOP_ROTATION_DEFAULTS.maxItems;
   const rotated = rotateShopSectionItems(block.cosmeticShopSection.items, {
     sectionId: rotation.id,
     rotateHours: rotation.rotateHours,
     now: Date.now(),
+    visible,
+    getId: (item) => item.shopItem.id,
   });
   return {
     ...block,
@@ -260,7 +279,7 @@ export const getHomeBlockById = async ({
       ...block.cosmeticShopSection,
       // A rotating block shows a handful of a section that can hold over a hundred. Three times
       // that is room for the client to drop blocked sellers and still fill the row.
-      items: rotated.slice(0, 3 * (shopBlockMaxItems(rotation) ?? rotated.length)),
+      items: rotated.slice(0, 3 * visible),
     },
   };
 };
@@ -484,6 +503,7 @@ export const getHomeBlockData = async ({
   user,
   input,
   homeBlock,
+  coverage,
 }: {
   homeBlock: {
     id: number;
@@ -512,6 +532,8 @@ export const getHomeBlockData = async ({
   // poisoning a shared cache entry and leaking one user's view to everyone else. If a
   // personalized variant is ever genuinely needed, it needs its own key, not this one.
   user?: SessionUser;
+  /** See `getModelsRaw`; the same never-from-the-shared-entry rule as `user`. */
+  coverage?: CoverageAudience;
 }): Promise<HomeBlockWithData | null> => {
   const metadata = await resolveHomeBlockMetadata(homeBlock);
 
@@ -645,6 +667,7 @@ export const getHomeBlockData = async ({
           baseModels,
         },
         user,
+        coverage,
         domain: input.domain,
         ...slimModelImages,
       });
@@ -661,13 +684,18 @@ export const getHomeBlockData = async ({
         return null;
       }
 
-      // This body is shared by every viewer, so the creatorShop flag is resolved as it is for a
-      // signed-out one: on while the flag is public, off when it is pulled or Flipt can't answer.
-      // The per-viewer block filter the shop page applies can't live in a shared body either; the
-      // block applies it on the client.
+      // This body is shared by every viewer, so the creatorShop and stickers flags are resolved as
+      // they are for a signed-out one: on while the flag is public, off when it is pulled or Flipt
+      // can't answer. The per-viewer block filter the shop page applies can't live in a shared body
+      // either; the block applies it on the client.
+      const [creatorShopEnabled, stickersEnabled] = await Promise.all([
+        isFliptPublic('creator-shop'),
+        isFliptPublic('stickers'),
+      ]);
       const data = await getShopSectionsWithItems({
         sectionId: cosmeticShopSectionMeta.id,
-        creatorShopEnabled: await isFliptPublic('creator-shop'),
+        creatorShopEnabled,
+        stickersEnabled,
       });
 
       const [cosmeticShopSection] = data;
@@ -759,6 +787,7 @@ export const getHomeBlockData = async ({
           ? (
               await getModelsWithImagesAndModelVersions({
                 user,
+                coverage,
                 input: {
                   ids: featured.map((f) => f.modelId),
                   limit: featured.length,
@@ -775,9 +804,24 @@ export const getHomeBlockData = async ({
             ).items
           : ([] as GetModelsWithImagesAndModelVersions[]);
 
-      const validModelData = modelData.filter(
-        (m) => hasSafeBrowsingLevel(m.nsfwLevel) && !m.nsfw && !m.poi
-      );
+      // PG only, for every viewer, so the shared payload cannot carry PG-13 for the client to show.
+      // Filtering after the slim slice is safe: `biasImageSlice` keeps one image of every level.
+      const validModelData = modelData
+        .filter((m) => hasPublicBrowsingLevel(m.nsfwLevel) && !m.nsfw && !m.poi)
+        .map((m) => ({
+          ...m,
+          images: m.images.filter((image) => isPublicOnlyBrowsingLevel(image.nsfwLevel)),
+          user: {
+            ...m.user,
+            // Unrated; an avatar renderer falls back to it once the rated picture is dropped.
+            image: null,
+            profilePicture:
+              m.user.profilePicture && isPublicOnlyBrowsingLevel(m.user.profilePicture.nsfwLevel)
+                ? m.user.profilePicture
+                : null,
+          },
+        }))
+        .filter((m) => m.images.length > 0);
 
       const validModelDataSorted = validModelData.sort((a, b) => {
         const matchA = featured.find((f) => f.modelId === a.id);

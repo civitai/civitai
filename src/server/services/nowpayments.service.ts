@@ -8,7 +8,19 @@ import {
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { dbKV } from '~/server/db/db-helpers';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
+import type { ManualCreditMatch } from '~/server/services/nowpayments-manual-credit';
+import {
+  decideDepositCredit,
+  HAND_PAID,
+  HELD,
+  type HeldReason,
+  LATE_FINISH_STATUSES,
+  manualPayinCreditExternalId,
+  userIdFromOrderId,
+} from '~/server/services/nowpayments-settle-decision';
+
 import { signalClient } from '~/utils/signal-client';
 import { SignalMessages, NotificationCategory } from '~/server/common/enums';
 import { createNotification } from '~/server/services/notification.service';
@@ -17,13 +29,22 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
+import dayjs from '~/shared/utils/dayjs';
 import {
   getChainConfig,
   getChainForNetworkWithFallback,
   isDepositComplete,
   outcomeAmountToBuzz,
+  OPEN_DEPOSIT_DIGEST_AFTER_DAYS,
+  OPEN_DEPOSIT_STATUSES,
   UNVERIFIED_DEPOSIT_STATUSES,
 } from '~/server/common/chain-config';
+import type {
+  ListedPaymentDigestItem,
+  ListedPaymentState,
+  OpenDepositDigestItem,
+} from '~/server/email/templates/openCryptoDepositDigest.email';
 
 /** IPN callback URL — configurable for dev (webhook.site) vs prod */
 const getIpnCallbackUrl = () =>
@@ -56,13 +77,11 @@ const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'nowpayments-service', type: 'error', ...data }).catch();
 };
 
-/**
- * Key for Buzz credited by hand for an on-chain deposit NowPayments never turned into a payment.
- * If NP later backfills that deposit, the backfill gets a fresh payment id, so `np-deposit-<id>`
- * cannot collide with the manual grant; the deposit's tx hash is the only identity both share.
- */
-export const manualPayinCreditExternalId = (payinHash: string) =>
-  `np-payin-${payinHash.toLowerCase()}`;
+export { manualPayinCreditExternalId };
+
+/** Support monitors this exact message for deposits a staff hand grant already paid. */
+const DEPOSIT_HELD_MESSAGE = 'Deposit held: a hand grant cites this payment';
+
 
 // The IPN body carries no payin_hash, so an IPN-driven event costs one status lookup. A null on
 // the event is not trusted as "no hash": the status response is the authority.
@@ -76,7 +95,20 @@ const resolvePayinHash = async (paymentId: number, event: NOWPayments.WebhookEve
 /** Max number of concurrent requests when fetching min amounts for currencies */
 const MAX_CONCURRENT_MIN_AMOUNT_REQUESTS = 10;
 
+/**
+ * Chains a deposit address may be created for: the static configs, plus every chain the supported
+ * currency list maps a NowPayments network to (so a newly enabled currency still works without a
+ * code change). Anything else is refused before it can take a lock or create a payment.
+ */
+export const isSupportedDepositChain = async (chain: string) => {
+  if (getChainConfig(chain)) return true;
+  const groups = await getSupportedCurrencies();
+  return groups.some((group) => group.networks.some((network) => network.chain === chain));
+};
+
 export const getDepositAddress = async (userId: number, chain = 'evm') => {
+  if (!(await isSupportedDepositChain(chain))) throwBadRequestError('Unsupported deposit chain');
+
   // Use explicit config if available, otherwise fall back to chain name as targetCurrency
   const config = getChainConfig(chain) ?? {
     chain,
@@ -149,18 +181,19 @@ export const getDepositAddress = async (userId: number, chain = 'evm') => {
   return result;
 };
 
-export const userIdFromOrderId = (orderId: string | null | undefined) => {
-  if (!orderId?.startsWith('user:')) return null;
-  const userId = parseInt(orderId.split(':')[1], 10);
-  return userId && !isNaN(userId) ? userId : null;
-};
+export { userIdFromOrderId };
 
+/** Nothing left to credit: credited already, paid by hand, or held because a hand grant paid it. */
 export const isDepositCredited = async (paymentId: number) => {
   const row = await dbRead.cryptoDeposit.findUnique({
     where: { paymentId: BigInt(paymentId) },
     select: { status: true, buzzCredited: true },
   });
-  return row?.status === 'finished' && row.buzzCredited != null;
+  return (
+    (row?.status === 'finished' && row.buzzCredited != null) ||
+    row?.status === HELD ||
+    row?.status === HAND_PAID
+  );
 };
 
 /** Hands a paid IPN NOWPayments could not confirm to the retry sweep, crediting nothing. */
@@ -177,7 +210,10 @@ export const recordUnverifiedDeposit = async (event: NOWPayments.WebhookEvent) =
   // A row NOWPayments already confirmed keeps its owner; the sweep picks it up from here. Run
   // after the upsert so a row another delivery created meanwhile is still handed over.
   await dbWrite.cryptoDeposit.updateMany({
-    where: { paymentId, status: { in: ['waiting', 'confirming', 'sending', 'partially_paid', 'failed'] } },
+    where: {
+      paymentId,
+      status: { in: [...OPEN_DEPOSIT_STATUSES, 'partially_paid'] },
+    },
     data: { status: 'buzz_failed', retryCount: 0 },
   });
 };
@@ -214,12 +250,27 @@ export const processDeposit = async (
   let multiplierInt: number | null = null;
   let transactionId: string | undefined;
   let buzzGrantFailed = false;
+  let held = false;
+  let handPaid = false;
+  let heldReason: HeldReason | undefined;
+  let failure: string | undefined;
+  // A late finish holds, rather than credits, when the hand-grant scan is unsure, and records what
+  // the ledger already holds. Decided from the row, so every caller (webhook, sweeps, mod tools) agrees.
+  let lateStatus: string | undefined;
+  /** What the ledger already holds for this deposit when it was credited before (often by hand). */
+  let ledgerAmount: number | undefined;
 
   if (isDepositComplete(webhookStatus)) {
+    const prior = await dbWrite.cryptoDeposit.findUnique({
+      where: { paymentId: BigInt(paymentId) },
+      select: { status: true },
+    });
+    if (prior && LATE_FINISH_STATUSES.includes(prior.status)) lateStatus = prior.status;
     const outcomeAmount = event.outcome_amount;
     if (!outcomeAmount || outcomeAmount <= 0) {
       // NOWPayments can report a payment paid before its amount settles; the sweep retries it.
       buzzGrantFailed = true;
+      failure = 'no outcome_amount';
       await log({
         message: 'Finished deposit with no outcome_amount',
         paymentId,
@@ -236,25 +287,89 @@ export const processDeposit = async (
       }
 
       try {
+        let possibleHandGrants: ManualCreditMatch[] = [];
+        let unscanned: string[] = [];
         // Throwing here lands the deposit in buzz_failed, which the retry sweep picks up.
-        const payinHash = await resolvePayinHash(paymentId, event);
-        const manualCredit = payinHash
-          ? await getTransactionByExternalId(manualPayinCreditExternalId(payinHash))
-          : null;
-
-        if (manualCredit) {
-          transactionId = 'already_granted';
-          bonusBuzz = null;
-          multiplierInt = null;
-          await log({
-            type: 'info',
-            message: 'Deposit already credited manually by payin hash; skipping grant',
+        const settle = async (): Promise<string | undefined> => {
+          const payinHash = await resolvePayinHash(paymentId, event);
+          const row = actor
+            ? null
+            : await dbWrite.cryptoDeposit.findUnique({
+                where: { paymentId: BigInt(paymentId) },
+                select: { status: true, createdAt: true },
+              });
+          const decision = await decideDepositCredit({
             paymentId,
             userId,
             payinHash,
+            expectedBuzz: buzzAmount,
+            paymentCreatedAt: event.created_at,
+            row,
+            lateStatus,
+            byModerator: !!actor,
           });
-        } else {
-          transactionId = await grantBuzzPurchase({
+
+          if (decision.decision === 'already_granted') {
+            ledgerAmount = decision.ledgerAmount;
+            if (decision.via === 'payin_hash') {
+              bonusBuzz = null;
+              multiplierInt = null;
+              await log({
+                type: 'info',
+                message: 'Deposit already credited manually by payin hash; skipping grant',
+                paymentId,
+                userId,
+                payinHash,
+              });
+            }
+            if (decision.via === 'hand_paid') {
+              handPaid = true;
+              await log({
+                type: 'info',
+                message: 'Deposit already paid by hand; settled without a grant',
+                paymentId,
+                userId,
+                matches: decision.matches.map((m) => `${m.ref} (${m.why})`),
+              });
+            }
+            return 'already_granted';
+          }
+
+          if (decision.decision === 'held') {
+            heldReason = decision.reason;
+            if (decision.reason === 'hand_grant_covers')
+              await log({
+                type: 'warning',
+                message: DEPOSIT_HELD_MESSAGE,
+                paymentId,
+                userId,
+                matches: decision.matches.map((m) => `${m.ref} (${m.why})`),
+              });
+            else if (decision.reason === 'hand_paid_unreadable')
+              await log({
+                type: 'warning',
+                message: 'Deposit held: a hand-paid top-up has an unreadable entityId',
+                paymentId,
+                userId,
+                matches: decision.matches.map((m) => `${m.ref} (${m.why})`),
+              });
+            else if (decision.reason)
+              await log({
+                type: 'warning',
+                message: 'Late deposit held: hand-grant scan inconclusive',
+                paymentId,
+                userId,
+                reason: decision.reason,
+                matches: decision.matches.map((m) => `${m.strength}:${m.ref} (${m.why})`),
+                unscanned: decision.unscanned,
+              });
+            return HELD;
+          }
+
+          possibleHandGrants = decision.possible;
+          unscanned = decision.unscanned;
+
+          return grantBuzzPurchase({
             userId,
             amount: buzzAmount,
             externalTransactionId: `np-deposit-${paymentId}`,
@@ -262,10 +377,60 @@ export const processDeposit = async (
             paymentId: event.payment_id,
             ...(actor && { creditedBy: actor.modUserId, ticketId: actor.ticketId }),
           });
+        };
+
+        const result = actor
+          ? { settled: await settle() }
+          : await withDistributedLock(
+              { key: `np-deposit:credit:${paymentId}`, ttl: 60, autoRenew: true, maxRetries: 0 },
+              async () => ({ settled: await settle() })
+            );
+        if (!result)
+          await log({
+            message: 'Deposit credit already running; left to the retry sweep',
+            paymentId,
+          });
+        if (result?.settled === HELD) {
+          held = true;
+          buzzAmount = 0;
+          bonusBuzz = null;
+          multiplierInt = null;
+        } else if (handPaid) {
+          transactionId = result?.settled;
+          buzzAmount = 0;
+          bonusBuzz = null;
+          multiplierInt = null;
+        } else {
+          transactionId = result?.settled;
+        }
+        // A late finish is often one support already paid by hand, for an amount that need not match
+        // NP's figure; support reconciles buzzCredited against the ledger, which includes any bonus.
+        if (lateStatus && transactionId === 'already_granted' && ledgerAmount != null) {
+          buzzAmount = ledgerAmount;
+          bonusBuzz = null;
+          multiplierInt = null;
         }
 
-        if (!transactionId) {
+        if (transactionId && transactionId !== 'already_granted' && unscanned.length)
+          await log({
+            type: 'warning',
+            message: 'Deposit credited: hand-grant scan incomplete',
+            paymentId,
+            userId,
+            unscanned,
+          });
+        if (transactionId && transactionId !== 'already_granted' && possibleHandGrants.length)
+          await log({
+            type: 'warning',
+            message: 'Deposit credited with possible hand grant',
+            paymentId,
+            userId,
+            matches: possibleHandGrants.map((m) => `${m.strength}:${m.ref} (${m.why})`),
+          });
+
+        if (!transactionId && !held) {
           buzzGrantFailed = true;
+          failure = result ? 'no transaction id' : 'credit already running';
           await log({
             message: 'Failed to create buzz transaction for deposit',
             paymentId,
@@ -280,6 +445,7 @@ export const processDeposit = async (
           transactionId = 'already_granted';
         } else {
           buzzGrantFailed = true;
+          failure = errMsg;
           await log({
             message: 'Buzz grant failed for deposit',
             paymentId,
@@ -322,7 +488,12 @@ export const processDeposit = async (
   // confirming → finished | buzz_failed — never move backward
   let depositStatus: string;
   if (buzzGrantFailed) {
-    depositStatus = 'buzz_failed';
+    // A late row stays put for the late sweep: the retry sweep would credit it without failing closed.
+    depositStatus = lateStatus ?? 'buzz_failed';
+  } else if (held) {
+    depositStatus = HELD;
+  } else if (handPaid) {
+    depositStatus = HAND_PAID;
   } else if (isDepositComplete(webhookStatus)) {
     depositStatus = 'finished';
   } else {
@@ -372,15 +543,17 @@ export const processDeposit = async (
         chain,
       };
 
-      // `failed` outranks the in-flight statuses so a rejection advances a stuck row, but
-      // sits below buzz_failed and finished: a late `failed` must not pull an owed
-      // (buzz_failed, still swept by retryFailedDeposits) or credited (finished) deposit
-      // into a terminal state, and a `finished` arriving after `failed` must still win.
+      // `failed`, `expired` and `refunded` outrank the in-flight statuses so NP's final word
+      // closes a stuck row, but sit below buzz_failed and finished: a late one must not pull an
+      // owed (buzz_failed, still swept by retryFailedDeposits) or credited (finished) deposit
+      // into a terminal state, and a `finished` arriving after any of them must still win.
       const statusRank: Record<string, number> = {
         // unverified sits above the in-flight statuses: a confirming IPN NOWPayments has verified
         // re-owns the row but leaves it to the sweep, which a paid IPN already asked for.
-        waiting: 0, unverified_exhausted: 0, confirming: 1, sending: 1, partially_paid: 1, unverified: 1.5,
-        failed: 2, buzz_failed: 3, finished: 4,
+        waiting: 0, unverified_exhausted: 0, confirming: 1, confirmed: 1, sending: 1, partially_paid: 1,
+        unverified: 1.5,
+        // Nothing automatic moves a held deposit; only a credit that finishes it can.
+        failed: 2, expired: 2, refunded: 2, buzz_failed: 3, held: 3.5, finished: 4, hand_paid: 4,
       };
       const nextRank = statusRank[depositStatus] ?? 0;
 
@@ -413,9 +586,14 @@ export const processDeposit = async (
     }
   }
 
-  const normalizedStatus = isDepositComplete(webhookStatus) ? 'finished' : webhookStatus;
+  const normalizedStatus = held
+    ? HELD
+    : isDepositComplete(webhookStatus)
+    ? 'finished'
+    : webhookStatus;
   const granted = !buzzGrantFailed && !!transactionId && transactionId !== 'already_granted';
-  const tellUser = !buzzGrantFailed && (statusAdvanced || granted);
+  // Support already settled this with the user.
+  const tellUser = !buzzGrantFailed && !handPaid && (statusAdvanced || granted);
   if (tellUser) {
     // Best effort: a failed signal must not cost the user the notification below, which a
     // redelivery would no longer send.
@@ -477,7 +655,7 @@ export const processDeposit = async (
     transactionId: transactionId || undefined,
   });
 
-  return { userId, buzzAmount, transactionId };
+  return { userId, buzzAmount, transactionId, heldReason, failure };
 };
 
 /**
@@ -488,6 +666,9 @@ export const reprocessDeposit = async (paymentId: number) => {
   const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
   if (!payment) {
     throw new Error(`Payment ${paymentId} not found on NowPayments`);
+  }
+  if (Number(payment.payment_id) !== paymentId) {
+    throw new Error(`NowPayments returned payment ${payment.payment_id} for ${paymentId}`);
   }
 
   if (!isDepositComplete(payment.payment_status)) {
@@ -516,12 +697,18 @@ export const eventFromPayment = (
   pay_address: payment.pay_address,
   parent_payment_id: payment.parent_payment_id,
   payin_hash: payment.payin_hash,
+  created_at: payment.created_at,
 });
 
 /** Max concurrent requests to NP API when fetching individual payments */
 const RECONCILE_FETCH_CONCURRENCY = 5;
 /** Max concurrent deposit processing (buzz grants, DB writes, notifications) */
 const RECONCILE_PROCESS_CONCURRENCY = 3;
+/**
+ * Max concurrent NP lookups per self-service reconcile click. Below the job's bound because many
+ * users can click at once (the rate limit is per user), so outbound load is clicks × this.
+ */
+const USER_RECONCILE_FETCH_CONCURRENCY = 3;
 
 type ReconcileDetail = {
   paymentId: string | number;
@@ -555,6 +742,9 @@ export const reconcileDeposits = async ({
 
   // 2. Filter for completed payments only
   const completedPayments = allPayments.filter((p) => isDepositComplete(p.payment_status));
+  const openPayments = allPayments.filter(
+    (p) => OPEN_DEPOSIT_STATUSES.includes(p.payment_status) && Number(p.actually_paid) > 0
+  );
 
   // 3. Process each completed payment with bounded concurrency
   const details = await mapWithConcurrency(
@@ -563,6 +753,10 @@ export const reconcileDeposits = async ({
     (payment) => reconcileSinglePayment(payment)
   );
 
+  const recordedOpen = (
+    await mapWithConcurrency(openPayments, RECONCILE_PROCESS_CONCURRENCY, recordOpenPayment)
+  ).filter(Boolean).length;
+
   const results = {
     totalPayments: allPayments.length,
     completedPayments: completedPayments.length,
@@ -570,6 +764,7 @@ export const reconcileDeposits = async ({
     newlyProcessed: 0,
     failed: 0,
     skipped: 0,
+    recordedOpen,
     details,
   };
 
@@ -582,6 +777,31 @@ export const reconcileDeposits = async ({
 
   return results;
 };
+
+/**
+ * Records a paid, in-flight payment as an open deposit row (or advances its status), so the
+ * open-deposit watch keeps polling it after it leaves the reconcile window. Credits nothing.
+ */
+async function recordOpenPayment(payment: NOWPayments.CreatePaymentResponse) {
+  const paymentId = Number(payment.payment_id);
+  if (!userIdFromOrderId(payment.order_id)) return false;
+  try {
+    const local = await dbRead.cryptoDeposit.findUnique({
+      where: { paymentId: BigInt(paymentId) },
+      select: { status: true },
+    });
+    if (local?.status === payment.payment_status) return false;
+    await processDeposit(paymentId, payment.payment_status, eventFromPayment(payment));
+    return true;
+  } catch (e) {
+    await log({
+      message: 'Failed to record open deposit',
+      paymentId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return false;
+  }
+}
 
 /** Fetch individual payments by ID with bounded concurrency. */
 async function fetchPaymentsByIds(ids: number[]): Promise<NOWPayments.CreatePaymentResponse[]> {
@@ -647,8 +867,14 @@ async function reconcileSinglePayment(
       where: { paymentId: BigInt(typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId) },
       select: { status: true, buzzCredited: true },
     });
-    if (localDeposit?.status === 'finished' && localDeposit.buzzCredited != null) {
+    if (
+      (localDeposit?.status === 'finished' && localDeposit.buzzCredited != null) ||
+      localDeposit?.status === HAND_PAID
+    ) {
       return { paymentId, status: payment.payment_status, action: 'already_processed' };
+    }
+    if (localDeposit?.status === HELD) {
+      return { paymentId, status: payment.payment_status, action: 'skipped', error: 'held' };
     }
   } catch {
     // Non-fatal, proceed to process
@@ -666,17 +892,7 @@ async function reconcileSinglePayment(
 
   // Process the deposit
   try {
-    const event: NOWPayments.WebhookEvent = {
-      payment_id: typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId,
-      payment_status: payment.payment_status,
-      order_id: payment.order_id,
-      outcome_amount: payment.outcome_amount ?? undefined,
-      actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
-      pay_currency: payment.pay_currency,
-      pay_address: payment.pay_address,
-      parent_payment_id: payment.parent_payment_id,
-      payin_hash: payment.payin_hash,
-    };
+    const event = eventFromPayment(payment);
 
     const depositResult = await processDeposit(
       typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId,
@@ -724,11 +940,12 @@ export const retryFailedDeposits = async () => {
     ...(await sweep('unverified', MAX_SWEEP_UNVERIFIED)),
   ];
 
-  if (!failedDeposits.length) return { retried: 0, succeeded: 0, failed: 0, exhausted: 0 };
+  if (!failedDeposits.length) return { retried: 0, succeeded: 0, failed: 0, exhausted: 0, held: 0 };
 
   let succeeded = 0;
   let failed = 0;
   let exhausted = 0;
+  let held = 0;
 
   const countRetry = async (
     deposit: { paymentId: bigint; retryCount: number; status: string },
@@ -781,17 +998,7 @@ export const retryFailedDeposits = async () => {
         continue;
       }
 
-      const event: NOWPayments.WebhookEvent = {
-        payment_id: numericId,
-        payment_status: payment.payment_status,
-        order_id: payment.order_id,
-        outcome_amount: payment.outcome_amount,
-        actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
-        pay_currency: payment.pay_currency,
-        pay_address: payment.pay_address,
-        parent_payment_id: payment.parent_payment_id,
-        payin_hash: payment.payin_hash,
-      };
+      const event = eventFromPayment(payment);
 
       await processDeposit(numericId, payment.payment_status, event);
 
@@ -818,6 +1025,8 @@ export const retryFailedDeposits = async () => {
         await countRetry({ ...deposit, status: 'buzz_failed' });
       } else if (updated?.status === 'unverified') {
         await countRetry(deposit);
+      } else if (updated?.status === HELD) {
+        held++;
       } else {
         // Status changed by another path (e.g., webhook fixed it) — skip
         succeeded++;
@@ -827,7 +1036,291 @@ export const retryFailedDeposits = async () => {
     }
   }
 
-  return { retried: failedDeposits.length, succeeded, failed, exhausted };
+  return { retried: failedDeposits.length, succeeded, failed, exhausted, held };
+};
+
+const openDepositWhere = () => ({
+  status: { in: [...OPEN_DEPOSIT_STATUSES, 'partially_paid'] },
+  payAmount: { gt: 0 },
+});
+
+/**
+ * The open-deposit list and its health counts, read from CryptoDeposit only: no NOWPayments
+ * call and no writes, so support can read it as often as it likes.
+ */
+export const getOpenDepositReport = async () => {
+  const [rows, finishedUncredited] = await Promise.all([
+    dbRead.cryptoDeposit.findMany({
+      where: { OR: [openDepositWhere(), { status: HELD }] },
+      select: {
+        paymentId: true,
+        userId: true,
+        status: true,
+        payCurrency: true,
+        payAmount: true,
+        createdAt: true,
+        user: { select: { username: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+    dbRead.cryptoDeposit.count({
+      where: { OR: [{ status: 'buzz_failed' }, { status: 'finished', buzzCredited: null }] },
+    }),
+  ]);
+
+  const now = dayjs.utc();
+  const items: OpenDepositDigestItem[] = rows.map((row) => ({
+    paymentId: row.paymentId.toString(),
+    userId: row.userId,
+    username: row.user?.username ?? 'unknown',
+    status: row.status,
+    payCurrency: row.payCurrency,
+    payAmount: row.payAmount,
+    daysOpen: now.diff(row.createdAt, 'day'),
+    held: row.status === HELD,
+  }));
+  const open = items.filter((i) => !i.held);
+
+  return {
+    items,
+    counts: {
+      open: open.length,
+      oldestOpenDays: open[0]?.daysOpen ?? 0,
+      held: items.length - open.length,
+      finishedUncredited,
+    },
+  };
+};
+
+/** Payment ids whose IPN never arrived, so no CryptoDeposit row exists to poll. Kept out of the repo. */
+export const WATCH_PAYMENT_IDS_KEY = 'nowpayments:watch-payment-ids';
+/** Listed ids support has confirmed nobody paid by hand. */
+export const WATCH_CREDIT_OK_KEY = 'nowpayments:watch-payment-ids-credit-ok';
+
+const readPaymentIdList = async (key: string): Promise<number[]> => {
+  let value: unknown;
+  try {
+    value = await dbKV.get<unknown>(key, []);
+  } catch (e) {
+    await log({
+      message: 'Watch list unreadable',
+      key,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return [];
+  }
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    await log({ message: 'Watch list is not an array; ignored', key });
+    return [];
+  }
+  const ids = value.filter((v): v is number => Number.isSafeInteger(v) && (v as number) > 0);
+  if (ids.length !== value.length)
+    await log({ message: 'Watch list has entries that are not payment ids; skipped', key });
+  return [...new Set(ids)];
+};
+
+/** NowPayments statuses that close a payment without paying it; recording one never credits. */
+const CLOSED_UNPAID_STATUSES = ['failed', 'expired', 'refunded'];
+
+/**
+ * Listed ids the row-driven watch did not poll. Writes a row only for a closed-unpaid status, or for
+ * an id on the credit-ok list: a row in flight would let the row-driven watch credit it unconfirmed.
+ */
+const watchListedPayments = async (
+  listed: number[],
+  creditOk: Set<number>,
+  polled: Set<number>,
+  heldBack: Map<number, string>
+) => {
+  if (!listed.length) return [];
+  const rows = await dbRead.cryptoDeposit.findMany({
+    where: { paymentId: { in: listed.map((id) => BigInt(id)) } },
+    select: { paymentId: true, status: true },
+  });
+  const rowStatus = new Map(rows.map((r) => [Number(r.paymentId), r.status]));
+
+  return mapWithConcurrency(
+    listed,
+    RECONCILE_FETCH_CONCURRENCY,
+    async (paymentId): Promise<ListedPaymentDigestItem> => {
+      const existing = rowStatus.get(paymentId) ?? null;
+      const report = (state: ListedPaymentState, status: string | null) => ({
+        paymentId: String(paymentId),
+        state,
+        status,
+      });
+      const npStatusHeldBack = heldBack.get(paymentId);
+      if (npStatusHeldBack) return report('awaiting_ok', npStatusHeldBack);
+      if (polled.has(paymentId)) return report('has_row', existing);
+      if (existing === HELD) return report('held', existing);
+      if (existing && !OPEN_DEPOSIT_STATUSES.includes(existing)) return report('has_row', existing);
+
+      try {
+        const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
+        if (!payment || Number(payment.payment_id) !== paymentId)
+          throw new Error('not found on NowPayments');
+        const status = payment.payment_status;
+        if (status === 'waiting') return report(existing ? 'has_row' : 'no_row', status);
+        if (!creditOk.has(paymentId) && !CLOSED_UNPAID_STATUSES.includes(status)) {
+          await log({
+            type: 'warning',
+            message: 'Listed payment not confirmed for credit; left alone',
+            paymentId,
+            status,
+          });
+          return report(isDepositComplete(status) ? 'awaiting_ok' : 'in_flight', status);
+        }
+        await processDeposit(paymentId, status, eventFromPayment(payment));
+        return report('recorded', status);
+      } catch (e) {
+        await log({
+          message: 'Listed payment check failed',
+          paymentId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+        return report('lookup_failed', existing);
+      }
+    }
+  );
+};
+
+/**
+ * How far back the daily sweep re-polls failed/expired rows: one NowPayments lookup per row per day.
+ * It is also where retrying stops: a late attempt that keeps failing stays failed and is retried
+ * daily until the row ages out of this window.
+ */
+const LATE_FINISH_LOOKBACK_DAYS = 30;
+
+const lateFinishWhere = () => ({
+  createdAt: { gte: dayjs.utc().subtract(LATE_FINISH_LOOKBACK_DAYS, 'day').toDate() },
+  // No payAmount filter: a row closed before its amount was recorded can still finish.
+  status: { in: LATE_FINISH_STATUSES },
+});
+
+/**
+ * Credits a closed deposit NowPayments now reports paid (processDeposit fails closed on a late row).
+ * Logs each attempt processDeposit returns from, credited or not; returns whether the row is now finished.
+ */
+const processLateFinish = async (
+  paymentId: number,
+  row: { status: string; createdAt: Date },
+  payment: NOWPayments.CreatePaymentResponse
+) => {
+  const { userId, buzzAmount, transactionId, heldReason, failure } = await processDeposit(
+    paymentId,
+    payment.payment_status,
+    eventFromPayment(payment)
+  );
+  const after = await dbWrite.cryptoDeposit.findUnique({
+    where: { paymentId: BigInt(paymentId) },
+    select: { status: true, buzzCredited: true },
+  });
+  const credited = after?.status === 'finished';
+  await logToAxiom({
+    name: 'nowpayments-late-finish',
+    type: 'warning',
+    paymentId,
+    userId,
+    credited,
+    held: after?.status === HELD,
+    handPaid: after?.status === HAND_PAID,
+    heldReason,
+    error: failure,
+    buzz: buzzAmount,
+    transactionId,
+    npStatus: payment.payment_status,
+    previousStatus: row.status,
+    status: after?.status ?? null,
+    buzzCredited: after?.buzzCredited ?? null,
+    rowAgeDays: dayjs.utc().diff(row.createdAt, 'day'),
+  }).catch(() => undefined);
+  return credited;
+};
+
+/**
+ * Polls NOWPayments once for each paid deposit still in flight. The reconcile job only lists
+ * payments created in the last 72h, so a payment that settles later is otherwise credited only
+ * if its IPN arrives. Settled payments go through processDeposit, closed ones record their status.
+ * Then checks the listed ids (WATCH_PAYMENT_IDS_KEY) that have no row to poll. A listed id is
+ * credited only once it is also on WATCH_CREDIT_OK_KEY, including one whose open row this loop polls.
+ * Also re-polls failed/expired rows from the last LATE_FINISH_LOOKBACK_DAYS, crediting only those
+ * NOWPayments now reports finished or partially_paid.
+ */
+export const watchOpenDeposits = async () => {
+  const listed = await readPaymentIdList(WATCH_PAYMENT_IDS_KEY);
+  const creditOk = new Set(listed.length ? await readPaymentIdList(WATCH_CREDIT_OK_KEY) : []);
+  const awaitingOk = new Set(listed.filter((id) => !creditOk.has(id)));
+  // Listed ids whose row this loop would have credited: the row may predate the listing (an IPN).
+  const heldBack = new Map<number, string>();
+
+  const [open, closedUnpaid] = await Promise.all([
+    dbRead.cryptoDeposit.findMany({
+      where: openDepositWhere(),
+      select: { paymentId: true, status: true, createdAt: true },
+    }),
+    dbRead.cryptoDeposit.findMany({
+      where: lateFinishWhere(),
+      select: { paymentId: true, status: true, createdAt: true },
+    }),
+  ]);
+  const rows = [
+    ...open.map((row) => ({ ...row, late: false })),
+    ...closedUnpaid.map((row) => ({ ...row, late: true })),
+  ];
+
+  const outcomes = await mapWithConcurrency(rows, RECONCILE_FETCH_CONCURRENCY, async (row) => {
+    const paymentId = Number(row.paymentId);
+    try {
+      const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
+      if (!payment) throw new Error('not found on NowPayments');
+      if (Number(payment.payment_id) !== paymentId) throw new Error('different payment returned');
+      const complete = isDepositComplete(payment.payment_status);
+      if (awaitingOk.has(paymentId) && complete) {
+        heldBack.set(paymentId, payment.payment_status);
+        return { lookupFailed: false, closed: false, lateFinished: false };
+      }
+      // A closed row only ever moves to a credit; any other NP status leaves it as it is.
+      if (row.late) {
+        if (!complete) return { lookupFailed: false, closed: false, lateFinished: false };
+        const lateFinished = await processLateFinish(paymentId, row, payment);
+        return { lookupFailed: false, closed: false, lateFinished };
+      }
+      if (payment.payment_status !== row.status || complete) {
+        await processDeposit(paymentId, payment.payment_status, eventFromPayment(payment));
+      }
+      return {
+        lookupFailed: false,
+        closed: !OPEN_DEPOSIT_STATUSES.includes(payment.payment_status),
+        lateFinished: false,
+      };
+    } catch (e) {
+      await log({
+        message: 'Open deposit check failed',
+        paymentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return { lookupFailed: true, closed: false, lateFinished: false };
+    }
+  });
+
+  const listedReport = await watchListedPayments(
+    listed,
+    creditOk,
+    new Set(rows.map((r) => Number(r.paymentId))),
+    heldBack
+  );
+
+  const report = await getOpenDepositReport();
+  return {
+    checked: rows.length,
+    closed: outcomes.filter((o) => o.closed).length,
+    lateFinished: outcomes.filter((o) => o.lateFinished).length,
+    lookupFailed: outcomes.filter((o) => o.lookupFailed).length,
+    counts: report.counts,
+    digest: report.items.filter((i) => !i.held && i.daysOpen >= OPEN_DEPOSIT_DIGEST_AFTER_DAYS),
+    listed: listedReport,
+  };
 };
 
 /** Hard cap on perPage to prevent abuse */
@@ -1007,6 +1500,8 @@ const getSupportedCurrenciesMemo = createTtlMemo<SupportedCurrencyGroup[]>(async
   return result;
 }, SUPPORTED_CURRENCIES_INPROC_TTL_MS, undefined, { freeze: true });
 
+export const clearSupportedCurrenciesMemo = () => getSupportedCurrenciesMemo.clear();
+
 export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]> => {
   try {
     return await getSupportedCurrenciesMemo();
@@ -1050,7 +1545,9 @@ export const reconcileUserDeposits = async (userId: number) => {
     // `payment_extra_ids`. Walk those to find every deposit made against this wallet.
     const childIds = parentPayment.payment_extra_ids ?? [];
     const childPayments = (
-      await Promise.all(childIds.map((id) => nowpaymentsCaller.getPaymentStatus(id)))
+      await mapWithConcurrency(childIds, USER_RECONCILE_FETCH_CONCURRENCY, (id) =>
+        nowpaymentsCaller.getPaymentStatus(id)
+      )
     ).filter((p): p is NOWPayments.CreatePaymentResponse => p != null);
     const payments = [parentPayment, ...childPayments];
 
@@ -1073,22 +1570,17 @@ export const reconcileUserDeposits = async (userId: number) => {
         select: { status: true, buzzCredited: true },
       });
 
-      if (existingTx || (existingDeposit?.status === 'finished' && existingDeposit.buzzCredited)) {
+      if (
+        existingTx ||
+        existingDeposit?.status === HELD ||
+        existingDeposit?.status === HAND_PAID ||
+        (existingDeposit?.status === 'finished' && existingDeposit.buzzCredited)
+      ) {
         continue;
       }
 
       try {
-        const event: NOWPayments.WebhookEvent = {
-          payment_id: numericId,
-          payment_status: payment.payment_status,
-          order_id: payment.order_id,
-          outcome_amount: payment.outcome_amount,
-          actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
-          pay_currency: payment.pay_currency,
-          pay_address: payment.pay_address,
-          parent_payment_id: payment.parent_payment_id,
-          payin_hash: payment.payin_hash,
-        };
+        const event = eventFromPayment(payment);
 
         await processDeposit(numericId, payment.payment_status, event);
         processed++;

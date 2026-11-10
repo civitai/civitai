@@ -1,9 +1,8 @@
-import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
-import { isGeneratorReady } from '~/shared/generation/generator-readiness';
+import { indexedVersionEligibility } from '~/shared/generation/coverage-fields';
+import { toIndexedVersion, toIndexedVersions } from '~/server/search-index/models-index-versions';
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
-import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { allowsDifferentLicenseOnMerges, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { dbRead } from '~/server/db/client';
@@ -11,18 +10,24 @@ import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { modelTagCache } from '~/server/redis/caches';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
-import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
-import type { SearchIndexContext } from '~/server/search-index/base.search-index';
+import type {
+  SearchIndexContext,
+  SearchIndexPullBatch,
+} from '~/server/search-index/base.search-index';
+import {
+  MODEL_SEARCH_INDEX_ELIGIBILITY,
+  modelSearchIndexEligibilitySql,
+} from '~/server/search-index/model-index-eligibility';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import {
   MODELS_WITHHELD_ATTRIBUTES,
   modelsDisplayedAttributes,
 } from '~/server/search-index/displayed-attributes';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
 import { modelsSearchableAttributes } from '~/server/search-index/searchable-attributes';
 import { modelsRankingRules } from '~/server/search-index/ranking-rules';
-import { modelVersionPricingSignals } from '@civitai/buzz';
 import {
   getModelPaidAccessGates,
   getModelVersionPaidAccessTerms,
@@ -36,7 +41,6 @@ import {
   getUserMetricPrivacyDefaults,
   resolveModelHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
-import type { HiddenModelMetrics } from '~/server/utils/model-metric-privacy';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -47,6 +51,7 @@ import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
 import { hasCompleteSfwFace, hoistCoverImage } from '~/shared/utils/model-sfw-face';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 
 const READ_BATCH_SIZE = 2000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -152,6 +157,14 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     const updateTypoToleranceTask = await index.updateTypoTolerance(typoTolerance);
     console.log('onIndexSetup :: updateTypoToleranceTask created', updateTypoToleranceTask);
   }
+
+  // Meili returns at most maxValuesPerFacet (default 100) values per facet, alphabetically.
+  if (settings.faceting?.maxValuesPerFacet !== SEARCH_FACET_LIMIT) {
+    const updateFacetingTask = await index.updateFaceting({
+      maxValuesPerFacet: SEARCH_FACET_LIMIT,
+    });
+    console.log('onIndexSetup :: updateFacetingTask created', updateFacetingTask);
+  }
 };
 
 type Model = Prisma.ModelGetPayload<{
@@ -164,27 +177,49 @@ type PullDataResult = {
   images: ImagesForModelVersions[];
 };
 
-type VersionMetricRow = {
-  generationCount: number;
-  downloadCount: number;
-  thumbsUpCount: number;
-  thumbsDownCount: number;
-};
+/** A taken-down model's document names none of its images: its cover ids are cleared. */
+export const withheldCoverIds = (model: { mode?: string | null }) =>
+  isModelWithheld(model) ? { coverImageId: null, sfwCoverImageId: null } : {};
 
-// Nested per-version metrics ship in `displayedAttributes`, so they must obey the
-// same model-level hide flags as the card — otherwise the raw hidden number leaks.
-// The search-index version selector carries no earned/tipped (buzz) field, so only
-// downloads + generations are maskable here.
-function maskHiddenVersionMetrics<T extends VersionMetricRow | undefined>(
-  metrics: T,
-  hidden: HiddenModelMetrics
+/**
+ * The images a model's search document carries: the newest version of each distinct base model
+ * keeps its images, so base-model-filtered cards can show a matching version's cover. The latest
+ * version goes first, so images[0] stays the primary cover. A taken-down model is still listed,
+ * without its images.
+ */
+export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
+  model: {
+    mode?: string | null;
+    coverImageId?: number | null;
+    sfwCoverImageId?: number | null;
+  },
+  modelVersions: { id: number; baseModel: string }[],
+  images: TImage[]
 ) {
-  if (!metrics) return metrics;
-  return {
-    ...metrics,
-    downloadCount: hidden.downloads ? null : metrics.downloadCount,
-    generationCount: hidden.generations ? null : metrics.generationCount,
-  };
+  if (isModelWithheld(model)) return [];
+  const coveredBaseModels = new Set<string>();
+  const coveredVersionIds: number[] = [];
+  for (const version of modelVersions) {
+    if (coveredBaseModels.has(version.baseModel)) continue;
+    coveredBaseModels.add(version.baseModel);
+    coveredVersionIds.push(version.id);
+  }
+
+  // The .red cover ahead of the .com one: a .com viewer filters a mature .red cover out and
+  // lands on theirs, while a .red viewer keeps the creator's pick.
+  return [model.sfwCoverImageId, model.coverImageId].reduce(
+    (list, coverId) =>
+      hoistCoverImage(
+        list,
+        list.find((image) => image.id === coverId)
+      ),
+    coveredVersionIds.flatMap((versionId) =>
+      images.filter(
+        (image) =>
+          image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
+      )
+    )
+  );
 }
 
 const transformData = async ({ models, tags, cosmetics, images }: PullDataResult) => {
@@ -277,24 +312,12 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       const [version] = modelVersions;
       if (!version) return null;
 
-      const { files, ...restVersion } = version;
-
-      const eligible = (x: (typeof modelVersions)[number], covered: boolean | undefined) =>
-        isGenerationEligible({
-          covered,
-          coveredLive: x.generationCoverage?.covered,
-          baseModel: x.baseModel,
-          modelType: model.type,
-          flags: x.flags,
-        });
-
-      const canGenerate = modelVersions.some((x) => eligible(x, x.generationCoverage?.covered));
+      const eligibility = modelVersions.map((x) => indexedVersionEligibility(x, model.type));
+      const canGenerate = eligibility.some((x) => x.canGenerate);
       // What `canGenerate` becomes when the staged rule takes over — the same composition over the
       // view's other column. Transitional: delete it, and its filterable entries, at the cutover,
       // when `covered` answers this on its own.
-      const canGenerateNext = modelVersions.some((x) =>
-        eligible(x, x.generationCoverage?.coveredNext)
-      );
+      const canGenerateNext = eligibility.some((x) => x.canGenerateNext);
       const cannotPromote = (meta as ModelMeta | null)?.cannotPromote;
 
       const category = tags[model.id]?.tags?.find(({ id }) => modelCategoriesIds.includes(id));
@@ -390,6 +413,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       return {
         ...model,
+        ...withheldCoverIds(model),
         // All four keys written unconditionally — see the merge argument above. `?? null`
         // and never `?? 0`: a version can legitimately be judged 0 with high confidence,
         // and `?.qualityScore ?? null` keeps that 0 while still clearing an absent label.
@@ -495,51 +519,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           minor: modelRecord.minor,
           sfwOnly: modelRecord.sfwOnly,
         },
-        version: {
-          ...restVersion,
-          metrics: maskHiddenVersionMetrics(restVersion.metrics[0], hidden),
-          hashes: restVersion.hashes.map((hash) => hash.hash),
-          hashData: restVersion.hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
-          settings: restVersion.settings as RecommendedSettingsSchema,
-          baseModel: restVersion.baseModel as BaseModel,
-        },
-        versions: modelVersions.map(
-          ({
-            generationCoverage,
-            files,
-            hashes,
-            settings,
-            metrics: vMetrics,
-            usageControl,
-            ...x
-          }) => ({
-            ...x,
-            // Keeps the column's name but holds readiness — the loaded-only filter reads this.
-            generatorLoaded: isGeneratorReady({ generatorLoaded: x.generatorLoaded, usageControl }),
-            // A turbo block on the version is what makes it a turbo variant; the picker filters on this.
-            turbo: !!(settings as RecommendedSettingsSchema | null)?.turbo,
-            pricing: modelVersionPricingSignals({ paidAccess: paidAccessTerms.get(x.id) ?? null }),
-            metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
-            hashes: hashes.map((hash) => hash.hash),
-            hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
-            canGenerate: isGenerationEligible({
-              covered: generationCoverage?.covered,
-              coveredLive: generationCoverage?.covered,
-              baseModel: x.baseModel,
-              modelType: model.type,
-              flags: x.flags,
-            }),
-            canGenerateNext: isGenerationEligible({
-              covered: generationCoverage?.coveredNext,
-              coveredLive: generationCoverage?.covered,
-              baseModel: x.baseModel,
-              modelType: model.type,
-              flags: x.flags,
-            }),
-            settings: settings as RecommendedSettingsSchema,
-            baseModel: x.baseModel as BaseModel,
-          })
-        ),
+        version: toIndexedVersion(version, hidden),
+        versions: toIndexedVersions(modelVersions, { hidden, paidAccessTerms, eligibility }),
         triggerWords: [
           ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
         ],
@@ -601,32 +582,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         return null;
       }
 
-      // Keep images for the newest version of each distinct base model — not just the
-      // latest version — so base-model-filtered cards can show a matching version's
-      // cover. The latest version goes first, so images[0] stays the primary cover.
-      const coveredBaseModels = new Set<string>();
-      const coveredVersionIds: number[] = [];
-      for (const version of modelVersions) {
-        if (coveredBaseModels.has(version.baseModel)) continue;
-        coveredBaseModels.add(version.baseModel);
-        coveredVersionIds.push(version.id);
-      }
-
-      // The .red cover ahead of the .com one: a .com viewer filters a mature .red cover out and
-      // lands on theirs, while a .red viewer keeps the creator's pick.
-      const modelImages = [model.sfwCoverImageId, model.coverImageId].reduce(
-        (list, coverId) =>
-          hoistCoverImage(
-            list,
-            list.find((image) => image.id === coverId)
-          ),
-        coveredVersionIds.flatMap((versionId) =>
-          images.filter(
-            (image) =>
-              image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
-          )
-        )
-      );
+      const modelImages = pickModelIndexImages(model, modelVersions, images);
 
       return {
         id: model.id,
@@ -740,13 +696,12 @@ export const prepareModelsBatches = async (
   lastUpdatedAt?: Date
 ) => {
   const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
-      SELECT MIN(id) as "startId", MAX(id) as "endId" FROM "Model"
-      WHERE status = ${ModelStatus.Published}::"ModelStatus"
-          AND availability != ${Availability.Unsearchable}::"Availability"
+      SELECT MIN(id) as "startId", MAX(id) as "endId" FROM "Model" m
+      WHERE ${modelSearchIndexEligibilitySql()}
       ${
         lastUpdatedAt
           ? Prisma.sql`
-        AND "createdAt" >= ${lastUpdatedAt}
+        AND m."createdAt" >= ${lastUpdatedAt}
       `
           : Prisma.sql``
       };
@@ -764,11 +719,10 @@ export const prepareModelsBatches = async (
 
     while (true) {
       const ids = await db.$queryRaw<{ id: number }[]>`
-        SELECT id FROM "Model"
-        WHERE status = ${ModelStatus.Published}::"ModelStatus"
-            AND availability != ${Availability.Unsearchable}::"Availability"
-            AND "updatedAt" >= ${lastUpdatedAt}
-            AND id > ${lastId}
+        SELECT id FROM "Model" m
+        WHERE ${modelSearchIndexEligibilitySql()}
+            AND m."updatedAt" >= ${lastUpdatedAt}
+            AND m.id > ${lastId}
         ORDER BY id
         LIMIT ${READ_BATCH_SIZE};
         `;
@@ -794,87 +748,90 @@ export const prepareModelsBatches = async (
   };
 };
 
+/** Hoisted and exported, like `prepareModelsBatches`, so a test can read the query it issues. */
+export const pullModelsData = async (
+  { db, logger }: SearchIndexContext,
+  batch: SearchIndexPullBatch
+) => {
+  const batchLogKey =
+    batch.type === 'update'
+      ? `Update ${batch.ids.length} items`
+      : `${batch.startId} - ${batch.endId}`;
+  logger(`PullData :: Pulling data for batch`, batchLogKey);
+  const models = await db.model.findMany({
+    select: modelSearchIndexSelect,
+    where: {
+      ...MODEL_SEARCH_INDEX_ELIGIBILITY,
+      id:
+        batch.type === 'update'
+          ? {
+              in: batch.ids,
+            }
+          : {
+              gte: batch.startId,
+              lte: batch.endId,
+            },
+    },
+  });
+
+  logger(`PullData :: Pulled models`, batchLogKey);
+
+  const results: PullDataResult = {
+    models,
+    tags: {},
+    cosmetics: {},
+    images: [],
+  };
+
+  if (models.length === 0) return results;
+
+  const pullBatches = chunk(models, 500);
+  const tasks: Task[] = [];
+  for (const batch of pullBatches) {
+    const batchIds = batch.map((m) => m.id);
+    tasks.push(async () => {
+      logger(`PullData :: Pull cosmetics`, batchLogKey);
+      const cosmetics = await getCosmeticsForEntity({
+        ids: batchIds,
+        entity: 'Model',
+      });
+      logger(`PullData :: Pulled cosmetics`, batchLogKey);
+      Object.assign(results.cosmetics, cosmetics);
+    });
+
+    tasks.push(async () => {
+      logger(`PullData :: Pull tags`, batchLogKey);
+      const tags = await modelTagCache.fetch(batchIds);
+      logger(`PullData :: Pulled tags`, batchLogKey);
+      Object.assign(results.tags, tags);
+    });
+
+    const modelVersionIds = batch.flatMap((m) => m.modelVersions.map((m) => m.id));
+    const versionBatches = chunk(modelVersionIds, 500);
+    for (const versionBatch of versionBatches) {
+      tasks.push(async () => {
+        logger(`PullData :: Pull images`, batchLogKey);
+        const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch);
+        const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
+        logger(`PullData :: Pulled images`, batchLogKey);
+
+        results.images.push(...images);
+      });
+    }
+  }
+  await limitConcurrency(tasks, 2);
+
+  logger(`PullData :: Finished pulling data for batch`, batchLogKey);
+
+  return results;
+};
+
 export const modelsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
   setup: onIndexSetup,
   maxQueueSize: 25, // Avoids hoggging too much memory.
   prepareBatches: prepareModelsBatches,
-  pullData: async ({ db, logger }, batch) => {
-    const batchLogKey =
-      batch.type === 'update'
-        ? `Update ${batch.ids.length} items`
-        : `${batch.startId} - ${batch.endId}`;
-    logger(`PullData :: Pulling data for batch`, batchLogKey);
-    const models = await db.model.findMany({
-      select: modelSearchIndexSelect,
-      where: {
-        status: ModelStatus.Published,
-        availability: {
-          not: Availability.Unsearchable,
-        },
-        id:
-          batch.type === 'update'
-            ? {
-                in: batch.ids,
-              }
-            : {
-                gte: batch.startId,
-                lte: batch.endId,
-              },
-      },
-    });
-
-    logger(`PullData :: Pulled models`, batchLogKey);
-
-    const results: PullDataResult = {
-      models,
-      tags: {},
-      cosmetics: {},
-      images: [],
-    };
-
-    if (models.length === 0) return results;
-
-    const pullBatches = chunk(models, 500);
-    const tasks: Task[] = [];
-    for (const batch of pullBatches) {
-      const batchIds = batch.map((m) => m.id);
-      tasks.push(async () => {
-        logger(`PullData :: Pull cosmetics`, batchLogKey);
-        const cosmetics = await getCosmeticsForEntity({
-          ids: batchIds,
-          entity: 'Model',
-        });
-        logger(`PullData :: Pulled cosmetics`, batchLogKey);
-        Object.assign(results.cosmetics, cosmetics);
-      });
-
-      tasks.push(async () => {
-        logger(`PullData :: Pull tags`, batchLogKey);
-        const tags = await modelTagCache.fetch(batchIds);
-        logger(`PullData :: Pulled tags`, batchLogKey);
-        Object.assign(results.tags, tags);
-      });
-
-      const modelVersionIds = batch.flatMap((m) => m.modelVersions.map((m) => m.id));
-      const versionBatches = chunk(modelVersionIds, 500);
-      for (const versionBatch of versionBatches) {
-        tasks.push(async () => {
-          logger(`PullData :: Pull images`, batchLogKey);
-          const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch);
-          const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
-          logger(`PullData :: Pulled images`, batchLogKey);
-
-          results.images.push(...images);
-        });
-      }
-    }
-    await limitConcurrency(tasks, 2);
-
-    logger(`PullData :: Finished pulling data for batch`, batchLogKey);
-
-    return results;
-  },
+  pullData: pullModelsData,
   transformData,
   pushData: async ({ indexName }, data) => {
     const { indexReadyRecords, indexRecordsWithImages } = data as {

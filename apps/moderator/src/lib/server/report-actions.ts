@@ -1,9 +1,15 @@
+import { sendAsCivitai } from './message-as-civitai';
+import { MESSAGE_AS_CIVITAI_MAX_LENGTH } from '$lib/message-as-civitai';
 import { fail, type Actions } from '@sveltejs/kit';
 import { z } from 'zod';
 import { canAccess, denied } from './access';
 import { parseForm, parseIdList, userIdSchema, checkboxField } from './query';
 import { issueStrike, restoreImages, setImageFlag } from './user-actions.service';
-import { countBlockedImages, removeImagesWithFollowUps } from './bulk-image.service';
+import {
+  capturesSkippedNote,
+  countBlockedImages,
+  removeImagesWithFollowUps,
+} from './bulk-image.service';
 import { sendModNotification } from './moderation-memory.service';
 import { setReportStatus } from './reports.service';
 import { saveNotesAction } from './report-queue-actions';
@@ -24,7 +30,7 @@ import type { PermissionId } from '$lib/permissions';
  * page making those writes checks.
  */
 
-type Scope = 'report' | 'strike' | 'notify' | 'images';
+type Scope = 'report' | 'strike' | 'notify' | 'message' | 'images';
 const scopedFail = (scope: Scope, message: string) => fail(400, { scope, error: message });
 
 // Scoped like every other refusal here, so it lands on the form that was submitted — `requiresGrant`'s
@@ -133,9 +139,12 @@ export function reportModerationActions(pagePath: string) {
         ? ` The ${result.flag.flag} flag was NOT applied: ${result.flag.error}`
         : '';
       const strikeNote = result.struck
-        ? result.struck.error
-          ? ` Struck ${result.struck.struck} of ${result.struck.owners} owners: ${result.struck.error}`
-          : ` Struck ${result.struck.struck} owner${result.struck.struck === 1 ? '' : 's'}.`
+        ? (result.struck.error
+            ? ` Struck ${result.struck.struck} of ${result.struck.owners} owners: ${result.struck.error}`
+            : ` Struck ${result.struck.struck} owner${result.struck.struck === 1 ? '' : 's'}.`) +
+          (result.struck.capturesSkipped
+            ? ` ${capturesSkippedNote(result.struck.capturesSkipped)}`
+            : '')
         : '';
 
       return {
@@ -200,6 +209,26 @@ export function reportModerationActions(pagePath: string) {
       });
       if (!result.ok) return scopedFail('notify', result.error);
       return { success: true };
+    },
+
+    // Two-way, unlike Notify: the user can answer, and the report rides along as context.
+    messageAsCivitai: async ({ request, locals }) => {
+      if (!locals.grants['user.message.asCivitai'])
+        return refuse('message', 'user.message.asCivitai');
+      const input = parseForm(
+        userIdSchema.extend({
+          message: z.string().trim().min(1).max(MESSAGE_AS_CIVITAI_MAX_LENGTH),
+          idempotencyKey: z.string().min(8).max(128),
+          reportId: z.coerce.number().int().positive().max(MAX_INT4).optional(),
+        }),
+        await request.formData()
+      );
+      if (typeof input === 'string') return scopedFail('message', input);
+
+      const { reportId, ...rest } = input;
+      const result = await sendAsCivitai({ ...rest, context: reportId ? { reportId } : undefined });
+      if (!result.ok) return scopedFail('message', result.error);
+      return { success: true, chatId: result.value.chatId, deduped: result.value.deduped };
     },
   } satisfies Actions;
 }

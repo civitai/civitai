@@ -1,13 +1,13 @@
-import { Prisma } from '@prisma/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
-import { excludedRecord } from '~/server/jobs/appeal-decision-records';
 import {
   type CreatorRemoval,
+  removalWindowStart,
   removalsQuery,
   withoutReversed,
 } from '~/server/services/creator-removals.service';
-import { getAppealExcludedIds } from '~/server/services/report.service';
+import { getAppealRefusedImageIds } from '~/server/services/report.service';
+import { ZERO_WEIGHT_REASONS } from '~/shared/utils/creator-removal-weights';
 import { getAppealRefusal, isAppealableImage } from '~/shared/utils/appeal';
 import { type AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
@@ -24,12 +24,24 @@ export type RemovedImage = {
   canAppeal: boolean;
 };
 
+const sqlString = (value: string) => `'${value.replace(/['\\]/g, '\\$&')}'`;
+
+/**
+ * Filtered in ClickHouse so `LIMIT` applies only to removals that cost points: made after
+ * `windowStart` and of a reason that weighs something. A removal with no reason weighs in full.
+ */
 export const REMOVALS_QUERY = `${removalsQuery('ownerId = {userId:Int32}')}
+    AND removedAt > {windowStart:Int64}${
+      ZERO_WEIGHT_REASONS.length
+        ? `
+    AND trimBoth(ifNull(reason, '')) NOT IN (${ZERO_WEIGHT_REASONS.map(sqlString).join(', ')})`
+        : ''
+    }
   ORDER BY removedAt DESC
   LIMIT ${REMOVED_IMAGES_LIMIT}
 `;
 
-async function getRemovalEvents(userId: number) {
+async function getRemovalEvents(userId: number, now: Date) {
   if (!clickhouse) return [];
   // The shared client waits minutes for a stalled connection; the page should not.
   const controller = new AbortController();
@@ -37,7 +49,7 @@ async function getRemovalEvents(userId: number) {
   try {
     const response = await clickhouse.query({
       query: REMOVALS_QUERY,
-      query_params: { userId },
+      query_params: { userId, windowStart: Math.floor(removalWindowStart(now).getTime() / 1000) },
       format: 'JSONEachRow',
       abort_signal: controller.signal,
       clickhouse_settings: { max_execution_time: CLICKHOUSE_TIMEOUT_SECONDS },
@@ -50,23 +62,17 @@ async function getRemovalEvents(userId: number) {
 
 type ImageState = {
   imageId: number;
-  excluded: boolean;
   owned: boolean;
   blockedFor: string | null;
   needsReview: string | null;
 };
 
 function getImageStates(userId: number, imageIds: number[]) {
-  const r = Prisma.raw('r');
   return dbRead.$queryRaw<ImageState[]>`
-    SELECT r."imageId", ${excludedRecord(r)} AS excluded,
-      coalesce(i."userId" = ${userId}, false) AS owned, i."blockedFor", i."needsReview"
-    FROM (
-      SELECT u.id AS "imageId", li."blockedFor"
-      FROM unnest(${imageIds}::int[]) AS u(id)
-      LEFT JOIN "Image" li ON li.id = u.id
-    ) r
-    LEFT JOIN "Image" i ON i.id = r."imageId"
+    SELECT u.id AS "imageId", coalesce(i."userId" = ${userId}, false) AS owned,
+      i."blockedFor", i."needsReview"
+    FROM unnest(${imageIds}::int[]) AS u(id)
+    LEFT JOIN "Image" i ON i.id = u.id
   `;
 }
 
@@ -84,28 +90,27 @@ async function getLatestAppeals(userId: number, imageIds: number[]) {
 }
 
 /**
- * The member's own removed images, newest first, up to the limit. Removals the appeal flow excludes
- * are left out, and `total` counts only what is listed.
+ * The member's own removed images that currently cost points, newest first, up to the limit.
+ * One the appeal flow excludes is listed like any other, with no appeal.
  */
-export async function getMyRemovedImages(userId: number) {
-  const fetched = await getRemovalEvents(userId);
+export async function getMyRemovedImages(userId: number, now = new Date()) {
+  const fetched = await getRemovalEvents(userId, now);
   const events = await withoutReversed(fetched);
   const none = { total: 0, truncated: false, items: [] as RemovedImage[] };
   if (!events.length) return none;
 
   const imageIds = events.map((e) => Number(e.imageId));
-  const [states, excludedIds] = await Promise.all([
+  const [states, refused] = await Promise.all([
     getImageStates(userId, imageIds),
-    getAppealExcludedIds({ imageIds, userIds: [userId] }),
+    getAppealRefusedImageIds({ imageIds, userId }),
   ]);
-  if (excludedIds.users.has(userId)) return none;
 
   const stateById = new Map(states.map((s) => [Number(s.imageId), s]));
   // An image with no state row is left out rather than shown unchecked.
   const listed = events.flatMap((e) => {
     const id = Number(e.imageId);
     const state = stateById.get(id);
-    if (!state || state.excluded || excludedIds.images.has(id)) return [];
+    if (!state) return [];
     return [{ id, removedAt: e.removedAt, state }];
   });
 
@@ -119,6 +124,7 @@ export async function getMyRemovedImages(userId: number) {
     canAppeal:
       state.owned &&
       isAppealableImage(state) &&
+      !refused.has(id) &&
       !getAppealRefusal(EntityType.Image, appeals.get(id)),
   }));
   return { total: items.length, truncated: fetched.length >= REMOVED_IMAGES_LIMIT, items };

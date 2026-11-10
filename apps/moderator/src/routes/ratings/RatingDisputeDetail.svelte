@@ -6,6 +6,7 @@
   import { ratingReviewEntityLabels, ratingReviewLevelLabel } from '@civitai/shared/rating-review';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { cn } from '@civitai/ui/utils.js';
+  import ComFaceCard from '$lib/components/ComFaceCard.svelte';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
   import type { LightboxItem } from '$lib/lightbox';
@@ -160,6 +161,9 @@
 
   {#snippet evidence()}
     <div class="space-y-5">
+      {#if row.entity && row.entityType === 'Model'}
+        <ComFaceCard face={row.entity.comFace ?? null} />
+      {/if}
       <section aria-label="Images" class="space-y-2">
         <div class="flex flex-wrap items-baseline gap-x-3">
           <h3 class="m-0 text-[11px] font-semibold tracking-[0.5px] text-dark-2">{caption.title}</h3>
@@ -218,7 +222,11 @@
 
       {#if row.scannedText}
         {#key row.id}
-          <ScannedTextCard text={row.scannedText} entityLabel={typeLabel.toLowerCase()} />
+          <ScannedTextCard
+            text={row.scannedText}
+            entityLabel={typeLabel.toLowerCase()}
+            reason={row.scan?.reason}
+          />
         {/key}
       {/if}
     </div>

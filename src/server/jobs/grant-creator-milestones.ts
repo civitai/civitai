@@ -17,6 +17,7 @@ import {
 import {
   CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
   creatorJourneyAudienceAmong,
+  isCreatorJourneyPublic,
 } from '~/server/services/creator-journey-flag.service';
 import { logToAxiom } from '~/server/logging/client';
 import { CREATOR_MILESTONE_GRANT_CRON } from '~/shared/constants/creator-journey.constants';
@@ -116,7 +117,10 @@ export const grantCreatorMilestones = createJob(
   'grant-creator-milestones',
   CREATOR_MILESTONE_GRANT_CRON,
   async (jobContext) => {
-    const gated = CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG;
+    // A gated watermark keeps untimed groups silent on the next run too, so a public flag must ungate
+    // the run. An unreadable flag stays gated: silent grants are the safe side.
+    const gated =
+      CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG && !(await isCreatorJourneyPublic().catch(() => false));
     const results: Record<string, unknown> = {};
     const failures: string[] = [];
     const audienceAmong = memoizedAudience((userIds) =>

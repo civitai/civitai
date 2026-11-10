@@ -15,6 +15,9 @@ export type PageAccessChangeTables = {
     path: string;
     roles_before: string[];
     roles_after: string[];
+    /** Stored roles outside the editor's catalogue that the change kept, and retired ones it dropped. */
+    roles_carried: Generated<string[]>;
+    roles_dropped: Generated<string[]>;
     reason: string | null;
     outcome: Generated<PageAccessOutcome>;
   };

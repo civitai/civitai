@@ -27,8 +27,13 @@ import {
   isMarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
+import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import {
+  AppDeveloperTermsCheckbox,
+  useAppDeveloperTermsAccepted,
+} from '~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox';
 
 /**
  * App management (Phase 1) — web form to edit an app's manifest. On save it
@@ -107,6 +112,7 @@ export function ManifestEditForm({
   const versionValid = SEMVER_RE.test(version);
   const versionHigher = compareSemver(version, currentVersion) > 0;
 
+  const termsAccepted = useAppDeveloperTermsAccepted();
   const mutation = trpc.blocks.updateManifest.useMutation({
     onSuccess: async (res) => {
       showSuccessNotification({
@@ -191,7 +197,8 @@ export function ManifestEditForm({
     !mutation.isPending &&
     name.trim().length > 0 &&
     !taglineTooLong &&
-    !repositoryError;
+    !repositoryError &&
+    termsAccepted;
 
   return (
     <Stack gap="md">
@@ -333,6 +340,8 @@ export function ManifestEditForm({
         </Alert>
       )}
 
+      <AppDeveloperTermsCheckbox />
+
       <Group justify="flex-end">
         <Button component={Link} href={`/apps/${appBlockId}`} variant="default">
           Cancel
@@ -350,7 +359,7 @@ export function ManifestEditForm({
       {mutation.data && (
         <Alert color="green" variant="light">
           Submitted as review request <code>{mutation.data.publishRequestId}</code>. Track it on{' '}
-          <Link href="/apps/build">My apps</Link>.
+          <Link href={MY_APPS_HREF}>My builds</Link>.
         </Alert>
       )}
     </Stack>

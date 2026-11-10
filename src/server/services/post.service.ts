@@ -1,17 +1,34 @@
 import { Prisma } from '@prisma/client';
+import {
+  onStorySparkLost,
+  onStorySparkPostsHidden,
+  onStorySparkPostsRestored,
+} from '~/server/events/points/hooks';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import {
+  readPostDetailViaKysely,
+  readPostDetailViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import {
   getDbWithoutLag,
+  getKyselyWithoutLag,
   preventReplicationLag,
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  announceReviewsInBackground,
+  syncReviewsOfMovedPosts,
+  unreleasedReviewIdsOfPosts,
+} from '~/server/services/resourceReview.visibility';
 import {
   imageMetaCache,
   imageResourcesCache,
@@ -22,6 +39,7 @@ import {
   userBasicCache,
   userImageVideoCountCaches,
   userPostCountCache,
+  refreshHasReceivedReviews,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
@@ -33,7 +51,6 @@ import { editPostImageSelect, postSelect } from '~/server/selectors/post.selecto
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
-import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import {
   buildPostCursorClause,
   encodePostCursor,
@@ -64,14 +81,18 @@ import {
   createImageResources,
   deleteImageFromS3,
   deleteImagesForModelVersionCache,
+  getImageMetricsObject,
   getImagesForPosts,
   imagesForModelVersionsCache,
   enqueueImageIngestion,
   invalidateManyImageExistence,
-  purgeImageGenerationDataCache,
   queueImageSearchIndexUpdate,
+  isPlainOwnerDelete,
+  imagesWithOpenReports,
 } from '~/server/services/image.service';
-import type { AssertPostOwnedBy } from '~/server/services/image.service';
+import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/services/image.service';
+import { Flags } from '~/shared/utils/flags';
+import { hasCompleteSfwFace, imagesForFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { invalidateHiddenImageMetadata } from '~/server/services/hidden-meta-invalidation.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
@@ -96,12 +117,16 @@ import {
   Availability,
   CollectionMode,
   CollectionType,
+  EntityType,
+  JobQueueType,
   MediaType,
   Model3DStatus,
   ModelHashType,
+  ModelModifier,
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
+import { enqueueJobs } from '~/server/services/job-queue.service';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { readImageUploadObjectHead } from '~/utils/s3-utils';
@@ -237,6 +262,7 @@ export const getPostsInfinite = async ({
   cursor,
   query,
   username,
+  userId: profileUserId,
   excludedImageIds,
   excludedUserIds,
   period,
@@ -272,7 +298,11 @@ export const getPostsInfinite = async ({
 
   let targetUser: number | undefined;
 
-  if (username) {
+  if (profileUserId) {
+    targetUser = profileUserId;
+    AND.push(Prisma.sql`p."userId" = ${targetUser}`);
+    cacheTags.push(`posts-user:${targetUser}`);
+  } else if (username) {
     const record = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
     if (!record) return { items: [] };
 
@@ -343,22 +373,19 @@ export const getPostsInfinite = async ({
     else AND.push(Prisma.sql`p."publishedAt" <= NOW() AND p."publishedAt" IS NOT NULL`);
   }
 
-  // Still keyed on `isOwnerRequest`, NOT on `canSeeUnpublished`. These are
-  // discovery filters, not publication ones — an owner browsing their own
-  // profile has never had them applied, and folding them into the publication
-  // gate above would have silently dropped tag and title filtering for
-  // moderators, who do get them today.
-  if (!isOwnerRequest) {
-    if (!!tags?.length)
-      AND.push(Prisma.sql`EXISTS (
-        SELECT 1 FROM "TagsOnPost" top
-        WHERE top."postId" = p.id AND top."tagId" IN (${Prisma.join(tags)})
-      )`);
+  // Still keyed on `isOwnerRequest`, NOT on `canSeeUnpublished`. This is a
+  // discovery filter, not a publication one — an owner browsing their own
+  // profile has never had it applied, and folding it into the publication
+  // gate above would have silently dropped tag filtering for moderators, who
+  // do get it today.
+  if (!isOwnerRequest && !!tags?.length)
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "TagsOnPost" top
+      WHERE top."postId" = p.id AND top."tagId" IN (${Prisma.join(tags)})
+    )`);
 
-    if (query) {
-      AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
-    }
-  }
+  // Applies to owner requests too, unlike the tag filter.
+  if (query) AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
 
   if (period !== 'AllTime') {
     const interval = period.toLowerCase();
@@ -667,11 +694,12 @@ const getPostCollectionCollectionItem = async ({
 
 export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
-  const db = await getDbWithoutLag('post', id);
-  const post = await db.post.findFirst({
-    where: { id, ...getPostDetailVisibility(user) },
-    select: postSelect,
-  });
+  const kysely = await getKyselyWithoutLag('post', id);
+  // The Prisma client on the same side of the lag decision, for the reads below.
+  const db = kysely === (await loadKyselyDb()).kyselyWrite ? dbWrite : dbRead;
+  let post = await readPostDetailViaKysely(kysely, { id, viewer: user, now: new Date() });
+  // A post whose user row is gone reads `undefined` through Kysely, and Prisma throws for it.
+  if (post === undefined) post = await readPostDetailViaPrisma(db, { id, viewer: user });
 
   if (!post) throw throwNotFoundError();
 
@@ -708,7 +736,8 @@ export type ResourceHelper = PostEditImageDetail['resourceHelper'][number];
 export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
-  const images = await getPostEditImages({ id, user });
+  const editImages = await getPostEditImages({ id, user });
+  const images = await withReactionCounts(editImages, post.publishedAt);
 
   let collectionTagId: null | number = null;
   let collectionItemExists = false;
@@ -738,6 +767,31 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     ownModelId: model?.userId === post.user.id ? model.id : null,
   };
 };
+
+/**
+ * Reaction totals for the editor's image cards. Edit-load only: uploads share
+ * `combinePostEditImageData` and must not pay a metrics read. Published posts only; an image the
+ * read could not resolve gets no count (absent, not 0).
+ */
+export async function withReactionCounts<T extends { id: number }>(
+  images: T[],
+  publishedAt: Date | null
+): Promise<(T & { reactionCount?: number })[]> {
+  if (!publishedAt || publishedAt > new Date() || !images.length) return images;
+  const metrics = await getImageMetricsObject(images);
+  return images.map((image) => {
+    const m = metrics[image.id];
+    if (!m) return image;
+    const { reactionLike, reactionHeart, reactionLaugh, reactionCry } = m;
+    if ([reactionLike, reactionHeart, reactionLaugh, reactionCry].every((n) => n == null))
+      return image;
+    return {
+      ...image,
+      reactionCount:
+        (reactionLike ?? 0) + (reactionHeart ?? 0) + (reactionLaugh ?? 0) + (reactionCry ?? 0),
+    };
+  });
+}
 
 async function getPostModel({
   modelVersionId,
@@ -993,7 +1047,7 @@ const onDownedVersionSql = (modelVersionId: Prisma.Sql) => Prisma.sql`EXISTS (
       OR m.status::text IN (${Prisma.join(constants.modPublishOnlyStatuses)}))
 )`;
 
-const TAKEN_DOWN_PUBLISH_ERROR =
+export const TAKEN_DOWN_PUBLISH_ERROR =
   "This post can't be published: its model or model version has been taken down.";
 
 export const updatePost = async ({
@@ -1127,6 +1181,13 @@ export const updatePost = async ({
   await preventReplicationLag('post', post.id);
   if (publishedAtWritten) await afterPostPublish({ postId: post.id, userId: post.userId });
   else await userPostCountCache.refresh(post.userId);
+  // A scheduled date writes publishedAt too; the scheduled-publishing job releases those reviews.
+  if (publishedAtWritten && post.publishedAt && post.publishedAt <= new Date())
+    syncReviewsOfMovedPosts({
+      change: 'publish',
+      postIds: [post.id],
+      onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+    });
   const textChanged = data.title !== undefined || data.detail !== undefined;
   if (publishedAtWritten || (textChanged && post.publishedAt))
     scanEntityInBackground({ entityType: 'Post', entityId: post.id });
@@ -1169,17 +1230,7 @@ export async function unpublishPostAsModerator({
   const post = rows[0];
   if (!post) return { unpublished: false };
 
-  const images = await dbWrite.image.findMany({
-    where: { postId: id },
-    select: { id: true },
-  });
-  if (images.length)
-    await queueImageSearchIndexUpdate({
-      ids: images.map((image) => image.id),
-      action: SearchIndexUpdateQueueAction.Delete,
-    });
-  await userPostCountCache.refresh(post.userId);
-  await userImageVideoCountCaches.refresh(post.userId);
+  await afterPostsUnpublish([{ postId: post.id, userId: post.userId }]);
   return { unpublished: true };
 }
 
@@ -1194,6 +1245,7 @@ export async function afterPostPublish(post: { postId: number; userId: number })
 
 export async function afterPostsPublish(posts: { postId: number; userId: number }[]) {
   if (!posts.length) return;
+  void onStorySparkPostsRestored({ postIds: posts.map((post) => post.postId) });
   const userIds = uniq(posts.map((post) => post.userId));
   await userPostCountCache.refresh(userIds);
   const images = await dbWrite.image.findMany({
@@ -1209,17 +1261,59 @@ export async function afterPostsPublish(posts: { postId: number; userId: number 
   await userImageVideoCountCaches.refresh(userIds);
 }
 
-export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerator?: boolean }) => {
+/** Everything an unpublish needs besides the write: the images leave search, the counts drop. */
+export async function afterPostsUnpublish(posts: { postId: number; userId: number }[]) {
+  if (!posts.length) return;
+  syncReviewsOfMovedPosts({
+    change: 'unpublish',
+    postIds: posts.map((post) => post.postId),
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
+  void onStorySparkPostsHidden({ postIds: posts.map((post) => post.postId) });
+  const images = await dbWrite.image.findMany({
+    where: { postId: { in: posts.map((post) => post.postId) } },
+    select: { id: true },
+  });
+  if (images.length)
+    await queueImageSearchIndexUpdate({
+      ids: images.map((image) => image.id),
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+  const userIds = uniq(posts.map((post) => post.userId));
+  await userPostCountCache.refresh(userIds);
+  await userImageVideoCountCaches.refresh(userIds);
+  // Last, so a failed queue write can't skip the search delete above. The nsfw trigger fires on
+  // publish only, and the version's level still counts this post's images.
+  await enqueueJobs(
+    posts.map((post) => ({
+      entityId: post.postId,
+      entityType: EntityType.Post,
+      type: JobQueueType.UpdateNsfwLevel,
+    }))
+  );
+}
+
+export const deletePost = async ({
+  id,
+  isModerator,
+  deletedById,
+}: GetByIdInput & { isModerator?: boolean; deletedById?: number }) => {
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
+  // Chapter 1 of a story started from an image, whose points go with it.
+  const sparked = await dbWrite.storylineChapter.findFirst({
+    where: { postId: id, depth: 0, storyline: { sparkImageId: { not: null } } },
+    select: { storylineId: true },
+  });
 
-  const { post, deletedImages, orphanedImageIds, imageOwnerIds } = await dbWrite.$transaction(
-    async (tx) => {
-      // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
-      const images = await tx.$queryRaw<
-        { id: number; url: string; userId: number; deletable: boolean }[]
-      >`
+  const { post, deletedImages, orphanedImageIds, imageOwnerIds, reported, unreleasedReviewIds } =
+    await dbWrite.$transaction(
+      async (tx) => {
+        // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
+        const images = await tx.$queryRaw<
+          { id: number; url: string; userId: number; deletable: boolean }[]
+        >`
         SELECT i.id, i.url, i."userId", ${Prisma.raw(
           isModerator ? 'TRUE' : 'i."userId" = p."userId"'
         )} AS deletable
@@ -1228,59 +1322,92 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
         WHERE i."postId" = ${id}
       `;
 
-      const deletableImages = images.filter((image) => image.deletable);
+        const deletableImages = images.filter((image) => image.deletable);
+        // Before the delete: `ImageReport` cascades with the image.
+        const reported =
+          deletedById === undefined
+            ? new Set<number>()
+            : await imagesWithOpenReports(
+                deletableImages.map((image) => image.id),
+                tx
+              );
 
-      let deletedImages: { id: number; url: string }[] = [];
-      if (deletableImages.length) {
-        deletedImages = await tx.$queryRaw<{ id: number; url: string }[]>`
+        type DeletedImage = {
+          id: number;
+          url: string;
+          userId: number;
+          ingestion: string;
+          needsReview: string | null;
+          nsfwLevel: number;
+          blockedFor: string | null;
+        };
+        let deletedImages: DeletedImage[] = [];
+        if (deletableImages.length) {
+          const imageIds = deletableImages.map((i) => i.id);
+          deletedImages = await tx.$queryRaw<DeletedImage[]>`
           DELETE FROM "Image"
-          WHERE id IN (${Prisma.join(deletableImages.map((i) => i.id))})
-          RETURNING id, url
+          WHERE id IN (${Prisma.join(imageIds)})
+          RETURNING id, url, "userId", ingestion::text, "needsReview", "nsfwLevel", "blockedFor"
         `;
-      }
+        }
 
-      const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
+        // Before the delete, which nulls their `postId` and leaves them public.
+        const unreleasedReviewIds = await unreleasedReviewIdsOfPosts([id], tx);
+
+        const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
         DELETE FROM "Post"
         WHERE id = ${id}
         RETURNING id, "nsfwLevel"
       `;
 
-      // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
-      // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
-      // never revisits them — their docs must be dropped here.
-      const deletedIds = new Set(deletedImages.map(({ id }) => id));
-      const orphanedImageIds = images.filter(({ id }) => !deletedIds.has(id)).map(({ id }) => id);
+        // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
+        // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
+        // never revisits them — their docs must be dropped here.
+        const deletedIds = new Set(deletedImages.map(({ id }) => id));
+        const orphanedImageIds = images.filter(({ id }) => !deletedIds.has(id)).map(({ id }) => id);
 
-      const imageOwnerIds = uniq(images.map((image) => image.userId));
+        const imageOwnerIds = uniq(images.map((image) => image.userId));
 
-      return { post, deletedImages, orphanedImageIds, imageOwnerIds };
-    },
-    // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
-    // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
-    // said to revert once the slowness was root-caused, and it now has been.
-    //
-    // The cause was NOT this budget. `UserProfile.sfwCoverImageId` is a foreign key to
-    // `Image` with ON DELETE SET NULL and no index, on a ~1.5 GB / 3.44M row table, so
-    // Postgres's referential-integrity trigger full-scanned it ONCE PER DELETED IMAGE:
-    // 1.74M calls at a 634 ms mean, ~290 hours of scan time, to null 12 rows. That made
-    // this DELETE cost ~634 ms per image, which is why ~100 images took ~63 s and why
-    // the failure was deterministic by post size rather than random.
-    //
-    // Fixed by the index in #4284, applied 2026-08-22 21:01:26Z. Measured after, on
-    // production traffic: the RI trigger went 634 ms -> 0.003 ms over 2,613 calls, and
-    // the plan went from ~193,719 buffers to 3. Slow (>5s) executions of this statement:
-    // 11 in the six minutes before the index, ZERO in the fifteen minutes after.
-    //
-    // So 10s is no longer a tight budget — at 0.003 ms/image even a 1000-image post
-    // spends ~3 ms in that trigger. Keeping 30s would only mean a genuinely stuck delete
-    // takes three times as long to surface.
-    { timeout: 10000 }
-  );
+        return {
+          post,
+          deletedImages,
+          orphanedImageIds,
+          imageOwnerIds,
+          reported,
+          unreleasedReviewIds,
+        };
+      },
+      // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
+      // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
+      // said to revert once the slowness was root-caused, and it now has been.
+      //
+      // The cause was NOT this budget. `UserProfile.sfwCoverImageId` is a foreign key to
+      // `Image` with ON DELETE SET NULL and no index, on a ~1.5 GB / 3.44M row table, so
+      // Postgres's referential-integrity trigger full-scanned it ONCE PER DELETED IMAGE:
+      // 1.74M calls at a 634 ms mean, ~290 hours of scan time, to null 12 rows. That made
+      // this DELETE cost ~634 ms per image, which is why ~100 images took ~63 s and why
+      // the failure was deterministic by post size rather than random.
+      //
+      // Fixed by the index in #4284, applied 2026-08-22 21:01:26Z. Measured after, on
+      // production traffic: the RI trigger went 634 ms -> 0.003 ms over 2,613 calls, and
+      // the plan went from ~193,719 buffers to 3. Slow (>5s) executions of this statement:
+      // 11 in the six minutes before the index, ZERO in the fifteen minutes after.
+      //
+      // So 10s is no longer a tight budget — at 0.003 ms/image even a 1000-image post
+      // spends ~3 ms in that trigger. Keeping 30s would only mean a genuinely stuck delete
+      // takes three times as long to surface.
+      { timeout: 10000 }
+    );
 
   // Immediately after the commit, ahead of the de-index/S3/cache steps below. Those can
   // reject, and by this point the rows are gone — the pre-delete snapshot is the only
   // remaining record of which documents went stale.
   await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'post-delete' });
+  if (sparked) void onStorySparkLost(sparked.storylineId);
+  announceReviewsInBackground({
+    reviewIds: unreleasedReviewIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 
   const deletedImageIds = deletedImages.map((img) => img.id);
 
@@ -1296,7 +1423,18 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
     await invalidateManyImageExistence(deletedImageIds);
 
     await Limiter({ batchSize: 5 }).process(deletedImages, async (batch) =>
-      Promise.all(batch.map(({ id, url }) => deleteImageFromS3({ id, url })))
+      Promise.all(
+        batch.map((image) =>
+          deleteImageFromS3({
+            id: image.id,
+            url: image.url,
+            keepShopArtwork: isPlainOwnerDelete(
+              { ...image, openReport: reported.has(image.id) },
+              deletedById
+            ),
+          })
+        )
+      )
     );
   }
 
@@ -1444,6 +1582,7 @@ export const addPostImage = async ({
   user,
   externalDetailsUrl,
   assertPostOwnedBy,
+  serverMintedUrl,
   ...props
 }: ImageSchema & {
   user: SessionUser;
@@ -1451,6 +1590,8 @@ export const addPostImage = async ({
   generationWorkflowId?: string;
   /** Shared across a request that adds several images to one post; see `createPostOwnerCheck`. */
   assertPostOwnedBy?: AssertPostOwnedBy;
+  /** `url` is a key the server minted and stored itself, not one from the client. */
+  serverMintedUrl?: boolean;
 }) => {
   const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
   if (externalData) {
@@ -1552,6 +1693,7 @@ export const addPostImage = async ({
     toolIds: toolId ? [toolId] : undefined,
     techniqueIds: techniqueId ? [techniqueId] : undefined,
     skipIngestion: collectionMeta.judgesApplyBrowsingLevel,
+    clientUrl: serverMintedUrl ? undefined : true,
   });
 
   await createImageResources({ imageId: partialResult.id }).catch(handleLogError);
@@ -1748,8 +1890,6 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
       userId: result.userId,
     });
   }
-
-  purgeImageGenerationDataCache(image.id);
 };
 
 export const addResourceToPostImage = async ({
@@ -1905,6 +2045,10 @@ export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostIma
 
   await updatePostNsfwLevel(postId);
   await bustCachesForPosts(postId);
+  // The version level counts the first 20 images by index, so an order change can move one in or out.
+  await enqueueJobs([
+    { entityId: postId, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
+  ]);
 
   return transaction;
 };
@@ -1914,6 +2058,103 @@ export const getPostResources = async ({ id }: GetByIdInput) => {
     where: { postId: id },
     orderBy: { modelName: 'asc' },
   });
+};
+
+type PostResourceCover = Pick<
+  ImagesForModelVersions,
+  'id' | 'userId' | 'url' | 'type' | 'nsfwLevel' | 'width' | 'height' | 'hash' | 'poi' | 'minor'
+>;
+
+/**
+ * The covers of a post's resources for its owner (or a moderator), keyed by model version. The
+ * cover is the first image of the shared version-image cache that the viewer's browsing level
+ * allows; a mature model listed on .com through its face sends only its PG/PG-13 images there.
+ * A version of a taken-down model, or of another user's private model, has none. Covers are
+ * decoration, so a cache failure yields none rather than an error.
+ */
+export const getPostResourceCovers = async ({
+  id,
+  user,
+  browsingLevel,
+}: GetByIdInput & { user: SessionUser; browsingLevel: number }) => {
+  const post = await dbRead.post.findUnique({ where: { id }, select: { userId: true } });
+  if (!post || (post.userId !== user.id && !user.isModerator)) throw throwAuthorizationError();
+
+  const resources = await getPostResources({ id });
+  const versionIds = [
+    ...new Set(resources.filter((x) => x.name !== 'vae').map((x) => x.modelVersionId)),
+  ].filter(isDefined);
+  const covers: Record<number, PostResourceCover | null> = Object.fromEntries(
+    versionIds.map((versionId) => [versionId, null])
+  );
+  if (!versionIds.length) return covers;
+
+  const versions = await dbRead.modelVersion.findMany({
+    where: { id: { in: versionIds } },
+    select: {
+      id: true,
+      model: {
+        select: {
+          mode: true,
+          nsfw: true,
+          nsfwLevel: true,
+          sfwName: true,
+          sfwCoverImageId: true,
+          availability: true,
+          userId: true,
+        },
+      },
+    },
+  });
+  const servable = versions.filter(
+    ({ model }) =>
+      model.mode !== ModelModifier.TakenDown &&
+      (model.availability !== Availability.Private || model.userId === user.id)
+  );
+  if (!servable.length) return covers;
+
+  const byVersion = await imagesForModelVersionsCache
+    .fetch(servable.map((version) => version.id))
+    .catch((error: Error) => {
+      logToAxiom({
+        name: 'post-service',
+        type: 'error',
+        message: 'post resource covers unavailable',
+        error: error.message,
+      }).catch();
+      return undefined;
+    });
+  if (!byVersion) return covers;
+
+  const showSfwFace = showsSfwFace(browsingLevel);
+  for (const { id: versionId, model } of servable) {
+    const images = imagesForFace(
+      byVersion[versionId]?.images ?? [],
+      { nsfw: model.nsfw, hasSfwFace: hasCompleteSfwFace(model) },
+      showSfwFace
+    ).filter(
+      (image) =>
+        Flags.intersects(image.nsfwLevel, browsingLevel) &&
+        // The cache keeps images from private posts; only their owner may see them.
+        (image.availability !== Availability.Private || image.userId === user.id)
+    );
+    const cover = images[0];
+    covers[versionId] = cover
+      ? {
+          id: cover.id,
+          userId: cover.userId,
+          url: cover.url,
+          type: cover.type,
+          nsfwLevel: cover.nsfwLevel,
+          width: cover.width,
+          height: cover.height,
+          hash: cover.hash,
+          poi: cover.poi,
+          minor: cover.minor,
+        }
+      : null;
+  }
+  return covers;
 };
 
 export const updatePostNsfwLevel = async (ids: number | number[]) => {
@@ -2030,6 +2271,7 @@ export const updatePostCollectionTagId = async ({
       tagId: collectionTagId,
     },
   });
+  await bustContestCollectionItemsCache(images.map((i) => i.id));
 };
 
 async function refreshSfwFaceLevels(modelIds: number[]) {

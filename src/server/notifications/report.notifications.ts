@@ -58,8 +58,7 @@ export const reportNotifications = createNotificationProcessor({
                 WHEN jsonb_typeof(r.details->'reportType') = 'string' THEN r.details->>'reportType'
                 WHEN EXISTS (SELECT 1 FROM "ResourceReviewReport" WHERE "reportId" = r.id) THEN 'review'
                 WHEN EXISTS (SELECT 1 FROM "ModelReport" WHERE "reportId" = r.id) THEN 'resource'
-                WHEN EXISTS (SELECT 1 FROM "CommentReport" WHERE "reportId" = r.id) THEN 'comment'
-                WHEN EXISTS (SELECT 1 FROM "CommentV2Report" WHERE "reportId" = r.id) THEN 'comment'
+                WHEN EXISTS (SELECT 1 FROM "CommentV3Report" WHERE "reportId" = r.id) THEN 'comment'
                 WHEN EXISTS (SELECT 1 FROM "ImageReport" WHERE "reportId" = r.id) THEN 'image'
                 WHEN EXISTS (SELECT 1 FROM "ArticleReport" WHERE "reportId" = r.id) THEN 'article'
                 WHEN EXISTS (SELECT 1 FROM "PostReport" WHERE "reportId" = r.id) THEN 'post'
@@ -93,7 +92,7 @@ export const reportNotifications = createNotificationProcessor({
   },
   'entity-appeal-resolved': {
     displayName: 'Entity appeal resolved',
-    category: NotificationCategory.Other,
+    category: NotificationCategory.Moderation,
     toggleable: false,
     prepareMessage: ({ details }) => {
       // Sent by the moderator app's site-appeal queues; every other sender omits `category`.
@@ -117,7 +116,7 @@ export const reportNotifications = createNotificationProcessor({
   },
   'entity-appeal-content-removed': {
     displayName: 'Appealed content removed',
-    category: NotificationCategory.Other,
+    category: NotificationCategory.Moderation,
     toggleable: false,
     prepareMessage: ({ details }) => {
       const entity = String(details.entityType).toLowerCase();

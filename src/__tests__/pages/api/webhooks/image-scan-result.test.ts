@@ -205,6 +205,14 @@ vi.mock('~/server/services/system-cache', () => ({
   getTagRules: vi.fn().mockResolvedValue([]),
 }));
 
+const { mockRefreshPicturesForImages } = vi.hoisted(() => ({
+  mockRefreshPicturesForImages: vi.fn(async (_imageIds: number[]) => undefined),
+}));
+vi.mock('~/server/services/refresh-profile-pictures-lazy', () => ({
+  refreshProfilePicturesForImagesLazy: mockRefreshPicturesForImages,
+  refreshProfilePicturesForUsersLazy: vi.fn(async () => undefined),
+}));
+
 // Auto-stubbing `~/server/redis/caches` mock.
 //
 // The success path busts/refreshes several redis caches (`userImageVideoCountCaches.bust`,
@@ -522,6 +530,7 @@ describe('image-scan-result webhook - pipeline tests', () => {
         return strings.join('').includes("'{retryCount}'");
       });
       expect(errorFlips).toHaveLength(0);
+      expect(mockRefreshPicturesForImages).toHaveBeenCalledWith([13]);
     });
 
     it('signals the Error state so the editor stops showing "Analyzing image"', async () => {
@@ -718,7 +727,11 @@ describe('image-scan-result webhook - pipeline tests', () => {
       expect(errorFlipsFor(40)).toHaveLength(0);
       expect(vi.mocked(signalClient.send)).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ imageId: 40, ingestion: ImageIngestionStatus.Scanned }),
+          data: expect.objectContaining({
+            imageId: 40,
+            ingestion: ImageIngestionStatus.Scanned,
+            nsfwLevel: 8,
+          }),
         })
       );
     });

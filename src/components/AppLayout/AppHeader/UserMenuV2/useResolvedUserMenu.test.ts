@@ -25,7 +25,7 @@ const { useResolvedUserMenu } = await import('./useResolvedUserMenu');
 let latest: ReturnType<typeof useResolvedUserMenu>;
 let root: Root;
 function Harness({ muted }: { muted: ['collections'] | [] }) {
-  latest = useResolvedUserMenu({ opened: true, pins: ['collections'], muted });
+  latest = useResolvedUserMenu({ opened: true, pins: ['collections'], muted, mobile: false });
   return null;
 }
 const mount = (muted: ['collections'] | []) =>

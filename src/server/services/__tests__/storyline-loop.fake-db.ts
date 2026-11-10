@@ -456,6 +456,8 @@ export function createFakeDb() {
       return [{ exists: blocks.has(`${a}:${b}`) || blocks.has(`${c}:${d}`) }];
     }
     if (text.includes("'scores'")) return [{ score: 0 }];
+    // `clearTombstoneTips`: the route's canon edges are not this loop's subject (the SQL suites).
+    if (text.includes('UPDATE "StorylineChapterEdge" e SET canon = false')) return [];
     if (text.includes('FROM "StorylinePendingChapter"') && text.includes('WHERE "postId" =')) {
       // The link a promotion reads, which it must lock: two writers then take turns on it.
       // Modelled only while the statement locks, so one that drops the lock is refused.
@@ -474,7 +476,13 @@ export function createFakeDb() {
     // images a reader may see is storyline.service.test's subject, not this one's.
     if (text.includes('FROM "Image" i') && text.includes('JOIN "StorylineChapter" c')) return [];
     if (text.includes('FOR NO KEY UPDATE')) return [];
-    if (text.includes('FROM "Storyline"') && /FOR SHARE( OF st)?$/.test(text.trim())) return [];
+    // The storyline of the chapter on a post, which a submit refuses without.
+    if (text.includes('JOIN "StorylineChapter" c') && /FOR SHARE OF st$/.test(text.trim())) {
+      const [postId] = v as [number];
+      const chapter = tables.storylineChapter.find((c) => same(c.postId, postId));
+      return chapter ? [{ id: chapter.storylineId }] : [];
+    }
+    if (text.includes('FROM "Storyline"') && /FOR SHARE$/.test(text.trim())) return [];
     if (text.includes('FROM "StorylineChapter"') && text.includes('FOR SHARE')) {
       // The live chapters among the ids asked for, locked until the transaction ends. Modelled only
       // while the statement carries both its filters, so one that drops either is refused.
@@ -621,9 +629,51 @@ export function createFakeDb() {
     });
   };
 
+  /**
+   * The Kysely reads the placement space resolver makes (`@civitai/db-queries/placement`), answered
+   * from these tables in the row shapes those queries return, for a test to put behind its own
+   * `vi.fn` mocks of them. What the real queries return for real rows is pinned against a database
+   * in placement-reads.kysely-parity.test.ts.
+   */
+  const placementReads = {
+    getChapterPlacementTarget: async (_db: unknown, postId: number) => {
+      const chapter = tables.storylineChapter.find((c) => same(c.postId, postId));
+      const storyline =
+        chapter && tables.storyline.find((st) => same(st.id, chapter.storylineId));
+      if (!chapter || !storyline) return undefined;
+      const owner = tables.user.find((u) => same(u.id, storyline.userId));
+      return {
+        removedAt: (chapter.removedAt as Date | null | undefined) ?? null,
+        storylineId: storyline.id as number,
+        storylineUserId: storyline.userId as number,
+        storylineStatus: storyline.status as string,
+        storylineTosViolation: storyline.tosViolation as boolean,
+        username: (owner?.username as string | null | undefined) ?? null,
+      };
+    },
+    listPlacementSpacesFor: async (
+      _db: unknown,
+      { surface, levels }: { surface: string; levels: { entityType: string; entityId: number }[] }
+    ) =>
+      tables.placementSpace
+        .filter(
+          (row) =>
+            row.surface === surface &&
+            levels.some(
+              (level) => level.entityType === row.entityType && same(level.entityId, row.entityId)
+            )
+        )
+        .map(({ entityType, mode, price, freeSlots, settings }) =>
+          structuredClone({ entityType, mode, price, freeSlots, settings })
+        ),
+    countPlacements: async (_db: unknown, where: Where) =>
+      tables.placement.filter((row) => matches('placement', row, where)).length,
+  };
+
   return {
     install,
     insert,
+    placementReads,
     rows: (model: (typeof MODELS)[number]) => structuredClone(tables[model]),
     row: (model: (typeof MODELS)[number], where: Where) => {
       const found = tables[model].find((r) => matches(model, r, where));

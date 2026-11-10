@@ -5,16 +5,11 @@ import { componentFileTypes } from '~/server/common/constants';
 import { EntityAccessPermission } from '~/server/common/enums';
 import type { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
-import { isPaidAccessActive } from '@civitai/buzz';
-import { getPaidAccess } from '~/server/services/paid-access.service';
 import type { LinkedComponentSettings } from '~/server/schema/model-version.schema';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
-import {
-  ModelFileVisibility,
-  ModelModifier,
-  ModelStatus,
-  ModelUsageControl,
-} from '~/shared/utils/prisma/enums';
+import type { ScanResultCode } from '~/shared/utils/prisma/enums';
+import { ModelUsageControl } from '~/shared/utils/prisma/enums';
+import { hasFailedScan } from '~/server/utils/failed-scan';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import type { ResolveAttribution } from '~/utils/resolve-attribution';
@@ -25,7 +20,23 @@ import { isDefined } from '~/utils/type-guards';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead } from '../db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { readModelVersionForFileViaKysely } from '~/server/services/hot-reads-5.reads';
+import {
+  downloadFileSelect,
+  readDownloadFilesViaKysely,
+} from '~/server/services/hot-reads-6.reads';
+import type { DownloadFilesWhere } from '@civitai/db-queries/hot-reads-6';
 import { hasEntityAccess } from './common.service';
+import { trainingDataShareRestricted } from './training-data-restricted.service';
+import { trainingDataServableOnHost } from '~/shared/utils/training-data-visibility';
+import {
+  getVersionEarlyAccess,
+  isModelArchived,
+  isModelDeleted,
+  isModelTakenDown,
+  isVersionPublished,
+} from '~/server/utils/model-version-gates';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
   if (!id && (!ids || ids.length === 0)) {
@@ -193,6 +204,7 @@ export const getFileForModelVersion = async ({
   fileId,
   direct,
   attribution,
+  redCapable,
 }: {
   modelVersionId: number;
   type?: ModelFileType;
@@ -219,42 +231,15 @@ export const getFileForModelVersion = async ({
    * resolver for attribution only. Required so every caller names itself.
    */
   attribution: ResolveAttribution;
+  /** Whether the request's host serves mature content (`isRedCapableHost`). When false, a
+   *  Training Data file rated above PG13 or not fully rated is not-found for anyone but its owner
+   *  or a moderator. */
+  redCapable: boolean;
 }): Promise<ModelVersionFileResult> => {
-  const modelVersion = await dbRead.modelVersion.findFirst({
-    // `model: { is: {} }` requires the (required) `model` relation to exist.
-    // Without it, a ModelVersion whose `model` was hard-deleted (orphaned FK)
-    // makes Prisma throw "Inconsistent query result: Field model is required to
-    // return data, got null" at query execution → caught upstream → 500 on every
-    // download lookup for that version. With the filter the DB drops the orphan
-    // row, findFirst returns null, and we fall through to the `not-found` (404)
-    // branch below — a model-less version is genuinely not downloadable. Same
-    // class/fix as #2637 (relation-existence filter on orphaned required
-    // relations).
-    where: { id: modelVersionId, model: { is: {} } },
-    select: {
-      id: true,
-      status: true,
-      model: {
-        select: {
-          id: true,
-          name: true,
-          type: true,
-          publishedAt: true,
-          status: true,
-          userId: true,
-          mode: true,
-          nsfw: true,
-          availability: true,
-          poi: true,
-        },
-      },
-      name: true,
-      trainedWords: true,
-      createdAt: true,
-      requireAuth: true,
-      usageControl: true,
-    },
-  });
+  // The version and its model. The read's inner join drops a version whose model row was
+  // hard-deleted (an orphaned foreign key), so that version is `not-found` (404), not a 500.
+  const { kyselyRead } = await loadKyselyDb();
+  const modelVersion = await readModelVersionForFileViaKysely(kyselyRead, modelVersionId);
 
   if (!modelVersion) return { status: 'not-found' };
 
@@ -271,32 +256,25 @@ export const getFileForModelVersion = async ({
   });
 
   // Paid-access gate now sourced from PaidAccess (mirrors the old columns during Phase 1).
-  const paidAccess = (await getPaidAccess('ModelVersion', [modelVersion.id]))[modelVersion.id];
-  const inEarlyAccess = !!paidAccess && isPaidAccessActive(paidAccess);
-  const deadline = paidAccess?.endsAt ?? undefined;
+  const { inEarlyAccess, deadline } = await getVersionEarlyAccess(modelVersion.id);
   const isDownloadable = modelVersion.usageControl === ModelUsageControl.Download;
 
-  const archived = modelVersion.model.mode === ModelModifier.Archived;
-  if (!noAuth && archived) return { status: 'archived' };
+  if (!noAuth && isModelArchived(modelVersion)) return { status: 'archived' };
 
   const isMod = user?.isModerator;
   const userId = user?.id;
   const isOwner = !!userId && modelVersion.model.userId === userId;
 
-  // A deleted model is downloadable by moderators only — no exceptions. This
+  // A deleted or taken-down model is downloadable by moderators only — no exceptions. This
   // gate runs before every other access path (owner, internal noAuth callers,
-  // and the published-state check) so a deleted (incl. DMCA-removed) model can
-  // never be served to its owner or anyone else. Owners are otherwise allowed
-  // to download their own unpublished work, but a deleted model's owner is
-  // frequently the exact party a takedown targets (the uploader).
-  const modelDeleted = modelVersion.model.status === 'Deleted';
-  if (modelDeleted && !isMod) return { status: 'not-found' };
+  // and the published-state check) so such a model can never be served to its
+  // owner or anyone else. Owners are otherwise allowed to download their own
+  // unpublished work, but the owner is frequently the exact party a takedown
+  // targets (the uploader). Both answer the same `not-found`.
+  if ((isModelDeleted(modelVersion) || isModelTakenDown(modelVersion)) && !isMod)
+    return { status: 'not-found' };
 
-  const canDownload =
-    noAuth ||
-    isMod ||
-    isOwner ||
-    (modelVersion?.model?.status === 'Published' && modelVersion?.status === 'Published');
+  const canDownload = noAuth || isMod || isOwner || isVersionPublished(modelVersion);
 
   if (!canDownload) return { status: 'not-found' };
 
@@ -316,7 +294,7 @@ export const getFileForModelVersion = async ({
     !!versionAccess?.hasAccess &&
     (versionAccess.permissions & EntityAccessPermission.EarlyAccessDownload) !== 0;
   if (inEarlyAccess && !boughtDownload && !isMod && !isOwner) {
-    return { status: 'early-access', details: { deadline } };
+    return { status: 'early-access', details: { deadline, baseModel: modelVersion.baseModel } };
   }
 
   // `unauthorized` means "no session" and callers answer it with a login redirect. A signed-in user
@@ -327,35 +305,24 @@ export const getFileForModelVersion = async ({
   }
 
   // Get the correct file
-  const fileSelect = {
-    id: true,
-    url: true,
-    name: true,
-    overrideName: true,
-    type: true,
-    metadata: true,
-    sizeKB: true,
-    hashes: { select: { hash: true }, where: { type: 'SHA256' as const } },
-  };
-
   let file: FileResult | null = null;
-  // The files `file` sits beside, so the name it gets can be made distinct from theirs.
   let versionFiles: FileResult[] = [];
+  const readFiles = (where: DownloadFilesWhere) => readDownloadFilesViaKysely(kyselyRead, where);
   if (fileId) {
     // Direct file lookup by ID — bypasses type-based resolution. Fetched as the whole version's
     // files rather than the one row so the siblings come along; it is the same single query.
-    const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId };
-    if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
-    const found = await dbRead.modelFile.findMany({ where: fileWhere, select: fileSelect });
+    const found = await readFiles({ modelVersionId, publicOnly: !isOwner && !isMod });
     versionFiles = found as FileResult[];
     file = versionFiles.find((candidate) => candidate.id === fileId) ?? null;
   } else {
     // Try local files on this model version first. A replaced file is a quarantined component whose
     // linked replacement is the fallback below, so it must not win here.
-    const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId, replacedAt: null };
-    if (type) fileWhere.type = type;
-    if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
-    const files = await dbRead.modelFile.findMany({ where: fileWhere, select: fileSelect });
+    const files = await readFiles({
+      modelVersionId,
+      notReplaced: true,
+      type,
+      publicOnly: !isOwner && !isMod,
+    });
     versionFiles = files as FileResult[];
     const metadata = {
       ...user?.filePreferences,
@@ -380,11 +347,22 @@ export const getFileForModelVersion = async ({
         // Fetch the primary 'Model' file from the linked version
         const linkedFile = await dbRead.modelFile.findFirst({
           where: { modelVersionId: linked.resourceId, type: 'Model' },
-          select: fileSelect,
+          select: {
+            ...downloadFileSelect,
+            modelVersion: {
+              select: { status: true, model: { select: { status: true, mode: true } } },
+            },
+          },
           orderBy: { id: 'asc' },
         });
-        if (linkedFile) {
-          file = { ...linkedFile, type: type } as FileResult;
+        // The linked file belongs to another model, which the gates above never saw.
+        const linkedRefused =
+          !!linkedFile &&
+          !isMod &&
+          (isModelDeleted(linkedFile.modelVersion) || isModelTakenDown(linkedFile.modelVersion));
+        if (linkedFile && !linkedRefused) {
+          const { modelVersion: _linkedVersion, ...linkedRow } = linkedFile;
+          file = { ...linkedRow, type: type } as FileResult;
           // Belongs to the linked version, so this version's files are not its siblings.
           versionFiles = [];
         }
@@ -392,6 +370,31 @@ export const getFileForModelVersion = async ({
     }
   }
   if (!file) return { status: 'not-found' };
+  if (
+    file.type === 'Training Data' &&
+    !isOwner &&
+    !isMod &&
+    !trainingDataServableOnHost(
+      file.metadata as { nsfwLevel?: unknown; fullyRated?: unknown } | null,
+      redCapable
+    )
+  )
+    return { status: 'not-found' };
+  if (
+    file.type === 'Training Data' &&
+    !isOwner &&
+    !isMod &&
+    (await trainingDataShareRestricted(dbRead, modelVersionId))
+  )
+    return { status: 'not-found' };
+  if (!isMod && hasFailedScan(file)) return { status: 'failed-scan' };
+
+  // Named against every file on the version, not only the files this request could pick from:
+  // otherwise two files sharing an uploaded name both download under it and overwrite each other.
+  const pickedFromAll = !!fileId && (isOwner || !!isMod);
+  if (versionFiles.length && !pickedFromAll) {
+    versionFiles = (await readFiles({ modelVersionId })) as FileResult[];
+  }
 
   const filename = getDownloadFilename({
     model: modelVersion.model,
@@ -419,9 +422,7 @@ export const getFileForModelVersion = async ({
       isDownloadable,
       // The download endpoint excludes unpublished versions from the download metric — a draft is only
       // reachable by its owner and by internal services, so anything fetching one isn't a download.
-      published:
-        modelVersion.status === ModelStatus.Published &&
-        modelVersion.model.status === ModelStatus.Published,
+      published: isVersionPublished(modelVersion),
     };
   } catch (err) {
     // Both storage-resolver and delivery-worker fallback rejected this file —
@@ -482,12 +483,15 @@ type ModelVersionFileResult =
         | 'no-access'
         | 'archived'
         | 'downloads-disabled'
+        | 'failed-scan'
         | 'error';
     }
   | {
       status: 'early-access';
       details: {
         deadline?: Date;
+        /** Lets the caller say a non-commercial version can't be bought, instead of offering a purchase. */
+        baseModel: string;
       };
     }
   | {
@@ -516,4 +520,6 @@ type FileResult = {
     hash: string;
   }[];
   url: string;
+  pickleScanResult: ScanResultCode;
+  virusScanResult: ScanResultCode;
 };

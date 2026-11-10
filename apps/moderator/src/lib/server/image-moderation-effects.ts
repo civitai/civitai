@@ -13,7 +13,7 @@ import { getClickhouse } from './clickhouse';
 import { getNotifications } from './notifications';
 import { getSysRedis } from './redis';
 import { syncSearchIndex } from './search-index';
-import { logAxiomError } from './axiom';
+import { logAxiomError, logToAxiom } from './axiom';
 import { appealResolutionEmail } from './emails/appeal-resolution.email';
 
 /**
@@ -120,12 +120,14 @@ type BlockableImage = {
   blockedFor: string | null;
 };
 
-export async function addImagesToBlocklist(images: BlockableImage[]): Promise<void> {
+export async function addImagesToBlocklist(
+  images: (BlockableImage & { csam?: boolean })[]
+): Promise<void> {
   const values = images
-    .filter((i): i is BlockableImage & { pHash: string } => !!i.pHash)
+    .filter((i): i is BlockableImage & { pHash: string; csam?: boolean } => !!i.pHash)
     .map((i) => ({
       hash: i.pHash,
-      reason: reviewTypeToBlockReason(i.blockedFor ?? i.needsReview),
+      reason: i.csam ? 'CSAM' : reviewTypeToBlockReason(i.blockedFor ?? i.needsReview),
     }));
   if (!values.length) return;
   await getClickhouse().insert({ table: 'blocked_images', values, format: 'JSONEachRow' });
@@ -355,13 +357,30 @@ export async function applyBlockSideEffects(
     userAgent?: string;
     violationType?: string;
     violationDetails?: string;
+    /** `HELD_IMAGE` as the block wrote it: no owner notice, and a CSAM blocklist entry. */
+    heldImage?: boolean;
+    /** Under the moderator-only review flag as the block wrote it: a CSAM blocklist entry. */
+    underReview?: boolean;
   }
 ): Promise<void> {
   const { imageId, actorUserId, ip, userAgent, violationType, violationDetails } = actor;
+  const { heldImage, underReview } = actor;
+  if (!heldImage && underReview)
+    void logToAxiom({
+      type: 'warning',
+      name: 'image-notice-under-review',
+      imageId,
+      userId: img.userId,
+    }).catch(() => undefined);
   await Promise.all([
     bestEffort('blocklist', imageId, () =>
       addImagesToBlocklist([
-        { pHash: img.pHash, needsReview: img.needsReview, blockedFor: img.blockedFor },
+        {
+          pHash: img.pHash,
+          needsReview: img.needsReview,
+          blockedFor: img.blockedFor,
+          csam: heldImage || underReview,
+        },
       ])
     ),
     trackImageDeleteTos({
@@ -375,14 +394,17 @@ export async function applyBlockSideEffects(
       violationType,
       violationDetails,
     }),
-    notifyImageTosViolation({
-      imageId,
-      ownerId: img.userId,
-      postId: img.postId,
-      // The chosen violation only — not the one `trackImageDeleteTos` infers for analytics. Telling
-      // someone their image broke a rule no moderator picked is worse than telling them nothing.
-      reason: violationType ? violationUserMessage(violationType) : undefined,
-    }),
+    heldImage
+      ? undefined
+      : notifyImageTosViolation({
+          imageId,
+          ownerId: img.userId,
+          postId: img.postId,
+          // The chosen violation only — not the one `trackImageDeleteTos` infers for analytics.
+          // Telling someone their image broke a rule no moderator picked is worse than telling
+          // them nothing.
+          reason: violationType ? violationUserMessage(violationType) : undefined,
+        }),
     bestEffort('invalidate-existence', imageId, () => invalidateImagesExistence([imageId])),
     bestEffort('visibility', imageId, () => applyVisibilitySideEffects(imageId, img.postId)),
   ]);
@@ -443,7 +465,7 @@ export async function notifyAppealResolved(input: {
     await getNotifications().createNotification({
       userId: input.appeal.userId,
       type: 'entity-appeal-resolved',
-      category: NotificationCategory.Other,
+      category: NotificationCategory.Moderation,
       // Per appeal, matching the main app: a repeated key reuses the first decision's notification.
       key: `entity-appeal-resolved:${entityType}:${input.entityId}:${input.appeal.id}`,
       details: {

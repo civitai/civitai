@@ -1,4 +1,5 @@
 import type {
+  AiToolkitTrainingInput,
   MingAiToolkitTrainingInput,
   Qwen21AiToolkitTrainingInput,
   YuE2AiToolkitTrainingInput,
@@ -13,6 +14,7 @@ import type {
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import { getFileExtension } from '~/utils/string-helpers';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
 /** Training Studio catalog gate (`ModelCard.flagKey`) -> the feature flag that answers it in this
@@ -24,7 +26,19 @@ export const studioModelFlagFeatures = {
   'yue2-training': 'yue2Training',
   'flux3-klein-training': 'flux3KleinTraining',
   'moss-image-training': 'mossImageTraining',
+  'flux2-klein-training': 'fluxTwoKleinTraining',
+  'flux2-klein-edit-training': 'flux2KleinEditTraining',
   'training-studio-audio-training': 'trainingStudioAudioTraining',
+  'krea2-training': 'krea2Training',
+  'boogu-training': 'booguTraining',
+  'mageflow-training': 'mageflowTraining',
+  'ernie-training': 'ernieTraining',
+  'hidream-o1-training': 'hidreamO1Training',
+  'anima-training': 'animaTraining',
+  'minimaxh3-training': 'minimaxh3Training',
+  'zimage-turbo-training': 'zimageturboTraining',
+  'ltx25-training': 'ltx25Training',
+  'ltx23-training': 'ltx23Training',
 } as const satisfies Record<string, FeatureFlagKey>;
 
 export function enabledStudioModelFlags(
@@ -125,6 +139,26 @@ export const aiToolkitBatchMax = (baseType: TrainingBaseModelType): number => {
   return 1;
 };
 
+// LoRA file size per unit of network dim, in MB, from the median size of published trainings. Size is
+// linear in dim but the per-dim cost depends on the architecture, so only measured types are listed.
+// Same figures as the Training Studio's LORA_MB_PER_DIM.
+const loraMbPerDim: Partial<Record<TrainingBaseModelType, number>> = {
+  sdxl: 6.8,
+  flux: 10.25,
+  sd15: 1.125,
+};
+
+/** "At dim 32 the file is about 218MB (≈6.8MB per dim)." for a measured base type, else null. */
+export const networkDimSizeHint = (
+  baseType: TrainingBaseModelType,
+  dim: number | undefined
+): string | null => {
+  const mbPerDim = loraMbPerDim[baseType];
+  if (!mbPerDim || !dim || !Number.isFinite(dim) || dim <= 0) return null;
+  const perDim = Math.round(mbPerDim * 10) / 10;
+  return `At dim ${dim} the file is about ${Math.round(dim * mbPerDim)}MB (≈${perDim}MB per dim).`;
+};
+
 export const engineTypes = [
   'kohya',
   'rapid',
@@ -140,6 +174,28 @@ export type OptimizerTypes = (typeof optimizerTypes)[number];
 
 export const loraTypes = ['lora'] as const; // LoCon Lycoris, LoHa Lycoris
 export const lrSchedulerTypes = ['constant', 'cosine', 'cosine_with_restarts', 'linear'] as const;
+
+// AI-Toolkit's own (lowercase) enums — the single source for the submit, whatif and stored-params
+// schemas, so an optimizer can't be accepted by one and rejected or defaulted by another.
+export const aiToolkitLrSchedulerTypes = [
+  'constant',
+  'constant_with_warmup',
+  'cosine',
+  'linear',
+  'step',
+] as const satisfies readonly NonNullable<AiToolkitTrainingInput['lrScheduler']>[];
+export const aiToolkitOptimizerTypes = [
+  'adamw',
+  'adamw8bit',
+  'adam8bit',
+  'lion',
+  'lion8bit',
+  'adafactor',
+  'adagrad',
+  'prodigy',
+  'prodigy8bit',
+  'automagic',
+] as const satisfies readonly NonNullable<AiToolkitTrainingInput['optimizerType']>[];
 
 export const trainingModelInfo: {
   [key in TrainingDetailsBaseModelList]: {
@@ -440,6 +496,8 @@ export const trainingModelInfo: {
     air: 'urn:air:ideogram4:repository:huggingface:ideogram-ai/ideogram-4-nf4@main.tar',
     baseModel: 'Ideogram 4.0',
     isNew: true,
+    // Not licensed for on-site training. Kept so existing LoRAs still resolve.
+    disabled: true,
     aiToolkit: { ecosystem: 'ideogram4' },
   },
   //
@@ -632,6 +690,14 @@ export const trainingModelInfo: {
 
 export const rapidEta = 5;
 
+/** The image and video entries a training-data zip is read for. */
+export function isTrainingMediaEntry(zname: string) {
+  if (zname.endsWith('/') || zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE'))
+    return false;
+  const mimeType = getMimeTypeFromExt(getFileExtension(zname));
+  return !!mimeType && !!MEDIA_TYPE[mimeType];
+}
+
 export async function unzipTrainingData<T = void>(
   zData: JSZip,
   cb: (args: { imgBlob: Blob; filename: string; fileExt: string }) => Promise<T> | T
@@ -639,12 +705,9 @@ export async function unzipTrainingData<T = void>(
   return (
     await Promise.all(
       Object.entries(zData.files).map(async ([zname, zf]) => {
-        if (zf.dir) return;
-        if (zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE')) return;
+        if (zf.dir || !isTrainingMediaEntry(zname)) return;
 
         const fileExt = getFileExtension(zname);
-        const mimeType = getMimeTypeFromExt(fileExt);
-        if (!MEDIA_TYPE[mimeType as any]) return;
         const imgBlob = await zf.async('blob');
         return cb({ imgBlob, filename: zname, fileExt });
       })
@@ -882,6 +945,27 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
   return mandatoryTypes.includes(baseType);
 };
 
+/**
+ * True when every catalog entry for this base type, or for this AI Toolkit ecosystem, is disabled.
+ * The form hides such a type entirely, but a custom-model run names an AIR rather than a catalog key,
+ * so the per-key `disabled` check alone would let it through.
+ */
+export const isRetiredTrainingTarget = ({
+  baseModelType,
+  ecosystem,
+}: {
+  baseModelType: string;
+  ecosystem?: string;
+}): boolean => {
+  const entries = Object.values(trainingModelInfo);
+  const allDisabled = (matching: typeof entries) =>
+    matching.length > 0 && matching.every((v) => v.disabled === true);
+  return (
+    allDisabled(entries.filter((v) => v.type === baseModelType)) ||
+    (!!ecosystem && allDisabled(entries.filter((v) => v.aiToolkit?.ecosystem === ecosystem)))
+  );
+};
+
 export const isAudioTrainingBaseType = (baseType: TrainingBaseModelType): boolean => {
   return (trainingBaseModelTypesAudio as readonly string[]).includes(baseType);
 };
@@ -1090,3 +1174,13 @@ export const formatTrainingValidationError = (
     .filter((line, i, arr) => arr.findIndex((l) => l.message === line.message) === i);
   return lines.length > 0 ? lines : null;
 };
+
+export function isHeldForTrainingReview(
+  status: TrainingStatus | null | undefined,
+  trainingResults: unknown
+): boolean {
+  return (
+    status === TrainingStatus.Paused &&
+    (trainingResults as { heldForReview?: unknown } | null | undefined)?.heldForReview === true
+  );
+}

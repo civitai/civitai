@@ -6,6 +6,8 @@ import type {
   Token,
   User,
 } from '@node-oauth/oauth2-server';
+import { isHttpError } from '@sveltejs/kit';
+import { AccessDeniedError } from '@node-oauth/oauth2-server';
 import { createHash, timingSafeEqual } from 'crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { pack } from 'msgpackr';
@@ -14,7 +16,7 @@ import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
-import { ACCESS_TOKEN_TTL, AUTH_CODE_TTL, REFRESH_TOKEN_TTL } from './constants';
+import { ACCESS_TOKEN_TTL, AUTH_CODE_TTL, REFRESH_TOKEN_TTL, SYSTEM_USER_ID } from './constants';
 import { createAppAccessToken, createOAuthTokenPair } from './token-helpers';
 import { OriginNotAllowedError } from './errors';
 import { redirectUriMatches } from './redirect-uri';
@@ -184,6 +186,8 @@ export const oauthModel = {
     const data = {
       clientId: client.id,
       userId: user.id,
+      // On the code itself, so the hand-off knows an impersonation even when its context is lost.
+      ...((user as { impersonation?: boolean }).impersonation && { impersonation: true }),
       scope: scopeValue,
       redirectUri: code.redirectUri,
       codeChallenge: code.codeChallenge,
@@ -219,6 +223,7 @@ export const oauthModel = {
       codeChallenge?: string;
       codeChallengeMethod?: string;
       expiresAt: string;
+      impersonation?: boolean;
     }>(REDIS_KEYS.OAUTH.AUTHORIZATION_CODES, hashedCode);
 
     if (!data) return false;
@@ -235,7 +240,7 @@ export const oauthModel = {
       codeChallenge: data.codeChallenge,
       codeChallengeMethod: data.codeChallengeMethod,
       client: client as Client,
-      user: { id: data.userId },
+      user: { id: data.userId, ...(data.impersonation && { impersonation: true }) },
     } as unknown as AuthorizationCode;
   },
 
@@ -254,30 +259,13 @@ export const oauthModel = {
   // ─── Tokens ─────────────────────────────────────────────────
 
   async saveToken(token: Token, client: Client, user: User): Promise<Token> {
-    const scope = stringToScope(token.scope as unknown as string);
-
-    if (isClientCredentialsUser(user)) {
-      const access = await createAppAccessToken(user.id, client.id, scope, ACCESS_TOKEN_TTL);
-      return {
-        accessToken: access.accessToken,
-        accessTokenExpiresAt: access.expiresAt,
-        scope: scopeToString(scope | TokenScope.UserRead),
-        client,
-        user,
-      } as Token;
+    try {
+      return await issueToken(token, client, user);
+    } catch (err) {
+      // The library turns any non-OAuth error into a 503, which a client retries; a refusal is final.
+      if (isHttpError(err, 403)) throw new AccessDeniedError(err.body.message);
+      throw err;
     }
-
-    const pair = await createOAuthTokenPair(user.id, client.id, scope);
-
-    return {
-      accessToken: pair.accessToken,
-      accessTokenExpiresAt: pair.accessTokenExpiresAt,
-      refreshToken: pair.refreshToken,
-      refreshTokenExpiresAt: pair.refreshTokenExpiresAt,
-      scope: scopeToString(scope),
-      client,
-      user,
-    } as Token;
   },
 
   async getAccessToken(accessToken: string): Promise<Token | false> {
@@ -404,6 +392,33 @@ function isClientCredentialsUser(user: User): user is User & ClientCredentialsUs
   return (user as Partial<ClientCredentialsUser>).viaClientCredentials === true;
 }
 
+async function issueToken(token: Token, client: Client, user: User): Promise<Token> {
+  const scope = stringToScope(token.scope as unknown as string);
+
+  if (isClientCredentialsUser(user)) {
+    const access = await createAppAccessToken(user.id, client.id, scope, ACCESS_TOKEN_TTL);
+    return {
+      accessToken: access.accessToken,
+      accessTokenExpiresAt: access.expiresAt,
+      scope: scopeToString(scope | TokenScope.UserRead),
+      client,
+      user,
+    } as Token;
+  }
+
+  const pair = await createOAuthTokenPair(user.id, client.id, scope);
+
+  return {
+    accessToken: pair.accessToken,
+    accessTokenExpiresAt: pair.accessTokenExpiresAt,
+    refreshToken: pair.refreshToken,
+    refreshTokenExpiresAt: pair.refreshTokenExpiresAt,
+    scope: scopeToString(scope),
+    client,
+    user,
+  } as Token;
+}
+
 /**
  * Resolve a client to the lite shape ({ id, grants, redirectUris }) needed for code issuance + redirect_uri
  * validation, from the DB OR the first-party source seam. Single definition so the DB→first-party fallback
@@ -420,12 +435,27 @@ export async function resolveClientLite(
       redirectUris: string[];
       isFirstParty: boolean;
       accessMode: string;
+      /**
+       * No consent screen: first-party, or a confidential system app (owned by the civitai system account)
+       * staff marked `skipConsent`. A public
+       * app never skips it: with no secret, any program could start its sign-in, and consent is what stops one
+       * getting a token silently.
+       */
+      skipConsent: boolean;
     }
   | undefined
 > {
   const dbClient = await db
     .selectFrom('OauthClient')
-    .select(['id', 'grants', 'redirectUris', 'accessMode'])
+    .select([
+      'id',
+      'grants',
+      'redirectUris',
+      'accessMode',
+      'skipConsent',
+      'isConfidential',
+      'userId',
+    ])
     .where('id', '=', clientId)
     .executeTakeFirst();
   if (dbClient) {
@@ -440,6 +470,8 @@ export async function resolveClientLite(
       redirectUris: dbClient.redirectUris,
       isFirstParty: false,
       accessMode: dbClient.accessMode,
+      skipConsent:
+        dbClient.skipConsent && dbClient.isConfidential && dbClient.userId === SYSTEM_USER_ID,
     };
   }
   // First-party: NO DB row, resolved purely from the redirect_uri ORIGIN (host checked against the registry),
@@ -455,6 +487,7 @@ export async function resolveClientLite(
         isFirstParty: true,
         // First-party (spoke) clients are never gated — they're our own login hosts.
         accessMode: 'open',
+        skipConsent: true,
       }
     : undefined;
 }

@@ -11,6 +11,7 @@ import { articlesSearchIndex } from '~/server/search-index';
 import { createNotification } from '~/server/services/notification.service';
 import { articleModerationFloorSql } from '~/server/services/text-scan/scan-floor';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { articleOwnImageIds } from '~/server/services/article-ingestion.helpers';
 import {
   ArticleIngestionStatus,
   ArticleStatus,
@@ -56,6 +57,7 @@ type ArticleForGate = {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   coverId: number | null;
+  bannerId: number | null;
 };
 
 export type AutoApproveGateResult =
@@ -89,6 +91,7 @@ export async function computeArticleDerivedNsfwLevel(articleId: number): Promise
         a.id,
         GREATEST(
           COALESCE(max(cover."nsfwLevel"), 0),
+          COALESCE(max(banner."nsfwLevel"), 0),
           COALESCE(max(content_imgs."nsfwLevel"), 0)
         ) AS "nsfwLevel"
       FROM "Article" a
@@ -98,6 +101,9 @@ export async function computeArticleDerivedNsfwLevel(articleId: number): Promise
         -- only sees Scanned covers. Keep the join tight to mirror that and
         -- avoid implying Blocked covers ever reach this computation.
         AND cover."ingestion" = 'Scanned'
+      LEFT JOIN "Image" banner
+        ON a."bannerId" = banner.id
+        AND banner."ingestion" = 'Scanned'
       LEFT JOIN "ImageConnection" ic
         ON ic."entityId" = a.id
         AND ic."entityType" = 'Article'
@@ -178,14 +184,19 @@ export async function evaluateAutoApproveGate({
   }
 
   // 3: per-image scan check.
+  const ownImageIds = articleOwnImageIds(article);
   const [coverOk, contentImagesProblematic] = await Promise.all([
-    article.coverId
+    ownImageIds.length
       ? dbRead.image
-          .findUnique({
-            where: { id: article.coverId },
+          .findMany({
+            where: { id: { in: ownImageIds } },
             select: { ingestion: true },
           })
-          .then((img) => img?.ingestion === ImageIngestionStatus.Scanned)
+          .then(
+            (imgs) =>
+              imgs.length === ownImageIds.length &&
+              imgs.every((img) => img.ingestion === ImageIngestionStatus.Scanned)
+          )
       : Promise.resolve(true),
     dbRead.imageConnection.count({
       where: {
@@ -404,7 +415,9 @@ export async function autoResolveArticleRatingReview(args: AutoResolveArgs): Pro
 
   // Post-commit (best-effort).
   await articlesSearchIndex
-    .queueUpdate([{ id: args.articleId, action: SearchIndexUpdateQueueAction.Update }])
+    .queueUpdate([{ id: args.articleId, action: SearchIndexUpdateQueueAction.Update }], {
+      reason: 'rating-review',
+    })
     .catch((e) =>
       handleLogError(e, 'article-rating-review-auto-search-index', {
         articleId: args.articleId,
@@ -493,6 +506,7 @@ export async function maybeAutoResolveDisputeAfterScan(articleId: number): Promi
         moderatorNsfwLevel: true,
         moderatorNsfwLevelBasis: true,
         coverId: true,
+        bannerId: true,
       },
     });
     if (!article) return;
@@ -506,6 +520,7 @@ export async function maybeAutoResolveDisputeAfterScan(articleId: number): Promi
         moderatorNsfwLevel: article.moderatorNsfwLevel,
         moderatorNsfwLevelBasis: article.moderatorNsfwLevelBasis,
         coverId: article.coverId,
+        bannerId: article.bannerId,
       },
       suggestedLevel: pending.suggestedLevel,
     });
@@ -558,6 +573,7 @@ export async function tryAutoApproveArticleDispute(args: {
       moderatorNsfwLevel: true,
       moderatorNsfwLevelBasis: true,
       coverId: true,
+      bannerId: true,
     },
   });
   if (!article) return null;

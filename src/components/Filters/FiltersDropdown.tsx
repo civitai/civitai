@@ -1,4 +1,5 @@
-import { Popover, Indicator, ActionIcon } from '@mantine/core';
+import { Indicator, ActionIcon } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconFilter, IconChevronDown } from '@tabler/icons-react';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 

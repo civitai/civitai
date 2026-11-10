@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
 
 // The wire contract for each moderator action the spoke exposes at `/api/mod/[action]`. Shared so the
 // spoke endpoint validates against the exact shape the main-app client sends — producer and consumer
@@ -85,7 +86,7 @@ export const MAX_FINDINGS_PER_REPORT = 1_000;
 export const MAX_REASON_LENGTH = 2_000;
 
 /** Declared once and used by both timestamp fields, so neither can regress without the other. */
-const isoWithOffset = z.iso.datetime({ offset: true });
+const isoWithOffset = isoDatetimeCompat({ offset: true });
 
 /**
  * 🔴 Every cross-field rule below exists because the receiving table has a CHECK constraint, and a
@@ -172,6 +173,9 @@ export const abuseReportInput = z
     // union here would make adding a counter a cross-repo change.
     counters: z.record(z.string().max(64), z.number()).nullish(),
     findings: z.array(abuseFinding).max(MAX_FINDINGS_PER_REPORT),
+    // Refuse the whole report rather than store its findings ungrouped, for a producer whose
+    // findings are unreviewable one row at a time.
+    requireGroupKey: z.boolean().optional(),
   })
   .superRefine((r, ctx) => {
     // A transposed pair renders as a negative duration on a board whose entire claim is when things

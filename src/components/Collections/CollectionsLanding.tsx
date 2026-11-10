@@ -1,101 +1,57 @@
-import {
-  Alert,
-  AspectRatio,
-  Badge,
-  Card,
-  Center,
-  Box,
-  Group,
-  Skeleton,
-  Stack,
-  Text,
-  Title,
-  Overlay,
-  useMantineTheme,
-  ThemeIcon,
-  useComputedColorScheme,
-} from '@mantine/core';
-import { IconAlertTriangle } from '@tabler/icons-react';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import { Button } from '@mantine/core';
+import { IconFolders, IconPlus } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { NoContent } from '~/components/NoContent/NoContent';
 
-export function CollectionsLanding() {
-  const theme = useMantineTheme();
-  const colorScheme = useComputedColorScheme('dark');
+const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
 
-  return (
-    <Box maw={1000} mx="auto">
-      <Stack>
-        <Stack pos="relative">
-          <Overlay
-            blur={3}
-            zIndex={10}
-            color={colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
-            opacity={0.8}
-            m={-8}
-            radius="md"
-          />
-          <Stack
-            styles={{
-              root: {
-                zIndex: 11,
-              },
-              [containerQuery.largerThan('sm')]: {
-                transform: 'translateX(-50%)',
-                left: '50%',
-              },
-            }}
-            pos="absolute"
-            top={0}
-            maw={400}
-          >
-            <Card withBorder shadow="sm">
-              <Card.Section withBorder inheritPadding mb="sm">
-                <Text size="lg" fw={500} py="xs">
-                  What are Collections?
-                </Text>
-              </Card.Section>
-              <Stack gap={4}>
-                <Text>
-                  {`This lets you add any resource to a currated list so you can catagorize them for yourself or share them for others to follow as you update. Want to put together a collection of resources just for game assets? Now you easily can and share that collection so others can find those resources easily.`}
-                </Text>
-              </Stack>
-            </Card>
-          </Stack>
-          <SectionPlaceholder
-            title="The latest from your subscriptions"
-            quantity={4}
-            ratio={512 / 768}
-          />
-          <SectionPlaceholder quantity={3} ratio={5 / 3} title="Your recent collections" />
-          <SectionPlaceholder title="Based on your recent activity" />
-        </Stack>
-      </Stack>
-    </Box>
-  );
-}
+const WHAT_ARE_COLLECTIONS =
+  'Collections let you save models, images, posts and articles into lists you can organize and share with others.';
 
-function SectionPlaceholder({
-  title,
-  ratio = 1,
-  quantity = 5,
+export function CollectionsLanding({
+  signedIn,
+  hasCollections,
 }: {
-  title: string;
-  ratio?: number;
-  quantity?: number;
-  perRow?: number;
+  signedIn: boolean;
+  hasCollections: boolean;
 }) {
+  const isMobile = useContainerSmallerThan('sm');
+
+  const props = !signedIn
+    ? { title: 'Collections', message: WHAT_ARE_COLLECTIONS }
+    : hasCollections
+    ? {
+        title: 'Pick a collection',
+        message: isMobile
+          ? 'Tap the Collections button above to choose one.'
+          : 'Choose one from the list on the left to view it.',
+      }
+    : { title: 'No collections yet', message: WHAT_ARE_COLLECTIONS };
+
   return (
-    <Stack gap={12}>
-      <Title order={3} lh={1}>
-        {title}
-      </Title>
-      <Group gap={12}>
-        {Array.from({ length: quantity }).map((_, i) => (
-          <AspectRatio ratio={ratio} w={`calc(${100 / quantity}% - 12px)`} key={i}>
-            <Skeleton width="100%" height="100%" />
-          </AspectRatio>
-        ))}
-      </Group>
-    </Stack>
+    <NoContent
+      {...props}
+      icon={<IconFolders size={80} />}
+      iconSize={128}
+      py="xl"
+      maw={500}
+      mx="auto"
+    >
+      {signedIn ? (
+        <Button
+          leftSection={<IconPlus size={16} />}
+          onClick={() => dialogStore.trigger({ component: CollectionEditModal })}
+        >
+          Create collection
+        </Button>
+      ) : (
+        <LoginRedirect reason="perform-action" returnUrl="/collections">
+          <Button>Sign in</Button>
+        </LoginRedirect>
+      )}
+    </NoContent>
   );
 }

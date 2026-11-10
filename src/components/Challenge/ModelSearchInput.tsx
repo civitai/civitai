@@ -2,9 +2,8 @@ import { Autocomplete, Loader } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useState, useEffect } from 'react';
-import { env } from '~/env/client';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { searchFetch } from '~/components/Search/search-api-key';
+import { SITE_SEARCH_PATH, searchFetch } from '~/components/Search/site-search-client';
 import { searchIndexMap } from '~/components/Search/search.types';
 
 type ModelSearchResult = {
@@ -17,7 +16,7 @@ type ModelSearchHit = { id: number; name: string; user?: { username?: string } }
 
 function searchModelsIndex(params: { q?: string; filter?: string; limit: number }) {
   return searchFetch<{ hits: ModelSearchHit[] }>(
-    `${env.NEXT_PUBLIC_SEARCH_HOST}/indexes/${searchIndexMap.models}/search`,
+    `${SITE_SEARCH_PATH}/indexes/${searchIndexMap.models}/search`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

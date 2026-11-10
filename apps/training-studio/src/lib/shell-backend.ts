@@ -4,14 +4,23 @@
 // (the shell-only signals token) and trace.ts (its dev-only trace proxy).
 import type {
   AutoLabelResult,
+  EditGenerationItem,
+  EditImageOption,
   StudioBackend,
   SubmittedBatch,
   TrainingRunPayload,
 } from '$lib/backend';
-import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
+import type {
+  DatasetItem,
+  GenerationItem,
+  TrainingDetail,
+  TrainingRow,
+} from '$lib/data/trainingRows';
 import type { EpochArchive } from '$lib/orchestrator-core';
-import type { TrainingServiceStatus } from '$lib/service-status-core';
+import { parseServiceStatus } from '$lib/service-status-core';
+import { MatureAckRequiredError } from '$lib/mature-charge';
 import { UploadError, uploadProblem } from '$lib/upload';
+import { AUTO_LABEL_UNAVAILABLE_CODE, AutoLabelRefusedError } from '$lib/autolabel-errors';
 
 /** Pull `message` out of a SvelteKit error body, falling back to a status-tagged default. */
 async function messageOf(res: Response, fallback: string): Promise<string> {
@@ -24,25 +33,75 @@ async function messageOf(res: Response, fallback: string): Promise<string> {
   return fallback;
 }
 
+/** Why an auto-label submit failed. Our route answers 4xx only for a refusal made before any workflow
+ *  existed (its own, or the main app's gates, validation and limits), and its marked 503 when
+ *  auto-label is unavailable: those return the image's cap slot. Every other failure (a 502, a gateway
+ *  503) may have come after a workflow was created and stays counted. */
+async function autoLabelSubmitFailure(res: Response): Promise<Error> {
+  const fallback = `auto-label submit failed (${res.status})`;
+  const body = (await res.json().catch(() => null)) as { message?: string; code?: string } | null;
+  const refused =
+    (res.status >= 400 && res.status < 500) ||
+    (res.status === 503 && body?.code === AUTO_LABEL_UNAVAILABLE_CODE);
+  return refused ? new AutoLabelRefusedError(body?.message || fallback) : new Error(fallback);
+}
+
+/** A refused training submit; a 409 carrying the server's mature count becomes `MatureAckRequiredError`,
+ *  so the caller can show the confirm. */
+async function startFailure(res: Response, fallback: string): Promise<Error> {
+  const body = (await res.json().catch(() => null)) as {
+    message?: string;
+    matureCount?: unknown;
+  } | null;
+  if (res.status === 409 && typeof body?.matureCount === 'number' && body.matureCount > 0)
+    return new MatureAckRequiredError(body.matureCount);
+  return new Error(body?.message || fallback);
+}
+
+/** GET `path` as JSON; a failure throws the route's message, else `fallback (status)`. */
+async function getFor<T>(path: string, fallback: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(path, { signal });
+  if (!res.ok) throw new Error(await messageOf(res, `${fallback} (${res.status})`));
+  return (await res.json()) as T;
+}
+
+async function quoteFrom(path: string): Promise<number | null> {
+  const res = await fetch(path);
+  if (!res.ok) return null;
+  return ((await res.json()) as { cost: number | null }).cost;
+}
+
+async function postFor(path: string, body: unknown, fallback: string) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await messageOf(res, fallback));
+  return (await res.json()) as { workflowId: string };
+}
+
 export const shellBackend: StudioBackend = {
-  listTrainings: async () => {
-    const res = await fetch('/api/trainings');
-    if (!res.ok) throw new Error(await messageOf(res, `Failed to load trainings (${res.status})`));
-    return (await res.json()) as TrainingRow[];
-  },
+  listTrainings: () => getFor<TrainingRow[]>('/api/trainings', 'Failed to load trainings'),
 
   // The /[id] page's own detail still comes from its server load (refresh() re-runs it); this seam
   // read serves RunDetail's ancestor-chain fetches (combined epochs).
-  getRunDetail: async (workflowId) => {
-    const res = await fetch(`/api/run-detail?id=${encodeURIComponent(workflowId)}`);
-    if (!res.ok) throw new Error(await messageOf(res, `Failed to load training (${res.status})`));
-    return (await res.json()) as TrainingDetail;
+  getRunDetail: (workflowId) =>
+    getFor<TrainingDetail>(
+      `/api/run-detail?id=${encodeURIComponent(workflowId)}`,
+      'Failed to load training'
+    ),
+
+  modelLive: async (modelId) => {
+    const res = await fetch(`/api/model-status?id=${modelId}`);
+    if (!res.ok) throw new Error(await messageOf(res, `Model check failed (${res.status})`));
+    return ((await res.json()) as { live: boolean }).live;
   },
 
   getRunDataset: async (workflowId) => {
     const res = await fetch(`/api/run-dataset?id=${encodeURIComponent(workflowId)}`);
     if (!res.ok) throw new Error("Couldn't load that dataset.");
-    return (await res.json()) as { air: string; caption: string }[];
+    return (await res.json()) as DatasetItem[];
   },
 
   datasetBlob: async (air, workflowId) => {
@@ -80,7 +139,7 @@ export const shellBackend: StudioBackend = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ mode, media, items }),
     });
-    if (!res.ok) throw new Error(`auto-label submit failed (${res.status})`);
+    if (!res.ok) throw await autoLabelSubmitFailure(res);
     return (await res.json()) as { workflowId: string };
   },
 
@@ -96,10 +155,42 @@ export const shellBackend: StudioBackend = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runs }),
     });
-    if (!res.ok) throw new Error(await messageOf(res, `Training could not start (${res.status})`));
+    if (!res.ok) throw await startFailure(res, `Training could not start (${res.status})`);
     const { workflowIds, failure } = (await res.json()) as SubmittedBatch;
     return { workflowIds, failure };
   },
+
+  listEditGenerations: async () =>
+    (
+      await getFor<{ items: EditGenerationItem[] }>(
+        '/api/generations?media=image&kind=edit',
+        'Failed to load your edits'
+      )
+    ).items,
+
+  editImageQuote: (imageUrl) =>
+    quoteFrom(`/api/edit-image?imageUrl=${encodeURIComponent(imageUrl)}`),
+
+  editImageSubmit: (req) => postFor('/api/edit-image', req, "Couldn't create the image."),
+
+  editImagePoll: (workflowId, signal) =>
+    getFor<{ done: boolean; options: EditImageOption[] }>(
+      `/api/edit-image/${encodeURIComponent(workflowId)}`,
+      'Image progress unavailable',
+      signal
+    ),
+
+  suggestQuote: () => quoteFrom('/api/suggest-instruction'),
+
+  suggestSubmit: (req) =>
+    postFor('/api/suggest-instruction', req, "Couldn't suggest an instruction."),
+
+  suggestPoll: (workflowId, signal) =>
+    getFor<{ done: boolean; text?: string }>(
+      `/api/suggest-instruction/${encodeURIComponent(workflowId)}`,
+      'Suggestion unavailable',
+      signal
+    ),
 
   rename: async (workflowId, name) => {
     const res = await fetch('/api/rename', {
@@ -135,16 +226,16 @@ export const shellBackend: StudioBackend = {
     for (const currency of currencies) params.append('currencies', currency);
     const res = await fetch(`/api/continue-training?${params}`);
     if (!res.ok) throw new Error(await messageOf(res, 'Could not price the continuation.'));
-    return (await res.json()) as { cost: number | null; steps?: number };
+    return (await res.json()) as { cost: number | null; steps?: number; matureCount: number };
   },
 
-  continueRun: async (workflowId, fromEpoch, addEpochs, currencies) => {
+  continueRun: async (workflowId, fromEpoch, addEpochs, currencies, matureAck) => {
     const res = await fetch('/api/continue-training', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ workflowId, fromEpoch, addEpochs, currencies }),
+      body: JSON.stringify({ workflowId, fromEpoch, addEpochs, currencies, matureAck }),
     });
-    if (!res.ok) throw new Error(await messageOf(res, 'Could not start training.'));
+    if (!res.ok) throw await startFailure(res, 'Could not start training.');
     return ((await res.json()) as { workflowId: string }).workflowId;
   },
 
@@ -172,6 +263,6 @@ export const shellBackend: StudioBackend = {
   getServiceStatus: async () => {
     const res = await fetch('/api/training-status');
     if (!res.ok) return null;
-    return (await res.json()) as TrainingServiceStatus;
+    return parseServiceStatus(await res.json());
   },
 };

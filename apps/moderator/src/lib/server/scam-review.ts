@@ -5,6 +5,7 @@ import { convertHtml } from './html-to-text';
 import { mapBounded } from './bounded';
 import { parseQuery } from './query';
 import { banConfirmed, resolveRestriction, setBanned } from './user-actions.service';
+import { retryRateLimited } from './rate-limit-retry';
 import { getGenerationRestrictions, type RestrictionRow } from './user-restriction.service';
 
 /**
@@ -53,7 +54,7 @@ async function loadScannedText(rows: RestrictionRow[]): Promise<Map<number, Scan
       )
     ),
   ];
-  const [profiles, users, comments, commentsV2] = await Promise.all([
+  const [profiles, users, comments] = await Promise.all([
     ids('UserProfile').length
       ? dbRead
           .selectFrom('UserProfile')
@@ -68,18 +69,11 @@ async function loadScannedText(rows: RestrictionRow[]): Promise<Map<number, Scan
           .where('id', 'in', ids('User'))
           .execute()
       : [],
-    ids('Comment').length
+    ids('CommentV3').length
       ? dbRead
-          .selectFrom('Comment')
+          .selectFrom('CommentV3')
           .select(['id', 'content'])
-          .where('id', 'in', ids('Comment'))
-          .execute()
-      : [],
-    ids('CommentV2').length
-      ? dbRead
-          .selectFrom('CommentV2')
-          .select(['id', 'content'])
-          .where('id', 'in', ids('CommentV2'))
+          .where('id', 'in', ids('CommentV3'))
           .execute()
       : [],
   ]);
@@ -93,9 +87,7 @@ async function loadScannedText(rows: RestrictionRow[]): Promise<Map<number, Scan
   for (const u of users)
     byEntity.set(`User:${u.id}`, [{ heading: 'Username', text: u.username ?? '' }]);
   for (const c of comments)
-    byEntity.set(`Comment:${c.id}`, [{ heading: 'Comment', text: scannedText(c.content) }]);
-  for (const c of commentsV2)
-    byEntity.set(`CommentV2:${c.id}`, [{ heading: 'Comment', text: scannedText(c.content) }]);
+    byEntity.set(`CommentV3:${c.id}`, [{ heading: 'Comment', text: scannedText(c.content) }]);
 
   const out = new Map<number, ScannedField[]>();
   for (const row of rows) {
@@ -153,6 +145,9 @@ export async function scamReviewLoad(url: URL) {
 
 const BAN_NOTE = 'Scam review: banned as a scam account.';
 const CLEAR_NOTE = 'Scam review: not a scam account.';
+const ALREADY_BANNED_NOTE = 'Scam review: a scam account, already banned.';
+/** Covers one rate-limit window. */
+const RULE_BUDGET_MS = 75_000;
 /** At most this many bans in flight: each is a call to the main app, which then works asynchronously. */
 const CONCURRENCY = 5;
 
@@ -185,7 +180,7 @@ export async function scamBulkRule({ request, locals }: RequestEvent) {
   const rows = await dbRead
     .selectFrom('UserRestriction as r')
     .leftJoin('User as u', 'u.id', 'r.userId')
-    .select(['r.id', 'r.userId', 'r.type', 'r.status', 'u.username'])
+    .select(['r.id', 'r.userId', 'r.type', 'r.status', 'u.username', 'u.bannedAt'])
     .where('r.id', 'in', all)
     .execute();
   const byId = new Map(rows.map((r) => [r.id, r]));
@@ -200,7 +195,10 @@ export async function scamBulkRule({ request, locals }: RequestEvent) {
     });
     return null;
   };
-  const toBan = banIds.data.flatMap((id) => usable(id) ?? []);
+  const ticked = banIds.data.flatMap((id) => usable(id) ?? []);
+  // `setBanned` refuses an account already banned; rule those restrictions without banning.
+  const alreadyBanned = ticked.filter((row) => row.bannedAt);
+  const toBan = ticked.filter((row) => !row.bannedAt);
   const toClear = clearIds.data.flatMap((id) => usable(id) ?? []);
   const moderatorId = locals.user.id;
 
@@ -238,23 +236,32 @@ export async function scamBulkRule({ request, locals }: RequestEvent) {
     return false;
   });
 
-  const rule =
-    (status: 'Upheld' | 'Overturned', note: string) => async (row: (typeof rows)[number]) => {
-      const result = await resolveRestriction({
-        userRestrictionId: row.id,
-        status,
-        resolvedReason: 'other',
-        internalNotes: note,
-        userId: row.userId,
-        moderatorId,
-      });
-      return result.ok ? null : result.error;
-    };
+  const ruleBy = Date.now() + RULE_BUDGET_MS;
+  const rule = (status: 'Upheld' | 'Overturned') => async (row: (typeof rows)[number]) => {
+    const note =
+      status === 'Overturned' ? CLEAR_NOTE : row.bannedAt ? ALREADY_BANNED_NOTE : BAN_NOTE;
+    const result = await retryRateLimited(
+      () =>
+        resolveRestriction({
+          userRestrictionId: row.id,
+          status,
+          resolvedReason: 'other',
+          internalNotes: note,
+          userId: row.userId,
+          moderatorId,
+        }),
+      ruleBy
+    );
+    return result.ok ? null : result.error;
+  };
   const [upheld, cleared] = await Promise.all([
-    mapBounded(toUphold, rule('Upheld', BAN_NOTE), { concurrency: CONCURRENCY, budgetMs: 60_000 }),
-    mapBounded(toClear, rule('Overturned', CLEAR_NOTE), {
+    mapBounded([...alreadyBanned, ...toUphold], rule('Upheld'), {
       concurrency: CONCURRENCY,
-      budgetMs: 60_000,
+      budgetMs: RULE_BUDGET_MS,
+    }),
+    mapBounded(toClear, rule('Overturned'), {
+      concurrency: CONCURRENCY,
+      budgetMs: RULE_BUDGET_MS,
     }),
   ]);
   const settle = (list: typeof rows, results: (string | null | undefined)[], prefix: string) =>
@@ -269,7 +276,11 @@ export async function scamBulkRule({ request, locals }: RequestEvent) {
     }).length;
 
   return {
-    banned: settle(toUphold, upheld, 'Banned, but the restriction was not resolved: '),
+    banned: settle(
+      [...alreadyBanned, ...toUphold],
+      upheld,
+      'Banned, but the restriction was not resolved: '
+    ),
     cleared: settle(toClear, cleared, 'Not cleared: '),
     failed,
   };
