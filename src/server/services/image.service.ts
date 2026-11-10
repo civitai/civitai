@@ -2012,6 +2012,8 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   postIdsInRequestedSort?: boolean;
   // Server-only: a hub's held models do not hold this viewer (a moderator on a full credential).
   holdExempt?: boolean;
+  // Server-only: the viewer a hub still shows their own taken-down models to (session or full key).
+  galleryOwnerId?: number;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
@@ -3962,6 +3964,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   currentUserId?: number;
   isModerator?: boolean;
   holdExempt?: boolean;
+  galleryOwnerId?: number;
   offset?: number;
   entry?: number;
   blockedFor?: string[];
@@ -4339,6 +4342,7 @@ async function resolvedHubSources(input: ImageSearchInput) {
     userId: input.currentUserId,
     isModerator: input.isModerator,
     holdExempt: input.holdExempt,
+    galleryOwnerId: input.galleryOwnerId,
     excludedSources: input.hubExcludedSources,
   });
 }

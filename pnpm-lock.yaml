@@ -159,8 +159,8 @@ importers:
         specifier: 2.8.2
         version: 2.8.2
       '@grpc/grpc-js':
-        specifier: 1.13.4
-        version: 1.13.4
+        specifier: 1.13.6
+        version: 1.13.6
       '@headlessui/react':
         specifier: '2.2'
         version: 2.2.7(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)
@@ -1167,6 +1167,9 @@ importers:
       redis:
         specifier: 6.3.0
         version: 6.3.0(@opentelemetry/api@1.9.0)
+      sanitize-html:
+        specifier: 2.12.1
+        version: 2.12.1
       tsconfig-paths:
         specifier: ^4.2.0
         version: 4.2.0
@@ -1183,6 +1186,9 @@ importers:
       '@types/pg':
         specifier: ^8.10.9
         version: 8.15.5
+      '@types/sanitize-html':
+        specifier: ^2.16.0
+        version: 2.16.0
       '@typescript-eslint/eslint-plugin':
         specifier: ^6.17.0
         version: 6.21.0(@typescript-eslint/parser@6.21.0(eslint@8.57.1)(typescript@5.9.3))(eslint@8.57.1)(typescript@5.9.3)
@@ -3119,8 +3125,8 @@ packages:
   '@grafana/faro-web-tracing@2.8.2':
     resolution: {integrity: sha512-3MTOVHaW138Te2k1RTlM8a0WngYHwAJoSMX2EcZNn9elq1/5eNADN+75k89jYcCtcdiQAIq/hmT2WfRtUTD+kQ==}
 
-  '@grpc/grpc-js@1.13.4':
-    resolution: {integrity: sha512-GsFaMXCkMqkKIvwCQjCrwH+GHbPKBjhwo/8ZuUkWHqbI73Kky9I+pQltrlT0+MWpedCoosda53lgjYfyEPgxBg==}
+  '@grpc/grpc-js@1.13.6':
+    resolution: {integrity: sha512-S9U8ioEds9fo8zCt4K8CyWHLJPg63FBgZo/hYUPVTiKppwsx/ykTnFg4g4/70beoa/DYao9uROQRcoahVH8PVQ==}
     engines: {node: '>=12.10.0'}
 
   '@grpc/grpc-js@1.14.7':
@@ -14098,7 +14104,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@grpc/grpc-js@1.13.4':
+  '@grpc/grpc-js@1.13.6':
     dependencies:
       '@grpc/proto-loader': 0.7.15
       '@js-sdsl/ordered-map': 4.4.2
