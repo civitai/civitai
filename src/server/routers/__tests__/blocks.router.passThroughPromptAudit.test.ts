@@ -70,7 +70,7 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
   deleteWorkflow: vi.fn(),
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
-  auditPromptServer: (input: { prompt: string }) => h.audit(input),
+  auditPromptServer: (input: Parameters<typeof h.audit>[0]) => h.audit(input),
   classifyPromptServer: (input: { prompt: string }) => h.classify(input),
 }));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
