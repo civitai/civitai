@@ -56,7 +56,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 // `responseMeta` reads the root. No stale-while-revalidate, so a kill switch clears within the TTL.
 const searchDecorationGate = middleware(async ({ ctx, input, next }) => {
   const { entityType } = input as GetSearchEventDecorationsInput;
-  const decorationEvents = await getVisibleDecorationEvents(entityType, ctx.user);
+  const decorationEvents = await getVisibleDecorationEvents(entityType, eventViewerOf(ctx));
   if (!ctx.cache) return next({ ctx: { decorationEvents } });
   if (await isEveryonesDecorationAnswer(entityType, decorationEvents, ctx.user)) {
     const result = await next({ ctx: { decorationEvents } });
