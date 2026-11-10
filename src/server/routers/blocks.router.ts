@@ -10134,6 +10134,8 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   if (isInlineComfyBody(body)) {
     const verdict = checkInlineComfyGraph(body.workflow);
     if (!verdict.runnable) return { snapshot: verdict.snapshot };
+    const pending = await checkInlineComfySources({ graph: verdict.graph, userId, claims });
+    if (pending) return pending;
     return {
       snapshot: {
         workflowId: 'wf_estimate',
@@ -10250,6 +10252,8 @@ async function submitCustomComfyWorkflow(opts: {
   // forget to read. Full reasoning in `services/blocks/inline-comfy.service`.
   let inlineAuditText = '';
   if (inlineBody) {
+    const pending = await checkInlineComfySources({ graph: inlineBody.workflow, userId, claims });
+    if (pending) return pending;
     // (a) CONTAINMENT — every AIR in the graph must be declared in `resources`,
     //     which is what makes gating that flat array sufficient.
     assertInlineGraphAirsDeclared(inlineBody.workflow, inlineBody.resources);
@@ -10950,6 +10954,47 @@ async function assertStepOrWorkflowInputsUsable(
       } satisfies BlockWorkflowSnapshot,
     };
   }
+}
+
+/**
+ * The source images an inline customComfy graph reads must pass the app-block source gate. The
+ * whole graph is read: a node may link a text field into an image input. The estimate and the
+ * submit both call this on the graph `checkInlineComfyGraph` returned, so nothing an estimate
+ * saw is trusted at submit. A pending source returns the failed snapshot; anything else throws.
+ */
+async function checkInlineComfySources(opts: {
+  graph: ComfyGraph;
+  userId: number;
+  claims: BlockClaims;
+}): Promise<{ snapshot: BlockWorkflowSnapshot } | null> {
+  const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(opts.graph);
+  if (tooDeep) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'workflow graph nests too deeply' });
+  }
+  if (tooLarge) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'workflow graph is too large to check' });
+  }
+  try {
+    await assertGenerationInputsUsable({
+      urls,
+      userId: opts.userId,
+      entry: 'appBlocksInlineComfy',
+      isApiCaller: false,
+      opaqueInput: true,
+      appBlockLog: { appBlockId: opts.claims.appBlockId, stepTypes: 'customComfy' },
+    });
+  } catch (error) {
+    if (!isAppSourcePendingError(error)) throw error;
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed',
+        error: (error as TRPCError).message,
+        errorCode: SOURCE_SCAN_PENDING_ERROR_CODE,
+      } satisfies BlockWorkflowSnapshot,
+    };
+  }
+  return null;
 }
 
 /** The step types a body runs, for a log line: a registry step's id, else each `$type`. */

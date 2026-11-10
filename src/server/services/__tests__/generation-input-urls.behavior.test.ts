@@ -473,6 +473,46 @@ describe('an App Blocks generation source', () => {
     expect(logged).not.toContain(KEY.replace(/-/g, ''));
   });
 
+  describe('an inline customComfy graph (appBlocksInlineComfy)', () => {
+    const OWN = '11111111-2222-4333-8444-555555555555';
+    const unusable = `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`;
+    const logged = (reason: string) =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'app-block-source-refusal', reason })
+      );
+
+    it.each([
+      ['held', { needsReview: 'poi' }],
+      ['unscannable', { ingestion: 'NotFound' }],
+    ])('refuses an own %s image and logs the reason', async (reason, over) => {
+      await givenImage({ userId: CALLER, postId: null, ...over });
+      loggingMock.logToAxiom.mockClear();
+      expect(await check([CDN()], 'appBlocksInlineComfy', true)).toBe(unusable);
+      logged(reason);
+    });
+
+    it('returns pending for an own image still being scanned', async () => {
+      await givenImage({ userId: CALLER, postId: null, ingestion: 'Pending' });
+      expect(await check([CDN()], 'appBlocksInlineComfy', true)).toMatch(/^refused: /);
+      logged('pending');
+    });
+
+    it('refuses an own upload with no image row', async () => {
+      await recordUploadKeyOwner(OWN, CALLER);
+      loggingMock.logToAxiom.mockClear();
+      expect(await check([OWN], 'appBlocksInlineComfy', true)).toBe(unusable);
+      logged('unrowed');
+    });
+
+    it('refuses a row-less key while an issue store is unreadable', async () => {
+      await recordUploadKeyOwner(OWN, CALLER);
+      redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+      loggingMock.logToAxiom.mockClear();
+      expect(await check([OWN], 'appBlocksInlineComfy', true)).toBe(unusable);
+      logged('store-unreadable');
+    });
+  });
+
   it('logs an unrowed upload refusal', async () => {
     const own = '11111111-2222-4333-8444-555555555555';
     await recordUploadKeyOwner(own, CALLER);

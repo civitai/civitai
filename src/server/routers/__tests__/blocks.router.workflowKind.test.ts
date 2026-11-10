@@ -153,6 +153,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { PlatformInternalStepTypeError } from '~/server/services/blocks/steps/orchestrator-denylist';
 import { formatStepTimeout } from '~/server/services/blocks/workflow.service';
 import {
+  APP_SOURCE_UNUSABLE_MESSAGE,
   GENERATION_EXTERNAL_IMAGE_MESSAGE,
   GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
 } from '~/server/services/generation-input-urls';
@@ -2371,5 +2372,113 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     givenImage(OTHER_USER, false);
     await expect(estimate(passThroughWith(CDN))).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('inline customComfy — the generation input gate', () => {
+  const OTHER_USER = 7;
+  const KEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+  const CDN = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${KEY}/original=true`;
+
+  function givenImage(owner: number, row: { scanComplete?: boolean; held?: boolean } = {}) {
+    const scanComplete = row.scanComplete ?? true;
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('FROM "Image" i')
+        ? [
+            {
+              url: KEY,
+              userId: owner,
+              visible: false,
+              blocked: false,
+              scanComplete,
+              scanPending: !scanComplete,
+              held: row.held ?? false,
+            },
+          ]
+        : []) as never);
+  }
+  afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
+  // The customComfy arm reads the session user; keep the account-restriction row as well.
+  beforeEach(() => {
+    const viewer = { id: VIEWER, isModerator: false, email: 'v@example.com', username: 'v' };
+    for (const db of [dbMock.dbWrite, dbMock.dbRead])
+      db.user.findUnique.mockImplementation((async (args: { select?: Record<string, boolean> }) =>
+        args.select?.bannedAt ? { muted: false, bannedAt: null } : viewer) as never);
+  });
+
+  const inline = (inputs: Record<string, unknown> = {}) => ({
+    kind: 'customComfy' as const,
+    mode: 'inline' as const,
+    workflow: {
+      '1': { class_type: 'EmptyLatentImage', inputs: { width: 512, height: 512, batch_size: 1 } },
+      '2': { class_type: 'CLIPTextEncode', inputs: { text: 'a serene lake', clip: ['1', 1] } },
+      '3': { class_type: 'LoadImage', inputs },
+    },
+    resources: [],
+    maxBuzz: 60,
+  });
+
+  it("refuses another user's private image on estimate AND submit, before any orchestrator call", async () => {
+    givenImage(OTHER_USER);
+    const refusal = { code: 'BAD_REQUEST', message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE };
+    await expect(estimate(inline({ image: CDN }))).rejects.toMatchObject(refusal);
+    await expect(submit(inline({ image: CDN }))).rejects.toMatchObject(refusal);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(counter(USER_CAP)).toBe(0);
+  });
+
+  it('refuses an own held image on estimate AND submit', async () => {
+    givenImage(VIEWER, { held: true });
+    const refusal = { code: 'BAD_REQUEST', message: APP_SOURCE_UNUSABLE_MESSAGE };
+    await expect(estimate(inline({ image: CDN }))).rejects.toMatchObject(refusal);
+    await expect(submit(inline({ image: CDN }))).rejects.toMatchObject(refusal);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('an own upload still being scanned is a failed snapshot with a code to retry on', async () => {
+    givenImage(VIEWER, { scanComplete: false });
+    for (const call of [estimate, submit]) {
+      await expect(call(inline({ image: CDN }))).resolves.toMatchObject({
+        snapshot: { status: 'failed', errorCode: 'source-scan-pending' },
+      });
+    }
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(counter(USER_CAP)).toBe(0);
+  });
+
+  it('checks the graph the submit carries, not the one an estimate passed', async () => {
+    givenImage(OTHER_USER);
+    await expect(estimate(inline())).resolves.toMatchObject({ snapshot: { status: 'pending' } });
+    await expect(submit(inline({ image: CDN }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('reads the whole graph: an image url in a text field is checked too', async () => {
+    givenImage(OTHER_USER);
+    const body = inline();
+    body.workflow['2'].inputs.text = `restyle ${CDN}`;
+    await expect(submit(body)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'nests too deeply',
+      () => {
+        let deep: unknown = 'x';
+        for (let i = 0; i < 80; i++) deep = { v: deep };
+        return { image: deep };
+      },
+    ],
+    ['is too large to check', () => ({ image: 'a\n'.repeat(70_000) })],
+  ])('refuses a graph that %s, never passing it unscanned', async (_, inputs) => {
+    for (const call of [estimate, submit]) {
+      await expect(call(inline(inputs()))).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    }
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 });
