@@ -285,13 +285,33 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   const directPublish = body.directPublish === true;
   const reportedSucceeded = (body.status ?? '').toLowerCase() === 'succeeded';
 
+  const { signals, dropped } = parseBuildSignals(body as Record<string, unknown>);
+  if (dropped.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[review-build-callback] dropped invalid optional field(s) ${dropped.join(', ')} for ${
+        body.publishRequestId
+      }`
+    );
+  }
+
   if (previewNoLongerActive) {
-    // A direct publish that succeeded put this preview on the shared server after its row stopped
-    // being an active preview, and that teardown's unpublish may have run before it landed:
-    // unpublish it for this sha. Best-effort and idempotent.
-    // Fire-and-forget like the other watchers here: the unpublish creates a k8s Job (calls with
-    // long timeouts) and must not hold the build callback's short request window.
-    if (directPublish && reportedSucceeded) {
+    // A direct publish put this preview on the shared server after its row stopped being an
+    // active preview (a FAILED one may have published before failing), and that teardown's
+    // unpublish may have run before it landed: unpublish it for this sha. Best-effort and
+    // idempotent. A failure from a superseded run does not (a newer run of the same sha may have
+    // published). Fire-and-forget like the other watchers here: the unpublish creates a k8s Job
+    // (calls with long timeouts) and must not hold the build callback's short request window.
+    if (
+      directPublish &&
+      (reportedSucceeded ||
+        !(await isSupersededRun({
+          mode: 'review',
+          slug: body.slug,
+          sha: body.sha,
+          runId: signals.runId,
+        })))
+    ) {
       void triggerReviewUnpublish({
         slug: body.slug,
         sha: body.sha,
@@ -315,16 +335,6 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       reason: 'preview no longer active (torn down or decided)',
     });
     return;
-  }
-
-  const { signals, dropped } = parseBuildSignals(body as Record<string, unknown>);
-  if (dropped.length > 0) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[review-build-callback] dropped invalid optional field(s) ${dropped.join(', ')} for ${
-        body.publishRequestId
-      }`
-    );
   }
 
   if (!reportedSucceeded) {
