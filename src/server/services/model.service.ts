@@ -4989,17 +4989,6 @@ export const publishModelById = async ({
           throw throwAuthorizationError('You are not authorized to publish this model version');
       }
 
-      // Anti-bump guard: publishedAt is immutable once a model has gone
-      // public. Allowed transitions: NULL (Draft) -> set, or future
-      // (Scheduled) -> reschedule. Republish of an already-public model is a
-      // no-op for this column. Mirrors the Post guard below.
-      await tx.$executeRaw`
-        UPDATE "Model"
-        SET "publishedAt" = ${publishedAt}
-        WHERE id = ${id}
-        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
-      `;
-
       // Validate NSFW + restricted base model combination
       if (model.nsfw) {
         const hasRestrictedBaseModel = model.modelVersions.some((version) =>
@@ -5085,6 +5074,26 @@ export const publishModelById = async ({
         `;
         movedPostIds = movedPosts.map((post) => post.id);
       }
+
+      // Anti-bump guard: publishedAt is immutable once a model has gone
+      // public. Allowed transitions: NULL (Draft) -> set, or future
+      // (Scheduled) -> reschedule. Republish of an already-public model is a
+      // no-op for this column.
+      // After the version writes, and never later than the model's earliest live or scheduled
+      // version: the scheduled-publishing job releases a model only once its own date passes, so
+      // scheduling a second, later version must not hold back the first.
+      await tx.$executeRaw`
+        UPDATE "Model" m
+        SET "publishedAt" = LEAST(
+          ${publishedAt},
+          (
+            SELECT MIN(mv."publishedAt") FROM "ModelVersion" mv
+            WHERE mv."modelId" = m.id AND mv.status IN ('Published', 'Scheduled')
+          )
+        )
+        WHERE m.id = ${id}
+        AND (m."publishedAt" IS NULL OR m."publishedAt" > NOW())
+      `;
       await updateModelLastVersionAt({ id, tx, onlyForward: republishing });
 
       return model;

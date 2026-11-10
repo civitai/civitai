@@ -54,12 +54,18 @@ const noFailedScanFileSql = (versionId: string) => Prisma.sql`
   )
 `;
 
-/** Scheduled models due by `now`. */
+/** Scheduled models due by `now`, or with a version already live. */
 export const scheduledModelsDueSql = (now: Date) => Prisma.sql`
   SELECT id, "userId"
   FROM "Model"
   WHERE status = 'Scheduled'
-    AND "publishedAt" <= ${now}
+    AND (
+      "publishedAt" <= ${now}
+      OR EXISTS (
+        SELECT 1 FROM "ModelVersion" mv
+        WHERE mv."modelId" = "Model".id AND mv.status = 'Published'
+      )
+    )
     AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
     AND ${notRemovedWithOwnerSql('meta')}
 `;
@@ -168,13 +174,17 @@ export const scheduledVersionsGoLiveSql = (ids: number[], now: Date) => Prisma.s
   RETURNING mv.id
 `;
 
-/** Scheduled models due by `now` go live, unless a moderation rule or a wipe's record stops them. */
+/**
+ * Scheduled models with a live version go live, whatever their own date, unless a moderation rule or
+ * a wipe's record stops them.
+ */
 export const scheduledModelsGoLiveSql = (ids: number[], now: Date) => Prisma.sql`
   UPDATE "Model"
-  SET status = 'Published'
+  -- A live model left with a future date reads as Scheduled again to the restore path, which would
+  -- send it back through this job and fire its publish side effects a second time.
+  SET status = 'Published', "publishedAt" = LEAST("publishedAt", ${now})
   WHERE id IN (${Prisma.join(ids)})
     AND status = 'Scheduled'
-    AND "publishedAt" <= ${now}
     AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
     AND ${notRemovedWithOwnerSql('meta')}
     -- After the version UPDATE, so a version it just published counts. A model whose versions all

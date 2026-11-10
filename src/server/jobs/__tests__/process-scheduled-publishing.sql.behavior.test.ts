@@ -329,3 +329,45 @@ describe('processScheduledPublishing :: story spark', () => {
     expect(mockSparkRestored).not.toHaveBeenCalled();
   });
 });
+
+describe('processScheduledPublishing :: a model dated after its live version', () => {
+  const FUTURE = new Date(Date.now() + 2 * 24 * 60 * 60_000);
+
+  // A second, later version once pushed the model's own date to its own: the first version went live
+  // on schedule and the model stayed Scheduled until the second.
+  async function modelDatedAfterLiveVersion({ v1Status }: { v1Status: string }) {
+    await pg.db.query(`INSERT INTO "Model" VALUES (1, $1, 'Scheduled', $2, NULL, NULL)`, [
+      OWNER,
+      FUTURE,
+    ]);
+    await pg.db.query(
+      `INSERT INTO "ModelVersion" VALUES (10, 1, $1, $2, 'Public'), (11, 1, 'Scheduled', $3, 'Private')`,
+      [v1Status, PAST, FUTURE]
+    );
+  }
+  const model = async () =>
+    (
+      await pg.db.query<{ status: string; publishedAt: Date }>(
+        `SELECT status, "publishedAt" FROM "Model" WHERE id = 1`
+      )
+    ).rows[0];
+
+  it('publishes the model once, no longer dated in the future', async () => {
+    await modelDatedAfterLiveVersion({ v1Status: 'Published' });
+    await runJob();
+    const after = await model();
+    expect(after.status).toBe('Published');
+    expect(after.publishedAt.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(engaged('model')).toEqual([1]);
+
+    await runJob();
+    expect(engaged('model')).toEqual([1]);
+  });
+
+  it('keeps a model with no live version Scheduled until its date', async () => {
+    await modelDatedAfterLiveVersion({ v1Status: 'Draft' });
+    await runJob();
+    expect(await model()).toEqual({ status: 'Scheduled', publishedAt: FUTURE });
+    expect(engaged('model')).toEqual([]);
+  });
+});
