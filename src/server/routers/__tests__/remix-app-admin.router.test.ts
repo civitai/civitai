@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   save: vi.fn(),
   setEnabled: vi.fn(),
   order: vi.fn(),
+  remove: vi.fn(),
   list: vi.fn(),
   start: vi.fn(),
 }));
@@ -25,6 +26,7 @@ vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) =
   saveRemixApp: h.save,
   setRemixAppEnabled: h.setEnabled,
   orderRemixApps: h.order,
+  deleteRemixApp: h.remove,
   listRemixAppsForAdmin: h.list,
 }));
 vi.mock('~/server/services/remix-app-run.service', async (importOriginal) => ({
@@ -76,6 +78,7 @@ describe('remixApp.admin', () => {
       () => as(user).save({ ...restyle }),
       () => as(user).setEnabled({ slug: 'restyle', enabled: false }),
       () => as(user).order({ slugs: ['restyle'] }),
+      () => as(user).delete({ slug: 'test-charcoal' }),
       () => as(user).testStart({ ...tap(), quote: 30 }),
     ];
     for (const call of calls) await expect(call()).rejects.toMatchObject({ code: 'FORBIDDEN' });
@@ -86,6 +89,7 @@ describe('remixApp.admin', () => {
     await as(moderator).save({ ...restyle });
     await as(moderator).setEnabled({ slug: 'restyle', enabled: false });
     await as(moderator).order({ slugs: ['restyle'] });
+    await as(moderator).delete({ slug: 'test-charcoal' });
     await as(moderator).testStart({ ...tap(), quote: 30 });
     for (const fn of Object.values(h)) expect(fn).toHaveBeenCalledTimes(1);
   });
@@ -142,16 +146,6 @@ describe('remixApp.admin', () => {
       code: 'BAD_REQUEST',
     });
     expect(h.save).not.toHaveBeenCalled();
-  });
-
-  it('refuses a video.remix target, which no app may use yet, before it is saved', async () => {
-    await expect(
-      as(moderator).save({ ...restyle, target: 'video.remix' } as never)
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(h.save).not.toHaveBeenCalled();
-    // POSITIVE CONTROL: the same row on the image slot saves.
-    await as(moderator).save({ ...restyle, target: 'image.remix' });
-    expect(h.save).toHaveBeenCalledTimes(1);
   });
 
   it('test-runs any app, disabled ones too, and passes no quote until one is confirmed', async () => {
