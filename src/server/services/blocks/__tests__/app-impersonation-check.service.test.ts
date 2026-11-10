@@ -215,6 +215,25 @@ describe('runImpersonationCheckForRequest', () => {
     expect(data).not.toHaveProperty('costUsd');
   });
 
+  it("reads the request's fork link and lowers a match against that parent to low", async () => {
+    seed({ id: 'arar_1', status: 'complete', costUsd: null, securityAudit: {} });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ v: 'ab_parent' }] as never);
+    dbMock.dbRead.appListing.findMany.mockResolvedValue([
+      { id: 'apl_p', name: 'Zorblex Helper', slug: 'parent', appBlockId: 'ab_parent' },
+    ] as never);
+    await runImpersonationCheckForRequest(PUBREQ, { callModel: clearModel });
+    const data = (
+      dbMock.dbWrite.appReviewAgentReport.updateMany.mock.calls[0][0] as {
+        data: { securityAudit: { findings: Array<{ check: string; severity: string }> } };
+      }
+    ).data;
+    expect(
+      data.securityAudit.findings
+        .filter((f) => f.check === 'listing-name-match')
+        .map((f) => f.severity)
+    ).toEqual(['low']);
+  });
+
   it.each([null, { id: 'arar_1', status: 'running', costUsd: null, securityAudit: null }])(
     'no finished report (%o): nothing is written',
     async (report) => {

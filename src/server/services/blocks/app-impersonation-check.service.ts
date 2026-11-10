@@ -266,7 +266,7 @@ export async function gatherImpersonationInputs(
   ]);
   const request = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: publishRequestId },
-    select: { slug: true, manifest: true, submittedByUserId: true, forkOfAppBlockId: true },
+    select: { slug: true, manifest: true, submittedByUserId: true },
   });
   if (!request) return null;
 
@@ -283,11 +283,22 @@ export async function gatherImpersonationInputs(
       name: true,
       tagline: true,
       description: true,
-      forkOfListingId: true,
       icon: { select: { url: true } },
       cover: { select: { url: true } },
     },
   });
+
+  // The fork columns are not on the generated client types (`@no-type`), so they are read raw,
+  // as the fork service does.
+  const [reqFork, listingFork] = (await Promise.all([
+    dbRead.$queryRaw`SELECT "fork_of_app_block_id" AS "v" FROM "app_block_publish_requests" WHERE "id" = ${publishRequestId}`,
+    listing
+      ? dbRead.$queryRaw`SELECT "fork_of_listing_id" AS "v" FROM "app_listings" WHERE "id" = ${listing.id}`
+      : Promise.resolve([]),
+  ])) as Array<Array<{ v: string | null }> | undefined>;
+  const firstValue = (rows: Array<{ v: string | null }> | undefined) =>
+    Array.isArray(rows) && typeof rows[0]?.v === 'string' && rows[0].v ? rows[0].v : null;
+  const fork = { forkOfAppBlockId: firstValue(reqFork), forkOfListingId: firstValue(listingFork) };
 
   const manifest = (request.manifest ?? {}) as Record<string, unknown>;
   const manifestDescription =
@@ -297,8 +308,8 @@ export async function gatherImpersonationInputs(
     slug: request.slug,
     tagline: listing?.tagline ?? null,
     description: listing?.description ?? manifestDescription,
-    forkOfAppBlockId: request.forkOfAppBlockId ?? null,
-    forkOfListingId: listing?.forkOfListingId ?? null,
+    forkOfAppBlockId: fork.forkOfAppBlockId,
+    forkOfListingId: fork.forkOfListingId,
   };
 
   // Other authors' approved store listings. An author's own apps are never compared with each
