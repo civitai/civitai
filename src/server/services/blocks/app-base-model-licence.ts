@@ -20,7 +20,8 @@ const REFUSED_HF_REPOS: ReadonlySet<string> = new Set([
 // Every FLUX.1 "-dev" tool repo (Krea, Kontext, Fill, ...), but not FLUX.1-dev itself.
 const REFUSED_HF_REPO_PATTERN = /^black-forest-labs\/flux\.1-.+-dev$/;
 
-const HF_AIR_RE = /^urn:air:[^:]+:[^:]+:huggingface:([^@\s]+)/i;
+// The repo is the first two path segments; a file path may follow with or without `@<version>`.
+const HF_AIR_RE = /^urn:air:[^:]+:[^:]+:huggingface:([^/@\s]+\/[^/@\s]+)/i;
 
 export function isRefusedBaseModel(baseModel: string): boolean {
   return REFUSED_BASE_MODELS.has(baseModel);
