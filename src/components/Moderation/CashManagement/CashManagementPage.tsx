@@ -15,13 +15,18 @@ import {
 } from '@mantine/core';
 import { useCallback, useState } from 'react';
 import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
+import { CashAdjustConfirmModal } from '~/components/Moderation/CashManagement/CashAdjustConfirmModal';
+import type { PendingCashAdjustment } from '~/components/Moderation/CashManagement/CashAdjustConfirmModal';
+import { CashLedger } from '~/components/Moderation/CashManagement/CashLedger';
+import { centsToDollars } from '~/components/Moderation/CashManagement/cash-format';
+import type {
+  CashAccountType as AccountType,
+  CashAdjustmentDirection as Direction,
+} from '~/components/Moderation/CashManagement/cash-format';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-
-type AccountType = 'cashPending' | 'cashSettled';
-type Direction = 'grant' | 'deduct';
 
 const refundableStatuses = new Set([
   'Paid',
@@ -31,10 +36,6 @@ const refundableStatuses = new Set([
   'Reclaimed',
 ]);
 
-function centsToDollars(cents: number) {
-  return (cents / 100).toFixed(2);
-}
-
 export function CashManagementPage() {
   const queryUtils = trpc.useUtils();
 
@@ -43,7 +44,7 @@ export function CashManagementPage() {
   const [direction, setDirection] = useState<Direction>('grant');
   const [amount, setAmount] = useState<number | undefined>();
   const [note, setNote] = useState('');
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pending, setPending] = useState<PendingCashAdjustment | null>(null);
   const [refundTarget, setRefundTarget] = useState<{
     withdrawalId: string;
     amount: number;
@@ -58,10 +59,11 @@ export function CashManagementPage() {
     error: cashError,
   } = trpc.moderator.cash.getCashForUser.useQuery({ userId: userId! }, { enabled: validUserId });
 
-  const { data: creatorData } = trpc.user.getCreator.useQuery(
-    { id: userId! },
-    { enabled: validUserId }
-  );
+  const {
+    data: creatorData,
+    isFetched: creatorFetched,
+    error: creatorError,
+  } = trpc.user.getCreator.useQuery({ id: userId! }, { enabled: validUserId });
 
   const { data: withdrawals, isLoading: withdrawalsLoading } =
     trpc.moderator.cash.getWithdrawalHistory.useQuery(
@@ -73,6 +75,7 @@ export function CashManagementPage() {
     if (!userId) return;
     queryUtils.moderator.cash.getCashForUser.invalidate({ userId });
     queryUtils.moderator.cash.getWithdrawalHistory.invalidate({ userId });
+    queryUtils.moderator.cash.getCashTransactions.invalidate({ userId });
   }, [userId, queryUtils]);
 
   const adjustMutation = trpc.moderator.cash.adjustBalance.useMutation({
@@ -81,14 +84,14 @@ export function CashManagementPage() {
       invalidateAll();
       setAmount(undefined);
       setNote('');
-      setConfirmOpen(false);
+      setPending(null);
     },
     onError: (error) => {
       showErrorNotification({
         title: 'Failed to adjust balance',
         error: new Error(error.message),
       });
-      setConfirmOpen(false);
+      setPending(null);
     },
   });
 
@@ -107,16 +110,12 @@ export function CashManagementPage() {
     },
   });
 
-  const handleSubmit = useCallback(() => {
-    if (!userId || !amount || !note.trim()) return;
-    adjustMutation.mutate({
-      userId,
-      amount,
-      accountType,
-      direction,
-      note: note.trim(),
-    });
-  }, [userId, amount, accountType, direction, note, adjustMutation]);
+  const handleSubmit = useCallback(
+    ({ userId, amount, accountType, direction, note }: PendingCashAdjustment) => {
+      adjustMutation.mutate({ userId, amount, accountType, direction, note });
+    },
+    [adjustMutation]
+  );
 
   const handleRefund = useCallback(() => {
     if (!refundTarget) return;
@@ -127,7 +126,24 @@ export function CashManagementPage() {
     });
   }, [refundTarget, refundNote, refundMutation]);
 
-  const canSubmit = validUserId && !!amount && amount > 0 && note.trim().length > 0;
+  // The target's identity and balance must be on screen before an adjustment can be opened.
+  const targetLoaded =
+    validUserId && creatorData?.id === userId && !!creatorData.username && cashData?.id === userId;
+  const userNotFound = validUserId && (!!creatorError || (creatorFetched && !creatorData));
+  const canSubmit = targetLoaded && !!amount && amount > 0 && note.trim().length > 0;
+
+  const openConfirm = () => {
+    if (!canSubmit || !creatorData?.username || !cashData || !userId || !amount) return;
+    setPending({
+      userId,
+      username: creatorData.username,
+      accountType,
+      direction,
+      amount,
+      note: note.trim(),
+      currentBalance: accountType === 'cashPending' ? cashData.pending : cashData.ready,
+    });
+  };
   const dollarAmount = amount ? centsToDollars(amount) : '0.00';
 
   return (
@@ -145,6 +161,12 @@ export function CashManagementPage() {
         />
 
         {cashLoading && validUserId && <PageLoader />}
+
+        {userNotFound && (
+          <Alert color="red" title="User not found">
+            No user with id {userId}.
+          </Alert>
+        )}
 
         {cashError && (
           <Alert color="red" title="Error">
@@ -238,12 +260,19 @@ export function CashManagementPage() {
             <Button
               color={direction === 'grant' ? 'green' : 'red'}
               disabled={!canSubmit}
-              onClick={() => setConfirmOpen(true)}
+              onClick={openConfirm}
             >
               {direction === 'grant' ? 'Grant' : 'Deduct'} ${dollarAmount}{' '}
               {direction === 'grant' ? 'to' : 'from'}{' '}
               {accountType === 'cashPending' ? 'Pending' : 'Settled'}
             </Button>
+          </>
+        )}
+
+        {validUserId && (
+          <>
+            <Divider label="Cash Ledger" labelPosition="center" />
+            <CashLedger userId={userId} />
           </>
         )}
 
@@ -327,36 +356,12 @@ export function CashManagementPage() {
         )}
       </Stack>
 
-      {/* Confirm Adjustment Modal */}
-      <Modal
-        opened={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
-        title="Confirm Cash Adjustment"
-      >
-        <Stack gap="md">
-          <Text>
-            You are about to <strong>{direction}</strong> <strong>${dollarAmount}</strong> ({amount}{' '}
-            cents) {direction === 'grant' ? 'to' : 'from'} user <strong>{userId}</strong>&apos;s{' '}
-            <strong>{accountType === 'cashPending' ? 'Cash Pending' : 'Cash Settled'}</strong>{' '}
-            account.
-          </Text>
-          <Text size="sm" c="dimmed">
-            Reason: {note}
-          </Text>
-          <Group justify="flex-end">
-            <Button variant="default" onClick={() => setConfirmOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              color={direction === 'grant' ? 'green' : 'red'}
-              loading={adjustMutation.isPending}
-              onClick={handleSubmit}
-            >
-              Confirm {direction === 'grant' ? 'Grant' : 'Deduction'}
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
+      <CashAdjustConfirmModal
+        adjustment={pending}
+        loading={adjustMutation.isPending}
+        onClose={() => setPending(null)}
+        onConfirm={handleSubmit}
+      />
 
       {/* Confirm Refund Modal */}
       <Modal
