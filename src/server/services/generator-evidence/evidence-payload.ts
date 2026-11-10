@@ -8,7 +8,6 @@ import type {
 import { EVIDENCE_MEDIA_TYPES } from '~/server/services/generator-evidence/evidence-meta';
 import { escapeXml, xmlSafe, xmlText } from '~/server/services/ncmec-xml';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
-import { trimNonAlphanumeric } from '~/utils/string-helpers';
 
 export type EvidenceFile = { job: StoredEvidenceJob; blob: StoredEvidenceBlob };
 
@@ -96,16 +95,31 @@ export function evidenceFileDetails(
 type PromptSource = { prompt?: unknown; negativePrompt?: unknown; resources?: unknown };
 const asText = (value: unknown) => (typeof value === 'string' && value.trim() ? value : undefined);
 
+const WORD = /\w/;
+
+/**
+ * What `trimNonAlphanumeric` returns, in one pass: its pattern takes time in the square of a long run of
+ * symbols, and prompt text reaches this unbounded.
+ */
+export function trimEdgeSymbols(text: string | undefined) {
+  if (text === undefined) return undefined;
+  let start = 0;
+  while (start < text.length && !WORD.test(text[start])) start++;
+  let end = text.length;
+  while (end > start && !WORD.test(text[end - 1])) end--;
+  return text.slice(start, end);
+}
+
 /**
  * An EXIF value, trimmed of edge symbols as the preserved-evidence send always has. Image metadata has
- * no length limit, so it is cut to the plain line's limit first: the trim's pattern is slow on long text.
+ * no length limit, so it is cut to the plain line's limit, marked, as that line is.
  */
 function exifValue(text: string | undefined, storedOnImage: boolean) {
-  if (!text || !storedOnImage) return trimNonAlphanumeric(text);
+  if (!text || !storedOnImage) return trimEdgeSymbols(text);
   const chars = Array.from(text);
-  if (chars.length <= MAX_GENERATION_LINE_CHARS) return trimNonAlphanumeric(text);
+  if (chars.length <= MAX_GENERATION_LINE_CHARS) return trimEdgeSymbols(text);
   const cut = `… ${IMAGE_TRUNCATION_MARKER}`;
-  const kept = trimNonAlphanumeric(chars.slice(0, MAX_GENERATION_LINE_CHARS - cut.length).join(''));
+  const kept = trimEdgeSymbols(chars.slice(0, MAX_GENERATION_LINE_CHARS - cut.length).join(''));
   return kept ? `${kept}${cut}` : undefined;
 }
 
