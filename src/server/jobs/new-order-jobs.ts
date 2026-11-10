@@ -95,6 +95,8 @@ async function grantBatches(grants: Array<GrantCandidate & { externalId: string 
   }
 }
 
+export const RELEASED_PAYOUT_CHUNK_SIZE = 500;
+
 async function grantReleasedPayouts(endDate: Date) {
   if (!clickhouse) return;
   const released = (
@@ -115,6 +117,21 @@ async function grantReleasedPayouts(endDate: Date) {
     const releaseDay = startOfDay(p.payoutReleaseFrom!);
     return { userId: p.userId, from: p.startAt > releaseDay ? p.startAt : releaseDay };
   });
+  // The per-player OR-clause grows with every player; one query for all of them exceeds
+  // ClickHouse's max_query_size. A failed chunk keeps its markers and retries next run.
+  for (const payFromChunk of chunk(payFrom, RELEASED_PAYOUT_CHUNK_SIZE)) {
+    try {
+      await grantReleasedChunk(payFromChunk, endDate);
+    } catch (e) {
+      handleLogError(e as Error, 'new-order-grant:released-chunk-failed', {
+        players: payFromChunk.length,
+      });
+    }
+  }
+}
+
+async function grantReleasedChunk(payFrom: Array<{ userId: number; from: Date }>, endDate: Date) {
+  if (!clickhouse) return;
   const earliest = payFrom.reduce((min, p) => (p.from < min ? p.from : min), payFrom[0].from);
   const userConditions = payFrom
     .map(
@@ -140,7 +157,7 @@ async function grantReleasedPayouts(endDate: Date) {
   }));
   await grantBatches(grants);
   await dbWrite.newOrderPlayer.updateMany({
-    where: { userId: { in: released.map((p) => p.userId) }, payoutBlockedAt: null },
+    where: { userId: { in: payFrom.map((p) => p.userId) }, payoutBlockedAt: null },
     data: { payoutReleaseFrom: null },
   });
 }

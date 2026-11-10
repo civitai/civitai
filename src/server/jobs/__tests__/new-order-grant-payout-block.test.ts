@@ -45,7 +45,7 @@ vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
 vi.mock('~/env/server', () => ({ env: {} }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { runGrantBlessedBuzz } from '~/server/jobs/new-order-jobs';
+import { RELEASED_PAYOUT_CHUNK_SIZE, runGrantBlessedBuzz } from '~/server/jobs/new-order-jobs';
 
 const judgment = (userId: number) => ({ userId, balance: 10, totalExp: 100 });
 const player = (userId: number, extra: Record<string, unknown> = {}) => ({
@@ -126,18 +126,8 @@ describe('runGrantBlessedBuzz release catch-up', () => {
     );
   });
 
-  it('a released player reset mid-hold is paid only judgments at or after startAt', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date(2026, 9, 17, 12));
-    const local = (d: number, h = 0) => new Date(2026, 9, d, h);
-    const startAt = local(11, 12);
-    const ratings = [
-      { createdAt: local(9, 10), exp: 900 },
-      { createdAt: local(11, 6), exp: 1100 },
-      { createdAt: local(11, 18), exp: 1300 },
-      { createdAt: local(12, 9), exp: 1700 },
-    ];
-    // Honours the catch-up query's time bounds and any per-user lower bound.
+  // A catch-up ClickHouse for user 7: honours the query's time bounds and any per-user lower bound.
+  const fakeCatchUp = (ratings: Array<{ createdAt: Date; exp: number }>) => {
     mockClickhouseQuery.mockImplementation(
       (strings: TemplateStringsArray, ...values: unknown[]) => {
         const sql = strings.reduce(
@@ -165,6 +155,20 @@ describe('runGrantBlessedBuzz release catch-up', () => {
         );
       }
     );
+  };
+
+  it('a released player reset mid-hold is paid only judgments at or after startAt', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 17, 12));
+    const local = (d: number, h = 0) => new Date(2026, 9, d, h);
+    const startAt = local(11, 12);
+    const ratings = [
+      { createdAt: local(9, 10), exp: 900 },
+      { createdAt: local(11, 6), exp: 1100 },
+      { createdAt: local(11, 18), exp: 1300 },
+      { createdAt: local(12, 9), exp: 1700 },
+    ];
+    fakeCatchUp(ratings);
     stubPlayers([], [player(7, { payoutReleaseFrom: local(8), startAt })]);
 
     try {
@@ -175,6 +179,28 @@ describe('runGrantBlessedBuzz release catch-up', () => {
 
     const txs = mockCreateBuzzMany.mock.calls.flatMap(([t]) => t as Array<{ amount: number }>);
     expect(txs.map((t) => t.amount)).toEqual([1300, 1700]);
+  });
+
+  it('a released player whose career began before the hold is paid from the start of the release day', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 17, 12));
+    const local = (d: number, h = 0) => new Date(2026, 9, d, h);
+    fakeCatchUp([
+      { createdAt: local(9, 10), exp: 900 },
+      { createdAt: local(11, 6), exp: 1100 },
+      { createdAt: local(11, 18), exp: 1300 },
+      { createdAt: local(12, 9), exp: 1700 },
+    ]);
+    stubPlayers([], [player(7, { payoutReleaseFrom: local(11, 15), startAt: local(5) })]);
+
+    try {
+      await runGrantBlessedBuzz();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const txs = mockCreateBuzzMany.mock.calls.flatMap(([t]) => t as Array<{ amount: number }>);
+    expect(txs.map((t) => t.amount)).toEqual([2400, 1700]);
   });
 
   it('does not pay a released player who has since been blocked again or banned', async () => {
@@ -190,5 +216,80 @@ describe('runGrantBlessedBuzz release catch-up', () => {
     await runGrantBlessedBuzz();
 
     expect(mockCreateBuzzMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('runGrantBlessedBuzz release catch-up in chunks', () => {
+  const releaseFrom = new Date('2026-10-10T00:00:00.000Z');
+  const playerCount = RELEASED_PAYOUT_CHUNK_SIZE + 1;
+  const releasedIds = Array.from({ length: playerCount }, (_, i) => i + 1);
+
+  const sqlOf = (strings: TemplateStringsArray, values: unknown[]) =>
+    strings.reduce((acc, s, i) => acc + s + (i < values.length ? String(values[i]) : ''), '');
+  const usersIn = (sql: string) =>
+    [...sql.matchAll(/userId = (\d+) AND createdAt >= parseDateTimeBestEffort/g)].map(([, id]) =>
+      Number(id)
+    );
+  const catchUpQueries: number[][] = [];
+  const stubCatchUp = (failWhenContains?: number) =>
+    mockClickhouseQuery.mockImplementation(
+      (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const sql = sqlOf(strings, values);
+        if (!sql.includes('dayMs')) return Promise.resolve([]);
+        const users = usersIn(sql);
+        catchUpQueries.push(users);
+        if (failWhenContains != null && users.includes(failWhenContains))
+          return Promise.reject(new Error('query rejected'));
+        return Promise.resolve(
+          users.map((userId) => ({
+            userId,
+            dayMs: releaseFrom.getTime(),
+            balance: 1,
+            totalExp: 10,
+          }))
+        );
+      }
+    );
+  const clearedIds = () =>
+    dbMock.dbWrite.newOrderPlayer.updateMany.mock.calls.flatMap(
+      ([args]) => (args as { where: { userId: { in: number[] } } }).where.userId.in
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    catchUpQueries.length = 0;
+    stubPlayers(
+      [],
+      releasedIds.map((id) => player(id, { payoutReleaseFrom: releaseFrom }))
+    );
+  });
+
+  it('pays and clears every released player across bounded queries', async () => {
+    stubCatchUp();
+
+    await runGrantBlessedBuzz();
+
+    expect(catchUpQueries.length).toBeGreaterThan(1);
+    for (const users of catchUpQueries)
+      expect(users.length).toBeLessThanOrEqual(RELEASED_PAYOUT_CHUNK_SIZE);
+    expect(grantedUserIds().sort((a, b) => a - b)).toEqual(releasedIds);
+    expect(clearedIds().sort((a, b) => a - b)).toEqual(releasedIds);
+  });
+
+  it('a failing chunk keeps its players held while the other chunk is paid and cleared', async () => {
+    stubCatchUp(1);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      await runGrantBlessedBuzz();
+    } finally {
+      consoleError.mockRestore();
+    }
+
+    const failed = catchUpQueries.find((users) => users.includes(1)) ?? [];
+    const paid = releasedIds.filter((id) => !failed.includes(id));
+    expect(paid.length).toBeGreaterThan(0);
+    expect(grantedUserIds().sort((a, b) => a - b)).toEqual(paid);
+    expect(clearedIds().sort((a, b) => a - b)).toEqual(paid);
   });
 });
