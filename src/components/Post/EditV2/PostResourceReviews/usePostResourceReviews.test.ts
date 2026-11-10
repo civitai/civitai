@@ -76,6 +76,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 import {
   resetPendingForTests,
   usePostResourceReviews,
+  usePostResourceReviewsSync,
 } from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -112,6 +113,7 @@ function renderHooks<T>(useHook: () => T, consumers = 1) {
   });
 }
 const useSubject = () => usePostResourceReviews({ postId: 1, ownerId: 7 });
+const useSync = () => usePostResourceReviewsSync({ postId: 1, ownerId: 7 });
 
 // Each act() flushes React once, so repeated short waits let a refetch loop show itself.
 const settle = async () => {
@@ -271,7 +273,7 @@ describe('usePostResourceReviews', () => {
   it('fetches once per set of resources, even when one of them never comes back from the query', async () => {
     const withVae = [...twoResources, { modelVersionId: 3, name: 'vae' }];
     store.set(withVae);
-    const hooks = renderHooks(useSubject);
+    const hooks = renderHooks(useSync);
     await settle();
     expect(fetchResources).toHaveBeenCalledTimes(1);
 
@@ -284,5 +286,18 @@ describe('usePostResourceReviews', () => {
     hooks.rerender();
     await settle();
     expect(fetchResources).toHaveBeenCalledTimes(2);
+  });
+
+  it('never fetches from a consumer alone', async () => {
+    renderHooks(useSubject, 3);
+    await settle();
+    expect(fetchResources).not.toHaveBeenCalled();
+  });
+
+  it('does not fetch for a viewer who cannot review', async () => {
+    state.currentUser = { id: 9, muted: false };
+    renderHooks(useSync);
+    await settle();
+    expect(fetchResources).not.toHaveBeenCalled();
   });
 });

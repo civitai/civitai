@@ -36,17 +36,25 @@ export type SaveDetailsResult = RateResult | 'needs-rating';
 
 type SaveBody = { rating: number; recommended: boolean; details?: string };
 
-/**
- * The current user's reviews of a post's resources, keyed by model version and shared by every
- * consumer through the `post.getResources` cache.
- */
-export function usePostResourceReviews({ postId, ownerId }: { postId: number; ownerId: number }) {
+const useCanReview = (ownerId: number) => {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useUtils();
   const isMuted = currentUser?.muted ?? false;
   // A moderator editing someone else's post must not review under their own account.
-  const canReview = !isMuted && !!currentUser && currentUser.id === ownerId;
+  return { isMuted, canReview: !isMuted && !!currentUser && currentUser.id === ownerId };
+};
 
+/**
+ * Loads the current user's reviews into the `post.getResources` cache on mount and whenever the
+ * post's image resources change. Mount it once per post; consumers only read the cache.
+ */
+export function usePostResourceReviewsSync({
+  postId,
+  ownerId,
+}: {
+  postId: number;
+  ownerId: number;
+}) {
+  const { canReview } = useCanReview(ownerId);
   const storeImages = usePostEditStore((state) => state.images);
   const resourceKey = useMemo(
     () =>
@@ -64,13 +72,7 @@ export function usePostResourceReviews({ postId, ownerId }: { postId: number; ow
     [storeImages]
   );
 
-  const { data, refetch } = trpc.post.getResources.useQuery({ id: postId }, { enabled: false });
-  const reviews = useMemo(() => dedupeByModelVersion(data ?? []), [data]);
-  const byModelVersionId = useMemo(
-    () => new Map(reviews.map((r) => [r.modelVersionId as number, r])),
-    [reviews]
-  );
-  const counts = useMemo(() => countReviews(reviews), [reviews]);
+  const { refetch } = trpc.post.getResources.useQuery({ id: postId }, { enabled: false });
 
   // Keyed on the version ids, not row counts: the server drops VAEs, so the counts never match.
   const fetchedKey = useRef<string | null>(null);
@@ -79,6 +81,28 @@ export function usePostResourceReviews({ postId, ownerId }: { postId: number; ow
     fetchedKey.current = resourceKey;
     refetch();
   }, [resourceKey, canReview, refetch]);
+}
+
+export function PostResourceReviewsSync(props: { postId: number; ownerId: number }) {
+  usePostResourceReviewsSync(props);
+  return null;
+}
+
+/**
+ * The current user's reviews of a post's resources, keyed by model version and shared by every
+ * consumer through the `post.getResources` cache. Never fetches; see `usePostResourceReviewsSync`.
+ */
+export function usePostResourceReviews({ postId, ownerId }: { postId: number; ownerId: number }) {
+  const queryUtils = trpc.useUtils();
+  const { canReview, isMuted } = useCanReview(ownerId);
+
+  const { data } = trpc.post.getResources.useQuery({ id: postId }, { enabled: false });
+  const reviews = useMemo(() => dedupeByModelVersion(data ?? []), [data]);
+  const byModelVersionId = useMemo(
+    () => new Map(reviews.map((r) => [r.modelVersionId as number, r])),
+    [reviews]
+  );
+  const counts = useMemo(() => countReviews(reviews), [reviews]);
 
   useSyncExternalStore(
     subscribe,

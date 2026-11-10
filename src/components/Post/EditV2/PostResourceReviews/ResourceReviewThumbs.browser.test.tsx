@@ -9,13 +9,16 @@ const state = vi.hoisted(() => ({
   currentUser: { id: 7, muted: false } as { id: number; muted: boolean },
 }));
 const upsert = vi.hoisted(() => vi.fn());
+const fetchResources = vi.hoisted(() => vi.fn());
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => state.currentUser }));
 vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
 vi.mock('~/components/Post/EditV2/PostEditProvider', () => ({
   usePostEditStore: (select: (s: { images: unknown[] }) => unknown) =>
     select({
-      images: [{ type: 'added', data: { resourceHelper: [{ modelVersionId: 5 }] } }],
+      images: [
+        { type: 'added', data: { resourceHelper: [{ modelVersionId: 5 }, { modelVersionId: 6 }] } },
+      ],
     }),
 }));
 
@@ -38,7 +41,17 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     {
       'post.getResources': {
         useQuery: (_input: unknown, opts: object) =>
-          useQuery({ queryKey: key, queryFn: async () => server.rows, ...opts }, client),
+          useQuery(
+            {
+              queryKey: key,
+              queryFn: async () => {
+                fetchResources();
+                return server.rows;
+              },
+              ...opts,
+            },
+            client
+          ),
       },
       'resourceReview.upsert': { useMutation: () => ({ mutateAsync: upsert }) },
     },
@@ -62,7 +75,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 import { ResourceReviewThumbs } from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewThumbs';
-import { resetPendingForTests } from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
+import {
+  PostResourceReviewsSync,
+  resetPendingForTests,
+} from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
 
 const Two = () => (
   <>
@@ -77,6 +93,7 @@ const Two = () => (
 
 beforeEach(() => {
   resetPendingForTests();
+  fetchResources.mockReset();
   state.currentUser = { id: 7, muted: false };
   server.rows = [resourceRow()];
   client.setQueryData(key, server.rows);
@@ -123,5 +140,27 @@ describe('ResourceReviewThumbs', () => {
     state.currentUser = { id: 99, muted: false };
     await renderWithProviders(<Two />);
     expect(page.getByRole('button', { name: /Cool LoRA/ }).elements()).toHaveLength(0);
+  });
+
+  test('many cards sharing a post fetch its reviews once', async () => {
+    await renderWithProviders(
+      <>
+        <PostResourceReviewsSync postId={1} ownerId={7} />
+        {[5, 6, 5, 6].map((id, i) => (
+          <ResourceReviewThumbs
+            key={i}
+            postId={1}
+            ownerId={7}
+            modelVersionId={id}
+            modelName={`Model ${id}`}
+          />
+        ))}
+      </>
+    );
+    await expect
+      .element(page.getByRole('button', { name: 'Recommend Model 5' }).first())
+      .toBeVisible();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(fetchResources).toHaveBeenCalledTimes(1);
   });
 });

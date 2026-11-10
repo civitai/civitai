@@ -6,6 +6,7 @@ import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV
 import { PostEditSidebar } from '~/components/Post/EditV2/PostEditSidebar';
 import { PostImageCards } from '~/components/Post/EditV2/PostImageCards/PostImageCards';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
+import { PostResourceReviewsSync } from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
 import { PostReorderImages } from '~/components/Post/EditV2/PostReorderImages';
 import { StorylineEditorHeader } from '~/components/Storyline/editor/StorylineEditorHeader';
 import { useTourContext } from '~/components/Tours/ToursProvider';
@@ -32,6 +33,7 @@ export function PostEdit() {
       collectionIds={removeDuplicates([collectionId, post.collectionId].filter(isDefined))}
     >
       <div className="@container">
+        <PostResourceReviewsSync postId={post.id} ownerId={post.user.id} />
         <div className="flex flex-col gap-3 @sm:flex-row @sm:justify-center @sm:gap-6">
           <div
             className="flex min-w-0 flex-1 flex-col gap-3"
