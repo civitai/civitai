@@ -240,15 +240,15 @@ describe("a provider's file selectors", () => {
 
   // Each wanted value is the one the default file preference would NOT pick.
   it.each([
-    ['size', { size: 'pruned' }, { size: 'full' }],
-    ['fp', { fp: 'fp16' }, { fp: 'fp8' }],
-    ['quantType', { quantType: 'Q4_K_M' }, { quantType: 'Q8_0' }],
+    ['size', 'pruned', 'full'],
+    ['fp', 'fp16', 'fp8'],
+    ['quantType', 'Q4_K_M', 'Q8_0'],
   ] as const)('pick the requested %s, not the primary file', async (key, primary, wanted) => {
     const id = version({}, [
-      { metadata: { format: 'GGUF', ...primary } },
-      { metadata: { format: 'GGUF', ...wanted } },
+      { metadata: { format: 'GGUF', [key]: primary } },
+      { metadata: { format: 'GGUF', [key]: wanted } },
     ]);
-    expect(await asProvider(id, { selectors: { [key]: wanted[key] } })).toMatchObject({
+    expect(await asProvider(id, { selectors: { [key]: wanted } })).toMatchObject({
       ok: true,
       fileId: id * 100 + 1,
     });
