@@ -31,6 +31,18 @@ describe('buildBrowsingLevelClause', () => {
   });
 });
 
+describe('buildBrowsingLevelClause in subset mode', () => {
+  it('excludes every level outside the browsing level, Blocked included', () => {
+    expect(buildBrowsingLevelClause(attribute, pg | pg13, 'subset')).toBe(
+      'nsfwLevel NOT IN [4, 8, 16, 32]'
+    );
+  });
+
+  it('emits no clause when every level is allowed', () => {
+    expect(buildBrowsingLevelClause(attribute, 63, 'subset')).toBeNull();
+  });
+});
+
 describe('buildBrowsingLevelFilters', () => {
   it('appends the browsing clause after the caller filters', () => {
     expect(

@@ -1,4 +1,8 @@
-import type { BrowsingLevelAttribute } from '~/components/Search/search-index-filters';
+import type {
+  BrowsingLevelAttribute,
+  BrowsingLevelMatch,
+} from '~/components/Search/search-index-filters';
+import { NsfwLevel } from '~/server/common/enums';
 import type { SearchIndexKey } from '~/components/Search/search.types';
 import { Flags } from '~/shared/utils/flags';
 import { isDefined } from '~/utils/type-guards';
@@ -6,14 +10,24 @@ import { isDefined } from '~/utils/type-guards';
 // Meilisearch rejects a bare `()` with invalid_search_filter, so a clause with nothing to say has
 // to disappear rather than become an empty string that still gets parenthesized downstream.
 
+// Every bit an item's level can carry, Blocked included.
+const LEVEL_BITS = Object.values(NsfwLevel).filter((v): v is number => typeof v === 'number');
+
 export function buildBrowsingLevelClause(
   attribute: BrowsingLevelAttribute | undefined,
-  browsingLevel: number
+  browsingLevel: number,
+  match: BrowsingLevelMatch = 'any'
 ) {
   if (!attribute) return null;
 
   const levels = Flags.instanceToArray(browsingLevel);
   if (!levels.length) return null;
+
+  if (match === 'subset') {
+    const outside = LEVEL_BITS.filter((bit) => !(bit & browsingLevel));
+    // An unrated item has no levels, so it passes, as the comics feed lists it.
+    return outside.length ? `${attribute} NOT IN [${outside.join(', ')}]` : null;
+  }
 
   return levels.map((value) => `${attribute}=${value}`).join(' OR ');
 }
@@ -21,15 +35,19 @@ export function buildBrowsingLevelClause(
 export function buildBrowsingLevelFilters({
   attribute,
   browsingLevel,
+  match,
   filters,
 }: {
   attribute: BrowsingLevelAttribute | undefined;
   browsingLevel: number;
+  match?: BrowsingLevelMatch;
   filters?: string[] | string;
 }) {
   const filterList = Array.isArray(filters) ? filters : [filters];
 
-  return [...filterList, buildBrowsingLevelClause(attribute, browsingLevel)].filter(isDefined);
+  return [...filterList, buildBrowsingLevelClause(attribute, browsingLevel, match)].filter(
+    isDefined
+  );
 }
 
 export function joinFilterClauses(filters?: string[] | string) {
