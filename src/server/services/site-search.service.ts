@@ -278,9 +278,9 @@ export async function siteMultiSearch(input: SiteMultiSearchInput, viewer: SiteS
     status: 200,
     body: {
       ...body,
-      results: body.results?.map((result) => ({
+      results: body.results?.map((result, i) => ({
         ...result,
-        hits: shapeHits(result.indexUid, result.hits, viewer),
+        hits: shapeHits(result.indexUid ?? input.queries[i]?.indexUid, result.hits, viewer),
       })),
     },
   };

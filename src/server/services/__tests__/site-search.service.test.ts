@@ -111,6 +111,8 @@ describe('comic covers', () => {
     { id: 1, coverImageUrl: cover, coverImageNsfwLevel: NsfwLevel.R },
     { id: 2, coverImageUrl: cover, coverImageNsfwLevel: NsfwLevel.PG },
     { id: 3, coverImageUrl: cover, coverImageNsfwLevel: null },
+    { id: 4, coverImageUrl: cover, coverImageNsfwLevel: NsfwLevel.PG | NsfwLevel.R },
+    { id: 5, coverImageUrl: cover, coverImageNsfwLevel: NsfwLevel.PG | NsfwLevel.PG13 },
   ];
   const respond = (body: unknown) =>
     vi.stubGlobal(
@@ -125,7 +127,13 @@ describe('comic covers', () => {
   it('a capped viewer gets no cover above the cap or unrated, in a single search', async () => {
     respond({ hits });
     const { body } = await siteIndexSearch(COMICS_SEARCH_INDEX, { q: 'x' }, capped);
-    expect(covers((body as { hits: unknown }).hits)).toEqual([undefined, cover, undefined]);
+    expect(covers((body as { hits: unknown }).hits)).toEqual([
+      undefined,
+      cover,
+      undefined,
+      undefined,
+      cover,
+    ]);
   });
 
   it('a capped viewer gets no cover above the cap in a multi-search', async () => {
@@ -135,12 +143,23 @@ describe('comic covers', () => {
       capped
     );
     const [result] = (body as { results: { hits: unknown }[] }).results;
-    expect(covers(result.hits)).toEqual([undefined, cover, undefined]);
+    expect(covers(result.hits)).toEqual([undefined, cover, undefined, undefined, cover]);
+  });
+
+  it('a capped viewer gets no cover in the highlight copy either', async () => {
+    const hit = {
+      id: 6,
+      coverImageNsfwLevel: NsfwLevel.R,
+      _formatted: { coverImageUrl: cover, name: 'C' },
+    };
+    respond({ hits: [hit] });
+    const { body } = await siteIndexSearch(COMICS_SEARCH_INDEX, { q: 'x' }, capped);
+    expect((body as { hits: { _formatted: unknown }[] }).hits[0]._formatted).toEqual({ name: 'C' });
   });
 
   it('an uncapped viewer keeps every cover', async () => {
     respond({ hits });
     const { body } = await siteIndexSearch(COMICS_SEARCH_INDEX, { q: 'x' }, uncapped);
-    expect(covers((body as { hits: unknown }).hits)).toEqual([cover, cover, cover]);
+    expect(covers((body as { hits: unknown }).hits)).toEqual([cover, cover, cover, cover, cover]);
   });
 });
