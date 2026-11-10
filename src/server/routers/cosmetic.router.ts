@@ -174,7 +174,12 @@ export const cosmeticRouter = router({
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(equipCosmeticSchema)
     .mutation(({ input, ctx }) =>
-      equipCosmeticToEntity({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+      equipCosmeticToEntity({
+        ...input,
+        userId: ctx.user.id,
+        // The placement gate's moderator: only on a session or a full-access key.
+        isModerator: eventViewerOf(ctx).isModerator,
+      })
     ),
   unequipCosmetic: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
