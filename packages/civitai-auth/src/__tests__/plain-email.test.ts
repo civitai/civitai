@@ -52,7 +52,7 @@ describe('parsePlainEmailAddress', () => {
   });
 
   it('refuses when the parser reads a group', () => {
-    const group: AddressParser = () => [{ group: [] }];
+    const group: AddressParser = () => [{ group: [], address: 'a@ok.test' }];
     expect(parsePlainEmailAddress('a@ok.test', group)).toBeNull();
   });
 

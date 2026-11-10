@@ -121,15 +121,16 @@ export const actions: Actions = {
       return fail(400, { email, captcha: true });
     }
 
+    // Only a plain address may start a new account. A returning user whose address on file is not
+    // plain (saved before this rule) still signs in with exactly that address. The lookup sits after
+    // the captcha so it is rate limited like every other one here.
+    if (!plain && !(await userExistsByEmail(email))) return fail(400, { email, invalid: true });
+
     // 3. Blocked email domains: reject NEW signups on a blocklisted domain — an exact entry, or a
     //    domain a moderator opted into suffix blocking — but don't retroactively lock out EXISTING
     //    accounts when a domain is later added to either list (mirrors the exemption in step 4).
     //    "Either list" matters: the exact list is appended weekly from upstream, while the suffix
     //    list is hand-maintained and synced by nothing.
-    //    Only a plain address may start a new account. A returning user whose address on file is
-    //    not plain (saved before this rule) still signs in with exactly that address. The lookup
-    //    sits after the captcha so it is rate limited like every other one here.
-    if (!plain && !(await userExistsByEmail(email))) return fail(400, { email, invalid: true });
     const domain = plain ? emailDomain(plain) : '';
     if (domain && (await isBlockedEmailDomain(domain)) && !(await userExistsByEmail(email))) {
       blockedEmailDomainSignupsTotal.inc({ path: 'email' });

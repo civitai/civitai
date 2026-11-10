@@ -834,10 +834,9 @@ export async function assertEmailAllowed(input: string) {
   const email = parsePlainEmailAddress(input, addressparser);
   if (!email) throw throwBadRequestError('Please provide a valid email address');
 
-  // `lastIndexOf`, not `split('@')[1]`: a quoted-local address ("a@b"@host) has more than one `@`,
-  // and taking the first segment yields a domain that matches nothing. A trailing dot is the FQDN
-  // root and resolves identically, so `provider.com.` would otherwise miss every list entry, pass
-  // the MX probe, and take a second slot in a citext-unique column for one real mailbox.
+  // A trailing dot is the FQDN root and resolves identically, so `provider.com.` would otherwise
+  // miss every list entry, pass the MX probe, and take a second slot in a citext-unique column for
+  // one real mailbox.
   // Kept identical to the hub's `emailDomain` -- fixing one side only is how the two diverge.
   const at = email.lastIndexOf('@');
   const rawDomain = at === -1 ? '' : email.slice(at + 1);
