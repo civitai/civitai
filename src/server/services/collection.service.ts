@@ -31,7 +31,12 @@ import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { getDbWithoutLag, kyselyMatching, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordChallengeEntrySubmitted } from '~/server/prom/challenge.metrics';
-import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
+import {
+  refreshHasReceivedReviews,
+  tagIdsForImagesCache,
+  userCollectionCountCache,
+} from '~/server/redis/caches';
+import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -1666,7 +1671,7 @@ export const upsertCollection = async ({
       // already down), so an action taken while it was hidden lands only on the owner, the images,
       // a hold, or the post's model or version; any of those keeps the post down.
       // One statement, so a failed lookup restores nothing.
-      await dbWrite.$executeRaw`
+      const restored = await dbWrite.$queryRaw<{ id: number }[]>`
         WITH reported AS (
           SELECT "userId"::bigint AS id FROM "CsamReport" WHERE "userId" IS NOT NULL
           UNION
@@ -1704,11 +1709,17 @@ export const upsertCollection = async ({
               WHERE mv.id = p."modelVersionId" AND mv.status = 'Published' AND m.status = 'Published'
             )
           )
+        RETURNING p.id
       `;
+      syncReviewsOfMovedPosts({
+        change: 'publish',
+        postIds: restored.map((post) => post.id),
+        onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+      });
     } else if (!updated.mode && updated.read !== CollectionReadConfiguration.Public) {
       // otherwise set publishedAt to null when no mode is setup. Already-unpublished posts are
       // left alone so their own stamps survive.
-      await dbWrite.$executeRaw`
+      const hidden = await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "Post" SET
           "publishedAt" = NULL,
           "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
@@ -1716,7 +1727,13 @@ export const upsertCollection = async ({
             'unpublishedByCollection', ${updated.id}::int
           )
         WHERE "collectionId" = ${updated.id} AND "publishedAt" IS NOT NULL
+        RETURNING id
       `;
+      syncReviewsOfMovedPosts({
+        change: 'unpublish',
+        postIds: hidden.map((post) => post.id),
+        onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+      });
     }
 
     // Follow rows carry whatever the collection granted for free when they were written, so
