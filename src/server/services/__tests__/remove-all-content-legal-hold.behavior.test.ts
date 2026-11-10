@@ -278,7 +278,7 @@ beforeAll(async () => {
       "parentId" int REFERENCES "CommentV3"(id) ON DELETE RESTRICT,
       "replyToId" int, path ltree NOT NULL, "rootId" int GENERATED ALWAYS AS (ltree2text(subpath(path, 0, 1))::int) STORED, "userId" int NOT NULL, content text NOT NULL,
       "tosViolation" boolean NOT NULL DEFAULT false, "deletedAt" timestamptz, "updatedAt" timestamptz,
-      "legacyV1Id" int,
+      "legacyV1Id" int, "pinnedAt" timestamptz,
       FOREIGN KEY ("entityId", "entityType") REFERENCES "CommentTopic" ON DELETE CASCADE
     );
     CREATE TABLE "CommentV3Report" (

@@ -14,7 +14,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   ...(await importOriginal<typeof Audit>()),
-  auditMetaData: vi.fn(() => ({ success: true })),
+  auditPostImageMeta: vi.fn(() => ({ success: true })),
   includesInappropriate: vi.fn(() => false),
   includesPoi: vi.fn(() => false),
 }));

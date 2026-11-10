@@ -188,7 +188,7 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
     'App Blocks author submit: moderators may queue a version of an app they do not own (the owner gate in submitVersion)',
   'v1/blocks/submit-version':
     'App Blocks author submit (CLI): moderators may queue a version of an app they do not own (the owner gate in submitVersion)',
-  'download/[...key]': 'key scoped to the caller’s own upload prefix; moderators may fetch any key',
+  'download/[...key]': FULL_CREDENTIAL,
   'download/attachments/[fileId]': 'file access check that also admits owners and public files',
   'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
   'download/vault/[vaultItemId]':
@@ -528,6 +528,8 @@ const FULL_SCOPE_SESSION_ROUTES = [
   'auth/freshdesk',
   // Session submit (App Assistant's Submit for review): no OAuth-client token reaches submitVersion here.
   'blocks/submit-version',
+  // Raw key download, moderators only.
+  'download/[...key]',
   'media/ingest/[mediaId]',
   'testing/model3d-seed',
   'user/orchestrator-key',

@@ -134,6 +134,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // Needs its key in flag state (enabled: false) BEFORE this code serves traffic: a missing key
   // makes evaluateBoolean throw and log on every call.
   CONTEST_COLLECTION_ITEMS_REDIS_CACHE = 'contest-collection-items-redis-cache',
+  // Per-process (L1) cache switches, one per cache, so each can be A/B'd and rolled back alone.
+  // Read through `~/server/redis/l1-switches`, which holds their TTL values; a missing key reads as
+  // off. Add each key (enabled: false) to flag state before flipping it.
+  //
+  // Gates the longer `basic-tags` (tagCache) L1 TTL.
+  BASIC_TAGS_L1_LONG_TTL = 'basic-tags-l1-long-ttl',
+  // Gates an L1 in front of the `cosmetics2` catalog cache (cosmeticCache).
+  COSMETICS_L1 = 'cosmetics-l1',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -302,6 +310,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
+  // Variant: `log` | `enforce`; any other answer is off. Read by mini-epoch-caller.ts.
+  MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
   // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
   // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:

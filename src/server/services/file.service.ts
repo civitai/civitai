@@ -34,6 +34,7 @@ import {
   getVersionEarlyAccess,
   isModelArchived,
   isModelDeleted,
+  isModelTakenDown,
   isVersionPublished,
 } from '~/server/utils/model-version-gates';
 
@@ -264,13 +265,14 @@ export const getFileForModelVersion = async ({
   const userId = user?.id;
   const isOwner = !!userId && modelVersion.model.userId === userId;
 
-  // A deleted model is downloadable by moderators only — no exceptions. This
+  // A deleted or taken-down model is downloadable by moderators only — no exceptions. This
   // gate runs before every other access path (owner, internal noAuth callers,
-  // and the published-state check) so a deleted (incl. DMCA-removed) model can
-  // never be served to its owner or anyone else. Owners are otherwise allowed
-  // to download their own unpublished work, but a deleted model's owner is
-  // frequently the exact party a takedown targets (the uploader).
-  if (isModelDeleted(modelVersion) && !isMod) return { status: 'not-found' };
+  // and the published-state check) so such a model can never be served to its
+  // owner or anyone else. Owners are otherwise allowed to download their own
+  // unpublished work, but the owner is frequently the exact party a takedown
+  // targets (the uploader). Both answer the same `not-found`.
+  if ((isModelDeleted(modelVersion) || isModelTakenDown(modelVersion)) && !isMod)
+    return { status: 'not-found' };
 
   const canDownload = noAuth || isMod || isOwner || isVersionPublished(modelVersion);
 
@@ -345,11 +347,22 @@ export const getFileForModelVersion = async ({
         // Fetch the primary 'Model' file from the linked version
         const linkedFile = await dbRead.modelFile.findFirst({
           where: { modelVersionId: linked.resourceId, type: 'Model' },
-          select: downloadFileSelect,
+          select: {
+            ...downloadFileSelect,
+            modelVersion: {
+              select: { status: true, model: { select: { status: true, mode: true } } },
+            },
+          },
           orderBy: { id: 'asc' },
         });
-        if (linkedFile) {
-          file = { ...linkedFile, type: type } as FileResult;
+        // The linked file belongs to another model, which the gates above never saw.
+        const linkedRefused =
+          !!linkedFile &&
+          !isMod &&
+          (isModelDeleted(linkedFile.modelVersion) || isModelTakenDown(linkedFile.modelVersion));
+        if (linkedFile && !linkedRefused) {
+          const { modelVersion: _linkedVersion, ...linkedRow } = linkedFile;
+          file = { ...linkedRow, type: type } as FileResult;
           // Belongs to the linked version, so this version's files are not its siblings.
           versionFiles = [];
         }

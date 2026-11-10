@@ -1964,7 +1964,9 @@ export const deleteArticleById = async ({
       handleLogError(error as Error, 'article-image-cleanup', { articleId: id });
     }
 
-    await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }], {
+      reason: 'delete',
+    });
 
     return deleted;
   } catch (error) {
@@ -2084,7 +2086,9 @@ export async function unpublishArticleById({
   );
 
   // Update search index (remove from public search)
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }], {
+    reason: 'edit',
+  });
 
   // Bust user content cache
   await userArticleCountCache.refresh(ownerId);
@@ -3043,9 +3047,10 @@ export async function dispatchArticleIngestionPostCommit(
 
   // Sync search index — the index filters on ingestion = 'Scanned', so any
   // ingestion state change must be reflected (add when Scanned, remove otherwise).
-  await articlesSearchIndex.queueUpdate([
-    { id: articleId, action: SearchIndexUpdateQueueAction.Update },
-  ]);
+  await articlesSearchIndex.queueUpdate(
+    [{ id: articleId, action: SearchIndexUpdateQueueAction.Update }],
+    { reason: 'ingestion' }
+  );
 
   if (publishedNotificationUserId !== null) {
     await createNotification({
@@ -3133,9 +3138,10 @@ export async function resolveArticleImageScan({
 
   await resolveIngestionError({ id: imageId, nsfwLevel, userId });
   await recomputeArticleIngestion(articleId);
-  await articlesSearchIndex.queueUpdate([
-    { id: articleId, action: SearchIndexUpdateQueueAction.Update },
-  ]);
+  await articlesSearchIndex.queueUpdate(
+    [{ id: articleId, action: SearchIndexUpdateQueueAction.Update }],
+    { reason: 'image-scan' }
+  );
 }
 
 const RESCAN_LIMIT = 3;
@@ -3241,7 +3247,9 @@ export async function rescanArticle({
   await preventReplicationLag('userArticles', article.userId);
 
   // Remove from search index immediately — article should not be searchable while rescanning.
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }], {
+    reason: 'edit',
+  });
 
   // --- Re-link content images (picks up new images, queues Pending ones) ---
   if (article.content) {
@@ -3534,7 +3542,9 @@ export const setArticleOfficial = async ({
 
   // The index document spreads `articleDetailSelect`, which now carries `isOfficial`, so
   // a stale document would keep serving the old provenance to search.
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }], {
+    reason: 'edit',
+  });
 
   return updated;
 };

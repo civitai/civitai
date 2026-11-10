@@ -126,6 +126,7 @@ import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publ
 import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { auditWildcardSetCategoriesJob } from '~/server/jobs/audit-wildcard-set-categories';
 import { clickhouseRefreshJobs } from '~/server/jobs/clickhouse-refresh-monitor';
+import { providerFetchSpikeMonitorJob } from '~/server/jobs/provider-fetch-spike-monitor';
 import { userActivityRollupJob } from '~/server/jobs/user-activity-rollup';
 import { userPopulationSnapshotJob } from '~/server/jobs/user-population-snapshot';
 import { metricReconciliationJobs } from '~/server/jobs/metric-reconciliation-audit';
@@ -258,6 +259,7 @@ export const jobs: Job[] = [
   auditWildcardSetCategoriesJob,
   ...metricReconciliationJobs,
   ...clickhouseRefreshJobs,
+  providerFetchSpikeMonitorJob,
   userActivityRollupJob,
   userPopulationSnapshotJob,
   ...jobQueueJobs,

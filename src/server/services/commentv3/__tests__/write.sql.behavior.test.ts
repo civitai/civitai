@@ -272,6 +272,16 @@ describe('comment v3 writes', () => {
     expect(await getStoredComment(db, live.id)).toMatchObject({ content: 'live', hidden: false });
   });
 
+  it('delete: a pinned comment kept as a tombstone loses its pin', async () => {
+    await pg.exec(`INSERT INTO "Article" VALUES (35)`);
+    const root = await post(35, 1);
+    await post(35, 2, root.id);
+    await setCommentFlags(db, [root.id], { pinned: true });
+    expect((await getStoredComment(db, root.id))?.pinnedAt).not.toBeNull();
+    await deleteComments(db, [root.id]);
+    expect(await getStoredComment(db, root.id)).toMatchObject({ content: '', pinnedAt: null });
+  });
+
   it('an edit is refused under a locked ancestor or topic, as the update handler asks', async () => {
     await pg.exec(`INSERT INTO "Article" VALUES (33)`);
     const root = await post(33, 1);

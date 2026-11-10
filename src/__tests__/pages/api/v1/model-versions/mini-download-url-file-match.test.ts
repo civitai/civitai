@@ -617,6 +617,48 @@ describe('GET /api/v1/model-versions/mini/[id] — the AIR handed to Air.stringi
   });
 });
 
+describe('GET /api/v1/model-versions/mini/[id] — the epoch url of a taken-down or deleted model', () => {
+  // The epoch url is the orchestrator's own link to the weights, outside the download route, so a
+  // taken-down or deleted model's is withheld from everyone but moderators; the rest stays.
+  type Row = Partial<typeof versionRow>;
+  const takenDown = {
+    availability: 'Private',
+    modelStatus: 'Published',
+    modelMode: 'TakenDown',
+  } as Row;
+  const deleted = { availability: 'Private', modelStatus: 'Deleted', modelMode: null } as Row;
+
+  it.each([
+    ['an anonymous caller', 'taken down', undefined, takenDown],
+    ['its owner', 'taken down', { id: OWNER_ID }, takenDown],
+    ['its owner', 'deleted', { id: OWNER_ID }, deleted],
+  ])('is withheld from %s when %s, and the rest kept', async (_who, _state, user, row) => {
+    currentUser.value = user;
+    const { status, body } = await run([TRAINING_FILE], {}, row);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([]);
+    expect(body.fileName).toBe(TRAINING_FILE.name);
+    expect(body.air).toEqual(expect.any(String));
+  });
+
+  it('is still given to a moderator', async () => {
+    currentUser.value = { id: 1, isModerator: true };
+    const { body } = await run([TRAINING_FILE], {}, takenDown);
+
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+
+  // The rows above are mocked, so this is what ties them to the real query.
+  it('reads the model status and mode in the version query', async () => {
+    await run([TRAINING_FILE], {}, takenDown);
+    const versionSql = (mockQueryRaw.mock.calls[0][0] as TemplateStringsArray).join('?');
+
+    expect(versionSql).toMatch(/\bm\.mode as "modelMode"/);
+    expect(versionSql).toMatch(/\bm\.status as "modelStatus"/);
+  });
+});
+
 describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch path', () => {
   /**
    * REGRESSION for the visibility gate being applied too early. A Private

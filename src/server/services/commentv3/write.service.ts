@@ -239,7 +239,7 @@ export async function deleteComments(db: SqlRunner, ids: number[]) {
   const kept = pending.filter((id) => requested.has(id));
   if (kept.length) {
     const { rows } = await db.query<RemovedCommentV3 & { deletedAt: Date | null }>(
-      `UPDATE "CommentV3" SET "deletedAt" = now(), content = '', "updatedAt" = now()
+      `UPDATE "CommentV3" SET "deletedAt" = now(), content = '', "pinnedAt" = NULL, "updatedAt" = now()
        WHERE id = ANY(${IDS}) AND "deletedAt" IS NULL
        RETURNING id, "userId", "entityType"::text AS "entityType", "entityId", NULL::timestamptz AS "deletedAt"`,
       [list(kept)]
