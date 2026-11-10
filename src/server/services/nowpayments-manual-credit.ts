@@ -76,8 +76,10 @@ export function matchManualCredit(
   if (credit.type === 'Reward' && credit.handPaidFor === ctx.paymentId)
     return { strength: 'hard', why: 'hand-paid top-up names the payment', handPaid: 'paid' };
   if (credit.type === 'Reward' && credit.handPaidFor === 'unreadable')
+    // It may be for another of the user's deposits: holds the automatic credit, but a moderator can
+    // acknowledge it.
     return {
-      strength: 'hard',
+      strength: 'soft',
       why: 'hand-paid top-up with unreadable entityId',
       handPaid: 'unreadable',
     };
@@ -211,14 +213,14 @@ export async function findHandGrantsForDeposit(
   const overflowed: string[] = [];
   const matches = await findManualCredits(userId, { ...ctx, since }, overflowed);
   const handPaid = matches.filter((m) => m.handPaid === 'paid');
-  const covering = matches.filter(
-    (m) => m.handPaid === 'unreadable' || (m.strength === 'hard' && m.fromStaff && !m.handPaid)
-  );
+  const unreadable = matches.filter((m) => m.handPaid === 'unreadable');
+  const covering = matches.filter((m) => m.strength === 'hard' && m.fromStaff && !m.handPaid);
   const settled = handPaid.length > 0;
   return {
     handPaid,
     covering: settled ? [] : covering,
-    possible: settled || covering.length ? [] : matches,
+    unreadable: settled || covering.length ? [] : unreadable,
+    possible: settled || covering.length || unreadable.length ? [] : matches,
     overflowed,
   };
 }

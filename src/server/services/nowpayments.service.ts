@@ -254,7 +254,7 @@ export const processDeposit = async (
   let transactionId: string | undefined;
   let buzzGrantFailed = false;
   let held = false;
-  /** Support already paid it by hand: settles as hand_paid, with no grant and nothing sent to the user. */
+  /** Support already paid this deposit by hand. */
   let handPaid = false;
   let heldReason: HeldReason | undefined;
   let failure: string | undefined;
@@ -345,6 +345,14 @@ export const processDeposit = async (
               await log({
                 type: 'warning',
                 message: DEPOSIT_HELD_MESSAGE,
+                paymentId,
+                userId,
+                matches: decision.matches.map((m) => `${m.ref} (${m.why})`),
+              });
+            else if (decision.reason === 'hand_paid_unreadable')
+              await log({
+                type: 'warning',
+                message: 'Deposit held: a hand-paid top-up has an unreadable entityId',
                 paymentId,
                 userId,
                 matches: decision.matches.map((m) => `${m.ref} (${m.why})`),

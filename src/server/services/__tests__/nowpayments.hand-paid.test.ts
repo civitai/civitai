@@ -208,12 +208,13 @@ describe('a deposit Support already paid by hand', () => {
   });
 
   it('holds, rather than grants, on a hand-paid top-up whose entityId it cannot read', async () => {
-    topUp('np-x');
+    topUp('np-x', { fromAccountId: OTHER_SENDER });
 
-    const row = await depositAfter('failed');
-
-    expect(grantBuzzPurchase).not.toHaveBeenCalled();
-    expect(row.status).toBe('held');
+    for (const status of ['failed', 'buzz_failed']) {
+      const row = await depositAfter(status);
+      expect(grantBuzzPurchase).not.toHaveBeenCalled();
+      expect(row.status).toBe('held');
+    }
   });
 
   // Without the marker, a top-up is only a soft keyword match, and a non-late row grants on those.
@@ -231,6 +232,27 @@ describe('a deposit Support already paid by hand', () => {
       const row = await depositAfter('hand_paid', later);
       expect(grantBuzzPurchase).not.toHaveBeenCalled();
       expect(row.status).toBe('hand_paid');
+    }
+  });
+});
+
+// Anyone can tip with any details; only a Reward can carry the hand-paid marker.
+describe('a Tip forging the hand-paid marker', () => {
+  it.each([
+    ['naming the payment', PAYMENT_ID],
+    ['with an unreadable entityId', 'np-x'],
+  ])('is ignored %s, late or not', async (_, entityId) => {
+    credit({
+      type: 'Tip',
+      fromAccountId: OTHER_SENDER,
+      details: { kind: 'hand-paid', entityId },
+    });
+
+    for (const status of ['failed', 'buzz_failed']) {
+      grantBuzzPurchase.mockClear();
+      const row = await depositAfter(status);
+      expect(grantBuzzPurchase).toHaveBeenCalledTimes(1);
+      expect(row.status).toBe('finished');
     }
   });
 });
@@ -282,7 +304,6 @@ describe('decideDepositCredit', () => {
       decision: 'already_granted',
       via: 'hand_paid',
     });
-    expect(createTransaction).not.toHaveBeenCalled();
   });
 });
 

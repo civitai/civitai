@@ -68,6 +68,7 @@ vi.mock('~/server/services/nowpayments-manual-credit', async (importOriginal) =>
   ...(await importOriginal<typeof ManualCredit>()),
   findHandGrantsForDeposit: vi.fn(async () => ({
     handPaid: [],
+    unreadable: [],
     covering: [],
     possible: [],
     overflowed: [],
@@ -1185,7 +1186,13 @@ function resetDepositMocks() {
   mockGrantBuzzPurchase.mockReset().mockResolvedValue('tx_123');
   vi.mocked(findHandGrantsForDeposit)
     .mockReset()
-    .mockResolvedValue({ handPaid: [], covering: [], possible: [], overflowed: [] });
+    .mockResolvedValue({
+      handPaid: [],
+      unreadable: [],
+      covering: [],
+      possible: [],
+      overflowed: [],
+    });
 }
 
 type DepositRow = Record<string, unknown>;
@@ -1256,6 +1263,7 @@ describe('recordUnverifiedDeposit', () => {
 
 const staffTipCitingPayment = {
   handPaid: [],
+  unreadable: [],
   covering: [
     {
       ref: 'tip-1',
@@ -1682,12 +1690,14 @@ describe('watchOpenDeposits', () => {
 
     const softMatch = {
       handPaid: [],
+      unreadable: [],
       covering: [],
       possible: [{ strength: 'soft', ref: 'tx-tip', why: 'amount' }],
       overflowed: [],
     } as unknown as Awaited<ReturnType<typeof findHandGrantsForDeposit>>;
     const overflow = {
       handPaid: [],
+      unreadable: [],
       covering: [],
       possible: [],
       overflowed: ['Tip'],

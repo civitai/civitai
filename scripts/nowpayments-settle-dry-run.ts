@@ -20,8 +20,7 @@ import { runScriptAndExit } from './lib/run-as-script';
  *     non-zero without printing that payment's decision.
  *   - the buzz ledger through the buzz service's GET endpoints (transaction by external id, account
  *     transactions).
- *   - NowPayments `GET /payment/<id>`, for the payin hash, settled amount and creation time. A
- *     failed lookup is logged to Axiom by the caller; nothing else is written.
+ *   - NowPayments `GET /payment/<id>`, for the payin hash, settled amount and creation time.
  *
  * Environment (the server env schema is validated on import, so its other required vars must be
  * set too):

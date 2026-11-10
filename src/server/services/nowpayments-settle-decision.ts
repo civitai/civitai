@@ -30,7 +30,8 @@ export const LATE_FINISH_STATUSES = ['failed', 'expired'];
 export type HeldReason =
   | 'hand_grant_covers'
   | 'soft_hand_grant_match'
-  | 'hand_grant_scan_incomplete';
+  | 'hand_grant_scan_incomplete'
+  | 'hand_paid_unreadable';
 
 export type SettleDecision =
   | {
@@ -95,7 +96,7 @@ export async function decideDepositCredit(input: {
       matches: [],
     };
 
-  const { handPaid, covering, possible, overflowed } = await findHandGrantsForDeposit(
+  const { handPaid, covering, unreadable, possible, overflowed } = await findHandGrantsForDeposit(
     input.userId,
     {
       paymentId,
@@ -107,6 +108,9 @@ export async function decideDepositCredit(input: {
   if (handPaid.length) return { decision: 'already_granted', via: 'hand_paid', matches: handPaid };
   if (covering.length)
     return { decision: 'held', reason: 'hand_grant_covers', matches: covering, unscanned: [] };
+  // Fail closed, late or not: the top-up may be for this deposit.
+  if (unreadable.length)
+    return { decision: 'held', reason: 'hand_paid_unreadable', matches: unreadable, unscanned: [] };
 
   // A late finish holds, rather than credits, when the hand-grant scan is unsure.
   const uncertain: HeldReason | undefined = possible.length

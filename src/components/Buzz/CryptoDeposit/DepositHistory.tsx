@@ -55,10 +55,7 @@ export function DepositHistory() {
   // Build a lookup: NowPayments currency code → { ticker, network, multiNetwork }
   const currencyLookup = useMemo(() => {
     if (!currencies) return {};
-    const lookup: Record<
-      string,
-      { ticker: string; network: string | null | undefined; multiNetwork: boolean }
-    > = {};
+    const lookup: Record<string, { ticker: string; network: string | null | undefined; multiNetwork: boolean }> = {};
     for (const group of currencies) {
       const multiNetwork = group.networks.length > 1;
       for (const net of group.networks) {
@@ -75,7 +72,9 @@ export function DepositHistory() {
   // Live updates are handled by the global useCryptoDepositSignal hook
   // in SignalsRegistrar.tsx, which invalidates getDepositHistory on signal receipt.
 
-  const deposits = (data?.deposits ?? []).filter((d): d is NonNullable<typeof d> => d != null);
+  const deposits = (data?.deposits ?? []).filter(
+    (d): d is NonNullable<typeof d> => d != null
+  );
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / perPage);
   const reconcile = useReconcileDeposits(total);
@@ -196,7 +195,9 @@ export function DepositHistory() {
                     )}
                   </Group>
                   <Group gap="md" wrap="nowrap">
-                    {feeUsdc != null && <FeePopover amount={feeUsdc} />}
+                    {feeUsdc != null && (
+                      <FeePopover amount={feeUsdc} />
+                    )}
                     <Group gap={4} wrap="nowrap">
                       <IconClock size={12} className="text-dimmed" />
                       <Text size="xs" c="dimmed">
@@ -360,7 +361,10 @@ function FeePopover({ amount }: { amount: number }) {
   return (
     <Popover width={280} position="top" withArrow shadow="md">
       <Popover.Target>
-        <UnstyledButton className="cursor-help" aria-label="Fee information">
+        <UnstyledButton
+          className="cursor-help"
+          aria-label="Fee information"
+        >
           <Text
             size="xs"
             c="dimmed"
@@ -423,13 +427,7 @@ function BonusBuzzPopover({
       }}
     >
       <HoverCard.Target>
-        <ActionIcon
-          variant="light"
-          color="yellow"
-          size="xs"
-          radius="xs"
-          aria-label="Membership bonus details"
-        >
+        <ActionIcon variant="light" color="yellow" size="xs" radius="xs" aria-label="Membership bonus details">
           <IconPlus size={12} />
         </ActionIcon>
       </HoverCard.Target>
