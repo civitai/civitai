@@ -909,3 +909,51 @@ describe('fast lane — agent-clean submissions sort first on the pending queue'
     expect(reviewRowLane(listingOnly)).toEqual({ lane: 'waiting', reasons: [] });
   });
 });
+
+describe('listing-edit impersonation check on the pending queue', () => {
+  const hit = { status: 'complete', flagging: 1, titles: ['Uses a protected brand name'] };
+  const listingEdit = (check: unknown) =>
+    offsiteRequestToUnifiedRow(
+      offsite({ id: 'le', kind: 'onsite', slug: 'shared-slug', listingEditCheck: check } as never),
+      vi.fn()
+    );
+
+  it('the listing row carries the check summary', () => {
+    expect(listingEdit(hit).listingEditCheck).toEqual(hit);
+    expect(listingEdit(undefined).listingEditCheck ?? null).toBeNull();
+  });
+
+  it('🔴 an app whose code is agent-clean but whose listing edit HIT is not fast-laned', () => {
+    const clean = {
+      status: 'complete',
+      severities: [],
+      overBroad: 0,
+      underDeclared: 0,
+      inaccurate: 0,
+      sectionsOk: true,
+      impersonationCheck: 'complete',
+    };
+    const code = onsiteRequestToUnifiedRow(
+      onsite({
+        id: 'code',
+        slug: 'shared-slug',
+        previewState: 'preview-live',
+        agentReview: clean,
+      } as never),
+      vi.fn()
+    );
+    const [combined] = mergeReviewRows([code], [listingEdit(hit)], 'asc', vi.fn(), {
+      fastLane: true,
+    });
+    expect(combined.kind).toBe('combined');
+    expect(reviewRowLane(combined)).toEqual({
+      lane: 'flagged',
+      reasons: ['the listing edit hit the impersonation check'],
+    });
+    // Control: the same pair without a hit IS agent-clean.
+    const [plain] = mergeReviewRows([code], [listingEdit(null)], 'asc', vi.fn(), {
+      fastLane: true,
+    });
+    expect(reviewRowLane(plain).lane).toBe('agent-clean');
+  });
+});

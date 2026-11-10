@@ -10,6 +10,7 @@ import {
   AGENT_REVIEW_LANE_BADGES,
   agentReviewDisplay,
   agentReviewLane,
+  listingEditCheckBadge,
   type AgentReviewSummary,
 } from '~/shared/utils/agent-review-findings';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
@@ -180,6 +181,33 @@ describe('agentReviewLane — the fast lane is positive evidence only', () => {
       expect(b.label).not.toMatch(/pass|safe|approved|verified|clean/i);
       expect(b.color).not.toBe('green');
     }
+  });
+});
+
+describe("listingEditCheckBadge — an approved app's listing edit", () => {
+  it('no check (nothing identity-related changed) → no badge: today’s behaviour', () => {
+    expect(listingEditCheckBadge(null)).toBeNull();
+    expect(listingEditCheckBadge(undefined)).toBeNull();
+  });
+
+  it('a complete check with nothing to flag → no badge', () => {
+    expect(listingEditCheckBadge({ status: 'complete', flagging: 0, titles: [] })).toBeNull();
+  });
+
+  it('🔴 a hit → a badge telling the moderator what to do, with the findings in its tooltip', () => {
+    expect(listingEditCheckBadge({ status: 'complete', flagging: 2, titles: ['a', 'b'] })).toEqual({
+      label: 'Impersonation: read the findings before approving',
+      color: 'orange',
+      title: 'a; b',
+    });
+  });
+
+  it('🔴 an incomplete check → check it by hand', () => {
+    expect(listingEditCheckBadge({ status: 'failed', flagging: 0, titles: [] })).toEqual({
+      label: 'Impersonation check incomplete: check the listing by hand',
+      color: 'orange',
+      title: undefined,
+    });
   });
 });
 

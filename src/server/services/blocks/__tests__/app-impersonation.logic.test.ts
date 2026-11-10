@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  boundedEditDistance,
   impersonationSkeleton,
   listingNameMatchFindings,
   mergeImpersonationIntoSecurityAudit,
   modelJudgementFindings,
   protectedTermFindings,
   stripImpersonationRecord,
-  verifiedDeclarationQuote,
   type ImpersonationCheckRecord,
   type ImpersonationSubject,
   type OtherListing,
@@ -64,22 +62,11 @@ describe('impersonationSkeleton — names that render alike compare equal', () =
   });
 });
 
-describe('boundedEditDistance', () => {
-  it('counts edits and gives up past the bound', () => {
-    expect(boundedEditDistance('zorbiex', 'zorbiex', 1)).toBe(0);
-    expect(boundedEditDistance('zorbiex', 'zorbiez', 1)).toBe(1);
-    expect(boundedEditDistance('zorbiex', 'zorbiezz', 2)).toBe(2);
-    expect(boundedEditDistance('zorbiex', 'abcdefg', 2)).toBe(3);
-    expect(boundedEditDistance('ab', 'abcdef', 1)).toBe(2);
-  });
-});
-
 describe('listingNameMatchFindings (deterministic)', () => {
   it("🔴 another author's app with the same name (after normalisation) fires, at medium", () => {
     const findings = listingNameMatchFindings(
       subject({ name: 'Z0rblex Studio', slug: 'my-studio' }),
-      [other({ name: 'Zorblex Studio', slug: 'zorblex-studio' }), other({ name: 'Unrelated' })],
-      0
+      [other({ name: 'Zorblex Studio', slug: 'zorblex-studio' }), other({ name: 'Unrelated' })]
     );
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({
@@ -92,25 +79,21 @@ describe('listingNameMatchFindings (deterministic)', () => {
 
   it('similar functionality under a different name does not fire', () => {
     expect(
-      listingNameMatchFindings(
-        subject({ name: 'Sketch Helper' }),
-        [other({ name: 'Drawing Assistant' })],
-        1
-      )
+      listingNameMatchFindings(subject({ name: 'Sketch Helper' }), [
+        other({ name: 'Drawing Assistant' }),
+      ])
     ).toEqual([]);
   });
 
   it('a structural fork link to the matched app records it at low (not a flag)', () => {
     const byListing = listingNameMatchFindings(
       subject({ name: 'Zorblex Studio', forkOfListingId: 'apl_parent' }),
-      [other({ id: 'apl_parent', name: 'Zorblex Studio' })],
-      0
+      [other({ id: 'apl_parent', name: 'Zorblex Studio' })]
     );
     expect(byListing.map((f) => f.severity)).toEqual(['low']);
     const byBlock = listingNameMatchFindings(
       subject({ name: 'Zorblex Studio', forkOfAppBlockId: 'ab_parent' }),
-      [other({ appBlockId: 'ab_parent', name: 'Zorblex Studio' })],
-      0
+      [other({ appBlockId: 'ab_parent', name: 'Zorblex Studio' })]
     );
     expect(byBlock.map((f) => f.severity)).toEqual(['low']);
   });
@@ -118,35 +101,26 @@ describe('listingNameMatchFindings (deterministic)', () => {
   it('a fork link to a DIFFERENT app does not lower the match', () => {
     const findings = listingNameMatchFindings(
       subject({ name: 'Zorblex Studio', forkOfListingId: 'apl_someone_else' }),
-      [other({ id: 'apl_parent', name: 'Zorblex Studio' })],
-      0
+      [other({ id: 'apl_parent', name: 'Zorblex Studio' })]
     );
     expect(findings.map((f) => f.severity)).toEqual(['medium']);
   });
 
-  it('the near-miss bound comes from config: 0 matches only identical skeletons, 1 also one edit away', () => {
-    const s = subject({ name: 'Zorblez Studio' });
+  it('🔴 only an IDENTICAL normalised name matches — one character apart does not', () => {
     const o = [other({ name: 'Zorblex Studio' })];
-    expect(listingNameMatchFindings(s, o, 0)).toEqual([]);
-    expect(listingNameMatchFindings(s, o, 1)).toHaveLength(1);
-  });
-
-  it('short names only ever match exactly, whatever the bound', () => {
-    expect(listingNameMatchFindings(subject({ name: 'Abc' }), [other({ name: 'Abd' })], 1)).toEqual(
-      []
-    );
-    expect(
-      listingNameMatchFindings(subject({ name: 'Abc' }), [other({ name: 'A-B-C' })], 1)
-    ).toHaveLength(1);
+    expect(listingNameMatchFindings(subject({ name: 'Zorblez Studio' }), o)).toEqual([]);
+    expect(listingNameMatchFindings(subject({ name: 'Zorblex Studios' }), o)).toEqual([]);
+    expect(listingNameMatchFindings(subject({ name: 'zorblex-STUDIO' }), o)).toHaveLength(1);
+    // A caller that still passes a near-miss bound gets no fuzzy match: there is no such bound.
+    const withStrayBound = listingNameMatchFindings as (...args: unknown[]) => unknown[];
+    expect(withStrayBound(subject({ name: 'Zorblez Studio' }), o, 1)).toEqual([]);
   });
 
   it("the submission's own slug is never compared with itself", () => {
     expect(
-      listingNameMatchFindings(
-        subject({ name: 'Zorblex Studio', slug: 'zorblex-studio' }),
-        [other({ name: 'Zorblex Studio', slug: 'zorblex-studio' })],
-        0
-      )
+      listingNameMatchFindings(subject({ name: 'Zorblex Studio', slug: 'zorblex-studio' }), [
+        other({ name: 'Zorblex Studio', slug: 'zorblex-studio' }),
+      ])
     ).toEqual([]);
   });
 });
@@ -155,11 +129,7 @@ describe('protectedTermFindings (deterministic)', () => {
   const terms = ['Zorblex', 'Quaddle Labs'];
 
   it('🔴 a protected term in the NAME fires at medium, look-alike spellings included', () => {
-    const findings = protectedTermFindings(
-      subject({ name: 'Official Z0rbl3x Tools' }),
-      terms,
-      null
-    );
+    const findings = protectedTermFindings(subject({ name: 'Official Z0rbl3x Tools' }), terms);
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({ severity: 'medium', check: 'protected-term' });
     expect(findings[0].evidence).toContain('term: Zorblex');
@@ -167,7 +137,7 @@ describe('protectedTermFindings (deterministic)', () => {
 
   it('a protected term in the SLUG fires', () => {
     expect(
-      protectedTermFindings(subject({ name: 'Tools', slug: 'quaddlelabs-tools' }), terms, null)
+      protectedTermFindings(subject({ name: 'Tools', slug: 'quaddlelabs-tools' }), terms)
     ).toHaveLength(1);
   });
 
@@ -175,46 +145,25 @@ describe('protectedTermFindings (deterministic)', () => {
     expect(
       protectedTermFindings(
         subject({ name: 'Sketch Helper', description: 'Works with your Zorblex account.' }),
-        terms,
-        null
+        terms
       )
     ).toEqual([]);
   });
 
-  it('an honest declaration lowers the hit to low', () => {
+  it('🔴 a listing that calls itself unofficial STILL fires at medium (no declaration exemption)', () => {
     const findings = protectedTermFindings(
-      subject({ name: 'Zorblex Helper' }),
-      terms,
-      'An unofficial fan project'
+      subject({
+        name: 'Zorblex Helper',
+        tagline: 'An unofficial fan project',
+        description: 'Not affiliated with Zorblex Inc.',
+      }),
+      terms
     );
-    expect(findings.map((f) => f.severity)).toEqual(['low']);
+    expect(findings.map((f) => f.severity)).toEqual(['medium']);
   });
 
   it('no terms → no findings (the service treats that as a check that did not run)', () => {
-    expect(protectedTermFindings(subject({ name: 'Zorblex Helper' }), [], null)).toEqual([]);
-  });
-});
-
-describe('verifiedDeclarationQuote — the model cannot invent a declaration', () => {
-  const s = subject({
-    name: 'Zorblex Helper',
-    description: 'A fan project.   Not affiliated with   Zorblex Inc.',
-  });
-
-  it('a quote really in the listing is kept (whitespace and case do not matter)', () => {
-    expect(verifiedDeclarationQuote(s, 'not affiliated with zorblex inc')).toBe(
-      'not affiliated with zorblex inc'
-    );
-  });
-
-  it('🔴 a quote the listing does not contain is dropped', () => {
-    expect(verifiedDeclarationQuote(s, 'This is an unofficial app')).toBeNull();
-  });
-
-  it('too short, or not a string, is dropped', () => {
-    expect(verifiedDeclarationQuote(s, 'fan')).toBeNull();
-    expect(verifiedDeclarationQuote(s, null)).toBeNull();
-    expect(verifiedDeclarationQuote(s, { quote: 'A fan project' })).toBeNull();
+    expect(protectedTermFindings(subject({ name: 'Zorblex Helper' }), [])).toEqual([]);
   });
 });
 
@@ -257,7 +206,7 @@ describe('security-audit storage', () => {
       'model-judgement': 'clear',
     },
   };
-  const finding = protectedTermFindings(subject({ name: 'Zorblex' }), ['Zorblex'], null)[0];
+  const finding = protectedTermFindings(subject({ name: 'Zorblex' }), ['Zorblex'])[0];
 
   it('🔴 a runner-supplied impersonationCheck is stripped (only civitai writes it)', () => {
     expect(

@@ -579,6 +579,19 @@ describe('agent review auto-start', () => {
     expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');
   });
 
+  it("🔴 listing-edit impersonation checks' spend counts against the same daily budget", async () => {
+    // $37 of reviews + $2 cap = $39 fits; add $1.50 of listing-edit checks and it no longer does.
+    spend(37);
+    expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');
+    redisMock.sysRedis.get.mockImplementation((async (key: string) =>
+      key.includes('listing-check-spend') ? '150' : null) as never);
+    try {
+      expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('budget-refused');
+    } finally {
+      redisMock.sysRedis.get.mockImplementation((async () => null) as never);
+    }
+  });
+
   it('the budget is env-configurable', async () => {
     envMock.set({ AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD: 100 });
     spend(90);
