@@ -49,4 +49,17 @@ describe('toPostableMedia', () => {
     );
     expect(media.audioMetadata).toEqual({ title: 'From Workflow' });
   });
+
+  it("lets the output's own params win over the workflow's, and keeps the seed in meta", () => {
+    const media = toPostableMedia(
+      output({
+        mediaType: 'audio',
+        params: { title: 'Step Title' },
+        workflow: { metadata: { params: { title: 'Workflow Title' } } },
+        step: { params: { title: 'Step Title', seed: 42, musicDescription: 'synth' } },
+      })
+    );
+    expect(media.audioMetadata?.title).toBe('Step Title');
+    expect(media.meta).toMatchObject({ seed: 42, musicDescription: 'synth' });
+  });
 });

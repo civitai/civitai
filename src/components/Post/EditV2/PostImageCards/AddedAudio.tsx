@@ -1,31 +1,17 @@
 import { Button, Text } from '@mantine/core';
 import { IconMusic, IconTrash } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { useDeletePostImage } from '~/components/Post/EditV2/PostImageCards/useDeletePostImage';
 import { audioMetadataSchema } from '~/server/schema/media.schema';
 import type { PostEditImageDetail } from '~/server/services/post.service';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
 
 /**
  * A song in the post editor: the player and its title, none of the image controls (resources,
  * tools, techniques, ratings, prompt). The cover-led music card replaces it.
  */
 export function AddedAudio({ image }: { image: PostEditImageDetail }) {
-  const queryUtils = trpc.useUtils();
-  const [postId, setImages] = usePostEditStore((state) => [state.post?.id, state.setImages]);
+  const { onDelete, isDeleting } = useDeletePostImage(image.id);
   const title = audioMetadataSchema.safeParse(image.metadata).data?.title;
-
-  const deleteMutation = trpc.image.delete.useMutation({
-    onSuccess: (_, { id }) => {
-      setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id));
-      if (postId)
-        queryUtils.post.getEdit.setData({ id: postId }, (old) =>
-          old ? { ...old, images: old.images?.filter((x) => x.id !== id) } : old
-        );
-    },
-    onError: (error) => showErrorNotification({ error: new Error(error.message) }),
-  });
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-gray-1 bg-gray-0 p-3 dark:border-dark-6 dark:bg-dark-8">
@@ -41,8 +27,8 @@ export function AddedAudio({ image }: { image: PostEditImageDetail }) {
           variant="subtle"
           size="compact-sm"
           leftSection={<IconTrash size={16} />}
-          loading={deleteMutation.isPending}
-          onClick={() => deleteMutation.mutate({ id: image.id })}
+          loading={isDeleting}
+          onClick={onDelete}
         >
           Delete
         </Button>

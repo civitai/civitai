@@ -75,4 +75,20 @@ describe('orchestratorMediaTransmitter.getFiles', () => {
     expect(files[0]).toMatchObject({ mediaType: 'audio', audioMetadata });
     expect(files[0].file.type).toBe('audio/vnd.wave');
   });
+
+  it('keeps the mime of an audio blob the preprocessor already knows, and retypes nothing else', async () => {
+    h.fetchBlob.mockResolvedValue(new Blob(['x'], { type: 'audio/mpeg' }));
+    orchestratorMediaTransmitter.setUrls('k', [
+      { url: 'https://orchestration.example.com/abc/song.wav', mediaType: 'audio' },
+    ]);
+    expect((await orchestratorMediaTransmitter.getFiles('k')).files[0].file.type).toBe(
+      'audio/mpeg'
+    );
+
+    h.fetchBlob.mockResolvedValue(new Blob(['x'], { type: 'image/gif' }));
+    orchestratorMediaTransmitter.setUrls('k', [
+      { url: 'https://orchestration.example.com/abc/a.wav' },
+    ]);
+    expect((await orchestratorMediaTransmitter.getFiles('k')).files[0].file.type).toBe('image/gif');
+  });
 });

@@ -39,7 +39,6 @@ import { getQueryKey } from '@trpc/react-query';
 import { remove, uniq } from 'lodash-es';
 import React, { createContext, useContext, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -113,6 +112,7 @@ import { getReleasedEventDecoration } from '~/shared/constants/event-decoration.
 import { isDefined } from '~/utils/type-guards';
 import { RemixSourcesCard } from '~/components/RemixGallery/RemixSourcesCard';
 import { CustomCard } from './CustomCard';
+import { useDeletePostImage } from './useDeletePostImage';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -212,18 +212,14 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #region [state]
   const { showPreview } = usePostPreviewContext();
   const storedImage = useImageStore(image);
-  const queryUtils = trpc.useUtils();
 
-  const [images, updateImage, setImages, postId, postPublishedAt, collectionId] = usePostEditStore(
-    (state) => [
-      state.images,
-      state.updateImage,
-      state.setImages,
-      state.post?.id,
-      state.post?.publishedAt,
-      state.collectionId,
-    ]
-  );
+  const [images, updateImage, postId, postPublishedAt, collectionId] = usePostEditStore((state) => [
+    state.images,
+    state.updateImage,
+    state.post?.id,
+    state.post?.publishedAt,
+    state.collectionId,
+  ]);
 
   const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta, type, needsReview } = storedImage;
   const minor = image.minor ?? false;
@@ -255,35 +251,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #endregion
 
   // #region [delete image]
-  const removeFromEditor = (id: number) => {
-    setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id));
-    if (postId)
-      queryUtils.post.getEdit.setData({ id: postId }, (old) => {
-        if (!old) return old;
-
-        return { ...old, images: old.images?.filter((x) => x.id !== id) };
-      });
-  };
-
-  const deleteImageMutation = trpc.image.delete.useMutation({
-    onSuccess: (_, { id }) => removeFromEditor(id),
-    onError: (error) => showErrorNotification({ error: new Error(error.message) }),
-  });
-
-  const handleDelete = () => {
-    if (!isBlocked)
-      dialogStore.trigger({
-        component: ConfirmDialog,
-        props: {
-          title: 'Delete image',
-          message: 'Are you sure you want to delete this image?',
-          labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-          confirmProps: { color: 'red', loading: deleteImageMutation.isPending },
-          onConfirm: async () => await deleteImageMutation.mutateAsync({ id: image.id }),
-        },
-      });
-    else deleteImageMutation.mutate({ id: image.id });
-  };
+  const { onDelete: handleDelete, removeFromEditor, isDeleting } = useDeletePostImage(image.id);
   // #endregion
 
   // #region [move image]
@@ -374,7 +342,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         onDelete: handleDelete,
         onMove: canMove ? handleMove : undefined,
         onEditMetaClick: handleEditMetaClick,
-        isDeleting: deleteImageMutation.isPending,
+        isDeleting,
         isUpdating: updateImageMutation.isPending,
         isAddingResource: addResourceMutation.isPending,
         toggleHidePrompt,
