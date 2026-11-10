@@ -1,3 +1,5 @@
+import { parsePlainEmailAddress } from '@civitai/auth/plain-email';
+import addressparser from 'nodemailer/lib/addressparser';
 import { CacheTTL } from '~/server/common/constants';
 import { BlocklistType } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
@@ -827,7 +829,11 @@ export function matchesBlockedSuffix(entries: string[], domain: string) {
  * Callers must exempt users who ALREADY have this address. A domain appended to the upstream list
  * later must not lock out an account that predates it — same rule as the hub's login action.
  */
-export async function assertEmailAllowed(email: string) {
+export async function assertEmailAllowed(input: string) {
+  // The parser is the one `~/server/email/client` delivers with; the domain comes from its output.
+  const email = parsePlainEmailAddress(input, addressparser);
+  if (!email) throw throwBadRequestError('Please provide a valid email address');
+
   // `lastIndexOf`, not `split('@')[1]`: a quoted-local address ("a@b"@host) has more than one `@`,
   // and taking the first segment yields a domain that matches nothing. A trailing dot is the FQDN
   // root and resolves identically, so `provider.com.` would otherwise miss every list entry, pass
