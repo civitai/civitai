@@ -26,7 +26,9 @@ describe('viewerSearchClauses', () => {
         { userId: 42, showSfwFace: false },
       ]) {
         for (const clause of viewerSearchClauses(index, viewer)) {
-          for (const [, attribute] of clause.matchAll(/([\w.]+)\s*(?:!=|>=|<=|=|<|>|NOT IN\b)/g)) {
+          for (const [, attribute] of clause.matchAll(
+            /([\w.]+)\s*(?:!=|>=|<=|=|<|>|NOT IN\b|IS NOT EMPTY\b)/g
+          )) {
             expect(filterable[index], `${index}: ${attribute}`).toContain(attribute);
             checked.add(`${index}:${attribute}`);
           }
@@ -44,7 +46,7 @@ describe('viewerSearchClauses', () => {
   it('caps a comic by every level it carries; other indexes by any of their levels', () => {
     const viewer = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
     expect(viewerSearchClauses(COMICS_SEARCH_INDEX, viewer)).toEqual([
-      'nsfwLevel NOT IN [4, 8, 16, 32]',
+      'nsfwLevel IS NOT EMPTY AND nsfwLevel NOT IN [4, 8, 16, 32]',
     ]);
     expect(viewerSearchClauses(MODELS_SEARCH_INDEX, viewer)).toEqual([
       'poi != true',

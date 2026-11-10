@@ -248,19 +248,15 @@ describe.skipIf(!HOST || !MASTER_KEY)('site search on a real Meilisearch', () =>
     expect(await search(signedInOnCom, `nsfwLevel = ${R}`)).toEqual([FACED]);
   });
 
-  it('a comic is served only when every level in it is within the cap, an unrated one always', async () => {
+  it('a comic is served only when every level in it is within the cap, an unrated one never', async () => {
     const comics = async (viewer: SiteSearchViewer) => {
       const { status, body } = await siteIndexSearch(COMICS_SEARCH_INDEX, { q: '' }, viewer);
       expect(status, JSON.stringify(body)).toBe(200);
       return idsOf(body);
     };
     expect(await comics({ isModerator: true, showSfwFace: false })).toEqual([SAFE, MIXED, UNRATED]);
-    expect(await comics(signedInOnCom)).toEqual([SAFE, UNRATED]);
-    expect(await comics({ ...signedInOnCom, browsingLevelCap: PG | R })).toEqual([
-      SAFE,
-      MIXED,
-      UNRATED,
-    ]);
+    expect(await comics(signedInOnCom)).toEqual([SAFE]);
+    expect(await comics({ ...signedInOnCom, browsingLevelCap: PG | R })).toEqual([SAFE, MIXED]);
   });
 
   it('a .com hit for a model with a face carries the face title and not the .red one', async () => {

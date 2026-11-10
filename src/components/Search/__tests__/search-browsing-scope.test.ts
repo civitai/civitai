@@ -202,7 +202,7 @@ describe('withSearchBrowsingScope', () => {
   it('filters comics by every level a comic carries, not any one of them', () => {
     canViewNsfw.value = true;
     const seen = renderSearch({ scoped: false, indexKey: 'comics' });
-    expect(seen.sentFilter).toBe('(nsfwLevel NOT IN [2, 4, 8, 16, 32])');
+    expect(seen.sentFilter).toBe('(nsfwLevel IS NOT EMPTY AND nsfwLevel NOT IN [2, 4, 8, 16, 32])');
   });
 
   it('keeps the domain cap', () => {

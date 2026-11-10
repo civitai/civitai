@@ -25,8 +25,11 @@ export function buildBrowsingLevelClause(
 
   if (match === 'subset') {
     const outside = LEVEL_BITS.filter((bit) => !(bit & browsingLevel));
-    // An unrated item has no levels, so it passes, as the comics feed lists it.
-    return outside.length ? `${attribute} NOT IN [${outside.join(', ')}]` : null;
+    // An unrated item stays out, as before: its cover has no level to check.
+    return [
+      `${attribute} IS NOT EMPTY`,
+      ...(outside.length ? [`${attribute} NOT IN [${outside.join(', ')}]`] : []),
+    ].join(' AND ');
   }
 
   return levels.map((value) => `${attribute}=${value}`).join(' OR ');
