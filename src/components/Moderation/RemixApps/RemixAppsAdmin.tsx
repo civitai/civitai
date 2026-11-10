@@ -22,7 +22,9 @@ import {
   IconPencil,
   IconPlayerPlay,
   IconPlus,
+  IconTrash,
 } from '@tabler/icons-react';
+import { openConfirmModal } from '@mantine/modals';
 import { useMemo, useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
@@ -78,6 +80,19 @@ export function RemixAppsAdmin() {
     showErrorNotification({ title: 'Not saved', error: new Error(error.message) });
   const setEnabled = trpc.remixApp.admin.setEnabled.useMutation({ onSuccess: refresh, onError });
   const order = trpc.remixApp.admin.order.useMutation({ onSuccess: refresh, onError });
+  const remove = trpc.remixApp.admin.delete.useMutation({ onSuccess: refresh, onError });
+  const confirmDelete = (slug: string) =>
+    openConfirmModal({
+      title: `Delete ${slug}?`,
+      children: (
+        <Text size="sm">
+          This removes the app row for good, and with it any installs of it. It cannot be undone.
+        </Text>
+      ),
+      labels: { confirm: 'Delete', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => remove.mutate({ slug }),
+    });
 
   const move = (index: number, by: -1 | 1) => {
     const slugs = rows.map((r) => r.slug);
@@ -96,6 +111,7 @@ export function RemixAppsAdmin() {
         onToggle={(slug, enabled) => setEnabled.mutate({ slug, enabled })}
         onEdit={setEditing}
         onTest={setTesting}
+        onDelete={confirmDelete}
       />
       {editing && (
         <RemixAppEditor
@@ -118,6 +134,7 @@ export function RemixAppsList({
   onToggle,
   onEdit,
   onTest,
+  onDelete,
 }: {
   rows: AdminRow[];
   isLoading: boolean;
@@ -126,6 +143,7 @@ export function RemixAppsList({
   onToggle: (slug: string, enabled: boolean) => void;
   onEdit: (input: RemixAppInput) => void;
   onTest: (slug: string) => void;
+  onDelete: (slug: string) => void;
 }) {
   return (
     <Stack gap="lg">
@@ -157,7 +175,7 @@ export function RemixAppsList({
             <Table.Th>Runs</Table.Th>
             <Table.Th>Version</Table.Th>
             <Table.Th>Listed</Table.Th>
-            <Table.Th w={90} />
+            <Table.Th w={120} />
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -171,6 +189,7 @@ export function RemixAppsList({
               onToggle={(enabled) => onToggle(row.slug, enabled)}
               onEdit={() => 'input' in row && row.input && onEdit(row.input)}
               onTest={() => onTest(row.slug)}
+              onDelete={() => onDelete(row.slug)}
             />
           ))}
         </Table.Tbody>
@@ -187,6 +206,7 @@ function AdminTableRow({
   onToggle,
   onEdit,
   onTest,
+  onDelete,
 }: {
   row: AdminRow;
   first: boolean;
@@ -195,6 +215,7 @@ function AdminTableRow({
   onToggle: (enabled: boolean) => void;
   onEdit: () => void;
   onTest: () => void;
+  onDelete: () => void;
 }) {
   const input = 'input' in row ? row.input : undefined;
   return (
@@ -248,6 +269,11 @@ function AdminTableRow({
           <ActionIcon variant="light" color="green" onClick={onTest} aria-label="Test run">
             <IconPlayerPlay size={14} />
           </ActionIcon>
+          {row.deletable && (
+            <ActionIcon variant="light" color="red" onClick={onDelete} aria-label="Delete">
+              <IconTrash size={14} />
+            </ActionIcon>
+          )}
         </Group>
       </Table.Td>
     </Table.Tr>
@@ -271,7 +297,7 @@ function RemixAppEditor({
   const [target, setTarget] = useState<string>(initial.target);
   const [specText, setSpecText] = useState(JSON.stringify(initial.spec, null, 2));
 
-  // The server runs the same schema, plus nothing else: what passes here saves.
+  // The server runs the same schema, and also checks the slug and the target.
   const parsed = useMemo(() => {
     let spec: unknown;
     try {
@@ -319,7 +345,8 @@ function RemixAppEditor({
           <TextInput label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} />
           <Select
             label="Shows on"
-            data={[...REMIX_SAVABLE_SLOT_IDS]}
+            // A stored row keeps its slot, even one new apps cannot take, so it can still be saved.
+            data={[...new Set<string>([...REMIX_SAVABLE_SLOT_IDS, initial.target])]}
             value={target}
             onChange={(value) => value && setTarget(value)}
           />
