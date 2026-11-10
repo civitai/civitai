@@ -150,6 +150,7 @@ import {
 import {
   enqueueCollectionRebuild,
   getCollectionIdsForModelCascade,
+  getCollectionIdsForModelImages,
 } from '~/server/services/collection-media-index';
 import {
   getCosmeticsForEntity,
@@ -2118,10 +2119,13 @@ export const updateModelById = async ({
   meta?: (stored: ModelMeta | null, row: LockedModelRow) => ModelMeta;
 }) => {
   let written = typeof data === 'function' ? undefined : data;
+  // The mode before this write; undefined when the write locked no row to read it from.
+  let priorMode: ModelModifier | null | undefined;
   const model =
     meta || typeof data === 'function'
       ? await dbWrite.$transaction(async (tx) => {
           const row = await lockModelRow(tx, id);
+          priorMode = row?.mode ?? null;
           const fields = typeof data === 'function' ? data(row) : data;
           written = fields;
           return tx.model.update({
@@ -2160,8 +2164,21 @@ export const updateModelById = async ({
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
   // A taken-down model's search document carries no images, so a change of mode rewrites it.
-  if (written && 'mode' in written)
+  if (written && 'mode' in written) {
     await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    // Collection covers drawn from its images change only when it enters or leaves TakenDown.
+    // Not awaited: the lookup reads every image on the model.
+    const writtenMode =
+      written.mode && typeof written.mode === 'object' ? written.mode.set : written.mode;
+    if (
+      writtenMode === ModelModifier.TakenDown ||
+      priorMode === ModelModifier.TakenDown ||
+      priorMode === undefined
+    )
+      void getCollectionIdsForModelImages({ modelId: id })
+        .then((found) => enqueueCollectionRebuild({ ...found, source: 'model-mode-change' }))
+        .catch(() => undefined);
+  }
 
   return withoutModeratorOnlyMeta(model);
 };
@@ -6250,6 +6267,28 @@ export async function isModelGalleryWithheld(selector: ImageModelSelector, viewe
     select: { userId: true, mode: true },
   });
   return models.some((model) => isModelWithheld(model) && model.userId !== viewerId);
+}
+
+/**
+ * Of the named versions, those whose model is taken down and not owned by the viewer. A version
+ * not found serves no images, so it is not returned. Moderators are the caller's to exempt.
+ */
+export async function getWithheldVersionIds(modelVersionIds: number[], viewerId?: number) {
+  const withheld = new Set<number>();
+  if (!modelVersionIds.length) return withheld;
+  const versions = await versionModelCache().fetch(uniq(modelVersionIds));
+  const modelIds = uniq(Object.values(versions).map((version) => version.modelId));
+  if (!modelIds.length) return withheld;
+  const models = await dbRead.model.findMany({
+    where: { id: { in: modelIds } },
+    select: { id: true, userId: true, mode: true },
+  });
+  const withheldModelIds = new Set(
+    models.filter((m) => isModelWithheld(m) && m.userId !== viewerId).map((m) => m.id)
+  );
+  for (const id of modelVersionIds)
+    if (versions[id] && withheldModelIds.has(versions[id].modelId)) withheld.add(id);
+  return withheld;
 }
 
 /**
