@@ -152,6 +152,12 @@ export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   placeholder?: string;
   disableInitialSearch?: boolean;
   /**
+   * Keeps images on Meilisearch even when semantic image search is on. For a caller whose
+   * `filters` scope images to one owner: the semantic search ignores the `filters` string, so it
+   * would offer everyone's images, and it answers nothing for an empty query.
+   */
+  imagesFromIndex?: boolean;
+  /**
    * The ids currently on offer, whenever that set changes. OPTIONAL and inert by default.
    *
    * Exists so a caller whose selection GRANTS something can screen the candidates against the
@@ -168,6 +174,7 @@ const QuickSearchDropdownInner = ({
   startingIndex,
   disableInitialSearch,
   showIndexSelect = true,
+  imagesFromIndex,
   ...props
 }: QuickSearchDropdownProps) => {
   const features = useFeatureFlags();
@@ -285,7 +292,7 @@ const QuickSearchDropdownInner = ({
         searchClient={
           disableInitialSearch
             ? searchClient
-            : features.imageSearch
+            : features.imageSearch && !imagesFromIndex
             ? semanticMeilisearch
             : meilisearch
         }

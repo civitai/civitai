@@ -11,14 +11,12 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 const state = vi.hoisted(() => ({
   imageSearch: false,
   searchClients: [] as Array<{ search: (requests: unknown[]) => Promise<unknown> }>,
-  meiliRequests: [] as Array<{ indexName: string; params?: { filters?: unknown } }>,
   semanticQuery: vi.fn(),
 }));
 
 vi.mock('@meilisearch/instant-meilisearch', () => ({
   instantMeiliSearch: () => ({
     search: async (requests: Array<{ indexName: string }>) => {
-      state.meiliRequests.push(...requests);
       return { results: requests.map((r) => ({ index: r.indexName, hits: [{ id: 41 }] })) };
     },
   }),
@@ -55,70 +53,73 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 const { ShowcaseItemsInput } = await import('~/components/Profile/ShowcaseItemsInput');
+const { QuickSearchDropdown } = await import('~/components/Search/QuickSearchDropdown');
 
 beforeEach(() => {
   state.imageSearch = false;
   state.searchClients = [];
-  state.meiliRequests = [];
   state.semanticQuery.mockReset();
   // What the flag-protected procedure does for a user without `imageSearch`.
   state.semanticQuery.mockRejectedValue(new Error('FORBIDDEN'));
 });
 
-async function searchImages(filters: string) {
+// Routing is decided by the client the picker hands InstantSearch, not by the request, so a neutral
+// request is enough.
+async function searchImages() {
   await vi.waitFor(() => expect(state.searchClients.length).toBeGreaterThan(0));
   const client = state.searchClients.at(-1)!;
   return (await client.search([
-    { indexName: 'images_v6', params: { query: 'fox', hitsPerPage: 25, filters } },
+    { indexName: 'images_v6', params: { query: 'fox', hitsPerPage: 25, filters: '(nsfwLevel=1)' } },
   ])) as { results: Array<{ hits: Array<{ id: number }> }> };
 }
 
-const renderImagesPicker = () =>
+const hitIds = (response: Awaited<ReturnType<typeof searchImages>>) =>
+  response.results[0].hits.map((hit) => hit.id);
+
+const renderShowcasePicker = () =>
   renderWithProviders(
     <ShowcaseItemsInput username="fox" supportedIndexes={['images']} value={[]} />
   );
+const renderPlainImagesDropdown = () =>
+  renderWithProviders(
+    <QuickSearchDropdown supportedIndexes={['images']} onItemSelected={() => undefined} />
+  );
 
-describe('ShowcaseItemsInput — Images search', () => {
-  test('without image search, the owner’s images come back from Meili, filtered to them', async () => {
-    renderImagesPicker();
+describe('Images search in the showcase picker', () => {
+  test('without image search, the owner’s images come back from Meili', async () => {
+    renderShowcasePicker();
 
-    const { results } = await searchImages('(user.username = "fox")');
-
-    expect(results[0].hits.map((hit) => hit.id)).toEqual([41]);
-    expect(state.meiliRequests[0].params?.filters).toContain('user.username = "fox"');
+    expect(hitIds(await searchImages())).toEqual([41]);
     expect(state.semanticQuery).not.toHaveBeenCalled();
   });
 
-  test('without image search, an unscoped images search also answers from Meili', async () => {
-    renderImagesPicker();
-
-    const { results } = await searchImages('(nsfwLevel=1)');
-
-    expect(results[0].hits.map((hit) => hit.id)).toEqual([41]);
-    expect(state.semanticQuery).not.toHaveBeenCalled();
-  });
-
-  test('with image search on, the owner-scoped picker still answers from Meili', async () => {
+  // The semantic search cannot scope to one owner, so the picker stays on Meili.
+  test('with image search on, it still answers from Meili', async () => {
     state.imageSearch = true;
     state.semanticQuery.mockResolvedValue({ items: [{ id: 99 }], latencyMs: 1 });
-    renderImagesPicker();
+    renderShowcasePicker();
 
-    const { results } = await searchImages('(user.username = "fox")');
+    expect(hitIds(await searchImages())).toEqual([41]);
+    expect(state.semanticQuery).not.toHaveBeenCalled();
+  });
+});
 
-    expect(results[0].hits.map((hit) => hit.id)).toEqual([41]);
+describe('Images search in a QuickSearchDropdown with no owner scope', () => {
+  test('without image search, it answers from Meili', async () => {
+    renderPlainImagesDropdown();
+
+    expect(hitIds(await searchImages())).toEqual([41]);
     expect(state.semanticQuery).not.toHaveBeenCalled();
   });
 
-  // Control: an unscoped images search with the flag on does reach the semantic fake, so the
-  // `not.toHaveBeenCalled` assertions above can see a call when one happens.
-  test('control: with image search on, an unscoped images search goes to the semantic search', async () => {
+  // Control: the semantic fake can see a call, so the `not.toHaveBeenCalled` assertions above
+  // are not vacuous.
+  test('control: with image search on, it answers from the semantic search', async () => {
     state.imageSearch = true;
     state.semanticQuery.mockResolvedValue({ items: [{ id: 99 }], latencyMs: 1 });
-    renderImagesPicker();
+    renderPlainImagesDropdown();
 
-    const { results } = await searchImages('(nsfwLevel=1)');
-
-    expect(results[0].hits.map((hit) => hit.id)).toEqual([99]);
+    expect(hitIds(await searchImages())).toEqual([99]);
     expect(state.semanticQuery).toHaveBeenCalledTimes(1);
   });
 });

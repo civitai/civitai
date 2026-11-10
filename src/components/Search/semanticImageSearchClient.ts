@@ -192,20 +192,7 @@ async function searchFacetValues(facetName: string, facetQuery: string) {
   return [];
 }
 
-// The semantic search cannot scope to one owner, and answers nothing without a query; an owner's
-// picker needs both.
-const OWNER_CLAUSE = /\buser\.username\s*=/;
-
-function isSemanticRequest(request: SearchRequests[number]) {
-  if (!isImageSearchIndex(request.indexName)) return false;
-  const { filters } = (request.params ?? {}) as RequestParams;
-  return !OWNER_CLAUSE.test(filters ?? '');
-}
-
-/**
- * Routes the images index to the semantic search; every other index, and an images request scoped
- * to one owner, goes to `client`.
- */
+/** Routes the images index to the semantic search; every other index goes to `client`. */
 export function withSemanticImageSearch(
   client: SearchClient,
   searchImages = createSemanticImageSearch()
@@ -213,7 +200,7 @@ export function withSemanticImageSearch(
   return {
     ...client,
     async search(requests: SearchRequests) {
-      const images = requests.map(isSemanticRequest);
+      const images = requests.map((request) => isImageSearchIndex(request.indexName));
       if (!images.some(Boolean)) return client.search(requests);
 
       const others = requests.filter((_, i) => !images[i]);
