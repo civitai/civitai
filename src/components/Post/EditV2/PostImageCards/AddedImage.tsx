@@ -1184,7 +1184,7 @@ function EditDetail() {
                     src={image.url}
                     thumbnailFrame={(image.metadata as VideoMetadata)?.thumbnailFrame}
                     thumbnailUrl={image.thumbnailUrl}
-                    width={image.metadata.width}
+                    width={(image.metadata as VideoMetadata).width}
                     updateImage={updateImage}
                   />
                 </div>

@@ -18,7 +18,7 @@ import {
   resolveOptimized,
   snapWidthToCommonSize,
 } from '~/client-utils/cf-images-utils';
-import { toOriginalEdgeUrl } from '~/client-utils/edge-url';
+import { getInferredMediaType, resolveEdgeUrl, toOriginalEdgeUrl } from '~/client-utils/edge-url';
 
 describe('snapWidthToCommonSize', () => {
   it('leaves widths that are exactly on the ladder unchanged', () => {
@@ -277,5 +277,20 @@ describe('toOriginalEdgeUrl', () => {
     ]) {
       expect(toOriginalEdgeUrl(url)).toBe(url);
     }
+  });
+});
+
+describe('audio media', () => {
+  it('infers audio from the file extension', () => {
+    expect(getInferredMediaType('abc', { name: 'song.mp3' })).toBe('audio');
+    expect(getInferredMediaType('abc', { name: 'song.wav' })).toBe('audio');
+    expect(getInferredMediaType('abc', { name: 'clip.mp4' })).toBe('video');
+    expect(getInferredMediaType('abc', { name: 'pic.png' })).toBe('image');
+  });
+
+  it('resolves an audio URL to the original file without image transforms', () => {
+    const { url, type } = resolveEdgeUrl('abc', { name: 'song.mp3', width: 450 });
+    expect(type).toBe('audio');
+    expect(url).toBe('https://image.test/abc/original=true/song.mp3');
   });
 });

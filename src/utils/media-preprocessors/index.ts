@@ -1,4 +1,5 @@
 import { MEDIA_TYPE } from '~/shared/constants/mime-types';
+import { preprocessAudio } from '~/utils/media-preprocessors/audio.preprocessor';
 import { preprocessImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { preprocessVideo } from '~/utils/media-preprocessors/video.preprocessor';
 
@@ -8,8 +9,10 @@ export { getVideoData } from './video.preprocessor';
 type SharedProps = { name: string; mimeType: string };
 type ProcessedImage = { type: 'image' } & AsyncReturnType<typeof preprocessImage>;
 type ProcessedVideo = { type: 'video' } & AsyncReturnType<typeof preprocessVideo>;
+type ProcessedAudio = { type: 'audio' } & AsyncReturnType<typeof preprocessAudio>;
 
-export type PreprocessFileReturnType = SharedProps & (ProcessedImage | ProcessedVideo);
+export type PreprocessFileReturnType = SharedProps &
+  (ProcessedImage | ProcessedVideo | ProcessedAudio);
 
 export async function preprocessFile(
   file: File,
@@ -30,6 +33,9 @@ export async function preprocessFile(
     case 'video':
       const videoData = await preprocessVideo(file);
       return { type, ...data, ...videoData };
+    case 'audio':
+      const audioData = await preprocessAudio(file);
+      return { type, ...data, ...audioData };
     default:
       throw new Error(`Unhandled file type: ${file.name.split('.').pop() as string}`);
   }

@@ -227,6 +227,15 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
               });
             }
             if (!data) return null;
+            if (data.type === 'audio') {
+              URL.revokeObjectURL(data.objectUrl);
+              showErrorNotification({
+                title: `Error: ${file.name}`,
+                error: new Error('Audio uploads are not supported yet.'),
+                autoClose: 6000,
+              });
+              return null;
+            }
             // A generated video's file carries the worker's ComfyUI graph, whose Model path and
             // engine would override the generator's meta and fail the on-site check. The
             // generator's meta drops empty arrays, so a job with no resources (e.g. an
