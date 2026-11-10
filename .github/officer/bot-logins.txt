@@ -11,10 +11,5 @@
 # Format: one login per line, `<app-slug>[bot]`, compared case-insensitively. `#` starts a
 # comment; blank lines are ignored.
 #
-# PLACEHOLDER: the release-followup officer's GitHub App does not exist yet. Once it is
-# created, replace the next comment line with its bot login, uncommented:
-# civitai-officer-release-followup[bot]
-#
-# PLACEHOLDER: the ci-watch officer's GitHub App does not exist yet either. Once it is
-# created, replace the next comment line with its bot login, uncommented:
-# civitai-officer-ci-watch[bot]
+civitai-officer-release-followup[bot]
+civitai-officer-ci-watch[bot]
