@@ -235,7 +235,13 @@ describe('the reconcile', () => {
     vi.mocked(submitTextModerationOrScan).mockImplementation(async ({ xguard }) => xguard());
     await reconcile();
     expect(writtenIngestion()).toBe(ArticleIngestionStatus.Pending);
-    expect(submitTextModerationOrScan).toHaveBeenCalledOnce();
+    // Forced past each pipeline's dedup, which would otherwise skip it and leave it waiting.
+    expect(submitTextModerationOrScan).toHaveBeenCalledWith(
+      expect.objectContaining({ force: true })
+    );
+    expect(submitTextModeration).toHaveBeenCalledWith(
+      expect.objectContaining({ forceRescan: true })
+    );
     // Its verdict will then match.
     expect(hashContent(vi.mocked(submitTextModeration).mock.calls[0][0].content)).toBe(
       xguardHash(NEW)

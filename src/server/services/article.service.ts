@@ -1346,16 +1346,19 @@ export const upsertArticle = async ({
         ));
       if (sharedSave) await resetSharedArticleTextCheck(tx, id as number);
       sharedTextChanged = sharedSave;
-      // A live article leaves Scanned with its new text too, so no failure before the recompute
-      // can leave that text public without its own verdict.
-      const liveSave =
+      // A live or scheduled article leaves Scanned with its new text too, so no failure before the
+      // recompute can leave that text counted on an older verdict.
+      const publicSave =
         textChanged &&
-        ((data.status as ArticleStatus | undefined) ?? article.status) === ArticleStatus.Published;
+        isPublicArticle({
+          status: (data.status as ArticleStatus | undefined) ?? article.status,
+          scheduledAt: scheduledAtWrite === undefined ? article.scheduledAt : scheduledAtWrite,
+        });
       const updated = await tx.article.update({
         where: updateWhere,
         data: {
           ...data,
-          ...(sharedSave || liveSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
+          ...(sharedSave || publicSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
           // The locked read: a block may have written its own keys since the first read.
           metadata: {
@@ -1626,13 +1629,12 @@ export async function applyArticleContentChange({
     // re-materialization is not a user edit: it must not reorder the "Recently Updated"
     // feed or reopen the rating-dispute re-edit window keyed on `updatedAt > resolvedAt`.
     // Under the share-token lock, so a link created meanwhile cannot miss this body: a shared
-    // draft, or a live article, leaves Scanned in the same statement that changes its text.
+    // draft, or a live or scheduled article, leaves Scanned in the same statement that changes its text.
     const affected = await dbWrite.$transaction(async (tx) => {
       await lockAccessTokens(tx, id);
       const shared = await isSharedArticle(id, publication.status, tx);
-      const live = publication.status === ArticleStatus.Published;
       const locked =
-        shared || live
+        shared || isPublicArticle(publication)
           ? await tx.article.findUnique({ where: { id }, select: { content: true } })
           : null;
       const changed = !!locked && locked.content !== content;

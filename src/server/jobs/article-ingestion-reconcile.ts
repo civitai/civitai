@@ -144,11 +144,14 @@ export const articleIngestionReconcile = createJob(
             },
           });
 
+          // The recompute left it unscanned because the verdict is for other text. Forced, or a
+          // scan that dedupes on its own hash would skip it and leave the article waiting.
+          const verdictForOtherText =
+            moderation?.status === EntityModerationStatus.Succeeded &&
+            articleTextVerdictMatch(moderation, after) === 'other';
           const shouldResubmit =
             !moderation ||
-            // The recompute left it unscanned because the verdict is for other text.
-            (moderation.status === EntityModerationStatus.Succeeded &&
-              articleTextVerdictMatch(moderation, after) === 'other') ||
+            verdictForOtherText ||
             (moderation.retryCount < MODERATION_RETRY_LIMIT &&
               (moderation.status === EntityModerationStatus.Failed ||
                 moderation.status === EntityModerationStatus.Expired ||
@@ -162,6 +165,7 @@ export const articleIngestionReconcile = createJob(
               await submitTextModerationOrScan({
                 entityType: 'Article',
                 entityId: id,
+                force: verdictForOtherText,
                 xguard: () =>
                   submitTextModeration({
                     entityType: 'Article',
@@ -169,6 +173,7 @@ export const articleIngestionReconcile = createJob(
                     content: textForModeration,
                     labels: ['nsfw'],
                     priority: 'low',
+                    forceRescan: verdictForOtherText,
                   }),
               });
               resubmitted++;
