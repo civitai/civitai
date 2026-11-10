@@ -3,6 +3,7 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { modelTagCache } from '~/server/redis/caches';
 import { getAllModelsWithVersionsSelect } from '~/server/selectors/model.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
+import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
@@ -62,6 +63,7 @@ export const modelWebhooks = createWebhookProcessor({
               files: castedFiles.map((file) => ({
                 ...file,
                 url: file.visibility === 'Public' ? file.url : undefined,
+                metadata: reduceToBasicFileMetadata(file.metadata),
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,
@@ -129,6 +131,7 @@ export const modelWebhooks = createWebhookProcessor({
               files: castedFiles.map((file) => ({
                 ...file,
                 url: file.visibility === 'Public' ? file.url : undefined,
+                metadata: reduceToBasicFileMetadata(file.metadata),
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,

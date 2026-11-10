@@ -80,6 +80,7 @@ beforeEach(() => {
         format: 'SafeTensor',
         size: 'full',
         fp: 'fp16',
+        quantType: 'Q4_K_M',
         selectedEpochUrl: EPOCH_URL,
         trainingResults: { epochs: [{ modelUrl: EPOCH_URL }] },
       },
@@ -99,6 +100,7 @@ describe('getModelVersionHandler linked components', () => {
       format: 'SafeTensor',
       size: 'full',
       fp: 'fp16',
+      quantType: 'Q4_K_M',
     });
   });
 });

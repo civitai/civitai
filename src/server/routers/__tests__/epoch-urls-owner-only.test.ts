@@ -6,8 +6,8 @@ import type * as ModelController from '~/server/controllers/model.controller';
 import type * as ModelVersionController from '~/server/controllers/model-version.controller';
 
 /**
- * A file's training epoch URLs (`selectedEpochUrl`, `trainingResults`) on each surface that returns
- * file metadata: the version's owner and moderators get them, nobody else does, whatever the
+ * A file's training epoch URLs (`selectedEpochUrl`, `trainingResults`) on the procedures that use
+ * `ownerOnlyFileUrls`: the version's owner and moderators get them, nobody else does, whatever the
  * request asks for.
  */
 

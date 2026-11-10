@@ -1,9 +1,8 @@
 import { dbRead } from '~/server/db/client';
-import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 
 /**
- * The files named by linked components, keyed by id. Only the basic metadata: a linked file belongs
- * to another model, and its raw metadata carries that owner's training results.
+ * The files named by linked components, keyed by id. Only the basic metadata a download link needs:
+ * a linked file belongs to another model, and its raw metadata carries that owner's training results.
  */
 export async function getLinkedFileData(fileIds: number[]) {
   const byId = new Map<
@@ -20,7 +19,13 @@ export async function getLinkedFileData(fileIds: number[]) {
       name: f.name,
       sizeKB: f.sizeKB,
       type: f.type,
-      metadata: f.metadata ? reduceToBasicFileMetadata(f.metadata) : null,
+      metadata: basicMetadata(f.metadata),
     });
   return byId;
+}
+
+function basicMetadata(metadata: unknown): BasicFileMetadata | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const { format, size, fp, quantType, isRequired } = metadata as BasicFileMetadata;
+  return { format, size, fp, quantType, isRequired };
 }
