@@ -176,6 +176,7 @@ type ProfileImage = Prisma.ImageGetPayload<{
 
 export const comicsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
+  outboxEntity: 'Comic',
   setup: onIndexSetup,
   prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
     const where = [
