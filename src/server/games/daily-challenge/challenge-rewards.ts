@@ -91,8 +91,10 @@ export async function distributeParticipationPrizes(args: {
     SELECT i."userId"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
+    JOIN "User" u ON u.id = i."userId"
     WHERE ci."collectionId" = ${collectionId}
       AND ci.status = 'ACCEPTED'
+      AND u."bannedAt" IS NULL
     GROUP BY i."userId"
     HAVING COUNT(*) >= ${entryPrizeRequirement}
   `;
@@ -216,5 +218,9 @@ export async function reconcileCompletedChallenge(
     },
   });
 
-  return { promoted, paid: paid.length, buzzGranted: paid.length * (challenge.entryPrize?.buzz ?? 0) };
+  return {
+    promoted,
+    paid: paid.length,
+    buzzGranted: paid.length * (challenge.entryPrize?.buzz ?? 0),
+  };
 }

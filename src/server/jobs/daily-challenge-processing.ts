@@ -958,6 +958,9 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     ? Prisma.empty
     : Prisma.sql`AND ci."reviewedAt" >= ${lastReviewedAt}`;
 
+  // Banned entrants are skipped in all three selections below: they can't place (getJudgedEntries),
+  // so a review would be LLM spend for nothing. An owed review of a banned entrant is resolved
+  // rather than kept, so it can't hold the challenge's completion back.
   const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
     SELECT
       ci."imageId",
@@ -971,6 +974,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     WHERE ci."collectionId" = ${currentChallenge.collectionId}
     AND ci.status = 'ACCEPTED'
     AND ci."tagId" IS NULL
+    AND u."bannedAt" IS NULL
     ${reviewedSince}
     AND ${notYetReviewedByJudge}
   `;
@@ -1018,6 +1022,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     WHERE ci."collectionId" = ${currentChallenge.collectionId}
     AND ci.status = 'ACCEPTED'
     AND ci."tagId" = ${config.reviewMeTagId}
+    AND u."bannedAt" IS NULL
     AND ${notYetReviewedByJudge}
   `;
   log('Requested review:', requestReview.length);
@@ -1036,6 +1041,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         WHERE ci."collectionId" = ${currentChallenge.collectionId}
         AND ci.status = 'ACCEPTED'
         AND ci."imageId" = ANY(${pendingIds}::int[])
+        AND u."bannedAt" IS NULL
         AND ${notYetReviewedByJudge}
       `
     : [];
@@ -2272,6 +2278,8 @@ export async function getJudgedEntries(
 
   // Every judged entry — the per-user best is picked below, after the theme gate has had a chance
   // to drop disqualified entries, so a user whose top entry is gated falls through to their next.
+  // A ban leaves the user's entries ACCEPTED in the collection, so banned entrants are dropped
+  // here. Read at query time: a ban lifted before completion makes them eligible again.
   const userBestEntries = await dbRead.$queryRaw<JudgedEntry[]>`
     SELECT
       ci."imageId",
@@ -2285,6 +2293,7 @@ export async function getJudgedEntries(
     AND ci."tagId" = ${config.judgedTagId}
     AND ci.note IS NOT NULL
     AND ci.status = 'ACCEPTED'
+    AND u."bannedAt" IS NULL
   `;
   log('Users with judged entries:', userBestEntries?.length);
   if (!userBestEntries.length) {
