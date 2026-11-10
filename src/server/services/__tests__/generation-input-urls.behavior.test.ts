@@ -1446,17 +1446,86 @@ describe('a chat App Block step, with the external-host refusal on', () => {
     expect(await chatStep(chat(page))).toBe('accepted');
   });
 
-  it('CONTROL: only a TOP-LEVEL messages list is free text, not one nested in a tool schema', async () => {
+  it('CONTROL: only a TOP-LEVEL messages list is free text, not one nested in another field', async () => {
     const url = 'https://example.com/a.png';
-    const withTool = (parameters: Record<string, unknown>) => ({
-      ...chat('hello'),
-      tools: [{ type: 'function', function: { name: 'f', parameters } }],
-    });
-    expect(await chatStep(withTool({ messages: [{ content: url }] }))).toBe(
+    expect(await chatStep({ ...chat('hello'), note: { messages: [{ content: url }] } })).toBe(
       `refused: ${EXTERNAL_MESSAGE}`
     );
     // The same link as the top-level message content passes.
     expect(await chatStep(chat(url))).toBe('accepted');
+  });
+
+  describe('a tool the chat declares to the model', () => {
+    const SCHEMA_URL = 'https://json-schema.org/draft/2020-12/schema';
+    // The shape a block echoes from the tool registry: zod's `z.toJSONSchema` output.
+    const zodSchema = {
+      $schema: SCHEMA_URL,
+      type: 'object',
+      properties: { query: { type: 'string' } },
+      additionalProperties: false,
+    };
+    const withTool = (fn: Record<string, unknown>) => ({
+      ...chat('hello'),
+      tools: [{ type: 'function', function: { name: 'search_models', ...fn } }],
+    });
+
+    // 🔴 THE PRODUCTION REPRO: every chat App Block message carrying a registry tool was refused.
+    it('accepts a tool whose parameters carry the $schema dialect url', async () => {
+      expect(await chatStep(withTool({ description: 'Search', parameters: zodSchema }))).toBe(
+        'accepted'
+      );
+    });
+
+    it('accepts urls anywhere in a tool: description, $id, a $ref, a nested string, a key', async () => {
+      const parameters = {
+        $id: 'https://example.com/schemas/search.json',
+        type: 'object',
+        properties: {
+          image: { $ref: 'https://example.com/schemas/image.json' },
+          ref: { $ref: '$arguments', path: 'https://example.com/a.png' },
+          'https://example.com/a.png': { type: 'string', examples: ['https://example.com/a.png'] },
+        },
+      };
+      expect(
+        await chatStep(
+          withTool({ description: 'Looks up https://example.com/a.png for you', parameters })
+        )
+      ).toBe('accepted');
+    });
+
+    it('CONTROL: the same $schema url is refused where nothing declares it text', async () => {
+      const refused = `refused: ${EXTERNAL_MESSAGE}`;
+      const params = withTool({ parameters: zodSchema });
+      // A pass-through body, a workflow, and an undeclared field of the registry step.
+      expect(await run(params, 'appBlocksPassThrough')).toBe(refused);
+      expect(await run({ $schema: SCHEMA_URL }, 'appBlocksPassThrough')).toBe(refused);
+      expect(
+        await run([[{ prompt: 'a cat' }], { schema: { $schema: SCHEMA_URL } }], 'appBlocksWorkflow')
+      ).toBe(refused);
+      expect(await chatStep({ ...chat('hello'), schema: zodSchema })).toBe(refused);
+      // A tool-level field beside `function` is not under the declared path either.
+      expect(
+        await chatStep({
+          ...chat('hello'),
+          tools: [{ type: 'function', function: { name: 'f' }, parameters: zodSchema }],
+        })
+      ).toBe(refused);
+    });
+
+    it("refuses another user's private image named in a tool description or schema", async () => {
+      await givenImage();
+      const cases = [
+        withTool({ description: `see ${CDN}` }),
+        withTool({ description: KEY }),
+        withTool({ parameters: { type: 'object', description: CDN } }),
+        withTool({ parameters: { type: 'object', properties: { [KEY]: { type: 'string' } } } }),
+      ];
+      // Control: while the image is public, each passes.
+      for (const params of cases) expect(await chatStep(params)).toBe('accepted');
+      await holder.db.exec(`UPDATE "Post" SET availability = 'Private'`);
+      for (const params of cases)
+        expect(await chatStep(params)).toBe(`refused: ${GENERATION_IMAGE_UNAVAILABLE_MESSAGE}`);
+    });
   });
 
   it("CONTROL: only a message's declared field is free text, not a sibling field", async () => {

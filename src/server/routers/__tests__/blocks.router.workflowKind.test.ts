@@ -15,6 +15,7 @@ import type * as DevTunnelModule from '~/server/services/blocks/dev-tunnel.servi
 import type * as BlockWorkflowsModule from '~/server/services/blocks/block-workflows.service';
 import type * as SurfaceModule from '~/server/services/blocks/user-app-surface.service';
 import type * as WorkflowsModule from '~/server/services/orchestrator/workflows';
+import type * as FliptModule from '~/server/flipt/client';
 
 /**
  * `kind:'workflow'` end to end through `blocksRouter`: estimate, submit, poll and
@@ -29,6 +30,9 @@ import type * as WorkflowsModule from '~/server/services/orchestrator/workflows'
  * 64 is above one budget (37) and below three; 110 + a fee of 5 is above three
  * and below four (148).
  */
+
+/** The external-host refusal flag; every other flag reads as it does unmocked. */
+const flags = vi.hoisted(() => ({ refuseExternal: false }));
 
 const h = vi.hoisted(() => ({
   authorize: vi.fn(),
@@ -63,6 +67,17 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof FlagModule>()),
   isAppBlocksAuthorFeeEnabled: (...a: unknown[]) => h.authorFeeFlag(...(a as [])),
 }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof FliptModule>();
+  const isFlipt = (async (flag: string, ...rest: unknown[]) =>
+    flag === actual.FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS
+      ? flags.refuseExternal
+      : (actual.isFlipt as (...a: unknown[]) => Promise<boolean>)(
+          flag,
+          ...rest
+        )) as typeof actual.isFlipt;
+  return { ...actual, isFlipt };
+});
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: () => h.getOrchestratorToken(),
 }));
@@ -135,7 +150,12 @@ import { envMock } from '~/__tests__/mocks/env.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { PlatformInternalStepTypeError } from '~/server/services/blocks/steps/orchestrator-denylist';
 import { formatStepTimeout } from '~/server/services/blocks/workflow.service';
-import { GENERATION_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/generation-input-urls';
+import {
+  GENERATION_EXTERNAL_IMAGE_MESSAGE,
+  GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+} from '~/server/services/generation-input-urls';
+import * as z from 'zod';
+import { getBlockTool } from '~/server/services/blocks/tools/registry';
 import { ANON_SUBJECT } from '~/server/services/block-token-subject';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 
@@ -2140,6 +2160,65 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
       givenImage(OTHER_USER, false);
       await refusedBeforeTheOrchestrator(chatStep(CDN));
       await refusedBeforeTheOrchestrator(chatStep(`what is in this picture?\n${CDN}`));
+    });
+
+    describe('with the external-host refusal ON', () => {
+      beforeEach(() => {
+        flags.refuseExternal = true;
+      });
+      afterEach(() => {
+        flags.refuseExternal = false;
+      });
+
+      // 🔴 THE PRODUCTION REPRO: a chat block that declares a registry tool, with `parameters` as
+      // `z.toJSONSchema` emits it (the `$schema` dialect url included), saying "hello".
+      const zodParameters = () =>
+        z.toJSONSchema(getBlockTool('search_models')!.argsSchema, {
+          io: 'input',
+          unrepresentable: 'any',
+        });
+      const senseiBody = () => ({
+        kind: 'step' as const,
+        step: 'chat-completion',
+        params: {
+          model: 'deepseek/deepseek-chat',
+          messages: [{ role: 'user', content: 'hello' }],
+          maxTokens: 128,
+          tools: [
+            {
+              type: 'function',
+              function: {
+                name: 'search_models',
+                description: getBlockTool('search_models')!.description,
+                parameters: zodParameters(),
+              },
+            },
+          ],
+        },
+      });
+
+      it('accepts a plain message whose declared tool schema carries $schema', async () => {
+        expect(zodParameters().$schema).toBe('https://json-schema.org/draft/2020-12/schema');
+        const error = await estimate(senseiBody()).then(
+          () => undefined,
+          (e: unknown) => e
+        );
+        expect(error).not.toMatchObject({ message: GENERATION_EXTERNAL_IMAGE_MESSAGE });
+        expect(whatifs().length).toBeGreaterThan(0);
+      });
+
+      it('POSITIVE CONTROL: the flag is live — the same schema in a pass-through body is refused', async () => {
+        const refusal = { code: 'BAD_REQUEST', message: GENERATION_EXTERNAL_IMAGE_MESSAGE };
+        const passThrough = {
+          kind: 'step' as const,
+          $type: 'chatCompletion',
+          input: senseiBody().params,
+          maxBuzz: 30,
+        };
+        await expect(estimate(passThrough)).rejects.toMatchObject(refusal);
+        await expect(submit(passThrough)).rejects.toMatchObject(refusal);
+        expect(h.submitWorkflow).not.toHaveBeenCalled();
+      });
     });
 
     it('a workflow still reads a link in a $ref-wired text field as an image input', async () => {
