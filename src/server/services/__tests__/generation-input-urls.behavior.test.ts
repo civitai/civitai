@@ -443,16 +443,59 @@ describe('an App Blocks generation source', () => {
     expect(await check([url], 'appBlocksPassThrough')).toBe(`refused: ${EXTERNAL_MESSAGE}`);
   });
 
-  it('logs the reason for refusing an own image, without naming the image', async () => {
-    await givenImage({ userId: CALLER, postId: null, ingestion: 'Pending' });
+  it.each([
+    ['held', { needsReview: 'poi' }],
+    ['unscannable', { ingestion: 'NotFound' }],
+    ['pending', { ingestion: 'Pending' }],
+  ])('logs a %s refusal of an own image once, without naming the image', async (reason, over) => {
+    await givenImage({ userId: CALLER, postId: null, ...over });
     loggingMock.logToAxiom.mockClear();
+    expect(await check([CDN()], 'appBlocksPassThrough')).toMatch(/^refused: /);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'app-block-source-refusal', reason })
+    );
+    const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls).toLowerCase();
+    expect(logged).not.toContain(KEY);
+    expect(logged).not.toContain(KEY.replace(/-/g, ''));
+  });
+
+  it('logs an unrowed upload refusal', async () => {
+    const own = '11111111-2222-4333-8444-555555555555';
+    await recordUploadKeyOwner(own, CALLER);
+    loggingMock.logToAxiom.mockClear();
+    expect(await check([CDN(own)], 'appBlocksPassThrough')).toBe(
+      `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'unrowed' })
+    );
+    const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls).toLowerCase();
+    expect(logged).not.toContain(own);
+    expect(logged).not.toContain(own.replace(/-/g, ''));
+  });
+
+  it('logs an external url refusal with mode refuse when the app refusal is on', async () => {
+    loggingMock.logToAxiom.mockClear();
+    await check(['https://example.com/a.png'], 'appBlocksPassThrough');
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'external', mode: 'refuse' })
+    );
+  });
+
+  it('refuses a key with one clean row and one held or pending row beside it', async () => {
+    await givenImage({ userId: CALLER, postId: null });
+    await givenImage({ id: 101, userId: CALLER, postId: null, ingestion: 'Pending' });
     expect(await check([CDN()], 'appBlocksPassThrough')).toBe(
       `refused: ${APP_SOURCE_PENDING_MESSAGE}`
     );
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'app-block-source-refusal', reason: 'pending' })
+  });
+
+  it('a row both held and still scanning is refused as unusable, not as pending', async () => {
+    await givenImage({ userId: CALLER, postId: null, ingestion: 'Pending', needsReview: 'poi' });
+    expect(await check([CDN()], 'appBlocksPassThrough')).toBe(
+      `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`
     );
-    expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain(KEY);
   });
 
   it('refuses an orchestrator blob once scanned source rows are on, and only from an app', async () => {

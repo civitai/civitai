@@ -2040,6 +2040,7 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
         });
       }
       expect(h.submitWorkflow).not.toHaveBeenCalled();
+      expect(counter(USER_CAP)).toBe(0);
     }
   );
 
