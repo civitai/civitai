@@ -576,6 +576,13 @@ export function resolvePerCallBuzzBudget(declared: unknown): number {
  */
 export const CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE = 'daily-limit-exceeded' as const;
 
+/**
+ * A generation input names the viewer's own upload before its scan has finished. Retry once the
+ * upload's scan completes. Returned by the estimate and the submit of `kind:'step'` and
+ * `kind:'workflow'` bodies as a failed snapshot's `errorCode`.
+ */
+export const SOURCE_SCAN_PENDING_ERROR_CODE = 'source-scan-pending' as const;
+
 /** Where a viewer sets, raises or removes their per-app daily Buzz limit. */
 export const APP_DAILY_LIMIT_SETTINGS_PATH = '/apps/activity';
 
