@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * Convention guard: the viewer an event-decoration gate is asked about, in a router or controller,
- * is `eventViewerOf(ctx)` (or a local `eventViewer` holding it), never the session user.
+ * is `eventViewerOf(ctx)` (or a local every assignment binds to it), never the session user; and
+ * the moderator flag a placement passes is `eventViewerOf(ctx).isModerator`.
  *
  * Before an event launches only its flag audience sees its hats, and a moderator is in every flag
  * audience. `eventViewerOf` counts that only for a session or a full-access personal key, the same
@@ -16,10 +17,15 @@ import { describe, expect, it } from 'vitest';
 const SERVER_DIR = path.resolve(__dirname, '../..');
 const SCAN_DIRS = ['routers', 'controllers'].map((d) => path.join(SERVER_DIR, d));
 
-const ALLOWED_VALUE = /^(eventViewer\b|eventViewerOf\()/;
-const VIEWER_FIELD = /\beventDecorationViewer\s*:\s*/g;
-const GATE_CALL =
-  /\b(getEventDecorationsForEntity|getViewerEventDecorations|getVisibleDecorationEvents)\s*\(/g;
+/** Gates taking the viewer as an object field. */
+const FIELD_GATES = ['getEventDecorationsForEntity', 'getViewerEventDecorations'];
+/** Gates taking the viewer as their second positional argument. */
+const POSITIONAL_GATES = ['getVisibleDecorationEvents', 'withoutHiddenEventDecorations'];
+const GATE_CALL = new RegExp(`\\b(${[...FIELD_GATES, ...POSITIONAL_GATES].join('|')})\\s*\\(`, 'g');
+/** The placement gate takes the moderator flag rather than a viewer. */
+const PLACEMENT_CALL = /\bequipCosmeticToEntity\s*\(/g;
+const VIEWER_FIELD = /[{,]\s*eventDecorationViewer\b\s*(:\s*)?/g;
+const EVENT_VIEWER_OF = /^eventViewerOf\(\s*ctx\s*\)/;
 
 function stripComments(source: string) {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
@@ -45,6 +51,54 @@ function callArgs(source: string, openParen: number) {
   return source.slice(openParen + 1);
 }
 
+/** A call's top-level arguments (commas inside brackets do not split). */
+function topLevelArgs(args: string) {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < args.length; i++) {
+    const c = args[i];
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth--;
+    else if (c === ',' && depth === 0) {
+      out.push(args.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  out.push(args.slice(start).trim());
+  return out;
+}
+
+/**
+ * Whether a value expression is the viewer eventViewerOf gives: the call itself, or an identifier
+ * every assignment in the file binds to that call. `trailing` names what may follow it.
+ */
+function isEventViewer(value: string, source: string, trailing = '') {
+  const v = value.trim();
+  if (EVENT_VIEWER_OF.test(v)) return v.replace(EVENT_VIEWER_OF, '').trim() === trailing;
+  const id = /^([A-Za-z_$][\w$]*)/.exec(v)?.[1];
+  if (!id || v.slice(id.length).trim() !== trailing) return false;
+  const assignments = [...source.matchAll(new RegExp(`\\b${id}\\s*=(?!=)\\s*`, 'g'))];
+  return (
+    assignments.length > 0 &&
+    assignments.every((a) => EVENT_VIEWER_OF.test(source.slice(a.index + a[0].length)))
+  );
+}
+
+/** The value of a property starting at `at`, up to the next top-level `,` or closing bracket. */
+function valueAt(source: string, at: number) {
+  let depth = 0;
+  for (let i = at; i < source.length; i++) {
+    const c = source[i];
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) {
+      if (depth === 0) return source.slice(at, i);
+      depth--;
+    } else if (c === ',' && depth === 0) return source.slice(at, i);
+  }
+  return source.slice(at);
+}
+
 function lineOf(source: string, index: number) {
   return source.slice(0, index).split('\n').length;
 }
@@ -56,21 +110,32 @@ function findViolations(files: { name: string; text: string }[]) {
     const where = (index: number) => `${name}:${lineOf(source, index)}`;
 
     for (const m of source.matchAll(VIEWER_FIELD)) {
-      const at = m.index + m[0].length;
-      if (!ALLOWED_VALUE.test(source.slice(at)))
-        hits.push(`${where(m.index)}: eventDecorationViewer`);
+      // Shorthand `{ eventDecorationViewer }` names a local of that name.
+      const value = m[1] ? valueAt(source, m.index + m[0].length) : 'eventDecorationViewer';
+      if (!isEventViewer(value, source))
+        hits.push(
+          `${where(m.index + m[0].indexOf('eventDecorationViewer'))}: eventDecorationViewer`
+        );
     }
     for (const m of source.matchAll(GATE_CALL)) {
       const args = callArgs(source, m.index + m[0].length - 1);
-      for (const v of args.matchAll(/\bviewer\s*:\s*/g)) {
-        if (!ALLOWED_VALUE.test(args.slice(v.index + v[0].length)))
+      if (FIELD_GATES.includes(m[1])) {
+        for (const v of args.matchAll(/[{,]\s*viewer\b\s*(:\s*)?/g)) {
+          const value = v[1] ? valueAt(args, v.index + v[0].length) : 'viewer';
+          if (!isEventViewer(value, source)) hits.push(`${where(m.index)}: ${m[1]} viewer`);
+        }
+      } else {
+        const second = topLevelArgs(args)[1] ?? '';
+        if (second && second !== 'undefined' && !isEventViewer(second, source))
           hits.push(`${where(m.index)}: ${m[1]} viewer`);
       }
-      // A gate called with a bare positional viewer (getVisibleDecorationEvents(entity, viewer)).
-      if (m[1] === 'getVisibleDecorationEvents') {
-        const second = args.split(',')[1]?.trim() ?? '';
-        if (second && second !== 'undefined' && !ALLOWED_VALUE.test(second))
-          hits.push(`${where(m.index)}: ${m[1]} viewer`);
+    }
+    for (const m of source.matchAll(PLACEMENT_CALL)) {
+      const args = callArgs(source, m.index + m[0].length - 1);
+      for (const v of args.matchAll(/[{,]\s*isModerator\b\s*(:\s*)?/g)) {
+        const value = v[1] ? valueAt(args, v.index + v[0].length) : 'isModerator';
+        if (!isEventViewer(value, source, '.isModerator'))
+          hits.push(`${where(m.index)}: equipCosmeticToEntity isModerator`);
       }
     }
   }
@@ -100,15 +165,35 @@ describe('no-raw-event-viewer', () => {
       'getImages({ eventDecorationViewer: user, other: 1 });',
       'getViewerEventDecorations({ ids, entity, viewer: ctx.user });',
       'getVisibleDecorationEvents(entity, ctx.user);',
-      'getModels({ eventDecorationViewer: eventViewerOf(ctx) });',
-      'getEventDecorationsForEntity({ ids, entity, viewer: eventViewer });',
-      'getVisibleDecorationEvents(entity, undefined);',
+      'getModels({ eventDecorationViewer: eventViewerOf(ctx) ?? ctx.user });',
+      'const viewer = ctx.user; getEventDecorationsForEntity({ ids, entity, viewer });',
+      'getImages({ eventDecorationViewer });',
+      'getVisibleDecorationEvents(pick(a, b), ctx.user);',
+      'equipCosmeticToEntity({ ...input, isModerator: ctx.user.isModerator });',
     ].join('\n');
     expect(findViolations([{ name: 'fixture.ts', text }])).toEqual([
       'fixture.ts:1: eventDecorationViewer',
       'fixture.ts:2: eventDecorationViewer',
+      'fixture.ts:5: eventDecorationViewer',
+      'fixture.ts:7: eventDecorationViewer',
       'fixture.ts:3: getViewerEventDecorations viewer',
       'fixture.ts:4: getVisibleDecorationEvents viewer',
+      'fixture.ts:6: getEventDecorationsForEntity viewer',
+      'fixture.ts:8: getVisibleDecorationEvents viewer',
+      'fixture.ts:9: equipCosmeticToEntity isModerator',
     ]);
+  });
+
+  it('accepts eventViewerOf(ctx) and locals bound to it', () => {
+    const text = [
+      'const eventViewer = eventViewerOf(ctx);',
+      'getModels({ eventDecorationViewer: eventViewerOf(ctx) });',
+      'getImages({ eventDecorationViewer: eventViewer, other: 1 });',
+      'getEventDecorationsForEntity({ ids, entity, viewer: eventViewer });',
+      'getVisibleDecorationEvents(entity, undefined);',
+      'withoutHiddenEventDecorations([{ cosmetic }], eventViewer);',
+      'equipCosmeticToEntity({ ...input, isModerator: eventViewerOf(ctx).isModerator });',
+    ].join('\n');
+    expect(findViolations([{ name: 'fixture.ts', text }])).toEqual([]);
   });
 });
