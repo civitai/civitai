@@ -279,6 +279,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `UserProfile.showcaseSections`: `20261106005437_user_profile_showcase_sections`
     //   `ResourceReview.postId` / `.releasedAt`: `20261231130000_resource_review_post_id`
     //   `BoxOpening.guaranteed`: `20261231000000_box_opening_guaranteed`
+    //   `MembershipGift.revertPriceId`: `20261122120000_membership_gift_revert_price`
     const inFlightColumns = new Set([
       'BoxOpening.guaranteed',
       'CsamReport.sendClaimId',
@@ -322,6 +323,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'Article.bannerId',
       'ResourceReview.postId',
       'ResourceReview.releasedAt',
+      'MembershipGift.revertPriceId',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.
