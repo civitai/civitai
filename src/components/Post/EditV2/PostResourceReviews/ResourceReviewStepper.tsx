@@ -220,18 +220,20 @@ export function ResourceReviewStepper({
         </Text>
       </div>
 
-      <Stack gap={6}>
-        <Text size="sm" fw={600}>
-          Used in {usedIn.length} of your {images.length} {images.length === 1 ? 'image' : 'images'}
-        </Text>
-        <Group gap={6} wrap="nowrap" className="overflow-x-auto">
-          {usedIn.map((image) => (
-            <Box key={image.id} w={56} h={56} className="shrink-0 overflow-hidden rounded-md">
-              <EdgeMedia src={image.url} type={image.type as 'image'} width={112} />
-            </Box>
-          ))}
-        </Group>
-      </Stack>
+      {images.length > 1 && (
+        <Stack gap={6}>
+          <Text size="sm" fw={600}>
+            Used in {usedIn.length} of your {images.length} images
+          </Text>
+          <Group gap={6} wrap="nowrap" className="overflow-x-auto">
+            {usedIn.map((image) => (
+              <Box key={image.id} w={56} h={56} className="shrink-0 overflow-hidden rounded-md">
+                <EdgeMedia src={image.url} type={image.type as 'image'} width={112} />
+              </Box>
+            ))}
+          </Group>
+        </Stack>
+      )}
 
       <Stack gap={6}>
         <Text size="sm" fw={600}>
