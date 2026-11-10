@@ -13,6 +13,7 @@ import type {
 import {
   findStoredCandidates,
   loadStoredMilestoneGroups,
+  storedDetectorSchema,
   storedMilestoneGroups,
 } from '~/server/services/creator-milestone-stored';
 
@@ -317,6 +318,15 @@ describe('findStoredCandidates', () => {
 
 describe('storedMilestoneGroups', () => {
   const valid = { type: 'query', sql: TEAL_SQL, dated: true, launchedAt: '2026-01-01T00:00:00Z' };
+
+  it('reads a hand-written minute-precision launch as :00 instead of skipping the definition', () => {
+    expect(storedDetectorSchema.shape.launchedAt.in.parse('2026-01-01T00:00Z')).toBe(
+      '2026-01-01T00:00:00Z'
+    );
+    expect(
+      storedDetectorSchema.safeParse({ ...valid, launchedAt: '2026-01-01T00:00Z' }).success
+    ).toBe(true);
+  });
 
   it('builds one group per valid definition, and reports every other by key and reason', () => {
     const skips: StoredMilestoneSkip[] = [];
