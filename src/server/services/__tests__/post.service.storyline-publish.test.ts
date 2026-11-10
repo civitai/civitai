@@ -12,6 +12,11 @@ const { prepareStorylinePublish, finishStorylinePublish } = vi.hoisted(() => ({
   finishStorylinePublish: vi.fn(),
 }));
 // Hand-listed: the real module's graph needs the server env, and these are all post.service uses.
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparkLost: vi.fn(),
+  onStorySparkPostsHidden: vi.fn(),
+  onStorySparkPostsRestored: vi.fn(),
+}));
 vi.mock('~/server/services/storyline-publish.service', () => ({
   prepareStorylinePublish,
   finishStorylinePublish,
@@ -67,7 +72,6 @@ vi.mock('~/server/services/image.service', () => ({
   imagesForModelVersionsCache: { refresh: vi.fn() },
   enqueueImageIngestion: vi.fn(),
   invalidateManyImageExistence: vi.fn(),
-  purgeImageGenerationDataCache: vi.fn(),
   purgeResizeCache: vi.fn(),
   queueImageSearchIndexUpdate: vi.fn(),
 }));

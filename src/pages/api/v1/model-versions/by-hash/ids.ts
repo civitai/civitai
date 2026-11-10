@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { dbRead } from '~/server/db/client';
 import {
   getHiddenModelVersionIds,
@@ -55,7 +55,7 @@ export default PublicEndpoint(
     // Versions the caller may not see are left out, as if their hashes had not matched.
     const hidden = await getHiddenModelVersionIds(
       matched.map((entry) => entry.modelVersion),
-      async () => (await getServerAuthSession({ req, res }))?.user
+      async () => (await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' }))?.user
     );
     const visible = matched.filter((entry) => !hidden.has(entry.modelVersionId));
     const ids = visible.map((entry) => ({

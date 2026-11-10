@@ -115,15 +115,12 @@ async function recordModAction(
     ]);
     return true;
   } catch (e) {
-    logToAxiom(
-      {
-        type: 'error',
-        name: 'reaction-abuse audit write failed',
-        message: (e as Error).message,
-        details: { activity, userIds, actorUserId: actorUserId ?? SYSTEM_ACTOR_ID },
-      },
-      'moderation'
-    );
+    logToAxiom({
+      type: 'error',
+      name: 'reaction-abuse audit write failed',
+      message: (e as Error).message,
+      details: { activity, userIds, actorUserId: actorUserId ?? SYSTEM_ACTOR_ID },
+    });
     return false;
   }
 }

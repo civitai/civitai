@@ -31,7 +31,8 @@ beforeAll(async () => {
     CREATE TABLE "UserNotificationSettings"("userId" int, type text);
     CREATE TABLE "Storyline"(id int PRIMARY KEY, "userId" int, title text, "tosViolation" boolean NOT NULL DEFAULT false);
     CREATE TABLE "CommentV3"(id int PRIMARY KEY, "entityType" text, "entityId" int, "parentId" int,
-      "replyToId" int, path ltree, "userId" int, "createdAt" timestamp(3), "deletedAt" timestamp(3));
+      "replyToId" int, path ltree, "userId" int, "createdAt" timestamp(3), "deletedAt" timestamp(3),
+      "tosViolation" boolean NOT NULL DEFAULT false);
     CREATE TABLE "CommentMute"("userId" int, "commentId" int);
     CREATE TABLE "CommentTopicMute"("userId" int, "entityType" text, "entityId" int);
     INSERT INTO "User" VALUES (1, 'owner'), (2, 'reader');
@@ -105,6 +106,13 @@ describe('new-storyline-comment', () => {
       async () => {
         await comment(500, READER);
         await db.exec(`UPDATE "CommentV3" SET "deletedAt" = now() WHERE id = 500`);
+      },
+    ],
+    [
+      "the comment is hidden for ToS, as an author's delete can keep it",
+      async () => {
+        await comment(500, READER);
+        await db.exec(`UPDATE "CommentV3" SET "tosViolation" = true WHERE id = 500`);
       },
     ],
     [

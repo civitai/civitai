@@ -20,6 +20,7 @@ import type {
   VIEW_TYPES,
 } from '~/server/schema/track.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
+import type { CommentEntityType } from '~/shared/utils/prisma/enums';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import type { ReportEntity } from '~/shared/utils/report-helpers';
 import dayjs from '~/shared/utils/dayjs';
@@ -170,7 +171,13 @@ export type UserActivityType =
   | 'RemoveContent'
   | 'ExcludedFromLeaderboard'
   | 'UnexcludedFromLeaderboard';
-export type ModelVersionActivty = 'Create' | 'Publish' | 'Download' | 'Unpublish' | 'HideDownload';
+export type ModelVersionActivty =
+  | 'Create'
+  | 'Publish'
+  | 'Download'
+  | 'Unpublish'
+  | 'HideDownload'
+  | 'GenerationFetch';
 export type ModelActivty =
   | 'Create'
   | 'Publish'
@@ -204,10 +211,6 @@ export const ReactionType = [
   'CommentV2_Delete',
   'Review_Create',
   'Review_Delete',
-  'Question_Create',
-  'Question_Delete',
-  'Answer_Create',
-  'Answer_Delete',
   'BountyEntry_Create',
   'BountyEntry_Delete',
   'Article_Create',
@@ -231,6 +234,17 @@ export type CommentType =
   | 'Review'
   | 'Bounty'
   | 'BountyEntry';
+/**
+ * The `comments.type` a new top-level comment on each CommentV3 entity type is tracked as; a reply is
+ * `Comment`, and an entity type without an entry is not tracked.
+ */
+export const commentTrackTypes: Partial<Record<CommentEntityType, CommentType>> = {
+  post: 'Post',
+  image: 'Image',
+  review: 'Review',
+  bounty: 'Bounty',
+  bountyEntry: 'BountyEntry',
+};
 export type CommentActivity = 'Create' | 'Delete' | 'Update' | 'Hide' | 'Unhide';
 export type PostActivityType = 'Create' | 'Publish' | 'Tags' | 'Delete';
 export type ImageActivityType =
@@ -240,8 +254,6 @@ export type ImageActivityType =
   | 'Tags'
   | 'Resources'
   | 'Restore';
-export type QuestionType = 'Create' | 'Delete';
-export type AnswerType = 'Create' | 'Delete';
 export type PartnerActivity = 'Run' | 'Update';
 export type BountyActivity = 'Create' | 'Update' | 'Delete' | 'Expire' | 'Refund';
 export type BountyEntryActivity = 'Create' | 'Update' | 'Delete' | 'Award';
@@ -317,7 +329,39 @@ export const ActionType = [
   // Same Enum16 hazard as above (migrations/2026-10-21-user-menu-click-action.sql, plus the
   // tracker restart in migrations/README.md); the item, group and section ride in `details`.
   'UserMenu_Click',
+  // Push opt-in funnel, one type with the step in `details.action`. Same Enum16 hazard as above
+  // (migrations/2026-11-03-push-prompt-action.sql, plus the tracker restart in migrations/README.md).
+  'Push_Prompt',
+  // Fields ride in `details` (migrations/2026-11-04-experiment-exposure-hat-turf-actions.sql).
+  'Experiment_Exposure',
+  'HatTurf_Action',
+  // App store acquisition funnel (migrations/2026-11-07-app-store-funnel-actions.sql, plus the
+  // tracker restart in migrations/README.md). `AppStore_Action` is client-postable (impression /
+  // card_click / detail_view / cta_click in `details.action`). `App_Visit` is SERVER-ONLY, like
+  // `App_Open`: one row per followed off-site "Visit", written by the `/apps/go/<listingId>`
+  // redirect, so it has no `trackActionSchema` arm.
+  'AppStore_Action',
+  'App_Visit',
+  // App Blocks in-app telemetry, emitted by the two block hosts: an error the viewer saw after the
+  // app loaded, and one row per host session on unmount/pagehide. Same Enum16 hazard as above
+  // (migrations/2026-11-07-app-telemetry-error-session-actions.sql, plus the tracker restart):
+  // until both are applied the tracker drops these rows silently and nothing else changes.
+  'App_Error',
+  'App_Session',
 ] as const;
+
+// Written without ip and userAgent, whoever calls: `actions` has no TTL, and these feed per-user
+// experiment readouts that need only the user id.
+const ACTOR_META_FREE_ACTION_TYPES: ReadonlySet<ActionType> = new Set([
+  'Experiment_Exposure',
+  'HatTurf_Action',
+  // Store funnel rows (impressions are high-volume) need only the user id. NOT `App_Open` /
+  // `App_Visit`: their counts de-dupe per actor at read time and need the ip fallback.
+  'AppStore_Action',
+  // Operational app telemetry: per-app error and engagement rates need the user id at most.
+  'App_Error',
+  'App_Session',
+]);
 export type ActionType = (typeof ActionType)[number];
 
 // No deviceId here. The browser fingerprint that populated the ClickHouse `deviceId`
@@ -553,7 +597,7 @@ export class Tracker {
               message: `Tracker returned ${res.status}`,
             },
             'clickhouse'
-          ).catch(() => {});
+          ).catch(() => undefined);
           failure = new Error(`tracker: ${table} rejected with ${res.status}`);
           break;
         }
@@ -576,7 +620,7 @@ export class Tracker {
             message: `Tracker returned ${res.status} after ${attempt} attempts`,
           },
           'clickhouse'
-        ).catch(() => {});
+        ).catch(() => undefined);
       } catch (e) {
         const error = e as Error;
         failure = error;
@@ -593,7 +637,7 @@ export class Tracker {
             cause: error.cause,
           },
           'clickhouse'
-        ).catch(() => {});
+        ).catch(() => undefined);
       }
     }
 
@@ -775,6 +819,7 @@ export class Tracker {
   // not what a reversible, private product control should leave behind.
   public action(values: { type: ActionType; details?: any }, options?: { skipActorMeta: boolean }) {
     const { details, ...rest } = values;
+    if (ACTOR_META_FREE_ACTION_TYPES.has(values.type)) options = { skipActorMeta: true };
     return this.track(
       'actions',
       {
@@ -794,8 +839,19 @@ export class Tracker {
     return this.track('bugReports', values);
   }
 
-  public modelEvent(values: { type: ModelActivty; modelId: number; nsfw: boolean }) {
-    return this.track('modelEvents', { ...values, ...this.provenance });
+  /** `userId` names the actor when the request has none, as a moderator's transfer. */
+  public modelEvent(values: {
+    type: ModelActivty;
+    modelId: number;
+    nsfw: boolean;
+    userId?: number;
+    time?: Date;
+  }) {
+    return this.track('modelEvents', {
+      ...values,
+      ...this.provenance,
+      time: values.time ?? new Date(),
+    });
   }
 
   public redeemableCode(activity: string, details: { quantity?: number; code?: string }) {
@@ -829,8 +885,11 @@ export class Tracker {
     targetUserId: number;
     source?: string;
     landingPage?: string;
+    time?: Date;
   }) {
-    return this.track('userActivities', values);
+    // Replicated inserts dedupe identical blocks: with a server-filled time, the same action on
+    // the same target by the same actor (ban, unban, ban) repeats an earlier row and is dropped.
+    return this.track('userActivities', { ...values, time: values.time ?? new Date() });
   }
 
   public resourceReview(values: {
@@ -851,14 +910,6 @@ export class Tracker {
     nsfw: NsfwLevelDeprecated;
   }) {
     return this.track('reactions', values);
-  }
-
-  public question(values: { type: QuestionType; questionId: number }) {
-    return this.track('questions', values);
-  }
-
-  public answer(values: { type: AnswerType; questionId: number; answerId: number }) {
-    return this.track('answers', values);
   }
 
   public comment(values: { type: CommentType; entityId: number; nsfw: boolean }) {
@@ -1018,6 +1069,18 @@ export class Tracker {
     );
   }
 
+  // Exactly these four columns, in their own table with a 12-month TTL (not `actions`, which has
+  // none): migrations/2026-10-28-image-upload-requests.sql.
+  /** `userId` names who the key was issued to when the request has no session, as in a job. */
+  public imageUploadRequest(key: string, userId?: number) {
+    return this.send('imageUploadRequests', ({ actor }) => ({
+      userId: userId ?? actor.userId,
+      ip: actor.ip,
+      key,
+      time: new Date(),
+    }));
+  }
+
   public search(values: { query: string; index: string; filters?: any }) {
     const { filters, ...rest } = values;
     return this.track('search', {
@@ -1131,7 +1194,7 @@ export class Tracker {
   public retoolAudit(values: {
     action: string;
     privileged: boolean;
-    outcome: 'ok' | 'error';
+    outcome: 'ok' | 'error' | 'warning';
     errorMsg?: string;
     payload: Record<string, unknown>;
     affected?: Record<string, unknown>;
@@ -1143,6 +1206,9 @@ export class Tracker {
       errorMsg: values.errorMsg ?? '',
       payload: JSON.stringify(values.payload),
       affected: values.affected ? JSON.stringify(values.affected) : '',
+      // Replicated inserts dedupe identical blocks; a repeated call with a server-filled
+      // createdAt is byte-identical and silently dropped.
+      createdAt: new Date(),
     });
   }
 

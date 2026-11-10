@@ -236,7 +236,8 @@ describe('confirming a hold', () => {
       isModerator: true,
       reason: 'other',
       customMessage: MODEL_RULES_UNPUBLISH_MESSAGE,
-      meta: { modelRules: expect.objectContaining({ ruleIds: [3, 4], textHash: HASH }) },
+      metaPatch: { modelRules: expect.objectContaining({ ruleIds: [3, 4], textHash: HASH }) },
+      metaUnset: ['needsReview'],
     });
     expect(tracker.modelEvent).toHaveBeenCalledWith({
       type: 'Unpublish',

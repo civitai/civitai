@@ -27,7 +27,15 @@ export interface SessionRegistryRedis {
   ): Promise<{ cursor: number; tuples: Array<{ field: string; value: string }> }>;
   get(key: string): Promise<string | null | undefined>;
   set(key: string, value: string, opts?: { EX?: number }): Promise<unknown>;
+  /** When present, a field and its TTL are written in one script, so the field can't outlive a failed TTL write. */
+  eval?(script: string, opts: { keys: string[]; arguments: string[] }): Promise<unknown>;
 }
+
+const SET_FIELD_WITH_TTL = `
+  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+  redis.call('HPEXPIRE', KEYS[1], ARGV[3], 'FIELDS', '1', ARGV[1])
+  return 1
+`;
 
 export type InvalidateInfo = { scope: 'token' | 'user' | 'all'; tokenId?: string; userId?: number };
 
@@ -76,8 +84,12 @@ export interface SessionRegistry {
   trackToken(tokenId: string, userId: number): Promise<void>;
   /** Mark a single session invalid (logout). */
   invalidateToken(tokenId: string, userId?: number): Promise<void>;
+  /** End every session descended from one sign-in (logout). */
+  invalidateFamily(familyId: string): Promise<void>;
   /** Mark every tracked session for a user invalid (ban). Requires redis.hGetAll. */
   invalidateUserSessions(userId: number): Promise<void>;
+  /** End every impersonation this moderator holds, leaving their own sessions alone. */
+  invalidateImpersonationsBy(moderatorId: number): Promise<void>;
   /** Global cutoff — revokes every token signed before now (mass logout). */
   invalidateAll(): Promise<void>;
   /** Flag a token for re-mint (not a revoke). */
@@ -101,6 +113,11 @@ const DEFAULT_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60;
 // Concurrency bound for the ban fan-out (individual commands, not a Lua batch).
 const INVALIDATE_BATCH = 100;
 
+/** The marker that ends a moderator's impersonations; `userCut` is the registry's `keys.userCut`. */
+export function impersonatorCutKey(userCut: string, moderatorId: number): string {
+  return `${userCut}:impersonator:${moderatorId}`;
+}
+
 export function createSessionRegistry(config: SessionRegistryConfig): SessionRegistry {
   const { keys } = config;
   const ttl = config.ttlSeconds ?? DEFAULT_TTL;
@@ -119,6 +136,7 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
   const { redis } = config;
   const userTokensKey = (userId: number) => `${keys.userTokens}:${userId}`;
   const userCutKey = (userId: number | string) => `${keys.userCut}:${userId}`;
+  const impersonatorCut = (moderatorId: number) => impersonatorCutKey(keys.userCut, moderatorId);
 
   async function setState(tokenId: string, state: 'invalid' | 'refresh') {
     await redis.hSet(keys.tokenState, tokenId, state);
@@ -217,6 +235,18 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
     await config.onInvalidate?.({ scope: 'token', tokenId, userId });
   }
 
+  async function invalidateFamily(familyId: string) {
+    if (redis.eval) {
+      await redis.eval(SET_FIELD_WITH_TTL, {
+        keys: [keys.familyState],
+        arguments: [familyId, 'invalid', String(markerTtl * 1000)],
+      });
+      return;
+    }
+    await redis.hSet(keys.familyState, familyId, 'invalid');
+    if (redis.hExpire) await redis.hExpire(keys.familyState, familyId, markerTtl);
+  }
+
   async function invalidateUserSessions(userId: number) {
     if (!redis.hGetAll)
       throw new Error('[@civitai/auth] invalidateUserSessions requires redis.hGetAll');
@@ -242,6 +272,10 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
     await config.onInvalidate?.({ scope: 'user', userId });
   }
 
+  async function invalidateImpersonationsBy(moderatorId: number) {
+    await redis.set(impersonatorCut(moderatorId), String(now()), { EX: markerTtl });
+  }
+
   async function invalidateAll() {
     // TTL the cutoff marker (matches the main app's prior EX): it only revokes tokens signed before it, which
     // all expire within `ttl` anyway, so the marker self-cleans rather than lingering forever.
@@ -263,13 +297,14 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
     const family = familyId(claims);
     const userId = claims.sub ?? claims.user?.id;
     // Issued in one tick so the client pipelines them into a single round trip.
-    const [state, familyState, allStr, userCut, impersonatorCut] = (
+    const [state, familyState, allStr, userCut, impersonatorUserCut, impersonationCut] = (
       await Promise.all([
         redis.hGet(keys.tokenState, tokenId),
         family ? redis.hGet(keys.familyState, family) : null,
         redis.get(keys.all),
         userId != null ? redis.get(userCutKey(userId)) : null,
         claims.impersonatedBy != null ? redis.get(userCutKey(claims.impersonatedBy)) : null,
+        claims.impersonatedBy != null ? redis.get(impersonatorCut(claims.impersonatedBy)) : null,
       ])
     ).map(asString);
     if (state === 'invalid') return true;
@@ -278,14 +313,17 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
     const signedAt = claims.signedAt;
     if (allStr && new Date(allStr).getTime() > signedAt) return true;
     if (userCut && Number(userCut) > signedAt) return true;
-    if (impersonatorCut && Number(impersonatorCut) > signedAt) return true;
+    if (impersonatorUserCut && Number(impersonatorUserCut) > signedAt) return true;
+    if (impersonationCut && Number(impersonationCut) > signedAt) return true;
     return false;
   }
 
   return {
     trackToken,
     invalidateToken,
+    invalidateFamily,
     invalidateUserSessions,
+    invalidateImpersonationsBy,
     invalidateAll,
     markForRefresh,
     isRevoked,

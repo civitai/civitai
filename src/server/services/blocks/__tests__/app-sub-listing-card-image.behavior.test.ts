@@ -90,16 +90,17 @@ beforeAll(async () => {
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
-      "needsReview" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
+      "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}',
-      "scanJobs" jsonb
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
       availability "Availability" DEFAULT 'Public', "collectionId" int
     );
     CREATE TABLE "Article" (
-      id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text
+      id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text,
+      "bannerId" int
     );
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]

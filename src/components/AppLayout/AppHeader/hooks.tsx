@@ -17,6 +17,7 @@ import {
   IconGavel,
   IconHistory,
   IconLink,
+  IconScreenShare,
   IconMoneybag,
   IconPhotoUp,
   IconPlayerPlayFilled,
@@ -42,6 +43,7 @@ import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisib
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useEventMenuItems } from '~/components/AppLayout/AppHeader/useEventMenuItems';
 import { enabledInventoryTypes } from '~/components/Inventory/inventory-types';
+import { openCivitaiLinkDialog } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
@@ -80,6 +82,8 @@ export type UserMenuItem = {
    * that costs a request is a request on every page.
    */
   badge?: number;
+  /** What the badge counts, shown on hover. */
+  badgeTooltip?: string;
 };
 
 type UserMenuItemGroup = {
@@ -139,6 +143,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.grape[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Inventory',
           badge: unopenedBoxes,
+          badgeTooltip: 'Unopened mystery boxes',
         },
         {
           id: 'my-shop',
@@ -179,6 +184,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Placements',
           badge: pendingPlacements,
+          badgeTooltip: 'Placements waiting for your review',
           newUntil: new Date('2026-09-20'),
         },
         {
@@ -199,6 +205,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Collections',
           badge: pendingCollectionReviews,
+          badgeTooltip: 'Items awaiting review in your collections',
         },
         {
           id: 'liked-models',
@@ -218,7 +225,6 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         {
           id: 'bounties',
           href: '/bounties?engagement=favorite',
-          as: '/bounties',
           visible: features.bounties,
           icon: IconMoneybag,
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
@@ -340,6 +346,12 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Knights of New',
           newUntil: new Date('2025-06-15'),
+        },
+        {
+          id: 'civitai-link',
+          icon: IconScreenShare,
+          label: 'Civitai Link',
+          onClick: () => openCivitaiLinkDialog(),
         },
         {
           id: 'link-app',

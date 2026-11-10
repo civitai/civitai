@@ -25,7 +25,9 @@ beforeEach(async () => {
     CREATE TABLE "ChatMessage" ("id" INTEGER PRIMARY KEY, "chatId" INTEGER NOT NULL,
       "userId" INTEGER NOT NULL, "content" TEXT NOT NULL, "editedAt" TIMESTAMP, "deletedAt" TIMESTAMP,
       "createdAt" TIMESTAMP NOT NULL DEFAULT now());
-    INSERT INTO "User" ("id","username") VALUES (-1,'system'), (10,'sender'), (11,'other');
+    CREATE TABLE "ModActivity" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "activity" TEXT NOT NULL,
+      "entityType" TEXT, "entityId" INTEGER);
+    INSERT INTO "User" ("id","username") VALUES (-1,'system'), (10,'sender'), (11,'other'), (12,'a-mod');
     -- chat 1: ids 101..130 alternate between the two members; 5 other chats' rows sit between them.
     INSERT INTO "ChatMessage" ("id","chatId","userId","content")
       SELECT g, 1, CASE WHEN g % 2 = 0 THEN 10 ELSE 11 END, 'm' || g FROM generate_series(101, 130) g;
@@ -50,6 +52,20 @@ describe('getChatWindow', () => {
       109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
     ]);
     expect(rows.find((r) => r.id === 112)).toMatchObject({ username: 'sender', content: 'm112' });
+  });
+
+  it('names the moderator behind a message sent as Civitai Moderation, and no one else', async () => {
+    await db.exec(`
+      INSERT INTO "ModActivity" ("userId","activity","entityType","entityId") VALUES
+        (12, 'message-as-civitai', 'chatMessage', 112),
+        (12, 'notify', 'chatMessage', 113);
+    `);
+    const { rows } = await getChatWindow(1, [112], 1, 1);
+    expect(rows.map((r) => [r.id, r.sentBy])).toEqual([
+      [111, null],
+      [112, 'a-mod'],
+      [113, null],
+    ]);
   });
 
   it('stops at the start and the end of the chat', async () => {

@@ -20,7 +20,9 @@ import {
 } from '~/server/events/points/keys';
 import type { EventHat, EventPointEntityType } from '~/server/events/points/types';
 import { logToAxiom } from '~/server/logging/client';
+import { delIfValue } from '~/server/redis/atomic';
 import { sysRedis } from '~/server/redis/client';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 // Enough log for an app server that missed a few refreshes; one further behind reloads the hash.
 const HATS_LOG_MAX = 50_000;
@@ -49,7 +51,7 @@ type ScoredEvent = GatedEvent & { endDate: Date; scoring: EventScoring };
 type HatEntity = { entityType: string; entityId: number };
 
 // The open placements of an event, each marked whether it may earn: on its owner's own content, an
-// entity type the event scores, its owner not banned, deleted or excluded from leaderboards. Oldest
+// entity type the event scores, its owner not banned, deleted or excluded from event points. Oldest
 // first. `ownerId` narrows it to one owner's, which is the whole answer for their content: only an
 // entity's owner can score on it.
 async function openEventPlacements(
@@ -61,7 +63,9 @@ async function openEventPlacements(
       COALESCE(
         p."entityOwnerId" = p."userId"
           AND p."entityType"::text = ANY(${[...event.entityTypes]}::text[])
-          AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT u."excludeFromLeaderboards",
+          AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND (u.flags & ${
+            UserFlag.ExcludeFromEventPoints
+          }::int) = 0,
         false
       ) AS eligible
     FROM "EventCosmeticPlacement" p
@@ -250,8 +254,6 @@ export async function syncOwnerEventHats(
 }
 
 const PENDING_ALL = '*';
-const DELETE_IF_EQUALS_SCRIPT =
-  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
 const RENEW_IF_EQUALS_SCRIPT =
   "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) end return 0";
 // Content left for the holder outlives a slow pass by a wide margin.
@@ -311,9 +313,7 @@ async function runOwnerHatSync(
       // Lost the lock mid-pass: the next attempt leaves our content to whoever holds it now.
       if (!(await syncOwnerPass(ownerId, next, now, scope, stillHeld))) continue;
     } finally {
-      await sysRedis
-        .eval(DELETE_IF_EQUALS_SCRIPT, { keys: [lock.lock], arguments: [token] })
-        .catch(() => undefined);
+      await delIfValue(sysRedis, lock.lock, token).catch(() => undefined);
     }
     const pending = await popPending(lock.pending);
     if (!pending.length) return;

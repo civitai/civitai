@@ -7,6 +7,11 @@ import {
   bountyVisibilityWhere,
   canViewBounty,
 } from '~/server/services/bounty-visibility';
+import {
+  createBountyInputSchema,
+  updateBountyInputSchema,
+  upsertBountyInputSchema,
+} from '~/server/schema/bounty.schema';
 import { Availability } from '~/shared/utils/prisma/enums';
 
 const priv = { availability: Availability.Private, userId: 5 };
@@ -45,6 +50,17 @@ describe('bountyVisibilityWhere', () => {
     expect(bountyVisibilityWhere({ id: 5 })).toEqual({
       OR: [{ availability: { not: Availability.Private } }, { userId: 5 }],
     });
+  });
+});
+
+// Only a moderator path may change availability; an owner could otherwise republish a wiped bounty.
+describe('an owner create or edit', () => {
+  it.each([
+    ['create', createBountyInputSchema],
+    ['update', updateBountyInputSchema],
+    ['upsert', upsertBountyInputSchema],
+  ])('cannot carry availability (%s)', (_, schema) => {
+    expect(Object.keys(schema.shape)).not.toContain('availability');
   });
 });
 
@@ -95,8 +111,14 @@ describe('assertBountyVisible', () => {
     expect(dbMock.dbRead.bounty.findUnique).not.toHaveBeenCalled();
   });
 
-  it('leaves a missing bounty to the caller', async () => {
+  it('404s a missing bounty as it does a hidden one, by bounty id and by entry id', async () => {
     dbMock.dbRead.bounty.findUnique.mockResolvedValue(null);
-    await expect(assertBountyVisible({ bountyId: 9 }, null)).resolves.toBeUndefined();
+    await expect(assertBountyVisible({ bountyId: 9 }, { id: 5 })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    dbMock.dbRead.bountyEntry.findUnique.mockResolvedValue(null);
+    await expect(assertBountyVisible({ entryId: 3 }, { id: 5 })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
   });
 });

@@ -1,16 +1,5 @@
-import {
-  ActionIcon,
-  Alert,
-  Button,
-  Container,
-  Group,
-  Loader,
-  Menu,
-  Popover,
-  Text,
-  Title,
-  Tooltip,
-} from '@mantine/core';
+import { ActionIcon, Alert, Button, Container, Group, Loader, Text, Title } from '@mantine/core';
+import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import { useReducedMotion } from '@mantine/hooks';
 import { keepPreviousData } from '@tanstack/react-query';
 import { LazyMotion } from 'motion/react';
@@ -30,7 +19,6 @@ import {
 } from '@tabler/icons-react';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import clsx from 'clsx';
-import { v4 as uuidv4 } from 'uuid';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { Page } from '~/components/AppLayout/Page';
@@ -119,7 +107,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
 
   const { skippedPairs, skip, recordVote } = useJudgeSkipList();
   // One judging session per visit to this page: leaving and coming back means watching in full again.
-  const [judgingSessionId] = useState(uuidv4);
+  const [judgingSessionId] = useState(() => crypto.randomUUID());
 
   // Read after mount: localStorage doesn't exist during server rendering.
   const [briefingOpen, setBriefingOpen] = useState(false);

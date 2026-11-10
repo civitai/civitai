@@ -44,10 +44,12 @@ vi.mock('$lib/server/ip-links.service', async (importOriginal) => ({
 
 const getInflationActors = vi.fn();
 const getSharedIpCoverage = vi.fn();
+const getReactorsPage = vi.fn();
 vi.mock('$lib/server/reactor-lookup.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReactorLookup>()),
   getInflationActors,
   getSharedIpCoverage,
+  getReactorsPage,
 }));
 vi.mock('$lib/server/dossier.service', () => ({
   getDossier: vi.fn(async (userId: number) => ({
@@ -71,6 +73,13 @@ vi.mock('$lib/server/dossier.service', () => ({
 
 const getBuzzFlows = vi.fn(async () => ({ days: 90, accounts: [], flows: [], truncated: false }));
 vi.mock('$lib/server/buzz-flows.service', () => ({ getBuzzFlows, MAX_BUZZ_DAYS: 365 }));
+const getPlacementFlows = vi.fn(async () => ({
+  days: 90,
+  accounts: [],
+  pairs: [],
+  truncated: false,
+}));
+vi.mock('$lib/server/placement-flows.service', () => ({ getPlacementFlows }));
 const resolveUserId = vi.fn(async () => null);
 vi.mock('$lib/server/user-lookup.service', () => ({ resolveUserId }));
 const getRegistrationEmails = vi.fn(
@@ -103,6 +112,38 @@ vi.mock('../store', () => ({
     body: 'Check 192.0.2.44 and 2001:db8:abc::9.',
     pending: 0,
   })),
+}));
+
+const previewMembershipExtension = vi.fn(async () => ({
+  ok: true as const,
+  preview: {
+    userId: 5,
+    days: 3,
+    subscription: null,
+    problems: [],
+    expectedCurrentPeriodEnd: 1795314120,
+    trialEndIso: '2026-11-25T02:22:00.000Z',
+    mode: 'renewing' as const,
+  },
+}));
+const extendMembership = vi.fn(async () => {
+  throw new Error('the assistant must never extend');
+});
+const previewMembershipCancel = vi.fn();
+const previewMembershipResync = vi.fn();
+const mustNotWrite = (name: string) =>
+  vi.fn(async () => {
+    throw new Error(`the assistant must never call ${name}`);
+  });
+const setMembershipCancel = mustNotWrite('setMembershipCancel');
+const resyncMembership = mustNotWrite('resyncMembership');
+vi.mock('$lib/server/user-actions.service', () => ({
+  previewMembershipExtension,
+  extendMembership,
+  previewMembershipCancel,
+  setMembershipCancel,
+  previewMembershipResync,
+  resyncMembership,
 }));
 
 const { TOOLS, toolsFor, quoted, reactorClusters, toolCatalog } = await import('../tools');
@@ -146,9 +187,15 @@ describe('toolsFor', () => {
       'accounts_on_address',
       'search_accounts',
       'buzz_flows',
+      'placement_flows',
+      'crucible_judging',
       'abuse_findings',
     ])
       expect(offered).not.toContain(lookupOnly);
+  });
+
+  it('offers placement_flows to a User Lookup holder', () => {
+    expect(names(['/retool/user-lookup'])).toContain('placement_flows');
   });
 
   it('offers detector findings only with the /abuse page', () => {
@@ -189,6 +236,32 @@ describe('what the tools hand the model', () => {
     expect(without.sources).not.toContainEqual(expect.objectContaining({ ref: 'run:4' }));
     const withAbuse = await run('get_user_dossier', { userId: 5 }, ['/reports/user', '/abuse']);
     expect(withAbuse.sources).toContainEqual(expect.objectContaining({ ref: 'run:4' }));
+  });
+});
+
+describe('placement_flows', () => {
+  it('takes 1 to 100 accounts and at most a year, like buzz_flows', () => {
+    const input = TOOLS.find((t) => t.name === 'placement_flows')!.input;
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+    expect(input.safeParse({ userIds: ids(100), days: 365 }).success).toBe(true);
+    expect(input.safeParse({ userIds: ids(101) }).success).toBe(false);
+    expect(input.safeParse({ userIds: [] }).success).toBe(false);
+    expect(input.safeParse({ userIds: [1], days: 366 }).success).toBe(false);
+  });
+
+  it('cites both ends of every pair it returns, and passes the cap on', async () => {
+    getPlacementFlows.mockResolvedValueOnce({
+      days: 30,
+      accounts: [{ userId: 5, username: 'five', placed: {}, received: {} }],
+      pairs: [{ placerId: 5, placerName: 'five', ownerId: 9, ownerName: 'nine' }],
+      truncated: true,
+    } as never);
+    const out = (await run('placement_flows', { userIds: [5], days: 30 }, [
+      '/retool/user-lookup',
+    ])) as unknown as { truncated: boolean; sources: unknown[] };
+    expect(getPlacementFlows).toHaveBeenLastCalledWith([5], 30);
+    expect(out.truncated).toBe(true);
+    expect(out.sources).toContainEqual(expect.objectContaining({ ref: 'user:9' }));
   });
 });
 
@@ -628,6 +701,150 @@ describe('toolCatalog', () => {
   });
 });
 
+describe('reactors_page', () => {
+  const PAGES = ['/retool/reactor-lookup', '/retool/user-lookup'];
+  type Page = {
+    data: {
+      overFloor: number;
+      belowFloor: number;
+      offset: number;
+      nextOffset: number | null;
+      refused?: string;
+      actors: { rank: number; userId: number; email?: string; normalizedEmail?: string }[];
+    };
+    rows: number;
+    truncated: boolean;
+    emailsShown: boolean;
+  };
+  // A list of `overFloor` reactors, user 3000 + rank; the fake serves the slice asked for.
+  const serve = (overFloor: number) =>
+    getReactorsPage.mockImplementation(
+      async (_id: number, { offset, limit }: { offset: number; limit: number }) => ({
+        actors: Array.from(
+          { length: Math.max(0, Math.min(limit, overFloor - offset)) },
+          (_, i) => ({
+            userId: 3001 + offset + i,
+            username: `r${offset + i + 1}`,
+            count: 9,
+            entities: 2,
+            totalGiven: 9,
+            owners: 1,
+            concentration: 1,
+            status: 'active',
+            strikes: 0,
+            createdAt: null,
+            instantVerify: null,
+          })
+        ),
+        overFloor,
+        belowFloor: 4,
+      })
+    );
+  const page = async (args: object, paths = PAGES, grants: string[] = []) =>
+    (await run('reactors_page', { userId: 1, ...args }, paths, grants)) as unknown as Page;
+
+  beforeEach(() => {
+    getReactorsPage.mockReset();
+    getRegistrationEmails.mockClear();
+    serve(250);
+  });
+
+  it('pages past the first 20, ranked in the full list', async () => {
+    const { data, truncated } = await page({ offset: 20, limit: 20 });
+    expect(getReactorsPage).toHaveBeenCalledWith(1, {
+      days: 30,
+      minCount: 5,
+      offset: 20,
+      limit: 20,
+    });
+    expect(data.actors.map((a) => [a.rank, a.userId])).toEqual(
+      Array.from({ length: 20 }, (_, i) => [21 + i, 3021 + i])
+    );
+    expect(data).toMatchObject({ overFloor: 250, belowFloor: 4, nextOffset: 40 });
+    expect(truncated).toBe(true);
+  });
+
+  it('ends the list where the reactors end', async () => {
+    const { data, truncated } = await page({ offset: 200, limit: 100 });
+    expect(data.actors.at(-1)).toMatchObject({ rank: 250, userId: 3250 });
+    expect(data.nextOffset).toBeNull();
+    expect(truncated).toBe(false);
+  });
+
+  it('refuses past the cap, says so, and still gives the true count', async () => {
+    serve(7_000);
+    const { data, truncated, rows } = await page({ offset: 5_000, limit: 100 });
+    expect(data.refused).toBe('Only the first 5000 ranks are paged; offset was 5000.');
+    expect(data).toMatchObject({ overFloor: 7_000, actors: [], nextOffset: null });
+    expect(getReactorsPage).toHaveBeenCalledWith(1, expect.objectContaining({ limit: 0 }));
+    expect([rows, truncated]).toEqual([0, true]);
+  });
+
+  it('serves a short last page when the limit does not divide the cap', async () => {
+    serve(7_000);
+    const { data, truncated, rows } = await page({ offset: 4_980, limit: 30 });
+    expect(data.refused).toBeUndefined();
+    expect(getReactorsPage).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ offset: 4_980, limit: 20 })
+    );
+    expect(data.actors.map((a) => a.rank)).toEqual(Array.from({ length: 20 }, (_, i) => 4_981 + i));
+    expect(data).toMatchObject({ overFloor: 7_000, nextOffset: null });
+    expect([rows, truncated]).toEqual([20, true]);
+  });
+
+  it('follows nextOffset to the cap at a limit that does not divide it', async () => {
+    serve(7_000);
+    const ranks: number[] = [];
+    let offset: number | null = 4_900;
+    while (offset !== null) {
+      const { data } = await page({ offset, limit: 30 });
+      expect(data.refused).toBeUndefined();
+      ranks.push(...data.actors.map((a) => a.rank));
+      offset = data.nextOffset;
+    }
+    expect(ranks).toEqual(Array.from({ length: 100 }, (_, i) => 4_901 + i));
+  });
+
+  it('pages up to the cap and stops there', async () => {
+    serve(7_000);
+    const { data } = await page({ offset: 4_900, limit: 100 });
+    expect(data.refused).toBeUndefined();
+    expect(data.actors.at(-1)?.rank).toBe(5_000);
+    expect(data.nextOffset).toBeNull();
+  });
+
+  it('caps a page at 100', () => {
+    const input = TOOLS.find((t) => t.name === 'reactors_page')!.input;
+    expect(input.safeParse({ userId: 1, limit: 101 }).success).toBe(false);
+    expect(input.safeParse({ userId: 1, limit: 100 }).success).toBe(true);
+  });
+
+  it('sends no email on any page without User Lookup and assistant.emails, and records that', async () => {
+    for (const [paths, grants] of [
+      [PAGES, []],
+      [['/retool/reactor-lookup'], ['assistant.emails']],
+    ]) {
+      for (const offset of [0, 100, 200]) {
+        const out = await page({ offset }, paths, grants);
+        expect(out.data.actors.length).toBeGreaterThan(0);
+        expect(JSON.stringify(out.data)).not.toContain('@');
+        expect(out.emailsShown).toBe(false);
+      }
+    }
+    expect(getRegistrationEmails).not.toHaveBeenCalled();
+  });
+
+  it('sends each reactor its inbox with both, and records that', async () => {
+    const out = await page({ offset: 100, limit: 2 }, PAGES, ['assistant.emails']);
+    expect(out.data.actors).toEqual([
+      expect.objectContaining({ userId: 3101, normalizedEmail: 'sock3101@gmail.com' }),
+      expect.objectContaining({ userId: 3102, normalizedEmail: 'sock3102@gmail.com' }),
+    ]);
+    expect(out.emailsShown).toBe(true);
+  });
+});
+
 describe('reactors_of', () => {
   const CREATOR = 1;
   // Ranked as the tool ranks them: user 1000 + rank, concentration and reactions falling with rank.
@@ -786,5 +1003,243 @@ describe('reactors_of', () => {
   it('lets any other failure of the address check fail the call', async () => {
     getSharedIpCoverage.mockRejectedValue(new Error('ClickHouse query failed: connection refused'));
     await expect(reactors()).rejects.toThrow(/connection refused/);
+  });
+});
+
+describe('membership extension: the assistant reads and proposes, a person extends', () => {
+  const LOOKUP_PAGE = ['/retool/user-lookup'];
+  const GRANT = ['user.membership.extend'];
+  const offered = (paths: string[], grants: string[]) =>
+    toolsFor(ctx(paths, grants)).map((t) => t.name);
+
+  it('offers the two tools only with User Lookup AND the extension grant', () => {
+    const both = ['preview_membership_extension', 'propose_membership_extension'];
+    expect(offered(LOOKUP_PAGE, GRANT)).toEqual(expect.arrayContaining(both));
+    for (const name of both) {
+      expect(offered(LOOKUP_PAGE, [])).not.toContain(name);
+      expect(offered([], GRANT)).not.toContain(name);
+    }
+  });
+
+  it('proposing extends nothing: it returns a prefilled panel link and calls no write', async () => {
+    const out = (await run(
+      'propose_membership_extension',
+      { userId: 5, days: 3, reason: 'Ticket 123: three free days' },
+      LOOKUP_PAGE,
+      GRANT
+    )) as { data: { extended: boolean; confirmAt: string } };
+    expect(out.data.extended).toBe(false);
+    expect(out.data.confirmAt).toBe(
+      '/retool/user-lookup/basic?q=5&extendDays=3&extendReason=Ticket+123%3A+three+free+days#membership-extend'
+    );
+    expect(extendMembership).not.toHaveBeenCalled();
+  });
+
+  it('the preview hands the model status, dates and the verdict, and no Stripe ids', async () => {
+    previewMembershipExtension.mockResolvedValueOnce({
+      ok: true,
+      preview: {
+        userId: 5,
+        days: 3,
+        subscription: {
+          id: 'sub_secret',
+          status: 'active',
+          currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+          trialEnd: null,
+          cancelAtPeriodEnd: false,
+          cancelAt: null,
+          latestInvoiceId: 'in_secret',
+        },
+        problems: ['sub_secret is on a schedule'],
+        expectedCurrentPeriodEnd: 1795314120,
+        trialEndIso: '2026-11-25T02:22:00.000Z',
+        mode: 'renewing',
+      },
+    } as never);
+    const out = (await run(
+      'preview_membership_extension',
+      { userId: 5, days: 3 },
+      LOOKUP_PAGE,
+      GRANT
+    )) as { data: Record<string, unknown> };
+    expect(out.data).toEqual({
+      days: 3,
+      subscription: {
+        status: 'active',
+        currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+        cancelAtPeriodEnd: false,
+      },
+      problems: ['[Stripe id] is on a schedule'],
+      newEnd: '2026-11-25T02:22:00.000Z',
+      mode: 'renewing',
+    });
+    expect(JSON.stringify(out.data)).not.toMatch(/sub_secret|in_secret/);
+    expect(extendMembership).not.toHaveBeenCalled();
+  });
+
+  it('no tool can reach the extend write', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/\bextendMembership\b|callModEndpoint|user\/membership-extend\b/);
+  });
+});
+
+describe('cancel-at-period-end and re-sync: the assistant reads and proposes, a person writes', () => {
+  const LOOKUP_PAGE = ['/retool/user-lookup'];
+  const offered = (paths: string[], grants: string[]) =>
+    toolsFor(ctx(paths, grants)).map((t) => t.name);
+
+  it('the cancel tools need the cancel grant; the extend grant alone does not offer them', () => {
+    const cancel = ['preview_membership_cancel', 'propose_membership_cancel'];
+    expect(offered(LOOKUP_PAGE, ['user.membership.cancel'])).toEqual(
+      expect.arrayContaining(cancel)
+    );
+    for (const name of cancel)
+      expect(offered(LOOKUP_PAGE, ['user.membership.extend'])).not.toContain(name);
+  });
+
+  it('the re-sync tools need the extend grant', () => {
+    const resync = ['preview_membership_resync', 'propose_membership_resync'];
+    expect(offered(LOOKUP_PAGE, ['user.membership.extend'])).toEqual(
+      expect.arrayContaining(resync)
+    );
+    for (const name of resync)
+      expect(offered(LOOKUP_PAGE, ['user.membership.cancel'])).not.toContain(name);
+  });
+
+  it('proposing a cancel change returns a prefilled panel link and calls no write', async () => {
+    const out = (await run(
+      'propose_membership_cancel',
+      { userId: 5, cancelAtPeriodEnd: false, reason: 'Ticket 123: wants to keep it' },
+      LOOKUP_PAGE,
+      ['user.membership.cancel']
+    )) as { data: { changed: boolean; confirmAt: string } };
+    expect(out.data.changed).toBe(false);
+    expect(out.data.confirmAt).toBe(
+      '/retool/user-lookup/basic?q=5&cancelAtPeriodEnd=false&cancelReason=Ticket+123%3A+wants+to+keep+it#membership-cancel'
+    );
+    expect(setMembershipCancel).not.toHaveBeenCalled();
+  });
+
+  it('the re-sync preview hands the model the differing fields and the Buzz verdict, no ids', async () => {
+    previewMembershipResync.mockResolvedValueOnce({
+      ok: true,
+      preview: {
+        userId: 5,
+        ours: null,
+        stripe: null,
+        changes: [
+          { field: 'id', ours: 'sub_old_secret', stripe: 'sub_new_secret' },
+          { field: 'status', ours: 'past_due', stripe: 'active' },
+        ],
+        endsBuzzMembership: {
+          id: 'buzz_secret',
+          status: 'active',
+          currentPeriodEnd: null,
+          confirm: 'buzz_secret|active|null',
+        },
+        problems: ['Stripe has no subscription sub_1Oldsecret'],
+      },
+    });
+    const out = (await run('preview_membership_resync', { userId: 5 }, LOOKUP_PAGE, [
+      'user.membership.extend',
+    ])) as { data: Record<string, unknown> };
+    expect(out.data).toEqual({
+      changes: [{ field: 'status', ours: 'past_due', stripe: 'active' }],
+      idOrPlanDiffers: true,
+      endsBuzzMembership: { status: 'active', currentPeriodEnd: null },
+      problems: ['Stripe has no subscription [Stripe id]'],
+    });
+    expect(JSON.stringify(out.data)).not.toMatch(/secret/);
+    expect(resyncMembership).not.toHaveBeenCalled();
+  });
+
+  it('no tool can reach the cancel or re-sync writes', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(
+      /\bsetMembershipCancel\b|\bresyncMembership\b|user\/membership-cancel\b|user\/membership-resync\b/
+    );
+  });
+
+  const cancelPreview = (over: Record<string, unknown>) => ({
+    ok: true,
+    preview: {
+      userId: 5,
+      cancelAtPeriodEnd: false,
+      subscription: {
+        id: 'sub_secret',
+        status: 'active',
+        currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+        trialEnd: null,
+        cancelAtPeriodEnd: true,
+        cancelAt: null,
+        latestInvoiceId: 'in_secret',
+      },
+      problems: [],
+      changed: true,
+      ...over,
+    },
+  });
+  const previewCancelTool = async () =>
+    (await run('preview_membership_cancel', { userId: 5, cancelAtPeriodEnd: false }, LOOKUP_PAGE, [
+      'user.membership.cancel',
+    ])) as { data: Record<string, unknown> };
+
+  it('the cancel preview tells "already so" apart from refused, and hides Stripe ids in problems', async () => {
+    previewMembershipCancel.mockResolvedValueOnce(cancelPreview({ changed: false }));
+    expect((await previewCancelTool()).data).toEqual({
+      cancelAtPeriodEnd: false,
+      subscription: {
+        status: 'active',
+        currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+        cancelAtPeriodEnd: true,
+      },
+      problems: [],
+      alreadySo: true,
+    });
+
+    previewMembershipCancel.mockResolvedValueOnce(
+      cancelPreview({ changed: null, problems: ['Stripe returned sub_secret, not sub_other'] })
+    );
+    const refused = (await previewCancelTool()).data;
+    expect(refused).toMatchObject({
+      alreadySo: false,
+      problems: ['Stripe returned [Stripe id], not [Stripe id]'],
+    });
+    expect(JSON.stringify(refused)).not.toMatch(/secret|sub_other/);
+  });
+
+  it.each([
+    ['preview_membership_extension', { userId: 5, days: 3 }, 'user.membership.extend'],
+    ['preview_membership_cancel', { userId: 5, cancelAtPeriodEnd: true }, 'user.membership.cancel'],
+    ['preview_membership_resync', { userId: 5 }, 'user.membership.extend'],
+  ])('%s hides Stripe ids in a failed preview too', async (name, args, grant) => {
+    const preview = (
+      {
+        preview_membership_extension: previewMembershipExtension,
+        preview_membership_cancel: previewMembershipCancel,
+        preview_membership_resync: previewMembershipResync,
+      } as Record<string, { mockResolvedValueOnce: (v: never) => unknown }>
+    )[name];
+    preview.mockResolvedValueOnce({
+      ok: false,
+      error: 'Stripe returned sub_1Secret for cus_1Secret',
+    } as never);
+    const out = (await run(name, args, LOOKUP_PAGE, [grant])) as { data: { error: string } };
+    expect(out.data.error).toBe('Stripe returned [Stripe id] for [Stripe id]');
+  });
+
+  it('proposing a re-sync returns a prefilled panel link and calls no write', async () => {
+    const out = (await run(
+      'propose_membership_resync',
+      { userId: 5, reason: 'Ticket 123: webhook missed' },
+      LOOKUP_PAGE,
+      ['user.membership.extend']
+    )) as { data: { resynced: boolean; confirmAt: string } };
+    expect(out.data.resynced).toBe(false);
+    expect(out.data.confirmAt).toBe(
+      '/retool/user-lookup/basic?q=5&resyncReason=Ticket+123%3A+webhook+missed#membership-resync'
+    );
   });
 });

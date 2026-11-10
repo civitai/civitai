@@ -1,4 +1,5 @@
-import { Alert, Button, Group, Text, Tooltip } from '@mantine/core';
+import { Alert, Button, Group, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconEyeOff } from '@tabler/icons-react';
 
 // Reminds the owner their shop is private (disabled) and offers a one-click publish.

@@ -1,27 +1,8 @@
 // proxy.ts (Next 16 renamed the `middleware` file convention to `proxy`)
 import type { NextRequest } from 'next/server';
-import { NextResponse } from 'next/server';
-import { isGlobalFliptFlagOn } from '~/server/flipt/global-sync';
 import { runMiddlewares } from '~/server/middleware';
-import { recordTrpcProxySkipped } from '~/server/prom/trpc-proxy-skip.metrics';
-import {
-  TRPC_PATH_PREFIX,
-  TRPC_SKIP_PROXY_MIDDLEWARE_FLAG,
-} from '~/server/middleware/api-request-policy';
 
 export async function proxy(request: NextRequest) {
-  // The tRPC route applies everything the middlewares do on /api/trpc (region block, default
-  // response headers, verified-crawler header) itself — see `applyApiRequestPolicy`. With the
-  // flag ON, the proxy hands tRPC straight through; OFF (the default), both apply it, which is
-  // idempotent. Once ON has proven out, `/api/trpc/:path*` can leave the matcher below, which is
-  // what stops Next invoking the proxy for tRPC at all.
-  if (
-    request.nextUrl.pathname.startsWith(TRPC_PATH_PREFIX) &&
-    isGlobalFliptFlagOn(TRPC_SKIP_PROXY_MIDDLEWARE_FLAG)
-  ) {
-    recordTrpcProxySkipped();
-    return NextResponse.next();
-  }
   return runMiddlewares(request);
 }
 
@@ -33,15 +14,26 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     '/', // Home page
-    '/((?!api|_next|favicon.ico|region-blocked|fonts|sounds|robots.txt|site.webmanifest).*)', // Removed 'images' exclusion to allow image pages to be processed
+    // Every page. The lookahead also skips the static files in `public/` that every page load
+    // requests — `/workers/*`, the favicons, the touch icons and `/images/<file>.<ext>` — because
+    // no middleware does anything for them: the region middlewares skip static file extensions
+    // (`shouldRunRegionMiddleware`), and the rest act on `/api/*`, on numeric detail pages, or by
+    // adding a noindex header / dropping a client-sent bot header, neither of which means anything
+    // on a static file. The `/images` file rule needs the extension: `/images`,
+    // `/images/iterate` and `/images/[imageId]` are pages and must still run the proxy.
+    '/((?!api|_next|favicon.ico|region-blocked|fonts|sounds|robots.txt|site.webmanifest|workers/|favicon-[a-z]+\\.ico$|apple-touch-icon[^/]*\\.png$|images/.+\\.(?:png|jpe?g|gif|svg|webp|ico)$).*)',
     '/moderator/:path*',
     '/testing/:path*',
     '/api/testing/:path*',
-    '/api/trpc/:path*',
+    // `/api/trpc` is deliberately NOT matched: the tRPC route applies the API policy itself
+    // (`applyApiRequestPolicy`), so invoking the proxy there would only add per-call overhead.
+    // `proxy-trpc-matcher.test.ts` fails if any entry here, including the broad page pattern
+    // above, matches a tRPC path.
     '/api/v1/:path*',
     // Viewer page data for static shells: needs the region block the page itself gets.
     '/api/page-data/:path*',
-    '/images/:path*', // Explicitly include image pages for region blocking
+    // No `/images/:path*` entry: the image PAGES are matched by the page pattern above, and an
+    // entry here would put the static `/images/<file>` requests back through the proxy.
     // '/models/:path*',
     '/user/:path*',
   ],

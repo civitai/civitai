@@ -2,8 +2,6 @@ import type { BadgeProps, MantineSpacing } from '@mantine/core';
 import { Badge, Group } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { Fragment } from 'react';
-import OneKeyMap from '@essentials/one-key-map';
-import trieMemoize from 'trie-memoize';
 import { DsBadge } from '~/components/AppLayout/ShellDs/ContentDs';
 
 export function Collection<T>({
@@ -25,15 +23,11 @@ export function Collection<T>({
   const renderedItems = (
     <>
       {displayedItems.map((item, index) => (
-        <Fragment key={'displayed' + index}>
-          {createRenderElement(renderItem, index, item)}
-        </Fragment>
+        <Fragment key={'displayed' + index}>{renderItem(item, index)}</Fragment>
       ))}
       {collapsedItems.length > 0 && opened
         ? collapsedItems.map((item, index) => (
-            <Fragment key={'collapsed' + index}>
-              {createRenderElement(renderItem, index, item)}
-            </Fragment>
+            <Fragment key={'collapsed' + index}>{renderItem(item, index)}</Fragment>
           ))
         : null}
       {collapsedItems.length > 0 &&
@@ -100,9 +94,3 @@ type Props<T> = {
   /** `@civitai/components` markup for the show/hide toggle (`modelPageDesignSystemMarkup`). Ignores `badgeProps`; needs `grouped` off. */
   ds?: boolean;
 };
-
-// supposedly ~5.5x faster than createElement without the memo
-const createRenderElement = trieMemoize(
-  [OneKeyMap, {}, WeakMap],
-  (RenderComponent, index, item) => <RenderComponent index={index} {...item} />
-);

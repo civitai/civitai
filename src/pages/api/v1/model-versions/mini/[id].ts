@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import { DEFAULT_GENERATION_TRIAL_LIMIT } from '@civitai/buzz';
 import { lowerFirst } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -6,7 +7,9 @@ import type { Session } from '~/types/session';
 import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { dbWrite } from '~/server/db/client';
+import { isNonCommercialBaseModel, stopsCreatorEarnings } from '~/server/common/constants';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import {
   getShouldChargeForResources,
   resolveCanGenerateForVersions,
@@ -252,8 +255,13 @@ export default MixedAuthEndpoint(async function handler(
   // url shape applies, and only then apply the gate to the download-route path.
   const isOwner = !!user?.id && user.id === modelVersion.modelUserId;
   const isMod = !!user?.isModerator;
-  const visibleFiles =
-    isOwner || isMod ? files : files.filter((f) => f.visibility === ModelFileVisibility.Public);
+  const listed = await trainingDataListing(dbRead, [{ id, files }], {
+    redCapable: isRedCapableHost(req.headers.host),
+    viewerManages: isOwner || isMod,
+  });
+  const visibleFiles = files.filter(
+    (f) => (isOwner || isMod || f.visibility === ModelFileVisibility.Public) && listed(f)
+  );
 
   // The download route merges the requesting user's `filePreferences` into
   // `getPrimaryFile` (see `getFileForModelVersion` in file.service.ts). Pinning
@@ -424,7 +432,10 @@ export default MixedAuthEndpoint(async function handler(
   //      (a checkpoint built on Turbo inherits the Turbo rate).
   //   Otherwise there is no lineage fee — a null source is NOT a fallback to a
   //   (baseModel, modelType) default; derivatives carry an explicit parent.
+  const nonCommercial = isNonCommercialBaseModel(modelVersion.baseModel);
+  const earningsStopped = stopsCreatorEarnings(modelVersion.baseModel);
   const isLicensingRoot =
+    !nonCommercial &&
     modelVersion.isLicensingRoot &&
     modelVersion.licensingFee != null &&
     modelVersion.licensingFee > 0;
@@ -433,6 +444,8 @@ export default MixedAuthEndpoint(async function handler(
   // worse than no fee — the orchestrator would stamp a null owner onto
   // ResourceCompensation. Dropping the component degrades safely instead.
   const hasSourceRule =
+    !nonCommercial &&
+    !isNonCommercialBaseModel(modelVersion.sourceBaseModel) &&
     !isLicensingRoot &&
     modelVersion.licensingSourceVersionId != null &&
     modelVersion.sourceLicensingFee != null &&
@@ -442,7 +455,10 @@ export default MixedAuthEndpoint(async function handler(
   // root), its own fee IS that component — don't double-count it as a surcharge.
   const isBaseRecipientItself = isLicensingRoot;
   const hasOwnFee =
-    modelVersion.licensingFee != null && modelVersion.licensingFee > 0 && !isBaseRecipientItself;
+    !nonCommercial &&
+    modelVersion.licensingFee != null &&
+    modelVersion.licensingFee > 0 &&
+    !isBaseRecipientItself;
 
   // `recipientUserId` is the owner of `recipientModelVersionId` at request time, so
   // payouts and the orchestrator's ResourceCompensation records follow ownership
@@ -485,16 +501,20 @@ export default MixedAuthEndpoint(async function handler(
     });
   }
 
-  // A version charging its own fee earns through that channel instead of creator comp. The
-  // lineage fee (hasSourceRule) settles to a different creator, so it doesn't opt THIS one out.
+  // Only a fee that is actually charged opts a version out of creator comp; a stored fee that isn't
+  // charged must not also cost the creator comp. The lineage fee (hasSourceRule) settles to a
+  // different creator, so it doesn't opt THIS one out.
   const payoutEnabled =
+    !earningsStopped &&
     !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&
-    !(modelVersion.licensingFee != null && modelVersion.licensingFee > 0);
+    !(isLicensingRoot || hasOwnFee);
   // Independent of the fee: a fee creator still gets their share of the creator tip.
-  const tipsEnabled = isCreatorTipEligible({
-    ownerId: modelVersion.modelUserId,
-    ownerFlags: modelVersion.userFlags,
-  });
+  const tipsEnabled =
+    !earningsStopped &&
+    isCreatorTipEligible({
+      ownerId: modelVersion.modelUserId,
+      ownerFlags: modelVersion.userFlags,
+    });
 
   const data = {
     air,

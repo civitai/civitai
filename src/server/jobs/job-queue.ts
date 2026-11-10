@@ -3,6 +3,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { chunk, uniq } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import {
   collectionsSearchIndex,
   imagesMetricsSearchIndex,
@@ -13,6 +14,7 @@ import {
   updateCollectionsNsfwLevels,
   updateNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
+import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { limitConcurrency, Limiter } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 // TEMP: unused while collection enqueue is disabled below. REVERT.
@@ -242,6 +244,7 @@ const handleJobQueueCleanup = createJob('job-queue-cleanup', '*/1 * * * *', asyn
     chunk(jobQueueIds.imageIds, batchSize).map((ids) => async () => {
       await dbWrite.imageConnection.deleteMany({ where: { imageId: { in: ids } } });
       await dbWrite.collectionItem.deleteMany({ where: { imageId: { in: ids } } });
+      await bustContestCollectionItemsCache(ids);
     });
   const cleanupPosts = () =>
     chunk(jobQueueIds.postIds, batchSize).map((ids) => async () => {
@@ -286,17 +289,21 @@ const handleJobQueueCleanIfEmpty = createJob(
         // stranding the creator. Keeping the shell lets them re-add showcase images. A storyline
         // chapter's post is kept for the same reason: deleting it leaves the chapter without content.
         await dbWrite.$executeRaw`
-          DELETE FROM "Post" p
-          WHERE id IN (${Prisma.join(ids)})
-            AND NOT EXISTS (SELECT 1 FROM "Image" WHERE "postId" = p.id)
-            AND NOT EXISTS (
-              SELECT 1 FROM "ModelVersion" mv
-              JOIN "Model" m ON m.id = mv."modelId"
-              WHERE mv.id = p."modelVersionId"
-                AND p."userId" = m."userId"
-                AND mv.status = 'Published'::"ModelStatus"
-            )
-            AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = p.id)
+          WITH doomed AS (
+            SELECT p.id FROM "Post" p
+            WHERE p.id IN (${Prisma.join(ids)})
+              AND NOT EXISTS (SELECT 1 FROM "Image" WHERE "postId" = p.id)
+              AND NOT EXISTS (
+                SELECT 1 FROM "ModelVersion" mv
+                JOIN "Model" m ON m.id = mv."modelId"
+                WHERE mv.id = p."modelVersionId"
+                  AND p."userId" = m."userId"
+                  AND mv.status = 'Published'::"ModelStatus"
+              )
+              AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = p.id)
+              AND NOT ${accountHoldSql(Prisma.raw('p."userId"'), true)}
+          )
+          DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
         `;
       });
 

@@ -53,6 +53,7 @@ import {
   isAdditionalResourceFeeExempt,
   setAdditionalResourceFeeWaived,
   setEvictable,
+  setPartnerDisclosure,
   toggleGenerationDisabled,
 } from '~/server/services/generation/generation.service';
 import { bustMvCache } from '~/server/services/model-version.service';
@@ -323,10 +324,72 @@ describe('moderator flag writes', () => {
       'setAdditionalResourceFeeWaived',
       () => setAdditionalResourceFeeWaived({ id: VERSION_ID, waived: true, isModerator: false }),
     ],
+    [
+      'setPartnerDisclosure',
+      () =>
+        setPartnerDisclosure({
+          id: VERSION_ID,
+          partnerService: true,
+          partnerTrains: true,
+          isModerator: false,
+        }),
+    ],
   ] as const)('%s refuses a non-moderator without writing', async (_, call) => {
     await expect(call()).rejects.toThrow();
     expect(queryRaw()).not.toHaveBeenCalled();
     expect(bustMvCache).not.toHaveBeenCalled();
+  });
+
+  describe('setPartnerDisclosure', () => {
+    const { PartnerService, PartnerTrains } = ModelVersionFlag;
+    const SQL =
+      'UPDATE "ModelVersion" SET flags = (flags & ~($1::int)) | $2::int WHERE id = $3 RETURNING "modelId", flags';
+
+    // Clear and set in one statement: a read-then-write could leave trains set after a concurrent clear of partner.
+    it.each([
+      [false, false, 0],
+      [true, false, PartnerService],
+      [true, true, PartnerService | PartnerTrains],
+    ])('service %s, trains %s writes bits %s', async (partnerService, partnerTrains, bits) => {
+      returning(bits | ModelVersionFlag.NotEvictable);
+      expect(
+        await setPartnerDisclosure({
+          id: VERSION_ID,
+          partnerService,
+          partnerTrains,
+          isModerator: true,
+        })
+      ).toEqual({ id: VERSION_ID, partnerService, partnerTrains });
+      expect(lastUpdate()).toEqual({
+        sql: SQL,
+        values: [PartnerService | PartnerTrains, bits, VERSION_ID],
+      });
+      expect(bustMvCache).toHaveBeenCalledWith(VERSION_ID, MODEL_ID);
+    });
+
+    it('reports the stored bits, not the request', async () => {
+      returning(PartnerService);
+      expect(
+        await setPartnerDisclosure({
+          id: VERSION_ID,
+          partnerService: true,
+          partnerTrains: true,
+          isModerator: true,
+        })
+      ).toEqual({ id: VERSION_ID, partnerService: true, partnerTrains: false });
+    });
+
+    it('refuses trains without partner service, without writing', async () => {
+      await expect(
+        setPartnerDisclosure({
+          id: VERSION_ID,
+          partnerService: false,
+          partnerTrains: true,
+          isModerator: true,
+        })
+      ).rejects.toThrow();
+      expect(queryRaw()).not.toHaveBeenCalled();
+    });
   });
 
   it.each([
@@ -343,5 +406,22 @@ describe('moderator flag writes', () => {
     queryRaw().mockResolvedValueOnce([] as never);
     await expect(call()).rejects.toThrow(`No model version with id ${VERSION_ID}`);
     expect(bustMvCache).not.toHaveBeenCalled();
+  });
+});
+
+describe('getResourceCanGenerate — base model with generation switched off', () => {
+  const canGenerateOn = (baseModel: string) =>
+    getResourceCanGenerate({
+      resource: { ...baseResource, baseModel, flags: ModelVersionFlag.None },
+      user: { id: 123, isModerator: true },
+      hiddenGates: noHiddenGates,
+    });
+
+  it('blocks a covered Ideogram 4.0 resource, for moderators too', () => {
+    expect(canGenerateOn('Ideogram 4.0')).toBe(false);
+  });
+
+  it('leaves Ideogram 4.5, which shares the ecosystem, generatable', () => {
+    expect(canGenerateOn('Ideogram 4.5')).toBe(true);
   });
 });

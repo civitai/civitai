@@ -1,13 +1,19 @@
 import { createEngineCluster, type EngineRedisCluster } from '@/services/redis-cluster-client'
 import { CacheUpdate, MetricEvent } from '@/types/events'
 import { logger } from '@/utils/logger'
-import { cacheKeys } from '@/common/utils/cache-keys'
+import { cacheKeys, METRIC_RECENT_EVENT_TTL } from '@/common/utils/cache-keys'
 import { EntityType } from '@/common/types/metric-types'
 import { RedisWithHelpers, withRedisHelpers } from '@/common/utils/query-utils'
 import { chunk } from '@/common/utils/basic'
 import { excludedUsersMetrics, redisCacheMetrics } from '@/metrics'
 import { config } from '@/config'
 import type { ExcludedUserLookup } from '@/services/metric-excluded-users'
+
+// Metrics whose events set the recent-event marker, so a populate that read ClickHouse
+// before the event arrived refreshes ~15 min later instead of at REFRESH_AFTER (1h).
+// Each marked entity costs extra ClickHouse refreshes while it keeps getting events, so
+// this is limited to Buzz tips: rare, and money a tipper expects to see counted.
+const RECENT_EVENT_METRIC_TYPES = new Set(['tippedAmount', 'tippedCount'])
 
 /**
  * Manages Redis cache updates for real-time metrics
@@ -123,7 +129,7 @@ export class RedisCache {
 
     const metricKey = this.buildCacheKey(event.entityType, event.entityId)
 
-    // Dedupe on the SAME tuple ClickHouse's entityMetricEvents ReplacingMergeTree
+    // Dedupe on the SAME tuple ClickHouse's entityMetricEvents_month ReplacingMergeTree
     // dedups on — (entityType, entityId, metricType, userId, createdAt) — so the
     // cache and CH collapse duplicates identically and can't diverge. createdAt
     // is the deterministic Debezium source.ts_ms (see deriveEventTimestamp), so a
@@ -137,9 +143,11 @@ export class RedisCache {
       await this.client!.hIncrIfExistsOnce(
         metricKey,
         dedupeKey,
+        cacheKeys.metricRecentEvent(event.entityType as EntityType, event.entityId),
         event.metricType,
         event.metricValue ?? 0,
         ttlSeconds,
+        RECENT_EVENT_METRIC_TYPES.has(event.metricType) ? METRIC_RECENT_EVENT_TTL : 0,
       )
       redisCacheMetrics.cacheUpdates.inc({ operation: 'increment_once' })
     } catch (err) {

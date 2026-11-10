@@ -1,4 +1,6 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+import type * as ResourceItemContentModule from './ResourceItemContent';
+import type * as MobileGeneratorModule from '~/hooks/useMobileGenerator';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 
@@ -78,6 +80,14 @@ import { renderWithProviders } from '../../../../test/component-setup';
 //
 // We do NOT mock Mantine (resolve.dedupe handles dual-React at the scaffold).
 
+// The layout comes from the flag and media queries, which the test browser can't set.
+let layout: 'mobile' | 'desktop' = 'desktop';
+vi.mock('~/hooks/useMobileGenerator', async (orig) => ({
+  ...(await orig<typeof MobileGeneratorModule>()),
+  useGeneratorLayout: () => layout,
+  useMobileGenerator: () => layout === 'mobile',
+}));
+
 vi.mock('./ResourceDataProvider', () => ({
   useResourceDataContext: vi.fn(),
   useResourceData: vi.fn(),
@@ -87,10 +97,8 @@ vi.mock('~/components/Dialog/triggers/resource-select', () => ({
   openResourceSelectModal: vi.fn(),
 }));
 
-vi.mock('./ResourceItemContent', async () => {
-  const actual = await vi.importActual<typeof import('./ResourceItemContent')>(
-    './ResourceItemContent'
-  );
+vi.mock('./ResourceItemContent', async (importOriginal) => {
+  const actual = await importOriginal<typeof ResourceItemContentModule>();
   return {
     // Keep the real pure helpers (getResourceStatus/getStatusClasses/
     // isResourceDisabled) — ResourceSelectInput imports them and they're pure
@@ -155,6 +163,7 @@ const makeResource = (over: Partial<Record<string, unknown>> = {}) =>
 
 describe('ResourceSelectInput (required-context-backed)', () => {
   beforeEach(() => {
+    layout = 'desktop';
     contextMock.mockReset();
     useResourceDataMock.mockReset();
     openModalMock.mockReset();
@@ -305,9 +314,78 @@ describe('ResourceSelectInput (required-context-backed)', () => {
     );
 
     // value.id 100 is one of the versions -> the segmented selector renders.
-    await page.getByRole('button', { name: 'Ver B', exact: true }).click();
+    await page.getByRole('radio', { name: 'Ver B', exact: true }).click();
 
     expect(getResourceData).toHaveBeenCalledWith(200);
     expect(onChange).toHaveBeenCalledWith(v200);
+  });
+
+  test('three versions stay buttons', async () => {
+    useResourceDataMock.mockReturnValue(useResourceDataResult({ data: makeResource({ id: 100 }) }));
+    renderWithProviders(
+      <ResourceSelectInput
+        value={{ id: 100 }}
+        onChange={vi.fn()}
+        versions={[
+          { label: 'Ver A', value: 100 },
+          { label: 'Ver B', value: 200 },
+          { label: 'Ver C', value: 300 },
+        ]}
+      />
+    );
+    await expect
+      .element(page.getByRole('radio', { name: 'Ver C', exact: true }))
+      .toBeInTheDocument();
+    await expect.element(page.getByRole('textbox', { name: 'Version' })).not.toBeInTheDocument();
+  });
+
+  test('past three versions the version buttons become a select', async () => {
+    const v400 = makeResource({ id: 400 });
+    const getResourceData = vi.fn((id: number) => (id === 400 ? v400 : undefined));
+    contextMock.mockReturnValue(makeContext({ getResourceData }));
+    useResourceDataMock.mockReturnValue(useResourceDataResult({ data: makeResource({ id: 100 }) }));
+    const onChange = vi.fn();
+
+    renderWithProviders(
+      <ResourceSelectInput
+        value={{ id: 100 }}
+        onChange={onChange}
+        versions={[
+          { label: 'Ver A', value: 100 },
+          { label: 'Ver B', value: 200 },
+          { label: 'Ver C', value: 300 },
+          { label: 'Ver D', value: 400 },
+        ]}
+      />
+    );
+
+    const select = page.getByRole('textbox', { name: 'Version' });
+    await expect.element(select).toHaveValue('Ver A');
+    await expect
+      .element(page.getByRole('radio', { name: 'Ver B', exact: true }))
+      .not.toBeInTheDocument();
+    await select.click();
+    await page.getByRole('option', { name: 'Ver D' }).click();
+    expect(onChange).toHaveBeenCalledWith(v400);
+  });
+
+  test('on a phone even a few versions are one dropdown, not a row of chips', async () => {
+    layout = 'mobile';
+    useResourceDataMock.mockReturnValue(useResourceDataResult({ data: makeResource({ id: 100 }) }));
+    renderWithProviders(
+      <ResourceSelectInput
+        value={{ id: 100 }}
+        onChange={vi.fn()}
+        versions={[
+          { label: 'Ver A', value: 100 },
+          { label: 'Ver B', value: 200 },
+        ]}
+      />
+    );
+
+    await expect.element(page.getByLabelText('Version')).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('radio', { name: 'Ver B', exact: true }))
+      .not.toBeInTheDocument();
   });
 });

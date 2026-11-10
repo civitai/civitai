@@ -98,7 +98,8 @@ import {
 import {
   getFeatureFlags,
   getFeatureFlagsAsync,
-  getFeatureFlagsLazy,
+  getFeatureFlagsLazyLegacy,
+  getFeatureFlagsLazyProto,
 } from '../feature-flags.service';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 
@@ -431,10 +432,14 @@ describe('the eager and lazy client paths agree on the new key', () => {
       for (const id of [777, 555]) {
         const user = makeUser({ id });
         const eager = getFeatureFlags({ user, req: makeReq() });
-        const lazy = getFeatureFlagsLazy({ user, req: makeReq() });
-        expect(!!lazy.appListingsPublicExternal, `id=${id}`).toBe(
-          !!eager.appListingsPublicExternal
-        );
+        // Both implementations behind `feature-flags-lazy-proto`, chosen explicitly: this file's
+        // Flipt mock exports no flag enum, so `getFeatureFlagsLazy` would only ever pick one.
+        for (const build of [getFeatureFlagsLazyLegacy, getFeatureFlagsLazyProto]) {
+          const lazy = build({ user, req: makeReq() });
+          expect(!!lazy.appListingsPublicExternal, `id=${id} ${build.name}`).toBe(
+            !!eager.appListingsPublicExternal
+          );
+        }
       }
     });
   }

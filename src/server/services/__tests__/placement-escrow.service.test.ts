@@ -2766,6 +2766,8 @@ describe('a write inside the settlement transaction', () => {
         parentPostId: CHAPTER_POST,
         postId: CONTINUATION_POST,
         placerId: PLACER,
+        // The owner answered, so the placer need not be a collaborator.
+        asCollaborator: false,
       });
       // The settle transaction's client: through `dbWrite` the edge would land
       // on another connection, outside the approval it belongs to.
@@ -2900,7 +2902,7 @@ describe('a write inside the settlement transaction', () => {
         'with a minor image',
         {},
         { ...READY_POST, images: [{ ...SCANNED, minor: true }] },
-        'storyline: that post cannot be submitted',
+        "This post or one of its images can't be used in a storyline",
       ],
     ])(
       'refuses to approve a continuation %s, and writes no edge',
@@ -2927,7 +2929,7 @@ describe('a write inside the settlement transaction', () => {
 
       await expect(
         settleStorylineContinuation({ placementId: 1, action: 'approve', actorId: OWNER })
-      ).rejects.toThrow('storyline: that post cannot be submitted');
+      ).rejects.toThrow("This post or one of its images can't be used in a storyline");
       expect(db.placements.get(1)!.status).toBe('pending');
       expect(writeChapterEdgeForPlacement).not.toHaveBeenCalled();
     });

@@ -47,6 +47,8 @@ const EXPECTED_CALL_SITES: Record<string, string> = {
   'server/routers/blocks.router.ts':
     'grantScopes consent ceiling + getInstallConfig install-time disclosure',
   'server/services/block-registry.service.ts': 'recordInstallConsent grant set',
+  'server/services/apps/storage-import-grant.service.ts':
+    "grantImportSourcePublish — the SOURCE app's ceiling for publish consent through an import",
   'server/services/blocks/user-app-surface.service.ts':
     'listMyScopeGrants — the /apps/activity permissions tab',
 };

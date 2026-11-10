@@ -1,12 +1,9 @@
-/**
- * Kling handler for the form-graph lane — legacy engine (`kling`) for
- * V1.6/V2/V2.5 Turbo, `kling-v3` for V3. V3's multiShot/klingElements subtree is
- * not built (see `video/kling.graph.ts`), so the elements/multiPrompt build is omitted.
- */
+/** Kling handler — legacy engine for V1.6/V2/V2.5 Turbo, `kling-v3` and `kling-v4` for V3 and V4. */
 
 import type {
   KlingVideoGenInput,
   KlingV3VideoGenInput,
+  KlingV4VideoGenInput,
   KlingModel,
   VideoGenStepTemplate,
 } from '@civitai/orchestration-client';
@@ -18,6 +15,7 @@ import type { EcosystemData } from './types';
 type KlingData = EcosystemData<'Kling'>;
 type KlingLegacyData = Extract<KlingData, { klingVersion: 'legacy' }>;
 type KlingV3Data = Extract<KlingData, { klingVersion: 'v3' }>;
+type KlingV4Data = Extract<KlingData, { klingVersion: 'v4' }>;
 
 const versionIdToModel = new Map<number, KlingModel>([
   [klingVersionIds.v1_6, 'v1.6'],
@@ -26,9 +24,35 @@ const versionIdToModel = new Map<number, KlingModel>([
 ]);
 
 export const createKlingInput = defineHandler<KlingData, [VideoGenStepTemplate]>((data) => {
-  const input = data.klingVersion === 'v3' ? createV3Input(data) : createLegacyInput(data);
+  const input =
+    data.klingVersion === 'v4'
+      ? createV4Input(data)
+      : data.klingVersion === 'v3'
+      ? createV3Input(data)
+      : createLegacyInput(data);
   return [{ $type: 'videoGen', input }];
 });
+
+function createV4Input(data: KlingV4Data): KlingV4VideoGenInput {
+  const images = data.images?.map((img) => img.url);
+  const isKeyframes = data.operation === 'imageToVideo';
+  const isEdit = data.operation === 'videoToVideoEdit';
+  if (isEdit && !data.video?.url) throw new Error('A source video is required for vid2vid:edit');
+
+  return removeEmpty({
+    engine: 'kling-v4' as const,
+    operation: data.operation,
+    prompt: data.prompt,
+    duration: data.duration,
+    resolution: data.resolution,
+    aspectRatio: data.aspectRatio?.value as KlingV4VideoGenInput['aspectRatio'],
+    sourceImage: isKeyframes ? images?.[0] : undefined,
+    endImage: isKeyframes ? images?.[1] : undefined,
+    images: isKeyframes ? undefined : images,
+    videoUrl: isEdit ? data.video?.url : undefined,
+    quantity: data.quantity ?? 1,
+  }) as KlingV4VideoGenInput;
+}
 
 function createLegacyInput(data: KlingLegacyData): KlingVideoGenInput {
   const model: KlingModel =

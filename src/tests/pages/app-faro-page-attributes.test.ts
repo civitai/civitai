@@ -51,16 +51,21 @@ function myAppBody(): ts.Block {
 
 const squash = (text: string) => text.replace(/\s+/g, ' ').trim();
 
+function faroProviderElement() {
+  const faro = collect(
+    myAppBody(),
+    (n) =>
+      (ts.isJsxSelfClosingElement(n) || ts.isJsxOpeningElement(n)) &&
+      ts.isIdentifier(n.tagName) &&
+      n.tagName.text === 'FaroProvider'
+  ) as (ts.JsxSelfClosingElement | ts.JsxOpeningElement)[];
+  if (faro.length !== 1) throw new Error(`expected one <FaroProvider>, found ${faro.length}`);
+  return faro[0];
+}
+
 describe('_app → FaroProvider page attributes', () => {
   it('passes the frozen hard-load values to the matching props', () => {
-    const faro = collect(
-      myAppBody(),
-      (n) =>
-        (ts.isJsxSelfClosingElement(n) || ts.isJsxOpeningElement(n)) &&
-        ts.isIdentifier(n.tagName) &&
-        n.tagName.text === 'FaroProvider'
-    ) as (ts.JsxSelfClosingElement | ts.JsxOpeningElement)[];
-    if (faro.length !== 1) throw new Error(`expected one <FaroProvider>, found ${faro.length}`);
+    const faro = [faroProviderElement()];
 
     const initializers = Object.fromEntries(
       faro[0].attributes.properties
@@ -94,5 +99,38 @@ describe('_app → FaroProvider page attributes', () => {
       bootedShell: '() => shell === true',
       bootedSignedIn: '() => isHardLoadSignedIn({ session, hasAuthCookie: pageHasAuthCookie })',
     });
+  });
+});
+
+/**
+ * FaroProvider reads the shell boot's readiness from `useShellReady`, which answers "ready" when no
+ * `ShellBootstrapProvider` is above it. So on a shell boot it must render inside the tree `_app`
+ * wraps in that provider, or a pending shell would decide the per-user resource_timing cohort on
+ * its user-less boot flags. The hook's behaviour is pinned by
+ * src/components/Faro/__tests__/faroProviderShellCohort.test.ts.
+ */
+describe('_app → FaroProvider shell readiness', () => {
+  it('renders FaroProvider inside the tree ShellBootstrapProvider wraps', () => {
+    let decl: ts.Node | undefined = faroProviderElement();
+    while (decl && !ts.isVariableDeclaration(decl)) decl = decl.parent;
+    if (!decl || !ts.isVariableDeclaration(decl) || !ts.isIdentifier(decl.name)) {
+      throw new Error('<FaroProvider> is not inside a variable declaration in MyApp');
+    }
+    const tree = decl.name.text;
+
+    const wrapped = (
+      collect(
+        myAppBody(),
+        (n) =>
+          ts.isJsxElement(n) &&
+          ts.isIdentifier(n.openingElement.tagName) &&
+          n.openingElement.tagName.text === 'ShellBootstrapProvider'
+      ) as ts.JsxElement[]
+    ).map((el) =>
+      el.children
+        .filter((c): c is ts.JsxExpression => ts.isJsxExpression(c) && !!c.expression)
+        .map((c) => c.expression?.getText())
+    );
+    expect(wrapped).toEqual([[tree]]);
   });
 });

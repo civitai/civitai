@@ -65,6 +65,11 @@ import {
 } from '~/server/services/image.service';
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
 import {
+  diffSectionItems,
+  logSectionPlacements,
+} from '~/server/services/cosmetic-shop-featured-log.service';
+import type { Tracker } from '~/server/clickhouse/client';
+import {
   excludeDeletedShopListing,
   SHOP_VERDICT_TRANSACTION,
 } from '~/server/services/creator-shop-labels.service';
@@ -172,17 +177,16 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   if (input.archived === false) {
     // Archiving stamps `archivedAt` without reliably moving `status`, so
     // `archivedAt` is the load-bearing signal; the status guard is belt-and-
-    // suspenders. Placed before the resellable branch so its stricter
+    // suspenders. Placed before the publishedCreatorOnly branch so its stricter
     // `status = Published` still wins when both are set.
     where.archivedAt = null;
     where.status = { not: CosmeticShopItemStatus.Archived };
   } else if (input.archived === true) {
     where.archivedAt = { not: null };
   }
-  if (input.resellable) {
+  if (input.publishedCreatorOnly) {
     where.status = CosmeticShopItemStatus.Published;
     cosmeticWhere.createdById = { not: null };
-    where.meta = { path: ['sellableByOthers'], equals: true };
   }
 
   if (Object.keys(cosmeticWhere).length > 0) where.cosmetic = cosmeticWhere;
@@ -192,7 +196,10 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
     take,
     skip,
     select: cosmeticShopItemSelect,
-    orderBy: { createdAt: 'desc' },
+    // These are picked for featuring, where newly approved is what's fresh.
+    orderBy: input.publishedCreatorOnly
+      ? [{ reviewedAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }]
+      : { createdAt: 'desc' },
   });
 
   const [withSold, count] = await Promise.all([
@@ -584,9 +591,8 @@ export const getSectionById = async ({ id }: GetByIdInput) => {
   };
 };
 
-// Creator-listed items may only be featured when published AND opted into
-// resale — a creator who never marked their item sellable-by-others hasn't
-// consented to official-shop placement.
+// `sellableByOthers` is deliberately not checked: it governs other creators reselling an item.
+// A sale through an official section is not a resale and pays the creator their full pool.
 async function assertSectionPlaceable(items: number[]) {
   // The section renders a listing with no cosmetic as a pack, with none of a box's checks.
   const boxes = await dbWrite.cosmeticShopItem.count({
@@ -598,28 +604,24 @@ async function assertSectionPlaceable(items: number[]) {
     where: {
       id: { in: items },
       cosmetic: { createdById: { not: null } },
-      OR: [
-        { status: { not: CosmeticShopItemStatus.Published } },
-        { NOT: { meta: { path: ['sellableByOthers'], equals: true } } },
-      ],
+      status: { not: CosmeticShopItemStatus.Published },
     },
     select: { title: true },
   });
   if (ineligible.length)
     throw new Error(
-      `These creator items are not published resellable cosmetics: ${ineligible
-        .map((i) => i.title)
-        .join(', ')}`
+      `These creator items are not published: ${ineligible.map((i) => i.title).join(', ')}`
     );
 }
 
 export const upsertCosmeticShopSection = async ({
   userId,
+  tracker,
   id,
   items,
   image, // TODO
   ...cosmeticShopSection
-}: UpsertCosmeticShopSectionInput & { userId: number }) => {
+}: UpsertCosmeticShopSectionInput & { userId: number; tracker?: Tracker }) => {
   if (items?.length) await assertSectionPlaceable(items);
 
   const shouldCreateImage = image && !image.id;
@@ -662,6 +664,11 @@ export const upsertCosmeticShopSection = async ({
   }
 
   if (items !== undefined && id) {
+    const before = await dbWrite.cosmeticShopSectionItem.findMany({
+      where: { shopSectionId: id },
+      select: { shopItemId: true },
+    });
+
     // Delete all items:
     await dbWrite.cosmeticShopSectionItem.deleteMany({
       where: {
@@ -694,6 +701,15 @@ export const upsertCosmeticShopSection = async ({
         ON CONFLICT ("shopSectionId", "shopItemId") DO UPDATE SET "index" = EXCLUDED."index"
       `;
     }
+
+    await logSectionPlacements({
+      tracker,
+      sectionId: id,
+      ...diffSectionItems(
+        before.map((r) => r.shopItemId),
+        items
+      ),
+    });
   }
 
   return getSectionById({ id });
@@ -715,7 +731,11 @@ export const getShopItemSections = async ({
  * One item into one section, appended after what the section already holds so the curated order
  * is left alone. The same placement rules as the section editor, which replaces the whole list.
  */
-export const addShopItemToSection = async ({ shopItemId, sectionId }: ShopItemSectionInput) => {
+export const addShopItemToSection = async ({
+  shopItemId,
+  sectionId,
+  tracker,
+}: ShopItemSectionInput & { tracker?: Tracker }) => {
   // The editor's rules only constrain creator cosmetics; a picker on the review queue also reaches
   // creator packs and items still in review, and neither is on sale.
   const item = await dbWrite.cosmeticShopItem.findUnique({
@@ -726,23 +746,26 @@ export const addShopItemToSection = async ({ shopItemId, sectionId }: ShopItemSe
   if (item.status !== CosmeticShopItemStatus.Published || item.archivedAt)
     throw new Error('Only published items can be placed in a shop section');
   await assertSectionPlaceable([shopItemId]);
-  await dbWrite.$executeRaw`
+  const inserted = await dbWrite.$executeRaw`
     INSERT INTO "CosmeticShopSectionItem" ("shopSectionId", "shopItemId", "index")
     SELECT ${sectionId}, ${shopItemId}, COALESCE(MAX("index") + 1, 0)
     FROM "CosmeticShopSectionItem"
     WHERE "shopSectionId" = ${sectionId}
     ON CONFLICT ("shopSectionId", "shopItemId") DO NOTHING
   `;
+  if (inserted) await logSectionPlacements({ tracker, sectionId, added: [shopItemId] });
   return getShopItemSections({ shopItemId });
 };
 
 export const removeShopItemFromSection = async ({
   shopItemId,
   sectionId,
-}: ShopItemSectionInput) => {
-  await dbWrite.cosmeticShopSectionItem.deleteMany({
+  tracker,
+}: ShopItemSectionInput & { tracker?: Tracker }) => {
+  const { count } = await dbWrite.cosmeticShopSectionItem.deleteMany({
     where: { shopSectionId: sectionId, shopItemId },
   });
+  if (count) await logSectionPlacements({ tracker, sectionId, removed: [shopItemId] });
   return getShopItemSections({ shopItemId });
 };
 
@@ -754,6 +777,28 @@ export const getShopItemEventTags = async ({ shopItemId }: { shopItemId: number 
   });
   if (!item) throw throwNotFoundError(`No cosmetic shop item with id ${shopItemId}`);
   return item.eventTags;
+};
+
+/**
+ * Moderator data: the event tags already in use, for one-click adds in the review drawer. Tags a
+ * section sells come first, then the rest by how many items carry them.
+ */
+export const getEventTagSuggestions = async ({ limit = 30 }: { limit?: number } = {}) => {
+  const rows = await dbRead.$queryRaw<{ tag: string }[]>`
+    WITH tags AS (
+      SELECT t AS tag, 0 AS sections, 1 AS items
+      FROM "CosmeticShopItem", unnest("eventTags") t
+      UNION ALL
+      SELECT meta->>'eventTag', 1, 0
+      FROM "CosmeticShopSection"
+      WHERE meta->>'eventTag' IS NOT NULL
+    )
+    SELECT tag FROM tags
+    GROUP BY tag
+    ORDER BY sum(sections) DESC, sum(items) DESC, tag
+    LIMIT ${limit}
+  `;
+  return rows.map((row) => row.tag);
 };
 
 export const setShopItemEventTags = async ({
@@ -830,10 +875,23 @@ export const deleteCosmeticShopItem = async ({ id }: GetByIdInput) => {
   }, SHOP_VERDICT_TRANSACTION);
 };
 
-export const deleteCosmeticShopSection = async ({ id }: GetByIdInput) => {
-  return dbWrite.cosmeticShopSection.delete({
+export const deleteCosmeticShopSection = async ({
+  id,
+  tracker,
+}: GetByIdInput & { tracker?: Tracker }) => {
+  const items = await dbWrite.cosmeticShopSectionItem.findMany({
+    where: { shopSectionId: id },
+    select: { shopItemId: true },
+  });
+  const deleted = await dbWrite.cosmeticShopSection.delete({
     where: { id },
   });
+  await logSectionPlacements({
+    tracker,
+    sectionId: id,
+    removed: items.map((i) => i.shopItemId),
+  });
+  return deleted;
 };
 
 export const reorderCosmeticShopSections = async ({
@@ -868,10 +926,8 @@ async function getSectionEventTags(sectionId?: number) {
 
 /**
  * A tagged section's items are its placed items, in their order, then every shop item carrying the
- * tag that is on sale, newest first. The tag is the placement: a moderator approving and tagging
- * an item is the consent the section editor otherwise asks `sellableByOthers` for, and selling it
- * through the official shop pays the creator their full pool unless they opted into resale. Tagged
- * items still pass every rule a placed item does for this viewer (`shopItemWhere`).
+ * tag that is on sale, newest first. Tagged items still pass every rule a placed item does for this
+ * viewer (`shopItemWhere`).
  */
 async function withEventTaggedItems<
   S extends {
@@ -1575,68 +1631,41 @@ export const purchaseCosmeticShopItem = async ({
         // We do this last mainly because we don't want to fail the purchase if this fails.
         // We can divide the funds later if needed.
         // Creator Shop items pay the cosmetic's creator (cosmetic.createdById)
-        // their 70% share directly. When another creator (the seller = addedById)
-        // lists a sellable-by-others cosmetic, that 70% pool is split by the
-        // seller share that seller listed under (% of price they keep; creator
-        // gets the rest). Official items keep the legacy meta.paidToUserIds
-        // distribution.
+        // their 70% pool, split with a reseller only as below. Official items
+        // keep the legacy meta.paidToUserIds distribution.
         const price = unitAmount;
         const creatorId = singleCosmetic.createdById;
 
-        // Cross-creator resale: when bought through another creator's shop
-        // (viaShopUserId) that actually resells this sellable item, split the 70%
-        // pool by the item's sellerShare. Verified server-side so credit can't be
-        // spoofed. Buying through your own resell listing pays no seller share —
-        // the kickback would be a self-discount.
-        // Every purchase declares its shop context: CIVITAI_SHOP_ATTRIBUTION
-        // (-1) = the official Civitai shop (platform acts as the reseller and
-        // keeps the seller share), a user id = that user's storefront. A positive
-        // attribution to another creator only diverts a share when a resale
-        // listing backs it; anything unverified, missing, or spoofed falls back to
-        // the official-shop split so bad attribution can never dodge the platform's
-        // share.
+        // Only a verified resale listing (a row, not the client's attribution)
+        // held by someone other than the buyer diverts a seller share. Every
+        // other sale pays the creator the full pool: the official shop, their
+        // own storefront, a missing or unverified attribution, and a buyer going
+        // through their own listing (the kickback would be a self-discount).
         //
-        // Attributions that keep the creator on the full pool: their own
-        // storefront (their own item, no reseller to pay), and a buyer purchasing
-        // through their OWN resell listing (no kickback — the seller share would
-        // be a self-discount).
-        let resellerId: number | undefined;
-        let creatorKeepsPool = false;
         // A reseller is paid the share recorded on their listing, not the item's
         // current one: the creator can cut it — or withdraw resale outright —
         // long after other creators built a storefront around the terms they
         // were offered. The listing row is also the permission, so it outlives
         // `sellableByOthers` going false.
-        let payoutShare = meta?.sellerShare ?? 0;
-        if (creatorId && viaShopUserId && viaShopUserId > 0) {
-          if (viaShopUserId === creatorId) {
-            // A creator selling their own item on their own storefront keeps the
-            // full 70% pool by default — there is no other creator reselling, so
-            // no seller share is diverted (the shop's `enabled` flag is a
-            // visibility setting, not a payout term).
-            creatorKeepsPool = true;
-          } else if (resaleListing) {
-            payoutShare = resaleListing.sellerShare;
-            if (viaShopUserId === userId) creatorKeepsPool = true;
-            else resellerId = viaShopUserId;
-          }
-        }
-
-        const platformResale =
-          !!creatorId && !!meta?.sellableByOthers && !resellerId && !creatorKeepsPool;
+        const resale =
+          creatorId &&
+          resaleListing &&
+          viaShopUserId &&
+          viaShopUserId !== userId &&
+          viaShopUserId !== creatorId
+            ? { resellerId: viaShopUserId, share: resaleListing.sellerShare }
+            : null;
         const { creatorPool, sellerAmount, creatorAmount } = computeCreatorShopSplit(
           price,
-          payoutShare
+          resale?.share ?? 0
         );
 
         let recipients: { userId: number; amount: number }[];
         if (creatorId) {
-          if (resellerId || platformResale) {
+          if (resale) {
             recipients = [
               ...(creatorAmount > 0 ? [{ userId: creatorId, amount: creatorAmount }] : []),
-              ...(resellerId && sellerAmount > 0
-                ? [{ userId: resellerId, amount: sellerAmount }]
-                : []),
+              ...(sellerAmount > 0 ? [{ userId: resale.resellerId, amount: sellerAmount }] : []),
             ];
           } else {
             recipients = [{ userId: creatorId, amount: creatorPool }];

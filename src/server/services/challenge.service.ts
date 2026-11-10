@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
+import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -15,6 +17,9 @@ import {
   getExistingWinnersForRetry,
   resolveEventContext,
 } from '~/server/games/daily-challenge/challenge-helpers';
+import { REVIEW_JOB_NAME } from '~/server/games/daily-challenge/challenge-ladder';
+import { acquireJobLock } from '~/server/jobs/job-lock';
+import { sysRedis } from '~/server/redis/client';
 import { resolveChallengeCollectionOwnerId } from '~/server/games/daily-challenge/challenge-collection-owner';
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
@@ -167,6 +172,7 @@ import {
   getJudgedEntries,
   getShowcaseImagesOfModel,
 } from '~/server/jobs/daily-challenge-processing';
+import { rejudgeEntries } from '~/server/services/challenge-judge-review.service';
 import {
   buildJudgingEngineContext,
   resolveJudgingEngine,
@@ -321,7 +327,10 @@ const challengeCardQuery = Prisma.sql`
       c."buzzType",
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
-      (SELECT COUNT(*)::int FROM "CommentV3" v WHERE v."entityType" = 'challenge' AND v."entityId" = c.id AND v."parentId" IS NULL AND v."deletedAt" IS NULL) as "commentCount",
+      (SELECT COUNT(*)::int FROM "CommentV3" v WHERE ${countedTopLevelCommentSql(
+        Prisma.raw('v'),
+        'challenge'
+      )} AND v."entityId" = c.id) as "commentCount",
       c."nsfwLevel",
       c."allowedNsfwLevel",
       c."modelVersionIds",
@@ -489,7 +498,10 @@ export async function getMyChallenges({
     SELECT c.id, c.title, c.theme, c.invitation, c."coverImageId", c."startsAt", c."endsAt",
            c.status, c.source, c."buzzType", c."prizePool",
            (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') AS "entryCount",
-           (SELECT COUNT(*)::int FROM "CommentV3" v WHERE v."entityType" = 'challenge' AND v."entityId" = c.id AND v."parentId" IS NULL AND v."deletedAt" IS NULL) AS "commentCount",
+           (SELECT COUNT(*)::int FROM "CommentV3" v WHERE ${countedTopLevelCommentSql(
+             Prisma.raw('v'),
+             'challenge'
+           )} AND v."entityId" = c.id) AS "commentCount",
            c."nsfwLevel", c."allowedNsfwLevel", c."modelVersionIds",
            NULL::int AS "modelId", NULL::text AS "modelName",
            c."collectionId", c."createdById",
@@ -1513,18 +1525,20 @@ export async function upsertChallenge({
           // KNOWN, MEASURED, AND DELIBERATELY NOT FIXED: this is a stale full-column replace.
           // `existingMetadata` comes from the REPLICA read above, so a SAME-status write committing
           // between that read and this one is dropped. The status predicate on this updateMany does
-          // not cover that; only a jsonb `||` merge (as backfill-theme-elements.ts uses) would.
+          // not cover that; only a jsonb `||` merge would.
           //
           // It is not worth the second raw-SQL write inside this transaction, because both the
           // probability and the consequence are near zero:
-          //   - The only concurrent writer of this column is the `reviewedAt` watermark in
-          //     daily-challenge-processing.ts (`*/10 * * * *`, and only for the ONE current
-          //     challenge). To lose it, a save of that specific challenge must straddle a
-          //     600-second-cadence instantaneous UPDATE. On the common path (the edit form
+          //   - The concurrent writers of this column are the review job (`reviewedAt` and
+          //     `pendingReview`, every 10 minutes) and a moderator re-judge (`pendingReview`). To
+          //     lose a write, a save of that specific challenge must straddle one of those
+          //     instantaneous UPDATEs. On the common path (the edit form
           //     pre-fills themeElements, so no LLM call runs) the window is replica lag plus the
           //     request — sub-second. The auto-generate branch's multi-second LLM window is wider
           //     but only fires when a theme is set and no elements are stored.
-          //   - Losing it costs a WIDER SCAN, not re-judging. 🔴 An earlier version of this note
+          //   - Losing `reviewedAt` costs a WIDER SCAN, not re-judging. Losing a `pendingReview`
+          //     key a re-judge wrote is worse: that entry's tag and comment are already gone, so
+          //     it is left unscored. 🔴 An earlier version of this note
           //     claimed it "re-judges the whole backlog at LLM cost" — that is WRONG. The same
           //     WHERE clause carries `notYetReviewedByJudge` (a NOT EXISTS on the judge's comment
           //     for that image), which excludes every already-scored entry regardless of the
@@ -2199,6 +2213,68 @@ export async function rescanChallenge({
     });
 }
 
+/**
+ * Moderator re-judge: undoes the judge's work on every judged entry and owes each a new review.
+ * Only while the challenge is Active and open: a completed one has paid out.
+ */
+export async function rejudgeChallenge({
+  id,
+  moderatorId,
+}: {
+  id: number;
+  moderatorId: number;
+}): Promise<{ entries: number }> {
+  const challenge = await dbWrite.challenge.findUnique({
+    where: { id },
+    select: { status: true, endsAt: true, collectionId: true, judgeId: true },
+  });
+  if (!challenge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+  if (challenge.status !== ChallengeStatus.Active || challenge.endsAt <= new Date())
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Only an active challenge can be re-judged',
+    });
+  if (!challenge.collectionId)
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Challenge has no entries collection' });
+
+  const config = await getChallengeConfig();
+  const judgeId = challenge.judgeId ?? config.defaultJudgeId;
+  if (!judgeId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Challenge has no judge' });
+  const { userId: judgeUserId } = await getJudgingConfigForChallenge(judgeId, config.defaultJudge);
+
+  // The review job's lock, so no tick reads the list or writes a review in the middle of the reset.
+  const lock = await acquireJobLock(REVIEW_JOB_NAME, REJUDGE_LOCK_SECONDS, sysRedis, {
+    failOpen: false,
+  });
+  if (!lock)
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'The review job is running. Try again in a few minutes.',
+    });
+  let reset: Awaited<ReturnType<typeof rejudgeEntries>>;
+  try {
+    reset = await rejudgeEntries({
+      challengeId: id,
+      collectionId: challenge.collectionId,
+      judgeUserId,
+      judgedTagId: config.judgedTagId,
+    });
+  } finally {
+    await lock.release();
+  }
+
+  await logToAxiom({
+    type: 'info',
+    name: 'challenge-rejudge',
+    challengeId: id,
+    moderatorId,
+    ...reset,
+  }).catch(() => undefined);
+  return { entries: reset.entries };
+}
+
+const REJUDGE_LOCK_SECONDS = 2 * 60;
+
 export async function updateChallengeStatus(id: number, status: ChallengeStatus) {
   const challenge = await dbWrite.challenge.update({
     where: { id },
@@ -2509,6 +2585,7 @@ export async function requestReview(
       WHERE "collectionId" = ${challenge.collectionId}
         AND "imageId" = ANY(ARRAY[${Prisma.join(eligibleImageIds)}])
     `;
+    await bustContestCollectionItemsCache(eligibleImageIds);
   }
 
   recordChallengeReviewRequested({ source: challenge.source });
@@ -3533,9 +3610,11 @@ export async function getActiveEvents(
     const counts = await dbRead.$queryRaw<
       Array<{ challengeId: number; commentCount: number }>
     >`SELECT "entityId" AS "challengeId", COUNT(*)::int AS "commentCount"
-       FROM "CommentV3"
-       WHERE "entityType" = 'challenge' AND "parentId" IS NULL AND "deletedAt" IS NULL
-         AND "entityId" IN (${Prisma.join(allChallengeIds)})
+       FROM "CommentV3" v
+       WHERE ${countedTopLevelCommentSql(
+         Prisma.raw('v'),
+         'challenge'
+       )} AND "entityId" IN (${Prisma.join(allChallengeIds)})
        GROUP BY "entityId"`;
     for (const row of counts) commentCounts.set(row.challengeId, row.commentCount);
   }
@@ -4213,7 +4292,10 @@ export async function getCompletedChallengesWithWinners(
       c."buzzType",
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
-      (SELECT COUNT(*)::int FROM "CommentV3" v WHERE v."entityType" = 'challenge' AND v."entityId" = c.id AND v."parentId" IS NULL AND v."deletedAt" IS NULL) as "commentCount",
+      (SELECT COUNT(*)::int FROM "CommentV3" v WHERE ${countedTopLevelCommentSql(
+        Prisma.raw('v'),
+        'challenge'
+      )} AND v."entityId" = c.id) as "commentCount",
       c."nsfwLevel",
       c."allowedNsfwLevel",
       c."modelVersionIds",

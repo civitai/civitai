@@ -24,6 +24,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ meta: { scores: { total: 20, models: 10, users: 10 } } }),
 }));
 
+const { REMOVAL_SCORE_WINDOW_LABEL } = await import('~/shared/constants/creator-journey.constants');
 const { CreatorScoreExplainer } = await import('~/components/Account/CreatorScoreExplainer');
 const { creatorScorePenalty, creatorScoreSources, creatorScoreStaffAwarded } = await import(
   '~/components/Account/creator-score-copy'
@@ -69,10 +70,13 @@ describe('CreatorScoreExplainer', () => {
     expect(text).toContain('Articles: Views, reactions, and comments on articles');
     expect(text).toContain('Followers: Follower count');
     expect(text).toContain('Helping moderation: Reports filed that moderators act on');
-    expect(text).toContain('Images removed for breaking our rules take points away.');
-    expect(text).toContain('If people unfollow you or remove a reaction, those points go too.');
+    expect(text).toContain(
+      `Images removed for breaking our rules take points away for ${REMOVAL_SCORE_WINDOW_LABEL}, some less than others depending on the reason.`
+    );
+    expect(text).toContain('Models a moderator takes down stop counting');
+    expect(text).toContain('if people unfollow you or remove a reaction, those points go too.');
     expect(text).toContain('updates once a day');
-    expect(text).toContain('never resets or expires');
+    expect(text).not.toContain('never resets or expires');
   });
 
   // Product decision: categories and activities only. Weights are tunable and may change, so

@@ -110,6 +110,10 @@ const { mockDeleteImages, mockPersistDeletedTakedowns } = vi.hoisted(() => ({
 // loses an export it imports. The job short-circuits before deleting anything when it is false.
 // The re-removal hold reads through Kysely, which this file does not route to PGlite; no image here
 // has an approved appeal, so the hold lets everything through (covered by its own tests).
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
+}));
+
 vi.mock('~/server/services/image-removal-hold.service', () => ({
   canConfirmReRemoval: async () => false,
   holdRemovals: async (requests: { imageId: number }[]) => ({
@@ -262,23 +266,39 @@ function presenceTest(sql: string, key: string) {
     doubleArrow ? metadata[key] !== null && metadata[key] !== undefined : key in metadata;
 }
 
+/** `writeModeratorBlock`, returning the rows it blocked. */
+function moderatorBlock(values: unknown[]) {
+  const [nsfwLevel, kept, reason, ids] = values as [number, string, string, number[]];
+  const blocked: { id: number; held: boolean }[] = [];
+  for (const row of store.images) {
+    if (!ids.includes(row.id)) continue;
+    row.ingestion = 'Blocked';
+    row.nsfwLevel = nsfwLevel;
+    row.blockedFor = row.blockedFor === kept ? kept : reason;
+    fireQueueTrigger(row);
+    blocked.push({ id: row.id, held: row.blockedFor === kept });
+  }
+  return blocked;
+}
+
 function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // The legal-hold lookup arrives as one `Prisma.sql` value rather than a template.
   const sql = Array.isArray(strings)
     ? strings.join('?')
     : (strings as unknown as { sql: string }).sql;
 
+  if (sql.includes('"blockedFor" = CASE')) return moderatorBlock(values);
+
   if (sql.includes('FROM "CsamReport"')) return [];
 
-  // remove-blocked-images: its two queue reads. The batch's held-id exclusion arrives as a nested
-  // `Prisma.sql` fragment, so its ids are read from that fragment's own values.
-  if (sql.includes('SELECT "entityId"') && sql.includes('FROM "JobQueue"')) {
-    const flat = values.flatMap((v) =>
-      v && typeof v === 'object' && 'values' in v ? (v as { values: unknown[] }).values : [v]
-    );
-    const ids = (flat.find(Array.isArray) as number[] | undefined) ?? [];
-    if (sql.includes('"entityId" = ANY(')) {
-      const cutoff = flat.find((v) => v instanceof Date) as Date;
+  // remove-blocked-images: its two queue reads, each passed as one `Prisma.sql` value.
+  if (sql.includes('FROM "JobQueue" j')) {
+    const bound = Array.isArray(strings)
+      ? values
+      : (strings as unknown as { values: unknown[] }).values;
+    const ids = (bound.find(Array.isArray) as number[] | undefined) ?? [];
+    if (sql.includes('AND EXISTS (SELECT 1 FROM unnest(')) {
+      const cutoff = bound.find((v) => v instanceof Date) as Date;
       return store.queue.filter((q) => ids.includes(q.entityId) && q.createdAt <= cutoff);
     }
     return store.queue

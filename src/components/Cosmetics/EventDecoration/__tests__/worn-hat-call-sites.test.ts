@@ -41,6 +41,10 @@ const CALL_SITES: [file: string, expected: string][] = [
     "eventDecorationOn={{ entityType: 'Model', entityId: data.id }}",
   ],
   [
+    'src/components/Article/ArticleCoverHat.tsx',
+    "wornOn={{ entityType: 'Article', entityId: articleId }}",
+  ],
+  [
     'src/components/Model/ModelCarousel/ModelCarousel.tsx',
     "wornOn={{ entityType: 'Image', entityId: image.id }}",
   ],
@@ -100,9 +104,12 @@ describe('worn hat call sites', () => {
     const src = read(file);
     const uses = src.split(`<${tag}`).length - 1;
     expect(uses).toBeGreaterThan(0);
-    expect(
-      src.split(`<${tag} imageId={image.id} decoration={image.eventDecoration} />`).length - 1
-    ).toBe(uses);
+    // Further props (the carousel's hat layer) may follow, on the same or later lines.
+    const paired = new RegExp(
+      `<${tag}\\s+imageId=\\{image\\.id\\}\\s+decoration=\\{image\\.eventDecoration\\}[\\s/]`,
+      'g'
+    );
+    expect(src.match(paired)?.length ?? 0).toBe(uses);
   });
 
   it.each(TEMPLATES)('%s passes the content on', (file) => {

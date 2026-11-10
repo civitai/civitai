@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import { assertDownloadUrlsResolve } from '~/tests/api/v1/download-url-seam.helper';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -41,6 +42,12 @@ vi.mock('~/server/db/client', () => {
   // client; a partial mock makes Vitest throw on the first one it can't find.
   return { dbRead: stub, dbWrite: stub, dbKV: stub, dbReadLong: stub, dbReadReplica: stub };
 });
+// The metric-privacy read (`prepareModelVersionResponse`) is a Kysely statement; no row is a version
+// with no privacy inputs, as the Prisma `null` was.
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getModelVersionPrivacyRow: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/model.service', () => ({ getVaeFiles: mockGetVaeFiles }));
 vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersion: mockGetImages,
@@ -53,18 +60,38 @@ vi.mock('~/server/services/paid-access.service', () => ({
 vi.mock('~/server/services/creator-program.service', () => ({
   hasValidCreatorMembershipCached: async () => false,
 }));
+const mockGetDownloadFilename = vi.hoisted(() =>
+  vi.fn(({ file }: any) => `${file.id}.safetensors`)
+);
 vi.mock('~/server/services/file.service', () => ({
-  getDownloadFilename: ({ file }: any) => `${file.id}.safetensors`,
+  getDownloadFilename: mockGetDownloadFilename,
 }));
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
+// The listing rule is tested on PGlite (training-data-share.behavior.test.ts); here only that this
+// surface asks it with the request's host and applies the answer.
+vi.mock('~/server/services/training-data-restricted.service', () => ({
+  trainingDataListing:
+    async (
+      _db: unknown,
+      _versions: unknown,
+      { redCapable, viewerManages }: { redCapable: boolean; viewerManages?: boolean }
+    ) =>
+    (file: { type: string }) =>
+      file.type !== 'Training Data' || redCapable || !!viewerManages,
+}));
+vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  isRedCapableHost: (host?: string | null) => host === 'civitai.red',
+}));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   MixedAuthEndpoint: (handler: any) => handler,
   // by-hash/[hash] is wrapped in PublicEndpoint(handler, ['GET'], {maxAge}).
   PublicEndpoint: (handler: any) => handler,
 }));
+const region = vi.hoisted(() => ({ restricted: false }));
 vi.mock('~/server/utils/region-blocking', () => ({
   getRegion: () => 'US',
-  isRegionRestricted: () => false,
+  isRegionRestricted: () => region.restricted,
 }));
 
 /**
@@ -325,11 +352,13 @@ describe('GET /api/v1/model-versions/by-hash/[hash] — same shaper, same pin', 
     mockFileFindFirst.mockResolvedValue({ modelVersion: modelVersion() });
   });
 
-  async function invokeByHash() {
+  async function invokeByHash(host = 'civitai.com') {
     const mod = await import('~/pages/api/v1/model-versions/by-hash/[hash]');
     const handler = mod.default as (req: any, res: any) => Promise<void>;
     const res: any = {
-      setHeader() {
+      headers: {} as Record<string, string>,
+      setHeader(name: string, value: string) {
+        this.headers[name] = value;
         return this;
       },
       status(code: number) {
@@ -341,12 +370,69 @@ describe('GET /api/v1/model-versions/by-hash/[hash] — same shaper, same pin', 
         return this;
       },
     };
-    await handler(
-      { method: 'GET', query: { hash: 'a'.repeat(64) }, headers: { host: 'civitai.com' } },
-      res
-    );
+    await handler({ method: 'GET', query: { hash: 'a'.repeat(64) }, headers: { host } }, res);
     return res;
   }
+
+  describe('a mature training dataset', () => {
+    beforeEach(() => {
+      const version = modelVersion();
+      version.files.push({
+        id: 15,
+        type: 'Training Data',
+        visibility: 'Public',
+        sizeKB: 6666,
+        url: 's3://data.zip',
+        name: 'data.zip',
+        hashes: [],
+        metadata: { nsfwLevel: 4, fullyRated: true },
+      });
+      mockFileFindFirst.mockResolvedValue({ modelVersion: version });
+    });
+    const ids = (res: any) => res.body.files.map((f: any) => f.id);
+
+    it('is left out on a host that is not red-capable', async () => {
+      expect(ids(await invokeByHash('civitai.com'))).not.toContain(15);
+    });
+
+    it('is listed on a red-capable host', async () => {
+      expect(ids(await invokeByHash('civitai.red'))).toContain(15);
+    });
+  });
+
+  describe('a model with a civitai.com face', () => {
+    beforeEach(() => {
+      const version = modelVersion();
+      version.description = '<p>Red version notes</p>';
+      version.model.sfwName = 'Com title';
+      mockFileFindFirst.mockResolvedValue({ modelVersion: version });
+    });
+    afterEach(() => {
+      region.restricted = false;
+    });
+
+    it('shows a restricted region the face and keeps that response out of the shared cache', async () => {
+      region.restricted = true;
+      const res = await invokeByHash();
+
+      expect(res.body.model.name).toBe('Com title');
+      expect(res.body.model).not.toHaveProperty('sfwName');
+      expect(res.body.description).toBeNull();
+      expect(res.headers['Cache-Control']).toBe('private, no-store');
+      // Download names keep the stored model name, matching the bytes the download route serves.
+      expect(mockGetDownloadFilename).toHaveBeenCalledWith(
+        expect.objectContaining({ model: expect.objectContaining({ name: 'Model 77' }) })
+      );
+    });
+
+    it('shows everyone else the stored listing, cacheable as before', async () => {
+      const res = await invokeByHash();
+
+      expect(res.body.model.name).toBe('Model 77');
+      expect(res.body.description).toBe('<p>Red version notes</p>');
+      expect(res.headers['Cache-Control']).toBeUndefined();
+    });
+  });
 
   it('pins every serialized file to its own id', async () => {
     const res = await invokeByHash();

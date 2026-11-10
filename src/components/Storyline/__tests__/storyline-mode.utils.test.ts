@@ -388,6 +388,16 @@ describe('getStorylineChapterName', () => {
       'This chapter is hidden by your browsing level'
     );
   });
+
+  // Dropped into a sentence, a tombstone's reason ("This chapter is hidden by ...") reads as nonsense.
+  it('names a tombstone by its number inside a sentence, and a visible chapter as ever', () => {
+    expect(getStorylineChapterName(hidden(3, 2), { inSentence: true })).toBe('Chapter 3');
+    const titled = {
+      ...visible(2, 1, 200),
+      post: { ...visible(2, 1, 200).post!, title: 'The painting' },
+    };
+    expect(getStorylineChapterName(titled, { inSentence: true })).toBe('The painting');
+  });
 });
 
 describe('getForkShare', () => {

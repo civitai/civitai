@@ -1,4 +1,5 @@
-import { Badge, Popover, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { Badge, Text, UnstyledButton } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { IconPlus, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';

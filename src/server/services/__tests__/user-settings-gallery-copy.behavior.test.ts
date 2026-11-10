@@ -192,4 +192,32 @@ describe('copyGallerySettingsToAllModelsByUser — merges the settings column, d
     expect(level(1)).not.toBe('31');
     expect(level(0)).not.toBe(level(1));
   });
+
+  // A cleared gallery is stored as JSON null, which `||` turns into an array rather than merging
+  // into; the flagged model would then hold no level at all.
+  it('holds the SFW level on a flagged model whose gallery settings were cleared or have no level', async () => {
+    await seedUser(holder.db, USER_ID, {});
+    await holder.db.query(
+      `INSERT INTO "Model" (id, "userId", minor, "sfwOnly", "gallerySettings")
+       VALUES (1, $1, true, false, 'null'::jsonb), (2, $1, false, true, '{"users": [5]}'::jsonb),
+              (3, $1, false, false, 'null'::jsonb)`,
+      [USER_ID]
+    );
+
+    await copyGallerySettingsToAllModelsByUser({
+      userId: USER_ID,
+      settings: { level: 31, users: [], tags: [] },
+    });
+
+    const rows = await holder.db.query<{ kind: string; level: string | null }>(
+      `SELECT jsonb_typeof("gallerySettings") AS kind,
+              jsonb_extract_path_text("gallerySettings", 'level') AS level
+       FROM "Model" ORDER BY id`
+    );
+    expect(rows.rows).toEqual([
+      { kind: 'object', level: '3' },
+      { kind: 'object', level: '3' },
+      { kind: 'object', level: '31' },
+    ]);
+  });
 });

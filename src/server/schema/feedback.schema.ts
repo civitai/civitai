@@ -5,14 +5,23 @@ import {
   FEEDBACK_AREAS,
   FEEDBACK_CONSOLE_ERROR_MAX_COUNT,
   FEEDBACK_CONSOLE_ERROR_MAX_LENGTH,
+  FEEDBACK_ERROR_REF_PATTERN,
   FEEDBACK_FILTER_VALUE_MAX_LENGTH,
   FEEDBACK_IMAGE_MAX_COUNT,
   FEEDBACK_MESSAGE_MAX_LENGTH,
   FEEDBACK_NETWORK_ERROR_MAX_COUNT,
   FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH,
   FEEDBACK_NETWORK_URL_MAX_LENGTH,
+  FEEDBACK_ORCHESTRATOR_ID_PATTERN,
   FEEDBACK_PATH_MAX_LENGTH,
   FEEDBACK_SESSION_ID_MAX_LENGTH,
+  FEEDBACK_TOAST_TEXT_MAX_LENGTH,
+  FEEDBACK_BUILD_MAX_LENGTH,
+  FEEDBACK_DEVICE_TEXT_MAX_LENGTH,
+  FEEDBACK_TRPC_CODE_PATTERN,
+  FEEDBACK_TRPC_ERROR_MAX_COUNT,
+  FEEDBACK_TRPC_PATH_MAX_LENGTH,
+  FEEDBACK_TRPC_PATH_PATTERN,
 } from '~/shared/constants/feedback.constants';
 
 export const feedbackAreaSchema = z.enum(FEEDBACK_AREAS);
@@ -36,6 +45,9 @@ export const feedbackAreaSchema = z.enum(FEEDBACK_AREAS);
 // nothing else on this platform retains, kept indefinitely, readable by moderators.
 // Their bounds are a proportionality judgement rather than a storage one: read the
 // note on `FEEDBACK_CONSOLE_ERROR_MAX_COUNT` before widening either.
+const deviceSize = z.number().int().min(0).max(100_000);
+const deviceText = z.string().max(FEEDBACK_DEVICE_TEXT_MAX_LENGTH);
+
 const feedbackContextSchema = z.object({
   path: z.string().max(FEEDBACK_PATH_MAX_LENGTH).optional(),
   reportedSource: z.string().max(50).optional(),
@@ -205,6 +217,51 @@ const feedbackContextSchema = z.object({
       })
     )
     .max(FEEDBACK_NETWORK_ERROR_MAX_COUNT)
+    .optional(),
+  /**
+   * Failed tRPC calls (`trpcErrorLink`). Path and code are shape-checked so neither can carry free
+   * text; there is deliberately no message field.
+   */
+  trpcErrors: z
+    .array(
+      z.object({
+        path: z.string().max(FEEDBACK_TRPC_PATH_MAX_LENGTH).regex(FEEDBACK_TRPC_PATH_PATTERN),
+        code: z.string().regex(FEEDBACK_TRPC_CODE_PATTERN),
+        httpStatus: z.number().int().min(400).max(599).optional(),
+        at: z.iso.datetime(),
+      })
+    )
+    .max(FEEDBACK_TRPC_ERROR_MAX_COUNT)
+    .optional(),
+  /** The reporter's environment (`collectClientContext`). Claims, like everything here. */
+  route: z.string().max(FEEDBACK_PATH_MAX_LENGTH).optional(),
+  build: z.string().max(FEEDBACK_BUILD_MAX_LENGTH).optional(),
+  device: z
+    .object({
+      viewport: z.object({ width: deviceSize, height: deviceSize }),
+      screen: z.object({ width: deviceSize, height: deviceSize }),
+      pixelRatio: z.number().min(0).max(10),
+      touch: z.boolean(),
+      colorScheme: z.enum(['dark', 'light']),
+      language: deviceText.optional(),
+      timeZone: deviceText.optional(),
+      online: z.boolean().optional(),
+    })
+    .optional(),
+  clientAt: z.iso.datetime().optional(),
+  /**
+   * Filed from a toast or alert's "Report this": the server-fault reference it showed, the
+   * orchestrator ids its caller held, and the text the reporter was shown. Claims like the rest;
+   * the patterns keep them inert text that triage copies, never a URL it follows.
+   */
+  errorRef: z.string().regex(FEEDBACK_ERROR_REF_PATTERN).optional(),
+  workflowId: z.string().regex(FEEDBACK_ORCHESTRATOR_ID_PATTERN).optional(),
+  jobId: z.string().regex(FEEDBACK_ORCHESTRATOR_ID_PATTERN).optional(),
+  toast: z
+    .object({
+      title: z.string().max(FEEDBACK_TOAST_TEXT_MAX_LENGTH).optional(),
+      message: z.string().max(FEEDBACK_TOAST_TEXT_MAX_LENGTH),
+    })
     .optional(),
 });
 

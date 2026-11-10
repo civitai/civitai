@@ -2,12 +2,13 @@ import { kyselyRead } from '~/server/db/kyselyDb';
 import { threadUrlMap } from '~/server/notifications/comment.notifications';
 
 /**
- * What `/comments/v2/<id>` reads: the comment's entity, plus the two addresses that are not the
- * entity id. A comic chapter is addressed by its project, and an app listing by its slug
- * (`entityId` is `app_listings.serial_id`, an integer that appears nowhere in the URL). A tombstone
- * is not addressable: nothing of a deleted comment should be reachable by link.
+ * What `/comments/<id>` reads: the comment's entity, plus the two addresses that are not the
+ * entity id. A comic chapter is addressed by its project and position, and an app listing by its slug
+ * (`entityId` is `app_listings.serial_id`, an integer that appears nowhere in the URL). A deleted
+ * comment has no permalink: a placeholder in a section is reached through its replies. Nor, but for
+ * a moderator, does one hidden for ToS.
  */
-export const getCommentPermalinkRow = (commentId: number) =>
+export const getCommentPermalinkRow = (commentId: number, { includeHidden = false } = {}) =>
   kyselyRead
     .selectFrom('CommentV3 as c')
     .leftJoin('ComicChapter as cch', (join) =>
@@ -21,10 +22,12 @@ export const getCommentPermalinkRow = (commentId: number) =>
       'c.entityType',
       'c.entityId',
       'cch.projectId as comicProjectId',
+      'cch.position as comicChapterPosition',
       'al.slug as appListingSlug',
     ])
     .where('c.id', '=', commentId)
     .where('c.deletedAt', 'is', null)
+    .$if(!includeHidden, (qb) => qb.where('c.tosViolation', '=', false))
     .executeTakeFirst();
 
 export type CommentPermalinkRow = NonNullable<Awaited<ReturnType<typeof getCommentPermalinkRow>>>;
@@ -79,10 +82,10 @@ export const buildCommentPermalink = (
     threadType: target.threadType,
     threadParentId: target.threadParentId,
     appListingSlug: target.appListingSlug,
+    comicChapterPosition: row.comicChapterPosition,
     commentId: row.id,
-    // Always pin the target comment as the thread root so it renders standalone via
-    // RootThreadProvider's activeComment path. Sidesteps cursor-paginated thread fetches
-    // (target may be on page N) and works uniformly for root and reply comments.
+    // Always pin the target comment as the thread root, so it renders standalone: no cursor-paginated
+    // thread fetch (the target may be on page N), and root and reply comments behave alike.
     commentParentType: 'comment',
     commentParentId: row.id,
   });

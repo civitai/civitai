@@ -10,9 +10,12 @@
   import ReportDetailColumns from '$lib/components/report-queue/ReportDetailColumns.svelte';
   import ReportList from '$lib/components/report-queue/ReportList.svelte';
   import { FormState } from '$lib/form-state.svelte';
-  import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import { LINK_CLASS, dateTime, num, relativeTime } from '$lib/format';
   import {
     bulkImageManagerUrl,
+    entityUrl,
+    imageLookupUrl,
     modelVersionLookupUrl,
     postReportUrl,
     userLookupUrl,
@@ -101,15 +104,41 @@
             {lookup.post.username ?? `#${lookup.post.userId}`}
           </a>
           {#if lookup.post.userBannedAt}<Badge variant="destructive">banned</Badge>{/if}
+          {#if lookup.post.userCreatedAt}
+            <span title={dateTime(lookup.post.userCreatedAt)}>
+              (account {relativeTime(lookup.post.userCreatedAt)})
+            </span>
+          {/if}
           · {dateTime(lookup.post.createdAt)} · {num(lookup.total)} images{blocked
             ? `, ${num(blocked)} already blocked`
             : ''} ·
           <a href="{data.civitaiUrl}/posts/{item.postId}" target="_blank" rel="noreferrer" class={LINK_CLASS}>
             on the site
           </a>
-          ·
-          <!-- Past the cap this panel loads, Bulk Image Manager is the post page with paging on it. -->
-          <a href={bulkImageManagerUrl('post', item.postId)} class={LINK_CLASS}>in Bulk Image Manager</a>
+        </p>
+      {/if}
+      {#if item.storylineChapter}
+        {@const chapter = item.storylineChapter}
+        <!-- A chapter judged alone, without the story it is part of, can pass where the story would not. -->
+        <p class="m-0 flex flex-wrap items-center gap-2 text-sm" data-testid="post-storyline-chapter">
+          <span>
+            Chapter {chapter.number} of
+            <a
+              href={entityUrl(data.civitaiUrl, 'storyline', chapter.storylineId)}
+              target="_blank"
+              rel="noreferrer"
+              class={LINK_CLASS}
+            >
+              {chapter.title}
+            </a>
+          </span>
+          {#if chapter.minorByScan}<Badge variant="destructive">storyline minor-flagged</Badge>{/if}
+          {#if chapter.tosViolation}<Badge variant="destructive">storyline taken down</Badge>{/if}
+          {#if chapter.heldRemoval}
+            <Badge variant="destructive" title={dateTime(chapter.heldRemoval.at)}>
+              removed by its {chapter.heldRemoval.by} while reported
+            </Badge>
+          {:else if chapter.removed}<Badge variant="secondary">removed from storyline</Badge>{/if}
         </p>
       {/if}
     </header>
@@ -145,6 +174,35 @@
               truncated={lookup.truncated}
               endLabel="End of the post."
             />
+            {#if item.ownerRecentImages.length}
+              <section class="mt-6 border-t border-dark-4 pt-4">
+                <h3 class="m-0 mb-2 flex flex-wrap items-baseline gap-2 text-sm font-semibold">
+                  {lookup.post.username ?? 'The owner'}'s latest images outside this post
+                  <a
+                    href={bulkImageManagerUrl('user', lookup.post.userId)}
+                    class="{LINK_CLASS} text-xs font-normal"
+                  >
+                    see all in Bulk Image Manager
+                  </a>
+                </h3>
+                <div class="grid grid-cols-[repeat(auto-fill,minmax(110px,1fr))] gap-2">
+                  {#each item.ownerRecentImages as img (img.id)}
+                    <a
+                      href={imageLookupUrl(img.id)}
+                      class="block overflow-hidden rounded-md bg-dark-6"
+                      title={dateTime(img.createdAt)}
+                    >
+                      <EdgeMedia
+                        src={img.url}
+                        type={img.type}
+                        width={220}
+                        class="aspect-square w-full object-cover"
+                      />
+                    </a>
+                  {/each}
+                </div>
+              </section>
+            {/if}
           </div>
         {/key}
       {/if}

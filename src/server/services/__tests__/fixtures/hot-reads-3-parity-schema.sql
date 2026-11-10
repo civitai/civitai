@@ -1,6 +1,6 @@
 -- Minimal schema for hot-reads-3.kysely-parity.test.ts.
 --
--- Only the tables the reads behind kysely-hot-reads-3 touch, and only the columns those reads select,
+-- Only the tables the hot-reads-3 reads touch, and only the columns those reads select,
 -- filter or order on. Types, nullability and primary keys follow schema.full.prisma. All of them are
 -- base TABLES in production too (none is declared as a view), which the suite checks separately.
 -- Everything lives in its own schema, hot_reads_3_parity, because other parity suites share the

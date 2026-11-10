@@ -13,8 +13,10 @@
   } from '@tabler/icons-svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
+  import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
   import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
+  import StickySummary from '$lib/components/StickySummary.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { isAbort, uploadFile } from '$lib/upload';
@@ -32,7 +34,6 @@
     paramBounds,
     seenFor,
     TARGET_STEPS,
-    TE_TRAINING_UNSUPPORTED_REASON,
     typesForMedia,
     type ExtraParamField,
     type LabelType,
@@ -43,20 +44,24 @@
     defaultRunParams,
     isCustom,
     MAX_SAMPLE_PROMPTS,
-    PARAM_HELP,
     PARAM_LABELS,
+    optimizerLrParams,
     paramDeviations,
     paramDisplay,
+    paramHelpText,
     promptHasTrigger,
     runCard,
     runExtraCapabilities,
     runParamsKey,
     runTakesSampleImages,
+    runTrainsPairs,
     runVersion,
     sampleImagesProblem,
     runVersionLabel,
+    blockedSelectionMessage,
     filledPrompts,
     teLocked,
+    teLockReason,
     withTrigger,
     type LaunchedRun,
     type NumericInput,
@@ -76,7 +81,8 @@
     params = $bindable(),
     presetType = $bindable(),
     imageCount,
-    matureCount,
+    trainsPairs = false,
+    matureCount: scannedMature,
     onStart,
     onBack,
     onShowMature,
@@ -92,24 +98,37 @@
     params: Record<string, RunParams>;
     presetType: string;
     imageCount: number;
+    /** An edit LoRA: `imageCount` counts before/after pairs, which the copy names as such. */
+    trainsPairs?: boolean;
     /** Trainable images whose upload scan rated them mature (R and up). */
     matureCount: number;
     onStart: (
       launched: LaunchedRun[],
       prompts: SamplePrompt[],
       name: string,
-      currencies: string[]
+      currencies: string[],
+      /** The user ticked the mature-dataset Yellow confirm. */
+      matureAck: boolean,
+      matureCount: number
     ) => Promise<void>;
     onBack: () => void;
     /** Back to the Data step, filtered to the mature images. */
     onShowMature: () => void;
   } = $props();
 
+  const datasetCount = $derived(
+    trainsPairs
+      ? `${imageCount.toLocaleString()} ${imageCount === 1 ? 'pair' : 'pairs'}`
+      : mediaCount(imageCount, selection.media)
+  );
+
   let starting = $state(false);
   let startError = $state('');
 
   // Moderators can switch training off on the main app; the flow's banner carries their message.
   const trainingDisabled = $derived(serviceStatus.value?.available === false);
+  // A run on a model that went down after it was picked (a stale tab, a restored draft).
+  const blockedMessage = $derived(blockedSelectionMessage(selection.runs, serviceStatus.value));
 
   // Green (membership) Buzz can't pay for NSFW training, so spending it requires an explicit attestation.
   let attestSfw = $state(false);
@@ -118,11 +137,14 @@
     if (!needsAttestation) attestSfw = false;
   });
 
-  // Blue can't pay for mature content without a paid membership: the orchestrator takes Blue, refunds
-  // it seconds after submit, and charges the whole price in Yellow. Users read that silent switch as a
-  // billing bug, so it is warned here and confirmed at Start. Unknown membership warns too, hedged.
+  // A mature dataset is never charged in Green: the orchestrator refunds that part seconds after submit and
+  // charges Yellow instead (and Blue too, without a membership). Users read that silent switch as a billing
+  // bug, so it is warned here and confirmed with a tick before Start. Unknown membership warns, hedged.
   const membership = hostConfig().isPaidMember;
-  const blueExcluded = $derived(matureCount > 0 && membership !== true);
+  // The server's own check can find mature images the upload scan hasn't rated yet; its refusal sets this.
+  let refusedMature = $state(0);
+  const matureCount = $derived(Math.max(scannedMature, refusedMature));
+  const mature = $derived(matureCount > 0);
 
 
   const OPTIMIZERS = ['AdamW8Bit', 'Adafactor', 'Prodigy', 'Automagic'];
@@ -165,6 +187,7 @@
       steps: p.steps,
       epochs: p.epochs > 0 ? p.epochs : undefined,
       imageCount: imageCount > 0 ? imageCount : undefined,
+      editTraining: runTrainsPairs(run) || undefined,
     };
   };
   // An out-of-range Steps field is UNQUOTABLE, never "quote the default budget": the orchestrator
@@ -207,6 +230,12 @@
     return sum;
   });
   const total = $derived(runTotal);
+  const spend = $derived(
+    nonBlueSpend(total, buzzMode.value, { mature, member: membership === true })
+  );
+  const ackKey = $derived(matureAckKey(total, spend?.amount, matureCount));
+  let ackedFor = $state<string | null>(null);
+  const ackMissing = $derived(matureAckMissing(ackedFor, ackKey));
   const runCostLabel = (i: number) => {
     const cost = runCostAt(i);
     return cost == null ? null : cost.toLocaleString();
@@ -303,9 +332,9 @@
     isExtra(field) ? capsAt(i)[field].bound : boundsFor(i)[field];
   const helpFor = (i: number, field: ParamField): string => {
     const run = selection.runs[i]!;
-    if (field === 'textEncoderLr' && teLocked(run))
-      return `Not available for ${runCard(run).name} — ${TE_TRAINING_UNSUPPORTED_REASON}`;
-    return PARAM_HELP[field].replace('{recommended}', paramDisplay(defaultsAt(i)[field]));
+    const teReason = field === 'textEncoderLr' ? teLockReason(run) : undefined;
+    if (teReason) return teReason;
+    return paramHelpText(field, run.cardType, defaultsAt(i), paramsAt(i));
   };
 
   function setField(i: number, field: ParamField, value: NumericInput | boolean) {
@@ -321,6 +350,7 @@
       return;
     }
     (p as unknown as Record<string, NumericInput | boolean>)[field] = value;
+    if (field === 'optimizer') Object.assign(p, optimizerLrParams(selection.runs[i]!, p));
     // Shuffling with nothing kept would move the trigger word away from the front of every
     // caption — keep one, as the main trainer does when a trigger is set.
     if (field === 'shuffleTokens' && value === true && trigger.trim() && Number(p.keepTokens) === 0)
@@ -392,8 +422,8 @@
   );
   // Blank rows generate no sample image, so they are not counted.
   const filledCount = $derived(filledPrompts(prompts.map((p) => p.text)).length);
-  // Blue always spends first (it isn't offered in the picker), so the moment the price exceeds the
-  // Blue balance the remainder comes out of yellow/green — real money. Testers were charged Yellow
+  // With Blue first on (the default), the moment the price exceeds the Blue balance the remainder
+  // comes out of yellow/green — real money. Testers were charged Yellow
   // without ever being told, and the same run cost Blue one day and Yellow the next as balances
   // drifted. Anything beyond Blue requires an explicit confirmation naming the amount — and when
   // the balance is UNKNOWN (a host without getBuzzBalances, a buzz-service blip), fail safe:
@@ -413,14 +443,15 @@
     if (
       starting ||
       trainingDisabled ||
+      blockedMessage ||
       total == null ||
       (needsAttestation && !attestSfw) ||
+      ackMissing ||
       imagesProblem ||
       uploadingImage
     )
       return;
-    const spend = nonBlueSpend(total, buzzMode.value, !blueExcluded);
-    if (spend) {
+    if (spend && !spend.matureYellow) {
       confirmSpend = spend;
       spendDialogOpen = true;
       return;
@@ -429,7 +460,7 @@
   }
 
   async function reallyStart() {
-    if (starting || trainingDisabled) return;
+    if (starting || trainingDisabled || blockedMessage) return;
     spendDialogOpen = false;
     starting = true;
     startError = '';
@@ -438,9 +469,12 @@
         selection.runs.map((run, i) => ({ run, params: paramsAt(i) })),
         prompts,
         name,
-        buzzMode.currencies
+        buzzMode.currencies,
+        ackKey !== null && !ackMissing,
+        matureCount
       );
     } catch (e) {
+      if (e instanceof MatureAckRequiredError) refusedMature = e.matureCount;
       startError = e instanceof Error ? e.message : 'Could not start training';
     } finally {
       starting = false;
@@ -611,7 +645,8 @@
 
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Training runs</div>
-      <div class="flex items-center gap-1.5">
+      <!-- The Character/Style/Concept exposure targets are about subjects; an edit run has none. -->
+      <div class="flex items-center gap-1.5" class:hidden={trainsPairs}>
         <span class="inline-flex items-center gap-1 font-mono text-xs text-dark-2">
           exposure guidance {@render help(GUIDANCE_HELP, 'exposure guidance')}
         </span>
@@ -687,6 +722,11 @@
             </span>
           </div>
 
+          {#if trainsPairs}
+            <div class="bg-dark-6 px-4 pb-3 font-mono text-xs text-dark-2">
+              each pair seen ~{seen(i)}×
+            </div>
+          {:else}
           <div class="flex items-center gap-1 bg-dark-6 px-4 pb-3 font-mono text-xs {low(i) ? 'text-buzz' : 'text-emerald-400'}">
             {#if low(i)}<IconAlertTriangle size={13} stroke={2} class="shrink-0" />{:else}<IconCheck
                 size={13}
@@ -696,6 +736,7 @@
               ? `low — we recommend ~${presetSeen}×; results may be weak, no refund`
               : `good for a ${presetType}, target ~${presetSeen}×`})
           </div>
+          {/if}
 
           {#if openAdv === i && !noAdvancedParams(run)}
             {@const extras = supportedExtras(i)}
@@ -823,7 +864,7 @@
     </div>
   </div>
 
-  <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <StickySummary>
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">What you're starting</h3>
     <dl class="m-0 flex flex-col gap-1 text-sm">
       <div class="flex justify-between gap-2.5">
@@ -833,7 +874,7 @@
       <div class="flex justify-between gap-2.5">
         <dt class="text-dark-2">Dataset</dt>
         <dd class="m-0 font-semibold text-dark-0">
-          {mediaCount(imageCount, selection.media)} · {labelMode === 'tag' ? 'tags' : 'captions'}
+          {datasetCount} · {trainsPairs ? 'instructions' : labelMode === 'tag' ? 'tags' : 'captions'}
         </dd>
       </div>
       <div class="flex justify-between gap-2.5">
@@ -912,28 +953,68 @@
       </span>
     </div>
     <div class="mt-1 text-right font-mono text-xs text-dark-2">
-      ~{etaMin} min{multi ? ' · parallel' : ''} · {mediaCount(imageCount, selection.media)}
+      ~{etaMin} min{multi ? ' · parallel' : ''} · {datasetCount}
     </div>
 
-    {#if blueExcluded}
+    {#if mature}
       <div
         role="note"
-        class="mt-3 flex items-start gap-2 rounded-lg border border-buzz/30 bg-buzz/5 p-3 text-xs leading-snug text-dark-1"
+        class="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
       >
-        <IconAlertTriangle size={14} stroke={2} class="mt-px shrink-0 text-buzz" />
+        <IconAlertTriangle size={14} stroke={2} class="mt-px shrink-0 text-amber-400" />
         <span>
           {matureCount}
           {matureCount === 1 ? 'image in your dataset was' : 'images in your dataset were'} rated
-          <strong>mature</strong> (R or above) —
-          <button type="button" onclick={onShowMature} class="font-semibold text-primary hover:underline">
-            see which
-          </button>.
-          <span class="text-blue-400">Blue</span> Buzz can't pay for mature content without a
-          membership, so {membership === undefined ? 'unless you have one, ' : ''}this
-          {multi ? 'training' : 'run'} is charged in full in <span class="text-buzz">Yellow</span> Buzz.
-          {@render membershipLink()}
+          <strong>mature</strong> (R or above).
+          {#if scannedMature > 0}
+            <button type="button" onclick={onShowMature} class="font-semibold text-primary hover:underline">
+              See which
+            </button>.
+          {/if}
+          {#if membership === true}
+            Mature content can't be paid with <span class="text-emerald-400">Green</span> Buzz.
+            {#if buzzMode.blueFirst}
+              <span class="text-blue-400">Blue</span> Buzz pays first, and anything beyond it is
+              charged in <span class="text-yellow-400">Yellow</span> Buzz.
+            {:else}
+              It is charged in <span class="text-yellow-400">Yellow</span> Buzz.
+            {/if}
+          {:else}
+            <span class="text-blue-400">Blue</span> and <span class="text-emerald-400">Green</span> Buzz
+            can't pay for mature content without a membership, so {membership === undefined
+              ? 'unless you have one, '
+              : ''}this {multi ? 'training' : 'run'} is charged in full in
+            <span class="text-yellow-400">Yellow</span> Buzz.
+            {@render membershipLink()}
+          {/if}
         </span>
       </div>
+      {#if ackKey}
+        <div
+          class="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
+        >
+          <Checkbox
+            id="ack-mature-yellow"
+            bind:checked={() => ackedFor === ackKey, (v) => (ackedFor = v ? ackKey : null)}
+            class="mt-0.5 shrink-0"
+          />
+          <label for="ack-mature-yellow" class="cursor-pointer">
+            {#if spend}
+              I understand {spend.uncertain ? 'up to ' : ''}<strong
+                >{spend.amount.toLocaleString()} Yellow Buzz</strong
+              >
+              will be charged because this dataset has mature images.
+            {:else if buzzMode.blueFirst}
+              I understand this dataset has mature images, so anything beyond my
+              <span class="text-blue-400">Blue</span> Buzz is charged in
+              <span class="text-yellow-400">Yellow</span> Buzz.
+            {:else}
+              I understand this dataset has mature images, so it is charged in
+              <span class="text-yellow-400">Yellow</span> Buzz.
+            {/if}
+          </label>
+        </div>
+      {/if}
     {:else}
       <BlueFirstNote class="mt-3" />
     {/if}
@@ -955,8 +1036,10 @@
       onclick={start}
       disabled={starting ||
         trainingDisabled ||
+        !!blockedMessage ||
         total == null ||
         (needsAttestation && !attestSfw) ||
+        ackMissing ||
         !!imagesProblem ||
         uploadingImage}
     >
@@ -971,6 +1054,8 @@
       <p class="mt-2 text-center font-mono text-xs text-dark-2">
         Training is currently disabled — see the notice above.
       </p>
+    {:else if blockedMessage}
+      <p class="mt-2 text-center font-mono text-xs text-buzz">{blockedMessage}</p>
     {:else if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
     {:else if imagesProblem}
@@ -983,14 +1068,14 @@
     <p class="mt-3 text-center font-mono text-xs text-dark-2">
       Refunded automatically if training fails
     </p>
-  </aside>
+  </StickySummary>
 </div>
 
-<div class="mt-6 flex items-center justify-between border-t border-dark-4 pt-5">
+<div class="mt-6 flex items-center justify-between gap-3 border-t border-dark-4 pt-5">
   <Button variant="outline" onclick={onBack}>
     <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Back
   </Button>
-  <span class="font-mono text-xs text-dark-2">This is the only step that spends Buzz</span>
+  <span class="text-right font-mono text-xs text-dark-2">This is the only step that spends Buzz</span>
 </div>
 
 <Dialog.Root bind:open={spendDialogOpen}>
@@ -1001,12 +1086,9 @@
         {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz
       </Dialog.Title>
       <Dialog.Description>
-        {#if blueExcluded}
-          Your dataset was rated mature, and
-          <span class="text-blue-400">Blue</span> Buzz can't pay for mature content without a
-          membership{membership === undefined ? ' — unless you have one, the' : '. The'} full
-          <strong>{confirmSpend?.amount.toLocaleString()}</strong> will come out of your Yellow Buzz.
-          {@render membershipLink()}
+        {#if !buzzMode.blueFirst}
+          Blue Buzz first is off, so all <strong>{confirmSpend?.amount.toLocaleString()}</strong> of
+          this run will come out of your {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.
         {:else if confirmSpend?.uncertain}
           Blue Buzz spends first, but your balance couldn't be read — up to
           <strong>{confirmSpend?.amount.toLocaleString()}</strong> of this run may come out of your

@@ -1,14 +1,5 @@
-import {
-  ActionIcon,
-  Button,
-  Kbd,
-  Paper,
-  Text,
-  Loader,
-  Box,
-  Skeleton,
-  Tooltip,
-} from '@mantine/core';
+import { ActionIcon, Button, Kbd, Paper, Text, Loader, Box, Skeleton } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { readLocalStorageValue, useHotkeys, useReducedMotion } from '@mantine/hooks';
 import type { HotkeyItem } from '@mantine/hooks';
 import {
@@ -29,6 +20,7 @@ import {
   JudgeReactionBar,
   type JudgeReactionBarProps,
 } from '~/components/Crucible/JudgeReactionBar';
+import { CrucibleReportButton } from '~/components/Crucible/CrucibleReportButton';
 import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHasCoarsePointer } from '~/hooks/useIsMobile';
@@ -665,6 +657,17 @@ function ImageCard({
           className={clsx(
             'absolute right-2.5 z-10',
             isVideo && !coarsePointer ? 'bottom-[60px]' : 'bottom-2.5'
+          )}
+        />
+
+        <CrucibleReportButton
+          imageId={entry.image.id}
+          side={position}
+          // Video's sound (and, on touch, fullscreen) buttons own the top-right corner, so the
+          // flag sits left of them.
+          className={clsx(
+            'absolute top-2.5 z-10',
+            !isVideo ? 'right-2.5' : coarsePointer ? 'right-[112px]' : 'right-[60px]'
           )}
         />
 

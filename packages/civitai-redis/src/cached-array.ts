@@ -23,7 +23,13 @@ export type CachedLookupOptions<T extends object> = {
   // Seconds a bust holds an id back. Unset, each bust flavour keeps its own default (see
   // NON_SWR_BUST_WINDOW and SWR_INVALIDATE_WINDOW); set, it applies to both, as it always did.
   debounceTime?: number;
-  cacheNotFound?: boolean;
+  // Whether an id the lookup finds nothing for is cached as a `{ notFound: true }` marker.
+  // A FUNCTION makes it switchable at runtime (a flag): it is asked once per fetch that reaches
+  // Redis, and while it answers false the fetch behaves exactly like `cacheNotFound: false` and
+  // also treats a marker written while it was on as a miss, so turning it off restores the
+  // uncached behaviour at once rather than when the markers expire. Throwing counts as false.
+  // A static `false` is unchanged: no markers written, and any marker found is still served.
+  cacheNotFound?: boolean | (() => boolean | Promise<boolean>);
   // Separate TTL for negative-cache markers. When the lookupFn legitimately returns nothing for an id
   // we cache `{ notFound: true }` to skip the work next time — but if the empty result is transient
   // (async scan/ingest hasn't populated the row yet, or replication lag), caching it for the full ttl
@@ -35,6 +41,14 @@ export type CachedLookupOptions<T extends object> = {
   // a stale value is served while a background revalidate runs. Defaults to `ttl`, reproducing the
   // historical `ttl * 2` physical expiry. Only consulted when `staleWhileRevalidate` is true.
   staleWhileRevalidateTtl?: number;
+  // Opt-in, for a non-SWR cache whose writers bust(). A miss fill's lookup can read the origin (often a
+  // replica) BEFORE a bust and write AFTER it; a plain SET then overwrites the bust's debounce marker
+  // with the pre-write value, which is served until `ttl`. With this set the fill is a SET NX, so it
+  // loses to any key already there: the marker of a bust that landed during its lookup, or a
+  // concurrent fill. The guarantee lasts as long as the marker, so pair it with a `debounceTime` that
+  // outlasts the lookup plus replica lag. Not for an SWR cache, whose revalidate overwrites a
+  // present, stale entry by design.
+  fillIfAbsent?: boolean;
   // --- In-process (per-pod) L1 in front of the Redis per-id cache -----------------------------------
   // Opt-in. When `localTtl` (SECONDS) is set, resolved per-id values are also held in a bounded per-pod
   // LRU. An L1 hit skips the Redis read for that id entirely — the win on hot feed hydration.
@@ -60,7 +74,7 @@ export type CachedLookupOptions<T extends object> = {
   // compressed value read through the general msgpack path throws → the entry is EVICTED and
   // reported as a miss — a silent permanent miss+evict loop. Writes may skip compression (fetch's
   // not-found marker does): the compress-aware read passes any non-sentinel value straight to
-  // msgpack. invalidate() rewrites the records and not-found markers it reads, compressed.
+  // msgpack. invalidate() rewrites the records it reads, and its debounce markers, compressed.
   //
   // Back-compat is free in BOTH directions: the compress-aware read is sentinel-discriminated, so
   // legacy uncompressed entries written before the flag was flipped still decode. No key-bust or
@@ -192,7 +206,7 @@ const MISS_FILL_JOIN_MAX_MS = 10_000;
 const NON_SWR_BUST_WINDOW = 2;
 /**
  * Default for an SWR cache's invalidate(): how long the backdated entry is still served as fresh
- * before revalidating. Unchanged from the builder's historical 10 s default.
+ * before revalidating, and the EX of the debounce marker that replaces a notFound marker.
  */
 const SWR_INVALIDATE_WINDOW = 10;
 type MissFillEntry = { startedAt: number };
@@ -213,6 +227,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     dontCacheFn,
     staleWhileRevalidate = true,
     staleWhileRevalidateTtl,
+    fillIfAbsent = false,
     localTtl,
     localMax = 10000,
     localMaxBytes,
@@ -434,12 +449,34 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       const ttlExpiry = new Date(Date.now() - ttl * 1000);
       const locks = new Set<RedisKeyTemplateCache>();
       let cacheHits = 0;
+      // markersLive: false only while a switchable cacheNotFound answers false; markers are then treated as misses.
+      let negative: boolean;
+      if (typeof cacheNotFound === 'function') {
+        try {
+          negative = (await cacheNotFound()) === true;
+        } catch {
+          negative = false;
+        }
+      } else negative = cacheNotFound;
+      const markersLive = typeof cacheNotFound !== 'function' || negative;
+      // A notFound marker served from Redis is a hit too: the lookup it stands for is skipped. Counted
+      // apart from `cachedArray` so that series keeps meaning "a row was served", while a hit ratio
+      // summed over cache_type stops reading a mostly-negative cache as near-zero (its refills are
+      // misses, so leaving these out counted only the cost of the markers and none of their benefit).
+      let notFoundHits = 0;
       for (const id of distinctIds) {
         const cached = cache[id];
         if (cached) {
-          if (cached.notFound) continue;
+          if (cached.notFound) {
+            // Marker ignored while the switch is off: the id is looked up again and counted like
+            // cacheNotFound: false (a miss only if the lookup finds a row), never as a notFound hit.
+            if (!markersLive) cacheMisses.add(id);
+            else notFoundHits++;
+            continue;
+          }
           // A readable marker is inside its window by construction: bust() writes it with EX = the
-          // window (per-call debounceTime, else the cache's, else NON_SWR_BUST_WINDOW), so Redis
+          // window (per-call debounceTime, else the cache's, else NON_SWR_BUST_WINDOW or, from
+          // invalidate(), SWR_INVALIDATE_WINDOW), so Redis
           // ends it and the marker needs no timestamp. Inside it the lookup is served but not
           // written back.
           if (cached.debounce) {
@@ -460,6 +497,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       }
 
       if (cacheHits > 0) metrics.hit(key, 'cachedArray', cacheHits);
+      if (notFoundHits > 0) metrics.hit(key, 'cachedArrayNotFound', notFoundHits);
 
       const toRevalidateIds = Object.keys(toRevalidate).map(Number);
       if (toRevalidateIds.length > 0) {
@@ -527,7 +565,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
           for (const id of cacheMisses) {
             const result = dbResults[id];
             if (!result) {
-              if (cacheNotFound) {
+              if (negative) {
                 // dontCache too: NX against the marker only guards while the marker outlives the
                 // lookup, and an in-window empty result may be replica lag.
                 if (writeBack && !dontCache.has(id))
@@ -555,7 +593,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
                   redis.packed.set(
                     `${key}:${id}` as RedisKeyTemplateCache,
                     value,
-                    { EX },
+                    fillIfAbsent ? { EX, NX: true } : { EX },
                     packedOptions
                   )
                 )
@@ -650,13 +688,36 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         cacheResults.push(...batchResults.filter(isDefined));
       }
 
-      const invaliDate = new Date(
-        Date.now() -
-          ttl * 1000 +
-          (options.debounceTime ?? debounceTime ?? SWR_INVALIDATE_WINDOW) * 1000
-      );
+      const windowSeconds = options.debounceTime ?? debounceTime ?? SWR_INVALIDATE_WINDOW;
+      const invaliDate = new Date(Date.now() - ttl * 1000 + windowSeconds * 1000);
+
+      // fetch() serves a notFound marker without looking at cachedAt, so backdating one only
+      // renews its EX and the row the bust announced is never read. A debounce marker sends reads
+      // to origin for the window (uncached, so a lagging replica can't re-pin the empty result).
+      // A zero window can't be an EX (Redis rejects EX 0), so it drops the marker instead.
+      const notFoundIds = cacheResults
+        .filter((x) => (x as AnyRecord).notFound)
+        .map((x) => x[idKey] as unknown as number);
+      if (notFoundIds.length > 0 && windowSeconds <= 0)
+        await redis.del(notFoundIds.map((id) => `${key}:${id}` as RedisKeyTemplateCache));
+      else if (notFoundIds.length > 0)
+        await Promise.all(
+          notFoundIds.map((id) =>
+            redis.packed.set(
+              `${key}:${id}` as RedisKeyTemplateCache,
+              { [idKey]: id, debounce: true },
+              { EX: windowSeconds },
+              packedOptions
+            )
+          )
+        );
+
       const updates = cacheResults.filter(
-        (x) => x !== null && 'cachedAt' in x && (x as AnyRecord).cachedAt !== invaliDate
+        (x) =>
+          x !== null &&
+          !(x as AnyRecord).notFound &&
+          'cachedAt' in x &&
+          (x as AnyRecord).cachedAt !== invaliDate
       ) as T[];
       if (updates.length === 0) return;
       const toCache = Object.fromEntries(

@@ -9,7 +9,6 @@ import {
   Group,
   Input,
   NumberInput,
-  Popover,
   Radio,
   SegmentedControl,
   Select,
@@ -19,6 +18,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconInfoCircle, IconPlus } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { uniq } from 'lodash-es';

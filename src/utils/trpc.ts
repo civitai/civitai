@@ -28,6 +28,7 @@ import { pageRouteHeaders } from '~/utils/page-route-header';
 import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
+import { feedbackErrorLink } from '~/utils/feedback/trpcErrorLink';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 import { BLOCK_TOKEN_QUERY_PROCEDURES } from '~/shared/constants/block-token-transport.constants';
 import {
@@ -251,6 +252,7 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'event.getTeamScores',
   'event.getWornHat',
   'generation.checkResourcesCoverage',
+  'hatTurf.getStickersForImages',
   'generation.getStatus',
   'homeBlock.getHomeBlock',
   'image.get404Images',
@@ -270,6 +272,7 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'tag.getHomeExcluded',
   'technique.getAll',
   'tool.getAll',
+  'training.getPublicStatus',
   'training.getStatus',
   'user.getCreator',
 ]);
@@ -607,6 +610,7 @@ export const trpcVanilla: CreateTRPCClient<AppRouter> = createTRPCClient<AppRout
         (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
         (opts.direction === 'down' && opts.result instanceof Error),
     }),
+    feedbackErrorLink,
     batchWindowLink,
     terminatingLink({ url, headers: getHeaders() }),
   ],
@@ -638,6 +642,7 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<A
             (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
             (opts.direction === 'down' && opts.result instanceof Error),
         }),
+        feedbackErrorLink,
         batchWindowLink,
         terminatingLink({
           url: isClient ? url : `${env.NEXT_PUBLIC_BASE_URL as string}${url}`,

@@ -28,6 +28,7 @@ export function MenuItemLabel({ item }: { item: UserMenuItem & { badgeMuted?: bo
       )}
       <QueueCountBadge
         count={item.badge ?? 0}
+        tooltip={item.badgeTooltip}
         max={99}
         ml={4}
         color={item.badgeMuted ? 'gray' : undefined}
@@ -57,6 +58,13 @@ export function PinGlyph({ pinned, touch }: { pinned: boolean; touch?: boolean }
 }
 
 export type PinTarget = Pick<ResolvedMenuItem, 'id' | 'label'>;
+
+/**
+ * The frame of the account card on both menus: a border, a faint Blue-to-Yellow wash and a lift off the
+ * sheet. A flat tint alone vanishes into the sheet, which is white in light mode and the same grey in dark.
+ */
+export const ACCOUNT_CARD_FRAME =
+  'rounded-xl border border-gray-3 bg-gradient-to-br from-blue-0 via-gray-0 to-yellow-0 shadow-sm dark:border-dark-4 dark:from-dark-4 dark:via-dark-5 dark:to-dark-4';
 
 /** The profile row above the menu is in no group, but it is a pinnable item. */
 export const PROFILE_PIN: PinTarget = { id: 'profile', label: 'Your Profile' };
@@ -148,6 +156,61 @@ export function useDragClickGuard() {
     // Cleared after the click the drop produces, which is dispatched before any timer runs.
     onDragSettled: () => {
       window.setTimeout(() => (dragging.current = false));
+    },
+  };
+}
+
+/**
+ * Mantine closes the menu on the outside mousedown, but the click that completes that press still
+ * lands on whatever is under the pointer, often a link. Call `onClose` when the menu closes: if a
+ * press is in progress, that press's click is cancelled. Any later click goes through.
+ */
+export function useDismissClickGuard() {
+  const pressing = useRef(false);
+  const armed = useRef(false);
+  const pressId = useRef(0);
+  useEffect(() => {
+    const press = (event: PointerEvent) => {
+      if (!event.isPrimary) return;
+      pressId.current++;
+      // Only a primary-button press produces a click; a right-click may never send its pointerup.
+      pressing.current = event.button === 0;
+      armed.current = false;
+    };
+    // A press that ends without a click (a drag off the target) must not leave the guard armed.
+    // A tap's click can trail its pointerup by a few hundred ms, hence the delay; a newer press
+    // owns the flag, so its timer must not be cleared by an older one.
+    const release = () => {
+      pressing.current = false;
+      const id = pressId.current;
+      window.setTimeout(() => {
+        if (pressId.current === id) armed.current = false;
+      }, 500);
+    };
+    const disarm = () => (armed.current = false);
+    const click = (event: MouseEvent) => {
+      if (!armed.current) return;
+      armed.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    window.addEventListener('pointerdown', press, true);
+    window.addEventListener('pointerup', release, true);
+    window.addEventListener('pointercancel', release, true);
+    window.addEventListener('click', click, true);
+    // A keyboard click never belongs to the dismissing press.
+    window.addEventListener('keydown', disarm, true);
+    return () => {
+      window.removeEventListener('pointerdown', press, true);
+      window.removeEventListener('pointerup', release, true);
+      window.removeEventListener('pointercancel', release, true);
+      window.removeEventListener('click', click, true);
+      window.removeEventListener('keydown', disarm, true);
+    };
+  }, []);
+  return {
+    onClose: () => {
+      if (pressing.current) armed.current = true;
     },
   };
 }

@@ -81,9 +81,10 @@
  * WAS FALSE. Verified 2026-10-03 against the GitHub API: `civitai/civitai` `main` carries
  * `required_status_checks: null` — there is NO required check on this branch, so NO
  * project in this repo can block a merge, `unit` included. `.github/workflows/lint.yml`'s
- * `geometry:` job says the same thing in its own comment. "Non-blocking" therefore
- * describes every tier here: `Component tests` goes red on a PR, `geometry` and `unit`
- * report as a green job with a red step, and none is a required check.
+ * `Geometry tests` step says the same thing in its own comment. "Non-blocking" therefore
+ * describes every tier here: `Component tests` goes red on a PR, `unit` reports as a red
+ * job in a green run, `geometry` as a green job with an error annotation, and none is a
+ * required check.
  *
  * The `unit`-project siblings are still where the STRUCTURAL half lives and are still
  * worth having — `__tests__/appsPageLayoutRender.test.ts` (the measure box, on the
@@ -277,7 +278,7 @@ async function renderAndMeasure(measurePx: AppsMeasure | undefined, collapsed: b
 }
 
 describe('the /apps route set that renders the shared chrome', () => {
-  test('🔴 is exactly these 12 routes (fails when it GROWS or SHRINKS)', () => {
+  test('🔴 is exactly these 13 routes (fails when it GROWS or SHRINKS)', () => {
     // A ledger, not a floor. The alignment assertions below loop over this set, so a
     // set that silently shrank — or emptied — would make them pass while checking
     // nothing. Adding an apps page is meant to fail here and be added deliberately.
@@ -300,12 +301,14 @@ describe('the /apps route set that renders the shared chrome', () => {
       '/apps/revenue',
       '/apps/review',
       '/apps/review/[publishRequestId]',
+      // The store, moved from `/apps` (now the viewer's app home); measure-free like it was.
+      '/apps/store',
       '/apps/store-preview/[slug]',
       '/apps/submit',
     ]);
     // Both classes are represented, so the loops below exercise the measured AND the
-    // measure-free branch of the layout rather than one of them 12 times.
-    expect(ROUTES.filter((r) => r.measure === undefined)).toHaveLength(6);
+    // measure-free branch of the layout rather than one of them 13 times.
+    expect(ROUTES.filter((r) => r.measure === undefined)).toHaveLength(7);
     expect(ROUTES.filter((r) => r.measure !== undefined)).toHaveLength(6);
   });
 });

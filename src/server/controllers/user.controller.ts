@@ -5,6 +5,10 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { bustUserCreator } from '~/server/services/user-creator.service';
 import { isAllowedAvatarUrl } from '~/server/utils/image-scan-url';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
+import {
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+} from '~/server/services/image-url-ownership';
 import { constants } from '~/server/common/constants';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
@@ -16,6 +20,8 @@ import type { Context, ProtectedContext } from '~/server/createContext';
 import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
 import { LegalHoldError } from '~/server/services/legal-hold.service';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { readModelVersionIdsViaKysely } from '~/server/services/hot-reads-5.reads';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { recordUserFeatureToggle } from '~/server/prom/feature-toggle.metrics';
 import { getUserFollows } from '~/server/redis/caches';
@@ -109,6 +115,7 @@ import {
   isUsernamePermitted,
   restoreUser,
   setLeaderboardEligibility,
+  setEventPointsExclusion,
   setUserMuted,
   setUserSetting,
   setEmailVerificationRequired,
@@ -148,6 +155,7 @@ import { releaseStrikeMuteOnTosAcceptance } from '~/server/services/strike.servi
 import { trackModActivity } from '~/server/services/moderator.service';
 import { logToAxiom } from '~/server/logging/client';
 import { Flags } from '~/shared/utils/flags';
+import { isSystemAccountMeta } from '@civitai/auth';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import { isUUID } from '~/utils/string-helpers';
@@ -228,7 +236,11 @@ export const getUserCreatorHandler = async ({
       isModerator: ctx.user?.isModerator,
     });
     if (!user) throw throwNotFoundError('Could not find user');
-    if (!ctx.user?.isModerator) user.excludeFromLeaderboards = false; // Mask from non-moderators
+    if (!ctx.user?.isModerator) {
+      // Mask from non-moderators
+      user.excludeFromLeaderboards = false;
+      user.excludeFromEventPoints = false;
+    }
 
     return user;
   } catch (error) {
@@ -547,6 +559,11 @@ export const completeOnboardingHandler = async ({
         });
         if (!validCaptcha) throw throwAuthorizationError('Recaptcha Failed. Please try again.');
 
+        // No "already onboarded" gate: a resubmit is how a failed payment is retried, and the
+        // externalTransactionId below keeps that from paying twice.
+        const current = await dbWrite.user.findUnique({ where: { id }, select: { meta: true } });
+        const bonusOwed = !isSystemAccountMeta(current?.meta);
+
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         if (input.userReferralCode || input.source) {
           await createUserReferral({
@@ -557,17 +574,18 @@ export const completeOnboardingHandler = async ({
           });
         }
 
-        await withRetries(() =>
-          createBuzzTransaction({
-            fromAccountId: 0,
-            toAccountId: ctx.user.id,
-            amount: getUserBuzzBonusAmount(),
-            description: 'Onboarding bonus',
-            type: TransactionType.Reward,
-            externalTransactionId: `${ctx.user.id}-onboarding-bonus`,
-            toAccountType: 'blue',
-          })
-        ).catch(handleLogError);
+        if (bonusOwed)
+          await withRetries(() =>
+            createBuzzTransaction({
+              fromAccountId: 0,
+              toAccountId: ctx.user.id,
+              amount: getUserBuzzBonusAmount(),
+              description: 'Onboarding bonus',
+              type: TransactionType.Reward,
+              externalTransactionId: `${ctx.user.id}-onboarding-bonus`,
+              toAccountType: 'blue',
+            })
+          ).catch(handleLogError);
         break;
       }
     }
@@ -648,6 +666,7 @@ export const updateUserHandler = async ({
       id,
       select: {
         username: true,
+        image: true,
         profilePictureId: true,
         profilePicture: { select: { userId: true } },
       },
@@ -660,6 +679,9 @@ export const updateUserHandler = async ({
       profilePicture && profilePicture.id !== user.profilePictureId
         ? { ...profilePicture, id: undefined }
         : undefined;
+    const newPictureUrls = [newPicture?.url, data.image !== user.image ? data.image : null];
+    await assertClientImageUrlsUsable({ urls: newPictureUrls, userId: id });
+    await assertClientKeysIssuedToCaller({ urls: newPictureUrls, userId: id });
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];
@@ -883,10 +905,7 @@ export const getUserEngagedModelVersionsHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const userId = ctx.user.id;
-  const versions = await dbRead.modelVersion.findMany({
-    where: { modelId: input.id },
-    select: { id: true },
-  });
+  const versions = await readModelVersionIdsViaKysely((await loadKyselyDb()).kyselyRead, input.id);
   const modelVersionIds = versions.map((x) => x.id);
 
   try {
@@ -1189,7 +1208,6 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
             downloadCountAllTime: true,
             thumbsUpCountAllTime: true,
             uploadCountAllTime: true,
-            answerCountAllTime: true,
           },
         },
         cosmetics: {
@@ -1765,6 +1783,14 @@ export const getUserPurchasedRewardsHandler = async ({ ctx }: { ctx: ProtectedCo
     throw throwDbError(error);
   }
 };
+
+export async function setEventPointsExclusionHandler({
+  input,
+}: {
+  input: SetLeaderboardEligibilitySchema;
+}) {
+  await setEventPointsExclusion(input);
+}
 
 export async function setLeaderboardEligibilityHandler({
   ctx,

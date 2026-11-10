@@ -14,6 +14,7 @@ import {
   handleError,
   submitWorkflow as clientSubmitWorkflow,
 } from '@civitai/orchestration-client';
+import { UploadType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -50,17 +51,18 @@ import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
 import { env as clientEnv } from '~/env/client';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
-  deleteObject,
   getB2S3Client,
   getGetUrl,
   getPutUrl,
   getS3Client,
+  getUploadBucket,
   isB2Url,
   parseKey,
 } from '~/utils/s3-utils';
 import { generateToken } from '~/utils/string-helpers';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import type { Orchestrator } from '../http/orchestrator/orchestrator.types';
+import { isBaseModelKey, mergeBlockedModels } from '~/utils/training-blocked-models';
 
 export type TrainingRequest = {
   trainingDetails: TrainingDetailsObj;
@@ -251,6 +253,9 @@ export async function getTrainingServiceStatus() {
 export async function setTrainingServiceStatus(input: {
   available: boolean;
   message?: string | null;
+  /** The blocked base-model keys (`trainingModelInfo`); omitted leaves the list as it is. */
+  blockedModels?: string[];
+  blockedModelReasons?: Record<string, string> | null;
 }) {
   // Read raw and throw on sysRedis error. We MUST NOT use the fail-open
   // getTrainingServiceStatus() here: if its read failed open and the
@@ -264,6 +269,13 @@ export async function setTrainingServiceStatus(input: {
     ...current,
     available: input.available,
     message: input.message ?? null,
+    ...(input.blockedModels
+      ? mergeBlockedModels(
+          current.blockedModels,
+          { blockedModels: input.blockedModels, blockedModelReasons: input.blockedModelReasons },
+          isBaseModelKey
+        )
+      : {}),
   };
   await sysRedis.hSet(
     REDIS_SYS_KEYS.SYSTEM.FEATURES,
@@ -312,6 +324,18 @@ export type AutoCaptionResponse = {
   [key: string]: string;
 };
 
+// The auto-label input is the zip the client just uploaded via /api/upload, whose keys are
+// `${type}/${userId}/...` (see buildUploadKey).
+function assertOwnTrainingTempUpload(url: string, userId: number) {
+  const { key, bucket } = parseKey(url);
+  if (
+    !bucket ||
+    bucket !== getUploadBucket(isB2Url(url) ? 'b2' : 'default') ||
+    !key.startsWith(`${UploadType.TrainingImagesTemp}/${userId}/`)
+  )
+    throw throwBadRequestError('Invalid URL');
+}
+
 export const autoTagHandler = async ({
   url,
   modelId,
@@ -319,11 +343,10 @@ export const autoTagHandler = async ({
 }: AutoTagInput & {
   userId: number;
 }) => {
+  assertOwnTrainingTempUpload(url, userId);
   const { url: getUrl } = isB2Url(url)
     ? await getGetUrl(url, { s3: getB2S3Client() })
     : await getGetUrl(url);
-  const { key, bucket } = parseKey(url);
-  if (!bucket) throw throwBadRequestError('Invalid URL');
 
   // todo check if this property comes through
 
@@ -338,15 +361,11 @@ export const autoTagHandler = async ({
     payload,
   });
 
-  console.log(response, payload);
-
   if (response.status === 429) {
-    deleteObject(bucket, key).catch();
     throw throwRateLimitError();
   }
 
   if (!response.ok) {
-    deleteObject(bucket, key).catch();
     throw throwBadRequestError(
       'We are not able to process your request at this time. Please try again later.'
     );
@@ -364,11 +383,10 @@ export const autoCaptionHandler = async ({
 }: AutoCaptionInput & {
   userId: number;
 }) => {
+  assertOwnTrainingTempUpload(url, userId);
   const { url: getUrl } = isB2Url(url)
     ? await getGetUrl(url, { s3: getB2S3Client() })
     : await getGetUrl(url);
-  const { key, bucket } = parseKey(url);
-  if (!bucket) throw throwBadRequestError('Invalid URL');
 
   const payload: Orchestrator.Training.ImageAutoCaptionJobPayload = {
     mediaUrl: getUrl,
@@ -385,12 +403,10 @@ export const autoCaptionHandler = async ({
   });
 
   if (response.status === 429) {
-    deleteObject(bucket, key).catch();
     throw throwRateLimitError();
   }
 
   if (!response.ok) {
-    deleteObject(bucket, key).catch();
     throw throwBadRequestError(
       'We are not able to process your request at this time. Please try again later.'
     );
@@ -496,9 +512,8 @@ export async function updateTrainingWorkflowRecords(
   // Read, never derived: createTrainingWorkflow stamps this at submit, and this runs again on any
   // re-sync of a finished run. Deriving it here would renumber one — and generation binds an epoch
   // by value, where getTrainingFileEpochNumberDetails answers a miss with the newest epoch rather
-  // than an error, so those bindings would silently move to other weights. Not enforced, though:
-  // `modelFileMetadataSchema` takes `trainingResults` from the client, so an owner can seed any
-  // offset on their own run.
+  // than an error, so those bindings would silently move to other weights. modelFile writes drop
+  // client `trainingResults`, but a file saved before that may carry any offset.
   const epochData = offsetEpochNumbers(derivedEpochs, trainingResults.epochOffset);
 
   const resolvedStartedAt = trainingResults.startedAt ?? derived.startedAt;
@@ -540,6 +555,8 @@ export async function updateTrainingWorkflowRecords(
     history,
     sampleImagesPrompts: derived.sampleImagesPrompts,
     transactionData: derived.transactionData ?? trainingResults.transactionData ?? [],
+    // Rewritten on every sync, so it clears once the hold ends.
+    heldForReview: derived.underReview || undefined,
   };
 
   const newMetadata: FileMetadata = {

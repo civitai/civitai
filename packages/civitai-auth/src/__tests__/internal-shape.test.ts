@@ -68,7 +68,7 @@ describe('client request shape', () => {
     await m.createDeviceAccountClient().list('civ-token=cur.jwt; civ-device=dev-1');
     await m.createDeviceAccountClient().switch('civ-token=cur.jwt; civ-device=dev-1', 9);
     await m.createImpersonationClient().impersonate('civ-token=cur.jwt', 7);
-    await m.createSessionTokenClient().revoke('cur.jwt');
+    await m.createSessionTokenClient().revoke('cur.jwt', { deviceId: 'dev-1' });
 
     const calls = hubCalls(fetch);
     expect(calls.map(([url, init]) => [new URL(url).pathname, init.method])).toEqual([
@@ -85,6 +85,7 @@ describe('client request shape', () => {
     }
     expect(JSON.parse(calls[0][1].body ?? '{}').deviceId).toBe('dev-1');
     expect(JSON.parse(calls[2][1].body ?? '{}')).toMatchObject({ deviceId: 'dev-1', userId: 9 });
+    expect(JSON.parse(calls[4][1].body ?? '{}').deviceId).toBe('dev-1');
   });
 
   it('keeps the legacy shape when the hub refuses the credential', async () => {

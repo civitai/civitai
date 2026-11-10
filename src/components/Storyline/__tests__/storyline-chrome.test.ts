@@ -222,6 +222,22 @@ describe('StorylineEntryChip', () => {
     act(() => chip?.click());
     expect(onEnter).toHaveBeenCalledTimes(1);
   });
+
+  // Deliberate: at 390px the phone header leaves the chip ~200px, and the label would take half
+  // of it from the title. Keep the label off there; the accessible name still says it.
+  it('drops the Read label in a phone header, keeping the title and the spoken invitation', () => {
+    const c = render(
+      createElement(StorylineEntryChip, {
+        title: 'The Patch',
+        depth: 3,
+        onEnter: vi.fn(),
+        compact: true,
+      })
+    );
+    const chip = c.querySelector<HTMLElement>('[data-testid="storyline-enter"]');
+    expect(text(chip)).toBe('The Patch · Ch 4');
+    expect(chip?.getAttribute('aria-label')).toBe('Read the storyline The Patch from chapter 4');
+  });
 });
 
 describe('the map on desktop: a sheet that drops from the chip', () => {
@@ -504,13 +520,42 @@ describe('the map', () => {
     expect(mocks.dialog.onClose).not.toHaveBeenCalled();
   });
 
-  it('leaves the storyline from the foot of the sheet', () => {
-    const storyline = renderMap();
-    act(() => q('storyline-leave')?.click());
-    expect([calls(storyline.leave).length, text(q('storyline-leave'))]).toEqual([
-      1,
+  // Readers expected the post, and staying on the image only dropped the chip.
+  it("leaves the storyline from the foot of the sheet to the current chapter's post", () => {
+    renderMap({ chapterIds: [1, 2], current: 2 });
+    expect([q('storyline-leave')?.getAttribute('href'), text(q('storyline-leave'))]).toEqual([
+      '/posts/20',
       "Leave the storyline · browse this post's images",
     ]);
+  });
+
+  it.each(['/posts/10', '/posts/10/a-title'])(
+    'closes the reader instead when it is a dialog over that post (%s)',
+    (asPath) => {
+      mocks.asPath = asPath;
+      renderMap();
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+      act(() => void q('storyline-leave')?.dispatchEvent(event));
+      expect([event.defaultPrevented, calls(mocks.dialog.onClose).length]).toEqual([true, 1]);
+    }
+  );
+
+  it('is a plain link over another post whose id starts the same', () => {
+    mocks.asPath = '/posts/100';
+    renderMap();
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    act(() => void q('storyline-leave')?.dispatchEvent(event));
+    expect([event.defaultPrevented, calls(mocks.dialog.onClose).length]).toEqual([false, 0]);
+  });
+
+  it('leaves in place when the current chapter has no post to open', () => {
+    const storyline = renderMap({ chapters: [chapter(1, 0, null)] });
+    act(() => q('storyline-leave')?.click());
+    expect([
+      q('storyline-leave')?.getAttribute('href'),
+      calls(storyline.leave).length,
+      text(q('storyline-leave')),
+    ]).toEqual([null, 1, 'Leave the storyline']);
   });
 
   it('shows the share of each way off the end from the first choice', () => {

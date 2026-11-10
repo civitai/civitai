@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   acceptDeliveryBlocked,
+  attachmentSlotsLeft,
+  attachmentStatus,
+  canAttachInStatus,
   buyerFinalsState,
   type DealFileFacts,
   filesByRound,
@@ -208,5 +211,51 @@ describe('deliverWait', () => {
     expect(deliverWait([file({ status: 'Failed', scanStatus: 'Pending' })], 0)).toBeNull();
     expect(deliverWait([file({ round: 0, scanStatus: 'Pending' })], 1)).toBeNull();
     expect(deliverWait([], 0)).toBeNull();
+  });
+});
+
+describe('buyer attachments', () => {
+  it('can be attached from the request until the seller delivers', () => {
+    expect(canAttachInStatus('Requested')).toBe(true);
+    expect(canAttachInStatus('Accepted')).toBe(true);
+    expect(canAttachInStatus('InRevision')).toBe(true);
+    for (const status of ['Delivered', 'Completed', 'Disputed', 'Cancelled'] as const)
+      expect(canAttachInStatus(status)).toBe(false);
+  });
+
+  it('tells the buyer a rejected file was not accepted', () => {
+    const attachment = (over: Partial<DealFileFacts>) => file({ kind: 'Attachment', ...over });
+    expect(attachmentStatus(attachment({ scanStatus: 'Failed' })).label).toBe('Not accepted');
+    expect(attachmentStatus(attachment({ status: 'Failed' })).label).toBe('Not accepted');
+    expect(attachmentStatus(attachment({ scanStatus: 'Pending' })).label).toBe('Being checked');
+    expect(attachmentStatus(attachment({ scanStatus: 'Passed' })).label).toBe('Shared');
+  });
+
+  it('polls while one is being checked, whatever the deal status', () => {
+    const checking = file({ kind: 'Attachment', round: 0, scanStatus: 'Pending' });
+    expect(filesPollMs([checking], { status: 'Requested', revisionsUsed: 0 })).toBe(30_000);
+    expect(
+      filesPollMs([{ ...checking, scanStatus: 'Passed' }], {
+        status: 'Requested',
+        revisionsUsed: 0,
+      })
+    ).toBe(false);
+  });
+
+  it('counts the limit across rounds, and attachments take no delivery slot', () => {
+    const attachments = [0, 1, 2].map((round) => file({ kind: 'Attachment', round }));
+    expect(attachmentSlotsLeft(attachments)).toBe(attachmentSlotsLeft([]) - 3);
+    expect(uploadSlotsLeft('Final', 'None', attachments, 0)).toBe(
+      uploadSlotsLeft('Final', 'None', [], 0)
+    );
+  });
+
+  it('refuses the same file types as a Final, worded for attaching', () => {
+    expect(uploadRefusal('Attachment', { name: 'a.mp4', type: 'video/mp4', size: MB })).toMatch(
+      /can't be attached/
+    );
+    expect(
+      uploadRefusal('Attachment', { name: 'set.zip', type: 'application/zip', size: MB })
+    ).toBeNull();
   });
 });

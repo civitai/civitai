@@ -9,9 +9,35 @@ import { trackedReasons } from '~/utils/login-helpers';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import { USER_MENU_ITEM_IDS } from '~/shared/constants/user-menu.constants';
 import {
+  APP_ERROR_STAGES,
+  APP_SESSION_HOSTS,
+  APP_SESSION_MAX_COUNT,
+  APP_SESSION_MAX_DURATION_MS,
+  APP_SUBMIT_FAILURE_REASONS,
+  APP_TELEMETRY_APP_BLOCK_ID_RE,
+} from '~/shared/constants/app-telemetry.constants';
+import {
+  EXPERIMENT_ASSIGNMENT_SOURCES,
+  EXPERIMENT_SURFACES,
+  experimentKeys,
+  HAT_TURF_CLIENT_ACTIONS,
+  HAT_TURF_EVENTS,
+  isExperimentVariant,
+  type ExperimentKey,
+} from '~/shared/constants/experiments.constants';
+import {
   USER_MENU_GROUP_IDS,
   USER_MENU_HEADER_GROUP,
 } from '~/shared/constants/user-menu-groups.constants';
+import { listingSortSchema } from '~/server/schema/blocks/app-listing-read.schema';
+import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
+import {
+  APP_STORE_ACTIONS,
+  APP_STORE_LISTING_ID_RE,
+  APP_STORE_POSITION_MAX,
+  APP_STORE_QUERY_LENGTH_BUCKETS,
+  APP_SURFACES,
+} from '~/shared/utils/app-store-telemetry';
 
 /*
  * Size caps on free-form tracking input, in JSON characters. Each is measured before anything
@@ -846,11 +872,10 @@ const appsBuildActionSchema = z.object({
     /**
      * Which funnel step fired. Ordered as the funnel runs.
      *
-     * `agent_prompt_copy` is the SECOND route to the same destination, kept separate from
-     * `cli_copy` on purpose: the page offers "copy three commands and run them" and "paste
-     * one prompt into a coding agent", and which one developers take is the question the
-     * split exists to answer. Folding it into `cli_copy` would make that unanswerable after
-     * the fact, and `state` does not separate them (both fire in all three states).
+     * `agent_prompt_copy` is a copy of the "paste one prompt into a coding agent" route.
+     * `cli_copy` (copying one of the manual CLI steps) was REMOVED with those steps: nothing
+     * on `/apps/build` offers them any more, so nothing emits it. Rows already stored keep
+     * the value — `details` is a String column — but the schema no longer accepts new ones.
      *
      * 🔴 ADDING A VALUE HERE NEEDS NO ClickHouse MIGRATION — `details` is a String column
      * (`tracker.action` JSON-stringifies it), so only a new `type` would. It DOES need the
@@ -858,7 +883,7 @@ const appsBuildActionSchema = z.object({
      * enum's members exactly; that pin is why this is a deliberate edit rather than a
      * silent one.
      */
-    action: z.enum(['view', 'request_access', 'cli_copy', 'agent_prompt_copy', 'create_entry']),
+    action: z.enum(['view', 'request_access', 'agent_prompt_copy', 'create_entry']),
     /**
      * Which of the page's three states the viewer was in. Mirrors `AppsBuildState` in
      * `~/components/Apps/appsBuildState`; the two are pinned together by
@@ -883,6 +908,114 @@ const userMenuClickSchema = z.object({
     // Opened from the Pinned section, not merely an item that is pinned.
     pinned: z.boolean(),
     surface: z.enum(['desktop', 'mobile']),
+  }),
+});
+
+// Push opt-in funnel, from the visit prompt and the settings-page card. Client-postable like
+// `UserMenu_Click`: an inflated count only misleads us. Every field is closed.
+export const PUSH_PROMPT_ACTIONS = [
+  'shown',
+  'enable_click',
+  'not_now',
+  'granted',
+  'native_dismissed',
+  'denied',
+  'subscribed',
+  'failed',
+] as const;
+export const PUSH_PROMPT_VARIANTS = ['new', 'finish', 'another-device'] as const;
+const pushPromptSchema = z.object({
+  type: z.literal('Push_Prompt'),
+  details: z.object({
+    action: z.enum(PUSH_PROMPT_ACTIONS),
+    surface: z.enum(['visit-prompt', 'settings-card']),
+    variant: z.enum(PUSH_PROMPT_VARIANTS),
+    platform: z.enum(['desktop', 'mobile']),
+  }),
+});
+
+// Client-postable: a forged exposure can only add a row for the poster's own session user, and the
+// readout counts each user once.
+const experimentExposureSchema = z.object({
+  type: z.literal('Experiment_Exposure'),
+  details: z
+    .object({
+      exp: z.enum(experimentKeys as [ExperimentKey, ...ExperimentKey[]]),
+      variant: z.string().max(64),
+      assignment: z.enum(EXPERIMENT_ASSIGNMENT_SOURCES),
+      surface: z.enum(EXPERIMENT_SURFACES),
+    })
+    .refine((d) => isExperimentVariant(d.exp, d.variant), { message: 'unknown variant' }),
+});
+
+// Only the UI actions: `opt_in`/`opt_out` (HAT_TURF_SERVER_ACTIONS) are written by the server, so a
+// script cannot inflate an arm's join rate.
+const hatTurfActionSchema = z.object({
+  type: z.literal('HatTurf_Action'),
+  details: z.object({
+    action: z.enum(HAT_TURF_CLIENT_ACTIONS),
+    event: z.enum(HAT_TURF_EVENTS),
+    surface: z.enum(EXPERIMENT_SURFACES).optional(),
+  }),
+});
+
+// App store acquisition funnel: which store cards were SEEN, which were clicked, which detail pages
+// were opened and which primary CTAs were followed. One type with the step in `details.action`, like
+// `AppsBuild_Action`, so a new step is a zod change and not an Enum16 migration.
+//
+// Client-postable, so no public count may read it.
+// Every field is closed or bounded, with no free text (unknown keys are stripped).
+const appStoreActionSchema = z.object({
+  type: z.literal('AppStore_Action'),
+  details: z.object({
+    action: z.enum(APP_STORE_ACTIONS),
+    listingId: z.string().regex(APP_STORE_LISTING_ID_RE),
+    surface: z.enum(APP_SURFACES),
+    /** Zero-based index of the card in the grid / rail it was rendered in. */
+    position: z.number().int().min(0).max(APP_STORE_POSITION_MAX).optional(),
+    /** The store grid's sort and category FILTER at the time (not the card's own category). */
+    sort: listingSortSchema.optional(),
+    category: z.enum(MARKETPLACE_CATEGORIES).optional(),
+    /** Whether the store search box held any (trimmed) text. Never the text itself. */
+    hasQuery: z.boolean().optional(),
+    /** The trimmed search text's length, as a closed bucket. */
+    queryLength: z.enum(APP_STORE_QUERY_LENGTH_BUCKETS).optional(),
+  }),
+});
+
+// App Blocks in-app telemetry, from the two block hosts. Client-postable through the public
+// `/api/track/batch` beacon, which checks Origin only.
+//
+// 🔴 THESE ROWS ARE UNTRUSTED AND INFLATABLE. Anyone can post any number of them for any
+// `appBlockId`, signed in or not, and inside a legitimate session the APP ITSELF drives
+// `submits` and `messagesToHost` (it chooses how many bridge messages to send). Analyse them as
+// distinct users at most, as an operational signal only; they must NEVER feed ranking, store
+// placement, payouts or anything else an app could gain from inflating.
+//
+// What the schema does guarantee: every field is closed or bounded — `appBlockId` is
+// shape-checked, the reason/stage/host are enums, the numbers are integer-capped — so no free
+// text reaches the `details` column. The hosts clamp before sending, because one rejected event
+// fails its whole batch.
+const appErrorSchema = z.object({
+  type: z.literal('App_Error'),
+  details: z.object({
+    appBlockId: z.string().regex(APP_TELEMETRY_APP_BLOCK_ID_RE),
+    reason: z.enum(APP_SUBMIT_FAILURE_REASONS),
+    stage: z.enum(APP_ERROR_STAGES),
+  }),
+});
+
+const appSessionSchema = z.object({
+  type: z.literal('App_Session'),
+  details: z.object({
+    appBlockId: z.string().regex(APP_TELEMETRY_APP_BLOCK_ID_RE),
+    host: z.enum(APP_SESSION_HOSTS),
+    /** Time the host was mounted AND the document visible, in ms. */
+    durationMs: z.number().int().min(0).max(APP_SESSION_MAX_DURATION_MS),
+    /** SUBMIT_WORKFLOW requests the host received. */
+    submits: z.number().int().min(0).max(APP_SESSION_MAX_COUNT),
+    /** Bridge messages the block sent the host (each accepted inbound message, once). */
+    messagesToHost: z.number().int().min(0).max(APP_SESSION_MAX_COUNT),
   }),
 });
 
@@ -913,6 +1046,12 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   announcementClickSchema,
   appsBuildActionSchema,
   userMenuClickSchema,
+  pushPromptSchema,
+  experimentExposureSchema,
+  hatTurfActionSchema,
+  appStoreActionSchema,
+  appErrorSchema,
+  appSessionSchema,
 ]);
 // What `track.addAction` parses: the action, with its whole JSON length capped at
 // `TRACK_DETAILS_MAX_CHARS`. Kept off `trackActionSchema` itself, whose arms are read through
@@ -1140,4 +1279,36 @@ export const blockEventBatchSchema = z.object({
     )
     .min(1)
     .max(BLOCK_EVENT_BATCH_MAX),
+});
+
+// Removed together with `media-overlap-detector`.
+export type MediaOverlapInput = z.infer<typeof mediaOverlapSchema>;
+export const mediaOverlapSchema = z.object({
+  overlapMs: z.number().int().min(0).max(3_600_000),
+  elements: z
+    .array(
+      z.object({
+        connected: z.boolean(),
+        media: z
+          .string()
+          .regex(/^[0-9a-f-]{36}$/i)
+          .nullable(),
+        tag: z.enum(['video', 'audio']),
+        paused: z.boolean(),
+        muted: z.boolean(),
+        volume: z.number().min(0).max(1),
+        currentTime: z.number().min(0),
+        duration: z.number().min(0).nullable(),
+        readyState: z.number().int().min(0).max(4),
+        controls: z.boolean(),
+        autoplay: z.boolean(),
+        inDialog: z.boolean(),
+        fullscreen: z.boolean(),
+      })
+    )
+    .min(2)
+    .max(16),
+  pathnames: z.array(z.string().max(512)).max(5),
+  visibility: z.string().max(16),
+  userAgent: z.string().max(512),
 });

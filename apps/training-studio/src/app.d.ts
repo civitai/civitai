@@ -3,7 +3,13 @@ import type { SessionUser } from '@civitai/auth';
 // See https://svelte.dev/docs/kit/types#app.d.ts
 declare global {
   namespace App {
-    // interface Error {}
+    interface Error {
+      message: string;
+      /** A 409 from a training submit: how many mature images the server found. */
+      matureCount?: number;
+      /** The auto-label stub's 503: our own refusal, before any orchestrator work. */
+      code?: 'auto_label_unavailable';
+    }
     interface Locals {
       // Non-optional: the hooks.server.ts guard redirects login/forbidden before any handler runs, so
       // route code always has a signed-in user. (Public paths skip the guard and must not read this.)

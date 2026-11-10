@@ -8,9 +8,9 @@ import {
   Text,
   TextInput,
   Title,
-  Tooltip,
   SimpleGrid,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBell, IconBellOff, IconPencilMinus, IconSearch } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
@@ -93,6 +93,14 @@ export default function CosmeticShopMain() {
   const ownedCosmeticIds = useOwnedCosmeticIds();
   const { wishlistedIds } = useQueryWishlistedShopItems();
   const features = useFeatureFlags();
+
+  // The sections mount only after the owned-cosmetics query settles, past the browser's own
+  // hash scroll, so a /shop#shop-section-<id> link has to scroll once they exist.
+  const sectionsReady = !isLoading && !loadingOwnedCosmetics;
+  useEffect(() => {
+    if (!sectionsReady) return;
+    document.getElementById(window.location.hash.slice(1))?.scrollIntoView();
+  }, [sectionsReady]);
 
   const { updateLastViewed, isFetched } = useShopLastViewed();
 

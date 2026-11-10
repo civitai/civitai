@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -119,6 +119,9 @@ beforeEach(async () => {
   dbHandle.current = new Kysely({ dialect: pgliteDialect(pg) });
   dbHandle.read = null;
 });
+
+// A cluster holds its memory until closed; a file of them left open runs a worker out of RAM.
+afterEach(() => pg.close());
 
 const reportedPosts = async () =>
   (
@@ -259,6 +262,7 @@ describe('enqueueing posts on unpublished resources for review', () => {
   // neither refuse a correct count nor let a wrong one through.
   it('counts a real run from the primary, not the replica', async () => {
     const replica = await freshPglite();
+    onTestFinished(() => replica.close());
     await replica.exec(SCHEMA);
     dbHandle.read = new Kysely({ dialect: pgliteDialect(replica) });
 

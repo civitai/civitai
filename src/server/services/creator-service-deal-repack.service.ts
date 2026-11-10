@@ -4,6 +4,7 @@ import type { Readable } from 'stream';
 import { finished } from 'stream/promises';
 import * as yazl from 'yazl';
 import { dbWrite } from '~/server/db/client';
+import { SCANNED_FILE_KINDS } from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
 import {
   handOffToScan,
@@ -40,13 +41,13 @@ const logRepack = (message: string, fields: Record<string, unknown>, type = 'inf
 
 type ClaimedZip = { id: number; dealId: number; round: number; s3Key: string; size: number };
 
-/** Takes the one unpacked zip Final that has no delivery archive yet and that no run holds. */
+/** Takes the one unpacked zip Final or Attachment that has no delivery archive yet and that no run holds. */
 function claimZip() {
   return dbWrite.$queryRaw<ClaimedZip[]>`
     UPDATE "ServiceDealFile" f SET "processingAt" = now()
     WHERE f."id" IN (
       SELECT p."id" FROM "ServiceDealFile" p
-      WHERE p."kind" = 'Final'::"ServiceDealFileKind"
+      WHERE p."kind"::text IN (${SCANNED_FILE_KINDS})
         AND p."status" = 'Ready'::"ServiceDealFileStatus"
         AND p."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
         AND p."unpackedAt" IS NOT NULL AND p."repackedAt" IS NULL AND p."failReason" IS NULL
@@ -187,7 +188,9 @@ export async function repackFinals({
       WHERE "id" = ${file.id}::int AND "repackedAt" IS NULL
         AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus" AND "failReason" IS NULL`;
     if (stored === 0) {
+      // Deleted while it worked.
       await deleteObject(bucket, key).catch(() => null);
+      await release(file.id);
       return 0;
     }
     // The archive is the file's from here on. A hand-off that fails is logged, not undone.

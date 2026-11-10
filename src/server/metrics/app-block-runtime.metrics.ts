@@ -42,6 +42,7 @@ import client, { type Counter, type Gauge, type Histogram, type Registry } from 
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 // Type-only: the document store's closed error-code set, so the `code` label is typed by it.
 import type { StorageApiCode } from '~/server/services/apps/doc-store-api';
+import type { AppSubmitFailureReason } from '~/shared/constants/app-telemetry.constants';
 
 /**
  * Low-cardinality LOGICAL endpoint names for the block REST surface. Passed by
@@ -119,8 +120,8 @@ export type AppBlockEndpoint =
   // deliberate multi-second hold into the p95 of the SPEND path, and a spend
   // failure disappears into the volume of estimates. They also charge DIFFERENT
   // rate-limit buckets — `poll` its own `:poll:` bucket, `estimate`/`cancel` the
-  // catalog bucket, `submit` none at all (bounded by the per-app velocity cap
-  // instead) — which is the other dimension these series get read for.
+  // catalog bucket, `submit` its own `:submit:` and `:submit-user:` buckets — which is the other
+  // dimension these series get read for.
   | 'workflows_submit'
   | 'workflows_estimate'
   | 'workflows_poll'
@@ -281,7 +282,20 @@ export type AppBlockEndpoint =
 // tRPC metrics). The former 'buzz_transactions' / 'buzz_daily_compensation' /
 // 'buzz_accounts' entries were dropped with those endpoints and stay dropped.
 
-export type AppBlockRequestResult = 'success' | 'client_error' | 'server_error' | 'forbidden';
+/**
+ * `not_found` is a READ MISS, not an error: a document-store GET for a key that does not exist
+ * yet. An app's first read of a key it has never written is a 404 by contract, so counting it as
+ * `client_error` inflated every storage-using app's error ratio with its own normal first run.
+ * It is its own value rather than folded into `success` so the miss rate stays readable. Only a
+ * response the handler explicitly marked (`markBlockRequestReadMiss`) gets it; every other 404
+ * (an unknown route, an undeclared collection) is still `client_error`.
+ */
+export type AppBlockRequestResult =
+  | 'success'
+  | 'client_error'
+  | 'server_error'
+  | 'forbidden'
+  | 'not_found';
 
 export type AppBlockRenderResult = 'ok' | 'error';
 
@@ -418,6 +432,15 @@ export type AppCapLimitsDegradeReason = 'db_error' | 'missing_row';
 export const APP_SPEND_CAP_REJECTION_REASONS = ['daily', 'velocity', 'unavailable'] as const;
 
 export type AppSpendCapRejectionReason = (typeof APP_SPEND_CAP_REJECTION_REASONS)[number];
+
+/**
+ * The `reason` label of `civitai_app_block_succeeded_without_media_total` — see
+ * the counter. `absent` is the defect signal to alert on.
+ */
+export const APP_BLOCK_SUCCEEDED_WITHOUT_MEDIA_REASONS = ['absent', 'unavailable'] as const;
+
+export type AppBlockSucceededWithoutMediaReason =
+  (typeof APP_BLOCK_SUCCEEDED_WITHOUT_MEDIA_REASONS)[number];
 
 /**
  * The viewer-confirmed quote kinds — `kind:'training'` and the confirmed pass-through
@@ -654,6 +677,31 @@ export function statusToRequestResult(status: number): AppBlockRequestResult {
   return 'success';
 }
 
+/**
+ * Responses a handler marked as an expected READ MISS. A WeakSet keyed on the response object, so
+ * the mark lives exactly as long as the request and needs no header or field on the wire.
+ */
+const READ_MISS_RESPONSES = new WeakSet<object>();
+
+/** Mark a response as a read miss (a 404 for a key that does not exist yet). Total. */
+export function markBlockRequestReadMiss(res: object): void {
+  try {
+    READ_MISS_RESPONSES.add(res);
+  } catch {
+    /* instrument-only */
+  }
+}
+
+/**
+ * The `result` label for a finished block REST response. A 404 the handler marked as a read miss
+ * is `not_found`; everything else follows `statusToRequestResult`. A marked response that ended
+ * with any other status (a later write failed, say) keeps its status's label.
+ */
+export function blockRequestResult(res: { statusCode: number }): AppBlockRequestResult {
+  if (res.statusCode === 404 && READ_MISS_RESPONSES.has(res)) return 'not_found';
+  return statusToRequestResult(res.statusCode);
+}
+
 function getOrCreateCounter(
   reg: Registry,
   name: string,
@@ -708,6 +756,7 @@ type Bundle = {
   capLimitsDegradedTotal: Counter<string>;
   spendCapRejectionsTotal: Counter<string>;
   confirmedQuoteOverchargeTotal: Counter<string>;
+  succeededWithoutMediaTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
   consentRevocationRefusalsTotal: Counter<string>;
@@ -720,6 +769,7 @@ type Bundle = {
   bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
+  submitFailuresTotal: Counter<string>;
   launchTotalSeconds: Histogram<string>;
   launchPhaseSeconds: Histogram<string>;
   launchInitPostsTotal: Histogram<string>;
@@ -857,7 +907,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const requestsTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_requests_total',
-    'App Block REST requests by app, logical endpoint, and outcome (success|client_error|server_error|forbidden)',
+    'App Block REST requests by app, logical endpoint, and outcome (success|client_error|server_error|forbidden|not_found). not_found is a document-store read of a key that does not exist yet (a normal first read), NOT an error: exclude it from error ratios. Other 404s stay client_error',
     ['app_block_id', 'endpoint', 'result']
   );
 
@@ -1049,6 +1099,41 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_confirmed_quote_overcharge_total',
     'App Block submits of a viewer-CONFIRMED quote (kind=training: a training run; kind=step: a confirmed pass-through step) that the orchestrator billed ABOVE the price the viewer confirmed in host chrome. Expected zero; any increase is a viewer charged more than they agreed to. Detected after the charge (cannot be prevented at submit). Details (app, step type, workflow, both amounts) are on the block-confirmed-quote-overcharge log line.',
     ['kind']
+  );
+
+  // ── SUCCEEDED generations that DELIVERED NOTHING ─────────────────────────────
+  // One increment per App Blocks workflow whose terminal poll first observed
+  // `succeeded` while at least one bridge-submitted MEDIA step succeeded with no
+  // media of its own (`classifySucceededWithoutMedia`), whatever its sibling
+  // steps delivered. The viewer paid for media the app never got — the #8132
+  // shape (a `comfy` step's blobs read off the wrong key).
+  //
+  // ONCE PER WORKFLOW, not per poll: the poll runs its terminal branch on EVERY
+  // poll after completion, so it increments only when the transition-only
+  // `updateBlockWorkflowStatus` reported the row actually changed (1). A workflow
+  // with no `block_workflows` row (dev tokens, a lost submit write) is never
+  // counted; neither is one whose row some other writer already moved to
+  // `succeeded` first, nor one never polled to terminal through `pollWorkflow`
+  // (the tab closed, or the app reconciles through `queryAppWorkflows` /
+  // `useAppWorkflows`, which never write the row) — so this is a LOWER bound.
+  //
+  // 🔴 ALERT ON reason="absent", NOT ON THE TOTAL. `absent` = the location the
+  // step's own extractor reads held no blobs at all: the #8132 defect shape, a
+  // bridge bug. `unavailable` = blobs were there but every one was pending,
+  // withheld or blocked by the orchestrator: the viewer still saw nothing, but it
+  // is not a bridge bug and will not be zero. Like the overcharge counter, the
+  // labelled child is born at its first increment, so alert on the value or an
+  // increase over a long window, not on a short `rate()`.
+  //
+  // 🔴 BOTH LABELS ARE BOUNDED: `step_type` is a native or registered
+  // orchestrator `$type` (code-owned), `passthrough` for any app-chosen
+  // pass-through `$type`, or `mixed`; `reason` is the closed pair above. No
+  // app/user/workflow id.
+  const succeededWithoutMediaTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_succeeded_without_media_total',
+    'App Blocks workflows that SUCCEEDED (and so were charged) with at least one bridge-submitted MEDIA step that succeeded but produced no media of its own, whatever its sibling steps delivered (text from a text step does not cancel it). Media steps: native image/video $types, registered steps whose moderation posture produces media, and pass-through steps that returned nothing at all. Text-posture, training, suppressOutput and non-bridge steps are never media steps, so a text-only workflow is never counted. ALERT ON reason="absent": the location the step\'s extractor reads held no blobs at all (the #8132 defect shape, a bridge bug). reason="unavailable": blobs were there but all pending, withheld or blocked by the orchestrator (not a bridge bug; expected non-zero). With several empty steps, absent wins. step_type = the empty media step\'s orchestrator $type when native or registered, `passthrough` for a pass-through $type, `mixed` when several. Counted once per workflow, when the terminal poll first records `succeeded` in block_workflows. A LOWER bound: not counted when the workflow has no block_workflows row, when another writer recorded `succeeded` first, or when it was never polled to terminal through pollWorkflow (tab closed, or the app reconciles through queryAppWorkflows/useAppWorkflows).',
+    ['step_type', 'reason']
   );
 
   // ── REST approved-status GATE verdicts ───────────────────────────────────────
@@ -1450,7 +1535,25 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['outcome']
   );
 
+  // ── workflow SUBMIT failures ────────────────────────────────────────────────
+  // One increment per `blocks.submitWorkflow` call that failed, thrown OR returned as a failed
+  // snapshot (the per-call budget and workflow-ceiling refusals are returned, not thrown). Emitted
+  // by the procedure's own middleware, so every `kind` arm is covered without a call per branch.
+  //
+  // Cardinality: (A+2) x 6, where A = apps with a verified token (the same `claims.appBlockId`
+  // bound the REST RED counter above uses), +1 for `dev` (every dev token) and +1 for `unknown`
+  // (the call failed before the token was verified). `reason` is a code-owned enum derived from
+  // the error's tRPC code and a fixed set of message patterns; the message itself is never a
+  // label.
+  const submitFailuresTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_submit_failures_total',
+    'App Block blocks.submitWorkflow calls that FAILED, thrown or returned as a failed snapshot, by app and reason (validation = input refused; ecosystem_unavailable = the chosen ecosystem is hidden or disabled; insufficient_buzz = the per-call budget, a workflow ceiling or the viewer funds refused it; rate_limited = a submit limiter refused it; server_error = the server or orchestrator could not answer; other = anything else, e.g. a scope or consent refusal). app_block_id is dev for every dev token and unknown when the call failed before its token was verified',
+    ['app_block_id', 'reason']
+  );
+
   return {
+    submitFailuresTotal,
     requestsTotal,
     requestDurationSeconds,
     rendersTotal,
@@ -1461,6 +1564,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     capLimitsDegradedTotal,
     spendCapRejectionsTotal,
     confirmedQuoteOverchargeTotal,
+    succeededWithoutMediaTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
     consentRevocationRefusalsTotal,
@@ -1713,6 +1817,25 @@ export function recordConfirmedQuoteOvercharge(kind: AppBlockConfirmedQuoteKind)
 }
 
 /**
+ * Fail-soft emit of one succeeded-without-media workflow (see the counter). Called
+ * from `blocks.pollWorkflow` only when the transition-only status write reported
+ * the `succeeded` transition AND `classifySucceededWithoutMedia` returned a label.
+ *
+ * 🔴 TOTAL, like every emitter here: the poll's contract is to return the snapshot.
+ */
+export function recordSucceededWithoutMedia(
+  stepType: string,
+  reason: AppBlockSucceededWithoutMediaReason
+): void {
+  try {
+    const { succeededWithoutMediaTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    succeededWithoutMediaTotal.inc({ step_type: stepType, reason });
+  } catch {
+    /* instrument-only — never let a metrics error touch the poll */
+  }
+}
+
+/**
  * Fail-soft emit of one revocation refusal. Called from BOTH guards that read
  * `BlockRevocation.isRevoked` — `withBlockScope` (`block-scope.middleware.ts`) and
  * `authorizeBlockBridgeToken` (`blocks/block-bridge-auth.service.ts`).
@@ -1938,7 +2061,9 @@ export type AppBlockRateLimitBucket =
   | 'post'
   | 'post-app'
   | 'poll'
-  | 'estimate-cells';
+  | 'estimate-cells'
+  | 'submit'
+  | 'submit-user';
 
 /**
  * Fail-soft emit of ONE bridge rate-limit refusal.
@@ -2090,5 +2215,35 @@ export function recordBlockCustomEvents(outcome: AppBlockCustomEventOutcome, cou
     customEventsTotal.inc({ outcome }, count);
   } catch {
     /* instrument-only */
+  }
+}
+
+/**
+ * The `app_block_id` label for a submit failure: `dev` for every dev token (the same bucketing the
+ * REST RED counter applies, because a dev token's id can be synthetic), the verified app id
+ * otherwise.
+ */
+export function submitFailureAppBlockLabel(claims: {
+  dev?: unknown;
+  appBlockId?: unknown;
+}): string {
+  if (claims.dev === true) return 'dev';
+  return typeof claims.appBlockId === 'string' && claims.appBlockId.length > 0
+    ? claims.appBlockId
+    : 'unknown';
+}
+
+/** Fail-soft emit of one failed workflow submit. Never throws. */
+export function recordAppBlockSubmitFailure(
+  appBlockIdLabel: string,
+  reason: AppSubmitFailureReason
+): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().submitFailuresTotal.inc({
+      app_block_id: appBlockIdLabel,
+      reason,
+    });
+  } catch {
+    /* instrument-only — never let a metrics error change a submit's outcome */
   }
 }

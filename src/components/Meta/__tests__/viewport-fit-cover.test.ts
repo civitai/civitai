@@ -76,8 +76,8 @@ const INSET_CONSUMERS = [
   'src/components/Ads/AdhesiveAd.tsx',
   // An inline `styles.inner` padding, which outranks the shell's modal rule the same way
   // SupportModal's Tailwind one does — but only while an on-screen keyboard is up, when the
-  // feedback dialog swaps its 10dvh offsets for a small gap. It folds the TOP inset into that
-  // gap; the bottom edge is the keyboard's, so there is no bottom inset to pay.
+  // feedback dialog swaps its default vertical offsets for a small gap. It folds the TOP inset
+  // into that gap; the bottom edge is the keyboard's, so there is no bottom inset to pay.
   'src/components/AppBlocks/ChromeFeedbackEntry.tsx',
   'src/components/AppLayout/AppFooter.tsx',
   // The phone account menu's sheet: starts under the header plus the top inset and pads its
@@ -89,7 +89,13 @@ const INSET_CONSUMERS = [
   'src/components/Csam/CsamImageSelection.tsx',
   'src/components/Games/NewOrder/NewOrderImageRatings.tsx',
   'src/components/Image/DetailV2/ImageDetail2.tsx',
+  // The remix tray floats `fixed` above the footer's Assistant button, so it adds the same insets
+  // the footer's cluster does.
+  'src/components/Image/Remix/RemixTray.tsx',
   'src/components/ImageGeneration/GeneratedOutputLightbox.tsx',
+  // The mobile generator is `fixed` over the whole viewport: it pads its top by the status bar's
+  // inset (the open form sheet starts below it) and its closed form bar by the home indicator's.
+  'src/components/ImageGeneration/MobileGenerator.module.scss',
   'src/components/IterativeEditor/IterativeImageEditor.module.scss',
   // The ONE node_modules viewport-edge surface paid at its call site rather
   // than at the `@layer mantine` seam: `@mantine/nprogress` renders a
@@ -110,6 +116,12 @@ const INSET_CONSUMERS = [
   // above, through inline `styles`.
   'src/components/Support/SupportModal.tsx',
   'src/components/generation_v2/GenerationLayout.tsx',
+  // The generator footer's frame in the mobile generator: when only alert strips show, it drops
+  // GenerationLayout's 0.5rem floor but keeps the home indicator's inset.
+  'src/components/generation_v2/FooterStrips.module.scss',
+  // A Menu shown as a bottom sheet in the mobile generator: not a Mantine Drawer, so the shell's
+  // drawer rule doesn't pay its bottom inset.
+  'src/components/Drawer/menuSheet.module.scss',
   'src/pages/avatar-generator.tsx',
   'src/pages/comics/project/[id]/ProjectWorkspace.module.scss',
   // `src/providers/ThemeProvider.tsx` LEFT this list deliberately. It used to
@@ -1248,5 +1260,41 @@ describe('the AppFooter / AdhesiveAd bottom-edge handover', () => {
         'reason it stops paying — it would then never pay on any route it renders on, and its ' +
         'links sit under the home indicator for every paid member and every moderator route.'
     ).not.toContain('--safe-area-inset-bottom-unpaid');
+  });
+});
+
+describe('the AppFooter slide-out handover', () => {
+  const APP_FOOTER = path.join(REPO_ROOT, 'src/components/AppLayout/AppFooter.tsx');
+  const BATCH_RAIL = path.join(REPO_ROOT, 'src/components/Post/Batch/BatchSummaryRail.tsx');
+
+  /**
+   * The footer hides with a React-only transform; `data-hidden` is the only DOM
+   * signal of it, and globals.css turns that into `--app-footer-offset`. If any
+   * side drifts the variable stays unset and the batch rail (`z-40`) falls to
+   * the viewport bottom UNDER the visible footer (`z-50`) — untappable on mobile.
+   */
+  it('the footer, the root rule and the consumer agree', () => {
+    const footer = stripComments(read(APP_FOOTER));
+    const css = read(GLOBALS_CSS);
+    const rail = stripComments(read(BATCH_RAIL));
+
+    expect(
+      footer,
+      '`data-hidden` must be ABSENT while the footer shows: `data-hidden={!showFooter}` renders ' +
+        '`data-hidden="false"`, which `:not([data-hidden])` treats as hidden forever.'
+    ).toContain('data-hidden={!showFooter || undefined}');
+    expect(
+      footer,
+      'the `footer` type selector in globals.css excludes `PageActionBar`; AppFooter must stay a `<footer>`.'
+    ).toMatch(/<footer\b[^>]*data-app-footer/s);
+    expect(
+      css,
+      'globals.css no longer sets `--app-footer-offset` from the visible footer.'
+    ).toMatch(
+      /#__next:has\(footer\[data-app-footer\]:not\(\[data-hidden\]\)\)\s*\{\s*--app-footer-offset:/
+    );
+    expect(rail, '`BatchSummaryRail` no longer follows the footer.').toContain(
+      'var(--app-footer-offset,0px)'
+    );
   });
 });

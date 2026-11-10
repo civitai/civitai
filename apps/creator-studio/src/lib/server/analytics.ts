@@ -31,6 +31,7 @@ export type TopImage = {
   url: string;
   nsfwLevel: number;
   type: 'image' | 'video' | 'audio';
+  createdAt: string | null;
 };
 export type ContentTotals = {
   reactions: number;
@@ -90,6 +91,7 @@ export type TopArticle = {
   coverUrl: string | null;
   nsfwLevel: number;
   publishedAt: string | null;
+  createdAt: string | null;
 };
 
 // A comic row on the /analytics/content Comics tab. Deliberately `readers`, not `views` — see fetchComics.
@@ -104,6 +106,7 @@ export type ComicSummary = {
   newReaders: number;
   projectViews: number;
   chapterReads: number;
+  createdAt: string;
 };
 
 // `tracking` distinguishes "nothing to show yet" from "zero", which these surfaces need because their tables
@@ -168,15 +171,27 @@ export const getContentTotals = createCache({
 }).get;
 
 // Top reacted media over the range (images + videos, split by `type` on each page).
+// `pool` swaps which items are ranked: the most-reacted (default) or the newest. Cache keys are strings and
+// numbers only, hence a name rather than a flag.
+export type TopPool = 'top' | 'recent';
 export const getTopMedia = createCache({
-  name: 'analytics:top-media:v5',
-  fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
-    fetchTopMedia(userId, from, to),
+  name: 'analytics:top-media:v7',
+  fetch: ({
+    userId,
+    from,
+    to,
+    pool,
+  }: {
+    userId: number;
+    from: string;
+    to: string;
+    pool?: TopPool;
+  }) => fetchTopMedia(userId, from, to, pool),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
 export const getComics = createCache({
-  name: 'analytics:comics:v4',
+  name: 'analytics:comics:v5',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchComics(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
@@ -210,9 +225,18 @@ export const getArticleViewDetail = createCache({
 }).get;
 
 export const getTopArticles = createCache({
-  name: 'analytics:top-articles:v3',
-  fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
-    fetchTopArticles(userId, from, to),
+  name: 'analytics:top-articles:v5',
+  fetch: ({
+    userId,
+    from,
+    to,
+    pool,
+  }: {
+    userId: number;
+    from: string;
+    to: string;
+    pool?: TopPool;
+  }) => fetchTopArticles(userId, from, to, pool),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
@@ -358,10 +382,20 @@ function articleViewsDailySql(ids: number[], from: string, to: string): string {
 }
 
 // The creator's articles ranked by views over the range, enriched from Postgres for title + cover.
-async function fetchTopArticles(userId: number, from: string, to: string): Promise<TopArticle[]> {
+async function fetchTopArticles(
+  userId: number,
+  from: string,
+  to: string,
+  pool: TopPool = 'top'
+): Promise<TopArticle[]> {
   const uid = Number(userId);
   const ids = await articleIdsFor(uid);
   if (!ids.length) return [];
+  // Recent swaps the pool: the creator's newest published articles, whether or not anyone viewed or reacted to
+  // them in the range. Re-sorting the most-viewed pool by date would drop exactly the article the creator
+  // posted today.
+  const newestIds = pool === 'recent' ? await newestArticleIds(uid, from, to) : null;
+  if (newestIds && !newestIds.length) return [];
 
   const ch = getClickhouse();
   // Views and reactions are fetched for the same id set so the client can re-rank between them without a
@@ -369,12 +403,16 @@ async function fetchTopArticles(userId: number, from: string, to: string): Promi
   // entityId, and the owner predicate is what keeps this off a broad scan.
   const [viewRows, reactionRows] = await Promise.all([
     ch.$query<{ articleId: number | string; views: number | string }>(
-      `SELECT entityId AS articleId, sum(views) AS views FROM daily_views WHERE entityType = '${VIEW_ENTITY.article}' AND entityId IN (${ids.join(
+      `SELECT entityId AS articleId, sum(views) AS views FROM daily_views WHERE entityType = '${VIEW_ENTITY.article}' AND entityId IN (${(
+        newestIds ?? ids
+      ).join(
         ','
       )}) AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY articleId ORDER BY views DESC LIMIT 100`
     ),
     ch.$query<{ articleId: number | string; reactions: number | string }>(
-      `SELECT entityId AS articleId, sum(if(type = 'Article_Create', 1, -1)) AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Article_Create', 'Article_Delete') AND entityId IN (${ids.join(
+      `SELECT entityId AS articleId, sum(if(type = 'Article_Create', 1, -1)) AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Article_Create', 'Article_Delete') AND entityId IN (${(
+        newestIds ?? ids
+      ).join(
         ','
       )}) AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY articleId`
     ),
@@ -385,7 +423,7 @@ async function fetchTopArticles(userId: number, from: string, to: string): Promi
   );
   // An article with reactions but no views in the period still belongs in the list — otherwise ranking by
   // reactions would silently omit it.
-  const shownIds = new Set([...viewsById.keys(), ...reactionsById.keys()]);
+  const shownIds = new Set(newestIds ?? [...viewsById.keys(), ...reactionsById.keys()]);
   if (!shownIds.size) return [];
 
   const impressionsById = await fetchImpressionsByEntity(
@@ -403,6 +441,7 @@ async function fetchTopArticles(userId: number, from: string, to: string): Promi
       'Article.title as title',
       'Article.nsfwLevel as nsfwLevel',
       'Article.publishedAt as publishedAt',
+      'Article.createdAt as createdAt',
       'Image.url as coverUrl',
     ])
     .execute();
@@ -417,8 +456,25 @@ async function fetchTopArticles(userId: number, from: string, to: string): Promi
       coverUrl: a.coverUrl ?? null,
       nsfwLevel: Number(a.nsfwLevel ?? 0),
       publishedAt: a.publishedAt ? new Date(a.publishedAt).toISOString() : null,
+      createdAt: a.createdAt ? new Date(a.createdAt).toISOString() : null,
     }))
     .sort((x, y) => y.views - x.views);
+}
+
+// The creator's newest published articles created within the range, newest first. Bounded to the page's 100-row
+// cap in Postgres, so the ClickHouse lookups that follow take a literal id list of at most 100.
+async function newestArticleIds(uid: number, from: string, to: string): Promise<number[]> {
+  const rows = await dbRead
+    .selectFrom('Article')
+    .where('userId', '=', uid)
+    .where('status', '=', 'Published')
+    .where(sql<boolean>`"createdAt" >= ${from}::date AND "createdAt" < (${to}::date + 1)`)
+    .orderBy(sql`"createdAt" desc nulls last`)
+    .orderBy('id', 'desc')
+    .limit(TOP_MEDIA_PER_TYPE)
+    .select(['id'])
+    .execute();
+  return rows.map((r) => r.id);
 }
 
 // Model views are creator-wide here, not per version. A view is of the *model* page, so hanging it off the
@@ -573,8 +629,15 @@ export const TOP_MEDIA_PG_CONCURRENCY = 4;
 // no media type, and ClickHouse's `images_created` keeps rows for deleted images, so any cut made in ClickHouse
 // lets deleted ids take a live image's slot. Every reacted id up to TOP_MEDIA_READ_CEILING comes back, and
 // `enrichTopImages` cuts.
-async function fetchTopMedia(userId: number, from: string, to: string): Promise<TopImage[]> {
+async function fetchTopMedia(
+  userId: number,
+  from: string,
+  to: string,
+  pool: TopPool = 'top'
+): Promise<TopImage[]> {
   const uid = Number(userId);
+  if (pool === 'recent')
+    return enrichTopImages(await newestMediaReactions(uid, from, to), from, to);
   const raw = await getClickhouse().$query<{
     imageId: number | string;
     reactions: number | string;
@@ -593,6 +656,47 @@ async function fetchTopMedia(userId: number, from: string, to: string): Promise<
       .catch(() => undefined);
   }
   return enrichTopImages(raw, from, to);
+}
+
+// Recent's pool: the newest published images and the newest published videos created within the range (N of each,
+// the same per-type cap), each carrying its reactions over the range — zero when nobody reacted, which the
+// reaction pool can never contain. Ordering by `(createdAt, id)` lets `Image_userId_createdAt` serve the window
+// and the cap. Unpublished images (no post, or a post not yet live) are not content
+// the audience can see, so they stay out, matching the reaction pool, which only knows images people reacted to.
+async function newestMediaReactions(
+  uid: number,
+  from: string,
+  to: string
+): Promise<{ imageId: number; reactions: number }[]> {
+  const newest = async (type: 'image' | 'video') =>
+    (
+      await sql<{ id: number }>`
+        SELECT i.id
+        FROM "Image" i
+        JOIN "Post" p ON p.id = i."postId"
+        WHERE i."userId" = ${uid}
+          AND i.type = ${type}::"MediaType"
+          AND i."createdAt" >= ${from}::date AND i."createdAt" < (${to}::date + 1)
+          AND p."publishedAt" IS NOT NULL AND p."publishedAt" <= now()
+        ORDER BY i."createdAt" DESC, i.id DESC
+        LIMIT ${TOP_MEDIA_PER_TYPE}
+      `.execute(dbRead)
+    ).rows.map((r) => Number(r.id));
+  const [images, videos] = await Promise.all([newest('image'), newest('video')]);
+  const ids = [...images, ...videos];
+  if (!ids.length) return [];
+  const rows = await getClickhouse().$query<{
+    imageId: number | string;
+    reactions: number | string;
+  }>(
+    `SELECT entityId AS imageId, ${netReactions} AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Image_Create', 'Image_Delete') AND entityId IN (${ids.join(
+      ','
+    )}) AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId`
+  );
+  const reactionsById = new Map(
+    rows.map((r) => [Number(r.imageId), Math.max(0, Number(r.reactions))])
+  );
+  return ids.map((imageId) => ({ imageId, reactions: reactionsById.get(imageId) ?? 0 }));
 }
 
 // Input is in ranking order, so the first N of each type are its top N.
@@ -658,9 +762,15 @@ async function enrichTopImages(
   for (let i = 0; i < ids.length; i += TOP_MEDIA_PG_BATCH_SIZE) {
     batches.push(ids.slice(i, i + TOP_MEDIA_PG_BATCH_SIZE));
   }
-  type ImageRow = { id: number; url: string | null; nsfwLevel: number | null; type: string };
+  type ImageRow = {
+    id: number;
+    url: string | null;
+    nsfwLevel: number | null;
+    type: string;
+    createdAt: Date | string | null;
+  };
   const results = await mapWithConcurrency(batches, TOP_MEDIA_PG_CONCURRENCY, (batch) =>
-    sql<ImageRow>`SELECT id, url, "nsfwLevel", type FROM "Image" WHERE id = ANY(${batch})`.execute(
+    sql<ImageRow>`SELECT id, url, "nsfwLevel", type, "createdAt" FROM "Image" WHERE id = ANY(${batch})`.execute(
       dbRead
     )
   );
@@ -678,6 +788,7 @@ async function enrichTopImages(
           url: img.url,
           nsfwLevel: Number(img.nsfwLevel ?? 0),
           type: img.type as TopImage['type'],
+          createdAt: img.createdAt ? new Date(img.createdAt).toISOString() : null,
         },
       ];
     })
@@ -890,6 +1001,7 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
     coverUrl: string | null;
     nsfwLevel: number;
     published: boolean;
+    createdAt: Date | string;
     chapters: string | number;
     readers: string | number;
     newReaders: string | number;
@@ -899,6 +1011,7 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
            i.url                                       AS "coverUrl",
            p."nsfwLevel"                               AS "nsfwLevel",
            (p."publishedAt" IS NOT NULL)               AS "published",
+           p."createdAt"                               AS "createdAt",
            count(DISTINCT c.id)                        AS "chapters",
            count(DISTINCT r."userId")                  AS "readers",
            count(DISTINCT r."userId") FILTER (
@@ -913,7 +1026,7 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
     WHERE p."userId" = ${uid}
       -- Comic deletion is soft and lives in status, not in a deletedAt column like the sibling entities.
       AND p.status <> 'Deleted'
-    GROUP BY p.id, p.name, i.url, p."nsfwLevel", p."publishedAt"
+    GROUP BY p.id, p.name, i.url, p."nsfwLevel", p."publishedAt", p."createdAt"
     ORDER BY count(DISTINCT r."userId") DESC, p.id DESC
   `.execute(dbRead);
 
@@ -970,6 +1083,7 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
         newReaders: Number(r.newReaders),
         projectViews: projectViews.get(projectId) ?? 0,
         chapterReads: chapterReads.get(projectId) ?? 0,
+        createdAt: new Date(r.createdAt).toISOString(),
       };
     }),
   };

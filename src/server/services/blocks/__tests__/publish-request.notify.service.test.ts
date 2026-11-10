@@ -1,5 +1,16 @@
 import JSZip from 'jszip';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * On-site App Block submitter-notification SERVICE emission tests.
@@ -22,8 +33,20 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
   const makeDb = () => ({
     // `approveRequest`'s pre-flight probes the media-split table; no row reads as absent.
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    // The storage-migration approve gate (`reserveStorageMigrationRuns`): no open run.
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        $queryRaw: async () => [],
+        $executeRaw: async () => 0,
+        $executeRawUnsafe: async () => 0,
+      })
+    ),
     appBlockPublishRequest: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The previous approved version (`getPreviousApprovedState`): none.
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The storage-migration history (`loadStorageMigrationBaseline`): none.
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
     },
@@ -43,6 +66,9 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
       findUnique: vi.fn(
         async (..._a: unknown[]): Promise<unknown> => ({ id: 'apl_existing', kind: 'onsite' })
       ),
+      // approveRequest's up-front "which listing does this approve publish" read (the
+      // publish floor): no draft / reset listing here, so nothing is gated.
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       create: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
     },

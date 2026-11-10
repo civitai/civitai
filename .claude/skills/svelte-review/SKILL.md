@@ -1,6 +1,6 @@
 ---
 name: svelte-review
-description: Run the three SvelteKit review agents (correctness, Svelte 5 idiom + UI conventions, abstraction) over a feature segment in apps/moderator, apps/auth or apps/creator-studio, and consolidate their findings. Use before calling a segment done, or when asked to review Svelte app work.
+description: Run the three SvelteKit review agents (correctness, Svelte 5 idiom + UI conventions, abstraction) over a feature segment in apps/moderator, apps/auth, apps/creator-studio or apps/training-studio, and consolidate their findings. Use before calling a segment done, or when asked to review Svelte app work.
 ---
 
 # SvelteKit segment review
@@ -29,7 +29,8 @@ several unrelated slices, review them one at a time; findings from a mixed diff 
 Include uncommitted changes: the review exists to run *before* the commit.
 
 **Name the app.** All three agents take the app directory as their scope, and the UI half of the idiom
-review differs per app — `apps/auth` uses neither `@civitai/ui` nor `text-dark-2` yet.
+review differs per app — `apps/auth` uses neither `@civitai/ui` nor `text-dark-2` yet, and
+`apps/training-studio` has no form actions (its mutations go through the `StudioBackend` seam).
 
 ## 2. Fan out
 

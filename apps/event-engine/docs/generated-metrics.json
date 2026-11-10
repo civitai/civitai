@@ -1,8 +1,8 @@
 {
   "metrics": {
-    "handlers": 24,
-    "handlersWithDebug": 19,
-    "metrics": 78
+    "handlers": 25,
+    "handlersWithDebug": 20,
+    "metrics": 80
   },
   "entityTypes": {
     "Article": {
@@ -12,13 +12,13 @@
       "Laugh": "articleReactionHandler",
       "Like": "articleReactionHandler",
       "collectedCount": "collectionItemHandler",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "tippedAmount": "buzzTipHandler",
       "tippedCount": "buzzTipHandler"
     },
     "Bounty": {
       "benefactorCount": "bountyBenefactorHandler",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "entryCount": "bountyEntryHandler",
       "favoriteCount": "bountyEngagementHandler",
       "trackCount": "bountyEngagementHandler",
@@ -58,7 +58,7 @@
       "ReactionHeart": "(not emitted by this app)",
       "ReactionLaugh": "(not emitted by this app)",
       "ReactionLike": "(not emitted by this app)",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "tippedAmount": "buzzTipHandler",
       "tippedCount": "buzzTipHandler"
     },
@@ -91,7 +91,7 @@
       "Laugh": "imageReactionHandler",
       "Like": "imageReactionHandler",
       "collectedCount": "collectionItemHandler",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "reactionCount": "imageReactionHandler",
       "tippedAmount": "buzzTipHandler",
       "tippedCount": "buzzTipHandler"
@@ -103,7 +103,7 @@
     "User": {
       "articleCount": "articleHandler",
       "bountyCount": "bountyHandler",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "followerCount": "userEngagementHandler",
       "followingCount": "userEngagementHandler",
       "hiddenCount": "userEngagementHandler",
@@ -173,9 +173,13 @@
       "Collection.followerCount"
     ],
     "Comment": [
-      "Model.commentCount"
+      "Model.commentCount",
+      "User.commentCount"
     ],
     "CommentV2": [
+      "User.commentCount"
+    ],
+    "CommentV3": [
       "Article.commentCount",
       "Bounty.commentCount",
       "Image.commentCount",

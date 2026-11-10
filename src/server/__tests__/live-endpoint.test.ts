@@ -59,11 +59,11 @@ const redisTrap = new Proxy(
 vi.mock('~/server/redis/client', () => redisTrap);
 
 // Keep the endpoint-helpers import chain out of the test (it pulls env + axiom +
-// prom + the full db/auth tree). Provide a faithful token-gated WebhookEndpoint
+// prom + the full db/auth tree). Provide a faithful token-gated ProbeEndpoint
 // so the test still exercises the real auth shape of the route.
 const TEST_TOKEN = 'test-webhook-token';
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint:
+  ProbeEndpoint:
     (handler: (req: unknown, res: unknown) => Promise<void>) => async (req: any, res: any) => {
       if (req.query?.token !== TEST_TOKEN) {
         res.status(401).json({ error: 'Unauthorized' });

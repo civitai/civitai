@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 
 // Use vi.hoisted to define mocks that will be available in vi.mock factories
 const {
@@ -12,6 +13,7 @@ const {
   mockSetUserSetting,
   mockGetStaticContent,
   mockTrackModActivity,
+  mockRevokeTokens,
 } = vi.hoisted(() => ({
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
   mockUpdateUserById: vi.fn().mockResolvedValue(undefined),
@@ -21,6 +23,7 @@ const {
   mockSetUserSetting: vi.fn().mockResolvedValue(undefined),
   mockGetStaticContent: vi.fn(),
   mockTrackModActivity: vi.fn().mockResolvedValue(undefined),
+  mockRevokeTokens: vi.fn(),
 }));
 
 // The db and logging clients come from the canonical shared mocks. Property
@@ -61,6 +64,10 @@ vi.mock('~/server/services/content.service', () => ({
   resolveTosHash: (h: string) => h,
 }));
 
+vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestratorCivitai>()),
+  revokeCivitaiUserTokens: mockRevokeTokens,
+}));
 vi.mock('~/server/auth/session-invalidation', () => ({
   invalidateSession: mockInvalidateSession,
   refreshSession: mockRefreshSession,
@@ -162,12 +169,23 @@ function mockTransactionForEscalation(
 // Prisma tagged templates hand the raw SQL over as a TemplateStringsArray.
 const sqlOf = (call: any[]) => (call[0] as string[]).join(' ');
 
+// `afterAccountStandingChanged` arms a real follow-up timer; held here so one test's cannot fire
+// inside another's assertions.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout'] });
+});
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+});
+
 describe('strike.service', () => {
   beforeEach(() => {
     // `reset`, not `clear`: an unconsumed `mockResolvedValueOnce` survives `clearAllMocks` and is
     // served to the next test. It also wipes factory-declared implementations, so re-arm them.
     vi.resetAllMocks();
     mockGetStaticContent.mockResolvedValue({ hash: 'deadbeef' });
+    mockRevokeTokens.mockResolvedValue(true);
   });
 
   // ==========================================================================
@@ -571,6 +589,7 @@ describe('strike.service', () => {
       const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(result).toEqual({ totalPoints: 3, action: 'muted-and-flagged' });
+      expect(mockRevokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: 1 });
       expect(userUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 1 },
@@ -775,6 +794,7 @@ describe('strike.service', () => {
       const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(result).toEqual({ totalPoints: 1, action: 'unmuted' });
+      expect(mockRevokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: 1 });
       expect(userUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 1 },
@@ -1042,6 +1062,8 @@ describe('strike.service', () => {
     it('throws NOT_FOUND when user does not exist', async () => {
       mockDbRead.user.findUnique.mockReset();
       mockDbRead.user.findUnique.mockResolvedValueOnce(null);
+      // Missing from the primary too (the replica-lag fallback reads it).
+      mockDbWrite.user.findUnique.mockResolvedValueOnce(null);
 
       await expect(createStrike(baseInput)).rejects.toThrow('User 100 not found');
     });
@@ -1397,6 +1419,7 @@ describe('strike.service', () => {
       const result = await acceptTosAfterMute({ userId: 1 });
 
       expect(result).toEqual({ unmuted: true });
+      expect(mockRevokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: 1 });
       // The modal's own settings write is not awaited, so this call owns the acceptance record.
       expect(mockSetUserSetting).toHaveBeenCalledWith(
         1,
@@ -1524,6 +1547,7 @@ describe('strike.service', () => {
       mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
 
       const result = await processTimedUnmutes();
+      expect(mockRevokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: 100 });
 
       expect(result).toEqual({ unmutedCount: 1 });
       expect(userUpdate).toHaveBeenCalledWith(

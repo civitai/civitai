@@ -9,8 +9,8 @@ import {
   Text,
   Textarea,
   TextInput,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 

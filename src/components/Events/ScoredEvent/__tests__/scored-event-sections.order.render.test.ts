@@ -26,13 +26,20 @@ type Team = { team: string; score: number; rank: number };
 const PINK_THIRD: Team[] = [{ team: 'Pink', score: 4200, rank: 3 }];
 let teams: Team[] | undefined = PINK_THIRD;
 let snapshotAt = new Date();
+let turfLive = true;
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
     'event.getCosmetic': { useQuery: () => ({ data: cosmetic }) },
     'event.getStandings': {
       useQuery: () => ({
-        data: teams && { teams, teamHats: [], topCosmetics: [], updatedAt: snapshotAt },
+        data: teams && {
+          teams,
+          teamHats: [],
+          topCosmetics: [],
+          updatedAt: snapshotAt,
+          turfLive,
+        },
       }),
     },
     'event.getMyHats': { useQuery: () => ({ data: hats, dataUpdatedAt: 1 }) },
@@ -76,10 +83,18 @@ vi.mock('~/components/Events/ScoredEvent/TeamHatShelf', () => ({ TeamHatShelf: m
 vi.mock('~/components/Events/ScoredEvent/HatCatalogPreview', () => ({
   HatCatalogPreview: marker('catalog'),
 }));
+vi.mock('~/components/HatTurf/EventPointPopsSetting', () => ({
+  EventPointPopsSetting: () => null,
+}));
 vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: marker('rules') }));
+// Its own browser test covers what it shows.
+vi.mock('~/components/Events/ScoredEvent/HatTurfEventSection', () => ({
+  HatTurfEventSection: marker('turf'),
+}));
 vi.mock('~/components/Events/ScoredEvent/TeamStandings', () => ({
   TeamStandings: marker('standings'),
   TopHats: marker('topHats'),
+  TopTurfPlayers: marker('turfPlayers'),
 }));
 
 const { ScoredEventSections } = await import('~/components/Events/ScoredEvent/ScoredEventSections');
@@ -91,6 +106,7 @@ afterEach(() => {
   host?.remove();
   teams = PINK_THIRD;
   snapshotAt = new Date();
+  turfLive = true;
 });
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -138,23 +154,27 @@ function sections({
 }
 
 describe('ScoredEventSections order', () => {
-  it('a visitor who has not joined: how it works, the hat catalogue, then the standings', () => {
+  it('a visitor who has not joined: how it works, the hat catalogue, Hat Turf, then the standings', () => {
     expect(sections({ joined: false, ended: false })).toEqual([
       'hero',
       'rules',
       'catalog',
+      'turf',
       'standings',
       'topHats',
+      'turfPlayers',
     ]);
   });
 
-  it('a player: their hats first, then standings, shop, top hats, rules', () => {
+  it('a player: their hats first, then Hat Turf, standings, shop, top hats, rules', () => {
     expect(sections({ joined: true, ended: false })).toEqual([
       'hero',
       'hats',
+      'turf',
       'standings',
       'shop',
       'topHats',
+      'turfPlayers',
       'rules',
     ]);
   });
@@ -163,9 +183,16 @@ describe('ScoredEventSections order', () => {
     expect(sections({ joined: true, ended: true })).toEqual([
       'hero',
       'standings',
+      'turf',
       'topHats',
       'hats',
     ]);
+  });
+
+  it('leaves out Top turf players until turf is live', () => {
+    turfLive = false;
+    expect(sections({ joined: true, ended: false })).not.toContain('turfPlayers');
+    expect(sections({ joined: false, ended: false })).not.toContain('turfPlayers');
   });
 
   it("hands the hero the player's team, its rank and its points", () => {

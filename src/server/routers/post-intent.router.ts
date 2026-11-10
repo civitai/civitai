@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { POST_TAG_LIMIT } from '~/server/common/constants';
 import { rateLimit } from '~/server/middleware.trpc';
-import { postRateLimits } from '~/server/schema/post.schema';
+import { POST_CREATE_RATE_LIMIT_KEY, postRateLimits } from '~/server/schema/post.schema';
 import { PostIntentRefusal } from '~/server/services/post-intent/post-intent.logic';
 import { publishIntent, stageIntent } from '~/server/services/post-intent/post-intent.service';
 import { guardedProcedure, isFlagProtected, router } from '~/server/trpc';
@@ -25,11 +25,13 @@ function toTrpcError(err: unknown): never {
 const postIntentProcedure = guardedProcedure.use(isFlagProtected('appPostIntent'));
 
 export const postIntentRouter = router({
-  stage: postIntentProcedure
-    .input(manifestInput)
-    .mutation(({ ctx, input }) =>
-      stageIntent({ manifestUrl: input.manifestUrl, userId: ctx.user.id }).catch(toTrpcError)
-    ),
+  stage: postIntentProcedure.input(manifestInput).mutation(({ ctx, input }) =>
+    stageIntent({
+      manifestUrl: input.manifestUrl,
+      userId: ctx.user.id,
+      requestHost: ctx.req?.headers?.host ?? '',
+    }).catch(toTrpcError)
+  ),
   publish: postIntentProcedure
     .input(
       manifestInput.extend({
@@ -39,7 +41,7 @@ export const postIntentRouter = router({
         publish: z.boolean(),
       })
     )
-    .use(rateLimit(postRateLimits, undefined, { sharedKey: 'post:create' }))
+    .use(rateLimit(postRateLimits, undefined, { sharedKey: POST_CREATE_RATE_LIMIT_KEY }))
     .mutation(({ ctx, input }) =>
       publishIntent({ ...input, userId: ctx.user.id }).catch(toTrpcError)
     ),

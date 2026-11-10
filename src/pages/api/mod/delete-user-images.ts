@@ -7,6 +7,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { deleteImages } from '~/server/services/image.service';
 import {
   accountHoldSql,
+  captureImageKeptSql,
   assertAccountNotUnderLegalHold,
   isLegalHoldAbort,
   LEGAL_HOLD_STOPPED,
@@ -43,7 +44,9 @@ export default ModEndpoint(
 
       let deletedImages = 0;
       for (const batch of chunk(imageIds, batchSize)) {
-        const result = await deleteImages(batch, true, { onlyWhere: unlessHeld });
+        const result = await deleteImages(batch, true, {
+          onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}`,
+        });
         deletedImages += result.length;
       }
 
@@ -52,8 +55,11 @@ export default ModEndpoint(
         // Only delete posts owned by the target user to avoid touching other users' posts
         // that may have referenced these images.
         deletedPosts = await dbWrite.$executeRaw`
-          DELETE FROM "Post"
-          WHERE "userId" = ${userId} AND id = ANY(${postIds}::int[]) AND ${unlessHeld}
+          WITH doomed AS (
+            SELECT id FROM "Post"
+            WHERE "userId" = ${userId} AND id = ANY(${postIds}::int[]) AND ${unlessHeld}
+          )
+          DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
         `;
       }
 

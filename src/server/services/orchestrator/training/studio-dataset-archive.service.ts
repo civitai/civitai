@@ -1,4 +1,5 @@
 import { Upload } from '@aws-sdk/lib-storage';
+import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import type { Prisma } from '@prisma/client';
 import type { Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
@@ -18,7 +19,8 @@ import {
   ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
 } from '~/server/utils/archive-helpers';
-import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import { isTrainingModerationApproved } from '~/server/services/orchestrator/training/publish-from-workflow';
+import { studioDatasetVisibility } from '~/server/services/training-data-restricted.service';
 import { bytesToKB } from '~/utils/number-helpers';
 import { getGetUrlByKey, getUploadBucket, getUploadS3Client } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
@@ -42,19 +44,30 @@ const MAX_PENDING_ENTRIES = 2;
 const MAX_UPLOAD_QUEUE_SIZE = 2;
 
 export type StudioDatasetArchive =
-  | { status: 'archived'; items: number; skipped: number; at: string }
+  | {
+      status: 'archived';
+      items: number;
+      skipped: number;
+      /** Every item of an approved run is in the zip, each rated: the only zip that can be
+       *  shared. */
+      complete?: boolean;
+      at: string;
+    }
   | { status: 'unavailable'; reason: string; at: string };
 
 type FileMetadata = Record<string, unknown> & {
   datasetArchiveAttempts?: number;
+  /** A closed owner's row is never given up on, so its failures back off instead. ISO time. */
+  datasetArchiveRetryAfter?: string;
+  datasetArchiveServiceAttempts?: number;
   datasetArchive?: StudioDatasetArchive;
 };
 
 /**
  * Placeholders still waiting for their dataset, newest first: the newest workflows are the ones
- * whose blobs are surest to still exist. This predicate is the partial index
+ * whose blobs are surest to still exist. All but the last condition are the partial index
  * `ModelFile_studio_dataset_pending_idx` verbatim, so the query stays an index read once the
- * backlog is empty.
+ * backlog is empty; the last skips rows backing off after a failed service-token read.
  */
 export async function getPendingStudioDatasetFileIds(limit: number): Promise<number[]> {
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
@@ -63,6 +76,10 @@ export async function getPendingStudioDatasetFileIds(limit: number): Promise<num
       AND "sizeKB" = 0
       AND metadata ? 'selectedEpochUrl'
       AND NOT metadata ? 'datasetArchive'
+      AND (
+        NOT metadata ? 'datasetArchiveRetryAfter'
+        OR (metadata->>'datasetArchiveRetryAfter')::timestamptz < now()
+      )
     ORDER BY id DESC
     LIMIT ${limit}
   `;
@@ -71,19 +88,23 @@ export async function getPendingStudioDatasetFileIds(limit: number): Promise<num
 
 type DatasetItem = { air: string; caption: string };
 
-/** The blob list the run trained on, or null for a run whose data isn't blob-backed. */
-export function getStudioDatasetItems(workflow: Workflow): DatasetItem[] | null {
+/** The blob list the run trained on, or null for a run whose data isn't blob-backed. `total` counts
+ *  every listed entry, including any without a readable `air`. */
+export function getStudioDatasetItems(
+  workflow: Workflow
+): { items: DatasetItem[]; total: number } | null {
   const steps = (workflow.steps ?? []) as { input?: { trainingData?: unknown } }[];
   const trainingData = steps.find((step) => step.input?.trainingData)?.input?.trainingData as
     | { type?: string; items?: { air?: unknown; caption?: unknown }[] }
     | undefined;
   if (trainingData?.type !== 'blobs' || !Array.isArray(trainingData.items)) return null;
-  return trainingData.items
+  const items = trainingData.items
     .filter((item): item is { air: string; caption?: unknown } => typeof item?.air === 'string')
     .map((item) => ({
       air: item.air,
       caption: typeof item.caption === 'string' ? item.caption : '',
     }));
+  return { items, total: trainingData.items.length };
 }
 
 /** The orchestrator's blob key in each stored form of a dataset `air` (mirrors the Studio's
@@ -127,7 +148,12 @@ async function fetchBlob({
   token: string;
   air: string;
   workflowId: string;
-}): Promise<{ bytes: Buffer; key: string; contentType: string | null } | null> {
+}): Promise<{
+  bytes: Buffer;
+  key: string;
+  contentType: string | null;
+  nsfwLevel: string | null;
+} | null> {
   const key = blobKeyFromAir(air);
   try {
     const response = await fetch(
@@ -144,6 +170,7 @@ async function fetchBlob({
       bytes: Buffer.from(await response.arrayBuffer()),
       key,
       contentType: response.headers.get('content-type'),
+      nsfwLevel: response.headers.get('x-nsfw-level')?.toLowerCase() ?? null,
     };
   } catch {
     return null;
@@ -204,10 +231,15 @@ async function uploadDatasetZip({
   const pad = Math.max(2, String(items.length).length);
   let included = 0;
   let captions = 0;
+  let nsfwLevel = 0;
+  let unrated = 0;
   try {
     for (const [index, item] of items.entries()) {
       const blob = await fetchBlob({ baseUrl, token, air: item.air, workflowId });
       if (!blob) continue;
+      const level = blob.nsfwLevel ? orchestratorNsfwLevelMap[blob.nsfwLevel] : undefined;
+      if (level) nsfwLevel |= level;
+      else unrated += 1;
       const base = String(index + 1).padStart(pad, '0');
       await bounded.append(blob.bytes, {
         name: `${base}.${extensionFor(blob.key, blob.contentType)}`,
@@ -236,6 +268,8 @@ async function uploadDatasetZip({
     bytes: archive.pointer(),
     included,
     captions,
+    nsfwLevel: nsfwLevel || undefined,
+    fullyRated: unrated === 0,
     skipped: items.length - included,
     backend: useB2 ? ('backblaze' as const) : ('cloudflare' as const),
   };
@@ -259,7 +293,18 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
       sizeKB: true,
       metadata: true,
       modelVersionId: true,
-      modelVersion: { select: { model: { select: { id: true, userId: true, meta: true } } } },
+      modelVersion: {
+        select: {
+          model: {
+            select: {
+              id: true,
+              userId: true,
+              meta: true,
+              user: { select: { bannedAt: true, deletedAt: true } },
+            },
+          },
+        },
+      },
     },
   });
   const metadata = (file?.metadata ?? {}) as FileMetadata;
@@ -280,18 +325,26 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
     ?.trainingStudioWorkflowId;
   if (!workflowId) return markUnavailable('not a Training Studio model');
 
+  // A banned or deleted owner cannot be minted a token, so their run is read with the service token.
+  const ownerClosed = !!(model.user.bannedAt || model.user.deletedAt);
   try {
-    const token = await getOrchestratorToken(model.userId);
+    const token = ownerClosed
+      ? serviceToken()
+      : await getOrchestratorToken(model.userId, undefined, { allowRestricted: true });
     let workflow: Workflow;
     try {
       workflow = await getWorkflow({ token, path: { workflowId } });
     } catch (error) {
-      if (error instanceof TRPCError && error.code === 'NOT_FOUND')
+      // Under the service token a not-found is not proof the run is gone: it fails safe below.
+      if (error instanceof TRPCError && error.code === 'NOT_FOUND' && !ownerClosed)
         return markUnavailable('workflow no longer exists');
       throw error;
     }
-    const items = getStudioDatasetItems(workflow);
-    if (!items?.length) return markUnavailable('run has no blob dataset');
+    const dataset = getStudioDatasetItems(workflow);
+    if (!dataset?.items.length) {
+      if (ownerClosed) throw new Error('run read with the service token has no blob dataset');
+      return markUnavailable('run has no blob dataset');
+    }
 
     const { baseUrl } = createOrchestratorClient(token).getConfig();
     if (!baseUrl) throw new Error('orchestrator endpoint is not configured');
@@ -301,35 +354,54 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
       model.userId,
       `${file.modelVersionId}_training_data.zip`
     );
+    const { items, total } = dataset;
     const stored = await uploadDatasetZip({ items, baseUrl, token, workflowId, key });
     const sizeKB = bytesToKB(stored.bytes);
     const archived: StudioDatasetArchive = {
       status: 'archived',
       items: stored.included,
       skipped: stored.skipped,
+      complete:
+        stored.skipped === 0 &&
+        stored.included === total &&
+        stored.fullyRated &&
+        isTrainingModerationApproved(workflow),
       at: new Date().toISOString(),
     };
 
-    // Conditional on the row still being the placeholder, so a file the owner swapped in while this
-    // ran is not overwritten (the zip it built is then orphaned, which is the cheaper failure).
-    const { count } = await dbWrite.modelFile.updateMany({
-      where: { id: file.id, sizeKB: 0 },
-      data: {
-        url: stored.url,
-        sizeKB,
-        exists: true,
-        // A dataset is never public by default — the in-app trainer only shares one the owner
-        // opted into. This also closes the placeholders created Public before 2026-10-13.
-        visibility: ModelFileVisibility.Private,
-        metadata: {
-          ...metadata,
-          numImages: stored.included,
-          numCaptions: stored.captions,
-          datasetArchive: archived,
+    const swapped = await dbWrite.$transaction(async (tx) => {
+      // Locked and re-read: the owner's sharing choice can be written while this ran. Conditional on
+      // the row still being the placeholder, so a file the owner swapped in meanwhile is not
+      // overwritten; the zip it built is orphaned.
+      const [row] = await tx.$queryRaw<{ metadata: FileMetadata | null }[]>`
+        SELECT metadata FROM "ModelFile" WHERE id = ${file.id} AND "sizeKB" = 0 FOR UPDATE`;
+      if (!row) return false;
+      const current = row.metadata ?? {};
+      await tx.modelFile.update({
+        where: { id: file.id },
+        data: {
+          url: stored.url,
+          sizeKB,
+          exists: true,
+          visibility: await studioDatasetVisibility(tx, {
+            modelVersionId: file.modelVersionId,
+            metadata: current,
+            complete: archived.complete === true,
+          }),
+          metadata: {
+            ...current,
+            numImages: stored.included,
+            numCaptions: stored.captions,
+            // The zip's rating, which decides the hosts that serve it (trainingDataServableOnHost).
+            ...(stored.nsfwLevel !== undefined && { nsfwLevel: stored.nsfwLevel }),
+            fullyRated: stored.fullyRated,
+            datasetArchive: archived,
+          },
         },
-      },
+      });
+      return true;
     });
-    if (count === 0) return { fileId, outcome: 'skipped' };
+    if (!swapped) return { fileId, outcome: 'skipped' };
 
     await deleteFilesForModelVersionCache(file.modelVersionId);
     await registerFileLocation({
@@ -350,12 +422,49 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
     );
     return { fileId, outcome: 'archived', items: stored.included, skipped: stored.skipped };
   } catch (error) {
-    const attempts = (metadata.datasetArchiveAttempts ?? 0) + 1;
     const message = error instanceof Error ? error.message : String(error);
+    if (ownerClosed) {
+      // Never given up on: the owner can no longer re-upload, so this copy may be the only one left.
+      const serviceAttempts = (metadata.datasetArchiveServiceAttempts ?? 0) + 1;
+      await logToAxiom({
+        type: 'error',
+        name: 'studio-dataset-archive-service-read-failed',
+        fileId,
+        modelVersionId: file.modelVersionId,
+        attempts: serviceAttempts,
+        message,
+      }).catch(() => undefined);
+      const retryAfter = new Date(Date.now() + serviceRetryDelayMs(serviceAttempts));
+      await writeMetadata(file.id, {
+        ...metadata,
+        datasetArchiveServiceAttempts: serviceAttempts,
+        datasetArchiveRetryAfter: retryAfter.toISOString(),
+      });
+      return { fileId, outcome: 'retry', attempts: serviceAttempts, error: message };
+    }
+    // A ban landing mid-run refuses the owner's mint: the next run takes the service-token path.
+    if (error instanceof TRPCError && error.code === 'FORBIDDEN') {
+      const attempts = metadata.datasetArchiveAttempts ?? 0;
+      return { fileId, outcome: 'retry', attempts, error: message };
+    }
+    const attempts = (metadata.datasetArchiveAttempts ?? 0) + 1;
     if (attempts >= STUDIO_DATASET_MAX_ATTEMPTS) return markUnavailable(`failed: ${message}`);
     await writeMetadata(file.id, { ...metadata, datasetArchiveAttempts: attempts });
     return { fileId, outcome: 'retry', attempts, error: message };
   }
+}
+
+const SERVICE_RETRY_BASE_MS = 60 * 60 * 1000;
+const SERVICE_RETRY_MAX_MS = 24 * 60 * 60 * 1000;
+/** 1h, 2h, 4h ... capped at a day: still retried, without crowding newer rows out of a run. */
+export function serviceRetryDelayMs(attempts: number) {
+  return Math.min(SERVICE_RETRY_BASE_MS * 2 ** (attempts - 1), SERVICE_RETRY_MAX_MS);
+}
+
+function serviceToken() {
+  if (!env.ORCHESTRATOR_ACCESS_TOKEN)
+    throw new Error('no orchestrator service token is configured');
+  return env.ORCHESTRATOR_ACCESS_TOKEN;
 }
 
 async function writeMetadata(fileId: number, metadata: FileMetadata) {

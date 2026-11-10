@@ -26,6 +26,7 @@ export const nowPaymentsRouter = router({
   getDepositAddress: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })
     .input(getDepositAddressInputSchema)
+    .use(rateLimit({ limit: 60, period: CacheTTL.hour }))
     .query(getDepositAddressHandler),
   getDepositHistory: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })

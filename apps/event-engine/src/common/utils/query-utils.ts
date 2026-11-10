@@ -57,13 +57,19 @@ const redisHelpers = (redis: IRedisClient) => {
     // re-applying the same delta becomes a no-op — the Redis equivalent of the
     // ClickHouse ReplacingMergeTree dedup. The marker is set BEFORE the
     // existence check on KEYS[1], so an event that arrives while the metric key
-    // is cold (not yet populated) still records "seen": if a reader populates
-    // the key from ClickHouse (which already has this event's row) before the
-    // redelivery lands, the redelivery won't double-count it.
-    // KEYS[2] MUST be hash-tagged to KEYS[1]'s slot (e.g. {<KEYS[1]>}:...)
-    // so both keys co-locate on one cluster node.
+    // is cold still records "seen" and a redelivery can't double-count it.
+    // When ARGV[4] > 0, a first-seen event also sets KEYS[3], the entity's
+    // recent-event marker, with that TTL: a populate that reads ClickHouse before
+    // this event reaches it would skip or wipe the increment, and the marker tells
+    // that populate to refresh again soon (see MetricService.populate in
+    // event-engine-common). ARGV[4] = 0 sets no marker (SET EX 0 is an error).
+    // KEYS[2] and KEYS[3] MUST be hash-tagged to KEYS[1]'s slot (e.g.
+    // {<KEYS[1]>}:...) so all three keys co-locate on one cluster node.
     hIncrIfExistsOnce: `
       if redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[3]) then
+        if tonumber(ARGV[4]) > 0 then
+          redis.call('SET', KEYS[3], '1', 'EX', ARGV[4])
+        end
         if redis.call('EXISTS', KEYS[1]) == 1 then
           return redis.call('HINCRBY', KEYS[1], ARGV[1], ARGV[2])
         end
@@ -71,6 +77,17 @@ const redisHelpers = (redis: IRedisClient) => {
       else
         return 0
       end
+    `,
+    // hReplaceEx that also stamps ARGV[2]: ARGV[3] normally, ARGV[4] when the marker
+    // KEYS[2] exists. Checked in the same script as the write, so a marker set just
+    // before it can't be missed. ARGV[5..] are field/value pairs. KEYS[2] must be
+    // hash-tagged to KEYS[1]'s cluster slot.
+    hReplaceStampedEx: `
+      redis.call('DEL', KEYS[1])
+      local stamp = ARGV[3]
+      if redis.call('EXISTS', KEYS[2]) == 1 then stamp = ARGV[4] end
+      redis.call('HSET', KEYS[1], ARGV[2], stamp, unpack(ARGV, 5))
+      return redis.call('EXPIRE', KEYS[1], ARGV[1])
     `,
   };
   const scriptShas: Partial<Record<keyof typeof scripts, string>> = {};
@@ -107,13 +124,40 @@ const redisHelpers = (redis: IRedisClient) => {
         const result = await executeScript('hIncrIfExists', [key], [field, incrBy.toString()]);
         return result !== 0;
       },
-      // Idempotent hIncrIfExists. `dedupeKey` must be hash-tagged to `key`'s
-      // cluster slot. The increment runs once per unique dedupeKey within ttl
+      // Idempotent hIncrIfExists. `dedupeKey` and `recentEventKey` must be
+      // hash-tagged to `key`'s cluster slot. The increment runs once per unique dedupeKey within ttl
       // seconds; replays are no-ops. Returns false when the increment was
       // skipped (duplicate or cold key).
-      async hIncrIfExistsOnce(key: string, dedupeKey: string, field: string, incrBy: number, ttl: number) {
-        const result = await executeScript('hIncrIfExistsOnce', [key, dedupeKey], [field, incrBy.toString(), String(ttl)]);
+      async hIncrIfExistsOnce(
+        key: string,
+        dedupeKey: string,
+        recentEventKey: string,
+        field: string,
+        incrBy: number,
+        ttl: number,
+        recentEventTtl: number,
+      ) {
+        const result = await executeScript(
+          'hIncrIfExistsOnce',
+          [key, dedupeKey, recentEventKey],
+          [field, incrBy.toString(), String(ttl), String(recentEventTtl)],
+        );
         return result !== 0;
+      },
+      async hReplaceStampedEx(
+        key: string,
+        markerKey: string,
+        stamp: { field: string; value: string; ifMarker: string },
+        fields: Record<string, string>,
+        ttl: number
+      ) {
+        return executeScript('hReplaceStampedEx', [key, markerKey], [
+          String(ttl),
+          stamp.field,
+          stamp.value,
+          stamp.ifMarker,
+          ...Object.entries(fields).flat(),
+        ]);
       },
     }
   }

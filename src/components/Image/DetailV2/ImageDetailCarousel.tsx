@@ -1,8 +1,15 @@
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
+import { HatTurfDetailLayer } from '~/components/HatTurf/detail/HatTurfDetailLayer';
+import { takesHats } from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import { ImageStickerOverlay } from '~/components/Sticker/ImageStickerOverlay';
+import {
+  STICKER_TIMELINE_SPACE,
+  useStickerTimelineOpen,
+} from '~/components/Sticker/StickerMotionEditor';
 import { DrawnMediaHat } from '~/components/Cosmetics/EventDecoration/DrawnMediaHat';
 import type { WornDecoration } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
@@ -16,6 +23,7 @@ import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { UnstyledButton } from '@mantine/core';
 import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.utils';
+import { imageDetailMediaProps } from '~/components/Image/DetailV2/image-detail-main-media';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
@@ -64,7 +72,7 @@ export function ImageDetailCarouselProvider<T extends ImageProps>({
 // VIDEO is here so arrow keys still seek a focused player with native controls
 const IGNORED_HOTKEY_TAGS = ['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO'];
 
-function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | null) {
+export function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | null) {
   if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
     return false;
   const target = event.target;
@@ -72,6 +80,8 @@ function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | nu
   if (target.isContentEditable) return false;
   if (IGNORED_HOTKEY_TAGS.includes(target.tagName)) return false;
   if (target.closest('[role="menu"],[role="listbox"]')) return false;
+  // An element that uses the arrows itself (a sticker being nudged into place).
+  if (target.closest('[data-arrow-keys]')) return false;
   // A dialog stacked on top of the detail view (report, add-to-collection) owns
   // its own arrow handling. The detail view's own modal shell is also a dialog,
   // but it contains the carousel, which is what tells the two apart.
@@ -171,6 +181,8 @@ export function ImageDetailCarousel({
   // what makes the swipe stutter on mobile. Embla emits 'settle' once the
   // animation is done AND the finger is up.
   const [settledIndex, setSettledIndex] = useState(index);
+  // The hat is drawn in a layer outside embla's clipping viewport, and follows its slide from there.
+  const [hatLayer, setHatLayer] = useState<HTMLDivElement | null>(null);
   const onSettleRef = useRef(onSettle);
   onSettleRef.current = onSettle;
 
@@ -211,7 +223,7 @@ export function ImageDetailCarousel({
   if (!images.length) return null;
 
   return (
-    <div ref={ref} className="flex min-h-0 flex-1 items-stretch justify-stretch">
+    <div ref={ref} className="relative flex min-h-0 flex-1 items-stretch justify-stretch">
       <Embla
         withControls={canNavigate}
         className="flex-1"
@@ -238,6 +250,8 @@ export function ImageDetailCarousel({
                     <ImageContent
                       image={image}
                       active={index === i}
+                      hatLayer={hatLayer}
+                      embla={embla}
                       {...connect}
                       videoRef={index === i ? videoRef : undefined}
                     />
@@ -248,6 +262,8 @@ export function ImageDetailCarousel({
           </Embla.Container>
         </Embla.Viewport>
       </Embla>
+      {/* Not clipped like the viewport, so a hat can hang past the picture's corner. */}
+      <div ref={setHatLayer} className="pointer-events-none absolute inset-0 isolate" />
     </div>
   );
 }
@@ -256,8 +272,17 @@ function ImageContent({
   image,
   videoRef,
   active = true,
+  hatLayer,
+  embla,
   ...connect
-}: { image: ImageProps; active?: boolean } & ConnectProps & ImageDetailCarouselProps) {
+}: {
+  image: ImageProps;
+  active?: boolean;
+  hatLayer: HTMLElement | null;
+  embla: EmblaCarouselType | null;
+} & ConnectProps &
+  ImageDetailCarouselProps) {
+  const showEventCosmetics = useShowEventCosmetics();
   const [defaultMuted, setDefaultMuted] = useLocalStorage({
     getInitialValueInEffect: false,
     key: 'detailView_defaultMuted',
@@ -278,6 +303,7 @@ function ImageContent({
   // dragstart carries no pointerType, and android chrome fires it for a long-press
   // drag — leaving that one to embla keeps the touch swipe as `watchTouchDrag` has it
   const pointerType = useRef('mouse');
+  const timelineOpen = useStickerTimelineOpen(image.id);
 
   const handleDragStart = (event: React.DragEvent) => {
     if (pointerType.current !== 'mouse') return;
@@ -299,8 +325,10 @@ function ImageContent({
           onPointerDownCapture={(event) => (pointerType.current = event.pointerType)}
           onDragStartCapture={handleDragStart}
           className="relative flex size-full items-center justify-center"
+          // The sticker timeline floats in the room this leaves, so it never covers the video.
+          style={timelineOpen ? { paddingBottom: STICKER_TIMELINE_SPACE } : undefined}
         >
-          {!safe && width && height ? (
+          {!safe ? (
             <div
               className="relative flex max-h-full max-w-full flex-1"
               style={{
@@ -313,28 +341,26 @@ function ImageContent({
             </div>
           ) : (
             <EdgeMedia
-              src={image.url}
-              name={image.name ?? image.id.toString()}
+              // `src`, `name`, `type`, `anim` and `original`: the props that shape the request,
+              // shared with the shell's preload of this image (see `image-detail-main-media`) so
+              // the two cannot ask for different URLs.
+              {...imageDetailMediaProps(image)}
               alt={image.name ?? undefined}
-              type={image.type}
               imageId={image.id}
-              className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
+              className="max-h-full w-auto max-w-full"
               wrapperProps={{
-                className: `flex items-center justify-center max-h-full w-auto max-w-full ${
-                  !safe ? 'invisible' : ''
-                }`,
+                className: 'flex items-center justify-center max-h-full w-auto max-w-full',
                 style: {
                   aspectRatio: (image?.width ?? 0) / (image?.height ?? 0),
                 },
               }}
               // No `width`: EdgeImage turns one into an inline `maxWidth` that beats `max-w-full`,
-              // and the aspect-ratio wrapper then clips the image's height.
-              // `anim` and `original` feed the CDN URL — an inactive slide has to
-              // request the same URL the active one will, or it warms nothing
-              anim
-              original={isVideo ? true : undefined}
+              // and the aspect-ratio wrapper then clips the image's height. A `width` would also
+              // change the URL, which `imageDetailMediaProps` owns.
               html5Controls={
-                active && (features.nativeVideoControls || shouldDisplayHtmlControls(image))
+                active &&
+                !timelineOpen &&
+                (features.nativeVideoControls || shouldDisplayHtmlControls(image))
               }
               muted={defaultMuted}
               onMutedChange={(isMuted) => {
@@ -351,15 +377,29 @@ function ImageContent({
                   ? (image.metadata as VideoMetadata)?.vimeoVideoId
                   : undefined
               }
-              controls={active}
+              controls={active && !timelineOpen}
               videoProps={{
                 autoPlay: active,
+                // A slide mid-transition is still in view, which the player's own in-view check
+                // reads as a reason to play. The sticker timeline owns play and pause: dropping
+                // the controls for it would otherwise re-run the player's autoplay.
+                standby: !active || timelineOpen,
               }}
             />
           )}
-          {/* The hat before the stickers, so stickers paint and take the pointer above it. */}
-          <DrawnMediaHat imageId={image.id} decoration={image.eventDecoration} />
-          {safe && <ImageStickerOverlay imageId={image.id} />}
+          <DrawnMediaHat
+            imageId={image.id}
+            decoration={image.eventDecoration}
+            layer={hatLayer}
+            embla={embla}
+          />
+          {safe && (
+            <ImageStickerOverlay
+              imageId={image.id}
+              wearsHat={showEventCosmetics && !!image.eventDecoration}
+            />
+          )}
+          {safe && active && takesHats(image) && <HatTurfDetailLayer imageId={image.id} />}
         </div>
       )}
     </ImageGuardContent>

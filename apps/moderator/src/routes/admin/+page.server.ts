@@ -1,7 +1,9 @@
 import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { isEditableGrant, pageAccessState, requireAccess } from '$lib/server/access';
+import { NAVIGATION, isEditableGrant, pageAccessState, requireAccess } from '$lib/server/access';
+import { ownableQueues, unownedQueues } from '$lib/queue-owners';
+import { listModeratorCandidates, listQueueOwners } from '$lib/server/queue-owners';
 import { moderatorDbStatus } from '$lib/moderator-db-status';
 import {
   GrantConflictError,
@@ -35,17 +37,32 @@ async function recentChanges(): Promise<{
   }
 }
 
+// Coverage gaps are the point of queue owners, so the count sits on this page as well as its own. A
+// read that fails must not take the grants editor down with it: `null` says the count is unknown.
+async function unownedQueueCount(): Promise<{ unowned: number; total: number } | null> {
+  try {
+    const queues = ownableQueues(NAVIGATION);
+    const [owners, moderators] = await Promise.all([listQueueOwners(), listModeratorCandidates()]);
+    const live = new Set(moderators.map((m) => m.id));
+    return { unowned: unownedQueues(queues, owners, live).length, total: queues.length };
+  } catch (e) {
+    console.error('[admin] queue owners unavailable', e);
+    return null;
+  }
+}
+
 export const load: PageServerLoad = async ({ locals, url }) => {
   requireAccess(locals.user, url.pathname);
-  const [roles, grants, history] = await Promise.all([
+  const [roles, grants, history, queueOwners] = await Promise.all([
     grantableRoles(),
     readPageAccessGrants(),
     recentChanges(),
+    unownedQueueCount(),
   ]);
   if (!roles) error(503, NO_ROLE_CATALOGUE);
   // `wide`: one column per hub role, and the role count only grows — capped at reading width the
   // matrices scrolled sideways long before the screen ran out.
-  return { roles, ...pageAccessState({ grants, roles }), ...history, wide: true };
+  return { roles, ...pageAccessState({ grants, roles }), ...history, queueOwners, wide: true };
 };
 
 const changesSchema = z.record(z.string(), z.array(z.string()));
@@ -102,7 +119,7 @@ export const actions: Actions = {
         userId: locals.user.id,
         via: 'admin-page',
         expect,
-        expectAmong: grantable,
+        manages: grantable,
       });
       return { success: true, count: changed.length };
     } catch (e) {

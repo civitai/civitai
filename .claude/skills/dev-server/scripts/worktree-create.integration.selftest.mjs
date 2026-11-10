@@ -218,7 +218,8 @@ try {
   check('skips an app the branch does not have', existsSync(join(tree, 'apps', 'gone')), false);
   check('the copies stay out of git', git(['status', '--porcelain'], tree), '');
 
-  // `wt env --refresh`: re-copies what the primary edited since, fills nothing over a newer file
+  // `wt env --refresh`: re-copies what the primary edited since, never over the tree's own edit
+  // unless --force. The tree's edit is backdated: mtime no longer decides anything.
   const { syncAppEnv } = await import('./app-env.mjs');
   writeFileSync(join(tree, 'apps', 'web', '.env'), 'WEB=tree\n');
   const past = new Date(Date.now() - 60_000);
@@ -227,10 +228,12 @@ try {
   check('without --refresh, an existing file is kept', syncAppEnv(primary, tree).refreshed.join(), '');
   check('without --refresh, the old value stays', read('.env'), rootCopy(1));
   const refreshed = syncAppEnv(primary, tree, { refresh: true }).refreshed;
-  check('--refresh re-copies files the primary edited later', refreshed.join(), '.env,apps/web/.env');
+  check('--refresh re-copies files the primary edited later', refreshed.join(), '.env');
   check('--refresh brings the new value', read('.env'), rootCopy(2));
-  writeFileSync(join(tree, '.env.development'), 'A=tree\n');
-  utimesSync(join(tree, '.env.development'), past, past);
+  check('--refresh keeps the tree\'s own edit', read('apps/web/.env'), 'WEB=tree\n');
+  const forced = syncAppEnv(primary, tree, { force: true }).refreshed;
+  check('--force re-copies over the tree\'s own edit', forced.join(), 'apps/web/.env');
+  check('--force brings the primary\'s value', read('apps/web/.env'), 'WEB=1\n');
   writeFileSync(join(primary, '.env.development'), realMail);
   syncAppEnv(primary, tree, { refresh: true });
   check('--refresh routes mail to the catcher too', read('.env.development'), catcherMail);
@@ -239,7 +242,7 @@ try {
   check('never copies a tracked .env.example', /edited-in-primary/.test(read('.env.example')), false);
 
   // `wt env` repairs a tree copied before the routing existed: a KEPT file is routed in place, its
-  // mtime left alone so a later primary edit still looks newer to --refresh.
+  // mtime left alone.
   const home = join(scratch, 'skill-env-home');
   const treeAuth = join(tree, 'apps', 'auth', '.env');
   writeFileSync(treeAuth, plantedAuth);

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as BuzzPackage from '@civitai/buzz';
 // Setup-order import: installs the shared db/redis/env/prom mocks and the REAL test RSA keypair
 // before `block-token.service` evaluates env at module load, so tokens below are really signed
 // and really verified.
@@ -79,6 +80,37 @@ function subjectFlag() {
   return async (opts?: { user?: { id?: number } }) =>
     opts?.user ? opts.user.id === 42 : h.flagBase.on;
 }
+
+// The model routes' raw queries: no rows. A cell past auth only has to answer, not find a model.
+const { emptyPool } = vi.hoisted(() => {
+  const client = { query: async () => ({ rows: [] }), release: () => undefined };
+  const query = async () => ({ rows: [] });
+  const cancellableQuery = async () => ({ result: async () => [], cancel: async () => undefined });
+  return { emptyPool: { connect: async () => client, query, cancellableQuery } };
+});
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: emptyPool,
+  pgDbReadLong: emptyPool,
+  pgDbWrite: emptyPool,
+}));
+
+// No Buzz service: every call rejects, as it would with the service down. Nothing here asserts on a
+// balance; a call that gets past auth only has to fail in the body, not reach a server.
+vi.mock('@civitai/buzz', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzPackage>()),
+  createBuzzClient: () =>
+    new Proxy(
+      {},
+      {
+        get: (_target, method) =>
+          method === 'then'
+            ? undefined
+            : async () => {
+                throw new Error(`Buzz service unavailable in this test (${String(method)})`);
+              },
+      }
+    ),
+}));
 
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
@@ -666,6 +698,15 @@ beforeEach(() => {
   });
   dbMock.dbRead.oauthClient.findUnique.mockReset().mockResolvedValue({ userId: SUBJECT_ID });
   dbMock.dbRead.user.findUnique.mockReset().mockResolvedValue({ id: 77, deletedAt: null });
+  // Only the submit's restriction read gets a row; every other route's user read stays empty.
+  dbMock.dbWrite.user.findUnique.mockReset().mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : null) as never);
   h.grantedScopes = [];
   env.APP_BLOCK_OAUTH_TOKENS_ENABLED = false;
 });
@@ -6580,7 +6621,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       401,
       { message: 'workflow submit requires authenticated viewer' },
       true,
-      [],
+      ['checkBlockSubmitRateLimit("bki_char", "anon")', 'checkBlockSubmitUserRateLimit("anon")'],
       [],
       ['ai:write:budgeted']
     ),
@@ -6593,14 +6634,13 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       null
     ),
     'rate limited': X(
-      404,
-      { message: 'model version not found' },
+      429,
+      { message: 'Rate limit exceeded, please retry shortly.' },
       true,
-      [],
+      ['checkBlockSubmitRateLimit("bki_char", "user:42")'],
       [
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
-        'hydrate:42',
       ],
       ['ai:write:budgeted']
     ),
@@ -6665,7 +6705,10 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       404,
       { message: 'model version not found' },
       true,
-      [],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       [
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
@@ -6677,7 +6720,10 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       404,
       { message: 'model version not found' },
       true,
-      [],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       [
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',

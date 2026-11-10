@@ -18,6 +18,7 @@ import {
 } from '@mantine/core';
 import type * as z from 'zod';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { GenerationPresetHint } from '~/components/Account/ApiKeyGeneration';
 import { Form, InputText, useForm } from '~/libs/form';
 import { addApiKeyInputSchema, simpleBuzzLimitToBudgets } from '~/server/schema/api-key.schema';
 import {
@@ -205,6 +206,7 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
               placeholder="Custom"
               clearable={false}
             />
+            <GenerationPresetHint />
             <Box>
               <Text size="sm" fw={500} mb={4}>
                 Permissions

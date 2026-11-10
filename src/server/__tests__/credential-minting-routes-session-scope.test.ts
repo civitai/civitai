@@ -26,7 +26,7 @@ vi.mock('~/server/auth/session-client', () => ({
 }));
 vi.mock('~/server/services/api-key.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ApiKeyService>()),
-  addApiKey: vi.fn(async () => 'minted-api-key'),
+  mintApiKey: vi.fn(async () => 'minted-api-key'),
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(async () => 'minted-orchestrator-token'),
@@ -69,7 +69,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   getUserSettings: vi.fn(async () => ({ features: {} })),
 }));
 
-const { addApiKey } = await import('~/server/services/api-key.service');
+const { mintApiKey } = await import('~/server/services/api-key.service');
 const { getOrchestratorToken } = await import('~/server/orchestrator/get-orchestrator-token');
 const { enableAppAssistant, mintAppAssistantToken } = await import(
   '~/server/services/app-assistant/app-assistant.service'
@@ -91,7 +91,7 @@ const routes: {
     name: 'GET /api/user/orchestrator-key',
     path: '/api/user/orchestrator-key',
     handler: (await import('~/pages/api/user/orchestrator-key')).default as unknown as Handler,
-    minted: () => addApiKey,
+    minted: () => mintApiKey,
   },
   {
     name: 'GET /api/training-studio/host',
@@ -206,10 +206,22 @@ async function call(
   return { status: statusCode, body: body as Record<string, unknown> | undefined };
 }
 
+const accountRow = { muted: false, bannedAt: null as Date | null };
+
 beforeEach(() => {
   vi.clearAllMocks();
   hubSession.current = null;
   bearerSession.mockResolvedValue(null);
+  accountRow.muted = false;
+  // Answers only the restriction read, by its exact select; other user reads stay unmocked.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { ...accountRow }
+      : null) as never);
 });
 
 describe.each(routes)('$name credential requirements', (route) => {
@@ -283,6 +295,21 @@ describe('the minted credential is still returned to an allowed caller', () => {
       token: 'minted-assistant-token',
       expiresAt: '2099-01-01T00:00:00Z',
     });
+  });
+});
+
+describe('orchestrator-key and a restricted account', () => {
+  it('refuses to issue a key to a restricted account, before any stored key is touched', async () => {
+    hubSession.current = { user: USER };
+    accountRow.muted = true;
+    dbMock.dbWrite.apiKey.findMany.mockResolvedValue([
+      { id: 1, key: 'stored-hash', userId: USER.id },
+    ] as never);
+    const { status } = await call(routes[0]);
+    expect(status).toBe(403);
+    expect(mintApiKey).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.apiKey.deleteMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.apiKey.create).not.toHaveBeenCalled();
   });
 });
 

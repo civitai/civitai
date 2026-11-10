@@ -2,13 +2,19 @@ import {
   EXTRA_PARAM_FIELDS,
   LORA_TYPES,
   MODEL_CARDS,
-  TE_TRAINING_UNSUPPORTED,
   allowsCustomBase,
   cardByType,
   extraParamCapabilities,
   extraParamDefaults,
+  isProdigy,
+  teTrainingUnsupportedReason,
+  MAX_NON_PRODIGY_LR,
   paramsForVersion,
   cardsForMedia,
+  findByAir,
+  isCardVisible,
+  visibleVersions,
+  versionPriceKey,
   ecosystemTakesSampleImages,
   versionStepDefault,
   versionSuffix,
@@ -19,6 +25,13 @@ import {
   type ModelVersionInfo,
 } from '$lib/data/trainingModels';
 import type { TrainingRunPayload } from '$lib/backend';
+import type { TrainingItem } from '$lib/train-core';
+import {
+  blockedRunMessage,
+  modelUnavailability,
+  type TrainingServiceStatus,
+} from '$lib/service-status-core';
+import type { TagExcluder } from '$lib/autolabel-exclude';
 
 export const CUSTOM_VERSION_KEY = 'custom';
 export const MAX_RUNS = 5;
@@ -124,6 +137,48 @@ export function runVersion(run: Run): ModelVersionInfo {
   return card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!;
 }
 
+/** The key a version is blocked under: its checkpoint's, as a submit resolves it (an edit card reuses
+ *  a base's checkpoint under its own key). */
+export const versionStatusKey = (v: ModelVersionInfo): string =>
+  findByAir(v.air)?.version.key ?? v.key;
+
+/** A card is unavailable when every version this viewer can see is blocked; the note is the first one's. */
+export function cardUnavailability(
+  card: ModelCard,
+  enabledFlags: ReadonlySet<string>,
+  status: TrainingServiceStatus | null | undefined
+): { reason: string | null } | null {
+  if (!isCardVisible(card, enabledFlags)) return null;
+  const downs = visibleVersions(card, enabledFlags).map((v) =>
+    modelUnavailability(status, versionStatusKey(v))
+  );
+  return downs.length > 0 && downs.every((d) => d !== null) ? downs[0]! : null;
+}
+
+/** Why the selection can't start: the first run whose model is blocked (a stale tab or restored draft
+ *  can still hold one), or null. */
+export function blockedSelectionMessage(
+  runs: Run[],
+  status: TrainingServiceStatus | null | undefined
+): string | null {
+  for (const run of runs) {
+    const v = runVersion(run);
+    // The same model fields the submit sends: a custom run still names the base it was picked under.
+    const message = blockedRunMessage(
+      {
+        ecosystem: v.ecosystem,
+        modelVariant: v.modelVariant,
+        version: v.version,
+        model: v.air,
+        customModel: isCustom(run) ? run.customAir?.trim() || undefined : undefined,
+      },
+      status
+    );
+    if (message) return message;
+  }
+  return null;
+}
+
 export function runVersionLabel(run: Run): string {
   if (isCustom(run)) return 'Custom';
   const card = runCard(run);
@@ -132,16 +187,27 @@ export function runVersionLabel(run: Run): string {
 }
 
 /** The version choices a card offers on Select: its catalog versions, then Custom where allowed. */
-export function versionOptions(card: ModelCard): { key: string; label: string }[] {
+export function versionOptions(
+  card: ModelCard,
+  enabledFlags?: ReadonlySet<string>
+): { key: string; label: string }[] {
   return [
-    ...card.versions.map((v) => ({ key: v.key, label: v.label })),
+    ...visibleVersions(card, enabledFlags).map((v) => ({ key: v.key, label: v.label })),
     ...(allowsCustomBase(card) ? [{ key: CUSTOM_VERSION_KEY, label: 'Custom' }] : []),
   ];
 }
 
-export function newRun(card: ModelCard): Run {
-  const first = card.versions[0];
-  if (!first) throw new Error(`Base-model card ${card.type} has no versions`);
+/** A run on the card's first version the viewer can see (`enabledFlags` omitted → `versions[0]`),
+ *  skipping a version that is down when `status` is given and another one is up. */
+export function newRun(
+  card: ModelCard,
+  enabledFlags?: ReadonlySet<string>,
+  status?: TrainingServiceStatus | null
+): Run {
+  const visible = visibleVersions(card, enabledFlags);
+  const first =
+    visible.find((v) => !modelUnavailability(status, versionStatusKey(v))) ?? visible[0];
+  if (!first) throw new Error(`Base-model card ${card.type} has no version this viewer can pick`);
   return { id: nextRunId(), cardType: card.type, versionKey: first.key };
 }
 
@@ -214,6 +280,11 @@ export interface Img {
    *  A label-format switch re-applies this instead of discarding it and re-auto-labeling — wiping
    *  a user's own caption files on a mode toggle is how tester data got silently destroyed. */
   sourceLabel?: string;
+  /** SHA-256 of the file's bytes, when the item came from a local file — edit pairs group by it. */
+  hash?: string;
+  /** The workflow that produced a blob-backed item whose URL needs an authenticated fetch (a
+   *  generation's edit source), so `backend().datasetBlob` can read its bytes. */
+  sourceWorkflowId?: string;
   tags: string[];
   caption: string;
 }
@@ -234,6 +305,34 @@ export function isTrainable(img: Img): boolean {
   return img.status === 'uploaded';
 }
 
+export const isLabeled = (img: Img) => img.tags.length > 0 || img.caption.trim().length > 0;
+
+/** Whether auto-label can read this image's media. A reused run's items (Train again, Reuse a dataset)
+ *  only hold a browser-local `blob:` preview URL, which the labeler can't fetch and the submit refuses. */
+export const canAutoLabelImage = (img: Pick<Img, 'blobUrl'>) =>
+  !!img.blobUrl?.startsWith('https://');
+
+/** Trainable images an auto-label pass may send. `skipTried` leaves out images auto-label already
+ *  attempted (the drain); `focusId` is the card whose inline editor is open. */
+export function autoLabelTargets(
+  images: Img[],
+  opts: { skipLabeled: boolean; skipTried: boolean; focusId: number | null }
+): Img[] {
+  return images.filter(
+    (i) =>
+      isTrainable(i) &&
+      canAutoLabelImage(i) &&
+      !i.labeling &&
+      i.id !== opts.focusId &&
+      !(opts.skipTried && i.labelTried) &&
+      !(opts.skipLabeled && isLabeled(i))
+  );
+}
+
+/** Trainable images auto-label can't read, which keep the manual editor. */
+export const handLabelOnlyCount = (images: Img[]) =>
+  images.filter((i) => isTrainable(i) && !canAutoLabelImage(i)).length;
+
 export function isFailed(img: Img): boolean {
   return img.status === 'blocked' || img.status === 'error';
 }
@@ -245,6 +344,27 @@ export function isFailed(img: Img): boolean {
 export function blobAirFromUrl(url: string): string {
   return url.split('?')[0];
 }
+
+/** A dataset item's bytes, for a zip: an upload's own File, else its URLs — a reused or hydrated item's
+ *  `previewUrl` is the local object URL already fetched — and, once those have expired, `readBlob`
+ *  (the authenticated read) for an item that names the workflow it came from. */
+export async function imgBytes(
+  img: Img,
+  readBlob?: (air: string, workflowId: string) => Promise<Blob>
+): Promise<Blob> {
+  if (img.file) return img.file;
+  for (const url of [img.previewUrl, img.blobUrl]) {
+    if (!url) continue;
+    const res = await fetch(url).catch(() => null);
+    if (res?.ok) return res.blob();
+  }
+  const air = img.blobId ?? img.blobUrl;
+  if (readBlob && air && img.sourceWorkflowId) return readBlob(air, img.sourceWorkflowId);
+  throw new Error(`${img.name} unavailable`);
+}
+
+/** "1 pair", "3 pairs". */
+export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** Per-run training parameters chosen on the Review step (mirrors the prod trainer's fields). */
 export interface RunParams {
@@ -325,6 +445,37 @@ export const PARAM_HELP: Record<keyof RunParams, string> = {
     'Randomly mirrors images horizontally to double the effective dataset. Good for symmetric subjects; keep it off for characters with asymmetric details, text, logos or handedness.',
 };
 
+/** LoRA file size per unit of network dim, in MB, from the median size of published trainings. Size is
+ *  linear in dim but the per-dim cost depends on the architecture, so only measured cards are listed. */
+const LORA_MB_PER_DIM: Partial<Record<string, number>> = {
+  sdxl: 6.8,
+  illustrious: 6.8,
+  pony: 6.8,
+  flux: 10.25,
+  sd15: 1.125,
+};
+
+/** " At dim 32 the file is about 218MB (≈6.8MB per dim)." for a measured card, else ''. */
+export function networkDimSizeHint(cardType: string, dim: NumericInput): string {
+  const mbPerDim = LORA_MB_PER_DIM[cardType];
+  const n = Number(dim);
+  if (!mbPerDim || dim === '' || !Number.isFinite(n) || n <= 0) return '';
+  const perDim = Math.round(mbPerDim * 10) / 10;
+  return ` At dim ${n} the file is about ${Math.round(n * mbPerDim)}MB (≈${perDim}MB per dim).`;
+}
+
+/** A param's help text for a run: the model's recommended value filled in, and for network dim the file
+ *  size at the value the user has entered. */
+export function paramHelpText(
+  field: keyof RunParams,
+  cardType: string,
+  defaults: RunParams,
+  current: RunParams
+): string {
+  const text = PARAM_HELP[field].replace('{recommended}', paramDisplay(defaults[field]));
+  return field === 'networkDim' ? text + networkDimSizeHint(cardType, current.networkDim) : text;
+}
+
 /** A run + its chosen params, produced by the Review step's Start and fed to `buildTrainingRuns`. */
 export interface LaunchedRun {
   run: Run;
@@ -345,8 +496,26 @@ function cardBaseQuote(prices: Record<string, number>, cardType: string): number
 /** The "from" Buzz quote for one model card; null when unpriced (callers show a muted em-dash).
  *  Single source of truth for the "from" floor shown on Select. A custom base costs the same as the
  *  card's own (whatif-verified — the orchestrator has no custom-model surcharge). */
-export function cardFromPrice(prices: Record<string, number>, cardType: string): number | null {
+export function cardFromPrice(
+  prices: Record<string, number>,
+  cardType: string,
+  enabledFlags?: ReadonlySet<string>
+): number | null {
+  const card = cardByType(cardType);
+  const first = card && visibleVersions(card, enabledFlags)[0];
+  if (card && first && first !== card.versions[0])
+    return prices[versionPriceKey(cardType, first.key)] ?? null;
   return cardBaseQuote(prices, cardType) ?? null;
+}
+
+/** One run's "from" quote: its own version's, where the sweep quoted it, else the card's. */
+function runFromPrice(prices: Record<string, number>, run: Run): number | null {
+  const card = cardByType(run.cardType);
+  const own =
+    card && run.versionKey !== card.versions[0]?.key
+      ? prices[versionPriceKey(run.cardType, run.versionKey)]
+      : undefined;
+  return own ?? cardFromPrice(prices, run.cardType);
 }
 
 /** Sum the "from" floor across a selection's runs; null if any run is unpriced (callers show "—").
@@ -358,7 +527,7 @@ export function cardFromPrice(prices: Record<string, number>, cardType: string):
 export function selectionFromTotal(prices: Record<string, number>, runs: Run[]): number | null {
   let sum = 0;
   for (const run of runs) {
-    const runPrice = cardFromPrice(prices, run.cardType);
+    const runPrice = runFromPrice(prices, run);
     if (runPrice == null) return null;
     sum += runPrice;
   }
@@ -400,8 +569,32 @@ export function runExtraCapabilities(run: Run, labelMode: LabelType) {
   return extraParamCapabilities(runCard(run), runVersion(run), labelMode);
 }
 
-/** The text-encoder rate is locked at 0 for models whose backend can't train it. */
-export const teLocked = (run: Run): boolean => TE_TRAINING_UNSUPPORTED.has(run.versionKey);
+/** Why the run's text-encoder rate is locked at 0, or undefined when its model can train it. */
+export const teLockReason = (run: Run): string | undefined =>
+  teTrainingUnsupportedReason(runVersion(run).ecosystem, runCard(run).name);
+export const teLocked = (run: Run): boolean => teLockReason(run) !== undefined;
+
+/** The learning rates after an optimizer change, as the main trainer couples them: Prodigy runs at
+ *  1, and so does a text encoder rate that is on; a locked one goes to 0 and an off (0) one stays off,
+ *  so a model that defaults TE off doesn't start training it. Switching away puts a Prodigy-level rate back to the
+ *  model's recommendation and leaves a rate the user picked alone. */
+export function optimizerLrParams(
+  run: Run,
+  params: RunParams
+): Pick<RunParams, 'unetLr' | 'textEncoderLr'> {
+  const { unetLr, textEncoderLr } = params;
+  if (isProdigy(params.optimizer))
+    return {
+      unetLr: '1',
+      textEncoderLr: teLocked(run) ? '0' : Number(textEncoderLr) > 0 ? '1' : textEncoderLr,
+    };
+  const defaults = defaultRunParams(run);
+  const reset = (v: NumericInput, d: NumericInput) => (Number(v) >= MAX_NON_PRODIGY_LR ? d : v);
+  return {
+    unetLr: reset(unetLr, defaults.unetLr),
+    textEncoderLr: reset(textEncoderLr, defaults.textEncoderLr),
+  };
+}
 
 export interface ParamDeviation {
   field: keyof RunParams;
@@ -496,6 +689,16 @@ export function submittedPrompts(texts: string[]): string[] {
   return filled.length ? filled : texts;
 }
 
+/** Whether a run trains an edit LoRA from before/after pairs. Every run in a selection agrees — the
+ *  Select step won't mix them, since the two datasets don't share a shape. */
+export const runTrainsPairs = (run: Run): boolean => runCard(run).pairs === true;
+
+/** Whether `card` can join a sweep led by `primary`: one dataset feeds every run, so they must agree on
+ *  its label format and on whether it is pairs. */
+export function sweepCompatible(card: ModelCard, primary: ModelCard): boolean {
+  return labelOptions(card).includes(primary.label) && !!card.pairs === !!primary.pairs;
+}
+
 /** Whether a run's samples can be rendered from input images (edit LoRAs). A Custom run resolves to
  *  its card's primary version, so it follows that ecosystem like every other run-level check. */
 export const runTakesSampleImages = (run: Run): boolean =>
@@ -567,6 +770,20 @@ export function labelString(img: Img, mode: LabelType): string {
   return mode === 'tag' ? img.tags.join(', ') : img.caption.trim();
 }
 
+/** The label text a format switch leaves on an image. The current text comes first (it carries
+ *  hand-edits); the imported source label is only the fallback for a cleared field. 'relabel' clears
+ *  the text for auto-label to refill, except on source-labeled items (the dialog promises they survive)
+ *  and on tiles auto-label can't read, which nothing would re-label. */
+export function labelTextAfterSwitch(
+  img: Img,
+  prev: LabelType,
+  choice: 'convert' | 'relabel'
+): string {
+  const source = img.sourceLabel?.trim();
+  const kept = labelString(img, prev) || source || '';
+  return choice === 'relabel' && !source && canAutoLabelImage(img) ? '' : kept;
+}
+
 /** Tag-text splitting, shared by every tag-entry path (parseLabel, the label editor, the exclude
  *  list, mass rename) — one definition so a comma/newline paste can't split differently per path.
  *  Dedupe stays at the call sites; their policies genuinely differ. */
@@ -582,10 +799,52 @@ export function splitTags(text: string): string[] {
   ];
 }
 
+/** `tags` plus the tags typed or pasted in `text`, in order, skipping any already present. */
+export function withTags(tags: string[], text: string): string[] {
+  const additions = splitTags(text).filter((t) => !tags.includes(t));
+  return additions.length ? [...tags, ...additions] : tags;
+}
+
 /** labelString's inverse — one definition so a mode round-trip can't corrupt labels. */
 export function parseLabel(text: string, mode: LabelType): { tags: string[]; caption: string } {
   const t = text.trim();
   return mode === 'tag' ? { tags: splitTags(t), caption: '' } : { tags: [], caption: t };
+}
+
+/** Where an auto-label result goes relative to the label an image already has. */
+export type LabelPosition = 'after' | 'before' | 'replace';
+
+/** An image's label after an auto-label result lands. Only the dataset format's field reaches
+ *  training (labelString), so a tagger result on a caption dataset — or a caption on a tag dataset —
+ *  is written into that field, which is how one .txt ends up holding both. `exclude` filters tagger
+ *  output only. An empty result keeps the label. */
+export function mergeAutoLabel(
+  img: Pick<Img, 'tags' | 'caption'>,
+  result: { tags?: string[]; caption?: string },
+  format: LabelType,
+  position: LabelPosition,
+  exclude: TagExcluder
+): { tags: string[]; caption: string } {
+  const newTags = [...new Set(result.tags ?? [])].filter((t) => !exclude(t));
+  const newCaption = result.caption?.trim() ?? '';
+
+  if (format === 'tag') {
+    const incoming = newTags.length ? newTags : splitTags(newCaption);
+    if (!incoming.length) return { tags: img.tags, caption: img.caption };
+    if (position === 'replace') return { tags: incoming, caption: img.caption };
+    const [first, second] = position === 'after' ? [img.tags, incoming] : [incoming, img.tags];
+    return { tags: [...new Set([...first, ...second])], caption: img.caption };
+  }
+
+  const incoming = newTags.length ? newTags.join(', ') : newCaption;
+  const existing = img.caption.trim();
+  if (!incoming) return { tags: img.tags, caption: img.caption };
+  if (position === 'replace' || !existing) return { tags: img.tags, caption: incoming };
+  // A retry must not stack a second copy. Whole lines: a new result may be a substring of an old one.
+  if (`\n${existing}\n`.includes(`\n${incoming}\n`))
+    return { tags: img.tags, caption: img.caption };
+  const caption = position === 'after' ? `${existing}\n${incoming}` : `${incoming}\n${existing}`;
+  return { tags: img.tags, caption };
 }
 
 // Parse a Review-step numeric field, falling back to a safe generic value when blank/garbage: Number('') is
@@ -598,7 +857,21 @@ function num(value: NumericInput, fallback: number): number {
 
 /** Assemble the Start payload: one run per training run, each carrying the shared uploaded-blob dataset
  *  (labels resolved by the dataset's single label type), the chosen params, prompts, trigger, and the
- *  metadata the reconnect list/detail read back. Params arrive as strings from the Review inputs. */
+ *  metadata the reconnect list/detail read back. Params arrive as strings from the Review inputs. An
+ *  edit LoRA passes its pairs as path-placed `items` (`pairItems`), which replace the image list. */
+/** One confirm covers every run of a sweep: they train on the same dataset. */
+export function stampMature(
+  runs: TrainingRunPayload[],
+  matureAck: boolean,
+  matureCount: number
+): TrainingRunPayload[] {
+  return runs.map((run) => ({
+    ...run,
+    ...(matureAck ? { matureAck: true } : {}),
+    meta: { ...run.meta, matureCount },
+  }));
+}
+
 export function buildTrainingRuns(
   selection: Selection,
   images: Img[],
@@ -607,20 +880,23 @@ export function buildTrainingRuns(
   launched: LaunchedRun[],
   prompts: SamplePrompt[],
   currencies: string[],
-  labelMode: LabelType
+  labelMode: LabelType,
+  edit?: { items: TrainingItem[]; pairs: number }
 ): TrainingRunPayload[] {
   const mode = labelMode;
-  const items = images
-    .filter((i) => i.status === 'uploaded' && !!i.blobId)
-    .map((i) => ({ air: i.blobId!, caption: labelString(i, mode) }));
+  const items = edit
+    ? edit.items
+    : images
+        .filter((i) => i.status === 'uploaded' && !!i.blobId)
+        .map((i) => ({ air: i.blobId!, caption: labelString(i, mode) }));
   const t = trigger.trim();
 
   return launched.map(({ run, params }) => {
     const version = runVersion(run);
     const caps = runExtraCapabilities(run, labelMode);
     // Fields the run can't use — a locked TE rate, tag-only fields on a caption dataset, image-only
-    // ones on video — go out as 0/off whatever the form holds: a value edited before a model or
-    // label-mode switch must not ride into a run that hangs on it or misreads it.
+    // ones on video — go out as 0/off whatever the form holds, so a value edited before a model or
+    // label-mode switch can't ride into a run that hangs or misreads it.
     const tags = caps.shuffleTokens.supported;
     return {
       ecosystem: version.ecosystem,
@@ -646,6 +922,7 @@ export function buildTrainingRuns(
       flipAugmentation: caps.flipAugmentation.supported && params.flipAugmentation,
       trigger: t,
       items,
+      ...(edit ? { editTraining: true } : {}),
       prompts: submittedPrompts(prompts.map((p) => p.text)),
       sourceImages: submittedSampleImages(run, prompts),
       currencies,
@@ -655,7 +932,7 @@ export function buildTrainingRuns(
         loraType: selection.loraType,
         cardType: run.cardType,
         versionKey: run.versionKey,
-        imageCount: items.length,
+        imageCount: edit?.pairs ?? items.length,
         trigger: t,
       },
     };

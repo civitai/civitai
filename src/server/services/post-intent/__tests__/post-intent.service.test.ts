@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as BlockPostService from '~/server/services/blocks/block-post.service';
 import type * as ImageService from '~/server/services/image.service';
@@ -12,14 +13,19 @@ import type * as VideoDimensions from '~/server/services/video-dimensions';
 import type * as S3Utils from '~/utils/s3-utils';
 
 const { requestMock, lookupMock, createImageMock, uploadMock, deleteManyMock, probeMock } =
-  vi.hoisted(() => ({
-    requestMock: vi.fn(),
-    lookupMock: vi.fn(),
-    createImageMock: vi.fn(),
-    uploadMock: vi.fn(),
-    deleteManyMock: vi.fn(),
-    probeMock: vi.fn(),
-  }));
+  vi.hoisted(() => {
+    // Before the static imports: `server-domain.ts` reads these at import time.
+    process.env.SERVER_DOMAIN_BLUE = 'civitai.com';
+    process.env.SERVER_DOMAIN_RED = 'civitai.red';
+    return {
+      requestMock: vi.fn(),
+      lookupMock: vi.fn(),
+      createImageMock: vi.fn(),
+      uploadMock: vi.fn(),
+      deleteManyMock: vi.fn(),
+      probeMock: vi.fn(),
+    };
+  });
 
 vi.mock('node:dns/promises', () => ({ lookup: lookupMock }));
 vi.mock('sharp', () => ({
@@ -446,6 +452,24 @@ describe('stageIntent: one manifest, one key', () => {
     expect(deleteManyMock).toHaveBeenCalledWith('images', ['key-1'], {});
   });
 
+  it('refuses when a concurrent staging won with a claim that has already lapsed', async () => {
+    serve({ headers: { 'content-type': 'application/json' }, body: manifestJson() }, { body: PNG });
+    dbMock.dbWrite.postIntentManifest.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: 'x' })
+    );
+    dbMock.dbWrite.postIntentManifest.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: 4,
+      userId: 7,
+      postedAt: null,
+      claimExpiresAt: new Date(now.getTime() - 1),
+      manifest: JSON.parse(manifestJson()),
+      staged: [],
+    });
+    await expect(stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now })).rejects.toMatchObject({
+      code: 'claimed',
+    });
+  });
+
   it('refuses HEIC with a message that names the format', async () => {
     const HEIC = Buffer.from([0, 0, 0, 0x18, ...Buffer.from('ftypheic'), ...new Array(16).fill(0)]);
     serve(
@@ -608,6 +632,192 @@ describe('publishIntent', () => {
     });
     expect(result.returnUrl).toBeUndefined();
     expect(dbMock.dbWrite.post.create.mock.calls[0][0].data.publishedAt).toBeNull();
+  });
+});
+
+describe('item: the app sub-listing a share names', () => {
+  const live = { author: { bannedAt: null, deletedAt: null }, ...parentWith(true) };
+  function parentWith(enabled: boolean) {
+    return { parentListing: { subListingParent: { enabled } } };
+  }
+  const SUB_LISTINGS: {
+    id: string;
+    parentListingId: string;
+    itemKey: string;
+    status: string;
+    title?: string;
+    contentRating?: string;
+  }[] = [
+    { id: 'asl_FAKEFUL', parentListingId: 'apl_games', itemKey: 'fakeful', status: 'approved' },
+    {
+      id: 'asl_MATURE',
+      parentListingId: 'apl_games',
+      itemKey: 'mature',
+      status: 'approved',
+      contentRating: 'x',
+    },
+    {
+      id: 'asl_BIDI',
+      parentListingId: 'apl_games',
+      itemKey: 'bidi',
+      status: 'approved',
+      title: '\u202eFake\u200bful\n',
+    },
+    {
+      id: 'asl_BLANK',
+      parentListingId: 'apl_games',
+      itemKey: 'blank',
+      status: 'approved',
+      title: '\u200b\u202e',
+    },
+    { id: 'asl_PENDING', parentListingId: 'apl_games', itemKey: 'unreviewed', status: 'pending' },
+    { id: 'asl_HIDDEN', parentListingId: 'apl_games', itemKey: 'hidden', status: 'hidden' },
+    { id: 'asl_OTHER', parentListingId: 'apl_other_app', itemKey: 'elsewhere', status: 'approved' },
+  ]
+    .map((r) => ({ ...r, ...live }))
+    .concat([
+      {
+        id: 'asl_BANNED',
+        parentListingId: 'apl_games',
+        itemKey: 'banned',
+        status: 'approved',
+        ...live,
+        author: { bannedAt: new Date('2026-10-01') as never, deletedAt: null },
+      },
+      {
+        id: 'asl_SWITCHED_OFF',
+        parentListingId: 'apl_games',
+        itemKey: 'switchedoff',
+        status: 'approved',
+        ...live,
+        ...parentWith(false),
+      },
+    ]);
+
+  /** Every `where` field, nested and `is` ones included, must hold for a row to match. */
+  function matches(row: unknown, where: Record<string, unknown>): boolean {
+    const r = (row ?? {}) as Record<string, unknown>;
+    return Object.entries(where).every(([k, v]) => {
+      if (k === 'is') return matches(r, v as Record<string, unknown>);
+      if (v !== null && typeof v === 'object' && !(v instanceof Date))
+        return matches(r[k], v as Record<string, unknown>);
+      return r[k] === v;
+    });
+  }
+
+  function serveSubListings() {
+    dbMock.dbRead.appSubListing.findFirst.mockImplementation((async ({
+      where,
+    }: {
+      where: Record<string, unknown>;
+    }) => {
+      const row = SUB_LISTINGS.find((r) => matches(r, where));
+      return row
+        ? {
+            id: row.id,
+            title: row.title ?? `Title of ${row.itemKey}`,
+            contentRating: row.contentRating ?? null,
+            parentListing: { contentRating: 'pg' },
+          }
+        : null;
+    }) as never);
+  }
+
+  const publishWith = async (item: unknown) => {
+    dbMock.dbWrite.postIntentManifest.findUnique.mockResolvedValue({
+      id: 1,
+      manifestUrl: MANIFEST_URL,
+      appId: APP_ID,
+      userId: 7,
+      postedAt: null,
+      claimExpiresAt: new Date(now.getTime() + 60_000),
+      manifest: JSON.parse(manifestJson(item === undefined ? {} : { item })),
+      staged: [
+        { key: 'key-1', sourceUrl: MEDIA_URL, type: 'image', mimeType: 'image/png', size: 24 },
+      ],
+    });
+    await publishIntent({ manifestUrl: MANIFEST_URL, userId: 7, publish: true, now });
+    return dbMock.dbWrite.post.create.mock.calls[0][0].data.metadata;
+  };
+
+  beforeEach(() => {
+    serveSubListings();
+    dbMock.dbWrite.post.create.mockResolvedValue({ id: 9001 });
+    dbMock.dbWrite.image.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.postIntentManifest.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('credits an approved item under the app', async () => {
+    expect(await publishWith('fakeful')).toEqual({
+      blockPublishedAppId: APP_ID,
+      blockPublishedSubListingId: 'asl_FAKEFUL',
+    });
+  });
+
+  it.each([
+    ['pending review', 'unreviewed'],
+    ['hidden by a moderator', 'hidden'],
+    ["approved under another app's listing", 'elsewhere'],
+    ['by a banned author', 'banned'],
+    ['under an app whose sub-listings are switched off', 'switchedoff'],
+    ['unknown', 'nosuchgame'],
+  ])('credits only the app for an item %s', async (_, item) => {
+    expect(await publishWith(item)).toEqual({ blockPublishedAppId: APP_ID });
+  });
+
+  it('leaves a share without an item unchanged', async () => {
+    expect(await publishWith(undefined)).toEqual({ blockPublishedAppId: APP_ID });
+    expect(dbMock.dbRead.appSubListing.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('still posts, credited to the app, when the item lookup fails, and logs it', async () => {
+    loggingMock.logToAxiom.mockClear();
+    dbMock.dbRead.appSubListing.findFirst.mockRejectedValue(new Error('replica down'));
+    expect(await publishWith('fakeful')).toEqual({ blockPublishedAppId: APP_ID });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'failed to resolve item', error: 'replica down' })
+    );
+  });
+
+  it('credits an item whose title sanitises to nothing, which the chip then leaves unnamed', async () => {
+    expect(await publishWith('blank')).toEqual({
+      blockPublishedAppId: APP_ID,
+      blockPublishedSubListingId: 'asl_BLANK',
+    });
+  });
+
+  const stageWith = async (item: string, requestHost = 'civitai.com') => {
+    serve(
+      { headers: { 'content-type': 'application/json' }, body: manifestJson({ item }) },
+      { headers: { 'content-type': 'image/png' }, body: PNG }
+    );
+    return (await stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, requestHost, now })).app;
+  };
+
+  it('names an approved item on the compose sheet', async () => {
+    expect(await stageWith('fakeful')).toEqual({
+      name: 'Civitai Games',
+      host: 'games.civitai.com',
+      itemName: 'Title of fakeful',
+    });
+  });
+
+  it('names a mature item on the compose sheet only on a host that shows its rating', async () => {
+    expect(await stageWith('mature')).not.toHaveProperty('itemName');
+    expect(await stageWith('mature', 'civitai.red')).toMatchObject({ itemName: 'Title of mature' });
+    expect(await stageWith('fakeful')).toMatchObject({ itemName: 'Title of fakeful' });
+  });
+
+  it('strips hidden and reordering characters from the item name', async () => {
+    expect(await stageWith('bidi')).toMatchObject({ itemName: 'Fakeful' });
+    expect(await stageWith('blank')).not.toHaveProperty('itemName');
+  });
+
+  it("does not name another app's item on the compose sheet", async () => {
+    expect(await stageWith('elsewhere')).toEqual({
+      name: 'Civitai Games',
+      host: 'games.civitai.com',
+    });
   });
 });
 

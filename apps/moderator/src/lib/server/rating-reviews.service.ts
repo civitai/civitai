@@ -13,12 +13,15 @@ import {
   collectionRatingLevel,
   isRatingReviewEntityType,
   ratingReviewEntityPath,
+  ratingReviewLevelLabel,
   ratingReviewModeratorLevels,
+  SYSTEM_NSFW_LOCK_META_KEY,
   textScanNsfwReason,
   textScanResultTextHash,
   type RatingReviewEntityType,
 } from '@civitai/shared/rating-review';
 import { dbRead, dbWrite } from './db';
+import { loadComFaces, type ComFaceSource } from './com-face';
 import { cappedText } from './html-to-text';
 import { modelCoverCount, modelCoverImages, MODEL_COVER_ORDER } from './model-covers';
 import { postCoverRows } from './post-covers';
@@ -26,6 +29,7 @@ import { challengeAllowedMaskAt } from './rating-review-apply';
 import { computeRatedEntityDerivedNsfwLevel } from './rated-entity-derivation';
 import { ReportStatus, type RatingReviewStatusFilter } from '$lib/rating-review';
 import type { MediaType } from '$lib/media/edge-url';
+import type { ComFace } from '$lib/com-face';
 
 export type RatingReviewUser = { id: number; username: string | null; image: string | null };
 
@@ -38,6 +42,8 @@ export type RatingReviewEntitySummary = {
   /** Set for an Article only; every other type's cover is the first image of its preview set. */
   coverUrl: string | null;
   coverType: MediaType | null;
+  /** A Model's civitai.com face, null when it has none; absent on every other type. */
+  comFace?: ComFace | null;
 };
 
 export type RatingReviewRow = {
@@ -74,7 +80,24 @@ function moderatorLevelsFor(
   return ratingReviewModeratorLevels(entityType, level);
 }
 
-type Summary = Omit<RatingReviewEntitySummary, 'path'> & { parentId: number | null };
+// The owner's notice compares labels against the snapshot (two NSFW levels on a model both read NSFW),
+// and a challenge or crucible can already sit at the applied level live.
+function keepsRating(
+  entityType: RatingReviewEntityType,
+  snapshotLevel: number,
+  liveLevel: number | undefined,
+  appliedLevel: number
+): boolean {
+  const label = ratingReviewLevelLabel(entityType, appliedLevel);
+  if (label === ratingReviewLevelLabel(entityType, snapshotLevel)) return true;
+  return liveLevel != null && getHighestBrowsingLevelBit(ratingBits(liveLevel)) === appliedLevel;
+}
+
+type Summary = Omit<RatingReviewEntitySummary, 'path' | 'comFace'> & {
+  parentId: number | null;
+  /** A Model's .com face columns, turned into `comFace` for the queue page only. */
+  comFaceSource?: ComFaceSource;
+};
 
 export type RatingReviewImage = {
   id: number;
@@ -155,7 +178,7 @@ async function loadSummaries(
     case 'Model': {
       const found = await dbRead
         .selectFrom('Model')
-        .select(['id', 'name', 'nsfwLevel'])
+        .select(['id', 'name', 'nsfwLevel', 'sfwName', 'sfwCoverImageId'])
         .where('id', 'in', ids)
         .where('deletedAt', 'is', null)
         .execute();
@@ -166,6 +189,7 @@ async function loadSummaries(
           title: r.name,
           nsfwLevel: r.nsfwLevel,
           override: null,
+          comFaceSource: { id: r.id, sfwName: r.sfwName, sfwCoverImageId: r.sfwCoverImageId },
         });
       break;
     }
@@ -338,23 +362,23 @@ async function loadImagesForType(
             AND EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = ic."imageId")) x
         WHERE x.rn <= ${CONNECTION_CAP}
         ORDER BY "entityId", "imageId"`.execute(dbRead);
-      const covers = new Map<number, number>();
+      const covers = new Map<number, number[]>();
       if (entityType === 'Article') {
         const found = await dbRead
           .selectFrom('Article')
-          .select(['id', 'coverId'])
+          .select(['id', 'coverId', 'bannerId'])
           .where('id', 'in', ids)
           .execute();
-        const existing = await imagesById(found.map((a) => a.coverId));
+        const existing = await imagesById(found.flatMap((a) => [a.coverId, a.bannerId]));
         for (const a of found)
-          if (a.coverId && existing.has(a.coverId)) covers.set(a.id, a.coverId);
+          covers.set(
+            a.id,
+            [a.coverId, a.bannerId].filter((x): x is number => x != null && existing.has(x))
+          );
       }
-      // The cover leads, then connections by image id.
+      // The cover leads, then the banner, then connections by image id.
       const idsByEntity = new Map<number, number[]>();
-      for (const id of ids) {
-        const cover = covers.get(id);
-        idsByEntity.set(id, cover ? [cover] : []);
-      }
+      for (const id of ids) idsByEntity.set(id, [...new Set(covers.get(id) ?? [])]);
       for (const l of links) {
         const list = idsByEntity.get(l.entityId);
         if (list && !list.includes(l.imageId)) list.push(l.imageId);
@@ -667,6 +691,11 @@ export async function hydrateRatingReviews(records: ReviewRecord[]): Promise<Rat
   );
   const summaries = new Map(loaded.map(([t, s]) => [t, s]));
   const scans = new Map(loaded.map(([t, , s]) => [t, s]));
+  const comFaces = await loadComFaces(
+    [...(summaries.get('Model')?.values() ?? [])].flatMap((s) =>
+      s.comFaceSource ? [s.comFaceSource] : []
+    )
+  );
 
   return found.map((r): RatingReviewRow => {
     const t = r.entityType as RatingReviewEntityType;
@@ -697,6 +726,7 @@ export async function hydrateRatingReviews(records: ReviewRecord[]): Promise<Rat
             override: s.override,
             coverUrl: s.coverUrl,
             coverType: s.coverType,
+            ...(t === 'Model' && { comFace: comFaces.get(s.id) ?? null }),
           }
         : null,
       scan: scans.get(t)?.get(r.entityId) ?? null,
@@ -750,6 +780,11 @@ const addLock = (prop: string) =>
   sql<string[]>`CASE WHEN ${prop} = ANY("lockedProperties") THEN "lockedProperties"
     ELSE array_append("lockedProperties", ${prop}) END`;
 
+// A moderator's ruling makes the nsfw lock the moderator's, so the marker that let the owner dispute
+// a system-set lock goes with it.
+const withoutSystemNsfwLock = sql<unknown>`CASE WHEN jsonb_typeof("meta") = 'object'
+    THEN "meta" - ${SYSTEM_NSFW_LOCK_META_KEY}::text ELSE "meta" END`;
+
 const gone = (entityType: RatingReviewEntityType) =>
   new RatingReviewResolveError(`That ${entityType} no longer exists; reload the queue.`);
 
@@ -794,7 +829,7 @@ async function applyOverride(
       const nsfw = appliedLevel >= 4;
       const updated = await trx
         .updateTable('Model')
-        .set({ nsfw, lockedProperties: addLock('nsfw') })
+        .set({ nsfw, lockedProperties: addLock('nsfw'), meta: withoutSystemNsfwLock })
         .where('id', '=', entityId)
         .where('deletedAt', 'is', null)
         .$if(nsfw, (qb) =>
@@ -1012,6 +1047,12 @@ export async function resolveRatingReview(input: {
       throw new RatingReviewResolveError(
         "This crucible has started; its allowed levels can't change."
       );
+    if (
+      exists &&
+      !modComment?.trim() &&
+      keepsRating(entityType, review.currentLevel, liveLevel, appliedLevel)
+    )
+      throw new RatingReviewResolveError('Add a reason when keeping the rating as it is');
 
     const basis =
       exists &&

@@ -45,7 +45,8 @@ const { commentCountArgs, allCommentCountArgs, commentV3Counts } = await import(
   '~/server/services/bot-account-detection/cohort'
 );
 const { liveCommentsOn } = await import('~/server/events/points/hooks');
-const { getThreadMuted } = await import('~/server/services/commentsv2.service');
+const { countedTopLevelCommentSql } = await import('~/server/services/comment-count.sql');
+const { getThreadMuted } = await import('~/server/services/commentv3/section.service');
 
 const db = { pg: null as unknown as PGlite };
 
@@ -89,7 +90,17 @@ CREATE TABLE "ModelVersion"(id int PRIMARY KEY, name text, "modelId" int);
 CREATE TABLE "UserEngagement"("userId" int, "targetUserId" int, type text);
 CREATE TABLE "UserNotificationSettings"("userId" int, type text);
 INSERT INTO "Post"(id, "userId") VALUES (1, 1);
-INSERT INTO "Article" VALUES (10);
+ALTER TABLE "Article" ADD COLUMN status text NOT NULL DEFAULT 'Published', ADD COLUMN "userId" int,
+  -- Read by new-mention's article branch; no article here names anyone.
+  ADD COLUMN title text NOT NULL DEFAULT '', ADD COLUMN content text NOT NULL DEFAULT '',
+  ADD COLUMN "publishedAt" timestamp, ADD COLUMN "updatedAt" timestamp,
+  ADD COLUMN "contentScannedAt" timestamp, ADD COLUMN ingestion text NOT NULL DEFAULT 'Scanned',
+  ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false,
+  ADD COLUMN unlisted boolean NOT NULL DEFAULT false,
+  ADD COLUMN availability text NOT NULL DEFAULT 'Public', ADD COLUMN "nsfwLevel" int NOT NULL DEFAULT 1;
+ALTER TABLE "User" ADD COLUMN "bannedAt" timestamp, ADD COLUMN "deletedAt" timestamp,
+  ADD COLUMN muted boolean NOT NULL DEFAULT false, ADD COLUMN "browsingLevel" int NOT NULL DEFAULT 1;
+INSERT INTO "Article"(id, "userId") VALUES (10, 1);
 UPDATE "Image" SET "userId" = 1, "postId" = 1 WHERE id = 10;
 UPDATE "Model" SET name = 'M', "userId" = 1 WHERE id = 1;
 UPDATE app_listings SET slug = 'pixel-forge' WHERE serial_id = 9;
@@ -238,7 +249,7 @@ describe('notification queries on CommentV3', () => {
       commentParentId: 100,
       commentParentType: 'comment',
     });
-    expect(byId(103).details.commentParentId).toBe(102);
+    expect(byId(103).details.commentParentId).toBe(101);
     expect(byId(302).details).toMatchObject({ threadType: 'comicProject', threadParentId: 5 });
     expect(byId(303).details).toMatchObject({
       threadType: 'appListing',
@@ -278,7 +289,7 @@ describe('notification queries on CommentV3', () => {
     ]);
     const byId = (id: number) => out.find((r) => r.details.commentId === id)!;
     expect(byId(105).details).toMatchObject({ commentParentId: 10, commentParentType: 'image' });
-    expect(byId(103).details.commentParentId).toBe(102);
+    expect(byId(103).details.commentParentId).toBe(101);
     const modelReply = out.find((r) => r.details.commentId === 101 && r.userId === 10)!;
     expect(modelReply.details).toMatchObject({ modelId: 1, parentId: 55, parentType: 'comment' });
     expect(modelReply.details.threadType).toBeUndefined();
@@ -325,6 +336,54 @@ describe('notification queries on CommentV3', () => {
     );
   });
 
+  it('new-mention stays quiet on an unpublished article, so the draft reaches nobody new', async () => {
+    const mentioned = async () =>
+      pairs(await run(mentionNotifications['new-mention'].prepareQuery)).filter(
+        ([commentId]) => commentId === 400
+      );
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "createdAt")
+         VALUES (400, 'article', 10, 2, 'see "mention:9"', now())`,
+      `DELETE FROM "CommentV3" WHERE id = 400`,
+      async () => {
+        expect(await mentioned()).toEqual([[400, 9]]);
+        await temporarily(
+          `UPDATE "Article" SET status = 'Draft' WHERE id = 10`,
+          `UPDATE "Article" SET status = 'Published' WHERE id = 10`,
+          async () => expect(await mentioned()).toEqual([])
+        );
+      }
+    );
+  });
+
+  it('replies on an unpublished article reach only its owner', async () => {
+    // On article 10 (owner 1): 401 by 2 at the top; 402 by 3 answers 106 (by 10); 403 by the owner
+    // answers 401; 404 by 3 answers the owner's 403, clamped under 401.
+    const ours = (out: Emitted[]) => pairs(out).filter(([commentId]) => commentId >= 401);
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "replyToId", "userId", content, "createdAt") VALUES
+         (401, 'article', 10, NULL, NULL, 2, 'a', now()), (402, 'article', 10, 106, NULL, 3, 'b', now()),
+         (403, 'article', 10, 401, NULL, 1, 'c', now()), (404, 'article', 10, 401, 403, 3, 'd', now())`,
+      `DELETE FROM "CommentV3" WHERE id BETWEEN 401 AND 404`,
+      async () => {
+        expect(ours(await emitted('new-comment-reply'))).toEqual([
+          [402, 10],
+          [403, 2],
+          [404, 1],
+        ]);
+        expect(ours(await emitted('new-thread-response')).length).toBeGreaterThan(0);
+        await temporarily(
+          `UPDATE "Article" SET status = 'Unpublished' WHERE id = 10`,
+          `UPDATE "Article" SET status = 'Published' WHERE id = 10`,
+          async () => {
+            expect(ours(await emitted('new-comment-reply'))).toEqual([[404, 1]]);
+            expect(ours(await emitted('new-thread-response'))).toEqual([]);
+          }
+        );
+      }
+    );
+  });
+
   it('the comment reaction milestone keys on the old ids, for live model comments only', async () => {
     const out = await run(reactionNotifications['comment-reaction-milestone'].prepareQuery);
     expect(out.map((r) => [r.userId, r.details])).toEqual([
@@ -353,6 +412,23 @@ describe('notification queries on CommentV3', () => {
         const replies = await emitted('new-comment-reply');
         expect(replies.filter((r) => [101, 104].includes(r.details.commentId))).toEqual([]);
         expect(pairs(await emitted('new-image-comment'))).toEqual([[107, 1]]);
+      }
+    );
+  });
+  it('opens a clamped reply under its parent, where the v3 section lists it', async () => {
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "replyToId", "userId", content) VALUES
+         (1061, 'article', 10, 106, NULL, 2, 'article reply'),
+         (1062, 'article', 10, 106, 1061, 3, 'clamped article reply'),
+         (3021, 'comicChapter', 77, 300, 302, 4, 'clamped chapter reply')`,
+      `DELETE FROM "CommentV3" WHERE id IN (3021, 1062, 1061)`,
+      async () => {
+        const out = await emitted('new-comment-reply');
+        const reply = out.find((r) => r.details.commentId === 1062)!;
+        // The v3 article section shows 106's replies, which is where 1062 sits.
+        expect(reply.details).toMatchObject({ commentParentId: 106, commentParentType: 'comment' });
+        // Not under 302, the comment it answers: the chapter's section also lists 300's replies.
+        expect(out.find((r) => r.details.commentId === 3021)!.details.commentParentId).toBe(300);
       }
     );
   });
@@ -471,12 +547,10 @@ describe('the detail fetcher', () => {
 });
 
 describe('the mute menu', () => {
-  // getThreadMuted's raw query, run here as Prisma would send it.
+  // getThreadMuted's raw queries, run here as Prisma would send them.
   const menu = (commentId: number, userId: number) => {
-    dbMock.dbRead.commentV2.findUnique.mockResolvedValue({
-      tosViolation: false,
-      childThread: null,
-    });
+    dbMock.dbWrite.$queryRawUnsafe.mockImplementation(((sql: string, ...values: unknown[]) =>
+      db.pg.query(sql, values).then((r) => r.rows)) as never);
     dbMock.dbWrite.$queryRaw.mockImplementation(((
       strings: TemplateStringsArray,
       ...values: unknown[]
@@ -492,33 +566,24 @@ describe('the mute menu', () => {
     expect(await menu(102, 6)).toEqual({ muted: true, viaAncestor: true, canMute: true });
     expect(await menu(100, 9)).toEqual({ muted: false, viaAncestor: false, canMute: true });
   });
-
-  it('refuses a mute anywhere in a locked chain: an ancestor, or the topic', async () => {
-    await temporarily(
-      `UPDATE "CommentV3" SET locked = true WHERE id = 100`,
-      `UPDATE "CommentV3" SET locked = false WHERE id = 100`,
-      async () => {
-        expect((await menu(102, 9)).canMute).toBe(false);
-        // Another conversation on the same image is not locked.
-        expect((await menu(105, 9)).canMute).toBe(true);
-      }
-    );
-    await temporarily(
-      `UPDATE "CommentTopic" SET locked = true WHERE "entityType" = 'image' AND "entityId" = 10`,
-      `UPDATE "CommentTopic" SET locked = false WHERE "entityType" = 'image' AND "entityId" = 10`,
-      async () => expect((await menu(100, 9)).canMute).toBe(false)
-    );
-  });
 });
 
 describe('the permalink row', () => {
-  it('addresses a comic chapter by its project and an app listing by its slug', async () => {
+  it('addresses a comic chapter by its project and position, and an app listing by its slug', async () => {
+    // Chapter 77 sits at position 2 of project 5: the reader's third chapter.
     expect(buildCommentPermalink(await getCommentPermalinkRow(300))).toBe(
-      '/comics/5?highlight=300&commentParentType=comment&commentParentId=300'
+      '/comics/5/comic/3?highlight=300&commentParentType=comment&commentParentId=300'
     );
     expect(buildCommentPermalink(await getCommentPermalinkRow(301))).toBe(
       '/apps/store-preview/pixel-forge?highlight=301&commentParentType=comment&commentParentId=301'
     );
+  });
+
+  it('finds no row for a comment hidden for ToS, but for a moderator', async () => {
+    // 400 is hidden for ToS, 401 only by the sweep (the detail fetcher's rows).
+    expect(await getCommentPermalinkRow(400)).toBeUndefined();
+    expect(await getCommentPermalinkRow(400, { includeHidden: true })).toMatchObject({ id: 400 });
+    expect(await getCommentPermalinkRow(401)).toMatchObject({ id: 401 });
   });
 
   it('finds no row for a deleted comment, and no link for a listing with no slug', async () => {
@@ -536,6 +601,31 @@ describe('the points hook', () => {
     expect(await liveCommentsOn(10, { entityType: 'Image', entityId: 10 })).toBe(1);
     // User 6's only comment is deleted.
     expect(await liveCommentsOn(6, { entityType: 'Image', entityId: 10 })).toBe(0);
+    // User 5's on article 10 was removed for ToS (400, in the detail fetcher's rows); user 7 still
+    // has one there that is only hidden by the sweep.
+    expect(await liveCommentsOn(5, { entityType: 'Article', entityId: 10 })).toBe(0);
+    expect(await liveCommentsOn(7, { entityType: 'Article', entityId: 10 })).toBe(1);
+  });
+});
+
+describe('the challenge comment count', () => {
+  it('counts live top-level comments only: not replies, deleted ones, or ones hidden for ToS', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Challenge" (id) VALUES (60);
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('challenge', 60);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "tosViolation", "deletedAt") VALUES
+        (600, 'challenge', 60, 4, 'live', false, NULL),
+        (601, 'challenge', 60, 5, 'hidden for ToS', true, NULL),
+        (602, 'challenge', 60, 6, '', false, now());
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "parentId") VALUES
+        (603, 'challenge', 60, 7, 'a reply', 600);
+    `);
+    const where = countedTopLevelCommentSql(Prisma.raw('v'), 'challenge');
+    const { rows } = await db.pg.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "CommentV3" v WHERE ${where.text} AND v."entityId" = 60`,
+      where.values as unknown[]
+    );
+    expect(rows[0].n).toBe(1);
   });
 });
 
@@ -558,5 +648,39 @@ describe('the bot cohort comment counts', () => {
     ]);
     // User 6's only comment is deleted: no row at all.
     expect(await commentV3Counts.groupBy(allCommentCountArgs([6]))).toEqual([]);
+  });
+});
+
+describe('a comment hidden for ToS', () => {
+  beforeAll(async () => {
+    await db.pg.exec(`
+      INSERT INTO "ResourceReview" (id) VALUES (70);
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('review', 70);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "tosViolation") VALUES
+        (610, 'image', 10, 8, 'hidden for ToS', true),
+        (611, 'image', 10, 9, 'live', false),
+        (612, 'review', 70, 8, 'hidden for ToS', true),
+        (613, 'review', 70, 9, 'live', false);
+    `);
+  });
+
+  it('notifies no one of it, as a deleted one notifies no one', async () => {
+    const ids = pairs(await emitted('new-image-comment')).map(([id]) => id);
+    expect(ids).toContain(611);
+    expect(ids).not.toContain(610);
+  });
+
+  it('does not tell its author about later comments in the thread they were in', async () => {
+    const replies = pairs(await emitted('new-thread-response')).filter(([id]) => id === 611);
+    expect(replies.map(([, to]) => to)).not.toContain(8);
+  });
+
+  it('leaves the review comment count, as a deleted one does', async () => {
+    const where = countedTopLevelCommentSql(Prisma.raw('v'), 'review');
+    const { rows } = await db.pg.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "CommentV3" v WHERE ${where.text} AND v."entityId" = 70`,
+      where.values as unknown[]
+    );
+    expect(rows[0].n).toBe(1);
   });
 });

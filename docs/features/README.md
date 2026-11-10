@@ -17,12 +17,16 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Model rule matches queue (moderator app) | [docs/features/text-scan.md](text-scan.md) |
 | Minor detection review mode | [docs/features/minor-detection-review.md](minor-detection-review.md) |
 | Label store (every moderation judgement, for training) | [docs/features/label-store.md](label-store.md) |
+| Edit LoRA training (Training Studio before/after pairs) | [docs/features/edit-lora-training.md](edit-lora-training.md) |
 | Rating Disputes | [docs/features/rating-dispute.md](rating-dispute.md) |
 | Buzz Accounts | [docs/features/buzz-accounts.md](buzz-accounts.md) |
 | Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](monetization-rules.md) |
+| Model gift links (free claims of gated versions) | [docs/features/model-gift-links.md](model-gift-links.md) |
 | Notifications | [docs/features/notifications.md](notifications.md) |
+| Message as Civitai Moderation (shared moderator chat account) | [docs/features/message-as-civitai.md](message-as-civitai.md) |
 | Web Push (browser push notifications) | [docs/features/web-push.md](web-push.md) |
 | Metrics/Analytics | [docs/features/entity-metrics.md](entity-metrics.md) |
+| Creator engagement API (`GET /api/v1/creator/engagement`) | [docs/features/creator-engagement-api.md](creator-engagement-api.md) |
 | Feed Impressions | [docs/features/feed-impressions.md](feed-impressions.md) |
 | Semantic image search page (`/search/semantic`) | [docs/features/semantic-image-search-page.md](semantic-image-search-page.md) |
 | Bitwise Flags | [docs/features/bitwise-flags.md](bitwise-flags.md) |
@@ -40,3 +44,4 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Storylines (branching stories told in posts) | [docs/features/storylines.md](storylines.md) |
 | Model civitai.com face (separate .com title, description and cover) | [docs/features/model-com-face.md](model-com-face.md) |
 | Semantic image search (image vectors in Qdrant, kept in sync by CDC) | [docs/features/semantic-image-search.md](semantic-image-search.md) |
+| Semantic model search (model vectors in Qdrant for the search service) | [docs/features/semantic-model-search.md](semantic-model-search.md) |

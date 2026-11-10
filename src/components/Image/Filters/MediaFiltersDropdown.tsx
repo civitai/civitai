@@ -1,15 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
-import {
-  Chip,
-  Divider,
-  Drawer,
-  Indicator,
-  Popover,
-  ScrollArea,
-  Stack,
-  Tooltip,
-  Group,
-} from '@mantine/core';
+import { Chip, Divider, Drawer, Indicator, ScrollArea, Stack, Group } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
@@ -22,6 +13,9 @@ import { useStagedFilters } from '~/components/Filters/useStagedFilters';
 import { getDefaultMediaTypes } from '~/components/Image/image.utils';
 import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
+import { useTeamColor } from '~/components/Events/events.utils';
+import { HatIcon } from '~/components/HatTurf/HatIcon';
+import { useHatTurfFeedPlayer } from '~/components/HatTurf/useHatTurfFeedPlayer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import useIsClient from '~/hooks/useIsClient';
@@ -66,6 +60,8 @@ export function MediaFiltersDropdown({
   const showPG13Toggle = isGreen && !!currentUser;
   const showChallengeToggle = filterType !== 'modelImages';
   const showJumpTo = jumpToSort !== undefined;
+  const turfPlayer = useHatTurfFeedPlayer();
+  const teamColor = useTeamColor();
   // The legacy hide* booleans fold into `excluded` so there is one gate, not two.
   const excluded = useMemo<MediaFilterKey[]>(
     () => [
@@ -77,6 +73,8 @@ export function MediaFiltersDropdown({
     [exclude, hideMediaTypes, hideBaseModels, hideTools]
   );
   const shows = useCallback((key: MediaFilterKey) => !excluded.includes(key), [excluded]);
+  // Hat Turf's filters, on the main image feed for players only (as the server serves them).
+  const showTurf = filterType === 'images' && !!isFeed && !!turfPlayer && shows('hideTurfHats');
   // A section whose every chip is excluded would otherwise render as a lone divider.
   const showResources = shows('hideManualResources') || shows('hideAutoResources');
   const showModerator = (
@@ -135,6 +133,9 @@ export function MediaFiltersDropdown({
       minorOnly: undefined,
       includePG13: undefined,
       ...(showJumpTo ? { jumpTo: undefined } : {}),
+      ...(showTurf
+        ? { hatTeams: undefined, hideTurfHats: undefined, hideWornHats: undefined }
+        : {}),
     };
     // `period` is special: the URL path needs `undefined` so `removeEmpty`
     // strips `?period=AllTime`, but the Zustand store needs `AllTime` so
@@ -152,7 +153,7 @@ export function MediaFiltersDropdown({
         types: getDefaultMediaTypes(filterType),
         period: MetricTimeframe.AllTime,
       });
-  }, [onChange, setFilters, filterType, shows, showJumpTo]);
+  }, [onChange, setFilters, filterType, shows, showJumpTo, showTurf]);
 
   const {
     opened,
@@ -172,6 +173,8 @@ export function MediaFiltersDropdown({
 
   // Only the URL-backed callers carry it; the store's filter shape has no jump.
   const jumpTo = 'jumpTo' in mergedFilters ? mergedFilters.jumpTo : undefined;
+  // A Hat Turf sort ranks over the whole event, so it has no time period.
+  const hatSorted = showTurf && !!mergedFilters.hatSort;
 
   // maybe have individual filter length with labels next to them
 
@@ -189,12 +192,19 @@ export function MediaFiltersDropdown({
     (shows('scheduled') && mergedFilters.scheduled ? 1 : 0) +
     (shows('tools') && !!mergedFilters.tools?.length ? 1 : 0) +
     (shows('techniques') && !!mergedFilters.techniques?.length ? 1 : 0) +
-    (shows('period') && mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime
+    (shows('period') &&
+    !hatSorted &&
+    mergedFilters.period &&
+    mergedFilters.period !== MetricTimeframe.AllTime
       ? 1
       : 0) +
+    (hatSorted ? mergedFilters.hatTeams?.length ?? 0 : 0) +
+    (showTurf && mergedFilters.hideTurfHats ? 1 : 0) +
+    (showTurf && mergedFilters.hideWornHats ? 1 : 0) +
     (shows('baseModels') ? mergedFilters.baseModels?.length ?? 0 : 0) +
+    (!hatSorted &&
     ((shows('remixesOnly') && !!mergedFilters.remixesOnly) ||
-    (shows('nonRemixesOnly') && !!mergedFilters.nonRemixesOnly)
+      (shows('nonRemixesOnly') && !!mergedFilters.nonRemixesOnly))
       ? 1
       : 0) +
     (showChallengeToggle && shows('hideChallenges') && mergedFilters.hideChallenges ? 1 : 0) +
@@ -226,7 +236,7 @@ export function MediaFiltersDropdown({
 
   const dropdownBody = (
     <Stack gap="lg" p="md">
-      {shows('period') && (
+      {shows('period') && !hatSorted && (
         <Stack gap="md">
           <Divider label="Time period" className="text-sm font-bold" mb={4} />
           <PeriodFilter
@@ -319,7 +329,8 @@ export function MediaFiltersDropdown({
               </Tooltip>
             </FilterChip>
           )}
-          {shows('nonRemixesOnly') && (
+          {/* A Hat Turf sort hydrates through the database, which has no remix filter. */}
+          {shows('nonRemixesOnly') && !hatSorted && (
             <FilterChip
               checked={mergedFilters.nonRemixesOnly}
               onChange={(checked) => {
@@ -329,7 +340,7 @@ export function MediaFiltersDropdown({
               <span>Originals Only</span>
             </FilterChip>
           )}
-          {shows('remixesOnly') && (
+          {shows('remixesOnly') && !hatSorted && (
             <FilterChip
               checked={mergedFilters.remixesOnly}
               onChange={(checked) =>
@@ -350,6 +361,62 @@ export function MediaFiltersDropdown({
             </FilterChip>
           )}
         </div>
+
+        {showTurf && (
+          <>
+            <Divider
+              label={
+                <span className="inline-flex items-center gap-1">
+                  <HatIcon size={14} /> Turf filters
+                </span>
+              }
+              className="text-sm font-bold"
+              mb={4}
+            />
+            {hatSorted && (
+              <Chip.Group
+                value={mergedFilters.hatTeams ?? []}
+                onChange={(hatTeams) => handleChange({ hatTeams })}
+                multiple
+              >
+                <Group gap={8} role="group" aria-label="Teams">
+                  <span className="text-dimmed text-xs">Teams</span>
+                  {turfPlayer.teams.map((team) => (
+                    <FilterChip
+                      key={team}
+                      value={team}
+                      style={{ '--mantine-primary-color-filled': teamColor(team) } as never}
+                    >
+                      <span>{team}</span>
+                    </FilterChip>
+                  ))}
+                </Group>
+              </Chip.Group>
+            )}
+            <Group gap={8} role="group" aria-label="Show">
+              <span className="text-dimmed text-xs">Show</span>
+              <Tooltip label="Hat Turf sorts only list images with Turf hats" disabled={!hatSorted}>
+                <span>
+                  <FilterChip
+                    checked={hatSorted || !mergedFilters.hideTurfHats}
+                    disabled={hatSorted}
+                    onChange={(checked) =>
+                      handleChange({ hideTurfHats: checked ? undefined : true })
+                    }
+                  >
+                    <span>Turf hats</span>
+                  </FilterChip>
+                </span>
+              </Tooltip>
+              <FilterChip
+                checked={!mergedFilters.hideWornHats}
+                onChange={(checked) => handleChange({ hideWornHats: checked ? undefined : true })}
+              >
+                <span>Worn hats</span>
+              </FilterChip>
+            </Group>
+          </>
+        )}
 
         {filterType === 'modelImages' && showResources && (
           <>

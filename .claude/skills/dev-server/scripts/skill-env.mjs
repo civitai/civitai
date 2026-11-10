@@ -34,7 +34,7 @@ import {
 } from 'fs';
 import { homedir } from 'os';
 import { basename, join, resolve } from 'path';
-import { syncAppEnv } from './app-env.mjs';
+import { appEnvSkipLines, syncAppEnv } from './app-env.mjs';
 import { resolvePrimaryCheckout, samePath } from './paths.mjs';
 
 /**
@@ -264,10 +264,10 @@ Copied ${r.copied} credential file(s) into ${target}.${
 }
 
 /** The app env files alongside: the root `.env` and every per-app one. */
-function syncApp(primary, target, refresh) {
+function syncApp(primary, target, refresh, force) {
   let r;
   try {
-    r = syncAppEnv(primary, target, { refresh });
+    r = syncAppEnv(primary, target, { refresh, force });
   } catch (error) {
     if (error.code === 'DEV_DB_MISSING') {
       console.error(`\n${error.message}\n`);
@@ -283,9 +283,13 @@ function syncApp(primary, target, refresh) {
   for (const p of r.dbRouted) console.log(`  db        ${p} (DATABASE_URL / DATABASE_REPLICA_URL set to the primary root .env's)`);
   for (const p of r.blanked) console.log(`  emptied   ${p} (CSAM_*)`);
   for (const p of r.noDir) console.log(`  skipped   ${p} (its app is not on this branch)`);
-  const stale = refresh ? '' : ' Pass --refresh to re-copy any the primary has edited since.';
+  for (const line of appEnvSkipLines(r)) console.log(line);
+  const skipped = r.edited.length + r.unrecorded.length;
+  const stale = refresh || force ? '' : ' Pass --refresh to re-copy any the primary has edited since.';
   console.log(
-    `\nEnv files: ${r.copied.length} copied, ${r.refreshed.length} refreshed, ${r.kept.length} left as they were.${
+    `\nEnv files: ${r.copied.length} copied, ${r.refreshed.length} refreshed, ${r.kept.length} left as they were${
+      skipped ? `, ${skipped} skipped` : ''
+    }.${
       r.kept.length ? stale : ''
     }\n`
   );
@@ -309,7 +313,7 @@ export function cmdSkillEnv(projectRoot, argv) {
       }.\n  Copying from ${primary.path} instead.`);
     }
     const copied = sync(primary.path, resolve(target));
-    syncApp(primary.path, resolve(target), argv.includes('--refresh'));
+    syncApp(primary.path, resolve(target), argv.includes('--refresh'), argv.includes('--force'));
     return copied;
   }
 

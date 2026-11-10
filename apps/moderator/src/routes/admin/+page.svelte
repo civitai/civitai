@@ -256,6 +256,29 @@
       {:else}
         <span class="flex items-center gap-1 pl-4.5 text-dark-0">{node.label}</span>
       {/if}
+      <!-- Roles with no column here, so no checkbox: the save keeps `kept` from the stored row and drops
+           `retired`, and saying so on the row is the only way an operator learns either. -->
+      {#if data.outside[node.key]}
+        {@const { kept, retired } = data.outside[node.key]}
+        <div class="mt-1 flex flex-wrap gap-1 pl-4.5 text-xs">
+          {#each kept as role (role)}
+            <span
+              class="rounded border border-dark-4 px-1.5 py-0.5 text-dark-2"
+              title="Granted outside this page. Saving keeps it."
+            >
+              {role} · kept on save
+            </span>
+          {/each}
+          {#each retired as role (role)}
+            <span
+              class="rounded border border-yellow-500/30 px-1.5 py-0.5 text-yellow-300"
+              title="Not a role this page grants. The next save of this row removes it."
+            >
+              {role} · removed on save
+            </span>
+          {/each}
+        </div>
+      {/if}
     </th>
     {#each data.roles as role (role)}
       <!-- Flex, not `text-center`: the checkbox is a block-level button, which text alignment does not
@@ -327,6 +350,19 @@
   <p class="mt-2 text-dark-2">
     What each role and moderator may spend on the mod assistant per day is set on
     <a href="/admin/spend-caps" class="underline">Assistant spend caps</a>.
+  </p>
+  <p class="mt-2 text-dark-2">
+    Who is responsible for covering each queue is set on
+    <a href="/admin/queue-owners" class="underline">Queue owners</a>.
+    {#if data.queueOwners === null}
+      <span class="text-red-300">The owner count could not be read.</span>
+    {:else if data.queueOwners.unowned}
+      <a href="/admin/queue-owners" class="font-medium text-yellow-300 underline">
+        {data.queueOwners.unowned} of {data.queueOwners.total} queues have no owner.
+      </a>
+    {:else}
+      Every queue has an owner.
+    {/if}
   </p>
 </header>
 

@@ -8,6 +8,8 @@ import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import { maxInitPostsWithin } from './iframeInitController';
 import type { HostStatus } from './openBuzzPurchaseGate';
 import type { BlockHostSurface } from './blockInitFragmentGate';
+import type { AppsRunOrigin } from '~/shared/utils/apps-run-origin';
+import { withRunLaunchOrigin } from '~/shared/utils/apps-run-origin';
 
 export type PageHostStatus = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
 
@@ -1121,8 +1123,35 @@ function navigateSiteFirstSegmentIsRefused(path: string): boolean {
  * neither says so twice, explicitly, rather than having one `null` stand in for
  * two different decisions. Both are total `Record`s over `BlockHostSurface`, so a
  * new surface is a compile error in both until someone decides both.
+ *
+ * LAUNCH ORIGIN (`opts.launchOrigin`, default `'store'`): the run chrome's "where was this
+ * launched from" signal lives in the PARENT URL as `?from=home` (`apps-run-origin.ts`). The
+ * pushed href is built from the block's path, so without this the first in-app navigation
+ * would drop it and a reload would relabel the way out "Marketplace". Every href that lands on
+ * a `/apps/run/…` path therefore goes through `withRunLaunchOrigin`: the HOST's origin wins
+ * over any `from` the block wrote into its own path (dropped, never echoed), so a
+ * store-launched run's block cannot make the crumb read "My apps", and a home-launched run
+ * carries exactly one `from=home`. The block never sees the parent query, so its `from` is
+ * never a round-trip of ours. A site-scope push to ANOTHER app's run route is treated the
+ * same way (its `from` is the host's too). Any other site page is left byte-for-byte alone.
+ * Omitting the option is the fail-safe `'store'`: no `from` is ever added.
  */
 export function resolveNavigateRequest(
+  raw: unknown,
+  opts: {
+    base: string | null;
+    slug: string;
+    siteNavigation: boolean;
+    launchOrigin?: AppsRunOrigin;
+  }
+): NavigateRequest | null {
+  const req = resolveNavigateRequestPath(raw, opts);
+  if (!req) return null;
+  return { ...req, href: withRunLaunchOrigin(req.href, opts.launchOrigin ?? 'store') };
+}
+
+/** `resolveNavigateRequest` before the launch-origin stamp — the validation and resolution. */
+function resolveNavigateRequestPath(
   raw: unknown,
   opts: { base: string | null; slug: string; siteNavigation: boolean }
 ): NavigateRequest | null {

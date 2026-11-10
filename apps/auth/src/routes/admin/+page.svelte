@@ -9,8 +9,8 @@
     },
     {
       href: '/admin/access',
-      title: 'OAuth Access',
-      desc: 'Gate login per OAuth app (open / testers-only / disabled) and manage the global tester allowlist.',
+      title: 'OAuth Apps',
+      desc: 'Staff settings per OAuth app: gate login (open / testers-only / disabled), skip the consent screen, and set its own token limit.',
     },
   ];
 </script>

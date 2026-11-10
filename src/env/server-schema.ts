@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { zc } from '~/utils/schema-helpers';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 import {
+  commaDelimitedNumberArray,
   commaDelimitedStringArray,
   commaDelimitedStringObject,
   stringToArray,
@@ -371,6 +372,8 @@ export const serverSchema = z
     DISCORD_BOT_TOKEN: z.string().optional(),
     DISCORD_GUILD_ID: z.string().optional(),
     DISCORD_WEBHOOK_MOD_ALERTS: z.string().optional(),
+    // The training canary's Discord channel. Unset: canary results are only logged to Axiom.
+    DISCORD_WEBHOOK_TRAINING_CANARY: z.string().optional(),
     EMAIL_HOST: z.string(),
     EMAIL_PORT: z.preprocess((x) => parseInt(String(x)), z.number()),
     EMAIL_SECURE: zc.booleanString,
@@ -393,9 +396,20 @@ export const serverSchema = z
     S3_IMAGE_CACHE_BUCKET_OLD: z.string().optional(),
     CF_API_TOKEN: z.string().optional(),
     CF_ZONE_ID: z.string().optional(),
+    // The value the edge puts in `x-civ-cf-verified-bot` on a verified crawler's request. Unset or
+    // empty: no request is treated as one (`~/server/bot-cache/bot-cache`).
+    CF_VERIFIED_BOT_HEADER_SECRET: z.string().optional(),
     JOB_TOKEN: z.string(),
     WEBHOOK_URL: z.url().optional(),
     WEBHOOK_TOKEN: z.string(),
+    // Accepted alongside WEBHOOK_TOKEN while callers move to a new value. Unset or blank: only
+    // WEBHOOK_TOKEN is accepted (~/server/utils/webhook-token).
+    WEBHOOK_TOKEN_PREVIOUS: z.string().optional(),
+    // Also accepted by /api/live, /api/ready and /api/health only, so probes need not carry
+    // WEBHOOK_TOKEN. Unset or blank matches nothing.
+    PROBE_TOKEN: z.string().optional(),
+    SYSTEM_ACCOUNT_KEY_TOKEN: z.string().optional(),
+    SYSTEM_ACCOUNT_PROFILE_TOKEN: z.string().optional(),
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.
     MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
@@ -421,6 +435,41 @@ export const serverSchema = z
     // reason as MODERATOR_APP_INTERNAL_URL above.
     GF_REPORT_TOKEN: z.string().optional(),
     GAMES_GUEST_USER_ID: z.union([z.coerce.number().int().positive(), z.literal('')]).optional(),
+    // The shared "Civitai Moderation" account that moderators message users as. Unset or '' turns the
+    // feature off.
+    CIVITAI_MODERATION_USER_ID: z
+      .union([z.coerce.number().int().positive(), z.literal('')])
+      .optional(),
+    // /api/v1/permissions/check answers about a given userId only for that user, a moderator or
+    // these accounts, when PERMISSIONS_CHECK_GATE is on. A malformed list reads as unset.
+    PERMISSIONS_CHECK_SERVICE_USER_IDS: commaDelimitedNumberArray()
+      .default([])
+      .catch([])
+      .transform((ids) => ids.filter((id) => id !== 0)),
+    PERMISSIONS_CHECK_GATE: zc.booleanString.default(false),
+    // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
+    MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),
+    // Download links (`/api/v1/download-links`, `/api/download/l/<id>`). Only these credentials may
+    // mint: OauthClient ids (client_credentials tokens carrying DownloadLink) and ApiKey ids. The
+    // PUBLIC lists name the subset that may also mint links with no named user.
+    DOWNLOAD_LINK_CLIENT_IDS: commaDelimitedStringArray().default([]),
+    DOWNLOAD_LINK_API_KEY_IDS: commaDelimitedStringArray().default([]),
+    DOWNLOAD_LINK_PUBLIC_CLIENT_IDS: commaDelimitedStringArray().default([]),
+    DOWNLOAD_LINK_PUBLIC_API_KEY_IDS: commaDelimitedStringArray().default([]),
+    // Derives each link's id from its linkId so a reused link's URL can be rebuilt. Unset or under
+    // 32 characters: every mint is a new link.
+    DOWNLOAD_LINK_SECRET: z.string().optional(),
+    // The least a link's fetch cap can be; large files get more (`linkFetchCap`).
+    DOWNLOAD_LINK_MAX_FETCHES: z.coerce.number().int().positive().default(50),
+    DOWNLOAD_LINK_MIN_REUSE_SECONDS: z.coerce.number().int().nonnegative().default(7200),
+    DOWNLOAD_LINK_FILE_URL_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(6 * 60 * 60),
+    // Mints (reused ones included) per minute.
+    DOWNLOAD_LINK_MINT_LIMIT_PER_CREDENTIAL: z.coerce.number().int().positive().default(3000),
+    DOWNLOAD_LINK_MINT_LIMIT_PER_USER: z.coerce.number().int().positive().default(120),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),
@@ -484,6 +533,9 @@ export const serverSchema = z
     // that 400s batches already-loaded browsers can still build — see `getTrpcMaxBatchSize` in
     // `src/server/trpc/batch-cap.ts`.
     TRPC_MAX_BATCH_SIZE: z.coerce.number().int().min(1).catch(TRPC_MAX_BATCH_SIZE),
+    BLUE_PAID_ACCESS_RING_WINDOW_DAYS: z.coerce.number().int().min(1).max(90).catch(7),
+    BLUE_PAID_ACCESS_RING_MIN_BUYERS: z.coerce.number().int().min(2).max(1_000).catch(5),
+    BLUE_PAID_ACCESS_RING_MIN_SHARE_PCT: z.coerce.number().int().min(1).max(100).catch(80),
     ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
     ORCHESTRATOR_MODE: z.string().default('dev'),
     ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
@@ -505,9 +557,9 @@ export const serverSchema = z
     SEARCH_TOKEN_API_KEY_UID: z.string().optional(),
     METRICS_SEARCH_HOST: z.url().optional(),
     METRICS_SEARCH_API_KEY: z.string().optional(),
-    // Semantic image search (docs/features/semantic-image-search.md). Unset = the search page errors.
-    QDRANT_URL: z.url().optional(),
-    QDRANT_API_KEY: z.string().optional(),
+    // The search service in front of Qdrant, behind semantic image search. Unset = the search page errors.
+    SEARCH_SERVICE_URL: z.url().optional(),
+    SEARCH_SERVICE_TOKEN: z.string().optional(),
     // Candidate image-feed service for shadow comparisons; unset = shadow mode inert.
     FEED_SERVICE_URL: z.url().optional(),
     // Debounce window (ms) for flushing model-metric-affected ids into the
@@ -653,6 +705,17 @@ export const serverSchema = z
     CSAM_BUCKET_NAME: z.string().default(''),
     CSAM_UPLOAD_REGION: z.string().default(''),
     CSAM_UPLOAD_ENDPOINT: z.string().default(''),
+    // Personal-data export archives: a private bucket of their own (short lifecycle), never a
+    // prefix of another. All optional: the export job logs an error and builds nothing without them.
+    PERSONAL_DATA_EXPORT_ENDPOINT: z.string().default(''),
+    PERSONAL_DATA_EXPORT_REGION: z.string().default(''),
+    PERSONAL_DATA_EXPORT_BUCKET: z.string().default(''),
+    PERSONAL_DATA_EXPORT_KEY: z.string().default(''),
+    PERSONAL_DATA_EXPORT_SECRET: z.string().default(''),
+    // Read-only connection to the stored generation workflow documents; reads from a secondary only.
+    PERSONAL_DATA_EXPORT_MONGO_URL: z.string().default(''),
+    // Where a refused export for a held account is reported; Legal's intake reads this inbox.
+    PERSONAL_DATA_EXPORT_LEGAL_EMAIL: z.string().default('compliance@civitai.com'),
     NCMEC_URL: z.string().optional(),
     NCMEC_USERNAME: z.string().default(''),
     NCMEC_PASSWORD: z.string().default(''),
@@ -793,7 +856,6 @@ export const serverSchema = z
     EXTERNAL_IMAGE_SCANNER: z.string().optional(),
     CLAVATA_SCAN: z.enum(['off', 'shadow', 'active']).default('shadow'),
     MINOR_SCANNER: z.enum(['custom', 'hive']).optional().catch(undefined),
-    HIVE_VISUAL_TOKEN: z.string().optional(),
 
     ALT_ORCHESTRATION_ENDPOINT: z.url().optional(),
     ALT_ORCHESTRATION_TOKEN: z.string().optional(),
@@ -821,7 +883,7 @@ export const serverSchema = z
     PAYPAL_CLIENT_ID: z.string().optional(),
     S3_VAULT_BUCKET: z.string().optional(),
     HEALTHCHECK_TIMEOUT: z.coerce.number().optional().default(1500),
-    // Comma-delimited check names to skip in /api/health (e.g. "searchMetrics").
+    // Comma-delimited check names to skip in /api/health (e.g. "clickhouse").
     // Static counterpart to the runtime sysRedis DISABLED_HEALTHCHECKS list.
     HEALTHCHECK_DISABLED: commaDelimitedStringArray().optional(),
     FRESHDESK_JWT_SECRET: z.string().optional(),
@@ -932,6 +994,10 @@ export const serverSchema = z
     // HQ task.closed -> Known Issues board sync. Standard Webhooks secret (`whsec_…`); unset
     // disables the receiver (503) rather than trusting unsigned deliveries.
     HQ_WEBHOOK_SECRET: z.string().optional(),
+    // Site bug report -> HQ task. The HQ origin (the route is appended) and an intake-scoped
+    // token; if either is unset, reports are saved but not filed.
+    HQ_INTAKE_URL: z.url({ protocol: /^https$/ }).optional(),
+    HQ_INTAKE_TOKEN: z.string().optional(),
 
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
@@ -1056,6 +1122,10 @@ export const serverSchema = z
     // must be configured BEFORE that mode is turned on, or invalidation stops working entirely.
     // Optional here so unset behaves exactly as today.
     IMAGE_CACHER_ADMIN_SECRET: z.string().optional(),
+    // Per call, the most retractions syncCdnAccess sends and the most CDN purges retryTakedownPersists
+    // makes; each retraction also purges. The rest wait for a later call. Anything but a positive
+    // integer (including 0) falls back to 15 rather than failing boot.
+    CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: z.coerce.number().int().positive().catch(15),
 
     // Color environment domains (server-only; delivered to client via AppProvider).
     // SERVER_DOMAIN_<COLOR> is the canonical host used for all outbound URLs.
@@ -1196,6 +1266,9 @@ export const serverSchema = z
     // for the provisioning Job, BUNDLE_S3_* for the presigned bundle, NEXTAUTH_URL
     // for the callback base) — no parallel infra knobs.
     AGENT_REVIEW_COST_CAP_USD: z.string().default('2'),
+    // Platform-wide ceiling (USD per UTC day) on agent reviews started AUTOMATICALLY when a review
+    // preview goes live. Past it, automatic starts are refused; a moderator can still start one.
+    AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD: z.coerce.number().nonnegative().default(40),
     // AGENTIC MOD CODE-REVIEW (App Blocks P1) — CONTAINMENT. Base URL the review
     // agent pod POSTs its report to. Set to the IN-CLUSTER civitai-web service URL
     // (e.g. `http://<svc>.<ns>.svc.cluster.local`) so the adversarial report + the

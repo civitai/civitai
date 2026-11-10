@@ -1,19 +1,11 @@
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
+import { delIfValue } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 const LOCK_REFRESH_INTERVAL = 8; // Every 8 seconds
 const LOCK_BUFFER = 2; // 2 second buffer on redis expiry
 
-// Release only if we still hold the token. The old blind DEL let a fast run
-// free a concurrent slow run's lock.
-const LOCK_RELEASE_SCRIPT = `
-  if redis.call("get", KEYS[1]) == ARGV[1] then
-    return redis.call("del", KEYS[1])
-  else
-    return 0
-  end
-`;
 // Extend the TTL only if we still hold the token (don't clobber a lock that
 // expired and was re-acquired by another run).
 const LOCK_REFRESH_SCRIPT = `
@@ -77,9 +69,8 @@ export async function acquireJobLock(
     released = true;
     clearInterval(interval);
     logToAxiom({ type: 'job-lock', message: 'unlock', job: name }, 'webhooks').catch();
-    await redis
-      .eval(LOCK_RELEASE_SCRIPT, { keys: [key], arguments: [token] })
-      .catch(() => undefined);
+    // Only while we still hold the token: a blind DEL let a fast run free a slow run's lock.
+    await delIfValue(redis, key, token).catch(() => undefined);
   };
 
   // Refresh while we still own the lock so long jobs keep it and dead pods

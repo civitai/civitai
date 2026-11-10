@@ -361,9 +361,9 @@ describe('standings rows (A7)', () => {
           startDate: later,
         })
       ).textContent ?? '';
-    expect(heading(true)).toMatch(
-      /Team standingsPoints live · graph updated hourly · last update \d/
-    );
+    const live = heading(true);
+    expect(live).toMatch(/Team standingsPoints live/);
+    expect(live).not.toMatch(/hourly|last update/);
     act(() => root?.unmount());
     host?.remove();
     expect(heading(false)).toMatch(/Team standingsUpdated hourly · last update \d/);

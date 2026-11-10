@@ -132,7 +132,7 @@
     const key = Number(formData.get('reportId') ?? formData.get('imageId'));
     const a = action.search;
     const verdict = a.includes('dismissFlag')
-      ? 'Flag dismissed'
+      ? 'Dismissed'
       : a.includes('accept')
         ? acceptedVerdict
         : a.includes('block')

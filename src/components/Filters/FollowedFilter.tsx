@@ -58,7 +58,17 @@ function DumbFollowFilter({ type, value, onChange, ...props }: DumbProps) {
     value === NEW_CREATORS_VALUE ? IconSparkles : value === 'true' ? IconUsersGroup : IconWorld;
   const { variant, ...buttonProps } = props.buttonProps ?? {};
 
-  return <SelectMenuV2 {...sharedProps} icon={icon} {...buttonProps} />;
+  // `data-collapse-label`: the sub nav keeps only the icon on the narrowest phones. The name stays
+  // in the DOM for screen readers and in `title` for hover.
+  return (
+    <SelectMenuV2
+      {...sharedProps}
+      icon={icon}
+      title={sharedProps.label}
+      data-collapse-label
+      {...buttonProps}
+    />
+  );
 }
 
 type StatefulProps = {

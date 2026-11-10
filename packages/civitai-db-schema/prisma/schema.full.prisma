@@ -434,6 +434,8 @@ model User {
   eligibilityChangedAt    DateTime?
   // Payment provider related
   customerId              String?                @unique // Stripe
+  // Legacy Stripe subscription id; the account scrub clears it.
+  subscriptionId          String?
   paddleCustomerId        String?                @unique
 
   profile              UserProfile?
@@ -562,6 +564,7 @@ model User {
   collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
   collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
   adTokens                   AdToken[]
+  accessTokens               AccessToken[]
   ratingRequests             ImageRatingRequest[]
   collectionItemScores       CollectionItemScore[]
   appeals                    Appeal[]                       @relation("submittedAppeals")
@@ -605,6 +608,7 @@ model User {
   // Storylines
   storylines                 Storyline[]
   storylineCollaborations    StorylineCollaborator[]
+  storylineFollows           StorylineFollow[]
   storylineEarlyAccess       StorylineEarlyAccessSignup?
   storylineBranchChoices     StorylineBranchChoice[]
   storylineCreateClicks      StorylineCreateClick[]
@@ -669,8 +673,13 @@ model User {
   mysteryBoxesSold                   ItemDefinition[]           @relation("ItemDefinitionSeller")
 
   gameFrameGames          GameFrameGame[]
+  giftLinksCreated        ModelVersionGiftLink[]
+  giftRedemptions         ModelVersionGiftRedemption[]
 
   @@index([deletedAt])
+  /// Partial in the database (WHERE "bannedAt" IS NOT NULL), as it exists in prod; Prisma cannot
+  /// express the predicate.
+  @@index([bannedAt], map: "User_banned")
 }
 
 model CustomerSubscription {
@@ -1140,6 +1149,24 @@ model Model {
 
   @@index([name])
   @@index([status, nsfw])
+  @@index([createdAt])
+  @@index([updatedAt, id])
+}
+
+/// Every owner a model has had, including its first. Read by the legal hold so a transfer cannot
+/// move data out of it. Append-only (a trigger refuses UPDATE and DELETE); no foreign keys, so rows
+/// outlive the model and user.
+model ModelOwnership {
+  id        Int      @id @default(autoincrement())
+  modelId   Int
+  userId    Int
+  /// 'create' | 'transfer' | 'account-delete' | 'restore' | 'baseline' (a CHECK in SQL)
+  reason    String
+  actorId   Int?
+  createdAt DateTime @default(now())
+
+  @@index([modelId])
+  @@index([userId])
 }
 
 /// A model's licensing permissions as they stood from `effectiveAt` until its next row, so a merge can
@@ -1332,6 +1359,7 @@ model ModelVersion {
   coveredCheckpoints      CoveredCheckpoint[]
   wildcardSet             WildcardSet?
   licensingRoot           LicensingRoot?
+  giftLinks               ModelVersionGiftLink[]
 
   @@index([modelId], type: Hash)
   @@index([licensingSourceVersionId])
@@ -1676,6 +1704,17 @@ model ModActivity {
   @@index([createdAt])
 }
 
+/// Which moderator is answering a Civitai Moderation thread, so two never reply at once. Expires
+/// unless renewed by a send.
+model ModThreadClaim {
+  chatId      Int      @id
+  moderatorId Int
+  claimedAt   DateTime @default(now())
+  expiresAt   DateTime
+
+  @@index([moderatorId])
+}
+
 enum ReportReason {
   TOSViolation
   NSFW
@@ -1863,6 +1902,30 @@ model ComicProjectReport {
 
   @@id([reportId, comicProjectId])
   @@index([comicProjectId], type: Hash)
+}
+
+/// A copy of a held author's ResourceReview, written in the same statement as a delete that would
+/// cascade it. Purged once the author's hold ends.
+model HeldResourceReview {
+  /// The original ResourceReview id.
+  id             Int       @id
+  modelId        Int
+  modelVersionId Int
+  userId         Int
+  rating         Int
+  recommended    Boolean
+  details        String?
+  exclude        Boolean
+  nsfw           Boolean
+  tosViolation   Boolean
+  metadata       Json?
+  createdAt      DateTime
+  updatedAt      DateTime
+  heldAt         DateTime  @default(now())
+  /// The holds on the author when it was copied.
+  holdReasons    String[]
+
+  @@index([userId])
 }
 
 model ResourceReview {
@@ -2168,7 +2231,8 @@ model Image {
   clubAvatar          Club[]                @relation("avatarImage")
   clubTierCover       ClubTier[]
   clubPostCoverImage  ClubPost[]
-  article             Article?
+  article             Article?              @relation("ArticleCover")
+  articleBanner       Article?              @relation("ArticleBanner")
   purchasableRewards  PurchasableReward[]
   tools               ImageTool[]
   techniques          ImageTechnique[]
@@ -2197,6 +2261,8 @@ model Image {
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
+  storylineSparks        Storyline[]            @relation("StorylineSparkImage")
+  storylineCoverUploads  StorylineCoverUpload[]
   caption                ImageCaption?
 
   @@index([featuredAt])
@@ -2870,6 +2936,7 @@ model ApiKey {
 
   @@index([clientId])
   @@index([workerDeviceId])
+  @@index([userId])
 }
 
 model OauthClient {
@@ -2886,6 +2953,12 @@ model OauthClient {
   /// Login gating: "open" (anyone), "testers" (only users holding the "tester" UserRole), "disabled" (no one).
   /// Read by the auth hub's /authorize gate. First-party (spoke) clients have no row here, so are never gated.
   accessMode     String         @default("open")
+  /// Staff-only, confidential system apps only (auth hub admin, OAuth Apps): signed-in users go straight through
+  /// /authorize with no consent screen, as first-party (spoke) clients do. Ignored for a public app.
+  skipConsent    Boolean        @default(false)
+  /// Staff-only, confidential system apps only: this client's own /oauth/token limit per minute, used once a request
+  /// is past the per-IP limit and the client has proved its secret. Null = the per-IP limit only.
+  tokenRateLimit Int?
   userId         Int
   user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   isVerified     Boolean        @default(false)
@@ -3102,6 +3175,16 @@ model AppBlock {
   // survives the parent's deletion and still marks the block as a fork.
   forkOfAppBlockId   String?   @map("fork_of_app_block_id") // @no-type
   forkOfCommitSha    String?   @map("fork_of_commit_sha") // @no-type
+
+  // STORAGE DELETION — when the app was deleted (`storageDeletedAt`), and when the deleted-app
+  // reaper (`jobs/reap-deleted-app-storage.ts`) finished deleting its document-store data
+  // (`storagePurgedAt`). The reaper deletes every user's data in the app 30 days after
+  // `storageDeletedAt`, and only while the block is not `approved` and not written since
+  // (`updatedAt`); restoring the app clears `storageDeletedAt`. No-type for the reason `visibility` documents on `AppListing`: read and
+  // written by raw SQL only, so nothing raises P2022 before manual-apply migration
+  // `20261218120000_app_block_storage_deleted_at` runs.
+  storageDeletedAt   DateTime? @map("storage_deleted_at") @db.Timestamptz(6) // @no-type
+  storagePurgedAt    DateTime? @map("storage_purged_at") @db.Timestamptz(6) // @no-type
 
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -3543,6 +3626,14 @@ model AppListing {
   revisionOfId    String?      @map("revision_of_id")
   revisionOf      AppListing?  @relation("AppListingRevision", fields: [revisionOfId], references: [id], onDelete: Cascade)
   revisions       AppListing[] @relation("AppListingRevision")
+  // MODERATOR-SET "Official" flag: the app is made by the Civitai team. A provenance claim
+  // like `Model.isOfficial` / `Article.isOfficial` — set only by `setListingOfficialAsModerator`,
+  // never from an author input or the manifest; renders a badge on the store card and page.
+  // 🔴 CARRIES THE no-type ANNOTATION — stripped from the generated client, read and written
+  // by raw SQL in `app-listing-official.service.ts` only, for the reason `visibility` above
+  // documents (a Prisma-declared scalar is named by every select-less query and would 500
+  // them until the manual migration `20261224120200_app_listing_official` is applied).
+  isOfficial      Boolean      @default(false) @map("is_official") // @no-type
   // Curation rail (mirrors AppBlock.featured / featured_order).
   featured        Boolean      @default(false)
   featuredOrder   Int?         @map("featured_order")
@@ -4851,6 +4942,82 @@ model AppUserScopeGrant {
   @@map("app_user_scope_grants")
 }
 
+// App Blocks cross-app storage imports: the per-source consent ledger. RAW SQL ONLY
+// (`storage-import-grant.service.ts`), so the model is stripped from the generated client; the
+// migration `20261218120000_app_storage_import_grants` is applied by hand and the service
+// tolerates the table's absence.
+// @no-type
+model AppStorageImportGrant {
+  userId             Int      @map("user_id")
+  consumerAppBlockId String   @map("consumer_app_block_id")
+  sourceAppBlockId   String   @map("source_app_block_id")
+  collections        String[]
+  access             String
+  grantedAt          DateTime @default(now()) @map("granted_at") @db.Timestamptz(6)
+
+  @@id([userId, consumerAppBlockId, sourceAppBlockId])
+  @@index([sourceAppBlockId], map: "app_storage_import_grants_source_idx")
+  @@map("app_storage_import_grants")
+}
+
+// App Developer Terms acceptance: one row per (developer, terms version). A developer accepts with
+// the checkbox at app publish; bumping APP_DEVELOPER_TERMS_VERSION asks everyone again. The FK to
+// "User" lives only in migration `20261223120000_app_developer_terms_acceptance`, applied by hand.
+model AppDeveloperTermsAcceptance {
+  userId     Int      @map("user_id")
+  version    String
+  acceptedAt DateTime @default(now()) @map("accepted_at") @db.Timestamptz(6)
+
+  @@id([userId, version])
+  @@map("app_developer_terms_acceptances")
+}
+
+// App Blocks App Storage schema migrations: one run per (approved publish request, collection)
+// over that collection's stored documents. RAW SQL ONLY (`storage-migration-run.service.ts`), so
+// the model is stripped from the generated client; the migration
+// `20261221120000_app_storage_migration_runs` is applied by hand (with its FKs, CHECK and partial
+// index, which live only there) and the service tolerates the table's absence.
+// @no-type
+model AppStorageMigrationRun {
+  publishRequestId String    @map("publish_request_id")
+  collection       String
+  appBlockId       String    @map("app_block_id")
+  ops              Json
+  status           String    @default("pending")
+  cursor           Json?
+  scanned          Int       @default(0)
+  migrated         Int       @default(0)
+  unchanged        Int       @default(0)
+  failed           Int       @default(0)
+  invalid          Int       @default(0)
+  failures         Json      @default("[]")
+  lastError        String?   @map("last_error")
+  attempts         Int       @default(0)
+  claimToken       String?   @map("claim_token")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  startedAt        DateTime? @map("started_at") @db.Timestamptz(6)
+  heartbeatAt      DateTime? @map("heartbeat_at") @db.Timestamptz(6)
+  finishedAt       DateTime? @map("finished_at") @db.Timestamptz(6)
+
+  @@id([publishRequestId, collection])
+  @@index([appBlockId], map: "app_storage_migration_runs_app_block_idx")
+  @@map("app_storage_migration_runs")
+}
+
+// App Blocks App Storage permission hooks: the verified source of each hook file, keyed by its own
+// sha256 (content-addressed, append-only). RAW SQL ONLY (`storage-hooks.ts`), so the model is
+// stripped from the generated client; the migration `20261224120000_app_storage_hook_sources` is
+// applied by hand (with its CHECKs, which live only there).
+// @no-type
+model AppStorageHookSource {
+  sha256    String   @id
+  source    String
+  sizeBytes Int      @map("size_bytes")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("app_storage_hook_sources")
+}
+
 /// App Blocks Phase 3 (git-push self-service) — per-civitai-user Forgejo
 /// identity. 1:1 with User (PK is the civitai userId), provisioned LAZILY the
 /// first time a developer requests git access to one of their apps.
@@ -4902,6 +5069,36 @@ model TrustedSpokeDomain {
   updatedAt         DateTime @default(now()) @updatedAt
 }
 
+// A bearer link to one resource (first use: a private share link to a draft article). Only the
+// sha256 of the token is stored; the raw token is shown to its creator once. A row grants nothing
+// once `revokedAt` is set or `expiresAt` has passed, and readers check both on every lookup.
+// `resourceType` is text, not an enum, so a new kind of link needs no enum migration.
+model AccessToken {
+  id           Int       @id @default(autoincrement())
+  resourceType String
+  resourceId   Int
+  tokenHash    String    @unique
+  createdById  Int
+  createdBy    User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+  expiresAt    DateTime
+  revokedAt    DateTime?
+
+  @@index([resourceType, resourceId])
+  @@index([createdById])
+}
+
+// The check a shared draft's read requires: the workflow whose verdict covers the draft's text, and
+// a hash of that text. Written under the share-token lock.
+model ArticleShareCheck {
+  articleId  Int      @id
+  // Bumped by every write that changes a shared draft's text.
+  generation Int      @default(0)
+  workflowId String?
+  textHash   String?
+  updatedAt  DateTime @updatedAt
+}
+
 model AdToken {
   id        Int       @id @default(autoincrement())
   token     String    @unique
@@ -4927,6 +5124,8 @@ model Comment {
   locked       Boolean? @default(false)
   hidden       Boolean? @default(false)
   pinnedAt     DateTime?
+  /// No longer set; only the reverse copy reads it. Kept until a migration drops it.
+  removedByAuthor Boolean @default(false)
 
   comments  Comment[]         @relation("ParentComments")
   reactions CommentReaction[]
@@ -5254,6 +5453,8 @@ model CommentV3 {
   pinnedAt      DateTime? @db.Timestamptz(6)
   reactionCount Int       @default(0)
   legacyV1Id    Int?
+  // No longer set; only the reverse copy reads it. Kept until a migration drops it.
+  removedByAuthor Boolean @default(false)
 
   reactions CommentV3Reaction[]
   reports   CommentV3Report[]
@@ -5639,6 +5840,7 @@ model EventCosmeticPlacement {
   updatedAt     DateTime       @default(now()) @db.Timestamptz(3)
 
   @@index([event, updatedAt])
+  @@index([userId, event])
 }
 
 model EventCosmeticScoreDaily {
@@ -5660,6 +5862,36 @@ model EventCosmeticScoreDaily {
 
   @@id([event, userId, cosmeticId, claimKey, day])
   @@index([event, day])
+}
+
+/// A Hat Turf sticker: one player's team mark on someone else's image, for an event. Free, never
+/// moved; a moderator removal is final (the unique key outlives it). Constraints and partial index
+/// live only in the migration.
+model EventTurfSticker {
+  id          BigInt    @id @default(autoincrement())
+  event       String
+  imageId     Int
+  userId      Int
+  team        String
+  cosmeticId  Int
+  data        Json      @default("{}")
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  removedAt   DateTime? @db.Timestamptz(3)
+  removedById Int?
+
+  @@unique([event, imageId, userId])
+  @@index([event, userId])
+}
+
+/// A player's Hat Turf sticker supply: a lazy token bucket, refilled on read from the event's
+/// supply schedule.
+model EventTurfStock {
+  event      String
+  userId     Int
+  stock      Float
+  refilledAt DateTime @db.Timestamptz(3)
+
+  @@id([event, userId])
 }
 
 /// `track` is TEXT behind a CHECK constraint, not an enum, so adding a track needs no deploy-first enum migration.
@@ -6015,6 +6247,8 @@ model BoxOpening {
   itemRoll           Int
   /// granted | refunded (text + CHECK)
   rewardStatus       String
+  /// Drawn from a pack's guaranteed tiers only.
+  guaranteed         Boolean  @default(false)
   createdAt          DateTime @default(now())
 
   @@index([userId, createdAt])
@@ -6105,7 +6339,10 @@ model Article {
   content          String
   cover            String?
   coverId          Int?          @unique
-  coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
+  coverImage       Image?        @relation("ArticleCover", fields: [coverId], references: [id], onDelete: SetNull)
+  // Optional wide banner across the top of the article page; coverId stays the feed card image.
+  bannerId         Int?          @unique
+  bannerImage      Image?        @relation("ArticleBanner", fields: [bannerId], references: [id], onDelete: SetNull)
   publishedAt      DateTime?
   // Go-live time for a never-published Draft; publishedAt stays NULL until then.
   scheduledAt      DateTime?
@@ -6143,8 +6380,28 @@ model Article {
   collectionItems    CollectionItem[]
   rewardsBonusEvents RewardsBonusEvent[]
   ratingReviews      ArticleRatingReview[]
+  contentLinkHold    ArticleContentLinkHold?
 
   @@index([status, ingestion, nsfwLevel])
+}
+
+/// Content urls of an article that linking created no Image row for yet: deferred until the
+/// upload key's issuer can be read, refused while it is someone other than the owner or editor.
+/// The article stays off public while any is held.
+model ArticleContentLinkHold {
+  articleId     Int       @id
+  article       Article   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  deferred      String[]  @default([])
+  refused       String[]  @default([])
+  /// Who saved the content; their own keys count as the owner's.
+  editorId      Int
+  /// When a url was first deferred, kept while any stays deferred.
+  deferredSince DateTime?
+  /// Set once a deferral outlives the backstop and a moderator report is filed.
+  reportedAt    DateTime?
+  checkedAt     DateTime  @default(now())
+
+  @@index([checkedAt])
 }
 
 model PressMention {
@@ -6308,6 +6565,7 @@ model Collection {
   moderatorNsfwLevel      Int?
   moderatorNsfwLevelBasis Int?
   collaborationDisabledAt DateTime?
+  archivedAt   DateTime?
 
   items        CollectionItem[]
   contributors CollectionContributor[]
@@ -6622,6 +6880,30 @@ model BountyBenefactor {
   @@index([userId], type: Hash)
 }
 
+/// An award a moderator release left neither paid nor refunded because its supporter has no charge
+/// on record, kept for a manual ruling. No foreign key: it outlives the bounty. Open while
+/// resolvedAt is null; an open row keeps the bounty from being deleted.
+model BountyUnpaidAward {
+  bountyId           Int
+  /// The supporter whose award is unpaid.
+  userId             Int
+  unitAmount         Int
+  buzzTransactionIds String[]  @default([])
+  winnerUserId       Int?
+  /// The bounty owner when the award was recorded, before any delete detaches the bounty.
+  ownerId            Int?
+  /// Null on a row backfilled from ModActivity, which did not record the moderator.
+  recordedById       Int?
+  recordedAt         DateTime  @default(now())
+  /// paid_winner | refunded_supporter | no_charge_found
+  ruling             String?
+  ledgerReference    String?
+  resolvedById       Int?
+  resolvedAt         DateTime?
+
+  @@id([bountyId, userId])
+}
+
 enum BountyEngagementType {
   Favorite
   Track
@@ -6705,6 +6987,25 @@ model CsamReport {
   // modelVersionIds  Int[]     @default([])
 }
 
+enum CsamQueueSetAsideOutcome {
+  AfterReport
+  Dismissed
+}
+
+/// An image a moderator took out of the CSAM review queue without changing the image. Whether the row
+/// still counts is decided when the queue is read; a changed flag or a new report deletes it.
+model CsamQueueSetAside {
+  imageId      Int                      @id
+  userId       Int
+  outcome      CsamQueueSetAsideOutcome
+  /// The report an `AfterReport` row follows. Nothing writes `AfterReport` rows yet.
+  csamReportId Int?
+  moderatorId  Int
+  createdAt    DateTime                 @default(now())
+
+  @@index([userId])
+}
+
 /// Written by a trigger on `CsamReport`: one row per change to a sent report and per deleted report.
 model CsamReportAudit {
   id              Int       @id @default(autoincrement())
@@ -6756,6 +7057,44 @@ model CsamReportArchiveObject {
   uploadedAt    DateTime @default(now())
 
   @@index([csamReportId])
+}
+
+/// One personal-data export request and its log. A moderator queues it; the
+/// `build-personal-data-exports` job builds the archive, uploads it and emails the requester a link;
+/// a separate release step sends the account owner a link after re-checking holds. The row outlives
+/// the archive, which the bucket deletes after its TTL. At most one queued or building row per user
+/// (a partial unique index in the migration).
+model PersonalDataExport {
+  id            Int       @id @default(autoincrement())
+  userId        Int
+  requestedById Int
+  /// queued | building | built | held | failed | released
+  status        String    @default("queued")
+  /// Always text-redacted-separate-file: the notes file beside the archive.
+  modNotesMode  String    @default("text-redacted-separate-file")
+  /// Neutral codes for the holds found when the archive was built; re-checked at release.
+  holdReasons   String[]  @default([])
+  archiveKey    String?
+  modNotesKey   String?
+  /// Per-source row counts and notes: what the archive's manifest.json holds, without data.
+  manifest      Json?
+  error         String?
+  attempts      Int       @default(0)
+  createdAt     DateTime  @default(now())
+  startedAt     DateTime?
+  builtAt       DateTime?
+  /// When the requester was emailed the link.
+  sentAt        DateTime?
+  linkExpiresAt DateTime?
+  releasedAt    DateTime?
+  releasedById  Int?
+  /// The help-desk ticket the request came in on, when it did.
+  ticketId      Int?
+  /// The date the user asked (the ticket's own date, or as entered): starts the response deadline.
+  requestedAt   DateTime? @db.Date
+
+  @@index([userId])
+  @@index([status])
 }
 
 /// A hold marker on one owner. While a row is active (see `EvidenceHeldUser`), that owner's images
@@ -6847,6 +7186,45 @@ model EntityAccess {
   meta         Json?    @default("{}")
 
   @@id([accessToId, accessToType, accessorId, accessorType])
+}
+
+// A free claim of a gated model version. The code is never stored, only its hash; a claim grants
+// EntityAccess with meta.giftLinkId. See docs/features/model-gift-links.md.
+model ModelVersionGiftLink {
+  id              Int                          @id @default(autoincrement())
+  modelVersionId  Int
+  modelVersion    ModelVersion                 @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  createdById     Int
+  createdBy       User                         @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  codeHash        String                       @unique
+  codeHint        String
+  label           String?
+  batchId         String?
+  /// null = uncapped. CHECKs (> 0, redemptionCount <= maxRedemptions) live only in the migration.
+  maxRedemptions  Int?
+  redemptionCount Int                          @default(0)
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  revokedById     Int?
+  createdAt       DateTime                     @default(now())
+  redemptions     ModelVersionGiftRedemption[]
+
+  @@index([modelVersionId, createdAt(sort: Desc)])
+  @@index([batchId])
+}
+
+model ModelVersionGiftRedemption {
+  giftLinkId Int
+  giftLink   ModelVersionGiftLink @relation(fields: [giftLinkId], references: [id], onDelete: Cascade)
+  userId     Int
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  claimedAt  DateTime             @default(now())
+  /// Set when the link's owner or a moderator removed this claimer's gifted access.
+  revokedAt   DateTime?
+  revokedById Int?
+
+  @@id([giftLinkId, userId])
+  @@index([userId])
 }
 
 enum PaidAccessEntityType {
@@ -7327,6 +7705,26 @@ model ImageCdnModeratorDelete {
   @@index([url])
 }
 
+/// The user an upload key's issue record named, kept when the key is saved as shop artwork so the
+/// proof outlives the record. Written only by `assertShopArtworkKeysIssued`.
+model ShopArtworkKeyOwner {
+  key        String   @id
+  userId     Int
+  recordedAt DateTime @default(now())
+}
+
+/// A Creator Shop takedown's artwork key, kept after the listing is deleted so the url stays taken
+/// down. Written only by `recordShopTakedownArtwork`.
+model ImageCdnShopTakedown {
+  id          Int      @unique @default(autoincrement())
+  url         String
+  shopItemId  Int
+  userId      Int?
+  takenDownAt DateTime @default(now())
+
+  @@id([url, shopItemId])
+}
+
 /// A short lease on one url while a cdn-access-sync run calls the image server about it.
 model ImageCdnAccessClaim {
   url          String   @id
@@ -7597,7 +7995,8 @@ model Appeal {
   buzzTransactionId String?
   entityRemovedAt   DateTime?
   category          AppealCategory?
-  /// What the form collected beyond the message (`SiteAppealContext`).
+  /// What the form collected beyond the message (`SiteAppealContext`); on an in-app model appeal, the
+  /// locked settings an owner asks a moderator to review (`LockReviewContext`), else NULL.
   context           Json?
 
   @@index([entityType, entityId, userId])
@@ -8963,6 +9362,7 @@ model UserProfile {
   privacySettings         Json      @default("{\"showFollowerCount\":true,\"showFollowingCount\":true,\"showReviewsRating\":true}")
   profileSectionsSettings Json      @default("[{\"key\":\"showcase\",\"enabled\":true},{\"key\":\"popularModels\",\"enabled\":true},{\"key\":\"popularArticles\",\"enabled\":true},{\"key\":\"modelsOverview\",\"enabled\":true},{\"key\":\"imagesOverview\",\"enabled\":true},{\"key\":\"recentReviews\",\"enabled\":true}]")
   showcaseItems           Json      @default("[]")
+  showcaseSections        Json      @default("[]")
 
   @@id([userId])
   // Serves the ON DELETE SET NULL referential-integrity trigger for the
@@ -10118,8 +10518,11 @@ model Placement {
   placerId              Int
   placer                User      @relation("PlacementPlacer", fields: [placerId], references: [id], onDelete: Cascade)
   data                  Json      @default("{}")
+  /// A sticker's movement over a video, in the shape of `StickerTrack`. Null for a still sticker;
+  /// `data` holds the pose at time zero either way. Its own column because the feed reads `data`.
+  track                 Json?
   status                String
-  /// 'owner' | 'moderator' | 'cosmeticTakedown', set with status 'removed'. The
+  /// 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer', set with status 'removed'. The
   /// removals refund different amounts, so the status alone cannot settle the
   /// money. Constrained by "Placement_removedBy_check" — a new value needs a
   /// migration even though the column is TEXT.
@@ -10322,17 +10725,24 @@ model Storyline {
   heroImage         Image? @relation("StorylineHeroImage", fields: [heroImageId], references: [id], onDelete: SetNull)
   /// The banner's vertical focus, as a percentage (0 top to 100 bottom).
   heroImagePosition Int    @default(50)
+  /// The image the storyline was started from, credited above chapter 1. Not a chapter. Shown only
+  /// while the image is visible and within the storyline's ceiling, which may not go below it.
+  sparkImageId      Int?
+  sparkImage        Image? @relation("StorylineSparkImage", fields: [sparkImageId], references: [id], onDelete: SetNull)
 
   chapters      StorylineChapter[]
   pendingChapters StorylinePendingChapter[]
   collaborators StorylineCollaborator[]
+  followers     StorylineFollow[]
   reports       StorylineReport[]
+  coverUploads  StorylineCoverUpload[]
   /// The storyline's own discussion (commentsv2 entity type `storyline`), separate from chapter 1's post thread.
   thread        Thread?
 
   @@index([userId])
   @@index([coverImageId])
   @@index([heroImageId])
+  @@index([sparkImageId])
 }
 
 /// A chapter of a storyline: one post. The tree lives in `StorylineChapterEdge`, not
@@ -10428,6 +10838,34 @@ model StorylineChapterEdge {
   @@index([parentChapterId, createdAt])
 }
 
+/// A record kept when a storyline's owner or a chapter's author removes a chapter while a report
+/// on it (its post or the storyline) is open: the removal itself is the ordinary one, and this row
+/// is what moderators see of it in the report's context. It changes nothing for anyone else.
+/// Not related to its storyline or post, so it outlives them.
+model StorylineChapterRemovalHold {
+  id               Int      @id @default(autoincrement())
+  storylineId      Int
+  /// The storyline's title at removal: the hold outlives the storyline.
+  storylineTitle   String
+  /// The removed chapter's id, its post and its author, as they were.
+  chapterId        Int
+  postId           Int?
+  chapterUserId    Int
+  depth            Int
+  placementId      Int?
+  parentChapterIds Int[]
+  chapterCreatedAt DateTime
+  removedById      Int
+  /// 'owner' or 'author'.
+  removedByRole    String
+  /// The reports open when it was removed.
+  reportIds        Int[]
+  createdAt        DateTime @default(now())
+
+  @@index([postId])
+  @@index([storylineId])
+}
+
 /// The post author's note on one image of a storyline chapter, shown to readers under the
 /// image. No row means no caption: an empty caption deletes it.
 model ImageCaption {
@@ -10445,13 +10883,40 @@ model ImageCaption {
 }
 
 /// Collaborators the storyline owner has endorsed. Their continuations skip review and
-/// are listed before everyone else's.
+/// are listed before everyone else's. A row is an invitation until the user accepts it: until
+/// then they are not shown on the storyline and have no collaborator rights.
 model StorylineCollaborator {
   storylineId Int
   storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
   userId      Int
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt   DateTime  @default(now())
+  /// When the user accepted the invitation; null while it is pending. Declining deletes the row.
+  acceptedAt  DateTime?
+
+  @@id([storylineId, userId])
+  @@index([userId])
+}
+
+/// Which new chapters of a storyline a follower is told about. Each scope includes the one before.
+enum StorylineFollowScope {
+  /// Chapters on the main path.
+  Canon
+  /// Also chapters by the owner or an accepted collaborator, judged when the notification is sent.
+  Endorsed
+  /// Every live chapter.
+  Everything
+}
+
+/// A user following a storyline for 'storyline-chapter-added'. The owner and each accepted
+/// collaborator get a row when they start or join, and may delete it; unfollowing deletes it.
+model StorylineFollow {
+  storylineId Int
+  storyline   Storyline            @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scope       StorylineFollowScope @default(Canon)
+  createdAt   DateTime             @default(now())
 
   @@id([storylineId, userId])
   @@index([userId])
@@ -10472,6 +10937,7 @@ model StorylineBranchChoice {
 
   @@id([userId, parentChapterId])
   @@index([parentChapterId, chapterId])
+  @@index([chapterId])
 }
 
 /// A signed-in reader asking for the "Create next section" tool at the end of a chapter. One row
@@ -10499,13 +10965,30 @@ model StorylineEarlyAccessSignup {
   @@index([createdAt])
 }
 
-model StorylineReport {
+/// An image uploaded through a storyline's Manage as its card cover or banner. A no-chapter cover
+/// must be listed here as uploaded for its storyline.
+model StorylineCoverUpload {
   storylineId Int
   storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
-  reportId    Int       @unique
-  report      Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  imageId     Int
+  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
 
-  @@id([reportId, storylineId])
+  @@id([storylineId, imageId])
+  @@index([imageId])
+}
+
+/// A report outlives its storyline: the delete sets `storylineId` NULL and fills the snapshot.
+model StorylineReport {
+  reportId        Int        @id
+  report          Report     @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  storylineId     Int?
+  storyline       Storyline? @relation(fields: [storylineId], references: [id], onDelete: SetNull)
+  /// The storyline's id once deleted, when a held copy of it was kept ("HeldStoryline").
+  heldStorylineId Int?
+  /// The storyline's title when it was deleted.
+  storylineTitle  String?
+
   @@index([storylineId], type: Hash)
 }
 
@@ -10570,9 +11053,13 @@ enum ServiceDealEventType {
   Refunded
 }
 
+/// Preview and Final are the seller's delivery. An Attachment is a file the buyer gives the seller
+/// for the work (a dataset, references); it goes through the same scans as a Final and reaches the
+/// seller only once they pass.
 enum ServiceDealFileKind {
   Preview
   Final
+  Attachment
 }
 
 /// Where a file is on its way to being usable. A Preview is Ready once its watermarked derivative
@@ -10778,7 +11265,7 @@ model ServiceDealFile {
   fileName       String                    @default("")
   mimeType       String
   size           Int
-  /// Uploading until the seller confirms the object is in the bucket.
+  /// Uploading until the uploader confirms the object is in the bucket.
   status         ServiceDealFileStatus     @default(Uploading)
   failReason     String?
   uploadedAt     DateTime?
@@ -10801,6 +11288,11 @@ model ServiceDealFile {
   deliveryKey    String?
   deliverySize   Int?
   repackedAt     DateTime?
+  /// An Attachment only: when the buyer confirmed the rights and likeness attestations for it.
+  attestedAt     DateTime?
+  /// Set when the uploader removed the file but its row and objects must stay; only moderators
+  /// see it after that. Null is a live file.
+  removedAt      DateTime?
   createdAt      DateTime                  @default(now())
   entries        ServiceDealFileEntry[]
 
@@ -11009,6 +11501,8 @@ model Crucible {
   // derive from the entries instead (getCrucibleTotalPrizePool).
   prizePool         Int            @default(0)
   entryLimit        Int            @default(1)
+  // Entries the owner removed from their own crucible, capped (CRUCIBLE_OWNER_REMOVAL_CAP). Moderator removals don't count.
+  ownerRemovalCount Int            @default(0)
   // Each person's first N entries skip the fee and add nothing to the pool. Moderators only.
   freeEntriesPerUser Int           @default(0)
   maxTotalEntries   Int?
@@ -11041,6 +11535,12 @@ model Crucible {
   // Lowercase labels a moderator sets so a homepage Feed block can pick the crucible up. Never
   // shown to non-moderators.
   eventTags         String[]       @default([])
+  // A moderator takedown: the page is gone for everyone but moderators. Null on an owner's cancel.
+  takenDownAt       DateTime?
+  takenDownById     Int?
+  takedownReason    String?
+  // Decided when it is taken down, so every re-run (and a re-cancel) pays the creator the same way.
+  takedownRefundsCreator Boolean @default(false)
 
   entries     CrucibleEntry[]
   reports     CrucibleReport[]

@@ -1,9 +1,32 @@
-import { Box, Button, Group, Text, Tooltip } from '@mantine/core';
-import { IconShieldCheck, IconX } from '@tabler/icons-react';
+import { Box, Button, Group, Text } from '@mantine/core';
+import type { AnimationEvent } from 'react';
+import clsx from 'clsx';
+import { Tooltip } from '~/components/MantineOverlays';
+import { IconShieldCheck, IconShieldExclamation, IconX } from '@tabler/icons-react';
+import { consentNoticeMessage } from './blockConsentNoticeCopy';
+
+/** The review button's visible word, and therefore its whole accessible name. */
+export const CONSENT_NOTICE_ALLOW_LABEL = 'Allow…';
 
 type BlockConsentNoticeProps = {
   /** The app's display name, as the host surface knows it. */
   appName?: string;
+  /**
+   * The scopes the notice is about: the set `resolveHostConsentNotice` returned for
+   * this render. Used ONLY to word the sentence (see `blockConsentNoticeCopy.ts`);
+   * the modal re-resolves its own set at click time.
+   */
+  missingScopes?: readonly string[];
+  /**
+   * The notice was brought back by a refusal (`resolveConsentNoticeAfterRefusal`):
+   * play the short attention flash once, on mount.
+   */
+  highlight?: boolean;
+  /**
+   * The flash finished. The host clears `highlight` so a later remount of this bar
+   * does not replay it. Not called under reduced motion, where nothing animates.
+   */
+  onHighlightPlayed?: () => void;
   /** Open the consent modal. The caller RE-RESOLVES the scope set at click time. */
   onReview: () => void;
   /** Retire the notice for this app, for this mount. */
@@ -41,10 +64,44 @@ type BlockConsentNoticeProps = {
  * 🔴 PRESENTATION ONLY. Every condition deciding whether this appears lives in
  * `resolveHostConsentNotice` (`requestConsentGate.ts`), shared by both hosts. Do not
  * add a gate here: a second place for the same rule is exactly how the model slot
- * came to have no backstop for the whole life of the page host's.
+ * came to have no backstop for the whole life of the page host's. The same goes for
+ * bringing it BACK after a dismissal: that is `resolveConsentNoticeAfterRefusal`, in
+ * the same file, and this component only receives the result as `highlight`.
  *
  * `role="status"` rather than `role="alert"`: it is an offer the viewer can ignore,
  * so it must not seize a screen reader mid-sentence.
+ *
+ * ── HARD TO MISS, STILL A NOTICE ────────────────────────────────────────────────
+ *
+ * 🔴 IT LOOKS LIKE A WARNING BECAUSE A NEUTRAL BAR WAS EASY TO MISS. The first version
+ * used the page background and a light button, and viewers read past it. It now has a
+ * yellow tint, a yellow edge and a shield-with-exclamation icon, all from Mantine's
+ * `yellow` VARIANT variables (`--mantine-color-yellow-light`, `-outline`,
+ * `-light-color`), which Mantine defines for both colour schemes, so the tint stays
+ * readable in light and dark without a second set of colours here.
+ * `data-variant="warning"` states that look as an attribute.
+ *
+ * 🔴 THE SENTENCE NAMES WHAT WILL NOT WORK. "X is missing permissions" told the viewer
+ * nothing about why to care. The wide form now says "X can't <a> or <b> until you
+ * allow it.", naming at most two permissions and then "and more", in the order the
+ * consent modal lists them. The wording, the cap and the fallback to the old generic
+ * sentence (no nameable scope) are in `blockConsentNoticeCopy.ts`.
+ *
+ * 🔴 "Allow…" IS THE PRIMARY, FILLED BUTTON; DISMISS STAYS SUBTLE. The ellipsis is
+ * deliberate: the button opens the existing consent modal (`onReview`), where the
+ * viewer sees the full list and decides. It never grants anything by itself. The
+ * filled yellow uses `autoContrast`, so its label colour is chosen for the fill.
+ *
+ * 🔴 WHEN A DISMISSED NOTICE COMES BACK, IT FLASHES ONCE. The host revives it when a
+ * request that passed through the host was refused for a permission the viewer can
+ * still grant — today a reaction refused as `needs-consent` (see
+ * `resolveConsentNoticeAfterRefusal` for what does and does not count). Because the notice was unmounted while
+ * dismissed, it mounts fresh with `highlight`, and the `attention-flash` animation
+ * (defined in `tailwind.config.js`) plays once; `onHighlightPlayed` then lets the host
+ * clear the highlight so a remount does not replay it. The host revives it at most
+ * once per app per mount (see `resolveConsentNoticeAfterRefusal`). The flash sits
+ * behind `motion-safe:`, so a viewer who asked for reduced motion sees the notice
+ * return without it.
  *
  * ── THE NARROW FORM ─────────────────────────────────────────────────────────────
  *
@@ -139,9 +196,10 @@ type BlockConsentNoticeProps = {
  *
  * 🔴 EACH BUTTON CARRIES AN EXPLICIT `aria-label`, BECAUSE BELOW THE RUNG ITS ONLY
  * CONTENT IS AN ICON — i.e. it would be named by nothing. `aria-label` overrides visible
- * text, so the review button's label is the EXACT string its wide form shows; a label
- * that merely paraphrased the visible word would break "label in name" for anyone
- * driving this by voice. The dismiss button keeps the longer label it already had.
+ * text, so the review button's label is the EXACT string its wide form shows
+ * (`CONSENT_NOTICE_ALLOW_LABEL`); a label that merely paraphrased the visible word would
+ * break "label in name" for anyone driving this by voice. The dismiss button keeps the
+ * longer label it already had, which CONTAINS its visible word "Dismiss".
  *
  * 🔴 `events` IS SET ON BOTH TOOLTIPS AND IS NOT COSMETIC. Mantine's default is
  * `{ hover: true, focus: false, touch: false }` — so on the device class the narrow form
@@ -163,54 +221,82 @@ type BlockConsentNoticeProps = {
  * and make the bar taller, which is the thing being fixed. Between the rung and roughly
  * 700px the wide form therefore still wraps the sentence onto two lines — far short of
  * the six it wrapped onto at 390px before, and the correct behaviour for that width.
+ * The leading warning icon is `shrink-0` and shows at every width; at the narrow rung
+ * it sits beside the short phrase, which is why the short phrase stays short.
  */
-export function BlockConsentNotice({ appName, onReview, onDismiss }: BlockConsentNoticeProps) {
+export function BlockConsentNotice({
+  appName,
+  missingScopes,
+  highlight = false,
+  onHighlightPlayed,
+  onReview,
+  onDismiss,
+}: BlockConsentNoticeProps) {
   return (
     <Box
       role="status"
       data-testid="block-consent-notice"
-      className="@container"
+      data-variant="warning"
+      data-highlight={highlight ? 'true' : undefined}
+      className={clsx('@container', highlight && 'motion-safe:animate-attention-flash')}
+      onAnimationEnd={(event: AnimationEvent<HTMLDivElement>) => {
+        // Only this box's own flash — not an animation bubbling up from a child
+        // (the tooltips animate too).
+        if (highlight && event.target === event.currentTarget) onHighlightPlayed?.();
+      }}
       px="md"
       py="xs"
       style={{
-        borderBottom: '1px solid var(--mantine-color-default-border)',
-        background: 'var(--mantine-color-body)',
+        borderBottom: '1px solid var(--mantine-color-yellow-outline)',
+        background: 'var(--mantine-color-yellow-light)',
       }}
     >
       <Group justify="space-between" wrap="nowrap" gap="sm" align="center">
-        {/* `min-w-0`: a flex item's automatic minimum size is its min-content width, so
-            without this the sentence floors the row at its longest word-run and pushes
-            the actions out instead of wrapping. */}
-        <Text size="sm" className="min-w-0">
-          {/* CLIPPED below the rung, not removed — see the a11y note above. */}
-          <span className="@max-xs:sr-only" data-form="wide">
-            {appName ?? 'This app'} is missing permissions it needs to work fully.
-          </span>
-          {/* Short, and deliberately WITHOUT the app name: this bar renders directly
+        {/* `min-w-0` on this group AND on the text: a flex item's automatic minimum
+            size is its min-content width, so without it the sentence floors the row at
+            its longest word-run and pushes the actions out instead of wrapping. */}
+        <Group gap="xs" wrap="nowrap" align="center" className="min-w-0">
+          <IconShieldExclamation
+            size={18}
+            className="shrink-0"
+            aria-hidden
+            data-testid="block-consent-notice-icon"
+            style={{ color: 'var(--mantine-color-yellow-light-color)' }}
+          />
+          <Text size="sm" className="min-w-0">
+            {/* CLIPPED below the rung, not removed — see the a11y note above. */}
+            <span className="@max-xs:sr-only" data-form="wide">
+              {consentNoticeMessage(appName, missingScopes)}
+            </span>
+            {/* Short, and deliberately WITHOUT the app name: this bar renders directly
               above the app it is about, so the name is the one word the narrow form can
               drop without losing the referent. `aria-hidden` because the sentence above
               is still in the tree at this width and only one of them may be announced. */}
-          <span className="@xs:hidden" data-form="narrow" aria-hidden>
-            Missing permissions
-          </span>
-        </Text>
+            <span className="@xs:hidden" data-form="narrow" aria-hidden>
+              Missing permissions
+            </span>
+          </Text>
+        </Group>
         <Group gap="xs" wrap="nowrap" className="shrink-0">
           <Tooltip
-            label="Review permissions"
+            label="Review and allow permissions"
             withArrow
             openDelay={300}
             events={{ hover: true, focus: true, touch: true }}
           >
             <Button
               size="compact-sm"
-              variant="light"
-              aria-label="Review permissions"
+              variant="filled"
+              color="yellow"
+              autoContrast
+              aria-label={CONSENT_NOTICE_ALLOW_LABEL}
               data-testid="block-consent-notice-review"
+              data-primary="true"
               onClick={onReview}
             >
               <IconShieldCheck size={16} className="@xs:hidden" data-form="narrow" />
               <span className="@max-xs:hidden" data-form="wide">
-                Review permissions
+                {CONSENT_NOTICE_ALLOW_LABEL}
               </span>
             </Button>
           </Tooltip>
@@ -223,6 +309,7 @@ export function BlockConsentNotice({ appName, onReview, onDismiss }: BlockConsen
             <Button
               size="compact-sm"
               variant="subtle"
+              color="gray"
               aria-label="Dismiss the missing-permissions notice"
               data-testid="block-consent-notice-dismiss"
               onClick={onDismiss}

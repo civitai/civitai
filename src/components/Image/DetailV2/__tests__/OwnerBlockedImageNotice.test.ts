@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import type * as TrpcModule from '~/utils/trpc';
 
-/** What the owner of a moderator-blocked image is told, by what the server says of the appeal. */
+/** What the owner of a blocked image is told, by the block and what the server says of the appeal. */
 
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -25,8 +25,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ...(await importOriginal<typeof TrpcModule>()),
     trpc: makeTrpcProxy({
       'image.getAppealState': {
-        useQuery: (input: unknown) => {
-          state.asked.push(input);
+        useQuery: (input: unknown, opts?: { enabled?: boolean }) => {
+          // A disabled query still returns what the cache holds, so the answer is returned anyway.
+          if (opts?.enabled !== false) state.asked.push(input);
           return state.appealState;
         },
       },
@@ -35,14 +36,19 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
 });
 
-import { OwnerBlockedImageNotice } from '~/components/Image/DetailV2/OwnerBlockedImageNotice';
+import {
+  IMAGE_REMOVED_TEXT,
+  IMAGE_REMOVED_TITLE,
+  OwnerBlockedImageNotice,
+} from '~/components/Image/DetailV2/OwnerBlockedImageNotice';
 
-const REFUSED = "This image has been removed from public view and can't be appealed.";
+type ImageState = { blockedFor?: string | null; needsReview?: string | null };
+const MODERATED: ImageState = { blockedFor: 'moderated', needsReview: null };
 
 let container: HTMLDivElement;
 let root: Root;
 
-function render() {
+function render(image: ImageState = MODERATED) {
   act(() => {
     root.render(
       React.createElement(
@@ -51,7 +57,7 @@ function render() {
         React.createElement(
           'div',
           { 'data-notice': '' },
-          React.createElement(OwnerBlockedImageNotice, { imageId: 4321 })
+          React.createElement(OwnerBlockedImageNotice, { image: { id: 4321, ...image } })
         )
       )
     );
@@ -66,6 +72,7 @@ beforeEach(() => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
+  state.asked = [];
 });
 
 afterEach(() => {
@@ -76,7 +83,6 @@ afterEach(() => {
 describe('OwnerBlockedImageNotice', () => {
   it('asks about the image it is shown for', () => {
     state.appealState = { data: undefined, isError: false };
-    state.asked = [];
     render();
     expect(state.asked).toEqual([{ id: 4321 }]);
   });
@@ -86,23 +92,41 @@ describe('OwnerBlockedImageNotice', () => {
     const text = render();
     expect(text).toContain('Blocked by moderators');
     expect(text).toContain('appeal this removal');
-    expect(text).not.toContain(REFUSED);
+    expect(text).not.toContain(IMAGE_REMOVED_TITLE);
   });
 
-  it('shows only the neutral line, with no banner or link, when the appeal would be refused', () => {
+  it('shows the same neutral notice, with no link, for every block the owner cannot appeal', () => {
+    // A moderator block the server refuses must not read differently from any other block.
     state.appealState = { data: { canAppeal: false }, isError: false };
-    expect(render()).toBe(REFUSED);
+    expect(render()).toBe(IMAGE_REMOVED_TITLE + IMAGE_REMOVED_TEXT);
+    const refused = notice().innerHTML;
     expect(notice().querySelector('a, button')).toBeNull();
+
+    // These never ask the server, and a cached yes must not reach them.
+    state.appealState = { data: { canAppeal: true }, isError: false };
+    for (const image of [
+      { blockedFor: 'tos' },
+      { blockedFor: 'CSAM' },
+      { blockedFor: 'AiNotVerified' },
+      { blockedFor: 'moderated', needsReview: 'appeal' },
+      { blockedFor: 'moderated', needsReview: 'csam' },
+    ]) {
+      render(image);
+      expect({ image, html: notice().innerHTML }).toEqual({ image, html: refused });
+    }
+    expect(state.asked).toEqual([{ id: 4321 }]);
   });
 
-  it('shows the neutral line when the check fails', () => {
+  it('shows the neutral notice when the check fails', () => {
     state.appealState = { data: undefined, isError: true };
-    expect(render()).toBe(REFUSED);
+    expect(render()).toBe(IMAGE_REMOVED_TITLE + IMAGE_REMOVED_TEXT);
     expect(notice().querySelector('a, button')).toBeNull();
   });
 
-  it('shows nothing while the check loads', () => {
+  it('shows nothing while the check loads, or on an image that is not blocked', () => {
     state.appealState = { data: undefined, isError: false };
     expect(render()).toBe('');
+    state.appealState = { data: { canAppeal: false }, isError: false };
+    expect(render({ blockedFor: null, needsReview: 'minor' })).toBe('');
   });
 });

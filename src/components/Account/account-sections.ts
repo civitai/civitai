@@ -4,6 +4,7 @@ import {
   IconBell,
   IconCreditCard,
   IconEye,
+  IconGauge,
   IconLayoutDashboard,
   IconPalette,
   IconShieldLock,
@@ -119,6 +120,8 @@ export const accountSections: AccountSection[] = [
       'generation count',
       'earned buzz',
       'creator showcase',
+      'hat turf',
+      'hats',
     ],
   },
   {
@@ -139,12 +142,28 @@ export const accountSections: AccountSection[] = [
     ],
   },
   {
+    id: 'usage',
+    path: 'usage',
+    label: 'Usage limits',
+    icon: IconGauge,
+    group: 'access',
+    keywords: ['limits', 'rate limit', 'quota', 'posts per day', 'too many', '429', 'api'],
+  },
+  {
     id: 'security',
     path: 'security',
     label: 'Security & Apps',
     icon: IconShieldLock,
     group: 'access',
-    keywords: ['sign in', 'connected accounts', 'api keys', 'oauth', 'connected apps'],
+    keywords: [
+      'sign in',
+      'connected accounts',
+      'api keys',
+      'oauth',
+      'connected apps',
+      'app storage',
+      'app data',
+    ],
   },
 ];
 

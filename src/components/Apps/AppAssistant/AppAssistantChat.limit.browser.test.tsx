@@ -87,7 +87,7 @@ const callNoop = (count: number) =>
 const sayDone = () => sse([chunk({ role: 'assistant', content: 'Done.' }), chunk({}, 'stop')]);
 
 const LIMIT_MESSAGE =
-  'App Assistant stopped this reply after 150 tool calls, the most one reply may make. Press Continue to let it carry on.';
+  'App Assistant stopped this reply after 300 tool calls, the most one reply may make. Press Continue to let it carry on.';
 
 type ChatEl = HTMLElement & { app?: unknown; send(text: string): Promise<void> };
 

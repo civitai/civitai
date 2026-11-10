@@ -25,7 +25,6 @@
  */
 
 import type { Prisma } from '@prisma/client';
-import { v4 as uuid } from 'uuid';
 import {
   isDatabaseEnvironmentConfigured,
   isNonProductionDatabase,
@@ -1013,7 +1012,7 @@ export async function runCommunityScore({
     await resolveWindow(input.collectionId, input, config);
 
     const state: ContestScoreRunState = {
-      runId: uuid(),
+      runId: crypto.randomUUID(),
       collectionId: input.collectionId,
       status: 'queued',
       requestedBy: userId,

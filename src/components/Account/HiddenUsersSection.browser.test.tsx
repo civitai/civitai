@@ -25,17 +25,20 @@ vi.mock('~/hooks/hidden-preferences', async (importOriginal) => ({
   useToggleHiddenPreferences: () => ({ mutateAsync: vi.fn().mockResolvedValue({}) }),
 }));
 
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcModule>()),
-  trpc: {
-    user: {
-      getAll: { useQuery: () => ({ data: mocks.users, isLoading: false, isFetching: false }) },
-    },
-  },
-}));
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof TrpcModule>()),
+    trpc: makeTrpcProxy({
+      'user.getAll': {
+        useQuery: () => ({ data: mocks.users, isLoading: false, isFetching: false }),
+      },
+    }),
+  };
+});
 
-vi.mock('~/components/MasonryGrid/BasicMasonryGrid', () => ({
-  BasicMasonryGrid: () => <div data-testid="grid" />,
+vi.mock('~/components/VirtualGrid/VirtualGrid', () => ({
+  VirtualGrid: () => <div data-testid="grid" />,
 }));
 
 const { HiddenUsersSection } = await import('./HiddenUsersSection');

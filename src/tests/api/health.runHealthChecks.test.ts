@@ -63,7 +63,6 @@ vi.mock('~/server/db/pgDb', () => ({
 
 vi.mock('~/server/meilisearch/client', () => ({
   metricsSearchClient: null,
-  withMeiliHealthProbe: (fn: () => Promise<boolean>) => fn(),
   MeiliCallTimeoutError: class MeiliCallTimeoutError extends Error {},
 }));
 
@@ -86,7 +85,7 @@ vi.mock('~/server/redis/client', () => ({
 }));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint: (handler: unknown) => handler,
+  ProbeEndpoint: (handler: unknown) => handler,
 }));
 
 vi.mock('~/utils/number-helpers', () => ({ getRandomInt: () => 123 }));
@@ -127,6 +126,14 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
     const { healthy, results } = await runHealthChecks(liveSignal());
     expect(healthy).toBe(true);
     expect(results.sysRedis).toBe(true);
+  });
+
+  it('runs exactly the live dependency checks: the retired feeds Meilisearch is not one', async () => {
+    // Pinned as the whole set so a re-added or dropped check is reviewed.
+    const { results } = await runHealthChecks(liveSignal());
+    expect(Object.keys(results).sort()).toEqual(
+      ['clickhouse', 'pgRead', 'pgWrite', 'read', 'redis', 'sysRedis', 'write'].sort()
+    );
   });
 
   it('sysRedis ping returns non-PONG → still healthy, sysRedis result recorded false', async () => {

@@ -41,11 +41,16 @@ type RetData = {
   id: number;
   userId: number;
   createdAt: string;
+  /** Set by a debounce re-surface: the recipient already held this notification unread. */
+  wasUnread?: boolean;
 };
 
 const appRunDelay = 5000;
 const tooOld = '30min';
 const rowsToFetch = 3000;
+// Rows with more recipients than this run in their own lane, so a follower fan-out that takes minutes
+// to signal cannot hold up the rows queued behind it.
+const bulkRecipients = 1000;
 const insertBatchSize = 5000;
 const signalBatchSize = 500;
 const signalDelay = 500;
@@ -77,6 +82,8 @@ async function bumpCounter(userId: number, category: NotificationCategory): Prom
   }
 }
 
+type Lane = 'normal' | 'bulk';
+
 // Batch-claim query for due PendingNotification rows. `FOR UPDATE SKIP LOCKED` on the inner SELECT is the
 // load-bearing concurrency guard: without it, two workers' CTE SELECTs can pick the SAME rows (the SELECT
 // takes no locks), and the outer UPDATE's `WHERE r.id = pn.id` does NOT re-check `claimedAt IS NULL` — so
@@ -84,9 +91,9 @@ async function bumpCounter(userId: number, category: NotificationCategory): Prom
 // rows → both workers fan the batch out (double signals + debounce rows resurrected via the ON CONFLICT
 // DO UPDATE ... viewed=FALSE path). The worker Deployment is replicas:1 + strategy:Recreate today, so no
 // two workers run concurrently in normal operation; SKIP LOCKED makes the claim correct regardless of
-// replica count (an accidental scale-up or a future HA change can't cause double fan-out). With a single
-// worker there is zero contention, so this clause is a no-op on the happy path.
-export const PENDING_CLAIM_QUERY = `
+// replica count (an accidental scale-up or a future HA change can't cause double fan-out). The two lanes in
+// one worker claim disjoint rows (split on cardinality), so they never contend either.
+const claimQuery = (lane: Lane) => `
   WITH
     return_data AS (
       SELECT
@@ -99,8 +106,9 @@ export const PENDING_CLAIM_QUERY = `
           "debounceSeconds" IS NULL
           OR ("debounceSeconds" IS NOT NULL AND NOW() >= "nextSendAt")
         )
+        AND cardinality(users) ${lane === 'bulk' ? '>' : '<='} ${bulkRecipients}
       ORDER BY id
-      LIMIT ${rowsToFetch}
+      LIMIT ${lane === 'bulk' ? 1 : rowsToFetch}
       FOR UPDATE SKIP LOCKED
     )
   UPDATE "PendingNotification" pn
@@ -110,9 +118,16 @@ export const PENDING_CLAIM_QUERY = `
   RETURNING *
 `;
 
-const getPending = async (): Promise<PendingReturnRow[]> => {
+export const PENDING_CLAIM_QUERY = claimQuery('normal');
+// One row per claim: each bulk row takes minutes, so the tail of a batch claim would sit claimed past the
+// stale-claim window before its turn came.
+export const BULK_CLAIM_QUERY = claimQuery('bulk');
+
+const getPending = async (lane: Lane): Promise<PendingReturnRow[]> => {
   try {
-    const query = await notifDbWrite().cancellableQuery<PendingReturnRow>(PENDING_CLAIM_QUERY);
+    const query = await notifDbWrite().cancellableQuery<PendingReturnRow>(
+      lane === 'bulk' ? BULK_CLAIM_QUERY : PENDING_CLAIM_QUERY
+    );
     return await query.result();
   } catch (e) {
     logAxiomError(e as Error);
@@ -217,8 +232,24 @@ export const handleDebounce = async (
   // contract rejects the combination outright (see createNotificationPendingRow), so this is
   // unreachable — belt and braces. Teaching debounced types to dedup means reworking this INSERT.
   if (respId) {
-    const userMappedData = users.map((u) => [respId, u]);
+    // Ascending userId, here and in the lock below: two transactions on the same recipients (a
+    // claim re-taken after `tooOld` while the first still runs) then lock rows in the same order.
+    const userMappedData = [...users].sort((a, b) => a - b).map((u) => [respId, u]);
     for (const batch of chunk(userMappedData, insertBatchSize)) {
+      // A recipient who still has this notification unread is already counted in the unread badge.
+      // FOR UPDATE, as its own statement: it reads the latest committed row and holds it, so a
+      // mark-read cannot land between this read and the upsert below.
+      const unreadRes = await client.query<{ userId: number }>(
+        format(
+          `SELECT "userId" FROM "UserNotification"
+           WHERE "notificationId" = %L AND "userId" IN (%L) AND viewed IS FALSE
+           ORDER BY "userId"
+           FOR UPDATE`,
+          respId,
+          batch.map(([, userId]) => userId)
+        )
+      );
+      const unread = new Set(unreadRes.rows.map((r) => Number(r.userId)));
       const insertUsersQuery = format(
         `INSERT INTO "UserNotification" ("notificationId", "userId")
          VALUES %L ON CONFLICT ("notificationId", "userId") DO UPDATE
@@ -226,7 +257,9 @@ export const handleDebounce = async (
         batch
       );
       const resUsers = await client.query<RetData>(insertUsersQuery);
-      retData = retData.concat(resUsers.rows);
+      retData = retData.concat(
+        resUsers.rows.map((r) => ({ ...r, wasUnread: unread.has(Number(r.userId)) }))
+      );
     }
   }
 
@@ -277,15 +310,17 @@ export const create = async (row: PendingReturnRow): Promise<RetData[] | undefin
   }
 };
 
-// Exported for behavioral unit tests. Export-for-test only — logic unchanged.
-export const run = async () => {
-  const rows = await getPending();
+/** One poll pass for a lane. Resolves to the number of rows it claimed. */
+export const run = async (lane: Lane = 'normal'): Promise<number> => {
+  const rows = await getPending(lane);
   let counterFailures = 0;
   for (const row of rows) {
+    const start = Date.now();
     const affectedUsers = await create(row);
-    health.markWorkerProgress();
+    health.markWorkerProgress(lane);
     if (!affectedUsers) {
       workerPendingProcessedTotal.inc({ outcome: 'errored' });
+      if (lane === 'bulk') logBulkRow(row, start, null);
       continue;
     }
     workerPendingProcessedTotal.inc({ outcome: 'fanned' });
@@ -301,9 +336,9 @@ export const run = async () => {
     const signalData = { type: row.type, category: row.category, details: row.details };
     const affectBatches = chunk(affectedUsers, signalBatchSize);
     for (let i = 0; i < affectBatches.length; i++) {
-      for (const { userId, id, createdAt } of affectBatches[i]!) {
+      for (const { userId, id, createdAt, wasUnread } of affectBatches[i]!) {
         // A failed or stuck counter bump must not cost the remaining recipients their signals.
-        if (counterFailures < counterFailuresBeforeSkip) {
+        if (!wasUnread && counterFailures < counterFailuresBeforeSkip) {
           counterFailures = (await bumpCounter(userId, row.category)) ? 0 : counterFailures + 1;
         }
         // Fire-and-forget (resilience unchanged): a signals failure must NOT break fan-out. We only add
@@ -322,41 +357,67 @@ export const run = async () => {
             logAxiomError(e as Error);
           });
       }
-      health.markWorkerProgress();
+      health.markWorkerProgress(lane);
       if (i < affectBatches.length - 1) await sleep(signalDelay);
     }
+
+    if (lane === 'bulk') logBulkRow(row, start, affectedUsers.length);
   }
+  return rows.length;
 };
 
+function logBulkRow(row: PendingReturnRow, start: number, delivered: number | null) {
+  logToAxiom({
+    type: delivered === null ? 'error' : 'info',
+    message: 'Bulk fan-out',
+    data: {
+      key: row.key,
+      type: row.type,
+      recipients: row.users.length,
+      delivered,
+      ms: Date.now() - start,
+    },
+  }).catch(() => {});
+}
+
 /**
- * Start the self-rescheduling poll loop. Each tick fully awaits run() before scheduling the next — a
- * plain setInterval would fire regardless of in-flight work and pile ticks up, starving the write pool.
- * Returns a stop() that halts scheduling after the current tick settles.
+ * Start the self-rescheduling poll loop, one per lane. Each tick fully awaits run() before scheduling the
+ * next — a plain setInterval would fire regardless of in-flight work and pile ticks up, starving the write
+ * pool. Returns a stop() that halts scheduling of every lane after its current tick settles.
  */
 export function startWorker(): { stop: () => void } {
-  let stopped = false;
-  health.markWorkerStarted();
+  const lanes = (['normal', 'bulk'] as const).map(startLane);
+  return {
+    stop: () => lanes.forEach((lane) => lane.stop()),
+  };
+}
 
-  const scheduleTick = () => {
+function startLane(lane: Lane): { stop: () => void } {
+  let stopped = false;
+  health.markWorkerStarted(lane);
+
+  const scheduleTick = (delay: number) => {
     if (stopped) return;
     setTimeout(async () => {
       if (stopped) return;
       const end = workerTickSeconds.startTimer();
+      let claimed = 0;
       try {
-        await run();
+        claimed = await run(lane);
       } catch (e) {
         logAxiomError(e as Error);
       } finally {
         end();
-        health.markWorkerProgress();
+        health.markWorkerProgress(lane);
         const w = notifDbWrite();
         writePoolActive.set(w.totalCount - w.idleCount);
       }
-      scheduleTick();
-    }, appRunDelay);
+      // The bulk lane claims one row per pass, so it goes straight on to the next while rows are left.
+      scheduleTick(lane === 'bulk' && claimed > 0 ? 0 : appRunDelay);
+    }, delay);
   };
 
-  scheduleTick();
+  scheduleTick(appRunDelay);
   return {
     stop: () => {
       stopped = true;

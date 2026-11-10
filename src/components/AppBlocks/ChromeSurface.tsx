@@ -1,4 +1,5 @@
-import { Drawer, Group, Menu, Popover, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Drawer, Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Menu, Popover } from '~/components/MantineOverlays';
 import type { ReactElement, ReactNode } from 'react';
 import { cloneElement, createContext, useContext, useMemo } from 'react';
 

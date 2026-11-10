@@ -1,12 +1,14 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireToken } from '$lib/server/token';
-import { continueTraining, continueTrainingWhatIf, type ContinueOpts } from '$lib/server/train';
 import {
-  TrainingTextCheckError,
-  TrainingTextRefusedError,
-  textCheckFailureStatus,
-} from '$lib/training-text';
+  continueTraining,
+  continueTrainingWhatIf,
+  MatureAckRequiredError,
+  type ContinueOpts,
+} from '$lib/server/train';
+import { TrainingBatchValidationError } from '$lib/train-core';
+import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
 
 function parse(v: string | null): number | null {
   const n = Number(v);
@@ -29,6 +31,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
   try {
     return json(await continueTrainingWhatIf(token, locals.user.id, opts));
   } catch (err) {
+    if (err instanceof TrainingBatchValidationError) error(400, err.message);
     console.warn('[training-studio] continue whatif failed', err);
     error(502, err instanceof Error ? err.message : 'Could not price the continuation.');
   }
@@ -41,6 +44,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     fromEpoch?: number;
     addEpochs?: number;
     currencies?: string[];
+    matureAck?: boolean;
   } | null;
   if (!body?.workflowId || typeof body.fromEpoch !== 'number' || typeof body.addEpochs !== 'number')
     error(400, 'Bad request.');
@@ -50,6 +54,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     addEpochs: body.addEpochs,
     // Filtered + defaulted by resolveCurrencies core-side — never trusted from the wire.
     currencies: Array.isArray(body.currencies) ? body.currencies : undefined,
+    matureAck: body.matureAck === true,
   };
 
   const token = await requireToken(locals, 'Training is unavailable right now.');
@@ -59,12 +64,14 @@ export const POST: RequestHandler = async ({ locals, request }) => {
         token,
         locals.user.id,
         opts,
-        locals.devPreview ? null : request.headers.get('cookie') ?? ''
+        textCheckCookie(locals, request)
       ),
     });
   } catch (err) {
-    if (err instanceof TrainingTextRefusedError) error(400, err.message);
-    if (err instanceof TrainingTextCheckError) error(textCheckFailureStatus(err), err.message);
+    if (err instanceof TrainingBatchValidationError) error(400, err.message);
+    if (err instanceof MatureAckRequiredError)
+      error(409, { message: err.message, matureCount: err.matureCount });
+    throwTextCheckHttpError(err);
     console.warn('[training-studio] continueTraining failed', err);
     error(502, err instanceof Error ? err.message : 'Could not start training.');
   }

@@ -5,6 +5,7 @@ vi.mock('~/server/utils/created-image-media-probe', () => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { imageSchema } from '~/server/schema/image.schema';
 import { profilePictureSchema } from '~/server/schema/user.schema';
 import {
@@ -47,6 +48,8 @@ function createdMetadata(call = 0) {
 beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.image.create.mockResolvedValue({ id: 4242 } as never);
+  // The fixture key was issued to user 1, who saves every image here.
+  redisMock.sysRedis.mGet.mockResolvedValue(['1'] as never);
 });
 
 describe('block provenance metadata keys', () => {
@@ -126,6 +129,38 @@ describe('createImage', () => {
     } as never);
 
     expect(createdMetadata()).toEqual({ blockPublishedAppId: SERVER_APP_ID });
+  });
+
+  it('writes the feedback capture stamp only from its argument', async () => {
+    const forged = { feedbackId: 1, reporterId: 999 };
+    await createImage({
+      url: KEY,
+      userId: 1,
+      type: 'image',
+      skipIngestion: true,
+      metadata: { ...CLIENT_METADATA, feedbackCapture: forged },
+    } as never);
+    expect(createdMetadata()).toEqual(UNRELATED);
+
+    dbMock.dbWrite.image.create.mockClear();
+    const stamp = { feedbackId: 7, reporterId: 42 };
+    await createImage({
+      url: KEY,
+      userId: 1,
+      type: 'image',
+      skipIngestion: true,
+      metadata: { ...CLIENT_METADATA, feedbackCapture: forged },
+      feedbackCapture: stamp,
+    } as never);
+    expect(createdMetadata()).toEqual({ ...UNRELATED, feedbackCapture: stamp });
+  });
+
+  it('drops a client feedback capture stamp at the image schema', () => {
+    const parsed = imageSchema.parse({
+      url: KEY,
+      metadata: { size: 1, feedbackCapture: { feedbackId: 1, reporterId: 2 } },
+    });
+    expect(parsed.metadata).toEqual({ size: 1 });
   });
 
   it('leaves metadata absent when neither is given', async () => {

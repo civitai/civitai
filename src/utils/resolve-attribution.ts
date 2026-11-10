@@ -52,3 +52,8 @@ export function resolveActorFor(user: { id?: number } | null | undefined): Resol
   if (user.id === constants.system.user.id) return 'internal';
   return 'user';
 }
+
+/** Internal fetches are not downloads: public download totals and contest signals read these events. */
+export function countsAsPublicDownload(user: { id?: number } | null | undefined): boolean {
+  return resolveActorFor(user) !== 'internal';
+}

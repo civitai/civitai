@@ -96,6 +96,7 @@ async function parentDetails(refs: ParentRef[]): Promise<Map<string, HoldParent>
       ? dbRead
           .selectFrom('Article as a')
           .leftJoin('Image as i', 'i.id', 'a.coverId')
+          .leftJoin('Image as b', 'b.id', 'a.bannerId')
           .select([
             'a.id',
             'a.title',
@@ -105,6 +106,12 @@ async function parentDetails(refs: ParentRef[]): Promise<Map<string, HoldParent>
             sql<string | null>`i.type::text`.as('type'),
             'i.minor',
             'i.acceptableMinor',
+            'b.id as bannerId',
+            'b.url as bannerUrl',
+            'b.nsfwLevel as bannerNsfwLevel',
+            sql<string | null>`b.type::text`.as('bannerType'),
+            'b.minor as bannerMinor',
+            'b.acceptableMinor as bannerAcceptableMinor',
           ])
           .where('a.id', 'in', articleIds)
           .execute()
@@ -141,25 +148,34 @@ async function parentDetails(refs: ParentRef[]): Promise<Map<string, HoldParent>
       imageTotal: 1,
     });
   for (const a of articles) {
-    const cover =
+    const own = [
       a.coverId !== null && a.url
-        ? [
-            {
-              id: a.coverId,
-              url: a.url,
-              nsfwLevel: a.nsfwLevel ?? 0,
-              type: a.type ?? undefined,
-              minor: a.minor ?? false,
-              acceptableMinor: a.acceptableMinor ?? false,
-            },
-          ]
-        : [];
+        ? {
+            id: a.coverId,
+            url: a.url,
+            nsfwLevel: a.nsfwLevel ?? 0,
+            type: a.type ?? undefined,
+            minor: a.minor ?? false,
+            acceptableMinor: a.acceptableMinor ?? false,
+          }
+        : null,
+      a.bannerId !== null && a.bannerId !== a.coverId && a.bannerUrl
+        ? {
+            id: a.bannerId,
+            url: a.bannerUrl,
+            nsfwLevel: a.bannerNsfwLevel ?? 0,
+            type: a.bannerType ?? undefined,
+            minor: a.bannerMinor ?? false,
+            acceptableMinor: a.bannerAcceptableMinor ?? false,
+          }
+        : null,
+    ].filter((image) => image !== null);
     found.set(parentKey({ type: 'article', id: a.id }), {
       type: 'article',
       id: a.id,
       title: a.title,
-      images: cover,
-      imageTotal: cover.length,
+      images: own,
+      imageTotal: own.length,
     });
   }
   return found;
@@ -175,11 +191,14 @@ const bare = ({ type, id }: ParentRef): HoldParent => ({
 });
 
 async function parentContexts(holds: HoldRef[]): Promise<Map<number, HoldParent>> {
-  const v2Ids = holds.filter((h) => h.entityType === 'CommentV2').map((h) => h.entityId);
-  const v2 = v2Ids.length ? await commentParents(v2Ids) : new Map<number, ParentRef>();
+  // `commentParents` reads `CommentV3`, which shares its ids with `CommentV2`, so it answers both.
+  const isThreadComment = (hold: HoldRef) =>
+    hold.entityType === 'CommentV2' || hold.entityType === 'CommentV3';
+  const threadIds = holds.filter(isThreadComment).map((h) => h.entityId);
+  const threads = threadIds.length ? await commentParents(threadIds) : new Map<number, ParentRef>();
   const refOf = (hold: HoldRef): ParentRef | null =>
-    hold.entityType === 'CommentV2'
-      ? v2.get(hold.entityId) ?? null
+    isThreadComment(hold)
+      ? threads.get(hold.entityId) ?? null
       : hold.entityType === 'Comment' && hold.commentModelId
       ? { type: 'model', id: hold.commentModelId }
       : null;
@@ -199,7 +218,8 @@ async function parentContexts(holds: HoldRef[]): Promise<Map<number, HoldParent>
 export async function getHoldContexts(holds: HoldRef[]): Promise<Map<number, HoldContext>> {
   const profileHolds = holds.filter((h) => h.entityType === 'UserProfile');
   const commentHolds = holds.filter(
-    (h) => h.entityType === 'Comment' || h.entityType === 'CommentV2'
+    (h) =>
+      h.entityType === 'Comment' || h.entityType === 'CommentV2' || h.entityType === 'CommentV3'
   );
   const [profiles, parents] = await Promise.all([
     profileHolds.length

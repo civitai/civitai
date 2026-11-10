@@ -3,9 +3,18 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  APP_STORAGE_ACKNOWLEDGEABLE_KEYWORDS,
   APP_STORAGE_BUILTIN_MARKS,
   APP_STORAGE_COLLECTION_NAME_RE,
   APP_STORAGE_ENABLED_FEATURES,
+  APP_STORAGE_HOOK_FILE_FORBIDDEN_SEGMENT_PATTERN,
+  APP_STORAGE_HOOK_FILE_MAX_LENGTH,
+  APP_STORAGE_HOOK_FILE_PATTERN,
+  APP_STORAGE_HOOK_SHA256_PATTERN,
+  APP_STORAGE_HOOK_TIMEOUT_MAX_MS,
+  APP_STORAGE_HOOK_TIMEOUT_MIN_MS,
+  APP_STORAGE_IMPORT_ACCESS,
+  APP_STORAGE_IMPORT_FROM_RE,
   APP_STORAGE_INDEX_PATH_RE,
   APP_STORAGE_INDEX_TYPES,
   APP_STORAGE_KINDS,
@@ -13,11 +22,23 @@ import {
   APP_STORAGE_MAX_COLLECTIONS,
   APP_STORAGE_MAX_COUNTERS,
   APP_STORAGE_MAX_DAILY_WRITES_PER_AUTHOR,
+  APP_STORAGE_MAX_IMPORT_COLLECTIONS,
+  APP_STORAGE_MAX_IMPORTS,
   APP_STORAGE_MAX_INDEXES,
   APP_STORAGE_MAX_MARKS,
+  APP_STORAGE_MAX_MIGRATION_OPS,
   APP_STORAGE_MAX_OWNED_MODEL_VERSIONS,
+  APP_STORAGE_MIGRATION_ACK_PATH_PATTERN,
+  APP_STORAGE_MIGRATION_OPS,
+  APP_STORAGE_MIGRATION_PATH_MAX_LENGTH,
+  APP_STORAGE_MIGRATION_PATH_PATTERN,
   APP_STORAGE_OWNED_POINTER_PATTERN,
+  APP_STORAGE_REGISTRY_AUDIENCES,
   APP_STORAGE_RESERVED_INDEX_NAMES,
+  APP_STORAGE_SCHEMA_KEYWORDS,
+  APP_STORAGE_SCHEMA_PATTERN_MAX_LENGTH,
+  APP_STORAGE_SCHEMA_PATTERNED_MAX_LENGTH,
+  APP_STORAGE_SCHEMA_TYPES,
   APP_STORAGE_TALLY_NAME_RE,
   APP_STORAGE_TTL_MAX_SECONDS,
   APP_STORAGE_TTL_MIN_SECONDS,
@@ -50,6 +71,7 @@ type SchemaObject = Record<string, unknown>;
 const schema = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8')) as {
   required: string[];
   properties: Record<string, SchemaObject>;
+  $defs: Record<string, SchemaObject>;
 };
 const storageSchema = schema.properties.storage;
 
@@ -67,6 +89,35 @@ const priv = (extra: Record<string, unknown> = {}) => one({ visibility: 'private
 const shared = (extra: Record<string, unknown> = {}) =>
   one({ visibility: 'shared', write: 'own', ...extra });
 const names = (n: number, prefix = 'n') => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
+const imp = (extra: Record<string, unknown> = {}) => ({
+  from: 'notes-app',
+  collections: ['notes'],
+  access: 'read',
+  ...extra,
+});
+const imports = (...list: unknown[]) => ({ imports: list });
+/** A collection schema nested `levels` deep through `properties` (the schema itself is 1). */
+const deepSchema = (levels: number) => {
+  let s: Record<string, unknown> = { type: 'number' };
+  for (let i = 1; i < levels; i++) s = { properties: { x: s } };
+  return s;
+};
+const CARD = {
+  type: 'object',
+  required: ['title'],
+  additionalProperties: false,
+  properties: {
+    title: { type: 'string', minLength: 1, maxLength: 60, pattern: '^[^<]*$' },
+    stars: { type: 'integer', minimum: 0, maximum: 5, description: 'rating' },
+    tags: { type: 'array', minItems: 1, maxItems: 4, items: { enum: ['a', 'b'] } },
+    kind: { const: 'card' },
+    extra: { type: ['object', 'null'], additionalProperties: { type: 'boolean' } },
+  },
+};
+const SHA = 'd'.repeat(64);
+const hook = (extra: Record<string, unknown> = {}) => ({
+  hook: { file: 'hooks/cards.js', sha256: SHA, ...extra },
+});
 
 /**
  * [label, storage, accepted with every phased feature ON, phased]. `phased` marks the cases
@@ -122,6 +173,50 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
     shared({ ownedModelVersions: ['/a', '/_b/c9', '/c/d/e/f', `/${'x'.repeat(64)}`] }),
     true,
   ],
+  ['exportable false', priv({ exportable: false }), true],
+  ['exportable true on shared', shared({ exportable: true }), true],
+  ['imports only', imports(imp()), true],
+  ['imports beside collections', { ...priv(), ...imports(imp({ access: 'readwrite' })) }, true],
+  [
+    '8 imports, 16 collections, 40-char from',
+    imports(
+      ...names(7, 'source-app-').map((from) => imp({ from })),
+      imp({ from: `a${'b'.repeat(38)}c`, collections: names(16, 'c') })
+    ),
+    true,
+  ],
+  ['3-char from', imports(imp({ from: 'abc' })), true],
+  ['private with a schema using every keyword', priv({ schema: CARD }), true],
+  ['shared own with a schema', shared({ schema: { type: 'object' } }), true],
+  ['empty schema', priv({ schema: {} }), true],
+  ['schema nested 16 deep', priv({ schema: deepSchema(16) }), true],
+  ['pattern with maxLength 1000', priv({ schema: { pattern: 'x', maxLength: 1000 } }), true],
+  ['256-char pattern', priv({ schema: { pattern: 'p'.repeat(256), maxLength: 1 } }), true],
+  // accept — schema migrations
+  [
+    'one op of every kind',
+    priv({
+      migrations: [
+        { op: 'default', path: '/status', value: 'draft' },
+        { op: 'rename', from: '/name', to: '/title' },
+        { op: 'remove', path: '/legacy' },
+        { op: 'acknowledge', path: '/stars', keyword: 'maximum' },
+        { op: 'acknowledge', path: '/tags', keyword: 'maxItems' },
+        { op: 'acknowledge', path: '', keyword: 'additionalProperties' },
+        { op: 'acknowledge', path: '/tags/*', keyword: 'maxLength' },
+      ],
+    }),
+    true,
+  ],
+  [
+    'default value of any JSON type',
+    priv({ migrations: [{ op: 'default', path: '/a', value: null }] }),
+    true,
+  ],
+  ['escaped path segments', priv({ migrations: [{ op: 'remove', path: '/a~1b/c~0d' }] }), true],
+  ['15-segment path', priv({ migrations: [{ op: 'remove', path: '/a'.repeat(15) }] }), true],
+  ['32 ops', priv({ migrations: names(32, '/p').map((path) => ({ op: 'remove', path })) }), true],
+  ['migrations on shared own', shared({ migrations: [{ op: 'remove', path: '/x' }] }), true],
   // accept, but phased
   ['dailyWritesPerAuthor 1', shared({ dailyWritesPerAuthor: 1 }), true, true],
   ['dailyWritesPerAuthor 1000', shared({ dailyWritesPerAuthor: 1000 }), true, true],
@@ -130,7 +225,16 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['kind log with maxEntries 10000', priv({ kind: 'log', maxEntries: 10000 }), true, true],
   ['ttlSeconds 60', priv({ ttlSeconds: 60 }), true, true],
   ['ttlSeconds 31536000', priv({ ttlSeconds: 31536000 }), true, true],
+  ['registry public on shared', shared({ registry: 'public' }), true, true],
   ['write owner', shared({ write: 'owner', counters: ['plays'] }), true, true],
+  // accept, but phased — permission hooks
+  ['hook on a private collection', priv(hook()), true, true],
+  ['hook on shared own, with a schema', shared({ schema: CARD, ...hook() }), true, true],
+  ['hook on write none', shared({ write: 'none', counters: ['plays'], ...hook() }), true, true],
+  ['hook .mjs, timeoutMs 1', priv(hook({ file: 'a.mjs', timeoutMs: 1 })), true, true],
+  ['hook timeoutMs 500', priv(hook({ timeoutMs: 500 })), true, true],
+  ['hook file of 200 chars', priv(hook({ file: `${'a'.repeat(197)}.js` })), true, true],
+  ['hook file with dots and dashes', priv(hook({ file: 'src/a.b/c-d_e.js' })), true, true],
   // reject — containers
   ['storage null', null, false],
   ['storage array', [], false],
@@ -145,6 +249,28 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['collection null', one(null), false],
   ['unknown collection key', priv({ label: 'x' }), false],
   ['`constructor` as an unknown collection key', priv({ constructor: 1 }), false],
+  // reject — imports
+  ['imports empty', imports(), false],
+  ['imports an object', { imports: imp() }, false],
+  ['9 imports', imports(...names(9, 'source-app-').map((from) => imp({ from }))), false],
+  ['from with uppercase', imports(imp({ from: 'Notes-app' })), false],
+  ['from with underscore', imports(imp({ from: 'notes_app' })), false],
+  ['from of 2 chars', imports(imp({ from: 'ab' })), false],
+  ['from of 41 chars', imports(imp({ from: `a${'b'.repeat(39)}c` })), false],
+  ['from ending in -', imports(imp({ from: 'notes-' })), false],
+  ['from missing', imports({ collections: ['notes'], access: 'read' }), false],
+  ['access write', imports(imp({ access: 'write' })), false],
+  ['access missing', imports({ from: 'notes-app', collections: ['notes'] }), false],
+  ['import collections empty', imports(imp({ collections: [] })), false],
+  ['import of 17 collections', imports(imp({ collections: names(17, 'c') })), false],
+  ['import collections duplicated', imports(imp({ collections: ['a', 'a'] })), false],
+  ['import collection uppercase', imports(imp({ collections: ['Notes'] })), false],
+  ['unknown import key', imports(imp({ mode: 'x' })), false],
+  ['imports beside empty collections', { collections: {}, ...imports(imp()) }, false],
+  ['exportable string', priv({ exportable: 'no' }), false],
+  ['registry on private', priv({ registry: 'public' }), false],
+  ['registry with an unknown audience', shared({ registry: 'everyone' }), false],
+  ['registry boolean', shared({ registry: true }), false],
   // reject — names
   ['uppercase collection', { collections: { Prefs: { visibility: 'private' } } }, false],
   ['leading digit collection', { collections: { '1x': { visibility: 'private' } } }, false],
@@ -214,6 +340,99 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
     false,
   ],
   ['showAuthor string', shared({ showAuthor: 'yes' }), false],
+  // reject — collection schemas
+  ['schema not an object', priv({ schema: [] }), false],
+  ['schema keyword outside the subset', priv({ schema: { format: 'date' } }), false],
+  ['nested keyword outside the subset', priv({ schema: { items: { oneOf: [] } } }), false],
+  ['$ref in a collection schema', priv({ schema: { $ref: '#/x' } }), false],
+  ['boolean items schema', priv({ schema: { items: true } }), false],
+  ['unknown type name', priv({ schema: { type: 'date' } }), false],
+  ['empty type list', priv({ schema: { type: [] } }), false],
+  ['repeated type', priv({ schema: { type: ['string', 'string'] } }), false],
+  ['repeated required name', priv({ schema: { required: ['a', 'a'] } }), false],
+  ['non-string required name', priv({ schema: { required: [1] } }), false],
+  ['empty enum', priv({ schema: { enum: [] } }), false],
+  ['negative minLength', priv({ schema: { minLength: -1 } }), false],
+  ['fractional maxItems', priv({ schema: { maxItems: 1.5 } }), false],
+  ['string minimum', priv({ schema: { minimum: '1' } }), false],
+  ['additionalProperties not a schema', priv({ schema: { additionalProperties: 'no' } }), false],
+  ['pattern without maxLength', priv({ schema: { pattern: 'x' } }), false],
+  ['pattern with maxLength 1001', priv({ schema: { pattern: 'x', maxLength: 1001 } }), false],
+  ['257-char pattern', priv({ schema: { pattern: 'p'.repeat(257), maxLength: 1 } }), false],
+  ['description not a string', priv({ schema: { description: 1 } }), false],
+  [
+    'schema on write none',
+    shared({ write: 'none', counters: ['plays'], schema: { type: 'object' } }),
+    false,
+  ],
+  // reject — schema migrations
+  ['migrations not an array', priv({ migrations: { op: 'remove', path: '/a' } }), false],
+  ['migrations empty', priv({ migrations: [] }), false],
+  ['33 ops', priv({ migrations: names(33, '/p').map((path) => ({ op: 'remove', path })) }), false],
+  ['unknown op', priv({ migrations: [{ op: 'copy', path: '/a' }] }), false],
+  ['op missing', priv({ migrations: [{ path: '/a' }] }), false],
+  ['default without value', priv({ migrations: [{ op: 'default', path: '/a' }] }), false],
+  ['rename without to', priv({ migrations: [{ op: 'rename', from: '/a' }] }), false],
+  ['unknown op key', priv({ migrations: [{ op: 'remove', path: '/a', value: 1 }] }), false],
+  ['root path on remove', priv({ migrations: [{ op: 'remove', path: '' }] }), false],
+  ['"*" segment on remove', priv({ migrations: [{ op: 'remove', path: '/tags/*' }] }), false],
+  [
+    '"*" segment on default',
+    priv({ migrations: [{ op: 'default', path: '/*', value: 1 }] }),
+    false,
+  ],
+  ['path without leading slash', priv({ migrations: [{ op: 'remove', path: 'a' }] }), false],
+  ['empty path segment', priv({ migrations: [{ op: 'remove', path: '/a//b' }] }), false],
+  ['bad escape', priv({ migrations: [{ op: 'remove', path: '/a~2' }] }), false],
+  ['16-segment path', priv({ migrations: [{ op: 'remove', path: '/a'.repeat(16) }] }), false],
+  ['513-char path', priv({ migrations: [{ op: 'remove', path: `/${'x'.repeat(512)}` }] }), false],
+  [
+    'unknown acknowledge keyword',
+    priv({ migrations: [{ op: 'acknowledge', path: '/a', keyword: 'format' }] }),
+    false,
+  ],
+  [
+    'migrations on write none',
+    shared({ write: 'none', counters: ['plays'], migrations: [{ op: 'remove', path: '/x' }] }),
+    false,
+  ],
+  // `acknowledge` is itemised: one field and one keyword, never `required`.
+  ['acknowledge without keyword', priv({ migrations: [{ op: 'acknowledge', path: '/a' }] }), false],
+  [
+    'acknowledge of a required field',
+    priv({ migrations: [{ op: 'acknowledge', path: '/a', keyword: 'required' }] }),
+    false,
+  ],
+  [
+    'acknowledge with a 16-segment path',
+    priv({ migrations: [{ op: 'acknowledge', path: '/a'.repeat(16), keyword: 'type' }] }),
+    false,
+  ],
+  [
+    'acknowledge path without leading slash',
+    priv({ migrations: [{ op: 'acknowledge', path: 'tags/*', keyword: 'type' }] }),
+    false,
+  ],
+  ['retiredCollections (no such key)', { ...priv(), retiredCollections: ['old_notes'] }, false],
+  // reject — permission hooks
+  ['hook not an object', priv({ hook: 'hooks/cards.js' }), false],
+  ['hook without sha256', priv({ hook: { file: 'h.js' } }), false],
+  ['hook without file', priv({ hook: { sha256: SHA } }), false],
+  ['hook sha256 uppercase', priv(hook({ sha256: 'D'.repeat(64) })), false],
+  ['hook sha256 of 65 chars', priv(hook({ sha256: 'd'.repeat(65) })), false],
+  ['hook file with a leading slash', priv(hook({ file: '/hooks/cards.js' })), false],
+  ['hook file with a ".." segment', priv(hook({ file: 'a/../cards.js' })), false],
+  ['hook file with a "." segment', priv(hook({ file: './cards.js' })), false],
+  ['hook file hidden', priv(hook({ file: '.cards.js' })), false],
+  ['hook file .ts', priv(hook({ file: 'cards.ts' })), false],
+  ['hook file of 201 chars', priv(hook({ file: `${'a'.repeat(198)}.js` })), false],
+  ['hook file in node_modules', priv(hook({ file: 'node_modules/x/i.js' })), false],
+  ['hook file in a nested node_modules', priv(hook({ file: 'a/node_modules/i.js' })), false],
+  ['hook timeoutMs 0', priv(hook({ timeoutMs: 0 })), false],
+  ['hook timeoutMs 501', priv(hook({ timeoutMs: 501 })), false],
+  ['hook timeoutMs fractional', priv(hook({ timeoutMs: 1.5 })), false],
+  ['hook decide (v2)', priv(hook({ decide: { allow: true } })), false],
+  ['hook unknown key', priv(hook({ source: 'x' })), false],
   // reject — ownedModelVersions
   ['ownedModelVersions not an array', shared({ ownedModelVersions: '/v' }), false],
   ['ownedModelVersions empty', shared({ ownedModelVersions: [] }), false],
@@ -261,6 +480,85 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
  */
 const PARSER_ONLY: Array<[string, unknown]> = [
   ['one name as counter and mark', shared({ counters: ['vote'], marks: ['vote'] })],
+  // `uniqueItems` compares whole entries, not one field of them.
+  ['two imports from one app', imports(imp(), imp({ collections: ['other'] }))],
+  // Collection schemas: bounds on the schema as a whole, and what a pattern compiles to.
+  ['schema nested 17 deep', priv({ schema: deepSchema(17) })],
+  ['schema over 16384 bytes', priv({ schema: { description: 'd'.repeat(16_400) } })],
+  [
+    '17 patterns in one schema',
+    priv({
+      schema: {
+        properties: Object.fromEntries(
+          names(17, 'p').map((n) => [n, { pattern: 'x', maxLength: 3 }])
+        ),
+      },
+    }),
+  ],
+  [
+    '33 patterns across the manifest, at most 16 in any one schema',
+    {
+      collections: Object.fromEntries(
+        [16, 16, 1].map((n, c) => [
+          `c${c}`,
+          {
+            visibility: 'private',
+            schema: {
+              properties: Object.fromEntries(
+                names(n, 'p').map((p) => [p, { pattern: `x${c}`, maxLength: 3 }])
+              ),
+            },
+          },
+        ])
+      ),
+    },
+  ],
+  ['minLength above maxLength', priv({ schema: { minLength: 3, maxLength: 2 } })],
+  ['minimum above maximum', priv({ schema: { minimum: 3, maximum: 2 } })],
+  ['a pattern that does not compile', priv({ schema: { pattern: '(', maxLength: 3 } })],
+  // Migrations: ops are compared with each other, and a default's size is measured as JSON.
+  [
+    'two ops touching one field',
+    priv({
+      migrations: [
+        { op: 'remove', path: '/b' },
+        { op: 'rename', from: '/a', to: '/b' },
+      ],
+    }),
+  ],
+  [
+    "an op inside another op's field",
+    priv({
+      migrations: [
+        { op: 'remove', path: '/meta' },
+        { op: 'default', path: '/meta/x', value: 1 },
+      ],
+    }),
+  ],
+  ['a rename onto itself', priv({ migrations: [{ op: 'rename', from: '/a', to: '/a' }] })],
+  [
+    'a default value over 4096 bytes',
+    priv({ migrations: [{ op: 'default', path: '/a', value: 'v'.repeat(4096) }] }),
+  ],
+  // Hooks: one file is compared across collections.
+  [
+    'one hook file pinned with two sha256s',
+    {
+      collections: {
+        a: { visibility: 'private', ...hook() },
+        b: { visibility: 'private', ...hook({ sha256: 'e'.repeat(64) }) },
+      },
+    },
+  ],
+];
+
+/**
+ * Rules that span `storage` and a manifest field OUTSIDE it (`outputDir`): the storage schema
+ * cannot see that field, so these are evaluated against whole manifests.
+ */
+const PARSER_ONLY_MANIFESTS: Array<[string, Record<string, unknown>]> = [
+  ['hook file inside outputDir', { outputDir: 'dist', storage: priv(hook({ file: 'dist/h.js' })) }],
+  ['hook file with outputDir "."', { outputDir: '.', storage: priv(hook()) }],
 ];
 
 describe('app-block v1 schema ⇄ storage parser drift guard', () => {
@@ -268,7 +566,37 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     expect(schema.required).not.toContain('storage');
     expect(storageSchema.type).toBe('object');
     expect(storageSchema.additionalProperties).toBe(false);
-    expect(storageSchema.required).toEqual(['collections']);
+    // At least one of the two: an app may only import, and declare no collection of its own.
+    expect(storageSchema.required).toBeUndefined();
+    expect(storageSchema.anyOf).toEqual([{ required: ['collections'] }, { required: ['imports'] }]);
+  });
+
+  it('pins every imports bound to the exported constants', () => {
+    const imports = (storageSchema.properties as Record<string, SchemaObject>).imports;
+    expect([imports.type, imports.minItems, imports.maxItems]).toEqual([
+      'array',
+      1,
+      APP_STORAGE_MAX_IMPORTS,
+    ]);
+    const item = imports.items as SchemaObject;
+    expect(item.additionalProperties).toBe(false);
+    expect(item.required).toEqual(['from', 'collections', 'access']);
+    const p = item.properties as Record<string, SchemaObject>;
+    expect(p.from.pattern).toBe(APP_STORAGE_IMPORT_FROM_RE.source);
+    expect([p.collections.minItems, p.collections.maxItems, p.collections.uniqueItems]).toEqual([
+      1,
+      APP_STORAGE_MAX_IMPORT_COLLECTIONS,
+      true,
+    ]);
+    expect((p.collections.items as SchemaObject).pattern).toBe(
+      APP_STORAGE_COLLECTION_NAME_RE.source
+    );
+    expect(p.access.enum).toEqual([...APP_STORAGE_IMPORT_ACCESS]);
+    // The whole string, because it is the published claim of which writes need the source's
+    // publish grant (`resolveImportAccess`: every op but read and delete). A reword fails here.
+    expect(p.access.description).toBe(
+      '"read": reads only; every write is refused. "readwrite": reads and writes, under the source collection\'s own write policy. A create, update, counter, mark or unmark in one of the source\'s SHARED collections also needs the viewer\'s own `apps:storage:publish` grant in the source app, which the app asks the host to prompt for; a document delete, and any write to a private collection, needs only the import grant.'
+    );
   });
 
   it('pins every bound to the exported constants', () => {
@@ -285,6 +613,8 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     const p = collection.properties as Record<string, SchemaObject>;
 
     expect(p.kind.enum).toEqual([...APP_STORAGE_KINDS]);
+    expect(p.exportable.type).toBe('boolean');
+    expect(p.registry.enum).toEqual([...APP_STORAGE_REGISTRY_AUDIENCES]);
     expect(p.visibility.enum).toEqual([...APP_STORAGE_VISIBILITIES]);
     expect(p.write.enum).toEqual([...APP_STORAGE_WRITE_POLICIES]);
 
@@ -330,6 +660,97 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     );
   });
 
+  it('declares the collection schema subset as one recursive $defs entry, pinned to the constants', () => {
+    const collections = (storageSchema.properties as Record<string, SchemaObject>).collections;
+    const collection = Object.values(
+      collections.patternProperties as Record<string, SchemaObject>
+    )[0];
+    const declared = (collection.properties as Record<string, SchemaObject>).schema;
+    expect(declared.$ref).toBe('#/$defs/storageCollectionSchema');
+    const subset = schema.$defs.storageCollectionSchema;
+    expect(subset.type).toBe('object');
+    expect(subset.additionalProperties).toBe(false);
+    const keywords = subset.properties as Record<string, SchemaObject>;
+    expect(Object.keys(keywords)).toEqual([...APP_STORAGE_SCHEMA_KEYWORDS]);
+    expect(schema.$defs.storageCollectionSchemaType.enum).toEqual([...APP_STORAGE_SCHEMA_TYPES]);
+    expect(keywords.pattern.maxLength).toBe(APP_STORAGE_SCHEMA_PATTERN_MAX_LENGTH);
+    const then = subset.then as SchemaObject;
+    expect(then.required).toEqual(['maxLength']);
+    expect(
+      ((then.properties as Record<string, SchemaObject>).maxLength as SchemaObject).maximum
+    ).toBe(APP_STORAGE_SCHEMA_PATTERNED_MAX_LENGTH);
+  });
+
+  it('pins the schema-migration declaration to the exported constants', () => {
+    const storageProps = storageSchema.properties as Record<string, SchemaObject>;
+
+    const collection = Object.values(
+      (storageProps.collections as SchemaObject).patternProperties as Record<string, SchemaObject>
+    )[0];
+    const migrations = (collection.properties as Record<string, SchemaObject>).migrations;
+    expect([migrations.type, migrations.minItems, migrations.maxItems]).toEqual([
+      'array',
+      1,
+      APP_STORAGE_MAX_MIGRATION_OPS,
+    ]);
+    expect((migrations.items as SchemaObject).$ref).toBe('#/$defs/storageMigrationOp');
+
+    const path = schema.$defs.storageMigrationPath;
+    expect([path.pattern, path.maxLength]).toEqual([
+      APP_STORAGE_MIGRATION_PATH_PATTERN,
+      APP_STORAGE_MIGRATION_PATH_MAX_LENGTH,
+    ]);
+    const variants = schema.$defs.storageMigrationOp.oneOf as SchemaObject[];
+    const opOf = (v: SchemaObject) =>
+      ((v.properties as Record<string, SchemaObject>).op as SchemaObject).const;
+    expect(variants.map(opOf)).toEqual([...APP_STORAGE_MIGRATION_OPS]);
+    const ackVariant = variants[variants.length - 1];
+    expect(ackVariant.required).toEqual(['op', 'path', 'keyword']);
+    const ack = ackVariant.properties as Record<string, SchemaObject>;
+    expect([ack.path.pattern, ack.path.maxLength]).toEqual([
+      APP_STORAGE_MIGRATION_ACK_PATH_PATTERN,
+      APP_STORAGE_MIGRATION_PATH_MAX_LENGTH,
+    ]);
+    expect(ack.keyword.enum).toEqual([...APP_STORAGE_ACKNOWLEDGEABLE_KEYWORDS]);
+    expect(ack.keyword.enum).not.toContain('required');
+  });
+
+  it('pins the permission-hook declaration to the exported constants', () => {
+    const collections = (storageSchema.properties as Record<string, SchemaObject>).collections;
+    const collection = Object.values(
+      collections.patternProperties as Record<string, SchemaObject>
+    )[0];
+    const declared = (collection.properties as Record<string, SchemaObject>).hook;
+    expect(declared.$ref).toBe('#/$defs/storageCollectionHook');
+    const def = schema.$defs.storageCollectionHook;
+    expect(def.type).toBe('object');
+    expect(def.additionalProperties).toBe(false);
+    expect(def.required).toEqual(['file', 'sha256']);
+    const p = def.properties as Record<string, SchemaObject>;
+    expect(Object.keys(p)).toEqual(['file', 'sha256', 'timeoutMs']);
+    expect([p.file.type, p.file.pattern, p.file.maxLength]).toEqual([
+      'string',
+      APP_STORAGE_HOOK_FILE_PATTERN,
+      APP_STORAGE_HOOK_FILE_MAX_LENGTH,
+    ]);
+    expect((p.file.not as SchemaObject).pattern).toBe(
+      APP_STORAGE_HOOK_FILE_FORBIDDEN_SEGMENT_PATTERN
+    );
+    expect([p.sha256.type, p.sha256.pattern]).toEqual(['string', APP_STORAGE_HOOK_SHA256_PATTERN]);
+    expect([p.timeoutMs.type, p.timeoutMs.minimum, p.timeoutMs.maximum]).toEqual([
+      'integer',
+      APP_STORAGE_HOOK_TIMEOUT_MIN_MS,
+      APP_STORAGE_HOOK_TIMEOUT_MAX_MS,
+    ]);
+  });
+
+  it('the evaluator resolves a local $ref and refuses one it cannot resolve', () => {
+    const doc = { $defs: { s: { type: 'string' } }, properties: { a: { $ref: '#/$defs/s' } } };
+    expect(schemaAccepts(doc, { a: 'x' })).toBe(true);
+    expect(schemaAccepts(doc, { a: 1 })).toBe(false);
+    expect(() => schemaAccepts({ $ref: '#/$defs/missing' }, 1)).toThrow(/cannot resolve/);
+  });
+
   it('the evaluator refuses a keyword it does not implement', () => {
     expect(() => schemaAccepts({ exclusiveMinimum: 1 }, 2)).toThrow(
       /does not implement "exclusiveMinimum"/
@@ -337,7 +758,7 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
   });
 
   it.each(CASES)('%s → schema and parser agree (accept=%s)', (_label, storage, expected) => {
-    expect(schemaAccepts(storageSchema, storage)).toBe(expected);
+    expect(schemaAccepts(storageSchema, storage, schema)).toBe(expected);
     expect(parserAccepts(storage)).toBe(expected);
   });
 
@@ -350,7 +771,17 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
   );
 
   it.each(PARSER_ONLY)('%s → schema accepts, parser refuses (parser-only rule)', (_l, storage) => {
-    expect(schemaAccepts(storageSchema, storage)).toBe(true);
+    expect(schemaAccepts(storageSchema, storage, schema)).toBe(true);
     expect(parserAccepts(storage)).toBe(false);
   });
+
+  it.each(PARSER_ONLY_MANIFESTS)(
+    '%s → schema accepts, parser refuses (rule across storage and the manifest)',
+    (_l, manifest) => {
+      expect(schemaAccepts(storageSchema, manifest.storage, schema)).toBe(true);
+      expect(parseManifestStorage(manifest, ALL_ON).errors.length).toBeGreaterThan(0);
+      // Positive control: the same storage with no outputDir is accepted.
+      expect(parserAccepts(manifest.storage)).toBe(true);
+    }
+  );
 });

@@ -3,7 +3,6 @@ import {
   Anchor,
   Badge,
   Button,
-  Card,
   CloseButton,
   Group,
   RingProgress,
@@ -12,6 +11,7 @@ import {
   useMantineTheme,
   rgba,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import type { IconProps } from '@tabler/icons-react';
 import {
@@ -26,7 +26,6 @@ import {
   IconDownload,
   IconFlag,
   IconInfoCircle,
-  IconLayoutList,
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
   IconPhoto,
@@ -34,6 +33,7 @@ import {
 } from '@tabler/icons-react';
 import { useMemo, useRef } from 'react';
 import {
+  StorylineChapterDescription,
   StorylineStageOverlay,
   StorylineToolbarChip,
 } from '~/components/Storyline/StorylineDetail';
@@ -56,23 +56,25 @@ import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelP
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { OwnerBlockedImageNotice } from '~/components/Image/DetailV2/OwnerBlockedImageNotice';
-import { isAppealableImage } from '~/shared/utils/appeal';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { ReportChapterMenuItem } from '~/components/Storyline/ReportChapterMenuItem';
+import { StorylineChapterRemoveItem } from '~/components/Storyline/StorylineChapterRemoveItem';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { useCarouselUrlSync } from '~/components/Image/DetailV2/useCarouselUrlSync';
 import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
+import { ImageDetailPostCard } from '~/components/Image/DetailV2/ImageDetailPostCard';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
+import { isImageDetailPoiHidden } from '~/components/Image/DetailV2/image-detail-main-media';
 import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
 import { ImagePublishedWithApp } from '~/components/Image/DetailV2/ImagePublishedWithApp';
@@ -83,6 +85,15 @@ import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
+import {
+  HatTurfDetailBadge,
+  HatTurfDetailControls,
+} from '~/components/HatTurf/detail/HatTurfDetailControls';
+import {
+  HatTurfDetailProvider,
+  HatTurfDetailReset,
+  takesHats,
+} from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
@@ -91,14 +102,15 @@ import { imageDetailGateLevel } from '~/components/Image/DetailV2/image-detail-g
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { useReactionNudgeClass } from '~/components/HatTurf/reaction-nudge';
 import { ImageReactorsPreview } from '~/components/Reaction/ImageReactorsPreview';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -137,6 +149,15 @@ const sharedIconProps: IconProps = {
 };
 
 export function ImageDetail2() {
+  const { images } = useImageDetailContext();
+  return (
+    <HatTurfDetailProvider images={images}>
+      <ImageDetail2Content />
+    </HatTurfDetailProvider>
+  );
+}
+
+function ImageDetail2Content() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const {
@@ -180,6 +201,8 @@ export function ImageDetail2() {
   const carouselNavigation = useCarouselNavigation({ items: images, initialIndex: index });
 
   const storyline = useStorylineMode();
+  // The header's `@max-md`, for the ⋯ menu, which is portaled out of the container.
+  const narrowStage = useIsMobile({ breakpoint: 'md' });
   const isLastImage = getStorylineStep(carouselNavigation.index, images.length, 'next') === 'end';
   const navigation = withStorylineNavigation(
     carouselNavigation,
@@ -218,9 +241,7 @@ export function ImageDetail2() {
 
   if (!image) return <NotFound />;
   // Avoid showing POI images to non-mods non owners.
-  if (image.poi && image.user.id !== currentUser?.id && !currentUser?.isModerator) {
-    return <NotFound />;
-  }
+  if (isImageDetailPoiHidden(image, currentUser)) return <NotFound />;
 
   const actualCollection = collection || collectionItems[0]?.collection;
   const forcedBrowsingLevel = actualCollection?.metadata?.forcedBrowsingLevel;
@@ -247,24 +268,61 @@ export function ImageDetail2() {
     ? IconLayoutSidebarRightExpand
     : IconLayoutSidebarRightCollapse;
 
+  const reactionsHidden =
+    hideReactions || collectionItems.some((ci) => contestCollectionReactionsHidden(ci.collection));
+
+  const pillStyling =
+    (h: number) =>
+    (_reaction: unknown, hasReacted?: boolean): Omit<ButtonProps, 'onClick'> & BadgeProps => ({
+      radius: 'xl',
+      variant: 'light',
+      px: undefined,
+      pl: 4,
+      pr: 8,
+      h,
+      style: {
+        color: 'white',
+        background: hasReacted ? rgba(theme.colors.blue[4], 0.4) : rgba(theme.colors.gray[8], 0.4),
+      },
+    });
+
+  // `withStoryline` is the desktop toolbar; without it, the phone's bottom bar, where Remix and
+  // Save are icon-only circles so the hat button and sticker pill fit beside them.
   const renderLeftImageControls = (withStoryline: boolean) => (
     <>
       {canRemix && (
         <RemixMenu image={image} source="remix:image">
-          <Button {...sharedButtonProps} color="blue" data-activity="remix:image">
-            <Group gap={4} wrap="nowrap">
-              <IconBrush size={16} />
-              <Text size="xs">Remix</Text>
-            </Group>
-          </Button>
+          {withStoryline ? (
+            <Button {...sharedButtonProps} color="blue" data-activity="remix:image">
+              <Group gap={4} wrap="nowrap">
+                <IconBrush size={16} />
+                <Text size="xs">Remix</Text>
+              </Group>
+            </Button>
+          ) : (
+            <LegacyActionIcon
+              {...sharedActionIconProps}
+              color="blue"
+              data-activity="remix:image"
+              aria-label="Remix"
+            >
+              <IconBrush {...sharedIconProps} />
+            </LegacyActionIcon>
+          )}
         </RemixMenu>
       )}
-      <Button {...sharedButtonProps} onClick={handleSaveClick}>
-        <IconBookmark {...sharedIconProps} />
-        <Text size="xs" align="center" fw={500}>
-          Save
-        </Text>
-      </Button>
+      {withStoryline ? (
+        <Button {...sharedButtonProps} onClick={handleSaveClick}>
+          <IconBookmark {...sharedIconProps} />
+          <Text size="xs" align="center" fw={500}>
+            Save
+          </Text>
+        </Button>
+      ) : (
+        <LegacyActionIcon {...sharedActionIconProps} onClick={handleSaveClick} aria-label="Save">
+          <IconBookmark {...sharedIconProps} />
+        </LegacyActionIcon>
+      )}
       {withStoryline && (
         <StorylineToolbarChip
           imageId={image.id}
@@ -288,10 +346,27 @@ export function ImageDetail2() {
           </Button>
         </NextLink>
       )}
-      {!image.poi && (
+      {/* On a phone the Buzz chip in the reaction row is the tip button, unless reactions are
+          hidden: the chip goes with them, so the bar keeps a Tip circle. */}
+      {!withStoryline && reactionsHidden && !image.poi && (
+        // The wrapper is the button; the circle inside it is a plain badge.
+        <InteractiveTipBuzzButton
+          toUserId={image.user.id}
+          entityId={image.id}
+          entityType="Image"
+          aria-label="Tip"
+          data-testid="image-detail-tip"
+        >
+          <Badge {...sharedBadgeProps} px={0} w={36}>
+            <IconBolt size={18} fill={theme.colors.accent[5]} color={theme.colors.accent[5]} />
+          </Badge>
+        </InteractiveTipBuzzButton>
+      )}
+      {withStoryline && !image.poi && (
         <InteractiveTipBuzzButton toUserId={image.user.id} entityId={image.id} entityType="Image">
           <Badge
             {...sharedBadgeProps}
+            data-testid="image-detail-tip"
             pr={12}
             style={{
               fontSize: 12,
@@ -304,6 +379,19 @@ export function ImageDetail2() {
             Tip
           </Badge>
         </InteractiveTipBuzzButton>
+      )}
+      {/* On a phone the badge is in the top toolbar, by Close, and the hat button is here. */}
+      {withStoryline && !narrowStage && takesHats(image) && (
+        <HatTurfDetailBadge imageId={image.id} />
+      )}
+      {!withStoryline && narrowStage && takesHats(image) && (
+        <HatTurfDetailControls imageId={image.id} large />
+      )}
+      {/* Off the reaction row on a phone: beside the reactions it squeezed their counts. */}
+      {!withStoryline && narrowStage && (
+        <ReactionSettingsProvider settings={{ buttonStyling: pillStyling(36) }}>
+          <StickerPlacementBar imageId={image.id} imageNsfwLevel={image.nsfwLevel} />
+        </ReactionSettingsProvider>
       )}
     </>
   );
@@ -337,23 +425,35 @@ export function ImageDetail2() {
       }}
     >
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
+      <HatTurfDetailReset imageId={image.id} />
       <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
         <BrowsingSettingsAddonsProvider>
           <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
             <div className="relative flex flex-1 overflow-hidden">
-              <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
+              <div className="relative flex flex-1 flex-col @max-md:min-w-0 @max-md:pb-[calc(60px+var(--safe-area-inset-bottom-unpaid))]">
                 <ImageGuard2 image={image} explain={false}>
                   {() => (
                     <>
                       {/* HEADER */}
-                      <div className="flex justify-between gap-8 p-3">
-                        <CloseButton
-                          onClick={close}
-                          variant="filled"
-                          className="size-9 rounded-full"
-                        />
-                        <div className="flex flex-1 flex-wrap justify-between gap-1">
-                          <div className="flex items-center @md:hidden">
+                      <div className="flex justify-between gap-3 p-3 @md:gap-8">
+                        <div className="flex shrink-0 items-center gap-1">
+                          <CloseButton
+                            onClick={close}
+                            variant="filled"
+                            className="size-9 rounded-full"
+                            data-testid="image-detail-close"
+                          />
+                          {narrowStage && takesHats(image) && (
+                            <HatTurfDetailBadge imageId={image.id} />
+                          )}
+                          <ImageGuard2.BlurToggle
+                            {...sharedBadgeProps}
+                            className={clsx('@md:hidden', sharedBadgeProps.className)}
+                          />
+                        </div>
+                        {/* One line on a phone: a wrapped row shrinks the image under it. */}
+                        <div className="flex flex-1 flex-wrap justify-between gap-1 @max-md:min-w-0 @max-md:flex-nowrap">
+                          <div className="flex min-w-0 items-center @md:hidden">
                             <StorylineToolbarChip
                               imageId={image.id}
                               postId={image.postId ?? null}
@@ -365,11 +465,7 @@ export function ImageDetail2() {
                             {renderLeftImageControls(true)}
                           </div>
 
-                          <div className="flex items-center gap-1">
-                            <ImageGuard2.BlurToggle
-                              {...sharedBadgeProps}
-                              className={clsx('@md:hidden', sharedBadgeProps.className)}
-                            />
+                          <div className="flex shrink-0 items-center gap-1">
                             {/* Disable view count  */}
                             {/* <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
@@ -377,46 +473,85 @@ export function ImageDetail2() {
                           {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                         </Text>
                       </Badge> */}
+                            {/* Wraps the ⋯ menu so a download outlives the menu closing. On a phone, Download is in
+                                the menu, and so is Report image. */}
                             <DownloadImage src={image.url} type={image.type} name={image.name}>
-                              {({ onClick, isLoading, progress }) => (
-                                <LegacyActionIcon
-                                  {...sharedActionIconProps}
-                                  onClick={onClick}
-                                  loading={isLoading && progress === 0}
-                                >
-                                  {isLoading && progress > 0 && (
-                                    <RingProgress
-                                      size={36}
-                                      sections={[{ value: progress, color: 'blue' }]}
-                                      thickness={4}
-                                    />
-                                  )}
-                                  {!isLoading && <IconDownload {...sharedIconProps} />}
-                                </LegacyActionIcon>
+                              {({ onClick: download, isLoading: downloading, progress }) => (
+                                <>
+                                  <LegacyActionIcon
+                                    {...sharedActionIconProps}
+                                    className={clsx(
+                                      sharedActionIconProps.className,
+                                      '@max-md:hidden'
+                                    )}
+                                    onClick={download}
+                                    loading={downloading && progress === 0}
+                                  >
+                                    {downloading && progress > 0 && (
+                                      <RingProgress
+                                        size={36}
+                                        sections={[{ value: progress, color: 'blue' }]}
+                                        thickness={4}
+                                      />
+                                    )}
+                                    {!downloading && <IconDownload {...sharedIconProps} />}
+                                  </LegacyActionIcon>
+                                  <ShareButton
+                                    url={imageShareUrl}
+                                    title={title}
+                                    collect={{ type: CollectionType.Image, imageId: image.id }}
+                                  >
+                                    <LegacyActionIcon {...sharedActionIconProps}>
+                                      <IconShare3 {...sharedIconProps} />
+                                    </LegacyActionIcon>
+                                  </ShareButton>
+                                  <LoginRedirect reason={'report-content'}>
+                                    <LegacyActionIcon
+                                      {...sharedActionIconProps}
+                                      className={clsx(
+                                        sharedActionIconProps.className,
+                                        '@max-md:hidden'
+                                      )}
+                                      onClick={handleReportClick}
+                                    >
+                                      <IconFlag {...sharedIconProps} />
+                                    </LegacyActionIcon>
+                                  </LoginRedirect>
+                                  <ImageContextMenu
+                                    image={image}
+                                    additionalMenuItems={
+                                      <>
+                                        {narrowStage && (
+                                          <Menu.Item
+                                            leftSection={<IconDownload size={14} stroke={1.5} />}
+                                            onClick={download}
+                                            disabled={downloading}
+                                            closeMenuOnClick={false}
+                                          >
+                                            {!downloading
+                                              ? 'Download'
+                                              : Number.isFinite(progress) && progress > 0
+                                              ? `Downloading ${Math.round(progress)}%`
+                                              : 'Downloading…'}
+                                          </Menu.Item>
+                                        )}
+                                        {storyline.active &&
+                                          !isOwner &&
+                                          !!image.postId &&
+                                          storyline.chapterIdOfImage(image.id) !== undefined && (
+                                            <ReportChapterMenuItem postId={image.postId} />
+                                          )}
+                                        <StorylineChapterRemoveItem imageId={image.id} />
+                                      </>
+                                    }
+                                  >
+                                    <LegacyActionIcon {...sharedActionIconProps}>
+                                      <IconDotsVertical {...sharedIconProps} />
+                                    </LegacyActionIcon>
+                                  </ImageContextMenu>
+                                </>
                               )}
                             </DownloadImage>
-                            <ShareButton
-                              url={imageShareUrl}
-                              title={title}
-                              collect={{ type: CollectionType.Image, imageId: image.id }}
-                            >
-                              <LegacyActionIcon {...sharedActionIconProps}>
-                                <IconShare3 {...sharedIconProps} />
-                              </LegacyActionIcon>
-                            </ShareButton>
-                            <LoginRedirect reason={'report-content'}>
-                              <LegacyActionIcon
-                                {...sharedActionIconProps}
-                                onClick={handleReportClick}
-                              >
-                                <IconFlag {...sharedIconProps} />
-                              </LegacyActionIcon>
-                            </LoginRedirect>
-                            <ImageContextMenu image={image}>
-                              <LegacyActionIcon {...sharedActionIconProps}>
-                                <IconDotsVertical {...sharedIconProps} />
-                              </LegacyActionIcon>
-                            </ImageContextMenu>
                           </div>
                         </div>
                         <div className={`@max-md:hidden ${sidebarOpen ? '-mr-3 ml-3' : ''}`}>
@@ -443,40 +578,29 @@ export function ImageDetail2() {
                       </div>
                       {/* FOOTER */}
                       <div className="flex flex-col gap-3 p-3">
+                        <StorylineChapterDescription imageId={image?.id} />
                         <div className="flex justify-center">
                           <ReactionSettingsProvider
                             settings={{
                               hideReactionCount: false,
-                              hideReactions:
-                                hideReactions ||
-                                collectionItems.some((ci) =>
-                                  contestCollectionReactionsHidden(ci.collection)
-                                ),
-                              buttonStyling: (reaction, hasReacted) => ({
-                                radius: 'xl',
-                                variant: 'light',
-                                px: undefined,
-                                pl: 4,
-                                pr: 8,
-                                h: 30,
-                                style: {
-                                  color: 'white',
-                                  background: hasReacted
-                                    ? rgba(theme.colors.blue[4], 0.4)
-                                    : rgba(theme.colors.gray[8], 0.4),
-                                  // backdropFilter: 'blur(7px)',
-                                },
-                              }),
+                              hideReactions: reactionsHidden,
+                              buttonStyling: pillStyling(30),
                             }}
                           >
                             <ImageDetailReactions image={image} />
-                            {/* Inside the provider, not beside it: the bar reads
-                                the same `buttonStyling` the reactions do. */}
-                            <StickerPlacementBar
-                              imageId={image.id}
-                              imageNsfwLevel={image.nsfwLevel}
-                              className="ml-2"
-                            />
+                            {/* On a phone it is in the bottom bar. */}
+                            {!narrowStage && (
+                              <StickerPlacementBar
+                                imageId={image.id}
+                                imageNsfwLevel={image.nsfwLevel}
+                                className="ml-2"
+                              />
+                            )}
+                            {!narrowStage && takesHats(image) && (
+                              <div className="ml-2">
+                                <HatTurfDetailControls imageId={image.id} />
+                              </div>
+                            )}
                           </ReactionSettingsProvider>
                         </div>
                         {storyline.active ? (
@@ -518,6 +642,7 @@ export function ImageDetail2() {
                   !sidebarOpen ? '@md:hidden' : ''
                 } z-10 flex flex-col bg-gray-2 dark:bg-dark-9`}
                 style={{ wordBreak: 'break-word' }}
+                data-testid="image-detail-sheet"
               >
                 {/* The padding is on the `!active` branch only. Expanded, this row
                     is at the TOP of the panel and the inset below it would be a
@@ -528,8 +653,12 @@ export function ImageDetail2() {
                     !active ? '@max-md:pb-[calc(0.75rem+var(--safe-area-inset-bottom-unpaid))]' : ''
                   }`}
                 >
-                  <div className="flex gap-1">{renderLeftImageControls(false)}</div>
-                  <LegacyActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
+                  <div className="flex items-center gap-1">{renderLeftImageControls(false)}</div>
+                  <LegacyActionIcon
+                    {...sharedActionIconProps}
+                    onClick={toggleInfo}
+                    data-testid="image-detail-chevron"
+                  >
                     <IconChevron {...sharedIconProps} />
                   </LegacyActionIcon>
                 </div>
@@ -615,9 +744,7 @@ export function ImageDetail2() {
                         &ndash; such as the prompt, tools, and resources used.
                       </AlertWithIcon>
                     )}
-                    {isAppealableImage(image) && isOwner && (
-                      <OwnerBlockedImageNotice imageId={image.id} />
-                    )}
+                    {isOwner && <OwnerBlockedImageNotice image={image} />}
                     {image.poi && (
                       <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">
                         <Text>
@@ -639,19 +766,7 @@ export function ImageDetail2() {
                       nsfwLevel={image.nsfwLevel}
                       mediaType={image.type}
                     />
-                    {post && (post.title || post.detail) && (
-                      <Card className="flex flex-col gap-3 rounded-xl">
-                        <Text className="flex items-center gap-2 text-xl font-semibold">
-                          <IconLayoutList />
-                          <span>{post.title}</span>
-                        </Text>
-                        {post.detail && (
-                          <ContentClamp maxHeight={75}>
-                            <RenderHtml html={post.detail} />
-                          </ContentClamp>
-                        )}
-                      </Card>
-                    )}
+                    <ImageDetailPostCard post={post} />
                     <ImageProcess imageId={image.id} />
                     <ImageRemixOfDetails imageId={image.id} />
                     <RemixGalleryCard imageId={image.id} />
@@ -690,6 +805,11 @@ function ImageDetailReactions({
 }: {
   image: ReturnType<typeof useImageDetailContext>['images'][number];
 }) {
+  const nudge = useReactionNudgeClass({
+    imageId: image.id,
+    ownerId: image.user.id,
+    reactions: image.reactions,
+  });
   return (
     <Metrics
       entityType="Image"
@@ -713,6 +833,8 @@ function ImageDetailReactions({
             metricsUnknown={image.stats?.statsUnknown}
             targetUserId={image.user.id}
             disableBuzzTip={image.poi}
+            // Wrap, never shrink: a shrunk pill cuts its count off.
+            className={clsx('flex-wrap', nudge)}
           />
         </ImageReactorsPreview>
       )}

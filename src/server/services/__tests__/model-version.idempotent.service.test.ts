@@ -77,15 +77,21 @@ vi.mock('~/server/services/image.service', () => ({
   uploadImageFromUrl: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
-vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
+vi.mock('~/server/services/orchestrator/models', () => ({
+  bustOrchestratorModelCache: vi.fn(),
+  getOrchestratorVersionAirs: vi.fn(() => Promise.resolve([])),
+  bustOrchestratorAirs: vi.fn(),
+}));
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
   updateModelLastVersionAt: vi.fn(),
+  bustPostVersionCache: vi.fn(),
 }));
 vi.mock('~/server/services/model-file.service', () => ({
   deleteFilesForModelVersionCache: vi.fn(),
 }));
 
+import { getPaidAccess } from '~/server/services/paid-access.service';
 import {
   assertUserEarlyAccessLimits,
   mergeVersions,
@@ -401,7 +407,11 @@ describe('mergeVersions training runs', () => {
   });
   const tx = {
     $queryRaw: versionRows,
-    modelFile: { findFirst: datasetFindFirst, updateMany: fileMove },
+    modelFile: {
+      findFirst: datasetFindFirst,
+      findMany: vi.fn(() => Promise.resolve([])),
+      updateMany: fileMove,
+    },
   };
 
   const row = (id: number, status: string, trainingStatus: string | null) => ({
@@ -494,6 +504,48 @@ describe('mergeVersions training runs', () => {
   it('merges a trained source that has no training data', async () => {
     stored({ trainingStatus: 'InReview' });
     datasetFindFirst.mockResolvedValue(null);
+
+    await expect(merge()).rejects.toThrow(PAST_CHECKS);
+  });
+
+  const withBaseModels = (source: string, target: string, targetStatus = 'Published') =>
+    versionRows.mockResolvedValue([
+      { ...row(TARGET, targetStatus, null), baseModel: target },
+      { ...row(SOURCE, 'Published', null), baseModel: source },
+    ]);
+
+  it('refuses merging a non-commercial source into a version on another base model', async () => {
+    withBaseModels('Flux.2 Klein 9B', 'SDXL 1.0');
+
+    await expect(merge()).rejects.toThrow(
+      "Files from a version on a non-commercial base model can't be merged into a version on a different base model. Contact a moderator."
+    );
+    expect(fileMove).not.toHaveBeenCalled();
+  });
+
+  it('refuses merging a published non-commercial source into a draft', async () => {
+    withBaseModels('Flux.2 Klein 9B', 'Flux.2 Klein 9B', 'Draft');
+
+    await expect(merge()).rejects.toThrow(
+      'Files from a published version on a non-commercial base model can only be merged into a published version. Contact a moderator.'
+    );
+    expect(fileMove).not.toHaveBeenCalled();
+  });
+
+  it('merges a non-commercial draft into a draft on the same base model (control)', async () => {
+    versionRows.mockResolvedValue([
+      { ...row(TARGET, 'Draft', null), baseModel: 'Flux.2 Klein 9B' },
+      { ...row(SOURCE, 'Draft', null), baseModel: 'Flux.2 Klein 9B' },
+    ]);
+
+    await expect(merge()).rejects.toThrow(PAST_CHECKS);
+  });
+
+  it.each([
+    ['a non-commercial source into the same base model', 'Flux.2 Klein 9B', 'Flux.2 Klein 9B'],
+    ['a commercial source into a non-commercial target', 'SDXL 1.0', 'Flux.2 Klein 9B'],
+  ])('merges %s', async (_, source, target) => {
+    withBaseModels(source, target);
 
     await expect(merge()).rejects.toThrow(PAST_CHECKS);
   });
@@ -616,6 +668,65 @@ describe('assertUserEarlyAccessLimits', () => {
     await expect(
       assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
     ).resolves.toBeUndefined();
+  });
+
+  describe('on a published version', () => {
+    const published = (gate: { timeframeDays: number | null; endsAt: Date | null } | null) => {
+      mockDbRead.modelVersion.findUnique.mockResolvedValueOnce({
+        initialPublishedAt: new Date('2026-01-01T00:00:00Z'),
+        status: 'Published',
+      });
+      mockDbWrite.paidAccess.findUnique.mockResolvedValueOnce(gate);
+    };
+
+    it('lets an ended window be resubmitted unchanged, without counting it against the caps', async () => {
+      published({ timeframeDays: 7, endsAt: new Date(Date.now() - 86_400_000) });
+      mockMaxModels.mockReturnValue(0);
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
+      ).resolves.toBeUndefined();
+      expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('judges the gate from the primary, not a stale cache', async () => {
+      const endsAt = new Date(Date.now() - 86_400_000);
+      // The cache still holds the 7-day window; a moderator has since changed it to 3 days.
+      vi.mocked(getPaidAccess).mockResolvedValue({ 10: { timeframeDays: 7, endsAt } } as never);
+      published({ timeframeDays: 3, endsAt });
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
+      ).rejects.toThrow("Early access can't be started");
+      vi.mocked(getPaidAccess).mockResolvedValue({});
+    });
+
+    it('refuses restarting an ended window with a different length', async () => {
+      published({ timeframeDays: 7, endsAt: new Date(Date.now() - 86_400_000) });
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 14, versionId: 10 })
+      ).rejects.toThrow("Early access can't be started");
+    });
+
+    it('refuses starting a window on a version that never had one', async () => {
+      published(null);
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
+      ).rejects.toThrow("Early access can't be started");
+    });
+
+    it('lets a running window be re-saved', async () => {
+      published({ timeframeDays: 7, endsAt: new Date(Date.now() + 86_400_000) });
+      primeActive([10]);
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
+      ).resolves.toBeUndefined();
+    });
+
+    it('lets a save that sends no window through', async () => {
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: undefined, versionId: 10 })
+      ).resolves.toBeUndefined();
+      expect(mockDbRead.modelVersion.findUnique).not.toHaveBeenCalled();
+    });
   });
 
   it('allows a new version while under the cap', async () => {

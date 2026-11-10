@@ -875,6 +875,17 @@ describe('updateCrucible — content and images', () => {
     expect(written()).toMatchObject({ image: { connect: { id: 77 } } });
   });
 
+  it("resolves a moderator's new cover and hero for the owner, uploaded by the moderator", async () => {
+    const MODERATOR = OWNER + 1000;
+    const image = { url: '6a1c3f3d-29e5-49c1-816f-bfc0f7c5c900', width: 1, height: 1 };
+    await edit({ coverImage: image, heroImage: image }, MODERATOR, true);
+
+    expect(resolveCoverImageId).toHaveBeenCalledTimes(2);
+    for (const [args] of resolveCoverImageId.mock.calls) {
+      expect(args).toMatchObject({ userId: OWNER, uploaderId: MODERATOR });
+    }
+  });
+
   it('removes the hero image when sent null', async () => {
     await edit({ heroImage: null });
     expect(written()).toMatchObject({ heroImage: { disconnect: true } });

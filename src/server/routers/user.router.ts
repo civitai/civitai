@@ -37,6 +37,7 @@ import {
   getUserSettingsHandler,
   getUserTagsHandler,
   setLeaderboardEligibilityHandler,
+  setEventPointsExclusionHandler,
   setUserSettingHandler,
   toggleArticleEngagementHandler,
   toggleBanHandler,
@@ -61,6 +62,7 @@ import {
   getAllUsersInput,
   getEngagedModelsByIdsSchema,
   getByUsernameSchema,
+  getUsageLimitsSchema,
   getUserByUsernameSchema,
   getUserCosmeticsSchema,
   getUserListSchema,
@@ -126,6 +128,8 @@ import type { UserOnboardingSchema } from '~/server/schema/user.schema';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import { dbRead } from '~/server/db/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { getUsageLimits, USAGE_LIMITS_SCOPES } from '~/server/services/usage-limits.service';
+import { getActiveLimits } from '~/server/utils/active-rate-limits';
 import { userCreatorEdgeTag } from '~/server/services/user-creator.service';
 
 export const userRouter = router({
@@ -155,6 +159,20 @@ export const userRouter = router({
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)
     .query(getUserByIdHandler),
+  getUsageLimits: protectedProcedure
+    .meta({ anyOfScopes: USAGE_LIMITS_SCOPES })
+    .input(getUsageLimitsSchema)
+    .query(({ ctx, input }) =>
+      getUsageLimits({
+        user: ctx.user,
+        req: ctx.req,
+        tokenScope: ctx.tokenScope,
+        ids: input?.ids,
+      })
+    ),
+  getActiveLimits: protectedProcedure
+    .meta({ anyOfScopes: USAGE_LIMITS_SCOPES })
+    .query(({ ctx }) => getActiveLimits(ctx.user.id)),
   getSearchHydration: publicProcedure
     .input(getUserSearchHydrationSchema)
     .query(getUserSearchHydrationHandler),
@@ -327,7 +345,7 @@ export const userRouter = router({
       }
     );
     track();
-    return { incomplete: result.incomplete };
+    return { incomplete: result.incomplete, keptModelIds: result.keptModelIds };
   }),
   getArticleEngagement: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
@@ -412,6 +430,9 @@ export const userRouter = router({
   setLeaderboardEligibility: moderatorProcedure
     .input(setLeaderboardEligbilitySchema)
     .mutation(setLeaderboardEligibilityHandler),
+  setEventPointsExclusion: moderatorProcedure
+    .input(setLeaderboardEligbilitySchema)
+    .mutation(setEventPointsExclusionHandler),
   requestAdToken: verifiedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .mutation(({ ctx }) => requestAdToken({ userId: ctx.user.id })),

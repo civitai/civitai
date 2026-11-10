@@ -49,9 +49,10 @@
 }
 
 .supportChip {
+  display: inline-flex;
   flex-shrink: 0;
-  min-height: 24px;
-  height: 24px;
+  min-height: 20px;
+  height: 20px;
   gap: 4px;
   padding: 0 var(--mantine-spacing-xs);
 }

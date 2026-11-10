@@ -95,12 +95,21 @@ interface TrainingStudioHost {
    *  new-tab for an absolute one. */
   generateUrl?(req: { air: string; workflowId: string; name: string }): string;
 
-  /** URL for the main app's publish entry (`/models/train/from-orchestrator?workflowId=…&epoch=…`),
+  /** URL for the main app's publish entry
+   *  (`/models/train/from-orchestrator?workflowId=…&epoch=…&ownRights=0|1&shareDataset=0|1`),
    *  which builds a Draft model from the run's checkpoint and drops the user into the model wizard.
    *  Ownership is enforced there by re-fetching the workflow with the caller's own orchestrator
-   *  token. Optional — omit to hide the Publish affordance. Same URL semantics as `generateUrl`:
-   *  relative navigates same-tab, absolute opens a new tab. */
-  publishUrl?(req: { workflowId: string; epoch: number }): string;
+   *  token. The dataset-sharing pair can only lower the stored choice on its own; a share the owner
+   *  has not yet confirmed shows a confirm step on the main app first. Build the query with
+   *  `publishSearchParams` (`src/lib/publish-url-core.ts`). Optional — omit to hide the Publish
+   *  affordance. Same URL semantics as `generateUrl`: relative navigates same-tab, absolute opens a
+   *  new tab. */
+  publishUrl?(req: {
+    workflowId: string;
+    epoch: number;
+    ownRights?: boolean;
+    shareDataset?: boolean;
+  }): string;
 
   /** URL for the run's model page, draft or published. The main app stamps
    *  `{ modelId, modelVersionId }` into the workflow's metadata when the publish entry creates the
@@ -108,6 +117,14 @@ interface TrainingStudioHost {
    *  render a "View draft" / "View your model page" link through this. Optional — omit to hide
    *  the affordance. Same URL semantics as `generateUrl`. */
   modelPageUrl?(req: { modelId: number }): string;
+
+  /** Whether that model still counts for this user (`GET /api/training-studio/model-status`): false
+   *  once the owner deleted it, since the stamped modelId outlives the delete. The run page asks
+   *  once per modelId; false drops the link (an unpublished run then offers Publish, which makes a
+   *  fresh draft), while pending or a rejection keeps it. A moderator's delete still counts, so
+   *  Publish can't route around it. Should time out on its own. Optional — omit and the link is
+   *  unchecked. */
+  modelLive?(modelId: number): Promise<boolean>;
 
   /** Open the host's own model picker for the Custom training base (the main app's
    *  resource-select modal). The component passes the run's orchestrator ecosystem so a host
@@ -151,6 +168,8 @@ Stays host-side (not orchestrator-backed or not user-token-backed):
 - **Buzz balances** — internal buzz service (`BUZZ_ENDPOINT`), no browser CORS.
 - **Trigger word check** — the main app's `POST /api/training-studio/check-text`; the standalone
   shell's server calls it with the user's session cookie, the embed through `checkTrainingText`.
+- **Model status** — the main app's `GET /api/training-studio/model-status`; the standalone shell's
+  server calls it with the user's session cookie, the embed through `modelLive`.
 
 ## CORS requirement
 

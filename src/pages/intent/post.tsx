@@ -136,6 +136,7 @@ function AppIntent({ manifestUrl }: { manifestUrl: string }) {
       values={values}
       onChange={setValues}
       appName={stage.data.app.name}
+      itemName={stage.data.app.itemName}
       primaryLabel="Publish"
       onPrimary={() => submit(true)}
       onOpenEditor={() => submit(false)}
@@ -195,7 +196,7 @@ function OpenIntent({ query }: { query: OpenIntentQuery }) {
           );
         },
         onError(error) {
-          showCreatePostError(error.message);
+          showCreatePostError(error);
           setBusy(undefined);
         },
       }

@@ -4,9 +4,8 @@ import { createEmail } from '~/server/email/templates/base.email';
 
 vi.mock('~/server/email/client', () => ({ sendEmail: vi.fn() }));
 
-// The first case is enforced by `pnpm run typecheck`, not by vitest: NoInfer is erased at
-// transpile, so it passes at runtime either way. It lives OUTSIDE __tests__ deliberately —
-// tsconfig excludes src/**/__tests__/**, so moving this file there disarms it silently.
+// The first case is enforced by `pnpm run typecheck:tests`, not by vitest: NoInfer is erased at
+// transpile, so it passes at runtime either way.
 describe('createEmail resolves T from the annotated params', () => {
   it('does not take testData as an inference site', () => {
     createEmail({

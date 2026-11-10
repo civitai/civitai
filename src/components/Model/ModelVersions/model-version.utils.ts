@@ -53,6 +53,7 @@ export const modelVersionAccessInput = (modelVersionId: number) => ({
  */
 export type ModelVersionPermissionData = {
   id: number;
+  baseModel?: string;
   usageControl?: ModelUsageControl | null;
   canGenerate?: boolean;
   paidAccess?: ModelVersionPaidAccessDto | null;
@@ -64,6 +65,7 @@ export const toModelVersionPermissionData = (
   version: Omit<ModelVersionPermissionData, 'model'>
 ): ModelVersionPermissionData => ({
   id: version.id,
+  baseModel: version.baseModel,
   usageControl: version.usageControl,
   canGenerate: version.canGenerate,
   paidAccess: version.paidAccess,

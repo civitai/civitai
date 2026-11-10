@@ -48,9 +48,9 @@ export type AppsBuildPageProps = { mode: 'build' } | AssistantProps;
  * and `/apps/assistant` (all 301 here) and absorbed the on-platform half of `/apps/submit`.
  *
  *   assistant — the App Assistant workspace, for a signed-in viewer `canAccessAppAssistant`
- *               admits. An author also gets a "My apps" switch to the states below.
+ *               admits. An author also gets a "My builds" switch to the states below.
  *   A · pitch     (not an author)                   — recruit, and request access
- *   B · first-app (author, nothing yet)             — agent card, manual setup collapsed, create
+ *   B · first-app (author, nothing yet)             — agent card, create
  *   C · workbench (author, has apps or submissions) — the app list + `New app`
  *
  * 🔴 THE GATE IS `resolveAppsBuildPageMode`, WHICH THE RAIL'S Build ROW ALSO CALLS. That sharing
@@ -132,7 +132,7 @@ export default function AppsBuildPage(props: AppsBuildPageProps) {
         leftSection={<IconLayoutList size={16} />}
         data-testid="apps-build-show-apps"
       >
-        My apps
+        My builds
       </Button>
     ) : undefined;
 
@@ -154,6 +154,7 @@ export default function AppsBuildPage(props: AppsBuildPageProps) {
               sandboxUrl={props.sandboxUrl}
               subagents={props.subagents}
               remoteRunner={props.remoteRunner}
+              userId={currentUser?.id ?? null}
             />
           )}
         </AppsPageLayout>

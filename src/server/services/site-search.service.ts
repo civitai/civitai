@@ -25,6 +25,8 @@ import { Flags } from '~/shared/utils/flags';
 import { Availability } from '~/shared/utils/prisma/enums';
 
 const SITE_SEARCH_TIMEOUT_MS = 5_000;
+// The value the breaker-protected search routes send (e.g. /api/v1/models).
+const SITE_SEARCH_RETRY_AFTER_SECONDS = 2;
 
 const searchableIndexes = (retired: readonly string[]) =>
   [
@@ -52,7 +54,12 @@ export type SiteSearchViewer = {
 
 /** A refusal the site-search endpoint sends as-is, so its message must be safe to show. */
 export class SiteSearchError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string) {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    readonly retryAfterSeconds?: number
+  ) {
     super(message);
     this.name = 'SiteSearchError';
   }
@@ -170,10 +177,19 @@ function withViewer<T extends { filter?: Filter }>(
   };
 }
 
+const searchUnavailable = () =>
+  new SiteSearchError(
+    503,
+    'search_unavailable',
+    'Search is temporarily unavailable',
+    SITE_SEARCH_RETRY_AFTER_SECONDS
+  );
+
 /**
  * POSTs to Meilisearch with the server's search key. A 4xx that rejects the query is returned
- * as-is so the client can tell a bad filter from an outage; anything that says our own key or the
- * backend is broken becomes a 502.
+ * as-is so the client can tell a bad filter from an outage. An unreachable, timed-out or 5xx
+ * backend is a retryable 503. A refused key (401/403) is a 502 with no Retry-After: retrying
+ * cannot fix our own credentials.
  */
 async function postToSearch(path: string, body: unknown): Promise<SiteSearchResponse> {
   const host = env.NEXT_PUBLIC_SEARCH_HOST;
@@ -200,7 +216,7 @@ async function postToSearch(path: string, body: unknown): Promise<SiteSearchResp
       cause: (error as Error).message,
       path,
     }).catch(() => undefined);
-    throw new SiteSearchError(502, 'search_unavailable', 'Search is temporarily unavailable');
+    throw searchUnavailable();
   }
 
   const responseBody = await res.json().catch(() => undefined);
@@ -218,6 +234,7 @@ async function postToSearch(path: string, body: unknown): Promise<SiteSearchResp
     code: (responseBody as { code?: string } | undefined)?.code,
     path,
   }).catch(() => undefined);
+  if (res.status >= 500) throw searchUnavailable();
   throw new SiteSearchError(502, 'search_unavailable', 'Search is temporarily unavailable');
 }
 

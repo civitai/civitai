@@ -1,5 +1,6 @@
 import type { ActionIconProps } from '@mantine/core';
-import { ActionIcon, Tooltip } from '@mantine/core';
+import { ActionIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBellCheck, IconBellPlus } from '@tabler/icons-react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

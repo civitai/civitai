@@ -56,6 +56,14 @@ export const PERMISSIONS = [
   // the main app's `/api/mod/user/reactions` and `/remove-reactions` by this literal
   // (`ModeratorGrantId`), so rename the two together.
   { id: 'user.removeReactions', label: 'Remove all of an account’s reactions (erasure request)' },
+  // An access request: queueing builds an archive of the account's data and emails the queuer a
+  // link. Nothing reaches the account owner until release, a separate grant. The main app checks the
+  // release literal (`ModeratorGrantId`), so rename the two together.
+  { id: 'user.personalDataExport.queue', label: 'Queue a personal data export (access request)' },
+  {
+    id: 'user.personalDataExport.release',
+    label: 'Send a built personal data export to the account owner',
+  },
   // Money: a membership code is worth up to six months of a paid tier. Checked again by the main
   // app's `/api/mod/user/membership-code` by this literal (`ModeratorGrantId`), so rename the two
   // together.
@@ -65,6 +73,18 @@ export const PERMISSIONS = [
   {
     id: 'user.membership.gift',
     label: 'Revoke or refund a membership gift whose payment did not clear',
+  },
+  // Money: free days on, or a re-sync of, a member's Stripe subscription. The main app checks this
+  // literal (`ModeratorGrantId`), so rename the two together.
+  {
+    id: 'user.membership.extend',
+    label: 'Extend a member’s Stripe membership by free days, or re-sync it from Stripe',
+  },
+  // Undoing a cancel arms the next renewal charge, so it is granted apart from extend. Also checked by
+  // literal in the main app (`ModeratorGrantId`).
+  {
+    id: 'user.membership.cancel',
+    label: 'Set or undo cancel-at-period-end on a member’s Stripe membership',
   },
   // Moves a creator's score, and with it their tier and what the tier unlocks. Checked again by the
   // main app's `/api/mod/user/creator-score-grant` by this literal (`ModeratorGrantId`), so rename the
@@ -86,6 +106,8 @@ export const PERMISSIONS = [
   // from User Lookup, every report queue, Image Lookup and Bulk Image Manager, and a gate on one of
   // those pages alone would leave the others as a way round it. Granted by hand on `/admin` at launch.
   { id: 'user.strike', label: 'Strike or notify an account' },
+  // Its own grant, not part of user.strike: it opens a two-way thread the user can answer.
+  { id: 'user.message.asCivitai', label: 'Message a user as Civitai Moderation' },
   { id: 'image.moderate', label: 'Remove, restore or flag images' },
   { id: 'bulk-ban.execute', label: 'Run a mass ban' },
   // Reaching a review queue is an investigation right; banning the account it belongs to is not. Held
@@ -130,6 +152,11 @@ export const PERMISSIONS = [
   // Support tickets carry the requester's email, a different class of data from anything moderation
   // shows. Without this the email is never even selected — see `ticketSql`.
   { id: 'decisions.support.pii', label: 'See support-ticket requester emails on Decisions' },
+  // Replies and status changes go out as one agent's Freshdesk key, so who may write to a customer is
+  // its own call; reading a ticket view is the page grant.
+  { id: 'tickets.reply', label: 'Reply to and change the status of a support ticket' },
+  // Hands a moderation ticket to support, naming the moderator who did it.
+  { id: 'tickets.escalate', label: 'Send a moderation ticket to support' },
   { id: 'scan-label.quota.edit', label: 'Set scan label voters and their daily quotas' },
   // Submits a real scan with the site's system account; the page shows signals only.
   { id: 'image.scanProbe.run', label: 'Run the image scanner on chosen images (signals only)' },
@@ -149,6 +176,21 @@ export const PERMISSIONS = [
   },
   // Checked by this literal in the main app's `/api/mod/label-store/predictions` (`ModeratorGrantId`).
   { id: 'labelStore.submitPrediction', label: 'Submit model predictions to the label store' },
+  // Money: gives a user back the Buzz an App Blocks generation charged them (the generation legs and
+  // the app author's fee). Also the read right for the lookup, which lists one account's App spend.
+  // Checked by this literal in the main app's `/api/mod/apps/workflow-charges` and
+  // `/api/mod/apps/refund-workflows` (`ModeratorGrantId`), so rename them together.
+  {
+    id: 'apps.buzz.refund',
+    label: 'Look up and refund a user’s App Blocks Buzz spend',
+  },
+  // Raises the per-call ceiling for a holder of `apps.buzz.refund`; useless without it. Apart
+  // because one call can return the spend of many generations. Checked by the same endpoint by this
+  // literal.
+  {
+    id: 'apps.buzz.refund.large',
+    label: 'Refund more than 5,000 App Blocks Buzz in one call',
+  },
   // Model Flags → Needs review lists two kinds of lead, each ruled by its own right: a held text-scan
   // detection (flag or dismiss, recorded with a reason) and a file match (set minor or dismiss). The
   // page grant opens the tab; the tab lists, and its actions rule, only the kinds held here.

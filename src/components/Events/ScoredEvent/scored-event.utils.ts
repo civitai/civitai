@@ -31,6 +31,61 @@ export function teamPositionsOverTime(history: TeamHistory[]) {
   return history.map(({ team }) => ({ team, positions: positions.get(team)! }));
 }
 
+export type StandingsPoint = { x: number; y: number };
+export type StandingsSeries = { team: string; points: StandingsPoint[] };
+
+/**
+ * The chart's series per team: the hourly history, ended at the live total (points) or live rank
+ * (positions) stamped `now` while the totals are live, so a line ends at the number beside it.
+ * Nothing is added when it would repeat the last history value.
+ */
+export function buildStandingsSeries({
+  mode,
+  history,
+  teams,
+  liveTotals,
+  now,
+}: {
+  mode: 'points' | 'position';
+  history: TeamHistory[];
+  teams: { team: string; score: number; rank: number }[];
+  liveTotals: boolean;
+  now: number;
+}): StandingsSeries[] {
+  const series: StandingsSeries[] =
+    mode === 'points'
+      ? history.map(({ team, scores }) => ({
+          team,
+          points: scores.map((s) => ({ x: s.date.getTime(), y: s.score })),
+        }))
+      : teamPositionsOverTime(history).map(({ team, positions }) => ({
+          team,
+          points: positions.map((p) => ({ x: p.date.getTime(), y: p.position })),
+        }));
+  if (!liveTotals) return series;
+  return series.map(({ team, points }) => {
+    const live = teams.find((t) => t.team === team);
+    if (!live) return { team, points };
+    const y = mode === 'points' ? live.score : live.rank;
+    if (points.at(-1)?.y === y) return { team, points };
+    return { team, points: [...points, { x: now, y }] };
+  });
+}
+
+const HOUR_MS = 60 * 60 * 1000;
+
+/** Points each team earned per hour; a gap where an hour has not been settled yet. */
+export function hourlySeries(hourly: {
+  start: Date;
+  teams: { team: string; points: (number | null)[] }[];
+}) {
+  const start = hourly.start.getTime();
+  return hourly.teams.map(({ team, points }) => ({
+    team,
+    points: points.map((y, i) => ({ x: start + i * HOUR_MS, y })),
+  }));
+}
+
 const ENTITY_NOUNS: Record<string, string> = {
   Image: 'images',
   Model: 'models',
@@ -101,7 +156,14 @@ export const HERO_VIDEO_OPTIONS = {
   original: true,
 } satisfies Omit<EdgeUrlProps, 'src'>;
 
-export type ScoredSection = 'standings' | 'hats' | 'shop' | 'topHats' | 'rules';
+export type ScoredSection =
+  | 'standings'
+  | 'turf'
+  | 'hats'
+  | 'shop'
+  | 'topHats'
+  | 'turfPlayers'
+  | 'rules';
 
 /**
  * The page's sections below the hero, in the order the viewer needs them: how it works first for a
@@ -114,9 +176,10 @@ export function scoredSectionOrder({
   joined: boolean;
   ended: boolean;
 }): ScoredSection[] {
-  if (ended) return ['standings', 'topHats', 'hats'];
-  if (joined) return ['hats', 'standings', 'shop', 'topHats', 'rules'];
-  return ['rules', 'shop', 'standings', 'topHats'];
+  // Once ended, Hat Turf (while its gate is open) sits under the result.
+  if (ended) return ['standings', 'turf', 'topHats', 'hats'];
+  if (joined) return ['hats', 'turf', 'standings', 'shop', 'topHats', 'turfPlayers', 'rules'];
+  return ['rules', 'shop', 'turf', 'standings', 'topHats', 'turfPlayers'];
 }
 
 type Settling = { endDate: Date; finalAt?: Date };

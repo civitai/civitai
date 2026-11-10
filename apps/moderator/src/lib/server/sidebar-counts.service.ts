@@ -1,6 +1,9 @@
 import { sql } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
-import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
+import {
+  APPS_PLATFORM_FEEDBACK_AREA,
+  ORCHESTRATION_FEEDBACK_AREA,
+} from '@civitai/shared/feedback.constants';
 import { prefixCacheKey, type RedisKeyTemplateCache } from '@civitai/redis';
 import { createCache } from './cache';
 import { dbRead } from './db';
@@ -27,6 +30,7 @@ import { countPendingScamRestrictions } from './user-restriction.service';
 import { countPendingCsamHolds } from './csam-holds.queries';
 import { countEvidenceHoldsEnding } from '@civitai/db-queries/evidence-hold';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
+import { countOpenUnpaidAwards } from './bounty-unpaid-award.service';
 import {
   getFlaggedCount,
   getHeldDetectionModelCount,
@@ -34,7 +38,10 @@ import {
   getMinorQueueCounts,
   type MinorQueueCounts,
 } from './minor-hash.service';
+import { ticketSnapshot } from './tickets/snapshot';
+import { peekTicketCounts } from './tickets/view-counts';
 import { NEEDS_REVIEW_COUNT_KEYS, needsReviewTotal } from '$lib/minor-flags/needs-review';
+import { getRestrictedVerdictCount } from './restricted-nsfw-verdicts';
 
 export type SidebarCounts = Record<string, number>;
 
@@ -42,7 +49,7 @@ export type SidebarCounts = Record<string, number>;
  *  instead of a smaller total. */
 export type SidebarCountsResult = { counts: SidebarCounts; unavailable: string[] };
 
-const counts = createCache({ name: 'sidebar-counts:v2', fetch: fetchCounts, ttlSeconds: 60 });
+const counts = createCache({ name: 'sidebar-counts:v3', fetch: fetchCounts, ttlSeconds: 60 });
 
 /** How long a part's last landed value stands in for it; older, the part is unknown. */
 export const LAST_GOOD_MS = 15 * 60_000;
@@ -119,6 +126,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     ingestionErrors,
     feedbackNew,
     feedbackAppsPlatformNew,
+    feedbackOrchestrationNew,
     removedAppeals,
     reRemovals,
     minorQueue,
@@ -130,6 +138,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     csamTextHolds,
     siteAppeals,
     evidenceHoldsEnding,
+    ticketCounts,
+    bountyUnpaidAwards,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -161,6 +171,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     // nothing.
     countNewFeedback(),
     countNewFeedback(APPS_PLATFORM_FEEDBACK_AREA),
+    countNewFeedback(ORCHESTRATION_FEEDBACK_AREA),
     countRemovedAppeals(),
     countPendingRemovalConfirmations(),
     // Waited on for a second at most: every verdict busts their cache and a fill takes ~10s.
@@ -170,8 +181,19 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     // Auto-flagged's own total, in models: the badge equals the queue's "of N". The hash branch scans
     // "Model" (no index serves its predicate), so it is bounded; a failure drops only this badge.
     bounded(() => getFlaggedCount()),
-    // Needs review's held detections, in models (`Model_textScanRedetected_idx`).
-    withLastGood('held-detections', getHeldDetectionModelCount, 3_000),
+    // Needs review's held detections, in models (`Model_textScanRedetected_idx`), plus its
+    // restricted-verdict leads (`Model_restrictedNsfwVerdict_idx`). A model with both counts twice.
+    withLastGood(
+      'held-detections',
+      async () => {
+        const [held, leads] = await Promise.all([
+          getHeldDetectionModelCount(),
+          getRestrictedVerdictCount(),
+        ]);
+        return held + leads;
+      },
+      3_000
+    ),
     // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.
     bounded(countStrikeReview),
     bounded(countPendingScamRestrictions),
@@ -181,6 +203,10 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bounded(countSiteAppeals),
     // Bounded: the view aggregates every hold row, so no index serves it.
     bounded(() => countEvidenceHoldsEnding(dbRead)),
+    // Bounded so a slow Redis read cannot hold up the sidebar; these keys are not in `maybe`, so a timeout shows no badge rather than `unavailable`.
+    bounded(() => peekTicketCounts(() => ticketSnapshot.peek())),
+    // Bounded: the legacy half filters ModActivity on `activity`, which no index covers.
+    bounded(countOpenUnpaidAwards),
   ]);
   // Null where a bounded count did not answer.
   const maybe: Record<string, number | null> = {
@@ -195,6 +221,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     evidenceHoldsEnding: evidenceHoldsEnding?.owners ?? null,
     stuckIngestion,
     ingestionErrors,
+    bountyUnpaidAwards,
   };
   const unavailable = Object.keys(maybe).filter((key) => maybe[key] == null);
   const known = Object.entries(maybe).filter((e): e is [string, number] => e[1] != null);
@@ -209,10 +236,12 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
       ratingReviews: ratingReviews.Pending,
       feedbackNew,
       feedbackAppsPlatformNew,
+      feedbackOrchestrationNew,
       removedAppeals,
       reRemovals,
       modelFlagsAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
       ...Object.fromEntries(known),
+      ...ticketCounts,
     },
     unavailable,
   };

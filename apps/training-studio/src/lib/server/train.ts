@@ -4,15 +4,13 @@ import { env } from '$env/dynamic/private';
 import { logToAxiom, safeError } from './axiom';
 import { orchestratorClient } from './orchestrator';
 import { workflowSignalCallbacks } from './signals';
-import { mainAppTextCheck } from './text-check';
-import type { TrainingTextCheck } from '$lib/training-text';
+import { requestTextCheck } from './text-check';
+import { getTrainingServiceStatus } from './service-status';
 import * as core from '$lib/train-core';
 import type { ContinueOpts, SubmittedBatch, TrainingRunInput } from '$lib/train-core';
 
-const textCheck = (cookie: string | null, userId: number): TrainingTextCheck =>
-  cookie === null ? async () => undefined : mainAppTextCheck(cookie, userId);
-
 export type { ContinueOpts, TrainingItem, TrainingRunInput } from '$lib/train-core';
+export { MatureAckRequiredError } from '$lib/train-core';
 
 // Live NDJSON tracing is in production orchestrator-side, so it defaults ON; TRAINING_TRACE_MODE
 // (`events` | `logs` | `none`) remains the kill switch if the submit ever starts rejecting it.
@@ -22,7 +20,7 @@ const TRACE_MODE = env.TRAINING_TRACE_MODE ?? 'events';
  *  partial-return policy). Charges Buzz — the single write in the flow. The `userId` registers the
  *  orchestrator callback that pushes live `workflow-update` signals for each run; `cookie` is the
  *  caller's, forwarded to the main app's trigger word check. */
-export function submitTrainingBatch(
+export async function submitTrainingBatch(
   token: string,
   runs: TrainingRunInput[] | undefined,
   userId: number,
@@ -30,7 +28,8 @@ export function submitTrainingBatch(
   cookie: string | null
 ): Promise<SubmittedBatch> {
   return core.submitTrainingBatch(orchestratorClient(token), runs, {
-    checkText: textCheck(cookie, userId),
+    status: await getTrainingServiceStatus(),
+    checkText: requestTextCheck(cookie, userId),
     callbacks: workflowSignalCallbacks(userId),
     traceMode: TRACE_MODE,
     onRunError: (err, runIndex) =>
@@ -49,7 +48,7 @@ export function submitTrainingBatch(
 }
 
 /** "Keep training": submit a new run continuing from a checkpoint. Charges Buzz. Returns the new run id. */
-export function continueTraining(
+export async function continueTraining(
   token: string,
   userId: number,
   opts: ContinueOpts,
@@ -57,19 +56,21 @@ export function continueTraining(
   cookie: string | null
 ): Promise<string> {
   return core.continueTraining(orchestratorClient(token), opts, {
-    checkText: textCheck(cookie, userId),
+    status: await getTrainingServiceStatus(),
+    checkText: requestTextCheck(cookie, userId),
     callbacks: workflowSignalCallbacks(userId),
     traceMode: TRACE_MODE,
   });
 }
 
 /** Price a "keep training" continuation without submitting (the same body, `whatif`). */
-export function continueTrainingWhatIf(
+export async function continueTrainingWhatIf(
   token: string,
   userId: number,
   opts: ContinueOpts
-): Promise<{ cost: number | null; steps: number | undefined }> {
+): Promise<{ cost: number | null; steps: number | undefined; matureCount: number }> {
   return core.continueTrainingWhatIf(orchestratorClient(token), opts, {
+    status: await getTrainingServiceStatus(),
     callbacks: workflowSignalCallbacks(userId),
     traceMode: TRACE_MODE,
   });

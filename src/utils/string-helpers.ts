@@ -141,22 +141,6 @@ export function camelCase(str: string) {
     .join('');
 }
 
-const validModelExtensions = ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.gguf', '.onnx'];
-
-export function sanitizeDownloadFilename(
-  value: string,
-  fallbackExtension = '.safetensors'
-): string {
-  let name = value
-    .trim()
-    .replace(/["\\\r\n\t]/g, '') // strip Content-Disposition-breaking chars
-    .replace(/\s+/g, ' '); // collapse internal whitespace
-
-  const hasValidExt = validModelExtensions.some((ext) => name.toLowerCase().endsWith(ext));
-  if (!hasValidExt) name = `${name}${fallbackExtension}`;
-  return name;
-}
-
 export function filenamize(value: string, length = 20) {
   value = value.replace(/[']/gi, '').replace(/[^a-z0-9]/gi, '_');
   // adjust length to be length + number of _ in value
@@ -393,6 +377,12 @@ export function toPascalCase(str: string) {
 
 export function capitalize(str: string) {
   return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+/** "the Flux model", but "The Weirdies model" rather than "the The Weirdies model". */
+export function withDefiniteArticle(name: string, article: 'the' | 'The' = 'the') {
+  if (!/^the\s/i.test(name)) return `${article} ${name}`;
+  return article === 'The' ? capitalize(name) : name;
 }
 
 export function toKebabCase(str: string) {

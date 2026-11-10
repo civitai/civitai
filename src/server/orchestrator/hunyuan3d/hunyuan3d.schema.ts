@@ -20,6 +20,7 @@
 import type { Hunyuan3dImageTo3dComfyPolyGenInput } from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
+import { dropUndefined } from '~/server/orchestrator/polygen/polygen.schema';
 
 // =============================================================================
 // Constants
@@ -71,15 +72,6 @@ export type Hunyuan3dGenerationSchema = z.infer<typeof hunyuan3dGenerationSchema
 // =============================================================================
 // Helper — convert validated schema to Hunyuan3D/Comfy PolyGen input shape
 // =============================================================================
-
-/** Strip undefined fields so we don't send empty keys to the orchestrator. */
-function dropUndefined<T extends Record<string, unknown>>(obj: T): T {
-  const out = {} as Record<string, unknown>;
-  for (const [k, v] of Object.entries(obj)) {
-    if (v !== undefined) out[k] = v;
-  }
-  return out as T;
-}
 
 /**
  * Convert form data to a Hunyuan3D/Comfy PolyGen input. Used by the graph

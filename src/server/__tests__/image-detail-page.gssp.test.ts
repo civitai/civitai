@@ -105,8 +105,10 @@ describe('/images/[imageId] getServerSideProps', () => {
         queryKey: [['image', 'get'], { input: { id: 101, browsingLevel: 3 }, type: 'query' }],
         data: {
           id: 101,
+          name: null,
           nsfwLevel: 4,
           poi: false,
+          type: 'image',
           user: { id: 7 },
           url: 'media-101',
           viewer: viewer(7),
@@ -144,8 +146,10 @@ describe('/images/[imageId] getServerSideProps', () => {
         queryKey: [['image', 'get'], { input: { id: 101, browsingLevel: 1 }, type: 'query' }],
         data: {
           id: 101,
+          name: null,
           nsfwLevel: 4,
           poi: false,
+          type: 'image',
           user: { id: 7 },
           url: null,
           viewer: viewer(null),

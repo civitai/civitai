@@ -1,13 +1,11 @@
 import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL } from '~/server/common/constants';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   readUserCreatorViaKysely,
-  readUserCreatorViaPrisma,
   type UserCreatorWhere,
 } from '~/server/services/user-creator.reads';
 import { createCachedObject } from '~/server/utils/cache-helpers';
@@ -18,10 +16,7 @@ import { createCachedObject } from '~/server/utils/cache-helpers';
  * (a username, or both) straight here.
  */
 export async function fetchUserCreator(where: UserCreatorWhere) {
-  // `kysely-hot-reads-2` on: the same two reads in one Kysely statement, on the replica as before.
-  const found = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))
-    ? await readUserCreatorViaKysely((await loadKyselyDb()).kyselyRead, where)
-    : await readUserCreatorViaPrisma(dbRead, where);
+  const found = await readUserCreatorViaKysely((await loadKyselyDb()).kyselyRead, where);
   if (!found) return null;
   const { user, modelCount } = found;
 
@@ -72,7 +67,8 @@ export const USER_CREATOR_BUST_WINDOW_S = 2;
  * WHAT IS LEFT TO THE TTL (≤ 60 s, on top of the edge cache's own TTL, which already applied to all of
  * these before this cache existed): stats and rank (written by jobs), the published-model count,
  * cosmetics granted or removed by event and shop paths that do not refresh the session, and
- * `excludeFromLeaderboards` (moderator-only, masked for everyone else by the handler).
+ * `excludeFromLeaderboards` and `excludeFromEventPoints` (moderator-only, masked for everyone else by
+ * the handler).
  *
  * Deliberately NOT here:
  *   - negative results (`cacheNotFound: false`): a user who does not exist yet, or a deleted one being

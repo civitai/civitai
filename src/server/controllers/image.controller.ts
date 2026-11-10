@@ -1,16 +1,13 @@
 import { TRPCError } from '@trpc/server';
-import { v4 as uuid } from 'uuid';
 import {
-  BlockedReason,
   ImageSort,
   NotificationCategory,
-  NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { mapToViolationType, tosReasonUserMessage } from '~/server/common/tos-reasons';
 import type { Context, ProtectedContext } from '~/server/createContext';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { imageTagsCache } from '~/server/redis/caches';
+import { dbRead } from '~/server/db/client';
+import { getUserFollows, imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -18,7 +15,7 @@ import {
   removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
 import {
-  isImageInQueue,
+  leaveQueuesAfterModeratorRating,
   updatePendingImageRatings,
 } from '~/server/services/games/new-order.service';
 import {
@@ -35,16 +32,30 @@ import {
   updateImageNsfwLevel,
   getOpenImageReportIds,
   updateImageReportStatusByReason,
+  writeModeratorBlock,
+  logNoticeUnderReview,
 } from '~/server/services/image.service';
+import { feedHydrateQuery, hydrateWithReadRescue } from '~/server/services/feed-primary.service';
+import {
+  fillTurfPage,
+  getHatTurfFeedEvent,
+  readTurfRankPage,
+  turfHiddenIds,
+} from '~/server/events/turf/turf-feed';
 import {
   clearReviewFlagsOnBlock,
   keepPendingAppealFlags,
 } from '~/server/services/image-appeal-flag';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { readImageAppChip } from '~/server/services/blocks/image-app-chip.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
-import { getGallerySettingsByModelId } from '~/server/services/model.service';
+import {
+  getGallerySettingsByModelId,
+  getHeldGalleryLevel,
+  getHeldLevelsByPost,
+} from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
 import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -67,11 +78,11 @@ import { viewerCanSeeImageMedia, withoutMedia } from '~/server/utils/image-media
 import { getEventDecorationsForEntity } from '~/server/services/cosmetic.service';
 import { eventViewerOf } from '~/server/events/event-viewer';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { Flags } from '~/shared/utils/flags';
 import {
   BlockImageReason,
   EntityType,
-  NewOrderRankType,
   ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
@@ -160,7 +171,7 @@ export const deleteImageHandler = async ({
       .filter((tag) => tag.concrete)
       .map((tag) => ({ tagName: tag.tagName }));
 
-    const image = await deleteImageById(input);
+    const image = await deleteImageById({ ...input, deletedById: ctx.user.id });
 
     if (image) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
@@ -234,47 +245,44 @@ export const setTosViolationHandler = async ({
       if (held.length) return { ...image, held: heldRemovalSummary(held)[0] };
     }
 
-    // Update all reports with this comment id to actioned
-    const affectedReports = await updateImageReportStatusByReason({
-      id,
-      reason: ReportReason.TOSViolation,
-      status: ReportStatus.Actioned,
-      actorId: user.id,
-    });
-    // Reward users for accepted reports
-    await Promise.allSettled(
-      affectedReports.map((report) =>
-        reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, { ip })
-      )
-    );
-
-    await createNotification({
-      userId: image.userId,
-      type: 'tos-violation',
-      category: NotificationCategory.System,
-      key: `tos-violation:image:${uuid()}`,
-      details: {
-        modelName: image.post?.title ?? `post #${image.postId as number}`,
-        entity: 'image',
-        url: `/images/${id}`,
-        // Only the moderator's own choice — the inferred fallback below is a classification for
-        // analytics, and telling someone their image broke a rule the moderator never picked is worse
-        // than telling them nothing.
-        ...(violationType ? { reason: tosReasonUserMessage(violationType) } : {}),
-      },
-    }).catch();
-
     // Block image
     // This used to be a delete, but the mod team prefers to have the clean up happen later
-    await dbWrite.image.updateMany({
-      where: { id },
-      data: {
-        ingestion: 'Blocked',
-        nsfwLevel: NsfwLevel.Blocked,
-        blockedFor: BlockedReason.Moderated,
-        updatedAt: new Date(),
-      },
-    });
+    const written = await writeModeratorBlock([id]);
+    const held = written.held.has(id);
+
+    if (!held) {
+      if (written.underReview.has(id)) logNoticeUnderReview([{ id, userId: image.userId }]);
+      // Update all reports with this comment id to actioned
+      const affectedReports = await updateImageReportStatusByReason({
+        id,
+        reason: ReportReason.TOSViolation,
+        status: ReportStatus.Actioned,
+        actorId: user.id,
+      });
+      // Reward users for accepted reports
+      await Promise.allSettled(
+        affectedReports.map((report) =>
+          reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, { ip })
+        )
+      );
+
+      await createNotification({
+        userId: image.userId,
+        type: 'tos-violation',
+        category: NotificationCategory.System,
+        key: `tos-violation:image:${crypto.randomUUID()}`,
+        details: {
+          modelName: image.post?.title ?? `post #${image.postId as number}`,
+          entity: 'image',
+          url: `/images/${id}`,
+          // Only the moderator's own choice — the inferred fallback below is a classification for
+          // analytics, and telling someone their image broke a rule the moderator never picked is
+          // worse than telling them nothing.
+          ...(violationType ? { reason: tosReasonUserMessage(violationType) } : {}),
+        },
+      }).catch();
+    }
+
     await clearReviewFlagsOnBlock([id]);
     await keepPendingAppealFlags([id]);
     await invalidateManyImageExistence([id]);
@@ -303,7 +311,11 @@ export const setTosViolationHandler = async ({
     // Remove image from all collections
     await removeEntityFromAllCollections('image', id);
 
-    if (image.pHash) await addBlockedImage({ hash: image.pHash, reason: BlockImageReason.TOS });
+    if (image.pHash)
+      await addBlockedImage({
+        hash: image.pHash,
+        reason: held || written.underReview.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
+      });
     await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
     // Re-queue the parent comic project (if any) so the search index
     // re-evaluates visibility against the new (Blocked) Image state.
@@ -338,6 +350,30 @@ export const setTosViolationHandler = async ({
 };
 
 // #region [new handlers]
+/**
+ * A held gallery is shown whole to a moderator, signed in or on a full-access key: the same
+ * credentials the moderator procedures accept, so an app a moderator authorised does not get it.
+ */
+const moderatorView = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
+
+/**
+ * The images a viewer may see whole: one on a minor or SFW-only model's post, above that model's held
+ * level, only the model's owner and moderators may, each in their own session or with a full key.
+ */
+async function withoutHeldFromViewer<T extends { postId?: number | null; nsfwLevel: number }>(
+  ctx: Context,
+  images: T[]
+) {
+  const postIds = images.map((image) => image.postId).filter(isDefined);
+  if (!postIds.length || moderatorView(ctx)) return images;
+  const held = await getHeldLevelsByPost(postIds);
+  return images.filter((image) => {
+    const hold = image.postId ? held.get(image.postId) : undefined;
+    const owner = !!ctx.user && isSessionOrFullUserKey(ctx) && hold?.ownerId === ctx.user.id;
+    return !hold || owner || Flags.intersects(hold.level, image.nsfwLevel);
+  });
+}
+
 export const getInfiniteImagesHandler = async ({
   input,
   ctx,
@@ -369,10 +405,35 @@ export const getInfiniteImagesHandler = async ({
   // same thing either way. The `hubId` conflict in `getInfiniteImagesSchema` still
   // reads the un-narrowed input and so stays the stricter of the two — it refuses
   // a combination this would have served, which is the safe direction.
-  const scopedInput =
-    input.publishedOnly && input.userId && input.userId !== user?.id
-      ? { ...input, publishedOnly: undefined }
-      : input;
+  const { hatSort, hatTeams, hideTurfHats, hideWornHats, ...unhatted } = input;
+  let scopedInput =
+    unhatted.publishedOnly && unhatted.userId && unhatted.userId !== user?.id
+      ? { ...unhatted, publishedOnly: undefined }
+      : unhatted;
+  // Hat Turf sorts and Show filters, for players on the main feed only; anyone else gets the feed as if
+  // unasked. Not on a scoped feed (profile, model, post...): the hydrate drops a model or hub scope, and
+  // the Show filters live in the shared images filter store, so a gallery would silently lose images.
+  const turfEvent =
+    (hatSort || hideTurfHats || hideWornHats) &&
+    features.hatTurfFeedCard &&
+    features.hatTurfFeedSorts &&
+    !isScopedImageFeed(scopedInput)
+      ? await getHatTurfFeedEvent(user?.id)
+      : null;
+  const hatFeedSort = turfEvent ? hatSort : undefined;
+  // Under a Hat Turf sort every image has Turf hats, so hiding them would empty the feed: only the
+  // worn-hat filter applies there.
+  const hide = { turf: hatFeedSort ? undefined : hideTurfHats, worn: hideWornHats };
+  const hideHats = turfEvent && (hide.turf || hide.worn) ? turfEvent : null;
+  const withoutHidden = async <T extends { id: number }>(items: T[]) => {
+    if (!hideHats) return items;
+    const hidden = await turfHiddenIds(
+      hideHats,
+      items.map((item) => item.id),
+      hide
+    );
+    return items.filter((item) => !hidden.has(item.id));
+  };
 
   const requiresDbPath = requiresImageDbPath(scopedInput);
 
@@ -388,10 +449,84 @@ export const getInfiniteImagesHandler = async ({
   }
 
   try {
+    // A minor or SFW-only model's images are served only at its gallery's held level, except to
+    // moderators, who must see what they may need to remove.
+    const heldLevel = moderatorView(ctx) ? undefined : await getHeldGalleryLevel(scopedInput);
+    if (heldLevel !== undefined) {
+      const browsingLevel = Flags.intersection(scopedInput.browsingLevel, heldLevel);
+      // The fetches read 0 as their default level, not as none, so an empty intersection is an empty page.
+      if (!browsingLevel) return { items: [], nextCursor: undefined };
+      scopedInput = { ...scopedInput, browsingLevel };
+    }
+    const dbInput = {
+      user,
+      domain: getRequestBoardDomainColor(ctx.req),
+      headers: { src: 'getInfiniteImagesHandler' },
+      include: [...scopedInput.include, 'tagIds' as const],
+      dbTarget: features.datapacketRead ? ('datapacket' as const) : ('read' as const),
+      // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
+      eventDecorationViewer: user,
+    };
+
+    if (turfEvent && hatFeedSort) {
+      const input = scopedInput;
+      // The hydrate reads an empty follow list as no filter; the feed serves it as nothing.
+      if (input.followed && user && !(await getUserFollows(user.id)).length)
+        return { items: [], nextCursor: undefined, source: 'turf' as const };
+      const cursor = typeof input.cursor === 'string' ? input.cursor : undefined;
+      const result = await fillTurfPage(
+        'sort',
+        input.limit,
+        cursor,
+        async (at) => {
+          const page = await readTurfRankPage({
+            event: turfEvent,
+            sort: hatFeedSort,
+            teams: hatTeams,
+            cursor: at,
+            limit: input.limit,
+          });
+          if (!page.ids.length) return { items: [], nextCursor: page.nextCursor };
+          const rows = await hydrateWithReadRescue(
+            { ...feedHydrateQuery(input, page.ids), ...dbInput },
+            async (query) => (await getAllImages(query)).items
+          );
+          // Picked by id, so held by each post's model; then back in rank order.
+          const byIdRows = new Map(
+            (await withoutHeldFromViewer(ctx, rows)).map((row) => [row.id, row])
+          );
+          const items = page.ids.flatMap((id) => byIdRows.get(id) ?? []);
+          return { items, nextCursor: page.nextCursor };
+        },
+        withoutHidden
+      );
+      return { ...result, source: 'turf' as const };
+    }
+
+    const readPage = (cursor: typeof scopedInput.cursor) =>
+      readImagePage({ ...scopedInput, cursor });
+    if (hideHats)
+      return await fillTurfPage(
+        'show',
+        scopedInput.limit,
+        scopedInput.cursor,
+        readPage,
+        withoutHidden
+      );
+    return await readPage(scopedInput.cursor);
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+
+  async function readImagePage(scopedInput: typeof unhatted) {
+    // Images picked by id name no model, so each is held by its own post's model.
+    const byId = !!scopedInput.imageId || !!scopedInput.ids?.length;
     if (useIndex) {
-      return await getAllImagesIndex({
+      const result = await getAllImagesIndex({
         ...scopedInput,
         user,
+        holdExempt: moderatorView(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
@@ -405,6 +540,7 @@ export const getInfiniteImagesHandler = async ({
           userAgent: ctx.req.headers['user-agent'],
         }),
       });
+      return byId ? { ...result, items: await withoutHeldFromViewer(ctx, result.items) } : result;
     } else {
       const result = await getAllImages({
         ...scopedInput,
@@ -420,13 +556,32 @@ export const getInfiniteImagesHandler = async ({
       // than inside getAllImages because the index result type is derived from its
       // return. No client reads it today — it is the wire contract, and the routing
       // tests assert on it to tell a DB page from an index page that returned nothing.
-      return { ...result, source: 'db' as const };
+      return {
+        ...result,
+        items: byId ? await withoutHeldFromViewer(ctx, result.items) : result.items,
+        source: 'db' as const,
+      };
     }
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
   }
 };
+
+/** A feed scoped to a model, hub, creator, collection or picked images, not the main one. */
+const isScopedImageFeed = (input: GetInfiniteImagesOutput) =>
+  !!(
+    input.modelId ||
+    input.modelVersionId ||
+    input.model3dId ||
+    input.hubId ||
+    input.collectionId ||
+    input.postId ||
+    input.postIds?.length ||
+    input.userId ||
+    input.username ||
+    input.ids?.length ||
+    input.imageId ||
+    input.reviewId ||
+    input.remixOfId
+  );
 
 const getReactionTotals = (post: ImagesAsPostModel) => {
   const stats = post.images[0]?.stats;
@@ -494,9 +649,34 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const pinned: Record<number, ResultType[]> = {};
     let remaining = limit;
     const fetchHidden = hidden && input.modelId;
-    const modelGallerySettings = input.modelId
-      ? await getGallerySettingsByModelId({ id: input.modelId })
-      : null;
+    // Only the model's owner and moderators may list the images it hides from its gallery.
+    if (hidden && input.modelId && !moderatorView(ctx)) {
+      const model = await dbRead.model.findUnique({
+        where: { id: input.modelId },
+        select: { userId: true },
+      });
+      if (!user || model?.userId !== user.id) return { nextCursor: undefined, items: [] };
+    }
+    // A minor or SFW-only model's gallery serves only its held level, whatever level is asked for:
+    // the page, the pinned posts and the sponsored post alike. Moderators see it whole.
+    const [modelGallerySettings, heldLevel] = await Promise.all([
+      input.modelId ? getGallerySettingsByModelId({ id: input.modelId }) : null,
+      moderatorView(ctx) ? undefined : getHeldGalleryLevel(input),
+    ]);
+    if (heldLevel !== undefined) {
+      const browsingLevel = Flags.intersection(input.browsingLevel, heldLevel);
+      // The fetches below read 0 as their default level, not as none, so an empty intersection is an
+      // empty gallery.
+      if (!browsingLevel) return { nextCursor: undefined, items: [] };
+      input = {
+        ...input,
+        browsingLevel,
+        preCapBrowsingLevel: Flags.intersection(
+          input.preCapBrowsingLevel ?? input.browsingLevel,
+          heldLevel
+        ),
+      };
+    }
     const hiddenImages = modelGallerySettings?.hiddenImages ?? {};
     const versionHiddenImages = input.modelVersionId
       ? hiddenImages[input.modelVersionId] ?? []
@@ -894,7 +1074,18 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       userId: result.user.id,
       postId: result.postId ?? null,
     });
-    return canSeeMedia ? result : withoutMedia({ ...result, eventDecoration: null });
+    // A failed hold lookup serves the image without media rather than failing the page.
+    const heldChecked = await withoutHeldFromViewer(ctx, [result]).catch((error) => {
+      logToAxiom({
+        type: 'error',
+        name: 'image-get-held-level',
+        message: (error as Error).message,
+        imageId: input.id,
+      }).catch(() => undefined);
+      return [];
+    });
+    const servable = canSeeMedia && !!heldChecked.length;
+    return servable ? result : withoutMedia({ ...result, eventDecoration: null });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -939,7 +1130,20 @@ export const getImageResourcesHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return await getImageResources({ ...input });
+    const { resources, visibleSignedOut } = await getImageResources({ ...input, viewer: ctx.user });
+    // The edge cache replays this body to every caller of the URL, signed in or not, so an image
+    // only its owner or a moderator may open stays out of it. So does a .com face, which makes the
+    // name depend on the viewer.
+    if (ctx.cache && (!visibleSignedOut || resources.some((resource) => resource.sfwName != null)))
+      ctx.cache.skip = true;
+    const showSfwFace = showsSfwFace(getRequestBrowsingLevel(ctx));
+    return resources.map(({ sfwName, modelName, ...resource }) => ({
+      ...resource,
+      modelName:
+        modelName == null
+          ? modelName
+          : resolveModelFace({ name: modelName, sfwName }, showSfwFace).name,
+    }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -1055,11 +1259,7 @@ export async function handleUpdateImageNsfwLevel({
     if (isModerator) {
       // Update knights of new order pending votes and remove it from new order queue
       await updatePendingImageRatings({ imageId: input.id, rating: input.nsfwLevel });
-      const valueInQueue = await isImageInQueue({
-        imageId: input.id,
-        rankType: [NewOrderRankType.Knight, NewOrderRankType.Templar, 'Inquisitor'],
-      });
-      if (valueInQueue) valueInQueue.pool.reset({ id: input.id });
+      await leaveQueuesAfterModeratorRating(input.id);
     }
 
     return { nsfwLevel: updatedNsfwLevel, applied: isModerator || applied };

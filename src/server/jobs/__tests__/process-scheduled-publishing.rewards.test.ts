@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -34,6 +34,10 @@ const {
 // Hand-listed rather than spread via importOriginal: the rewards barrel reaches
 // modules that build query caches from the db client at import time, so pulling the
 // real one in drops this suite to zero collected tests.
+// A tagged template or a prebuilt Prisma.Sql, as the job passes either.
+const sqlText = (q: unknown) =>
+  Array.isArray(q) ? q.join(' ') : (q as { strings: string[] }).strings.join(' ');
+
 vi.mock('~/server/rewards', () => ({ firstDailyPostReward: { apply: mockApply } }));
 vi.mock('~/server/rewards/active/firstDailyPost.reward', () => ({
   getFirstDailyPostRewardedIds: mockRewardedIds,
@@ -89,7 +93,12 @@ type Chapter = {
 type Follower = { projectId: number; userId: number };
 
 // Read by the default transaction stub, so a test that installs its own keeps it.
-const txPosts: { scheduled: Row[]; flipped: Row[] } = { scheduled: [], flipped: [] };
+const txPosts: { scheduled: Row[]; flipped: Row[]; models: Row[]; versions: Row[] } = {
+  scheduled: [],
+  flipped: [],
+  models: [],
+  versions: [],
+};
 
 // Routed on SQL text rather than call order so adding a read doesn't shift these.
 // `flipped` is the rows the post UPDATE returns; by default every scheduled post publishes.
@@ -110,10 +119,15 @@ const stubReads = ({
   followers?: Follower[];
   flipped?: Row[];
 }) => {
+  // A scheduled post publishes only alongside its version, so posts come with one unless given.
+  if (!versions.length && scheduled.length)
+    versions = [{ id: 1, userId: scheduled[0].userId, extras: { modelId: 1 } }];
   txPosts.scheduled = scheduled;
   txPosts.flipped = flipped ?? scheduled;
+  txPosts.models = models;
+  txPosts.versions = versions;
   mockDbWrite.$queryRaw.mockImplementation(async (...args: unknown[]) => {
-    const sql = (args[0] as string[]).join(' ');
+    const sql = sqlText(args[0]);
     // There is no "ComicEngagement" table — prod answers 42P01. Throwing rather than
     // returning [] keeps a revert from reading as "this project has no followers".
     if (sql.includes('"ComicEngagement"'))
@@ -131,8 +145,8 @@ const stubReads = ({
 const standaloneCall = () =>
   mockDbWrite.$queryRaw.mock.calls.find(
     (args) =>
-      (args[0] as string[]).join(' ').includes('FROM "Post" p') &&
-      !(args[0] as string[]).join(' ').includes('JOIN "ModelVersion"')
+      sqlText(args[0]).includes('FROM "Post" p') &&
+      !sqlText(args[0]).includes('JOIN "ModelVersion"')
   ) as unknown[];
 
 const runJob = () => (processScheduledPublishing as unknown as () => Promise<void>)();
@@ -145,13 +159,16 @@ beforeEach(() => {
   mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
     fn({
       $executeRaw: vi.fn(),
-      $queryRaw: vi.fn(async (strings: string[]) => {
-        const sql = strings.join(' ');
+      $queryRaw: vi.fn(async (strings: unknown) => {
+        const sql = sqlText(strings);
         if (sql.includes('FOR NO KEY UPDATE OF mv, p'))
           return txPosts.scheduled.map(({ id }) => ({ postId: id, versionId: 1 }));
         // Keyed on the RETURNING too: without it Postgres hands back no rows at all.
         if (sql.includes('UPDATE "Post" p') && sql.includes('RETURNING p.id, p."userId"'))
           return txPosts.flipped;
+        if (sql.includes('RETURNING mv.id')) return txPosts.versions.map(({ id }) => ({ id }));
+        if (sql.includes('UPDATE "Model"') && sql.includes('RETURNING id'))
+          return txPosts.models.map(({ id }) => ({ id }));
         return [];
       }),
     })
@@ -214,7 +231,9 @@ describe('processScheduledPublishing :: first daily post reward', () => {
     });
     await runJob().catch(() => undefined);
     // The UPDATE really returned the post inside the transaction, so its absence below is the rollback.
-    expect(flippedInTx).toEqual([{ id: 1, userId: 10 }]);
+    expect((flippedInTx as { flippedPosts: unknown }).flippedPosts).toEqual([
+      { id: 1, userId: 10 },
+    ]);
     expect(mockApply).not.toHaveBeenCalled();
     expect(mockProcessEngagement).not.toHaveBeenCalled();
     expect(mockDbWrite.image.findMany).not.toHaveBeenCalled();
@@ -478,13 +497,11 @@ describe('processScheduledPublishing :: lastVersionAt', () => {
     await runJob();
 
     const call = txExecuteRaw.mock.calls.find((args) =>
-      (args[0] as string[]).join(' ').includes('SET "lastVersionAt"')
+      sqlText(args[0]).includes('SET "lastVersionAt"')
     );
     expect(call).toBeDefined();
-    expect((call![0] as string[]).join('?')).toContain(
-      `SET "lastVersionAt" = date_trunc('milliseconds', NOW())`
-    );
-    expect(call!.slice(1).some((v) => v instanceof Date)).toBe(false);
+    expect(sqlText(call![0])).toContain(`SET "lastVersionAt" = date_trunc('milliseconds', NOW())`);
+    expect((call![0] as Prisma.Sql).values.some((v) => v instanceof Date)).toBe(false);
   });
 });
 
@@ -495,8 +512,8 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
     mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         $executeRaw: vi.fn(),
-        $queryRaw: vi.fn(async (strings: string[]) =>
-          strings.join(' ').includes('RETURNING mv.id') ? [{ id: 101 }] : []
+        $queryRaw: vi.fn(async (strings: unknown) =>
+          sqlText(strings).includes('RETURNING mv.id') ? [{ id: 101 }] : []
         ),
       })
     );
@@ -517,8 +534,8 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
   // A version takedown locks the version, then unpublishes its live posts, so the scheduled posts
   // publish only after the job holds their versions and the posts themselves.
   it('locks the posts and their versions before publishing the posts', async () => {
-    const txQueryRaw = vi.fn(async (strings: string[]) =>
-      strings.join(' ').includes('FOR NO KEY UPDATE OF mv, p') ? [{ postId: 7, versionId: 70 }] : []
+    const txQueryRaw = vi.fn(async (strings: unknown) =>
+      sqlText(strings).includes('FOR NO KEY UPDATE OF mv, p') ? [{ postId: 7, versionId: 70 }] : []
     );
     mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({ $executeRaw: vi.fn(), $queryRaw: txQueryRaw })
@@ -527,7 +544,7 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
 
     await runJob();
 
-    const sql = txQueryRaw.mock.calls.map(([strings]) => (strings as string[]).join(' '));
+    const sql = txQueryRaw.mock.calls.map(([strings]) => sqlText(strings));
     const lock = sql.findIndex(
       (q) =>
         q.includes('JOIN "Post" p ON p."modelVersionId" = mv.id') &&
@@ -542,8 +559,8 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
   // and its new version is unlocked: publishing it by id alone could put it live on a version a
   // takedown is downing. Keep the UPDATE keyed on the (post, version) pairs the lock returned.
   it('publishes only the post and version pairs the lock returned', async () => {
-    const txQueryRaw = vi.fn(async (strings: string[]) =>
-      strings.join(' ').includes('FOR NO KEY UPDATE OF mv, p') ? [{ postId: 7, versionId: 70 }] : []
+    const txQueryRaw = vi.fn(async (strings: unknown) =>
+      sqlText(strings).includes('FOR NO KEY UPDATE OF mv, p') ? [{ postId: 7, versionId: 70 }] : []
     );
     mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({ $executeRaw: vi.fn(), $queryRaw: txQueryRaw })
@@ -558,11 +575,10 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
     await runJob();
 
     const publish = txQueryRaw.mock.calls.find(([strings]) =>
-      (strings as string[]).join(' ').includes('UPDATE "Post" p')
+      sqlText(strings).includes('UPDATE "Post" p')
     );
     expect(publish).toBeDefined();
-    const [strings, ...values] = publish as unknown as [string[], ...unknown[]];
-    const flat = Prisma.sql(strings, ...values);
+    const flat = publish![0] as Prisma.Sql;
     expect(flat.text).toContain('(p.id, p."modelVersionId") IN (($1, $2))');
     expect(flat.values.slice(0, 2)).toEqual([7, 70]);
     expect(flat.values).not.toContain(8);
@@ -577,7 +593,7 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
 
     await runJob();
 
-    const sql = txQueryRaw.mock.calls.map(([strings]) => (strings as string[]).join(' '));
+    const sql = txQueryRaw.mock.calls.map(([strings]) => sqlText(strings));
     expect(sql.some((q) => q.includes('UPDATE "Post" p'))).toBe(false);
     expect(mockApply).not.toHaveBeenCalled();
     expect(mockRefreshImageVideoCounts).not.toHaveBeenCalled();

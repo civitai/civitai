@@ -124,7 +124,7 @@ describe('hook -> engine -> ledger -> read, on the registered birthday2026 confi
     const weights = birthday2026.scoring!.types;
     push.markEventPointsDirty.mockClear();
     await hooks.onReactionCreated({ entityType: 'image', entityId: IMAGE, userId: 1 });
-    await hooks.onCommentCreated({ userId: 2, entityType: 'image', entityId: IMAGE, threadId: 0 });
+    await hooks.onCommentCreated({ userId: 2, entityType: 'image', entityId: IMAGE });
     await hooks.onPlacementApproved({
       surface: 'sticker',
       targetType: 'image',

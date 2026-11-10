@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { createImpersonationClient } from '@civitai/auth';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { BANNED_ACCOUNT_MESSAGE } from '~/server/utils/errorHandling';
 import { setSessionCookie } from '~/server/auth/civ-cookie';
 import { isAllowedOriginRequest, isJsonRequest } from '~/server/utils/origin-helpers';
 import { isProd } from '~/env/other';
@@ -15,7 +16,7 @@ const impersonation = createImpersonationClient();
 const schema = z.object({ userId: z.coerce.number() });
 
 export default AuthedEndpoint(
-  async function handler(req, res) {
+  async function handler(req, res, user) {
     if (isProd && !isAllowedOriginRequest(req))
       return res.status(403).json({ error: 'Cross-origin request blocked' });
     const cookie = req.headers.cookie ?? '';
@@ -33,6 +34,7 @@ export default AuthedEndpoint(
       return res.status(200).json({ ok: true });
     }
 
+    if (user.bannedAt) return res.status(403).json({ error: BANNED_ACCOUNT_MESSAGE });
     if (!isJsonRequest(req)) return res.status(415).json({ error: 'expected application/json' });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
@@ -48,5 +50,7 @@ export default AuthedEndpoint(
     setSessionCookie(res, minted.token, { host: req.headers.host, requestCookies: req.cookies });
     return res.status(200).json({ ok: true });
   },
-  ['POST', 'DELETE']
+  ['POST', 'DELETE'],
+  // Exit (DELETE) stays open: while impersonating, the session user is the target, who may be banned.
+  { allowBanned: true }
 );

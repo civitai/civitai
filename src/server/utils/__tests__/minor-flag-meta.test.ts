@@ -54,6 +54,14 @@ describe('stripMinorHashMeta', () => {
     minorHashDismissed: { at: '2026-07-30T00:00:00.000Z', by: 7 },
     minorHashCleared: { at: '2026-07-30T00:00:00.000Z' },
     profanityMatches: ['badword'],
+    ownerFlagOverride: {
+      at: '2026-07-30T00:00:00.000Z',
+      flags: ['minor'],
+      prevNsfw: true,
+      prevSfwOnly: false,
+      prevLockedProperties: ['nsfw'],
+    },
+    ownerDeclaredFlags: { at: '2026-07-30T00:00:00.000Z', flags: ['minor'] },
   };
 
   it('removes all three minor-hash keys', () => {
@@ -61,6 +69,11 @@ describe('stripMinorHashMeta', () => {
     expect(result).not.toHaveProperty('minorFlagSnapshot');
     expect(result).not.toHaveProperty('minorHashDismissed');
     expect(result).not.toHaveProperty('minorHashCleared');
+  });
+
+  it('removes the owner-flag override record and the owner-declared flags', () => {
+    expect(stripMinorHashMeta(full)).not.toHaveProperty('ownerFlagOverride');
+    expect(stripMinorHashMeta(full)).not.toHaveProperty('ownerDeclaredFlags');
   });
 
   it('leaves every other key untouched — including profanityMatches', () => {
@@ -82,6 +95,30 @@ describe('stripMinorHashMeta', () => {
     expect(input.minorHashCleared).toBeDefined();
   });
 
+  it('hides which system check locked the rating', () => {
+    expect(
+      stripMinorHashMeta({ systemNsfwLock: { source: 'text-scan', at: '2026-09-05T00:00:00Z' } })
+    ).toEqual({});
+  });
+
+  it('hides a restricted-verdict lead and its rulings from every client', () => {
+    expect(
+      stripMinorHashMeta({
+        restrictedNsfwVerdict: {
+          source: 'text-scan',
+          at: '2026-11-04T00:00:00Z',
+          restriction: 'minor',
+        },
+        restrictedNsfwVerdictRulings: [],
+        restrictedNsfwVerdictDormant: {
+          source: 'text-scan',
+          at: '2026-11-04T00:00:00Z',
+          restriction: 'minor',
+        },
+      })
+    ).toEqual({});
+  });
+
   it('passes null through', () => {
     expect(stripMinorHashMeta(null)).toBeNull();
   });
@@ -100,6 +137,10 @@ describe('filterModelMetaForClient', () => {
     minorHashDismissed: { at: '2026-07-30T00:00:00.000Z', by: 7 },
     minorHashCleared: { at: '2026-07-30T00:00:00.000Z' },
     profanityMatches: ['badword'],
+    profanityEvaluation: {
+      reason: 'test reason',
+      metrics: { matchCount: 1, uniqueWords: 1, totalWords: 10, density: 0.1 },
+    },
   };
 
   it('strips all three minor-hash keys for a normal user', () => {
@@ -121,9 +162,13 @@ describe('filterModelMetaForClient', () => {
     expect(filterModelMetaForClient(full, false).unpublishedReason).toBe('other');
   });
 
-  it('still applies profanity filtering: hidden for users, kept for moderators', () => {
-    expect(filterModelMetaForClient(full, false).profanityMatches).toBeUndefined();
-    expect(filterModelMetaForClient(full, true).profanityMatches).toEqual(['badword']);
+  it('hides both profanity keys from users and keeps them for moderators', () => {
+    const user = filterModelMetaForClient(full, false);
+    expect(user).not.toHaveProperty('profanityMatches');
+    expect(user).not.toHaveProperty('profanityEvaluation');
+    const mod = filterModelMetaForClient(full, true);
+    expect(mod.profanityMatches).toEqual(['badword']);
+    expect(mod.profanityEvaluation).toEqual(full.profanityEvaluation);
   });
 
   it('does not mutate the input', () => {
@@ -222,6 +267,7 @@ describe('stripModerationOwnedMeta', () => {
   const meta = {
     textModeration: { matchedTerms: ['t'], triggeredLabels: ['NSFW'], scannedAt: 'x' },
     minorFlagSnapshot: { source: 'auto', at: 'x' },
+    ownerFlagOverride: { at: 'x', flags: ['minor'] },
     profanityMatches: ['p'],
     commentsLocked: true,
   } as unknown as ModelMeta;
@@ -230,6 +276,7 @@ describe('stripModerationOwnedMeta', () => {
     const result = stripModerationOwnedMeta(meta);
     expect(result?.textModeration).toBeUndefined();
     expect(result?.minorFlagSnapshot).toBeUndefined();
+    expect(result?.ownerFlagOverride).toBeUndefined();
     expect(result?.profanityMatches).toBeUndefined();
   });
 

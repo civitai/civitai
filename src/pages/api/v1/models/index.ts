@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import type { Session } from '~/types/session';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import type { GetAllModelsInput } from '~/server/schema/model.schema';
@@ -154,6 +155,7 @@ export default MixedAuthEndpoint(async function handler(
         nsfwImagePassthrough: !!parsedParams.data.nsfw,
         user,
         baseUrlOrigin,
+        redCapable: isRedCapableHost(req.headers.host),
       }
     );
 

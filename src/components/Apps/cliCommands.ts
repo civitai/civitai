@@ -1,7 +1,8 @@
 /**
  * Canonical Civitai App-Blocks CLI commands + ecosystem links — the SINGLE
- * source within civitai-web for the get-started page (`GetStartedBody`) and the
- * submit CTA (`CliSubmitCta`), so the two surfaces can't drift.
+ * source within civitai-web for the submit CTA (`CliSubmitCta`), the get-started
+ * page's toolkit links (`GetStartedBody`) and the agent prompt (`AgentOnboardingCard`).
+ * `/apps/build` itself shows no CLI commands any more.
  *
  * SOURCE OF TRUTH is the `civitai/cli` repo (its README "## Quickstart" +
  * `internal/cmd/app_init.go` printed next-steps). The CLI exposes no
@@ -33,7 +34,7 @@ export const APP_SDK_NPM_URL = 'https://www.npmjs.com/package/@civitai/app-sdk';
  *  - releases — the release carries `windows_amd64` / `windows_arm64` (.exe + .zip)
  *               alongside linux/darwin × amd64/arm64, so a no-toolchain download is a
  *               real Windows route and is named as one.
- *  - go       — from source, Go 1.25+ (already used by the get-started page).
+ *  - go       — from source, Go 1.25+.
  *
  * The CLI publishes no machine-readable manifest, so these stay MANUALLY in sync;
  * the `*.browser.test.tsx` suites pin the exact strings so a change is deliberate.
@@ -47,12 +48,6 @@ export const CIVITAI_CLI_RELEASES_URL = 'https://github.com/civitai/cli/releases
 // --- Author / run / submit ---
 /** Bare `civitai app create` (the submit CTA's form). */
 export const CLI_CREATE_COMMAND = 'civitai app create';
-/** With-sample-name form the manual setup uses. */
-export const CLI_CREATE_SAMPLE_COMMAND = 'civitai app create my-app';
-// The CLI does NOT install deps on `create`; its own next-step prompt is
-// `cd <dir> && npm install && npm run dev:harness`. `dev:harness` serves a MOCK
-// host at localhost:5186 (plain `npm run dev` shows a blank screen — no host).
-export const CLI_RUN_COMMAND = 'cd my-app && npm install && npm run dev:harness';
 export const CLI_SUBMIT_COMMAND = 'civitai app submit';
 
 // --- Agent onboarding (the "let your agent build it" prompt) ---

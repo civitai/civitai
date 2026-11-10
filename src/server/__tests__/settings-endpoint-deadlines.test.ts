@@ -33,6 +33,7 @@ const h = vi.hoisted(() => ({
   follows: vi.fn(),
   addons: vi.fn(),
   navBanners: vi.fn(),
+  eventSeeds: vi.fn(),
   siteAlerts: vi.fn(),
   session: vi.fn(),
   tos: vi.fn(async (_: { domainColor: string }) => undefined as unknown),
@@ -79,6 +80,8 @@ vi.mock('~/server/services/announcement.service', async (importOriginal) => ({
 }));
 // Its only export. Loading the real module pulls the whole event engine into this graph.
 vi.mock('~/server/services/nav-banner.service', () => ({ getNavBanners: h.navBanners }));
+// The same, for the event seeds.
+vi.mock('~/server/services/event-seeds.service', () => ({ getEventSeeds: h.eventSeeds }));
 vi.mock('~/server/services/site-alert.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SiteAlertService>()),
   getActiveSiteAlerts: h.siteAlerts,
@@ -115,6 +118,12 @@ const invoke = (headers: Record<string, string> = { host: 'civitai.com' }) => {
   return { done, json };
 };
 
+// Reset per test: `clearAllMocks` keeps an implementation, so one test's never-settling seeds
+// would otherwise park every later test that awaits the bootstrap without advancing the clock.
+beforeEach(() => {
+  h.eventSeeds.mockReset().mockResolvedValue([]);
+});
+
 describe('/api/user/settings read deadlines', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -125,6 +134,7 @@ describe('/api/user/settings read deadlines', () => {
     h.follows.mockResolvedValue([7]);
     h.addons.mockResolvedValue([{ id: 'a' }]);
     h.navBanners.mockResolvedValue([{ id: 'event:e1' }]);
+    h.eventSeeds.mockResolvedValue([{ event: 'e1', access: 'open' }]);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -141,6 +151,7 @@ describe('/api/user/settings read deadlines', () => {
     expect(body.announcements).toEqual([{ id: 1 }]);
     expect(body.liveNow).toBe(true);
     expect(body.navBanners).toEqual([{ id: 'event:e1' }]);
+    expect(body.eventSeeds).toEqual([{ event: 'e1', access: 'open' }]);
   });
 
   it('still answers when a dependency never replies, and seeds the SAFE settings default', async () => {
@@ -187,6 +198,7 @@ describe('/api/user/settings read deadlines', () => {
   it('degrades each hanging member independently', async () => {
     h.announcements.mockReturnValue(new Promise(() => undefined));
     h.liveNow.mockReturnValue(new Promise(() => undefined));
+    h.eventSeeds.mockReturnValue(new Promise(() => undefined));
     const { json } = invoke();
     await vi.runAllTimersAsync();
 
@@ -194,6 +206,8 @@ describe('/api/user/settings read deadlines', () => {
     const body = json.mock.calls[0][0];
     expect(body.announcements).toBeUndefined();
     expect(body.liveNow).toBe(false);
+    // No seeds: the client fetches the event queries for itself, as before.
+    expect(body.eventSeeds).toBeUndefined();
     // The member that did reply is unaffected.
     expect(body.settings).toEqual({ showNsfw: true });
   });
@@ -236,14 +250,17 @@ describe('/api/user/settings nav banners', () => {
     await vi.runAllTimersAsync();
     await done;
     expect(h.navBanners).toHaveBeenCalledTimes(1);
-    expect(h.navBanners.mock.calls[0]).toEqual([{ viewer: { id: 42, isModerator: true } }]);
+    // Plus the request's own cosmetic-read memo, which carries nothing from the request.
+    expect(h.navBanners.mock.calls[0]).toEqual([
+      { viewer: { id: 42, isModerator: true }, reads: expect.any(Map) },
+    ]);
   });
 
   it('resolves them as signed out when there is no session', async () => {
     const { done } = invoke();
     await vi.runAllTimersAsync();
     await done;
-    expect(h.navBanners.mock.calls[0]).toEqual([{ viewer: undefined }]);
+    expect(h.navBanners.mock.calls[0]).toEqual([{ viewer: undefined, reads: expect.any(Map) }]);
   });
 });
 
@@ -310,6 +327,7 @@ describe('settings bootstrap during a server render', () => {
       liveNow: true,
       navBanners: [],
       siteAlerts: { version: 7, alerts: [] },
+      eventSeeds: [],
       session: { user: { id: 42, username: 'x' } },
     });
   });
@@ -444,9 +462,14 @@ describe('settings bootstrap during a server render', () => {
 });
 
 /**
- * 🔴 The domain colour a render resolves must be the one the HTTP route resolved — for the
- * INTERNAL host — not the page's. Resolving the page's host instead changes which ToS fields
- * and which domain-targeted announcements land on first paint.
+ * 🔴 The domain colour a render resolves for the ToS fields must be the one the HTTP route
+ * resolved — for the INTERNAL host — not the page's: resolving the page's host instead changes
+ * which ToS fields land on first paint.
+ *
+ * The announcements seed is the exception, and must resolve the PAGE's host: it seeds the
+ * browser's own `announcement.getAnnouncements` query, which the browser then refetches at the
+ * page's host, so the internal host's answer (the all-domains list) was a different answer under
+ * the same query key — domain-targeted announcements never reached first paint.
  *
  * Domains are configured here (they are read at module load, hence the fresh imports), and
  * the ToS and announcement mocks echo the colour they were asked for, so a host difference
@@ -480,28 +503,32 @@ describe('settings bootstrap during a server render — domain resolution', () =
     vi.unstubAllEnvs();
   });
 
-  it.each(['civitai.com', 'civitai.red'])(
-    'a render for Host: %s answers what the route answered for the internal host',
-    async (publicHost) => {
-      const { default: freshHandler } = await import('~/pages/api/user/settings');
-      const fresh = await import('~/server/services/settings-bootstrap.service');
+  // The route as the browser reaches it, on `host`.
+  async function routeAnswer(host: string) {
+    const { default: freshHandler } = await import('~/pages/api/user/settings');
+    const json = vi.fn();
+    const res = { status: vi.fn(() => res), json, setHeader: vi.fn(), end: vi.fn() };
+    const done = (
+      freshHandler as unknown as (q: NextApiRequest, s: NextApiResponse) => Promise<void>
+    )(
+      { method: 'GET', headers: { host }, query: {}, cookies: {} } as unknown as NextApiRequest,
+      res as unknown as NextApiResponse
+    );
+    await vi.runAllTimersAsync();
+    await done;
+    return JSON.parse(JSON.stringify(json.mock.calls[0][0]));
+  }
 
-      const json = vi.fn();
-      const res = { status: vi.fn(() => res), json, setHeader: vi.fn(), end: vi.fn() };
-      const done = (
-        freshHandler as unknown as (q: NextApiRequest, s: NextApiResponse) => Promise<void>
-      )(
-        {
-          method: 'GET',
-          headers: { host: INTERNAL_HOST },
-          query: {},
-          cookies: {},
-        } as unknown as NextApiRequest,
-        res as unknown as NextApiResponse
-      );
-      await vi.runAllTimersAsync();
-      await done;
-      const wire = JSON.parse(JSON.stringify(json.mock.calls[0][0]));
+  it.each([
+    ['civitai.com', 'green'],
+    ['blue.example', 'blue'],
+    ['civitai.red', 'red'],
+  ])(
+    'a render for Host: %s answers what the route answered for the internal host, announcements excepted (%s)',
+    async (publicHost, color) => {
+      const internal = await routeAnswer(INTERNAL_HOST);
+      const viewer = await routeAnswer(publicHost);
+      const fresh = await import('~/server/services/settings-bootstrap.service');
 
       const rendered = await fresh.resolveSettingsBootstrapForRender({
         headers: { host: publicHost },
@@ -509,18 +536,37 @@ describe('settings bootstrap during a server render — domain resolution', () =
         url: '/',
       } as unknown as RenderRequest);
 
+      const rest: Record<string, unknown> = { ...(rendered as Record<string, unknown>) };
+      const internalRest: Record<string, unknown> = { ...internal };
+      const announcements = rest.announcements;
+      delete rest.announcements;
+      delete internalRest.announcements;
       expect(
-        rendered,
+        rest,
         'a server render must resolve the domain the HTTP route resolved (the internal host), not the page host'
-      ).toEqual(wire);
+      ).toEqual(internalRest);
+      expect(
+        announcements,
+        'the announcements seed must be what the browser’s own call answers, on the page host'
+      ).toEqual(viewer.announcements);
       // Literal, so both sides moving together still shows: the internal host matches no
-      // configured domain, so ToS falls back to blue and announcements get no domain.
+      // configured domain, so ToS falls back to blue; the announcements are the page's domain.
       expect(rendered).toMatchObject({
         tosMeta: { domainColor: 'blue' },
-        announcements: [{ id: 1, domain: 'none' }],
+        announcements: [{ id: 1, domain: color }],
       });
     }
   );
+
+  it('a render for a host that matches no domain seeds the all-domains announcements', async () => {
+    const fresh = await import('~/server/services/settings-bootstrap.service');
+    const rendered = await fresh.resolveSettingsBootstrapForRender({
+      headers: { host: 'unknown.example' },
+      cookies: {},
+      url: '/',
+    } as unknown as RenderRequest);
+    expect(rendered).toMatchObject({ announcements: [{ id: 1, domain: 'none' }] });
+  });
 
   it('rejects with no base URL, as the fetch to an undefined base did, so the render degrades', async () => {
     vi.stubEnv('NEXTAUTH_URL_INTERNAL', undefined);
@@ -545,6 +591,7 @@ describe('settings bootstrap during a server render — domain resolution', () =
     // above pass whichever host the render used.
     const { getRequestDomainColor } = await import('~/server/utils/server-domain');
     expect(getRequestDomainColor({ headers: { host: 'civitai.com' } })).toBe('green');
+    expect(getRequestDomainColor({ headers: { host: 'blue.example' } })).toBe('blue');
     expect(getRequestDomainColor({ headers: { host: 'civitai.red' } })).toBe('red');
     expect(getRequestDomainColor({ headers: { host: INTERNAL_HOST } })).toBeUndefined();
   });

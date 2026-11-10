@@ -6,7 +6,10 @@ import { parseRetryAfter, RateLimiter } from './ratelimit';
 
 // The orchestration client has no type for this step yet; this is the subset we send and read.
 // One step embeds exactly one input; a workflow carries many steps.
-export type EmbedInput = { id: string; imageUrl?: string; videoUrl?: string };
+export type EmbedInput = { id: string; imageUrl?: string; videoUrl?: string; text?: string };
+type InputKind = 'image' | 'video' | 'text';
+const kindOf = (input: EmbedInput): InputKind =>
+  input.videoUrl ? 'video' : input.text !== undefined ? 'text' : 'image';
 type StepOutput = {
   model: string;
   modelRevision: string;
@@ -27,8 +30,10 @@ export const MAX_VIDEOS_PER_WORKFLOW = 8;
 const MAX_VIDEO_SECONDS = 60;
 const MAX_VIDEO_KB = 100 * 1024;
 const MAX_VIDEO_SIDE = 4096;
-// The embedding profile is 512x512 pixels; 512 is on the image cacher's width ladder.
-const EMBED_IMAGE_WIDTH = 512;
+// The variant the site's image cards request for 2x screens (a 450 card's hi-DPI rung), so it is
+// usually already stored and the image cacher redirects to it without converting the original.
+// The smallest ladder rung at or above the model's 512x512 profile that the site requests.
+const EMBED_IMAGE_PARAMS = 'anim=false,width=800,optimized=true';
 const TERMINAL = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
 /**
@@ -65,7 +70,7 @@ const builders: Partial<Record<ImageRow['type'], (row: ImageRow, opts: BuildOpti
   image: (row, { imageLocation }) => ({
     input: {
       id: String(row.id),
-      imageUrl: edgeUrl(imageLocation, row.url, `width=${EMBED_IMAGE_WIDTH}`, '.jpeg'),
+      imageUrl: edgeUrl(imageLocation, row.url, EMBED_IMAGE_PARAMS, '.jpeg'),
     },
   }),
   video: (row, { imageLocation, embedVideo }) => {
@@ -186,6 +191,7 @@ export class MixedStampError extends Error {
 
 /** A rejected workflow is split at most this many times (128 down to groups of 8). */
 const MAX_SPLIT_DEPTH = 4;
+const PACE_CREDIT_MS = 100;
 /**
  * 429s are the orchestrator's flow control, not errors: they are budgeted by time, and longer
  * than one workflow can run (30 min), since another process may hold the account's quota.
@@ -250,6 +256,11 @@ export type EmbedderOptions = {
   /** Wait before re-sending an ambiguous submit (see AmbiguousSubmitError). */
   resubmitDelayMs?: number;
   /**
+   * False ignores the RateLimit in-flight quota (q and r) for the cap and the workflow size, as
+   * the orchestrator owners asked while its value is provisional. 429s and Retry-After still hold.
+   */
+  honorQuota?: boolean;
+  /**
    * Steps submitted per second, across every call on this embedder; 0 or unset is unlimited.
    * Cache hits create no orchestrator job, so neither job budget bounds them.
    */
@@ -260,8 +271,8 @@ export type EmbedderOptions = {
 
 type EmbedCall = {
   result: EmbedResult;
-  /** The accepted stamp per media type: image and video steps report different profiles. */
-  stamps: Map<'image' | 'video', ModelStamp>;
+  /** The accepted stamp per input kind: image, video and text steps may report different profiles. */
+  stamps: Map<InputKind, ModelStamp>;
   /** Checked for every step's stamp before its vector is accepted; throwing rejects the workflow. */
   acceptStamp?: (stamp: ModelStamp) => Promise<void>;
   /** Given each workflow's accepted vectors as it returns, so they can be stored before the call ends. */
@@ -298,7 +309,7 @@ export class Embedder {
   private readonly fetch: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
-  private readonly batchSize: number;
+  readonly batchSize: number;
 
   constructor(private readonly opts: EmbedderOptions) {
     this.budget = new JobBudget(Math.max(1, opts.maxInFlight));
@@ -337,6 +348,7 @@ export class Embedder {
       batchSize: config.vectorSync.embedBatchSize,
       resubmitDelayMs: config.vectorSync.embedResubmitDelaySeconds * 1000,
       outageRetryForMs: config.vectorSync.embedOutageRetrySeconds * 1000,
+      honorQuota: config.vectorSync.embedHonorQuota,
       // Backfill and reconcile only: live sync must keep up with uploads, and is bounded by the
       // event rate rather than a walk over existing images.
       maxStepsPerSecond: priority === 'low' ? config.vectorSync.embedMaxStepsPerSecond : 0,
@@ -364,10 +376,9 @@ export class Embedder {
         await this.sleep(hold);
         continue;
       }
-      const size = this.limits.allowance(
+      const size = this.allowance(
         Math.min(this.batchSize, this.budget.capacity),
-        running.size === 0,
-        this.now()
+        running.size === 0
       );
       if (size === 0) {
         if (running.size) await Promise.race(running);
@@ -376,13 +387,13 @@ export class Embedder {
         continue;
       }
       // Paced before the batch is taken and the budget held: a batch waiting its turn holds no
-      // jobs, and is sized from what the quota says after the wait, not before it.
-      await this.paceSteps(size);
+      // jobs, and is sized from what the quota says after the wait, not before it. Paced by what
+      // is left, not the full size, so a short batch does not push every later submit back.
+      await this.paceSteps(Math.min(size, queue.length));
       if (call.result.error) break;
-      const fresh = this.limits.allowance(
+      const fresh = this.allowance(
         Math.min(this.batchSize, this.budget.capacity),
-        running.size === 0,
-        this.now()
+        running.size === 0
       );
       if (fresh === 0) continue;
       const batch = takeBatch(queue, Math.min(size, fresh));
@@ -438,7 +449,7 @@ export class Embedder {
 
     // Each step stands alone: a failed step fails only its own image.
     const steps = new Map((workflow.steps ?? []).map((step) => [step.name, step]));
-    const accepted: Array<[number, number[], ModelStamp, 'image' | 'video']> = [];
+    const accepted: Array<[number, number[], ModelStamp, InputKind]> = [];
     const failed: string[] = [];
     for (const input of batch) {
       const out = steps.get(stepName(input.id));
@@ -455,7 +466,7 @@ export class Embedder {
         failed.push(input.id);
         continue;
       }
-      const kind = input.videoUrl ? 'video' : 'image';
+      const kind = kindOf(input);
       const stamp: ModelStamp = {
         model: output.model,
         modelRevision: output.modelRevision,
@@ -491,7 +502,7 @@ export class Embedder {
     }
 
     // Every distinct stamp in this workflow is checked before any of its vectors is kept.
-    const distinct = new Map<string, [ModelStamp, 'image' | 'video']>();
+    const distinct = new Map<string, [ModelStamp, InputKind]>();
     for (const [, , stamp, kind] of accepted) distinct.set(JSON.stringify(stamp), [stamp, kind]);
     for (const [stamp, kind] of distinct.values()) {
       const seen = call.stamps.get(kind);
@@ -515,14 +526,31 @@ export class Embedder {
     }
   }
 
-  /** Spaces submits so steps go out at a steady rate, with no burst: each reserves its own slot. */
-  private async paceSteps(steps: number) {
+  /** The step rate submits are paced to now, after setLimits; 0 is unlimited. */
+  get stepsPerSecond() {
     const configured = this.opts.maxStepsPerSecond;
     const limit = this.stepsPerSecondLimit;
-    const rate = limit && configured ? Math.min(limit, configured) : limit ?? configured;
+    return (limit && configured ? Math.min(limit, configured) : limit ?? configured) ?? 0;
+  }
+
+  /** How many of `max` steps the account's quota takes now, across every call on this embedder. */
+  submitAllowance(max: number) {
+    return this.allowance(max, this.budget.inFlight === 0);
+  }
+
+  /** How long a submit made now would wait: its step-rate slot, or a 429's hold. */
+  get submitWaitMs() {
+    const now = this.now();
+    return Math.max(0, this.nextSubmitAt - now, this.limits.waitMs(now));
+  }
+
+  /** Spaces submits so steps go out at a steady rate, with no burst: each reserves its own slot. */
+  private async paceSteps(steps: number) {
+    const rate = this.stepsPerSecond;
     if (!rate) return;
     const now = this.now();
-    const at = Math.max(now, this.nextSubmitAt);
+    // Timers wake a millisecond or more late; without crediting that, hundreds of steps/s fall short.
+    const at = this.nextSubmitAt >= now - PACE_CREDIT_MS ? this.nextSubmitAt : now;
     this.nextSubmitAt = at + (steps * 1000) / rate;
     if (at > now) await this.sleep(at - now);
   }
@@ -583,7 +611,11 @@ export class Embedder {
           model: EMBED_MODEL,
           dimensions: VECTOR_DIMENSIONS,
           precision: 'float32',
-          ...(input.videoUrl ? { videoUrl: input.videoUrl } : { imageUrl: input.imageUrl }),
+          ...(input.videoUrl
+            ? { videoUrl: input.videoUrl }
+            : input.text !== undefined
+            ? { text: input.text }
+            : { imageUrl: input.imageUrl }),
         },
       })),
       tier: 'paid',
@@ -632,10 +664,19 @@ export class Embedder {
     this.applyCapacity();
   }
 
+  private get honorsQuota() {
+    return this.opts.honorQuota !== false;
+  }
+
   private applyCapacity() {
-    this.budget.setCapacity(
-      Math.min(this.opts.maxInFlight, this.inFlightLimit ?? Infinity, this.limits.quota ?? Infinity)
-    );
+    const quota = this.honorsQuota ? this.limits.quota ?? Infinity : Infinity;
+    this.budget.setCapacity(Math.min(this.opts.maxInFlight, this.inFlightLimit ?? Infinity, quota));
+  }
+
+  /** How many steps may go out now. A 429's hold applies even when the quota headers are ignored. */
+  private allowance(max: number, nothingInFlight: boolean) {
+    if (!this.honorsQuota) return this.limits.waitMs(this.now()) > 0 ? 0 : max;
+    return this.limits.allowance(max, nothingInFlight, this.now());
   }
 
   /** Applies the account quota as the cap, and logs the limits once, from the first response. */
@@ -649,6 +690,7 @@ export class Embedder {
         {
           inflightQuota: seen.quota,
           inflightRemaining: seen.remaining,
+          quotaHonored: this.honorsQuota,
           buzzPolicy: seen.policies.get('buzz'),
           buzzRemaining: seen.states.get('buzz'),
           cap: this.budget.capacity,

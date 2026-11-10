@@ -27,7 +27,11 @@ export const GET: RequestHandler = async ({ params, url, locals, request }) => {
   const limit: PromptScanLimit = pick(url.searchParams.get('limit'), PROMPT_SCAN_LIMITS);
 
   try {
-    const items = await getPromptScans(userId, { days, limit, signal: request.signal });
+    const { items, truncated } = await getPromptScans(userId, {
+      days,
+      limit,
+      signal: request.signal,
+    });
     // Prompt text is evidence of what an account asked for; who read whose is our only record of it.
     void logToAxiom({
       name: 'user-prompt-scans-view',
@@ -38,7 +42,7 @@ export const GET: RequestHandler = async ({ params, url, locals, request }) => {
       limit,
       rows: items.length,
     }).catch(() => null);
-    return json({ items, days, limit });
+    return json({ items, truncated, days, limit });
   } catch (e) {
     console.error('[user-prompt-scans] query failed', e);
     // Never 502 or 504: Cloudflare swaps those for its own HTML page.

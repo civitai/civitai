@@ -1,8 +1,28 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { imageReviewedSql } from '~/server/common/image-visibility';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+
+/**
+ * An image with any `blockedFor` reason is visible only to its owner and moderators, as SQL over
+ * `"Image" i`. Empty for a moderator.
+ */
+export function imageBlockedForConditions({
+  userId,
+  isModerator,
+}: {
+  userId?: number;
+  isModerator?: boolean;
+}): Prisma.Sql[] {
+  if (isModerator) return [];
+  return [
+    userId
+      ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
+      : Prisma.sql`(i."blockedFor" IS NULL)`,
+  ];
+}
 
 /**
  * Who may fetch a single image by id, as SQL over `"Image" i` with `"Post" p` LEFT JOINed on
@@ -33,7 +53,7 @@ export function imageVisibilityConditions({
     // Post gates sit in the WHERE, not the JOIN: an image outlives a deleted post (`Image.postId`
     // is ON DELETE SET NULL) and an inner join drops it before ownership is tested. Nothing on
     // `Image` separates that from a never-posted upload, so a postless image is owner-only unless
-    // it is the cover of an article the viewer could read (getArticleById's non-owner rule), or
+    // it is the cover or banner of an article the viewer could read (getArticleById's non-owner rule), or
     // shown on a bounty or bounty entry whose bounty the viewer could open (canViewBounty).
     Prisma.sql`(
       p."publishedAt" < now()
@@ -41,7 +61,7 @@ export function imageVisibilityConditions({
       OR (i."postId" IS NULL AND i."userId" = ${userId})
       OR (i."postId" IS NULL AND EXISTS (
         SELECT 1 FROM "Article" a
-        WHERE a."coverId" = i.id
+        WHERE (a."coverId" = i.id OR a."bannerId" = i.id)
           AND a.status = 'Published'
           AND a."publishedAt" IS NOT NULL
           AND a.ingestion = 'Scanned'
@@ -69,6 +89,11 @@ export function imageVisibilityConditions({
     // mod review) — never serve it by direct id to anyone but the owner. Feeds already
     // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
     Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`,
+    // Owner-only, as in the image feeds (`pendingOthersImageConditions`).
+    userId
+      ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
+      : Prisma.sql`(i."acceptableMinor" = FALSE)`,
+    ...imageBlockedForConditions({ userId }),
   ];
 }
 
@@ -81,6 +106,7 @@ export async function assertImageVisibleToViewer({
   userId,
   isModerator,
   confirmBlockOnPrimary = false,
+  withSignedOutVerdict = false,
 }: {
   id: number;
   userId?: number;
@@ -90,11 +116,25 @@ export async function assertImageVisibleToViewer({
    * confirm a cache "not blocked" against the primary. Read callers leave it off.
    */
   confirmBlockOnPrimary?: boolean;
+  /**
+   * Also answer whether a signed-out viewer may open it (`visibleSignedOut`), from the same read,
+   * for a caller deciding whether the response may go to a shared cache.
+   */
+  withSignedOutVerdict?: boolean;
 }) {
+  const signedOutVerdict = withSignedOutVerdict
+    ? Prisma.sql`(${Prisma.join([Prisma.sql`TRUE`, ...imageVisibilityConditions({})], ' AND ')})`
+    : Prisma.sql`NULL::boolean`;
   const [visible] = await dbRead.$queryRaw<
-    { id: number; userId: number; nsfwLevel: number; postId: number | null }[]
+    {
+      id: number;
+      userId: number;
+      nsfwLevel: number;
+      postId: number | null;
+      visibleSignedOut: boolean | null;
+    }[]
   >`
-    SELECT i.id, i."userId", i."nsfwLevel", i."postId"
+    SELECT i.id, i."userId", i."nsfwLevel", i."postId", ${signedOutVerdict} AS "visibleSignedOut"
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE ${Prisma.join(
@@ -114,4 +154,58 @@ export async function assertImageVisibleToViewer({
     if (blocked) throw throwNotFoundError();
   }
   return visible;
+}
+
+/**
+ * The subset of `ids` the viewer may open by id: `imageVisibilityConditions`, minus images whose
+ * owner is on the viewer's `BlockedByUsers` list. Any id the replica doesn't return as visible is
+ * read again from the primary, so an image or a publish from moments ago (a post published
+ * straight into a collection) still counts.
+ */
+export async function getImageIdsVisibleToViewer({
+  ids,
+  userId,
+  isModerator,
+}: {
+  ids: number[];
+  userId?: number;
+  isModerator?: boolean;
+}): Promise<Set<number>> {
+  const wanted = [...new Set(ids)];
+  if (wanted.length === 0) return new Set();
+
+  const read = (db: typeof dbRead, idList: number[]) =>
+    db.$queryRaw<{ id: number; userId: number }[]>`
+      SELECT i.id, i."userId"
+      FROM "Image" i
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      WHERE ${Prisma.join(
+        [
+          Prisma.sql`i.id IN (${Prisma.join(idList)})`,
+          ...imageVisibilityConditions({ userId, isModerator }),
+        ],
+        ' AND '
+      )}
+    `;
+
+  const rows = await read(dbRead, wanted);
+  const found = new Set(rows.map((r) => r.id));
+  const missing = wanted.filter((id) => !found.has(id));
+  if (missing.length > 0) rows.push(...(await read(dbWrite, missing)));
+
+  if (!userId || isModerator) return new Set(rows.map((r) => r.id));
+  const optedOut = new Set((await BlockedByUsers.getCached({ userId })).map((u) => u.id));
+  return new Set(
+    rows.filter((r) => r.userId === userId || !optedOut.has(r.userId)).map((r) => r.id)
+  );
+}
+
+/** NOT_FOUND unless the viewer may open every image in `ids` (see getImageIdsVisibleToViewer). */
+export async function assertImagesVisibleToViewer(args: {
+  ids: number[];
+  userId?: number;
+  isModerator?: boolean;
+}) {
+  const visible = await getImageIdsVisibleToViewer(args);
+  if (args.ids.some((id) => !visible.has(id))) throw throwNotFoundError('Image not found');
 }

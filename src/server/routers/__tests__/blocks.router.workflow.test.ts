@@ -140,18 +140,30 @@ const {
 // divergence, so a flat "no divergence" line can be told apart from a detector
 // that never ran. Mocked so the outcome label is assertable; the real emitter is
 // fail-soft and would swallow everything silently.
-const { mockRecordStepPriceCheck } = vi.hoisted(() => ({
+const { mockRecordStepPriceCheck, mockRecordSubmitFailure } = vi.hoisted(() => ({
   mockRecordStepPriceCheck: vi.fn(() => undefined),
+  mockRecordSubmitFailure: vi.fn((_label: string, _reason: string) => undefined),
 }));
 // A bare factory, so every symbol the router imports from this module must be listed
 // here or it resolves to `undefined` and the router throws the moment it is called.
 // `recordBlockPostSubjectRefusal` is only reached on the post preamble's unreadable-
 // subject branch, which this suite does not drive — it is listed so that stays true by
 // construction rather than by luck.
-vi.mock('~/server/metrics/app-block-runtime.metrics', () => ({
-  recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
-  recordBlockPostSubjectRefusal: () => undefined,
-}));
+// `submitFailureAppBlockLabel` is the REAL one (it decides the label under test); the emitter is
+// mocked so the (label, reason) pair is assertable.
+vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('~/server/metrics/app-block-runtime.metrics')
+  >();
+  return {
+    recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
+    recordBlockPostSubjectRefusal: () => undefined,
+    recordSucceededWithoutMedia: () => undefined,
+    recordAppBlockSubmitFailure: (label: string, reason: string) =>
+      mockRecordSubmitFailure(label, reason),
+    submitFailureAppBlockLabel: actual.submitFailureAppBlockLabel,
+  };
+});
 
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   getActiveDevTunnel: (...a: unknown[]) => mockGetActiveDevTunnel(...(a as [])),
@@ -221,7 +233,7 @@ const { mockClaimGen, mockFinalizeGen, mockReleaseGen, genIdemStore } = vi.hoist
   mockReleaseGen: vi.fn(),
 }));
 vi.mock('~/server/utils/block-gen-idempotency', async (importActual) => {
-  const actual = await importActual<typeof import('~/server/utils/block-gen-idempotency')>();
+  const actual = await importActual<object>();
   return {
     ...actual,
     claimGenIdempotency: (...a: unknown[]) => mockClaimGen(...(a as [])),
@@ -499,6 +511,8 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   // because the router imports it: a factory that omits an export the module under test binds
   // makes every call through it throw `No "…" export is defined on the mock`.
   checkBlockPollRateLimit: async () => ({ allowed: true }),
+  checkBlockSubmitRateLimit: async () => ({ allowed: true }),
+  checkBlockSubmitUserRateLimit: async () => ({ allowed: true }),
 }));
 // 🔴 `getResourceData` IS HERE ON PURPOSE, AND IS NOT MOCKED AWAY AT THE SERVICE
 // BOUNDARY. The customComfy INLINE arm's entitlement belt
@@ -513,6 +527,12 @@ vi.mock('~/server/services/generation/generation.service', () => ({
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: (...args: unknown[]) => mockGetHighestTierSubscription(...args),
+}));
+// The generation input gate is tested at these routes in blocks.router.workflowKind.test; here
+// it passes, so the placeholder image urls below reach the quote and budget logic under test.
+vi.mock('~/server/services/generation-input-urls', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  assertGenerationInputsUsable: async () => undefined,
 }));
 // W3 flow A — the submit path dynamic-imports recordSpendAttribution from
 // here. Mock the whole module so we drive the spend-write behavior; the
@@ -1855,6 +1875,29 @@ describe('blocks.submitWorkflow', () => {
       expect(result.snapshot.workflowId).toBe('wf_real');
       expect(mockReserveAppSpend).not.toHaveBeenCalled();
     });
+
+    it('a dev-tunnel submit carries the tag the generator Queue leaves out', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 100, dev: true, appId: 'ephemeral-demo' })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 8 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_dev',
+          status: 'unassigned',
+          cost: { total: 8 },
+          steps: [],
+        });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockSubmitWorkflow.mock.calls[1][0].body.tags).toEqual(
+        // The literal, not WORKFLOW_TAGS.APP_BLOCK: the Queue excludes runs by this exact wire value.
+        expect.arrayContaining(['app-block', 'app-block:ephemeral-demo'])
+      );
+    });
   });
 
   // ---- G6: persistent block output queue (fire-and-forget write) ----------
@@ -2925,6 +2968,43 @@ describe('blocks.submitWorkflow', () => {
     expect(stamped).not.toBe('textToImage:txt2img');
     expect(stamped).not.toBe('textToImage');
     expect(String(stamped).split(':')[0]).toBe('textToImage');
+  });
+
+  // 🔴 THE PLATFORM-BUILT comfy PATH STAYS OPEN. `comfy` is on the pass-through
+  // denylist (a block may not submit a RAW comfy graph), but img2img/hires on an
+  // SD-family checkpoint is BUILT as a `comfy` step by the generation graph
+  // (`createComfyInput`). That step reaches `submitWorkflow` without passing the
+  // denylist, so this native submit must still go through with `$type: 'comfy'`.
+  it("native kind:'textToImage' that the graph builds as a comfy step is still submitted", async () => {
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({
+        buzzBudget: 1000,
+        blockInstanceId: 'page_apb_page',
+        ctx: { slotId: 'app.page', entityType: 'none' },
+      })
+    );
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_comfy_native');
+    mockCreateStepsFromGraph.mockResolvedValue({
+      steps: [{ $type: 'comfy', name: 's1', input: { comfyWorkflow: {} } }],
+      workflowMetadata: undefined,
+    });
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({
+      blockToken: 'tok',
+      body: validBody({
+        sourceImage: { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+      }),
+    });
+
+    expect(result.snapshot.workflowId).toBe('wf_comfy_native');
+    const submittedTypes = mockSubmitWorkflow.mock.calls.map(
+      (c) => (c[0] as { body: { steps: Array<{ $type: string }> } }).body.steps[0].$type
+    );
+    expect(submittedTypes.length).toBeGreaterThan(0);
+    expect(submittedTypes.every((t) => t === 'comfy')).toBe(true);
   });
 
   it('G5: threads the body sharedContentKey (opaque) through to the spend attribution', async () => {
@@ -4052,6 +4132,92 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     });
   });
 
+  // ── civitai_app_block_submit_failures_total ──────────────────────────────
+  // The procedure's own middleware records every failed submit, thrown OR returned as a failed
+  // snapshot. Red on origin/main: nothing recorded a submit failure at all.
+  describe('submitWorkflow — failure telemetry', () => {
+    beforeEach(() => {
+      mockRecordSubmitFailure.mockClear();
+    });
+
+    it('records nothing for a successful submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        pageClaims({ buzzBudget: 100, appBlockId: 'apb_tele' })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(25);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockRecordSubmitFailure).not.toHaveBeenCalled();
+    });
+
+    it('a THROWN ecosystem refusal is recorded as ecosystem_unavailable for the verified app', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        pageClaims({ buzzBudget: 1000, appBlockId: 'apb_tele' })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(new Map([[99, { canGenerate: true }]]));
+      // The exact message the generation graph produces for a hidden/disabled ecosystem.
+      mockCreateStepsFromGraph.mockRejectedValueOnce(
+        new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Validation failed: ecosystem: Ecosystem is currently unavailable',
+        })
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['apb_tele', 'ecosystem_unavailable']]);
+    });
+
+    it('a RETURNED insufficient-budget snapshot is recorded as insufficient_buzz', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 5, appBlockId: 'apb_tele' }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      // Resolved, not thrown: a counter that only watched throws would miss this one.
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/insufficient buzz budget/);
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['apb_tele', 'insufficient_buzz']]);
+    });
+
+    it('a failure before the token is verified is labelled unknown', async () => {
+      mockVerifyBlockToken.mockResolvedValue(null);
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['unknown', 'other']]);
+    });
+
+    it('a body the input schema refuses is recorded as validation', async () => {
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: { kind: 'not-a-kind' } as never })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['unknown', 'validation']]);
+    });
+  });
+
   describe('submitWorkflow', () => {
     it('a page token submits when generatable + within budget (no spend bound bypassed)', async () => {
       mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 100 }));
@@ -4572,6 +4738,8 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       // not `resources[0]` — the additional LoRA lives in `resources`.)
       const stepArg = mockCreateStepsFromGraph.mock.calls[0][0];
       expect(stepArg.input.model.id).toBe(500);
+      // The block's input urls go through the generation input check as App Blocks input.
+      expect(stepArg.inputGate).toEqual({ entry: 'appBlocks', isApiCaller: false });
     });
 
     it('FIX1: non-Checkpoint page body — a LoRA matching the BODY family but NOT the resolved checkpoint is REJECTED', async () => {
@@ -10802,6 +10970,53 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         );
       }
     });
+
+    // 🔴 A RAW comfy GRAPH IS REFUSED. `workflow.service` delivers a comfy step's
+    // `output.blobs` as media, and this arm runs no prompt audit, so a block
+    // naming `$type: 'comfy'` here would otherwise get an unaudited ComfyUI graph
+    // rendered and handed back. The platform's own comfy steps (built from
+    // `kind: 'textToImage'`) do not pass this guard; see the native submit test.
+    it.each(['comfy', 'Comfy'])(
+      'refuses a raw `%s` step on submit AND estimate, before the orchestrator or any reservation',
+      async (t) => {
+        // `as never`: `ptBody` is a loosely typed fixture; the cast keeps these two
+        // call sites from adding test-file type errors (typecheck-tests ratchet).
+        const calls: Array<[string, () => Promise<unknown>]> = [
+          [
+            'submitWorkflow',
+            () =>
+              caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) as never }),
+          ],
+          [
+            'estimateWorkflow',
+            () =>
+              caller().estimateWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) as never }),
+          ],
+        ];
+        for (const [run, call] of calls) {
+          mockVerifyBlockToken.mockResolvedValue(ptClaims());
+          happyUser();
+          ptQuoting(5, 5);
+          const err = await call().then(
+            () => null,
+            (e: unknown) => e
+          );
+          expect(err, run).toBeInstanceOf(TRPCError);
+          expect((err as TRPCError).code, run).toBe('FORBIDDEN');
+          expect((err as TRPCError).cause, run).toBeInstanceOf(PlatformInternalStepTypeError);
+          expect(((err as TRPCError).cause as PlatformInternalStepTypeError).stepType, run).toBe(t);
+          expect(mockSubmitWorkflow, `${run}: not even the whatif quote`).not.toHaveBeenCalled();
+          expect(mockGetOrchestratorToken, run).not.toHaveBeenCalled();
+          expect(mockReserveAppSpend, run).not.toHaveBeenCalled();
+          expect(
+            mockSysRedis.incrBy.mock.calls.filter((c) =>
+              String(c[0]).startsWith('system:blocks:buzz-cap:')
+            ),
+            run
+          ).toHaveLength(0);
+        }
+      }
+    );
   });
 
   describe('🔴 criterion 3 — `input` reaches the orchestrator UNMODIFIED', () => {

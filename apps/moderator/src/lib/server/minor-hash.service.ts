@@ -1,5 +1,7 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
+import { LOCK_REVIEW_KIND } from '@civitai/shared/lock-review';
 import { createCache } from './cache';
+import { loadComFaces } from './com-face';
 import { dbRead, dbWrite } from './db';
 import { MODEL_COVER_ORDER, modelCoverImages } from './model-covers';
 import { getUserNotes } from './moderation-memory.service';
@@ -31,6 +33,7 @@ import type {
   PriorClearView,
   RedetectionView,
 } from '$lib/minor-flags/text-scan-verdicts';
+import type { ComFace } from '$lib/com-face';
 import type { ModelFlagDetail, ScanRows } from '$lib/minor-flags/model-detail';
 import type { AppealCounts } from '$lib/minor-flags/appeal-row';
 import type { FlaggedSource } from '$lib/minor-flags/flagged-decision';
@@ -274,6 +277,9 @@ export type MinorFlagAppealRow = {
   status: string;
   minor: boolean;
   poi: boolean;
+  /** The settings the owner asked to have unlocked, on a lock review; null on a flag appeal. */
+  lockReview: string[] | null;
+  lockedProperties: string[];
   textScanFlags: unknown;
   latestScan: LatestScan | null;
   flaggedAt: Date | null;
@@ -308,6 +314,8 @@ export type MinorFlagAppealRow = {
   /** Needs review lists this model too (a held detection or a file match). */
   alsoInNeedsReview: boolean;
   scanRows: ScanRows;
+  /** The model's civitai.com face, null when it has none. */
+  comFace: ComFace | null;
 };
 
 export type AppealQuery = Page & { filters?: AppealFilters };
@@ -375,7 +383,8 @@ LEFT JOIN LATERAL (
          count(*) FILTER (WHERE pa.status::text = 'Void')::int AS void,
          count(*) FILTER (WHERE pa.status::text = 'Pending')::int AS pending
   FROM "Appeal" pa
-  WHERE pa."userId" = pg."userId" AND pa."entityType" = 'Model' AND pa.category IS NULL ${exclude}
+  WHERE pa."userId" = pg."userId" AND pa."entityType" = 'Model' AND pa.category IS NULL
+    AND COALESCE(pa.context->>'kind', '') <> ${LOCK_REVIEW_KIND} ${exclude}
 ) ap ON TRUE
 `;
 
@@ -391,6 +400,7 @@ LEFT JOIN LATERAL (
          count(DISTINCT sa."entityId")::int AS models
   FROM "Appeal" sa
   WHERE sa."entityType" = 'Model' AND sa.category IS NULL AND sa."entityId" <> pg."modelId"
+    AND COALESCE(sa.context->>'kind', '') <> ${LOCK_REVIEW_KIND}
     AND sa."entityId" IN (
       SELECT ov."modelId"
       FROM "ModelVersion" mv
@@ -493,8 +503,16 @@ const appealSourcePredicate = (source: AppealSource) => {
   return sql`${flagSourceSql} = ${SNAPSHOT_SOURCE[source]}`;
 };
 
+const isLockReviewSql = sql`COALESCE(a.context->>'kind' = ${LOCK_REVIEW_KIND}, FALSE)`;
+
 const appealFlagPredicate = (flag: AppealFlag) =>
-  flag === 'minor' ? sql`m.minor` : flag === 'poi' ? sql`m.poi` : sql`TRUE`;
+  flag === 'minor'
+    ? sql`m.minor`
+    : flag === 'poi'
+    ? sql`m.poi`
+    : flag === 'lock'
+    ? isLockReviewSql
+    : sql`TRUE`;
 
 const flaggedAtSql = sql`(${appealSnapshotSql}->>'at')::timestamptz`;
 
@@ -528,11 +546,16 @@ export async function getMinorFlagAppealsForReview({
       ? sql`pg."flaggedAt" DESC NULLS LAST, pg."appealCreatedAt", pg."appealId"`
       : sql`pg."appealCreatedAt", pg."appealId"`;
 
-  const rows = await sql<MinorFlagAppealRow>`
+  const rows = await sql<
+    Omit<MinorFlagAppealRow, 'comFace'> & { sfwName: string | null; sfwCoverImageId: number | null }
+  >`
     WITH pg AS (
       SELECT a.id AS "appealId", a."appealMessage", a."createdAt" AS "appealCreatedAt",
              m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
+             m."sfwName", m."sfwCoverImageId",
              m.status::text AS status, m.minor, m.poi, m.type::text AS "modelType",
+             CASE WHEN ${isLockReviewSql} THEN a.context->'locks' END AS "lockReview",
+             COALESCE(m."lockedProperties", '{}') AS "lockedProperties",
              m."createdAt" AS "modelCreatedAt",
              m.meta->'textScanFlags' AS "textScanFlags",
              ${flaggedAtSql} AS "flaggedAt",
@@ -604,26 +627,36 @@ export async function getMinorFlagAppealsForReview({
       SELECT count(*)::int + 1 AS nth
       FROM "Appeal" ya
       WHERE ya."userId" = pg."userId" AND ya."entityType" = 'Model' AND ya.category IS NULL
+        AND COALESCE(ya.context->>'kind', '') <> ${LOCK_REVIEW_KIND}
         AND ya."createdAt" >= date_trunc('year', pg."appealCreatedAt")
         AND (ya."createdAt", ya.id) < (pg."appealCreatedAt", pg."appealId")
     ) ya ON TRUE
     ORDER BY ${outer}
   `.execute(dbRead);
 
-  return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
+  const page = rows.rows.slice(0, limit);
+  const comFaces = await loadComFaces(
+    page.map((r) => ({ id: r.modelId, sfwName: r.sfwName, sfwCoverImageId: r.sfwCoverImageId }))
+  );
+  const items: MinorFlagAppealRow[] = page.map(({ sfwName: _n, sfwCoverImageId: _c, ...r }) => ({
+    ...r,
+    comFace: comFaces.get(r.modelId) ?? null,
+  }));
+  return { items, hasMore: rows.rows.length > limit };
 }
 
 /** Cross-tabbed on source and flag state so both chip rows come from one scan. */
 export async function getMinorFlagAppealGroups({ search }: { search?: MinorSearch }) {
   const rows = await sql<AppealGroup>`
-    SELECT ${flagSourceSql} AS source, m.minor, m.poi, count(*)::int AS count
+    SELECT ${flagSourceSql} AS source, m.minor, m.poi, ${isLockReviewSql} AS "lockReview",
+           count(*)::int AS count
     FROM "Appeal" a
     JOIN "Model" m ON m.id = a."entityId"
     ${joinsUploader(search) ? sql`LEFT JOIN "User" u ON u.id = m."userId"` : sql``}
     WHERE a."entityType" = 'Model' AND a.category IS NULL
       AND a.status::text = 'Pending'
       AND ${searchPredicate(search, userRefs)}
-    GROUP BY 1, 2, 3
+    GROUP BY 1, 2, 3, 4
   `.execute(dbRead);
   return rows.rows;
 }
@@ -1376,11 +1409,11 @@ export async function getModelFlagState(modelId: number) {
 }
 
 /** Whether the owner has an open flag appeal on the model: the Appeals tab's rule. A site-form appeal
- *  carries a category and is not one. */
+ *  carries a category and a lock review a context kind; neither is one. */
 const pendingModelAppealExists = (modelId: RawBuilder<unknown>) => sql<boolean>`EXISTS (
   SELECT 1 FROM "Appeal" a
   WHERE a."entityType" = 'Model' AND a."entityId" = ${modelId}
-    AND a.status::text = 'Pending' AND a.category IS NULL
+    AND a.status::text = 'Pending' AND a.category IS NULL AND NOT ${isLockReviewSql}
 )`;
 
 const textScanEntryView = (label: 'minor' | 'poi') => sql`jsonb_build_object(
@@ -1732,7 +1765,10 @@ export async function getModelFlagDetail({
       ) f ON TRUE
       LEFT JOIN LATERAL (
         SELECT count(*) FILTER (WHERE o.status::text = 'Published')::int AS "uploaderPublished",
-               count(*) FILTER (WHERE o.status::text = 'UnpublishedViolation')::int AS "uploaderModUnpublished",
+               count(*) FILTER (
+                 WHERE o.status::text = 'UnpublishedViolation'
+                   AND o.meta ->> 'removedWithOwner' IS DISTINCT FROM 'true'
+               )::int AS "uploaderModUnpublished",
                count(*) FILTER (WHERE o.id <> m.id AND ${revertedSql})::int AS "revertedCount",
                to_char(max(${revertedAtSql}) FILTER (WHERE o.id <> m.id) AT TIME ZONE 'UTC',
                        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "revertedLastAt"

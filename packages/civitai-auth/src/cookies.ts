@@ -70,7 +70,7 @@ export function readCookie(header: string, name: string): string | undefined {
  * %-escape keeps its raw value rather than throwing out of a caller such as logout.
  */
 export function parseCookieHeader(header: string): Record<string, string> {
-  const out: Record<string, string> = {};
+  const out: Record<string, string> = Object.create(null);
   for (const part of header.split(';')) {
     const idx = part.indexOf('=');
     if (idx === -1) continue;

@@ -124,7 +124,13 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-file-urls';
+import {
+  trainingDataOwnerView,
+  trainingDataPublicView,
+} from '~/server/services/training-data-restricted.service';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { readModelPoiAndOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /** 404s a lookup of a model the viewer may not see. `pick` reads the model id from the input. */
@@ -132,10 +138,7 @@ const modelVisibleToViewer = (pick: (input: any) => number | undefined) =>
   middleware(async ({ ctx, next, input }) => {
     const id = pick(input ?? {});
     if (id && !ctx.user?.isModerator) {
-      const model = await dbRead.model.findUnique({
-        where: { id },
-        select: { poi: true, userId: true },
-      });
+      const model = await readModelPoiAndOwnerViaKysely((await loadKyselyDb()).kyselyRead, id);
       if (model && !canViewPoiModel(model.poi, model.userId, ctx.user)) throw throwNotFoundError();
     }
     return next();
@@ -232,11 +235,21 @@ const creatorGalleryHiddenUsersRateLimit = rateLimit(
 
 const modelFileUrlsForOwner = ownerOnlyFileUrls<Awaited<ReturnType<typeof getModelHandler>>>({
   ownerId: ({ data }) => data.user.id,
-  strip: (data) => ({
+  strip: async (data, { redCapable }) => {
+    const view = await trainingDataPublicView(dbRead, data.modelVersions, { redCapable });
+    return {
+      ...data,
+      modelVersions: data.modelVersions.map((version) => ({
+        ...version,
+        files: withoutFileUrls(view(version.files)) as typeof version.files,
+      })),
+    };
+  },
+  forOwner: (data) => ({
     ...data,
     modelVersions: data.modelVersions.map((version) => ({
       ...version,
-      files: withoutFileUrls(version.files) as typeof version.files,
+      files: trainingDataOwnerView(version.files),
     })),
   }),
 });

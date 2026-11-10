@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { BlockedReason } from '~/server/common/enums';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as EmailTemplates from '~/server/email/templates';
 import type * as BuzzService from '~/server/services/buzz.service';
@@ -71,7 +74,9 @@ const updateMany =
       .map(([col, v]) => `"${col}" = ${param(v)}`)
       .join(', ');
     const conds = Object.entries(where).map(([col, v]) =>
-      v && typeof v === 'object' && 'in' in v
+      v === null
+        ? `"${col}" IS NULL`
+        : v && typeof v === 'object' && 'in' in v
         ? `"${col === 'id' ? 'id' : col}" = ANY(${param(v.in)})`
         : `"${col}" = ${param(v)}`
     );
@@ -112,7 +117,11 @@ beforeAll(async () => {
       "resolvedBy" int,
       "resolvedAt" timestamp(3),
       "internalNotes" text,
-      "resolvedMessage" text
+      "resolvedMessage" text,
+      "resolvedReason" text,
+      "entityRemovedAt" timestamp(3),
+      category text,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
   `);
 });
@@ -132,7 +141,7 @@ beforeEach(async () => {
     await updateMany('Appeal')({ where, data });
     return (
       await holder.db.query(
-        `SELECT id, "entityId", "entityType", "resolvedAt", "buzzTransactionId", status, "userId"
+        `SELECT id, "entityId", "entityType", "resolvedAt", "buzzTransactionId", status, "userId", "createdAt"
          FROM "Appeal" WHERE "entityId" = ANY($1) AND status = $2`,
         [where.entityId.in, data.status]
       )
@@ -145,11 +154,21 @@ beforeEach(async () => {
     const flat = Prisma.sql(strings, ...(v as never[]));
     // Only the statements that write the review flag; the other raw writers touch columns this
     // stand-in does not have.
-    if (!/"Appeal"|SET "needsReview"/.test(flat.text)) return 0;
+    if (!/"Appeal"|SET "needsReview"|"CsamQueueSetAside"|"blockedFor" = CASE/.test(flat.text))
+      return 0;
     return (await run(flat)).affectedRows ?? 0;
   }) as never);
+  // `writeModeratorBlock` returns rows; every other raw read here has its own fake.
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...v: unknown[]
+  ) => {
+    const flat = Prisma.sql(strings, ...(v as never[]));
+    if (!/"blockedFor" = CASE|AND "blockedFor" = \$/.test(flat.text)) return [];
+    return (await run(flat)).rows;
+  }) as never);
   await holder.db.exec(`
-    TRUNCATE "Image", "Appeal";
+    TRUNCATE "Image", "Appeal" CASCADE;
     INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview") VALUES
       (${APPEALED}, 7, 'Blocked', 'moderated', 32, 'appeal'),
       (${FLAGGED}, 8, 'Scanned', NULL, 4, 'minor'),
@@ -287,6 +306,75 @@ describe('setTosViolationHandler', () => {
   });
 });
 
+describe('a re-block keeps the original block reason', () => {
+  const BLOCKED_WITH_REASON = 45;
+  const OTHER_REASON = 46;
+  const blockedFor = async (id: number) =>
+    (
+      await holder.db.query<{ blockedFor: string | null }>(
+        `SELECT "blockedFor" FROM "Image" WHERE id = $1`,
+        [id]
+      )
+    ).rows[0].blockedFor;
+  const tosBlock = async (id: number) => {
+    dbMock.dbRead.image.findFirst.mockResolvedValue({
+      nsfwLevel: 32,
+      userId: 11,
+      postId: null,
+      pHash: null,
+      post: null,
+    } as never);
+    await setTosViolationHandler({
+      input: { id },
+      ctx: { user: { id: 2, isModerator: true }, ip: '127.0.0.1', track: { images: vi.fn() } },
+    } as never);
+  };
+
+  beforeEach(async () => {
+    await holder.db.query(
+      `INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES
+        ($1, 11, 'Blocked', $2, 32), ($3, 11, 'Blocked', $4, 32)`,
+      [BLOCKED_WITH_REASON, BlockedReason.CSAM, OTHER_REASON, BlockedReason.AiNotVerified]
+    );
+  });
+
+  it('handleBlockImages', async () => {
+    await handleBlockImages({ ids: [BLOCKED_WITH_REASON, OTHER_REASON, FLAGGED] });
+
+    expect(await blockedFor(BLOCKED_WITH_REASON)).toBe(BlockedReason.CSAM);
+    expect(await blockedFor(OTHER_REASON)).toBe(BlockedReason.Moderated);
+    expect(await blockedFor(FLAGGED)).toBe(BlockedReason.Moderated);
+  });
+
+  it('handleBlockImages over a whole account', async () => {
+    dbMock.dbRead.image.findMany.mockImplementationOnce(
+      (async () =>
+        (
+          await holder.db.query(
+            `SELECT id, "userId", NULL::bigint AS "pHash", NULL::int AS "postId", "nsfwLevel", "blockedFor", "needsReview" FROM "Image" WHERE "userId" = 11`
+          )
+        ).rows) as never
+    );
+
+    await handleBlockImages({ userId: 11 });
+
+    expect(await blockedFor(BLOCKED_WITH_REASON)).toBe(BlockedReason.CSAM);
+    expect(await blockedFor(OTHER_REASON)).toBe(BlockedReason.Moderated);
+  });
+
+  it('setTosViolationHandler', async () => {
+    await tosBlock(BLOCKED_WITH_REASON);
+
+    expect(await blockedFor(BLOCKED_WITH_REASON)).toBe(BlockedReason.CSAM);
+  });
+
+  it('setTosViolationHandler still blocks any other image as moderated', async () => {
+    await tosBlock(OTHER_REASON);
+
+    expect(await blockedFor(OTHER_REASON)).toBe(BlockedReason.Moderated);
+  });
+});
+
 describe('reportCsamImages', () => {
   const moderator = { id: 2, isModerator: true } as never;
 
@@ -388,5 +476,180 @@ describe('reportCsamImages', () => {
     } as never);
 
     expect((await imageRow(APPEALED)).needsReview).toBe('csam');
+  });
+});
+
+describe('approving an image appeal', () => {
+  const approve = () =>
+    resolveEntityAppeal({
+      ids: [APPEALED],
+      entityType: 'Image',
+      status: 'Approved',
+      userId: 2,
+    } as never);
+  const pendingAppeals = async () =>
+    (
+      await holder.db.query(
+        `SELECT id FROM "Appeal" WHERE "entityType" = 'Image' AND "entityId" = $1 AND status = 'Pending'`,
+        [APPEALED]
+      )
+    ).rows.length;
+
+  beforeEach(() => {
+    dbMock.dbWrite.image.update.mockImplementation((async ({ where, data }: any) => {
+      await updateMany('Image')({ where: { id: where.id }, data });
+      return { postId: null, pHash: null };
+    }) as never);
+  });
+
+  it('is refused for an image blocked for CSAM, and leaves the appeal pending', async () => {
+    await holder.db.query(`UPDATE "Image" SET "blockedFor" = $1 WHERE id = $2`, [
+      BlockedReason.CSAM,
+      APPEALED,
+    ]);
+
+    await expect(approve()).rejects.toThrow('cannot put it back');
+
+    expect(await pendingAppeals()).toBe(1);
+    expect(await imageRow(APPEALED)).toMatchObject({ ingestion: 'Blocked' });
+  });
+
+  it('still restores an image blocked for another reason', async () => {
+    await approve();
+
+    expect(await pendingAppeals()).toBe(0);
+    expect(await imageRow(APPEALED)).toMatchObject({ ingestion: 'Scanned' });
+  });
+});
+
+describe('reportCsamImages and images set aside from the CSAM queue', () => {
+  const moderator = { id: 2, isModerator: true } as never;
+
+  beforeAll(async () => {
+    await holder.db.exec(`CREATE TABLE "CsamReport" (id serial PRIMARY KEY)`);
+    await holder.db.exec(
+      readFileSync(
+        new URL(
+          '../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_csam_queue_set_aside/migration.sql',
+          import.meta.url
+        ),
+        'utf8'
+      )
+    );
+  });
+
+  beforeEach(async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(
+      (async (strings: TemplateStringsArray, ...v: unknown[]) =>
+        (await run(Prisma.sql(strings, ...(v as never[])))).rows) as never
+    );
+    // REVIEW_FLAGGED already carries the CSAM flag, so reporting it changes nothing on the image.
+    await holder.db.exec(`
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", outcome, "moderatorId") VALUES
+        (${REVIEW_FLAGGED}, 10, 'Dismissed', 1), (${DECIDED}, 9, 'Dismissed', 1);
+    `);
+  });
+
+  const setAsideIds = async () =>
+    (
+      await holder.db.query<{ imageId: number }>(
+        `SELECT "imageId" FROM "CsamQueueSetAside" ORDER BY 1`
+      )
+    ).rows.map((r) => r.imageId);
+
+  it('puts a reported image back in the queue, and only that image', async () => {
+    await reportCsamImages({ imageIds: [REVIEW_FLAGGED], user: moderator });
+
+    expect(await setAsideIds()).toEqual([DECIDED]);
+    expect((await imageRow(REVIEW_FLAGGED)).needsReview).toBe('csam');
+  });
+
+  it('still reports before the migration is applied', async () => {
+    await holder.db.exec(`
+      ALTER TABLE "Image" DISABLE TRIGGER "Image_csam_queue_set_aside_end";
+      ALTER TABLE "CsamQueueSetAside" RENAME TO "CsamQueueSetAsideAway";
+    `);
+    try {
+      await reportCsamImages({ imageIds: [FLAGGED], user: moderator });
+      expect((await imageRow(FLAGGED)).needsReview).toBe('csam');
+    } finally {
+      await holder.db.exec(`
+        ALTER TABLE "CsamQueueSetAsideAway" RENAME TO "CsamQueueSetAside";
+        ALTER TABLE "Image" ENABLE TRIGGER "Image_csam_queue_set_aside_end";
+      `);
+    }
+  });
+
+  // A role with every grant but the ones named, as an app role whose grants were missed.
+  const asRoleWithout = async (revoke: string, fn: () => Promise<void>) => {
+    await holder.db.exec(`
+      DROP ROLE IF EXISTS app_role;
+      CREATE ROLE app_role;
+      GRANT ALL ON ALL TABLES IN SCHEMA public TO app_role;
+      GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO app_role;
+      ${revoke};
+      SET ROLE app_role;
+    `);
+    try {
+      await fn();
+    } finally {
+      await holder.db.exec(`
+        ROLLBACK;
+        RESET ROLE;
+        DROP OWNED BY app_role;
+        DROP ROLE app_role;
+      `);
+    }
+  };
+
+  it('still reports when the role may not delete set-asides, and says the grant is missing', async () => {
+    loggingMock.logToAxiom.mockClear();
+    await asRoleWithout(`REVOKE DELETE ON "CsamQueueSetAside" FROM app_role`, async () => {
+      await reportCsamImages({ imageIds: [REVIEW_FLAGGED], user: moderator });
+    });
+    expect((await imageRow(REVIEW_FLAGGED)).needsReview).toBe('csam');
+    expect(await setAsideIds()).toEqual([DECIDED, REVIEW_FLAGGED]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'csam-queue-set-aside-not-deletable' })
+    );
+  });
+
+  it('ends a set-aside on a flag change by a role with no grant on the table', async () => {
+    await asRoleWithout(`REVOKE ALL ON "CsamQueueSetAside" FROM app_role`, async () => {
+      await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${DECIDED}`);
+    });
+    expect(await setAsideIds()).toEqual([REVIEW_FLAGGED]);
+  });
+
+  it('lets no role attach the set-aside function to a table of its own', async () => {
+    await asRoleWithout(`SELECT 1`, async () => {
+      await expect(
+        holder.db.exec(`
+          CREATE TEMP TABLE own (id int);
+          CREATE TRIGGER own_end AFTER UPDATE ON own FOR EACH ROW
+            EXECUTE FUNCTION csam_queue_set_aside_end();
+        `)
+      ).rejects.toThrow(/permission denied for function/);
+    });
+  });
+});
+
+// Scan Labels: a csam-realistic vote can come after a 2-of-3 block already acted. The hold it sends
+// is this report, and it must still take the plain-blocked image out of the purge.
+describe('reportCsamImages on an image a plain block already removed', () => {
+  const moderator = { id: 2, isModerator: true } as never;
+
+  it('holds it and the blocked-image purge keeps it', async () => {
+    const { reviewHeldBlockedImagesSql } = await import('~/server/jobs/image-ingestion');
+    // The stand-in keeps ingestion as text; the purge's query casts to the enum's name.
+    await holder.db.exec(`CREATE DOMAIN "ImageIngestionStatus" AS text`);
+    const held = async () =>
+      (await run(reviewHeldBlockedImagesSql)).rows.map((r) => (r as { id: number }).id);
+    expect(await held()).not.toContain(DECIDED);
+
+    await reportCsamImages({ imageIds: [DECIDED], user: moderator });
+
+    expect(await imageRow(DECIDED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+    expect(await held()).toContain(DECIDED);
   });
 });

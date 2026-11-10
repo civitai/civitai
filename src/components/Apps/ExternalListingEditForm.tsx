@@ -56,6 +56,10 @@ import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listin
 import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import {
+  AppDeveloperTermsCheckbox,
+  useAppDeveloperTermsAccepted,
+} from '~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox';
 
 /**
  * /apps/submit?edit=<listingId> — the EDIT wizard (W13). Reuses the create wizard's
@@ -143,7 +147,10 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   // left a window where the FIRST edit of an approved listing seeded parent row ids
   // and a screenshot removal deleted from the live served listing.
   const shadowId = edit.shadowId;
-  const effectiveId = approved ? shadowId : edit.parentId;
+  // A moderator with no revision yet edits the live listing; the server opens a revision
+  // on their first material change.
+  const moderatorLiveEdit = approved && !shadowId && edit.role === 'moderator';
+  const effectiveId = approved && !moderatorLiveEdit ? shadowId : edit.parentId;
 
   // OG metadata auto-pull via the shared `useListingAutofill` hook (same SSRF-safe path
   // as create) — auto-fires on a URL CHANGE (blur/Enter/advance + a debounced pause);
@@ -166,6 +173,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const updateListingMutation = trpc.appListings.updateListing.useMutation();
   const updateRevisionMutation = trpc.appListings.updateRevisionDraft.useMutation();
   const submitRevisionMutation = trpc.appListings.submitListingRevision.useMutation();
+  const termsAccepted = useAppDeveloperTermsAccepted();
 
   const saving =
     updateListingMutation.isPending ||
@@ -265,7 +273,14 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     const scalarChanged = hasScalarChanges(patch);
 
     try {
-      if (approved) {
+      if (moderatorLiveEdit) {
+        if (scalarChanged) {
+          const res = await updateListingMutation.mutateAsync({ listingId: edit.parentId, patch });
+          if (res.requiresReview && res.shadowId) {
+            await submitRevisionMutation.mutateAsync({ shadowId: res.shadowId });
+          }
+        }
+      } else if (approved) {
         if (!shadowId) {
           setServerError('Preparing the revision — try again in a moment.');
           return;
@@ -728,6 +743,8 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         </Stepper.Step>
       </Stepper>
 
+      {(approved || moderatorLiveEdit) && <AppDeveloperTermsCheckbox />}
+
       <Group justify="space-between">
         <Button variant="default" component={Link} href={MY_APPS_HREF} disabled={saving}>
           Cancel
@@ -735,7 +752,10 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         <Button
           onClick={() => void handleSave()}
           loading={saving}
-          disabled={approved && !shadowId}
+          disabled={
+            (approved && !shadowId && !moderatorLiveEdit) ||
+            ((approved || moderatorLiveEdit) && !termsAccepted)
+          }
           leftSection={<IconDeviceFloppy size={16} />}
           data-testid="apps-offsite-edit-save"
         >

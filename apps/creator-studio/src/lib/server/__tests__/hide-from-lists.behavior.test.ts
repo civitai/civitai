@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -48,8 +48,17 @@ vi.mock('@civitai/db/kysely', () => {
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
+const notCounted = vi.hoisted(() => ({ ids: [] as number[], reads: 0 }));
+vi.mock('$lib/server/metric-excluded-users', () => ({
+  getMetricExcludedUserIds: async () => {
+    notCounted.reads++;
+    return notCounted.ids;
+  },
+}));
+
 const { getReactors, imageAudienceListable } = await import('../reactors');
 const { getCollectors } = await import('../collectors');
+const { REACTORS_PAGE_SIZE } = await import('$lib/analytics/reactors');
 
 const OWNER = 42;
 const IMAGE = 900;
@@ -68,6 +77,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int, ingestion text, "nsfwLevel" int, url text, "blockedFor" text
     );
     CREATE TABLE "ImageReaction" ("imageId" int, "userId" int, reaction text, "createdAt" timestamp DEFAULT now());
+    CREATE TABLE "Article" (id int PRIMARY KEY, "userId" int);
+    CREATE TABLE "ArticleReaction" ("articleId" int, "userId" int, reaction text, "createdAt" timestamp);
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type text);
     CREATE TABLE "Collection" (
       id int PRIMARY KEY, "userId" int, read text, availability text, mode text
@@ -113,8 +124,6 @@ describe('Creator Studio "Who reacted" and reactions from before the lists launc
 
   beforeAll(async () => {
     await holder.db.exec(`
-      CREATE TABLE "Article" (id int PRIMARY KEY, "userId" int);
-      CREATE TABLE "ArticleReaction" ("articleId" int, "userId" int, reaction text, "createdAt" timestamp);
       INSERT INTO "User" (id, username, settings) VALUES
         (${QUIET}, 'quiet', '{}'),
         (${OPTED_IN}, 'optin', '{"showPreLaunchReactions": true}'),
@@ -233,5 +242,71 @@ describe('Creator Studio lists on a blocked image', () => {
 
   it('still refuses a caller who does not own the image', async () => {
     expect(await lists(911, 999)).toEqual({ reactors: undefined, collectors: undefined });
+  });
+});
+
+describe('Creator Studio "Who reacted" leaves out reactors the reaction totals do not count', () => {
+  const NC_IMAGE = 920;
+  const NC_ARTICLE = 720;
+  const COUNTED = 100;
+  const NOT_COUNTED = 200;
+  const page = (entity: 'image' | 'article', id: number, ownerId = OWNER) =>
+    getReactors(holder.db as never, ownerId, entity, id, {
+      reaction: 'Like',
+      cursor: null,
+    } as never);
+
+  beforeAll(async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId") VALUES (${NC_IMAGE}, ${OWNER});
+      INSERT INTO "Article" VALUES (${NC_ARTICLE}, ${OWNER});
+      INSERT INTO "ImageReaction" ("imageId", "userId", reaction) VALUES
+        (${NC_IMAGE}, ${COUNTED}, 'Like'), (${NC_IMAGE}, ${NOT_COUNTED}, 'Like');
+      INSERT INTO "ArticleReaction" VALUES
+        (${NC_ARTICLE}, ${COUNTED}, 'Like', now()), (${NC_ARTICLE}, ${NOT_COUNTED}, 'Like', now());
+    `);
+  });
+
+  beforeEach(() => {
+    notCounted.ids = [];
+    notCounted.reads = 0;
+  });
+
+  it.each(['image', 'article'] as const)(
+    '%s: absent from the list and the tab count; a counted reactor stays',
+    async (entity) => {
+      notCounted.ids = [NOT_COUNTED];
+      const p = await page(entity, entity === 'image' ? NC_IMAGE : NC_ARTICLE);
+      expect(p?.reactors.map((r) => r.userId)).toEqual([COUNTED]);
+      expect(p?.counts.Like).toBe(1);
+    }
+  );
+
+  it('still fills a page when the newest reactors are not counted', async () => {
+    const image = 921;
+    const newest = [5001, 5002, 5003];
+    const counted = Array.from({ length: REACTORS_PAGE_SIZE }, (_, i) => 3000 + i);
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId") VALUES (${image}, ${OWNER});
+      INSERT INTO "ImageReaction" ("imageId", "userId", reaction) VALUES
+        ${[...counted, ...newest].map((u) => `(${image}, ${u}, 'Like')`).join(', ')};
+    `);
+    notCounted.ids = newest;
+    const p = await page('image', image);
+    expect(p?.reactors).toHaveLength(REACTORS_PAGE_SIZE);
+    expect(p?.reactors.map((r) => r.userId)).not.toContain(5001);
+    expect(p?.counts.Like).toBe(REACTORS_PAGE_SIZE);
+    expect(p?.next).toBeNull();
+  });
+
+  it('lists and counts everyone when the set is empty', async () => {
+    const p = await page('image', NC_IMAGE);
+    expect(p?.reactors.map((r) => r.userId)).toEqual([NOT_COUNTED, COUNTED]);
+    expect(p?.counts.Like).toBe(2);
+  });
+
+  it('does not read the set for a caller who does not own the content', async () => {
+    expect(await page('image', NC_IMAGE, 999)).toBeNull();
+    expect(notCounted.reads).toBe(0);
   });
 });

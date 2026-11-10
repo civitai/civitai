@@ -37,11 +37,13 @@ export function GenericImageCard({
   entityType,
   entityId,
   disabled,
+  hideEventDecoration,
 }: {
   image: ImageProps;
   entityId: number;
   entityType?: string;
   disabled?: boolean;
+  hideEventDecoration?: boolean;
 }) {
   const url = (() => {
     if (!entityType || !entityId) return undefined;
@@ -97,7 +99,7 @@ export function GenericImageCard({
       }}
       href={disabled ? undefined : url}
       frameDecoration={image.cosmetic}
-      eventDecoration={image.eventDecoration?.data}
+      eventDecoration={hideEventDecoration ? undefined : image.eventDecoration?.data}
       eventDecorationOn={getGenericCardWornOn(image.id, entityType, entityId)}
       aspectRatio="portrait"
       useCSSAspectRatio

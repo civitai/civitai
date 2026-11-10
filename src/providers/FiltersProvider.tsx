@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useRef } from 'react';
+import { HAT_SORTS } from '~/shared/constants/hat-turf-feed.constants';
 import * as z from 'zod';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
@@ -15,8 +16,6 @@ import {
   ImageSort,
   ModelSort,
   PostSort,
-  QuestionSort,
-  QuestionStatus,
   ThreadSort,
   ToolSort,
 } from '~/server/common/enums';
@@ -55,6 +54,7 @@ const modelFilterSchema = z.object({
   earlyAccess: z.boolean().optional(),
   paidAccess: z.boolean().optional(),
   hidePaid: z.boolean().optional(),
+  onSale: z.boolean().optional(),
   supportsGeneration: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
   followed: z.boolean().optional(),
@@ -73,13 +73,6 @@ const modelFilterSchema = z.object({
 export const modelSortPeriodDefaults = modelFilterSchema
   .pick({ sort: true, period: true })
   .parse({});
-
-type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
-const questionFilterSchema = z.object({
-  sort: z.enum(QuestionSort).default(QuestionSort.MostLiked),
-  period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime),
-  status: z.enum(QuestionStatus).optional(),
-});
 
 type ImageFilterSchema = z.infer<typeof imageFilterSchema>;
 const imageFilterSchema = z.object({
@@ -111,6 +104,11 @@ const imageFilterSchema = z.object({
   // Green-domain only: opt-in to PG-13 content on image/video feeds.
   // Default off — feeds show PG only until user toggles this on.
   includePG13: z.boolean().optional(),
+  // Hat Turf players only; the server ignores these from anyone else.
+  hatSort: z.enum(HAT_SORTS).optional(),
+  hatTeams: z.string().array().optional(),
+  hideTurfHats: z.boolean().optional(),
+  hideWornHats: z.boolean().optional(),
 });
 
 type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;
@@ -142,6 +140,13 @@ const articleFilterSchema = z.object({
 type CollectionFilterSchema = z.infer<typeof collectionFilterSchema>;
 const collectionFilterSchema = z.object({
   sort: z.enum(CollectionSort).default(constants.collectionFilterDefaults.sort),
+});
+
+// The URL query a collection view was last left on, per content type. Validated again when it is
+// used, so a value an enum has since dropped is discarded there.
+export type CollectionFeedFilterSchema = z.infer<typeof collectionFeedFilterSchema>;
+const collectionFeedFilterSchema = z.object({
+  query: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
 });
 
 type BountyFilterSchema = z.infer<typeof bountyFilterSchema>;
@@ -209,12 +214,15 @@ const auctionFilterSchema = z.object({
 
 type StorageState = {
   models: ModelFilterSchema;
-  questions: QuestionFilterSchema;
   images: ImageFilterSchema;
   modelImages: ModelImageFilterSchema;
   posts: PostFilterSchema;
   articles: ArticleFilterSchema;
   collections: CollectionFilterSchema;
+  collectionModels: CollectionFeedFilterSchema;
+  collectionImages: CollectionFeedFilterSchema;
+  collectionPosts: CollectionFeedFilterSchema;
+  collectionArticles: CollectionFeedFilterSchema;
   bounties: BountyFilterSchema;
   crucibles: CrucibleFilterSchema;
   videos: VideoFilterSchema;
@@ -225,7 +233,13 @@ type StorageState = {
   changelogs: ChangelogFilterSchema;
   auctions: AuctionFilterSchema;
 };
-export type FilterSubTypes = keyof StorageState;
+export type CollectionFeedKey =
+  | 'collectionModels'
+  | 'collectionImages'
+  | 'collectionPosts'
+  | 'collectionArticles';
+// Without the collection feed keys, which hold a URL query rather than filters a feed can run on.
+export type FilterSubTypes = Exclude<keyof StorageState, CollectionFeedKey>;
 
 const periodModeTypes = ['models', 'images', 'posts', 'articles', 'bounties'] as const;
 export type PeriodModeType = (typeof periodModeTypes)[number];
@@ -236,12 +250,15 @@ export type FilterKeys<K extends keyof FilterState> = keyof Pick<FilterState, K>
 
 type StoreState = FilterState & {
   setModelFilters: (filters: Partial<ModelFilterSchema>) => void;
-  setQuestionFilters: (filters: Partial<QuestionFilterSchema>) => void;
   setImageFilters: (filters: Partial<ImageFilterSchema>) => void;
   setModelImageFilters: (filters: Partial<ModelImageFilterSchema>) => void;
   setPostFilters: (filters: Partial<PostFilterSchema>) => void;
   setArticleFilters: (filters: Partial<ArticleFilterSchema>) => void;
   setCollectionFilters: (filters: Partial<CollectionFilterSchema>) => void;
+  setCollectionModelFilters: (filters: Partial<CollectionFeedFilterSchema>) => void;
+  setCollectionImageFilters: (filters: Partial<CollectionFeedFilterSchema>) => void;
+  setCollectionPostFilters: (filters: Partial<CollectionFeedFilterSchema>) => void;
+  setCollectionArticleFilters: (filters: Partial<CollectionFeedFilterSchema>) => void;
   setBountyFilters: (filters: Partial<BountyFilterSchema>) => void;
   setCrucibleFilters: (filters: Partial<CrucibleFilterSchema>) => void;
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
@@ -256,12 +273,15 @@ type StoreState = FilterState & {
 type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.ZodObject }>;
 const localStorageSchemas: LocalStorageSchema = {
   models: { key: 'model-filters', schema: modelFilterSchema },
-  questions: { key: 'question-filters', schema: questionFilterSchema },
   images: { key: 'image-filters', schema: imageFilterSchema },
   modelImages: { key: 'model-image-filters', schema: modelImageFilterSchema },
   posts: { key: 'post-filters', schema: postFilterSchema },
   articles: { key: 'article-filters', schema: articleFilterSchema },
   collections: { key: 'collections-filters', schema: collectionFilterSchema },
+  collectionModels: { key: 'collection-model-filters', schema: collectionFeedFilterSchema },
+  collectionImages: { key: 'collection-image-filters', schema: collectionFeedFilterSchema },
+  collectionPosts: { key: 'collection-post-filters', schema: collectionFeedFilterSchema },
+  collectionArticles: { key: 'collection-article-filters', schema: collectionFeedFilterSchema },
   bounties: { key: 'bounties-filters', schema: bountyFilterSchema },
   crucibles: { key: 'crucibles-filters', schema: crucibleFilterSchema },
   videos: { key: 'videos-filters', schema: videoFilterSchema },
@@ -351,8 +371,6 @@ const createFilterStore = () =>
       ...getInitialLocalStorageValues(),
       setModelFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'models', data, state })),
-      setQuestionFilters: (data) =>
-        set((state) => handleLocalStorageChange({ key: 'questions', data, state })),
       setImageFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'images', data, state })),
       setModelImageFilters: (data) =>
@@ -363,6 +381,14 @@ const createFilterStore = () =>
         set((state) => handleLocalStorageChange({ key: 'articles', data, state })),
       setCollectionFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'collections', data, state })),
+      setCollectionModelFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'collectionModels', data, state })),
+      setCollectionImageFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'collectionImages', data, state })),
+      setCollectionPostFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'collectionPosts', data, state })),
+      setCollectionArticleFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'collectionArticles', data, state })),
       setBountyFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'bounties', data, state })),
       setCrucibleFilters: (data) =>
@@ -415,7 +441,7 @@ function deserializeJSON(value: string) {
   }
 }
 
-export function useSetFilters(type: FilterSubTypes) {
+export function useSetFilters(type: FilterSubTypes | CollectionFeedKey) {
   return useFiltersContext(
     useCallback(
       (state) =>
@@ -423,10 +449,13 @@ export function useSetFilters(type: FilterSubTypes) {
           models: state.setModelFilters,
           posts: state.setPostFilters,
           images: state.setImageFilters,
-          questions: state.setQuestionFilters,
           modelImages: state.setModelImageFilters,
           articles: state.setArticleFilters,
           collections: state.setCollectionFilters,
+          collectionModels: state.setCollectionModelFilters,
+          collectionImages: state.setCollectionImageFilters,
+          collectionPosts: state.setCollectionPostFilters,
+          collectionArticles: state.setCollectionArticleFilters,
           bounties: state.setBountyFilters,
           crucibles: state.setCrucibleFilters,
           videos: state.setVideoFilters,

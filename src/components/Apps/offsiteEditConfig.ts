@@ -67,7 +67,7 @@ export type ListingEditContext = {
    * which is true for both, and the owner-specific phrasing only on a positive `'owner'`.
    * See {@link isOwnerEdit}.
    */
-  role?: 'owner' | 'editor';
+  role?: 'owner' | 'editor' | 'moderator';
   hasPendingRevision: boolean;
   shadowId: string | null;
   scalars: {

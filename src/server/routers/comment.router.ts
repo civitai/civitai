@@ -14,12 +14,13 @@ import {
   upsertCommentHandler,
 } from '~/server/controllers/comment.controller';
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { rateLimit } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import type { CommentUpsertInput } from '~/server/schema/comment.schema';
 import { reactionRateLimits } from '~/server/schema/reaction.schema';
 import {
+  COMMENT_V3_RATE_LIMIT_KEY,
   commentRateLimits,
   commentUpsertInput,
   getAllCommentsSchema,
@@ -37,22 +38,35 @@ import {
   publicProcedure,
   router,
 } from '~/server/trpc';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { SITE_REACTION_RATE_LIMIT_KEY } from '~/shared/constants/block-reaction.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   if (!ctx?.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
 
-  const { id } = input as { id: number };
+  const { id, parentId } = input as { id?: number; parentId?: number | null };
   const userId = ctx.user.id;
+  const isModerator = ctx.user.isModerator;
   let ownerId: number = userId;
   if (id) {
-    const isModerator = ctx?.user?.isModerator;
-    ownerId = (await dbRead.comment.findUnique({ where: { id } }))?.userId ?? 0;
+    // The primary: an author's delete that just hid it must hold against their edit right after.
+    const comment = await dbWrite.comment.findUnique({
+      where: { id },
+      select: { userId: true, tosViolation: true },
+    });
+    ownerId = comment?.userId ?? 0;
     if (!isModerator && ownerId) {
       if (ownerId !== userId) throw throwAuthorizationError();
+      if (comment?.tosViolation) throw throwNotFoundError(`No comment with id ${id}`);
     }
+  }
+  if (parentId && !isModerator) {
+    const parent = await dbWrite.comment.findUnique({
+      where: { id: parentId },
+      select: { tosViolation: true },
+    });
+    if (parent?.tosViolation) throw throwNotFoundError(`No comment with id ${parentId}`);
   }
 
   return next({
@@ -141,7 +155,7 @@ export const commentRouter = router({
     .input(commentUpsertInput)
     .use(isOwnerOrModerator)
     .use(isLocked)
-    .use(rateLimit(commentRateLimits))
+    .use(rateLimit(commentRateLimits, undefined, { sharedKey: COMMENT_V3_RATE_LIMIT_KEY }))
     .mutation(upsertCommentHandler),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })

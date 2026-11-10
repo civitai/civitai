@@ -94,7 +94,7 @@ export const reportNotifications = createNotificationProcessor({
   },
   'entity-appeal-resolved': {
     displayName: 'Entity appeal resolved',
-    category: NotificationCategory.Other,
+    category: NotificationCategory.Moderation,
     toggleable: false,
     prepareMessage: ({ details }) => {
       // Sent by the moderator app's site-appeal queues; every other sender omits `category`.
@@ -118,7 +118,7 @@ export const reportNotifications = createNotificationProcessor({
   },
   'entity-appeal-content-removed': {
     displayName: 'Appealed content removed',
-    category: NotificationCategory.Other,
+    category: NotificationCategory.Moderation,
     toggleable: false,
     prepareMessage: ({ details }) => {
       const entity = String(details.entityType).toLowerCase();

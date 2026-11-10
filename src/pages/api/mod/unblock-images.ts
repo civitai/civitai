@@ -27,7 +27,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   ).catch();
 
   const startedAt = Date.now();
-  const updatedIds: number[] = [];
+  const candidateIds: number[] = [];
 
   try {
     const [{ maxId }] = await dbRead.$queryRaw<{ maxId: number | null }[]>`
@@ -42,31 +42,42 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
           AND "nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked})
       `;
       if (rows.length) {
-        updatedIds.push(...rows.map((r) => r.id));
+        candidateIds.push(...rows.map((r) => r.id));
         console.log(
           `[unblock-images] ids ${from}-${from + ID_RANGE}: ${
             rows.length
-          } eligible. Running total: ${updatedIds.length}`
+          } eligible. Running total: ${candidateIds.length}`
         );
       }
     }
 
-    console.log(`[unblock-images] Updating ${updatedIds.length} images in the database...`);
-    await dbWrite.image.updateMany({
-      where: { id: { in: updatedIds } },
+    console.log(`[unblock-images] Updating ${candidateIds.length} images in the database...`);
+    // The scan read the replica; only rows still blocked for moderation on the primary, and still
+    // matching the filter above, are cleared.
+    const unblocked = await dbWrite.image.updateManyAndReturn({
+      where: {
+        id: { in: candidateIds },
+        blockedFor: { in: ['moderated', 'Moderated'] },
+        needsReview: null,
+        nsfwLevel: { notIn: [0, NsfwLevel.Blocked] },
+      },
       data: { blockedFor: null },
+      select: { id: true },
     });
-    console.log(`[unblock-images] DB update complete.`);
+    const unblockedIds = unblocked.map((image) => image.id);
+    console.log(
+      `[unblock-images] DB update complete: cleared ${unblockedIds.length} of ${candidateIds.length} candidates.`
+    );
 
     // This clears `blockedFor` without touching `ingestion`, so any row still sitting at
     // ingestion='Blocked' would be armed for purge by trg_blocked_image_delete_queue on the
     // very update that was meant to unblock it.
-    await dropBlockedImageDeleteQueue(updatedIds);
+    await dropBlockedImageDeleteQueue(unblockedIds);
 
     // Update search index for the unblocked images
-    console.log(`[unblock-images] Updating search index for ${updatedIds.length} images...`);
+    console.log(`[unblock-images] Updating search index for ${unblockedIds.length} images...`);
     await queueImageSearchIndexUpdate({
-      ids: updatedIds,
+      ids: unblockedIds,
       action: SearchIndexUpdateQueueAction.Update,
     });
     console.log(`[unblock-images] Search index update complete.`);
@@ -76,16 +87,16 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     await trackModActivity(user.id, {
       entityType: 'image',
       activity: 'review',
-      entityId: updatedIds,
+      entityId: unblockedIds,
     });
     console.log(`[unblock-images] Moderator activity tracked for user ${user.id}.`);
 
     const elapsed = Date.now() - startedAt;
     console.log(
-      `[unblock-images] Completed. Total updated: ${updatedIds.length}, Time: ${elapsed}ms`
+      `[unblock-images] Completed. Total updated: ${unblockedIds.length}, Time: ${elapsed}ms`
     );
 
-    return res.status(200).json({ updated: updatedIds.length, ms: elapsed });
+    return res.status(200).json({ updated: unblockedIds.length, ms: elapsed });
   } catch (error) {
     const e = error as Error;
     console.error('[unblock-images] Error:', e);

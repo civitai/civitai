@@ -2,6 +2,7 @@ import { shortAge } from '$lib/format';
 import {
   chatAuditChatUrl,
   commentV2Url,
+  commentV3Url,
   entityUrl,
   modelCommentUrl,
   userLookupUrl,
@@ -18,6 +19,7 @@ export const CSAM_HOLD_ENTITY_TYPES = [
   'ChatMessage',
   'Comment',
   'CommentV2',
+  'CommentV3',
   'UserProfile',
 ] as const;
 
@@ -30,6 +32,7 @@ export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   ChatMessage: 'Chat message',
   Comment: 'Model comment',
   CommentV2: 'Comment',
+  CommentV3: 'Comment (new)',
   UserProfile: 'Profile',
 };
 
@@ -79,6 +82,7 @@ const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'ChatMessage',
   'Comment',
   'CommentV2',
+  'CommentV3',
   'UserProfile',
   'Post',
   'Model',
@@ -159,6 +163,7 @@ export function holdTitle(hold: {
       return 'Chat';
     case 'Comment':
     case 'CommentV2':
+    case 'CommentV3':
       return 'Comment';
     case 'UserProfile':
       return hold.username ?? (hold.userId ? `user #${hold.userId}` : 'Profile');
@@ -208,6 +213,8 @@ export function holdEntityHref(civitaiUrl: string, hold: HoldRef): string | null
   switch (hold.entityType) {
     case 'CommentV2':
       return commentV2Url(civitaiUrl, hold.entityId);
+    case 'CommentV3':
+      return commentV3Url(civitaiUrl, hold.entityId);
     case 'Comment':
       return hold.commentModelId
         ? modelCommentUrl(civitaiUrl, hold.commentModelId, hold.entityId)

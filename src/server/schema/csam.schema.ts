@@ -43,12 +43,34 @@ export const csamReportDetails = z.object({
   // userActivity: userActivitySchema.array().optional(),
 });
 
+export type CsamContextSources = z.infer<typeof csamContextSourcesSchema>;
+export const csamContextSourcesSchema = z.object({
+  postIds: z.number().int().positive().array().max(100),
+  commentIds: z.number().int().positive().array().max(500),
+});
+
 export type CreateCsamReportSchema = z.infer<typeof createCsamReportSchema>;
 export const createCsamReportSchema = z.object({
   userId: z.number(),
   imageIds: z.number().array().optional(),
   details: csamReportDetails.optional(),
   type: z.enum(CsamReportType),
+  /** A sent image report on the same user that this one supplements. */
+  supplementalOf: z.number().int().positive().optional(),
+  contextSources: csamContextSourcesSchema.optional(),
+});
+
+export type GetCsamContextCandidatesSchema = z.infer<typeof getCsamContextCandidatesSchema>;
+export const getCsamContextCandidatesSchema = z.object({
+  userId: z.number().int(),
+  imageIds: z.number().int().positive().array().max(1000),
+});
+
+export type GetCsamSupplementalPreviewSchema = z.infer<typeof getCsamSupplementalPreviewSchema>;
+export const getCsamSupplementalPreviewSchema = z.object({
+  userId: z.number().int().positive(),
+  imageIds: z.number().int().positive().array().max(1000),
+  supplementalOf: z.number().int().positive(),
 });
 
 // #endregion
@@ -109,3 +131,57 @@ export const createExternalCsamReportSchema = z.object({
     .optional(),
 });
 // #endregion
+
+/** A preserve request reads every workflow and copies every file inside one API call. */
+export const MAX_WORKFLOWS_PER_PRESERVE = 10;
+/** Every file of the request is probed and copied inside the same call. */
+export const MAX_FILES_PER_PRESERVE = 100;
+
+const cyberTipNumber = z.number().int().positive().max(9_999_999_999);
+const priorCTReportsSchema = cyberTipNumber.array().max(20).optional();
+
+export const generatorEvidenceUserSchema = z.object({ userId: z.number().int().positive() });
+
+export const generatorEvidenceWorkflowsSchema = generatorEvidenceUserSchema.extend({
+  cursor: z.string().max(200).optional(),
+});
+
+export type PreserveGeneratorEvidenceSchema = z.infer<typeof preserveGeneratorEvidenceSchema>;
+export const preserveGeneratorEvidenceSchema = generatorEvidenceUserSchema
+  .extend({
+    workflowIds: z.string().min(1).max(100).array().max(100).default([]),
+    triggers: z
+      .object({
+        restrictionId: z.number().int().positive(),
+        index: z.number().int().min(0).max(10_000),
+      })
+      .array()
+      .max(200)
+      .default([]),
+    priorCTReports: priorCTReportsSchema,
+    manifestKey: z.string().min(1).max(300).optional(),
+  })
+  .refine((input) => input.workflowIds.length + input.triggers.length > 0 || !!input.manifestKey, {
+    message: 'Pick at least one workflow or trigger, or name a manifest.',
+  });
+
+export const approveGeneratorEvidenceSchema = generatorEvidenceUserSchema.extend({
+  reportId: z.number().int().positive(),
+  version: z.string().min(1).max(64),
+  priorCTReports: priorCTReportsSchema,
+});
+
+export const generatorEvidenceFileSchema = generatorEvidenceUserSchema.extend({
+  reportId: z.number().int().positive(),
+  blobId: z.string().min(1).max(300),
+});
+
+export const excludeGeneratorEvidenceFileSchema = generatorEvidenceFileSchema.extend({
+  reason: z.string().trim().min(3).max(1000),
+});
+
+export const clearUnconfirmedOpenSchema = z.object({
+  reportId: z.number().int().positive(),
+  /** What the moderator checked with NCMEC before clearing it. */
+  note: z.string().trim().min(3).max(1000),
+});

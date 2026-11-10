@@ -1,108 +1,48 @@
 import { Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
-import type { RefinementListProps } from 'react-instantsearch';
 import { useInstantSearch } from 'react-instantsearch';
 import {
   BrowsingLevelFilter,
-  ChipRefinementList,
   DateRangeRefinement,
   SearchableMultiSelectRefinementList,
-  SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { SearchLayout } from '~/components/Search/SearchLayout';
-import { ImageSearchMaintenanceNotice } from '~/components/Search/ImageSearchMaintenance';
-import { IconCloudOff } from '@tabler/icons-react';
+import { IconCloudOff, IconPhotoSearch } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
-import { ImagesSearchIndexSortBy } from '~/components/Search/parsers/image.parser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
+import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
 import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { MediaType } from '~/shared/utils/prisma/enums';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { isDefined } from '~/utils/type-guards';
-import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
-import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
+import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
 
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 export default function ImageSearch() {
-  const features = useFeatureFlags();
   return (
     <SearchLayout.Root>
       <SearchLayout.Content>
         <SearchHeader />
-        {features.imageSearch ? <ImagesHitList /> : <ImageSearchMaintenanceNotice />}
+        <ImagesHitList />
       </SearchLayout.Content>
     </SearchLayout.Root>
   );
 }
 
-const filterMediaTypesOptions: RefinementListProps['transformItems'] = (items) => {
-  return items.filter((item) => item.value !== MediaType.audio);
-};
-
 function RenderFilters() {
-  const features = useFeatureFlags();
-  const browsingSettingsAddons = useBrowsingSettingsAddons();
-  const currentUser = useCurrentUser();
-
-  const items = [
-    { label: 'Relevancy', value: ImagesSearchIndexSortBy[0] as string },
-    { label: 'Most Reactions', value: ImagesSearchIndexSortBy[1] as string },
-    { label: 'Most Discussed', value: ImagesSearchIndexSortBy[2] as string },
-    { label: 'Most Collected', value: ImagesSearchIndexSortBy[3] as string },
-    { label: 'Most Buzz', value: ImagesSearchIndexSortBy[4] as string },
-    { label: 'Newest', value: ImagesSearchIndexSortBy[5] as string },
-  ];
-
-  const filters = [
-    browsingSettingsAddons.settings.disablePoi
-      ? `poi != true${
-          currentUser?.username
-            ? ` OR user.username = ${quoteMeiliValue(currentUser.username)}`
-            : ''
-        }`
-      : null,
-    buildMinorExclusionFilter({
-      targetIndex: 'images',
-      addons: browsingSettingsAddons.settings,
-      currentUser,
-    }),
-    // Filter out images from NSFW models with restricted base models
-    `NOT (nsfwLevel IN [${nsfwBrowsingLevelsArray.join(
-      ', '
-    )}] AND baseModel IN [${nsfwRestrictedBaseModels.map((model) => `'${model}'`).join(', ')}])`,
-  ].filter(isDefined);
-
+  // Sort, media type, aspect ratio, tools and techniques return when the image index carries
+  // what they need (docs/image-search-qdrant-plan.md).
   return (
-    <>
-      <BrowsingLevelFilter indexKey="images" filters={filters} />
-      <SortBy
-        title="Sort images by"
-        items={!features.canViewNsfw ? items.filter((x) => x.label !== 'Newest') : items}
-      />
-      <DateRangeRefinement title="Filter by Creation Date" attribute="createdAtUnix" />
-      <ChipRefinementList
-        title="Filter by Media Type"
-        sortBy={['name']}
-        operator="or"
-        attribute="type"
-        transformItems={filterMediaTypesOptions}
-      />
-      <ChipRefinementList
-        title="Filter by Aspect Ratio"
-        sortBy={['name']}
-        attribute="aspectRatio"
-      />
+    <div className="flex flex-col gap-4 pt-4 [&_.mantine-Accordion-control]:pt-2 [&_.mantine-Accordion-panel]:pb-1">
+      <Text size="sm" c="dimmed" className="px-4 pb-2">
+        Filters narrow down a search. Type what you&rsquo;re looking for in the search bar first.
+      </Text>
+      <BrowsingLevelFilter indexKey="images" />
+      <DateRangeRefinement title="Filter by Posted Date" attribute="createdAtUnix" />
       <SearchableMultiSelectRefinementList title="Users" attribute="user.username" searchable />
       <SearchableMultiSelectRefinementList
         title="Tags"
@@ -111,31 +51,22 @@ function RenderFilters() {
         searchable
       />
       <SearchableMultiSelectRefinementList
-        title="Tools"
-        attribute="toolNames"
-        operator="and"
-        searchable
-      />
-      <SearchableMultiSelectRefinementList
-        title="Techniques"
-        attribute="techniqueNames"
-        operator="and"
-        searchable
-      />
-      <SearchableMultiSelectRefinementList
         title="Filter by Base Model"
         sortBy={['name']}
         attribute="baseModel"
-        limit={100}
+        limit={SEARCH_FACET_LIMIT}
         searchable
+        remoteSearch={false}
         renderOption={renderBaseModelOption}
       />
-    </>
+    </div>
   );
 }
 
 function ImagesHitList() {
-  const { status } = useInstantSearch();
+  const { status, indexUiState, results } = useInstantSearch();
+  const correctedQuery = (results?.userData as { correctedQuery?: string }[] | undefined)?.[0]
+    ?.correctedQuery;
 
   const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'images'>();
 
@@ -144,6 +75,30 @@ function ImagesHitList() {
     data: hits,
   });
   const decorated = useSearchEventDecorations(hits, items as { id: number }[], { entity: 'Image' });
+
+  // Image search ranks by meaning, so it needs words to rank by; filters alone list nothing.
+  if (!indexUiState.query?.trim()) {
+    const hasFilters =
+      Object.values(indexUiState.refinementList ?? {}).some((values) => values.length > 0) ||
+      Object.values(indexUiState.range ?? {}).some(Boolean);
+    return (
+      <Center mt="md">
+        <Stack gap="md" align="center" maw={600}>
+          <ThemeIcon size={128} radius={100} className="opacity-50">
+            <IconPhotoSearch size={80} />
+          </ThemeIcon>
+          <Title order={1} lh={1} ta="center">
+            {hasFilters ? 'Add a search term' : 'Search images'}
+          </Title>
+          <Text align="center">
+            {hasFilters
+              ? 'Image search starts from what you describe. Filters like users, tags and base model narrow those results, but they can’t list images on their own.'
+              : 'Describe what you want to see, like “a red fox in the snow”, then use the filters to narrow the results.'}
+          </Text>
+        </Stack>
+      </Center>
+    );
+  }
 
   if (hits.length === 0) {
     const NotFound = (
@@ -202,6 +157,11 @@ function ImagesHitList() {
 
   return (
     <Stack>
+      {correctedQuery && (
+        <Text size="sm">
+          Showing results for <strong>{correctedQuery}</strong>
+        </Text>
+      )}
       {hiddenCount > 0 && (
         <Text c="dimmed">{hiddenCount} images have been hidden due to your settings.</Text>
       )}
@@ -227,10 +187,7 @@ function ImagesHitList() {
               const height = data?.height ?? 450;
               return { width, height };
             }}
-            adjustHeight={({ height }) => {
-              const imageHeight = Math.max(Math.min(height, 600), 150);
-              return imageHeight;
-            }}
+            adjustHeight={(args) => adjustImagesCardHeight(args)}
             maxItemHeight={600}
             render={ImagesCardMemoized}
             itemId={(data) => data.id}
@@ -254,17 +211,13 @@ function ImagesHitList() {
 }
 
 function ImageSearchLayout({ children }: { children: React.ReactNode }) {
-  const features = useFeatureFlags();
   return (
     <SearchLayout
       indexName={IMAGES_SEARCH_INDEX}
-      maintenance={!features.imageSearch}
       leftSidebar={
-        features.imageSearch ? (
-          <SearchLayout.Filters>
-            <RenderFilters />
-          </SearchLayout.Filters>
-        ) : undefined
+        <SearchLayout.Filters>
+          <RenderFilters />
+        </SearchLayout.Filters>
       }
     >
       {children}
@@ -279,10 +232,7 @@ ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features }) => {
-    // Only redirect when the Images entry is hidden entirely. When it stays visible
-    // (`imageSearchEntry`) but search is off (`imageSearch`), the page renders a maintenance
-    // notice in place — old bookmarks land on the notice instead of a redirect.
-    if (!features?.imageSearch && !features?.imageSearchEntry)
+    if (!features?.imageSearch)
       return { redirect: { destination: '/search/models', permanent: false } };
   },
 });

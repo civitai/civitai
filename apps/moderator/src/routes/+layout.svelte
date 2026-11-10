@@ -16,6 +16,7 @@
     IconScanLetterT,
     IconChartBar,
     IconScale,
+    IconTicket,
     IconCircle,
     IconChevronRight,
     IconLogout,
@@ -62,7 +63,6 @@
     refreshSidebarCounts,
   } from '$lib/sidebar-counts.svelte';
   import {
-    URGENT_SEVERITY_RANK,
     queueWaitBadge,
     severityClassForRank,
   } from '$lib/queue-thresholds';
@@ -70,6 +70,8 @@
   import { minuteClock } from '$lib/minute-clock.svelte';
   import UserCardPopover from '$lib/components/user-card/UserCardPopover.svelte';
   import QuickSwitcher from '$lib/components/QuickSwitcher.svelte';
+  import { SvelteSet } from 'svelte/reactivity';
+  import { writeOpenNavGroups } from '$lib/nav-open-groups';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -87,7 +89,11 @@
     '/admin': IconShieldLock,
     '/page-visits': IconChartBar,
   };
-  const groupIcons: Record<string, typeof IconPhoto> = { Images: IconPhoto, Users: IconUsers };
+  const groupIcons: Record<string, typeof IconPhoto> = {
+    Images: IconPhoto,
+    Users: IconUsers,
+    Tickets: IconTicket,
+  };
   const iconFor = (item: NavLink) =>
     (item.path ? icons[item.path] : groupIcons[item.label]) ?? IconCircle;
 
@@ -127,18 +133,15 @@
   // Threshold colour on top-level counts only; a group takes its worst queue's, so a collapsed group
   // still says when something inside it is behind.
   const severityFor = (link: NavLink) => severityClassForRank(navWorstRank(link, countFor));
-  const overThreshold = (link: NavLink) =>
-    (navWorstRank(link, countFor) ?? Infinity) <= URGENT_SEVERITY_RANK;
 
-  // Collapsed unless you're working inside the section or something in it is over threshold; an
-  // explicit toggle wins from then on.
-  let openGroups = $state<Record<string, boolean>>({});
-  const holdsCurrentPage = (item: NavLink) =>
-    !!item.children?.some(
-      (child) => !child.external && !!child.path && isPathActive(child.path, page.url.pathname)
-    );
-  const isOpen = (item: NavLink) =>
-    openGroups[item.label] ?? (holdsCurrentPage(item) || overThreshold(item));
+  // Collapsed until the moderator opens one; their open sections are remembered across visits.
+  const openGroups = $derived(new SvelteSet(data.openNavGroups));
+  const isOpen = (item: NavLink) => openGroups.has(item.label);
+  const setOpen = (item: NavLink, open: boolean) => {
+    if (open) openGroups.add(item.label);
+    else openGroups.delete(item.label);
+    writeOpenNavGroups([...openGroups]);
+  };
 
   const who = $derived(data.user?.username ?? `user #${data.user?.id}`);
 
@@ -194,7 +197,7 @@
                   {@const rollup = badgeFor(item, rollupFor(item))}
                   <Collapsible
                     open={isOpen(item)}
-                    onOpenChange={(o) => (openGroups[item.label] = o)}
+                    onOpenChange={(o) => setOpen(item, o)}
                   >
                     <SidebarMenuItem>
                       <CollapsibleTrigger>

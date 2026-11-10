@@ -1,5 +1,6 @@
 <script lang="ts">
   import { dateTime } from '$lib/format';
+  import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { enhance } from '$app/forms';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
@@ -480,7 +481,21 @@
                 {/if}
               </p>
             {:else}
-              <p class="mb-2 text-sm text-muted-foreground">This storyline no longer exists.</p>
+              {@const deleted = data.deletedStorylines.find((d) => d.reportId === selected.id)}
+              {#if deleted?.held}
+                <p class="mb-2 text-sm" title={fmtDate(deleted.held.deletedAt)}>
+                  <span class="font-medium">{deleted.title}</span> was deleted by
+                  {deleted.held.deletedByOwner ? 'its owner' : 'a moderator'}. A copy of it and its
+                  {deleted.held.chapters} chapters is kept for records.
+                  <a href={userLookupUrl(deleted.held.userId, 'reports')} class="underline">Owner</a>
+                </p>
+              {:else if deleted?.title}
+                <p class="mb-2 text-sm text-muted-foreground">
+                  <span class="font-medium">{deleted.title}</span> was deleted.
+                </p>
+              {:else}
+                <p class="mb-2 text-sm text-muted-foreground">This storyline no longer exists.</p>
+              {/if}
             {/if}
             {#if storyline && !storyline.tosViolationByModerator}
               <p class="mb-2 text-sm">
@@ -534,6 +549,16 @@
             {#if storylineForm.error}
               <p class="mt-2 text-sm text-red-300" role="alert">{storylineForm.error}</p>
             {/if}
+            {#each data.storylineHolds.filter((h) => h.reportIds.includes(selected.id)) as hold}
+              {@const postUrl = entityUrl(data.civitaiUrl, 'post', hold.postId)}
+              <p class="mt-3 text-sm" title={fmtDate(hold.createdAt)}>
+                Chapter {hold.number} ({hold.storylineTitle}) removed by its {hold.removedByRole} while this report
+                was open.
+                {#if postUrl}
+                  <a href={postUrl} target="_blank" rel="noopener" class="underline">View post</a>
+                {/if}
+              </p>
+            {/each}
           </div>
         {/if}
 

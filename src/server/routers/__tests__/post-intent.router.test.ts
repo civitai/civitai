@@ -20,7 +20,7 @@ const ctx = (features: Record<string, boolean>) =>
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     features: { trpcFlagGuardPerRequest: true, ...features },
-    req: { headers: {} },
+    req: { headers: { host: 'civitai.com' } },
     res: { setHeader: () => undefined },
   } as never);
 
@@ -39,9 +39,13 @@ describe('postIntent router', () => {
     expect(svc.stageIntent).not.toHaveBeenCalled();
   });
 
-  it('stages for the signed-in user when the flag is on', async () => {
+  it('stages for the signed-in user, on the host they are on, when the flag is on', async () => {
     await postIntentRouter.createCaller(ctx({ appPostIntent: true })).stage({ manifestUrl });
-    expect(svc.stageIntent).toHaveBeenCalledWith({ manifestUrl, userId: 7 });
+    expect(svc.stageIntent).toHaveBeenCalledWith({
+      manifestUrl,
+      userId: 7,
+      requestHost: 'civitai.com',
+    });
   });
 
   it('reports a second post as a conflict', async () => {
