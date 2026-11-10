@@ -37,11 +37,11 @@ const builds: Array<[string, () => Promise<typeof ReactQuery>]> = [
   ['CommonJS', async () => requireHere(path.join(pkgDir, 'build/modern/index.cjs'))],
 ];
 
-type MutationResult = ReturnType<typeof ReactQuery.useMutation>;
+type MutationResult = ReactQuery.UseMutationResult<number, Error, number>;
 
 function renderCapturing(rq: typeof ReactQuery, client: ReactQuery.QueryClient, calls = 1) {
   const results: MutationResult[] = [];
-  const mutationFn = vi.fn(async (n: number) => n * 2);
+  const mutationFn = vi.fn(async (n: number): Promise<number> => n * 2);
   function Probe() {
     for (let i = 0; i < calls; i++) results.push(rq.useMutation({ mutationFn }));
     return createElement('i', null, results[0].status);
