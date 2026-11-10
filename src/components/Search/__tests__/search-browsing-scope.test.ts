@@ -48,16 +48,17 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 vi.mock('~/providers/BrowserSettingsProvider', () => ({
   useBrowsingSettings: (select: (state: typeof settings) => unknown) => select(settings),
 }));
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof Trpc>()),
-  trpc: {
-    system: {
-      getBrowsingSettingAddons: {
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof Trpc>()),
+    trpc: makeTrpcProxy({
+      'system.getBrowsingSettingAddons': {
         useQuery: () => ({ data: DEFAULT_BROWSING_SETTINGS_ADDONS, isLoading: false }),
       },
-    },
-  },
-}));
+    }),
+  };
+});
 vi.mock('~/components/HiddenPreferences/HiddenPreferencesProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof HiddenPreferencesModule>()),
   useHiddenPreferencesContext: () => ({
