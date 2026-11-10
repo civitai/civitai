@@ -189,8 +189,8 @@ describe.each(SURFACES)('%s and a deleted or taken-down model', (_, read) => {
     const files = await read(TAKEN_DOWN, user);
     const weightsFile = files.find((f) => f.id === 1);
 
-    expect(weightsFile?.metadata.selectedEpochUrl).toBeUndefined();
-    expect(epochsOf(weightsFile)[0]).not.toHaveProperty('modelUrl');
+    expect(weightsFile).toBeDefined();
+    expect(JSON.stringify(weightsFile)).not.toContain(EPOCH_URL);
   });
 
   it('gives a moderator the stored metadata', async () => {

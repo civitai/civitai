@@ -38,6 +38,8 @@ export type ModelPayload = {
   username: string | null;
   /** sha256 of search_text: a point whose hash differs is re-embedded. */
   docHash: string;
+  /** Set on write, see withPayloadHash. */
+  payloadHash?: string;
 };
 
 type Row = ModelSource & {

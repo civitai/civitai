@@ -979,8 +979,8 @@ export async function isAppBlocksAgenticReviewAutostartEnabled(): Promise<boolea
  * GLOBAL flag: publish review previews to the shared static server instead of rendering a
  * per-preview Deployment/Service/route. ON: the review apply Job runs the smoke test then the
  * review-lane publish; reachability is an origin probe through the shared route; teardown runs
- * the review unpublish Job. OFF: the per-preview objects, exactly as before. Base-value
- * evaluation (no user), like the other machine-side flags.
+ * the review unpublish Job. OFF: a per-preview Deployment/Service/route. Base-value evaluation
+ * (no user), like the other machine-side flags.
  */
 export const APP_BLOCKS_REVIEW_SHARED_SERVER_FLAG = 'app-blocks-review-shared-server';
 
@@ -991,7 +991,9 @@ export async function isAppBlocksReviewSharedServerEnabled(): Promise<boolean> {
 /**
  * GLOBAL flag: when a LIVE on-site app is delisted (moderator delist, moderator reset to
  * pending, owner unpublish), also remove it from the shared static server so its subdomain stops
- * serving. OFF: the block is only suspended, as before. Base-value evaluation (no user).
+ * serving; a relist puts it back. OFF: the block is only suspended and the subdomain keeps serving
+ * its last published build, though an app taken down while the flag was on is still put back on
+ * relist. Base-value evaluation (no user).
  */
 export const APP_BLOCKS_LIVE_UNPUBLISH_FLAG = 'app-blocks-live-unpublish';
 

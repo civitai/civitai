@@ -1,6 +1,7 @@
 import type { AutocompleteProps } from '@mantine/core';
 import { Group, Select } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
@@ -320,6 +321,9 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const isSubmittingOptionRef = useRef(false);
   const showSfwFace = useShowsSfwFace();
+  // The dropdown portals at Mantine's popover z-index (300), but a registry dialog stacked on
+  // another sits at 300 + index and would cover it.
+  const dialogZIndex = useDialogContext().zIndex;
 
   const indexName = results?.index
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
@@ -456,6 +460,10 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
       clearable={query.length > 0}
       loading={loading}
       {...autocompleteProps}
+      comboboxProps={{
+        zIndex: dialogZIndex ? dialogZIndex + 1 : undefined,
+        ...autocompleteProps.comboboxProps,
+      }}
     />
   );
 }

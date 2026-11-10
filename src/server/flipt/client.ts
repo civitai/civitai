@@ -134,6 +134,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // Needs its key in flag state (enabled: false) BEFORE this code serves traffic: a missing key
   // makes evaluateBoolean throw and log on every call.
   CONTEST_COLLECTION_ITEMS_REDIS_CACHE = 'contest-collection-items-redis-cache',
+  // Per-process (L1) cache switches, one per cache, so each can be A/B'd and rolled back alone.
+  // Read through `~/server/redis/l1-switches`, which holds their TTL values; a missing key reads as
+  // off. Add each key (enabled: false) to flag state before flipping it.
+  //
+  // Gates the longer `basic-tags` (tagCache) L1 TTL.
+  BASIC_TAGS_L1_LONG_TTL = 'basic-tags-l1-long-ttl',
+  // Gates an L1 in front of the `cosmetics2` catalog cache (cosmeticCache).
+  COSMETICS_L1 = 'cosmetics-l1',
+  // Gates an L1 in front of `images-for-model-version-2` (imagesForModelVersionsCache).
+  MODEL_VERSION_IMAGES_L1 = 'model-version-images-l1',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',

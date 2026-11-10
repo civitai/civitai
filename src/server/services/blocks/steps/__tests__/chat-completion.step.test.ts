@@ -1608,12 +1608,8 @@ describe('chat-completion — extractToolCalls', () => {
 });
 
 /**
- * 🔴 THE SOUNDNESS PIN FOR `freeTextParamPaths`. The generation input gate does
- * not read a link in a declared free-text string as an image input. That is
- * sound only while the step's own schema admits NOTHING BUT A STRING at each
- * declared path: a content-part array would carry an `image_url` the
- * orchestrator fetches, and a `{ $ref }` object could wire another step's url
- * in. Widen such a field and these go red.
+ * 🔴 The soundness pin for `freeTextParamPaths`; the claim is stated once, at its
+ * declaration in `steps/index.ts`. Widen a declared field and these go red.
  */
 describe('free-text param paths', () => {
   /** Replace every value at `path` (`a.b`, `a[]` = each item) in a copy of `params`. */
@@ -1669,11 +1665,15 @@ describe('free-text param paths', () => {
         .filter(([, step]) => step.freeTextParamPaths !== undefined)
         .map(([id, step]): [string, unknown] => [id, step.freeTextParamPaths])
     );
-    expect(declared).toEqual({ 'chat-completion': ['messages[].content'] });
+    expect(declared).toEqual({
+      'chat-completion': ['messages[].content', 'tools[].function.**'],
+    });
   });
 
   for (const [id, step] of listRegisteredSteps()) {
-    for (const path of step.freeTextParamPaths ?? []) {
+    // A `.**` path declares a whole subtree, not a string; each has its own pin below (the
+    // ledger above names every one).
+    for (const path of (step.freeTextParamPaths ?? []).filter((p) => !p.endsWith('.**'))) {
       it.each(NOT_A_STRING)(`${id}: its schema refuses %s at '${path}'`, (_, value) => {
         for (const variant of step.variants) {
           const canonical = step.canonicalParamsFor(variant);
@@ -1716,4 +1716,87 @@ describe('free-text param paths', () => {
       for (const [, value] of NOT_A_STRING) expect(parse(withContent(value)).success).toBe(false);
     }
   );
+
+  /**
+   * 🔴 `tools[].function.**` (INVARIANT GUARDS — green before the path was declared too; they
+   * pin the assumption that makes it sound). Everything under a tool's `function` is text the
+   * model is shown, never fetched: that holds only while a tool's `type` is the literal
+   * 'function' (a server-side tool type, such as a web fetch, would make the orchestrator fetch)
+   * and neither the tool nor its `function` accepts a field beyond name/description/parameters.
+   */
+  describe("chat-completion: 'tools[].function.**'", () => {
+    const SCHEMA_URL = 'https://json-schema.org/draft/2020-12/schema';
+    const tool = (over: Record<string, unknown> = {}, fn: Record<string, unknown> = {}) => ({
+      type: 'function',
+      function: {
+        name: 'search_models',
+        description: 'Search models',
+        parameters: { $schema: SCHEMA_URL, type: 'object', properties: {} },
+        ...fn,
+      },
+      ...over,
+    });
+    const withTools = (...tools: unknown[]) => ({ ...VALID_PARAMS, tools });
+
+    it('POSITIVE CONTROL: a tool whose parameters carry a $schema url parses', () => {
+      expect(parse(withTools(tool())).success).toBe(true);
+    });
+
+    it.each(['civitai:web_search', 'web_search', 'web_search_preview', 'file_search', 'url'])(
+      "refuses a tool whose type is '%s', not 'function'",
+      (type) => {
+        expect(parse(withTools(tool({ type }))).success).toBe(false);
+      }
+    );
+
+    it('refuses a tool with no type', () => {
+      const untyped: Record<string, unknown> = tool();
+      delete untyped.type;
+      expect(parse(withTools(untyped)).success).toBe(false);
+    });
+
+    it.each([
+      ['parameters', { url: 'https://example.com/a.png' }],
+      ['url', 'https://example.com/a.png'],
+      ['image_url', { url: 'https://example.com/a.png' }],
+      ['$ref', '$arguments'],
+    ])("refuses a tool-level '%s' field", (key, value) => {
+      expect(parse(withTools(tool({ [key]: value }))).success).toBe(false);
+    });
+
+    it.each([
+      ['url', 'https://example.com/a.png'],
+      ['image_url', { url: 'https://example.com/a.png' }],
+      ['$ref', '$arguments'],
+      ['path', 'image'],
+    ])("refuses a '%s' field inside a tool's function", (key, value) => {
+      expect(parse(withTools(tool({}, { [key]: value }))).success).toBe(false);
+    });
+
+    it('refuses a tool whose function is a $ref object or a string', () => {
+      for (const fn of [{ $ref: '$arguments', path: 'image' }, 'https://example.com/a.png'])
+        expect(parse(withTools({ type: 'function', function: fn })).success).toBe(false);
+    });
+
+    it('refuses an image_url anywhere outside a tool function: a message part, a top-level field', () => {
+      const part = { type: 'image_url', image_url: { url: 'https://example.com/a.png' } };
+      expect(
+        parse({ ...VALID_PARAMS, messages: [{ role: 'user', content: [part] }] }).success
+      ).toBe(false);
+      expect(parse({ ...VALID_PARAMS, image_url: part.image_url }).success).toBe(false);
+      expect(parse({ ...withTools(tool()), image: 'https://example.com/a.png' }).success).toBe(
+        false
+      );
+    });
+
+    it('INVARIANT GUARD: the built step input carries no other step, no arguments, and the tools as given', () => {
+      const params = parse(withTools(tool()));
+      expect(params.success).toBe(true);
+      const built = chatCompletionStep.buildStep(params.data as ChatCompletionStepParams);
+      expect(built.$type).toBe('chatCompletion');
+      const input = built.input as Record<string, unknown>;
+      expect(Object.keys(input)).not.toContain('arguments');
+      expect(input.tools).toEqual([tool()]);
+    });
+  });
 });
