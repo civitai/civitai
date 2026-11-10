@@ -68,7 +68,7 @@ vi.mock('~/utils/delivery-worker', async (importOriginal) => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { resetEnv } from '~/__tests__/mocks/env.mock';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import handler from '~/pages/api/download/models/[modelVersionId]';
@@ -186,6 +186,27 @@ describe('an unknown provider token', () => {
 
   it('is a 401 whatever comes before the colon', async () => {
     const { res } = await run({ token: 'not a provider:x' });
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith({ error: 'invalid provider token' });
+  });
+});
+
+describe('a configured webhook token that contains a colon', () => {
+  const WEBHOOK = `hook:${'ef'.repeat(20)}`;
+
+  it('keeps the path it had before provider tokens: not a provider token, left on the request', async () => {
+    setEnv({ WEBHOOK_TOKEN: WEBHOOK });
+    const { req, res } = await run({ token: WEBHOOK });
+
+    expect(mockGetLiveProviderTokens).not.toHaveBeenCalled();
+    expect(req.query.token).toBe(WEBHOOK);
+    expect(res.redirect).toHaveBeenCalledWith('https://storage.example/public');
+  });
+
+  it('control: only the exact value is exempt; one character more is a provider token', async () => {
+    setEnv({ WEBHOOK_TOKEN: WEBHOOK });
+    const { res } = await run({ token: `${WEBHOOK}0` });
+
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith({ error: 'invalid provider token' });
   });

@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import type { NextApiRequest } from 'next';
+import { matchWebhookToken } from '~/server/utils/webhook-token';
 
 /**
  * A per-provider download token is `<provider>:<secret>`, sent as `?token=` on the download routes.
@@ -103,11 +104,16 @@ export type ProviderTokenParam =
  * Reads `?token=` for a per-provider download token. When one is present it is removed from
  * `req.query` and `req.url`, so no session code sees it and no log line this app writes after this
  * point carries it. A `?token=` without `:` is left alone: it is a user API key.
+ *
+ * A `?token=` that is exactly a configured webhook token is left alone too, even if it contains `:`.
+ * Session code already skips that value, so such a request keeps being served as it was before
+ * provider tokens existed.
  */
 export function takeProviderToken(req: NextApiRequest): ProviderTokenParam {
   const raw = req.query.token;
   const values = raw === undefined ? [] : Array.isArray(raw) ? raw : [raw];
-  if (!values.some(isProviderToken)) return { kind: 'none' };
+  if (!values.some((value) => isProviderToken(value) && !matchWebhookToken(value)))
+    return { kind: 'none' };
 
   delete req.query.token;
   if (req.url) {
