@@ -13,36 +13,45 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { env, queueModelsReindex, collectionsOf, enqueueCollectionRebuild, queuedCollections } =
-  vi.hoisted(() => {
-    const queuedCollections = new Set<number>();
-    return {
-      env: {
-        WEBHOOK_TOKEN: 'test-token',
-        LOGGING: '',
-        NEXTAUTH_URL: 'https://example.test',
-        TRPC_ORIGINS: [] as string[],
-      },
-      queueModelsReindex: vi.fn(async (ids: number[]) => ({ ids: ids.length })),
-      // Model n's images show in collections 10n and 100 (shared, so it must be queued once).
-      collectionsOf: vi.fn(
-        async ({
-          modelId,
-        }: {
-          modelId: number;
-        }): Promise<{
-          collectionIds: number[];
-          truncated: boolean;
-          failed?: boolean;
-        }> => ({ collectionIds: [modelId * 10, 100], truncated: false })
-      ),
-      enqueueCollectionRebuild: vi.fn(async ({ collectionIds }: { collectionIds: number[] }) => {
-        for (const id of collectionIds) queuedCollections.add(id);
-        return { queued: collectionIds.length, truncated: false };
-      }),
-      queuedCollections,
-    };
-  });
+const {
+  env,
+  queueModelsReindex,
+  collectionsOf,
+  enqueueCollectionRebuild,
+  queuedCollections,
+  getQueue,
+  coverLegUsable,
+} = vi.hoisted(() => {
+  const queuedCollections = new Set<number>();
+  return {
+    env: {
+      WEBHOOK_TOKEN: 'test-token',
+      LOGGING: '',
+      NEXTAUTH_URL: 'https://example.test',
+      TRPC_ORIGINS: [] as string[],
+    },
+    queueModelsReindex: vi.fn(async (ids: number[]) => ({ ids: ids.length })),
+    // Model n's images show in collections 10n and 100 (shared, so it must be queued once).
+    collectionsOf: vi.fn(
+      async ({
+        modelId,
+      }: {
+        modelId: number;
+      }): Promise<{
+        collectionIds: number[];
+        truncated: boolean;
+        failed?: boolean;
+      }> => ({ collectionIds: [modelId * 10, 100], truncated: false })
+    ),
+    enqueueCollectionRebuild: vi.fn(async ({ collectionIds }: { collectionIds: number[] }) => {
+      for (const id of collectionIds) queuedCollections.add(id);
+      return { queued: collectionIds.length, truncated: false };
+    }),
+    queuedCollections,
+    getQueue: vi.fn(async () => ({ content: [...queuedCollections] })),
+    coverLegUsable: vi.fn(async () => true),
+  };
+});
 
 vi.mock('~/env/server', () => ({ env }));
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
@@ -51,13 +60,13 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/search-index/queue-models-reindex', () => ({ queueModelsReindex }));
 // The collections queue, as the read-back sees it.
 vi.mock('~/server/search-index/SearchIndexUpdate', () => ({
-  SearchIndexUpdate: { getQueue: async () => ({ content: [...queuedCollections] }) },
+  SearchIndexUpdate: { getQueue },
 }));
 // The lookup's SQL is collection-media-index-model-images.behavior.test.ts's to pin.
 vi.mock('~/server/services/collection-media-index', () => ({
   getCollectionIdsForModelImages: collectionsOf,
   enqueueCollectionRebuild,
-  isCoverLegUsable: async () => true,
+  isCoverLegUsable: coverLegUsable,
 }));
 
 const handler = (await import('~/pages/api/admin/temp/queue-takendown-models-reindex')).default;
@@ -150,6 +159,31 @@ describe('/api/admin/temp/queue-takendown-models-reindex', () => {
         truncated: false,
         dryRun: false,
       });
+      // Read back without checking the queue out, so the sync still gets it.
+      expect(getQueue).toHaveBeenCalledWith('collections_v3', 'Update', true);
+    });
+
+    it.each([true, false])(
+      'checks the cover leg once per page and hands the answer (%s) to every lookup',
+      async (usable) => {
+        coverLegUsable.mockResolvedValueOnce(usable);
+        expect(await call({ target: 'collections', dryRun: 'true' })).toBe(200);
+        expect(coverLegUsable).toHaveBeenCalledTimes(1);
+        expect(
+          collectionsOf.mock.calls.map(([arg]) => (arg as { withCover?: boolean }).withCover)
+        ).toEqual([usable, usable, usable, usable]);
+        expect(body).toMatchObject({ coverLeg: usable });
+      }
+    );
+
+    it.each([
+      ['take', '0'],
+      ['take', '201'],
+      ['afterId', '-1'],
+    ])('refuses %s=%s and queues nothing', async (param, value) => {
+      expect(await call({ target: 'collections', dryRun: 'false', [param]: value })).toBe(400);
+      expect(collectionsOf).not.toHaveBeenCalled();
+      expect(enqueueCollectionRebuild).not.toHaveBeenCalled();
     });
 
     it('takes a page of models at a time and says where the next page starts', async () => {

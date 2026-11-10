@@ -40,7 +40,8 @@ import { ModelModifier } from '~/shared/utils/prisma/enums';
  *
  * models: read back from the queue; what `landed` proves is in `queueModelsReindex`.
  * collections: `collections` is how many were found for this page of models, and `landed` how
- * many of those are in the queue afterwards (equal on a good run; low means re-run the page).
+ * many of those are in the queue afterwards. Low means the enqueue failed or the sync checked the
+ * queue out in between; either way, re-run the page, which is harmless.
  * `failedModelIds` lists models whose lookup failed and found nothing, and `truncated` says a
  * model's lookup hit its cap; either means this page is incomplete.
  */

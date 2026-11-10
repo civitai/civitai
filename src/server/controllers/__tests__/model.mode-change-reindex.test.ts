@@ -138,8 +138,8 @@ describe("a change of a model's mode", () => {
   });
 
   it('rebuilds the collections on an unlocked write, which reads no prior mode', async () => {
-    mode = 'TakenDown';
-    await updateModelById({ id: MODEL, data: { mode: { set: null } } });
+    // The stored mode is null and the write archives it, so only the unread prior can rebuild.
+    await updateModelById({ id: MODEL, data: { mode: { set: 'Archived' } } });
     await settled();
     expect(collectionRebuilt()).toBe(true);
   });
