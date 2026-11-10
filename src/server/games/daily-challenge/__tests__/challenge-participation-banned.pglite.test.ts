@@ -35,7 +35,7 @@ beforeAll(async () => {
     INSERT INTO "Image" VALUES (1, 10), (2, 20);
     INSERT INTO "CollectionItem" VALUES (100, 1, 'ACCEPTED'), (100, 2, 'ACCEPTED');
   `);
-  vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation((async (
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
   ) => {

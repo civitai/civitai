@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
 const mockDbWrite = dbMock.dbWrite;
 dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
 dbMock.dbWrite.challenge.findUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
@@ -174,7 +173,7 @@ describe('endChallengeAndPickWinners — sendChallengeResultsNotification exclud
   it('excludes both the winner and the participation-prize earners', async () => {
     // Entry-prize eligible pool: user 1 (the winner, must be filtered out by the source itself),
     // plus users 2 and 3 (participation-prize earners who are not winners).
-    mockDbReadQueryRaw.mockResolvedValueOnce([{ userId: 1 }, { userId: 2 }, { userId: 3 }]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ userId: 1 }, { userId: 2 }, { userId: 3 }]);
 
     await endChallengeAndPickWinners(1);
 
@@ -186,7 +185,7 @@ describe('endChallengeAndPickWinners — sendChallengeResultsNotification exclud
   });
 
   it('excludes only the winner when nobody separately earned the participation prize', async () => {
-    mockDbReadQueryRaw.mockResolvedValueOnce([{ userId: 1 }]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ userId: 1 }]);
 
     await endChallengeAndPickWinners(1);
 

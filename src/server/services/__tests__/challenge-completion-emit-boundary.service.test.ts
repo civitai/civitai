@@ -3,7 +3,7 @@ import type * as PrizeService from '~/server/services/prize.service';
 import client from 'prom-client';
 import type { PersistedChallengeWinner } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
+import type * as ChallengeRewards from '~/server/games/daily-challenge/challenge-rewards';
 const mockDbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
 const mockDbWriteExecuteRaw = dbMock.dbWrite.$executeRaw;
 const mockDbWriteChallengeUpdate = dbMock.dbWrite.challenge.update;
@@ -131,10 +131,16 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
   updateChallengeStatus: mockUpdateChallengeStatus,
 }));
 
-vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
-  distributeParticipationPrizes: vi.fn().mockResolvedValue([]),
-  promoteChallengeEntries: vi.fn().mockResolvedValue(0),
-}));
+// distributeParticipationPrizes stays real (spied): the moderator path pays entry prizes through
+// it, and its earner query is what leaves banned users out (challenge-participation-banned test).
+vi.mock('~/server/games/daily-challenge/challenge-rewards', async (importOriginal) => {
+  const actual = await importOriginal<typeof ChallengeRewards>();
+  return {
+    ...actual,
+    distributeParticipationPrizes: vi.fn(actual.distributeParticipationPrizes),
+    promoteChallengeEntries: vi.fn().mockResolvedValue(0),
+  };
+});
 
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   buildWinnerPrizes: vi.fn().mockReturnValue([]),
@@ -327,7 +333,7 @@ beforeEach(() => {
 describe('entry prizes stay automatic and blue', () => {
   it('pays an entry prize straight to blue, and never awards it as a claimable prize', async () => {
     // User 1 is the winner; user 2 earned the entry prize.
-    mockDbReadQueryRaw.mockResolvedValueOnce([{ userId: 1 }, { userId: 2 }]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([{ userId: 1 }, { userId: 2 }]);
 
     await endChallengeAndPickWinners(1);
 
@@ -348,6 +354,12 @@ describe('entry prizes stay automatic and blue', () => {
       (prizes as { externalTransactionId: string }[]).map((p) => p.externalTransactionId)
     );
     expect(awardedKeys.filter((key) => key.startsWith('challenge-entry-prize-'))).toEqual([]);
+    const { distributeParticipationPrizes } = await import(
+      '~/server/games/daily-challenge/challenge-rewards'
+    );
+    expect(distributeParticipationPrizes).toHaveBeenCalledWith(
+      expect.objectContaining({ challengeId: 1, excludeUserIds: [1] })
+    );
   });
 });
 
@@ -356,7 +368,7 @@ describe('mod -> job completion boundary — prize Buzz is counted exactly once'
     // The entry-participation prize block runs (user 2 earned it, user 1 is the winner) and its
     // notification throws — i.e. a failure strictly BETWEEN the winner payout and the Completed
     // write, which is the whole hazard window.
-    mockDbReadQueryRaw.mockResolvedValueOnce([{ userId: 1 }, { userId: 2 }]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([{ userId: 1 }, { userId: 2 }]);
     mockCreateNotification.mockRejectedValueOnce(new Error('notification service down'));
 
     await expect(endChallengeAndPickWinners(1)).rejects.toThrow('notification service down');
@@ -375,7 +387,7 @@ describe('mod -> job completion boundary — prize Buzz is counted exactly once'
 
   it('the job retry after that failure yields exactly ONE prize-Buzz increment for one payout', async () => {
     // --- Phase 1: the moderator run pays the winner, then dies before marking Completed.
-    mockDbReadQueryRaw.mockResolvedValueOnce([{ userId: 1 }, { userId: 2 }]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([{ userId: 1 }, { userId: 2 }]);
     mockCreateNotification.mockRejectedValueOnce(new Error('notification service down'));
     await expect(endChallengeAndPickWinners(1)).rejects.toThrow('notification service down');
 
@@ -404,7 +416,7 @@ describe('mod -> job completion boundary — prize Buzz is counted exactly once'
   it('a clean moderator completion still emits both counters exactly once', async () => {
     // Guards the fix from the opposite direction: moving the emits after the Completed write must
     // not have dropped them from the happy path.
-    mockDbReadQueryRaw.mockResolvedValueOnce([{ userId: 1 }]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([{ userId: 1 }]);
 
     await expect(endChallengeAndPickWinners(1)).resolves.toMatchObject({ success: true });
 
@@ -422,7 +434,7 @@ describe('mod -> job completion boundary — prize Buzz is counted exactly once'
     // already fired, so a throw there left prize_paid counted and completed NOT counted for a
     // challenge that is permanently Completed (status is already written, so the time-based
     // Completing reset can never retry it). Both emits now anchor to the same successful write.
-    mockDbReadQueryRaw.mockResolvedValueOnce([{ userId: 1 }]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([{ userId: 1 }]);
     mockCreateNotification.mockRejectedValueOnce(new Error('winner notification failed'));
 
     await expect(endChallengeAndPickWinners(1)).rejects.toThrow('winner notification failed');

@@ -87,7 +87,8 @@ export async function distributeParticipationPrizes(args: {
 
   if (!entryPrize || entryPrize.buzz <= 0) return [];
 
-  const earned = await dbRead.$queryRaw<{ userId: number }[]>`
+  // Primary, not replica: this pays Buzz outright, so a ban made moments ago must be seen.
+  const earned = await dbWrite.$queryRaw<{ userId: number }[]>`
     SELECT i."userId"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
