@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { consensusRule, decideYesNo } from './decide';
 
 const votes = (yes: number, no: number) => [
-  ...Array.from({ length: yes }, () => ({ answer: 'yes' })),
-  ...Array.from({ length: no }, () => ({ answer: 'no' })),
+  ...Array.from({ length: yes }, () => ({ answer: 'yes', weight: 1 })),
+  ...Array.from({ length: no }, () => ({ answer: 'no', weight: 1 })),
 ];
+const held = (yes: number, no: number) => votes(yes, no).map((v) => ({ ...v, weight: 0 }));
 const rule = { needed: 5, max: 8 };
 
 describe('decideYesNo', () => {
@@ -44,8 +45,25 @@ describe('decideYesNo', () => {
     });
   });
 
+  it('does not count a weight-0 answer toward the size, the majority or the cap', () => {
+    expect(decideYesNo([...votes(2, 2), ...held(1, 0)], rule)).toEqual({ kind: 'pending' });
+    expect(decideYesNo(held(9, 0), rule)).toEqual({ kind: 'pending' });
+    expect(decideYesNo([...votes(3, 2), ...held(0, 4)], rule)).toEqual({
+      kind: 'consensus',
+      value: 'yes',
+    });
+    expect(decideYesNo([...votes(3, 3), ...held(2, 2)], { needed: 4, max: 6 })).toEqual({
+      kind: 'exhausted',
+    });
+    expect(decideYesNo([...votes(2, 2), ...held(2, 2)], { needed: 4, max: 6 })).toEqual({
+      kind: 'pending',
+    });
+  });
+
   it('ignores answers that are not on offer', () => {
-    expect(decideYesNo([{ answer: '4' }, ...votes(2, 2)], { needed: 5, max: 9 })).toEqual({
+    expect(
+      decideYesNo([{ answer: '4', weight: 1 }, ...votes(2, 2)], { needed: 5, max: 9 })
+    ).toEqual({
       kind: 'pending',
     });
   });

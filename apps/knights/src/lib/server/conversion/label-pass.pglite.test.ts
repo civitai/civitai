@@ -180,6 +180,18 @@ describe('labels', () => {
     expect(await labelled(2)).toEqual([true]);
   });
 
+  it('never labels a vote cast while held, even once the hold is cleared', async () => {
+    await seedPlayer(pg, 1);
+    await pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","verdict","xp","settledAt")
+       VALUES (1,1,'2026-12-10 10:00:00','knights.image.nsfwLevel',101,'Knight','4',0,'correct',10,'2026-12-10 11:00:00')`
+    );
+
+    await pass();
+    expect(await labels()).toEqual([]);
+    expect(await hasUnlabelled(db, 'rating')).toBe(false);
+  });
+
   it('leaves a vote that has not been graded yet', async () => {
     await seedPlayer(pg, 1);
     await pg.query(

@@ -5,12 +5,14 @@ export type YesNoDecision =
 
 /**
  * One vote per person, as the label store counts them. Enough answers and a strict majority is a consensus; a tie is no
- * outcome, so the question keeps being asked until it is broken or `max` answers are in.
+ * outcome, so the question keeps being asked until it is broken or `max` answers are in. An answer of weight 0 (a held
+ * player's) is recorded but is not a vote here, as in `decideChoice`.
  */
 export function decideYesNo(
-  votes: { answer: string }[],
+  cast: { answer: string; weight: number }[],
   rule: { needed: number; max: number }
 ): YesNoDecision {
+  const votes = cast.filter((v) => v.weight > 0);
   const yes = votes.filter((v) => v.answer === 'yes').length;
   const no = votes.filter((v) => v.answer === 'no').length;
   const total = yes + no;

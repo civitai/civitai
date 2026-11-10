@@ -66,6 +66,20 @@ beforeEach(async () => {
   for (const p of [1, 2]) await seedPlayer(pg, p);
 });
 
+describe("a held player's answers", () => {
+  it('leave a question unswept and unanswered as far as the count goes', async () => {
+    const ids = await seed([row('a', 10)]);
+    await pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt" = now() WHERE "userId" = 1`);
+    const before = (await item(ids.a)).updatedAt;
+    await answer(1, ids.a);
+    expect(await item(ids.a)).toMatchObject({ voteCount: 0, updatedAt: before });
+
+    await pg.exec(`UPDATE "Image" SET "blockedFor" = 'x' WHERE id = 10`);
+    expect(await sweep(LATER)).toMatchObject({ unplayable: 0, stale: 0 });
+    expect(await item(ids.a)).toMatchObject({ status: 'Open' });
+  });
+});
+
 describe('closing stranded questions', () => {
   it('closes an answered question whose image is no longer shown, dropping the gold of its answers but keeping the XP', async () => {
     const ids = await seed([row('a', 10), row('b', 11)]);

@@ -44,7 +44,9 @@ export type Decision =
   | { kind: 'resolved'; value: string }
   | { kind: 'split' };
 
-export function decideChoice(votes: WeightedAnswer[], rule: DecisionRule): Decision {
+/** A vote of weight 0 (a held player's) is recorded but is not a vote here: it counts toward no quorum, maximum or share. */
+export function decideChoice(cast: WeightedAnswer[], rule: DecisionRule): Decision {
+  const votes = cast.filter((vote) => vote.weight > 0);
   if (votes.length < rule.votesNeeded) return { kind: 'pending' };
   const threshold =
     rule.unanimousAtNeeded && votes.length === rule.votesNeeded ? 1 : rule.threshold;

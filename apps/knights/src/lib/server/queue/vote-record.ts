@@ -3,6 +3,7 @@ import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { asksBlockReason, blockReasonProblem } from '../../block-reasons';
 import { recordVoteDay } from '../daily/daily.service';
+import { heldSql } from '../conversion/held';
 import { goldForRank, PROGRESSION } from '../progression/config';
 import { ledgerOf } from '../progression/progression';
 import { standingOf } from '../progression/rating';
@@ -51,6 +52,8 @@ export type InsertedVote = {
   status: 'inserted';
   player: { rankType: string; startAt: Date };
   gold: number;
+  /** What the vote was stored with: 0 for a held player's. */
+  weight: number;
 };
 
 /**
@@ -76,9 +79,9 @@ export async function insertVote(
 
   await lockPlayerVoting(trx, input.userId);
   let query = trx
-    .selectFrom('NewOrderPlayer')
-    .select(['rankType', 'exp', 'startAt'])
-    .where('userId', '=', input.userId);
+    .selectFrom('NewOrderPlayer as p')
+    .select(['p.rankType', 'p.exp', 'p.startAt', heldSql('p.userId').as('held')])
+    .where('p.userId', '=', input.userId);
   if (input.lockPlayer) query = query.forUpdate();
   const player = await query.executeTakeFirst();
   if (!player) return rejected('no-player');
@@ -118,14 +121,17 @@ export async function insertVote(
   if (smites >= SMITES.max) return rejected('reset-pending');
 
   const { belowBar } = standingOf(player.rankType, await ledgerOf(trx, input.userId));
-  // A vote that weighs nothing could still be the one that tips a split into a decision.
-  const weight = voteWeight({
+  const computed = voteWeight({
     rank: player.rankType,
     level: levelForExp(player.exp),
     smites,
     belowBar,
   });
-  if (weight <= 0) return rejected('no-weight');
+  // A vote that weighs nothing could still be the one that tips a split into a decision, so it is refused. A held
+  // player's vote is the exception: it is recorded, graded and paid but stored at 0 (only when its computed weight is positive), which `decideChoice` and
+  // `escalateExpired` ignore. Clearing the hold does not re-weight votes already cast.
+  if (computed <= 0) return rejected('no-weight');
+  const weight = player.held ? 0 : computed;
   const gold = goldForRank(player.rankType, belowBar);
 
   await trx
@@ -145,7 +151,12 @@ export async function insertVote(
       ...(subject.labelled ? { labelled: true } : {}),
     })
     .execute();
-  return { status: 'inserted', player, gold };
+  return {
+    status: 'inserted',
+    player: { rankType: player.rankType, startAt: player.startAt },
+    gold,
+    weight,
+  };
 }
 
 /**

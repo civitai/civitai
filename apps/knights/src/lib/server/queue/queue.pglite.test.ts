@@ -1226,3 +1226,142 @@ describe('ensureVotePartitions', () => {
     expect(res.status).toBe('recorded');
   });
 });
+
+describe('held players', () => {
+  const PAST = new Date('2026-12-15T11:00:00Z');
+  beforeEach(async () => {
+    await pg.exec(`TRUNCATE "User"`);
+    // Earlier tests leave their own outcome on the shared mock.
+    applyConsensus.mockReset();
+    applyConsensus.mockImplementation(async () => APPLIED);
+  });
+  const hold = (...userIds: number[]) =>
+    pg.query(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt" = now() WHERE "userId" = ANY($1)`, [
+      userIds,
+    ]);
+  const weightOf = async (itemId: number, userId: number) =>
+    (
+      await pg.query<{ weight: number }>(
+        `SELECT weight FROM "KnightsVote" WHERE "itemId"=$1 AND "playerId"=$2`,
+        [itemId, userId]
+      )
+    ).rows[0]?.weight;
+
+  it('accepts a held vote and stores it with no weight', async () => {
+    await player(1, 'Knight');
+    await player(2, 'Knight');
+    await hold(1);
+    await pg.query(`INSERT INTO "User" ("id","bannedAt") VALUES (2, now())`);
+    await image(10);
+    const id = await item(10);
+
+    expect(await vote(1, id, '4')).toMatchObject({ status: 'recorded' });
+    expect(await vote(2, id, '4')).toMatchObject({ status: 'recorded' });
+    expect(await weightOf(id, 1)).toBe(0);
+    expect(await weightOf(id, 2)).toBe(0);
+  });
+
+  it('never resolves an item on held votes, however many agree', async () => {
+    await fiveKnights();
+    await hold(1, 2, 3, 4, 5);
+    await image(10);
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4, 5]) expect((await vote(u, id, '4')).status).toBe('recorded');
+    expect(applyConsensus).not.toHaveBeenCalled();
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Knight' });
+
+    await image(11);
+    const one = await item(11, { votesNeeded: 1 });
+    await player(6, 'Knight');
+    await hold(6);
+    expect((await vote(6, one, '4')).status).toBe('recorded');
+    expect(await itemRow(one)).toMatchObject({ status: 'Open' });
+  });
+
+  it('does not count held votes toward the ten that hand a split up', async () => {
+    for (let i = 1; i <= 10; i++) await player(i, 'Knight');
+    await hold(5, 6, 7, 8, 9, 10);
+    await image(10);
+    const id = await item(10);
+    for (let i = 1; i <= 10; i++) await vote(i, id, i % 2 ? '4' : '8');
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Knight' });
+  });
+
+  it('resolves on the real votes alone, whatever the held votes say', async () => {
+    await fiveKnights();
+    await player(6, 'Knight');
+    await player(7, 'Knight');
+    await hold(6, 7);
+    await image(10);
+    const id = await item(10);
+    for (const u of [1, 2, 3]) await vote(u, id, '4');
+    expect((await vote(6, id, '8')).status).toBe('recorded');
+    expect((await vote(7, id, '8')).status).toBe('recorded');
+    expect(applyConsensus).not.toHaveBeenCalled();
+    expect((await vote(4, id, '4')).status).toBe('resolved');
+    expect(applyConsensus).toHaveBeenCalledWith(expect.objectContaining({ value: '4' }));
+  });
+
+  it('grades a held vote against the verdict and pays its XP', async () => {
+    await fiveKnights();
+    await player(6, 'Knight');
+    await player(7, 'Knight');
+    await hold(6, 7);
+    await image(10);
+    const id = await item(10);
+    await vote(6, id, '4');
+    await vote(7, id, '8');
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
+
+    const rows = (
+      await pg.query<{ playerId: number; verdict: string; settledAt: Date | null }>(
+        `SELECT "playerId", verdict, "settledAt" FROM "KnightsVote" WHERE "itemId"=$1 AND "playerId" > 5 ORDER BY "playerId"`,
+        [id]
+      )
+    ).rows;
+    expect(rows.map((r) => r.verdict)).toEqual(['correct', 'failed']);
+    expect(rows.every((r) => r.settledAt !== null)).toBe(true);
+    const exp = await pg.query<{ exp: number }>(
+      `SELECT exp FROM "NewOrderPlayer" WHERE "userId"=6`
+    );
+    expect(exp.rows[0].exp).toBeGreaterThan(10);
+  });
+
+  it('extends an item whose only vote is held, as one nobody voted on', async () => {
+    await active(2, 'Templar');
+    await player(1, 'Knight');
+    await hold(1);
+    await image(10);
+    const id = await item(10, { expires: PAST });
+    expect((await vote(1, id, '4')).status).toBe('recorded');
+    expect(await escalateExpired(db, { now: NOW })).toEqual({
+      escalated: 0,
+      toInquisitor: 0,
+      extended: 1,
+    });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Knight' });
+  });
+
+  it('does not let a held player staff a rank, so an item skips to the next rank someone can serve', async () => {
+    await active(1, 'Knight');
+    await active(2, 'Paladin');
+    await hold(2);
+    await image(10);
+    const id = await item(10, { expires: PAST });
+    await vote(1, id, '4');
+
+    expect(await escalateExpired(db, { now: NOW })).toEqual({
+      escalated: 0,
+      toInquisitor: 1,
+      extended: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor' });
+
+    await image(11);
+    const other = await item(11, { expires: PAST });
+    await pg.query(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt" = NULL WHERE "userId" = 2`);
+    await vote(1, other, '4');
+    await escalateExpired(db, { now: NOW });
+    expect(await itemRow(other)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+  });
+});

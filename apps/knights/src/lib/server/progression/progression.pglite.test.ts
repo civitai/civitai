@@ -161,6 +161,8 @@ describe('grading', () => {
     await image(10);
     const id = await item(10);
     await resolve(id, 1, '4');
+    // The held player's vote carries no weight, so a fourth real vote is what settles the item.
+    await vote(5, id, '4');
 
     expect(await who(1)).toMatchObject({ goldPending: 0, goldEarned: PROGRESSION.baseGold });
   });

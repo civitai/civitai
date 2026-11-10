@@ -124,7 +124,7 @@ function shapeOf(kind: LabelKind) {
     return {
       when: sql`v."createdAt"`,
       join: sql`JOIN "KnightsQueueItem" it ON it."id" = v."itemId" AND it."audience" IS NOT NULL AND it."externalId" IS NOT NULL`,
-      eligible: sql`v."itemId" > 0`,
+      eligible: sql`v."itemId" > 0 AND v."weight" > 0`,
       externalId: sql`it."externalId"`,
       ref: (hash: ReturnType<typeof sql>, at: 'b' | 'source') =>
         sql`'KnightsYesNoVote:' || ${sql.ref(
@@ -137,7 +137,7 @@ function shapeOf(kind: LabelKind) {
     when: sql`v."settledAt"`,
     join: sql``,
     // A hidden check (negative item id) is a golden-set answer, not a judgment of a queue item: never labelled, so never scanned.
-    eligible: sql`v."itemId" > 0 AND v."settledAt" IS NOT NULL
+    eligible: sql`v."itemId" > 0 AND v."weight" > 0 AND v."settledAt" IS NOT NULL
         AND EXISTS (SELECT 1 FROM "KnightsQuestion" kq WHERE kq."key" = v."questionKey" AND kq."kind" = 'choice')`,
     externalId: sql`NULL::text`,
     ref: (hash: ReturnType<typeof sql>, at: 'b' | 'source') =>

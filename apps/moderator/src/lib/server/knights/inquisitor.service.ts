@@ -178,6 +178,8 @@ export async function getInquisitorQueue(
       'in',
       items.map((item) => item.id)
     )
+    // A held player's vote (weight 0) decided nothing, so it is not shown as a vote.
+    .where('weight', '>', 0)
     .groupBy(['itemId', 'answer', 'stage'])
     .execute();
 
@@ -190,6 +192,7 @@ export async function getInquisitorQueue(
       items.map((item) => item.id)
     )
     .where('answer', '=', String(NsfwLevel.Blocked))
+    .where('weight', '>', 0)
     .execute();
 
   return items.map(({ options, ingestion, reason, escalationReason, ...item }) => {

@@ -160,6 +160,49 @@ describe('an answer', () => {
   });
 });
 
+describe('a held player', () => {
+  const hold = (...ids: number[]) =>
+    pg.query(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt" = now() WHERE "userId" = ANY($1)`, [
+      ids,
+    ]);
+
+  it('is recorded at weight 0 and never decides the question, however many held answers agree', async () => {
+    const ids = await seed([row('a')]);
+    await knights(7);
+    await hold(1, 2, 3, 4, 5, 6, 7);
+    for (let u = 1; u <= 7; u++) await vote(u, ids.a, 'yes');
+    expect(await item(ids.a)).toMatchObject({ status: 'Open' });
+    expect((await votes(ids.a)).every((v) => v.weight === 0)).toBe(true);
+  });
+
+  it('decides as the real answers alone would, and is graded and paid XP', async () => {
+    const ids = await seed([row('a')]);
+    await knights(8);
+    await hold(6, 7, 8);
+    await vote(6, ids.a, 'no');
+    await vote(7, ids.a, 'no');
+    await vote(8, ids.a, 'yes');
+    for (const u of [1, 2, 3, 4]) {
+      await vote(u, ids.a, 'yes');
+      expect(await item(ids.a)).toMatchObject({ status: 'Open' });
+    }
+    await vote(5, ids.a, 'yes');
+
+    expect(await item(ids.a)).toMatchObject({ status: 'Consensus', resolvedValue: 'yes' });
+    expect(await votes(ids.a)).toMatchObject([
+      { playerId: 1, verdict: 'correct' },
+      { playerId: 2, verdict: 'correct' },
+      { playerId: 3, verdict: 'correct' },
+      { playerId: 4, verdict: 'correct' },
+      { playerId: 5, verdict: 'correct' },
+      { playerId: 6, verdict: 'failed', weight: 0 },
+      { playerId: 7, verdict: 'failed', weight: 0 },
+      { playerId: 8, verdict: 'correct', weight: 0 },
+    ]);
+    expect((await player(8)).exp).toBe(PROGRESSION.voteXp + PROGRESSION.correctXp);
+  });
+});
+
 describe('consensus', () => {
   it('closes the question at the consensus size and grades the answers like a rating: the majority right, the rest wrong', async () => {
     const ids = await seed([row('a')]);

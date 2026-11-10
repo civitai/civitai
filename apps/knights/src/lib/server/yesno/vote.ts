@@ -96,14 +96,18 @@ export async function castYesNoVote(
       if (vote.status === 'rejected') return rejected(vote.reason);
 
       const voted: XpDelta[] = [{ playerId: input.userId, xp: PROGRESSION.voteXp }];
-      await trx
-        .updateTable('KnightsQueueItem')
-        .set({ voteCount: (eb) => eb('voteCount', '+', 1), updatedAt: utc(now) })
-        .where('id', '=', item.id)
-        .execute();
+      // A held player's answer (weight 0) decides nothing, so it must not make the question look answered: swept as
+      // stale, ordered first in the feed or locked against rewording.
+      if (vote.weight > 0) {
+        await trx
+          .updateTable('KnightsQueueItem')
+          .set({ voteCount: (eb) => eb('voteCount', '+', 1), updatedAt: utc(now) })
+          .where('id', '=', item.id)
+          .execute();
+      }
       const answers = await trx
         .selectFrom('KnightsVote')
-        .select('answer')
+        .select(['answer', 'weight'])
         .where('itemId', '=', item.id)
         .execute();
       const decision = decideYesNo(answers, consensusRule(item));
