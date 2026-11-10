@@ -5,6 +5,7 @@ import { dbRead, dbWrite } from './db';
 import { logAxiomError, logToAxiom } from './axiom';
 import {
   BLOCK_MAJORITY,
+  CSAM_HOLD_VOID_REASON,
   DAY_MS,
   dayBounds,
   dayRange,
@@ -228,6 +229,9 @@ export async function getActionHealth(db: Kysely<DB> = dbRead) {
       sql<string>`count(*) FILTER (WHERE "actionedAt" IS NULL AND "actionError" IS NOT NULL AND "status" <> 'void')`.as(
         'failing'
       ),
+      sql<string>`count(*) FILTER (WHERE "status" = 'void' AND "voidReason" = ${CSAM_HOLD_VOID_REASON} AND "actionResult" IS DISTINCT FROM 'csam-held')`.as(
+        'holdsPending'
+      ),
     ])
     .executeTakeFirstOrThrow();
   return {
@@ -235,6 +239,7 @@ export async function getActionHealth(db: Kysely<DB> = dbRead) {
     skipped: Number(row.skipped),
     pending: Number(row.pending),
     failing: Number(row.failing),
+    holdsPending: Number(row.holdsPending),
   };
 }
 

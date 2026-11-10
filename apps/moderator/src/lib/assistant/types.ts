@@ -16,6 +16,11 @@ export type TurnToolCall = {
   /** The model round that asked for it, from 1. Absent on turns logged before rounds were kept: unknown,
    *  not round 1. */
   round?: number;
+  /** Whether registration emails went to the model. Absent where the tool does not report it. */
+  emailsShown?: boolean;
+  /** Lists shortened to fit the model's result budget, so `truncated` from a size cut reads apart from
+   *  a tool's own page limit. */
+  cutForSize?: { at: string; kept: number; of: number }[];
 };
 
 /**

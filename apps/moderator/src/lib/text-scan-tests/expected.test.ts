@@ -23,7 +23,7 @@ describe('parseExpected', () => {
   });
 
   it('treats an empty object as "score nothing"', () => {
-    expect(parseExpected({}, 'CommentV2')).toEqual({});
+    expect(parseExpected({}, 'CommentV3')).toEqual({});
   });
 
   it('refuses a non-object', () => {

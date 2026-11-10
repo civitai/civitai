@@ -96,7 +96,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: makeTrpcProxy(
     {
-      'reaction.toggle': {
+      'reaction.toggleWithPoints': {
         useMutation: () => ({ mutate: reactionToggle, isPending: reactionEnv.togglePending }),
       },
       'reaction.getMyImageReactions': {
@@ -1229,11 +1229,9 @@ describe('CrucibleJudgingUI — reactions', () => {
     await pastFeedbackDelay();
 
     expect(reactionToggle).toHaveBeenCalledTimes(1);
-    expect(reactionToggle).toHaveBeenCalledWith({
-      entityId: rightImageId,
-      entityType: 'image',
-      reaction: 'Heart',
-    });
+    expect(reactionToggle).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: rightImageId, entityType: 'image', reaction: 'Heart' })
+    );
     expect(onVote).not.toHaveBeenCalled();
     expect(onSkip).not.toHaveBeenCalled();
   });

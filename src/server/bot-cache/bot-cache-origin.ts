@@ -17,6 +17,7 @@ import {
   BOT_CACHE_LOOKUP_FAILED,
   BOT_CACHE_STATUS_HEADER,
 } from '~/shared/constants/bot-cache.constants';
+import { isMobileUserAgent } from '~/shared/utils/mobile-user-agent';
 
 /**
  * Bot HTML origin cache: a cacheable crawler render (`~/server/bot-cache/bot-cache`) is kept in
@@ -76,12 +77,15 @@ export function botCacheKey(
   host: string,
   pathname: string,
   search: string,
+  userAgent: string | undefined,
   buildId: string = shellBuildId()
 ): BotCacheKey | null {
   if (!buildId || buildId === UNKNOWN_BUILD_ID) return null;
   const prefix = REDIS_KEYS.BOT_CACHE.HTML;
   const query = new URLSearchParams([...new URLSearchParams(search)].sort(compareEntries));
-  return `${prefix}:${buildId}:${host.toLowerCase()}:${pathname}?${query.toString()}`;
+  // Some pages render a phone layout by user agent: mobile and desktop crawlers must not share HTML.
+  const device = isMobileUserAgent(userAgent) ? 'm' : 'd';
+  return `${prefix}:${buildId}:${device}:${host.toLowerCase()}:${pathname}?${query.toString()}`;
 }
 
 export const BOT_CACHE_ORIGIN_METRIC = PROM_PREFIX + 'bot_html_origin_cache_total';
@@ -198,7 +202,7 @@ export function captureBotCacheRender(
 ) {
   if (req.headers[BOT_CACHE_STATUS_HEADER] === BOT_CACHE_LOOKUP_FAILED) return;
   const { pathname, search } = new URL(req.url ?? '/', 'http://localhost');
-  const key = botCacheKey(req.headers.host ?? '', pathname, search);
+  const key = botCacheKey(req.headers.host ?? '', pathname, search, req.headers['user-agent']);
   if (!key) return;
   const chunks: Buffer[] = [];
   let size = 0;

@@ -9,6 +9,8 @@ export type EvidenceRef =
       stepName?: string;
       /** The orchestrator's verdict on an output, when it withheld it. */
       blockedReason?: string;
+      /** The orchestrator job that produced an output, as the workflow read reports it. */
+      orchestratorJobId?: string;
     }
   | { kind: 'external'; role: EvidenceRole; stepName?: string; host: string; url: string };
 
@@ -27,6 +29,7 @@ export type EvidenceJob = {
 const AIR_BLOB = /^urn:air:[^:]+:[^:]+:orchestrator:blob@([^\s?#]+)$/i;
 // Keys are opaque, but a path segment or a urn version never carries these.
 const BLOB_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
+const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const MEDIA_PATH = /\.(jpe?g|png|webp|gif|avif|mp4|webm|mov)$/i;
 
 const CIVITAI_HOST = /(^|\.)civitai\.com$/;
@@ -96,7 +99,7 @@ function walk(value: unknown, visit: (node: unknown) => void, depth = 0) {
   else if (isRecord(value)) for (const item of Object.values(value)) walk(item, visit, depth + 1);
 }
 
-/** An output blob as the orchestrator reports it: an id plus an availability verdict. */
+/** An output blob as the orchestrator reports it: an id, an availability verdict and its job. */
 function asOutputBlob(node: unknown) {
   if (!isRecord(node) || typeof node.id !== 'string' || typeof node.available !== 'boolean')
     return null;
@@ -104,6 +107,8 @@ function asOutputBlob(node: unknown) {
   return {
     blobId: node.id,
     blockedReason: typeof node.blockedReason === 'string' ? node.blockedReason : undefined,
+    ...(typeof node.jobId === 'string' &&
+      JOB_ID.test(node.jobId) && { orchestratorJobId: node.jobId }),
   };
 }
 

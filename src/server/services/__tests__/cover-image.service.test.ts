@@ -49,6 +49,7 @@ const unattached: ReusableCoverImageCandidate = {
   id: 10,
   postId: null,
   article: null,
+  articleBanner: null,
   _count: { connections: 0, challengesCover: 0, challengeEventCovers: 0 },
 };
 
@@ -216,6 +217,7 @@ describe('isReusableCoverImage', () => {
 
   it.each([
     ['already covers another article', { article: { id: 5 } }],
+    ["is another article's banner", { articleBanner: { id: 5 } }],
     ['belongs to a post', { postId: 3 }],
     ['has image connections', { _count: { ...unattached._count, connections: 1 } }],
     ['covers a challenge', { _count: { ...unattached._count, challengesCover: 1 } }],

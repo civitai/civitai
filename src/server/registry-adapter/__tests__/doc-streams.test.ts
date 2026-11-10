@@ -58,7 +58,7 @@ function app(
   };
 }
 
-const V = (coll: string, n: number) => `urn:schema:civitai-apps:orbit-notes/${coll}@v${n}`;
+const V = (coll: string, n: number) => `urn:schema:apps.civitai.com:orbit-notes/${coll}@v${n}`;
 const OPTED_IN = { notes: notes(200, { registry: 'public' }), drafts: notes(50) };
 
 describe('resolveFromCatalog', () => {
@@ -98,8 +98,17 @@ describe('resolveFromCatalog', () => {
       appId: 'ab_orbit_31',
       slug: 'orbit-notes',
       collection: 'notes',
+      contentRating: 'pg',
       family: [V('notes', 1), V('notes', 2)],
     });
+  });
+
+  it('the stream carries its app’s rating: the listing’s, else its block’s', async () => {
+    const listed = app(OPTED_IN, { contentRating: 'pg13' });
+    listed.listing.contentRating = 'x';
+    expect((await resolve([listed])(V('notes', 1)))?.contentRating).toBe('x');
+    listed.listing.contentRating = null;
+    expect((await resolve([listed])(V('notes', 1)))?.contentRating).toBe('pg13');
   });
 
   it('a major past the newest is not published', async () => {
@@ -128,40 +137,45 @@ describe('resolveFromCatalog', () => {
 
   it('a URN that is not a collection schema of this namespace resolves to nothing', async () => {
     const r = resolve([app(OPTED_IN)]);
-    expect(await r('urn:schema:civitai-schemas:app@v1')).toBeNull();
+    expect(await r('urn:schema:apps.civitai.com:app@v1')).toBeNull();
     expect(await r('urn:schema:other-ns:orbit-notes/notes@v1')).toBeNull();
   });
 });
 
 describe('composeAdapter', () => {
-  const APPS = 'urn:schema:civitai-schemas:app@v1';
+  const APPS = 'urn:schema:apps.civitai.com:app@v1';
   const entities: Adapter = {
-    namespace: 'civitai-apps',
+    namespace: 'apps.civitai.com',
     serves: (s) => s === APPS,
     // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
     snapshot: async () => ({ cursor: 'entity-cursor', entities: [] }),
     // eslint-disable-next-line require-yield
-    async *changes() {
-      return;
-    },
+    changes: async () =>
+      (async function* () {
+        // no changes
+      })(),
   };
   const docs = {
     // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
     snapshot: async () => ({ cursor: 'doc-cursor', entities: [] }),
     // eslint-disable-next-line require-yield
-    async *changes() {
-      return;
-    },
+    changes: async () =>
+      (async function* () {
+        // no changes
+      })(),
   };
   const adapter = composeAdapter(entities, docs as never);
   const ctx = { signal: new AbortController().signal };
 
-  it('serves the entity schemas and every collection-schema URN, nothing else', () => {
-    expect(
-      [APPS, V('notes', 1), 'urn:schema:civitai-schemas:model@v1', 'urn:schema:x:y@v1'].map(
-        adapter.serves
-      )
-    ).toEqual([true, true, false, false]);
+  it('🔴 serves the entity schemas and every collection-schema URN it may publish, nothing else', () => {
+    const schemas = [
+      APPS,
+      V('notes', 1),
+      V('notes', 2),
+      'urn:schema:civitai-schemas:model@v1',
+      'urn:schema:x:y@v1',
+    ];
+    expect(schemas.map((s) => adapter.serves(s))).toEqual([true, true, true, false, false]);
   });
 
   it('routes each stream to its own source', async () => {

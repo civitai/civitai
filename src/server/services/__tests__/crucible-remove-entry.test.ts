@@ -40,9 +40,8 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   createNotification,
 }));
 
-const { removeCrucibleEntry, removeCrucibleEntryAsOwner } = await import(
-  '~/server/services/crucible.service'
-);
+const { removeCrucibleEntry, removeCrucibleEntryAsOwner, removeCrucibleEntryForThemeReview } =
+  await import('~/server/services/crucible.service');
 
 const MODERATOR = 3;
 const OWNER = 9;
@@ -416,6 +415,30 @@ describe('removeCrucibleEntryAsOwner', () => {
     expect(reserve).not.toHaveBeenCalled();
     expect(runningCheck().sql).not.toContain('ownerRemovalCount');
     expect(notice().details).not.toHaveProperty('reason');
+  });
+});
+
+describe('removeCrucibleEntryForThemeReview', () => {
+  const removeForReview = () =>
+    removeCrucibleEntryForThemeReview({ entryId: 5, reasonText: 'Off-topic for this crucible' });
+
+  it('removes and refunds like a moderator, tells the entrant it was the theme review and why', async () => {
+    await removeForReview();
+
+    expect(deleteEntry).toHaveBeenCalledWith({ where: { id: 5 } });
+    expect(refundMultiAccountTransaction).toHaveBeenCalled();
+    expect(notice()).toMatchObject({
+      details: { removedBy: 'review', reason: 'Off-topic for this crucible', refundedAmount: 50 },
+    });
+  });
+
+  it('is not held to the owner cap, even with the cap used up', async () => {
+    findEntry.mockResolvedValue(entry({}, { ownerRemovalCount: CRUCIBLE_OWNER_REMOVAL_CAP }));
+
+    await removeForReview();
+
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(deleteEntry).toHaveBeenCalled();
   });
 });
 

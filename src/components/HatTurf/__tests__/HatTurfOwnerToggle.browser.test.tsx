@@ -9,6 +9,11 @@ const h = vi.hoisted(() => ({
     | { available: number; optedIn: boolean; ownerOff: boolean; mode: string }
     | undefined,
   mutate: vi.fn(),
+  flags: {} as Record<string, boolean>,
+}));
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useFeatureFlags: () => h.flags,
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
@@ -41,6 +46,7 @@ const render = () => renderWithProviders(<HatTurfOwnerToggle />);
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(() => {
+  h.flags = {};
   h.user = { id: 1 };
   h.released = 'birthday2026';
   h.stock = { available: 3, optedIn: false, ownerOff: false, mode: 'live' };
@@ -68,12 +74,39 @@ describe("owner's Hat Turf switch in account settings", () => {
   });
 
   // A player cannot wall off their own images.
-  test('in Hat Turf: disabled, and says to leave first', async () => {
+  // Each link goes where the way to leave is drawn: the Profile pane's switch on the V2 settings
+  // page with Hat Turf on, else the event page (the legacy page has no such switch).
+  test.each([
+    [
+      'V2 settings',
+      { accountSettingsV2: true, hatTurfImageDetail: true },
+      /Turn off “Take part in Hat Turf” first/,
+      '/user/account/profile#hat-turf',
+    ],
+    [
+      'legacy settings',
+      { hatTurfImageDetail: true },
+      /Leave Hat Turf on the event page first/,
+      '/events/birthday2026#hat-turf',
+    ],
+  ])('in Hat Turf on %s: disabled, and links to where to leave', async (_, flags, copy, href) => {
+    h.flags = flags;
     h.stock = { available: 3, optedIn: true, ownerOff: false, mode: 'live' };
     await render();
     await vi.waitFor(() => expect(toggle()).not.toBeNull());
     expect(toggle()!.disabled).toBe(true);
+    expect(document.body.textContent).toMatch(copy);
+    expect(document.querySelector(`a[href="${href}"]`)).not.toBeNull();
+  });
+
+  // With the Hat Turf flags off, neither way to leave is drawn, so there is nothing to link to.
+  test('in Hat Turf with its flags off: no link', async () => {
+    h.flags = { accountSettingsV2: true };
+    h.stock = { available: 3, optedIn: true, ownerOff: false, mode: 'live' };
+    await render();
+    await vi.waitFor(() => expect(toggle()).not.toBeNull());
     expect(document.body.textContent).toMatch(/Leave Hat Turf first/);
+    expect(document.querySelector('a')).toBeNull();
   });
 
   test.each([

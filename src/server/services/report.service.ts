@@ -63,7 +63,6 @@ import {
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import type { Report } from '~/shared/utils/prisma/models';
-import { v3WriteSurfaceSql } from '~/server/services/commentv3/write.service';
 import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
 import {
@@ -308,8 +307,6 @@ const validateReportCreation = async ({
 const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.User]: 'user',
   [ReportEntity.Model]: 'model',
-  [ReportEntity.Comment]: 'comment',
-  [ReportEntity.CommentV2]: 'comment',
   [ReportEntity.CommentV3]: 'comment',
   [ReportEntity.Image]: 'image',
   [ReportEntity.ResourceReview]: 'review',
@@ -333,8 +330,6 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
 const reportTypeConnectionMap = {
   [ReportEntity.User]: 'userId',
   [ReportEntity.Model]: 'modelId',
-  [ReportEntity.Comment]: 'commentId',
-  [ReportEntity.CommentV2]: 'commentV2Id',
   [ReportEntity.CommentV3]: 'commentId',
   [ReportEntity.Image]: 'imageId',
   [ReportEntity.ResourceReview]: 'resourceReviewId',
@@ -539,15 +534,10 @@ export const createReport = async ({
   const writeReport = async (tx: Prisma.TransactionClient) => {
     // A deleted comment's placeholder keeps its row, so the link below would take it; its old
     // reports were dropped with it. Held `FOR SHARE` until commit, so a delete waits for this report
-    // and drops its link too. A comment on another surface is reported through its old table, whose
-    // removal is what actions and rewards its reports.
+    // and drops its link too.
     if (type === ReportEntity.CommentV3) {
       const [comment] = await tx.$queryRaw<{ id: number }[]>`
-        SELECT id FROM "CommentV3"
-        WHERE id = ${id} AND "deletedAt" IS NULL AND ${Prisma.raw(
-        v3WriteSurfaceSql('"entityType"')
-      )}
-        FOR SHARE
+        SELECT id FROM "CommentV3" WHERE id = ${id} AND "deletedAt" IS NULL FOR SHARE
       `;
       if (!comment) throw throwNotFoundError('That comment no longer exists.');
     }
@@ -1573,6 +1563,22 @@ export async function resolveEntityAppeal({
   /** 'flag' leaves a model's pending lock review, which is ruled on by its own path, open. */
   modelAppealKind?: 'flag';
 }) {
+  // An approval never restores an image blocked for CSAM: refused whole, and every appeal stays
+  // Pending. Read on the primary just before the claim, so a CSAM block landing between this read
+  // and the claim is not seen. The only live Image-approval caller is `handleUnblockImages`, after
+  // an explicit unblock.
+  if (entityType === EntityType.Image && status === AppealStatus.Approved && ids.length) {
+    const held = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Image" WHERE id = ANY(${ids}::int[]) AND "blockedFor" = ${BlockedReason.CSAM}
+    `;
+    if (held.length)
+      throw throwBadRequestError(
+        `Image ${held
+          .map((h) => h.id)
+          .join(', ')} is removed, and approving its appeal cannot put it back`
+      );
+  }
+
   // One statement claims the appeals: a concurrent resolution that already closed one gets nothing
   // back for it, so only one of them refunds.
   const appeals = await dbWrite.appeal.updateManyAndReturn({

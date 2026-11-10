@@ -3,19 +3,19 @@ import { parseCollectionSchemaUrn, registryUrn } from '~/server/registry-adapter
 
 describe('registryUrn', () => {
   it.each([
-    [{ kind: 'app', slug: 'pixel-garden' }, 'urn:civitai-apps:app/pixel-garden'],
+    [{ kind: 'app', slug: 'pixel-garden' }, 'urn:apps.civitai.com:app/pixel-garden'],
     [
       { kind: 'release', slug: 'pixel-garden', version: '2.10.3-beta.1' },
-      'urn:civitai-apps:app/pixel-garden@2.10.3-beta.1',
+      'urn:apps.civitai.com:app/pixel-garden@2.10.3-beta.1',
     ],
     [
       { kind: 'collection-schema', slug: 'pixel-garden', collection: 'seed_packs', major: 3 },
-      'urn:schema:civitai-apps:pixel-garden/seed_packs@v3',
+      'urn:schema:apps.civitai.com:pixel-garden/seed_packs@v3',
     ],
-    [{ kind: 'runtime', name: 'iframe', major: 1 }, 'urn:civitai-apps:runtime/iframe@1'],
+    [{ kind: 'runtime', name: 'iframe', major: 1 }, 'urn:apps.civitai.com:runtime/iframe@1'],
     [
       { kind: 'document', slug: 'pixel-garden', collection: 'seed_packs', key: '01J:Ab.c-9' },
-      'urn:civitai-apps:pixel-garden/seed_packs/01J:Ab.c-9',
+      'urn:apps.civitai.com:pixel-garden/seed_packs/01J:Ab.c-9',
     ],
   ] as const)('%o → %s', (ref, urn) => {
     expect(registryUrn(ref)).toBe(urn);
@@ -45,19 +45,21 @@ describe('registryUrn', () => {
 
 describe('parseCollectionSchemaUrn', () => {
   it('reads back what the builder writes', () => {
-    expect(parseCollectionSchemaUrn('urn:schema:civitai-apps:pixel-garden/seed_packs@v12')).toEqual(
-      {
-        slug: 'pixel-garden',
-        collection: 'seed_packs',
-        major: 12,
-      }
-    );
+    expect(
+      parseCollectionSchemaUrn('urn:schema:apps.civitai.com:pixel-garden/seed_packs@v12')
+    ).toEqual({
+      slug: 'pixel-garden',
+      collection: 'seed_packs',
+      major: 12,
+    });
   });
 
   it('the longest names the store allows still parse', () => {
     const slug = `a${'b'.repeat(62)}c`;
     const collection = `c${'d'.repeat(31)}`;
-    expect(parseCollectionSchemaUrn(`urn:schema:civitai-apps:${slug}/${collection}@v1`)).toEqual({
+    expect(
+      parseCollectionSchemaUrn(`urn:schema:apps.civitai.com:${slug}/${collection}@v1`)
+    ).toEqual({
       slug,
       collection,
       major: 1,
@@ -65,14 +67,14 @@ describe('parseCollectionSchemaUrn', () => {
   });
 
   it.each([
-    `urn:schema:civitai-apps:${'a'.repeat(65)}/notes@v1`,
-    `urn:schema:civitai-apps:orbit-notes/${'c'.repeat(33)}@v1`,
-    'urn:schema:civitai-schemas:app@v1',
+    `urn:schema:apps.civitai.com:${'a'.repeat(65)}/notes@v1`,
+    `urn:schema:apps.civitai.com:orbit-notes/${'c'.repeat(33)}@v1`,
+    'urn:schema:apps.civitai.com:app@v1',
     'urn:schema:other-apps:pixel-garden/seed_packs@v1',
-    'urn:schema:civitai-apps:pixel-garden/seed_packs@v0',
-    'urn:schema:civitai-apps:pixel-garden@v1',
-    'urn:schema:civitai-apps:Pixel/seed_packs@v1',
-    'urn:civitai-apps:pixel-garden/seed_packs/k1',
+    'urn:schema:apps.civitai.com:pixel-garden/seed_packs@v0',
+    'urn:schema:apps.civitai.com:pixel-garden@v1',
+    'urn:schema:apps.civitai.com:Pixel/seed_packs@v1',
+    'urn:apps.civitai.com:pixel-garden/seed_packs/k1',
   ])('null for %s', (urn) => {
     expect(parseCollectionSchemaUrn(urn)).toBeNull();
   });

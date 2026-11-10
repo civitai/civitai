@@ -7,20 +7,26 @@ import type * as FeatureFlagsService from '~/server/services/feature-flags.servi
 import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as StorylineService from '~/server/services/storyline.service';
 import type * as StorylineReaderLevel from '~/server/utils/storyline-reader-level';
+import type * as WriteService from '~/server/services/commentv3/write.service';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 
 const REACTOR_ID = 5;
 
-const { mockToggleReaction, mockEncouragement, mockGoodContent, storylineGate } = vi.hoisted(
-  () => ({
+const { mockToggleReaction, mockEncouragement, mockGoodContent, storylineGate, v3Comment } =
+  vi.hoisted(() => ({
     mockToggleReaction: vi.fn(),
     storylineGate: vi.fn(),
+    v3Comment: vi.fn(async (..._a: unknown[]): Promise<unknown> => undefined),
     mockEncouragement: vi.fn<(event: unknown) => Promise<void>>(async () => undefined),
     mockGoodContent: vi.fn<(event: unknown) => Promise<void>>(async () => undefined),
-  })
-);
+  }));
 
 vi.mock('~/server/services/reaction.service', () => ({ toggleReaction: mockToggleReaction }));
+// The comment a reaction targets, as CommentV3 stores it; none means it is missing or deleted.
+vi.mock('~/server/services/commentv3/write.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof WriteService>()),
+  getV3WriteComment: v3Comment,
+}));
 // An image's two reads, through Kysely: an image in no post (so no access check), whose owner row
 // is not found (so no tracker row).
 vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
@@ -77,8 +83,13 @@ function makeCtx() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockToggleReaction.mockResolvedValue('created');
-  // A live comment, so the comment cases reach the reaction.
-  dbMock.dbWrite.commentV2.findUnique.mockResolvedValue({ tosViolation: false } as never);
+  // A live comment on a section with no visibility gate, so the comment cases reach the reaction.
+  v3Comment.mockResolvedValue({
+    id: 1,
+    entityType: 'challenge',
+    entityId: 9,
+    tosViolation: false,
+  } as never);
 });
 
 async function react(entityType: ReactionEntityType, entityId: number) {
@@ -157,8 +168,7 @@ describe('toggleReactionHandler — owner of a resource review', () => {
 
 const ALL_REACTIONS: ReviewReactions[] = ['Like', 'Dislike', 'Heart', 'Laugh', 'Cry'];
 const CONTENT: ReviewReactions[] = ['Like', 'Heart', 'Laugh', 'Cry'];
-// The set each entity type's site UI offers: `Reactions.tsx` / `JudgeReactionBar` for content,
-// the legacy `ReactionPicker` (every value) for commentOld.
+// The set each entity type's site UI offers: `Reactions.tsx` / `JudgeReactionBar`.
 const EXPECTED_ALLOWED: Record<ReactionEntityType, ReviewReactions[]> = {
   image: CONTENT,
   post: CONTENT,
@@ -166,21 +176,17 @@ const EXPECTED_ALLOWED: Record<ReactionEntityType, ReviewReactions[]> = {
   bountyEntry: CONTENT,
   comment: CONTENT,
   resourceReview: CONTENT,
-  commentOld: ALL_REACTIONS,
 };
 const ENTITY_TYPES = Object.keys(EXPECTED_ALLOWED) as ReactionEntityType[];
-const HELD_TABLE: Record<ReactionEntityType, string> = {
-  commentOld: 'commentReaction',
-  comment: 'commentV2Reaction',
+// A comment's reactions are on CommentV3Reaction, read raw (see the comment cases below).
+const HELD_TABLE: Record<Exclude<ReactionEntityType, 'comment'>, string> = {
   image: 'imageReaction',
   post: 'postReaction',
   resourceReview: 'resourceReviewReaction',
   article: 'articleReaction',
   bountyEntry: 'bountyEntryReaction',
 };
-const HELD_FK: Record<ReactionEntityType, string> = {
-  commentOld: 'commentId',
-  comment: 'commentId',
+const HELD_FK: Record<Exclude<ReactionEntityType, 'comment'>, string> = {
   image: 'imageId',
   post: 'postId',
   resourceReview: 'reviewId',
@@ -224,7 +230,11 @@ describe('toggleReactionHandler — which reactions may be created', () => {
     }
   );
 
-  it.each(cases.filter((c) => !c.allowed))(
+  const heldCases = cases.flatMap(({ entityType, ...c }) =>
+    !c.allowed && entityType !== 'comment' ? [{ ...c, entityType }] : []
+  );
+
+  it.each(heldCases)(
     'still removes a $entityType $reaction the user already holds',
     async ({ entityType, reaction }) => {
       mockToggleReaction.mockResolvedValue('removed');
@@ -241,7 +251,7 @@ describe('toggleReactionHandler — which reactions may be created', () => {
   );
 
   // Holding a different reaction on the entity (a Like) must not unlock creating this one.
-  it.each(cases.filter((c) => !c.allowed))(
+  it.each(heldCases)(
     'looks up exactly the user, reaction and $entityType row before allowing $reaction',
     async ({ entityType, reaction }) => {
       await toggleReactionHandler({
@@ -254,6 +264,33 @@ describe('toggleReactionHandler — which reactions may be created', () => {
       });
     }
   );
+
+  // Every comment's reactions are on CommentV3Reaction.
+  it('still removes a comment Dislike the user holds on CommentV3', async () => {
+    mockToggleReaction.mockResolvedValue('removed');
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ n: 1 }] as never);
+    await expect(
+      toggleReactionHandler({
+        ctx: makeCtx(),
+        input: { entityType: 'comment', entityId: 31, reaction: 'Dislike' },
+      })
+    ).resolves.toBe('removed');
+    expect(String(dbMock.dbWrite.$queryRaw.mock.calls[0][0].join('?'))).toContain(
+      '"CommentV3Reaction"'
+    );
+    expect(dbMock.dbWrite.$queryRaw.mock.calls[0].slice(1)).toEqual([31, REACTOR_ID, 'Dislike']);
+  });
+
+  it('refuses a comment Dislike the user does not hold', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ n: 0 }] as never);
+    await expect(
+      toggleReactionHandler({
+        ctx: makeCtx(),
+        input: { entityType: 'comment', entityId: 31, reaction: 'Dislike' },
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockToggleReaction).not.toHaveBeenCalled();
+  });
 
   it('asks the primary, not the replica, whether a legacy reaction is held', async () => {
     mockToggleReaction.mockResolvedValue('removed');
@@ -288,8 +325,12 @@ describe('toggleReactionHandler — a comment on a crucible', () => {
     takenDownAt,
   });
   beforeEach(() => {
-    // The comment is in crucible 17's thread.
-    dbMock.dbRead.$queryRaw.mockResolvedValue([{ crucibleId: 17 }] as never);
+    v3Comment.mockResolvedValue({
+      id: 55,
+      entityType: 'crucible',
+      entityId: 17,
+      tosViolation: false,
+    } as never);
   });
 
   it('is refused once the crucible is taken down', async () => {
@@ -313,7 +354,12 @@ describe('toggleReactionHandler — a comment on a crucible', () => {
 
   it('is refused on a comment hidden for ToS', async () => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucible(null) as never);
-    dbMock.dbWrite.commentV2.findUnique.mockResolvedValue({ tosViolation: true } as never);
+    v3Comment.mockResolvedValue({
+      id: 55,
+      entityType: 'crucible',
+      entityId: 17,
+      tosViolation: true,
+    } as never);
 
     await expect(react('comment', 55)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(mockToggleReaction).not.toHaveBeenCalled();
@@ -330,12 +376,17 @@ describe('toggleReactionHandler — a comment on a crucible', () => {
 
 describe('toggleReactionHandler — a comment on a storyline', () => {
   beforeEach(() => {
-    // The comment is in storyline 17's thread.
-    dbMock.dbRead.$queryRaw.mockResolvedValue([{ storylineId: 17 }] as never);
+    v3Comment.mockResolvedValue({
+      id: 55,
+      entityType: 'storyline',
+      entityId: 17,
+      tosViolation: false,
+    } as never);
   });
 
   it('is refused once the storyline is taken down', async () => {
     storylineGate.mockResolvedValue({ userId: REACTOR_ID, tosViolation: true });
+    dbMock.dbRead.storyline.findUnique.mockResolvedValue({ tosViolation: true } as never);
 
     await expect(react('comment', 55)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(mockToggleReaction).not.toHaveBeenCalled();
@@ -350,6 +401,7 @@ describe('toggleReactionHandler — a comment on a storyline', () => {
 
   it('goes through on a storyline the reactor can open (control)', async () => {
     storylineGate.mockResolvedValue({ userId: 4, tosViolation: false });
+    dbMock.dbRead.storyline.findUnique.mockResolvedValue({ tosViolation: false } as never);
 
     await react('comment', 55);
 

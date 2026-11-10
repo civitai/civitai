@@ -107,6 +107,7 @@ export function DumbModelFiltersDropdown({
       earlyAccess: undefined,
       paidAccess: undefined,
       hidePaid: undefined,
+      onSale: undefined,
       supportsGeneration: false,
       hidden: undefined,
       fileFormats: undefined,
@@ -127,6 +128,7 @@ export function DumbModelFiltersDropdown({
         earlyAccess: undefined,
         paidAccess: undefined,
         hidePaid: undefined,
+        onSale: undefined,
         supportsGeneration: undefined,
         hidden: undefined,
         fileFormats: undefined,
@@ -178,6 +180,7 @@ export function DumbModelFiltersDropdown({
     (!hideEarlyAccess && mergedFilters.earlyAccess ? 1 : 0) +
     (!hideEarlyAccess && mergedFilters.paidAccess ? 1 : 0) +
     (!hideEarlyAccess && mergedFilters.hidePaid ? 1 : 0) +
+    (!hideEarlyAccess && mergedFilters.onSale ? 1 : 0) +
     (mergedFilters.supportsGeneration ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.isFeatured ? 1 : 0) +
@@ -287,7 +290,7 @@ export function DumbModelFiltersDropdown({
         )}
 
         <Group gap={8} mb={4}>
-          {/* Hide Paid and the two show-only toggles are mutually exclusive: together they select
+          {/* Hide Paid and the three show-only toggles are mutually exclusive: together they select
               the empty set, so each clears the others rather than returning nothing.
               The shop pins Early Access on, so neither toggle can do anything
               useful there. (Gate kinds are disjoint per VERSION, not per model —
@@ -295,21 +298,32 @@ export function DumbModelFiltersDropdown({
           {!hideEarlyAccess && (
             <>
               <FilterChip
-                checked={mergedFilters.earlyAccess}
+                checked={!!mergedFilters.earlyAccess}
                 onChange={(checked) => patchPending({ earlyAccess: checked, hidePaid: undefined })}
               >
                 <span>Early Access</span>
               </FilterChip>
               <FilterChip
-                checked={mergedFilters.paidAccess}
+                checked={!!mergedFilters.paidAccess}
                 onChange={(checked) => patchPending({ paidAccess: checked, hidePaid: undefined })}
               >
                 <span>Paid Access</span>
               </FilterChip>
               <FilterChip
-                checked={mergedFilters.hidePaid}
+                checked={!!mergedFilters.onSale}
+                onChange={(checked) => patchPending({ onSale: checked, hidePaid: undefined })}
+              >
+                <span>On Sale</span>
+              </FilterChip>
+              <FilterChip
+                checked={!!mergedFilters.hidePaid}
                 onChange={(checked) =>
-                  patchPending({ hidePaid: checked, earlyAccess: undefined, paidAccess: undefined })
+                  patchPending({
+                    hidePaid: checked,
+                    earlyAccess: undefined,
+                    paidAccess: undefined,
+                    onSale: undefined,
+                  })
                 }
               >
                 <span>Hide Paid</span>

@@ -29,8 +29,8 @@ function getCacheClient(target: CacheTarget = 'main'): any {
 }
 
 import { sleep } from '~/server/utils/concurrency-helpers';
+import { queryCacheKeyHash } from '~/server/utils/query-cache-key';
 import { createLogger } from '~/utils/logging';
-import { hashifyObject } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 const log = createLogger('cache-helpers', 'cyan');
@@ -110,7 +110,7 @@ export function queryCache(db: PrismaClient, key: string, version?: string) {
     // don't inherit the environment prefix from the key table — apply it explicitly. Without
     // this, previews would share these entries with production. No-op in production.
     const cacheKey = prefixCacheKey(
-      [key, version, hashifyObject(query).toString()].filter(isDefined).join(':')
+      [key, version, queryCacheKeyHash(query)].filter(isDefined).join(':')
     ) as RedisKeyTemplateCache;
     const cachedData = await redis.packed.get<T>(cacheKey);
     if (cachedData && options?.ttl !== 0) {
@@ -140,7 +140,7 @@ export function queryCacheRaw(executor: RawQueryExecutor, key: string, version?:
     // this typing is not quite right, as we're creating redis keys on the fly here.
     // Same on-the-fly minting as queryCache above — apply the environment prefix explicitly.
     const cacheKey = prefixCacheKey(
-      [key, version, hashifyObject(query).toString()].filter(isDefined).join(':')
+      [key, version, queryCacheKeyHash(query)].filter(isDefined).join(':')
     ) as RedisKeyTemplateCache;
     const cachedData = await redis.packed.get<T>(cacheKey);
     if (cachedData && options?.ttl !== 0) {

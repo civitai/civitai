@@ -2,8 +2,16 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  z-index: 3;
   pointer-events: none;
+  /* No z-index here or inside: it would lift resting hats over the card chips (see .raised). */
+}
+
+/*
+ * A feed card paints its chips (reactions, tip, hat button) over the picture as later siblings, so
+ * a resting hat stays under them. A hat being placed, and image detail's layer, sit on top.
+ */
+.raised {
+  z-index: 3;
 }
 
 .box {
@@ -35,6 +43,24 @@
   animation: land 0.3s ease;
 }
 
+/* Under the viewer's own hat: how long it keeps counting. */
+.timeLeft {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 2px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: var(--mantine-color-white);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .dim {
   opacity: 0.55;
   filter: saturate(0.25) drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
@@ -63,6 +89,12 @@
   font-size: 11px;
   font-weight: 800;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* A feed card stacks its menu and Remix buttons down the right edge, above this layer. */
+.moreFeed {
+  right: auto;
+  left: max(8px, var(--event-decoration-clear-left, 0px));
 }
 
 .moreButton {

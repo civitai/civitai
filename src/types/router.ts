@@ -21,16 +21,6 @@ export type ModelVersionById = ModelVersionRouter['getById'];
 type ModelFileRouter = RouterOutput['modelFile'];
 export type RecentTrainingData = ModelFileRouter['getRecentTrainingData']['items'];
 
-type CommentRouter = RouterOutput['comment'];
-export type CommentGetReactions = CommentRouter['getReactions'];
-export type CommentGetAll = CommentRouter['getAll'];
-export type CommentGetAllItem = CommentGetAll['comments'][number];
-export type CommentGetById = CommentRouter['getById'];
-export type CommentGetCommentsById = CommentRouter['getCommentsById'];
-
-type CommentV2Router = RouterOutput['commentv2'];
-export type CommentV2GetInfinite = CommentV2Router['getInfinite'];
-
 type NotificationRouter = RouterOutput['notification'];
 export type NotificationGetAll = NotificationRouter['getAllByUser'];
 export type NotificationGetAllItem = NotificationGetAll['items'][number];

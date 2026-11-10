@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import type { ReactElement } from 'react';
 import { useEffect, useState } from 'react';
 import { Button, Drawer, Switch, Text } from '@mantine/core';
@@ -20,7 +21,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import type { ExperimentSurface } from '~/shared/constants/experiments.constants';
 import dayjs from '~/shared/utils/dayjs';
-import { trpc } from '~/utils/trpc';
 
 export const DEFAULT_SPOT = { x: 0.5, y: 0.4 };
 
@@ -130,7 +130,11 @@ export function HatTurfPanelPopover({
   );
 }
 
-/** Your hat and what's left of your supply, the image's standings, then Show hats and Leave. */
+/**
+ * Your hat and what's left of your supply, the image's standings, then Show hats.
+ * No Leave here by product decision: leaving is on the event page's Hat Turf section and the
+ * "Take part in Hat Turf" account setting.
+ */
 export function HatTurfPanel({
   imageId,
   surface,
@@ -154,6 +158,7 @@ export function HatTurfPanel({
   const setShowHats = useHatTurfStore((state) => state.setShowHats);
   const optIn = useJoin();
   const { cosmeticId } = useChosenHat();
+  const mobile = useIsMobile({ type: 'media' });
   if (!feed) return null;
 
   const joined = !!user && stock?.optedIn === true;
@@ -221,38 +226,21 @@ export function HatTurfPanel({
         />
       </div>
       <hr className={classes.divider} />
-      <div className={classes.pad}>
+      <div className={clsx(classes.pad, classes.showHatsPad)}>
+        {/* The switch first and its label right after it; on a phone a bigger switch in a full
+            36px tap row. */}
         <Switch
-          size="xs"
+          size={mobile ? 'md' : 'xs'}
           label="Show hats"
-          labelPosition="left"
           checked={showHats}
           onChange={(event) => {
             const show = event.currentTarget.checked;
             setShowHats(show);
             track(show ? 'hide_all_hats_off' : 'hide_all_hats_on', feed.event);
           }}
-          styles={{ root: { width: '100%' }, body: { justifyContent: 'space-between' } }}
+          classNames={{ body: classes.showHats }}
+          data-testid="hat-turf-show-hats"
         />
-        {joined && (
-          <>
-            <Button
-              fullWidth
-              mt="sm"
-              size="xs"
-              variant="outline"
-              color="red"
-              loading={optIn.isPending}
-              data-testid="hat-turf-panel-leave"
-              onClick={() => optIn.mutate({ event: feed.event, optedIn: false })}
-            >
-              Leave Hat Turf
-            </Button>
-            <Text size="xs" c="dimmed" mt={4}>
-              You stop seeing hats and can&apos;t place any. Hats you placed keep counting.
-            </Text>
-          </>
-        )}
       </div>
     </div>
   );
@@ -297,17 +285,7 @@ function Supply({
   nextAt: Date | null;
   color: string;
 }) {
-  const utils = trpc.useUtils();
-  // Reread when the next hat is due, so the count and the countdown move on together.
-  // Keyed on the time, not the Date: the hook builds a new Date every render.
-  const due = nextAt?.getTime();
-  useEffect(() => {
-    if (!due) return;
-    const wait = Math.max(0, due - Date.now()) + 500;
-    const timer = window.setTimeout(() => void utils.hatTurf.getStock.invalidate(), wait);
-    return () => window.clearTimeout(timer);
-  }, [due, utils]);
-
+  // useHatStock rereads the stock when the next hat is due, so the count and countdown move on.
   return (
     <div className={classes.supply} data-testid="hat-turf-panel-supply">
       <div className={classes.supplyRow}>

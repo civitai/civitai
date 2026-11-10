@@ -1,5 +1,9 @@
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 import type { ProtectedContext } from '~/server/createContext';
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -10,8 +14,12 @@ import {
 import type {
   CreateCsamReportSchema,
   CreateExternalCsamReportSchema,
+  CsamReportFormOutput,
 } from '~/server/schema/csam.schema';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createCsamReport } from '~/server/services/csam.service';
+import type { CsamContextText } from '~/server/services/csam-context-text';
+import { reportedUserIdsOf, snapshotCsamContextText } from '~/server/services/csam-context-text';
 import { createSupplementalCsamReport } from '~/server/services/csam-supplemental.service';
 import { createExternalCsamReport } from '~/server/services/csam.service-new';
 import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-flag';
@@ -33,12 +41,34 @@ export async function createCsamReportHandler({
 /** The report plus everything it triggers. Split from the tRPC handler so `/api/mod/csam/*` can reach
  *  it with the acting moderator's id rather than a fabricated tRPC context. */
 export async function fileCsamReport(input: CreateCsamReportSchema & { reportedById: number }) {
-  const { userId, imageIds = [], details, type, reportedById, supplementalOf } = input;
+  const { contextSources, ...filing } = input;
+  const { userId, imageIds = [], details, type, reportedById, supplementalOf } = filing;
   let denyFailed = false;
   let denyBookkeepingFailed = false;
   let strikesReviewFailed = false;
-  if (supplementalOf) await createSupplementalCsamReport({ ...input, supplementalOf });
-  else await createCsamReport(input);
+  if (
+    isFeedbackCaptureOwner(userId) ||
+    isFeedbackCaptureOwner((details as { secondaryUserId?: unknown } | undefined)?.secondaryUserId)
+  )
+    throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
+  if (contextSources && type !== 'Image')
+    throwBadRequestError('Text can be attached to an image report only');
+  const contextText = contextSources
+    ? await snapshotCsamContextText({
+        imageIds,
+        ...(userId > 0 && { ownerId: userId }),
+        sources: contextSources,
+        reportedUserIds: reportedUserIdsOf(userId, details),
+        capturedById: reportedById,
+      })
+    : [];
+  const withContext: CsamReportFormOutput & { contextText?: CsamContextText[] } = {
+    ...details,
+    contextText,
+  };
+  const filed = contextText.length ? { ...filing, details: withContext } : filing;
+  if (supplementalOf) await createSupplementalCsamReport({ ...filed, supplementalOf });
+  else await createCsamReport(filed);
 
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {
@@ -87,7 +117,10 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
       // The deny is the least certain step (the gate can be already resolved, expired, or the
       // orchestrator briefly down) and the one that is safe to retry, so it must not gate the rest.
       try {
-        const denied = await handleDenyTrainingData({ input: { id: modelVersionId } });
+        const denied = await handleDenyTrainingData({
+          input: { id: modelVersionId },
+          moderatorId: reportedById,
+        });
         // The gate IS released here, so this is not a failed deny — the run is stopped and repeating
         // the action would refuse. Only our own record is behind, which still needs a human.
         denyBookkeepingFailed = denied.webhookFailed;
@@ -155,6 +188,8 @@ export async function createExternalCsamReportHandler({
   input: CreateExternalCsamReportSchema;
   ctx: ProtectedContext;
 }) {
+  if (isFeedbackCaptureOwner(input.userId) || isFeedbackCaptureOwner(input.secondaryUserId))
+    throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   // No auto soft-delete/ban here: external offenders are typically already
   // banned, and there is no on-Civitai content to remove. The report row is
   // picked up and sent to NCMEC by the hourly send-csam-reports job.

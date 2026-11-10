@@ -78,6 +78,7 @@ const EDIT_IMG_IDS = [
   ECO.Krea2,
   ECO.Krea3,
   ECO.Ming,
+  ECO.MiniMaxH3Image,
 ];
 
 /** Image ecosystems that support image:create */
@@ -129,6 +130,7 @@ const TXT2IMG_IDS = [
   ECO.MuseImage,
   ECO.MageFlow,
   ECO.Ming,
+  ECO.MiniMaxH3Image,
 ];
 
 /** Video ecosystems that support video:create */
@@ -315,6 +317,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Extract Metadata',
     description: 'Extract generation parameters from an image',
     category: 'image',
+    showBackButton: true,
     ecosystemIds: [],
     noSubmit: true,
   },
@@ -526,6 +529,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Enhance Prompt',
     description: 'Improve your prompt with AI suggestions',
     category: 'image',
+    showBackButton: true,
     ecosystemIds: [],
     noSubmit: true,
     hidden: true,

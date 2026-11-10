@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
-import { EMPTY_CURSOR, createDocFeed } from '~/server/registry-adapter/doc-feed';
+import type { DocFeedOptions } from '~/server/registry-adapter/doc-feed';
+import { EMPTY_CURSOR, PROGRESS_EVERY_MS, createDocFeed } from '~/server/registry-adapter/doc-feed';
 import type { FixtureCatalog } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 import {
   createMemorySnapshotStore,
@@ -9,8 +10,8 @@ import {
 import type { Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 
-const V1 = 'urn:schema:civitai-apps:orbit-notes/notes@v1';
-const V2 = 'urn:schema:civitai-apps:orbit-notes/notes@v2';
+const V1 = 'urn:schema:apps.civitai.com:orbit-notes/notes@v1';
+const V2 = 'urn:schema:apps.civitai.com:orbit-notes/notes@v2';
 const DIALECT = 'https://json-schema.org/draft/2020-12/schema';
 const title = (maxLength: number) => ({
   type: 'object',
@@ -20,11 +21,14 @@ const ONE_MAJOR: CollectionStream['family'] = [
   { urn: V1, body: { ...title(10), $schema: DIALECT, $id: V1 } },
 ];
 const TWO_MAJORS: CollectionStream['family'] = [
-  { urn: V1, body: { ...title(10), $schema: DIALECT, $id: V1, 'x-successor': V2 } },
-  { urn: V2, body: { ...title(100), $schema: DIALECT, $id: V2 } },
+  { urn: V1, body: { ...title(10), $schema: DIALECT, $id: V1 } },
+  {
+    urn: V2,
+    body: { ...title(100), $schema: DIALECT, $id: V2, 'x-migrateFrom': { schema: V1, steps: [] } },
+  },
 ];
 
-const urn = (key: string) => `urn:civitai-apps:orbit-notes/notes/${key}`;
+const urn = (key: string) => `urn:apps.civitai.com:orbit-notes/notes/${key}`;
 const doc = (key: string, t: string, seq: number, extra: Record<string, unknown> = {}) => ({
   appId: 'ab_orbit_7',
   ns: 'prod',
@@ -50,9 +54,15 @@ function setup(store = createMemorySnapshotStore()) {
       tombstones: [],
       lastSeq: { ab_orbit_7: 5 },
     },
-    stream: { appId: 'ab_orbit_7', slug: 'orbit-notes', collection: 'notes', family: TWO_MAJORS },
+    stream: {
+      appId: 'ab_orbit_7',
+      slug: 'orbit-notes',
+      collection: 'notes',
+      contentRating: 'pg',
+      family: TWO_MAJORS,
+    },
   };
-  const make = (edits: Array<() => void> = []) => {
+  const make = (edits: Array<() => void> = [], over: Partial<DocFeedOptions> = {}) => {
     let polls = 0;
     const abort = new AbortController();
     const feed = createDocFeed({
@@ -65,10 +75,12 @@ function setup(store = createMemorySnapshotStore()) {
         else edits[polls]();
         polls++;
       },
+      ...over,
     });
     const drain = async (schema: string, cursor: string) => {
       const out: Change[] = [];
-      for await (const c of feed.changes(schema, cursor, { signal: abort.signal })) out.push(c);
+      for await (const c of await feed.changes(schema, cursor, { signal: abort.signal }))
+        out.push(c);
       return out;
     };
     return { feed, drain, signal: abort.signal };
@@ -76,7 +88,8 @@ function setup(store = createMemorySnapshotStore()) {
   return { world, store, make };
 }
 
-const shape = (c: Change) => ('upsert' in c ? ['upsert', c.upsert.urn] : ['delete', c.delete]);
+const shape = (c: Change) =>
+  'upsert' in c ? ['upsert', c.upsert.urn] : 'delete' in c ? ['delete', c.delete] : ['progress'];
 async function codeOf(p: Promise<unknown>) {
   try {
     await p;
@@ -244,7 +257,7 @@ describe('🔴 an unpublished stream writes nothing to the store', () => {
   it('a snapshot of a collection URN that resolves to nothing gets a constant cursor and no write', async () => {
     const { world, store, make } = setup();
     world.stream = null;
-    const snap = await make().feed.snapshot('urn:schema:civitai-apps:no-such-app/invented@v1');
+    const snap = await make().feed.snapshot('urn:schema:apps.civitai.com:no-such-app/invented@v1');
     expect([snap.cursor, store.puts()]).toEqual([EMPTY_CURSOR, 0]);
   });
 
@@ -264,7 +277,7 @@ describe('🔴 an unpublished stream writes nothing to the store', () => {
       ['delete', urn('n1')],
       ['delete', urn('n2')],
     ]);
-    expect(changes[1].cursor).toBe(EMPTY_CURSOR);
+    expect((changes[1] as { cursor: string }).cursor).toBe(EMPTY_CURSOR);
     // The resume only refreshes the state it read (a touch); nothing is written.
     expect([store.puts() - before, store.touches()]).toEqual([0, 1]);
   });
@@ -311,6 +324,7 @@ describe('🔴 an empty published stream reads incrementally', () => {
         appId: 'ab_orbit_7',
         slug: 'orbit-notes',
         collection: 'notes',
+        contentRating: 'pg',
         family: TWO_MAJORS,
       }),
       store: createMemorySnapshotStore(),
@@ -325,7 +339,8 @@ describe('🔴 an empty published stream reads incrementally', () => {
     const snap = await feed.snapshot(V1);
     expect([snap.entities, fullReads]).toEqual([[], 1]);
     const out: Change[] = [];
-    for await (const c of feed.changes(V1, snap.cursor, { signal: abort.signal })) out.push(c);
+    for await (const c of await feed.changes(V1, snap.cursor, { signal: abort.signal }))
+      out.push(c);
     expect(out.map(shape)).toEqual([['upsert', urn('n7')]]);
     expect(fullReads).toBe(1);
   });
@@ -361,6 +376,7 @@ describe('a poll with nothing new', () => {
         appId: 'ab_orbit_7',
         slug: 'orbit-notes',
         collection: 'notes',
+        contentRating: 'pg',
         family: TWO_MAJORS,
       }),
       store,
@@ -372,7 +388,7 @@ describe('a poll with nothing new', () => {
     const { cursor } = await feed.snapshot(V2);
     const after = { puts: store.puts(), reads: { ...reads } };
     const out: Change[] = [];
-    for await (const c of feed.changes(V2, cursor, { signal: abort.signal })) out.push(c);
+    for await (const c of await feed.changes(V2, cursor, { signal: abort.signal })) out.push(c);
     expect(out).toEqual([]);
     expect(polls).toBe(4);
     expect([store.puts() - after.puts, reads]).toEqual([0, after.reads]);
@@ -392,5 +408,67 @@ describe('🔴 a mint re-sends documents whose claims grew, on the old major too
     expect(resent.schemas).toEqual([V1, V2]);
     const onV2 = (await make().feed.snapshot(V2)).entities.find((e) => e.urn === urn('n1'))!;
     expect([onV2.rev, onV2.schemas]).toEqual([resent.rev, resent.schemas]);
+  });
+});
+
+describe('🔴 progress: the namespace seq moves with no change for this stream', () => {
+  // A write this stream does not carry: a private document (another key space) bumps the
+  // namespace's seq, and the shared feed sees nothing of it but the head.
+  const privateWrite = (world: { cat: FixtureCatalog }, seq: number) => {
+    world.cat.documents!.push(doc(`p${seq}`, 'private', seq, { scopeUid: 42 }));
+    world.cat.lastSeq = { ab_orbit_7: seq };
+  };
+  /** `n` private writes one second apart, then one more a whole interval later. */
+  const burst = (world: { cat: FixtureCatalog }, clock: { t: number }, n: number) => [
+    ...Array.from({ length: n }, (_, i) => () => {
+      clock.t += 1000;
+      privateWrite(world, 6 + i);
+    }),
+    () => {
+      clock.t += PROGRESS_EVERY_MS;
+      privateWrite(world, 6 + n);
+    },
+  ];
+
+  it('a burst of private writes saves one state per interval, and progress only for it', async () => {
+    const { world, store, make } = setup();
+    const clock = { t: 0 };
+    const h = make(burst(world, clock, 20), { now: () => clock.t });
+    const { cursor } = await h.feed.snapshot(V2);
+    const before = store.puts();
+    const changes = await h.drain(V2, cursor);
+    expect(changes.map(shape)).toEqual([['progress']]);
+    expect([store.puts() - before, store.size()]).toEqual([1, 2]);
+  });
+
+  it('within the interval a disconnected consumer keeps its cursor, however many moves', async () => {
+    // Two states kept per stream: saving each move would evict the snapshot's at the second.
+    const store = createMemorySnapshotStore(2);
+    const { world, make } = setup(store);
+    const clock = { t: 0 };
+    const h = make(burst(world, clock, 10).slice(0, 10), { now: () => clock.t });
+    const { cursor } = await h.feed.snapshot(V2);
+    expect(await h.drain(V2, cursor)).toEqual([]);
+    world.cat.documents![0] = doc('n1', 'short, edited', 30, { version: 2 });
+    world.cat.lastSeq = { ab_orbit_7: 30 };
+    const resumed = setup(store);
+    resumed.world.cat = world.cat;
+    expect((await resumed.make().drain(V2, cursor)).map(shape)).toEqual([['upsert', urn('n1')]]);
+  });
+
+  it('a progress cursor is a saved state: it resumes with only what changed after it', async () => {
+    const { world, store, make } = setup();
+    const clock = { t: 0 };
+    const h = make(burst(world, clock, 0), { now: () => clock.t });
+    const { cursor } = await h.feed.snapshot(V2);
+    const [moved] = (await h.drain(V2, cursor)) as Array<{ progress: string }>;
+    expect(moved.progress).not.toBe(cursor);
+    world.cat.documents![0] = doc('n1', 'short, edited', 8, { version: 2 });
+    world.cat.lastSeq = { ab_orbit_7: 8 };
+    const resumed = setup(store);
+    resumed.world.cat = world.cat;
+    expect((await resumed.make().drain(V2, moved.progress)).map(shape)).toEqual([
+      ['upsert', urn('n1')],
+    ]);
   });
 });

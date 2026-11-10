@@ -56,7 +56,6 @@ import {
   awardViewPoints,
   hattedImpressionEntities,
   onCommentCreated,
-  onCommentsRemoved,
   onTopicCommentsRemoved,
   onModelReviewsChanged,
   onPlacementApproved,
@@ -139,16 +138,19 @@ describe('reactions', () => {
   it('awards a hatted image reaction with a per-(entity, actor) sourceId', async () => {
     hatted.add('Image:7');
     await onReactionCreated({ entityType: 'image', entityId: 7, userId: ACTOR });
-    expect(awardEventPoints).toHaveBeenCalledWith([
-      {
-        type: 'reaction',
-        actorId: ACTOR,
-        entityType: 'Image',
-        entityId: 7,
-        time: expect.any(Date),
-        sourceId: `ImageReaction:7:${ACTOR}`,
-      },
-    ]);
+    expect(awardEventPoints).toHaveBeenCalledWith(
+      [
+        {
+          type: 'reaction',
+          actorId: ACTOR,
+          entityType: 'Image',
+          entityId: 7,
+          time: expect.any(Date),
+          sourceId: `ImageReaction:7:${ACTOR}`,
+        },
+      ],
+      expect.any(Function)
+    );
   });
 
   it('ignores reactions on other entity types and on unhatted content', async () => {
@@ -197,10 +199,9 @@ describe('reactions', () => {
 });
 
 describe('comments', () => {
-  it('awards a top-level comment on a hatted image without a thread lookup', async () => {
+  it('awards a comment on a hatted image', async () => {
     hatted.add('Image:7');
-    await onCommentCreated({ userId: ACTOR, entityType: 'image', entityId: 7, threadId: 70 });
-    expect(db.thread.findMany).not.toHaveBeenCalled();
+    await onCommentCreated({ userId: ACTOR, entityType: 'image', entityId: 7 });
     expect(awardEventPoints).toHaveBeenCalledWith([
       {
         type: 'comment',
@@ -213,54 +214,15 @@ describe('comments', () => {
     ]);
   });
 
-  it("credits a reply to its root thread's article", async () => {
-    hatted.add('Article:3');
-    db.thread.findMany.mockResolvedValueOnce([
-      {
-        id: 71,
-        rootThreadId: 30,
-        imageId: null,
-        articleId: null,
-        rootThread: { imageId: null, articleId: 3 },
-      },
-    ]);
-    await onCommentCreated({ userId: ACTOR, entityType: 'comment', entityId: 99, threadId: 71 });
-    expect(awardEventPoints).toHaveBeenCalledWith([
-      expect.objectContaining({
-        type: 'comment',
-        entityType: 'Article',
-        entityId: 3,
-        time: expect.any(Date),
-        sourceId: `CommentV2:Article:3:${ACTOR}`,
-      }),
-    ]);
-  });
-
   it('ignores comments on other entity types', async () => {
     hatted.add('Model:7');
-    await onCommentCreated({ userId: ACTOR, entityType: 'model', entityId: 7, threadId: 70 });
+    await onCommentCreated({ userId: ACTOR, entityType: 'model', entityId: 7 });
     expect(awardEventPoints).not.toHaveBeenCalled();
   });
 
-  it('removes once the actor has no comment left anywhere under the root thread', async () => {
-    hatted.add('Image:7');
-    db.thread.findMany.mockResolvedValue([
-      { id: 70, rootThreadId: null, imageId: 7, articleId: null, rootThread: null },
-    ]);
-    kysely.state.answers = [{ n: '2' }, { n: '0' }];
-
-    await onCommentsRemoved([{ userId: ACTOR, threadId: 70 }]);
-    expect(removeEventPoints).not.toHaveBeenCalled();
-
-    await onCommentsRemoved([{ userId: ACTOR, threadId: 70 }]);
-    expect(removeEventPoints).toHaveBeenCalledWith([
-      expect.objectContaining({ sourceId: `CommentV2:Image:7:${ACTOR}` }),
-    ]);
-  });
-
-  // A CommentV3 comment names its section, so no thread is read; the source id is the one the award
-  // was made under, so a comment written before its surface flipped is still settled.
-  it('settles a CommentV3 comment by its section, once the actor has none left there', async () => {
+  // The source id is the one the award was made under, so a comment awarded before the move to
+  // CommentV3 is still settled.
+  it('settles a comment by its section, once the actor has none left there', async () => {
     hatted.add('Article:8');
     kysely.state.answers = [{ n: '1' }, { n: '0' }];
     await onTopicCommentsRemoved([{ userId: ACTOR, entityType: 'article', entityId: 8 }]);
@@ -272,7 +234,6 @@ describe('comments', () => {
       { userId: ACTOR, entityType: 'article', entityId: 8 },
     ]);
 
-    expect(db.thread.findMany).not.toHaveBeenCalled();
     expect(kysely.state.calls).toHaveLength(1);
     expect(removeEventPoints).toHaveBeenCalledWith([
       expect.objectContaining({ sourceId: `CommentV2:Article:8:${ACTOR}` }),
@@ -391,33 +352,17 @@ describe('round 1', () => {
     }
   });
 
-  it("reads every deleted comment's thread in one query and removes once per actor and root", async () => {
-    hatted.add('Image:7');
-    db.thread.findMany.mockResolvedValue([
-      { id: 70, rootThreadId: null, imageId: 7, articleId: null, rootThread: null },
-      { id: 71, rootThreadId: 70, imageId: null, articleId: null, rootThread: { imageId: 7 } },
-    ]);
-    kysely.state.answers = [{ n: '0' }];
-
-    await onCommentsRemoved([
-      { userId: ACTOR, threadId: 70 },
-      { userId: ACTOR, threadId: 71 },
-      { userId: ACTOR, threadId: 70 },
-    ]);
-
-    expect(db.thread.findMany).toHaveBeenCalledTimes(1);
-    expect(db.thread.findMany.mock.calls[0][0]).toMatchObject({ where: { id: { in: [70, 71] } } });
-    expect(kysely.state.calls).toHaveLength(1);
-    expect(removeEventPoints).toHaveBeenCalledTimes(1);
-  });
-
   it('skips the remaining-rows query for a comment on unhatted content', async () => {
-    db.thread.findMany.mockResolvedValue([
-      { id: 70, rootThreadId: null, imageId: 7, articleId: null, rootThread: null },
-    ]);
-    await onCommentsRemoved([{ userId: ACTOR, threadId: 70 }]);
+    await onTopicCommentsRemoved([{ userId: ACTOR, entityType: 'image', entityId: 7 }]);
     expect(kysely.state.calls).toHaveLength(0);
     expect(removeEventPoints).not.toHaveBeenCalled();
+
+    // Control: the same comment on a hatted image is settled.
+    hatted.add('Image:7');
+    await onTopicCommentsRemoved([{ userId: ACTOR, entityType: 'image', entityId: 7 }]);
+    expect(removeEventPoints).toHaveBeenCalledWith([
+      expect.objectContaining({ sourceId: `CommentV2:Image:7:${ACTOR}` }),
+    ]);
   });
 
   it('removes a placer once however many of their placements on the image came down', async () => {

@@ -127,6 +127,18 @@ export const wasLastReviewARejection = (history?: CosmeticShopItemHistoryEntry[]
   return index >= 0 && history![index].action === 'reject';
 };
 
+/**
+ * Whether the item is still waiting on the creator: the last verdict asked for changes and nothing
+ * was submitted or edited since. Read from history because archiving overwrites `status`.
+ */
+export const awaitsRequestedChanges = (history?: CosmeticShopItemHistoryEntry[]) => {
+  const index = lastReviewIndex(history);
+  if (index < 0 || history![index].action !== 'request-changes') return false;
+  return !history!
+    .slice(index + 1)
+    .some((entry) => entry.kind === 'submitted' || entry.kind === 'edited');
+};
+
 // Allowlist: a newly recorded edit field that changes what holders see must be added here, or
 // editing it after approval leaves the item wearable unreviewed.
 const DISPLAYED_FIELDS = new Set(['name', 'description', 'artwork', 'offsets', 'slug']);

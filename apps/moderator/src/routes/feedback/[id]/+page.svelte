@@ -72,6 +72,7 @@
       {context}
       siblings={data.siblings}
       knownIssues={data.knownIssues}
+      captureView={data.captureView}
       grafanaUrl={data.grafanaUrl}
       civitaiUrl={data.civitaiUrl}
       canTriage={!!data.grants['feedback.status.set']}

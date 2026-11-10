@@ -5,6 +5,13 @@ import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
+import {
+  bustRemixGalleryHosts,
+  getRemixGalleryHostsWithEntries,
+  REMIX_GALLERY_SURFACE,
+  REMIX_GALLERY_TARGET_TYPE,
+} from '~/server/services/remix-gallery-hosts.cache';
 import { readViewerPendingPlacementsViaKysely } from '~/server/services/hot-reads-3.reads';
 import { logToAxiom } from '~/server/logging/client';
 import { remixAcceptReward } from '~/server/rewards/active/remixAccept.reward';
@@ -74,8 +81,8 @@ import {
   remixGalleryShuffleSeed,
 } from '~/shared/utils/remix-gallery';
 
-const SURFACE = 'remixGallery' as const;
-const TARGET_TYPE = 'image' as const;
+const SURFACE = REMIX_GALLERY_SURFACE;
+const TARGET_TYPE = REMIX_GALLERY_TARGET_TYPE;
 
 type SubmissionImage = {
   id: number;
@@ -411,8 +418,8 @@ export async function createRemixGallerySubmission({
   // where a submission is made (above), and by `createFreePlacement` itself
   // against `allowedModes`. So a free submission here is always pending and
   // always the owner's to answer.
-  if (free || waiver)
-    return createFreePlacement({
+  if (free || waiver) {
+    const created = await createFreePlacement({
       surface: SURFACE,
       targetType: TARGET_TYPE,
       targetId: hostImageId,
@@ -420,6 +427,10 @@ export async function createRemixGallerySubmission({
       data,
       teamWaiver: waiver ? { perDay: waiver.perDay } : undefined,
     }).catch(asDuplicateRefusal);
+    // The host now has a placement: drop its cached "no entries" (remix-gallery-hosts.cache).
+    await bustRemixGalleryHosts([hostImageId]);
+    return created;
+  }
 
   // Every rule from here down is the paid path's, which is why none of them is
   // reached above. The floor in particular exists because the price is this
@@ -474,6 +485,9 @@ export async function createRemixGallerySubmission({
       select: { id: true },
     })
     .catch(asDuplicateRefusal);
+  // The host now has a placement: drop its cached "no entries" (remix-gallery-hosts.cache). Before
+  // the escrow, whose failure expires the row rather than deleting it, so the host keeps it.
+  await bustRemixGalleryHosts([hostImageId]);
 
   try {
     await holdPlacementEscrow({
@@ -712,6 +726,10 @@ export async function actOnRemixGallerySubmission({
   // appeared to work and did not is what this cost us on chunk D.
   if (!result.settled)
     throw throwBadRequestError('remix gallery: that submission was already resolved elsewhere');
+
+  // Approval is when the entry first renders. Membership did not change, but a fill that raced the
+  // insert's bust may have cached "no entries" for this host (remix-gallery-hosts.cache).
+  if (action === 'approve') await bustRemixGalleryHosts([placement.targetId]);
 
   // Fired only from behind that `settled` check, which is the whole double-pay
   // guard: it is true for exactly one call in a placement's life. Re-presenting a
@@ -1290,10 +1308,17 @@ const hostIsShowable = (alias = 'i') => {
  * declined.
  */
 async function readHostImage(hostImageId: number) {
-  const [row] = await dbRead.$queryRaw<{ nsfwLevel: number; minor: boolean; showable: boolean }[]>`
+  // Through Kysely, not Prisma's `$queryRaw` (see queryPrismaSql): an int4 and two booleans.
+  // An id past int4 is no image: null, as Prisma answered, rather than a range error.
+  if (!isPgInt4(hostImageId)) return null;
+  const { kyselyRead } = await loadKyselyDb();
+  const [row] = await queryPrismaSql<{ nsfwLevel: number; minor: boolean; showable: boolean }>(
+    kyselyRead,
+    Prisma.sql`
     SELECT i."nsfwLevel", ${hostIsMinor()} AS minor, ${hostIsShowable()} AS showable
     FROM "Image" i WHERE i.id = ${hostImageId}
-  `;
+  `
+  );
   return row ?? null;
 }
 
@@ -1490,7 +1515,15 @@ async function galleryHasEntries({
 }) {
   const levels = onlySelectableLevels(browsingLevel);
 
-  const [row] = await dbRead.$queryRaw<{ exists: boolean }[]>`
+  // A host with no placement at all has nothing to show, and that is most hosts: answered from
+  // the negative cache without the query (remix-gallery-hosts.cache).
+  if (!(await getRemixGalleryHostsWithEntries([hostImageId])).has(hostImageId)) return false;
+
+  // Through Kysely, not Prisma's `$queryRaw` (see queryPrismaSql): one boolean.
+  const { kyselyRead } = await loadKyselyDb();
+  const [row] = await queryPrismaSql<{ exists: boolean }>(
+    kyselyRead,
+    Prisma.sql`
     SELECT EXISTS (
       SELECT 1
       FROM "Placement" pl
@@ -1500,7 +1533,8 @@ async function galleryHasEntries({
         AND pl."targetType" = ${TARGET_TYPE}
         AND pl."targetId" = ${hostImageId}${entryIsVisible(levels, Prisma.sql`${hostImageId}`)}
     ) AS "exists"
-  `;
+  `
+  );
 
   return row?.exists ?? false;
 }
@@ -1593,15 +1627,23 @@ async function getSparkStorylineSummaries({
   viewer: Viewer;
 }) {
   const levels = onlySelectableLevels(browsingLevel);
-  const ids = [...new Set(imageIds)];
+  // Caller ids, bound as `int[]`: one past int4 would fail the whole statement (see isPgInt4).
+  const ids = [...new Set(imageIds)].filter(isPgInt4);
+  if (!ids.length) return {};
   const excluded = [...(await getViewerExcludedIds(viewer))];
-  const rows = await dbRead.$queryRaw<
-    (Omit<SparkStorylineCardEntry, 'previews'> & {
+  // Through Kysely, not Prisma's `$queryRaw` (see queryPrismaSql). `total` is `count(*) OVER`, an
+  // int8: Prisma returned it as a bigint, the Kysely pools as a number, and `Number()` below takes
+  // either. `previews` is jsonb, parsed alike.
+  const { kyselyRead } = await loadKyselyDb();
+  const rows = await queryPrismaSql<
+    Omit<SparkStorylineCardEntry, 'previews'> & {
       hostId: number;
-      total: bigint;
+      total: number | bigint;
       previews: SparkStorylineCardEntry['previews'];
-    })[]
-  >`
+    }
+  >(
+    kyselyRead,
+    Prisma.sql`
     WITH listed AS (
       SELECT st.id AS "storylineId", st.title, st."sparkImageId" AS "hostId", u.username,
         row_number() OVER (PARTITION BY st."sparkImageId" ORDER BY st.id DESC) AS rn,
@@ -1647,9 +1689,9 @@ async function getSparkStorylineSummaries({
             AND p."userId" <> ALL(${excluded}::int[])
             AND (p."nsfwLevel" & ~(${storylineCeilingSql} * 2 - 1)) = 0
             AND (i."nsfwLevel" & ~(${storylineCeilingSql} * 2 - 1)) = 0${postedImageIsVisible(
-    levels,
-    Prisma.raw('l."hostId"')
-  )}
+      levels,
+      Prisma.raw('l."hostId"')
+    )}
           ORDER BY c.id, i.index NULLS LAST, i.id
         ) firsts
         ORDER BY depth, "chapterId"
@@ -1658,7 +1700,8 @@ async function getSparkStorylineSummaries({
     ) pv
     WHERE l.rn <= ${REMIX_GALLERY_CARD_THUMBS}
     ORDER BY l."hostId", l.rn
-  `;
+  `
+  );
 
   const summaries: Record<number, NonNullable<RemixGalleryCardSummary['storylines']>> = {};
   for (const row of rows) {
@@ -1681,19 +1724,27 @@ async function getRemixEntrySummaries({
   browsingLevel: number;
 }): Promise<Record<number, RemixGalleryCardSummary>> {
   const levels = onlySelectableLevels(browsingLevel);
-  const ids = [...new Set(imageIds)];
+  // Only hosts with any placement can have an entry to count, and almost none do: the rest are
+  // answered from the negative cache (remix-gallery-hosts.cache), and with none left there is no
+  // query at all.
+  const withEntries = await getRemixGalleryHostsWithEntries(imageIds);
+  const ids = [...new Set(imageIds)].filter((id) => withEntries.has(id));
+  if (!ids.length) return {};
 
-  const rows = await dbRead.$queryRaw<
-    {
-      hostId: number;
-      imageId: number;
-      url: string;
-      type: MediaType;
-      nsfwLevel: number;
-      username: string | null;
-      total: bigint;
-    }[]
-  >`
+  // Through Kysely, not Prisma's `$queryRaw` (see queryPrismaSql). `total` is `count(*) OVER`, an
+  // int8: Prisma returned it as a bigint, the Kysely pools as a number; `Number()` takes either.
+  const { kyselyRead } = await loadKyselyDb();
+  const rows = await queryPrismaSql<{
+    hostId: number;
+    imageId: number;
+    url: string;
+    type: MediaType;
+    nsfwLevel: number;
+    username: string | null;
+    total: number | bigint;
+  }>(
+    kyselyRead,
+    Prisma.sql`
     WITH visible AS (
       SELECT
         pl."targetId" AS "hostId",
@@ -1717,19 +1768,21 @@ async function getRemixEntrySummaries({
       WHERE pl.surface = ${SURFACE}
         AND pl."targetType" = ${TARGET_TYPE}
         AND pl."targetId" IN (${Prisma.join(ids)})${entryIsVisible(
-    levels,
-    Prisma.raw('pl."targetId"')
-  )}
+      levels,
+      Prisma.raw('pl."targetId"')
+    )}
     )
     SELECT "hostId", "imageId", url, type, "nsfwLevel", username, total
     FROM visible
     WHERE rn <= ${REMIX_GALLERY_CARD_THUMBS}
     ORDER BY "hostId", rn
-  `;
+  `
+  );
 
   const summaries: Record<number, RemixGalleryCardSummary> = {};
   for (const row of rows) {
-    // `count(*) OVER` comes back as bigint, which does not survive JSON.
+    // `count(*) OVER` is an int8: a bigint, which does not survive JSON, from Prisma; a number
+    // from the Kysely pools.
     const summary = (summaries[row.hostId] ??= { count: Number(row.total), entries: [] });
     summary.entries.push({
       imageId: row.imageId,

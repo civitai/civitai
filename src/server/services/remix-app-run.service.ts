@@ -35,6 +35,7 @@ import {
   viewerOf,
   type RemixAppCaller,
 } from '~/server/services/remix-app.service';
+import { getRegisteredRemixApp } from '~/server/services/remix-app-registry.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import type {
   RemixAnswer,
@@ -52,7 +53,6 @@ import {
   replayRemixApp,
   type RemixLogEntry,
 } from '~/shared/remix-apps/replay';
-import { getRuntimeRemixApp } from '~/shared/remix-apps/system-apps';
 import {
   readRemixTag,
   REMIX_APP_TAG,
@@ -160,7 +160,7 @@ function runSourceId(segments: Segment[]) {
 type RunImage = RemixImage & { nsfwLevel?: NsfwLevel };
 
 /** Read through the generator queue's normalizer: an upscale is a comfy step that returns `blobs`, not `images`. */
-function outputImages(workflow: Workflow): RunImage[] {
+export function outputImages(workflow: Workflow): RunImage[] {
   return (workflow.steps ?? [])
     .flatMap((step) => normalizeStepOutput(step as Parameters<typeof normalizeStepOutput>[0]))
     .flatMap((blob) =>
@@ -415,7 +415,7 @@ async function advance({
   if (quote == null) return { status: 'priced', runId, ...priced };
   assertWithinQuote(priced.cost, quote);
 
-  const tags = remixRunTags({ slug: app.slug, runId, segment: index });
+  const tags = remixRunTags({ slug: app.slug, runId, segment: index, runtime: true });
   const remixRun: RemixRunMetadata = { app: app.slug, version: app.version, answers };
   // A segment after the first reads the previous segment's output, which carries no source; the
   // mint names it again so the graph signs it into this segment's metadata and output files.
@@ -432,7 +432,10 @@ async function advance({
   return { status: 'running', runId, workflowId: result.id as string };
 }
 
-/** `answers`: to asks before the app's first workflow, which records them when it submits. */
+/**
+ * `answers`: to asks before the app's first workflow, which records them when it submits.
+ * `allowDisabled`: a mod's test run of an app the menu does not list yet.
+ */
 export async function startRemixRun({
   slug,
   imageId,
@@ -440,6 +443,7 @@ export async function startRemixRun({
   answers = [],
   quote,
   caller,
+  allowDisabled = false,
 }: {
   slug: string;
   imageId: number;
@@ -447,9 +451,9 @@ export async function startRemixRun({
   answers?: RemixAnswer[];
   quote?: number;
   caller: RemixAppCaller;
+  allowDisabled?: boolean;
 }) {
-  const app = getRuntimeRemixApp(slug);
-  if (!app) throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
+  const { app } = await getRegisteredRemixApp(slug, { allowDisabled });
   const image = await loadSource(imageId, caller, true);
   const runId = remixRunId({ userId: caller.user.id, slug, imageId, nonce });
   const segments = await readRun(runId, caller);
@@ -477,9 +481,12 @@ async function loadRun(runId: string, caller: RemixAppCaller) {
   const segments = await readRun(runId, caller);
   if (!segments.length) throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix not found' });
   const { meta } = segments[segments.length - 1];
-  const app = getRuntimeRemixApp(meta.app);
-  if (!app || app.version !== meta.version)
-    throw damaged('the app changed since it started. Start it again from the image.');
+  const changed = () => damaged('the app changed since it started. Start it again from the image.');
+  // A disabled app's run still finishes: it was paid for.
+  const { app } = await getRegisteredRemixApp(meta.app, { allowDisabled: true }).catch((error) => {
+    throw error instanceof TRPCError && error.code === 'NOT_FOUND' ? changed() : error;
+  });
+  if (app.version !== meta.version) throw changed();
   const image = await loadSource(runSourceId(segments), caller, true);
   return { segments, app, image };
 }

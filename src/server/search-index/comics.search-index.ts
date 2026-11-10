@@ -7,7 +7,8 @@ import { comicsFilterableAttributes } from '~/server/search-index/filterable-att
 import { comicsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { profileImageSelect } from '../selectors/image.selector';
+import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
+import type { profileImageSelect } from '../selectors/image.selector';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -175,6 +176,7 @@ type ProfileImage = Prisma.ImageGetPayload<{
 
 export const comicsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
+  outboxEntity: 'Comic',
   setup: onIndexSetup,
   prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
     const where = [
@@ -272,12 +274,10 @@ export const comicsSearchIndex = createSearchIndexUpdateProcessor({
 
     if (!comics.length) return null;
 
-    const profilePictures = await db.image.findMany({
-      where: {
-        id: { in: comics.map((c) => c.user.profilePictureId).filter(isDefined) },
-      },
-      select: profileImageSelect,
-    });
+    const profilePictures = await getServableProfilePictures(
+      db,
+      comics.map((c) => c.user.profilePictureId).filter(isDefined)
+    );
 
     logger(`PullData :: Pulled comics and profile pictures`);
 

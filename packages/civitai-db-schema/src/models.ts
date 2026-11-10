@@ -260,7 +260,7 @@ export type Model3DEngagementType = "Favorite" | "Hide" | "Notify";
 
 export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
-export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
+export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion" | "Comic";
 
 export type StorylineStatus = "Ongoing" | "Complete";
 
@@ -278,7 +278,7 @@ export type ServiceDealStatus = "Requested" | "Accepted" | "Delivered" | "InRevi
 
 export type ServiceDealEventType = "Requested" | "Accepted" | "Declined" | "Expired" | "Delivered" | "RevisionRequested" | "Completed" | "CancellationRequested" | "CancellationAccepted" | "CancellationDeclined" | "Cancelled" | "Disputed" | "DisputeResolved" | "DeadlineExtended" | "Held" | "Released" | "Refunded";
 
-export type ServiceDealFileKind = "Preview" | "Final";
+export type ServiceDealFileKind = "Preview" | "Final" | "Attachment";
 
 export type ServiceDealFileStatus = "Uploading" | "Processing" | "Ready" | "Failed";
 
@@ -678,6 +678,7 @@ export interface User {
   collaboratingOn?: EntityCollaborator[];
   collaborationsCreated?: EntityCollaborator[];
   adTokens?: AdToken[];
+  accessTokens?: AccessToken[];
   ratingRequests?: ImageRatingRequest[];
   collectionItemScores?: CollectionItemScore[];
   appeals?: Appeal[];
@@ -775,6 +776,8 @@ export interface User {
   serviceDealsSold?: ServiceDeal[];
   mysteryBoxesSold?: ItemDefinition[];
   gameFrameGames?: GameFrameGame[];
+  giftLinksCreated?: ModelVersionGiftLink[];
+  giftRedemptions?: ModelVersionGiftRedemption[];
 }
 
 export interface CustomerSubscription {
@@ -1180,6 +1183,7 @@ export interface ModelVersion {
   coveredCheckpoints?: CoveredCheckpoint[];
   wildcardSet?: WildcardSet | null;
   licensingRoot?: LicensingRoot | null;
+  giftLinks?: ModelVersionGiftLink[];
 }
 
 export interface LicensingRoot {
@@ -1532,17 +1536,6 @@ export interface HeldResourceReview {
   holdReasons: string[];
 }
 
-export interface HeldAnswer {
-  id: number;
-  questionId: number;
-  userId: number;
-  content: string;
-  createdAt: Date;
-  updatedAt: Date;
-  heldAt: Date;
-  holdReasons: string[];
-}
-
 export interface ResourceReview {
   id: number;
   modelId: number;
@@ -1564,6 +1557,9 @@ export interface ResourceReview {
   reactions?: ResourceReviewReaction[];
   helper?: ResourceReviewHelper | null;
   reports?: ResourceReviewReport[];
+  postId: number | null;
+  post?: Post | null;
+  releasedAt: Date | null;
 }
 
 export interface ResourceReviewReaction {
@@ -1679,6 +1675,7 @@ export interface Post {
   collectionItems?: CollectionItem[];
   storylineChapter?: StorylineChapter | null;
   storylinePendingChapter?: StorylinePendingChapter | null;
+  resourceReviews?: ResourceReview[];
 }
 
 export interface PostMetric {
@@ -1757,6 +1754,7 @@ export interface Image {
   clubTierCover?: ClubTier[];
   clubPostCoverImage?: ClubPost[];
   article?: Article | null;
+  articleBanner?: Article | null;
   purchasableRewards?: PurchasableReward[];
   tools?: ImageTool[];
   techniques?: ImageTechnique[];
@@ -2965,6 +2963,26 @@ export interface TrustedSpokeDomain {
   updatedAt: Date;
 }
 
+export interface AccessToken {
+  id: number;
+  resourceType: string;
+  resourceId: number;
+  tokenHash: string;
+  createdById: number;
+  createdBy?: User;
+  createdAt: Date;
+  expiresAt: Date;
+  revokedAt: Date | null;
+}
+
+export interface ArticleShareCheck {
+  articleId: number;
+  generation: number;
+  workflowId: string | null;
+  textHash: string | null;
+  updatedAt: Date;
+}
+
 export interface AdToken {
   id: number;
   token: string;
@@ -3764,6 +3782,7 @@ export interface BoxOpening {
   tierPoolSize: number;
   itemRoll: number;
   rewardStatus: string;
+  guaranteed: boolean;
   createdAt: Date;
 }
 
@@ -3817,6 +3836,8 @@ export interface Article {
   cover: string | null;
   coverId: number | null;
   coverImage?: Image | null;
+  bannerId: number | null;
+  bannerImage?: Image | null;
   publishedAt: Date | null;
   scheduledAt: Date | null;
   contentScannedAt: Date | null;
@@ -3955,6 +3976,7 @@ export interface Collection {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Date | null;
+  archivedAt: Date | null;
   items?: CollectionItem[];
   contributors?: CollectionContributor[];
   invites?: CollectionInvite[];
@@ -4272,6 +4294,29 @@ export interface CsamReportArchiveObject {
   uploadedAt: Date;
 }
 
+export interface PersonalDataExport {
+  id: number;
+  userId: number;
+  requestedById: number;
+  status: string;
+  modNotesMode: string;
+  holdReasons: string[];
+  archiveKey: string | null;
+  modNotesKey: string | null;
+  manifest: JsonValue | null;
+  error: string | null;
+  attempts: number;
+  createdAt: Date;
+  startedAt: Date | null;
+  builtAt: Date | null;
+  sentAt: Date | null;
+  linkExpiresAt: Date | null;
+  releasedAt: Date | null;
+  releasedById: number | null;
+  ticketId: number | null;
+  requestedAt: Date | null;
+}
+
 export interface EvidenceHold {
   id: number;
   userId: number;
@@ -4336,6 +4381,35 @@ export interface EntityAccess {
   addedAt: Date;
   permissions: number;
   meta: JsonValue | null;
+}
+
+export interface ModelVersionGiftLink {
+  id: number;
+  modelVersionId: number;
+  modelVersion?: ModelVersion;
+  createdById: number;
+  createdBy?: User;
+  codeHash: string;
+  codeHint: string;
+  label: string | null;
+  batchId: string | null;
+  maxRedemptions: number | null;
+  redemptionCount: number;
+  expiresAt: Date | null;
+  revokedAt: Date | null;
+  revokedById: number | null;
+  createdAt: Date;
+  redemptions?: ModelVersionGiftRedemption[];
+}
+
+export interface ModelVersionGiftRedemption {
+  giftLinkId: number;
+  giftLink?: ModelVersionGiftLink;
+  userId: number;
+  user?: User;
+  claimedAt: Date;
+  revokedAt: Date | null;
+  revokedById: number | null;
 }
 
 export interface PaidAccess {
@@ -7005,6 +7079,8 @@ export interface ServiceDealFile {
   deliveryKey: string | null;
   deliverySize: number | null;
   repackedAt: Date | null;
+  attestedAt: Date | null;
+  removedAt: Date | null;
   createdAt: Date;
   entries?: ServiceDealFileEntry[];
 }

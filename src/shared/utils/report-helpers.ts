@@ -1,7 +1,5 @@
 export enum ReportEntity {
   Model = 'model',
-  Comment = 'comment',
-  CommentV2 = 'commentV2',
   CommentV3 = 'commentV3',
   Image = 'image',
   ResourceReview = 'resourceReview',
@@ -35,8 +33,6 @@ export enum ReportEntity {
  */
 export const reportEntityLabels: Record<ReportEntity, string> = {
   [ReportEntity.Model]: 'Model',
-  [ReportEntity.Comment]: 'Comment',
-  [ReportEntity.CommentV2]: 'Comment',
   [ReportEntity.CommentV3]: 'Comment',
   [ReportEntity.Image]: 'Image',
   [ReportEntity.ResourceReview]: 'Review',

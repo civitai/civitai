@@ -10,6 +10,7 @@ import {
   resolveResourceFileSchema,
   setEvictableSchema,
   setAdditionalResourceFeeWaivedSchema,
+  setPartnerDisclosureSchema,
   // sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
@@ -32,6 +33,7 @@ import {
   toggleGenerationDisabled,
   setEvictable,
   setAdditionalResourceFeeWaived,
+  setPartnerDisclosure,
 } from '~/server/services/generation/generation.service';
 import { generatorMessageSchema } from '~/shared/generation/messages';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -47,7 +49,10 @@ import * as z from 'zod';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
-import { coverageAudience } from '~/server/services/generation/coverage-source';
+import {
+  coverageAudience,
+  generatorAcceptsBoostRequired,
+} from '~/server/services/generation/coverage-source';
 
 export const generationRouter = router({
   getWorkflowDefinitions: publicProcedure
@@ -166,6 +171,11 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       setAdditionalResourceFeeWaived({ ...input, isModerator: ctx.user.isModerator })
     ),
+  setPartnerDisclosure: moderatorProcedure
+    .input(setPartnerDisclosureSchema)
+    .mutation(({ input, ctx }) =>
+      setPartnerDisclosure({ ...input, isModerator: ctx.user.isModerator })
+    ),
   getCoverageAudience: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .query(({ ctx }) => coverageAudience(ctx.user ?? undefined)),
@@ -178,6 +188,9 @@ export const generationRouter = router({
           user: ctx.user,
           withPreview: true,
           browsingLevel: getRequestBrowsingLevel(ctx),
+          // The generator form's own read of the resources it will submit, so it must agree with
+          // the whatIf: an admitted cold checkpoint reads as generatable, not stripped at submit.
+          acceptBoostRequired: generatorAcceptsBoostRequired(input.acceptBoostRequired, ctx),
         })
       ).filter((r) => canViewPoiModel(r.model.poi, r.model.userId, ctx.user))
     ),

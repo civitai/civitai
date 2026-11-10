@@ -16,6 +16,7 @@ vi.mock('@civitai/orchestration-client', () => ({
 }));
 
 import { elementBackend, type StudioElementHost } from './backend';
+import { AutoLabelRefusedError } from '$lib/autolabel-errors';
 import { TrainingTextRefusedError, type TrainingTextCheck } from '$lib/training-text';
 
 function host(checkTrainingText?: StudioElementHost['checkTrainingText']): StudioElementHost {
@@ -87,6 +88,9 @@ describe('elementBackend auto-label payer', () => {
   it('never submits with the user token when the host offers no system-paid path', async () => {
     const getOrchestratorToken = vi.fn(async () => 'user-token');
     const backend = elementBackend({ ...host(), getOrchestratorToken });
+    await expect(backend.autoLabelSubmit(items, 'tag', 'image')).rejects.toBeInstanceOf(
+      AutoLabelRefusedError
+    );
     await expect(backend.autoLabelSubmit(items, 'tag', 'image')).rejects.toThrow(/unavailable/);
     expect(getOrchestratorToken).not.toHaveBeenCalled();
   });
@@ -122,6 +126,9 @@ describe('elementBackend mature confirm', () => {
 
   it.each([true, false])('hands the core the ack the panel gave (%s)', async (ack) => {
     await elementBackend(host(async () => ({ ok: true }))).continueRun('wf', 1, 1, ['blue'], ack);
-    expect(core.continueTraining.mock.calls[0][1]).toMatchObject({ workflowId: 'wf', matureAck: ack });
+    expect(core.continueTraining.mock.calls[0][1]).toMatchObject({
+      workflowId: 'wf',
+      matureAck: ack,
+    });
   });
 });

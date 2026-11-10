@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { toPublicApiVersionFlags } from '~/shared/constants/model-version-flags.constants';
 import {
   coverageAudience,
   coveragePairForUser,
@@ -109,6 +110,7 @@ import { getMetaMetricVisibility } from '~/server/utils/model-metric-privacy';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
+import { getLinkedFileData } from '~/server/services/linked-file-data.service';
 import { assertBountyEntryFileUrlAllowed } from '~/server/utils/model-file-url-bound';
 import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
@@ -238,23 +240,7 @@ const loadModelVersion = async ({
         linkedComponentResources.map((r) => (r.settings as LinkedComponentSettings).fileId)
       ),
     ].filter(Boolean);
-    const linkedFileDataMap = new Map<
-      number,
-      { name: string; sizeKB: number; type: string; metadata: Record<string, unknown> | null }
-    >();
-    if (linkedFileIds.length > 0) {
-      const fileData = await dbRead.modelFile.findMany({
-        where: { id: { in: linkedFileIds } },
-        select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
-      });
-      for (const f of fileData)
-        linkedFileDataMap.set(f.id, {
-          name: f.name,
-          sizeKB: f.sizeKB,
-          type: f.type,
-          metadata: f.metadata as Record<string, unknown> | null,
-        });
-    }
+    const linkedFileDataMap = await getLinkedFileData(linkedFileIds);
 
     const linkedComponents = selectLiveLinkedComponents(
       linkedComponentResources.map((r) => {
@@ -271,9 +257,7 @@ const loadModelVersion = async ({
           fileName: fileData?.name ?? s.fileName,
           sizeKB: fileData?.sizeKB,
           fileType: fileData?.type,
-          fileMetadata: fileData?.metadata as
-            | { format?: string | null; size?: string | null; fp?: string | null }
-            | undefined,
+          fileMetadata: fileData?.metadata ?? undefined,
           isRequired: s.isRequired,
         };
       }),
@@ -364,6 +348,7 @@ const loadModelVersion = async ({
 
     return {
       ...version,
+      flags: ctx?.user?.isModerator ? version.flags : toPublicApiVersionFlags(version.flags),
       // A .com face has no per-version description; the .red one is not shown in its place.
       description: withSfwFace ? null : version.description,
       model: {
@@ -1306,7 +1291,7 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
 }) => {
   const { payWithBlue, ...rest } = input;
   try {
-    return earlyAccessPurchase({
+    return await earlyAccessPurchase({
       ...rest,
       userId: ctx.user.id,
       buzzType: payWithBlue ? 'blue' : getAllowedAccountTypes(ctx.features)[0],

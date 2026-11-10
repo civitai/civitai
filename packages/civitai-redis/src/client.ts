@@ -2180,6 +2180,19 @@ export function createRedisClients(options: CreateRedisClientsOptions = {}): Red
 
 // Source of Truth data
 export const REDIS_SYS_KEYS = {
+  DOWNLOAD_LINK: {
+    // `dl:link:<sha256(id)>` — hash of one download link (credential, user, version, file, expiresAt,
+    // fetches). The raw id is never stored.
+    LINK: 'dl:link',
+    // `dl:linkid:<linkId>` → the link's hash key, for revoking one link by its public linkId.
+    LINK_ID: 'dl:linkid',
+    // `dl:reuse:<credential>:<fileId>:<userId|public>` → the hash key of the link a repeat mint returns.
+    REUSE: 'dl:reuse',
+    // `dl:links:cred:<credential>` — set of the hash keys a credential minted, for revoking them all.
+    CRED_LINKS: 'dl:links:cred',
+    // `dl:mint-rate:<cred|user>:<id>:<minute>` — fixed-window mint counters.
+    MINT_RATE: 'dl:mint-rate',
+  },
   APP: {
     // Per-app page-access overrides (`app:page-access:${app}`) — a JSON path→role map mirroring the
     // AppPageAccess table, read on every gated request so the gate doesn't hit Postgres per hit.
@@ -2201,6 +2214,8 @@ export const REDIS_SYS_KEYS = {
   FEEDBACK: {
     // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
     RATE_LIMIT: 'system:feedback:rate-limit',
+    // Fixed-window count of HQ filing attempts per reporter — `system:feedback:hq-filing:${userId}`.
+    HQ_FILING: 'system:feedback:hq-filing',
   },
   PRICING: {
     // Hash of userId → extra licensing-fee slots (see FEE_ALLOWANCE_BOOST_* in @civitai/buzz).
@@ -2297,6 +2312,29 @@ export const REDIS_SYS_KEYS = {
     // Per-API-key (fallback per-IP) rate-limit counter for the token-authed bundle-submit
     // endpoint (`/api/v1/blocks/submit-version`). On sysRedis like the retool limiter + BUZZ_CAP.
     SUBMIT_RATE_LIMIT: 'system:blocks:submit-rate-limit',
+    // Per-slug counter for git pushes recorded for review, and per-user for the web manifest
+    // editor's commits. Same `SET NX EX` + `INCR` shape as SUBMIT_RATE_LIMIT, on sysRedis.
+    PUSH_REVIEW_RATE_LIMIT: 'system:blocks:push-review-rate-limit',
+    // Review previews started automatically at submit, per submitter per UTC day
+    // (`system:blocks:review-auto-builds:${userId}:${YYYY-MM-DD}`). Past the budget the submit
+    // still succeeds and the preview waits for a moderator to start it.
+    REVIEW_AUTO_BUILDS: 'system:blocks:review-auto-builds',
+    // New-submission moderator alerts per submitter per UTC hour
+    // (`system:blocks:review-submission-alerts:${userId}:${YYYY-MM-DDTHH}`).
+    REVIEW_SUBMISSION_ALERTS: 'system:blocks:review-submission-alerts',
+    // Agent-review auto-start budget reserved by starts in flight, in US cents, per UTC day
+    // (`system:blocks:agent-review-autostart-reserved:${YYYY-MM-DD}`): the per-review cap is
+    // reserved before the start and released once its report row exists (or the start failed).
+    AGENT_REVIEW_AUTOSTART_RESERVED: 'system:blocks:agent-review-autostart-reserved',
+    // Live app pointer on the shared static server, per app slug. TAKEDOWN
+    // (`...:${slug}`, no TTL) is set to 'attempted' when this platform starts a live unpublish or
+    // restore for the app (the evidence a relist restores on), upgraded to 'confirmed' when an
+    // unpublish succeeded, and cleared when its pointer is written back (a restore or a deploy). LOCK
+    // (`...:${slug}`, SET NX EX) serialises the pointer Jobs of one app; DIRTY (`...:${slug}`)
+    // asks the lock holder to look at the app again before it lets go.
+    LIVE_POINTER_TAKEDOWN: 'system:blocks:live-pointer-takedown',
+    LIVE_POINTER_LOCK: 'system:blocks:live-pointer-lock',
+    LIVE_POINTER_DIRTY: 'system:blocks:live-pointer-dirty',
     /**
      * Per-user (fallback per-IP) rate-limit counter for the dev/preview
      * block-token mint (`/api/v1/blocks/dev-token`). Same `SET NX EX` + `INCR`
@@ -2458,6 +2496,8 @@ export const REDIS_SYS_KEYS = {
     COUNT: 'download:count',
     /** Per user and file: requests in the last day, so repeats of one file count only past a cap. */
     REPEATS: 'download:repeats',
+    /** `<prefix>:<provider>:<hour>`: a provider's downloads this hour. See provider-download.limiter.ts. */
+    PROVIDER: 'download:provider',
   },
   GENERATION: {
     LIMITS: 'generation:limits',
@@ -2902,6 +2942,8 @@ export const REDIS_SYS_KEYS = {
   REMIX_APP: {
     // A choice ask's per-option prices, per run, segment and step, while that ask is open.
     OPTION_PRICES: 'remix-app:option-prices',
+    // Bumped after every mod write; the registry cache key carries it.
+    REGISTRY_GENERATION: 'remix-app:registry-generation',
   },
   MESSAGE_AS_CIVITAI: {
     IDEMPOTENCY: 'message-as-civitai:idempotency',
@@ -3062,6 +3104,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // `<prefix>:ip-blacklist` / `<prefix>:user-blacklist` — the raw KeyValue row the
     // download routes check. See download-blocklist.service.ts.
     DOWNLOAD_BLOCKLIST: 'packed:caches:download-blocklist',
+    // The live per-provider download tokens. See provider-download/provider-token.store.ts.
+    PROVIDER_DOWNLOAD_TOKENS: 'packed:caches:provider-download-tokens',
     // `<prefix>:<userId>` — the account's standing ({ muted, banned, exists }). See account-standing.service.ts.
     ACCOUNT_STANDING: 'packed:caches:account-standing',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
@@ -3069,6 +3113,10 @@ const REDIS_KEYS_UNPREFIXED = {
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     PAID_ACCESS: 'packed:caches:paid-access',
     PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
+    // `<prefix>:row:<surface>:<entityType>:<entityId>` (a cached space row) and
+    // `<prefix>:written:<surface>:<entityType>:<entityId>` (when that row was last written) —
+    // the display read of a placement space. See placement-space.service.ts.
+    PLACEMENT_SPACE: 'packed:caches:placement-space',
     USER_COSMETICS: 'packed:caches:user-cosmetics',
     USER_OWNED_STICKER: 'packed:caches:user-owned-sticker',
     COSMETICS_OLD: 'packed:caches:cosmetics',
@@ -3142,6 +3190,8 @@ const REDIS_KEYS_UNPREFIXED = {
     CREATOR_SHOWCASE_CANDIDATES: 'packed:caches:creator-showcase-candidates',
     // Remix app whatIf price per (app, tier, aspect, user tier, mod, currencies): `quoteRemixApps`.
     REMIX_APP_QUOTE: 'packed:caches:remix-app-quote',
+    // The remix app rows (`app_blocks` with a remix status): `getRemixAppRegistry`, busted on every mod edit.
+    REMIX_APP_REGISTRY: 'packed:caches:remix-app-registry',
     // The user-independent active-auction list backing `auction.getAll` (~21.8
     // calls/s at peak, hitting the PRIMARY DB `dbWrite`). Output is a single global
     // `{ id, auctionBase, lowestBidRequired }[]` with no per-user/ctx variance, so
@@ -3184,6 +3234,12 @@ const REDIS_KEYS_UNPREFIXED = {
     // `getUserMetricPrivacyDefaultsMap` in creator-membership.service.
     USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
     CONTEST_COMMUNITY_SCORE: 'packed:caches:contest-community-score',
+    // Contest entries per image; see src/server/services/contest-collection-items.cache.ts.
+    CONTEST_COLLECTION_ITEMS: 'packed:caches:contest-collection-items',
+    // Which host images have any remix-gallery placement, so the card and gallery reads skip
+    // the database for the hosts that have none; see
+    // src/server/services/remix-gallery-hosts.cache.ts.
+    REMIX_GALLERY_HOSTS: 'packed:caches:remix-gallery-hosts',
     // Async contest-scoring runs: per-run state, the per-collection pointer to the
     // most recent run, and the scored result each run produces. Every key carries a
     // TTL, so the whole namespace self-cleans and no table backs it.
@@ -3236,6 +3292,9 @@ const REDIS_KEYS_UNPREFIXED = {
     LIMIT: {
       BASE: 'packed:trpc:limit',
       KEYS: 'packed:trpc:limit:keys',
+      // `<userId>` hashes of abuse limits the user is refused by now: field = limiter key,
+      // value = retry time (epoch ms), each field expiring at that time.
+      ACTIVE: 'trpc:limit:active',
     },
     // `<bucket>:<userId>` sorted sets of in-flight request slots (`inFlightLimit`).
     IN_FLIGHT: 'trpc:in-flight',

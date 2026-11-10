@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
 import { POST_TAG_LIMIT } from '~/server/common/constants';
 import type { ExternalMetaSchema } from '~/server/schema/image.schema';
 import { APP_SUB_LISTING_EXTERNAL_ID_RE } from '~/shared/constants/app-sub-listing.constants';
@@ -114,7 +115,7 @@ export const postIntentManifestSchema = z.object({
     .record(z.string().max(100), z.union([z.string().max(500), z.number(), z.boolean()]))
     .refine((d) => Object.keys(d).length <= DETAILS_LIMIT, `at most ${DETAILS_LIMIT} details`)
     .optional(),
-  expiresAt: z.iso.datetime({ offset: true }).optional(),
+  expiresAt: isoDatetimeCompat({ offset: true }).optional(),
   // A bad item key falls back to the app's own credit rather than refusing the share.
   item: z.string().regex(APP_SUB_LISTING_EXTERNAL_ID_RE).optional().catch(undefined),
 });

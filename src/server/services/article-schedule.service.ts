@@ -4,6 +4,7 @@ import { eventEngine } from '~/server/events';
 import { logToAxiom } from '~/server/logging/client';
 import { userArticleCountCache } from '~/server/redis/caches';
 import { articlesSearchIndex } from '~/server/search-index';
+import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
 import { getScheduledArticleGoLive } from '~/server/services/article-schedule.helpers';
 import { createNotification } from '~/server/services/notification.service';
 import { ArticleStatus } from '~/shared/utils/prisma/enums';
@@ -43,21 +44,31 @@ export async function publishDueScheduledArticles(now: Date) {
       ingestion: article.ingestion,
     };
 
-    if (outcome === 'publish') {
-      // publishedAt is the real go-live instant, not the scheduled one: the follower notification
-      // and the Newest sort both key on it, and a value behind their last pass would be skipped.
-      const { count } = await dbWrite.article.updateMany({
-        where: guard,
-        data: { status: ArticleStatus.Published, publishedAt: now, scheduledAt: null },
-      });
-      if (count) published.push(article);
-    } else if (outcome === 'process') {
-      // publishedAt is stamped by recomputeArticleIngestion when the scan settles.
-      const { count } = await dbWrite.article.updateMany({
-        where: guard,
-        data: { status: ArticleStatus.Processing, scheduledAt: null },
-      });
-      if (count) processing.push(article);
+    if (outcome === 'publish' || outcome === 'process') {
+      // A link made for the draft must not reopen it after a later unpublish. The lock can wait on
+      // a save of this article; a timeout rolls back and leaves it due, so the next run retries it
+      // and this run still runs the side effects of the ones it already took live.
+      const { count } = await dbWrite
+        .$transaction(async (tx) => {
+          await lockAccessTokens(tx, article.id);
+          const write = await tx.article.updateMany({
+            where: guard,
+            // publishedAt is the real go-live instant, not the scheduled one: the follower
+            // notification and the Newest sort both key on it, and a value behind their last pass
+            // would be skipped. A processing article gets it from recomputeArticleIngestion.
+            data:
+              outcome === 'publish'
+                ? { status: ArticleStatus.Published, publishedAt: now, scheduledAt: null }
+                : { status: ArticleStatus.Processing, scheduledAt: null },
+          });
+          if (write.count) await revokeActiveAccessTokens('Article', article.id, tx);
+          return write;
+        })
+        .catch(async (error) => {
+          await logGoLiveError('go-live write failed', article.id, error);
+          return { count: 0 };
+        });
+      if (count) (outcome === 'publish' ? published : processing).push(article);
     } else {
       const { count } = await dbWrite.article.updateMany({
         where: guard,
@@ -75,7 +86,9 @@ export async function publishDueScheduledArticles(now: Date) {
         entityType: 'article',
         entityId: id,
       }),
-      articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]),
+      articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }], {
+        reason: 'scheduled-publish',
+      }),
       userArticleCountCache.refresh(userId),
       createNotification({
         userId,

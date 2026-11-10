@@ -34,24 +34,28 @@ type ImageSearchHit = ImagesInfiniteModel & {
 
 type ImagesTransformed = ReturnType<typeof imagesTransform>;
 function imagesTransform(items: Hit<ImageSearchHit>[]) {
-  return items.map((item) => ({
-    ...item,
-    prompt: item.prompt ?? '',
-    tagNames: item.tagNames ?? [],
-    stats: item.stats && {
-      ...item.stats,
-      reactionCountAllTime:
-        item.stats.reactionCountAllTime ??
-        item.stats.likeCountAllTime +
-          item.stats.heartCountAllTime +
-          item.stats.laughCountAllTime +
-          item.stats.cryCountAllTime,
-    },
-    hasMeta: !item.hideMeta && item.prompt,
-    nsfwLevel: item.nsfwLevel,
-    ingestion: ImageIngestionStatus.Scanned,
-    publishedAt: item.sortAt,
-  }));
+  return items.map((item) => {
+    // Semantic search hits are already full images and carry their own values.
+    const hydrated = item as { hasMeta?: boolean; publishedAt?: Date | null };
+    return {
+      ...item,
+      prompt: item.prompt ?? '',
+      tagNames: item.tagNames ?? [],
+      stats: item.stats && {
+        ...item.stats,
+        reactionCountAllTime:
+          item.stats.reactionCountAllTime ??
+          item.stats.likeCountAllTime +
+            item.stats.heartCountAllTime +
+            item.stats.laughCountAllTime +
+            item.stats.cryCountAllTime,
+      },
+      hasMeta: hydrated.hasMeta ?? (!item.hideMeta && item.prompt),
+      nsfwLevel: item.nsfwLevel,
+      ingestion: ImageIngestionStatus.Scanned,
+      publishedAt: hydrated.publishedAt ?? item.sortAt,
+    };
+  });
 }
 
 type ArticlesTransformed = ReturnType<typeof articlesTransform>;

@@ -241,10 +241,8 @@ export function StickerPlacementBar({
             arrowSize={10}
             shadow="md"
             radius="md"
-            // Under the placement tray, which is `z-30` and fixed to the bottom
-            // of the viewport. Mantine's default (300) put this hint on top of
-            // the panel it exists to send people to — pointing at a button that
-            // was no longer the thing to press.
+            // Under the placement tray (PAGE_MODAL_Z_INDEX + 1). Mantine's default (300) put
+            // this hint on top of the panel it exists to send people to.
             zIndex={20}
             // Dismissed by its own control only. A click-outside dismissal on a
             // hint anchored to a button people are about to press would count

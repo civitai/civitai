@@ -76,7 +76,11 @@ vi.mock('~/server/services/image.service', () => ({
   uploadImageFromUrl: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
-vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
+vi.mock('~/server/services/orchestrator/models', () => ({
+  bustOrchestratorModelCache: vi.fn(),
+  getOrchestratorVersionAirs: vi.fn(() => Promise.resolve([])),
+  bustOrchestratorAirs: vi.fn(),
+}));
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
   updateModelLastVersionAt: vi.fn(),
@@ -402,7 +406,11 @@ describe('mergeVersions training runs', () => {
   });
   const tx = {
     $queryRaw: versionRows,
-    modelFile: { findFirst: datasetFindFirst, updateMany: fileMove },
+    modelFile: {
+      findFirst: datasetFindFirst,
+      findMany: vi.fn(() => Promise.resolve([])),
+      updateMany: fileMove,
+    },
   };
 
   const row = (id: number, status: string, trainingStatus: string | null) => ({

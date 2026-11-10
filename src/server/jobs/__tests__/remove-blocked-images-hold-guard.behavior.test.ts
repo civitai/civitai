@@ -160,6 +160,7 @@ const BASE_SCHEMA = `
       ingestion "ImageIngestionStatus" NOT NULL,
       "needsReview" text,
       "blockedFor" text,
+      minor boolean NOT NULL DEFAULT false,
       metadata jsonb,
       "updatedAt" timestamp(3),
       "cascadeParentId" int

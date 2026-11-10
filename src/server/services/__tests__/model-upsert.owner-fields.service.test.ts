@@ -113,10 +113,14 @@ vi.mock('~/server/services/model-cover.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelCoverService>()),
   assertCoverImagesValid: mockAssertCoverImagesValid,
 }));
-const { mockQueueComFaceRecheck } = vi.hoisted(() => ({ mockQueueComFaceRecheck: vi.fn() }));
+const { mockQueueComFaceRecheck, mockQueueComFaceRestore } = vi.hoisted(() => ({
+  mockQueueComFaceRecheck: vi.fn(),
+  mockQueueComFaceRestore: vi.fn(),
+}));
 vi.mock('~/server/services/model-com-face-recheck.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ComFaceRecheck>()),
   queueComFaceRecheck: mockQueueComFaceRecheck,
+  queueComFaceRestore: mockQueueComFaceRestore,
 }));
 const { mockPreviewComFaceIntent, mockPreviewTextScanNsfw } = vi.hoisted(() => ({
   mockPreviewComFaceIntent: vi.fn(),
@@ -1072,6 +1076,20 @@ describe('.com face re-check after a listing edit', () => {
     expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
   });
 
+  it('arms the restore check on a .red listing edit only, not on a .com edit', async () => {
+    mockStored({ sfwName: 'Retro Style', sfwCoverImageId: null });
+    mockPreviewComFaceIntent.mockResolvedValue({
+      status: 'ok',
+      output: { detected: false, reason: 'stub' },
+    });
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'ok', level: 1, reason: 'stub' });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: 'Retro Style 2' });
+    expect(mockQueueComFaceRestore).not.toHaveBeenCalled();
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, description: 'New description' });
+    expect(mockQueueComFaceRestore).toHaveBeenCalledWith(MODEL_ID);
+  });
+
   it('does not queue it for a model without a .com face', async () => {
     await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed' });
     expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
@@ -1163,6 +1181,18 @@ describe('.com face re-check after a listing edit', () => {
       },
     });
     await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, sfwCoverImageId: 6 });
+    expect(updateData().meta).not.toHaveProperty('comFaceRemoved');
+  });
+
+  it('drops the removal marker when the owner turns the face off', async () => {
+    mockStored({
+      sfwName: 'Retro Style',
+      sfwCoverImageId: null,
+      meta: {
+        comFaceRemoved: { at: '2026-11-05T00:00:00.000Z', sfwCoverImageId: 5, reason: 'detected' },
+      },
+    });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: null });
     expect(updateData().meta).not.toHaveProperty('comFaceRemoved');
   });
 });

@@ -40,7 +40,6 @@ import type { Report } from '@civitai/cybertipline-tools';
 import {
   Client,
   Environment,
-  FileDetailType,
   FileRelevance,
   IncidentType,
   IPEventName,
@@ -51,6 +50,7 @@ import type { BoundedArchive } from '~/server/utils/archive-helpers';
 import {
   createBoundedArchive,
   createByteBudget,
+  FAILED_ARCHIVE_SETTLE_MS,
   deriveUploadPartGeometry,
   ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
@@ -68,8 +68,9 @@ import { SHOWN_ACTIONS, shownActivity } from '@civitai/shared/held-media';
 import { logToAxiom } from '~/server/logging/client';
 import type { CsamSupplementalDetails } from '~/server/services/csam-supplemental-text';
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
+import type { CsamContextText } from '~/server/services/csam-context-text';
+import { contextWebPageIncidents } from '~/server/services/csam-context-text';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
-import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
 import { MAX_EVIDENCE_BYTES } from '~/server/services/generator-evidence/preserve-blob';
@@ -83,6 +84,7 @@ import {
   evidenceFilesToSend,
   evidenceReportInfo,
   evidenceSizeProblem,
+  promptFileDetails,
   readVerifiedEvidence,
   verifyStoredEvidence,
 } from '~/server/services/generator-evidence/evidence-payload';
@@ -197,6 +199,7 @@ type CsamReportDetails = CsamReportFormOutput & {
   /** CyberTips opened for this report and cancelled before it was sent. */
   cancelledReportIds?: number[];
   supplemental?: CsamSupplementalDetails;
+  contextText?: CsamContextText[];
   /** CyberTips opened for this report that could not be cancelled, so may have reached NCMEC. */
   possibleDuplicateReportIds?: number[];
   /** Opens whose answer could not be read: nothing more is sent until a moderator clears them. */
@@ -1376,12 +1379,17 @@ async function reportImages(claim: SendClaim) {
       fileAnnotations.physicalHarm = true;
     }
     const originalFileName = image.name?.split('?')[0];
+    const prompts = promptFileDetails((image.meta ?? {}) as Record<string, unknown>, {
+      storedOnImage: true,
+    });
     fileDetailsOf.set(image.id, {
       fileDetails: {
         originalFileName: originalFileName ? xmlText(originalFileName) : undefined,
         locationOfFile: xmlText(getEdgeUrl(image.url, { type: image.type })),
         fileViewedByEsp: viewed.has(image.id),
         fileAnnotations,
+        ...(prompts.details && { details: prompts.details }),
+        ...(prompts.additionalInfo.length && { additionalInfo: prompts.additionalInfo }),
       },
       fileAnnotations,
     });
@@ -1473,10 +1481,18 @@ async function reportImages(claim: SendClaim) {
     };
   };
 
+  const webPageIncidents = contextWebPageIncidents(report.details?.contextText).map(
+    ({ url, additionalInfo }) => ({
+      url: [xmlText(url)],
+      additionalInfo: xmlText(additionalInfo),
+      thirdPartyHostedContent: false,
+    })
+  );
   const sent = await sendCyberTip(
     claim,
     {
       ...initialReport,
+      ...(webPageIncidents.length && { incidentDetails: { webPageIncidents } }),
       ...(supplemental && {
         personOrUserReported: {
           ...initialReport.personOrUserReported,
@@ -1640,6 +1656,14 @@ async function sendGenerationData(
       'archive-data'
     );
 
+  const detailsOf = ({ job }: (typeof fetched)[number]) => {
+    const { details, additionalInfo } = promptFileDetails(job);
+    return {
+      ...GENERATED_FILE_DETAILS,
+      ...(details && { details }),
+      ...(additionalInfo.length && { additionalInfo }),
+    } satisfies FileDetailsXml;
+  };
   let sending: ReturnType<typeof sendEach> | undefined;
   const sent = await sendCyberTip(
     claim,
@@ -1650,32 +1674,16 @@ async function sendGenerationData(
       }),
     },
     {
-      fileDetails: [GENERATED_FILE_DETAILS],
+      fileDetails: fetched.map(detailsOf),
       sendFiles: async (reportId) => {
         sending = sendEach(
           fetched,
-          async ({ job: { prompt, negativePrompt, resources }, url, file }) => {
+          async (item) => {
             const {
               data: { fileId, hash },
-            } = await uploadToCyberTip(claim, await spooledFile(file));
-
-            const valuePair: Array<{ name: string; value: string }> = [];
-            if (prompt)
-              valuePair.push({ name: 'prompt', value: trimNonAlphanumeric(prompt) ?? '' });
-            if (negativePrompt)
-              valuePair.push({
-                name: 'negativePrompt',
-                value: trimNonAlphanumeric(negativePrompt) ?? '',
-              });
-            if (resources) valuePair.push({ name: 'resources', value: resources.join(',') });
-
-            await cybertipClient.submitFileDetails({
-              fileId,
-              reportId,
-              ...GENERATED_FILE_DETAILS,
-              // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
-            });
-            return { url, fileId, hash } satisfies CsamReportGeneratedImageData;
+            } = await uploadToCyberTip(claim, await spooledFile(item.file));
+            await cybertipClient.submitFileDetails({ fileId, reportId, ...detailsOf(item) });
+            return { url: item.url, fileId, hash } satisfies CsamReportGeneratedImageData;
           },
           // The upload reads each file whole: one at a time.
           1
@@ -2157,6 +2165,7 @@ async function getTrainingDataZipStream({
     user: reportingUser ?? undefined,
     // Fetched server-side to build a report, not on a user's behalf.
     attribution: { caller: 'other', actor: 'internal' },
+    redCapable: true,
   });
   if (modelFile.status !== 'success') throw new Error('training data not found');
 
@@ -2904,6 +2913,19 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       entries: [
         ['user', { value: user }],
         ['reportId', { value: reportId }],
+        ...(report.details?.contextText?.length
+          ? ([
+              [
+                'reportContext',
+                {
+                  value: {
+                    webPageIncidents: contextWebPageIncidents(report.details.contextText),
+                    contextText: report.details.contextText,
+                  },
+                },
+              ],
+            ] as const)
+          : []),
         ['models', { items: streamModels() }],
         ['modelVersions', { items: streamModelVersions() }],
         ['images', { items: flattenPages(scanUserImages()) }],
@@ -2958,6 +2980,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         const limit = plimit(10);
         // Bounded in bytes, not count: original sizes vary too much for an entry count to bound memory.
         const budget = createByteBudget();
+        // A failed archive stops its running reads and waits for them before its caller removes
+        // the scratch dirs they write into.
+        const readers = new AbortController();
+        const running = new Set<Promise<void>>();
         const hoursSinceSent = report.reportSentAt
           ? (Date.now() - report.reportSentAt.getTime()) / 3_600_000
           : 0;
@@ -2974,12 +3000,15 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           try {
             original = await spoolOriginalImage(image, {
               reserve: budget.reserve,
+              cancel: readers.signal,
               spoolDir: `${reportDirs.images}/spool`,
               onRetry: (failedAttempt) => {
                 attempts = Math.max(attempts, failedAttempt + 1);
               },
             });
           } catch (e) {
+            // Stopped because another image failed: not this image's failure.
+            if (readers.signal.aborted) throw e;
             // A full URL may be on a host we do not control: after a day of retries its failing
             // no longer holds the archive back. A stored object's failure is always retried.
             const retried =
@@ -3047,18 +3076,30 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           for await (const page of scanUserImages()) {
             await Promise.all(
               page.map((image) =>
-                limit(() =>
-                  archiveImage(image).catch((e) => {
+                limit(() => {
+                  const task = archiveImage(image).catch((e) => {
                     // Before this slot frees: queued reads would otherwise still open.
                     limit.clearQueue();
                     throw e;
-                  })
-                )
+                  });
+                  running.add(task);
+                  const done = () => running.delete(task);
+                  task.then(done, done);
+                  return task;
+                })
               )
             );
           }
         } catch (e) {
+          readers.abort(e);
           budget.abort(e);
+          // Only reads that started: `clearQueue` leaves a queued task's promise unsettled.
+          let settleTimer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([
+            Promise.allSettled(running),
+            new Promise((resolve) => (settleTimer = setTimeout(resolve, FAILED_ARCHIVE_SETTLE_MS))),
+          ]);
+          clearTimeout(settleTimer);
           throw e;
         }
 

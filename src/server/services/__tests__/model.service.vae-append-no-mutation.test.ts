@@ -255,3 +255,28 @@ describe('getModelsWithVersions — the linked-VAE append does NOT mutate the ca
   // restored (measured), i.e. it is vacuous. The array identity that matters is the INPUT one,
   // which is what the test above pins.
 });
+
+// Shares this file's scaffold: the same getModelsRaw read feeds the browse feed, associated
+// resources and /api/v1/models, whose `flags` is a published field.
+describe('getModelsWithVersions serves flags without the partner bits', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each([
+    [0, 0],
+    [8, 8],
+    [32 | 64 | 8, 8],
+    [32 | 2, 2],
+  ])('stored %s is served as %s', async (stored, served) => {
+    primeOneModelWithALinkedVae();
+    const cached = (await dataForModelsCache.fetch([MODEL_ID])) as never as Record<
+      number,
+      { versions: Record<string, unknown>[] }
+    >;
+    cached[MODEL_ID].versions[0].flags = stored;
+    vi.mocked(dataForModelsCache.fetch).mockResolvedValue(cached as never);
+
+    const { items } = await callGetModelsWithVersions();
+    expect(items).toHaveLength(1);
+    expect(items[0].modelVersions[0].flags).toBe(served);
+  });
+});

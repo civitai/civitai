@@ -564,6 +564,7 @@ model User {
   collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
   collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
   adTokens                   AdToken[]
+  accessTokens               AccessToken[]
   ratingRequests             ImageRatingRequest[]
   collectionItemScores       CollectionItemScore[]
   appeals                    Appeal[]                       @relation("submittedAppeals")
@@ -672,6 +673,8 @@ model User {
   mysteryBoxesSold                   ItemDefinition[]           @relation("ItemDefinitionSeller")
 
   gameFrameGames          GameFrameGame[]
+  giftLinksCreated        ModelVersionGiftLink[]
+  giftRedemptions         ModelVersionGiftRedemption[]
 
   @@index([deletedAt])
   /// Partial in the database (WHERE "bannedAt" IS NOT NULL), as it exists in prod; Prisma cannot
@@ -1356,6 +1359,7 @@ model ModelVersion {
   coveredCheckpoints      CoveredCheckpoint[]
   wildcardSet             WildcardSet?
   licensingRoot           LicensingRoot?
+  giftLinks               ModelVersionGiftLink[]
 
   @@index([modelId], type: Hash)
   @@index([licensingSourceVersionId])
@@ -1924,23 +1928,6 @@ model HeldResourceReview {
   @@index([userId])
 }
 
-/// A copy of a held author's Answer, written in the same statement as a Question delete that would
-/// cascade it. Purged once the author's hold ends.
-model HeldAnswer {
-  /// The original Answer id.
-  id          Int      @id
-  questionId  Int
-  userId      Int
-  content     String
-  createdAt   DateTime
-  updatedAt   DateTime
-  heldAt      DateTime @default(now())
-  /// The holds on the author when it was copied.
-  holdReasons String[]
-
-  @@index([userId])
-}
-
 model ResourceReview {
   id             Int                      @id @default(autoincrement())
   modelId        Int
@@ -1962,10 +1949,20 @@ model ResourceReview {
   reactions      ResourceReviewReaction[]
   helper         ResourceReviewHelper?
   reports        ResourceReviewReport[]
+  /// The unpublished post the review was written from. The review stays hidden until that post is live.
+  postId         Int?
+  post           Post?                    @relation(fields: [postId], references: [id], onDelete: SetNull)
+  /// When a review linked to a post was announced: notified and recounted. Cleared when the post is
+  /// unpublished, so the next go-live announces it again.
+  releasedAt     DateTime?
 
   @@unique([modelVersionId, userId])
   @@index([modelVersionId], type: Hash)
   @@index([userId], type: Hash)
+  @@index([postId])
+  // NOTE: the partial index "ResourceReview_unreleased_postId_idx" (postId WHERE postId IS NOT NULL
+  // AND releasedAt IS NULL) serves the review release sweep. It lives only in migration
+  // 20261231130000_resource_review_post_id: Prisma does not support partial indexes.
 }
 
 model ResourceReviewReaction {
@@ -2128,6 +2125,7 @@ model Post {
   collectionItems CollectionItem[]
   storylineChapter StorylineChapter?
   storylinePendingChapter StorylinePendingChapter?
+  resourceReviews  ResourceReview[]
 
   @@index([modelVersionId])
   @@index([model3dId])
@@ -2244,7 +2242,8 @@ model Image {
   clubAvatar          Club[]                @relation("avatarImage")
   clubTierCover       ClubTier[]
   clubPostCoverImage  ClubPost[]
-  article             Article?
+  article             Article?              @relation("ArticleCover")
+  articleBanner       Article?              @relation("ArticleBanner")
   purchasableRewards  PurchasableReward[]
   tools               ImageTool[]
   techniques          ImageTechnique[]
@@ -5016,6 +5015,20 @@ model AppStorageMigrationRun {
   @@map("app_storage_migration_runs")
 }
 
+// App Blocks App Storage permission hooks: the verified source of each hook file, keyed by its own
+// sha256 (content-addressed, append-only). RAW SQL ONLY (`storage-hooks.ts`), so the model is
+// stripped from the generated client; the migration `20261224120000_app_storage_hook_sources` is
+// applied by hand (with its CHECKs, which live only there).
+// @no-type
+model AppStorageHookSource {
+  sha256    String   @id
+  source    String
+  sizeBytes Int      @map("size_bytes")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("app_storage_hook_sources")
+}
+
 /// App Blocks Phase 3 (git-push self-service) — per-civitai-user Forgejo
 /// identity. 1:1 with User (PK is the civitai userId), provisioned LAZILY the
 /// first time a developer requests git access to one of their apps.
@@ -5065,6 +5078,36 @@ model TrustedSpokeDomain {
   enabled           Boolean  @default(true)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @default(now()) @updatedAt
+}
+
+// A bearer link to one resource (first use: a private share link to a draft article). Only the
+// sha256 of the token is stored; the raw token is shown to its creator once. A row grants nothing
+// once `revokedAt` is set or `expiresAt` has passed, and readers check both on every lookup.
+// `resourceType` is text, not an enum, so a new kind of link needs no enum migration.
+model AccessToken {
+  id           Int       @id @default(autoincrement())
+  resourceType String
+  resourceId   Int
+  tokenHash    String    @unique
+  createdById  Int
+  createdBy    User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+  expiresAt    DateTime
+  revokedAt    DateTime?
+
+  @@index([resourceType, resourceId])
+  @@index([createdById])
+}
+
+// The check a shared draft's read requires: the workflow whose verdict covers the draft's text, and
+// a hash of that text. Written under the share-token lock.
+model ArticleShareCheck {
+  articleId  Int      @id
+  // Bumped by every write that changes a shared draft's text.
+  generation Int      @default(0)
+  workflowId String?
+  textHash   String?
+  updatedAt  DateTime @updatedAt
 }
 
 model AdToken {
@@ -6215,6 +6258,8 @@ model BoxOpening {
   itemRoll           Int
   /// granted | refunded (text + CHECK)
   rewardStatus       String
+  /// Drawn from a pack's guaranteed tiers only.
+  guaranteed         Boolean  @default(false)
   createdAt          DateTime @default(now())
 
   @@index([userId, createdAt])
@@ -6305,7 +6350,10 @@ model Article {
   content          String
   cover            String?
   coverId          Int?          @unique
-  coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
+  coverImage       Image?        @relation("ArticleCover", fields: [coverId], references: [id], onDelete: SetNull)
+  // Optional wide banner across the top of the article page; coverId stays the feed card image.
+  bannerId         Int?          @unique
+  bannerImage      Image?        @relation("ArticleBanner", fields: [bannerId], references: [id], onDelete: SetNull)
   publishedAt      DateTime?
   // Go-live time for a never-published Draft; publishedAt stays NULL until then.
   scheduledAt      DateTime?
@@ -6528,6 +6576,7 @@ model Collection {
   moderatorNsfwLevel      Int?
   moderatorNsfwLevelBasis Int?
   collaborationDisabledAt DateTime?
+  archivedAt   DateTime?
 
   items        CollectionItem[]
   contributors CollectionContributor[]
@@ -7021,6 +7070,44 @@ model CsamReportArchiveObject {
   @@index([csamReportId])
 }
 
+/// One personal-data export request and its log. A moderator queues it; the
+/// `build-personal-data-exports` job builds the archive, uploads it and emails the requester a link;
+/// a separate release step sends the account owner a link after re-checking holds. The row outlives
+/// the archive, which the bucket deletes after its TTL. At most one queued or building row per user
+/// (a partial unique index in the migration).
+model PersonalDataExport {
+  id            Int       @id @default(autoincrement())
+  userId        Int
+  requestedById Int
+  /// queued | building | built | held | failed | released
+  status        String    @default("queued")
+  /// Always text-redacted-separate-file: the notes file beside the archive.
+  modNotesMode  String    @default("text-redacted-separate-file")
+  /// Neutral codes for the holds found when the archive was built; re-checked at release.
+  holdReasons   String[]  @default([])
+  archiveKey    String?
+  modNotesKey   String?
+  /// Per-source row counts and notes: what the archive's manifest.json holds, without data.
+  manifest      Json?
+  error         String?
+  attempts      Int       @default(0)
+  createdAt     DateTime  @default(now())
+  startedAt     DateTime?
+  builtAt       DateTime?
+  /// When the requester was emailed the link.
+  sentAt        DateTime?
+  linkExpiresAt DateTime?
+  releasedAt    DateTime?
+  releasedById  Int?
+  /// The help-desk ticket the request came in on, when it did.
+  ticketId      Int?
+  /// The date the user asked (the ticket's own date, or as entered): starts the response deadline.
+  requestedAt   DateTime? @db.Date
+
+  @@index([userId])
+  @@index([status])
+}
+
 /// A hold marker on one owner. While a row is active (see `EvidenceHeldUser`), that owner's images
 /// are not deleted by anything. Report rows are written by a trigger on `CsamReport` when a report is
 /// sent; `manual` rows are written by a person. A hold ends at `releaseAt` (or `extendedUntil`, if
@@ -7110,6 +7197,45 @@ model EntityAccess {
   meta         Json?    @default("{}")
 
   @@id([accessToId, accessToType, accessorId, accessorType])
+}
+
+// A free claim of a gated model version. The code is never stored, only its hash; a claim grants
+// EntityAccess with meta.giftLinkId. See docs/features/model-gift-links.md.
+model ModelVersionGiftLink {
+  id              Int                          @id @default(autoincrement())
+  modelVersionId  Int
+  modelVersion    ModelVersion                 @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  createdById     Int
+  createdBy       User                         @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  codeHash        String                       @unique
+  codeHint        String
+  label           String?
+  batchId         String?
+  /// null = uncapped. CHECKs (> 0, redemptionCount <= maxRedemptions) live only in the migration.
+  maxRedemptions  Int?
+  redemptionCount Int                          @default(0)
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  revokedById     Int?
+  createdAt       DateTime                     @default(now())
+  redemptions     ModelVersionGiftRedemption[]
+
+  @@index([modelVersionId, createdAt(sort: Desc)])
+  @@index([batchId])
+}
+
+model ModelVersionGiftRedemption {
+  giftLinkId Int
+  giftLink   ModelVersionGiftLink @relation(fields: [giftLinkId], references: [id], onDelete: Cascade)
+  userId     Int
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  claimedAt  DateTime             @default(now())
+  /// Set when the link's owner or a moderator removed this claimer's gifted access.
+  revokedAt   DateTime?
+  revokedById Int?
+
+  @@id([giftLinkId, userId])
+  @@index([userId])
 }
 
 enum PaidAccessEntityType {
@@ -10318,6 +10444,7 @@ enum OutboxEntity {
   Model
   Post
   ModelVersion
+  Comic
 }
 
 /// Transactional outbox for entity lifecycle events, consumed by the event-engine app via Debezium CDC
@@ -10938,9 +11065,13 @@ enum ServiceDealEventType {
   Refunded
 }
 
+/// Preview and Final are the seller's delivery. An Attachment is a file the buyer gives the seller
+/// for the work (a dataset, references); it goes through the same scans as a Final and reaches the
+/// seller only once they pass.
 enum ServiceDealFileKind {
   Preview
   Final
+  Attachment
 }
 
 /// Where a file is on its way to being usable. A Preview is Ready once its watermarked derivative
@@ -11146,7 +11277,7 @@ model ServiceDealFile {
   fileName       String                    @default("")
   mimeType       String
   size           Int
-  /// Uploading until the seller confirms the object is in the bucket.
+  /// Uploading until the uploader confirms the object is in the bucket.
   status         ServiceDealFileStatus     @default(Uploading)
   failReason     String?
   uploadedAt     DateTime?
@@ -11169,6 +11300,11 @@ model ServiceDealFile {
   deliveryKey    String?
   deliverySize   Int?
   repackedAt     DateTime?
+  /// An Attachment only: when the buyer confirmed the rights and likeness attestations for it.
+  attestedAt     DateTime?
+  /// Set when the uploader removed the file but its row and objects must stay; only moderators
+  /// see it after that. Null is a live file.
+  removedAt      DateTime?
   createdAt      DateTime                  @default(now())
   entries        ServiceDealFileEntry[]
 

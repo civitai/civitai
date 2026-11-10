@@ -67,6 +67,12 @@ import { AppListingActionsMenu } from '~/components/Apps/AppListingActionsMenu';
 import { AppListingOfficialBadge } from '~/components/Apps/AppListingOfficialBadge';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
+import { useAppStoreDetailView, useTrackAppStoreAction } from '~/components/Apps/appStoreTelemetry';
+import {
+  APP_VISIT_LINK_REL,
+  appVisitHref,
+  withAppSurface,
+} from '~/shared/utils/app-store-telemetry';
 import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
 import {
   NO_BROKEN_SCREENSHOTS,
@@ -663,7 +669,20 @@ function ScreenshotGallery({
 }
 
 /** Kind-aware primary action button + (for info/connect stubs) an inline note. */
-function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpenPage: boolean }) {
+function PrimaryAction({
+  detail,
+  canOpenPage,
+  visitRedirectHref,
+}: {
+  detail: ListingDetail;
+  canOpenPage: boolean;
+  /**
+   * For an OFF-SITE listing, the `/apps/go` visit redirect its Visit CTA goes through (records
+   * the visit, then 302s to the listing's STORED URL); null otherwise. Decided by the caller so
+   * this renderer keeps routing on `action` alone (see `appListingDetailView.test.ts`).
+   */
+  visitRedirectHref: string | null;
+}) {
   const action = getDetailPrimaryAction(detail, { canOpenPage });
   // The recents store is ACCOUNT-scoped (#4048): every write carries the id of
   // the viewer who made it, so a later account in the same browser profile does
@@ -686,10 +705,22 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   // `__tests__/appListingActionGlyph.test.ts`.
   const glyphFor = (mode: DetailActionMode) => ACTION_GLYPH_ICONS[detailActionGlyph(mode)];
 
+  // Acquisition telemetry: every followed primary CTA is a `cta_click`; the launch / visit it
+  // leads to is recorded server-side with surface `detail` (the run route's `App_Open`, the
+  // `/apps/go` redirect's `App_Visit`). This component is rendered only outside `preview`.
+  const trackStoreAction = useTrackAppStoreAction();
+  const onCtaClick = () => trackStoreAction('cta_click', detail.id, { surface: 'detail' });
+
   if (action.mode === 'open' && action.href) {
     const GlyphIcon = glyphFor('open');
     return (
-      <Button component={Link} href={action.href} leftSection={<GlyphIcon size={16} />} fullWidth>
+      <Button
+        component={Link}
+        href={withAppSurface(action.href, 'detail')}
+        onClick={onCtaClick}
+        leftSection={<GlyphIcon size={16} />}
+        fullWidth
+      >
         {action.label}
       </Button>
     );
@@ -697,13 +728,16 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
 
   if (action.mode === 'visit' && action.href) {
     const GlyphIcon = glyphFor('visit');
+    // The on-site "Open live" escape hatch is a Civitai-hosted origin, not an off-site visit, so
+    // it has no redirect and keeps its direct link.
+    const visitHref = visitRedirectHref ?? action.href;
     return (
       <Stack gap={4}>
         <Button
           component="a"
-          href={action.href}
+          href={visitHref}
           target="_blank"
-          rel="noopener noreferrer"
+          rel={visitRedirectHref ? APP_VISIT_LINK_REL : 'noopener noreferrer'}
           leftSection={<GlyphIcon size={16} />}
           data-testid="apps-listing-open-live"
           fullWidth
@@ -713,7 +747,10 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
           // following this link IS the moment the app is opened, and it leaves
           // the SPA — so it is the only chance to record the open. A detail-page
           // VIEW never records.
-          onClick={() => recordRecentlyOpenedApp(toRecentAppFromListing(detail), recentsOwnerId)}
+          onClick={() => {
+            recordRecentlyOpenedApp(toRecentAppFromListing(detail), recentsOwnerId);
+            onCtaClick();
+          }}
         >
           {action.label}
         </Button>
@@ -1069,10 +1106,13 @@ export function AppListingDetailBody({
   //     would put a live launch back onto an UNAPPROVED shadow listing, which is
   //     precisely what that posture exists to prevent.
   const primaryAction = getDetailPrimaryAction(detail, { canOpenPage });
+  // Tagged with the `detail` surface exactly like the Open CTA, so the two stay one destination.
   const heroLaunchHref =
     !preview && primaryAction.mode === 'open' && !primaryAction.external && primaryAction.href
-      ? primaryAction.href
+      ? withAppSurface(primaryAction.href, 'detail')
       : null;
+  // One `detail_view` per mount (acquisition funnel). Never in the moderator preview.
+  useAppStoreDetailView(detail.id, !preview);
   const visibilityBadge = visibilityBadgeFor(detail.restrictedAudience);
   const categoryHref = appsStoreCategoryHref(detail.category);
 
@@ -1306,7 +1346,13 @@ export function AppListingDetailBody({
             {!preview && (
               <Card withBorder data-testid="apps-listing-action-card">
                 <Card.Section inheritPadding py="sm" px="sm">
-                  <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+                  <PrimaryAction
+                    detail={detail}
+                    canOpenPage={canOpenPage}
+                    visitRedirectHref={
+                      detail.kind === 'offsite' ? appVisitHref(detail.id, 'detail') : null
+                    }
+                  />
                   {/* FORKABLE APPS — "Fork", for a viewer with App Assistant and the rollout
                       flag, on a forkable, publicly visible on-site app. Renders nothing else. */}
                   <ListingForkButton listing={detail} />

@@ -100,11 +100,6 @@ export enum ImageScanType {
   SpineRating = 9,
 }
 
-// export enum CommentV2Sort {
-//   Newest = 'Newest',
-//   Oldest = 'Oldest',
-// }
-
 export enum ArticleSort {
   MostBookmarks = 'Most Bookmarks',
   MostReactions = 'Most Reactions',
@@ -186,6 +181,8 @@ export enum SignalMessages {
   EventPointsHat = 'event-points:hat',
   EventPointsTeams = 'event-points:teams',
   EventPointsOwner = 'event-points:owner',
+  // To one user only: their own live total, while they watch it (watch.ts selfWatchMember).
+  EventPointsSelf = 'event-points:self',
   EventPointsTurf = 'event-points:turf',
 }
 

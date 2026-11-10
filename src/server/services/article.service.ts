@@ -13,6 +13,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { eventEngine } from '~/server/events';
 import { userArticleCountCache, articleStatCache } from '~/server/redis/caches';
+import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
@@ -36,9 +37,14 @@ import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
 } from '~/server/selectors/cosmetic.selector';
-import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
+import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
+import {
+  articleOwnImageIds,
+  deriveArticleIngestionState,
+} from '~/server/services/article-ingestion.helpers';
+import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
+import { isSharedArticle, sharedArticleTextHash } from '~/server/services/article-share.helpers';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
@@ -91,6 +97,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 import { removeTags } from '~/utils/string-helpers';
+import { removeSpoilers } from '~/utils/html-sanitize-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { articleContentJson } from '~/server/utils/article-content-json';
@@ -118,10 +125,12 @@ import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import {
-  articleAwaitsTextVerdict,
   isPublicArticle,
+  isShareableArticleStatus,
 } from '~/server/services/text-scan/public-content';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import type { SkipReason } from '~/server/services/text-scan/actions/settle-skipped';
 import {
   computeArticleDerivedNsfwLevel,
   maybeAutoResolveDisputeAfterScan,
@@ -189,6 +198,16 @@ const getArticleStatsObject = async (data: { id: number }[]) => {
 export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
 
 export type ArticleGetAll = AsyncReturnType<typeof getArticles>['items'];
+/**
+ * The image a card shows for an article `a`: its cover, else its banner once servable. The article
+ * page hides a banner that is not scanned or awaits review, so a card must not show one either.
+ */
+export const articleCardCoverIdSql = Prisma.sql`COALESCE(
+  a."coverId",
+  (SELECT b.id FROM "Image" b
+    WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL)
+)`;
+
 export const getArticles = async ({
   limit,
   cursor,
@@ -474,7 +493,7 @@ export const getArticles = async ({
       SELECT
         a.id,
         a.cover,
-        a."coverId",
+        ${articleCardCoverIdSql} AS "coverId",
         a.title,
         a."publishedAt",
         a."nsfwLevel",
@@ -542,10 +561,10 @@ export const getArticles = async ({
       if (nextItem) nextCursor = { v: Number(nextItem.cursorV), id: nextItem.id };
     }
 
-    const profilePictures = await dbRead.image.findMany({
-      where: { id: { in: articles.map((a) => a.user.profilePictureId).filter(isDefined) } },
-      select: { ...profileImageSelect, ingestion: true },
-    });
+    const profilePictures = await getServableProfilePictures(
+      dbRead,
+      articles.map((a) => a.user.profilePictureId).filter(isDefined)
+    );
 
     const coverIds = articles.map((x) => x.coverId).filter(isDefined);
     const coverImages = coverIds.length
@@ -657,7 +676,7 @@ export const getCivitaiNews = async () => {
     SELECT
       c.name as "collection",
       a.id,
-      "coverId",
+      ${articleCardCoverIdSql} AS "coverId",
       title,
       content,
       "publishedAt",
@@ -694,7 +713,8 @@ export const getCivitaiNews = async () => {
     return {
       ...article,
       user: user ?? null,
-      summary: article.summary ?? truncate(removeTags(article.content), { length: 200 }),
+      summary:
+        article.summary ?? truncate(removeTags(removeSpoilers(article.content)), { length: 200 }),
       coverImage: coverImage
         ? { ...coverImage, tags: coverImage?.tags.flatMap((x) => x.tag.id) }
         : undefined,
@@ -771,6 +791,8 @@ export const getArticleById = async ({
       // field doesn't flow into external webhook / search-index payloads.
       select: {
         ...articleDetailSelect,
+        // Page-only: kept out of the shared select so the webhook and search payloads are unchanged.
+        bannerImage: { select: imageSelect },
         moderatorNsfwLevel: true,
         scheduledAt: true,
         reactions: viewerReactionsSelect(userId),
@@ -799,20 +821,9 @@ export const getArticleById = async ({
       type: 'Article',
     });
 
-    const coverImage = article.coverImage
-      ? {
-          ...article.coverImage,
-          nsfwLevel: article.coverImage.nsfwLevel as NsfwLevel,
-          meta: article.coverImage.meta as ImageMetaProps,
-          metadata: article.coverImage.metadata as ImageMetadata,
-          tags: article.coverImage?.tags.flatMap((x) => x.tag.id),
-        }
-      : undefined;
-
-    const canViewCoverImage =
-      isModerator ||
-      userId === article.userId ||
-      (coverImage?.ingestion === 'Scanned' && !coverImage?.needsReview);
+    const isOwnerOrMod = isModerator || userId === article.userId;
+    const coverImage = viewableArticleImage(article.coverImage, isOwnerOrMod);
+    const bannerImage = viewableArticleImage(article.bannerImage, isOwnerOrMod);
 
     // `content` is always sanitized HTML — the editor only ever emits `editor.getHTML()`.
     // Never parse it as JSON: sanitize-html passes a JSON body through untouched, so that
@@ -832,7 +843,8 @@ export const getArticleById = async ({
         ...tag,
         isCategory: articleCategories.some((c) => c.id === tag.id),
       })),
-      coverImage: canViewCoverImage ? coverImage : undefined,
+      coverImage,
+      bannerImage,
       contentJson,
       contentImages: imageConnections.map((conn) => conn.image),
       metadata: (article.metadata as ArticleMetadata) ?? null,
@@ -843,6 +855,24 @@ export const getArticleById = async ({
   }
 };
 
+type ArticleImageRow = Prisma.ImageGetPayload<{ select: typeof imageSelect }>;
+
+/**
+ * The cover or banner as a reader may see it: owners and moderators always, anyone else only once
+ * the image has been scanned and is not waiting on review.
+ */
+function viewableArticleImage(image: ArticleImageRow | null | undefined, isOwnerOrMod: boolean) {
+  if (!image) return undefined;
+  if (!isOwnerOrMod && (image.ingestion !== 'Scanned' || image.needsReview)) return undefined;
+  return {
+    ...image,
+    nsfwLevel: image.nsfwLevel as NsfwLevel,
+    meta: image.meta as ImageMetaProps,
+    metadata: image.metadata as ImageMetadata,
+    tags: image.tags.flatMap((x) => x.tag.id),
+  };
+}
+
 const ARTICLE_VIOLATION_STATUS_LOCKED_MESSAGE =
   'This article was unpublished for violating Terms of Service and its status cannot be changed. Please contact support if you believe this was in error.';
 
@@ -852,6 +882,7 @@ export const upsertArticle = async ({
   tags: inputTags,
   attachments,
   coverImage,
+  bannerImage,
   isModerator,
   scanContent,
   scheduledAt,
@@ -880,6 +911,7 @@ export const upsertArticle = async ({
       title: string;
       cover: string | null;
       coverId: number | null;
+      bannerId: number | null;
       userId: number;
       publishedAt: Date | null;
       status: string;
@@ -898,6 +930,7 @@ export const upsertArticle = async ({
           title: true,
           cover: true,
           coverId: true,
+          bannerId: true,
           userId: true,
           publishedAt: true,
           status: true,
@@ -978,7 +1011,8 @@ export const upsertArticle = async ({
     // Stays `undefined` when there is no cover — Prisma reads that as "don't write this
     // column". (It was previously seeded from `coverImage?.id`, which is dead: the only branch
     // in which that could be non-undefined is the one that immediately overwrites it.)
-    let coverId: number | undefined;
+    // undefined leaves the column alone, null clears it.
+    let coverId: number | null | undefined = coverImage === null ? null : undefined;
     if (coverImage) {
       // `id` present -> the ownership rule below runs, unchanged. `id` absent -> reuse an
       // existing row for this url, else verify the object is still in the uploads bucket
@@ -996,6 +1030,21 @@ export const upsertArticle = async ({
               throw throwAuthorizationError('Invalid cover image');
             }
           }
+        },
+      });
+    }
+
+    // undefined leaves the column alone, null clears it.
+    let bannerId: number | null | undefined = bannerImage === null ? null : undefined;
+    if (bannerImage) {
+      bannerId = await resolveCoverImageId({
+        coverImage: bannerImage,
+        userId,
+        currentCoverId: article?.bannerId,
+        assertOwnership: async (imageId) => {
+          if (article != null && imageId === article.bannerId) return;
+          const isImgOwner = await isImageOwner({ userId, isModerator, imageId });
+          if (!isImgOwner) throw throwAuthorizationError('Invalid banner image');
         },
       });
     }
@@ -1019,6 +1068,7 @@ export const upsertArticle = async ({
             publishedAt,
             scheduledAt: scheduledAtWrite,
             coverId,
+            bannerId,
             userId,
             tags: tags
               ? {
@@ -1081,6 +1131,7 @@ export const upsertArticle = async ({
             userId,
             ownerId: result.userId,
             coverId: result.coverId,
+            bannerId: result.bannerId,
           });
 
           // Mark scan as requested after successfully linking images
@@ -1272,16 +1323,47 @@ export const upsertArticle = async ({
       : writingWithoutViolationStatus
       ? { id, status: { not: ArticleStatus.UnpublishedViolation } }
       : { id };
+    let sharedTextChanged = false;
     const result = await dbWrite.$transaction(async (tx) => {
+      // A shared draft leaves Scanned in the same write that changes its text. Under the lock, so
+      // neither a link being created nor a concurrent save can slip between the read and the write.
+      await lockAccessTokens(tx, id as number);
+      const stored = await tx.article.findUnique({
+        where: { id: id as number },
+        select: { title: true, content: true, metadata: true },
+      });
+      const textChanged =
+        (data.title !== undefined && data.title !== stored?.title) ||
+        (data.content !== undefined && data.content !== stored?.content);
+      const sharedSave =
+        textChanged &&
+        (await isSharedArticle(
+          id as number,
+          (data.status as ArticleStatus | undefined) ?? (article.status as ArticleStatus),
+          tx
+        ));
+      if (sharedSave) await resetSharedArticleTextCheck(tx, id as number);
+      sharedTextChanged = sharedSave;
+      // A live article leaves Scanned with its new text too, so no failure before the recompute
+      // can leave that text public without its own verdict.
+      const liveSave =
+        textChanged &&
+        ((data.status as ArticleStatus | undefined) ?? article.status) === ArticleStatus.Published;
       const updated = await tx.article.update({
         where: updateWhere,
         data: {
           ...data,
+          ...(sharedSave || liveSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
-          metadata: { ...prevMetadata, ...data.metadata },
+          // The locked read: a block may have written its own keys since the first read.
+          metadata: {
+            ...((stored?.metadata as ArticleMetadata | null) ?? prevMetadata),
+            ...data.metadata,
+          },
           publishedAt,
           scheduledAt: scheduledAtWrite,
           coverId,
+          bannerId,
           tags: tags
             ? {
                 deleteMany: {
@@ -1309,6 +1391,9 @@ export const upsertArticle = async ({
         },
       });
       if (!updated) return null;
+      // A link made for the draft must not reopen it after a later unpublish.
+      if (data.status && !isShareableArticleStatus(data.status as ArticleStatus))
+        await revokeActiveAccessTokens('Article', updated.id, tx);
       // A tag rewrite above drops the official row like any other; the column restores it.
       if (officialTag && (tags || data.isOfficial !== undefined))
         await writeOfficialArticleTag({
@@ -1358,12 +1443,48 @@ export const upsertArticle = async ({
     // Count-cache refresh hits Redis — run after commit, off the txn budget.
     await userArticleCountCache.refresh(result.userId);
 
-    // remove old cover image
-    if (article.coverId !== coverId && article.coverId) {
-      const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
-      if (isImgOwner) {
-        await deleteImageById({ id: article.coverId });
+    // The save has committed: a failed cleanup is logged, and must not skip the content change below.
+    try {
+      // A replaced or cleared cover or banner, once nothing else shows it. The cover keeps the narrower
+      // check it always had (owner, and no other article shows it) rather than `unusedAuthorImage`.
+      const replacedImageIds: number[] = [];
+      if (article.coverId !== coverId && article.coverId && article.coverId !== result.bannerId) {
+        const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
+        const shownElsewhere =
+          isImgOwner &&
+          (await dbWrite.article.count({
+            where: {
+              id: { not: id },
+              OR: [{ coverId: article.coverId }, { bannerId: article.coverId }],
+            },
+          })) > 0;
+        if (isImgOwner && !shownElsewhere) replacedImageIds.push(article.coverId);
       }
+      if (bannerId !== undefined && article.bannerId && article.bannerId !== bannerId) {
+        const unused = await dbWrite.image.findFirst({
+          where: { id: article.bannerId, ...unusedAuthorImage(result.userId) },
+          select: { id: true },
+        });
+        if (unused) replacedImageIds.push(unused.id);
+      }
+      // The same holds as article delete: a safety report or legal hold on the owner keeps them all.
+      if (replacedImageIds.length && !(await ownerUnderSafetyReport(dbWrite, result.userId))) {
+        const rows = await dbWrite.image.findMany({
+          where: { id: { in: replacedImageIds } },
+          select: { id: true, url: true },
+        });
+        const deletable = await withoutOfferingCovers(
+          dbWrite,
+          await withoutShopArtwork(dbWrite, rows)
+        );
+        // Per image, so one failed delete does not stop the rest.
+        for (const imageId of deletable)
+          await deleteImageById({ id: imageId }).catch((error) =>
+            handleLogError(error, 'article-replaced-image-cleanup', { articleId: id, imageId })
+          );
+      }
+    } catch (error) {
+      handleLogError(error as Error, 'article-replaced-image-cleanup', { articleId: id });
     }
 
     await applyArticleContentChange({
@@ -1375,7 +1496,9 @@ export const upsertArticle = async ({
         ownerId: result.userId,
         title: data.title ?? article.title ?? '',
         previousContent: article.content,
-        coverId: coverId ?? article.coverId,
+        sharedTextChanged,
+        coverId: result.coverId,
+        bannerId: result.bannerId,
         publication: { status: result.status, scheduledAt: result.scheduledAt },
       },
     });
@@ -1422,7 +1545,10 @@ type ArticleContentChangeContext = {
   ownerId: number;
   title: string | null;
   previousContent: string | null;
+  /** The write voided a shared draft's verdict, so a fresh check must follow. */
+  sharedTextChanged?: boolean;
   coverId: number | null;
+  bannerId: number | null;
   publication: { status: ArticleStatus; scheduledAt: Date | null };
 };
 
@@ -1473,6 +1599,7 @@ export async function applyArticleContentChange({
         title: true,
         content: true,
         coverId: true,
+        bannerId: true,
         status: true,
         scheduledAt: true,
       },
@@ -1483,10 +1610,12 @@ export async function applyArticleContentChange({
       title: stored.title,
       previousContent: stored.content,
       coverId: stored.coverId,
+      bannerId: stored.bannerId,
       publication: { status: stored.status, scheduledAt: stored.scheduledAt },
     };
   }
-  const { ownerId, title, previousContent, coverId, publication } = resolved;
+  const { ownerId, title, previousContent, coverId, bannerId, publication } = resolved;
+  let sharedTextChanged = !!resolved.sharedTextChanged;
 
   // A caller holding the pre-write snapshot has already written this body itself. Replaying
   // it would reinstate the older body over a save that committed in between.
@@ -1494,10 +1623,30 @@ export async function applyArticleContentChange({
     // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
     // re-materialization is not a user edit: it must not reorder the "Recently Updated"
     // feed or reopen the rating-dispute re-edit window keyed on `updatedAt > resolvedAt`.
-    const affected =
-      await dbWrite.$executeRaw`UPDATE "Article" SET content = ${content} WHERE id = ${id}${
+    // Under the share-token lock, so a link created meanwhile cannot miss this body: a shared
+    // draft, or a live article, leaves Scanned in the same statement that changes its text.
+    const affected = await dbWrite.$transaction(async (tx) => {
+      await lockAccessTokens(tx, id);
+      const shared = await isSharedArticle(id, publication.status, tx);
+      const live = publication.status === ArticleStatus.Published;
+      const locked =
+        shared || live
+          ? await tx.article.findUnique({ where: { id }, select: { content: true } })
+          : null;
+      const changed = !!locked && locked.content !== content;
+      const resetting = shared && changed;
+      const written = await tx.$executeRaw`UPDATE "Article" SET content = ${content}${
+        changed ? Prisma.sql`, ingestion = 'Rescan'::"ArticleIngestionStatus"` : Prisma.empty
+      } WHERE id = ${id}${
         expectedContent === undefined ? Prisma.empty : Prisma.sql` AND content = ${expectedContent}`
       }`;
+      // Only a write that landed voids the verdict, or no check would follow the reset.
+      if (resetting && written) {
+        await resetSharedArticleTextCheck(tx, id);
+        sharedTextChanged = true;
+      }
+      return written;
+    });
     if (expectedContent !== undefined && !affected) return false;
   }
 
@@ -1519,6 +1668,7 @@ export async function applyArticleContentChange({
           userId,
           ownerId,
           coverId,
+          bannerId,
           cleanupOnly: !scanContent,
         });
 
@@ -1562,7 +1712,7 @@ export async function applyArticleContentChange({
     }
   }
 
-  // Submit for text moderation (non-blocking). `submitTextModeration` →
+  // Submit for text moderation. `submitTextModeration` →
   // `createXGuardModerationRequest` handles contentHash dedup internally,
   // so a save that doesn't change `title` or `content` is a no-op
   // orchestrator-wise. If the article's text was emptied out entirely,
@@ -1573,14 +1723,28 @@ export async function applyArticleContentChange({
   {
     const currentTitle = title ?? '';
     const hasText = articleHasText(currentTitle, content);
+    const shared = await isSharedArticle(id, publication.status);
 
     if (!hasText) {
       await dbWrite.entityModeration.deleteMany({
         where: { entityType: 'Article', entityId: id },
       });
+    } else if (shared) {
+      // Link holders see the text as soon as it passes, so a check that cannot be shown to have
+      // started withdraws the links.
+      const checked =
+        !sharedTextChanged ||
+        (await submitSharedArticleText(id).catch((e) => {
+          handleLogError(e as Error, 'article-share-check', { articleId: id });
+          return false;
+        }));
+      if (!checked) await revokeActiveAccessTokens('Article', id);
     } else if (isPublicArticle(publication)) {
-      const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
+      const textForModeration = articleModerationText(currentTitle, content);
 
+      // Awaited, published edits included: the submit records the pending scan for this text,
+      // so the recompute below cannot count a verdict for older text.
+      let skipped: SkipReason | undefined;
       const submitted = submitTextModerationOrScan({
         entityType: 'Article',
         entityId: id,
@@ -1593,6 +1757,9 @@ export async function applyArticleContentChange({
             recordForReview: true,
             rearmRetries: true,
           }),
+        onActiveSkip: async (reason) => {
+          skipped = reason;
+        },
       }).catch((e) => {
         logToAxiom({
           type: 'error',
@@ -1600,9 +1767,12 @@ export async function applyArticleContentChange({
           message: (e as Error).message,
           articleId: id,
         }).catch();
+        return null;
       });
-      // Otherwise the recompute below can count a verdict for older text and take it live.
-      if (articleAwaitsTextVerdict(publication)) await submitted;
+      // The orchestrator client sets no timeout, so a hung submit would hold the save open.
+      const workflow = await withTimeoutFallback(submitted, ARTICLE_TEXT_SUBMIT_TIMEOUT_MS, null);
+      if (!(await articleTextSubmitRecorded(id, textForModeration, workflow, skipped)))
+        await holdArticleTextVerdict(id);
     }
   }
 
@@ -1618,6 +1788,56 @@ export async function applyArticleContentChange({
   );
 
   return true;
+}
+
+const ARTICLE_TEXT_SUBMIT_TIMEOUT_MS = 10_000;
+
+const articleModerationText = (title: string, content: string | null) =>
+  [title, removeTags(content ?? '')].filter(Boolean).join(' ');
+
+/**
+ * Whether the row now holds this text's scan or its verdict. Neither path throws on every miss: the
+ * XGuard submit logs a failed row write, and an active scan can skip without writing.
+ */
+async function articleTextSubmitRecorded(
+  articleId: number,
+  submittedText: string,
+  workflow: { id?: string | null } | null | undefined,
+  skipped: SkipReason | undefined
+) {
+  // A save that wrote later text may have recorded first, leaving this save's scan on the row for
+  // text the article no longer has.
+  const stored = await dbWrite.article.findUnique({
+    where: { id: articleId },
+    select: { title: true, content: true },
+  });
+  if (!stored || articleModerationText(stored.title ?? '', stored.content) !== submittedText)
+    return false;
+  // The row already has this text's verdict, or its scan in flight.
+  if (skipped === 'unchanged' || skipped === 'in-flight') return true;
+  if (!workflow?.id) return false;
+  const row = await dbWrite.entityModeration.findUnique({
+    where: { entityType_entityId: { entityType: 'Article', entityId: articleId } },
+    select: { workflowId: true },
+  });
+  return row?.workflowId === workflow.id;
+}
+
+/**
+ * A submit that recorded nothing leaves the verdict for the previous text in place.
+ * Pending keeps that verdict from counting for this text until the retry cron's stuck-Pending sweep
+ * resubmits; the stored verdict fields stay, as a fresh submit leaves them (`markTextScanPending`).
+ */
+async function holdArticleTextVerdict(articleId: number) {
+  await dbWrite.entityModeration.updateMany({
+    where: { entityType: 'Article', entityId: articleId },
+    data: {
+      status: EntityModerationStatus.Pending,
+      workflowId: null,
+      contentHash: null,
+      retryCount: 0,
+    },
+  });
 }
 
 /**
@@ -1636,6 +1856,7 @@ export const unusedAuthorImage = (ownerId: number) =>
     blockedFor: null,
     reports: { none: {} },
     article: { is: null },
+    articleBanner: { is: null },
     assignedUser: { is: null },
     connections: { none: {} },
     collectionItems: { none: {} },
@@ -1754,12 +1975,9 @@ export const deleteArticleById = async ({
     const collectionsToRebuild = await getCollectionIdsForArticle({ articleId: id });
 
     const deleted = await dbWrite.$transaction(async (tx) => {
-      // The comments' CommentV3 rows go before the article's cascade reaches their CommentV2 rows:
-      // every write on these comments locks CommentV3 first, so the cascade must too.
-      await tx.$executeRaw`DELETE FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" = ${id}`;
       const article = await tx.article.delete({
         where: { id },
-        select: { coverId: true },
+        select: { coverId: true, bannerId: true },
       });
 
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
@@ -1774,11 +1992,11 @@ export const deleteArticleById = async ({
     // already gone, so the pre-delete snapshot is the only record left.
     await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'article-delete' });
 
-    // The cover goes through the same checks as the content images: it can be someone else's
-    // upload, or still shown elsewhere.
+    // The cover and banner go through the same checks as the content images: either can be
+    // someone else's upload, or still shown elsewhere.
     const imageIds = [
       ...new Set([
-        ...(deleted.coverId ? [deleted.coverId] : []),
+        ...articleOwnImageIds(deleted),
         ...contentImageConnections.map((conn) => conn.imageId),
       ]),
     ];
@@ -1803,6 +2021,8 @@ export const deleteArticleById = async ({
               error,
               imageId === deleted.coverId
                 ? 'article-cover-image-cleanup'
+                : imageId === deleted.bannerId
+                ? 'article-banner-image-cleanup'
                 : 'article-content-image-cleanup',
               { articleId: id, imageId }
             );
@@ -1813,7 +2033,9 @@ export const deleteArticleById = async ({
       handleLogError(error as Error, 'article-image-cleanup', { articleId: id });
     }
 
-    await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }], {
+      reason: 'delete',
+    });
 
     return deleted;
   } catch (error) {
@@ -1881,31 +2103,28 @@ export async function unpublishArticleById({
   userId: number;
   isModerator?: boolean;
 }) {
-  // Fetch article
-  const db = await getDbWithoutLag('article', id);
-  const article = await db.article.findUnique({
-    where: { id },
-    select: { userId: true, publishedAt: true, status: true },
-  });
-
-  if (!article) throw throwNotFoundError(`No article with id ${id}`);
-
-  // Permission check (defensive, already checked in middleware)
-  const isOwner = article.userId === userId || isModerator;
-  if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
-
-  // State validation
-  if (!article.publishedAt || article.status !== ArticleStatus.Published) {
-    throw throwBadRequestError('Article is not published');
-  }
-
-  // Atomic update with transaction
-  const updated = await dbWrite.$transaction(
+  const { updated, ownerId } = await dbWrite.$transaction(
     async (tx) => {
+      // Read under a row lock, so a block that commits first is seen here and one that comes later
+      // waits for this write and lands on top of it.
+      const [article] = await tx.$queryRaw<
+        { userId: number; publishedAt: Date | null; status: ArticleStatus }[]
+      >`SELECT "userId", "publishedAt", status FROM "Article" WHERE id = ${id} FOR UPDATE`;
+
+      if (!article) throw throwNotFoundError(`No article with id ${id}`);
+
+      // Permission check (defensive, already checked in middleware)
+      const isOwner = article.userId === userId || isModerator;
+      if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
+
+      if (!article.publishedAt || article.status !== ArticleStatus.Published) {
+        throw throwBadRequestError('Article is not published');
+      }
+
       const unpublishedAt = new Date().toISOString();
 
       // Build updated metadata
-      const updatedMetadata = {
+      const updatedMetadata: ArticleMetadata = {
         ...metadata,
         ...(reason
           ? {
@@ -1916,26 +2135,34 @@ export async function unpublishArticleById({
         unpublishedAt,
         unpublishedBy: userId,
       };
+      // Only a Published article gets here, so a restore must publish it, whatever an earlier
+      // block recorded.
+      delete updatedMetadata.statusBeforeViolation;
 
-      // Update article status and metadata
-      return await tx.article.update({
+      // An old share link must not reopen what a moderator took down.
+      if (isModerator) await revokeActiveAccessTokens('Article', id, tx);
+
+      const updated = await tx.article.update({
         where: { id },
         data: {
           status: reason ? ArticleStatus.UnpublishedViolation : ArticleStatus.Unpublished,
           metadata: updatedMetadata,
         },
       });
+      return { updated, ownerId: article.userId };
     },
     { timeout: 30000, maxWait: 10000 }
   );
 
   // Update search index (remove from public search)
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }], {
+    reason: 'edit',
+  });
 
   // Bust user content cache
-  await userArticleCountCache.refresh(article.userId);
+  await userArticleCountCache.refresh(ownerId);
   await preventReplicationLag('article', id);
-  await preventReplicationLag('userArticles', article.userId);
+  await preventReplicationLag('userArticles', ownerId);
 
   return updated;
 }
@@ -2108,6 +2335,7 @@ export async function linkArticleContentImages({
   userId,
   ownerId,
   coverId,
+  bannerId,
   cleanupOnly,
   now = new Date(),
   relinks = 0,
@@ -2117,6 +2345,7 @@ export async function linkArticleContentImages({
   userId: number;
   ownerId: number;
   coverId?: number | null;
+  bannerId?: number | null;
   cleanupOnly?: boolean;
   now?: Date;
   /** How many times this call has re-run over content a later save wrote. */
@@ -2231,9 +2460,10 @@ export async function linkArticleContentImages({
 
       // --- Orphan detection (always runs) ---
 
-      // Build exclusion list: content images + cover image
-      const excludeImageIds = [...contentImageIds];
-      if (coverId) excludeImageIds.push(coverId);
+      const excludeImageIds = [
+        ...contentImageIds,
+        ...articleOwnImageIds({ coverId: coverId ?? null, bannerId: bannerId ?? null }),
+      ];
 
       // Get orphaned connections for this article
       const orphanedConnections = await tx.imageConnection.findMany({
@@ -2292,6 +2522,7 @@ export async function linkArticleContentImages({
         userId,
         ownerId,
         coverId,
+        bannerId,
         now,
         relinks: relinks + 1,
       });
@@ -2409,20 +2640,29 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     }),
     dbRead.article.findUnique({
       where: { id },
-      select: { title: true, content: true, coverId: true, status: true, scheduledAt: true },
+      select: {
+        title: true,
+        content: true,
+        coverId: true,
+        bannerId: true,
+        status: true,
+        scheduledAt: true,
+      },
     }),
     dbRead.entityModeration.findUnique({
       where: { entityType_entityId: { entityType: 'Article', entityId: id } },
       select: { status: true, blocked: true, retryCount: true, updatedAt: true },
     }),
   ]);
+  const shared = !!article && (await isSharedArticle(id, article.status));
 
-  // Cover lives on `Article.coverId`, not in `ImageConnection`, so a cover-only
-  // problem (no content images) would otherwise render nothing. Fold it into the
-  // scannable set, deduped against any connection that also references it.
-  const cover = article?.coverId
-    ? await dbRead.image.findUnique({
-        where: { id: article.coverId },
+  // Cover and banner live on `Article`, not in `ImageConnection`, so a cover- or banner-only
+  // problem (no content images) would otherwise render nothing. Fold them into the
+  // scannable set, deduped against any connection that also references them.
+  const ownImageIds = article ? articleOwnImageIds(article) : [];
+  const ownImages = ownImageIds.length
+    ? await dbRead.image.findMany({
+        where: { id: { in: ownImageIds } },
         select: {
           id: true,
           url: true,
@@ -2432,10 +2672,10 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
           scanJobs: true,
         },
       })
-    : null;
+    : [];
 
   const images = connections.map((c) => c.image);
-  if (cover && !images.some((image) => image.id === cover.id)) images.push(cover);
+  for (const own of ownImages) if (!images.some((image) => image.id === own.id)) images.push(own);
 
   const total = images.length;
   const scannedImages = images.filter((i) => i.ingestion === ImageIngestionStatus.Scanned);
@@ -2457,7 +2697,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     moderation?.status === EntityModerationStatus.Succeeded && !!moderation.blocked;
   const required =
     !!article &&
-    (isPublicArticle(article) || textBlocked) &&
+    (isPublicArticle(article, shared) || textBlocked) &&
     articleHasText(article.title, article.content);
   const textTerminalStatuses = new Set<EntityModerationStatus>([
     EntityModerationStatus.Succeeded,
@@ -2535,6 +2775,8 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
     const result = await dbWrite.$transaction(
       async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
+        // Before the row lock below, in the order every share-link writer takes them.
+        await lockAccessTokens(tx, articleId);
 
         await updateArticleNsfwLevels([articleId], tx);
 
@@ -2545,6 +2787,91 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
 
     await dispatchArticleIngestionPostCommit(result);
   }
+}
+
+/**
+ * Written in the same transaction as a shared draft's new text: the earlier verdict stops
+ * counting, and its in-flight check can no longer land (callbacks match on `workflowId`).
+ */
+export async function resetSharedArticleTextCheck(tx: Prisma.TransactionClient, id: number) {
+  await tx.entityModeration.updateMany({
+    where: { entityType: 'Article', entityId: id },
+    data: { status: EntityModerationStatus.Pending, workflowId: null },
+  });
+  await tx.articleShareCheck.upsert({
+    where: { articleId: id },
+    create: { articleId: id, generation: 1 },
+    update: { generation: { increment: 1 }, workflowId: null, textHash: null },
+  });
+}
+
+const SHARED_CHECK_ATTEMPTS = 3;
+
+/**
+ * A shared draft passes the same content checks as a published article before it can be viewed.
+ * Sends the stored text for a fresh check and records that check as the one the shared read
+ * requires, but only if no write changed the text meanwhile: every such write bumps the check's
+ * generation under the share lock, and the record is made under the same lock. A changed text is
+ * checked again. False when no check can be shown to have started; throws when the submit does.
+ */
+export async function submitSharedArticleText(id: number): Promise<boolean> {
+  const snapshot = (tx: Prisma.TransactionClient) =>
+    Promise.all([
+      tx.article.findUnique({ where: { id }, select: { title: true, content: true } }),
+      tx.articleShareCheck.findUnique({ where: { articleId: id }, select: { generation: true } }),
+    ]);
+  const underLock = <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) =>
+    dbWrite.$transaction(async (tx) => {
+      await lockAccessTokens(tx, id);
+      return fn(tx);
+    });
+
+  for (let attempt = 0; attempt < SHARED_CHECK_ATTEMPTS; attempt++) {
+    const [text, check] = await underLock(snapshot);
+    if (!text) return false;
+    if (!articleHasText(text.title, text.content)) return true;
+    const generation = check?.generation ?? 0;
+
+    const startedAt = new Date();
+    const workflow = await submitTextModerationOrScan({
+      entityType: 'Article',
+      entityId: id,
+      force: true,
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Article',
+          entityId: id,
+          content: [text.title, removeTags(text.content ?? '')].filter(Boolean).join(' '),
+          labels: ['nsfw'],
+          recordForReview: true,
+          forceRescan: true,
+          rearmRetries: true,
+        }),
+    });
+    const workflowId = workflow?.id;
+    const row = await dbWrite.entityModeration.findUnique({
+      where: { entityType_entityId: { entityType: 'Article', entityId: id } },
+      select: { updatedAt: true },
+    });
+    if (!workflowId || !row || row.updatedAt < startedAt) return false;
+
+    const recorded = await underLock(async (tx) => {
+      const [now, nowCheck] = await snapshot(tx);
+      const unchanged =
+        (nowCheck?.generation ?? 0) === generation &&
+        now?.title === text.title &&
+        now?.content === text.content;
+      if (!unchanged) return false;
+      await tx.articleShareCheck.upsert({
+        where: { articleId: id },
+        create: { articleId: id, generation, workflowId, textHash: sharedArticleTextHash(text) },
+        update: { workflowId, textHash: sharedArticleTextHash(text) },
+      });
+      return true;
+    });
+    if (recorded) return true;
+  }
+  return false;
 }
 
 /**
@@ -2602,6 +2929,8 @@ export async function recomputeArticleIngestionInTx(
   articleId: number
 ): Promise<RecomputeIngestionResult> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
+  // Held to commit, so a share link cannot be made between the go-live revoke below and the flip.
+  await lockAccessTokens(tx, articleId);
 
   // --- Image side (content images + cover) ---
   //
@@ -2638,23 +2967,24 @@ export async function recomputeArticleIngestionInTx(
       title: true,
       content: true,
       coverId: true,
+      bannerId: true,
       moderatorNsfwLevel: true,
     },
   });
   const hold = await getContentLinkHold(tx, articleId);
 
-  const coverIngestion = current.coverId
-    ? (
-        await tx.image.findUnique({
-          where: { id: current.coverId },
-          select: { ingestion: true },
-        })
-      )?.ingestion ?? null
-    : null;
+  // The banner is gated exactly like the cover.
+  const ownImageIds = articleOwnImageIds(current);
+  const ownImages = ownImageIds.length
+    ? await tx.image.findMany({
+        where: { id: { in: ownImageIds } },
+        select: { ingestion: true },
+      })
+    : [];
 
   const imageStates: ImageIngestionStatus[] = [
     ...connections.map((c) => c.image.ingestion),
-    ...(coverIngestion ? [coverIngestion] : []),
+    ...ownImages.map((image) => image.ingestion),
   ];
 
   const totalImages = imageStates.length;
@@ -2731,6 +3061,8 @@ export async function recomputeArticleIngestionInTx(
   if (flipToPublished) {
     setFragments.push(Prisma.sql`status = ${ArticleStatus.Published}::"ArticleStatus"`);
     setFragments.push(Prisma.sql`"publishedAt" = ${flipPublishedAt}`);
+    // A link made for the draft must not reopen it after a later unpublish.
+    await revokeActiveAccessTokens('Article', articleId, tx);
   }
   await tx.$executeRaw`
     UPDATE "Article"
@@ -2784,9 +3116,10 @@ export async function dispatchArticleIngestionPostCommit(
 
   // Sync search index — the index filters on ingestion = 'Scanned', so any
   // ingestion state change must be reflected (add when Scanned, remove otherwise).
-  await articlesSearchIndex.queueUpdate([
-    { id: articleId, action: SearchIndexUpdateQueueAction.Update },
-  ]);
+  await articlesSearchIndex.queueUpdate(
+    [{ id: articleId, action: SearchIndexUpdateQueueAction.Update }],
+    { reason: 'ingestion' }
+  );
 
   if (publishedNotificationUserId !== null) {
     await createNotification({
@@ -2859,21 +3192,25 @@ export async function resolveArticleImageScan({
   // unrelated image: the image must be this article's cover or one of its
   // content-image connections.
   const [article, connection] = await Promise.all([
-    dbRead.article.findUnique({ where: { id: articleId }, select: { coverId: true } }),
+    dbRead.article.findUnique({
+      where: { id: articleId },
+      select: { coverId: true, bannerId: true },
+    }),
     dbRead.imageConnection.findFirst({
       where: { entityId: articleId, entityType: ImageConnectionType.Article, imageId },
       select: { imageId: true },
     }),
   ]);
   if (!article) throw throwNotFoundError(`No article with id ${articleId}`);
-  if (article.coverId !== imageId && !connection)
+  if (!articleOwnImageIds(article).includes(imageId) && !connection)
     throw throwBadRequestError(`Image ${imageId} does not belong to article ${articleId}`);
 
   await resolveIngestionError({ id: imageId, nsfwLevel, userId });
   await recomputeArticleIngestion(articleId);
-  await articlesSearchIndex.queueUpdate([
-    { id: articleId, action: SearchIndexUpdateQueueAction.Update },
-  ]);
+  await articlesSearchIndex.queueUpdate(
+    [{ id: articleId, action: SearchIndexUpdateQueueAction.Update }],
+    { reason: 'image-scan' }
+  );
 }
 
 const RESCAN_LIMIT = 3;
@@ -2951,6 +3288,7 @@ export async function rescanArticle({
       content: true,
       title: true,
       coverId: true,
+      bannerId: true,
       status: true,
       scheduledAt: true,
     },
@@ -2978,7 +3316,9 @@ export async function rescanArticle({
   await preventReplicationLag('userArticles', article.userId);
 
   // Remove from search index immediately — article should not be searchable while rescanning.
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }], {
+    reason: 'edit',
+  });
 
   // --- Re-link content images (picks up new images, queues Pending ones) ---
   if (article.content) {
@@ -2988,6 +3328,7 @@ export async function rescanArticle({
       userId: article.userId,
       ownerId: article.userId,
       coverId: article.coverId,
+      bannerId: article.bannerId,
     });
   }
 
@@ -3002,17 +3343,19 @@ export async function rescanArticle({
     },
   });
 
-  // Cover lives on `Article.coverId`, not in `ImageConnection`, so a broken
-  // cover would never be re-queued without folding it in here.
-  const cover = article.coverId
-    ? await dbWrite.image.findUnique({
-        where: { id: article.coverId },
+  // Cover and banner live on `Article`, not in `ImageConnection`, so a broken
+  // one would never be re-queued without folding it in here.
+  const ownImageIds = articleOwnImageIds(article);
+  const ownImages = ownImageIds.length
+    ? await dbWrite.image.findMany({
+        where: { id: { in: ownImageIds } },
         select: rescanImageSelect,
       })
-    : null;
+    : [];
 
   const candidates = connections.map((conn) => conn.image);
-  if (cover && !candidates.some((image) => image.id === cover.id)) candidates.push(cover);
+  for (const own of ownImages)
+    if (!candidates.some((image) => image.id === own.id)) candidates.push(own);
 
   const imagesToIngest = candidates.filter((image) => canRescanArticleImage(image, article.userId));
 
@@ -3038,7 +3381,10 @@ export async function rescanArticle({
   // `createXGuardModerationRequest` so a moderator-initiated rescan
   // produces a new orchestrator workflow even when the article's text
   // is unchanged.
-  if (article.content && isPublicArticle(article)) {
+  if (
+    article.content &&
+    (isPublicArticle(article) || (await isSharedArticle(id, article.status)))
+  ) {
     const textForModeration = [article.title, removeTags(article.content)]
       .filter(Boolean)
       .join(' ');
@@ -3116,15 +3462,15 @@ export async function rescanArticleImage({
   const db = await getDbWithoutLag('article', articleId);
   const article = await db.article.findUnique({
     where: { id: articleId },
-    select: { userId: true, coverId: true },
+    select: { userId: true, coverId: true, bannerId: true },
   });
   if (!article) throw throwNotFoundError(`No article with id ${articleId}`);
   if (article.userId !== userId && !isModerator)
     throw throwAuthorizationError('You cannot perform this action');
 
-  // Image must belong to the article: its cover or a content-image connection.
+  // Image must belong to the article: its cover, its banner or a content-image connection.
   const belongs =
-    article.coverId === imageId ||
+    articleOwnImageIds(article).includes(imageId) ||
     !!(await dbRead.imageConnection.findFirst({
       where: { entityId: articleId, entityType: ImageConnectionType.Article, imageId },
       select: { imageId: true },
@@ -3265,7 +3611,9 @@ export const setArticleOfficial = async ({
 
   // The index document spreads `articleDetailSelect`, which now carries `isOfficial`, so
   // a stale document would keep serving the old provenance to search.
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }], {
+    reason: 'edit',
+  });
 
   return updated;
 };

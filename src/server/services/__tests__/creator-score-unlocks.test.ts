@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pricingEligibility } from '@civitai/buzz';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import type { RateLimit } from '~/server/middleware.trpc';
+import {
+  resolveUsageLimit,
+  resolveUsageLimitRules,
+} from '~/server/services/usage-limit-config.service';
+import type { UsageLimitRef } from '~/shared/constants/usage-limits';
 import { articleRateLimits } from '~/server/schema/article.schema';
 import { commentRateLimits } from '~/server/schema/comment.schema';
 import { postRateLimits } from '~/server/schema/post.schema';
@@ -79,10 +83,10 @@ const sessionUser = (scores: { total?: number; articles?: number }, tier?: strin
   ({ id: 1, tier, meta: { scores } } as unknown as SessionUser);
 
 // The rate-limit middleware keeps the HIGHEST limit among the rules that apply for a period.
-const effectiveLimit = (rules: RateLimit[], period: number, user: SessionUser) =>
+const effectiveLimit = async (ref: UsageLimitRef, period: number, user: SessionUser) =>
   Math.max(
-    ...rules
-      .filter((r) => r.period === period && (!r.userReq || r.userReq(user)))
+    ...(await resolveUsageLimitRules(ref.usageLimitIds, user))
+      .filter((r) => r.period === period)
       .map((r) => r.limit)
   );
 
@@ -191,45 +195,45 @@ describe('creator score unlock registry', () => {
     expect(await joinError(minScore)).not.toBe(scoreRefusal);
   });
 
-  it('each daily post tier takes effect at its registry threshold, for members too', () => {
+  it('each daily post tier takes effect at its registry threshold, for members too', async () => {
     const tiers = withPrefix('daily-posts:');
     expect(tiers).toHaveLength(2);
     for (const { key, minScore, label } of tiers) {
       const limit = labelNumber(label, /Post up to (\d+) times/);
       const memberLimit = labelNumber(label, /\((\d+) as a member\)/);
       const day = (user: SessionUser) => effectiveLimit(postRateLimits, CacheTTL.day, user);
-      expect(day(sessionUser({ total: minScore - 1 })), key).toBeLessThan(limit);
-      expect(day(sessionUser({ total: minScore })), key).toBe(limit);
-      expect(day(sessionUser({ total: minScore }, 'gold')), key).toBe(memberLimit);
+      expect(await day(sessionUser({ total: minScore - 1 })), key).toBeLessThan(limit);
+      expect(await day(sessionUser({ total: minScore })), key).toBe(limit);
+      expect(await day(sessionUser({ total: minScore }, 'gold')), key).toBe(memberLimit);
     }
   });
 
   it.each([
     ['comment-rate-limit', commentRateLimits],
     ['reaction-rate-limit', reactionRateLimits],
-  ])('every %s rule switches on at the registry threshold and not before', (key, rules) => {
+  ])('every %s limit rises at the registry threshold and not before', async (key, ref) => {
     const { minScore } = unlock(key);
-    const gated = rules.filter((r) => r.userReq);
-    expect(gated.length).toBeGreaterThan(0);
-    for (const rule of gated) {
-      const where = `${key} rule ${rule.limit}/${rule.period}s`;
-      expect(rule.userReq?.(sessionUser({ total: minScore - 1 })), where).toBe(false);
-      expect(rule.userReq?.(sessionUser({ total: minScore })), where).toBe(true);
+    for (const id of ref.usageLimitIds) {
+      const at = async (total: number) =>
+        (await resolveUsageLimit(id, sessionUser({ total }))).limit;
+      expect(await at(minScore - 1), id).toBeLessThan(await at(minScore));
+      expect(await at(minScore - 1), id).toBe(await at(0));
     }
   });
 
   // A product decision, not an oversight: article limits were keyed on the articles category score and
   // were moved onto the total so every Creator Score gate compares the number the user can see.
-  it('each daily article tier takes effect at its registry threshold, on the total, not the articles score', () => {
+  it('each daily article tier takes effect at its registry threshold, on the total, not the articles score', async () => {
     for (const { key, minScore, label } of withPrefix('daily-articles:')) {
       const limit = labelNumber(label, /up to (\d+) articles/);
       const day = (user: SessionUser) => effectiveLimit(articleRateLimits, CacheTTL.day, user);
-      expect(day(sessionUser({ total: minScore - 1, articles: 10_000_000 })), key).toBeLessThan(
-        limit
-      );
-      expect(day(sessionUser({ total: minScore })), key).toBe(limit);
       expect(
-        day(sessionUser({ total: String(minScore * 10) as unknown as number })),
+        await day(sessionUser({ total: minScore - 1, articles: 10_000_000 })),
+        key
+      ).toBeLessThan(limit);
+      expect(await day(sessionUser({ total: minScore })), key).toBe(limit);
+      expect(
+        await day(sessionUser({ total: String(minScore * 10) as unknown as number })),
         `${key} string total`
       ).toBeLessThan(limit);
     }

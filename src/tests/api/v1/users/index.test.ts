@@ -289,4 +289,12 @@ describe('/api/v1/users system-request token', () => {
 
     expect(await includeSentFor({ token: 'a-real-secret' })).toEqual(['status']);
   });
+
+  it('treats WEBHOOK_TOKEN_PREVIOUS as a system request while it is set, and not once it is unset', async () => {
+    setEnv({ WEBHOOK_TOKEN: 'a-real-secret', WEBHOOK_TOKEN_PREVIOUS: 'the-old-secret' });
+    expect(await includeSentFor({ token: 'the-old-secret' })).toEqual(['status']);
+
+    setEnv({ WEBHOOK_TOKEN_PREVIOUS: undefined });
+    expect(await includeSentFor({ token: 'the-old-secret' })).toEqual([]);
+  });
 });

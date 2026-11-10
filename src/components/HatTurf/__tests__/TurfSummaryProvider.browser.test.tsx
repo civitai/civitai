@@ -8,7 +8,14 @@ const h = vi.hoisted(() => ({
   } | null,
   asked: [] as { proc: string; input: any }[],
   mark: vi.fn(),
-  fetch: vi.fn(async () => ({} as Record<number, unknown[]>)),
+  fetch: vi.fn(async (_input?: unknown, _opts?: unknown) => ({} as Record<number, unknown[]>)),
+  fetchSummaries: vi.fn(async (_input?: unknown, _opts?: unknown) => ({
+    images: {} as Record<number, unknown>,
+  })),
+  // When the page's chunk queries answered; a card's catch-up read waits until this is 30s old.
+  stamp: 0,
+  // The page's chunk queries have not answered yet.
+  pending: false,
   push: undefined as undefined | ((raw: unknown) => void),
   // Every mounted provider's push handler: one per simulated viewer.
   viewers: new Set<(raw: unknown) => void>(),
@@ -19,7 +26,12 @@ const h = vi.hoisted(() => ({
   // trust it alone: rows set this to answer even when the provider disables the read.
   stockIgnoresEnabled: false,
 }));
-h.utils = { hatTurf: { getStickersForImages: { fetch: h.fetch } } };
+h.utils = {
+  hatTurf: {
+    getStickersForImages: { fetch: h.fetch },
+    getSummaries: { fetch: h.fetchSummaries },
+  },
+};
 
 const summary = (leader: string, hatted = false) => ({
   shown: { blue: 2, pink: 1 },
@@ -69,33 +81,34 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           const asked = build(t);
           h.asked.push(...asked);
           return asked.map(({ proc, input }, i) => ({
-            dataUpdatedAt: 1 + i,
-            data:
-              proc === 'getSummaries'
-                ? {
-                    team: 'blue',
-                    images: Object.fromEntries(
-                      input.imageIds
-                        .filter((id: number) => id % 2 === 1)
-                        .map((id: number) => [id, summary('blue', id === 1)])
-                    ),
-                    open: Object.fromEntries(input.imageIds.map((id: number) => [id, id !== 4])),
-                    hidden: input.imageIds.includes(6) ? { 6: true } : {},
-                  }
-                : Object.fromEntries(
-                    input.imageIds.map((id: number) => [
-                      id,
-                      [
-                        {
-                          id: id * 10,
-                          userId: 9,
-                          team: 'blue',
-                          cosmeticId: 11,
-                          data: { x: 0.5, y: 0.5 },
-                        },
-                      ],
-                    ])
+            dataUpdatedAt: h.pending ? 0 : h.stamp + i,
+            data: h.pending
+              ? undefined
+              : proc === 'getSummaries'
+              ? {
+                  team: 'blue',
+                  images: Object.fromEntries(
+                    input.imageIds
+                      .filter((id: number) => id % 2 === 1)
+                      .map((id: number) => [id, summary('blue', id === 1)])
                   ),
+                  open: Object.fromEntries(input.imageIds.map((id: number) => [id, id !== 4])),
+                  hidden: input.imageIds.includes(6) ? { 6: true } : {},
+                }
+              : Object.fromEntries(
+                  input.imageIds.map((id: number) => [
+                    id,
+                    [
+                      {
+                        id: id * 10,
+                        userId: 9,
+                        team: 'blue',
+                        cosmeticId: 11,
+                        data: { x: 0.5, y: 0.5 },
+                      },
+                    ],
+                  ])
+                ),
           }));
         },
         useUtils: () => h.utils,
@@ -136,6 +149,9 @@ beforeEach(() => {
   h.asked = [];
   h.mark.mockClear();
   h.fetch.mockClear();
+  h.fetchSummaries.mockClear();
+  h.stamp = Date.now() - 1_000;
+  h.pending = false;
   h.viewers.clear();
   latest = null;
 });
@@ -175,7 +191,8 @@ describe('TurfSummaryProvider', () => {
 
   // Only a viewer who joined Hat Turf sees turf. The
   // others keep the context (the join invite needs it) but get no hats, counts or pushes. The joined
-  // row is the positive control for the rest.
+  // row is the positive control for the rest. On the feed a signed-out viewer has nothing that reads
+  // the summaries, so they are not asked for.
   test.each([
     { who: 'joined', user: { id: 1 }, stock: { available: 3, optedIn: true }, joined: true },
     { who: 'not joined', user: { id: 1 }, stock: { available: 3, optedIn: false }, joined: false },
@@ -196,12 +213,29 @@ describe('TurfSummaryProvider', () => {
     await mount([1, 3]);
     await vi.waitFor(() => expect(latest).not.toBeNull());
     const procs = new Set(h.asked.map((a) => a.proc));
-    expect(procs.has('getSummaries')).toBe(true);
+    expect(procs.has('getSummaries')).toBe(user !== null);
     expect(procs.has('getStickersForImages')).toBe(joined);
     expect(Object.keys(latest!.images).length).toBe(joined ? 2 : 0);
     expect(Object.keys(latest!.stickers).length).toBe(joined ? 2 : 0);
     expect(h.viewers.size).toBe(joined ? 1 : 0);
     expect(latest!.joined).toBe(joined);
+  });
+
+  // Image detail's signed-out badge and panel read `hidden` and `open`, so its own gate keeps them.
+  test('signed out on image detail (its own gate): the summaries are still read', async () => {
+    h.user = null;
+    h.gate = null;
+    await renderWithProviders(
+      <TurfSummaryProvider imageIds={[1, 4, 6]} gate={{ event: 'birthday2026' }}>
+        <Probe />
+      </TurfSummaryProvider>
+    );
+    await vi.waitFor(() => expect(latest).not.toBeNull());
+    const procs = h.asked.map((a) => a.proc);
+    expect(procs).toContain('getSummaries');
+    expect(procs).not.toContain('getStickersForImages');
+    expect(latest!.open[4]).toBe(false);
+    expect(latest!.hidden).toEqual({ 6: true });
   });
 
   test('a push replaces the image’s counts, keeps hatted, and reads its hats back once', async () => {
@@ -293,6 +327,29 @@ describe('TurfSummaryProvider', () => {
       expect(h.mark).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1_000);
       expect(h.mark.mock.calls.map(([arg]) => arg.imageIds)).toEqual([[11, 12, 13, 14, 15]]);
+      stops.forEach((stop) => stop());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A long scroll mounts a few cards every few hundred ms. After the first mark, the cards that follow
+  // wait for the next one at least 2s later, instead of one mark per 250ms window.
+  test('a long scroll sends one mark per two seconds, not one per few cards', async () => {
+    vi.useFakeTimers();
+    try {
+      await mount([1]);
+      const stops: (() => void)[] = [latest!.watch(21)];
+      await vi.advanceTimersByTimeAsync(500);
+      expect(h.mark.mock.calls.map(([arg]) => arg.imageIds)).toEqual([[21]]);
+      for (const id of [22, 23, 24]) {
+        stops.push(latest!.watch(id));
+        await vi.advanceTimersByTimeAsync(500);
+      }
+      // 250ms + 2s after the first mark, not yet.
+      expect(h.mark).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(h.mark.mock.calls.map(([arg]) => arg.imageIds)).toEqual([[21], [22, 23, 24]]);
       stops.forEach((stop) => stop());
     } finally {
       vi.useRealTimers();
@@ -397,5 +454,133 @@ describe('stickers a push carries', () => {
     await vi.advanceTimersByTimeAsync(30_000);
     expect(h.fetch).not.toHaveBeenCalled();
     expect(latest!.stickers[1]).toEqual(hat);
+  });
+});
+
+// Pushes reach only images someone is watching, so a change made while nobody watched a card's image
+// was pushed to nobody. A card that watches again (a virtualized feed scrolled back) rereads it.
+describe('a card that watches again catches up', () => {
+  const pink = { ...summary('pink'), shown: { pink: 4 }, counted: { pink: 4 } };
+  const hat = [{ id: '7', userId: 3, team: 'pink', cosmeticId: 12, data: {} }];
+  const countReads = () => h.fetchSummaries.mock.calls.map(([arg]: any) => arg.imageIds);
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    h.fetchSummaries.mockImplementation(async () => ({ images: { 1: pink } }));
+    h.fetch.mockImplementation(async () => ({ 1: hat }));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const watchFor = async (imageIds: number[], ms = 300) => {
+    const stops = imageIds.map((id) => latest!.watch(id));
+    await vi.advanceTimersByTimeAsync(ms);
+    return () => act(() => stops.forEach((stop) => stop()));
+  };
+  const awayFor = async (ms: number, imageIds = [1]) => {
+    (await watchFor(imageIds))();
+    await vi.advanceTimersByTimeAsync(ms);
+    return watchFor(imageIds);
+  };
+
+  test('draws the counts that changed while nobody watched, with no push', async () => {
+    await mount([1]);
+    expect(latest!.images[1].leader).toBe('blue');
+    await awayFor(31_000);
+    expect(latest!.images[1].leader).toBe('pink');
+    expect(latest!.images[1].counted).toEqual({ pink: 4 });
+  });
+
+  test('asks past the client cache, whose default would hand back an earlier read', async () => {
+    await mount([1]);
+    await awayFor(91_000);
+    expect(h.fetchSummaries.mock.calls[0][1]).toEqual({ staleTime: 0 });
+    expect(h.fetch.mock.calls[0][1]).toEqual({ staleTime: 0 });
+  });
+
+  // The stickers read is edge-cached, so before 90s it could hand back what is already drawn.
+  test('rereads stickers only once they are older than the edge cache can be', async () => {
+    await mount([1]);
+    const stop = await awayFor(31_000);
+    expect(h.fetch).not.toHaveBeenCalled();
+    stop();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await watchFor([1]);
+    expect(h.fetch).toHaveBeenCalledTimes(1);
+    expect(latest!.stickers[1]).toEqual(hat);
+  });
+
+  test('reads nothing back within the stale window', async () => {
+    await mount([1]);
+    await awayFor(5_000);
+    expect(h.fetchSummaries).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  test('reads nothing for an image a push brought up to date within the window', async () => {
+    await mount([1]);
+    await vi.advanceTimersByTimeAsync(40_000);
+    act(() => h.push!({ event: 'birthday2026', imageId: 1, counts: pink, stickers: hat }));
+    await awayFor(5_000);
+    expect(h.fetchSummaries).not.toHaveBeenCalled();
+  });
+
+  test('reads nothing for a card watching for the first time, however late', async () => {
+    await mount([1]);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await watchFor([1]);
+    expect(h.fetchSummaries).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  test('reads nothing while the page itself has not been read', async () => {
+    h.pending = true;
+    await mount([1]);
+    await awayFor(120_000);
+    expect(h.fetchSummaries).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  test('cards watching again together are read in one request', async () => {
+    await mount(ids(5));
+    (await watchFor(ids(5)))();
+    await vi.advanceTimersByTimeAsync(31_000);
+    for (const id of ids(5)) {
+      latest!.watch(id);
+      await vi.advanceTimersByTimeAsync(20);
+    }
+    await vi.advanceTimersByTimeAsync(300);
+    expect(countReads()).toEqual([ids(5)]);
+  });
+
+  test('goes out at most once every five seconds', async () => {
+    await mount(ids(2));
+    (await watchFor(ids(2)))();
+    await vi.advanceTimersByTimeAsync(31_000);
+    const stop = await watchFor([1]);
+    stop();
+    await watchFor([2], 1_000);
+    expect(countReads()).toEqual([[1]]);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(countReads()).toEqual([[1], [2]]);
+  });
+
+  test('a push that lands while the read is in flight is not undone by it', async () => {
+    let counts!: (v: { images: Record<number, unknown> }) => void;
+    let stickers!: (v: Record<number, unknown[]>) => void;
+    h.fetchSummaries.mockImplementationOnce(() => new Promise((r) => (counts = r)));
+    h.fetch.mockImplementationOnce(() => new Promise((r) => (stickers = r)));
+    await mount([1]);
+    await awayFor(91_000);
+    expect(h.fetchSummaries).toHaveBeenCalledTimes(1);
+    expect(h.fetch).toHaveBeenCalledTimes(1);
+    const newer = { ...pink, shown: { pink: 9 }, counted: { pink: 9 } };
+    const newerHat = [{ ...hat[0], id: '8' }];
+    act(() => h.push!({ event: 'birthday2026', imageId: 1, counts: newer, stickers: newerHat }));
+    await act(async () => {
+      counts({ images: { 1: pink } });
+      stickers({ 1: hat });
+    });
+    expect(latest!.images[1].counted).toEqual({ pink: 9 });
+    expect(latest!.stickers[1]).toEqual(newerHat);
   });
 });

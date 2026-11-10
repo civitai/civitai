@@ -126,11 +126,15 @@ describe('tipalti webhook endpoint: paymentGroupApproved for a cash withdrawal',
     );
 
   beforeEach(() => {
-    dbMock.dbWrite.cashWithdrawal.findFirst.mockResolvedValue({
-      id: 'abc123-full',
-      userId: 7,
-      metadata: {},
-    });
+    // findCashWithdrawalByRefCode matches the refCode stored on the row.
+    dbMock.dbWrite.cashWithdrawal.findMany.mockResolvedValue([
+      {
+        id: 'abc123-full',
+        userId: 7,
+        status: 'InternalValue',
+        metadata: { paymentRefCode: refCode },
+      },
+    ]);
   });
 
   // Tipalti has already approved; a failed hold read must be visible but not drop the approval.

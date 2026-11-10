@@ -24,6 +24,11 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(async () => mockDbRead),
   preventModelVersionLagBatch: vi.fn(),
 }));
+const { syncReviewsOfMovedPosts } = vi.hoisted(() => ({ syncReviewsOfMovedPosts: vi.fn() }));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  syncReviewsOfMovedPosts,
+}));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class {} }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(() => false), FLIPT_FEATURE_FLAGS: {} }));
@@ -924,12 +929,30 @@ describe('publishPrivateModel', () => {
     mockPrivateModel({});
 
     await publish(false);
-    const republish = mockDbWrite.$executeRaw.mock.calls.find(([strings]) =>
+    const republish = mockDbWrite.$queryRaw.mock.calls.find(([strings]) =>
       (strings as string[]).join('?').includes('UPDATE "Post"')
     );
     expect(republish).toBeDefined();
     expect((republish![0] as string[]).join('?')).toMatch(/"userId" = \?/);
     expect(republish!.slice(1)).toContain(OWNER_ID);
+  });
+
+  it('releases the reviews of only the posts the publish moved', async () => {
+    mockPrivateModel({});
+    const base = mockDbWrite.$queryRaw.getMockImplementation()!;
+    mockDbWrite.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      Array.isArray(strings) && strings.join('?').includes('UPDATE "Post"')
+        ? Promise.resolve([{ id: 5 }])
+        : base(strings, ...values)) as never);
+
+    await publish(false);
+
+    expect(syncReviewsOfMovedPosts).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ change: 'publish', postIds: [5] })
+    );
   });
 
   it('refuses when one of several versions was taken down after it was read', async () => {

@@ -92,6 +92,7 @@ export async function readCollectionByIdViaKysely(
     mode: row.mode,
     metadata: row.metadata,
     availability: row.availability,
+    archivedAt: row.archivedAt,
     userId: row.userId,
     tags: row.tags.map((tag) => ({
       tag: { id: tag.tag.id, name: tag.tag.name },
