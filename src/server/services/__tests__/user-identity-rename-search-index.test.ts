@@ -13,11 +13,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * The self-serve profile save has always enqueued this. This is the moderator path.
  */
 
-const { mockCacheRefresh, mockQueueUpdate, mockInvalidateSession } = vi.hoisted(() => ({
-  mockCacheRefresh: vi.fn(async () => undefined),
-  mockQueueUpdate: vi.fn(async () => undefined),
-  mockInvalidateSession: vi.fn(async () => undefined),
-}));
+const { mockCacheRefresh, mockQueueUpdate, mockInvalidateSession, mockQueueOwnedContent } =
+  vi.hoisted(() => ({
+    mockCacheRefresh: vi.fn(async () => undefined),
+    mockQueueUpdate: vi.fn(async () => undefined),
+    mockInvalidateSession: vi.fn(async () => undefined),
+    mockQueueOwnedContent: vi.fn(async () => undefined),
+  }));
 
 vi.mock('~/server/redis/caches', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -30,8 +32,11 @@ vi.mock('~/server/search-index', async (importOriginal) => {
 vi.mock('~/server/auth/session-invalidation', () => ({
   invalidateSession: mockInvalidateSession,
 }));
+vi.mock('~/server/search-index/user-content-reindex', () => ({
+  queueOwnedContentUpdate: mockQueueOwnedContent,
+}));
 
-const { forceUpdateUserIdentity } = await import('~/server/services/user.service');
+const { forceUpdateUserIdentity, updateUserById } = await import('~/server/services/user.service');
 
 const USER_ID = 8317;
 
@@ -94,5 +99,51 @@ describe('forceUpdateUserIdentity -> user search index', () => {
     });
     expect(userUpdate).not.toHaveBeenCalled();
     expect(mockQueueUpdate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Every model, article, collection, bounty and comic document embeds the owner's username, and
+ * search filters and matches on it inside Meilisearch. A rename must re-queue them, or the old
+ * name stays findable and the new one misses the older content.
+ */
+describe('a rename -> owned content documents', () => {
+  it('a moderator rename re-queues the owned content', async () => {
+    await forceUpdateUserIdentity({ userId: USER_ID, username: 'renamed-by-a-moderator' });
+
+    expect(mockQueueOwnedContent).toHaveBeenCalledTimes(1);
+    expect(mockQueueOwnedContent).toHaveBeenCalledWith(USER_ID);
+  });
+
+  it('a moderator save that resends the current username does not', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValueOnce({ username: 'unchanged' });
+
+    await forceUpdateUserIdentity({ userId: USER_ID, username: 'unchanged', email: 'a@b.test' });
+
+    expect(mockQueueOwnedContent).not.toHaveBeenCalled();
+  });
+
+  it('a moderator display-name change does not — content documents do not carry it', async () => {
+    await forceUpdateUserIdentity({ userId: USER_ID, name: 'New Display Name' });
+
+    expect(mockQueueOwnedContent).not.toHaveBeenCalled();
+  });
+
+  it('a profile save that changes the username re-queues the owned content', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValueOnce({ username: 'luisa_pinguin' });
+
+    await updateUserById({ id: USER_ID, data: { username: 'luisa_caotica' } });
+
+    expect(mockQueueOwnedContent).toHaveBeenCalledTimes(1);
+    expect(mockQueueOwnedContent).toHaveBeenCalledWith(USER_ID);
+  });
+
+  /** The account form sends the username on every save; only a real rename is worth a scan. */
+  it('a profile save that resends the same username does not', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValueOnce({ username: 'luisa_caotica' });
+
+    await updateUserById({ id: USER_ID, data: { username: 'luisa_caotica' } });
+
+    expect(mockQueueOwnedContent).not.toHaveBeenCalled();
   });
 });

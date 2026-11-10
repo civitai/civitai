@@ -58,6 +58,7 @@ import type {
   GetUserSearchHydrationInput,
 } from '~/server/schema/user.schema';
 import { usersSearchIndex } from '~/server/search-index';
+import { queueOwnedContentUpdate } from '~/server/search-index/user-content-reindex';
 import type {
   BadgeCosmetic,
   CardDecorationCosmetic,
@@ -512,8 +513,10 @@ export const completeOnboardingHandler = async ({
             ...(emailChanged ? { emailVerified: null } : {}),
           },
         });
-        if (input.username && input.username !== current?.username)
+        if (input.username && input.username !== current?.username) {
           queueScamScan({ entityType: 'User', entityId: id });
+          void queueOwnedContentUpdate(id);
+        }
 
         // 🔴 `changed` only — NOT `emailChanged`. The caller picks the recipient, so sending on
         // every address change made this an unmetered way to mail an arbitrary third party from
