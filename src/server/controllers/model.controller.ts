@@ -222,6 +222,7 @@ import {
   ModelUploadType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { failedScanFileWhere } from '~/server/utils/failed-scan';
@@ -2125,7 +2126,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
             collectedCount: rank?.collectedCountAllTime ?? 0,
             tippedAmountCount: hiddenMetrics.buzz ? null : rank?.tippedAmountCountAllTime ?? 0,
           },
-          images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
+          images: !isModelWithheld(model) ? (versionImages as typeof images) : [],
           canGenerate,
           version,
         };

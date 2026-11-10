@@ -1,0 +1,132 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import type * as ImageService from '~/server/services/image.service';
+import type * as ModelService from '~/server/services/model.service';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { ModelModifier } from '~/shared/utils/prisma/enums';
+
+const { fetches, versionImages } = vi.hoisted(() => ({
+  fetches: vi.fn(async () => ({
+    items: [{ id: 1, postId: 100, nsfwLevel: 1, user: { id: 5 } }],
+    nextCursor: undefined,
+  })),
+  versionImages: vi.fn(async (ids: number[]) =>
+    Object.fromEntries(ids.map((id) => [id, { modelVersionId: id, images: [{ id: 1 }] }]))
+  ),
+}));
+
+vi.mock('~/server/services/image.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageService>()),
+  getAllImages: fetches,
+  getAllImagesIndex: fetches,
+  getImagesForModelVersionCache: versionImages,
+}));
+// The real withhold check; the gallery hold and settings are other suites' concern.
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelService>()),
+  getGallerySettingsByModelId: async () => null,
+  getHeldGalleryLevel: async () => undefined,
+  getHeldLevelsByPost: async () => new Map(),
+}));
+vi.mock('~/server/services/promotion.service', () => ({
+  getSponsoredGalleryPost: async () => undefined,
+}));
+
+const {
+  getInfiniteImagesHandler,
+  getImagesAsPostsInfiniteHandler,
+  getImagesForModelVersionHandler,
+} = await import('~/server/controllers/image.controller');
+
+const OWNER = 5;
+// Model 1 (version 10) is taken down; model 2 (version 20) is not.
+const modes: Record<number, ModelModifier | null> = { 1: ModelModifier.TakenDown, 2: null };
+
+type User = { id: number; isModerator?: boolean };
+const ctx = (user?: User, subject?: unknown) =>
+  ({
+    user,
+    subject,
+    features: { imageIndexFeed: true },
+    req: { headers: {} },
+    ip: '127.0.0.1',
+  } as never);
+const feedInput = (selector: object) =>
+  ({ limit: 10, include: [], browsingLevel: allBrowsingLevelsFlag, ...selector } as never);
+
+const surfaces = [
+  [
+    'image.getInfinite by version',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getInfiniteImagesHandler({
+        input: feedInput({ modelVersionId: versionId }),
+        ctx: ctx(user, subject),
+      }).then((result) => result.items),
+  ],
+  [
+    'image.getInfinite by model',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getInfiniteImagesHandler({
+        input: feedInput({ modelId: versionId / 10 }),
+        ctx: ctx(user, subject),
+      }).then((result) => result.items),
+  ],
+  [
+    'image.getImagesAsPostsInfinite',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getImagesAsPostsInfiniteHandler({
+        input: feedInput({ modelId: versionId / 10, modelVersionId: versionId }),
+        ctx: ctx(user, subject),
+      }).then((result) => result.items),
+  ],
+  [
+    'image.getImagesForModelVersion',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getImagesForModelVersionHandler({ input: { id: versionId }, ctx: ctx(user, subject) }).then(
+        (result) => Object.values(result).flatMap((entry) => entry.images)
+      ),
+  ],
+] as const;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  installFakeCacheRedis();
+  dbMock.dbRead.modelVersion.findMany.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: { in: number[] } };
+  }) => where.id.in.map((id) => ({ id, modelId: id / 10 }))) as never);
+  dbMock.dbRead.model.findMany.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: { in: number[] } };
+  }) => where.id.in.map((id) => ({ userId: OWNER, mode: modes[id] ?? null }))) as never);
+  dbMock.dbRead.resourceReview.findMany.mockResolvedValue([] as never);
+});
+
+describe.each(surfaces)('%s on a taken-down model', (_name, run) => {
+  it.each([
+    ['a signed-out visitor', undefined, undefined],
+    ['another user', { id: 99 }, undefined],
+    [
+      'a moderator through an app they authorised',
+      { id: 99, isModerator: true },
+      { type: 'oauth' },
+    ],
+    ['its owner through an app they authorised', { id: OWNER }, { type: 'oauth' }],
+  ])('serves %s no images', async (_viewer, user, subject) => {
+    expect(await run(user, subject)).toEqual([]);
+  });
+
+  it.each([
+    ['its owner', { id: OWNER }],
+    ['a moderator', { id: 99, isModerator: true }],
+  ])('serves %s its images', async (_viewer, user) => {
+    expect(await run(user)).not.toEqual([]);
+  });
+
+  it("serves another user the images of a model that isn't taken down", async () => {
+    expect(await run({ id: 99 }, undefined, 20)).not.toEqual([]);
+  });
+});

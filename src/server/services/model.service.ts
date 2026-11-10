@@ -315,6 +315,7 @@ import {
   resolveModelFace,
   showsSfwFace,
 } from '~/shared/utils/model-sfw-face';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
@@ -1880,7 +1881,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   });
 
   const modelVersionIds = items
-    .filter((model) => model.mode !== ModelModifier.TakenDown)
+    .filter((model) => !isModelWithheld(model))
     .flatMap((m) => m.modelVersions)
     .map((m) => m.id);
 
@@ -6218,6 +6219,28 @@ export async function getHeldGalleryLevel({
   for (const gallery of galleries)
     if (gallery?.sfwHeld) held = Flags.intersection(held ?? allBrowsingLevelsFlag, gallery.level);
   return held;
+}
+
+/**
+ * Whether a request that selects images by a model or model version names a taken-down model the
+ * viewer does not own. Its images are withheld; moderators are the caller's to exempt.
+ */
+export async function isModelGalleryWithheld(
+  { modelId, modelVersionId }: { modelId?: number | null; modelVersionId?: number | null },
+  viewerId?: number
+) {
+  const modelIds = new Set<number>();
+  if (modelId) modelIds.add(modelId);
+  if (modelVersionId) {
+    const version = (await versionModelCache().fetch([modelVersionId]))[modelVersionId];
+    if (version) modelIds.add(version.modelId);
+  }
+  if (!modelIds.size) return false;
+  const models = await dbRead.model.findMany({
+    where: { id: { in: [...modelIds] } },
+    select: { userId: true, mode: true },
+  });
+  return models.some((model) => isModelWithheld(model) && model.userId !== viewerId);
 }
 
 /**
