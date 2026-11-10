@@ -635,9 +635,26 @@ export function blockToolDeclarations(): Array<{
     function: {
       name: tool.name,
       description: tool.description,
-      // `io: 'input'` because this describes what the model SENDS; matches the
-      // call form already used elsewhere in the repo.
-      parameters: z.toJSONSchema(tool.argsSchema, { io: 'input', unrepresentable: 'any' }),
+      parameters: toolParameters(tool.argsSchema),
     },
   }));
+}
+
+/**
+ * The JSON Schema a tool's `parameters` carries: `z.toJSONSchema` of its `argsSchema`, without
+ * the `$schema` key. `io: 'input'` because this describes what the model SENDS.
+ *
+ * 🔴 `$schema` IS DROPPED BECAUSE IT IS A URL. zod 4 always emits it
+ * (`https://json-schema.org/draft/2020-12/schema`; no supported option omits it), a block echoes these
+ * declarations back in its chat step's `tools[]`, and a whole url anywhere in step params is
+ * read by the generation input gate as an image input. The model does not need the key.
+ */
+export function toolParameters(argsSchema: z.ZodType): Record<string, unknown> {
+  // A fresh object per call, so deleting from it touches nothing shared.
+  const schema: Record<string, unknown> = z.toJSONSchema(argsSchema, {
+    io: 'input',
+    unrepresentable: 'any',
+  });
+  delete schema.$schema;
+  return schema;
 }
