@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { letLruClockClear } from '@civitai/redis/__tests__/helpers/lru-clock';
 import type * as FliptClient from '~/server/flipt/client';
 
 /**
@@ -10,7 +11,7 @@ import type * as FliptClient from '~/server/flipt/client';
  * had; on, 300s. Each case reads at two points inside the window and one past it, and uses its own
  * tag ids, because the cache (and its L1) is one module-level instance for the whole file.
  *
- * The L1 clock is `performance.now`, which lru-cache reads per call; the Redis fake reads `Date.now`,
+ * The L1 clock is a mocked `performance.now` (see letLruClockClear); the Redis fake reads `Date.now`,
  * which is left alone, so a jump here ages only the L1.
  */
 
@@ -26,11 +27,9 @@ const { resetL1SwitchesForTests } = await import('~/server/redis/l1-switches');
 
 const PREFIX = 'packed:caches:basic-tags:';
 let clock = 0;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-// lru-cache reuses one clock reading for 1ms, so let that lapse after a jump.
 const advance = async (seconds: number) => {
   clock += seconds * 1000;
-  await sleep(5);
+  await letLruClockClear();
 };
 // How many Redis reads asked for one of this cache's keys.
 const redisReads = () =>
@@ -40,16 +39,13 @@ const redisReads = () =>
 
 let flag: boolean | null = null;
 
-// lru-cache keeps its last clock reading until a 1ms timer clears it, and a case with no
-// `advance` never yields to that timer, so a reading left by the previous case (later than this
-// case's restarted clock) would age every entry here. Let it clear before each case.
 beforeEach(async () => {
   vi.clearAllMocks();
   installFakeCacheRedis();
   resetL1SwitchesForTests();
   clock = 5_000_000;
   vi.spyOn(performance, 'now').mockImplementation(() => clock);
-  await sleep(5);
+  await letLruClockClear();
   vi.mocked(isFliptSync).mockImplementation((key: string) =>
     key === 'basic-tags-l1-long-ttl' ? flag : null
   );

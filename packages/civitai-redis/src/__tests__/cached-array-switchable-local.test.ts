@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCacheBuilders, type CacheBuilderDeps } from '../cached-array';
 import type { RedisKeyTemplateCache } from '../client';
+import { letLruClockClear } from './helpers/lru-clock';
 
 /**
  * A `localTtl` FUNCTION makes a cache's per-pod L1 switchable at runtime: asked once per fetch, its
@@ -13,23 +14,22 @@ import type { RedisKeyTemplateCache } from '../client';
  *  - `localClone` keeps a caller's nested mutation out of the L1.
  *
  * The redis stub is a Map shared by every cache made from one `build()` — two caches made on one
- * store stand for two pods. The L1 clock is `performance.now`, which lru-cache reads per call.
+ * store stand for two pods. The L1 clock is a mocked `performance.now` (see letLruClockClear).
  */
 
 type Row = { id: number; v: string; images: { id: number; level: number }[] };
 const KEY = 'packed:caches:test-switchable-l1' as RedisKeyTemplateCache;
 
 let clock = 0;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-// lru-cache reuses one clock reading for 1ms (ttlResolution), so let that lapse after a jump.
 const advance = async (ms: number) => {
   clock += ms;
-  await sleep(5);
+  await letLruClockClear();
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   clock = 1_000_000;
   vi.spyOn(performance, 'now').mockImplementation(() => clock);
+  await letLruClockClear();
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -279,11 +279,15 @@ describe('createCachedObject — switchable L1 and busts', () => {
 
     expect((await podB.fetch([9]))[9].v).toBe(before[9].v); // the accepted cross-pod lag
     expect((await podB.fetch([9], { bypassLocal: true }))[9].v).toBe(after.v);
-    // ...and that read refreshed pod B's L1.
+    // ...and that read refreshed pod B's L1: the next read is served from it.
+    const readsAfterBypass = t.redis.packed.mGet.mock.calls.length;
     expect((await podB.fetch([9]))[9].v).toBe(after.v);
+    expect(t.redis.packed.mGet).toHaveBeenCalledTimes(readsAfterBypass);
 
+    // Past the TTL that copy has expired, so the next read goes to Redis.
     await advance(61_000);
     expect((await podB.fetch([9]))[9].v).toBe(after.v);
+    expect(t.redis.packed.mGet).toHaveBeenCalledTimes(readsAfterBypass + 1);
   });
 });
 

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { letLruClockClear } from '@civitai/redis/__tests__/helpers/lru-clock';
 import { NsfwLevel } from '~/server/common/enums';
 import type * as FliptClient from '~/server/flipt/client';
 
@@ -16,7 +17,7 @@ import type * as FliptClient from '~/server/flipt/client';
  * read and never be written into the entry.
  *
  * The cache is one module-level instance for the whole file, so each case uses its own version
- * ids. The L1 clock is `performance.now` (read per call by lru-cache); the Redis fake reads
+ * ids. The L1 clock is a mocked `performance.now` (see letLruClockClear); the Redis fake reads
  * `Date.now`, left alone, so a jump here ages only the L1.
  */
 
@@ -44,10 +45,9 @@ const { getEligibleModels } = await import('~/server/services/eligible-models.se
 
 const PREFIX = 'packed:caches:images-for-model-version-2:';
 let clock = 0;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const advance = async (seconds: number) => {
   clock += seconds * 1000;
-  await sleep(5); // lru-cache reuses one clock reading for 1ms
+  await letLruClockClear();
 };
 const redisReads = () =>
   redisMock.redis.packed.mGet.mock.calls.filter(([keys]) =>
@@ -94,16 +94,13 @@ let tagReads: MockInstance<(typeof tagIdsForImagesCache)['fetch']>;
 const plant = (versionId: number) =>
   fs.plant(`${PREFIX}${versionId}`, { ...entryFor(versionId), cachedAt: new Date() }, 86400);
 
-// lru-cache keeps its last clock reading until a 1ms timer clears it, and a case with no
-// `advance` never yields to that timer, so a reading left by the previous case (later than this
-// case's restarted clock) would age every entry here. Let it clear before each case.
 beforeEach(async () => {
   vi.clearAllMocks();
   fs = installFakeCacheRedis();
   resetL1SwitchesForTests();
   clock = 7_000_000;
   vi.spyOn(performance, 'now').mockImplementation(() => clock);
-  await sleep(5);
+  await letLruClockClear();
   vi.mocked(isFliptSync).mockImplementation((key: string) =>
     key === 'model-version-images-l1' ? flag : null
   );

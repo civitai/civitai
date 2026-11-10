@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { letLruClockClear } from '@civitai/redis/__tests__/helpers/lru-clock';
 import { NsfwLevel } from '~/server/common/enums';
 import type * as PlacementQueries from '@civitai/db-queries/placement';
 import type * as FliptClient from '~/server/flipt/client';
@@ -15,7 +16,7 @@ import { CosmeticFlag } from '~/shared/constants/cosmetic-flags.constants';
  * the shared catalog entry.
  *
  * The cache is one module-level instance for the whole file, so each case uses its own cosmetic
- * ids. The L1 clock is `performance.now` (read per call by lru-cache); the Redis fake reads
+ * ids. The L1 clock is a mocked `performance.now` (see letLruClockClear); the Redis fake reads
  * `Date.now`, left alone, so a jump here ages only the L1.
  */
 
@@ -41,10 +42,9 @@ const { getStickerPlacementCounts } = await import('~/server/services/sticker-pl
 
 const PREFIX = 'packed:caches:cosmetics2:';
 let clock = 0;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const advance = async (seconds: number) => {
   clock += seconds * 1000;
-  await sleep(5); // lru-cache reuses one clock reading for 1ms
+  await letLruClockClear();
 };
 // Redis reads of a catalog entry (not the cosmetics2:* sub-caches that share the prefix).
 const catalogReads = () =>
@@ -67,9 +67,6 @@ const rowsFor = (ids: number[]) =>
 
 let fs: ReturnType<typeof installFakeCacheRedis>;
 
-// lru-cache keeps its last clock reading until a 1ms timer clears it, and a case with no
-// `advance` never yields to that timer, so a reading left by the previous case (later than this
-// case's restarted clock) would age every entry here. Let it clear before each case.
 beforeEach(async () => {
   vi.clearAllMocks();
   fs = installFakeCacheRedis();
@@ -77,7 +74,7 @@ beforeEach(async () => {
   clock = 9_000_000;
   flagsInDb = new Map();
   vi.spyOn(performance, 'now').mockImplementation(() => clock);
-  await sleep(5);
+  await letLruClockClear();
   vi.mocked(isFliptSync).mockImplementation((key: string) =>
     key === 'cosmetics-l1' ? flag : null
   );
