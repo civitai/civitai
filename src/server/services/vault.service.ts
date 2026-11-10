@@ -139,11 +139,13 @@ export const getModelVersionDataForVault = async ({
     throw throwNotFoundError('Model version not published. Cannot store in vault.');
   }
 
-  if (!modelVersion.files.length) {
+  // The vault keeps model files only.
+  const modelFiles = modelVersion.files.filter((file) => file.type !== 'Training Data');
+  if (!modelFiles.length) {
     throw throwNotFoundError('Model version has no files.');
   }
 
-  const parsedFiles = modelVersion.files.map((file) => ({
+  const parsedFiles = modelFiles.map((file) => ({
     ...file,
     metadata: (file.metadata || {}) as FileMetadata,
   }));

@@ -125,13 +125,14 @@ export default AuthedEndpoint(
         // Unlike a deleted version, a taken-down model's files are moderators-only, vault included.
         if (modelVersion && isModelTakenDown(modelVersion) && !user.isModerator)
           return onError(404, 'File not found');
-        if (!user.isModerator) {
-          const scan = await dbRead.modelFile.findUnique({
-            where: { id: file.id },
-            select: { pickleScanResult: true, virusScanResult: true },
-          });
-          if (scan && hasFailedScan(scan)) return onError(403, FAILED_SCAN_DOWNLOAD_MESSAGE);
-        }
+        const stored = await dbRead.modelFile.findUnique({
+          where: { id: file.id },
+          select: { type: true, pickleScanResult: true, virusScanResult: true },
+        });
+        // The vault serves model files only, to everyone, whatever an older item stored.
+        if (stored?.type === 'Training Data') return onError(404, 'File not found');
+        if (!user.isModerator && stored && hasFailedScan(stored))
+          return onError(403, FAILED_SCAN_DOWNLOAD_MESSAGE);
         const { url } = await resolveDownloadUrl(file.id, file.url, file.displayName, {
           caller: 'vault',
           actor: resolveActorFor(user),
