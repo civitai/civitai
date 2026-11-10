@@ -139,6 +139,16 @@ describe("a model's search document, built by the real transform", () => {
     expect(doc.sfwCoverImageId).toBeNull();
   });
 
+  // bypassLocal reaches imagesForModelVersionsCache's appendFn, which reads the images' tag ids; the
+  // document keeps them until the next reindex, so they must not come from this process's L1.
+  it("reads the version images past this process's L1", async () => {
+    await documentFor(null);
+    expect(imagesForModelVersionsCache.fetch).toHaveBeenCalledTimes(1);
+    expect(imagesForModelVersionsCache.fetch).toHaveBeenCalledWith([VERSION], {
+      bypassLocal: true,
+    });
+  });
+
   it('keeps the images and cover ids of an archived model', async () => {
     const doc = await documentFor(ModelModifier.Archived);
     expect(doc.images.map((i) => i.id)).toEqual(expect.arrayContaining([101, 102, 103]));
