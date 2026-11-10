@@ -19,6 +19,7 @@ const Q = 'knights.image.nsfwLevel';
 const NOW = new Date('2026-12-15T12:00:00Z');
 const KNIGHT = RANK_BADGE_IDS.Knight;
 const TEMPLAR = RANK_BADGE_IDS.Templar;
+const PALADIN = 4208;
 
 let pg: PGlite;
 let db: Kysely<DB>;
@@ -62,7 +63,7 @@ beforeEach(async () => {
     `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","UserCosmetic","Cosmetic" RESTART IDENTITY CASCADE`
   );
   await pg.exec(
-    `INSERT INTO "Cosmetic" ("id","source") VALUES (${KNIGHT},'Trophy'),(${TEMPLAR},'Trophy')`
+    `INSERT INTO "Cosmetic" ("id","source") VALUES (${KNIGHT},'Trophy'),(${TEMPLAR},'Trophy'),(${PALADIN},'Trophy')`
   );
 });
 
@@ -102,7 +103,13 @@ describe('rank badges', () => {
     expect(await owned(2)).toEqual([]);
   });
 
-  it('gives a Paladin the badges below it, as the original game has none for Paladin', async () => {
+  it('gives a Paladin its badge and the badges below it', async () => {
+    await grantRankBadges(db, 1, 'Paladin');
+    expect(await owned(1)).toEqual([KNIGHT, TEMPLAR, PALADIN]);
+  });
+
+  it('still gives a Paladin the badges below it when the Paladin cosmetic is missing', async () => {
+    await pg.exec(`DELETE FROM "Cosmetic" WHERE "id"=${PALADIN}`);
     await grantRankBadges(db, 1, 'Paladin');
     expect(await owned(1)).toEqual([KNIGHT, TEMPLAR]);
   });

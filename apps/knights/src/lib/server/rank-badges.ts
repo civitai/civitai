@@ -4,9 +4,8 @@ import { imageUrl } from './image-url';
 import { RANK_BADGE_IDS } from './progression/badges';
 
 /**
- * The cosmetics the original game uses for its rank badges: Acolyte, Knight and Templar. Paladin has none yet, so the
- * pages fall back to the crest. `RANK_BADGE_IDS` stays Knight and Templar only because it also says which badges a rank-up
- * grants, and the Acolyte badge is not granted here.
+ * The rank badge cosmetics the pages show. Acolyte is added here rather than in `RANK_BADGE_IDS` because that also says
+ * which badges a rank-up grants, and the Acolyte badge is not granted here.
  */
 export const RANK_BADGE_COSMETICS = { Acolyte: 858, ...RANK_BADGE_IDS } as const;
 
