@@ -2896,14 +2896,20 @@ export function articleHasText(title: string | null, content: string | null): bo
 export const ARTICLE_TEXT_VERDICT_HASHED_SINCE = new Date('2026-11-11T00:00:00Z');
 
 /**
- * Whether a stored text verdict judged this title and content. A text-scan verdict carries the
+ * Whether a stored text verdict covers this title and content. A text-scan verdict carries the
  * scanned text's `textHash` in its result; an XGuard verdict carries `contentHash`.
  */
 export function articleTextVerdictMatch(
   row: { contentHash: string | null; result: Prisma.JsonValue | null; updatedAt: Date },
   article: { title: string | null; content: string | null }
-): 'current' | 'other' | 'legacy' {
-  const result = row.result as { version?: unknown; textHash?: unknown } | null;
+): 'current' | 'other' | 'legacy' | 'partial' {
+  const result = row.result as {
+    version?: unknown;
+    textHash?: unknown;
+    meta?: { inputCut?: unknown };
+  } | null;
+  // It did not judge all of the text; a resubmit would judge the same part.
+  if (result?.version != null && result.meta?.inputCut === true) return 'partial';
   const stored =
     result?.version != null
       ? typeof result.textHash === 'string'
@@ -3059,8 +3065,10 @@ export async function recomputeArticleIngestionInTx(
       : 'current';
   if (verdictMatch === 'legacy')
     logToAxiom({ type: 'info', name: 'article-verdict-unverifiable' }).catch();
-  // A verdict for other text neither clears nor blocks this text.
-  const verdictForThisText = verdictMatch !== 'other';
+  if (verdictMatch === 'partial')
+    logToAxiom({ type: 'info', name: 'article-verdict-input-cut' }).catch();
+  // A verdict for other text, or for part of this one, neither clears nor blocks it.
+  const verdictForThisText = verdictMatch === 'current' || verdictMatch === 'legacy';
   const textBlocked = textSucceeded && verdictForThisText && textModeration?.blocked === true;
   const textError =
     hasText && !!textModeration && textErrorStatuses.includes(textModeration.status);
