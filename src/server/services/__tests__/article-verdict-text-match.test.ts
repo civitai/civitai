@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { useTxClients } from '~/__tests__/tx-client';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
@@ -227,8 +228,34 @@ describe('submitted text hashes to what the recompute compares', () => {
 describe('the reconcile', () => {
   const reconcile = async () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: ARTICLE }] as never);
-    await articleIngestionReconcile.run({}).result;
+    return (await articleIngestionReconcile.run({}).result) as Record<string, number>;
   };
+  beforeEach(() => {
+    const counts = new Map<string, number>();
+    redisMock.sysRedis.incrBy.mockImplementation((async (key: string, by: number) => {
+      counts.set(key, (counts.get(key) ?? 0) + by);
+      return counts.get(key);
+    }) as never);
+  });
+
+  it('stops forcing resubmits for one text after three, and says so', async () => {
+    row = xguardVerdict(OLD);
+    vi.mocked(submitTextModerationOrScan).mockResolvedValue({ id: 'wf' });
+    for (let run = 0; run < 4; run++) await reconcile();
+    expect(submitTextModerationOrScan).toHaveBeenCalledTimes(3);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'article-verdict-resubmit-capped' })
+    );
+  });
+
+  it('counts a resubmit the scan skipped as skipped, not resubmitted', async () => {
+    row = xguardVerdict(OLD);
+    vi.mocked(submitTextModerationOrScan).mockImplementation(async ({ onActiveSkip }) => {
+      await onActiveSkip?.('missing-prompt');
+      return null;
+    });
+    expect(await reconcile()).toMatchObject({ resubmitted: 0, skippedResubmits: 1 });
+  });
 
   it('resubmits the stored text of an article whose verdict is for older text', async () => {
     row = xguardVerdict(OLD);
