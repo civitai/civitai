@@ -124,40 +124,58 @@ const LEVELLED_INDEXES = [
 ];
 
 describe('buildSearchRules: the site content level', () => {
-  // Each levelled index is held to the same clause the site-search proxy applies; the opt-in
-  // real-Meilisearch test shows Meilisearch refusing what that clause excludes.
-  const levelClauses = (viewer: Parameters<typeof buildSearchRules>[0], cap: number) => {
-    const rules = buildSearchRules(viewer, []);
-    return LEVELLED_INDEXES.map((index) => {
-      const filter = String(rules[index]?.filter ?? '');
-      const clause = indexBrowsingLevelClause(index, cap);
-      return { index, held: filter === clause || filter.includes(`(${clause})`) };
-    });
+  // Each levelled index gets its privacy rules (as on an uncapped site) ANDed with the clause the
+  // site-search proxy applies; the opt-in real-Meilisearch test shows Meilisearch enforcing it.
+  type Viewer = Parameters<typeof buildSearchRules>[0];
+  const expectedRules = (viewer: Viewer, cap: number) => {
+    const uncapped = buildSearchRules(
+      viewer ? { ...viewer, browsingLevelCap: null } : { browsingLevelCap: null },
+      []
+    );
+    return Object.fromEntries(
+      Object.entries(uncapped).map(([index, rule]) => {
+        const clause = LEVELLED_INDEXES.includes(index)
+          ? indexBrowsingLevelClause(index, cap)
+          : null;
+        if (!clause) return [index, rule];
+        return [index, { filter: rule.filter ? `(${rule.filter}) AND (${clause})` : clause }];
+      })
+    );
   };
-  const allHeld = LEVELLED_INDEXES.map((index) => ({ index, held: true }));
 
   it('a capped site holds every levelled index to its cap, moderators included', () => {
     for (const isModerator of [false, true]) {
       const viewer = { id: 42, isModerator, browsingLevelCap: publicBrowsingLevelsFlag };
-      expect(levelClauses(viewer, publicBrowsingLevelsFlag)).toEqual(allHeld);
+      expect(buildSearchRules(viewer, [])).toEqual(expectedRules(viewer, publicBrowsingLevelsFlag));
     }
   });
 
+  it('pins the clause for a levelled index and none for an index with no level', () => {
+    const rules = buildSearchRules({ browsingLevelCap: publicBrowsingLevelsFlag }, []);
+    expect(rules[ARTICLES_SEARCH_INDEX]).toEqual({ filter: 'nsfwLevel=1' });
+    for (const index of BROWSER_SEARCH_INDEXES.filter((i) => !LEVELLED_INDEXES.includes(i)))
+      expect(rules[index], index).toEqual({});
+  });
+
   it('a missing or unusable cap fails closed to the SFW cap', () => {
-    for (const viewer of [
+    const viewers = [
       null,
       undefined,
       { id: 42 },
-      { id: 42, browsingLevelCap: 0 },
-      { id: 42, browsingLevelCap: NaN },
-    ])
-      expect(levelClauses(viewer, sfwBrowsingLevelsFlag)).toEqual(allHeld);
+      ...[0, -1, 1.5, NaN, '31'].map((browsingLevelCap) => ({
+        id: 42,
+        browsingLevelCap: browsingLevelCap as number,
+      })),
+    ];
+    for (const viewer of viewers)
+      expect(buildSearchRules(viewer, []), JSON.stringify(viewer)).toEqual(
+        expectedRules(viewer, sfwBrowsingLevelsFlag)
+      );
   });
 
   it('an uncapped site adds no level clause', () => {
     const rules = buildSearchRules({ id: 42, browsingLevelCap: null }, []);
-    for (const index of LEVELLED_INDEXES)
-      expect(String(rules[index]?.filter ?? ''), index).not.toContain('nsfwLevel');
+    expect(JSON.stringify(rules)).not.toContain('nsfwLevel');
   });
 });
 

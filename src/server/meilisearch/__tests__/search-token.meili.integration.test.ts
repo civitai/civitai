@@ -233,6 +233,8 @@ describe.skipIf(!HOST || !MASTER_KEY)('search tokens on a real Meilisearch', () 
   ])('on a capped site, a token for %s', (_label, viewer) => {
     it('finds no model or comic above the cap, even when the filter asks for it', async () => {
       const token = tokenFor(viewer);
+      expect(await searchIds(token, MODELS_SEARCH_INDEX)).not.toContain(MATURE);
+      expect(await searchIds(token, MODELS_SEARCH_INDEX)).toContain(CONTROL);
       expect(await searchIds(token, MODELS_SEARCH_INDEX, `id = ${MATURE}`)).toEqual([]);
       expect(await searchIds(token, COMICS_SEARCH_INDEX)).toEqual([SFW_COMIC]);
       expect(await searchIds(token, COMICS_SEARCH_INDEX, `id = ${MATURE_COMIC}`)).toEqual([]);

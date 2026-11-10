@@ -2,12 +2,20 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
-import { COMICS_SEARCH_INDEX } from '~/server/common/constants';
-import { indexBrowsingLevelClause } from '~/components/Search/search-filters';
+import type * as FeatureFlags from '~/server/services/feature-flags.service';
+import { COMICS_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { buildSearchRules } from '~/server/meilisearch/search-token';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
-const { mockGetServerAuthSession } = vi.hoisted(() => ({ mockGetServerAuthSession: vi.fn() }));
+const { mockGetServerAuthSession, mockGetFeatureFlagsLazy } = vi.hoisted(() => ({
+  mockGetServerAuthSession: vi.fn(),
+  mockGetFeatureFlagsLazy: vi.fn(),
+}));
+
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlags>()),
+  getFeatureFlagsLazy: mockGetFeatureFlagsLazy,
+}));
 
 // `~/env/client` validates at import and throws on a missing NEXT_PUBLIC_* var.
 vi.mock('~/env/client', () => ({
@@ -35,6 +43,7 @@ async function requestToken(query: Record<string, string> = {}, headers = {}) {
   const req = {
     method: 'GET',
     headers: { host: 'example.test', ...headers },
+    url: '/api/search/token',
     cookies: {},
     query,
     socket: { remoteAddress: '10.0.0.1' },
@@ -53,6 +62,8 @@ async function requestToken(query: Record<string, string> = {}, headers = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetServerAuthSession.mockResolvedValue(null);
+  // civitai.com: signed out PG, signed in PG/PG-13.
+  mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: false });
   setEnv({
     SEARCH_TOKEN_API_KEY: 'parent-key',
     SEARCH_TOKEN_API_KEY_UID: '6062abda-a5aa-4414-ac91-ecd7944c0f8d',
@@ -80,16 +91,35 @@ describe('GET /api/search/token', () => {
     expect(decodeRules(body.token)).not.toEqual(buildSearchRules({ id: 42, isModerator: true }));
   });
 
-  it('gives a moderator session the unfiltered rules', async () => {
+  it('gives a moderator session the moderator rules, still held to the site level', async () => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 7, isModerator: true } });
     const { body } = await requestToken();
     expect(decodeRules(body.token)).toEqual(buildSearchRules({ id: 7, isModerator: true }));
   });
 
-  it('holds the token to the site content level', async () => {
+  it('holds a signed-out token to PG', async () => {
     const { body } = await requestToken();
-    expect(decodeRules(body.token)[COMICS_SEARCH_INDEX].filter).toBe(
-      indexBrowsingLevelClause(COMICS_SEARCH_INDEX, publicBrowsingLevelsFlag)
+    const rules = decodeRules(body.token);
+    expect(rules[COMICS_SEARCH_INDEX].filter).toBe(
+      'nsfwLevel IS NOT EMPTY AND nsfwLevel NOT IN [2, 4, 8, 16, 32]'
+    );
+    expect(rules[MODELS_SEARCH_INDEX].filter).toBe(
+      '((poi != true) AND (availability != Private)) AND (nsfwLevel=1)'
+    );
+  });
+
+  it('a signed-in viewer where the site caps nothing gets no level clause', async () => {
+    mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: true });
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+    const { body } = await requestToken();
+    expect(JSON.stringify(decodeRules(body.token))).not.toContain('nsfwLevel');
+  });
+
+  it('a client-sent verified-bot header does not lift the signed-out cap', async () => {
+    mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: true });
+    const { body } = await requestToken({}, { 'x-civitai-verified-bot': 'googlebot' });
+    expect(decodeRules(body.token)).toEqual(
+      buildSearchRules({ browsingLevelCap: publicBrowsingLevelsFlag })
     );
   });
 
