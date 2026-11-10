@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
+import { STREAK_BADGE_IDS } from '../daily/streak-badges';
 import { hasActiveMembership, listInventory, membershipOf, recentPurchases } from './inventory';
 
 const NOW = new Date('2026-12-20T12:00:00Z');
@@ -77,6 +78,21 @@ describe('listInventory', () => {
       [ACOLYTE_BADGE, 'rank', null],
       [101, 'shop', 'seal-key'],
     ]);
+  });
+
+  it('lists an earned streak badge', async () => {
+    const shipped = { ...STREAK_BADGE_IDS };
+    Object.assign(STREAK_BADGE_IDS, { 7: 105 });
+    try {
+      await pg.exec(
+        `INSERT INTO "Cosmetic" ("id","name","type","source","data") VALUES (105,'Week','Badge','Trophy','{}')`
+      );
+      await own(105, 'streak-grant');
+
+      expect(await inventory()).toMatchObject([{ cosmeticId: 105, origin: 'streak' }]);
+    } finally {
+      Object.assign(STREAK_BADGE_IDS, shipped);
+    }
   });
 
   it("leaves out another player's cosmetic and a holding no shop purchase put there", async () => {

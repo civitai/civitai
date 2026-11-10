@@ -13,6 +13,7 @@ import {
   watchStands,
   type StreakState,
 } from './streak';
+import { grantStreakBadges } from './streak-badges';
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
@@ -116,6 +117,7 @@ async function completeWatch(
     })
     .where('playerId', '=', playerId)
     .execute();
+  await grantStreakBadges(trx, playerId, after.streak);
   return streakBonusGold(after.streak);
 }
 

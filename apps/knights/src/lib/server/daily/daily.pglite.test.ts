@@ -21,6 +21,7 @@ import {
   getRecapState,
   recordVoteDay,
 } from './daily.service';
+import { STREAK_BADGE_IDS } from './streak-badges';
 
 const Q = 'knights.image.nsfwLevel';
 const NOON = (day: string) => new Date(`${day}T12:00:00Z`);
@@ -271,6 +272,50 @@ describe('streaks and shields', () => {
     await completeWatchOn(1, D1);
     await voteOnFreshItem(1, NOON(D1));
     expect((await keeper(1)).streak).toBe(1);
+  });
+});
+
+describe('streak badges', () => {
+  const SEVEN_DAY_BADGE = 7001;
+  const shipped = { ...STREAK_BADGE_IDS };
+
+  beforeEach(async () => {
+    Object.assign(STREAK_BADGE_IDS, { 7: SEVEN_DAY_BADGE, 30: null, 100: null });
+    await pg.exec(`TRUNCATE "UserCosmetic","Cosmetic" RESTART IDENTITY CASCADE`);
+    await pg.exec(`INSERT INTO "Cosmetic" ("id","source") VALUES (${SEVEN_DAY_BADGE},'Trophy')`);
+  });
+  afterAll(() => {
+    Object.assign(STREAK_BADGE_IDS, shipped);
+  });
+
+  const owned = async (userId: number) =>
+    (
+      await pg.query<{ cosmeticId: number }>(
+        `SELECT "cosmeticId" FROM "UserCosmetic" WHERE "userId"=$1`,
+        [userId]
+      )
+    ).rows.map((row) => row.cosmeticId);
+
+  it('grants the 7-day badge on the Watch that reaches a 7-day streak, a shield day included', async () => {
+    await seedPlayer(pg, 1);
+    // Monday 14th; the 15th is missed and covered by the week's shield
+    for (const day of [
+      '2026-12-14',
+      '2026-12-16',
+      '2026-12-17',
+      '2026-12-18',
+      '2026-12-19',
+      '2026-12-20',
+    ]) {
+      await completeWatchOn(1, day);
+    }
+    expect((await keeper(1)).streak).toBe(6);
+    expect(await owned(1)).toEqual([]);
+
+    await completeWatchOn(1, '2026-12-21');
+
+    expect((await keeper(1)).streak).toBe(7);
+    expect(await owned(1)).toEqual([SEVEN_DAY_BADGE]);
   });
 });
 
