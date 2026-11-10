@@ -16,6 +16,9 @@ import type {
   AnimaAiToolkitTrainingInput,
 } from '@civitai/orchestration-client';
 import {
+  BLOCKED_CUSTOM_MODEL_MESSAGE,
+  isBlockedCustomModel,
+  isBlockedCustomModelId,
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
 } from '@civitai/shared/training-custom-model';
@@ -64,42 +67,32 @@ import {
 } from '~/utils/training';
 import { modelUnavailability, unavailableModelMessage } from '~/utils/training-blocked-models';
 
-async function isSafeTensor(modelVersionId: number) {
+async function getCustomModelVersion(modelVersionId: number) {
   // it's possible we need to modify this if a model somehow has pickle and safetensor
-  const [data] = await dbWrite.$queryRaw<{ fmt: string }[]>`
-    SELECT mf.metadata ->> 'format' as fmt
+  const [data] = await dbWrite.$queryRaw<{ fmt: string | null; modelId: number }[]>`
+    SELECT mf.metadata ->> 'format' as fmt, mv."modelId" as "modelId"
     FROM "ModelVersion" mv
            JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Model'
-           JOIN "Model" m ON m.id = mv."modelId"
     WHERE mv.id = ${modelVersionId}
     LIMIT 1
   `;
-
-  return isSafeTensorFormat(data?.fmt);
+  return data;
 }
 
 const checkCustomModel = async (
-  model: string,
-  check_st = true
-): Promise<
-  | {
-      ok: true;
-    }
-  | { ok: false; message: string }
-> => {
+  model: string
+): Promise<{ ok: true } | { ok: false; message: string }> => {
   if (model in trainingModelInfo) return { ok: true };
 
   const mMatch = parseAIRSafe(model);
   if (!mMatch) return { ok: false, message: 'Invalid structure for custom model.' };
 
-  if (check_st) {
-    const isST = await isSafeTensor(mMatch.version);
-    if (!isST)
-      return {
-        ok: false,
-        message: NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
-      };
-  }
+  // The model id is read off the version, not the AIR: a caller can pair any model id with a version.
+  const version = await getCustomModelVersion(mMatch.version);
+  if (isBlockedCustomModel(model) || (version && isBlockedCustomModelId(version.modelId)))
+    return { ok: false, message: BLOCKED_CUSTOM_MODEL_MESSAGE };
+  if (!isSafeTensorFormat(version?.fmt))
+    return { ok: false, message: NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE };
 
   return { ok: true };
 };
@@ -432,6 +425,8 @@ export const createTrainingWorkflow = async ({
     })
   )
     throw throwBadRequestError('This base model is not available for training.');
+  const customCheck = await checkCustomModel(baseModel);
+  if (!customCheck.ok) throw throwBadRequestError(customCheck.message);
   const samplePrompts = modelVersion.trainingDetails.samplePrompts ?? ['', '', ''];
   const samplesOverrides = modelVersion.trainingDetails.samplesOverrides;
   const negativePrompt = modelVersion.trainingDetails.negativePrompt ?? '';
@@ -494,13 +489,6 @@ export const createTrainingWorkflow = async ({
   const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
     ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })
     : await getGetUrl(modelVersion.trainingUrl);
-
-  if (!(baseModel in trainingModelInfo)) {
-    const customCheck = await checkCustomModel(baseModel);
-    if (!customCheck.ok) {
-      throw throwBadRequestError(customCheck.message);
-    }
-  }
 
   const model = getTrainingFields.getModel(baseModel);
   const priority = getTrainingFields.getPriority(isPriority);
