@@ -151,9 +151,12 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
   if (webSession && webSession.status !== 'ok') {
     // Two sheet cookies (one set from elsewhere on the domain) answer as an invalid session.
+    // Counted by the parser's own rule: the name before the first '=', trimmed.
     const sheetCookies = cookieHeader
       .split(';')
-      .filter((c) => c.trim().startsWith(`${SHEET_COOKIE}=`));
+      .filter((c) => c.includes('=') && c.slice(0, c.indexOf('=')).trim() === SHEET_COOKIE);
+    if (sheetCookies.length > 1)
+      console.warn('[held-sheet] duplicate sheet cookies refused', { count: sheetCookies.length });
     const user =
       sheetCookies.length > 1
         ? null

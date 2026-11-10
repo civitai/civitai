@@ -428,6 +428,49 @@ describe('hook: the sheet cookie', () => {
     }
   });
 
+  it('counts a sheet cookie written with a space before the =', async () => {
+    const token = await signIn();
+    const cookie = `__Secure-held_sheet =${token}; __Secure-held_sheet=${'o'.repeat(43)}`;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect((await run('/api/held-media/7', cookie)).res.status).toBe(401);
+    expect(warn).toHaveBeenCalledWith('[held-sheet] duplicate sheet cookies refused', { count: 2 });
+    warn.mockRestore();
+  });
+
+  describe('with a service token', () => {
+    beforeEach(() => {
+      process.env.MOD_INBOUND_TOKEN = 'sk-inbound-held-test';
+    });
+    afterEach(() => {
+      delete process.env.MOD_INBOUND_TOKEN;
+    });
+
+    it('refuses a wrong token before the sheet cookie is looked at', async () => {
+      const token = await signIn();
+      redis.get.mockClear();
+      const { res, resolve } = await run(
+        '/api/held-media/7?token=wrong-token',
+        `__Secure-held_sheet=${token}`
+      );
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(resolve).not.toHaveBeenCalled();
+      expect(guardCheck).not.toHaveBeenCalled();
+      expect(redis.get).not.toHaveBeenCalled();
+    });
+
+    it('treats a valid token as the token client, not the sheet', async () => {
+      const token = await signIn();
+      const { res, locals } = await run(
+        '/api/held-media/7?token=sk-inbound-held-test',
+        `__Secure-held_sheet=${token}`
+      );
+      expect(res.status).toBe(299);
+      expect(locals.tokenClient).toBe('webhook');
+      expect(locals.heldCredential).toBeUndefined();
+      expect(guardCheck).not.toHaveBeenCalled();
+    });
+  });
+
   it('asks the web guard once per request', async () => {
     const token = await signIn();
     guardCheck.mockResolvedValue({ status: 'ok', user: { ...MOD }, setCookies: [] });
