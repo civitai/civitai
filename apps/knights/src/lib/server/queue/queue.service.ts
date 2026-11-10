@@ -818,7 +818,7 @@ export async function applyPendingResolutions(
 }
 
 /**
- * Moves items whose stage window lapsed. An item with no vote at its stage may have had no one to answer it, so it gets
+ * Moves items whose stage window lapsed. An item with no counted vote (a held player's weighs 0) at its stage may have had no one to answer it, so it gets
  * one more window at the same stage, until two stage windows after it entered the stage; after that, or when nobody can serve the stage, it is handed up like one with
  * votes: to the next stage someone can serve, or to the Inquisitors.
  */
@@ -850,6 +850,8 @@ export async function escalateExpired(
           )
           .select('v.itemId')
           .distinct()
+          // A held player's vote (weight 0) decides nothing, so an item with only those had no vote.
+          .where('v.weight', '>', 0)
           .where(
             'v.itemId',
             'in',
