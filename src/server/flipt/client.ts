@@ -214,7 +214,8 @@ export enum FLIPT_FEATURE_FLAGS {
   TRPC_FAST_SUPERJSON_SHARED_REFS = 'trpc-fast-superjson-shared-refs',
   // One shared `user` object per creator in the image.getInfinite / image.getImagesAsPostsInfinite
   // responses, so devalue writes each creator once (decoded shape unchanged). DEFAULT-OFF. Global
-  // boolean, read at most once per 5s per process. See `~/server/utils/feed-shared-users`.
+  // boolean, read at most once per 5s per process. A no-op unless TRPC_FAST_SUPERJSON_SHARED_REFS
+  // is on too (the fast walk would bail on the shared users). See `feed-shared-users.ts`.
   IMAGE_FEED_SHARED_USERS = 'image-feed-shared-users',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:

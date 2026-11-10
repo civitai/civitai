@@ -1,4 +1,5 @@
 import superjson from 'superjson';
+import type { SuperJSONValue } from 'superjson';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fastSuperjsonSerialize } from '~/server/trpc/superjson-fast-serialize';
 
@@ -294,7 +295,7 @@ describe('fastSuperjsonSerialize — sharedRefs', () => {
   const SHARED = { sharedRefs: true } as const;
 
   function expectIdenticalShared(value: unknown) {
-    const expected = superjson.serialize(value);
+    const expected = superjson.serialize(value as SuperJSONValue);
     const actual = fastSuperjsonSerialize(value, undefined, SHARED);
     expect(JSON.stringify(actual)).toBe(JSON.stringify(expected));
     expect(actual).toStrictEqual(expected);
@@ -490,7 +491,8 @@ describe('fastSuperjsonSerialize — sharedRefs', () => {
       const value = gen(5);
       expectIdenticalShared(value);
       expect(usedSuperjsonShared(value)).toBe(false);
-      if (superjson.serialize(value).meta?.referentialEqualities) withEqualities++;
+      if (superjson.serialize(value as SuperJSONValue).meta?.referentialEqualities)
+        withEqualities++;
     }
     // Positive control: the loop really exercised shared references.
     expect(withEqualities).toBeGreaterThan(50);

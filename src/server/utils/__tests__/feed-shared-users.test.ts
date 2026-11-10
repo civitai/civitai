@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { isSameFeedUser, shareFeedUsers } from '~/server/utils/feed-shared-users';
 
 vi.mock('~/server/flipt/client', () => ({
-  FLIPT_FEATURE_FLAGS: { IMAGE_FEED_SHARED_USERS: 'image-feed-shared-users' },
+  FLIPT_FEATURE_FLAGS: {
+    IMAGE_FEED_SHARED_USERS: 'image-feed-shared-users',
+    TRPC_FAST_SUPERJSON_SHARED_REFS: 'trpc-fast-superjson-shared-refs',
+  },
   isFliptSync: () => null,
 }));
 
@@ -45,10 +48,27 @@ function makeImage(id: number, postId: number, user: ReturnType<typeof makeUser>
 /** An `image.getImagesAsPostsInfinite`-shaped page: posts of 1–8 images, one creator each. */
 function asPostsPage() {
   let imageId = 1000;
+  // One fetch looks each creator's cosmetics and profile picture up ONCE, so every image of a
+  // creator holds the same `cosmetics` array and `profilePicture` object, whichever post it is in.
+  const lookups = new Map<number, { cosmetics: unknown[]; profilePicture: unknown }>();
+  const lookup = (creatorId: number) => {
+    let found = lookups.get(creatorId);
+    if (!found) {
+      found = {
+        cosmetics:
+          creatorId % 3 === 0
+            ? [{ cosmetic: { id: creatorId, name: `badge-${creatorId}` }, data: {} }]
+            : [],
+        profilePicture:
+          creatorId % 2 === 0 ? { id: 9000 + creatorId, url: `pp-${creatorId}` } : null,
+      };
+      lookups.set(creatorId, found);
+    }
+    return found;
+  };
   const items = Array.from({ length: 12 }, (_, p) => {
     const creatorId = 500 + (p % 9); // some creators own two posts on the page
-    const cosmetics = p % 3 === 0 ? [{ cosmetic: { id: p, name: `badge-${p}` }, data: {} }] : [];
-    const profilePicture = p % 2 === 0 ? { id: 9000 + creatorId, url: `pp-${creatorId}` } : null;
+    const { cosmetics, profilePicture } = lookup(creatorId);
     const images = Array.from({ length: 1 + (p % 8) }, () =>
       makeImage(imageId++, 70 + p, makeUser(creatorId, cosmetics, profilePicture))
     );

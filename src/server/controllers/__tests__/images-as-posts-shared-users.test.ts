@@ -5,13 +5,14 @@ import type * as ImageService from '~/server/services/image.service';
 
 /**
  * The seam between `getImagesAsPostsInfiniteHandler` and `shareFeedUsers`: with
- * `image-feed-shared-users` on, every image of one creator (and its post) carries ONE `user`
- * object; off, the handler's output is what it was. The values are the same either way.
+ * `image-feed-shared-users` AND `trpc-fast-superjson-shared-refs` on, every image of one creator
+ * (and its post) carries ONE `user` object; with either off, the handler's output is what it was.
+ * The values are the same either way.
  */
 
 const { fetches, flag } = vi.hoisted(() => ({
   fetches: vi.fn(),
-  flag: { sharedUsers: null as boolean | null },
+  flag: { sharedUsers: null as boolean | null, sharedRefs: null as boolean | null },
 }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => {
@@ -19,7 +20,11 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
   return {
     ...actual,
     isFliptSync: (key: string, ...rest: [string?, Record<string, string>?]) =>
-      key === 'image-feed-shared-users' ? flag.sharedUsers : actual.isFliptSync(key, ...rest),
+      key === 'image-feed-shared-users'
+        ? flag.sharedUsers
+        : key === 'trpc-fast-superjson-shared-refs'
+        ? flag.sharedRefs
+        : actual.isFliptSync(key, ...rest),
   };
 });
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
@@ -71,6 +76,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetFeedSharedUsersGateForTests();
   flag.sharedUsers = null;
+  // The prerequisite flag on by default here, so each case below varies `image-feed-shared-users`.
+  flag.sharedRefs = true;
   dbMock.dbRead.resourceReview.findMany.mockResolvedValue([] as never);
   fetches.mockImplementation(async () => ({ items: ROWS.map(toImage) }));
 });
@@ -120,6 +127,20 @@ describe('getImagesAsPostsInfiniteHandler — image-feed-shared-users', () => {
     // The post shares its first image's `user`, as before the flag: 3 posts, 6 images.
     expect(distinctObjects(usersOf(page))).toBe(6);
   });
+
+  it.each([
+    ['off', false],
+    ['unknown (no Flipt key yet)', null],
+  ])(
+    'leaves every image its own user object while trpc-fast-superjson-shared-refs is %s',
+    async (_label, value) => {
+      // Sharing with the fast walk unable to reuse a shared object would make it bail.
+      flag.sharedUsers = true;
+      flag.sharedRefs = value;
+      const page = await run();
+      expect(distinctObjects(usersOf(page))).toBe(6);
+    }
+  );
 
   it('serves the same values on and off', async () => {
     flag.sharedUsers = false;

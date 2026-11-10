@@ -103,14 +103,27 @@ export function shareFeedUsers<T>(result: T): T {
   return changed ? ({ ...result, items: shared } as T) : result;
 }
 
-let gate = createCachedFlagGate(() => isFliptSync(FLIPT_FEATURE_FLAGS.IMAGE_FEED_SHARED_USERS));
+const readSharedUsers = () => isFliptSync(FLIPT_FEATURE_FLAGS.IMAGE_FEED_SHARED_USERS);
+// The fast superjson walk BAILS on a shared reference unless `trpc-fast-superjson-shared-refs` is
+// on (a partial walk, then a full `superjson.serialize`), so sharing users with that flag off
+// would make every superjson-written feed response slower. Sharing therefore needs BOTH flags.
+// This is its own cached read of the flag (the response writer has another): the two can
+// disagree for at most one refresh window, and either way the written values are identical.
+const readSharedRefs = () => isFliptSync(FLIPT_FEATURE_FLAGS.TRPC_FAST_SUPERJSON_SHARED_REFS);
 
-/** Tests only: forget the cached flag read. */
+let gate = createCachedFlagGate(readSharedUsers);
+let sharedRefsGate = createCachedFlagGate(readSharedRefs);
+
+/** Tests only: forget the cached flag reads. */
 export function resetFeedSharedUsersGateForTests() {
-  gate = createCachedFlagGate(() => isFliptSync(FLIPT_FEATURE_FLAGS.IMAGE_FEED_SHARED_USERS));
+  gate = createCachedFlagGate(readSharedUsers);
+  sharedRefsGate = createCachedFlagGate(readSharedRefs);
 }
 
-/** `shareFeedUsers` while `image-feed-shared-users` is on; the result unchanged otherwise. */
+/**
+ * `shareFeedUsers` while `image-feed-shared-users` AND `trpc-fast-superjson-shared-refs` are both
+ * on; the result unchanged otherwise.
+ */
 export function withSharedFeedUsers<T>(result: T): T {
-  return gate() ? shareFeedUsers(result) : result;
+  return gate() && sharedRefsGate() ? shareFeedUsers(result) : result;
 }
