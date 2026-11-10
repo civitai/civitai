@@ -47,6 +47,7 @@ export const PERMISSIONS = [
   // an ownership or claim dispute — a legal question, not a content one — and the model reports panel
   // puts the button one click from every report in the queue.
   { id: 'model.takeDown', label: 'Take down a model (ownership / claim)' },
+  { id: 'model.mergeAnalysis.run', label: 'Run a model merge analysis' },
 
   // Also destructive, but never behind the page grant: an erasure request, carried out by the
   // main app's `deleteUser`. That app checks this id by its literal (`ModeratorGrantId` in
