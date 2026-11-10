@@ -36,6 +36,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { RankUp } from '~/components/Games/LevelProgress/RankUp';
 import { newOrderConfig } from '~/server/common/constants';
 import { NewOrderBetaBanner } from '~/components/Games/NewOrder/NewOrderBetaBanner';
+import { KNIGHTS_APP_URL } from '~/shared/constants/knights.constants';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { useIsTabActive } from '~/hooks/useIsTabActive';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -48,7 +49,7 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ features }) => {
     if (!features?.newOrderGame)
       return {
-        redirect: { destination: '/', permanent: false },
+        redirect: { destination: KNIGHTS_APP_URL, permanent: false },
       };
   },
 });

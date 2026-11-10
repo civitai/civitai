@@ -49,6 +49,7 @@ import { useQueryNotificationsCount } from '~/components/Notifications/notificat
 import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
+import { KNIGHTS_APP_URL } from '~/shared/constants/knights.constants';
 import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
@@ -340,8 +341,10 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         },
         {
           id: 'knights-of-new',
-          href: '/games/knights-of-new-order',
-          visible: features.newOrderGame,
+          // `newOrderGame` off retires the in-app game: the link then goes to the Knights app, on the
+          // same colour domains the game was offered on (`isBlue`).
+          href: features.newOrderGame ? '/games/knights-of-new-order' : KNIGHTS_APP_URL,
+          visible: features.newOrderGame || features.isBlue,
           icon: IconSword,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Knights of New',
