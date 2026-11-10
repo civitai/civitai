@@ -1,5 +1,10 @@
 import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
-import { isNavigationRequest, spokeReauthResponse, withSetCookies } from '@civitai/auth';
+import {
+  isNavigationRequest,
+  parseCookieHeader,
+  spokeReauthResponse,
+  withSetCookies,
+} from '@civitai/auth';
 import { civitaiAppUrl } from '$lib/server/civitai-url';
 import { guard } from '$lib/server/auth';
 import { applyGrants, canAccess, resolvePermissions } from '$lib/server/access';
@@ -7,6 +12,7 @@ import { movedViewTarget } from '$lib/moved-pages';
 import { loadPageAccessGrants } from '$lib/server/page-access';
 import { authenticateWebhookToken, type AcceptedCredential } from '$lib/server/webhook-endpoint';
 import { logAxiomError, logToAxiom } from '$lib/server/axiom';
+import { isSheetImagePath, resolveSheetSession, SHEET_COOKIE } from '$lib/server/held-sheet';
 
 // Where authenticated-but-not-a-moderator users get sent. A 403 would be a dead end (re-login can't
 // grant the role); bounce them to the main site instead. Overridable via env for non-prod hosts.
@@ -21,6 +27,8 @@ const NON_MODERATOR_REDIRECT = civitaiAppUrl();
 //   ok        → authenticated moderator → populate locals.user and continue
 // Public paths that must resolve without a session — the brand favicon (also prerendered at build,
 // where there is no cookie) and the sign-in routes. Everything else is gated.
+const SHEET_EXCHANGE_PATH = '/api/held-media/auth/exchange';
+
 const PUBLIC_PATHS = new Set([
   '/favicon.svg',
   '/logout',
@@ -95,6 +103,27 @@ export const init: ServerInit = async () => {
 
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
+  // The held-media sheet: its code exchange carries no session, and its scoped cookie stands in for
+  // the web session on the image route alone. Anywhere else the cookie is ignored.
+  if (event.url.pathname === SHEET_EXCHANGE_PATH && event.request.method === 'POST')
+    return resolve(event);
+  const sheetToken = parseCookieHeader(event.request.headers.get('cookie') ?? '')[SHEET_COOKIE];
+  if (
+    sheetToken !== undefined &&
+    isSheetImagePath(event.url.pathname) &&
+    (event.request.method === 'GET' || event.request.method === 'HEAD')
+  ) {
+    const user = await resolveSheetSession(sheetToken).catch(() => {
+      console.error('[held-sheet] session lookup failed');
+      return null;
+    });
+    if (!user) return new Response(null, { status: 401, headers: { 'cache-control': 'no-store' } });
+    event.locals.user = user;
+    event.locals.heldCredential = 'sheet';
+    applyGrants(await loadPageAccessGrants());
+    event.locals.grants = resolvePermissions(user);
+    return resolve(event);
+  }
   // An /api/* request presenting a credential of its own is verified HERE and never redirected to the hub
   // login — a script needs a status code, not an HTML login page. Verifying in the hook means an invalid
   // token cannot reach a handler at all; WebhookEndpoint then decides which endpoints accept a verified
