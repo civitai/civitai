@@ -1240,4 +1240,19 @@ describe('content-hash download url (download-hash-urls flag)', () => {
 
     expect(body.downloadUrls).toEqual([EPOCH_URL]);
   });
+
+  // A public training file on a private version still takes the epoch arm, so only the epoch
+  // guards keep the hash url off it: the trainingResults check and the private-version term.
+  it('flag on: a public training file on a private version gets the epoch url alone', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    currentUser.value = { id: OWNER_ID };
+
+    const { body } = await run(
+      [PUBLIC_TRAINING_FILE],
+      { modelFileId: String(PUBLIC_TRAINING_FILE.id) },
+      { availability: 'Private' }
+    );
+
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
 });
