@@ -92,6 +92,7 @@ import {
   claimCosmetic,
   createUserReferral,
   deleteUser,
+  deleteBasicDataForUser,
   deleteUserProfilePictureCache,
   equipCosmetic,
   getCreators,
@@ -512,8 +513,19 @@ export const completeOnboardingHandler = async ({
             ...(emailChanged ? { emailVerified: null } : {}),
           },
         });
-        if (input.username && input.username !== current?.username)
+        if (input.username && input.username !== current?.username) {
           queueScamScan({ entityType: 'User', entityId: id });
+          // The user index already holds this account from signup, and its incremental sync scans
+          // on `createdAt`, so without the enqueue search keeps the pre-onboarding username.
+          // Best-effort: the row is committed, and a cache/Redis blip must not fail the step.
+          await Promise.all([
+            deleteBasicDataForUser(id).catch(handleLogError),
+            usersSearchIndex
+              .queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }])
+              .catch(handleLogError),
+            bustUserCreator(id, { usernames: current?.username ? [current.username] : [] }),
+          ]);
+        }
 
         // 🔴 `changed` only — NOT `emailChanged`. The caller picks the recipient, so sending on
         // every address change made this an unmetered way to mail an arbitrary third party from

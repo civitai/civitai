@@ -142,6 +142,12 @@ export enum FLIPT_FEATURE_FLAGS {
   BASIC_TAGS_L1_LONG_TTL = 'basic-tags-l1-long-ttl',
   // Gates an L1 in front of the `cosmetics2` catalog cache (cosmeticCache).
   COSMETICS_L1 = 'cosmetics-l1',
+  // Gates the larger `tag-ids-for-images` (tagIdsForImagesCache) L1 tier: longer TTL AND more entries.
+  TAG_IDS_FOR_IMAGES_L1_LARGE = 'tag-ids-for-images-l1-large',
+  // Batches the per-command `redis_command_duration_seconds` observations into a local accumulator
+  // flushed at scrape (same series, same values; see @civitai/telemetry/redis-command-metrics).
+  // Boolean, no entity, read at most once per 5s per process. A missing key reads as off.
+  REDIS_COMMAND_METRICS_BATCHED = 'redis-command-metrics-batched',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -208,6 +214,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
   // no entity or context. See `responseWriteSerialize`.
   TRPC_FAST_SUPERJSON_WRITE = 'trpc-fast-superjson-write',
+  // With TRPC_FAST_SUPERJSON_WRITE on, lets the fast walk handle a shared (non-circular) object
+  // reference instead of bailing to `superjson.serialize` (same output either way). DEFAULT-OFF.
+  // Global boolean, read at most once per 5s per process (`createCachedFlagGate`).
+  TRPC_FAST_SUPERJSON_SHARED_REFS = 'trpc-fast-superjson-shared-refs',
+  // One shared `user` object per creator in the image.getInfinite / image.getImagesAsPostsInfinite
+  // responses, so devalue writes each creator once (decoded shape unchanged). DEFAULT-OFF. Global
+  // boolean, read at most once per 5s per process. A no-op unless TRPC_FAST_SUPERJSON_SHARED_REFS
+  // is on too (the fast walk would bail on the shared users). See `feed-shared-users.ts`.
+  IMAGE_FEED_SHARED_USERS = 'image-feed-shared-users',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
