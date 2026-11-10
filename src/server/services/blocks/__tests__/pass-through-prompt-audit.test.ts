@@ -100,4 +100,54 @@ describe('collectPassThroughAuditText', () => {
     ]);
     expect(got.tooLarge).toBe(true);
   });
+
+  it('reads an object that carries a $ref key but is not a reference', () => {
+    const got = collectPassThroughAuditText([
+      {
+        $type: 'customComfy',
+        input: {
+          workflow: {
+            '6': {
+              $ref: 'x',
+              path: 'y',
+              class_type: 'CLIPTextEncode',
+              inputs: { t: 'hidden words' },
+            },
+          },
+        },
+      },
+    ]);
+    expect(got.prompt).toContain('hidden words');
+  });
+
+  it('reads the default of a reference', () => {
+    const got = collectPassThroughAuditText([
+      {
+        $type: 'videoGen',
+        input: { images: [{ $ref: 'gen', path: 'url', default: 'fallback words' }] },
+      },
+    ]);
+    expect(got.prompt).toContain('fallback words');
+  });
+
+  it('in a graph step, treats every reference as an unreadable prompt', () => {
+    const got = collectPassThroughAuditText([
+      {
+        $type: 'customComfy',
+        input: { workflow: { '6': { inputs: { t: { $ref: '$arguments', path: 'p' } } } } },
+      },
+    ]);
+    expect(got.promptRefs).toEqual(['argument']);
+  });
+
+  it('in a graph step, reads negative-named and url-shaped leaves as prompt text', () => {
+    const got = collectPassThroughAuditText([
+      {
+        $type: 'customComfy',
+        input: { workflow: { negative_node: { inputs: { v: 'https://example.com/some words' } } } },
+      },
+    ]);
+    expect(got).toMatchObject({ negativePrompt: '' });
+    expect(got.prompt).toContain('https://example.com/some words');
+  });
 });

@@ -61,20 +61,24 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+const REF_KEYS: ReadonlySet<string> = new Set(['$ref', 'path', 'default', 'format']);
+/** Steps whose input is a caller-authored graph: node ids and input names say nothing. */
+const GRAPH_STEP_TYPES: ReadonlySet<string> = new Set(['customcomfy', 'comfy']);
+
+/** The orchestrator's reference predicate (`$ref` and `path`, nothing else but `default`/`format`). */
 function refSource(value: Record<string, unknown>): PromptRefSource | null {
-  for (const [key, target] of Object.entries(value)) {
-    if (key.toLowerCase() !== '$ref') continue;
-    return typeof target === 'string' && target.toLowerCase() === '$arguments'
-      ? 'argument'
-      : 'step';
-  }
-  return null;
+  const keys = Object.keys(value).map((key) => key.toLowerCase());
+  if (!keys.includes('$ref') || !keys.includes('path')) return null;
+  if (keys.some((key) => !REF_KEYS.has(key))) return null;
+  const target = Object.entries(value).find(([key]) => key.toLowerCase() === '$ref')?.[1];
+  return typeof target === 'string' && target.toLowerCase() === '$arguments' ? 'argument' : 'step';
 }
 
 /**
  * The text an audited step's input would generate from. Every string leaf is read, not a
  * declared field: engine inputs nest prompts (`multiPrompt[].prompt`), and whether the
- * orchestrator binds a re-cased key is not something this repo can know.
+ * orchestrator binds a re-cased key is not something this repo can know. In a graph step every
+ * leaf is prompt text and every reference is unreadable, since the caller names the keys.
  */
 export function collectPassThroughAuditText(
   steps: ReadonlyArray<{ $type: string; input: unknown }>
@@ -85,41 +89,62 @@ export function collectPassThroughAuditText(
   const promptRefs: PromptRefSource[] = [];
   let tooDeep = false;
 
-  const walk = (value: unknown, inText: boolean, inNegative: boolean, depth: number) => {
+  const walk = (
+    value: unknown,
+    at: { text: boolean; negative: boolean; graph: boolean },
+    depth: number
+  ) => {
     if (depth > WALK_DEPTH_MAX) {
       tooDeep = true;
       return;
     }
     if (typeof value === 'string') {
       const text = value.trim();
-      if (!text || (!inText && URL_OR_AIR.test(text))) return;
-      (inNegative ? negative : prompt).add(text);
+      if (!text || (!at.text && !at.graph && URL_OR_AIR.test(text))) return;
+      (at.negative && !at.graph ? negative : prompt).add(text);
       return;
     }
     if (Array.isArray(value)) {
-      for (const item of value) walk(item, inText, inNegative, depth + 1);
+      for (const item of value) walk(item, at, depth + 1);
       return;
     }
     if (!isPlainObject(value)) return;
     const ref = refSource(value);
     if (ref) {
-      if (inText) promptRefs.push(ref);
+      if (at.text || at.graph) promptRefs.push(ref);
+      // A reference's `default` is literal text the step may use in its place.
+      for (const [key, child] of Object.entries(value))
+        if (key.toLowerCase() === 'default') walk(child, at, depth + 1);
       return;
     }
     for (const [key, child] of Object.entries(value)) {
-      walk(child, inText || TEXT_KEY.test(key), inNegative || NEGATIVE_KEY.test(key), depth + 1);
+      walk(
+        child,
+        {
+          text: at.text || TEXT_KEY.test(key),
+          negative: at.negative || NEGATIVE_KEY.test(key),
+          graph: at.graph,
+        },
+        depth + 1
+      );
     }
   };
 
   for (const step of steps) {
     const templates = collectBlockStepTemplates(step.$type, step.input) ?? [step];
     for (const template of templates) {
-      if (!AUDITED_TYPE_LOOKUP.has(foldStepTypeCase(template.$type))) continue;
-      auditedTypes.push(foldStepTypeCase(template.$type));
+      const type = foldStepTypeCase(template.$type);
+      if (!AUDITED_TYPE_LOOKUP.has(type)) continue;
+      auditedTypes.push(type);
       // A whole input that is a reference resolves to text nothing here can read.
       const inputRef = isPlainObject(template.input) ? refSource(template.input) : null;
       if (inputRef) promptRefs.push(inputRef);
-      else walk(template.input, false, false, 0);
+      else
+        walk(
+          template.input,
+          { text: false, negative: false, graph: GRAPH_STEP_TYPES.has(type) },
+          0
+        );
     }
   }
 
@@ -136,9 +161,17 @@ export function collectPassThroughAuditText(
 
 export type PassThroughPromptAuditMode = 'off' | 'log' | 'enforce';
 
+let lastKnownMode: PassThroughPromptAuditMode | null = null;
+
+/**
+ * `null` from Flipt is an unreachable client or a failed evaluation as often as a missing flag,
+ * so it keeps the last mode this process read rather than dropping an enforced gate to off.
+ */
 export async function getPassThroughPromptAuditMode(): Promise<PassThroughPromptAuditMode> {
   const variant = await getFliptVariant(FLIPT_FEATURE_FLAGS.APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT);
-  return variant === 'log' || variant === 'enforce' ? variant : 'off';
+  if (variant === null) return lastKnownMode ?? 'off';
+  lastKnownMode = variant === 'log' || variant === 'enforce' ? variant : 'off';
+  return lastKnownMode;
 }
 
 type AuditContext = {

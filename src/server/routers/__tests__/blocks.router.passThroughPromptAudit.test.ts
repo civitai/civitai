@@ -347,10 +347,18 @@ describe('log mode', () => {
 
 describe('off', () => {
   it('neither audits nor observes', async () => {
-    h.variant.mockImplementation(async () => null);
+    h.variant.mockImplementation(async () => 'off');
     await submit(stepBody({ prompt: 'badword' })).catch(() => undefined);
     expect(h.audit).not.toHaveBeenCalled();
     expect(h.classify).not.toHaveBeenCalled();
     expect(whatIfCalls()).toHaveLength(1);
+  });
+});
+
+describe('an unreadable flag', () => {
+  it('keeps the last mode read instead of dropping to off', async () => {
+    await submit(stepBody({ prompt: 'a calm lake' })).catch(() => undefined);
+    h.variant.mockImplementation(async () => null);
+    await expect(submit(stepBody({ prompt: 'badword' }))).rejects.toThrow(REFUSED);
   });
 });
