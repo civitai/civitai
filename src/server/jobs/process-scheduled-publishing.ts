@@ -323,6 +323,10 @@ export const processScheduledPublishing = createJob(
       }
     }
 
+    const versionModels = scheduledModelVersions.flatMap(({ id, userId, extras }) =>
+      extras?.modelId ? [{ versionId: id, modelId: extras.modelId, userId }] : []
+    );
+
     // What the UPDATEs below actually published, with each post's owner as of the write: they
     // re-check every row, so one taken down or moved since the selects drops out, and must get none
     // of the side effects. Returned rather than assigned out, so a rollback yields none.
@@ -331,9 +335,7 @@ export const processScheduledPublishing = createJob(
         let flipped: ScheduledEntity[] = [];
         let publishedModels = new Set<number>();
         let publishedVersions = new Set<number>();
-        const modelsToUpdate = [
-          ...new Set(scheduledModelVersions.map(({ extras }) => extras?.modelId).filter(isDefined)),
-        ];
+        const modelsToUpdate = uniq(versionModels.map(({ modelId }) => modelId));
 
         // Models, then versions, each by id: the order the model publish and takedown paths take
         // them, which lock their one model first. Without it this crosses them and either side can
@@ -403,10 +405,9 @@ export const processScheduledPublishing = createJob(
         }
 
         const releasedWithVersionIds = uniq(
-          scheduledModelVersions
-            .filter(({ id }) => publishedVersions.has(id))
-            .map(({ extras }) => extras?.modelId)
-            .filter(isDefined)
+          versionModels
+            .filter(({ versionId }) => publishedVersions.has(versionId))
+            .map(({ modelId }) => modelId)
         );
         const releasedModelIds = uniq([
           ...scheduledModels.map(({ id }) => id),
@@ -468,8 +469,7 @@ export const processScheduledPublishing = createJob(
 
     // Process event engagements
     const modelOwners = new Map<number, number>();
-    for (const { extras, userId } of scheduledModelVersions)
-      if (extras?.modelId) modelOwners.set(extras.modelId, userId);
+    for (const { modelId, userId } of versionModels) modelOwners.set(modelId, userId);
     for (const { id, userId } of scheduledModels) modelOwners.set(id, userId);
     for (const id of publishedModelIds) {
       const userId = modelOwners.get(id);
