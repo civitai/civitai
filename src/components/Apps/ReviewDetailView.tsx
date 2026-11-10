@@ -1,10 +1,16 @@
-import { Stack } from '@mantine/core';
+import { Anchor, Badge, Button, Card, Code, Group, Stack, Text, Title } from '@mantine/core';
+import { IconArrowLeft, IconConfetti } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
 import {
   ReviewDecisionAlert,
   ReviewSubmitterMeta,
+  type ManifestDiffSummary,
   type OnsiteReviewSelection,
 } from '~/components/Apps/OnsiteReviewModal';
+import { appDisplayName } from '~/shared/utils/app-display-name';
+import { trpc } from '~/utils/trpc';
 import { ReviewActionBar, type ReviewActionStatus } from '~/components/Apps/ReviewActionBar';
 import { ReviewDetailTabsView } from '~/components/Apps/ReviewDetailTabsView';
 import { useNowTick } from '~/components/Apps/reviewRelativeTime';
@@ -45,8 +51,8 @@ import { useReviewNavigationGuard } from '~/components/Apps/useReviewNavigationG
 const STATUS_MESSAGE: Record<ReviewActionStatus, string> = {
   idle: '',
   submitting: 'Submitting the review decision…',
-  approved: 'Submission approved. Returning to the review queue.',
-  rejected: 'Submission rejected. Returning to the review queue.',
+  approved: 'Submission approved. Opening the next submission.',
+  rejected: 'Submission rejected. Opening the next submission.',
   error: 'The review action failed. Please try again.',
 };
 
@@ -55,6 +61,7 @@ export function ReviewDetailView({
   onClose,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
+  /** After a decision — the page opens the next pending submission (or "No more app submissions waiting"). */
   onClose: () => void;
 }) {
   const mainRef = useRef<HTMLDivElement>(null);
@@ -121,7 +128,10 @@ export function ReviewDetailView({
         style={{ outline: 'none' }}
       >
         <Stack gap="md">
-          <ReviewSubmitterMeta request={selection.request} now={now} />
+          <Stack gap={6}>
+            <ReviewDetailHeader selection={selection} />
+            <ReviewSubmitterMeta request={selection.request} now={now} />
+          </Stack>
           <ReviewDecisionAlert selection={selection} now={now} />
           <ReviewDetailTabsView selection={selection} />
         </Stack>
@@ -136,7 +146,103 @@ export function ReviewDetailView({
         onClose={handleActionSuccess}
         onStatusChange={setStatus}
         sticky
+        approveAndNext
       />
     </>
+  );
+}
+
+/**
+ * What is being reviewed, at a glance: the app's icon and display name, then its slug,
+ * version, kind and first-version / decision badges. The submitter and the submitted age sit
+ * on the line directly below (`ReviewSubmitterMeta`).
+ *
+ * 🔴 THE BADGE WORDS ARE THE QUEUE'S. "first version" in violet is `OnsiteReviewModalTitle`'s
+ * and the queue row's spelling; "App" is the queue's kind badge for an on-site code request.
+ */
+export function ReviewDetailHeader({
+  selection,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+}) {
+  const { request, mode } = selection;
+  const name = appDisplayName(request.manifest, request.slug);
+  const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
+  return (
+    <Group gap="sm" wrap="nowrap" align="center" data-testid="apps-review-detail-header">
+      <ListingIconThumb
+        url={request.iconUrl ?? null}
+        name={name}
+        imgTestId="apps-review-detail-icon"
+        placeholderTestId="apps-review-detail-icon-placeholder"
+      />
+      <Stack gap={2} style={{ minWidth: 0 }}>
+        <Title order={2} lineClamp={1} data-testid="apps-review-detail-name">
+          {name}
+        </Title>
+        <Group gap={6} wrap="wrap">
+          <Code>{request.slug}</Code>
+          <Code data-testid="apps-review-detail-version">v{request.version}</Code>
+          <Badge size="sm" variant="light" color="blue" data-testid="apps-review-detail-kind">
+            App
+          </Badge>
+          {mds.kind === 'first-version' && (
+            <Badge color="violet" size="sm">
+              first version
+            </Badge>
+          )}
+          {mode === 'approved' && (
+            <Badge color="green" size="sm">
+              approved
+            </Badge>
+          )}
+          {mode === 'rejected' && (
+            <Badge color="red" size="sm">
+              rejected
+            </Badge>
+          )}
+        </Group>
+      </Stack>
+    </Group>
+  );
+}
+
+/**
+ * The end of the APP SUBMISSION queue: no on-site submission is left after the last decision.
+ *
+ * 🔴 IT DOES NOT SAY "NOTHING ELSE IS WAITING", because "next" only walks on-site app
+ * submissions — listing requests (store media revisions, standalone listings) can still be
+ * pending. Those are counted here, from the same count proc as the Pending tab's badge, and
+ * linked to the queue.
+ */
+export function AllCaughtUp() {
+  const { data } = trpc.blocks.countReviewQueue.useQuery(undefined, { retry: false });
+  const listingRequests = data?.offsite ?? 0;
+  return (
+    <Card withBorder p="xl" data-testid="apps-review-all-caught-up">
+      <Stack align="center" gap="sm">
+        <IconConfetti size={40} color="var(--mantine-color-green-6)" />
+        <Title order={3}>No more app submissions waiting</Title>
+        <Text c="dimmed" ta="center">
+          Pending approvals finish in the background.
+        </Text>
+        {listingRequests > 0 && (
+          <Text ta="center" data-testid="apps-review-other-queues">
+            {listingRequests} listing request{listingRequests === 1 ? '' : 's'} still pending —{' '}
+            <Anchor component={Link} href="/apps/review?tab=pending">
+              open the queue
+            </Anchor>
+          </Text>
+        )}
+        <Button
+          component={Link}
+          href="/apps/review"
+          variant="default"
+          leftSection={<IconArrowLeft size={14} />}
+        >
+          Back to the queue
+        </Button>
+      </Stack>
+    </Card>
   );
 }

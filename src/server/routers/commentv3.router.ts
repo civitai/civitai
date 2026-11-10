@@ -4,6 +4,7 @@ import {
   getCommentSectionHandler,
   getCommentThreadHandler,
   setTosViolationV3Handler,
+  toggleCommentLockV3Handler,
   toggleHideCommentV3Handler,
   togglePinCommentV3Handler,
   createCommentV3Handler,
@@ -16,7 +17,7 @@ import {
   toggleThreadMuteHandler,
 } from '~/server/controllers/commentv3.controller';
 import { rateLimit } from '~/server/middleware.trpc';
-import { commentRateLimits } from '~/server/schema/comment.schema';
+import { COMMENT_V3_RATE_LIMIT_KEY, commentRateLimits } from '~/server/schema/comment.schema';
 import {
   commentV3IdSchema,
   getCommentRepliesSchema,
@@ -37,11 +38,7 @@ import {
 } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-/**
- * The v3 comment suite (`src/components/CommentsV3`). Writes serve only
- * `constants.comments.v3WriteSurfaces`; model comments still write through the v1 `comment`
- * router.
- */
+/** The v3 comment suite (`src/components/CommentsV3`), for every comment surface. */
 export const commentv3Router = router({
   getSection: publicProcedure.input(getCommentSectionSchema).query(getCommentSectionHandler),
   getReplies: publicProcedure.input(getCommentRepliesSchema).query(getCommentRepliesHandler),
@@ -49,12 +46,12 @@ export const commentv3Router = router({
   create: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(createCommentV3Schema)
-    .use(rateLimit(commentRateLimits, undefined, { sharedKey: 'commentv3:write' }))
+    .use(rateLimit(commentRateLimits, undefined, { sharedKey: COMMENT_V3_RATE_LIMIT_KEY }))
     .mutation(createCommentV3Handler),
   update: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(updateCommentV3Schema)
-    .use(rateLimit(commentRateLimits, undefined, { sharedKey: 'commentv3:write' }))
+    .use(rateLimit(commentRateLimits, undefined, { sharedKey: COMMENT_V3_RATE_LIMIT_KEY }))
     .mutation(updateCommentV3Handler),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
@@ -69,6 +66,7 @@ export const commentv3Router = router({
     .input(commentV3IdSchema)
     .mutation(togglePinCommentV3Handler),
   setTosViolation: moderatorProcedure.input(commentV3IdSchema).mutation(setTosViolationV3Handler),
+  toggleLock: moderatorProcedure.input(commentV3IdSchema).mutation(toggleCommentLockV3Handler),
   getSectionLock: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(commentSectionSchema)

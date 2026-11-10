@@ -690,9 +690,10 @@ jobs:
     # Per-shard, not the whole suite. The ~3.4m estimate above is from the
     # 2026-08-25 measurement; on 2026-10-23, under heavy runner load, shards took
     # 7 to 12.5 minutes, close enough to the old 15m limit to be cancelled by it.
-    # 20m leaves headroom over that. It is NOT 30/4: the fixed overhead does not
-    # shard.
-    timeout-minutes: 20
+    # Raised 20 -> 25m on 2026-11-10: shard medians had reached 13-16m and shard 3
+    # (the heaviest, since `--shard` splits by file count, not cost) hit 20m on
+    # slow runners. It is NOT 30/4: the fixed overhead does not shard.
+    timeout-minutes: 25
     # A real Redis for the tests that must see what Redis itself does: Lua scripts, sorted-set
     # order of equal scores, increment exactness (roster.real-redis.test.ts). Such a test skips
     # itself without its URL, so a shard that does not hold it pays only the container start.
@@ -718,14 +719,13 @@ jobs:
     env:
       ROSTER_REDIS_URL: redis://localhost:6379/15
       APPDATA_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-      # The same throwaway server for the hot-reads-2, placement-reads, hot-reads-3, hot-reads-4,
-      # hot-reads-5 and hot-reads-6 Kysely suites (pinned to the values the retired Prisma reads
+      # The same throwaway server for the hot-reads-2, placement-reads, hot-reads-3, hot-reads-5 and
+      # hot-reads-6 Kysely suites (pinned to the values the retired Prisma reads
       # returned), which drop and recreate their own `hot_reads_2_parity`, `placement_parity` and
       # `hot_reads_<n>_parity` schemas there. Each fails in CI if this is missing rather than
       # skipping itself.
       KYSELY_HOT_READS_2_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       KYSELY_HOT_READS_3_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-      KYSELY_HOT_READS_4_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       KYSELY_HOT_READS_5_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       KYSELY_HOT_READS_6_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # Likewise for the kysely-hot-reads-7 suite (its own `hot_reads_7_parity` schema).

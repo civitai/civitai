@@ -59,15 +59,16 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int, "threadId" int, hidden boolean, "updatedAt" timestamptz
     );
     CREATE TABLE "CommentV3" (
-      id int PRIMARY KEY, "userId" int, "entityType" text, "entityId" int,
+      id int PRIMARY KEY, "userId" int, "entityType" text, "entityId" int, "legacyV1Id" int,
       hidden boolean NOT NULL DEFAULT false, "deletedAt" timestamptz, "updatedAt" timestamptz
     );
+    CREATE TABLE "Comment" (id int PRIMARY KEY, hidden boolean, "updatedAt" timestamptz);
   `);
 });
 
 beforeEach(async () => {
   await holder.db.exec(`
-    TRUNCATE "Thread", "CommentV2", "CommentV3", "Image", "Article", "Challenge", app_listings,
+    TRUNCATE "Thread", "CommentV2", "CommentV3", "Comment", "Image", "Article", "Challenge", app_listings,
       "Model", "ComicProject", "ComicChapter";
     INSERT INTO "Image" (id, "userId") VALUES (10, ${BLOCKER}), (20, ${OTHER_OWNER});
     INSERT INTO "Article" (id, "userId") VALUES (30, ${BLOCKER}), (31, ${OTHER_OWNER});
@@ -113,8 +114,9 @@ beforeEach(async () => {
 
     -- Comments only in CommentV3, on a surface that writes there directly: the blocker's article
     -- (a live one, a deleted one and a bystander's), someone else's article, a chapter of the
-    -- blocker's comic and one of someone else's, owned through their projects, and a comment on the
-    -- blocker's model, which is not such a surface.
+    -- blocker's comic and one of someone else's, owned through their projects, and a pre-flip
+    -- comment on the blocker's model, with its v1 row.
+    INSERT INTO "Comment" (id, hidden) VALUES (9005, false);
     INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId", "deletedAt") VALUES
       (2001, ${BLOCKED}, 'article', 30, NULL),
       (2002, ${BLOCKED}, 'article', 30, now()),
@@ -125,6 +127,7 @@ beforeEach(async () => {
       (2007, ${BLOCKED}, 'comicChapter', 63, NULL),
       -- 5001's own row: a pre-flip comment, hidden here first with its CommentV2 row in step.
       (5001, ${BLOCKED}, 'article', 30, NULL);
+    UPDATE "CommentV3" SET "legacyV1Id" = 9005 WHERE id = 2005;
   `);
 
   // The CommentV3 writes are `setCommentFlags`, whose SQL runs as written.
@@ -163,14 +166,15 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
       blockedUserId: BLOCKED,
     });
 
-    expect(result).toEqual({ status: 'hidden', count: 7, capped: false });
+    expect(result).toEqual({ status: 'hidden', count: 8, capped: false });
     // 1004 was already hidden. Everything on OTHER_OWNER's image (3001, 3003 despite its forged
     // root, and 9001), the bystander's comment 1002 and the orphaned 8001 stay visible. 5001's
     // CommentV2 row is hidden in step with its CommentV3 row.
     expect(await hiddenIds()).toEqual([1001, 1003, 1004, 5001, 6001, 7001]);
-    // Only the blocked user's live comments on the blocker's article and chapter; 5001 counted once,
-    // as a CommentV3 comment.
-    expect(await hiddenIds('CommentV3')).toEqual([2001, 2006, 5001]);
+    // Only the blocked user's live comments on the blocker's article, model and chapter; 5001
+    // counted once, as a CommentV3 comment. The model comment's v1 row is hidden in step.
+    expect(await hiddenIds('CommentV3')).toEqual([2001, 2005, 2006, 5001]);
+    expect(await hiddenIds('Comment')).toEqual([9005]);
   });
 
   it("leaves other people's content alone when they are not the blocker", async () => {

@@ -547,15 +547,15 @@ describe('csam hold row text', () => {
 describe('holdEntityHref', () => {
   const ref = { entityId: 5, userId: null, username: null, chatId: null };
 
-  it('opens a legacy comment on its model, highlighting the comment', () => {
+  it('opens a comment a hold names by its old id through its CommentV3 permalink', () => {
     expect(
-      holdEntityHref('https://site.test', { ...ref, entityType: 'Comment', commentModelId: 70 })
-    ).toBe('https://site.test/models/70?dialog=commentThread&highlight=5');
+      holdEntityHref('https://site.test', { ...ref, entityType: 'Comment', commentV3Id: 9005 })
+    ).toBe('https://site.test/comments/9005');
   });
 
-  it('has no link for a legacy comment whose model is unknown', () => {
+  it('has no link for an old-id comment that is gone', () => {
     expect(
-      holdEntityHref('https://site.test', { ...ref, entityType: 'Comment', commentModelId: null })
+      holdEntityHref('https://site.test', { ...ref, entityType: 'Comment', commentV3Id: null })
     ).toBeNull();
   });
 });

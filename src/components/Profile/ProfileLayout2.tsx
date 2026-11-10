@@ -11,7 +11,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { Meta } from '~/components/Meta/Meta';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { buildProfileMeta } from '~/components/Profile/profile-meta';
 import { env } from '~/env/client';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -90,34 +90,18 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
 
     return false;
   }, [user, overview, pathname]);
-  // const { classes } = useStyles();
 
-  // What this creator actually has, biggest two kinds first — a profile with only images should
-  // not advertise models.
-  const metaDescription = useMemo(() => {
-    if (!user?.username) return undefined;
-    const counts: [number, string][] = [
-      [overview?.modelCount ?? 0, 'AI models'],
-      [overview?.imageCount ?? 0, 'images'],
-      [overview?.videoCount ?? 0, 'videos'],
-      [overview?.articleCount ?? 0, 'articles'],
-      [overview?.comicCount ?? 0, 'comics'],
-    ];
-    const has = counts
-      .filter(([count]) => count > 0)
-      .sort((a, b) => b[0] - a[0])
-      .slice(0, 2)
-      .map(([count, noun]) => `${abbreviateNumber(count)} ${noun}`);
-
-    if (!has.length)
-      return `Browse ${user.username}'s AI models, images and articles on Civitai. Download or generate online.`;
-
-    const followers = user.stats?.followerCountAllTime ?? 0;
-    const following = followers > 0 ? `, followed by ${abbreviateNumber(followers)} people` : '';
-    return `${user.username} on Civitai: ${has.join(
-      ' and '
-    )}${following}. Download or generate online.`;
-  }, [user?.username, user?.stats?.followerCountAllTime, overview]);
+  const profileMeta = useMemo(
+    () =>
+      user?.username
+        ? buildProfileMeta({
+            username: user.username,
+            overview,
+            followers: user.stats?.followerCountAllTime,
+          })
+        : undefined,
+    [user?.username, user?.stats?.followerCountAllTime, overview]
+  );
 
   const userMetaImage = profileSchemaImageUrl(user?.profilePicture);
   const ogEndpoint = user ? milestoneOgEndpoint(user.id, milestone, milestoneShareable) : undefined;
@@ -130,7 +114,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
           '@context': 'https://schema.org',
           '@type': 'ProfilePage',
           name: `${user.username} Creator Profile`,
-          description: `Learn more about ${user.username} on Civitai.`,
+          description: profileMeta?.description,
           primaryImageOfPage: {
             '@type': 'ImageObject',
             contentUrl: pageImage,
@@ -167,8 +151,8 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
     <>
       {user && user.username && stats && !blockedByThem ? (
         <Meta
-          title={`${user.username} Creator Profile | Civitai`}
-          description={metaDescription}
+          title={profileMeta?.title ?? `${user.username} | Civitai`}
+          description={profileMeta?.description}
           images={user.profilePicture}
           ogEndpoint={ogEndpoint}
           canonical={pathname}

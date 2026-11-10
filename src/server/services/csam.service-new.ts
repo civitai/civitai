@@ -51,6 +51,7 @@ import type { BoundedArchive } from '~/server/utils/archive-helpers';
 import {
   createBoundedArchive,
   createByteBudget,
+  FAILED_ARCHIVE_SETTLE_MS,
   deriveUploadPartGeometry,
   ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
@@ -68,6 +69,8 @@ import { SHOWN_ACTIONS, shownActivity } from '@civitai/shared/held-media';
 import { logToAxiom } from '~/server/logging/client';
 import type { CsamSupplementalDetails } from '~/server/services/csam-supplemental-text';
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
+import type { CsamContextText } from '~/server/services/csam-context-text';
+import { contextWebPageIncidents } from '~/server/services/csam-context-text';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
@@ -197,6 +200,7 @@ type CsamReportDetails = CsamReportFormOutput & {
   /** CyberTips opened for this report and cancelled before it was sent. */
   cancelledReportIds?: number[];
   supplemental?: CsamSupplementalDetails;
+  contextText?: CsamContextText[];
   /** CyberTips opened for this report that could not be cancelled, so may have reached NCMEC. */
   possibleDuplicateReportIds?: number[];
   /** Opens whose answer could not be read: nothing more is sent until a moderator clears them. */
@@ -1473,10 +1477,18 @@ async function reportImages(claim: SendClaim) {
     };
   };
 
+  const webPageIncidents = contextWebPageIncidents(report.details?.contextText).map(
+    ({ url, additionalInfo }) => ({
+      url: [xmlText(url)],
+      additionalInfo: xmlText(additionalInfo),
+      thirdPartyHostedContent: false,
+    })
+  );
   const sent = await sendCyberTip(
     claim,
     {
       ...initialReport,
+      ...(webPageIncidents.length && { incidentDetails: { webPageIncidents } }),
       ...(supplemental && {
         personOrUserReported: {
           ...initialReport.personOrUserReported,
@@ -2157,6 +2169,7 @@ async function getTrainingDataZipStream({
     user: reportingUser ?? undefined,
     // Fetched server-side to build a report, not on a user's behalf.
     attribution: { caller: 'other', actor: 'internal' },
+    redCapable: true,
   });
   if (modelFile.status !== 'success') throw new Error('training data not found');
 
@@ -2904,6 +2917,19 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       entries: [
         ['user', { value: user }],
         ['reportId', { value: reportId }],
+        ...(report.details?.contextText?.length
+          ? ([
+              [
+                'reportContext',
+                {
+                  value: {
+                    webPageIncidents: contextWebPageIncidents(report.details.contextText),
+                    contextText: report.details.contextText,
+                  },
+                },
+              ],
+            ] as const)
+          : []),
         ['models', { items: streamModels() }],
         ['modelVersions', { items: streamModelVersions() }],
         ['images', { items: flattenPages(scanUserImages()) }],
@@ -2958,6 +2984,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         const limit = plimit(10);
         // Bounded in bytes, not count: original sizes vary too much for an entry count to bound memory.
         const budget = createByteBudget();
+        // A failed archive stops its running reads and waits for them before its caller removes
+        // the scratch dirs they write into.
+        const readers = new AbortController();
+        const running = new Set<Promise<void>>();
         const hoursSinceSent = report.reportSentAt
           ? (Date.now() - report.reportSentAt.getTime()) / 3_600_000
           : 0;
@@ -2974,12 +3004,15 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           try {
             original = await spoolOriginalImage(image, {
               reserve: budget.reserve,
+              cancel: readers.signal,
               spoolDir: `${reportDirs.images}/spool`,
               onRetry: (failedAttempt) => {
                 attempts = Math.max(attempts, failedAttempt + 1);
               },
             });
           } catch (e) {
+            // Stopped because another image failed: not this image's failure.
+            if (readers.signal.aborted) throw e;
             // A full URL may be on a host we do not control: after a day of retries its failing
             // no longer holds the archive back. A stored object's failure is always retried.
             const retried =
@@ -3047,18 +3080,30 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           for await (const page of scanUserImages()) {
             await Promise.all(
               page.map((image) =>
-                limit(() =>
-                  archiveImage(image).catch((e) => {
+                limit(() => {
+                  const task = archiveImage(image).catch((e) => {
                     // Before this slot frees: queued reads would otherwise still open.
                     limit.clearQueue();
                     throw e;
-                  })
-                )
+                  });
+                  running.add(task);
+                  const done = () => running.delete(task);
+                  task.then(done, done);
+                  return task;
+                })
               )
             );
           }
         } catch (e) {
+          readers.abort(e);
           budget.abort(e);
+          // Only reads that started: `clearQueue` leaves a queued task's promise unsettled.
+          let settleTimer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([
+            Promise.allSettled(running),
+            new Promise((resolve) => (settleTimer = setTimeout(resolve, FAILED_ARCHIVE_SETTLE_MS))),
+          ]);
+          clearTimeout(settleTimer);
           throw e;
         }
 

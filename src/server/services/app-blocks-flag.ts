@@ -952,6 +952,56 @@ export async function isAppBlocksReviewSandboxEnabled(opts?: {
 }
 
 /**
+ * GLOBAL flag: start a review preview automatically when a version is submitted (ZIP or git
+ * push), instead of waiting for a moderator to press "Start preview". Machine-side, evaluated with
+ * no user, so it reads the flag's BASE value (see GLOBAL-EVAL SEMANTICS above): a plain boolean in
+ * Flipt. Off (or absent, or Flipt unreachable) leaves every submission exactly as before, waiting
+ * for a moderator. The manual button stays behind APP_BLOCKS_REVIEW_SANDBOX_FLAG.
+ */
+export const APP_BLOCKS_REVIEW_AUTODEPLOY_FLAG = 'app-blocks-review-autodeploy';
+
+export async function isAppBlocksReviewAutodeployEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_REVIEW_AUTODEPLOY_FLAG);
+}
+
+/**
+ * GLOBAL flag: start the agent code review automatically once a review preview goes live, within
+ * the platform-wide daily agent-review budget. Same base-value evaluation as
+ * APP_BLOCKS_REVIEW_AUTODEPLOY_FLAG. Manual starts stay behind APP_BLOCKS_AGENTIC_REVIEW_FLAG.
+ */
+export const APP_BLOCKS_AGENTIC_REVIEW_AUTOSTART_FLAG = 'app-blocks-agentic-review-autostart';
+
+export async function isAppBlocksAgenticReviewAutostartEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_AGENTIC_REVIEW_AUTOSTART_FLAG);
+}
+
+/**
+ * GLOBAL flag: publish review previews to the shared static server instead of rendering a
+ * per-preview Deployment/Service/route. ON: the review apply Job runs the smoke test then the
+ * review-lane publish; reachability is an origin probe through the shared route; teardown runs
+ * the review unpublish Job. OFF: a per-preview Deployment/Service/route. Base-value evaluation
+ * (no user), like the other machine-side flags.
+ */
+export const APP_BLOCKS_REVIEW_SHARED_SERVER_FLAG = 'app-blocks-review-shared-server';
+
+export async function isAppBlocksReviewSharedServerEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_REVIEW_SHARED_SERVER_FLAG);
+}
+
+/**
+ * GLOBAL flag: when a LIVE on-site app is delisted (moderator delist, moderator reset to
+ * pending, owner unpublish), also remove it from the shared static server so its subdomain stops
+ * serving; a relist puts it back. OFF: the block is only suspended and the subdomain keeps serving
+ * its last published build, though an app taken down while the flag was on is still put back on
+ * relist. Base-value evaluation (no user).
+ */
+export const APP_BLOCKS_LIVE_UNPUBLISH_FLAG = 'app-blocks-live-unpublish';
+
+export async function isAppBlocksLiveUnpublishEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_LIVE_UNPUBLISH_FLAG);
+}
+
+/**
  * Dedicated mod-segmented flag for the AGENTIC MOD CODE-REVIEW (App Blocks P1).
  *
  * When a moderator reviews a PENDING publish request they can dispatch an

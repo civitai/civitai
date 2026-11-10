@@ -12,6 +12,7 @@
     IconUpload,
   } from '@tabler/icons-svelte';
   import { backend, browser, portalProps } from '$lib/host';
+  import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { pool } from '$lib/pool';
   import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
@@ -577,6 +578,10 @@
     <div class="rounded-xl border border-dark-4 bg-dark-6 p-8 text-center text-sm text-dark-2">
       Nothing here for this filter.
     </div>
+  {/if}
+
+  {#if pairs.length > 0}
+    <BlueFirstNote />
   {/if}
 
   {#if view === 'pairs'}

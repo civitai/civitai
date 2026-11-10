@@ -87,14 +87,14 @@ describe('actor-derived notifications outside the comment family', () => {
     expect(q).toMatch(/blk\.type = 'Block'/);
   });
 
-  // new-mention UNIONs two branches (comment, model description) and derives its recipient with unnest() in the SELECT list,
+  // new-mention UNIONs three branches (comment, model description, article) and derives its recipient with unnest() in the SELECT list,
   // where no WHERE clause can see it. Each branch carries its author out as `actorId` so the filter
   // can run once on the outer query — a branch that forgets the column is a SQL error, but one that
   // selects the WRONG user silently notifies across the block.
   it('new-mention carries the acting user out of every union branch', () => {
     const q = others['new-mention'].prepareQuery?.({ lastSent: '2026-01-01' }) ?? '';
-    // The comment arm and the model-description arm.
-    expect(q.match(/"userId" "actorId"/g)).toHaveLength(2);
+    // The comment arm, the model-description arm and the article arm.
+    expect(q.match(/"userId" "actorId"/g)).toHaveLength(3);
     expect(q).toMatch(/blk\."userId" = r\."ownerId" AND blk\."targetUserId" = r\."actorId"/);
   });
 

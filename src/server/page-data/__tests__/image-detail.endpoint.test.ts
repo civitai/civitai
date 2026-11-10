@@ -123,6 +123,7 @@ beforeEach(() => {
       liveNow: false,
       navBanners: null,
       siteAlerts: null,
+      eventSeeds: null,
       session,
     };
   });
@@ -204,6 +205,7 @@ describe('page-data parity with getServerSideProps', () => {
         'announcements',
         'browsingSettingsAddons',
         'chatSettings',
+        'eventSeeds',
         'flags',
         'following',
         'liveNow',

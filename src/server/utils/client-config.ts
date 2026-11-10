@@ -56,18 +56,43 @@ export function peekSiteAlertsVersion() {
   return client ? readSiteAlertsVersion(client) : 0;
 }
 
+// x-client-version is client-controlled, so the memo is capped in entries and key length and cleared when full.
+type ParsedVersion = ReturnType<typeof semver.parse>;
+const versionParseCache = new Map<string, ParsedVersion>();
+const VERSION_PARSE_CACHE_MAX = 256;
+const VERSION_PARSE_CACHE_MAX_KEY_LENGTH = 64;
+
+/** `semver.parse`, memoised per raw string. `null` for anything `semver.valid` rejects. */
+function parseVersion(raw: unknown): ParsedVersion {
+  if (typeof raw !== 'string') return null;
+  if (raw.length > VERSION_PARSE_CACHE_MAX_KEY_LENGTH) return semver.parse(raw);
+  const cached = versionParseCache.get(raw);
+  if (cached !== undefined) return cached;
+  const parsed = semver.parse(raw);
+  if (versionParseCache.size >= VERSION_PARSE_CACHE_MAX) versionParseCache.clear();
+  versionParseCache.set(raw, parsed);
+  return parsed;
+}
+
+/** TEST-ONLY: the memo's current size, and a reset so a test starts cold. */
+export function __versionParseCacheSizeForTests(): number {
+  return versionParseCache.size;
+}
+export function __resetVersionParseCacheForTests(): void {
+  versionParseCache.clear();
+}
+
 /** Whether this request's bundle is older than the version or date the CLIENT hash forces. */
 export function clientNeedsUpdate(
   headers: IncomingHttpHeaders | undefined,
   client: Record<string, string>
 ) {
-  const version = headers?.['x-client-version'] as string | undefined;
   const date = headers?.['x-client-date'] as string | undefined;
-  const clientVersion = decodeRedisString(client.version);
-  if (semver.valid(clientVersion)) {
-    // semver.lt throws on a version it cannot parse, and the client sends this header.
-    if (!version || !semver.valid(version)) return true;
-    return semver.lt(version, clientVersion as string);
+  const forcedVersion = parseVersion(decodeRedisString(client.version));
+  if (forcedVersion) {
+    const version = parseVersion(headers?.['x-client-version']);
+    if (!version) return true;
+    return version.compare(forcedVersion) < 0;
   }
   if (client.date) {
     if (!date) return true;
@@ -86,8 +111,8 @@ export function callsRemovedProcedure(
   serverVersion = process.env.version
 ) {
   if (!calls?.some((call) => !call.procedure)) return false;
-  const version = headers?.['x-client-version'];
-  if (typeof version !== 'string' || !semver.valid(version) || !semver.valid(serverVersion))
-    return false;
-  return semver.lt(version, serverVersion as string);
+  const version = parseVersion(headers?.['x-client-version']);
+  const server = parseVersion(serverVersion);
+  if (!version || !server) return false;
+  return version.compare(server) < 0;
 }

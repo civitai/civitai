@@ -37,7 +37,8 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
+import { getHotkeyHandler, useDebouncedValue } from '@mantine/hooks';
+import { useSearchFocusHotkeys } from '~/hooks/useSearchFocusHotkeys';
 import { IconSearch, IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
@@ -345,10 +346,7 @@ export const CustomSearchBox = forwardRef<
     }
   }, [query]);
 
-  useHotkeys([
-    ['/', focusInput],
-    ['mod+k', focusInput],
-  ]);
+  useSearchFocusHotkeys(focusInput);
 
   return (
     <TextInput

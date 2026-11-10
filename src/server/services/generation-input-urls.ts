@@ -29,6 +29,17 @@ export const GENERATION_IMAGE_UNAVAILABLE_MESSAGE =
 export const generationImageUnavailableError = () =>
   imageUrlUnavailableError(GENERATION_IMAGE_UNAVAILABLE_MESSAGE);
 
+/** Shown when a generation input links to a host outside Civitai, which the gate refuses. */
+export const GENERATION_EXTERNAL_IMAGE_MESSAGE =
+  'This request includes a link to an image hosted outside Civitai. Please upload the image instead.';
+
+export const generationExternalImageError = () =>
+  imageUrlUnavailableError(GENERATION_EXTERNAL_IMAGE_MESSAGE);
+
+/** Shown when an orchestrator-native input carries a plain link to a Civitai page, refused there. */
+export const GENERATION_PAGE_LINK_MESSAGE =
+  'This request includes a link to a Civitai page, not an image. Please upload the image instead.';
+
 /** An upload key as minted: the whole value, nothing around it. */
 const BARE_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -162,7 +173,8 @@ export type GenerationInputEntryPoint =
   | 'comicsCostEstimate'
   | 'comicPanelJob'
   | 'remixAppRun'
-  | 'remixAppQuote';
+  | 'remixAppQuote'
+  | 'articleReframe';
 
 /** Entry points where an external host is only counted while the external-host flag is off. */
 const EXTERNAL_COUNTED_ENTRIES = new Set<GenerationInputEntryPoint>([
@@ -202,6 +214,9 @@ const carriesUrl = (value: string) => {
   return true;
 };
 
+/** A url's host, lower-cased; a fully-qualified host (`image.civitai.com.`) is the same server. */
+const normalisedHost = (parsed: URL) => parsed.host.toLowerCase().replace(/\.(?=(:\d+)?$)/, '');
+
 export function classifyGenerationInputUrl(raw: string): GenerationInputUrlClass {
   if (BARE_KEY.test(raw)) return 'key';
   if (hasUrlAmbiguousBytes(raw)) return 'invalid';
@@ -211,8 +226,7 @@ export function classifyGenerationInputUrl(raw: string): GenerationInputUrlClass
   } catch {
     return 'invalid';
   }
-  // A fully-qualified host (`image.civitai.com.`) resolves to the same server.
-  const host = parsed.host.toLowerCase().replace(/\.(?=(:\d+)?$)/, '');
+  const host = normalisedHost(parsed);
   const isCdn = imageCdnHosts().includes(host);
   const configuredOrigin = (() => {
     try {
@@ -507,14 +521,57 @@ function isWholeFetchableValue(value: string, budget: DecodeBudget, protocol: st
 }
 
 /**
+ * Free text a registry step declares in its params (`freeTextParamPaths`), each `list[].field`:
+ * the string `field` of every item of the array `list` at the top of the params. Or
+ * `list[].field.**`: everything under `field` of every item is text, whatever its shape (every
+ * string in it, object keys included).
+ */
+export type FreeTextPaths = readonly string[];
+
+/** `'string'`: a string at the field is text. `'subtree'`: everything under the field is. */
+type FreeTextKind = 'string' | 'subtree';
+
+/** `paths` as list name -> the item fields that are free text, and how. */
+function freeTextFieldsByList(paths: FreeTextPaths = []) {
+  const byList = new Map<string, Map<string, FreeTextKind>>();
+  for (const path of paths) {
+    const [list, spec] = path.split('[].');
+    const subtree = spec.endsWith('.**');
+    const fields = byList.get(list) ?? new Map<string, FreeTextKind>();
+    fields.set(subtree ? spec.slice(0, -3) : spec, subtree ? 'subtree' : 'string');
+    byList.set(list, fields);
+  }
+  return byList;
+}
+
+/** Whether a url names one of our images: on our image CDN or a civitai host, carrying a key. */
+function namesOurImage(url: string, budget: DecodeBudget) {
+  try {
+    const parsed = new URL(url);
+    if (!imageCdnHosts().includes(normalisedHost(parsed)) && !isCivitaiHostname(parsed.hostname))
+      return false;
+  } catch {
+    return false;
+  }
+  return keysInWithin(url, budget).length > 0;
+}
+
+/**
  * What an orchestrator-native input may fetch, under any field name (a field name says nothing
  * there: any step can `$ref` any field). A string that is a url is collected whole (trimmed). Any
  * other string is text, which a consumer may still split into urls, so every upload key in it is
  * collected bare, in any spelling `keysIn` reads: the gate's `opaqueInput` mode refuses those
  * only when they name an image that fails. `tooDeep` when the input nests past the walk's bound,
  * so a caller can refuse rather than pass what it did not read.
+ *
+ * `freeTextPaths`: strings at these paths are free text, never a url to fetch, so a url in one is
+ * not collected whole unless it names one of our images; its keys are collected as in any text.
+ * Only a value that IS a string there is text (and a list only when it is an array): anything
+ * else at the path is walked as usual. Under a `.**` path every string is text, whatever the shape.
+ * Default none: every string is read as above.
  */
-export function opaqueInputUrlsIn(value: unknown) {
+export function opaqueInputUrlsIn(value: unknown, freeTextPaths?: FreeTextPaths) {
+  const textFieldsByList = freeTextFieldsByList(freeTextPaths);
   // Not `walkJsonValues`: this walk splits strings into lines and budgets depth and characters too.
   const urls: string[] = [];
   let tooDeep = false;
@@ -540,8 +597,19 @@ export function opaqueInputUrlsIn(value: unknown) {
     for (const key of keysInTextWithin(text, decoded)) collect(key);
     if (decoded.left < 0) tooLarge = true;
   };
-  /** `counted`: a line of a string whose characters were already counted whole. */
-  const walk = (item: unknown, depth: number, counted = false) => {
+  /**
+   * `counted`: a line of a string whose characters were already counted whole. `text`: the string
+   * is declared free text, or the array/object is under a declared `.**` field (so every string
+   * in it, keys included, is text). `scope.list`: the item is a declared list, and these fields
+   * of each of its items are text; `scope.item`: the item is one of those items.
+   */
+  const walk = (
+    item: unknown,
+    depth: number,
+    counted = false,
+    text = false,
+    scope?: { list: Map<string, FreeTextKind> } | { item: Map<string, FreeTextKind> }
+  ) => {
     if (item == null || tooDeep || tooLarge) return;
     if (depth > OPAQUE_INPUT_MAX_DEPTH) {
       tooDeep = true;
@@ -566,7 +634,7 @@ export function opaqueInputUrlsIn(value: unknown) {
         return;
       }
       if (splitsIntoUrlLines(item)) {
-        for (const line of item.split(/[\r\n]+/)) walk(line, depth + 1, true);
+        for (const line of item.split(/[\r\n]+/)) walk(line, depth + 1, true, text);
         pushKeysInText(item);
         return;
       }
@@ -588,8 +656,19 @@ export function opaqueInputUrlsIn(value: unknown) {
         return;
       }
       const protocol = parsedProtocol(parsed);
+      if (text) {
+        // Free text: only a url naming one of our images is collected whole; every key is still
+        // collected so a private image is refused.
+        if (
+          !controlInside &&
+          isWholeFetchableValue(parsed, decoded, protocol) &&
+          (!protocol || namesOurImage(parsed, decoded))
+        )
+          collect(parsed);
+        pushKeysInText(item);
+      }
       // A url with a control byte left inside: hand it whole to the classifier, which refuses it.
-      if (controlInside && (protocol === 'https:' || protocol === 'http:')) collect(parsed);
+      else if (controlInside && (protocol === 'https:' || protocol === 'http:')) collect(parsed);
       else if (isWholeFetchableValue(parsed, decoded, protocol)) {
         collect(parsed);
         // A url rejoined across a break or space: a consumer splitting on it reads the keys.
@@ -597,13 +676,27 @@ export function opaqueInputUrlsIn(value: unknown) {
       } else pushKeysInText(item);
       if (decoded.left < 0) tooLarge = true;
     } else if (Array.isArray(item)) {
-      for (const child of item) walk(child, depth + 1);
+      const fields = scope && 'list' in scope ? scope.list : undefined;
+      for (const child of item)
+        walk(child, depth + 1, false, text, fields ? { item: fields } : undefined);
     } else if (typeof item === 'object') {
       const record = item as Record<string, unknown>;
+      const itemFields = scope && 'item' in scope ? scope.item : undefined;
       for (const field of Object.keys(record)) {
         if (tooDeep || tooLarge) return;
-        walk(field, depth + 1);
-        walk(record[field], depth + 1);
+        walk(field, depth + 1, false, text);
+        const value = record[field];
+        const listFields = depth === 0 ? textFieldsByList.get(field) : undefined;
+        const kind = itemFields?.get(field);
+        if (listFields && Array.isArray(value))
+          walk(value, depth + 1, false, false, { list: listFields });
+        else
+          walk(
+            value,
+            depth + 1,
+            false,
+            text || kind === 'subtree' || (kind === 'string' && typeof value === 'string')
+          );
       }
     }
   };
@@ -615,8 +708,8 @@ export function opaqueInputUrlsIn(value: unknown) {
  * The one gate on a url a generation reads. Orchestrator blobs pass. A bare key or an image CDN
  * url passes only if every key it carries passes `assertKeysUsable`; a CDN url with no key is
  * refused. Other civitai hosts, non-https and unparseable values are refused. External hosts are
- * refused, except on `EXTERNAL_COUNTED_ENTRIES` while the external-host flag is off, where they
- * are only counted.
+ * refused (with `GENERATION_EXTERNAL_IMAGE_MESSAGE`), except on `EXTERNAL_COUNTED_ENTRIES` while
+ * the external-host flag is off, where they are only counted.
  */
 export async function assertGenerationInputsUsable({
   urls,
@@ -641,9 +734,11 @@ export async function assertGenerationInputsUsable({
   const given = [...new Set(urls.filter((url): url is string => !!url))];
   if (!given.length) return;
   const caller = isApiCaller ? 'api' : 'session';
-  const refuse = (cls: GenerationInputUrlClass) => {
+  /** `pageLink`: a plain link to one of our pages, counted as `external` (`isPlainPageLink`). */
+  const refuse = (cls: GenerationInputUrlClass, pageLink = false) => {
     refusalCounter.inc({ entry, class: cls, caller, mode: 'refuse' });
-    return generationImageUnavailableError();
+    if (pageLink) return imageUrlUnavailableError(GENERATION_PAGE_LINK_MESSAGE);
+    return cls === 'external' ? generationExternalImageError() : generationImageUnavailableError();
   };
 
   const keys = new Set<string>();
@@ -658,13 +753,14 @@ export async function assertGenerationInputsUsable({
       continue;
     }
     let cls = classifyGenerationInputUrl(url);
+    let pageLink = false;
     if (opaqueInput) {
       const asHttps =
         cls === 'invalid' && /^http:/i.test(url)
           ? classifyGenerationInputUrl(url.replace(/^http:/i, 'https:'))
           : cls;
-      if (asHttps === 'external' || (asHttps === 'civitai_other' && isPlainPageLink(url)))
-        cls = 'external';
+      pageLink = asHttps === 'civitai_other' && isPlainPageLink(url);
+      if (asHttps === 'external' || pageLink) cls = 'external';
     }
     if (cls === 'orchestrator') continue;
     if (cls === 'key') {
@@ -687,13 +783,13 @@ export async function assertGenerationInputsUsable({
         mode: refuseExternal ? 'refuse' : 'log',
         userId,
       });
-      if (refuseExternal) throw refuse(cls);
+      if (refuseExternal) throw refuse(cls, pageLink);
       refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });
       // A proxy or wrapper url may carry one of our image keys.
       keysIn(url).forEach((key) => externalKeys.add(key));
       continue;
     }
-    throw refuse(cls);
+    throw refuse(cls, pageLink);
   }
 
   try {

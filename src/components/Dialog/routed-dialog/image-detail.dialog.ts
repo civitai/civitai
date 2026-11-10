@@ -29,11 +29,13 @@ const imageDetailDialog = routedDialogDictionary.addItem('imageDetail', {
     // An image opened from inside the reader (a remix, say) is not in the storyline: drop the
     // reader's params rather than carry them into a URL that no longer names them.
     // `active` is the opener's expanded info sheet; collapsing it is a history `back()`, so
-    // inheriting it would make that pop the new image instead.
+    // inheriting it would make that pop the new image instead. `highlight` is the opener's linked
+    // comment, and it opens the new image's info sheet as well.
     const {
       [STORYLINE_CHAPTER_PARAM]: _chapter,
       [STORYLINE_VIA_PARAM]: _via,
       active: _active,
+      highlight: _highlight,
       ...rest
     } = query as Record<string, unknown>;
     // Props come back from the query on a reload, where the list is a comma string.

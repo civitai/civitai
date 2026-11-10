@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Popover } from '~/components/MantineOverlays';
 import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -11,6 +11,8 @@ import {
   RING_LENGTH,
   RING_RADIUS,
   badgeFigure,
+  creditedForTeam,
+  badgeFill,
   formatMargin,
   badgeLeader,
   ringArcs,
@@ -61,13 +63,17 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
     enabled: !!feed?.arm,
   });
   const [open, setOpen] = useState(false);
+  // An id safe in url(#...) whatever characters React's ids use.
+  const clipId = `turf-fill${useId().replace(/[^\w-]/g, '')}`;
   const leader = summary ? badgeLeader(summary) : null;
   // A hatted image scores for its hat's team alone; a different leader's count is shown as blocked.
   const guard = summary?.hatted ? summary.hattedTeam : null;
   const holder = guard ?? leader;
   const blocked = guard && leader && leader !== guard ? leader : null;
   const stock = useHatStock();
-  const figure = summary ? badgeFigure(summary, feed?.team, stock?.creditedPlayers) : null;
+  // The cap of the team leading this image: what an action here credits.
+  const credited = creditedForTeam(stock, leader);
+  const figure = summary ? badgeFigure(summary, feed?.team, credited) : null;
   const shownCount = figure ? figure.points : null;
   // Pops only when a count the viewer already saw changes, not when the first one arrives. Held in
   // state, not derived per render, so an unrelated re-render mid-animation does not cancel it.
@@ -84,6 +90,9 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const colorOf = (team: string) => teamColor(team) ?? FALLBACK_COLOR;
   const discTeam = figure?.pointsTeam ?? null;
   const discColor = discTeam ? colorOf(discTeam) : summary.hatted ? FALLBACK_COLOR : undefined;
+  // Fills from the bottom toward the scoring cap, over a dimmed disc of the same colour.
+  const fill = figure && discColor ? badgeFill(figure, !!summary.hatted, credited) : 1;
+  const fillTop = 24 + DISC_RADIUS - 2 * DISC_RADIUS * fill;
 
   const label = `${figure?.pointsTeam ? 'Hat Turf:' : standingsLabel(summary, feed.team)}${
     figure ? figureLabel(figure) : ''
@@ -132,13 +141,35 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
             ))}
           </g>
           <circle className={classes.gap} cx="24" cy="24" r={RING_RADIUS - RING_STROKE / 2} />
+          {fill < 1 && (
+            <>
+              <clipPath id={clipId}>
+                <rect
+                  className={classes.level}
+                  x="0"
+                  y={fillTop}
+                  width="48"
+                  height={48 - fillTop}
+                />
+              </clipPath>
+              <circle
+                className={clsx(classes.discFill, classes.discTrack)}
+                cx="24"
+                cy="24"
+                r={DISC_RADIUS}
+                fill={discColor}
+              />
+            </>
+          )}
           <circle
             className={clsx(classes.discFill, !discColor && classes.neutral)}
             cx="24"
             cy="24"
             r={DISC_RADIUS}
             fill={discColor}
+            clipPath={fill < 1 ? `url(#${clipId})` : undefined}
             data-testid="hat-turf-disc-fill"
+            data-fill={fill}
           />
         </svg>
         <span className={classes.disc} data-testid="hat-turf-disc">

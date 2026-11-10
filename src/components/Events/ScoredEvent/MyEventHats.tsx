@@ -1,4 +1,4 @@
-import { Button, Group, Paper, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Button, Center, Group, Paper, SimpleGrid, Stack, Text } from '@mantine/core';
 import { IconHanger, IconPlus } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
@@ -18,6 +18,9 @@ import { numberWithCommas } from '~/utils/number-helpers';
 // rather than reach past it.
 const HAT_ROOM =
   'calc(max(0px, (100cqw - var(--container-size-lg)) / 2) + var(--mantine-spacing-md))';
+
+// Some players hold 200 hats; the grid shows this many more per press. The heading counts them all.
+export const HATS_PAGE_SIZE = 30;
 
 export function MyEventHats({
   event,
@@ -40,6 +43,7 @@ export function MyEventHats({
   const heldBoxes = ended ? boxes.filter((box) => box.heldBoxItemIds.length) : [];
   // Re-reads the clock every half minute, so a hat's Move button unlocks when its cooldown ends.
   const [now, setNow] = useState(() => new Date());
+  const [shown, setShown] = useState(HATS_PAGE_SIZE);
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(timer);
@@ -110,7 +114,7 @@ export function MyEventHats({
         style={{ gridAutoRows: '1fr', '--event-decoration-allowance': HAT_ROOM } as CSSProperties}
         data-testid="my-hats-grid"
       >
-        {hats.map((hat) => (
+        {hats.slice(0, shown).map((hat) => (
           <MyHatCard
             key={`${hat.cosmeticId}:${hat.claimKey}`}
             hat={hat}
@@ -140,6 +144,13 @@ export function MyEventHats({
           </a>
         )}
       </SimpleGrid>
+      {hats.length > shown && (
+        <Center>
+          <Button variant="subtle" size="sm" onClick={() => setShown((n) => n + HATS_PAGE_SIZE)}>
+            Show more
+          </Button>
+        </Center>
+      )}
     </Stack>
   );
 }

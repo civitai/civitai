@@ -168,6 +168,19 @@ vi.mock('~/server/utils/app-block-ids', () => ({
   // claim's seat remediation writes AppOwnershipEvents through `recordOwnershipEvent`.
   newAppOwnershipEventId: () => `aoe_test_${++ids.n}`,
 }));
+// LIVE UNPUBLISH (`app-blocks-live-unpublish`): what the takedown and relist paths hand the shared
+// static server. Its own behaviour (flag, Jobs, readiness list) is pinned in
+// live-unpublish.service.test.ts.
+const live = vi.hoisted(() => ({
+  takeDown: vi.fn(async (_slug: string): Promise<{ liveNote?: string }> => ({})),
+  restore: vi.fn(async (_input: { slug: string; appBlockId: string }) => 'restored' as const),
+}));
+vi.mock('~/server/services/blocks/live-unpublish.service', () => ({
+  takeDownLiveApp: async (slug: string) => (await live.takeDown(slug)) ?? {},
+  restoreLiveAppSoon: (input: { slug: string; appBlockId: string }) => {
+    void Promise.resolve(live.restore(input)).catch(() => undefined);
+  },
+}));
 // Assert owner-notification emission without pulling the notifications client graph.
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({
   notifyAppListingOwner: mockNotify,
@@ -2538,5 +2551,228 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     );
     expect(relistCall?.[0]?.data).not.toHaveProperty('contentRating');
     expect(mockWrite.appListingReport.create).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LIVE UNPUBLISH: every path that suspends a live on-site block also removes it from the shared
+// static server after the takedown commits, and every relist that approves the block again puts it
+// back. The readiness app's store takedown is never refused: only its server-side step is skipped.
+// ---------------------------------------------------------------------------
+const READINESS_NOTE = `${SLUG} keeps serving: it is the static server's readiness app`;
+
+describe('live unpublish on takedown', () => {
+  beforeEach(() => {
+    live.takeDown.mockResolvedValue({});
+  });
+
+  it('ON-SITE mod delist: takes the app down after the delist commits', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    const res = await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    expect(live.takeDown).toHaveBeenCalledWith(SLUG);
+    expect(live.takeDown.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockWrite.appBlock.updateMany.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('OFF-SITE mod delist: nothing to take down (no hosted app)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(live.takeDown).not.toHaveBeenCalled();
+  });
+
+  it('the readiness app: the delist SUCCEEDS as a store delist (no FORBIDDEN) and says it keeps serving', async () => {
+    live.takeDown.mockResolvedValue({ liveNote: READINESS_NOTE });
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    const res = await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed', liveNote: READINESS_NOTE });
+    // The store takedown went through in full.
+    expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'removed' } })
+    );
+    expect(mockWrite.appBlock.updateMany).toHaveBeenCalledWith({
+      where: { id: BLOCK_ID, status: 'approved' },
+      data: { status: 'suspended' },
+    });
+    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.action).toBe('delist');
+  });
+
+  it('a failing live step never fails the delist', async () => {
+    live.takeDown.mockRejectedValue(new Error('k8s down'));
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    const res = await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    expect(live.takeDown).toHaveBeenCalledWith(SLUG);
+  });
+
+  it('ON-SITE owner unpublish: takes the app down after the takedown commits', async () => {
+    mockWrite.appListing.findUnique.mockResolvedValueOnce({
+      userId: OWNER,
+      status: 'approved',
+      kind: 'onsite',
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId: BLOCK_ID,
+      externalUrl: null,
+      connectClientId: null,
+    });
+    const res = await unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
+    expect(live.takeDown).toHaveBeenCalledWith(SLUG);
+  });
+
+  it('owner unpublish of the readiness app: unpublished from the store, with the note', async () => {
+    live.takeDown.mockResolvedValue({ liveNote: READINESS_NOTE });
+    mockWrite.appListing.findUnique.mockResolvedValueOnce({
+      userId: OWNER,
+      status: 'approved',
+      kind: 'onsite',
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId: BLOCK_ID,
+      externalUrl: null,
+      connectClientId: null,
+    });
+    const res = await unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'removed', liveNote: READINESS_NOTE });
+  });
+
+  it('owner unpublish of someone else’s listing: nothing is taken down', async () => {
+    mockWrite.appListing.findUnique.mockResolvedValueOnce({
+      userId: OWNER + 1,
+      status: 'approved',
+      kind: 'onsite',
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId: BLOCK_ID,
+      externalUrl: null,
+      connectClientId: null,
+    });
+    await expect(
+      unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'NOT_OWNED' });
+    expect(live.takeDown).not.toHaveBeenCalled();
+  });
+});
+
+describe('live restore on relist', () => {
+  it('ON-SITE mod relist: re-publishes the app after the relist commits', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('removed'));
+    await relistListing({
+      input: { appListingId: APP_ID, reason: 'appeal upheld' },
+      reviewerUserId: REVIEWER,
+    });
+    expect(live.restore).toHaveBeenCalledTimes(1);
+    expect(live.restore).toHaveBeenCalledWith({ slug: SLUG, appBlockId: BLOCK_ID });
+    expect(live.restore.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockWrite.appBlock.updateMany.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('a failing live restore never fails the relist', async () => {
+    live.restore.mockRejectedValueOnce(new Error('k8s down'));
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('removed'));
+    const res = await relistListing({
+      input: { appListingId: APP_ID, reason: 'appeal upheld' },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(live.restore).toHaveBeenCalledWith({ slug: SLUG, appBlockId: BLOCK_ID });
+    // The rejection is handled where the restore is started: nothing is left unhandled.
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
+  it('OFF-SITE mod relist: nothing to restore', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    await relistListing({
+      input: { appListingId: APP_ID, reason: 'appeal upheld' },
+      reviewerUserId: REVIEWER,
+    });
+    expect(live.restore).not.toHaveBeenCalled();
+  });
+
+  it('ON-SITE relist whose block was not suspended (drift): the block is not approved, nothing restored', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('removed'));
+    mockWrite.appBlock.updateMany.mockResolvedValueOnce({ count: 0 });
+    await relistListing({
+      input: { appListingId: APP_ID, reason: 'appeal upheld' },
+      reviewerUserId: REVIEWER,
+    });
+    expect(live.restore).not.toHaveBeenCalled();
+  });
+
+  it('a relist that fails its guard restores nothing', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    mockWrite.appListing.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(
+      relistListing({
+        input: { appListingId: APP_ID, reason: 'appeal upheld' },
+        reviewerUserId: REVIEWER,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+    expect(live.restore).not.toHaveBeenCalled();
+  });
+
+  function ownerRemovedOnsite() {
+    return {
+      userId: OWNER,
+      status: 'removed',
+      kind: 'onsite',
+      slug: SLUG,
+      name: 'Cool App',
+      appBlockId: BLOCK_ID,
+      externalUrl: null,
+      connectClientId: null,
+    };
+  }
+
+  // Icon + cover set and matching the recorded baseline, so the republish takes the IMMEDIATE arm
+  // (the same fixture shape as the republish scan-gate tests).
+  // Every mock it reads is re-established here: earlier suites (the rating floor's wire())
+  // leave screenshot and image implementations behind, which would make the live assets
+  // differ from this baseline and route the republish to review.
+  function republishImmediately() {
+    mockWrite.appListing.findUnique.mockResolvedValue(withAssets(ownerRemovedOnsite()));
+    mockWrite.appListingScreenshot.findMany.mockResolvedValue([]);
+    mockWrite.image.findMany.mockImplementation(injectIngestion({}));
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue(
+      ownerUnpublishEvent(approvedAssets({ iconId: 1, coverId: 2 }))
+    );
+  }
+
+  it('ON-SITE owner republish (immediate): re-publishes the app', async () => {
+    republishImmediately();
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(live.restore).toHaveBeenCalledWith({ slug: SLUG, appBlockId: BLOCK_ID });
+  });
+
+  it('ON-SITE owner republish whose block was not suspended (drift): nothing restored', async () => {
+    republishImmediately();
+    mockWrite.appBlock.updateMany.mockResolvedValueOnce({ count: 0 });
+    await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(live.restore).not.toHaveBeenCalled();
+  });
+
+  it('owner republish FORBIDDEN after a mod delist: nothing restored', async () => {
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerRemovedOnsite());
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'delist' });
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(live.restore).not.toHaveBeenCalled();
   });
 });

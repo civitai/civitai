@@ -31,7 +31,9 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   useFeatureFlags: () => features,
 }));
 const stock = vi.hoisted(() => ({
-  data: undefined as { creditedPlayers: number; optedIn: boolean } | undefined,
+  data: undefined as
+    | { creditedPlayers: number; creditedByTeam?: Record<string, number>; optedIn: boolean }
+    | undefined,
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
@@ -700,6 +702,51 @@ describe('the badge: points in the dial, the viewer margin beside it', () => {
     expect(badge()!.querySelector('[data-testid="hat-turf-count-cap"]')).toBeNull();
     expect(count()).toBe('6');
     expect(badge()!.getAttribute('aria-label')).toContain('earns 6 points for blue');
+  });
+
+  // The disc is a gauge toward the scoring cap: what the image earns against the most it can.
+  const discLevel = () => {
+    const disc = badge()!.querySelector('[data-testid="hat-turf-disc-fill"]')!;
+    const clip = disc.getAttribute('clip-path');
+    if (!clip) return 1;
+    const rect = badge()!.querySelector(`${clip.slice(4, -1)} rect`)!;
+    // The share of the disc's 28-unit height below the clip's top edge.
+    return (24 + 14 - Number(rect.getAttribute('y'))) / 28;
+  };
+
+  test('the disc fills toward the scoring cap: 2 of 5 is two fifths', async () => {
+    stock.data = { creditedPlayers: 5, optedIn: true };
+    await show(standing({ counted: { blue: 2, pink: 1 } }), 'blue');
+    expect(count()).toBe('2');
+    expect(discLevel()).toBeCloseTo(0.4);
+  });
+
+  test('a leader past the cap fills the disc, never past it', async () => {
+    stock.data = { creditedPlayers: 5, optedIn: true };
+    await show(standing({ counted: { blue: 8 } }), 'blue');
+    expect(discLevel()).toBe(1);
+  });
+
+  test("a hatted image's disc stays solid: its one point is not counted against the cap", async () => {
+    stock.data = { creditedPlayers: 5, optedIn: true };
+    await show(standing({ hatted: true, hattedTeam: 'blue', counted: { blue: 1 } }), 'blue');
+    expect(count()).toBe('1');
+    expect(discLevel()).toBe(1);
+  });
+
+  // Credit is team-relative: the dial says what an action here credits, so the leader's number,
+  // not the viewer's (10 here).
+  test("the dial is capped at the leading team's own credited number", async () => {
+    stock.data = { creditedPlayers: 10, creditedByTeam: { blue: 2, pink: 10 }, optedIn: true };
+    await show(standing({ counted: { blue: 5, pink: 1 } }), 'pink');
+    expect(count()).toBe('2');
+    expect(discLevel()).toBe(1);
+  });
+
+  test("the disc fills against the leading team's own credited number: 1 of 2 is half", async () => {
+    stock.data = { creditedPlayers: 10, creditedByTeam: { blue: 2, pink: 10 }, optedIn: true };
+    await show(standing({ counted: { blue: 1 } }), 'pink');
+    expect(discLevel()).toBeCloseTo(0.5);
   });
 
   test('credit unread: the dial is the leader count', async () => {

@@ -26,6 +26,7 @@ const {
   mockSetCommitStatus,
   mockAppBlockUpdate,
   mockMarkDeploy,
+  mockAfterDeploy,
   attempts,
 } = vi.hoisted(() => {
   /**
@@ -82,6 +83,7 @@ const {
       name: 'apply-job-1',
     })),
     mockWaitApply: vi.fn<(...a: any[]) => Promise<string>>(async () => 'succeeded'),
+    mockAfterDeploy: vi.fn(async (_slug: string) => 'not-suspended'),
     mockSetCommitStatus: vi.fn(async () => undefined),
     mockAppBlockUpdate: vi.fn(async () => undefined),
     mockMarkDeploy: vi.fn<(...a: any[]) => Promise<void>>(async () => undefined),
@@ -144,6 +146,9 @@ vi.mock('~/server/services/blocks/forgejo.service', () => ({
 // helper so we can assert the transitions (the real one writes to the DB).
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   markRequestDeployState: mockMarkDeploy,
+}));
+vi.mock('~/server/services/blocks/live-unpublish.service', () => ({
+  afterLiveDeploy: (slug: string) => mockAfterDeploy(slug),
 }));
 
 import {
@@ -498,6 +503,28 @@ describe('build-callback handler — flag gate + replay guard', () => {
     // Phase 2: the request transitions 'deploying' (apply trigger) → 'live' (watcher).
     expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'deploying');
     expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'live');
+  });
+
+  // A delist while this deploy ran: its unpublish may finish before this publish writes the
+  // pointer back, so a successful deploy re-checks the block (live-unpublish.service).
+  it('a successful deploy re-checks the block for a takedown that raced it; a failed one does not', async () => {
+    mockAfterDeploy.mockClear();
+    mockWaitApply.mockResolvedValue('succeeded');
+    await invoke(signedReq(validSuccessBody()), makeRes());
+    await flush();
+    await vi.waitFor(() => expect(mockAfterDeploy).toHaveBeenCalledWith(SLUG));
+
+    mockAfterDeploy.mockClear();
+    mockMarkDeploy.mockClear();
+    mockWaitApply.mockResolvedValue('failed');
+    mockSetNx.mockClear();
+    await invoke(signedReq(validSuccessBody()), makeRes());
+    // The watcher's last write on a failed deploy: it has run to its end before the check below.
+    await vi.waitFor(() =>
+      expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Deploy failed')
+    );
+    await flush();
+    expect(mockAfterDeploy).not.toHaveBeenCalled();
   });
 
   it('clears the replay slot when triggerApply itself throws — no watcher runs, so the catch must free it', async () => {

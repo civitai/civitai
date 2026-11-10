@@ -10,6 +10,7 @@ import * as z from 'zod';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import {
   readPostDetailViaKysely,
@@ -24,6 +25,11 @@ import {
 } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  announceReviewsInBackground,
+  syncReviewsOfMovedPosts,
+  unreleasedReviewIdsOfPosts,
+} from '~/server/services/resourceReview.visibility';
+import {
   imageMetaCache,
   imageResourcesCache,
   modelVersionAccessCache,
@@ -33,6 +39,7 @@ import {
   userBasicCache,
   userImageVideoCountCaches,
   userPostCountCache,
+  refreshHasReceivedReviews,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
@@ -1171,6 +1178,13 @@ export const updatePost = async ({
   await preventReplicationLag('post', post.id);
   if (publishedAtWritten) await afterPostPublish({ postId: post.id, userId: post.userId });
   else await userPostCountCache.refresh(post.userId);
+  // A scheduled date writes publishedAt too; the scheduled-publishing job releases those reviews.
+  if (publishedAtWritten && post.publishedAt && post.publishedAt <= new Date())
+    syncReviewsOfMovedPosts({
+      change: 'publish',
+      postIds: [post.id],
+      onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+    });
   const textChanged = data.title !== undefined || data.detail !== undefined;
   if (publishedAtWritten || (textChanged && post.publishedAt))
     scanEntityInBackground({ entityType: 'Post', entityId: post.id });
@@ -1247,6 +1261,11 @@ export async function afterPostsPublish(posts: { postId: number; userId: number 
 /** Everything an unpublish needs besides the write: the images leave search, the counts drop. */
 export async function afterPostsUnpublish(posts: { postId: number; userId: number }[]) {
   if (!posts.length) return;
+  syncReviewsOfMovedPosts({
+    change: 'unpublish',
+    postIds: posts.map((post) => post.postId),
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
   void onStorySparkPostsHidden({ postIds: posts.map((post) => post.postId) });
   const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((post) => post.postId) } },
@@ -1285,7 +1304,7 @@ export const deletePost = async ({
     select: { storylineId: true },
   });
 
-  const { post, deletedImages, orphanedImageIds, imageOwnerIds, reported } =
+  const { post, deletedImages, orphanedImageIds, imageOwnerIds, reported, unreleasedReviewIds } =
     await dbWrite.$transaction(
       async (tx) => {
         // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
@@ -1329,6 +1348,9 @@ export const deletePost = async ({
         `;
         }
 
+        // Before the delete, which nulls their `postId` and leaves them public.
+        const unreleasedReviewIds = await unreleasedReviewIdsOfPosts([id], tx);
+
         const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
         DELETE FROM "Post"
         WHERE id = ${id}
@@ -1343,7 +1365,14 @@ export const deletePost = async ({
 
         const imageOwnerIds = uniq(images.map((image) => image.userId));
 
-        return { post, deletedImages, orphanedImageIds, imageOwnerIds, reported };
+        return {
+          post,
+          deletedImages,
+          orphanedImageIds,
+          imageOwnerIds,
+          reported,
+          unreleasedReviewIds,
+        };
       },
       // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
       // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
@@ -1372,6 +1401,10 @@ export const deletePost = async ({
   // remaining record of which documents went stale.
   await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'post-delete' });
   if (sparked) void onStorySparkLost(sparked.storylineId);
+  announceReviewsInBackground({
+    reviewIds: unreleasedReviewIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 
   const deletedImageIds = deletedImages.map((img) => img.id);
 
@@ -2138,6 +2171,7 @@ export const updatePostCollectionTagId = async ({
       tagId: collectionTagId,
     },
   });
+  await bustContestCollectionItemsCache(images.map((i) => i.id));
 };
 
 async function refreshSfwFaceLevels(modelIds: number[]) {

@@ -53,6 +53,7 @@ vi.mock('~/server/redis/caches', () => {
     userPostCountCache: cacheStub(),
   };
 });
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
   createImage: vi.fn(),
   createImageResources: vi.fn(),

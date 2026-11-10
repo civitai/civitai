@@ -62,6 +62,7 @@
     IconChevronLeft,
     IconChevronRight,
     IconExternalLink,
+    IconGift,
   } from '@tabler/icons-svelte';
   import { modelUrl, siteModelUrl } from '$lib/model-url';
   import type { PageData } from './$types';
@@ -1000,6 +1001,16 @@
                           />
                         </span>
                       </button>
+                      {#if data.giftLinksEnabled && version.paidAccessConfig}
+                        <a
+                          href="/models/gifts/{version.id}"
+                          title="Gift links"
+                          aria-label="Gift links for {version.name}"
+                          class="shrink-0 rounded-md p-1 text-dark-2 hover:bg-dark-6 hover:text-white"
+                        >
+                          <IconGift size={16} />
+                        </a>
+                      {/if}
                     </div>
                   </li>
                 {/each}

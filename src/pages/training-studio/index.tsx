@@ -8,7 +8,9 @@ import { Page } from '~/components/AppLayout/Page';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
 import { checkStudioModelLive } from '~/components/Training/studio-model-live';
+import { studioPublishUrl } from '~/components/Training/studio-publish-url';
 import { checkStudioTriggerWord } from '~/components/Training/studio-trigger-word-check';
+import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import { SwitchToClassicTrainerAlert } from '~/components/Training/TrainingStudioSwitch';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -201,6 +203,8 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           canGenerateUnpublished,
           isPaidMember,
           pricingUrl: '/pricing',
+          supportUrl: SUPPORT_LINKS.portal,
+          dataPolicyUrl: '/content/training/data-policy',
           enabledModelFlags,
         },
         hrefFor,
@@ -223,11 +227,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           : undefined,
         // Relative on purpose (same-tab). Not gated on canGenerate — the publish entry guards
         // muted/onboarding itself, and publishing doesn't ride the generation lanes.
-        publishUrl: (req: { workflowId: string; epoch: number }) =>
-          `/models/train/from-orchestrator?${new URLSearchParams({
-            workflowId: req.workflowId,
-            epoch: String(req.epoch),
-          })}`,
+        publishUrl: studioPublishUrl,
         modelPageUrl: (req: { modelId: number }) => `/models/${req.modelId}`,
         modelLive: checkStudioModelLive,
         // The studio's Custom base: open this app's resource-select modal and hand back the picked

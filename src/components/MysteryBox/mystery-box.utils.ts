@@ -58,6 +58,17 @@ export function tierSummaries<C extends OddsContent>(view: OddsView<C>): TierSum
     });
 }
 
+/** The odds of a pack's guaranteed box: the box's own, over only the guaranteed tiers. */
+export function guaranteedTierSummaries<C extends OddsContent>(
+  view: OddsView<C>,
+  guaranteedTierIds: number[]
+) {
+  return tierSummaries({
+    tiers: view.tiers.filter((t) => guaranteedTierIds.includes(t.id)),
+    contents: view.contents.filter((c) => guaranteedTierIds.includes(c.tierId)),
+  });
+}
+
 export function collectedCount(view: Pick<MysteryBoxView, 'contents'>) {
   const left = view.contents.filter((c) => c.left).length;
   return { collected: view.contents.length - left, left, total: view.contents.length };
@@ -67,13 +78,23 @@ export function collectedCount(view: Pick<MysteryBoxView, 'contents'>) {
  * What the viewer can do with a box. Buying needs more left than the boxes they already hold (the
  * purchase refuses otherwise); a held box opens while anything is left.
  */
-export function boxActions(view: Pick<MysteryBoxView, 'contents' | 'heldBoxItemIds' | 'listing'>) {
+export function boxActions(
+  view: Pick<MysteryBoxView, 'contents' | 'heldBoxItemIds' | 'listing'> & {
+    packListing?: MysteryBoxView['packListing'];
+  }
+) {
   const { left } = collectedCount(view);
   const held = view.heldBoxItemIds.length;
+  const pack = view.packListing;
   return {
     complete: left === 0,
     canOpen: held > 0 && left > 0,
     canBuy: !!view.listing && left > held,
+    /** A pack needs its size left beyond the held boxes, and something left in its guaranteed tiers. */
+    canBuyPack:
+      !!pack &&
+      left >= held + pack.size &&
+      view.contents.some((c) => c.left && pack.guaranteedTierIds.includes(c.tierId)),
     /** Held boxes already cover everything left. */
     covered: !!view.listing && held > 0 && left > 0 && left <= held,
   };

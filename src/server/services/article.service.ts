@@ -13,6 +13,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { eventEngine } from '~/server/events';
 import { userArticleCountCache, articleStatCache } from '~/server/redis/caches';
+import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
@@ -36,7 +37,7 @@ import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
 } from '~/server/selectors/cosmetic.selector';
-import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
+import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   articleOwnImageIds,
@@ -96,6 +97,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 import { removeTags } from '~/utils/string-helpers';
+import { removeSpoilers } from '~/utils/html-sanitize-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { articleContentJson } from '~/server/utils/article-content-json';
@@ -195,6 +197,16 @@ const getArticleStatsObject = async (data: { id: number }[]) => {
 export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
 
 export type ArticleGetAll = AsyncReturnType<typeof getArticles>['items'];
+/**
+ * The image a card shows for an article `a`: its cover, else its banner once servable. The article
+ * page hides a banner that is not scanned or awaits review, so a card must not show one either.
+ */
+export const articleCardCoverIdSql = Prisma.sql`COALESCE(
+  a."coverId",
+  (SELECT b.id FROM "Image" b
+    WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL)
+)`;
+
 export const getArticles = async ({
   limit,
   cursor,
@@ -480,7 +492,7 @@ export const getArticles = async ({
       SELECT
         a.id,
         a.cover,
-        a."coverId",
+        ${articleCardCoverIdSql} AS "coverId",
         a.title,
         a."publishedAt",
         a."nsfwLevel",
@@ -548,10 +560,10 @@ export const getArticles = async ({
       if (nextItem) nextCursor = { v: Number(nextItem.cursorV), id: nextItem.id };
     }
 
-    const profilePictures = await dbRead.image.findMany({
-      where: { id: { in: articles.map((a) => a.user.profilePictureId).filter(isDefined) } },
-      select: { ...profileImageSelect, ingestion: true },
-    });
+    const profilePictures = await getServableProfilePictures(
+      dbRead,
+      articles.map((a) => a.user.profilePictureId).filter(isDefined)
+    );
 
     const coverIds = articles.map((x) => x.coverId).filter(isDefined);
     const coverImages = coverIds.length
@@ -663,7 +675,7 @@ export const getCivitaiNews = async () => {
     SELECT
       c.name as "collection",
       a.id,
-      "coverId",
+      ${articleCardCoverIdSql} AS "coverId",
       title,
       content,
       "publishedAt",
@@ -700,7 +712,8 @@ export const getCivitaiNews = async () => {
     return {
       ...article,
       user: user ?? null,
-      summary: article.summary ?? truncate(removeTags(article.content), { length: 200 }),
+      summary:
+        article.summary ?? truncate(removeTags(removeSpoilers(article.content)), { length: 200 }),
       coverImage: coverImage
         ? { ...coverImage, tags: coverImage?.tags.flatMap((x) => x.tag.id) }
         : undefined,
@@ -1954,7 +1967,9 @@ export const deleteArticleById = async ({
       handleLogError(error as Error, 'article-image-cleanup', { articleId: id });
     }
 
-    await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }], {
+      reason: 'delete',
+    });
 
     return deleted;
   } catch (error) {
@@ -2022,27 +2037,24 @@ export async function unpublishArticleById({
   userId: number;
   isModerator?: boolean;
 }) {
-  // Fetch article
-  const db = await getDbWithoutLag('article', id);
-  const article = await db.article.findUnique({
-    where: { id },
-    select: { userId: true, publishedAt: true, status: true },
-  });
-
-  if (!article) throw throwNotFoundError(`No article with id ${id}`);
-
-  // Permission check (defensive, already checked in middleware)
-  const isOwner = article.userId === userId || isModerator;
-  if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
-
-  // State validation
-  if (!article.publishedAt || article.status !== ArticleStatus.Published) {
-    throw throwBadRequestError('Article is not published');
-  }
-
-  // Atomic update with transaction
-  const updated = await dbWrite.$transaction(
+  const { updated, ownerId } = await dbWrite.$transaction(
     async (tx) => {
+      // Read under a row lock, so a block that commits first is seen here and one that comes later
+      // waits for this write and lands on top of it.
+      const [article] = await tx.$queryRaw<
+        { userId: number; publishedAt: Date | null; status: ArticleStatus }[]
+      >`SELECT "userId", "publishedAt", status FROM "Article" WHERE id = ${id} FOR UPDATE`;
+
+      if (!article) throw throwNotFoundError(`No article with id ${id}`);
+
+      // Permission check (defensive, already checked in middleware)
+      const isOwner = article.userId === userId || isModerator;
+      if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
+
+      if (!article.publishedAt || article.status !== ArticleStatus.Published) {
+        throw throwBadRequestError('Article is not published');
+      }
+
       const unpublishedAt = new Date().toISOString();
 
       // Build updated metadata
@@ -2064,25 +2076,27 @@ export async function unpublishArticleById({
       // An old share link must not reopen what a moderator took down.
       if (isModerator) await revokeActiveAccessTokens('Article', id, tx);
 
-      // Update article status and metadata
-      return await tx.article.update({
+      const updated = await tx.article.update({
         where: { id },
         data: {
           status: reason ? ArticleStatus.UnpublishedViolation : ArticleStatus.Unpublished,
           metadata: updatedMetadata,
         },
       });
+      return { updated, ownerId: article.userId };
     },
     { timeout: 30000, maxWait: 10000 }
   );
 
   // Update search index (remove from public search)
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }], {
+    reason: 'edit',
+  });
 
   // Bust user content cache
-  await userArticleCountCache.refresh(article.userId);
+  await userArticleCountCache.refresh(ownerId);
   await preventReplicationLag('article', id);
-  await preventReplicationLag('userArticles', article.userId);
+  await preventReplicationLag('userArticles', ownerId);
 
   return updated;
 }
@@ -3036,9 +3050,10 @@ export async function dispatchArticleIngestionPostCommit(
 
   // Sync search index — the index filters on ingestion = 'Scanned', so any
   // ingestion state change must be reflected (add when Scanned, remove otherwise).
-  await articlesSearchIndex.queueUpdate([
-    { id: articleId, action: SearchIndexUpdateQueueAction.Update },
-  ]);
+  await articlesSearchIndex.queueUpdate(
+    [{ id: articleId, action: SearchIndexUpdateQueueAction.Update }],
+    { reason: 'ingestion' }
+  );
 
   if (publishedNotificationUserId !== null) {
     await createNotification({
@@ -3126,9 +3141,10 @@ export async function resolveArticleImageScan({
 
   await resolveIngestionError({ id: imageId, nsfwLevel, userId });
   await recomputeArticleIngestion(articleId);
-  await articlesSearchIndex.queueUpdate([
-    { id: articleId, action: SearchIndexUpdateQueueAction.Update },
-  ]);
+  await articlesSearchIndex.queueUpdate(
+    [{ id: articleId, action: SearchIndexUpdateQueueAction.Update }],
+    { reason: 'image-scan' }
+  );
 }
 
 const RESCAN_LIMIT = 3;
@@ -3234,7 +3250,9 @@ export async function rescanArticle({
   await preventReplicationLag('userArticles', article.userId);
 
   // Remove from search index immediately — article should not be searchable while rescanning.
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }], {
+    reason: 'edit',
+  });
 
   // --- Re-link content images (picks up new images, queues Pending ones) ---
   if (article.content) {
@@ -3527,7 +3545,9 @@ export const setArticleOfficial = async ({
 
   // The index document spreads `articleDetailSelect`, which now carries `isOfficial`, so
   // a stale document would keep serving the old provenance to search.
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }], {
+    reason: 'edit',
+  });
 
   return updated;
 };

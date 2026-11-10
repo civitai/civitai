@@ -41,6 +41,10 @@ import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/blo
 import { PUBLISHED_NS, reviewNamespace } from '~/server/services/apps/doc-store';
 import type { DocStoreContext } from '~/server/services/apps/doc-store.types';
 import {
+  enforcedManifestOf,
+  type EnforcedManifest,
+} from '~/server/services/apps/doc-store-schema-major';
+import {
   docStoreDependency,
   docStoreUnavailable,
   DocStoreError,
@@ -85,6 +89,13 @@ export type StorageAccess = {
   importedFrom?: string;
   /** With `importedFrom`: the import's access. A `read` import refuses every write. */
   importAccess?: 'read' | 'readwrite';
+  /**
+   * The approved app's enforced manifest (`app_blocks.manifest`) that `collections` were parsed
+   * from, with its row's revision — the source app's, through an import. What a production
+   * write's schema major is derived against (`doc-store-schema-major.ts`). Unset for a review
+   * token.
+   */
+  enforcedManifest?: EnforcedManifest;
 };
 
 const notEligible = (reason: string, message: string) =>
@@ -216,7 +227,7 @@ export async function resolveStorageAccess(
   const row = await dependency(
     dbRead.appBlock.findUnique({
       where: { id: approval.appBlockId },
-      select: { manifest: true },
+      select: { manifest: true, updatedAt: true },
     })
   );
   return {
@@ -224,6 +235,7 @@ export async function resolveStorageAccess(
     tokenKind: claims.dev === true ? 'dev' : isHubTokenClaims(claims) ? 'hub' : 'app',
     ctx: { appId: approval.appBlockId, ns, viewerUid },
     ...declaredStorage(approval.appBlockId, row?.manifest),
+    enforcedManifest: enforcedManifestOf(row),
   };
 }
 
@@ -277,7 +289,7 @@ export async function resolveImportAccess(
   const source = await dependency(
     dbRead.appBlock.findUnique({
       where: { blockId: from },
-      select: { id: true, status: true, manifest: true },
+      select: { id: true, status: true, manifest: true, updatedAt: true },
     })
   );
   if (!source || source.status !== 'approved') {
@@ -361,5 +373,6 @@ export async function resolveImportAccess(
     maxBrowsingLevel: consumer.maxBrowsingLevel,
     importedFrom: from,
     importAccess: declared.access,
+    enforcedManifest: enforcedManifestOf(source),
   };
 }

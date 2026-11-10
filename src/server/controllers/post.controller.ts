@@ -45,7 +45,7 @@ import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
-import { getHeldGalleryLevel } from '~/server/services/model.service';
+import { getHeldGalleryLevel, isModelGalleryWithheld } from '~/server/services/model.service';
 import { Flags } from '~/shared/utils/flags';
 import type { GetByIdInput } from './../schema/base.schema';
 import type {
@@ -85,12 +85,19 @@ export const getPostsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
-    // A minor or SFW-only model's posts are served only at its gallery's held level, except to
-    // moderators, who must see what they may need to remove.
-    const heldLevel =
-      ctx.user?.isModerator && isSessionOrFullUserKey(ctx)
-        ? undefined
-        : await getHeldGalleryLevel({ ...input, postIds: input.ids });
+    // A minor or SFW-only model's posts are served only at its gallery's held level, and a
+    // taken-down model's only to its owner, except to moderators, who must see what they may need
+    // to remove.
+    const selector = { ...input, postIds: input.ids };
+    const moderator = !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
+    const ownerId = ctx.user && isSessionOrFullUserKey(ctx) ? ctx.user.id : undefined;
+    const [heldLevel, withheld] = moderator
+      ? [undefined, false]
+      : await Promise.all([
+          getHeldGalleryLevel(selector),
+          isModelGalleryWithheld(selector, ownerId),
+        ]);
+    if (withheld) return { items: [], nextCursor: undefined };
     if (heldLevel !== undefined) {
       const browsingLevel = Flags.intersection(input.browsingLevel, heldLevel);
       // The feed reads 0 as no filter, so an empty intersection is an empty page.
@@ -609,15 +616,23 @@ export const updatePostHandler = async ({
   }
 };
 
+/**
+ * The post as `post.get` serves it, or NOT_FOUND unless the viewer may see it: `getPostDetail`'s
+ * visibility plus the owner's block of a non-moderator viewer.
+ */
+async function assertPostVisibleToViewer({ id, user }: GetByIdInput & { user?: Context['user'] }) {
+  const post = await getPostDetail({ id, user });
+  if (!post) throw throwNotFoundError();
+  if (user && !user.isModerator) {
+    const blocked = await amIBlockedByUser({ userId: user.id, targetUserId: post.user.id });
+    if (blocked) throw throwNotFoundError();
+  }
+  return post;
+}
+
 export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
-    const post = await getPostDetail({ ...input, user: ctx.user });
-    if (!post) throw throwNotFoundError();
-
-    if (ctx.user && !ctx.user.isModerator) {
-      const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: post.user.id });
-      if (blocked) throw throwNotFoundError();
-    }
+    const post = await assertPostVisibleToViewer({ ...input, user: ctx.user });
 
     // "Published with <app>" chip. Resolved HERE rather than inside
     // `getPostDetail` for two reasons: this is the single tRPC read the post
@@ -830,8 +845,15 @@ export const removePostTagHandler = async ({
 // #endregion
 
 // #region [post resources]
-export const getPostResourcesHandler = async ({ input }: { input: GetByIdInput }) => {
+export const getPostResourcesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
+    await assertPostVisibleToViewer({ ...input, user: ctx.user });
     const resources = await getPostResources({ ...input });
 
     return resources.filter((x) => x.name !== 'vae');

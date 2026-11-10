@@ -1038,6 +1038,7 @@ export const OutboxEntity = {
   Model: 'Model',
   Post: 'Post',
   ModelVersion: 'ModelVersion',
+  Comic: 'Comic',
 } as const;
 export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];
 export const StorylineStatus = {
@@ -1114,6 +1115,7 @@ export type ServiceDealEventType = (typeof ServiceDealEventType)[keyof typeof Se
 export const ServiceDealFileKind = {
   Preview: 'Preview',
   Final: 'Final',
+  Attachment: 'Attachment',
 } as const;
 export type ServiceDealFileKind = (typeof ServiceDealFileKind)[keyof typeof ServiceDealFileKind];
 export const ServiceDealFileStatus = {

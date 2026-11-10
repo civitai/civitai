@@ -1,6 +1,7 @@
 import { fail, type RequestEvent } from '@sveltejs/kit';
 import { z } from 'zod';
 import { int4Id, parseForm } from '../query';
+import { AppealRestoreRefusedError, APPEAL_RESTORE_REFUSED } from '../image-moderation.service';
 import { classifyAppeal } from '$lib/tickets/appeals';
 import {
   NOT_PERMITTED,
@@ -97,12 +98,19 @@ export function createTicketAppealActions(deps: AppealWriteDeps) {
       const reason = deps.parseReason(ok.form, input.status);
       if (typeof reason === 'string') return fail(400, { error: reason });
 
-      const closed = await deps.resolve({
-        imageId: appeal.entityId,
-        status: input.status,
-        ...reason,
-        userId: event.locals.user.id,
-      });
+      let closed;
+      try {
+        closed = await deps.resolve({
+          imageId: appeal.entityId,
+          status: input.status,
+          ...reason,
+          userId: event.locals.user.id,
+        });
+      } catch (e) {
+        if (e instanceof AppealRestoreRefusedError)
+          return fail(409, { error: APPEAL_RESTORE_REFUSED });
+        throw e;
+      }
       if (!closed) return fail(409, { error: DECIDED });
       // `resolve` closes whichever appeal is pending on the image, which may not be the one posted.
       // The change is made either way, so it is reported and noted, never failed.

@@ -275,6 +275,22 @@ export async function listStickerPlacementRows(
     .execute();
 }
 
+/** Tracks of the approved placements on one image. Never joined to the listing: a track dwarfs its row. */
+export async function listPlacementTrackRows(
+  db: Kysely<DB>,
+  input: { surface: string; targetType: string; targetId: number }
+) {
+  return db
+    .selectFrom('Placement')
+    .select(['id', 'targetId', 'data', 'track'])
+    .where('surface', '=', input.surface)
+    .where('targetType', '=', input.targetType)
+    .where('targetId', '=', input.targetId)
+    .where('status', '=', 'approved')
+    .where('track', 'is not', null)
+    .execute();
+}
+
 /** Approved placements on these targets, for the per-image counts. Unordered, as the source was. */
 export async function listApprovedPlacementRows(
   db: Kysely<DB>,

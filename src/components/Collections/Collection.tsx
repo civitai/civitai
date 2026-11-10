@@ -2,6 +2,7 @@ import type { ContainerProps } from '@mantine/core';
 import {
   ActionIcon,
   AspectRatio,
+  Badge,
   Box,
   Button,
   Center,
@@ -151,6 +152,7 @@ const ModelCollection = ({
         status: undefined,
         earlyAccess: undefined,
         hidePaid: undefined,
+        onSale: undefined,
         view: undefined,
         supportsGeneration: undefined,
         followed: undefined,
@@ -768,6 +770,11 @@ export function Collection({
                         <Title order={1} lineClamp={1} className={classes.title}>
                           {collection?.name ?? 'Loading...'}
                         </Title>
+                        {collection?.archivedAt && (
+                          <Badge color="gray" variant="light" radius="sm">
+                            Archived
+                          </Badge>
+                        )}
                         {submissionPeriod}
                       </Group>
                       {collection?.description && (

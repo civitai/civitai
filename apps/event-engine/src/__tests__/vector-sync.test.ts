@@ -2486,7 +2486,7 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
   };
 
   // An outage (or an expired queue) used to mark every image failed and let the caller move on.
-  test.each(['failed', 'expired', 'canceled'])(
+  test.each(['expired', 'canceled'])(
     'a %s workflow with no step succeeded is re-submitted, not dropped',
     async (status) => {
       let posts = 0;
@@ -2517,11 +2517,48 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     expect(result.failed).toEqual([]);
   });
 
-  test('a workflow that keeps failing ends as counted failures, without an error that would stall the caller', async () => {
+  // Reconcile 2026-11-09: one old image whose media 404s fails all 16 steps of its workflow.
+  // Retried as an outage, the same batch was re-submitted for 15 minutes and the bucket stalled.
+  test('a failed workflow with no step succeeded is split until the bad input is isolated, not re-submitted whole', async () => {
+    const submitted: string[][] = [];
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      const ids = stepIds(init);
+      submitted.push(ids);
+      return ids.includes('5') ? failedWorkflow(init, 'failed') : ok(init, 50);
+    }) as unknown as typeof fetch;
+    const result = await clocked(fetchImpl).e.embed(inputs(16));
+    expect(result.failed).toEqual([5]);
+    expect([...result.vectors.keys()].sort((a, b) => a - b)).toEqual(
+      inputs(16)
+        .map((i) => Number(i.id))
+        .filter((id) => id !== 5)
+    );
+    const asKeys = submitted.map((ids) => ids.join(','));
+    expect(new Set(asKeys).size).toBe(asKeys.length); // no batch sent twice
+    expect(submitted).toHaveLength(9); // 16, then halves 8+8, 4+4, 2+2, 1+1
+    expect(result.error).toBeUndefined();
+  });
+
+  // Deliberate: a 'failed' workflow is treated as bad inputs, never as an outage, so an outage that
+  // reports 'failed' is bisected (2N-1 workflows) and counted failed for reconcile to retry. If
+  // you are adding outage retry back for 'failed', the 404 batch above must still not stall.
+  test('a failed workflow where every input fails ends with all of them failed after one bisection', async () => {
     let posts = 0;
     const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
       posts++;
       return failedWorkflow(init, 'failed');
+    }) as unknown as typeof fetch;
+    const result = await clocked(fetchImpl).e.embed(inputs(4));
+    expect(posts).toBe(7);
+    expect(result.failed.sort()).toEqual([1, 2, 3, 4]);
+    expect(result.error).toBeUndefined();
+  });
+
+  test('a workflow that keeps expiring ends as counted failures, without an error that would stall the caller', async () => {
+    let posts = 0;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      posts++;
+      return failedWorkflow(init, 'expired');
     }) as unknown as typeof fetch;
     const result = await clocked(fetchImpl).e.embed(inputs(2));
     expect(posts).toBe(3); // maxRetries 2

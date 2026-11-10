@@ -107,3 +107,36 @@ describe('the idle hat call to action', () => {
     expect(cta(render([hat()], true))).toBeNull();
   });
 });
+
+// Some players hold 200 hats: the grid pages 30 at a time, the heading still counts every hat.
+describe('Your hats paging', () => {
+  const many = (n: number, over: (i: number) => Record<string, unknown> = () => ({})) =>
+    Array.from({ length: n }, (_, i) => hat({ cosmeticId: 100 + i, points: i + 1, ...over(i) }));
+  const cards = (el: Element) => el.querySelectorAll('[data-testid="my-hat"]').length;
+  const showMore = (el: Element) =>
+    [...el.querySelectorAll('button')].find((b) => b.textContent === 'Show more');
+
+  it('31 hats: 30 cards and Show more, then all 31 and no button, totals over all 31', () => {
+    const el = render(many(31));
+    expect(cards(el)).toBe(30);
+    // 1 + 2 + ... + 31 = 496; the first 30 alone would be 465.
+    expect(el.textContent).toContain('31 hats · 496 points');
+    act(() => showMore(el)!.click());
+    expect(cards(el)).toBe(31);
+    expect(showMore(el)).toBeUndefined();
+    expect(el.textContent).toContain('31 hats · 496 points');
+  });
+
+  it('no Show more at 30 hats', () => {
+    const el = render(many(30));
+    expect(cards(el)).toBe(30);
+    expect(showMore(el)).toBeUndefined();
+  });
+
+  it('offers the idle hat even when it is past the first 30', () => {
+    const el = render(many(32, (i) => (i < 31 ? { moveCooldownLeftMs: 10 * 60_000 } : {})));
+    expect(cta(el)).not.toBeNull();
+    act(() => cta(el)!.querySelector('button')!.click());
+    expect(trigger.mock.calls[0][0].props.hat.cosmeticId).toBe(131);
+  });
+});

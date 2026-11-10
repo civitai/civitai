@@ -192,6 +192,12 @@ describe('getTurfStickers paging', () => {
     expect((await getTurfStickers('e', 900, PLACER)).nextCursor).toBeNull();
   });
 
+  it('serves the draw ceiling, 24 when the event sets none', async () => {
+    serve(drawn(LIMIT));
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([]);
+    expect((await getTurfStickers('e', 900, PLACER)).drawCeiling).toBe(24);
+  });
+
   it('a later page asks only for stickers older than the cursor, and not for mine', async () => {
     dbMock.dbRead.$queryRaw.mockResolvedValueOnce([]);
     const before = { createdAt: '2026-11-05T11:00:00.123Z', id: BigInt(4242) };

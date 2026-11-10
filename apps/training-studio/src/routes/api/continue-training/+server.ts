@@ -7,6 +7,7 @@ import {
   MatureAckRequiredError,
   type ContinueOpts,
 } from '$lib/server/train';
+import { TrainingBatchValidationError } from '$lib/train-core';
 import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
 
 function parse(v: string | null): number | null {
@@ -30,6 +31,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
   try {
     return json(await continueTrainingWhatIf(token, locals.user.id, opts));
   } catch (err) {
+    if (err instanceof TrainingBatchValidationError) error(400, err.message);
     console.warn('[training-studio] continue whatif failed', err);
     error(502, err instanceof Error ? err.message : 'Could not price the continuation.');
   }
@@ -66,6 +68,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
       ),
     });
   } catch (err) {
+    if (err instanceof TrainingBatchValidationError) error(400, err.message);
     if (err instanceof MatureAckRequiredError)
       error(409, { message: err.message, matureCount: err.matureCount });
     throwTextCheckHttpError(err);

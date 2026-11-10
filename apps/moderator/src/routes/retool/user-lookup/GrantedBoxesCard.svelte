@@ -5,7 +5,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
-  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+  import { ConfirmButton } from '@civitai/ui/components/confirm/index.js';
   import type { FormState } from '$lib/form-state.svelte';
   import { dateTime } from '$lib/format';
   import { MAX_BOXES_PER_USER, newBoxGrantId } from '$lib/mystery-box';

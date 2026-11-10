@@ -8,6 +8,7 @@ import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
 import { isV3WriteSurface } from '~/server/services/commentv3/write.service';
 import { onReactionCreated, onReactionRemoved } from '~/server/events/points/hooks';
+import type { EventPointGrant } from '~/server/events/points/award';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 
@@ -62,11 +63,14 @@ export const toggleReaction = async ({
   reaction,
   isModerator,
   eventPoints = true,
+  onEventPoints,
 }: ToggleReactionInput & {
   userId: number;
   isModerator?: boolean;
   // False for automated accounts (the challenge judge): event points are for people engaging.
   eventPoints?: boolean;
+  // Handed the created reaction's live event-point grants, which resolve before the ledger write.
+  onEventPoints?: (grants: Promise<EventPointGrant[]>) => void;
 }) => {
   if (!(await claimToggleWindow({ entityType, entityId, userId, reaction }))) return 'ignored';
   if (entityType === 'comment' && (await isV3WriteComment(entityId)))
@@ -81,7 +85,11 @@ export const toggleReaction = async ({
     // Enforce on create only — a user blocked after reacting can still un-react.
     await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
     await createReaction({ entityType, entityId, userId, reaction });
-    if (eventPoints) void onReactionCreated({ entityType, entityId, userId });
+    if (eventPoints) {
+      const grants = onReactionCreated({ entityType, entityId, userId });
+      // Awaiting is optional: the award runs to the end either way.
+      if (onEventPoints) onEventPoints(grants);
+    }
     return 'created';
   }
 };
@@ -146,11 +154,6 @@ const getReaction = async ({
   // A stale hit is handled downstream: deleteReaction reports 0 rows.
   const db = await getDbWithoutLag();
   switch (entityType) {
-    case 'commentOld':
-      return await db.commentReaction.findFirst({
-        where: { userId, reaction, commentId: entityId },
-        select: { id: true },
-      });
     case 'comment':
       return await db.commentV2Reaction.findFirst({
         where: { userId, reaction, commentId: entityId },
@@ -204,12 +207,6 @@ const deleteReaction = async ({
   userId: number;
 }) => {
   switch (entityType) {
-    case 'commentOld': {
-      const { count } = await dbWrite.commentReaction.deleteMany({
-        where: { commentId: entityId, userId, reaction },
-      });
-      return count;
-    }
     case 'comment': {
       const { count } = await dbWrite.commentV2Reaction.deleteMany({
         where: { commentId: entityId, userId, reaction },
@@ -260,11 +257,6 @@ const createReaction = async ({
   ...data
 }: ToggleReactionInput & { userId: number }) => {
   switch (entityType) {
-    case 'commentOld':
-      return await dbWrite.commentReaction.create({
-        data: { ...data, commentId: entityId },
-        select: { reaction: true },
-      });
     case 'comment':
       return await dbWrite.commentV2Reaction.create({
         data: { ...data, commentId: entityId },

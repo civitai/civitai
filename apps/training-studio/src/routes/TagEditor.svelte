@@ -2,6 +2,7 @@
   import { IconX } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { autoLabelAvailable } from '$lib/host';
   import { isTriggerTag, tagsHaveTrigger, withTags } from './trainingFlow';
 
   // `draft` is bindable so the label editor can commit a half-typed tag when it steps to the next image.
@@ -63,7 +64,11 @@
   {/if}
   {#if tags.length === 0}
     <span class="self-center font-mono text-xs text-dark-2">
-      {compact ? 'No tags yet' : 'No tags yet — type below, paste comma-separated, or re-run auto-label.'}
+      {compact
+        ? 'No tags yet'
+        : autoLabelAvailable()
+          ? 'No tags yet — type below, paste comma-separated, or re-run auto-label.'
+          : 'No tags yet — type below or paste comma-separated.'}
     </span>
   {/if}
   {#each tags as t (t)}

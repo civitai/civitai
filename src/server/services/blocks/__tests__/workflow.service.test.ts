@@ -54,6 +54,7 @@ import { getRecipe, REGISTERED_RECIPE_IDS } from '../recipes';
 import {
   getStepByOrchestratorType,
   listRegisteredSteps,
+  NATIVE_STEP_OUTPUT_KEY,
   NATIVELY_EXTRACTED_STEP_TYPES,
   postureProducesMedia,
   type AnyBlockStep,
@@ -352,6 +353,7 @@ describe('snapshotFromWorkflow', () => {
     expect(snap.imageUrls).toEqual(['https://cdn/gen.png']);
   });
 
+  // A comfy step's output is `{ blobs }` (ComfyOutput), never `{ images }`.
   it('surfaces images from a comfy step', () => {
     const wf = fakeWorkflow({
       steps: [
@@ -360,7 +362,9 @@ describe('snapshotFromWorkflow', () => {
           name: 's1',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'c1', url: 'https://cdn/comfy.png', available: true }] },
+          output: {
+            blobs: [{ id: 'c1', type: 'image', url: 'https://cdn/comfy.png', available: true }],
+          },
         },
       ],
     });
@@ -391,7 +395,9 @@ describe('snapshotFromWorkflow', () => {
           name: 's3',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'b', url: 'https://cdn/b.png', available: true }] },
+          output: {
+            blobs: [{ id: 'b', type: 'image', url: 'https://cdn/b.png', available: true }],
+          },
         },
       ],
     });
@@ -2221,6 +2227,172 @@ describe('projectAppWorkflow: customComfy blobs', () => {
       cost: 47,
       createdAt: '2026-07-17T00:00:00.000Z',
     });
+  });
+
+  it('carries numeric width/height from a customComfy blob, null otherwise', () => {
+    const wf = fakeWorkflow({
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'customComfy',
+          name: 'block-custom-comfy',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            blobs: [
+              {
+                id: 'p1',
+                type: 'image',
+                url: 'https://cdn/sized.png',
+                available: true,
+                width: 2048,
+                height: 1024,
+              },
+              {
+                id: 'p2',
+                type: 'image',
+                url: 'https://cdn/unsized.png',
+                available: true,
+                width: '2048',
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(
+      projectAppWorkflow(wf as never).images.map(({ url, width, height }) => ({
+        url,
+        width,
+        height,
+      }))
+    ).toEqual([
+      { url: 'https://cdn/sized.png', width: 2048, height: 1024 },
+      { url: 'https://cdn/unsized.png', width: null, height: null },
+    ]);
+  });
+});
+
+// Fixtures carry ONLY blobs, as the orchestrator returns for a comfy step.
+describe('comfy step blobs (output.blobs, not .images)', () => {
+  const comfyWorkflow = () =>
+    fakeWorkflow({
+      id: 'wf_comfy',
+      createdAt: '2026-11-07T00:00:00.000Z',
+      status: 'succeeded',
+      cost: { total: 12 },
+      steps: [
+        {
+          $type: 'comfy',
+          name: BLOCK_STEP_NAME,
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            blobs: [
+              {
+                id: 'c1',
+                type: 'image',
+                url: 'https://cdn/comfy-1.jpeg',
+                available: true,
+                nsfwLevel: 'pg13',
+              },
+              {
+                id: 'c2',
+                type: 'image',
+                url: 'https://cdn/comfy-2.jpeg',
+                available: true,
+                nsfwLevel: 'pg',
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+  it('snapshotFromWorkflow surfaces every available comfy blob url, in order', () => {
+    expect(snapshotFromWorkflow(comfyWorkflow() as never).imageUrls).toEqual([
+      'https://cdn/comfy-1.jpeg',
+      'https://cdn/comfy-2.jpeg',
+    ]);
+  });
+
+  it('projectAppWorkflow projects comfy blobs to images with the mapped nsfwLevel', () => {
+    expect(projectAppWorkflow(comfyWorkflow() as never).images).toEqual([
+      {
+        url: 'https://cdn/comfy-1.jpeg',
+        width: null,
+        height: null,
+        nsfwLevel: nsfwLevelFromContentRating('pg13'),
+      },
+      {
+        url: 'https://cdn/comfy-2.jpeg',
+        width: null,
+        height: null,
+        nsfwLevel: nsfwLevelFromContentRating('pg'),
+      },
+    ]);
+  });
+
+  it('excludes comfy blobs that are unavailable, blocked or url-less on BOTH read surfaces', () => {
+    const wf = fakeWorkflow({
+      id: 'wf_comfy_mixed',
+      createdAt: '2026-11-07T00:00:00.000Z',
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'comfy',
+          name: BLOCK_STEP_NAME,
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            blobs: [
+              { id: 'ok', type: 'image', url: 'https://cdn/ok.jpeg', available: true },
+              { id: 'pending', type: 'image', url: 'https://cdn/pending.jpeg', available: false },
+              {
+                id: 'blocked',
+                type: 'image',
+                url: 'https://cdn/blocked.jpeg',
+                available: false,
+                blockedReason: 'moderation',
+              },
+              { id: 'nourl', type: 'image', url: null, available: true },
+              { id: 'empty', type: 'image', url: '', available: true },
+            ],
+          },
+        },
+      ],
+    });
+    expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/ok.jpeg']);
+    expect(projectAppWorkflow(wf as never).images.map((i) => i.url)).toEqual([
+      'https://cdn/ok.jpeg',
+    ]);
+  });
+
+  it('yields nothing for a comfy step whose blobs are ALL unavailable', () => {
+    const wf = fakeWorkflow({
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'comfy',
+          name: BLOCK_STEP_NAME,
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            blobs: [{ id: 'x', type: 'image', url: 'https://cdn/x.jpeg', available: false }],
+          },
+        },
+      ],
+    });
+    expect(snapshotFromWorkflow(wf as never).imageUrls).toBeUndefined();
+    expect(projectAppWorkflow(wf as never).images).toEqual([]);
+  });
+
+  // INVARIANT GUARD (not regression coverage): every natively extracted `$type`
+  // has a declared output key, and no key exists for a non-native `$type`.
+  it('NATIVE_STEP_OUTPUT_KEY covers exactly NATIVELY_EXTRACTED_STEP_TYPES', () => {
+    expect(Object.keys(NATIVE_STEP_OUTPUT_KEY).sort()).toEqual(
+      [...NATIVELY_EXTRACTED_STEP_TYPES].sort()
+    );
   });
 });
 

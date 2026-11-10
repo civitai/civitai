@@ -5,7 +5,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 /**
  * 🔴 THE HOOK BOTH ITS CONSUMERS MOCK.
  *
- * `AssistantButton` and `SupportMenu` each replace `useAssistantAvailable` in their
+ * `FloatingHelpMenu` and `SupportMenu` each replace `useAssistantAvailable` in their
  * own suites — correctly, they are testing themselves — with the result that the
  * three-condition derivation it exists to centralise executed in NO test. Dropping
  * `|| !features.assistant` turned CivBot's footer button and its menu item on for

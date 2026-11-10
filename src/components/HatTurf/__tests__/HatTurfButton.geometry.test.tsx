@@ -5,6 +5,8 @@ import type * as CardStickerOverlayModule from '~/components/Sticker/CardSticker
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as BrowserSettingsModule from '~/providers/BrowserSettingsProvider';
 import type * as TrackUtilsModule from '~/components/TrackView/track.utils';
+import type * as ImageContextMenuModule from '~/components/Image/ContextMenu/ImageContextMenu';
+import type * as CardRemixButtonModule from '~/components/Image/Remix/CardRemixButton';
 
 const features = {
   stickerPlacement: false,
@@ -84,10 +86,23 @@ vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
 vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
   useImagesContext: () => ({ getImages: () => [] }),
 }));
-vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
-  ImageContextMenu: () => null,
-}));
-vi.mock('~/components/Image/Remix/CardRemixButton', () => ({ CardRemixButton: () => null }));
+// The header's buttons are real only where a test measures them (the +N chip below).
+const header = { real: false };
+vi.mock('~/components/Image/ContextMenu/ImageContextMenu', async (importOriginal) => {
+  const real = await importOriginal<typeof ImageContextMenuModule>();
+  return {
+    ...real,
+    ImageContextMenu: (props: Parameters<typeof real.ImageContextMenu>[0]) =>
+      header.real ? <real.ImageContextMenu {...props} /> : null,
+  };
+});
+vi.mock('~/components/Image/Remix/CardRemixButton', async (importOriginal) => {
+  const real = await importOriginal<typeof CardRemixButtonModule>();
+  return {
+    CardRemixButton: (props: Parameters<typeof real.CardRemixButton>[0]) =>
+      header.real ? <real.CardRemixButton {...props} /> : null,
+  };
+});
 vi.mock('~/components/UserAvatar/UserAvatarSimple', () => ({
   UserAvatarSimple: () => <span>user</span>,
 }));
@@ -159,7 +174,17 @@ const image = {
   stats: { likeCountAllTime: 1082, heartCountAllTime: 12400, tippedAmountCountAllTime: 25000 },
 } as unknown as Parameters<typeof ImageCard>[0]['data'];
 
-async function renderCard() {
+type TurfSummaries = NonNullable<React.ContextType<typeof TurfSummaryContext>>['images'];
+type TurfStickers = NonNullable<React.ContextType<typeof TurfSummaryContext>>['stickers'];
+
+async function renderCard(
+  viewport: { width: number; height: number } = PHONE_VIEWPORT,
+  {
+    width = 171,
+    images = {},
+    stickers = {},
+  }: { width?: number; images?: TurfSummaries; stickers?: TurfStickers } = {}
+) {
   useHatTurfStore.setState({ cosmeticId: null, showHats: true });
   await renderAtViewport(
     <TurfSummaryContext.Provider
@@ -167,20 +192,20 @@ async function renderCard() {
         event: 'birthday2026',
         arm: 'control',
         team: 'blue',
-        images: {},
+        images,
         open: {},
-        stickers: {},
+        stickers,
         joined: true,
         watch: () => () => undefined,
       }}
     >
       <IntersectionObserverProvider>
-        <div style={{ width: 171 }}>
+        <div style={{ width }} data-testid="card-frame">
           <ImageCard data={image} />
         </div>
       </IntersectionObserverProvider>
     </TurfSummaryContext.Provider>,
-    PHONE_VIEWPORT
+    viewport
   );
   await vi.waitFor(() =>
     expect(document.body.querySelector('[data-testid="hat-turf-gear"] svg')).not.toBeNull()
@@ -222,4 +247,113 @@ describe('Hat Turf button geometry on a feed card', () => {
       }
     }
   );
+
+  // Seen on a phone: "Show hats" sat at the row's left and its switch at the far right, too small
+  // to hit. The switch comes first and its label right after it, and on a phone the switch is
+  // bigger in a tap row taller than it. A 44px row in the panel's 12px pad then read as too much
+  // padding around one switch, so the space above and below the switch is bounded too.
+  test.each([
+    ['phone', PHONE_VIEWPORT],
+    ['desktop', { width: 1280, height: 800 }],
+  ] as const)(
+    'Show hats in the panel: switch first, its label beside it (%s)',
+    async (name, vp) => {
+      await renderCard(vp);
+      (document.body.querySelector('[data-testid="hat-turf-gear"]') as HTMLElement).click();
+      await vi.waitFor(() =>
+        expect(document.body.querySelector('[data-testid="hat-turf-show-hats"]')).not.toBeNull()
+      );
+      // The phone panel is a sheet that slides up: measure it at rest.
+      await new Promise((r) => setTimeout(r, 600));
+      await nextLayout();
+      // The test id lands on the switch's input; measure from its root.
+      const root = document.body
+        .querySelector('[data-testid="hat-turf-show-hats"]')!
+        .closest('.mantine-Switch-root')!;
+      const track = root.querySelector('.mantine-Switch-track')!.getBoundingClientRect();
+      const label = root.querySelector('.mantine-Switch-label')!;
+      const text = document.createRange();
+      text.selectNodeContents(label);
+      const words = text.getBoundingClientRect();
+      expect(track.right).toBeLessThanOrEqual(words.left);
+      expect(words.left - track.right).toBeLessThan(16);
+      const body = root.querySelector('.mantine-Switch-body')!.getBoundingClientRect();
+      if (name === 'phone') {
+        expect(body.height).toBeGreaterThanOrEqual(32);
+        expect(track.height).toBeGreaterThanOrEqual(24);
+        // From the divider above the row to the switch, and from the switch to the sheet's edge.
+        const pad = root.parentElement!.getBoundingClientRect();
+        expect({ above: track.top - pad.top, below: pad.bottom - track.bottom }).toEqual({
+          above: expect.toSatisfy((px: number) => px <= 14),
+          below: expect.toSatisfy((px: number) => px <= 14),
+        });
+        // The whole row takes the tap: a press near its bottom edge, under the label, flips it.
+        const hit = document.elementFromPoint(words.left + 4, body.bottom - 2) as HTMLElement;
+        expect(hit.closest('label')).not.toBeNull();
+        hit.click();
+        await vi.waitFor(() => expect(useHatTurfStore.getState().showHats).toBe(false));
+      } else {
+        expect(track.height).toBeLessThan(24);
+      }
+    }
+  );
+});
+
+// Feedback: the "+N" hats chip sat at the card's top right, under the Remix button the card's
+// header stacks below its menu, so it could not be seen.
+describe('the +N hats chip on a feed card', () => {
+  const overlaps = (a: DOMRect, b: DOMRect) =>
+    a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+
+  test.each([171, 260, 320])('clears the Remix and menu buttons at %spx', async (width) => {
+    features.imageGeneration = true;
+    header.real = true;
+    try {
+      await renderCard(
+        { width: 1280, height: 800 },
+        {
+          width,
+          images: {
+            [image.id]: {
+              shown: { blue: 6, pink: 4 },
+              counted: { blue: 6, pink: 4 },
+              leader: 'blue',
+              leaderCosmeticId: 11,
+              hatted: true,
+              hattedTeam: null,
+            },
+          },
+          stickers: {
+            [image.id]: [1, 2].map((id) => ({
+              id,
+              userId: 10 + id,
+              team: 'blue',
+              cosmeticId: 11,
+              data: { x: 0.3 * id, y: 0.6, scale: 0.2, rotation: 0, flip: false },
+            })),
+          },
+        }
+      );
+      const q = (selector: string) => document.body.querySelector(selector);
+      await vi.waitFor(() => expect(q('[data-testid="hat-turf-more"]')).not.toBeNull());
+      const chip = q('[data-testid="hat-turf-more"]')!.getBoundingClientRect();
+      expect(chip.width).toBeGreaterThan(0);
+      const remix = q('[data-activity="remix:image-card-home"]')!;
+      expect(remix.getBoundingClientRect().width).toBeGreaterThan(0);
+      // The header's right column: the menu button with Remix under it.
+      const column = remix.closest('.flex-col')!.getBoundingClientRect();
+      expect(column.height).toBeGreaterThan(remix.getBoundingClientRect().height);
+      expect(overlaps(chip, column), 'the +N chip is under the menu or Remix button').toBe(false);
+      // It moves to the left, under the badge row there.
+      const badge = q('[data-testid="hat-turf-count"]')!.getBoundingClientRect();
+      expect(badge.width).toBeGreaterThan(0);
+      expect(overlaps(chip, badge), 'the +N chip is under the Hat Turf badge').toBe(false);
+      const frame = q('[data-testid="card-frame"]')!.getBoundingClientRect();
+      expect(chip.left).toBeGreaterThanOrEqual(frame.left);
+      expect(chip.right).toBeLessThanOrEqual(frame.right);
+    } finally {
+      features.imageGeneration = false;
+      header.real = false;
+    }
+  });
 });

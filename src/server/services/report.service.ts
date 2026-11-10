@@ -430,6 +430,9 @@ export const createReport = async ({
   // only mods can create csam reports
   if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
 
+  if (type === ReportEntity.Comment)
+    throw throwBadRequestError('Report a comment with the commentV3 type and its comment id.');
+
   // User-only on purpose: reporting your own content is how a creator contests a
   // rating, so this must not widen to other entity types.
   if (type === ReportEntity.User && id === userId)
@@ -1575,6 +1578,22 @@ export async function resolveEntityAppeal({
   /** 'flag' leaves a model's pending lock review, which is ruled on by its own path, open. */
   modelAppealKind?: 'flag';
 }) {
+  // An approval never restores an image blocked for CSAM: refused whole, and every appeal stays
+  // Pending. Read on the primary just before the claim, so a CSAM block landing between this read
+  // and the claim is not seen. The only live Image-approval caller is `handleUnblockImages`, after
+  // an explicit unblock.
+  if (entityType === EntityType.Image && status === AppealStatus.Approved && ids.length) {
+    const held = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Image" WHERE id = ANY(${ids}::int[]) AND "blockedFor" = ${BlockedReason.CSAM}
+    `;
+    if (held.length)
+      throw throwBadRequestError(
+        `Image ${held
+          .map((h) => h.id)
+          .join(', ')} is removed, and approving its appeal cannot put it back`
+      );
+  }
+
   // One statement claims the appeals: a concurrent resolution that already closed one gets nothing
   // back for it, so only one of them refunds.
   const appeals = await dbWrite.appeal.updateManyAndReturn({
