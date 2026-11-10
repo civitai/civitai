@@ -3,10 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/mocks/db.mock';
 
 /**
- * `civitai_provider_download_total` must exist at 0 before a pod serves its first provider
- * download. A series created at 1 is invisible to `increase()`, so an alert on the increase would
- * miss one download per new (pod, provider, result, visibility) series. Seeding runs from the
- * `/api/metrics` handler, so these tests go through it.
+ * `civitai_provider_download_total` must be scraped at 0 before its first provider download:
+ * `increase()` cannot see a series whose first scraped value is above 0, so every download before
+ * it would go uncounted. Seeding runs from the `/api/metrics` handler, so these tests go through it.
  */
 
 const { mockGetLiveProviderTokens } = vi.hoisted(() => ({ mockGetLiveProviderTokens: vi.fn() }));
@@ -20,13 +19,15 @@ vi.mock('~/server/services/provider-download/provider-token.store', () => ({
 
 const token = (provider: string) => ({ provider, hash: `h-${provider}`, hourlyCeiling: 100 });
 
-async function scrape() {
+async function scrape(): Promise<string> {
   const mod = await import('~/pages/api/metrics');
   const handler = mod.default as unknown as (
     req: unknown,
     res: { setHeader: (k: string, v: string) => void; send: (body: string) => void }
   ) => Promise<void>;
-  await handler({}, { setHeader: () => undefined, send: () => undefined });
+  let body = '';
+  await handler({}, { setHeader: () => undefined, send: (b: string) => (body = b) });
+  return body;
 }
 
 type Row = { value: number; labels: Record<string, string> };
@@ -53,7 +54,10 @@ beforeEach(() => {
 describe('/api/metrics seeds civitai_provider_download_total', () => {
   it('a scrape publishes every reachable series at 0 for each live provider and unknown', async () => {
     mockGetLiveProviderTokens.mockResolvedValue([token('acme'), token('acme'), token('beta')]);
-    await scrape();
+    const body = await scrape();
+    expect(body).toContain(
+      'civitai_provider_download_total{provider="beta",result="granted",visibility="nonpublic"} 0'
+    );
     expect(await series()).toEqual({
       ...reachable('acme'),
       ...reachable('beta'),
@@ -78,7 +82,7 @@ describe('/api/metrics seeds civitai_provider_download_total', () => {
 
   it('a failed token read still seeds unknown and does not fail the scrape', async () => {
     mockGetLiveProviderTokens.mockRejectedValue(new Error('db down'));
-    await expect(scrape()).resolves.toBeUndefined();
+    await expect(scrape()).resolves.toContain('civitai_provider_download_total');
     expect(await series()).toEqual({ 'unknown/refused_401/unknown': 0 });
   });
 });

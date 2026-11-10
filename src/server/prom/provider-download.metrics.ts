@@ -51,10 +51,11 @@ const REACHABLE: ReadonlyArray<[ProviderDownloadResult, ProviderDownloadVisibili
 ];
 
 /**
- * Publishes every series a download can reach at 0, for each live provider and for `unknown`. A
- * series created at 1 is invisible to `increase()`, so a first download on a pod would not count.
- * Called on every scrape, so a newly minted provider is seeded before its first download in all
- * but the scrape it was minted in. Never throws.
+ * Publishes every series a download can reach at 0, for each live provider and for `unknown`.
+ * `increase()` cannot see a series whose first scraped value is above 0, so unseeded, every download
+ * a pod served before that series' first scrape went uncounted. Called on every scrape, so what is
+ * still missed is the downloads before a pod's first scrape, and those of a provider before the
+ * first scrape after it was minted. Never throws.
  */
 export async function seedProviderDownloadMetrics() {
   try {
