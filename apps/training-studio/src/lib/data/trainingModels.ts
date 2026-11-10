@@ -1319,12 +1319,14 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
+  // Not the main app's 32/32, which Anima LoRA creators report as too large: 16/16 here, 8/8 for
+  // characters (`NETWORK_SIZE_BY_LORA_TYPE`).
   anima: {
     epochs: 5,
     unetLr: 1e-4,
     textEncoderLr: 0,
-    networkDim: 32,
-    networkAlpha: 32,
+    networkDim: 16,
+    networkAlpha: 16,
     resolution: 1024,
     batchSize: 1,
     noiseOffset: 0,
@@ -1576,10 +1578,25 @@ function batchMaxForCard(cardType: string): number {
   return 1;
 }
 
+/** Network dim/alpha per LoRA type, by version key, over that version's `PARAM_DEFAULTS`. */
+const NETWORK_SIZE_BY_LORA_TYPE: Record<
+  string,
+  Partial<Record<string, Pick<RunParamDefaults, 'networkDim' | 'networkAlpha'>>>
+> = {
+  anima: { character: { networkDim: 8, networkAlpha: 8 } },
+};
+
 /** The advanced-param defaults for a chosen version (falls back to the card's primary version, then the
- *  modern-caption base — so a "Custom…" pick still gets sensible per-family values). */
-export function paramsForVersion(card: ModelCard, versionKey: string): RunParamDefaults {
-  return PARAM_DEFAULTS[versionKey] ?? PARAM_DEFAULTS[card.versions[0]!.key] ?? PARAM_FALLBACK;
+ *  modern-caption base — so a "Custom…" pick still gets sensible per-family values), sized for the
+ *  LoRA type where that version's network size depends on it. */
+export function paramsForVersion(
+  card: ModelCard,
+  versionKey: string,
+  loraType = ''
+): RunParamDefaults {
+  const key = PARAM_DEFAULTS[versionKey] ? versionKey : card.versions[0]!.key;
+  const defaults = PARAM_DEFAULTS[key] ?? PARAM_FALLBACK;
+  return { ...defaults, ...NETWORK_SIZE_BY_LORA_TYPE[key]?.[loraType] };
 }
 
 /**
