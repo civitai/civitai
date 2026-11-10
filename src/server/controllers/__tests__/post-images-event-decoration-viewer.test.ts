@@ -69,3 +69,27 @@ describe('getInfiniteImagesHandler for a post', () => {
     }
   );
 });
+
+// The feed with no post goes to the index when the index feed is on.
+describe('getInfiniteImagesHandler on the index feed', () => {
+  it.each([
+    ['a session', session, true],
+    ['a scoped token', scopedKey, false],
+  ])('names the viewer (moderator on %s)', async (_label, credential, isModerator) => {
+    await getInfiniteImagesHandler({
+      input: { limit: 10, include: [], browsingLevel: 1 } as never,
+      ctx: {
+        user: moderator,
+        ...credential,
+        features: { imageIndexFeed: true },
+        req: { headers: {} },
+      } as never,
+    });
+    expect(getAllImages).not.toHaveBeenCalled();
+    expect(getAllImagesIndex).toHaveBeenCalledTimes(1);
+    const [arg] = getAllImagesIndex.mock.calls[0] as unknown as [
+      { eventDecorationViewer?: unknown }
+    ];
+    expect(arg.eventDecorationViewer).toEqual({ id: 5, isModerator });
+  });
+});
