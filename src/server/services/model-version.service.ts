@@ -2061,7 +2061,6 @@ export const publishModelVersionById = async ({
       name: true,
       baseModel: true,
       publishedAt: true,
-      status: true,
       meta: true,
       model: {
         select: {
@@ -2131,6 +2130,11 @@ export const publishModelVersionById = async ({
       const downed = await readDownedVersion(tx, id, 'update');
       if (enforceTakedown && downed)
         throw throwAuthorizationError('You are not authorized to publish this model version');
+      // Under the lock: a replica read can still show a version the owner just published as Draft.
+      const [stored] = await tx.$queryRaw<{ status: ModelStatus }[]>`
+        SELECT status FROM "ModelVersion" WHERE id = ${id}
+      `;
+      const isLive = stored?.status === ModelStatus.Published;
 
       let updatedVersion;
       if (status === ModelStatus.Published && paidAccessGate) {
@@ -2155,8 +2159,7 @@ export const publishModelVersionById = async ({
           data: {
             // A live version stays live: put back to Scheduled with its past date, the job would
             // re-release it at once, taking a scheduled model with it.
-            status:
-              currentVersion.status === ModelStatus.Published ? ModelStatus.Published : status,
+            status: isLive ? ModelStatus.Published : status,
             meta,
             availability: currentVersion.model.availability,
           },

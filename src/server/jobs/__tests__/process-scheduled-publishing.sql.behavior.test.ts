@@ -8,9 +8,10 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 // The job's own SQL, run against an in-process Postgres: what a run publishes, and what it engages.
 
-const { mockProcessEngagement, mockSparkRestored } = vi.hoisted(() => ({
+const { mockProcessEngagement, mockSparkRestored, jobDate } = vi.hoisted(() => ({
   mockProcessEngagement: vi.fn(),
   mockSparkRestored: vi.fn(),
+  jobDate: { lastRun: new Date(0) },
 }));
 
 // Hand-listed rather than spread via importOriginal, as in process-scheduled-publishing.rewards.test:
@@ -46,7 +47,7 @@ vi.mock('~/server/services/article-schedule.service', () => ({
 vi.mock('~/server/services/text-scan/submit', () => ({ scanEntitiesInBackground: vi.fn() }));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
-  getJobDate: async () => [new Date(0), vi.fn()] as const,
+  getJobDate: async () => [jobDate.lastRun, vi.fn()] as const,
 }));
 
 const { processScheduledPublishing } = await import('~/server/jobs/process-scheduled-publishing');
@@ -128,6 +129,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  jobDate.lastRun = new Date(0);
   mockProcessEngagement.mockReset();
   mockSparkRestored.mockReset();
   beforeTx = undefined;
@@ -379,6 +381,15 @@ describe('processScheduledPublishing :: a model dated after its first version', 
     await pg.db.query(`INSERT INTO "ModelFile" ("modelVersionId") VALUES (11)`);
     beforeTx = () =>
       pg.db.exec(`UPDATE "ModelVersion" SET status = 'UnpublishedViolation' WHERE id = 11`);
+    await runJob();
+    expect(await model()).toEqual({ status: 'Scheduled', publishedAt: FUTURE });
+    expect(engaged('model')).toEqual([]);
+  });
+
+  // Put back to Scheduled with the date it already went live on (unpublished, then rescheduled).
+  it('keeps the model Scheduled when its version is due only by an old date', async () => {
+    await modelDatedAfterFirstVersion({ v1Status: 'Scheduled' });
+    jobDate.lastRun = new Date(PAST.getTime() + 60_000);
     await runJob();
     expect(await model()).toEqual({ status: 'Scheduled', publishedAt: FUTURE });
     expect(engaged('model')).toEqual([]);

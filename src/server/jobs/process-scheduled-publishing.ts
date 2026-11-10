@@ -35,6 +35,7 @@ import { notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 type ScheduledEntity = {
   id: number;
   userId: number;
+  publishedAt?: Date;
   extras?: { modelId: number; hasEarlyAccess?: boolean; earlyAccessEndsAt?: Date } & MixedObject;
 };
 
@@ -69,6 +70,7 @@ export const scheduledVersionsDueSql = (now: Date) => Prisma.sql`
   SELECT
     mv.id,
     m."userId",
+    mv."publishedAt",
     JSON_BUILD_OBJECT(
       'modelId', m.id,
       'hasEarlyAccess', EXISTS (
@@ -323,8 +325,8 @@ export const processScheduledPublishing = createJob(
       }
     }
 
-    const versionModels = scheduledModelVersions.flatMap(({ id, userId, extras }) =>
-      extras?.modelId ? [{ versionId: id, modelId: extras.modelId, userId }] : []
+    const versionModels = scheduledModelVersions.flatMap(({ id, userId, publishedAt, extras }) =>
+      extras?.modelId ? [{ versionId: id, modelId: extras.modelId, userId, publishedAt }] : []
     );
 
     // What the UPDATEs below actually published, with each post's owner as of the write: they
@@ -404,9 +406,14 @@ export const processScheduledPublishing = createJob(
           }
         }
 
+        // Only a version whose date came due since the last run: one put back to Scheduled with an
+        // old date it already went live on is published again at once, not on a schedule.
         const releasedWithVersionIds = uniq(
           versionModels
-            .filter(({ versionId }) => publishedVersions.has(versionId))
+            .filter(
+              ({ versionId, publishedAt }) =>
+                publishedVersions.has(versionId) && !!publishedAt && publishedAt > lastRun
+            )
             .map(({ modelId }) => modelId)
         );
         const releasedModelIds = uniq([

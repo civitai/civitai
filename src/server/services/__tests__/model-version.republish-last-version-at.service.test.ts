@@ -183,16 +183,22 @@ describe('a future-dated publish of a version', () => {
     expect(writtenStatus()).toBe('Scheduled');
   });
 
+  // The replica still reads the version as a Draft; the read under the lock says it is live.
   it('leaves a live version live', async () => {
-    dbMock.dbRead.modelVersion.findUniqueOrThrow.mockResolvedValue({
-      ...storedVersion,
-      status: 'Published',
-    } as never);
-    await publishModelVersionById({
-      id: VERSION_ID,
-      publishedAt: future(),
-      enforceTakedown: false,
-    });
+    const original = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('SELECT status FROM "ModelVersion"')
+        ? [{ status: 'Published' }]
+        : []) as never);
+    try {
+      await publishModelVersionById({
+        id: VERSION_ID,
+        publishedAt: future(),
+        enforceTakedown: false,
+      });
+    } finally {
+      dbMock.dbWrite.$queryRaw.mockImplementation(original as never);
+    }
     expect(writtenStatus()).toBe('Published');
   });
 });

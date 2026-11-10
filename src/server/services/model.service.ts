@@ -5079,14 +5079,15 @@ export const publishModelById = async ({
       // Anti-bump guard: publishedAt is set only while NULL (Draft) or future (Scheduled); once
       // public it never moves. Never later than the earliest scheduled version, the one the model
       // goes live with; a live version may have been published at once, ahead of the model's date,
-      // so it does not count. Must run after the version writes.
+      // and a Scheduled one already past its date went live before, so neither counts. Must run
+      // after the version writes.
       await tx.$executeRaw`
         UPDATE "Model" m
         SET "publishedAt" = LEAST(
           ${publishedAt},
           (
             SELECT MIN(mv."publishedAt") FROM "ModelVersion" mv
-            WHERE mv."modelId" = m.id AND mv.status = 'Scheduled'
+            WHERE mv."modelId" = m.id AND mv.status = 'Scheduled' AND mv."publishedAt" > NOW()
           )
         )
         WHERE m.id = ${id}

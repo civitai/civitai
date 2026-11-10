@@ -226,6 +226,13 @@ describe('publishModelById :: the date of a scheduled model', () => {
     expect(await modelDate()).toEqual(at(-2));
   });
 
+  // Unpublished after going live, then rescheduled: it keeps the date it went live on.
+  it('ignores a rescheduled version still carrying a past date', async () => {
+    await seed(at(3), [[V1, 'Unpublished', at(-1)]]);
+    await publishModelById({ id: MODEL_ID, versionIds: [V1], publishedAt: at(5) });
+    expect(await modelDate()).toEqual(at(5));
+  });
+
   it('dates a Draft model at its first scheduled version', async () => {
     await seed(null, [[V1, 'Draft', null]]);
     await publishModelById({ id: MODEL_ID, versionIds: [V1], publishedAt: at(2) });
