@@ -312,6 +312,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
+  // Variant flag for the mini model-version endpoint's epoch arm on Private versions: `log` logs
+  // the caller class, `enforce` also withholds the epoch url from callers outside it. Any other
+  // answer (no match, unknown variant, Flipt unreachable) is off.
+  MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
   // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
   // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:
