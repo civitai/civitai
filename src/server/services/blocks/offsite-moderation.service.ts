@@ -3,7 +3,10 @@ import type { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 // Light (its heavy dependencies are dynamic imports), so imported statically.
-import { restoreLiveApp, takeDownLiveApp } from '~/server/services/blocks/live-unpublish.service';
+import {
+  restoreLiveAppSoon,
+  takeDownLiveApp,
+} from '~/server/services/blocks/live-unpublish.service';
 import {
   assertAcceptedAppDeveloperTermsTrpc,
   assertListingOwnerAcceptedAppDeveloperTerms,
@@ -564,17 +567,6 @@ async function takeDownLiveAppAfterCommit(slug: string): Promise<{ liveNote?: st
   return takeDownLiveApp(slug).catch(() => ({}));
 }
 
-/**
- * LIVE RESTORE, after a relist COMMITS and the block is approved again: when this platform took
- * the app off the shared static server (its takedown marker), re-publish its approved build so it
- * serves again, whatever the `app-blocks-live-unpublish` flag says now. With no marker, nothing.
- * Fire-and-forget and reported on failure; a failed restore keeps the marker, so the next relist
- * runs it again.
- */
-function restoreLiveAppSoon(slug: string, appBlockId: string): void {
-  void restoreLiveApp({ slug, appBlockId }).catch(() => undefined);
-}
-
 export type DelistListingResult = {
   appListingId: string;
   status: 'removed';
@@ -808,7 +800,7 @@ export async function relistListing(opts: {
   await bustAppListingCatalogCache().catch(() => undefined);
   // The block is approved again (not on drift): put the app back on the shared static server.
   if (isOnsite && listing.appBlockId && !onsiteBlockRestoreDrift) {
-    restoreLiveAppSoon(listing.slug, listing.appBlockId);
+    restoreLiveAppSoon({ slug: listing.slug, appBlockId: listing.appBlockId });
   }
 
   return { appListingId: input.appListingId, status: 'approved' };
@@ -2194,7 +2186,7 @@ export async function republishOwnListing(opts: {
   // IMMEDIATE arm: serve the app again. The review arm leaves the block suspended, and
   // `approveExternalRequest` puts the app back when it un-suspends the block.
   const restore = liveRestore as { slug: string; appBlockId: string } | null;
-  if (restore) restoreLiveAppSoon(restore.slug, restore.appBlockId);
+  if (restore) restoreLiveAppSoon(restore);
 
   // 🔴 The narrowing is on the LOCAL, not on a re-read: `reviewReason` is assigned inside
   // the transaction callback and TypeScript cannot see through the closure, so it is

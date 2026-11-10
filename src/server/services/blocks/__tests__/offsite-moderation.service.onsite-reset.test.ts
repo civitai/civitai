@@ -37,7 +37,9 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
     appBlockPublishRequest: { create: vi.fn(async (a: { data: unknown }) => a.data) },
     appListingModerationEvent: { create: vi.fn(async (a: { data: unknown }) => a.data) },
   };
-  write.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) => cb(write));
+  write.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) =>
+    cb(write)
+  );
   const read: ReadMock = {
     appListing: { findUnique: vi.fn(async () => null) },
     appBlockPublishRequest: { findFirst: vi.fn(async () => null) },
@@ -51,7 +53,9 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
-vi.mock('~/server/services/blocks/app-listing-notify', () => ({ notifyAppListingOwner: mockNotify }));
+vi.mock('~/server/services/blocks/app-listing-notify', () => ({
+  notifyAppListingOwner: mockNotify,
+}));
 // LIVE UNPUBLISH (`app-blocks-live-unpublish`): what the reset hands the shared static server
 // after it commits. Its own behaviour (flag, Jobs, readiness list) is pinned in
 // live-unpublish.service.test.ts.
@@ -60,7 +64,7 @@ const live = vi.hoisted(() => ({
 }));
 vi.mock('~/server/services/blocks/live-unpublish.service', () => ({
   takeDownLiveApp: (slug: string) => live.takeDown(slug),
-  restoreLiveApp: async () => 'not-taken-down',
+  restoreLiveAppSoon: () => undefined,
 }));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingModerationEventId: () => `alme_test_${++ids.n}`,
