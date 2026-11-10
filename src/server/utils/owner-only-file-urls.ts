@@ -65,6 +65,25 @@ export function ownerOnlyFileUrls<TData, TInput = unknown>(
   });
 }
 
-export function withoutFileUrls<T extends { url?: unknown }>(files: T[] | null | undefined) {
-  return files?.map((file) => ({ ...file, url: undefined })) ?? files;
+/** Everyone else's view of a file: no storage `url`, and no training epoch URLs in its metadata. */
+export function withoutFileUrls<T extends { url?: unknown; metadata?: unknown }>(
+  files: T[] | null | undefined
+) {
+  return (
+    files?.map((file) => ({
+      ...file,
+      url: undefined,
+      ...('metadata' in file ? { metadata: withoutEpochFields(file.metadata) } : {}),
+    })) ?? files
+  );
+}
+
+const EPOCH_FIELDS = ['trainingResults', 'selectedEpochUrl'];
+
+/** File metadata without the training epoch URLs, which are the owner's alone. */
+export function withoutEpochFields<M>(metadata: M): M {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return metadata;
+  const copy = { ...(metadata as Record<string, unknown>) };
+  for (const key of EPOCH_FIELDS) delete copy[key];
+  return copy as M;
 }
