@@ -4,6 +4,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Audit from '~/utils/metadata/audit';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as ImageService from '~/server/services/image.service';
+import type * as ModRules from '~/server/utils/mod-rules';
+import type * as NotificationService from '~/server/services/notification.service';
 
 /**
  * A block on a banned owner's image is the ban's decision, so a clean scan result that lands
@@ -26,8 +28,12 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getImagesModRules: vi.fn(async () => []),
 }));
-vi.mock('~/server/utils/mod-rules', () => ({ evaluateRules: vi.fn(() => undefined) }));
-vi.mock('~/server/services/notification.service', () => ({
+vi.mock('~/server/utils/mod-rules', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModRules>()),
+  evaluateRules: vi.fn(() => undefined),
+}));
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
   createNotification: vi.fn(async () => undefined),
 }));
 vi.mock('../../../../event-engine-common/services/metrics', () => ({

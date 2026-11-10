@@ -225,6 +225,7 @@ describe('NCMEC image upload', () => {
       ...imageRow(501),
       userId: FEEDBACK_CAPTURE_OWNER_ID,
       metadata: { feedbackCapture: { feedbackId: 9, reporterId } },
+      meta: { prompt: 'a page' },
     });
     // The stand-in ignores the WHERE: the reporter's upload row comes back whoever is asked about.
     const uploadRowsForAnyone = () => {
@@ -250,6 +251,7 @@ describe('NCMEC image upload', () => {
         `Email: user@example.invalid\n${FEEDBACK_CAPTURE_UPLOAD_IP_NOTE}`
       );
       expect(fileInfo()?.[0]).toBe(FEEDBACK_CAPTURE_FILE_NOTE);
+      expect(fileInfo()).toHaveLength(2);
     });
 
     it("never files its reporter's upload IP as another subject's", async () => {
@@ -262,9 +264,10 @@ describe('NCMEC image upload', () => {
       expect(reported.ipCaptureEvent).toEqual([]);
       expect(reported.additionalInfo).toBe('Email: user@example.invalid');
       expect(fileInfo()?.[0]).toBe(FEEDBACK_CAPTURE_FILE_NOTE);
+      expect(fileInfo()).toHaveLength(2);
     });
 
-    it('is the only file marked as a capture (control)', async () => {
+    it('marks no ordinary file as a capture (control)', async () => {
       uploadRowsForAnyone();
 
       await processCsamReport(report);

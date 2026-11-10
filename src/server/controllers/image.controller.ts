@@ -1,3 +1,4 @@
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { TRPCError } from '@trpc/server';
 import {
   ImageSort,
@@ -271,21 +272,23 @@ export const setTosViolationHandler = async ({
         )
       );
 
-      await createNotification({
-        userId: image.userId,
-        type: 'tos-violation',
-        category: NotificationCategory.System,
-        key: `tos-violation:image:${crypto.randomUUID()}`,
-        details: {
-          modelName: image.post?.title ?? `post #${image.postId as number}`,
-          entity: 'image',
-          url: `/images/${id}`,
-          // Only the moderator's own choice — the inferred fallback below is a classification for
-          // analytics, and telling someone their image broke a rule the moderator never picked is
-          // worse than telling them nothing.
-          ...(violationType ? { reason: tosReasonUserMessage(violationType) } : {}),
-        },
-      }).catch();
+      // A capture's owner stands for no one, and its reporter is not told either.
+      if (!isFeedbackCaptureOwner(image.userId))
+        await createNotification({
+          userId: image.userId,
+          type: 'tos-violation',
+          category: NotificationCategory.System,
+          key: `tos-violation:image:${crypto.randomUUID()}`,
+          details: {
+            modelName: image.post?.title ?? `post #${image.postId as number}`,
+            entity: 'image',
+            url: `/images/${id}`,
+            // Only the moderator's own choice — the inferred fallback below is a classification for
+            // analytics, and telling someone their image broke a rule the moderator never picked is
+            // worse than telling them nothing.
+            ...(violationType ? { reason: tosReasonUserMessage(violationType) } : {}),
+          },
+        }).catch();
     }
 
     await clearReviewFlagsOnBlock([id]);

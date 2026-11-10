@@ -232,16 +232,14 @@ export function CsamImageCard({
   const { ref, inView } = useInView();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  // Selected under the report's subject. A feedback page capture is owned by the capture account,
-  // not the subject, and its shown record names that owner.
-  const ownerId = image.userId;
-  const userId = useCsamSubjectId() ?? ownerId;
+  // Under the report's subject: a feedback page capture on it is owned by the capture account.
+  const userId = useCsamSubjectId() ?? image.userId;
   const imageId = image.id;
   const checked = useCsamImageSelectStore((state) => state.selected[userId]?.[imageId] ?? false);
   const preselected = useCsamImageSelectStore((state) => !!state.seeded[`${userId}:${imageId}`]);
   const shownRow = useCsamImageSelectStore((state) => state.shownRows[`${userId}:${imageId}`]);
   const record = (action: 'open' | 'select', rendition: ShownRendition) =>
-    void recordShown({ imageId, userId: ownerId, action, rendition }).then((ok) =>
+    void recordShown({ imageId, userId, action, rendition }).then((ok) =>
       useCsamImageSelectStore.getState().setShownRow(userId, imageId, ok ? 'recorded' : 'refused')
     );
   // What the tile has put on screen so far; a selection made before then is not recorded.
