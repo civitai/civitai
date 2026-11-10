@@ -515,9 +515,14 @@ describe('build-callback handler — flag gate + replay guard', () => {
     await vi.waitFor(() => expect(mockAfterDeploy).toHaveBeenCalledWith(SLUG));
 
     mockAfterDeploy.mockClear();
+    mockMarkDeploy.mockClear();
     mockWaitApply.mockResolvedValue('failed');
     mockSetNx.mockClear();
     await invoke(signedReq(validSuccessBody()), makeRes());
+    // The watcher's last write on a failed deploy: it has run to its end before the check below.
+    await vi.waitFor(() =>
+      expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Deploy failed')
+    );
     await flush();
     expect(mockAfterDeploy).not.toHaveBeenCalled();
   });

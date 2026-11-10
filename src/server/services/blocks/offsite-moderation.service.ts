@@ -568,7 +568,8 @@ async function takeDownLiveAppAfterCommit(slug: string): Promise<{ liveNote?: st
  * LIVE RESTORE, after a relist COMMITS and the block is approved again: when this platform took
  * the app off the shared static server (its takedown marker), re-publish its approved build so it
  * serves again, whatever the `app-blocks-live-unpublish` flag says now. With no marker, nothing.
- * Fire-and-forget, reported on failure, never retried.
+ * Fire-and-forget and reported on failure; a failed restore keeps the marker, so the next relist
+ * runs it again.
  */
 function restoreLiveAppSoon(slug: string, appBlockId: string): void {
   void restoreLiveApp({ slug, appBlockId }).catch(() => undefined);
@@ -1959,8 +1960,9 @@ export type RepublishOwnListingResult = {
  * approved in the SAME tx (via {@link flipBackingBlockStatus}), so the app serves again.
  * On the REVIEW arm it is deliberately LEFT SUSPENDED — the app must not serve while its
  * store card is unreviewed, the same posture {@link resetOnsiteListingToPending} takes —
- * and `approveExternalRequest` un-suspends it on approve, gated on exactly the `pending`
- * on-site listing this route writes. OFF-SITE: only the listing flips. `reason` optional.
+ * and `approveExternalRequest` un-suspends it on approve (and puts the app back live), gated on
+ * exactly the `pending` on-site listing this route writes. OFF-SITE: only the listing flips.
+ * `reason` optional.
  *
  * 🔴 MATURITY IS RE-DERIVED AT GO-LIVE, UNIFORMLY FOR BOTH KINDS (this used to be a
  * pure visibility toggle with NO re-derive, which was the hole). A `removed` listing is
@@ -2189,7 +2191,8 @@ export async function republishOwnListing(opts: {
 
   // Catalog bust: owner-republish restores the listing to the catalog (or moves it to pending).
   await bustAppListingCatalogCache().catch(() => undefined);
-  // IMMEDIATE arm only (the review arm leaves the block suspended): serve the app again.
+  // IMMEDIATE arm: serve the app again. The review arm leaves the block suspended, and
+  // `approveExternalRequest` puts the app back when it un-suspends the block.
   const restore = liveRestore as { slug: string; appBlockId: string } | null;
   if (restore) restoreLiveAppSoon(restore.slug, restore.appBlockId);
 
