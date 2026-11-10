@@ -14,13 +14,27 @@ type ProcessedAudio = { type: 'audio' } & AsyncReturnType<typeof preprocessAudio
 export type PreprocessFileReturnType = SharedProps &
   (ProcessedImage | ProcessedVideo | ProcessedAudio);
 
+export type PreprocessFileOptions = {
+  allowAnimatedWebP?: boolean;
+  /**
+   * The file is a generated song. It is probed as audio even in a video container (ACE muxes the
+   * cover into the file). Without it audio is refused before it is probed: nothing uploads audio
+   * as a free-standing file.
+   */
+  asAudio?: boolean;
+};
+
 export async function preprocessFile(
   file: File,
-  options?: { allowAnimatedWebP?: boolean }
+  options?: PreprocessFileOptions
 ): Promise<PreprocessFileReturnType> {
   let fileType = file.type;
   if (fileType === 'application/octet-stream') fileType = 'video/mp4';
-  const type = MEDIA_TYPE[fileType];
+  const mediaType = MEDIA_TYPE[fileType];
+  const type =
+    options?.asAudio && (mediaType === 'audio' || mediaType === 'video') ? 'audio' : mediaType;
+  if (type === 'audio' && !options?.asAudio)
+    throw new Error('Audio uploads are not supported yet.');
   const data = {
     name: file.name,
     mimeType: fileType,

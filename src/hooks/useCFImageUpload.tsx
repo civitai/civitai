@@ -237,7 +237,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
 export type DataFromFile = AsyncReturnType<typeof getDataFromFile>;
 export const getDataFromFile = async (file: File, options?: { allowAnimatedWebP?: boolean }) => {
   const preprocessed = await preprocessFile(file, options);
-  // Audio is preprocessed but cannot be uploaded through the image pipeline yet.
+  // preprocessFile refuses audio before probing it; this narrows the type for what follows.
   if (preprocessed.type === 'audio') {
     URL.revokeObjectURL(preprocessed.objectUrl);
     throw new Error('Audio uploads are not supported yet.');

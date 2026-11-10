@@ -58,10 +58,29 @@ describe('preprocessAudio', () => {
 describe('preprocessFile', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('routes an .mp3 file to the audio preprocessor', async () => {
+  it('refuses audio before probing it unless the caller says it is a song', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fake');
+    const created = mockMediaElements('load');
+    await expect(preprocessFile(file)).rejects.toThrow(/audio uploads are not supported/i);
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(created).toHaveLength(0);
+  });
+
+  it('routes an .mp3 song to the audio preprocessor', async () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fake');
     mockMediaElements('load');
-    const result = await preprocessFile(file);
+    const result = await preprocessFile(file, { asAudio: true });
     expect(result).toMatchObject({ type: 'audio', name: 'song.mp3', mimeType: 'audio/mpeg' });
+  });
+
+  it('probes a cover-muxed mp4 song as audio, not as a video', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fake');
+    mockMediaElements('load');
+    const mp4 = new File(['x'], 'song.mp4', { type: 'video/mp4' });
+    expect(await preprocessFile(mp4, { asAudio: true })).toMatchObject({
+      type: 'audio',
+      mimeType: 'video/mp4',
+      metadata: { duration: 12.346 },
+    });
   });
 });
