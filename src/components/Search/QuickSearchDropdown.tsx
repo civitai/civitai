@@ -61,6 +61,38 @@ const semanticMeilisearch = withUserHydration(
   )
 );
 
+// Caps the option list's scroll area at the room left in the window, so its last row stays
+// reachable. Mantine's `size: true` would cap the outer dropdown instead and clip the scroll area.
+// Cleared on close: Combobox keeps the closed dropdown mounted (display: none) and reuses it, and
+// `flip` measures it at its current height, so a stale small value would keep it cramped.
+const MAX_DROPDOWN_HEIGHT = 300;
+const AVAILABLE_HEIGHT_VAR = '--quick-search-available-height';
+const viewportMiddlewares = (floatingRef: React.MutableRefObject<HTMLElement | null>) => ({
+  flip: true,
+  shift: true,
+  size: {
+    padding: 8,
+    apply({
+      availableHeight,
+      elements,
+    }: {
+      availableHeight: number;
+      elements: { floating: HTMLElement };
+    }) {
+      floatingRef.current = elements.floating;
+      const style = getComputedStyle(elements.floating);
+      const chrome = ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'].reduce(
+        (sum, key) => sum + (parseFloat(style[key as keyof CSSStyleDeclaration] as string) || 0),
+        0
+      );
+      elements.floating.style.setProperty(
+        AVAILABLE_HEIGHT_VAR,
+        `${Math.max(availableHeight - chrome, 0)}px`
+      );
+    },
+  },
+});
+
 // TODO: These styles were taken from the original SearchBar component. We should probably migrate that searchbar to use this component.
 // const useStyles = createStyles((theme) => ({
 //   root: {
@@ -342,6 +374,8 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   // The dropdown portals at Mantine's popover z-index (300), but a registry dialog stacked on
   // another sits at 300 + index and would cover it.
   const dialogZIndex = useDialogContext().zIndex;
+  const floatingRef = useRef<HTMLElement | null>(null);
+  const middlewares = useMemo(() => viewportMiddlewares(floatingRef), []);
 
   const indexName = results?.index
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
@@ -428,7 +462,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
       classNames={classes}
       placeholder={placeholder ?? 'Search Civitai'}
       type="search"
-      maxDropdownHeight={300}
+      maxDropdownHeight={`min(${MAX_DROPDOWN_HEIGHT}px, var(${AVAILABLE_HEIGHT_VAR}, ${MAX_DROPDOWN_HEIGHT}px))`}
       // TODO: Mantine7
       // nothingFound={
       //   !hits.length ? (
@@ -480,7 +514,12 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
       {...autocompleteProps}
       comboboxProps={{
         zIndex: dialogZIndex ? dialogZIndex + 1 : undefined,
+        middlewares,
         ...autocompleteProps.comboboxProps,
+      }}
+      onDropdownClose={() => {
+        floatingRef.current?.style.removeProperty(AVAILABLE_HEIGHT_VAR);
+        autocompleteProps.onDropdownClose?.();
       }}
     />
   );
