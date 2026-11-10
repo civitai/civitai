@@ -622,11 +622,7 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
     modelTagCache.fetch(batchIds),
   ]);
   const modelVersionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
-  // bypassLocal reaches the cache's appendFn, which reads each image's tag ids past this process's
-  // L1 (see imagesForModelVersionsCache): the document keeps them until its next reindex.
-  const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds, {
-    bypassLocal: true,
-  });
+  const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
   const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
 
   const { indexReadyRecords, indexRecordsWithImages } = await transformData({
@@ -815,7 +811,10 @@ export const pullModelsData = async (
     for (const versionBatch of versionBatches) {
       tasks.push(async () => {
         logger(`PullData :: Pull images`, batchLogKey);
-        // bypassLocal: see getModelSearchIndexRecords.
+        // bypassLocal reaches the cache's appendFn, which reads each image's tag ids past this
+        // process's L1 (see imagesForModelVersionsCache): the document keeps them until its next
+        // reindex. Only this index builder bypasses; getModelSearchIndexRecords is a request path
+        // (the resource picker) that stores nothing, so it stays on the L1.
         const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch, {
           bypassLocal: true,
         });
