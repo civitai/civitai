@@ -58,7 +58,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       useUtils: () => ({
         post: {
           getResources: {
-            cancel: async () => undefined,
+            cancel: () => client.cancelQueries({ queryKey: key }),
             getData: () => client.getQueryData(key),
             setData: (_input: unknown, updater: unknown) =>
               client.setQueryData(
@@ -286,6 +286,26 @@ describe('usePostResourceReviews', () => {
     hooks.rerender();
     await settle();
     expect(fetchResources).toHaveBeenCalledTimes(2);
+  });
+
+  it('still loads the reviews when a rating lands while the first fetch is in flight', async () => {
+    const withThird = [row(1), row(2), row(3)];
+    fetchResources.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      return withThird;
+    });
+    upsert.mockResolvedValue({ id: 100, rating: 5, recommended: true });
+    const [hook] = renderHooks(() => {
+      usePostResourceReviewsSync({ postId: 1, ownerId: 7 });
+      return useSubject();
+    });
+    await act(async () => {
+      await hook.current.rate(1, true);
+    });
+    await settle();
+    const rows = client.getQueryData<ReturnType<typeof row>[]>(key)!;
+    expect(rows.map((r) => r.modelVersionId)).toEqual([1, 2, 3]);
+    expect(rows[0]).toMatchObject({ reviewRecommended: true });
   });
 
   it('never fetches from a consumer alone', async () => {

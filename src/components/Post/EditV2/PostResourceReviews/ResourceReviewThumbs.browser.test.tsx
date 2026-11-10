@@ -160,7 +160,11 @@ describe('ResourceReviewThumbs', () => {
     await expect
       .element(page.getByRole('button', { name: 'Recommend Model 5' }).first())
       .toBeVisible();
-    await new Promise((r) => setTimeout(r, 200));
-    expect(fetchResources).toHaveBeenCalledTimes(1);
+    await expect.poll(() => fetchResources.mock.calls.length).toBe(1);
+    // A duplicate fetch would be triggered by a later render; give several frames to show one.
+    for (let frame = 0; frame < 20; frame++) {
+      await new Promise((r) => requestAnimationFrame(r));
+      expect(fetchResources).toHaveBeenCalledTimes(1);
+    }
   });
 });

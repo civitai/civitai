@@ -24,11 +24,14 @@ const setPending = (key: string, on: boolean) => {
 export const resetPendingForTests = () => {
   pending.clear();
   pendingVersion++;
+  syncFetch = null;
 };
 const subscribe = (l: () => void) => {
   listeners.add(l);
   return () => void listeners.delete(l);
 };
+// The first load of a post's reviews. A rating waits for it instead of cancelling it.
+let syncFetch: Promise<unknown> | null = null;
 const pendingKey = (postId: number, modelVersionId: number) => `${postId}:${modelVersionId}`;
 
 export type RateResult = 'saved' | 'ignored' | 'failed';
@@ -79,7 +82,10 @@ export function usePostResourceReviewsSync({
   useEffect(() => {
     if (!canReview || fetchedKey.current === resourceKey) return;
     fetchedKey.current = resourceKey;
-    refetch();
+    const fetch = refetch().finally(() => {
+      if (syncFetch === fetch) syncFetch = null;
+    });
+    syncFetch = fetch;
   }, [resourceKey, canReview, refetch]);
 }
 
@@ -115,6 +121,7 @@ export function usePostResourceReviews({ postId, ownerId }: { postId: number; ow
 
   const save = useCallback(
     async (modelVersionId: number, patch: ReviewPatch, body: SaveBody): Promise<RateResult> => {
+      if (syncFetch) await syncFetch.catch(() => undefined);
       const key = pendingKey(postId, modelVersionId);
       const row = queryUtils.post.getResources
         .getData({ id: postId })
