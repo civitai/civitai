@@ -147,9 +147,11 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
 //
 // That is why the TTL depends on the value cached. The image-cacher reads `hideMeta: false` as
 // "the original may be served with its metadata", so a stale false is the leak direction: those
-// entries keep the short TTL (`CacheTTL.sm`, 3 minutes, what every entry had before), so an owner's
-// just-hidden metadata can still be served for at most 3 minutes after the stale entry is written
-// (itself within a replica lag of the flip), the same bound as before the TTL was raised.
+// entries keep the short TTL (`CacheTTL.sm`, 3 minutes, what every entry had before), so a stale
+// false for an owner's just-hidden metadata lives in this cache for at most 3 minutes after it
+// is written (itself within a replica lag of the flip), the same bound as before the TTL was
+// raised. That bounds this cache entry only: bytes a downstream cache fills from it during that
+// window are kept for that cache's own TTL, which this one does not shorten.
 // `hideMeta: true` entries get the hour: a stale true only withholds metadata the owner has just
 // un-hidden (fail-closed) for at most an hour. A tombstone written by the bust and respected by
 // the fill (SET NX) would shorten both windows further, but a tombstone under this key would be

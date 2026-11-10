@@ -1627,7 +1627,9 @@ async function getSparkStorylineSummaries({
   viewer: Viewer;
 }) {
   const levels = onlySelectableLevels(browsingLevel);
-  const ids = [...new Set(imageIds)];
+  // Caller ids, bound as `int[]`: one past int4 would fail the whole statement (see isPgInt4).
+  const ids = [...new Set(imageIds)].filter(isPgInt4);
+  if (!ids.length) return {};
   const excluded = [...(await getViewerExcludedIds(viewer))];
   // Through Kysely, not Prisma's `$queryRaw` (see queryPrismaSql). `total` is `count(*) OVER`, an
   // int8: Prisma returned it as a bigint, the Kysely pools as a number, and `Number()` below takes

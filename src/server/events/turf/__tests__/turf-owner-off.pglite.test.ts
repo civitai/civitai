@@ -207,6 +207,38 @@ describe("an owner's switch: keep Hat Turf off my images", () => {
   });
 });
 
+// Prisma's raw reads answered an id past int4 with no rows; through the pg pools the `int[]` bind is
+// a range error that fails the whole batch. Such an id is dropped before the statement runs.
+describe('an image id past int4 in the batch', () => {
+  const PAST_INT4 = 2 ** 31;
+  beforeEach(async () => {
+    const { rejectPastInt4 } = await import('~/test-utils/kysely-raw-fake');
+    const raw = pgliteRaw(db);
+    kysely.read.mockImplementation(async (strings: readonly string[], ...values: unknown[]) => {
+      rejectPastInt4(values);
+      return raw.queryRaw(strings as TemplateStringsArray, ...values);
+    });
+  });
+
+  it('answers the other ids, and leaves it out', async () => {
+    const { open, mine } = await getTurfSummaries('e', [IMAGES[0], PAST_INT4, IMAGES[1]], PLACER);
+    expect(open).toEqual({ [IMAGES[0]]: true, [IMAGES[1]]: false });
+    expect(mine).toEqual({ [IMAGES[0]]: true, [IMAGES[1]]: true });
+  });
+
+  it('with no other id, answers empty without a statement', async () => {
+    kysely.read.mockClear();
+    await expect(getTurfSummaries('e', [PAST_INT4], PLACER)).resolves.toEqual({
+      team: null,
+      images: {},
+      open: {},
+      mine: {},
+      hidden: {},
+    });
+    expect(kysely.read).not.toHaveBeenCalled();
+  });
+});
+
 describe("a banned or deleted owner's images", () => {
   // Stickers on an image whose owner is later banned or deleted stop counting and drawing.
   it.each([

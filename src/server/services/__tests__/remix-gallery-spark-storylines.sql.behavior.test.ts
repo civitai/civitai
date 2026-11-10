@@ -269,6 +269,34 @@ describe('storylines on a host card', () => {
     expect(summaries[HOST].storylines?.entries.map((e) => e.storylineId)).toEqual([5, 4, 3, 2]);
   });
 
+  // Prisma's raw reads answered an id past int4 with no rows; through the pg pools the `int[]` bind
+  // is a range error that fails every card in the batch. Such an id is dropped before it runs.
+  describe('a host id past int4 in the batch', () => {
+    const PAST_INT4 = 2 ** 31;
+    beforeEach(async () => {
+      const { rejectPastInt4 } = await import('~/test-utils/kysely-raw-fake');
+      const raw = pgliteRaw(db.pg);
+      kysely.read.mockImplementation(async (strings: readonly string[], ...values: unknown[]) => {
+        rejectPastInt4(values);
+        return strings.join('?').includes('WITH listed AS')
+          ? raw.queryRaw(strings as TemplateStringsArray, ...values)
+          : [];
+      });
+    });
+
+    it('still lists the storylines of the other hosts', async () => {
+      await story(1, HOST);
+      expect(await listed([HOST, PAST_INT4])).toEqual({ [HOST]: [1] });
+    });
+
+    it('with no other host, asks nothing about storylines', async () => {
+      kysely.read.mockClear();
+      expect(await listed([PAST_INT4])).toEqual({});
+      const asked = kysely.read.mock.calls.map(([strings]) => (strings as string[]).join('?'));
+      expect(asked.filter((sql) => sql.includes('WITH listed AS'))).toEqual([]);
+    });
+  });
+
   describe('chapter previews', () => {
     const PG13 = 2;
     /** PG, PG-13 and R: a viewer who would see an R chapter anywhere else. */

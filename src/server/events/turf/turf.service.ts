@@ -2,7 +2,7 @@ import { chunk } from 'lodash-es';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { queryPrismaSql } from '~/server/db/prisma-sql-kysely';
+import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { flagAudienceAmong } from '~/server/events/event-access';
 import { eventPlayerEligibleSql } from '~/server/events/player-eligibility';
 import { loadEvents } from '~/server/events/load-events';
@@ -993,10 +993,13 @@ export async function reconcileAllTurf(now = new Date()) {
  */
 export async function getTurfSummaries(
   eventName: string,
-  imageIds: number[],
+  askedIds: number[],
   viewerId?: number,
   now = new Date()
 ) {
+  // Caller ids, bound as `int[]`: one past int4 would fail the whole statement (see isPgInt4). No
+  // image has such an id, so it is answered like one never asked about.
+  const imageIds = askedIds.filter(isPgInt4);
   const event = await getTurfEvent(eventName, now);
   if (!event || event.turf.mode === 'off' || !imageIds.length)
     return { team: null, images: {}, open: {}, mine: {}, hidden: {} };
