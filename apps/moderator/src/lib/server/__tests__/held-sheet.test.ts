@@ -93,7 +93,8 @@ const VERIFIER = 'v'.repeat(20) + '-._~' + 'A1'.repeat(12);
 const CHALLENGE = createHash('sha256').update(VERIFIER).digest('base64url');
 const STATE = 'S'.repeat(24);
 const MOD = { id: 42, username: 'mod42', isModerator: true, roles: ['moderator:senior'] };
-const CLAIMS = { sub: '42', jti: 'web-session-1', signedAt: 1_000 };
+const CLAIMS = { sub: '42', sid: 'family-1', jti: 'web-session-1', signedAt: 1_000, iat: 5 };
+const WEB = { sub: '42', sid: 'family-1', jti: 'web-session-1', signedAt: 1_000 };
 
 const { hostSessionCookieName, sessionCookieName } = await import('@civitai/auth');
 const WEB_COOKIE = `${hostSessionCookieName()}=web.jwt; ${sessionCookieName()}=web.jwt`;
@@ -148,7 +149,7 @@ async function issue(): Promise<string> {
 async function signIn(): Promise<string> {
   const res = await exchangePost({ code: await issue(), code_verifier: VERIFIER });
   expect(res.status).toBe(204);
-  return /held_sheet=([^;]+)/.exec(res.headers.get('set-cookie')!)![1];
+  return /__Secure-held_sheet=([^;]+)/.exec(res.headers.get('set-cookie')!)![1];
 }
 
 beforeEach(() => {
@@ -178,7 +179,8 @@ describe('auth/start', () => {
       expect(res.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
       expect(res.headers.get('x-frame-options')).toBe('DENY');
       expect(res.headers.get('cache-control')).toBe('no-store');
-      expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+      // no-referrer would make the form POST carry `Origin: null`, which SvelteKit refuses.
+      expect(res.headers.get('referrer-policy')).toBe('same-origin');
     }
   });
 
@@ -230,8 +232,7 @@ describe('auth/start', () => {
       state: STATE,
       redirect: 'hubapp://held-media',
       userId: 42,
-      jti: 'web-session-1',
-      signedAt: 1_000,
+      web: WEB,
     });
   });
 
@@ -241,6 +242,8 @@ describe('auth/start', () => {
     verifyToken.mockResolvedValueOnce({ ...CLAIMS, impersonatedBy: 7 });
     expect((await startPost()).status).toBe(403);
     verifyToken.mockResolvedValueOnce(null);
+    expect((await startPost()).status).toBe(403);
+    verifyToken.mockResolvedValueOnce({ ...CLAIMS, jti: undefined });
     expect((await startPost()).status).toBe(403);
     expect(store.size).toBe(0);
   });
@@ -252,7 +255,7 @@ describe('auth/exchange', () => {
     expect(res.status).toBe(204);
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(res.headers.get('set-cookie')).toMatch(
-      /^held_sheet=[A-Za-z0-9_-]{43}; Path=\/api\/held-media\/; Max-Age=900; Secure; HttpOnly; SameSite=Strict$/
+      /^__Secure-held_sheet=[A-Za-z0-9_-]{43}; Path=\/api\/held-media\/; Max-Age=900; Secure; HttpOnly; SameSite=Strict$/
     );
   });
 
@@ -267,9 +270,10 @@ describe('auth/exchange', () => {
     ['a missing verifier', undefined],
     ['a short verifier', 'abc'],
     ['a verifier with a bad character', 'v'.repeat(42) + '!'],
-  ])('refuses %s', async (_n, codeVerifier) => {
+  ])('refuses %s, without burning the code', async (_n, codeVerifier) => {
     const code = await issue();
     expect((await exchangePost({ code, code_verifier: codeVerifier })).status).toBe(400);
+    expect((await exchangePost({ code, code_verifier: VERIFIER })).status).toBe(204);
   });
 
   it('burns the code on a wrong verifier, so the right one then fails too', async () => {
@@ -317,7 +321,7 @@ describe('hook: the sheet cookie', () => {
 
   it('authenticates the image route as the moderator, marked as the sheet', async () => {
     const token = await signIn();
-    const { res, locals } = await run('/api/held-media/7', `held_sheet=${token}`);
+    const { res, locals } = await run('/api/held-media/7', `__Secure-held_sheet=${token}`);
     expect(res.status).toBe(299);
     expect(locals.user).toMatchObject({ id: 42 });
     expect(locals.heldCredential).toBe('sheet');
@@ -325,17 +329,24 @@ describe('hook: the sheet cookie', () => {
   });
 
   it('answers 401 for an unknown or malformed cookie, and runs nothing', async () => {
-    for (const cookie of [`held_sheet=${'x'.repeat(43)}`, 'held_sheet=short', 'held_sheet=']) {
+    for (const cookie of [
+      `__Secure-held_sheet=${'x'.repeat(43)}`,
+      '__Secure-held_sheet=short',
+      '__Secure-held_sheet=',
+    ]) {
       const { res, resolve } = await run('/api/held-media/7', cookie);
       expect(res.status).toBe(401);
       expect(resolve).not.toHaveBeenCalled();
+      expect(res.headers.get('set-cookie')).toBe(
+        '__Secure-held_sheet=; Path=/api/held-media/; Max-Age=0; Secure; HttpOnly; SameSite=Strict'
+      );
     }
   });
 
   it('answers 401 when the moderator was demoted after signing in, and runs nothing', async () => {
     const token = await signIn();
     getSessionUserById.mockResolvedValue({ ...MOD, isModerator: false });
-    const { res, resolve } = await run('/api/held-media/7', `held_sheet=${token}`);
+    const { res, resolve } = await run('/api/held-media/7', `__Secure-held_sheet=${token}`);
     expect(res.status).toBe(401);
     expect(resolve).not.toHaveBeenCalled();
     expect(getSessionUserById).toHaveBeenCalledWith(42);
@@ -347,25 +358,25 @@ describe('hook: the sheet cookie', () => {
   ])('answers 401 for a %s moderator', async (_n, change) => {
     const token = await signIn();
     getSessionUserById.mockResolvedValue({ ...MOD, ...change });
-    expect((await run('/api/held-media/7', `held_sheet=${token}`)).res.status).toBe(401);
+    expect((await run('/api/held-media/7', `__Secure-held_sheet=${token}`)).res.status).toBe(401);
   });
 
   it('answers 401 once the web session that started it is revoked', async () => {
     const token = await signIn();
     isRevoked.mockResolvedValue(true);
-    expect((await run('/api/held-media/7', `held_sheet=${token}`)).res.status).toBe(401);
-    expect(isRevoked).toHaveBeenCalledWith({ jti: 'web-session-1', signedAt: 1_000 });
+    expect((await run('/api/held-media/7', `__Secure-held_sheet=${token}`)).res.status).toBe(401);
+    expect(isRevoked).toHaveBeenCalledWith(WEB);
   });
 
   it('expires after 15 idle minutes, and each fetch restarts the clock', async () => {
     vi.useFakeTimers();
     const token = await signIn();
     vi.advanceTimersByTime(14 * 60_000);
-    expect((await run('/api/held-media/7', `held_sheet=${token}`)).res.status).toBe(299);
+    expect((await run('/api/held-media/7', `__Secure-held_sheet=${token}`)).res.status).toBe(299);
     vi.advanceTimersByTime(14 * 60_000);
-    expect((await run('/api/held-media/7', `held_sheet=${token}`)).res.status).toBe(299);
+    expect((await run('/api/held-media/7', `__Secure-held_sheet=${token}`)).res.status).toBe(299);
     vi.advanceTimersByTime(15 * 60_000 + 1);
-    expect((await run('/api/held-media/7', `held_sheet=${token}`)).res.status).toBe(401);
+    expect((await run('/api/held-media/7', `__Secure-held_sheet=${token}`)).res.status).toBe(401);
   });
 
   it('expires 2 h after sign-in however active', async () => {
@@ -373,10 +384,10 @@ describe('hook: the sheet cookie', () => {
     const token = await signIn();
     for (let i = 0; i < 8; i++) {
       vi.advanceTimersByTime(14 * 60_000);
-      expect((await run('/api/held-media/7', `held_sheet=${token}`)).res.status).toBe(299);
+      expect((await run('/api/held-media/7', `__Secure-held_sheet=${token}`)).res.status).toBe(299);
     }
     vi.advanceTimersByTime(10 * 60_000);
-    expect((await run('/api/held-media/7', `held_sheet=${token}`)).res.status).toBe(401);
+    expect((await run('/api/held-media/7', `__Secure-held_sheet=${token}`)).res.status).toBe(401);
   });
 
   it.each([
@@ -387,43 +398,66 @@ describe('hook: the sheet cookie', () => {
     ['an image path with a suffix', '/api/held-media/7x', 'GET'],
   ])('ignores the cookie on %s and asks the web guard', async (_n, path, method) => {
     const token = await signIn();
-    const { res, resolve, locals } = await run(path, `held_sheet=${token}`, method);
+    const { res, resolve, locals } = await run(path, `__Secure-held_sheet=${token}`, method);
     expect(guardCheck).toHaveBeenCalled();
     expect(resolve).not.toHaveBeenCalled();
     expect(res.status).toBe(401);
     expect(locals.heldCredential).toBeUndefined();
   });
 
-  it('lets the exchange through without a web session', async () => {
+  it('lets the exchange through without a web session, for a POST only', async () => {
     const { res } = await run('/api/held-media/auth/exchange', null, 'POST');
     expect(res.status).toBe(299);
     expect(guardCheck).not.toHaveBeenCalled();
+    expect((await run('/api/held-media/auth/exchange', null, 'GET')).res.status).toBe(401);
+    expect(guardCheck).toHaveBeenCalled();
+  });
+
+  it('answers 503, not 401, when the session store cannot be read', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const token = await signIn();
+    redis.get.mockRejectedValueOnce(new Error('redis down'));
+    const { res, resolve } = await run('/api/held-media/7', `__Secure-held_sheet=${token}`);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(resolve).not.toHaveBeenCalled();
+    errors.mockRestore();
   });
 
   it('logs no code, verifier, state or token on any path', async () => {
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { inspect } = await import('node:util');
+    const spies = (['log', 'info', 'debug', 'warn', 'error'] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation(() => {})
+    );
     const { logToAxiom, logAxiomError } = await import('$lib/server/axiom');
+    // Success paths.
+    expect((await startGet()).status).toBe(200);
     const code = await issue();
     const token = await signIn();
+    expect((await run('/api/held-media/7', `__Secure-held_sheet=${token}`)).res.status).toBe(299);
     // Failure paths that log.
     redis.set.mockRejectedValueOnce(new Error('redis down'));
     expect((await startPost()).status).toBe(503);
     redis.getDel.mockRejectedValueOnce(new Error('redis down'));
     expect((await exchangePost({ code, code_verifier: VERIFIER })).status).toBe(503);
     redis.get.mockRejectedValueOnce(new Error('redis down'));
-    expect((await run('/api/held-media/7', `held_sheet=${token}`)).res.status).toBe(401);
+    expect((await run('/api/held-media/7', `__Secure-held_sheet=${token}`)).res.status).toBe(503);
+    getSessionUserById.mockResolvedValueOnce(null);
+    expect((await run('/api/held-media/7', `__Secure-held_sheet=${token}`)).res.status).toBe(401);
 
-    const logged = JSON.stringify([
-      errors.mock.calls,
-      warns.mock.calls,
-      vi.mocked(logToAxiom).mock.calls,
-      vi.mocked(logAxiomError).mock.calls,
-    ]);
-    expect(errors).toHaveBeenCalled();
+    const calls = [
+      ...spies.flatMap((spy) => spy.mock.calls),
+      ...vi.mocked(logToAxiom).mock.calls,
+      ...vi.mocked(logAxiomError).mock.calls,
+    ];
+    // inspect, not JSON.stringify: an Error stringifies to `{}` and would hide its message.
+    const logged = calls
+      .flat()
+      .map((arg) => inspect(arg, { depth: 8 }))
+      .join('\n');
+    expect(spies[4]).toHaveBeenCalled();
     for (const secret of [code, token, VERIFIER, STATE, CHALLENGE])
       expect(logged).not.toContain(secret);
-    errors.mockRestore();
-    warns.mockRestore();
+    spies.forEach((spy) => spy.mockRestore());
   });
 });

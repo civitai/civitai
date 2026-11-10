@@ -43,7 +43,8 @@ export const GET: RequestHandler = async ({ params, locals, request, cookies }) 
     });
   if (!signed) error(502, 'Could not reach storage.');
 
-  const range = forwardableRange(request.headers.get('range'));
+  // The sheet always gets the whole image, so every fetch it makes is audited.
+  const range = credential === 'sheet' ? null : forwardableRange(request.headers.get('range'));
   const upstream = await fetchHeldObject(signed.url, range, request.signal).catch((e) => {
     console.error('[held-media] fetch failed', e);
     return null;

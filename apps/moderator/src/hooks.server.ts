@@ -12,7 +12,12 @@ import { movedViewTarget } from '$lib/moved-pages';
 import { loadPageAccessGrants } from '$lib/server/page-access';
 import { authenticateWebhookToken, type AcceptedCredential } from '$lib/server/webhook-endpoint';
 import { logAxiomError, logToAxiom } from '$lib/server/axiom';
-import { isSheetImagePath, resolveSheetSession, SHEET_COOKIE } from '$lib/server/held-sheet';
+import {
+  clearedSheetCookie,
+  isSheetImagePath,
+  resolveSheetSession,
+  SHEET_COOKIE,
+} from '$lib/server/held-sheet';
 
 // Where authenticated-but-not-a-moderator users get sent. A 403 would be a dead end (re-login can't
 // grant the role); bounce them to the main site instead. Overridable via env for non-prod hosts.
@@ -115,9 +120,15 @@ export const handle: Handle = async ({ event, resolve }) => {
   ) {
     const user = await resolveSheetSession(sheetToken).catch(() => {
       console.error('[held-sheet] session lookup failed');
-      return null;
+      return undefined;
     });
-    if (!user) return new Response(null, { status: 401, headers: { 'cache-control': 'no-store' } });
+    if (user === undefined)
+      return new Response(null, { status: 503, headers: { 'cache-control': 'no-store' } });
+    if (!user)
+      return new Response(null, {
+        status: 401,
+        headers: { 'cache-control': 'no-store', 'set-cookie': clearedSheetCookie() },
+      });
     event.locals.user = user;
     event.locals.heldCredential = 'sheet';
     applyGrants(await loadPageAccessGrants());

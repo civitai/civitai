@@ -8,6 +8,8 @@ import type * as HeldMediaModule from '../held-media';
  */
 
 const KEY = '0b9f5a4e-1d2c-4e3f-8a7b-6c5d4e3f2a1b';
+/** A sheet cookie on a request the hook did not authenticate with it. */
+const STRAY = 'S'.repeat(43);
 
 const getHeldMedia = vi.hoisted(() =>
   vi.fn(
@@ -78,7 +80,7 @@ async function call(
       url,
       request: new Request(url, { headers, method }),
       cookies: {
-        get: (name: string) => (sheet && name === 'held_sheet' ? sheet.token : undefined),
+        get: (name: string) => (name === '__Secure-held_sheet' ? sheet?.token ?? STRAY : undefined),
       },
       locals: {
         user: { id: 42, roles: ['moderator:staff'] },
@@ -447,15 +449,37 @@ describe('the held-media sheet', () => {
       ],
     ]);
     expect(res!.headers.get('set-cookie')).toBe(
-      `held_sheet=${TOKEN}; Path=/api/held-media/; Max-Age=900; Secure; HttpOnly; SameSite=Strict`
+      `__Secure-held_sheet=${TOKEN}; Path=/api/held-media/; Max-Age=900; Secure; HttpOnly; SameSite=Strict`
     );
     expect(res!.headers.get('cache-control')).toBe('private, no-store');
     expect(res!.headers.get('content-disposition')).toBe('inline');
   });
 
-  it('sets no sheet cookie on a web-session fetch', async () => {
+  it('sets no sheet cookie on a web-session fetch, even one carrying a sheet cookie', async () => {
     const { res } = await call();
     expect(res!.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('ignores a Range from the sheet, so every fetch is whole and audited', async () => {
+    await call('/api/held-media/7', { range: 'bytes=1-' }, '7', 'GET', { token: TOKEN });
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get('range')).toBeNull();
+    expect(insertModActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs no sheet cookie when the view row fails', async () => {
+    const { inspect } = await import('node:util');
+    const spies = (['log', 'info', 'debug', 'warn', 'error'] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation(() => {})
+    );
+    insertModActivity.mockRejectedValueOnce(new Error('db down'));
+    expect((await sheetCall()).status).toBe(503);
+    const logged = [...spies.flatMap((s) => s.mock.calls), ...logToAxiom.mock.calls]
+      .flat()
+      .map((a) => inspect(a, { depth: 8 }))
+      .join('\n');
+    expect(spies[4]).toHaveBeenCalled();
+    expect(logged).not.toContain(TOKEN);
+    spies.forEach((s) => s.mockRestore());
   });
 
   it.each(['image/png', 'image/webp', 'image/gif', 'image/avif'])(

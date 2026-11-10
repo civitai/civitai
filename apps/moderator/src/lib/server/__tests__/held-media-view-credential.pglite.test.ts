@@ -108,12 +108,16 @@ describe('heldMedia:view credential', () => {
     ).rejects.toThrow(/ModActivity_credential_check/);
   });
 
-  it('throws when the row is not written', async () => {
-    await db.exec(`ALTER TABLE "ModActivity" ADD CONSTRAINT "no_seven" CHECK ("entityId" <> 7)`);
+  // A skipped insert raises nothing in Postgres; only the empty RETURNING shows it.
+  it('throws when the insert is skipped without an error', async () => {
+    await db.exec(`
+      CREATE FUNCTION skip_row() RETURNS trigger AS $$ BEGIN RETURN NULL; END; $$ LANGUAGE plpgsql;
+      CREATE TRIGGER skip_row BEFORE INSERT ON "ModActivity" FOR EACH ROW EXECUTE FUNCTION skip_row();
+    `);
     try {
-      await expect(recordHeldView(42, 7, 'sheet')).rejects.toThrow();
+      await expect(recordHeldView(42, 7, 'sheet')).rejects.toThrow(/not written/);
     } finally {
-      await db.exec(`ALTER TABLE "ModActivity" DROP CONSTRAINT "no_seven"`);
+      await db.exec(`DROP TRIGGER skip_row ON "ModActivity"; DROP FUNCTION skip_row();`);
     }
   });
 

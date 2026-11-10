@@ -17,7 +17,7 @@ import { getSysRedis } from './redis';
  * `/api/held-media/`, and the image route accepts that cookie in place of the web session.
  */
 
-export const SHEET_COOKIE = 'held_sheet';
+export const SHEET_COOKIE = '__Secure-held_sheet';
 export const SHEET_COOKIE_PATH = '/api/held-media/';
 export const SHEET_REDIRECT = 'hubapp://held-media';
 export const CODE_TTL_SECONDS = 60;
@@ -42,8 +42,17 @@ const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
 export type StartParams = { challenge: string; state: string; redirect: string };
 
-type CodeRecord = StartParams & { userId: number; jti?: string; signedAt?: number };
-type SessionRecord = { userId: number; jti?: string; signedAt?: number; createdAt: number };
+/** The web session's claims that its revocation is checked by. */
+type WebSession = Pick<SessionClaims, 'sub' | 'sid' | 'jti' | 'signedAt'>;
+type CodeRecord = StartParams & { userId: number; web: WebSession };
+type SessionRecord = { userId: number; web: WebSession; createdAt: number };
+
+const webSession = ({ sub, sid, jti, signedAt }: SessionClaims): WebSession => ({
+  sub,
+  sid,
+  jti,
+  signedAt,
+});
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('base64url');
 const newSecret = () => randomBytes(32).toString('base64url');
@@ -79,7 +88,7 @@ export async function issueCode(
   claims: SessionClaims
 ): Promise<string> {
   const code = newSecret();
-  const record: CodeRecord = { ...params, userId, jti: claims.jti, signedAt: claims.signedAt };
+  const record: CodeRecord = { ...params, userId, web: webSession(claims) };
   await getSysRedis().set(codeKey(code), JSON.stringify(record), {
     EX: CODE_TTL_SECONDS,
     NX: true,
@@ -103,12 +112,7 @@ export async function exchangeCode(code: unknown, codeVerifier: unknown): Promis
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null;
 
   const token = newSecret();
-  const session: SessionRecord = {
-    userId: record.userId,
-    jti: record.jti,
-    signedAt: record.signedAt,
-    createdAt: Date.now(),
-  };
+  const session: SessionRecord = { userId: record.userId, web: record.web, createdAt: Date.now() };
   await getSysRedis().set(sessionKey(token), JSON.stringify(session), {
     EX: SHEET_IDLE_SECONDS,
   });
@@ -125,6 +129,7 @@ export function admitsSheetUser(user: SessionUser | null): user is SessionUser {
 /**
  * The moderator behind a sheet session token, looked up fresh, or null. A hit slides the idle
  * expiry; the session never outlives `SHEET_MAX_AGE_MS` or the web session that started it.
+ * Throws when the session store cannot be read.
  */
 export async function resolveSheetSession(token: string | undefined): Promise<SessionUser | null> {
   if (!token || !TOKEN.test(token)) return null;
@@ -137,7 +142,7 @@ export async function resolveSheetSession(token: string | undefined): Promise<Se
     await redis.del(key);
     return null;
   }
-  if (await isRevoked({ jti: session.jti, signedAt: session.signedAt })) return null;
+  if (!session.web?.jti || (await isRevoked(session.web))) return null;
 
   const user = await (sessions ??= createSessionClient()).getSessionUserById(session.userId);
   if (!admitsSheetUser(user) || user.id !== session.userId) return null;
@@ -145,6 +150,9 @@ export async function resolveSheetSession(token: string | undefined): Promise<Se
   await redis.expire(key, SHEET_IDLE_SECONDS);
   return user;
 }
+
+/** Clears a sheet cookie the server no longer honours. */
+export const clearedSheetCookie = () => sheetCookie('', 0);
 
 export function sheetCookie(token: string, maxAge = SHEET_IDLE_SECONDS): string {
   return `${SHEET_COOKIE}=${token}; Path=${SHEET_COOKIE_PATH}; Max-Age=${maxAge}; Secure; HttpOnly; SameSite=Strict`;

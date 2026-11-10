@@ -13,7 +13,8 @@ import {
 const HEADERS = {
   'cache-control': 'no-store',
   'x-frame-options': 'DENY',
-  'referrer-policy': 'no-referrer',
+  // Not no-referrer: under it the form POST carries `Origin: null`, which the origin check refuses.
+  'referrer-policy': 'same-origin',
   'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' hubapp:; frame-ancestors 'none'; base-uri 'none'`,
 };
 
@@ -64,7 +65,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   if (!params) return status(400);
 
   const claims = await webSessionClaims(request.headers.get('cookie') ?? '');
-  if (!claims || Number(claims.sub) !== locals.user.id || claims.impersonatedBy != null)
+  if (!claims?.jti || Number(claims.sub) !== locals.user.id || claims.impersonatedBy != null)
     return status(403);
 
   const code = await issueCode(params, locals.user.id, claims).catch(() => null);
