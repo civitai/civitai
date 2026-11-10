@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
+import { dbRead } from '~/server/db/client';
 
 const CANDIDATE_MULTIPLIER = 3;
 const MAX_HYDRATION_ROUNDS = 3;
@@ -254,4 +255,22 @@ export async function collectPage<T extends { id: number }>({
 
   const nextCursor = !exhausted && position < MAX_CANDIDATE_OFFSET ? position : undefined;
   return { items, nextCursor };
+}
+
+/** Tag names, as search URLs and pickers carry them, to ids; a name that does not exist is dropped. */
+export async function resolveTagIds(names: string[]) {
+  const tags = await dbRead.tag.findMany({
+    where: { name: { in: names.map((name) => name.toLowerCase()) } },
+    select: { id: true },
+  });
+  return tags.map((x) => x.id);
+}
+
+/** Usernames to user ids; a name that does not exist is dropped. */
+export async function resolveUserIds(usernames: string[]) {
+  const users = await dbRead.user.findMany({
+    where: { username: { in: usernames } },
+    select: { id: true },
+  });
+  return users.map((x) => x.id);
 }

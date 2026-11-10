@@ -8,6 +8,8 @@ import { getArticles } from '~/server/services/article.service';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import {
   collectPage,
+  resolveTagIds,
+  resolveUserIds,
   searchServiceSource,
   type CandidateFilter,
   type CandidateSource,
@@ -27,13 +29,6 @@ const searchServiceCandidates = searchServiceSource('articles', {
   notFoundMessage: 'Article not found',
 });
 
-async function idsByName<T extends { id: number }>(
-  names: string[] | undefined,
-  find: (names: string[]) => Promise<T[]>
-) {
-  return names?.length ? (await find(names)).map((x) => x.id) : undefined;
-}
-
 export async function searchSemanticArticles({
   input,
   user,
@@ -46,15 +41,8 @@ export async function searchSemanticArticles({
   const none = { items: [] as HydratedArticle[], nextCursor: undefined, correctedQuery: undefined };
   const [hidden, userIds, tagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
-    idsByName(input.usernames, (usernames) =>
-      dbRead.user.findMany({ where: { username: { in: usernames } }, select: { id: true } })
-    ),
-    idsByName(input.tagNames, (names) =>
-      dbRead.tag.findMany({
-        where: { name: { in: names.map((n) => n.toLowerCase()) } },
-        select: { id: true },
-      })
-    ),
+    input.usernames?.length ? resolveUserIds(input.usernames) : undefined,
+    input.tagNames?.length ? resolveTagIds(input.tagNames) : undefined,
   ]);
   // A named user or tag that does not exist can match nothing.
   if (userIds && !userIds.length) return none;
