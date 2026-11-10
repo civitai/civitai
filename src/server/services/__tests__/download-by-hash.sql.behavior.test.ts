@@ -347,6 +347,8 @@ describe('the pre-filter only drops copies the gate would refuse this caller', (
     ['a failed virus scan', { file: { virusScanResult: 'Danger' } }],
     ['generation-only use', { version: { usageControl: 'Generation' } }],
     ['an unpublished model', { modelStatus: 'Unpublished' }],
+    ['an unpublished version', { versionStatus: 'Draft' }],
+    ['a private file', { visibility: 'Private' }],
   ] as [string, Copy][])('never offers a stranger a copy on %s', async (_, excluded) => {
     await copy(1, excluded);
     await copy(2);
@@ -454,6 +456,8 @@ describe('taken-down copies are logged, not refused', () => {
   it.each([
     ['a taken-down model', { mode: 'TakenDown' }],
     ['a model with a deletion date', { model: { deletedAt: new Date() } }],
+    ['a deleted model', { modelStatus: 'Deleted' }],
+    ['a model unpublished for a violation', { modelStatus: 'UnpublishedViolation' }],
   ] as [string, Copy][])('counts a copy on %s as taken down', async (_, takenDown) => {
     await copy(1);
     await copy(2, takenDown);
