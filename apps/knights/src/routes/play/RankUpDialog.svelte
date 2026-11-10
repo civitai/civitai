@@ -31,7 +31,7 @@
     dailyGoldCap?: number;
     /** The rank below's perks, for the before and after. */
     previous?: { voteWeight: number; goldMultiplier: number; dailyGoldCap: number };
-    /** The rank's badge image; Paladin has none yet and shows the crest. */
+    /** The rank's badge image; without one the crest shows. */
     badge?: string | null;
     message: string | null;
     submitting: boolean;

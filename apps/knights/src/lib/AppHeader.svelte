@@ -45,7 +45,7 @@
     recapUnseen?: boolean;
     goldPerBuzz: number;
     ladder: LadderRow[];
-    /** Rank badge image addresses by rank; a rank without one (Paladin) shows the crest. */
+    /** Rank badge image addresses by rank; a rank without one shows the crest. */
     badges: { small: Record<string, string> };
   } = $props();
 
