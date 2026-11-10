@@ -101,6 +101,12 @@ import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import {
+  createMetricRefresher,
+  imageMetricsSwrEnabled,
+  resolveMetricsStaleWhileRevalidate,
+  type MetricRefresher,
+} from '~/server/services/image-metrics-swr';
+import {
   FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
   MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
   MeiliCallTimeoutError,
@@ -5972,6 +5978,89 @@ type ImageMetricsObject = Record<
 // decode, and a multi-digit counter string does fail, so that read would gut the hash.
 const STALE_METRIC_CACHE_TIMEOUT_MS = 500;
 
+// A cached `metrics:Image:<id>` hash as an `ImageMetricsObject` entry. Shared by the stale arm
+// below and the image-metrics-swr arm, so a hash reads the same on both.
+//
+// A `notFound` sentinel is a positive "ClickHouse had no rows", so it shapes to nulls like any
+// cached value - the same zeros MetricService itself resolves that id to. Only an absent key is
+// unknown. `_populatedAt` (the populate stamp) is not a metric and is not read.
+//
+// `|| null` here, not only in the shaper: it keeps NaN from ever leaving this helper, so changing
+// the shaper's `||` to `??` cannot leak one downstream.
+const shapeCachedMetricHash = (
+  id: number,
+  hash: Record<string, string>
+): ImageMetricsObject[number] => {
+  const count = (value: string | undefined) => Number.parseInt(value ?? '', 10) || null;
+  return shapeImageMetrics(id, {
+    Like: count(hash.Like),
+    Heart: count(hash.Heart),
+    Laugh: count(hash.Laugh),
+    Cry: count(hash.Cry),
+    commentCount: count(hash.commentCount),
+    Collection: count(hash.Collection),
+    tippedAmount: count(hash.tippedAmount),
+  });
+};
+
+// The image-metrics-swr arm's primary read: every hash, under `deadlineMs`, serving whatever
+// landed. A key that rejects or misses the deadline is `undefined`, which the SWR arm classifies as
+// `image_metrics_swr_ids_total{class="unanswered"}` (an absent key is `{}`, class "cold") and
+// reads through the flag-OFF path with what is left of its budget. It does NOT touch
+// `image_metrics_stale_cache_timeout_total`, which keeps meaning the fallback arm only.
+const readImageMetricHashesForSwr = async (
+  uniqueIds: number[],
+  deadlineMs: number
+): Promise<(Record<string, string> | undefined)[]> => {
+  const metricRedis = redis as unknown as IRedisClient;
+  const landed: (Record<string, string> | undefined)[] = new Array(uniqueIds.length);
+  const reads = Promise.all(
+    uniqueIds.map((id, index) =>
+      metricRedis
+        .hGetAll(cacheKeys.metric('Image', id))
+        .then((hash) => {
+          landed[index] = hash;
+        })
+        .catch(() => undefined)
+    )
+  );
+  // `withTimeoutFallback` treats a non-positive deadline as NO deadline, hence the floor.
+  await withTimeoutFallback<unknown>(reads, Math.max(1, deadlineMs), undefined);
+  return landed;
+};
+
+let _imageMetricsRefresher: MetricRefresher | null = null;
+const getImageMetricsRefresher = () =>
+  (_imageMetricsRefresher ??= createMetricRefresher((ids) =>
+    // MetricService's own stale-entry repopulate: takes the same per-id lock a cold miss does (so
+    // one pod refreshes a hot key), stamps the entry, never throws, and resolves only once the
+    // populate has finished - which is what lets the refresher cap how many run at once.
+    // `fetch` cannot be used for this: it fires the same repopulate WITHOUT awaiting it.
+    getImageMetricService()['refreshInBackground']('Image', ids)
+  ));
+
+// `remainingMs` is what is left of the flag-OFF read's ClickHouse budget. The cache read takes at
+// most min(500ms, that budget), and the ids it cannot answer get only what remains of it, so the
+// flag-ON worst case is the flag-OFF one (budget + the 500ms stale-cache deadline), not their sum.
+const getImageMetricsObjectSwr = (
+  ids: number[],
+  remainingMs: () => number
+): Promise<ImageMetricsObject> =>
+  resolveMetricsStaleWhileRevalidate<ImageMetricsObject[number]>(ids, {
+    readHashes: (uniqueIds) =>
+      readImageMetricHashesForSwr(
+        uniqueIds,
+        Math.min(STALE_METRIC_CACHE_TIMEOUT_MS, remainingMs())
+      ),
+    shape: shapeCachedMetricHash,
+    fetchCold: (coldIds) =>
+      getImageMetricsObjectDirect(
+        coldIds.map((id) => ({ id })),
+        remainingMs()
+      ),
+    enqueueRefresh: (dueIds) => getImageMetricsRefresher().enqueue(dueIds),
+  });
+
 const getCachedImageMetricsObject = async (ids: number[]): Promise<ImageMetricsObject> => {
   const uniqueIds = [...new Set(ids)];
   if (!uniqueIds.length) return {};
@@ -6034,24 +6123,7 @@ const getCachedImageMetricsObject = async (ids: number[]): Promise<ImageMetricsO
     uniqueIds.forEach((id, index) => {
       const hash = landed[index];
       if (!hash || Object.keys(hash).length === 0) return;
-
-      // A `notFound` sentinel is a positive "ClickHouse had no rows", so it
-      // shapes to nulls like any cached value - the same zeros MetricService
-      // itself resolves that id to. Only an absent key is unknown.
-      //
-      // `|| null` here, not only in the shaper: it keeps NaN from ever leaving this
-      // helper, so changing the shaper's `||` to `??` cannot leak one downstream.
-      const count = (value: string | undefined) => Number.parseInt(value ?? '', 10) || null;
-
-      result[id] = shapeImageMetrics(id, {
-        Like: count(hash.Like),
-        Heart: count(hash.Heart),
-        Laugh: count(hash.Laugh),
-        Cry: count(hash.Cry),
-        commentCount: count(hash.commentCount),
-        Collection: count(hash.Collection),
-        tippedAmount: count(hash.tippedAmount),
-      });
+      result[id] = shapeCachedMetricHash(id, hash);
     });
 
     return result;
@@ -6117,17 +6189,55 @@ export function toImageV2Stats(match: ImageMetricsObject[number] | undefined): I
 // MetricService (which now pulls from the FINAL `entityMetricDailyAgg_v2` view).
 // The legacy in-app `entitymetric:*` read path (imageMetricsCache) was retired
 // after the v2 + watcher cutover went 100% stable.
+//
+// With `image-metrics-swr` ON, ids whose hash is cached are answered from it and refreshed in the
+// background (`~/server/services/image-metrics-swr`); only the rest take the read below.
 export const getImageMetricsObject = async (
   data: { id: number }[]
 ): Promise<ImageMetricsObject> => {
+  if (imageMetricsSwrEnabled()) {
+    // One budget for the whole call, the flag-OFF read's own: the SWR cache read and any
+    // flag-OFF read after it (for the ids it could not answer, or all of them on a throw) share it.
+    const deadline = Date.now() + env.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS;
+    const remainingMs = () => Math.max(0, deadline - Date.now());
+    try {
+      return await getImageMetricsObjectSwr(
+        data.map((d) => d.id),
+        remainingMs
+      );
+    } catch (e) {
+      // Not expected (every leg fails soft). The fallback gets only what is left of the budget, so
+      // even this path costs no more than OFF's worst case.
+      const error = e as Error;
+      logToAxiom(
+        { type: 'error', name: 'Failed to getImageMetrics swr', message: error.message },
+        'clickhouse'
+      ).catch();
+      return getImageMetricsObjectDirect(data, remainingMs());
+    }
+  }
+  return getImageMetricsObjectDirect(data);
+};
+
+// The flag-OFF read, and the SWR arm's read for ids the cache cannot answer. `timeoutMs` bounds
+// the MetricService read; the SWR arm passes what is left of its budget. With none left the
+// MetricService read is skipped and the ids are answered from the cache, as on a timeout.
+// Exported for its tests.
+export const getImageMetricsObjectDirect = async (
+  data: { id: number }[],
+  timeoutMs: number = env.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS
+): Promise<ImageMetricsObject> => {
   try {
     const ids = data.map((d) => d.id);
+
+    // `withTimeoutFallback` reads a non-positive deadline as NO deadline, so an exhausted budget
+    // must not reach it.
+    if (!(timeoutMs > 0)) return await getCachedImageMetricsObject(ids);
 
     // The ClickHouse read has NO request-level timeout other than the client's own
     // `request_timeout` (300s), and a try/catch CANNOT catch a hang. Bound
     // it here so a saturated/cold-miss metric read fails SOFT to empty metrics
     // instead of parking for minutes and blowing the SSR deadline.
-    const timeoutMs = env.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS;
     // Narrow type flows from this call (`fetch('Image', …)` → Record<number,
     // ImageMetrics>); withTimeoutFallback infers T from it so the empty fallback
     // is typed identically (no widening to the full metric union).
