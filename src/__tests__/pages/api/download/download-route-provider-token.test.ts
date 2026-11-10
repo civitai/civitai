@@ -117,6 +117,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import handler from '~/pages/api/download/models/[modelVersionId]';
 import sha256Route from '~/pages/api/download/sha256/[hash]';
+import blake3Route from '~/pages/api/download/blake3/[hash]';
 import { hashProviderSecret } from '~/server/services/provider-download/provider-token';
 
 const SECRET = 'ab'.repeat(32);
@@ -388,7 +389,11 @@ describe('a provider token on a hash URL', () => {
     liveSizeSpreadKB: 0,
   });
 
-  async function runHash(hash: unknown, query: Record<string, string | string[]> = {}) {
+  async function runHash(
+    hash: unknown,
+    query: Record<string, string | string[]> = {},
+    route = sha256Route
+  ) {
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(query))
       for (const v of Array.isArray(value) ? value : [value]) search.append(key, v);
@@ -407,7 +412,7 @@ describe('a provider token on a hash URL', () => {
       setHeader: vi.fn().mockReturnThis(),
       headersSent: false,
     } as unknown as NextApiResponse;
-    await sha256Route(req, res);
+    await route(req, res);
     return { req, res };
   }
 
@@ -446,7 +451,6 @@ describe('a provider token on a hash URL', () => {
     expect(mockTrackerCtor).toHaveBeenCalledWith(expect.anything(), expect.anything(), null);
     expect(mockGetServerAuthSession).not.toHaveBeenCalled();
     expect(mockGetFileForModelVersion).not.toHaveBeenCalled();
-    // The lookup ran as a provider, not as an anonymous caller.
     expect(holder.params[0]).toEqual(expect.arrayContaining([HASH.toUpperCase(), 'SHA256', true]));
     expect(await counter('RunPods', 'granted')).toBe(granted + 1);
   });
@@ -473,7 +477,6 @@ describe('a provider token on a hash URL', () => {
   });
 
   it('is a 401 for an unknown token, before any lookup, never an anonymous download', async () => {
-    // Control: the same URL without the token runs the lookup, and not as a provider.
     await runHash(HASH);
     expect(holder.params).toHaveLength(1);
     expect(holder.params[0]).not.toContain(true);
@@ -485,6 +488,14 @@ describe('a provider token on a hash URL', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'invalid provider token' });
     expect(holder.params).toEqual([]);
     expect(res.redirect).not.toHaveBeenCalled();
+  });
+
+  it('looks a blake3 URL up under BLAKE3 for a provider', async () => {
+    const { res } = await runHash(HASH, { token: `RunPods:${SECRET}` }, blake3Route);
+
+    expect(res.redirect).toHaveBeenCalledWith('https://storage.example/private?sig=1');
+    expect(holder.params[0]).toEqual(expect.arrayContaining([HASH.toUpperCase(), 'BLAKE3']));
+    expect(holder.params[0]).not.toContain('SHA256');
   });
 
   it('two tokens on one request are a 400', async () => {

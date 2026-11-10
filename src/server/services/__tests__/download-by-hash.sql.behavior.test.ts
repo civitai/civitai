@@ -521,7 +521,6 @@ describe('a provider token holder', () => {
     const result = await providerPick(providerGate([1]));
     expect(result).toMatchObject({ ok: true, fileId: 1 });
 
-    // Control: a stranger is never offered it.
     const stranger = fakeGate([1]);
     expect((await pick(stranger, { id: STRANGER })).fileResult.status).toBe('not-found');
     expect(stranger).not.toHaveBeenCalled();
@@ -541,7 +540,6 @@ describe('a provider token holder', () => {
   ] as [string, Copy][])('is never offered a copy on %s', async (_, excluded) => {
     await copy(1, excluded);
     await copy(2);
-    // Passes nothing, so every copy offered is tried whatever the order.
     const gate = providerGate([]);
 
     await providerPick(gate);
