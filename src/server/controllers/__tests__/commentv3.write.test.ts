@@ -40,7 +40,7 @@ vi.mock('~/server/services/commentv3/write.service', async (importOriginal) => {
     getStoredComment: (db: unknown, id: number, lock?: string) => m.getStored(db, id, lock),
     getV3WriteComment: async (_db: unknown, id: number) => {
       const row = m.stored.get(id);
-      return row && !row.deletedAt && actual.isV3WriteSurface(row.entityType) ? row : undefined;
+      return row && !row.deletedAt ? row : undefined;
     },
     insertComment: m.insertComment,
     updateCommentContent: m.updateCommentContent,
@@ -151,7 +151,6 @@ beforeEach(() => {
   m.stored.set(103, row(103, { userId: ANSWERED_AUTHOR, parentId: 100, path: '100.103' }));
   m.stored.set(104, row(104, { parentId: 100, replyToId: 103, path: '100.104', hidden: true }));
   m.stored.set(200, row(200, { entityType: 'image' }));
-  m.stored.set(201, row(201, { entityType: 'model3dReview' }));
   m.getStored.mockImplementation(async (_db: unknown, id: number) => m.stored.get(id));
   m.insertComment.mockImplementation(async (_db: unknown, args: { parentId?: number }) =>
     row(300, { parentId: args.parentId ?? null })
@@ -411,12 +410,16 @@ describe('commentv3 create', () => {
     });
   });
 
-  it('refuses a surface that does not write CommentV3 yet', async () => {
+  it('refuses a comment on a 3D model review, a section nothing renders', async () => {
     await expect(create(STRANGER, { entityType: 'model3dReview' })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });
-    await expect(create(STRANGER, { parentId: 201 })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
+    expect(m.insertComment).not.toHaveBeenCalled();
+  });
+
+  it('refuses an entity type with no comment section', async () => {
+    await expect(create(STRANGER, { entityType: 'nope' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
     });
     expect(m.insertComment).not.toHaveBeenCalled();
   });
@@ -567,12 +570,6 @@ describe('commentv3 hide and pin', () => {
       expect(m.setCommentFlags).toHaveBeenCalledTimes(1);
     }
   );
-
-  it('run in a transaction, so the row lock covers the CommentV2 sync', async () => {
-    const tx = nextTx();
-    await toggleHideCommentV3Handler({ ctx: ctx(ARTICLE_OWNER), input: { id: 101 } });
-    expect(await runsOn(m.setCommentFlags.mock.calls[0][0], tx)).toBe(true);
-  });
 });
 
 describe('a model with its comments locked', () => {

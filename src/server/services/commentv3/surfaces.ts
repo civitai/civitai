@@ -16,6 +16,7 @@ import type { StoredCommentV3 } from '~/server/services/commentv3/write.service'
 import {
   handleLogError,
   throwAuthorizationError,
+  throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
@@ -278,7 +279,12 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
     trackAs: (comment) => ({ type: 'Model', entityId: comment.entityId }),
   },
   model3d: {},
-  model3dReview: {},
+  // Nothing renders these comments, and the surface never wrote CommentV3.
+  model3dReview: {
+    assertWritable: async () => {
+      throw throwBadRequestError('Comments on 3D model reviews are closed.');
+    },
+  },
   appListing: {},
 };
 

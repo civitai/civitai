@@ -9,7 +9,10 @@ import type {
   StepQuoteErrorCode,
   WorkflowQuoteErrorCode,
 } from '~/server/services/blocks/pass-through-quote-failure';
-import type { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
+import type {
+  CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
+  SOURCE_SCAN_PENDING_ERROR_CODE,
+} from '~/shared/constants/block-scope.constants';
 import type { BlockWorkflowErrorCode } from '~/server/services/blocks/workflow-graph';
 import type { InlineComfyRefusedCode } from '~/server/services/blocks/inline-comfy.service';
 import { detectGraphFormat } from '~/components/AppBlocks/resourceFileParse';
@@ -672,10 +675,12 @@ export const BLOCK_STEP_QUOTE_ID_REGEX = /^sq_[a-f0-9]{32}$/;
 
 const blockPassThroughStepShape = {
   kind: z.literal('step'),
-  // The ARM discriminator. `z.undefined()` — NOT an absent key. See the
+  // The ARM discriminator. `z.undefined().optional()` — NOT an absent key. See the
   // `blockStepMemberSchema` note below: an arm that simply omits `step` builds
-  // fine and then throws on the first parse, measured.
-  step: z.undefined(),
+  // fine and then throws on the first parse, measured. `.optional()` because from
+  // zod 4.4 a bare `z.undefined()` key must be present: a body without `step`
+  // (the normal pass-through body) fails it with `expected nonoptional`.
+  step: z.undefined().optional(),
   $type: z.string().min(1).max(PASS_THROUGH_TYPE_MAX_CHARS),
   // 🔴 ORCHESTRATOR-NATIVE AND FORWARDED UNMODIFIED. The server may refuse it,
   // but never rewrites, merges or defaults any field in here — that is the
@@ -991,7 +996,7 @@ const blockCustomComfyMemberSchema = z.discriminatedUnion(
 //      error shape — that was measured about the OUTER union, where the plain
 //      union is the top level. Nested, it does not work at all.)
 //
-// `z.undefined()` supplies the discriminator value zod needs, so
+// `z.undefined().optional()` supplies the discriminator value zod needs, so
 // `{kind:'step', $type, input, maxBuzz}` (no `step` key) lands on the
 // pass-through arm while `{kind:'step', step, params}` still lands on the
 // registry arm and rejects an unregistered id at `path:['step']` — the error
@@ -1127,6 +1132,10 @@ export type BlockWorkflowSnapshot = {
    * run: not ComfyUI API format, or a loader input holding a model filename instead of
    * an AIR. The codes are `checkComfyGraph`'s from `@civitai/app-sdk/blocks`. Returned
    * by the estimate and the submit alike, with no `cost`, before anything is reserved.
+   *
+   * `'source-scan-pending'` — a `kind:'step'` or `kind:'workflow'` input names the viewer's
+   * own upload whose scan has not finished. Retry once the scan completes. Estimate and
+   * submit alike, before anything is reserved.
    */
   errorCode?:
     | TrainingQuoteErrorCode
@@ -1134,7 +1143,8 @@ export type BlockWorkflowSnapshot = {
     | StepQuoteErrorCode
     | BlockWorkflowErrorCode
     | InlineComfyRefusedCode
-    | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE;
+    | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE
+    | typeof SOURCE_SCAN_PENDING_ERROR_CODE;
   // The buzz account that primarily funded this generation (the accountType of
   // the largest realized debit). OPTIONAL + additive: existing consumers that
   // don't read it are unaffected. Only the account TYPE is surfaced — nothing

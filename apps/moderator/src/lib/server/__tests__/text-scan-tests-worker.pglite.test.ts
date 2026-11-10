@@ -104,8 +104,8 @@ describe('runWorker', () => {
     await runWorker(deps(scan.fn), runId);
 
     expect(scan.calls.map((c) => [c.entityType, c.keys.length])).toEqual([
-      ['CommentV2', 8],
-      ['CommentV2', 2],
+      ['CommentV3', 8],
+      ['CommentV3', 2],
       ['Model', 3],
     ]);
     expect(await runRow(runId)).toMatchObject({

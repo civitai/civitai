@@ -877,14 +877,5 @@
     }
   ],
   "tags:an untagged image": [],
-  "tags:no images": [],
-  "thread:a locked thread": {
-    "id": 9301,
-    "locked": true
-  },
-  "thread:an open thread": {
-    "id": 9302,
-    "locked": false
-  },
-  "thread:no thread": null
+  "tags:no images": []
 }
