@@ -21,9 +21,14 @@ const SCAN_DIRS = ['routers', 'controllers'].map((d) => path.join(SERVER_DIR, d)
 const FIELD_GATES = ['getEventDecorationsForEntity', 'getViewerEventDecorations'];
 /** Gates taking the viewer as their second positional argument. */
 const POSITIONAL_GATES = ['getVisibleDecorationEvents', 'withoutHiddenEventDecorations'];
-const GATE_CALL = new RegExp(`\\b(${[...FIELD_GATES, ...POSITIONAL_GATES].join('|')})\\s*\\(`, 'g');
+/** Type arguments (`<T>`) may sit between a call's name and its `(`. */
+const TYPE_ARGS = '\\s*(?:<[^()]*>)?\\s*';
+const GATE_CALL = new RegExp(
+  `\\b(${[...FIELD_GATES, ...POSITIONAL_GATES].join('|')})${TYPE_ARGS}\\(`,
+  'g'
+);
 /** The placement gate takes the moderator flag rather than a viewer. */
-const PLACEMENT_CALL = /\bequipCosmeticToEntity\s*\(/g;
+const PLACEMENT_CALL = new RegExp(`\\bequipCosmeticToEntity${TYPE_ARGS}\\(`, 'g');
 const VIEWER_FIELD = /[{,]\s*eventDecorationViewer\b\s*(:\s*)?/g;
 const EVENT_VIEWER_OF = /^eventViewerOf\(\s*ctx\s*\)/;
 
@@ -170,6 +175,7 @@ describe('no-raw-event-viewer', () => {
       'getImages({ eventDecorationViewer });',
       'getVisibleDecorationEvents(pick(a, b), ctx.user);',
       'equipCosmeticToEntity({ ...input, isModerator: ctx.user.isModerator });',
+      'getVisibleDecorationEvents<Entity>(entity, ctx.user);',
     ].join('\n');
     expect(findViolations([{ name: 'fixture.ts', text }])).toEqual([
       'fixture.ts:1: eventDecorationViewer',
@@ -180,6 +186,7 @@ describe('no-raw-event-viewer', () => {
       'fixture.ts:4: getVisibleDecorationEvents viewer',
       'fixture.ts:6: getEventDecorationsForEntity viewer',
       'fixture.ts:8: getVisibleDecorationEvents viewer',
+      'fixture.ts:10: getVisibleDecorationEvents viewer',
       'fixture.ts:9: equipCosmeticToEntity isModerator',
     ]);
   });
