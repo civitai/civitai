@@ -1,8 +1,28 @@
 import { dbRead } from '~/server/db/client';
 import { canViewOwnerOnly, canViewPoiModel } from '~/server/utils/poi-model-visibility';
-import { Availability } from '~/shared/utils/prisma/enums';
+import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 
 type Viewer = { id?: number | null; isModerator?: boolean | null } | null | undefined;
+
+/**
+ * Null unless `viewer` may see the model: published or theirs, and not `poi` unless theirs.
+ * `getModelHandler`'s rule without its owner-block check. A moderator sees every model, with no
+ * read, so `userId` (the owner) is null for them.
+ */
+export async function getModelVisibleToViewer(
+  modelId: number,
+  viewer?: Viewer
+): Promise<{ userId: number | null } | null> {
+  if (viewer?.isModerator) return { userId: null };
+  const model = await dbRead.model.findUnique({
+    where: { id: modelId },
+    select: { status: true, userId: true, poi: true },
+  });
+  if (!model) return null;
+  if (model.status !== ModelStatus.Published && model.userId !== viewer?.id) return null;
+  if (!canViewPoiModel(model.poi, model.userId, viewer)) return null;
+  return { userId: model.userId };
+}
 
 /** The ids among `modelIds` that `viewer` may not see (see `canViewPoiModel`). */
 export async function getHiddenModelIds(modelIds: number[], viewer?: Viewer) {

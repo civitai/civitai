@@ -94,6 +94,7 @@ import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/service
 import { Flags } from '~/shared/utils/flags';
 import { hasCompleteSfwFace, imagesForFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
+import { getImageIdsVisibleToViewer } from '~/server/services/image-visibility.service';
 import { invalidateHiddenImageMetadata } from '~/server/services/hidden-meta-invalidation.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueForWorkflow } from '~/server/services/technique.service';
@@ -2053,10 +2054,42 @@ export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostIma
   return transaction;
 };
 
-export const getPostResources = async ({ id }: GetByIdInput) => {
-  return await dbRead.postResourceHelper.findMany({
+/**
+ * The resources of the post's images the viewer may open (`getImageIdsVisibleToViewer`). The view
+ * keeps one row per resource from any of the post's images, so for anyone but a moderator a row
+ * stays only when a visible image uses that version, and it names that image.
+ */
+export const getPostResources = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+  const rows = await dbRead.postResourceHelper.findMany({
     where: { postId: id },
     orderBy: { modelName: 'asc' },
+  });
+  if (isModerator || !rows.length) return rows;
+
+  const images = await dbRead.image.findMany({ where: { postId: id }, select: { id: true } });
+  const visibleIds = await getImageIdsVisibleToViewer({
+    ids: images.map((image) => image.id),
+    userId,
+    isModerator,
+  });
+  if (!visibleIds.size) return [];
+
+  const used = await dbRead.imageResourceNew.findMany({
+    where: { imageId: { in: [...visibleIds] } },
+    select: { imageId: true, modelVersionId: true },
+    orderBy: { imageId: 'asc' },
+  });
+  const imageByVersion = new Map<number, number>();
+  for (const { imageId, modelVersionId } of used)
+    if (!imageByVersion.has(modelVersionId)) imageByVersion.set(modelVersionId, imageId);
+
+  return rows.flatMap((row) => {
+    const imageId = imageByVersion.get(row.modelVersionId);
+    return imageId === undefined ? [] : [{ ...row, imageId }];
   });
 };
 
@@ -2171,7 +2204,8 @@ export const updatePostNsfwLevel = async (ids: number | number[]) => {
 export const getPostContestCollectionDetails = async ({
   id,
   userId,
-}: GetByIdInput & { userId?: number }) => {
+  isModerator,
+}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
   const post = await dbRead.post.findUnique({
     where: { id },
     select: { collectionId: true, userId: true },
@@ -2198,14 +2232,24 @@ export const getPostContestCollectionDetails = async ({
   const images = isImageCollection
     ? await dbRead.image.findMany({
         where: { postId: id },
+        select: { id: true },
       })
+    : [];
+  const imageIds = isImageCollection
+    ? [
+        ...(await getImageIdsVisibleToViewer({
+          ids: images.map((i) => i.id),
+          userId,
+          isModerator,
+        })),
+      ]
     : [];
 
   const items = await dbRead.collectionItem.findMany({
     where: {
       collectionId: post.collectionId,
       postId: isImageCollection ? undefined : id,
-      imageId: isImageCollection ? { in: images.map((i) => i.id) } : undefined,
+      imageId: isImageCollection ? { in: imageIds } : undefined,
     },
     select: {
       id: true,
