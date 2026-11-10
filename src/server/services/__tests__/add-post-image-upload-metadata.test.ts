@@ -82,6 +82,8 @@ vi.mock('~/server/redis/caches', () => {
   };
 });
 
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+
 // The heavy image.service graph — replaced wholesale with the named exports post.service imports.
 vi.mock('~/server/services/image.service', () => ({
   createImage: vi.fn(),

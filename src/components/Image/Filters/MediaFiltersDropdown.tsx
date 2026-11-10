@@ -134,7 +134,12 @@ export function MediaFiltersDropdown({
       includePG13: undefined,
       ...(showJumpTo ? { jumpTo: undefined } : {}),
       ...(showTurf
-        ? { hatTeams: undefined, hideTurfHats: undefined, hideWornHats: undefined }
+        ? {
+            hatTeams: undefined,
+            hatTurfMine: undefined,
+            hideTurfHats: undefined,
+            hideWornHats: undefined,
+          }
         : {}),
     };
     // `period` is special: the URL path needs `undefined` so `removeEmpty`
@@ -175,13 +180,17 @@ export function MediaFiltersDropdown({
   const jumpTo = 'jumpTo' in mergedFilters ? mergedFilters.jumpTo : undefined;
   // A Hat Turf sort ranks over the whole event, so it has no time period.
   const hatSorted = showTurf && !!mergedFilters.hatSort;
+  // The viewer's own live hats, whatever media they are on, so the type chips do not apply.
+  const myHats = showTurf && !!mergedFilters.hatTurfMine;
+  // Both are served by the database hydrate, which has no period or remix filter.
+  const turfHydrated = hatSorted || myHats;
 
   // maybe have individual filter length with labels next to them
 
   // Every term is gated on `shows` as well: a count that includes a control the
   // caller excluded reads as an active filter the user cannot find or clear.
   const filterLength =
-    ('types' in mergedFilters && shows('types') ? mergedFilters.types?.length ?? 0 : 0) +
+    ('types' in mergedFilters && shows('types') && !myHats ? mergedFilters.types?.length ?? 0 : 0) +
     (shows('withMeta') && mergedFilters.withMeta ? 1 : 0) +
     (shows('requiringMeta') && mergedFilters.requiringMeta ? 1 : 0) +
     (shows('hidden') && mergedFilters.hidden ? 1 : 0) +
@@ -193,16 +202,17 @@ export function MediaFiltersDropdown({
     (shows('tools') && !!mergedFilters.tools?.length ? 1 : 0) +
     (shows('techniques') && !!mergedFilters.techniques?.length ? 1 : 0) +
     (shows('period') &&
-    !hatSorted &&
+    !turfHydrated &&
     mergedFilters.period &&
     mergedFilters.period !== MetricTimeframe.AllTime
       ? 1
       : 0) +
     (hatSorted ? mergedFilters.hatTeams?.length ?? 0 : 0) +
+    (myHats ? 1 : 0) +
     (showTurf && mergedFilters.hideTurfHats ? 1 : 0) +
     (showTurf && mergedFilters.hideWornHats ? 1 : 0) +
     (shows('baseModels') ? mergedFilters.baseModels?.length ?? 0 : 0) +
-    (!hatSorted &&
+    (!turfHydrated &&
     ((shows('remixesOnly') && !!mergedFilters.remixesOnly) ||
       (shows('nonRemixesOnly') && !!mergedFilters.nonRemixesOnly))
       ? 1
@@ -236,7 +246,7 @@ export function MediaFiltersDropdown({
 
   const dropdownBody = (
     <Stack gap="lg" p="md">
-      {shows('period') && !hatSorted && (
+      {shows('period') && !turfHydrated && (
         <Stack gap="md">
           <Divider label="Time period" className="text-sm font-bold" mb={4} />
           <PeriodFilter
@@ -255,7 +265,7 @@ export function MediaFiltersDropdown({
         </Stack>
       )}
       <Stack gap="md">
-        {shows('types') && (
+        {shows('types') && !myHats && (
           <>
             <Divider label="Media type" className="text-sm font-bold" mb={4} />
             <Chip.Group
@@ -329,8 +339,8 @@ export function MediaFiltersDropdown({
               </Tooltip>
             </FilterChip>
           )}
-          {/* A Hat Turf sort hydrates through the database, which has no remix filter. */}
-          {shows('nonRemixesOnly') && !hatSorted && (
+          {/* A Hat Turf sort and My live hats hydrate through the database, which has no remix filter. */}
+          {shows('nonRemixesOnly') && !turfHydrated && (
             <FilterChip
               checked={mergedFilters.nonRemixesOnly}
               onChange={(checked) => {
@@ -340,7 +350,7 @@ export function MediaFiltersDropdown({
               <span>Originals Only</span>
             </FilterChip>
           )}
-          {shows('remixesOnly') && !hatSorted && (
+          {shows('remixesOnly') && !turfHydrated && (
             <FilterChip
               checked={mergedFilters.remixesOnly}
               onChange={(checked) =>
@@ -373,6 +383,15 @@ export function MediaFiltersDropdown({
               className="text-sm font-bold"
               mb={4}
             />
+            <Group gap={8} role="group" aria-label="Only">
+              <span className="text-dimmed text-xs">Only</span>
+              <FilterChip
+                checked={myHats}
+                onChange={(checked) => handleChange({ hatTurfMine: checked ? true : undefined })}
+              >
+                <span>My live hats</span>
+              </FilterChip>
+            </Group>
             {hatSorted && (
               <Chip.Group
                 value={mergedFilters.hatTeams ?? []}
@@ -395,11 +414,14 @@ export function MediaFiltersDropdown({
             )}
             <Group gap={8} role="group" aria-label="Show">
               <span className="text-dimmed text-xs">Show</span>
-              <Tooltip label="Hat Turf sorts only list images with Turf hats" disabled={!hatSorted}>
+              <Tooltip
+                label="Hat Turf sorts and your live hats only list images with Turf hats"
+                disabled={!turfHydrated}
+              >
                 <span>
                   <FilterChip
-                    checked={hatSorted || !mergedFilters.hideTurfHats}
-                    disabled={hatSorted}
+                    checked={turfHydrated || !mergedFilters.hideTurfHats}
+                    disabled={turfHydrated}
                     onChange={(checked) =>
                       handleChange({ hideTurfHats: checked ? undefined : true })
                     }

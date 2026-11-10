@@ -99,7 +99,8 @@ beforeAll(async () => {
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "ResourceReview" (
       id int PRIMARY KEY, "userId" int NOT NULL,
-      "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE, "modelVersionId" int
+      "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE, "modelVersionId" int,
+      "postId" int, "releasedAt" timestamp(3)
     );
     CREATE DOMAIN "Availability" AS text;
     CREATE TABLE "File" (id serial PRIMARY KEY, "entityType" text, "entityId" int);

@@ -1,4 +1,8 @@
 import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
+import {
   heldEntryOnBountySql,
   keepHeldReviewsCte,
   reviewsOnModelsSql,
@@ -146,6 +150,7 @@ import {
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { deleteImages } from '~/server/services/image.service';
 import {
+  refreshHasReceivedReviews,
   refreshOwnedStickerCache,
   userContentOverviewCache,
   userModelCountCache,
@@ -170,6 +175,7 @@ import {
 import { clearUserEngagement } from '~/server/services/user-engagement';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
+import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import {
   handleLogError,
   isPrismaUniqueViolation,
@@ -505,6 +511,8 @@ export async function setUserMuted(
     if (!result.released) throw new Error(`No user with id ${args.userId}`);
     return { ...result.user, sessionInvalidated: true };
   }
+  if (isFeedbackCaptureOwner(args.userId))
+    throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
 
   // A repeated mute (the REST route's retry) keeps the moderator's original `mutedAt`.
   const current = await dbWrite.user.findUnique({
@@ -1150,6 +1158,8 @@ export const deleteUser = async ({
   removeImages,
   removeAppData,
 }: DeleteUserInput) => {
+  // Refused by name; the account scrub below also rejects a non-positive id, but only as a 500.
+  if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   const user = await dbWrite.user.findFirst({
     where: { username, id },
     select: { id: true, meta: true },
@@ -1745,6 +1755,7 @@ export const removeAllContent = async ({
   /** The webhook caller's unverified say-so; named on alerts only, never written as an actor. */
   claimedModeratorId?: number | null;
 }) => {
+  if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   const alertedBy = { userId: id, actorUserId: actorUserId ?? claimedModeratorId };
   // Here rather than in each caller (tRPC, the webhook, the moderator app's purge), so every one is
   // held to it. The deletes that destroy evidence check again in their own statements.
@@ -2563,6 +2574,7 @@ async function bulkUnpublishModelsForBannedUser({
   const modelIds = modelsToUnpublish.map((m) => m.id);
   const versionIds = modelsToUnpublish.flatMap((m) => m.modelVersions.map((v) => v.id));
 
+  let unpublishedPostIds: number[] = [];
   // Bulk update models and versions in a transaction
   await dbWrite.$transaction(
     async (tx) => {
@@ -2588,7 +2600,7 @@ async function bulkUnpublishModelsForBannedUser({
         `;
 
         // Update posts to unpublish them
-        await tx.$executeRaw`
+        const unpublishedPosts = await tx.$queryRaw<{ id: number }[]>`
           UPDATE "Post"
           SET
             metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
@@ -2601,11 +2613,18 @@ async function bulkUnpublishModelsForBannedUser({
             "publishedAt" IS NOT NULL
             AND "userId" = ${odRef}
             AND "modelVersionId" IN (${Prisma.join(versionIds)})
+          RETURNING id
         `;
+        unpublishedPostIds = unpublishedPosts.map((post) => post.id);
       }
     },
     { timeout: 60000 }
   );
+  syncReviewsOfMovedPosts({
+    change: 'unpublish',
+    postIds: unpublishedPostIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 
   // Bust user model count cache
   await userModelCountCache.refresh(odRef);
@@ -2771,6 +2790,9 @@ export const toggleBan = async ({
 
   const userMeta = (user.meta ?? {}) as UserMeta;
   const bannedAt = force ? null : user.bannedAt;
+  // Never banned; an unban stays open so a ban from before this guard can still be lifted.
+  if (!bannedAt && isFeedbackCaptureOwner(id))
+    throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
 
   const updatedMeta = bannedAt
     ? {

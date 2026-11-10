@@ -5369,7 +5369,58 @@ export async function previewRequest(params: PreviewRequestParams): Promise<Prev
   if (!claim.claimed) {
     throw new Error(`can only preview a pending request (${params.publishRequestId} changed)`);
   }
-  return startClaimedReviewBuild(claim.claimed, params.actor);
+  // The replaced preview is unpublished inside startClaimedReviewBuild, once the new sha is known.
+  return startClaimedReviewBuild(claim.claimed, params.actor, {
+    replacedDeployDetail: claim.replacedDeployDetail,
+  });
+}
+
+/**
+ * A rebuild (a start over a row that already had a preview) REPLACES the row's deploy detail, and
+ * that detail is the only record that the old build was published to the shared static server's
+ * review lane. So unpublish it here, from the detail the claim replaced, in whatever state it was
+ * left: a `preview-failed` preview can be published too (the publish succeeded and a later step
+ * failed). Without this the old meta stays served behind the mod-gate until the bucket lifecycle
+ * expires it.
+ *
+ * Only for a detail that RECORDS `sharedServer: true` and a full sha: a per-preview preview, or
+ * one whose serving mode was never recorded (its build never reached the apply step, so nothing
+ * was published), has nothing on the shared server. Unpublishing deletes only
+ * `review/<sha16>/meta.json` in the bucket; a per-preview route for the same host (a same-sha
+ * rebuild with the flag off) is a different backend and outranks the shared review route, so it
+ * is unaffected. Best-effort: it never blocks the rebuild.
+ *
+ * 🔴 NOT FOR THE SAME SHA. Called once the new build's sha is resolved (`newSha`), and skipped when
+ * it equals the replaced one: with the flag on the new build republishes that same
+ * `review/<sha16>/meta.json`, and an unpublish Job landing after that publish would leave the
+ * preview marked live but 404ing, with the callback's replay guard stopping any republish. The
+ * cost, accepted: a same-sha rebuild with the flag OFF leaves the old shared meta in place
+ * (shadowed by the per-preview route, gated, and expired by the bucket lifecycle). `newSha`
+ * undefined (the source could not be resolved, so nothing new will be published) unpublishes.
+ */
+async function unpublishReplacedSharedPreview(
+  request: { id: string; slug: string },
+  replacedDeployDetail: string | null | undefined,
+  newSha: string | undefined
+): Promise<void> {
+  const replaced = parseReviewDetail(replacedDeployDetail);
+  if (replaced.sharedServer !== true || !/^[0-9a-f]{40}$/.test(replaced.sha ?? '')) return;
+  if (newSha !== undefined && replaced.sha === newSha) return;
+  try {
+    const { triggerReviewUnpublish } = await import('./apps-pipeline.service');
+    await triggerReviewUnpublish({
+      slug: request.slug,
+      sha: replaced.sha as string,
+      publishRequestId: request.id,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[previewRequest] unpublish of the replaced shared-server preview failed (id=${request.id}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
 }
 
 /**
@@ -5384,7 +5435,9 @@ export async function previewRequest(params: PreviewRequestParams): Promise<Prev
  */
 export async function startClaimedReviewBuild(
   request: { id: string; slug: string; bundleKey: string; forgejoCommitSha: string | null },
-  actor: ReviewPreviewActor
+  actor: ReviewPreviewActor,
+  /** A rebuild's claim: the deploy detail it replaced (see unpublishReplacedSharedPreview). */
+  opts: { replacedDeployDetail?: string | null } = {}
 ): Promise<PreviewRequestResult> {
   const { env } = await import('~/env/server');
   const [{ triggerReviewBuild, reviewHost }, { reviewActorDetail }] = await Promise.all([
@@ -5404,6 +5457,8 @@ export async function startClaimedReviewBuild(
   try {
     sha = await resolveReviewSourceSha(request);
   } catch (err) {
+    // No new build will publish anything, so the replaced shared preview is unpublished.
+    await unpublishReplacedSharedPreview(request, opts.replacedDeployDetail, undefined);
     await markReviewPreviewState(
       request.id,
       'preview-failed',
@@ -5415,6 +5470,7 @@ export async function startClaimedReviewBuild(
     );
     throw err;
   }
+  await unpublishReplacedSharedPreview(request, opts.replacedDeployDetail, sha);
   const host = reviewHost(sha, env.APPS_DOMAIN);
   const url = `https://${host}/${request.slug}`;
 

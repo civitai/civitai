@@ -332,7 +332,7 @@ describe('resource review writes — block enforcement', () => {
 describe('a review read', () => {
   // The old Thread.commentCount stopped moving when review comments moved to CommentV3.
   it('counts its comments on CommentV3, as the review list does', async () => {
-    mockDbRead.resourceReview.findUnique.mockResolvedValueOnce({
+    mockDbRead.resourceReview.findFirst.mockResolvedValueOnce({
       id: 7,
       user: { id: 2 },
       model: { status: 'Published' },
@@ -341,7 +341,7 @@ describe('a review read', () => {
     await expect(getResourceReview({ id: 7 })).resolves.toMatchObject({
       thread: { commentCount: 3 },
     });
-    expect(mockDbRead.resourceReview.findUnique.mock.calls[0][0].select).not.toHaveProperty(
+    expect(mockDbRead.resourceReview.findFirst.mock.calls[0][0].select).not.toHaveProperty(
       'thread'
     );
   });

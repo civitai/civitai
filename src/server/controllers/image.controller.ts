@@ -39,6 +39,7 @@ import { feedHydrateQuery, hydrateWithReadRescue } from '~/server/services/feed-
 import {
   fillTurfPage,
   getHatTurfFeedEvent,
+  readMyTurfPage,
   readTurfRankPage,
   turfHiddenIds,
 } from '~/server/events/turf/turf-feed';
@@ -120,6 +121,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { moderatorApp } from '~/server/services/moderator-app.service';
 import { ModeratorClientError } from '@civitai/moderation';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
+import { visibleReviewWhere } from '~/server/services/resourceReview.visibility';
 
 export const moderateImageHandler = async ({
   input,
@@ -405,7 +407,7 @@ export const getInfiniteImagesHandler = async ({
   // same thing either way. The `hubId` conflict in `getInfiniteImagesSchema` still
   // reads the un-narrowed input and so stays the stricter of the two — it refuses
   // a combination this would have served, which is the safe direction.
-  const { hatSort, hatTeams, hideTurfHats, hideWornHats, ...unhatted } = input;
+  const { hatSort, hatTeams, hatTurfMine, hideTurfHats, hideWornHats, ...unhatted } = input;
   let scopedInput =
     unhatted.publishedOnly && unhatted.userId && unhatted.userId !== user?.id
       ? { ...unhatted, publishedOnly: undefined }
@@ -414,16 +416,18 @@ export const getInfiniteImagesHandler = async ({
   // unasked. Not on a scoped feed (profile, model, post...): the hydrate drops a model or hub scope, and
   // the Show filters live in the shared images filter store, so a gallery would silently lose images.
   const turfEvent =
-    (hatSort || hideTurfHats || hideWornHats) &&
+    (hatSort || hatTurfMine || hideTurfHats || hideWornHats) &&
     features.hatTurfFeedCard &&
     features.hatTurfFeedSorts &&
     !isScopedImageFeed(scopedInput)
       ? await getHatTurfFeedEvent(user?.id)
       : null;
   const hatFeedSort = turfEvent ? hatSort : undefined;
-  // Under a Hat Turf sort every image has Turf hats, so hiding them would empty the feed: only the
-  // worn-hat filter applies there.
-  const hide = { turf: hatFeedSort ? undefined : hideTurfHats, worn: hideWornHats };
+  // The images the viewer has a live Turf hat on. A player is always signed in.
+  const hatsOf = turfEvent && hatTurfMine ? user?.id : undefined;
+  // Under a Hat Turf sort or the viewer's own hats every image has Turf hats, so hiding them would
+  // empty the feed: only the worn-hat filter applies there.
+  const hide = { turf: hatFeedSort || hatsOf ? undefined : hideTurfHats, worn: hideWornHats };
   const hideHats = turfEvent && (hide.turf || hide.worn) ? turfEvent : null;
   const withoutHidden = async <T extends { id: number }>(items: T[]) => {
     if (!hideHats) return items;
@@ -469,25 +473,26 @@ export const getInfiniteImagesHandler = async ({
       eventDecorationViewer: user,
     };
 
-    if (turfEvent && hatFeedSort) {
-      const input = scopedInput;
+    if (turfEvent && (hatFeedSort || hatsOf)) {
+      // The viewer's own hats are listed whatever they are on, videos too.
+      const input = hatsOf ? { ...scopedInput, types: undefined } : scopedInput;
       // The hydrate reads an empty follow list as no filter; the feed serves it as nothing.
       if (input.followed && user && !(await getUserFollows(user.id)).length)
         return { items: [], nextCursor: undefined, source: 'turf' as const };
       const cursor = typeof input.cursor === 'string' ? input.cursor : undefined;
       const result = await fillTurfPage(
-        'sort',
+        hatsOf ? 'mine' : 'sort',
         input.limit,
         cursor,
         async (at) => {
-          const page = await readTurfRankPage({
-            event: turfEvent,
-            sort: hatFeedSort,
-            teams: hatTeams,
-            cursor: at,
-            limit: input.limit,
-          });
+          const read = { event: turfEvent, teams: hatTeams, cursor: at, limit: input.limit };
+          const mine = hatsOf
+            ? await readMyTurfPage({ ...read, userId: hatsOf, sort: hatFeedSort })
+            : undefined;
+          const page = mine ?? (await readTurfRankPage({ ...read, sort: hatFeedSort! }));
           if (!page.ids.length) return { items: [], nextCursor: page.nextCursor };
+          // Only in the viewer's own hats: the card shows that hat's time left.
+          const placedAt = mine?.placedAt;
           const rows = await hydrateWithReadRescue(
             { ...feedHydrateQuery(input, page.ids), ...dbInput },
             async (query) => (await getAllImages(query)).items
@@ -496,7 +501,11 @@ export const getInfiniteImagesHandler = async ({
           const byIdRows = new Map(
             (await withoutHeldFromViewer(ctx, rows)).map((row) => [row.id, row])
           );
-          const items = page.ids.flatMap((id) => byIdRows.get(id) ?? []);
+          const items = page.ids.flatMap((id) => {
+            const row = byIdRows.get(id);
+            if (!row) return [];
+            return placedAt ? [{ ...row, turfPlacedAt: placedAt.get(id) }] : [row];
+          });
           return { items, nextCursor: page.nextCursor };
         },
         withoutHidden
@@ -885,6 +894,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
               userId: { in: userIds },
               modelId: input.modelId,
               modelVersionId: input.modelVersionId,
+              ...visibleReviewWhere(user?.id),
             },
             select: {
               userId: true,
