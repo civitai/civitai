@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getImageTagRows } from '~/server/redis/image-tag-rows';
 
 // The id batch must bind as a single array parameter so the statement text is batch-size-independent.
+// What the statement returns, against real rows, is pinned in image-tag-rows.sql.behavior.test.ts.
 
 const queryRaw = vi.fn();
 const db = { $queryRaw: queryRaw } as unknown as Parameters<typeof getImageTagRows>[0];
@@ -28,10 +29,19 @@ describe('getImageTagRows', () => {
       await getImageTagRows(db, ids);
       const query = lastQuery();
 
-      expect(query.values).toEqual([ids]);
+      expect(query.values).toEqual([
+        ids,
+        ['anime', 'cartoon', 'comics', 'manga', 'man', 'woman', 'men', 'women'],
+      ]);
       expect(normalise(query.text)).toBe(
-        'SELECT "imageId", "source", "tagId" FROM "TagsOnImageDetails" ' +
-          'WHERE "imageId" = ANY($1::int[]) AND "disabled" = false'
+        'SELECT toi."imageId", toi."source", toi."tagId" FROM "TagsOnImageDetails" toi ' +
+          'WHERE toi."imageId" = ANY($1::int[]) AND toi."disabled" = false ' +
+          'AND NOT ( toi."source" = \'Rekognition\' AND EXISTS ( ' +
+          'SELECT 1 FROM "TagsOnImageDetails" wd ' +
+          'WHERE wd."imageId" = toi."imageId" AND wd."source" = \'WD14\' AND wd."disabled" = false ) ' +
+          'AND EXISTS ( SELECT 1 FROM "Tag" t ' +
+          'WHERE t.id = toi."tagId" AND t.type <> \'Moderation\' AND t.name::text <> \'\' ' +
+          'AND t.name::text <> ALL($2::text[]) ) )'
       );
     }
   });

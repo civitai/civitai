@@ -63,18 +63,10 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import dayjs from '~/shared/utils/dayjs';
-import type { Availability, CosmeticSource } from '~/shared/utils/prisma/enums';
-import {
-  CosmeticEntity,
-  CosmeticType,
-  ModelStatus,
-  TagSource,
-  TagType,
-} from '~/shared/utils/prisma/enums';
+import type { Availability, CosmeticSource, TagType } from '~/shared/utils/prisma/enums';
+import { CosmeticEntity, CosmeticType, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { styleTags, subjectTags } from '~/libs/tags';
 
-const alwaysIncludeTags = [...styleTags, ...subjectTags];
 export const tagIdsForImagesCache = createCachedObject<{
   imageId: number;
   tags: number[];
@@ -109,32 +101,17 @@ export const tagIdsForImagesCache = createCachedObject<{
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
 
+    // Rekognition rows superseded by WD14 are already left out by the query (getImageTagRows).
     const imageTags = await getImageTagRows(db, imageIds);
 
     const tagIds = imageTags.map((t) => t.tagId);
     const tags = await tagCache.fetch(tagIds);
 
-    const hasWD: { [p: string]: boolean } = {};
-    for (const row of imageTags) {
-      const imageIdStr = row.imageId.toString();
-      hasWD[imageIdStr] ??= false;
-      if (row.source === TagSource.WD14) hasWD[imageIdStr] = true;
-    }
-    const result = imageTags.reduce((acc, { tagId, imageId, source }) => {
+    const result = imageTags.reduce((acc, { tagId, imageId }) => {
       const imageIdStr = imageId.toString();
       acc[imageIdStr] ??= { imageId, tags: [] };
 
-      const tag = tags[tagId];
-      if (!tag) return acc;
-
-      let canAdd = true;
-      if (source === TagSource.Rekognition && hasWD[imageIdStr as keyof typeof hasWD]) {
-        if (tag.type !== TagType.Moderation && tag.name && !alwaysIncludeTags.includes(tag.name)) {
-          canAdd = false;
-        }
-      }
-
-      if (canAdd) acc[imageIdStr].tags.push(tagId);
+      if (tags[tagId]) acc[imageIdStr].tags.push(tagId);
       return acc;
     }, {} as Record<string, { imageId: number; tags: number[] }>);
     return result;
@@ -650,8 +627,8 @@ export const tagCache = createCachedObject<TagLookup>({
   // the images search index), modelTagCache's tags (category filtering in model.service, and the
   // model page's tag list, which drops `unlisted` tags), and stripUnlistedTags (`unlisted`, on the
   // non-moderator votable-tags panel). These are label surfaces: image and model visibility is
-  // gated on the entity's own nsfwLevel, never the tag's. `type` also decides which Rekognition tag
-  // ids tagIdsForImagesCache keeps, a value that cache holds for hours.
+  // gated on the entity's own nsfwLevel, never the tag's. (Which Rekognition tag ids
+  // tagIdsForImagesCache keeps is decided in SQL from the live Tag row, not from this cache.)
   localTtl: basicTagsLocalTtl,
   localMax: 100000,
   localMaxBytes: L1_CACHE_BYTE_BUDGETS.basicTags,
