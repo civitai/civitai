@@ -278,15 +278,9 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
     return Object.fromEntries(cosmetics.map((x) => [x.id, x]));
   },
   ttl: CacheTTL.day,
-  // L1 only while the COSMETICS_L1 switch is on (60s); off, every read goes to Redis as before.
-  // Admin edits (cosmetic.service: the sticker placement rating, an event hat's fit) still refresh
-  // the Redis entry at once and drop the id from the editing pod's L1, but there is no cross-pod L1
-  // bust: OTHER pods can serve the previous value for up to 60s. That is accepted for display
-  // (names, images, badges). The one reader that hides content on `flags` — the kept-off sticker
-  // check in sticker-placement.service — reads with `bypassLocal`, so it stays as fresh as today, and
-  // so does eventDecorationEntityCaches, which stores what it reads for a day. Readers that store it
-  // for longer without bypassing (search documents, the leaderboard and home-block caches) are
-  // filled on their own schedule, not by a cosmetics2 edit, so they lag by up to the L1 TTL more.
+  // L1 only while COSMETICS_L1 is on. Admin edits refresh Redis and this process's L1 but there is
+  // no cross-process bust, so other processes can serve the previous value for up to the L1 TTL.
+  // Readers that hide content on `flags` or cache the result for long read with `bypassLocal`.
   localTtl: cosmeticsLocalTtl,
   localMax: 20000,
   localMaxBytes: L1_CACHE_BYTE_BUDGETS.cosmetics,
@@ -647,28 +641,17 @@ export const tagCache = createCachedObject<TagLookup>({
     );
   },
   ttl: CacheTTL.day,
-  // L1: the tag catalog is a small, near-static, SHARED universe keyed by tag id, so a
-  // per-pod L1 sized to hold the hot catalog reaches a near-100% feed hit ratio and
-  // removes tagCache's per-id Redis GET fan-out. The 1d Redis TTL dwarfs a 30s L1.
-  // BEHAVIOR-AUDIT (2026-07): the value carries nsfwLevel + unlisted. Every reader was
-  // grepped — neither field feeds a HARD content-visibility gate on the feed. Readers
-  // use tag NAMES for display (getTagNamesForImages, search-index tagNames), tag id/name
-  // for category filtering (model.service), and `unlisted` ONLY in stripUnlistedTags —
-  // a non-moderator filter on the model VOTABLE-TAGS panel (a tag-label surface, not
-  // image/content visibility; the ImageTag SQL view already drops unlisted at the DB
-  // layer, and moderators bypass it). Image/model visibility is gated by the entity's
-  // OWN nsfwLevel, never the tag's. So a ≤30s L1 delay on a busted tag-level/unlisted
-  // edit is a cosmetic tag-label lag, not a moderation-visibility bug. localTtl kept
-  // conservative (30s) given that (minor) mod-adjacent surface; hit ratio is driven by
-  // catalog coverage (localMax), not localTtl. Busted per-id on mod tag-level changes
-  // (adjust-tag-level.ts) — dropped from THIS pod's L1, ≤30s cross-pod lag accepted.
+  // L1: the tag catalog is small, near-static and shared by every reader, so an L1 sized to hold
+  // the hot catalog (localMax) removes tagCache's per-id Redis read fan-out.
   //
-  // 30s unless the BASIC_TAGS_L1_LONG_TTL switch is on, then 300s — so a busted tag-level or
-  // unlisted edit can take up to 5 minutes to reach other pods. Re-audited for the longer window
-  // (2026-11): the readers are still the ones listed above, plus the model page's tag list, which
-  // drops `unlisted` tags (a label surface again); `type` also decides, at lookup time, which
-  // Rekognition tag ids tagIdsForImagesCache keeps, a value that cache then holds for hours. The
-  // Redis entry is a day, and only adjust-tag-level busts it, so most edits already wait longer.
+  // localTtl is 30s, or 300s while BASIC_TAGS_L1_LONG_TTL is on. A busted tag-level or unlisted
+  // edit (adjust-tag-level.ts, the only bust) is dropped from the editing process's L1 and reaches
+  // other processes after at most that long. Readers: tag names for display (getTagNamesForImages,
+  // the images search index), modelTagCache's tags (category filtering in model.service, and the
+  // model page's tag list, which drops `unlisted` tags), and stripUnlistedTags (`unlisted`, on the
+  // non-moderator votable-tags panel). These are label surfaces: image and model visibility is
+  // gated on the entity's own nsfwLevel, never the tag's. `type` also decides which Rekognition tag
+  // ids tagIdsForImagesCache keeps, a value that cache holds for hours.
   localTtl: basicTagsLocalTtl,
   localMax: 100000,
   localMaxBytes: L1_CACHE_BYTE_BUDGETS.basicTags,

@@ -134,18 +134,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // Needs its key in flag state (enabled: false) BEFORE this code serves traffic: a missing key
   // makes evaluateBoolean throw and log on every call.
   CONTEST_COLLECTION_ITEMS_REDIS_CACHE = 'contest-collection-items-redis-cache',
-  // Per-pod (L1) cache switches, one per cache, so each can be A/B'd and rolled back alone. Each is
-  // read through `~/server/redis/l1-switches`: a global boolean, evaluated with no entity or
-  // context, at most once per 5s per process. DEFAULT-OFF: `isFliptSync` returns null for an
-  // unknown flag or an uninitialized client, which keeps today's behaviour. Add each key
-  // (enabled: false) to flag state before flipping it; a missing key just reads as off.
+  // Per-process (L1) cache switches, one per cache, so each can be A/B'd and rolled back alone.
+  // Read through `~/server/redis/l1-switches`, which holds their TTL values; a missing key reads as
+  // off. Add each key (enabled: false) to flag state before flipping it.
   //
-  // ON raises the `basic-tags` (tagCache) L1 TTL from 30s to 300s.
+  // Gates the longer `basic-tags` (tagCache) L1 TTL.
   BASIC_TAGS_L1_LONG_TTL = 'basic-tags-l1-long-ttl',
-  // ON puts a 60s L1 in front of the `cosmetics2` catalog cache (cosmeticCache), which has none.
+  // Gates an L1 in front of the `cosmetics2` catalog cache (cosmeticCache).
   COSMETICS_L1 = 'cosmetics-l1',
-  // ON puts a 30s L1 in front of `images-for-model-version-2` (imagesForModelVersionsCache), which
-  // has none. An L1 hit also skips that cache's per-image tag read.
+  // Gates an L1 in front of `images-for-model-version-2` (imagesForModelVersionsCache).
   MODEL_VERSION_IMAGES_L1 = 'model-version-images-l1',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
