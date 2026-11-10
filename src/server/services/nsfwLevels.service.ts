@@ -430,7 +430,8 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
       RETURNING a.id;
     `);
   await articlesSearchIndex.queueUpdate(
-    articles.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    articles.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
+    { reason: 'nsfw-level' }
   );
 }
 
@@ -814,7 +815,8 @@ export async function queueComicsForPanelImages(imageIds: number[]) {
   const projectIds = await getComicProjectIdsForImages(imageIds);
   if (!projectIds.length) return;
   await comicsSearchIndex.queueUpdate(
-    projectIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    projectIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
+    { reason: 'nsfw-level' }
   );
 }
 
