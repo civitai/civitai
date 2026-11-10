@@ -3,7 +3,8 @@ import { env as clientEnv } from '~/env/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
-import { recordExternalHost } from '~/server/services/generation-input-hosts';
+import { externalHostBucket, recordExternalHost } from '~/server/services/generation-input-hosts';
+import { logToAxiom } from '~/server/logging/client';
 import {
   CIVITAI_IMAGE_HOSTS,
   hasUrlAmbiguousBytes,
@@ -57,6 +58,8 @@ export async function assertStoredImageUrlsUnblocked(urls: string[]) {
   if (blocked.length) throw generationImageUnavailableError();
 }
 
+type AppSourceRefusal = 'held' | 'pending' | 'unrowed';
+
 type InputImageRow = {
   url: string;
   userId: number;
@@ -78,6 +81,10 @@ export const APP_SOURCE_NOT_ON_CIVITAI_MESSAGE =
   'generation inputs from apps must be images uploaded or published on Civitai';
 
 const appSourcePendingError = () => imageUrlUnavailableError(APP_SOURCE_PENDING_MESSAGE);
+
+/** True for the refusal of an app's own upload whose scan has not finished. */
+export const isAppSourcePendingError = (error: unknown) =>
+  error instanceof TRPCError && error.message === APP_SOURCE_PENDING_MESSAGE;
 const appSourceUnusableError = () => imageUrlUnavailableError(APP_SOURCE_UNUSABLE_MESSAGE);
 const appSourceNotOnCivitaiError = () =>
   imageUrlUnavailableError(APP_SOURCE_NOT_ON_CIVITAI_MESSAGE);
@@ -96,14 +103,17 @@ async function assertKeysUsable({
   now,
   imagesOnly = false,
   maxKeys = MAX_KEYS,
-  appBlock = false,
+  appBlock,
 }: {
   keys: string[];
   urls: string[];
   userId: number;
   now?: Date;
-  /** Every image, the caller's own included, must be scanned and unflagged; see `APP_BLOCK_ENTRIES`. */
-  appBlock?: boolean;
+  /**
+   * Every image, the caller's own included, must be scanned and unflagged; see
+   * `APP_BLOCK_ENTRIES`. Told the reason before each such refusal.
+   */
+  appBlock?: { refusing: (reason: AppSourceRefusal) => void };
   imagesOnly?: boolean;
   /** Most keys one check reads; the image lookup still goes `MAX_KEYS` at a time. */
   maxKeys?: number;
@@ -139,7 +149,11 @@ async function assertKeysUsable({
     if (appBlock && keyRows.some((r) => r.held || !r.scanComplete)) {
       // Only the owner learns why: to anyone else the image is just unavailable.
       if (!own) throw generationImageUnavailableError();
-      if (keyRows.some((r) => r.held)) throw appSourceUnusableError();
+      if (keyRows.some((r) => r.held)) {
+        appBlock.refusing('held');
+        throw appSourceUnusableError();
+      }
+      appBlock.refusing('pending');
       throw appSourcePendingError();
     }
     if (!keyRows.length || own) continue;
@@ -157,8 +171,10 @@ async function assertKeysUsable({
       throw generationImageUnavailableError();
     // A key issued to the caller with no row is an upload that never reached the scan.
     const unrecorded = new Set(issuers.unrecorded);
-    if (appBlock && unrowed.flatMap(keysIn).some((key) => !unrecorded.has(key)))
+    if (appBlock && unrowed.flatMap(keysIn).some((key) => !unrecorded.has(key))) {
+      appBlock.refusing('unrowed');
       throw appSourceUnusableError();
+    }
     return;
   }
   try {
@@ -168,7 +184,10 @@ async function assertKeysUsable({
       throw generationImageUnavailableError();
     throw error;
   }
-  if (appBlock) throw appSourceUnusableError();
+  if (appBlock) {
+    appBlock.refusing('unrowed');
+    throw appSourceUnusableError();
+  }
 }
 
 /**
@@ -765,6 +784,7 @@ export async function assertGenerationInputsUsable({
   entry,
   isApiCaller,
   opaqueInput = false,
+  appBlockLog,
   now,
 }: {
   urls: (string | null | undefined)[];
@@ -777,6 +797,8 @@ export async function assertGenerationInputsUsable({
    * that fails, and http to an external host counts as external.
    */
   opaqueInput?: boolean;
+  /** Who and what an App Blocks entry's source log lines are about. Never a url or image id. */
+  appBlockLog?: { appBlockId?: string; stepTypes?: string };
   now?: Date;
 }) {
   const given = [...new Set(urls.filter((url): url is string => !!url))];
@@ -796,6 +818,23 @@ export async function assertGenerationInputsUsable({
   // Read once per call, only when an external url is seen.
   let refuseExternal: boolean | undefined;
   const appBlock = APP_BLOCK_ENTRIES.has(entry);
+  const logAppSource = (
+    reason: AppSourceRefusal | 'external',
+    extra: Record<string, unknown> = {}
+  ) =>
+    void logToAxiom({
+      name: 'app-block-source-refusal',
+      type: 'info',
+      entry,
+      reason,
+      appBlockId: appBlockLog?.appBlockId,
+      stepTypes: appBlockLog?.stepTypes,
+      ...extra,
+    }).catch(() => undefined);
+  const appBlockKeys = appBlock
+    ? { refusing: (reason: AppSourceRefusal) => logAppSource(reason) }
+    : undefined;
+  let refuseExternalAppSource: boolean | undefined;
   let refuseOrchestrator: boolean | undefined;
   for (const url of given) {
     if (opaqueInput && KEY_LIKE.test(url.trim())) {
@@ -834,7 +873,19 @@ export async function assertGenerationInputsUsable({
       keyedUrls.push(url);
       continue;
     }
-    if (cls === 'external' && appBlock) throw refuse(cls, pageLink);
+    if (cls === 'external' && appBlock) {
+      refuseExternalAppSource ??= await isFlipt(
+        FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES
+      );
+      logAppSource('external', {
+        host: externalHostBucket(url),
+        mode: refuseExternalAppSource ? 'refuse' : 'log',
+      });
+      if (refuseExternalAppSource) throw refuse(cls, pageLink);
+      refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });
+      keysIn(url).forEach((key) => externalKeys.add(key));
+      continue;
+    }
     if (cls === 'external' && EXTERNAL_COUNTED_ENTRIES.has(entry)) {
       refuseExternal ??= await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS);
       recordExternalHost({
@@ -854,7 +905,13 @@ export async function assertGenerationInputsUsable({
   }
 
   try {
-    await assertKeysUsable({ keys: [...keys], urls: keyedUrls, userId, now, appBlock });
+    await assertKeysUsable({
+      keys: [...keys],
+      urls: keyedUrls,
+      userId,
+      now,
+      appBlock: appBlockKeys,
+    });
     const imageOnlyKeys = [...externalKeys].filter((key) => !keys.has(key));
     if (imageOnlyKeys.length > IMAGE_ONLY_KEY_SIZE_REPORTED)
       largeKeySetCounter.inc({ entry, size: keySetSizeBucket(imageOnlyKeys.length) });
@@ -869,7 +926,7 @@ export async function assertGenerationInputsUsable({
       now,
       imagesOnly: true,
       maxKeys: IMAGE_ONLY_MAX_KEYS,
-      appBlock,
+      appBlock: appBlockKeys,
     });
   } catch (error) {
     if (error instanceof TRPCError && error.code === 'BAD_REQUEST')

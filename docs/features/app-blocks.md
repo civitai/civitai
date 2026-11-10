@@ -757,6 +757,21 @@ cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
   as on the platform one — so a job that reserves 5,000 and bills 200 gives back 4,800
   when it reaches a terminal state.
 
+### Generation input images (`kind: 'step'` and `kind: 'workflow'`)
+
+An image a generation input names must be an image stored on Civitai that has finished its
+scan and may be used as a source, the viewer's own uploads included.
+
+- **Still being scanned.** An upload whose scan has not finished is refused by the estimate
+  and the submit with a failed snapshot whose `errorCode` is `'source-scan-pending'`, before
+  anything is reserved. Retry once the upload's scan completes: with `OPEN_IMAGE_UPLOAD`
+  `asyncScan`, wait for the `scanned` verdict before using the image as a source.
+- **Not usable as a source.** An image the scan did not clear is refused with
+  `that image can’t be used as a generation source`. Choose a different image.
+- **External hosts.** Image urls on hosts outside Civitai are being phased out of
+  generation inputs; upload the image instead. Free text in a chat step's messages and tool
+  schemas is not an image input.
+
 ### Training runs (`kind: 'training'`)
 
 A page app can train a LoRA (ai-toolkit engine) on images the viewer uploads, through

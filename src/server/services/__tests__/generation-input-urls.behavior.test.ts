@@ -4,6 +4,7 @@ import { TRPCError } from '@trpc/server';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 
@@ -13,6 +14,7 @@ const holder = vi.hoisted(() => ({
   db: null as unknown as PGlite,
   refuseExternal: false,
   scannedRows: false,
+  refuseExternalApp: true,
   clickhouseDown: false,
 }));
 
@@ -20,10 +22,12 @@ vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: {
     GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS: 'generation-input-refuse-external-hosts',
     APP_BLOCK_SOURCE_SCANNED_ROWS: 'app-block-source-scanned-rows',
+    APP_BLOCK_REFUSE_EXTERNAL_SOURCES: 'app-block-refuse-external-sources',
   },
   isFlipt: async (flag: string) =>
     (flag === 'generation-input-refuse-external-hosts' && holder.refuseExternal) ||
-    (flag === 'app-block-source-scanned-rows' && holder.scannedRows),
+    (flag === 'app-block-source-scanned-rows' && holder.scannedRows) ||
+    (flag === 'app-block-refuse-external-sources' && holder.refuseExternalApp),
 }));
 
 // No upload request log rows: a key with no record is answered by the issue record alone.
@@ -114,6 +118,7 @@ beforeEach(async () => {
   redis.clear();
   holder.refuseExternal = false;
   holder.scannedRows = false;
+  holder.refuseExternalApp = true;
   holder.clickhouseDown = false;
   redisMock.sysRedis.set.mockImplementation((async (key: string, value: string) => {
     redis.set(key, value);
@@ -393,6 +398,45 @@ describe('an App Blocks generation source', () => {
         `refused: ${EXTERNAL_MESSAGE}`
       );
     expect(await check(['https://example.com/a.png'], 'generateFromGraph')).toBe('accepted');
+  });
+
+  it('while external refusal is off, allows an external host from an app and logs it without the url', async () => {
+    holder.refuseExternalApp = false;
+    loggingMock.logToAxiom.mockClear();
+    const url = 'https://example.com/secret-path/a.png';
+    await expect(
+      assertGenerationInputsUsable({
+        urls: [url],
+        userId: CALLER,
+        entry: 'appBlocksPassThrough',
+        isApiCaller: false,
+        now: AFTER,
+        appBlockLog: { appBlockId: 'apb_1', stepTypes: 'videogen' },
+      })
+    ).resolves.toBeUndefined();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'app-block-source-refusal',
+        reason: 'external',
+        mode: 'log',
+        appBlockId: 'apb_1',
+        stepTypes: 'videogen',
+        entry: 'appBlocksPassThrough',
+      })
+    );
+    expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain('secret-path');
+  });
+
+  it('logs the reason for refusing an own image, without naming the image', async () => {
+    await givenImage({ userId: CALLER, postId: null, ingestion: 'Pending' });
+    loggingMock.logToAxiom.mockClear();
+    expect(await check([CDN()], 'appBlocksPassThrough')).toBe(
+      `refused: ${APP_SOURCE_PENDING_MESSAGE}`
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'app-block-source-refusal', reason: 'pending' })
+    );
+    expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain(KEY);
   });
 
   it('refuses an orchestrator blob once scanned source rows are on, and only from an app', async () => {

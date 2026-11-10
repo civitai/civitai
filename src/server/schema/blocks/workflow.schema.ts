@@ -9,7 +9,10 @@ import type {
   StepQuoteErrorCode,
   WorkflowQuoteErrorCode,
 } from '~/server/services/blocks/pass-through-quote-failure';
-import type { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
+import type {
+  CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
+  SOURCE_SCAN_PENDING_ERROR_CODE,
+} from '~/shared/constants/block-scope.constants';
 import type { BlockWorkflowErrorCode } from '~/server/services/blocks/workflow-graph';
 import type { InlineComfyRefusedCode } from '~/server/services/blocks/inline-comfy.service';
 import { detectGraphFormat } from '~/components/AppBlocks/resourceFileParse';
@@ -1127,6 +1130,10 @@ export type BlockWorkflowSnapshot = {
    * run: not ComfyUI API format, or a loader input holding a model filename instead of
    * an AIR. The codes are `checkComfyGraph`'s from `@civitai/app-sdk/blocks`. Returned
    * by the estimate and the submit alike, with no `cost`, before anything is reserved.
+   *
+   * `'source-scan-pending'` — a `kind:'step'` or `kind:'workflow'` input names the viewer's
+   * own upload whose scan has not finished. Retry once the scan completes. Estimate and
+   * submit alike, before anything is reserved.
    */
   errorCode?:
     | TrainingQuoteErrorCode
@@ -1134,7 +1141,8 @@ export type BlockWorkflowSnapshot = {
     | StepQuoteErrorCode
     | BlockWorkflowErrorCode
     | InlineComfyRefusedCode
-    | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE;
+    | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE
+    | typeof SOURCE_SCAN_PENDING_ERROR_CODE;
   // The buzz account that primarily funded this generation (the accountType of
   // the largest realized debit). OPTIONAL + additive: existing consumers that
   // don't read it are unaffected. Only the account TYPE is surfaced — nothing
