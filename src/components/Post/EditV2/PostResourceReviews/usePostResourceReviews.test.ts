@@ -2,7 +2,7 @@
 import { QueryClient, useQuery } from '@tanstack/react-query';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as TrpcModule from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 
@@ -13,26 +13,20 @@ const state = vi.hoisted(() => ({
 const upsert = vi.hoisted(() => vi.fn());
 const showErrorNotification = vi.hoisted(() => vi.fn());
 const invalidateUserReview = vi.hoisted(() => vi.fn(async () => undefined));
+const fetchResources = vi.hoisted(() => vi.fn());
+const store = vi.hoisted(() => ({
+  images: [] as unknown[],
+  set(resources: { modelVersionId: number; name: string }[]) {
+    store.images = [{ type: 'added', data: { resourceHelper: resources } }];
+  },
+}));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => state.currentUser }));
 vi.mock('~/utils/notifications', () => ({ showErrorNotification }));
-// Matches the two resources below so the useSubject never refetches over the optimistic cache.
-vi.mock('~/components/Post/EditV2/PostEditProvider', () => {
-  const images = [
-    {
-      type: 'added',
-      data: {
-        resourceHelper: [
-          { modelVersionId: 1, name: 'a' },
-          { modelVersionId: 2, name: 'b' },
-        ],
-      },
-    },
-  ];
-  return {
-    usePostEditStore: (select: (s: { images: unknown[] }) => unknown) => select({ images }),
-  };
-});
+vi.mock('~/components/Post/EditV2/PostEditProvider', () => ({
+  usePostEditStore: (select: (s: { images: unknown[] }) => unknown) =>
+    select({ images: store.images }),
+}));
 
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 const key = ['post.getResources', 1];
@@ -47,7 +41,7 @@ const row = (modelVersionId: number, extra = {}) => ({
   ...extra,
 });
 const useResources = (_input: unknown, opts: object) =>
-  useQuery({ queryKey: key, queryFn: () => [], ...opts }, client);
+  useQuery({ queryKey: key, queryFn: () => fetchResources(), ...opts }, client);
 const cached = () =>
   client.getQueryData<ReturnType<typeof row>[]>(key)!.map((r) => r.reviewRecommended);
 
@@ -56,7 +50,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: makeTrpcProxy(
     {
       'post.getResources': {
-        useQuery: useResources,
+        useQuery: (input: unknown, opts: object) => useResources(input, opts),
       },
       'resourceReview.upsert': { useMutation: () => ({ mutateAsync: upsert }) },
     },
@@ -79,24 +73,58 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   ),
 }));
 
-import { usePostResourceReviews } from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
+import {
+  resetPendingForTests,
+  usePostResourceReviews,
+} from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const roots: ReturnType<typeof createRoot>[] = [];
 function renderHooks<T>(useHook: () => T, consumers = 1) {
   const results = Array.from({ length: consumers }, () => ({ current: undefined as T }));
   const root = createRoot(document.createElement('div'));
-  const probes = results.map((result, i) => {
-    function Probe() {
-      result.current = useHook();
-      return null;
-    }
-    return createElement(Probe, { key: i });
+  roots.push(root);
+  const Probes = results.map(
+    (result) =>
+      function Probe() {
+        result.current = useHook();
+        return null;
+      }
+  );
+  let tick = 0;
+  const render = () =>
+    act(() =>
+      root.render(
+        createElement(
+          'div',
+          null,
+          Probes.map((Probe, i) => createElement(Probe, { key: i, tick } as object))
+        )
+      )
+    );
+  render();
+  return Object.assign(results, {
+    rerender: () => {
+      tick++;
+      render();
+    },
   });
-  act(() => root.render(createElement('div', null, probes)));
-  return results;
 }
 const useSubject = () => usePostResourceReviews({ postId: 1, ownerId: 7 });
+
+// Each act() flushes React once, so repeated short waits let a refetch loop show itself.
+const settle = async () => {
+  for (let i = 0; i < 8; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 15));
+    });
+  }
+};
+const twoResources = [
+  { modelVersionId: 1, name: 'a' },
+  { modelVersionId: 2, name: 'b' },
+];
 
 beforeEach(() => {
   state.currentUser = { id: 7, muted: false };
@@ -104,11 +132,22 @@ beforeEach(() => {
   showErrorNotification.mockReset();
   client.clear();
   client.setQueryData(key, [row(1), row(2)]);
+  fetchResources.mockReset();
+  fetchResources.mockImplementation(async () => {
+    await new Promise((r) => setTimeout(r, 10));
+    return client.getQueryData(key) ?? [];
+  });
+  store.set(twoResources);
+});
+
+afterEach(() => {
+  act(() => roots.splice(0).forEach((root) => root.unmount()));
+  resetPendingForTests();
 });
 
 describe('usePostResourceReviews', () => {
   it('a rating from one consumer shows in every consumer', async () => {
-    upsert.mockResolvedValue({ id: 100, recommended: true });
+    upsert.mockResolvedValue({ id: 100, rating: 5, recommended: true });
     const [a, b] = renderHooks(useSubject, 2);
     await act(async () => {
       await a.current.rate(1, true);
@@ -131,29 +170,29 @@ describe('usePostResourceReviews', () => {
   });
 
   it('updates the created review on the next rating instead of creating again', async () => {
-    upsert.mockResolvedValue({ id: 100, recommended: true });
+    upsert.mockResolvedValue({ id: 100, rating: 5, recommended: true });
     const [a] = renderHooks(useSubject);
     await act(async () => {
       await a.current.rate(1, true);
     });
-    upsert.mockResolvedValue({ id: 100, recommended: false });
+    upsert.mockResolvedValue({ id: 100, rating: 1, recommended: false });
     await act(async () => {
       await a.current.rate(1, false);
     });
     expect(upsert.mock.calls[0][0].id).toBeUndefined();
-    expect(upsert.mock.calls[1][0]).toMatchObject({ id: 100, recommended: false });
+    expect(upsert.mock.calls[1][0]).toMatchObject({ id: 100, rating: 1, recommended: false });
   });
 
   it('re-applies the rating when a create race returns a review that has another one', async () => {
     upsert
-      .mockResolvedValueOnce({ id: 55, recommended: true })
-      .mockResolvedValueOnce({ id: 55, recommended: false });
+      .mockResolvedValueOnce({ id: 55, rating: 5, recommended: true })
+      .mockResolvedValueOnce({ id: 55, rating: 1, recommended: false });
     const [a] = renderHooks(useSubject);
     await act(async () => {
       await a.current.rate(1, false);
     });
     expect(upsert).toHaveBeenCalledTimes(2);
-    expect(upsert.mock.calls[1][0]).toMatchObject({ id: 55, recommended: false });
+    expect(upsert.mock.calls[1][0]).toMatchObject({ id: 55, rating: 1, recommended: false });
   });
 
   it('ignores a second rating for the same version while one is in flight', async () => {
@@ -170,7 +209,7 @@ describe('usePostResourceReviews', () => {
     });
     expect(upsert).toHaveBeenCalledTimes(1);
     await act(async () => {
-      resolve({ id: 100, recommended: true });
+      resolve({ id: 100, rating: 5, recommended: true });
       await first;
     });
     expect(a.current.isPending(1)).toBe(false);
@@ -189,5 +228,61 @@ describe('usePostResourceReviews', () => {
     expect(renderHooks(useSubject)[0].current.canReview).toBe(false);
     state.currentUser = { id: 9, muted: false };
     expect(renderHooks(useSubject)[0].current.canReview).toBe(false);
+  });
+
+  it('a failed save on one version leaves a concurrent save on another version intact', async () => {
+    let failFirst!: (e: Error) => void;
+    let resolveSecond!: (v: unknown) => void;
+    upsert
+      .mockReturnValueOnce(new Promise((_, reject) => (failFirst = reject)))
+      .mockReturnValueOnce(new Promise((r) => (resolveSecond = r)));
+    const [a] = renderHooks(useSubject);
+    let first!: Promise<unknown>;
+    let second!: Promise<unknown>;
+    await act(async () => {
+      first = a.current.rate(1, true);
+      second = a.current.rate(2, false);
+    });
+    await act(async () => {
+      resolveSecond({ id: 200, rating: 1, recommended: false });
+      await second;
+    });
+    await act(async () => {
+      failFirst(new Error('nope'));
+      await first;
+    });
+    const rows = client.getQueryData<ReturnType<typeof row>[]>(key)!;
+    expect(rows[0]).toMatchObject({ reviewId: null, reviewRecommended: null });
+    expect(rows[1]).toMatchObject({ reviewId: 200, reviewRecommended: false, reviewRating: 1 });
+    expect(showErrorNotification).toHaveBeenCalledOnce();
+  });
+
+  it('re-applies a lost create race when only the rating differs', async () => {
+    upsert
+      .mockResolvedValueOnce({ id: 55, rating: 3, recommended: true })
+      .mockResolvedValueOnce({ id: 55, rating: 5, recommended: true });
+    const [a] = renderHooks(useSubject);
+    await act(async () => {
+      await a.current.rate(1, true);
+    });
+    expect(upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it('fetches once per set of resources, even when one of them never comes back from the query', async () => {
+    const withVae = [...twoResources, { modelVersionId: 3, name: 'vae' }];
+    store.set(withVae);
+    const hooks = renderHooks(useSubject);
+    await settle();
+    expect(fetchResources).toHaveBeenCalledTimes(1);
+
+    store.set(withVae);
+    hooks.rerender();
+    await settle();
+    expect(fetchResources).toHaveBeenCalledTimes(1);
+
+    store.set([...withVae, { modelVersionId: 4, name: 'd' }]);
+    hooks.rerender();
+    await settle();
+    expect(fetchResources).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,5 +1,4 @@
-import { isEqual, uniqWith } from 'lodash-es';
-import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import type { ReviewPatch } from '~/components/Post/EditV2/PostResourceReviews/postResourceReviews.utils';
 import {
@@ -21,6 +20,10 @@ const setPending = (key: string, on: boolean) => {
   else pending.delete(key);
   pendingVersion++;
   listeners.forEach((l) => l());
+};
+export const resetPendingForTests = () => {
+  pending.clear();
+  pendingVersion++;
 };
 const subscribe = (l: () => void) => {
   listeners.add(l);
@@ -45,23 +48,23 @@ export function usePostResourceReviews({ postId, ownerId }: { postId: number; ow
   const canReview = !isMuted && !!currentUser && currentUser.id === ownerId;
 
   const storeImages = usePostEditStore((state) => state.images);
-  const imageResources = useMemo(
+  const resourceKey = useMemo(
     () =>
-      uniqWith(
-        storeImages
-          .map((x) => (x.type === 'added' ? x.data : undefined))
-          .filter(isDefined)
-          .flatMap((x) => x.resourceHelper)
-          .map(({ modelVersionId, name }) => ({ modelVersionId, name })),
-        isEqual
-      ),
+      [
+        ...new Set(
+          storeImages
+            .map((x) => (x.type === 'added' ? x.data : undefined))
+            .filter(isDefined)
+            .flatMap((x) => x.resourceHelper)
+            .map((x) => x.modelVersionId)
+        ),
+      ]
+        .sort((a, b) => a - b)
+        .join(','),
     [storeImages]
   );
 
-  const { data, refetch, isRefetching } = trpc.post.getResources.useQuery(
-    { id: postId },
-    { enabled: false }
-  );
+  const { data, refetch } = trpc.post.getResources.useQuery({ id: postId }, { enabled: false });
   const reviews = useMemo(() => dedupeByModelVersion(data ?? []), [data]);
   const byModelVersionId = useMemo(
     () => new Map(reviews.map((r) => [r.modelVersionId as number, r])),
@@ -69,11 +72,13 @@ export function usePostResourceReviews({ postId, ownerId }: { postId: number; ow
   );
   const counts = useMemo(() => countReviews(reviews), [reviews]);
 
-  // Refetch when the post's image resources change, as the old sidebar list did.
+  // Keyed on the version ids, not row counts: the server drops VAEs, so the counts never match.
+  const fetchedKey = useRef<string | null>(null);
   useEffect(() => {
-    const shouldRefetch = imageResources.length !== (data ?? []).length && canReview;
-    if (shouldRefetch && !isRefetching) refetch();
-  }, [imageResources, canReview, refetch, isRefetching]); //eslint-disable-line
+    if (!canReview || fetchedKey.current === resourceKey) return;
+    fetchedKey.current = resourceKey;
+    refetch();
+  }, [resourceKey, canReview, refetch]);
 
   useSyncExternalStore(
     subscribe,
@@ -93,25 +98,35 @@ export function usePostResourceReviews({ postId, ownerId }: { postId: number; ow
       if (!canReview || !row?.modelId || pending.has(key)) return 'ignored';
 
       setPending(key, true);
-      await queryUtils.post.getResources.cancel({ id: postId });
-      const previous = queryUtils.post.getResources.getData({ id: postId });
+      const previousReview: ReviewPatch = {
+        reviewId: row.reviewId,
+        reviewRating: row.reviewRating,
+        reviewRecommended: row.reviewRecommended,
+        reviewDetails: row.reviewDetails,
+        reviewCreatedAt: row.reviewCreatedAt,
+      };
       const apply = (p: ReviewPatch) =>
         queryUtils.post.getResources.setData({ id: postId }, (old) =>
           old ? patchReview(old, modelVersionId, p) : old
         );
-      apply(patch);
       try {
+        await queryUtils.post.getResources.cancel({ id: postId });
+        apply(patch);
         const input = { postId, modelId: row.modelId, modelVersionId, ...body };
         let saved = await upsert({ ...input, id: row.reviewId ?? undefined });
         // A create that lost the unique-constraint race returns the existing review untouched.
-        if (!row.reviewId && saved.recommended !== body.recommended) {
+        const differs =
+          saved.recommended !== body.recommended ||
+          saved.rating !== body.rating ||
+          (body.details !== undefined && saved.details !== body.details);
+        if (!row.reviewId && differs) {
           saved = await upsert({ ...input, id: saved.id });
         }
         apply({ reviewId: saved.id, reviewCreatedAt: row.reviewCreatedAt ?? new Date() });
         await queryUtils.resourceReview.getUserResourceReview.invalidate();
         return 'saved';
       } catch (error) {
-        queryUtils.post.getResources.setData({ id: postId }, previous);
+        apply(previousReview);
         showErrorNotification({
           title: 'Failed to save review',
           error: error instanceof Error ? error : new Error('Unknown error'),
