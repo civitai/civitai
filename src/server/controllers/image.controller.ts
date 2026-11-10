@@ -10,6 +10,7 @@ import { dbRead } from '~/server/db/client';
 import { getUserFollows, imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import {
   getUserCollectionPermissionsById,
   removeEntityFromAllCollections,
@@ -1223,10 +1224,22 @@ export const getImageContestCollectionDetailsHandler = async ({
   ctx: Context;
 }) => {
   try {
+    const userId = ctx.user?.id;
+    const isModerator = ctx.user?.isModerator;
+    // An image the viewer may not open gets the same answer as an id with no contest entries.
+    const visible = await assertImageVisibleToViewer({ id: input.id, userId, isModerator }).then(
+      () => true,
+      (error) => {
+        if (error instanceof TRPCError && error.code === 'NOT_FOUND') return false;
+        throw error;
+      }
+    );
+    if (!visible) return { collectionItems: [], post: null };
+
     const collectionItems = await getImageContestCollectionDetails({
       ...input,
-      userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
+      userId,
+      isModerator,
     });
     const imageId = collectionItems?.[0]?.imageId;
     if (!imageId) return { collectionItems, post: null };
