@@ -37,9 +37,69 @@ const AUDITED_TYPE_LOOKUP: ReadonlySet<string> = new Set(
 export const PASS_THROUGH_AUDIT_TEXT_MAX = 20_000;
 
 const WALK_DEPTH_MAX = 64;
+// Marks literal text that a url-shaped string still counts in; references never rely on it.
 const TEXT_KEY = /prompt|lyric|text|message|style|caption|instruction/i;
 const NEGATIVE_KEY = /negative/i;
 const URL_OR_AIR = /^\s*(https?:\/\/\S+|urn:air:\S+)\s*$/i;
+/**
+ * Step input fields that take media or a url, from the `@civitai/orchestration-client` input
+ * types (lower-cased). A reference is readable as non-prompt only under one of these; under
+ * any other key it may bind text, so it counts as an unreadable prompt.
+ */
+const MEDIA_KEYS: ReadonlySet<string> = new Set([
+  'additionalvideos',
+  'audioblob',
+  'audiourl',
+  'blob',
+  'blobkey',
+  'bloburl',
+  'endimage',
+  'endsourceimage',
+  'firstframe',
+  'firstframeimage',
+  'frames',
+  'frontalimage',
+  'garmenturl',
+  'image',
+  'image_url',
+  'images',
+  'imagestylereferences',
+  'imageurl',
+  'imageurls',
+  'inputurl',
+  'keyframes',
+  'lastframe',
+  'lastframeimage',
+  'mask',
+  'mediaurl',
+  'mediaurls',
+  'middleframeimage',
+  'middleimages',
+  'personmask',
+  'refaudiourl',
+  'referenceaudios',
+  'referenceimage',
+  'referenceimages',
+  'referencevideos',
+  'referencevideourls',
+  'sampleinputimages',
+  'sourceaudio',
+  'sourceimage',
+  'sourceimages',
+  'sourceimageurl',
+  'sourceurl',
+  'sourcevideo',
+  'startimage',
+  'subjectmaskurl',
+  'subjecturl',
+  'targetaudio',
+  'textureimageurl',
+  'url',
+  'video',
+  'videoblob',
+  'videos',
+  'videourl',
+]);
 
 export type PromptRefSource = 'argument' | 'step';
 
@@ -91,7 +151,7 @@ export function collectPassThroughAuditText(
 
   const walk = (
     value: unknown,
-    at: { text: boolean; negative: boolean; graph: boolean },
+    at: { text: boolean; negative: boolean; graph: boolean; media: boolean },
     depth: number
   ) => {
     if (depth > WALK_DEPTH_MAX) {
@@ -111,7 +171,7 @@ export function collectPassThroughAuditText(
     if (!isPlainObject(value)) return;
     const ref = refSource(value);
     if (ref) {
-      if (at.text || at.graph) promptRefs.push(ref);
+      if (at.text || at.graph || !at.media) promptRefs.push(ref);
       // A reference's `default` is literal text the step may use in its place.
       for (const [key, child] of Object.entries(value))
         if (key.toLowerCase() === 'default') walk(child, at, depth + 1);
@@ -124,6 +184,7 @@ export function collectPassThroughAuditText(
           text: at.text || TEXT_KEY.test(key),
           negative: at.negative || NEGATIVE_KEY.test(key),
           graph: at.graph,
+          media: at.media || MEDIA_KEYS.has(key.toLowerCase()),
         },
         depth + 1
       );
@@ -142,7 +203,7 @@ export function collectPassThroughAuditText(
       else
         walk(
           template.input,
-          { text: false, negative: false, graph: GRAPH_STEP_TYPES.has(type) },
+          { text: false, negative: false, graph: GRAPH_STEP_TYPES.has(type), media: false },
           0
         );
     }

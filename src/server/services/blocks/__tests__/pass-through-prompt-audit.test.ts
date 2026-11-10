@@ -94,6 +94,15 @@ describe('collectPassThroughAuditText', () => {
     expect(got).toMatchObject({ prompt: 'animate it', promptRefs: [] });
   });
 
+  it.each([
+    ['a free-text field with any name', { description: { $ref: '$arguments', path: 'd' } }],
+    ['a nested field', { settings: { voice: { $ref: 'chat', path: 'output.text' } } }],
+    ['a text field under a media field', { image: { caption: { $ref: '$arguments', path: 'c' } } }],
+  ])('treats a reference in %s as an unreadable prompt', (_, input) => {
+    const got = collectPassThroughAuditText([{ $type: 'videoGen', input }]);
+    expect(got.promptRefs).toHaveLength(1);
+  });
+
   it('audits exactly these step types', () => {
     expect([...PROMPT_AUDITED_STEP_TYPES].sort()).toEqual(
       [
