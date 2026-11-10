@@ -153,8 +153,6 @@ import {
   withSysReadDeadline,
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
-import { modelVersionImagesLocalTtl } from '~/server/redis/l1-switches';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
 import { createLruCache } from '~/server/utils/lru-cache';
 import {
@@ -6664,28 +6662,10 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
       }
     }
   },
-  // L1 only while MODEL_VERSION_IMAGES_L1 is on. The value is built with no viewer: consumers apply
-  // their own viewer filtering after the read, and nothing viewer-specific may be written into an
-  // entry. There is no cross-process L1 bust, so other processes can serve old images (including an
-  // old nsfwLevel) for up to the L1 TTL; callers that store what they build pass `bypassLocal`.
-  localTtl: modelVersionImagesLocalTtl,
-  localMax: 5000,
-  localMaxBytes: L1_CACHE_BYTE_BUDGETS.modelVersionImages,
-  localClone: (entry) => ({
-    ...entry,
-    images: entry.images.map((image) => ({
-      ...image,
-      ...(image.tags ? { tags: [...image.tags] } : {}),
-    })),
-  }),
 });
 
-export async function getImagesForModelVersionCache(
-  modelVersionIds: number[],
-  // For a caller that stores what it builds from this beyond the L1 TTL (see the cache's L1 note).
-  { bypassLocal = false }: { bypassLocal?: boolean } = {}
-) {
-  const images = await imagesForModelVersionsCache.fetch(modelVersionIds, { bypassLocal });
+export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
+  const images = await imagesForModelVersionsCache.fetch(modelVersionIds);
   // `images` is keyed by model version id, so this lookup treats version ids as image ids and the
   // entry-level `tags` it attaches belong to an unrelated image; no consumer reads them. Each
   // image's own `tags` come from the cache's appendFn and are unaffected.

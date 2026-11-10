@@ -33,6 +33,12 @@ const EVENT = {
   getTeamCosmetic: async () => 11,
 };
 vi.mock('~/server/events/load-events', () => ({ loadEvents: async () => [EVENT] }));
+// getTurfStock and getTurfSummaries read through Kysely, not Prisma's `$queryRaw`: both Kysely
+// clients' statements go to the same PGlite (see beforeEach).
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
 const pushTurfCounts = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('~/server/events/turf/turf-watch', async (importOriginal) => ({
   ...(await importOriginal<typeof TurfWatch>()),
@@ -116,6 +122,8 @@ afterAll(async () => db.close());
 
 beforeEach(() => {
   const raw = pgliteRaw(db);
+  kysely.read.mockReset().mockImplementation(raw.queryRaw);
+  kysely.write.mockReset().mockImplementation(raw.queryRaw);
   for (const client of [dbMock.dbRead, dbMock.dbWrite]) {
     client.$queryRaw.mockImplementation(raw.queryRaw as never);
     client.$executeRaw.mockImplementation(raw.executeRaw as never);

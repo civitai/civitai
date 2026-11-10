@@ -622,11 +622,7 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
     modelTagCache.fetch(batchIds),
   ]);
   const modelVersionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
-  // Past this process's L1: the document outlives it, and a version edit queues this update
-  // right after refreshing the entry in Redis.
-  const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds, {
-    bypassLocal: true,
-  });
+  const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
   const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
 
   const { indexReadyRecords, indexRecordsWithImages } = await transformData({
@@ -815,10 +811,7 @@ export const pullModelsData = async (
     for (const versionBatch of versionBatches) {
       tasks.push(async () => {
         logger(`PullData :: Pull images`, batchLogKey);
-        // Past this process's L1, as above.
-        const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch, {
-          bypassLocal: true,
-        });
+        const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch);
         const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
         logger(`PullData :: Pulled images`, batchLogKey);
 

@@ -1,4 +1,5 @@
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError, getTRPCErrorFromUnknown, type TRPCMiddlewareFunction } from '@trpc/server';
 import * as z from 'zod';
@@ -8525,8 +8526,8 @@ export const blocksRouter = router({
     .input(
       z.object({
         appBlockId: z.string().min(1).max(64).optional(),
-        from: z.string().datetime().optional(),
-        to: z.string().datetime().optional(),
+        from: isoDatetimeCompat().optional(),
+        to: isoDatetimeCompat().optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -8709,8 +8710,8 @@ export const blocksRouter = router({
     .input(
       z.object({
         appBlockId: z.string().min(1).max(64).optional(),
-        from: z.string().datetime().optional(),
-        to: z.string().datetime().optional(),
+        from: isoDatetimeCompat().optional(),
+        to: isoDatetimeCompat().optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -8745,8 +8746,8 @@ export const blocksRouter = router({
     .input(
       z.object({
         appBlockId: z.string().min(1).max(64),
-        from: z.string().datetime().optional(),
-        to: z.string().datetime().optional(),
+        from: isoDatetimeCompat().optional(),
+        to: isoDatetimeCompat().optional(),
         includeOwner: z.boolean().optional(),
         // Declared-name shape; `__undeclared__` cannot match it.
         event: z.string().regex(BLOCK_ANALYTICS_NAME_RE).optional(),
