@@ -861,28 +861,29 @@ describe('per-user daily cap by membership tier (resolveUserAppCaps)', () => {
     dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null as never);
   });
 
-  // INVARIANT GUARD (green at the base and at HEAD, and that is the claim): with no override,
-  // every tier is refused exactly where the 50,000 constant refused, with the same message, and
-  // allowed exactly up to it.
-  describe.each(['free', 'founder', 'bronze', 'silver', 'gold'])('today, tier %s', (tier) => {
+  /** One 25-Buzz submit with `alreadySpent` on today's counter; the router's reply. */
+  async function submitWith(alreadySpent: number) {
+    seeds.push([DAILY_PREFIX, alreadySpent]);
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    orchestratorQuoting(25);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    return caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+  }
+
+  // INVARIANT GUARD (green at the base and at HEAD, and that is the claim): with no override, a
+  // FREE viewer is refused exactly where the pre-tier 50,000 constant refused, with the same
+  // message, and allowed exactly up to it.
+  describe('Free is unchanged', () => {
     it('a spend landing exactly on 50,000 succeeds', async () => {
-      asTier(tier);
-      seeds.push([DAILY_PREFIX, 49_975]);
-      mockVerifyBlockToken.mockResolvedValue(validClaims());
-      orchestratorQuoting(25);
-      const caller = blocksRouter.createCaller(fakeCtx() as never);
-      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      asTier('free');
+      const result = await submitWith(49_975);
       expect(result.snapshot.workflowId).toBe('wf_real');
       expect(counters.get(keyUnder(DAILY_PREFIX))).toBe(50_000);
     });
 
     it('one Buzz past 50,000 is refused with the same message as before', async () => {
-      asTier(tier);
-      seeds.push([DAILY_PREFIX, 49_976]);
-      mockVerifyBlockToken.mockResolvedValue(validClaims());
-      orchestratorQuoting(25);
-      const caller = blocksRouter.createCaller(fakeCtx() as never);
-      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      asTier('free');
+      const result = await submitWith(49_976);
       expect(result.snapshot.error).toBe(
         'daily Buzz cap reached: 49976 already spent today across your installed apps, ' +
           'this generation costs 25, daily cap is 50000'
@@ -892,41 +893,46 @@ describe('per-user daily cap by membership tier (resolveUserAppCaps)', () => {
     });
   });
 
-  // REGRESSION (red at the base, where the router enforced the constant): a tier value set in the
-  // usage-limits row moves the enforced cap.
-  it('a gold viewer spends past 50,000 up to their tier cap', async () => {
-    usageLimitsRow({ 'apps.buzz-daily': { byTier: { gold: { limit: 61_234 } } } });
-    asTier('gold');
-    seeds.push([DAILY_PREFIX, 50_000]);
-    mockVerifyBlockToken.mockResolvedValue(validClaims());
-    orchestratorQuoting(25);
-    const caller = blocksRouter.createCaller(fakeCtx() as never);
-    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
-    expect(result.snapshot.workflowId).toBe('wf_real');
-    expect(counters.get(keyUnder(DAILY_PREFIX))).toBe(50_025);
+  // REGRESSION (red at the base, where every tier was held to 50,000): each paid tier is held to
+  // its table value by default — allowed exactly up to it, refused one Buzz past it. Founder
+  // maps to Bronze.
+  describe.each([
+    ['founder', 75_000],
+    ['bronze', 75_000],
+    ['silver', 100_000],
+    ['gold', 200_000],
+  ])('tier %s, daily cap %d', (tier, cap) => {
+    it('a spend landing exactly on the cap succeeds', async () => {
+      asTier(tier);
+      const result = await submitWith(cap - 25);
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(counters.get(keyUnder(DAILY_PREFIX))).toBe(cap);
+    });
+
+    it('one Buzz past the cap is refused, and the message names it', async () => {
+      asTier(tier);
+      const result = await submitWith(cap - 24);
+      expect(result.snapshot.error).toBe(
+        `daily Buzz cap reached: ${cap - 24} already spent today across your installed apps, ` +
+          `this generation costs 25, daily cap is ${cap}`
+      );
+      expect(counters.get(keyUnder(DAILY_PREFIX))).toBe(cap - 24);
+    });
   });
 
-  it('a gold viewer is refused past their tier cap, and the message names it', async () => {
+  // A tier value set in the usage-limits row moves the enforced cap, with no deploy.
+  it('a usage-limits override moves a tier cap', async () => {
     usageLimitsRow({ 'apps.buzz-daily': { byTier: { gold: { limit: 61_234 } } } });
     asTier('gold');
-    seeds.push([DAILY_PREFIX, 61_220]);
-    mockVerifyBlockToken.mockResolvedValue(validClaims());
-    orchestratorQuoting(25);
-    const caller = blocksRouter.createCaller(fakeCtx() as never);
-    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    expect((await submitWith(61_209)).snapshot.workflowId).toBe('wf_real');
+  });
+
+  it('a usage-limits override refuses past the overridden cap, and the message names it', async () => {
+    usageLimitsRow({ 'apps.buzz-daily': { byTier: { gold: { limit: 61_234 } } } });
+    asTier('gold');
+    const result = await submitWith(61_220);
     expect(result.snapshot.error).toContain('daily cap is 61234');
     expect(counters.get(keyUnder(DAILY_PREFIX))).toBe(61_220);
-  });
-
-  it('under the same row a free viewer keeps the 50,000 cap', async () => {
-    usageLimitsRow({ 'apps.buzz-daily': { byTier: { gold: { limit: 61_234 } } } });
-    asTier('free');
-    seeds.push([DAILY_PREFIX, 50_000]);
-    mockVerifyBlockToken.mockResolvedValue(validClaims());
-    orchestratorQuoting(25);
-    const caller = blocksRouter.createCaller(fakeCtx() as never);
-    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
-    expect(result.snapshot.error).toContain('daily cap is 50000');
   });
 
   // SEAM, behavioural half: the account Limits row shows the number the reservation enforces.
@@ -938,22 +944,20 @@ describe('per-user daily cap by membership tier (resolveUserAppCaps)', () => {
     expect(row?.limit).toBe(61_234);
   });
 
-  describe('continue on own Buzz at the limit', () => {
-    const OPT_IN_ROW = { 'apps.buzz-daily-opt-in': { base: 70_000 } };
-
-    it('opted in with the flag on: the viewer continues past the plan cap', async () => {
-      usageLimitsRow(OPT_IN_ROW);
+  describe('continue on own Buzz at the limit: twice the tier cap for the UTC day', () => {
+    const optedIn = (tier: string) => {
+      asTier(tier);
       mockIsUpgradePromptEnabled.mockImplementation(async () => true);
       viewerOptedIn();
-      seeds.push([DAILY_PREFIX, 60_000]);
-      mockVerifyBlockToken.mockResolvedValue(validClaims());
-      orchestratorQuoting(25);
-      const caller = blocksRouter.createCaller(fakeCtx() as never);
-      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    };
+
+    it('an opted-in Free viewer can reach 100,000, and is charged alone', async () => {
+      optedIn('free');
+      const result = await submitWith(99_975);
       expect(result.snapshot.workflowId).toBe('wf_real');
       // The viewer pays: the only daily counter charged is theirs, and the orchestrator token
       // the generation is submitted (and charged) under is the viewer's. No app owner appears.
-      expect(counters.get(keyUnder(DAILY_PREFIX))).toBe(60_025);
+      expect(counters.get(keyUnder(DAILY_PREFIX))).toBe(100_000);
       expect([...counters.keys()].filter((k) => k.startsWith('system:blocks:buzz-cap:'))).toEqual([
         keyUnder(DAILY_PREFIX),
       ]);
@@ -961,56 +965,46 @@ describe('per-user daily cap by membership tier (resolveUserAppCaps)', () => {
       for (const [userId] of mockGetOrchestratorToken.mock.calls) expect(userId).toBe(42);
     });
 
-    it('the opt-in ceiling still bounds the spend', async () => {
-      usageLimitsRow(OPT_IN_ROW);
-      mockIsUpgradePromptEnabled.mockImplementation(async () => true);
-      viewerOptedIn();
-      seeds.push([DAILY_PREFIX, 69_990]);
-      mockVerifyBlockToken.mockResolvedValue(validClaims());
-      orchestratorQuoting(25);
-      const caller = blocksRouter.createCaller(fakeCtx() as never);
-      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
-      expect(result.snapshot.error).toContain('daily cap is 70000');
-      expect(counters.get(keyUnder(DAILY_PREFIX))).toBe(69_990);
+    it('an opted-in Free viewer is refused one Buzz past 100,000', async () => {
+      optedIn('free');
+      const result = await submitWith(99_976);
+      expect(result.snapshot.error).toContain('daily cap is 100000');
+      expect(counters.get(keyUnder(DAILY_PREFIX))).toBe(99_976);
+    });
+
+    it('an opted-in Gold viewer can reach 400,000', async () => {
+      optedIn('gold');
+      expect((await submitWith(399_975)).snapshot.workflowId).toBe('wf_real');
+    });
+
+    it('an opted-in Gold viewer is refused one Buzz past 400,000', async () => {
+      optedIn('gold');
+      const result = await submitWith(399_976);
+      expect(result.snapshot.error).toContain('daily cap is 400000');
     });
 
     it("the viewer's per-app consent budget still bounds an opted-in spend", async () => {
-      usageLimitsRow(OPT_IN_ROW);
-      mockIsUpgradePromptEnabled.mockImplementation(async () => true);
-      viewerOptedIn();
+      optedIn('free');
       mockGrantFindUnique.mockResolvedValue({ buzzBudgetPerDay: 100, revokedAt: null });
-      seeds.push([DAILY_PREFIX, 60_000]);
       seeds.push([CONSENT_PREFIX, 90]);
-      mockVerifyBlockToken.mockResolvedValue(validClaims());
-      orchestratorQuoting(25);
-      const caller = blocksRouter.createCaller(fakeCtx() as never);
-      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      const result = await submitWith(60_000);
       expect(result.snapshot.error).toContain('your limit for this app is 100');
       expect(counters.get(keyUnder(DAILY_PREFIX))).toBe(60_000);
       expect(counters.get(keyUnder(CONSENT_PREFIX))).toBe(90);
     });
 
     it('with the flag off a recorded opt-in is ignored: the plan cap binds', async () => {
-      usageLimitsRow(OPT_IN_ROW);
+      asTier('free');
       viewerOptedIn();
-      seeds.push([DAILY_PREFIX, 60_000]);
-      mockVerifyBlockToken.mockResolvedValue(validClaims());
-      orchestratorQuoting(25);
-      const caller = blocksRouter.createCaller(fakeCtx() as never);
-      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      const result = await submitWith(60_000);
       expect(result.snapshot.error).toContain('daily cap is 50000');
     });
 
-    it('today (opt-in ceiling equal to the plan cap) the opt-in changes nothing', async () => {
+    it('flag on but not opted in: the plan cap binds', async () => {
+      asTier('free');
       mockIsUpgradePromptEnabled.mockImplementation(async () => true);
-      viewerOptedIn();
-      seeds.push([DAILY_PREFIX, 49_990]);
-      mockVerifyBlockToken.mockResolvedValue(validClaims());
-      orchestratorQuoting(25);
-      const caller = blocksRouter.createCaller(fakeCtx() as never);
-      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      const result = await submitWith(49_990);
       expect(result.snapshot.error).toContain('daily cap is 50000');
-      expect(mockIsUpgradePromptEnabled).not.toHaveBeenCalled();
     });
   });
 });
