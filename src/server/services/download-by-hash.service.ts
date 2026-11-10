@@ -37,11 +37,10 @@ export type HashCandidate = {
 };
 
 /**
- * Every copy of the content, pre-filtered to the ones the gate could pass for this viewer and
- * ordered so the likeliest pass is tried first. Within a tier the oldest copy wins, so a re-upload
- * never takes the original's downloads. Private copies are left out as the by-hash lookup hides
- * them, so a refusal cannot confirm that a private model holds these bytes. The pre-filter only narrows: the gate still
- * decides every candidate. One index lookup on the hash, then primary-key joins.
+ * Copies of the content the gate could pass for this viewer, likeliest first; the oldest copy wins
+ * within a tier so a re-upload never takes the original's downloads. Private copies are left out
+ * for everyone but their owner and moderators, so a refusal cannot confirm a private model holds
+ * these bytes. The gate still decides every candidate.
  */
 export async function findHashCandidates({
   hash,
@@ -108,6 +107,7 @@ export async function findHashCandidates({
             AND (
               v.owner
               OR (
+                -- Mirrors canViewPoiModel and isPrivateModelVersion (model-visibility.service).
                 NOT v.poi
                 AND NOT v.private
                 AND v."modelStatus" = 'Published'
@@ -167,7 +167,7 @@ function log(message: string, data: Record<string, unknown>) {
 }
 
 /**
- * Serves the first candidate the unchanged per-file gate passes. A copy of the same bytes that was
+ * Serves the first candidate the per-file gate passes. A copy of the same bytes that was
  * taken down does not refuse the request; it is logged for review.
  */
 export async function pickFileByHash({
