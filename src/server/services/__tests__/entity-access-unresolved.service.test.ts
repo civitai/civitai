@@ -263,6 +263,28 @@ describe('hasEntityAccess — a batch mixing the caller’s own Private versions
     ]);
   });
 
+  it('grants the owner their own paid-gated Public version in the batch, and no one else', async () => {
+    const ownedGated = { ...PUBLIC_VERSION, entityId: 44, userId: OWNER };
+    lookupModelVersionAccessMock.mockResolvedValue(byId(ownedGated, othersPrivate));
+    getPaidAccessMock.mockResolvedValue({
+      44: { entityType: 'ModelVersion', entityId: 44, endsAt: null },
+    });
+
+    const forOwner = await hasEntityAccess({
+      entityType: 'ModelVersion',
+      entityIds: [44, 22],
+      userId: OWNER,
+    });
+    const forOther = await hasEntityAccess({
+      entityType: 'ModelVersion',
+      entityIds: [44, 22],
+      userId: 999,
+    });
+
+    expect(forOwner.map(({ hasAccess }) => hasAccess)).toEqual([true, false]);
+    expect(forOther.map(({ hasAccess }) => hasAccess)).toEqual([false, false]);
+  });
+
   it('control: a caller who owns none of them gets only the public one', async () => {
     const access = await hasEntityAccess({
       entityType: 'ModelVersion',
