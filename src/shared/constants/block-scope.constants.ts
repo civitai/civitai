@@ -983,8 +983,8 @@ export const CONSENT_EXEMPT_SCOPES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether a scope is signed WITHOUT a grant, and therefore cannot be revoked. A function and not
- * the Set so a caller cannot add a member; see `CONSENT_EXEMPT_SCOPES` for what membership means.
+ * Whether a scope is signed WITHOUT a grant, and therefore cannot be revoked; see
+ * CONSENT_EXEMPT_SCOPES.
  */
 export function isConsentExemptScope(scope: string): boolean {
   return CONSENT_EXEMPT_SCOPES.has(scope);

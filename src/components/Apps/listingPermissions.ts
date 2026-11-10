@@ -39,7 +39,7 @@ export type ListingPermission = {
   rank: number;
 };
 
-/** Appended to the description of every consent-exempt scope; see `permissionDetail`. */
+/** Appended to the description of every consent-exempt scope unless `noteIrrevocable` is off; see `permissionDetail`. */
 export const IRREVOCABLE_PERMISSION_NOTE = "This permission can't be removed later.";
 
 /**

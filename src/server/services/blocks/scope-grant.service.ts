@@ -1413,22 +1413,7 @@ export function consentGatedScopes(scopes: string[]): string[] {
   return scopes.filter((s) => !CONSENT_EXEMPT_SCOPES.has(s));
 }
 
-/**
- * Whether a scope is signed WITHOUT a grant, and therefore cannot be revoked.
- *
- * 🔴 ONE PREDICATE, THREE CONSUMERS, AND THAT IS WHY IT IS EXPORTED RATHER THAN
- * OPEN-CODED. `consentGatedScopes` (the install/anon-strip filter), `partitionByConsent`
- * (the mint) and `blocks.revokeScopes`'s refusal all have to agree about the same set
- * strings. Open-coded at the router it would drift from the set the mint actually
- * consults, and the drift is silent in the dangerous direction: a scope the router
- * thought was revokable gets a suppression entry that `partitionByConsent` never reads,
- * so the UI reports success and the app keeps the permission.
- *
- * Callers ask this predicate rather than hold the Set. The Set lives in the shared
- * constants as a `ReadonlySet`, which is a compile-time promise only: a runtime `.add()`
- * would consent-exempt a gated scope at mint, the one change that silently widens what a
- * token carries, so nothing may mutate it.
- */
+/** Re-exported so the service's callers keep one import; defined beside the Set. */
 export { isConsentExemptScope };
 
 /**
