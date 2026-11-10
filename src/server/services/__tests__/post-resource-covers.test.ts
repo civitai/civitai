@@ -143,6 +143,20 @@ describe('getPostResourceCovers', () => {
     expect(covers[4]?.id).toBe(14);
   });
 
+  it('skips images from someone else’s private post', async () => {
+    mockFetchCovers.mockResolvedValue({
+      1: {
+        modelVersionId: 1,
+        images: [
+          { ...cached(11, 1), availability: Availability.Private, userId: 77 },
+          cached(12, 1),
+        ],
+      },
+    });
+
+    expect((await coversFor())[1]?.id).toBe(12);
+  });
+
   it('returns no covers, and does not throw, when the cache fails', async () => {
     mockFetchCovers.mockRejectedValue(new Error('redis down'));
 

@@ -2132,7 +2132,12 @@ export const getPostResourceCovers = async ({
       byVersion[versionId]?.images ?? [],
       { nsfw: model.nsfw, hasSfwFace: hasCompleteSfwFace(model) },
       showSfwFace
-    ).filter((image) => Flags.intersects(image.nsfwLevel, browsingLevel));
+    ).filter(
+      (image) =>
+        Flags.intersects(image.nsfwLevel, browsingLevel) &&
+        // The cache keeps images from private posts; only their owner may see them.
+        (image.availability !== Availability.Private || image.userId === user.id)
+    );
     const cover = images[0];
     covers[versionId] = cover
       ? {
