@@ -40,13 +40,14 @@ import {
   PREVIEW_CHIP_LABELS,
   sensitiveChipLabel,
 } from '~/components/Apps/reviewQueueSignals';
-import { agentReviewDisplay } from '~/shared/utils/agent-review-findings';
+import { agentReviewDisplay, AGENT_REVIEW_LANE_BADGES } from '~/shared/utils/agent-review-findings';
 import classes from './UnifiedReviewList.module.scss';
 import {
   failedBuildSummary,
   mergeReviewRows,
   offsiteRequestToUnifiedRow,
   onsiteRequestToUnifiedRow,
+  reviewRowLane,
   type CombinedReviewPayload,
   type OffsiteReviewRequest,
   type OnsiteReviewRequest,
@@ -186,7 +187,10 @@ export function UnifiedReviewList({
       : onsiteItems;
     const onsiteRows = visibleOnsite.map((r) => onsiteRequestToUnifiedRow(r, openOnsiteReview));
     const offsiteRows = offsiteItems.map((r) => offsiteRequestToUnifiedRow(r, openOffsiteReview));
-    return mergeReviewRows(onsiteRows, offsiteRows, direction, openCombinedReview);
+    // The pending queue (the tab that shows signals) puts agent-clean submissions first.
+    return mergeReviewRows(onsiteRows, offsiteRows, direction, openCombinedReview, {
+      fastLane: showSignals,
+    });
   }, [
     onsiteItems,
     offsiteItems,
@@ -195,6 +199,7 @@ export function UnifiedReviewList({
     openOffsiteReview,
     openCombinedReview,
     hideIds,
+    showSignals,
   ]);
 
   // The Deploy column exists only where a retrigger handler was supplied (the
@@ -406,8 +411,24 @@ function RowSignals({ row }: { row: UnifiedReviewRow }) {
   const preview = previewChipState(signals.previewState);
   // Finding COUNTS, never a verdict ("AI: 1 high · 2 medium" / "AI: no findings").
   const ai = signals.agentReview === undefined ? null : agentReviewDisplay(signals.agentReview);
+  // The lane says what to do next — never that the submission "passed".
+  const lane = reviewRowLane(row);
+  const laneBadge = lane.lane === 'waiting' ? null : AGENT_REVIEW_LANE_BADGES[lane.lane];
   return (
     <Group gap={4} wrap="wrap" data-testid={`apps-unified-review-signals-${row.key}`}>
+      {laneBadge && (
+        <Badge
+          size="sm"
+          variant="light"
+          color={laneBadge.color}
+          styles={FULL_LABEL_BADGE_STYLES}
+          data-signal="lane"
+          data-state={lane.lane}
+          title={lane.reasons.length > 0 ? lane.reasons.join('; ') : undefined}
+        >
+          {laneBadge.label}
+        </Badge>
+      )}
       <Badge
         size="sm"
         variant="light"

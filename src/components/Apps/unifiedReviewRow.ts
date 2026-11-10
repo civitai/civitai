@@ -3,7 +3,11 @@ import { appDisplayName } from '~/shared/utils/app-display-name';
 import type { AnyRequest, ManifestDiffSummary } from '~/components/Apps/OnsiteReviewModal';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import type { ListingReviewMedia } from '~/server/services/blocks/app-listing.service';
-import type { AgentReviewSummary } from '~/shared/utils/agent-review-findings';
+import {
+  agentReviewLane,
+  type AgentReviewLaneResult,
+  type AgentReviewSummary,
+} from '~/shared/utils/agent-review-findings';
 import { sensitiveScopeCount } from '~/components/Apps/reviewQueueSignals';
 import {
   BUILD_STEP_LABELS,
@@ -499,6 +503,7 @@ function combineCodeAndMediaRows(
  *     row + an on-site listing-MEDIA row for the SAME app into ONE combined row
  *     carrying both ids/payloads (see `combineCodeAndMediaRows`). History tabs omit
  *     the opener, so decided rows are never combined;
+ *   - with `opts.fastLane` (the PENDING queue), `agent-clean` rows first;
  *   - sort by `submittedAt` — `asc` = oldest-first (pending FIFO), `desc` =
  *     newest-first (history);
  *   - STABLE, direction-independent tiebreak by `key` so equal timestamps always
@@ -507,11 +512,30 @@ function combineCodeAndMediaRows(
  * Pure — no side effects. Every input row appears in the output exactly once, EXCEPT
  * a combined code+media pair, which appears as its single combined row.
  */
+/**
+ * A PENDING row's queue lane, from its agent review (see `agentReviewLane`). A row with no
+ * decision signals (a listing-only row, a history row) or a viewer without the agentic surface
+ * is `waiting`. A review preview that failed to build keeps an otherwise clean row OUT of the
+ * fast lane: the app did not run.
+ */
+export function reviewRowLane(row: Pick<UnifiedReviewRow, 'signals'>): AgentReviewLaneResult {
+  const signals = row.signals;
+  if (!signals || signals.agentReview === undefined) return { lane: 'waiting', reasons: [] };
+  const result = agentReviewLane(signals.agentReview);
+  if (result.lane === 'agent-clean' && signals.previewState === 'preview-failed') {
+    return { lane: 'flagged', reasons: ['the review preview failed to build'] };
+  }
+  return result;
+}
+
 export function mergeReviewRows(
   onsite: UnifiedReviewRow[],
   offsite: UnifiedReviewRow[],
   direction: 'asc' | 'desc',
-  openCombined?: (payload: CombinedReviewPayload) => void
+  openCombined?: (payload: CombinedReviewPayload) => void,
+  /** PENDING tab: `agent-clean` rows sort ahead of every other row (each group keeping the
+   *  date order below). Only the rows already loaded are reordered. */
+  opts: { fastLane?: boolean } = {}
 ): UnifiedReviewRow[] {
   const byKey = new Map<string, UnifiedReviewRow>();
   for (const row of onsite) if (!byKey.has(row.key)) byKey.set(row.key, row);
@@ -520,7 +544,14 @@ export function mergeReviewRows(
   let rows = Array.from(byKey.values());
   if (openCombined) rows = combineCodeAndMediaRows(rows, openCombined);
 
+  const clean = opts.fastLane
+    ? new Set(rows.filter((r) => reviewRowLane(r).lane === 'agent-clean').map((r) => r.key))
+    : null;
   rows.sort((a, b) => {
+    if (clean) {
+      const ca = clean.has(a.key);
+      if (ca !== clean.has(b.key)) return ca ? -1 : 1;
+    }
     const ta = a.submittedAt.getTime();
     const tb = b.submittedAt.getTime();
     if (ta !== tb) return direction === 'asc' ? ta - tb : tb - ta;

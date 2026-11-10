@@ -431,7 +431,9 @@ export function discordText(value: string, max: number): string {
 
 /**
  * A review build left the building/deploying states (live, or failed). Frees its slot to the
- * queue and, when live, may start the agent review. Never throws.
+ * queue and may start the agent review — whether or not the preview came up: the agent reads
+ * the submitted bundle, not the preview, and every submission gets a review (a failed preview
+ * still keeps the submission out of the moderator fast lane). Never throws.
  */
 export async function onReviewBuildSettled(args: {
   publishRequestId: string;
@@ -439,7 +441,7 @@ export async function onReviewBuildSettled(args: {
 }): Promise<void> {
   try {
     await drainReviewPreviewQueue();
-    if (args.live) await maybeAutoStartAgentReview(args.publishRequestId);
+    await maybeAutoStartAgentReview(args.publishRequestId);
   } catch (err) {
     warn('onReviewBuildSettled', `failed (id=${args.publishRequestId})`, err);
   }
@@ -483,7 +485,7 @@ function perReviewCapUsd(env: { AGENT_REVIEW_COST_CAP_USD: string }): number {
 }
 
 /**
- * Start the agent review for a request whose preview just went live, when the
+ * Start the agent review for a request whose review build just settled (live or failed), when the
  * `app-blocks-agentic-review-autostart` flag is on and the `app-blocks-agentic-review` flag's base
  * value is on, no agent review has run for the request yet,
  * and one more review at its per-review cap fits in today's platform budget. Past the budget it is

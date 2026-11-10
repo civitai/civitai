@@ -1274,8 +1274,12 @@ export const serverSchema = z
     // for the callback base) — no parallel infra knobs.
     AGENT_REVIEW_COST_CAP_USD: z.string().default('2'),
     // Platform-wide ceiling (USD per UTC day) on agent reviews started AUTOMATICALLY when a review
-    // preview goes live. Past it, automatic starts are refused; a moderator can still start one.
+    // build settles. Past it, automatic starts are refused; a moderator can still start one.
     AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD: z.coerce.number().nonnegative().default(40),
+    // Agent review IMPERSONATION check: how many single-character edits apart two normalised
+    // app names may be and still count as the same name. 0 = only names identical after
+    // normalisation match. The deployed value is set in the deployment's own env, not here.
+    APP_REVIEW_NAME_MATCH_MAX_EDITS: z.coerce.number().int().min(0).max(3).default(0),
     // AGENTIC MOD CODE-REVIEW (App Blocks P1) — CONTAINMENT. Base URL the review
     // agent pod POSTs its report to. Set to the IN-CLUSTER civitai-web service URL
     // (e.g. `http://<svc>.<ns>.svc.cluster.local`) so the adversarial report + the

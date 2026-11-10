@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resetHybridNodes } from '~/__tests__/mocks/hybrid';
 import type { ImpersonationSubject } from '~/server/services/blocks/app-impersonation.logic';
 import type { ModelCall } from '~/server/services/blocks/app-impersonation-check.service';
+import type * as BlocklistService from '~/server/services/blocklist.service';
 
 type ModelArgs = Parameters<ModelCall>[0];
 
@@ -15,7 +16,8 @@ type ModelArgs = Parameters<ModelCall>[0];
 const m = vi.hoisted(() => ({
   terms: ['Zorblex'] as string[],
 }));
-vi.mock('~/server/services/blocklist.service', () => ({
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlocklistService>()),
   getBlocklistData: vi.fn(async () => m.terms),
 }));
 

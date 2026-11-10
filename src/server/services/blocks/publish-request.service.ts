@@ -2830,7 +2830,16 @@ async function agentReviewSummariesForRequests(
                   THEN r.scope_verdicts->'scopes' ELSE '[]'::jsonb END
            ) AS sv
           WHERE jsonb_typeof(sv) = 'object'
-            AND lower(sv->>'justificationAccurate') = 'no') AS "inaccurate"
+            AND lower(sv->>'justificationAccurate') = 'no') AS "inaccurate",
+        -- Every analysis produced a result: an object slot with no non-null error key.
+        (jsonb_typeof(r.code_review) = 'object'
+          AND jsonb_typeof(r.security_audit) = 'object'
+          AND jsonb_typeof(r.scope_verdicts) = 'object'
+          AND coalesce(jsonb_typeof(r.code_review->'error'), 'null') = 'null'
+          AND coalesce(jsonb_typeof(r.security_audit->'error'), 'null') = 'null'
+          AND coalesce(jsonb_typeof(r.scope_verdicts->'error'), 'null') = 'null') AS "sectionsOk",
+        (CASE WHEN jsonb_typeof(r.security_audit->'impersonationCheck') = 'object'
+              THEN r.security_audit->'impersonationCheck'->>'status' END) AS "impersonationCheck"
       FROM app_review_agent_reports r
       WHERE r.publish_request_id = ANY(${ids}::text[])
       ORDER BY r.publish_request_id, r.started_at DESC
@@ -2841,6 +2850,8 @@ async function agentReviewSummariesForRequests(
       overBroad: number | null;
       underDeclared: number | null;
       inaccurate: number | null;
+      sectionsOk: boolean | null;
+      impersonationCheck: string | null;
     }>;
     for (const r of rows) {
       out.set(r.publishRequestId, {
@@ -2849,6 +2860,8 @@ async function agentReviewSummariesForRequests(
         overBroad: r.overBroad ?? 0,
         underDeclared: r.underDeclared ?? 0,
         inaccurate: r.inaccurate ?? 0,
+        sectionsOk: r.sectionsOk === true,
+        impersonationCheck: r.impersonationCheck ?? null,
       });
     }
   } catch (err) {

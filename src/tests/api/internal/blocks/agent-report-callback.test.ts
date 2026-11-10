@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Readable } from 'node:stream';
+import type * as ImpersonationCheckService from '~/server/services/blocks/app-impersonation-check.service';
 
 /**
  * AGENTIC MOD CODE-REVIEW (App Blocks P1) — POST
@@ -40,7 +41,8 @@ vi.mock('~/server/services/blocks/review-session', () => ({
 vi.mock('~/pages/api/internal/blocks/review-build-callback', () => ({
   checkCallbackTimestamp: mockTs,
 }));
-vi.mock('~/server/services/blocks/app-impersonation-check.service', () => ({
+vi.mock('~/server/services/blocks/app-impersonation-check.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImpersonationCheckService>()),
   runImpersonationCheckForRequest: mockImpersonation,
 }));
 vi.mock('~/server/db/client', () => ({

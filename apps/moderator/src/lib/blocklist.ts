@@ -10,6 +10,7 @@ export const BLOCKLIST_TYPES = [
   'PromptBenignPhrase',
   'NegativeBenignPhrase',
   'ProfanityBenignWord',
+  'AppProtectedBrandTerm',
 ] as const;
 
 export type BlocklistType = (typeof BLOCKLIST_TYPES)[number];
@@ -59,4 +60,11 @@ export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
     ' A few tokens are also exempt in code regardless of this list, because' +
     " obscenity's own patterns match them more broadly than the word they stand for (see LIBRARY_OVERMATCH_TOKENS)." +
     ' That exemption covers flagging, not the censoring of already-published text, and cannot be changed from here.',
+  AppProtectedBrandTerm:
+    'Brand, product and company names an app submission may not use in its name or slug. The agent' +
+    ' review flags a submission whose name or slug contains one (look-alike spellings included) and' +
+    ' sends it to the normal review queue, unless the listing says it is unofficial or a fork.' +
+    ' Enter the name as people write it, one per entry. An EMPTY list does not pass submissions: it' +
+    ' marks every impersonation check incomplete, so nothing reaches the fast lane until this list' +
+    ' has entries.',
 };

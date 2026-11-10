@@ -21,6 +21,11 @@ export type AgentReviewSummary = {
   underDeclared: number;
   /** Scopes whose justification the agent marked inaccurate (`justificationAccurate: 'no'`). */
   inaccurate: number;
+  /** Every analysis (code review, security audit, scopes) produced a result rather than an
+   *  error. Absent on an older payload, which then never reads as agent-clean. */
+  sectionsOk?: boolean;
+  /** The impersonation check's record status (`complete` | `failed`), or null when none ran. */
+  impersonationCheck?: string | null;
 };
 
 /** Severity buckets, worst first — the order the counts are written in. */
@@ -120,3 +125,74 @@ export function agentReviewDisplay(
     scopeFlags,
   };
 }
+
+/**
+ * Where a pending submission sits in the moderator queue, from its agent review.
+ *
+ * - `agent-clean` — the review finished, every analysis and the impersonation check completed,
+ *   and nothing was found that needs a person's judgement first: no finding rated medium or
+ *   worse (or unrated), no scope flag. These sort to the TOP of the queue. A moderator still
+ *   opens and approves every one of them; nothing is approved without a person.
+ * - `flagged` — the review finished but found something, or did not complete (a failed or
+ *   cost-capped run, a failed analysis, a missing or failed impersonation check). Normal queue,
+ *   with the report.
+ * - `waiting` — no review yet, or one still running. Normal queue.
+ *
+ * 🔴 FAIL-CLOSED: anything this function does not positively recognise as clean is not clean.
+ */
+export type AgentReviewLane = 'agent-clean' | 'flagged' | 'waiting';
+
+export type AgentReviewLaneResult = {
+  lane: AgentReviewLane;
+  /** Why it is flagged (empty unless `flagged`), in plain words for the badge's tooltip. */
+  reasons: string[];
+};
+
+const FLAGGING_SEVERITIES: ReadonlySet<AgentFindingSeverity> = new Set([
+  'critical',
+  'high',
+  'medium',
+  'unrated',
+]);
+
+export function agentReviewLane(
+  summary: AgentReviewSummary | null | undefined
+): AgentReviewLaneResult {
+  const display = agentReviewDisplay(summary);
+  if (!summary || display.state === 'not-run' || display.state === 'running') {
+    return { lane: 'waiting', reasons: [] };
+  }
+  const reasons: string[] = [];
+  if (display.state === 'failed') reasons.push('the agent review failed');
+  if (summary.status === 'cost-capped') reasons.push('the agent review stopped at its cost cap');
+  if (display.state === 'reported') {
+    if (summary.sectionsOk !== true) reasons.push('an analysis did not complete');
+    if (summary.impersonationCheck !== 'complete') {
+      reasons.push(
+        summary.impersonationCheck === 'failed'
+          ? 'the impersonation check did not complete'
+          : 'the impersonation check has not run'
+      );
+    }
+    const flagging = (Object.keys(display.counts) as AgentFindingSeverity[]).reduce(
+      (n, k) => n + (FLAGGING_SEVERITIES.has(k) ? display.counts[k] : 0),
+      0
+    );
+    if (flagging > 0) reasons.push(`${flagging} finding${flagging === 1 ? '' : 's'} to check`);
+    if (display.scopeFlags > 0)
+      reasons.push(`${display.scopeFlags} scope flag${display.scopeFlags === 1 ? '' : 's'}`);
+  }
+  return reasons.length > 0 ? { lane: 'flagged', reasons } : { lane: 'agent-clean', reasons };
+}
+
+/**
+ * The queue badge for a lane — it says what the moderator does next, never a verdict.
+ * `waiting` has no badge (the AI chip already says "not run" / "running").
+ */
+export const AGENT_REVIEW_LANE_BADGES: Record<
+  Exclude<AgentReviewLane, 'waiting'>,
+  { label: string; color: string }
+> = {
+  'agent-clean': { label: 'Fast lane: read the report, then decide', color: 'teal' },
+  flagged: { label: 'Agent flagged: read the findings first', color: 'orange' },
+};

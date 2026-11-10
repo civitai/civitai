@@ -424,6 +424,10 @@ export enum BlocklistType {
   // "spread"). Suppresses a substring match from the profanity filter rather than
   // being blanked from the text — different matcher to the two phrase lists above.
   ProfanityBenignWord = 'ProfanityBenignWord',
+  // Brand names an App Block's name or slug may not use unless it declares itself unofficial —
+  // read by the agent review's impersonation check. Edited by moderators at
+  // /moderator/blocklists; an empty list fails that check rather than passing it.
+  AppProtectedBrandTerm = 'AppProtectedBrandTerm',
 }
 
 export enum ToolSort {
