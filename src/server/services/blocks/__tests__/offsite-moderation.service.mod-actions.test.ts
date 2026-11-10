@@ -177,7 +177,9 @@ const live = vi.hoisted(() => ({
 }));
 vi.mock('~/server/services/blocks/live-unpublish.service', () => ({
   takeDownLiveApp: async (slug: string) => (await live.takeDown(slug)) ?? {},
-  restoreLiveApp: async (input: { slug: string; appBlockId: string }) => live.restore(input),
+  restoreLiveAppSoon: (input: { slug: string; appBlockId: string }) => {
+    void Promise.resolve(live.restore(input)).catch(() => undefined);
+  },
 }));
 // Assert owner-notification emission without pulling the notifications client graph.
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({
