@@ -34,7 +34,7 @@ describe('searchFetch with siteSearchProxy on', () => {
     respond(200, { results: [] });
     await searchFetch('http://localhost/api/search/multi-search', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer public-key' },
     });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('/api/search/multi-search');
@@ -80,8 +80,12 @@ describe('searchFetch with siteSearchProxy off (the kill switch)', () => {
     vi.stubGlobal('fetch', fetchMock);
     tokenResponse();
     respond(200, { results: [] });
-    await searchFetch('http://localhost/api/search/multi-search', { method: 'POST' });
+    await searchFetch('http://localhost/api/search/multi-search', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer public-key' },
+    });
 
+    expect(fetchMock).toHaveBeenCalledTimes(2); // the token route, then the proxy only
     const [url, init] = fetchMock.mock.calls.at(-1)!;
     expect(url).toBe('/api/search/multi-search');
     expect(new Headers(init.headers).get('Authorization')).toBeNull();

@@ -79,6 +79,18 @@ describe('searchFetch', () => {
     expect(searchKeys).toEqual(['revoked', 'tok-2']);
   });
 
+  it('a rejected token with no fresh one does not search again without a key', async () => {
+    const { searchKeys } = stubNetwork(
+      [{ token: 'revoked', expiresAt: Date.now() + 3_600_000 }, { token: null }],
+      () => 403
+    );
+    await expect(searchFetch(SEARCH_URL, { method: 'POST' })).rejects.toMatchObject({
+      name: 'MeiliSearchApiError',
+      httpStatus: 403,
+    });
+    expect(searchKeys).toEqual(['revoked']);
+  });
+
   it('throws an error the resilient client classifies as a Meilisearch API error', async () => {
     stubNetwork([{ token: null }], () => 403);
     await expect(searchFetch(SEARCH_URL, { method: 'POST' })).rejects.toMatchObject({

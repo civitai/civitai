@@ -26,7 +26,13 @@ function meilisearchPath(url: string) {
 }
 
 async function proxySearchFetch<T>(path: string, init: RequestInit): Promise<T> {
-  const res = await fetch(`${SITE_SEARCH_PATH}${path}`, { ...init, credentials: 'same-origin' });
+  const headers = new Headers(init.headers);
+  headers.delete('Authorization');
+  const res = await fetch(`${SITE_SEARCH_PATH}${path}`, {
+    ...init,
+    headers,
+    credentials: 'same-origin',
+  });
 
   const body = await res.json().catch(() => undefined);
   if (!res.ok) {
