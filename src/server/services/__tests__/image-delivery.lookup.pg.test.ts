@@ -287,7 +287,14 @@ const found = (row: Row, body: Record<string, unknown>) => ({
   body,
   threw: false,
   fallbacks: [],
-  cacheWrites: [[`packed:caches:image-delivery-metadata:v2:${row.url}`, body, { EX: 3600 }]],
+  // 3 minutes for an entry that shows metadata, an hour for one that hides it (image-delivery.service).
+  cacheWrites: [
+    [
+      `packed:caches:image-delivery-metadata:v2:${row.url}`,
+      body,
+      { EX: body.hideMeta === true ? 3600 : 180 },
+    ],
+  ],
 });
 const NOT_FOUND = {
   status: 404,

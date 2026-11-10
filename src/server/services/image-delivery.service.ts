@@ -138,18 +138,39 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
 //
 // STALENESS: `hideMeta` can flip, and `updatePostImage` is the only writer in this repo that
 // flips it on an existing image. It busts in BOTH directions: hiding through
-// `invalidateHiddenImageMetadata` (whose first step is this bust), showing directly. So every
-// app-path flip takes effect at once, and the TTL only bounds what no app path writes: an
-// out-of-band flip (direct DB) and a failed bust (`bustImageDeliveryMetadataCache` never throws).
-// Because the delivered image BYTES are still separately purged/CDN-managed and this value only
-// gates embedded-metadata visibility, that ≤TTL window is acceptable. `type`/`mimeType`/`url`
-// need no bust of their own: they are set when the media row is created and no writer in this
-// repo updates them afterwards. `ingestion` moving to NotFound is not written by any path in
-// this repo, so it is not busted; a cached row lingers at most TTL, and the caller then converts
-// an original that turns out to be gone, as it did before the row was marked.
-// The TTL is an hour, up from 3 minutes, now that every in-repo writer of a cached field is
-// accounted for above: at 3 minutes most reads missed.
-export const IMAGE_DELIVERY_METADATA_TTL = CacheTTL.hour;
+// `invalidateHiddenImageMetadata` (whose first step is this bust), showing directly. A bust is a
+// plain DEL and the fill a plain SET from the REPLICA, so a bust does NOT make a flip take effect
+// at once: a fill that read the replica before the flip replicated, or whose SET lands after the
+// DEL, re-caches the pre-flip value, and that stale entry then lives for its whole TTL. So does
+// one written while a bust failed (`bustImageDeliveryMetadataCache` never throws), or before an
+// out-of-band flip (direct DB).
+//
+// That is why the TTL depends on the value cached. The image-cacher reads `hideMeta: false` as
+// "the original may be served with its metadata", so a stale false is the leak direction: those
+// entries keep the short TTL (`CacheTTL.sm`, 3 minutes, what every entry had before), so an owner's
+// just-hidden metadata can still be served for at most 3 minutes after the stale entry is written
+// (itself within a replica lag of the flip), the same bound as before the TTL was raised.
+// `hideMeta: true` entries get the hour: a stale true only withholds metadata the owner has just
+// un-hidden (fail-closed) for at most an hour. A tombstone written by the bust and respected by
+// the fill (SET NX) would shorten both windows further, but a tombstone under this key would be
+// read as a metadata row by a release that predates it, so it needs a key bump; not done here.
+//
+// `type`/`mimeType`/`url` need no bust of their own: they are set when the media row is created
+// and no writer in this repo updates them afterwards. `ingestion` moving to NotFound is not
+// written by any path in this repo, so it is not busted; a cached row lingers at most its TTL,
+// and the caller then converts an original that turns out to be gone, as it did before the row
+// was marked.
+export const IMAGE_DELIVERY_METADATA_TTL = {
+  /** `hideMeta: false`: a stale entry leaks hidden metadata, so this bounds that window. */
+  visible: CacheTTL.sm,
+  /** `hideMeta: true`: a stale entry only withholds metadata (fail-closed). */
+  hidden: CacheTTL.hour,
+} as const;
+
+const imageDeliveryMetadataTtl = (metadata: ImageDeliveryMetadata) =>
+  metadata.hideMeta === true
+    ? IMAGE_DELIVERY_METADATA_TTL.hidden
+    : IMAGE_DELIVERY_METADATA_TTL.visible;
 
 export const getCachedImageDeliveryMetadata = async (
   url: string
@@ -167,7 +188,7 @@ export const getCachedImageDeliveryMetadata = async (
 
   if (result) {
     try {
-      await redis.packed.set(key, result, { EX: IMAGE_DELIVERY_METADATA_TTL });
+      await redis.packed.set(key, result, { EX: imageDeliveryMetadataTtl(result) });
     } catch {
       // Best-effort cache write; a Redis stall here never fails the request.
     }
@@ -180,6 +201,8 @@ export const getCachedImageDeliveryMetadata = async (
 // negatives, deleting the key means the next read re-queries and re-populates the fresh row.
 // Called by `updatePostImage` when `hideMeta` changes, inside the user's save: so it is bounded by
 // one deadline across both attempts, and it never throws (the TTL still bounds a missed bust).
+// A DEL cannot stop a racing fill from re-caching the pre-flip value: see STALENESS above for
+// what bounds that.
 export const bustImageDeliveryMetadataCache = async (url: string) => {
   const key = getImageDeliveryMetadataCacheKey(url);
   const deadline = Date.now() + BUST_DEADLINE_MS;
