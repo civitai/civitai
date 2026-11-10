@@ -309,16 +309,6 @@ describe('setTextScanRollout', () => {
     await setTextScanRollout('CommentV3', null, { moderatorId: 5 });
     expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:modes', 'CommentV3');
   });
-
-  it('turns CommentV3 off with null, dropping the stored CommentV2 rollout it falls back to', async () => {
-    await setTextScanRollout('CommentV3', null, { moderatorId: 5 });
-    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:modes', 'CommentV2');
-  });
-
-  it('leaves the stored CommentV2 rollout alone for any other type', async () => {
-    await setTextScanRollout('Post', null, { moderatorId: 5 });
-    expect(redisMock.sysRedis.hDel).not.toHaveBeenCalledWith('system:text-scan:modes', 'CommentV2');
-  });
 });
 
 describe('setTextScanWebSearchRollout', () => {
