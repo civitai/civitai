@@ -22,7 +22,12 @@ import { getProfanityFilter } from '~/libs/profanity-simple';
 import { maskProfanityOutsideMarkup } from './mask-profanity';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
-import { STICKER_JUMBO_LIMIT, stickerMaxWidth, STICKER_SIZE } from '~/shared/utils/sticker-token';
+import {
+  STICKER_JUMBO_LIMIT,
+  stickerInlineStyle,
+  stickerMaxWidth,
+  STICKER_SIZE,
+} from '~/shared/utils/sticker-token';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { MentionHoverCard } from '~/components/UserAvatar/MentionHoverCard';
 import { StickerAttributionHoverCard } from '~/components/Sticker/StickerAttributionHoverCard';
@@ -258,7 +263,7 @@ export function RenderHtml({
       img.style.maxWidth = `${stickerMaxWidth(size)}px`;
       img.style.objectFit = 'contain';
       img.style.display = 'inline-block';
-      img.style.verticalAlign = 'text-bottom';
+      Object.assign(img.style, stickerInlineStyle(size));
       node.replaceChildren(img);
     });
   }, [html, stickerById, stickerIds]);
