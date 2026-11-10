@@ -117,10 +117,11 @@ export function promptFileDetails(
   if (resources.length) valuePair.push({ name: 'resources', value: xmlText(resources.join(',')) });
 
   const as = storedOnImage ? ', as stored on the image' : '';
+  const marker = storedOnImage ? IMAGE_TRUNCATION_MARKER : TRUNCATION_MARKER;
   const lines = [
-    prompt && line(`Prompt${as}: `, prompt),
-    negativePrompt && line(`Negative prompt${as}: `, negativePrompt),
-    resources.length && line(`Resources${as}: `, resources.join(', ')),
+    prompt && line(`Prompt${as}: `, prompt, marker),
+    negativePrompt && line(`Negative prompt${as}: `, negativePrompt, marker),
+    resources.length && line(`Resources${as}: `, resources.join(', '), marker),
   ].filter((text): text is string => !!text);
   return {
     ...(valuePair.length && { details: [{ type: FileDetailType.EXIF, valuePair }] }),
@@ -131,9 +132,11 @@ export function promptFileDetails(
 /** Each line, label and marker included, is at most this many code points before escaping. */
 export const MAX_GENERATION_LINE_CHARS = 4000;
 export const TRUNCATION_MARKER = '[truncated; full text preserved]';
-const CUT = `… ${TRUNCATION_MARKER}`;
+/** For text read from an image's own metadata, which the report does not itself hold. */
+export const IMAGE_TRUNCATION_MARKER = '[truncated]';
 
-function line(label: string, text: string) {
+function line(label: string, text: string, marker = TRUNCATION_MARKER) {
+  const CUT = `… ${marker}`;
   const chars = [...xmlSafe(text.trim())];
   const room = MAX_GENERATION_LINE_CHARS - label.length;
   const kept =

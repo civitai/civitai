@@ -885,6 +885,26 @@ describe('prompts sent with each file', () => {
     expect(file).toEqual({ additionalInfo: [], pairs: {} });
   });
 
+  it.each([
+    ['an image report', 'Image', '[truncated]'],
+    ['a generated-image report', 'GeneratedImage', '[truncated; full text preserved]'],
+  ])('on %s: a long prompt is cut with its marker', async (_, type, marker) => {
+    const long = 'p'.repeat(5_000);
+    dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501, { meta: { prompt: long } })]);
+    const filing =
+      type === 'Image'
+        ? report('Image', {}, [{ id: 501 }])
+        : report('GeneratedImage', {
+            generatedImages: [{ jobId: 'job-1', prompt: long, blobs: [{ url: 'blob-1' }] }],
+          });
+
+    await processCsamReport(filing);
+
+    const [file] = await sentAsParsed();
+    expect(file.additionalInfo[0].endsWith(`… ${marker}`)).toBe(true);
+    if (type === 'Image') expect(file.additionalInfo[0]).not.toContain('preserved');
+  });
+
   it('on a generated-image report: read back as the generation stored them, checked before the CyberTip opens', async () => {
     await processCsamReport(generated());
 
