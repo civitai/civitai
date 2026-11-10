@@ -304,7 +304,9 @@ export async function getCsamQueueByUser({
         ) e
         where e ->> 'id' = i.id::text
       )), false)`.as('captureReported'),
-      sql<boolean>`bool_or(i.ingestion = 'Blocked')`.as('anyRemoved'),
+      sql<boolean>`bool_or(i.ingestion = 'Blocked' and not ${setAsideCounts('i', setAside)})`.as(
+        'removedNotDismissed'
+      ),
       sql<number>`count(*)::int`.as('flagged'),
       sql<number>`(count(*) filter (where not ${outOfPending('i', setAside)}))::int`.as('pending'),
       sql<number>`max(i.id)`.as('latestImageId'),
@@ -328,7 +330,11 @@ export async function getCsamQueueByUser({
   );
   const capture = (g: (typeof page)[number]) =>
     isFeedbackCaptureOwner(g.userId)
-      ? { imageId: Number(g.latestImageId), feedbackId: g.captureFeedbackId, removed: g.anyRemoved }
+      ? {
+          imageId: Number(g.latestImageId),
+          feedbackId: g.captureFeedbackId,
+          removed: g.removedNotDismissed,
+        }
       : null;
 
   const none = userIds.length === 0;

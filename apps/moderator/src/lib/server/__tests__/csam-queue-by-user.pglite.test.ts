@@ -566,3 +566,37 @@ describe('images set aside from the CSAM queue', () => {
     }
   });
 });
+
+describe('a removed feedback page capture in the CSAM queue by user', () => {
+  beforeAll(async () => {
+    await db.exec(SET_ASIDE_MIGRATION);
+  });
+  afterAll(async () => {
+    await db.exec(`
+      DROP TRIGGER IF EXISTS "Image_csam_queue_set_aside_end" ON "Image";
+      DROP FUNCTION IF EXISTS csam_queue_set_aside_end();
+      DROP TABLE IF EXISTS "CsamQueueSetAside"; DROP TYPE IF EXISTS "CsamQueueSetAsideOutcome";
+    `);
+  });
+
+  it('says a removed capture is removed until it is dismissed', async () => {
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion", "nsfwLevel") VALUES
+        (303, -2, 'csam', 'Blocked', 32), (304, -2, 'csam', 'Blocked', 32);
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId")
+        VALUES (303, -2, 'Dismissed', 1);
+    `);
+    try {
+      const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+      const removed = (imageId: number) =>
+        users.find((u) => u.capture?.imageId === imageId)?.capture?.removed;
+      expect(removed(303)).toBe(false);
+      expect(removed(304)).toBe(true);
+    } finally {
+      await db.exec(`
+        DELETE FROM "CsamQueueSetAside" WHERE "imageId" = 303;
+        DELETE FROM "Image" WHERE id IN (303, 304);
+      `);
+    }
+  });
+});
