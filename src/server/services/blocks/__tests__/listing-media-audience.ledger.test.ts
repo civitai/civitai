@@ -153,6 +153,8 @@ const EXPECTED_PROJECTORS: Record<
   // The agent review's impersonation check: the submitted icon and cover, exactly as attached,
   // handed to the review model. Never rendered or returned to a viewer.
   'server/services/blocks/app-impersonation-check.service.ts': 'raw: review model input',
+  // The same check on an approved app's listing edit: the revision's new icon and cover.
+  'server/services/blocks/app-listing-edit-impersonation.service.ts': 'raw: review model input',
 };
 
 /** Modules that read a listing image url without the gate's columns — none of them public. */
@@ -167,6 +169,8 @@ const EXPECTED_UNGATED_HYDRATIONS: Record<string, string> = {
   'server/services/blocks/publish-request.service.ts': 'the on-site moderator review queue',
   'server/services/blocks/app-impersonation-check.service.ts':
     "the agent review's impersonation check (model input, never rendered)",
+  'server/services/blocks/app-listing-edit-impersonation.service.ts':
+    'the listing-edit impersonation check (model input, never rendered)',
 };
 
 describe('listing-media call-site ledger', () => {

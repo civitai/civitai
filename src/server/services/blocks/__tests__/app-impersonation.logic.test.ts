@@ -112,7 +112,7 @@ describe('listingNameMatchFindings (deterministic)', () => {
     expect(listingNameMatchFindings(subject({ name: 'Zorblex Studios' }), o)).toEqual([]);
     expect(listingNameMatchFindings(subject({ name: 'zorblex-STUDIO' }), o)).toHaveLength(1);
     // A caller that still passes a near-miss bound gets no fuzzy match: there is no such bound.
-    const withStrayBound = listingNameMatchFindings as (...args: unknown[]) => unknown[];
+    const withStrayBound = listingNameMatchFindings as unknown as (...args: unknown[]) => unknown[];
     expect(withStrayBound(subject({ name: 'Zorblez Studio' }), o, 1)).toEqual([]);
   });
 

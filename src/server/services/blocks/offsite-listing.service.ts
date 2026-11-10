@@ -2098,6 +2098,13 @@ export async function submitListingRevision(opts: {
   // writers that correctly do not bust).
   await bustAppListingCatalogCache().catch(() => undefined);
 
+  // IMPERSONATION CHECK for an approved app whose edit changes its name, icon or cover: the
+  // moderator queue badges a hit. After the response-relevant work and NOT awaited, so the
+  // author's submit is not held on a model call; it never throws.
+  void import('./app-listing-edit-impersonation.service')
+    .then((m) => m.runListingEditImpersonationCheck(publishRequestId))
+    .catch(() => undefined);
+
   return { publishRequestId, shadowId, slug: shadow.revisionOf.slug };
 }
 
@@ -4790,7 +4797,12 @@ export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOption
     select: { ...modQueueSubmissionSelect, submittedBy: submitterChip },
   });
   const hasNext = rows.length > limit;
-  const items = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
+  const page = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
+  // The impersonation check on an approved app's listing edit (absent = not checked). FAIL-SOFT:
+  // a failed read leaves every row without a badge rather than taking the queue down.
+  const { listingEditCheckSummaries } = await import('./app-listing-edit-impersonation.service');
+  const checks = await listingEditCheckSummaries(page.map((r) => r.id)).catch(() => null);
+  const items = page.map((r) => ({ ...r, listingEditCheck: checks?.get(r.id) ?? null }));
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 

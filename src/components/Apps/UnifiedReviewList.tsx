@@ -399,9 +399,36 @@ export const FULL_LABEL_BADGE_STYLES = {
  * many sensitive permissions it asks for. Listing-only rows (no code) have none and show `—`.
  * The AI chip is absent — not "not run" — when the viewer has no agentic surface.
  */
+function ListingEditCheckBadge({ row }: { row: UnifiedReviewRow }) {
+  const badge = listingEditCheckBadge(row.listingEditCheck);
+  if (!badge) return null;
+  return (
+    <Badge
+      size="sm"
+      variant="light"
+      color={badge.color}
+      styles={FULL_LABEL_BADGE_STYLES}
+      data-signal="listing-impersonation"
+      data-state={row.listingEditCheck?.status ?? 'none'}
+      title={badge.title}
+    >
+      {badge.label}
+    </Badge>
+  );
+}
+
 function RowSignals({ row }: { row: UnifiedReviewRow }) {
   const signals = row.signals;
   if (!signals) {
+    // A listing-only row: no code signals, but an approved app's listing edit may carry an
+    // impersonation-check badge. Nothing to show → the dash, exactly as before.
+    if (listingEditCheckBadge(row.listingEditCheck)) {
+      return (
+        <Group gap={4} wrap="wrap" data-testid={`apps-unified-review-signals-${row.key}`}>
+          <ListingEditCheckBadge row={row} />
+        </Group>
+      );
+    }
     return (
       <Text size="xs" c="dimmed" data-testid={`apps-unified-review-signals-${row.key}`}>
         —
@@ -463,6 +490,7 @@ function RowSignals({ row }: { row: UnifiedReviewRow }) {
       >
         {sensitiveChipLabel(signals.sensitiveCount)}
       </Badge>
+      <ListingEditCheckBadge row={row} />
     </Group>
   );
 }

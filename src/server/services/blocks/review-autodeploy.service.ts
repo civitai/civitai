@@ -476,7 +476,51 @@ export async function agentReviewSpendTodayUsd(now: Date = new Date()): Promise<
       where: { startedAt: { gte: dayStart }, costUsd: null },
     }),
   ]);
-  return Number(costed._sum.costUsd ?? 0) + uncosted * perReviewCapUsd(env);
+  return (
+    Number(costed._sum.costUsd ?? 0) +
+    uncosted * perReviewCapUsd(env) +
+    (await readListingCheckSpendUsd(now))
+  );
+}
+
+async function listingCheckSpendKey(now: Date) {
+  const { REDIS_SYS_KEYS } = await import('~/server/redis/client');
+  return `${REDIS_SYS_KEYS.BLOCKS.LISTING_CHECK_SPEND}:${now.toISOString().slice(0, 10)}` as const;
+}
+
+/**
+ * Today's model spend of the impersonation check on approved apps' listing edits, which has no
+ * report row of its own to be counted from. Unreadable counts as nothing: the amounts are
+ * fractions of a cent per check, and the reservation read below already refuses a start when
+ * Redis cannot be read.
+ */
+async function readListingCheckSpendUsd(now: Date): Promise<number> {
+  try {
+    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
+    const raw = await withSysReadDeadline(sysRedis.get(await listingCheckSpendKey(now)));
+    const cents = Number(raw);
+    return Number.isFinite(cents) && cents > 0 ? cents / 100 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Add one listing-edit impersonation check's model spend to today's total. Best-effort. */
+export async function recordListingCheckSpendUsd(usd: number): Promise<void> {
+  if (!Number.isFinite(usd) || usd <= 0) return;
+  try {
+    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
+    const key = await listingCheckSpendKey(new Date());
+    await withSysReadDeadline(
+      sysRedis
+        .multi()
+        .set(key, '0', { NX: true, EX: 26 * 60 * 60 })
+        .incrBy(key, Math.max(1, Math.round(usd * 100)))
+        .exec()
+    );
+  } catch {
+    // Lost spend only makes the day's total read low by a fraction of a cent.
+  }
 }
 
 function perReviewCapUsd(env: { AGENT_REVIEW_COST_CAP_USD: string }): number {

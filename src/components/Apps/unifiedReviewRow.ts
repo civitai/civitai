@@ -5,8 +5,10 @@ import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import type { ListingReviewMedia } from '~/server/services/blocks/app-listing.service';
 import {
   agentReviewLane,
+  listingEditCheckBadge,
   type AgentReviewLaneResult,
   type AgentReviewSummary,
+  type ListingEditCheckSummary,
 } from '~/shared/utils/agent-review-findings';
 import { sensitiveScopeCount } from '~/components/Apps/reviewQueueSignals';
 import {
@@ -180,6 +182,11 @@ export type UnifiedReviewRow = {
    *  - `sensitiveCount` — sensitive permissions the manifest requests.
    */
   signals?: ReviewRowSignals;
+  /**
+   * PENDING listing-edit rows (and the combined row that holds one): the impersonation check on
+   * an approved app's listing edit. Absent / null = not checked (no identity change).
+   */
+  listingEditCheck?: ListingEditCheckSummary | null;
 };
 
 export type ReviewRowSignals = {
@@ -337,6 +344,8 @@ export type OffsiteReviewRequest = {
   iconUrl?: string | null;
   coverUrl?: string | null;
   reviewMedia?: ListingReviewMedia | null;
+  /** PENDING queue only: the impersonation check on an approved app's listing edit. */
+  listingEditCheck?: ListingEditCheckSummary | null;
 };
 
 /**
@@ -403,6 +412,7 @@ export function offsiteRequestToUnifiedRow(
     iconUrl: req.iconUrl ?? null,
     coverUrl: req.coverUrl ?? null,
     reviewMedia: req.reviewMedia ?? null,
+    listingEditCheck: req.listingEditCheck ?? null,
   };
 }
 
@@ -473,8 +483,10 @@ function combineCodeAndMediaRows(
         redIcon: code.reviewMedia?.redIcon ?? media.reviewMedia?.redIcon ?? null,
         redCover: code.reviewMedia?.redCover ?? media.reviewMedia?.redCover ?? null,
       },
-      // The CODE half owns the preview, the AI review and the permissions.
+      // The CODE half owns the preview, the AI review and the permissions; the MEDIA half owns
+      // the listing-edit impersonation check.
       signals: code.signals,
+      listingEditCheck: media.listingEditCheck ?? null,
     });
   }
 
@@ -518,10 +530,15 @@ function combineCodeAndMediaRows(
  * is `waiting`. A review preview that failed to build keeps an otherwise clean row OUT of the
  * fast lane: the app did not run.
  */
-export function reviewRowLane(row: Pick<UnifiedReviewRow, 'signals'>): AgentReviewLaneResult {
+export function reviewRowLane(
+  row: Pick<UnifiedReviewRow, 'signals' | 'listingEditCheck'>
+): AgentReviewLaneResult {
   const signals = row.signals;
   if (!signals || signals.agentReview === undefined) return { lane: 'waiting', reasons: [] };
   const result = agentReviewLane(signals.agentReview);
+  if (result.lane === 'agent-clean' && listingEditCheckBadge(row.listingEditCheck)) {
+    return { lane: 'flagged', reasons: ['the listing edit hit the impersonation check'] };
+  }
   if (result.lane === 'agent-clean' && signals.previewState === 'preview-failed') {
     return { lane: 'flagged', reasons: ['the review preview failed to build'] };
   }

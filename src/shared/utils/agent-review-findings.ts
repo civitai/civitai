@@ -196,3 +196,36 @@ export const AGENT_REVIEW_LANE_BADGES: Record<
   'agent-clean': { label: 'Fast lane: read the report, then decide', color: 'teal' },
   flagged: { label: 'Agent flagged: read the findings first', color: 'orange' },
 };
+
+/**
+ * The impersonation check on an APPROVED app's listing edit, as the listing queue reads it
+ * (`app-listing-edit-impersonation.service`). Absent when the edit changed none of name, icon or
+ * cover — nothing was checked and the row looks as it always did.
+ */
+export type ListingEditCheckSummary = {
+  status: 'complete' | 'failed';
+  /** Findings rated medium or worse. */
+  flagging: number;
+  /** Their titles, for the badge's tooltip. */
+  titles: string[];
+};
+
+/** The listing row's badge: only for a hit or an incomplete check; `null` leaves the row as it was. */
+export function listingEditCheckBadge(
+  summary: ListingEditCheckSummary | null | undefined
+): { label: string; color: string; title: string | undefined } | null {
+  if (!summary) return null;
+  if (summary.status !== 'complete') {
+    return {
+      label: 'Impersonation check incomplete: check the listing by hand',
+      color: 'orange',
+      title: undefined,
+    };
+  }
+  if (summary.flagging === 0) return null;
+  return {
+    label: 'Impersonation: read the findings before approving',
+    color: 'orange',
+    title: summary.titles.join('; '),
+  };
+}

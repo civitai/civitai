@@ -7,18 +7,17 @@
  * a finding — only identity.
  *
  * Three checks, and each finding records which one fired (`check`):
- *  - `listing-name-match` (deterministic): the submission's name, normalised, equals (or is
- *    within the configured edit distance of) the name of another author's approved listing.
+ *  - `listing-name-match` (deterministic): the submission's name, normalised, equals the
+ *    normalised name of another author's approved listing.
  *  - `protected-term` (deterministic): the submission's name or slug contains a protected brand
  *    term. The terms are moderator-managed data (the `AppProtectedBrandTerm` blocklist), never a
  *    list in this file.
  *  - `model-judgement`: a model reads the listing (text, icon, cover) for everything the two
  *    deterministic checks cannot see.
  *
- * An HONEST declaration lowers a deterministic finding to `low` (still recorded, no longer a
- * flag): a structural fork link to the matched app, or — for the model's reading of the text — a
- * quote that is verified, here, to really appear in the listing. The model cannot clear a
- * deterministic finding by asserting a declaration that is not on the page.
+ * Only a STRUCTURAL fork link to the matched app lowers a name match to `low` (still recorded, no
+ * longer a flag). Nothing the listing SAYS lowers anything: a protected term in the name or slug
+ * always flags, whatever the listing claims about being unofficial.
  *
  * No React, no Prisma, no I/O: the service (`app-impersonation-check.service.ts`) gathers the
  * inputs and persists the result.
@@ -135,25 +134,6 @@ export function impersonationSkeleton(value: string): string {
     .replace(/vv/g, 'w');
 }
 
-/** Levenshtein distance, giving up (returning `max + 1`) as soon as it must exceed `max`. */
-export function boundedEditDistance(a: string, b: string, max: number): number {
-  if (a === b) return 0;
-  if (Math.abs(a.length - b.length) > max) return max + 1;
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
-    let rowMin = i;
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
-      if (cur[j] < rowMin) rowMin = cur[j];
-    }
-    if (rowMin > max) return max + 1;
-    prev = cur;
-  }
-  return prev[b.length];
-}
-
 // ---------------------------------------------------------------------------
 // Deterministic checks
 // ---------------------------------------------------------------------------
@@ -177,9 +157,6 @@ export type OtherListing = {
   appBlockId?: string | null;
 };
 
-/** A name skeleton shorter than this never fuzzy-matches (only an identical skeleton does). */
-const MIN_FUZZY_SKELETON_LENGTH = 4;
-
 function isDeclaredForkOf(subject: ImpersonationSubject, other: OtherListing): boolean {
   if (subject.forkOfListingId && subject.forkOfListingId === other.id) return true;
   return !!(
@@ -191,36 +168,28 @@ function isDeclaredForkOf(subject: ImpersonationSubject, other: OtherListing): b
 
 /**
  * `listing-name-match`: another author's approved listing whose name has the same skeleton as
- * the submission's (or one within `maxEdits`). The caller passes only OTHER authors' listings,
+ * the submission's. The caller passes only OTHER authors' listings,
  * so an author's own family of apps never matches itself.
  */
 export function listingNameMatchFindings(
   subject: ImpersonationSubject,
-  others: readonly OtherListing[],
-  maxEdits: number
+  others: readonly OtherListing[]
 ): ImpersonationFinding[] {
   const mine = impersonationSkeleton(subject.name);
   if (!mine) return [];
-  const edits = Number.isInteger(maxEdits) && maxEdits > 0 ? maxEdits : 0;
   const findings: ImpersonationFinding[] = [];
   for (const other of others) {
     if (other.slug === subject.slug) continue;
     const theirs = impersonationSkeleton(other.name);
     if (!theirs) continue;
-    const exact = mine === theirs;
-    const close =
-      !exact &&
-      edits > 0 &&
-      Math.min(mine.length, theirs.length) >= MIN_FUZZY_SKELETON_LENGTH &&
-      boundedEditDistance(mine, theirs, edits) <= edits;
-    if (!exact && !close) continue;
+    if (mine !== theirs) continue;
     const fork = isDeclaredForkOf(subject, other);
     findings.push({
       severity: fork ? 'low' : 'medium',
       category: IMPERSONATION_CATEGORY,
       check: 'listing-name-match',
       title: fork
-        ? `Name matches the app it declares itself a fork of ("${other.name}")`
+        ? `Name matches the app it is linked to as a fork ("${other.name}")`
         : `Name matches another author's app ("${other.name}")`,
       detail: fork
         ? `"${subject.name}" reads as "${other.name}" (${other.slug}), and the submission is linked to it as a fork. Recorded for the moderator; not a flag.`
@@ -228,7 +197,7 @@ export function listingNameMatchFindings(
       evidence: [
         `check: listing-name-match`,
         `matched: ${other.slug}`,
-        exact ? 'identical after normalisation' : 'near-identical after normalisation',
+        'identical after normalisation',
       ],
     });
   }
@@ -239,14 +208,11 @@ export function listingNameMatchFindings(
  * `protected-term`: the submission's NAME or SLUG contains a protected term (compared by
  * skeleton, so look-alike spellings count). The listing description is deliberately not
  * scanned: saying an app works WITH a brand is not posing as it, and the model reads the text.
- *
- * `declaration` is a verified quote of the listing honestly saying it is unofficial / a fork
- * (see {@link verifiedDeclarationQuote}); with one, a hit is recorded at `low`.
+ * A hit always flags (`medium`): nothing the listing says about being unofficial lowers it.
  */
 export function protectedTermFindings(
   subject: ImpersonationSubject,
-  terms: readonly string[],
-  declaration: string | null
+  terms: readonly string[]
 ): ImpersonationFinding[] {
   const fields = [impersonationSkeleton(subject.name), impersonationSkeleton(subject.slug)];
   const findings: ImpersonationFinding[] = [];
@@ -257,44 +223,15 @@ export function protectedTermFindings(
     seen.add(t);
     if (!fields.some((f) => f.includes(t))) continue;
     findings.push({
-      severity: declaration ? 'low' : 'medium',
+      severity: 'medium',
       category: IMPERSONATION_CATEGORY,
       check: 'protected-term',
-      title: declaration
-        ? `Uses a protected brand name ("${term}"), and declares itself unofficial`
-        : `Uses a protected brand name ("${term}")`,
-      detail: declaration
-        ? `The name or slug contains "${term}". The listing says: "${declaration}". Recorded for the moderator; not a flag.`
-        : `The name or slug contains "${term}" and the listing does not say it is unofficial or a fork. Check it is not posing as that brand.`,
+      title: `Uses a protected brand name ("${term}")`,
+      detail: `The name or slug contains "${term}". Check the app is not posing as that brand.`,
       evidence: [`check: protected-term`, `term: ${term}`],
     });
   }
   return findings;
-}
-
-function collapse(value: string): string {
-  return value.replace(/\s+/g, ' ').trim().toLowerCase();
-}
-
-/** Shortest quote accepted as a declaration: long enough to be a phrase, not a stray word. */
-const MIN_DECLARATION_QUOTE_CHARS = 8;
-
-/**
- * The model's quoted declaration, only when it REALLY appears in the listing text the author
- * wrote (name, tagline or description, whitespace- and case-insensitive). A quote the listing
- * does not contain is the model being misled, and is dropped.
- */
-export function verifiedDeclarationQuote(
-  subject: ImpersonationSubject,
-  quote: unknown
-): string | null {
-  if (typeof quote !== 'string') return null;
-  const q = collapse(quote);
-  if (q.length < MIN_DECLARATION_QUOTE_CHARS) return null;
-  const haystack = [subject.name, subject.tagline ?? '', subject.description ?? '']
-    .map(collapse)
-    .join('\n');
-  return haystack.includes(q) ? quote.trim().slice(0, 300) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -303,7 +240,6 @@ export function verifiedDeclarationQuote(
 
 export type ModelJudgement = {
   findings?: unknown;
-  declaredUnofficialQuote?: unknown;
 };
 
 const MAX_MODEL_FINDINGS = 5;
