@@ -1,4 +1,5 @@
-import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Group, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { usePostResourceReviews } from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 

@@ -1,4 +1,5 @@
-import { ActionIcon, Tooltip } from '@mantine/core';
+import { ActionIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconMessageCircle } from '@tabler/icons-react';
 import { openResourceReviewStepper } from '~/components/Post/EditV2/PostResourceReviews/openResourceReviewStepper';
 import { useStepperImagesGetter } from '~/components/Post/EditV2/PostResourceReviews/useStepperImages';
