@@ -1,4 +1,6 @@
 import client from 'prom-client';
+import { getLiveProviderTokens } from '~/server/services/provider-download/provider-token.store';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 
 // Downloads made with a per-provider download token, by outcome. `provider` is a provider with a
 // live token, or `unknown` for a token that named none, so a caller cannot add series.
@@ -34,5 +36,38 @@ export function countProviderDownload(
     providerDownloadCounter.inc({ provider, result, visibility });
   } catch {
     // metrics never fail a download
+  }
+}
+
+const SEED_DEADLINE_MS = 1_000;
+
+/** Every (result, visibility) pair `countProviderDownload` is called with. */
+const REACHABLE: ReadonlyArray<[ProviderDownloadResult, ProviderDownloadVisibility]> = [
+  ['granted', 'public'],
+  ['granted', 'nonpublic'],
+  ['refused_401', 'unknown'],
+  ['refused_429', 'unknown'],
+  ['refused_gate', 'unknown'],
+];
+
+/**
+ * Publishes every series a download can reach at 0, for each live provider and for `unknown`. A
+ * series created at 1 is invisible to `increase()`, so a first download on a pod would not count.
+ * Called on every scrape, so a newly minted provider is seeded before its first download in all
+ * but the scrape it was minted in. Never throws.
+ */
+export async function seedProviderDownloadMetrics() {
+  try {
+    providerDownloadCounter.inc(
+      { provider: 'unknown', result: 'refused_401', visibility: 'unknown' },
+      0
+    );
+    // Bounded: a stalled token read must not stall the scrape.
+    const live = await withTimeoutFallback(getLiveProviderTokens(), SEED_DEADLINE_MS, []);
+    for (const provider of new Set(live.map((entry) => entry.provider)))
+      for (const [result, visibility] of REACHABLE)
+        providerDownloadCounter.inc({ provider, result, visibility }, 0);
+  } catch {
+    // seeding never fails a scrape
   }
 }
