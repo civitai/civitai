@@ -285,3 +285,38 @@ describe('decideDepositCredit', () => {
     expect(createTransaction).not.toHaveBeenCalled();
   });
 });
+
+describe('the dry-run control that ignores the prior grant', () => {
+  const input = {
+    paymentId: PAYMENT_ID,
+    userId: USER_ID,
+    payinHash: null,
+    expectedBuzz: 20_000,
+    paymentCreatedAt: new Date('2026-10-20T08:00:00Z'),
+    row: { status: 'finished', createdAt: new Date('2026-10-20T08:00:00Z') },
+    lateStatus: undefined,
+    byModerator: false,
+  };
+  const creditedNormally = () =>
+    credit({ type: 'Purchase', externalTransactionId: `np-deposit-${PAYMENT_ID}`, amount: 20_000 });
+
+  it('is off unless asked for: a normally credited deposit stops at its prior grant', async () => {
+    creditedNormally();
+
+    expect(await decideDepositCredit(input)).toMatchObject({
+      decision: 'already_granted',
+      via: 'np_deposit',
+    });
+    expect(await decideDepositCredit({ ...input, ignorePriorGrant: true })).toMatchObject({
+      decision: 'grant',
+    });
+  });
+
+  it('is never set by the deposit flow: a redelivery of a credited deposit grants nothing', async () => {
+    creditedNormally();
+
+    await depositAfter('buzz_failed');
+
+    expect(grantBuzzPurchase).not.toHaveBeenCalled();
+  });
+});

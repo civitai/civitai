@@ -57,12 +57,18 @@ export async function decideDepositCredit(input: {
   lateStatus: string | undefined;
   /** A moderator crediting by hand has already been through assessDepositCredit. */
   byModerator: boolean;
+  /**
+   * Dry-run control only: skip the payin-hash and `np-deposit-<id>` ledger checks, so the hand-grant
+   * scan runs on a deposit that was credited normally. Never set by the deposit flow.
+   */
+  ignorePriorGrant?: boolean;
 }): Promise<SettleDecision> {
-  const { paymentId, payinHash, row, lateStatus } = input;
+  const { paymentId, payinHash, row, lateStatus, ignorePriorGrant = false } = input;
 
-  const manualCredit = payinHash
-    ? await getTransactionByExternalId(manualPayinCreditExternalId(payinHash))
-    : null;
+  const manualCredit =
+    payinHash && !ignorePriorGrant
+      ? await getTransactionByExternalId(manualPayinCreditExternalId(payinHash))
+      : null;
   if (manualCredit)
     return {
       decision: 'already_granted',
@@ -78,7 +84,9 @@ export async function decideDepositCredit(input: {
   if (row?.status === HAND_PAID)
     return { decision: 'already_granted', via: 'hand_paid', matches: [] };
 
-  const priorGrant = await getTransactionByExternalId(`np-deposit-${paymentId}`);
+  const priorGrant = ignorePriorGrant
+    ? null
+    : await getTransactionByExternalId(`np-deposit-${paymentId}`);
   if (priorGrant)
     return {
       decision: 'already_granted',
