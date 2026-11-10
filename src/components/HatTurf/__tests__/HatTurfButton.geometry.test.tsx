@@ -320,6 +320,7 @@ describe('the +N hats chip on a feed card', () => {
               leader: 'blue',
               leaderCosmeticId: 11,
               hatted: true,
+              hattedTeam: null,
             },
           },
           stickers: {
