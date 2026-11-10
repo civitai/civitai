@@ -1675,8 +1675,8 @@ export const teTrainingUnsupportedReason = (
     : `Text encoder training isn't supported for ${modelName}.`;
 };
 
-/** Per-field input bounds for a card — mirrors the ai-toolkit constraints: SDXL-family gets 256-dim nets and
- *  1024–2048 resolution; batch is capped per family; epochs are 1–20; LR is 0–1. */
+/** Per-field input bounds for a card — mirrors the ai-toolkit constraints: SDXL-family gets 256-dim nets;
+ *  batch is capped per family; epochs are 1–20; LR is 0–1. Resolution mirrors the in-app trainer only. */
 export function paramBounds(card: ModelCard): Record<string, ParamBound> {
   const sdxl = SDXL_FAMILY.has(card.type);
   const video = card.media === 'video';
@@ -1688,7 +1688,8 @@ export function paramBounds(card: ModelCard): Record<string, ParamBound> {
     textEncoderLr: { min: 0, max: 1, step: 1e-5 },
     networkDim: { min: 1, max: netMax, step: 1 },
     networkAlpha: { min: 1, max: netMax, step: 1 },
-    // Video/audio resolution is fixed upstream; images range per family.
+    // The orchestrator's AI-Toolkit input declares no `resolution` and drops what we send, so no value
+    // here (SDXL's 2048 included) reaches the trainer. Widening these bounds would add nothing.
     resolution: video
       ? { min: 960, max: 960, step: 1 }
       : audio
