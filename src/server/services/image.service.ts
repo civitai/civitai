@@ -98,6 +98,7 @@ import {
   type JudgeScore,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { poolCounters } from '~/server/games/new-order/utils';
+import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
@@ -8320,11 +8321,13 @@ export async function updateImageNsfwLevel({
       });
 
       if (current.userId === userId) {
-        await addImageToQueue({
-          imageIds: id,
-          rankType: NewOrderRankType.Knight,
-          priority: 1,
-        });
+        if (isV1KnightsLive()) {
+          await addImageToQueue({
+            imageIds: id,
+            rankType: NewOrderRankType.Knight,
+            priority: 1,
+          });
+        }
         await queueOwnerRatingForKnights(id);
       }
     }
@@ -9119,12 +9122,14 @@ export async function queueImageSearchIndexUpdate({
   if (action === SearchIndexUpdateQueueAction.Delete) {
     await refreshThumbnailCache(ids);
     // Remove the image from the knights of new order pool counters
-    await Promise.all([
-      ...poolCounters.Knight.a.map((queue) => queue.reset({ id: ids })),
-      ...poolCounters.Knight.b.map((queue) => queue.reset({ id: ids })),
-      ...poolCounters.Templar.a.map((queue) => queue.reset({ id: ids })),
-      ...poolCounters.Templar.b.map((queue) => queue.reset({ id: ids })),
-    ]);
+    if (isV1KnightsLive()) {
+      await Promise.all([
+        ...poolCounters.Knight.a.map((queue) => queue.reset({ id: ids })),
+        ...poolCounters.Knight.b.map((queue) => queue.reset({ id: ids })),
+        ...poolCounters.Templar.a.map((queue) => queue.reset({ id: ids })),
+        ...poolCounters.Templar.b.map((queue) => queue.reset({ id: ids })),
+      ]);
+    }
   }
 }
 

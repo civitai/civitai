@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { NsfwLevel } from '~/server/common/enums';
+import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import {
   leaveQueuesAfterModeratorRating,
   updatePendingImageRatings,
@@ -29,8 +30,10 @@ export default WebhookEndpoint(async (req, res) => {
 
   const { imageId, nsfwLevel } = result.data;
 
-  await updatePendingImageRatings({ imageId, rating: nsfwLevel });
-  await leaveQueuesAfterModeratorRating(imageId);
+  if (isV1KnightsLive()) {
+    await updatePendingImageRatings({ imageId, rating: nsfwLevel });
+    await leaveQueuesAfterModeratorRating(imageId);
+  }
 
   return res.status(200).json({ ok: true, imageId });
 });
