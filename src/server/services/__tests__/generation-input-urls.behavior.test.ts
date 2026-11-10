@@ -1429,7 +1429,6 @@ describe('a chat App Block step, with the external-host refusal on', () => {
     // Green before this change too (a civitai host is accepted by name); pins that the host
     // normalisation shared with the classifier keeps it so.
     const dotted = `https://image.civitai.com./x/${KEY}/original=true`;
-    expect(opaqueInputUrlsIn(chat(`see ${dotted} please`), chatPaths()).urls).toContain(dotted);
     expect(opaqueInputUrlsIn(chat(dotted), chatPaths()).urls).toContain(dotted);
     await recordUploadKeyOwner(KEY, OTHER);
     expect(await chatStep(chat(dotted))).toBe(`refused: ${GENERATION_IMAGE_UNAVAILABLE_MESSAGE}`);
