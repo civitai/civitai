@@ -10884,7 +10884,7 @@ type RegistryStepBody = Exclude<StepBody, PassThroughStepBody>;
  * Narrow a `kind:'step'` body to its PASS-THROUGH arm.
  *
  * 🔴 KEYED ON THE VALUE OF `step`, NOT `'step' in body`. The pass-through arm
- * declares `step: z.undefined()`, so a body carrying `step` as an own key is a
+ * declares `step: z.undefined().optional()`, so a body carrying `step` as an own key is a
  * LEGAL pass-through body (an SDK spreading an optional variable produces one,
  * and `undefined` survives superjson); a presence test routes it to
  * `resolveBlockStep`, which answers BAD_REQUEST. Same rule as
