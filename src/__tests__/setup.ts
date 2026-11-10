@@ -100,6 +100,7 @@ function orchestratorClientMock() {
     // Functions
     createCivitaiClient: vi.fn(),
     getWorkflow: vi.fn(),
+    getFreeTier: vi.fn(),
     submitWorkflow: vi.fn(),
     updateWorkflow: vi.fn(),
     getResource: vi.fn(),

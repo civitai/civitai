@@ -173,6 +173,15 @@ export const userRouter = router({
   getActiveLimits: protectedProcedure
     .meta({ anyOfScopes: USAGE_LIMITS_SCOPES })
     .query(({ ctx }) => getActiveLimits(ctx.user.id)),
+  /** The user's free generation allowance per free-tier model, from the orchestrator. */
+  getOrchestrationFreeUsage: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .query(async ({ ctx }) => {
+      const { getMyOrchestrationFreeUsage } = await import(
+        '~/server/services/orchestrator/free-tier-usage.service'
+      );
+      return getMyOrchestrationFreeUsage(ctx.user, ctx);
+    }),
   getSearchHydration: publicProcedure
     .input(getUserSearchHydrationSchema)
     .query(getUserSearchHydrationHandler),

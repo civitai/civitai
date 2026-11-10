@@ -17,6 +17,10 @@ export function UsageLimitsPane() {
   const currentUser = useCurrentUser();
   const limits = trpc.user.getUsageLimits.useQuery(undefined, { staleTime: STALE_MS });
   const active = trpc.user.getActiveLimits.useQuery(undefined, { staleTime: STALE_MS });
+  const freeUsage = trpc.user.getOrchestrationFreeUsage.useQuery(undefined, {
+    staleTime: STALE_MS,
+    retry: false,
+  });
 
   return (
     <UsageLimitsView
@@ -29,6 +33,7 @@ export function UsageLimitsPane() {
       limits={limits.data?.limits}
       status={limits.isLoading ? 'loading' : limits.isError ? 'error' : 'ready'}
       active={active.data ?? []}
+      freeUsage={freeUsage.data ?? undefined}
     />
   );
 }
@@ -40,6 +45,8 @@ export type UsageLimitsViewProps = {
   limits?: UsageLimitRow[];
   status: 'loading' | 'error' | 'ready';
   active: { area: string; retryAt: string }[];
+  /** Free generation allowance per model; absent when it failed to load or no token is issued. */
+  freeUsage?: UsageLimitRow[];
 };
 
 export function UsageLimitsView({
@@ -49,6 +56,7 @@ export function UsageLimitsView({
   limits,
   status,
   active,
+  freeUsage,
 }: UsageLimitsViewProps) {
   const areas = useMemo(() => {
     const byArea = new Map<string, UsageLimitRow[]>();
@@ -85,6 +93,9 @@ export function UsageLimitsView({
         areas.map(([area, rows]) => (
           <UsageLimitCard key={area} area={area} rows={rows} now={now} timeZone={timeZone} />
         ))
+      )}
+      {freeUsage && freeUsage.length > 0 && (
+        <UsageLimitCard area="generation" rows={freeUsage} now={now} timeZone={timeZone} />
       )}
       <Paper withBorder radius="md" p="sm" className="bg-gray-0 dark:bg-dark-7">
         <Text size="xs" c="dimmed">
