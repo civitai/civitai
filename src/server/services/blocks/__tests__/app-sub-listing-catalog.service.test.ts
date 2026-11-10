@@ -569,6 +569,15 @@ describe('upsertCatalogSubListing — item images', () => {
     }
   );
 
+  it('a failed flag read (not a missing column) fails the sync and writes nothing', async () => {
+    officialFlag({ err: new Error('connection reset') });
+    write.appSubListing.findUnique.mockResolvedValue(itemRow({ imageId: CREATOR_IMAGE }));
+    await expect(put({ ...BODY, imageId: OWNER_IMAGE })).rejects.toThrow();
+    expect(officialReads()).toHaveLength(1);
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
+    expect(mockBust).not.toHaveBeenCalled();
+  });
+
   it('an Official flag on another listing does not open the shortcut for this parent', async () => {
     officialFlag({ rows: [{ id: 'apl_OTHER', isOfficial: true }] });
     write.appSubListing.findUnique.mockResolvedValue(itemRow({ imageId: CREATOR_IMAGE }));
