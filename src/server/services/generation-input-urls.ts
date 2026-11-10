@@ -520,16 +520,24 @@ function isWholeFetchableValue(value: string, budget: DecodeBudget, protocol: st
 
 /**
  * Free text a registry step declares in its params (`freeTextParamPaths`), each `list[].field`:
- * the string `field` of every item of the array `list` at the top of the params.
+ * the string `field` of every item of the array `list` at the top of the params. Or
+ * `list[].field.**`: everything under `field` of every item is text, whatever its shape (every
+ * string in it, object keys included).
  */
 export type FreeTextPaths = readonly string[];
 
-/** `paths` as list name -> the item fields that are free text. */
+/** `'string'`: a string at the field is text. `'subtree'`: everything under the field is. */
+type FreeTextKind = 'string' | 'subtree';
+
+/** `paths` as list name -> the item fields that are free text, and how. */
 function freeTextFieldsByList(paths: FreeTextPaths = []) {
-  const byList = new Map<string, Set<string>>();
+  const byList = new Map<string, Map<string, FreeTextKind>>();
   for (const path of paths) {
-    const [list, field] = path.split('[].');
-    byList.set(list, (byList.get(list) ?? new Set<string>()).add(field));
+    const [list, spec] = path.split('[].');
+    const subtree = spec.endsWith('.**');
+    const fields = byList.get(list) ?? new Map<string, FreeTextKind>();
+    fields.set(subtree ? spec.slice(0, -3) : spec, subtree ? 'subtree' : 'string');
+    byList.set(list, fields);
   }
   return byList;
 }
@@ -557,7 +565,7 @@ function namesOurImage(url: string, budget: DecodeBudget) {
  * `freeTextPaths`: strings at these paths are free text, never a url to fetch, so a url in one is
  * not collected whole unless it names one of our images; its keys are collected as in any text.
  * Only a value that IS a string there is text (and a list only when it is an array): anything
- * else at the path is walked as usual.
+ * else at the path is walked as usual. Under a `.**` path every string is text, whatever the shape.
  * Default none: every string is read as above.
  */
 export function opaqueInputUrlsIn(value: unknown, freeTextPaths?: FreeTextPaths) {
@@ -589,15 +597,16 @@ export function opaqueInputUrlsIn(value: unknown, freeTextPaths?: FreeTextPaths)
   };
   /**
    * `counted`: a line of a string whose characters were already counted whole. `text`: the string
-   * is declared free text. `scope.list`: the item is a declared list, and these fields of each of
-   * its items are text; `scope.item`: the item is one of those items.
+   * is declared free text, or the array/object is under a declared `.**` field (so every string
+   * in it, keys included, is text). `scope.list`: the item is a declared list, and these fields
+   * of each of its items are text; `scope.item`: the item is one of those items.
    */
   const walk = (
     item: unknown,
     depth: number,
     counted = false,
     text = false,
-    scope?: { list: Set<string> } | { item: Set<string> }
+    scope?: { list: Map<string, FreeTextKind> } | { item: Map<string, FreeTextKind> }
   ) => {
     if (item == null || tooDeep || tooLarge) return;
     if (depth > OPAQUE_INPUT_MAX_DEPTH) {
@@ -668,18 +677,25 @@ export function opaqueInputUrlsIn(value: unknown, freeTextPaths?: FreeTextPaths)
     } else if (Array.isArray(item)) {
       const fields = scope && 'list' in scope ? scope.list : undefined;
       for (const child of item)
-        walk(child, depth + 1, false, false, fields ? { item: fields } : undefined);
+        walk(child, depth + 1, false, text, fields ? { item: fields } : undefined);
     } else if (typeof item === 'object') {
       const record = item as Record<string, unknown>;
       const itemFields = scope && 'item' in scope ? scope.item : undefined;
       for (const field of Object.keys(record)) {
         if (tooDeep || tooLarge) return;
-        walk(field, depth + 1);
+        walk(field, depth + 1, false, text);
         const value = record[field];
         const listFields = depth === 0 ? textFieldsByList.get(field) : undefined;
+        const kind = itemFields?.get(field);
         if (listFields && Array.isArray(value))
           walk(value, depth + 1, false, false, { list: listFields });
-        else walk(value, depth + 1, false, !!itemFields?.has(field) && typeof value === 'string');
+        else
+          walk(
+            value,
+            depth + 1,
+            false,
+            text || kind === 'subtree' || (kind === 'string' && typeof value === 'string')
+          );
       }
     }
   };
