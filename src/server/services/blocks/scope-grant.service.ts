@@ -1382,6 +1382,11 @@ function rethrowMissingRevokedScopesColumn(err: unknown, site: string): unknown 
   });
 }
 
+/**
+ * Intersects the scopes the token would otherwise carry with the user's
+ * granted scopes, returning the granted subset to sign + the withheld scopes
+ * the host must re-consent for. `CONSENT_EXEMPT_SCOPES` members sign without a grant.
+ */
 export function partitionByConsent(
   requestedScopes: string[],
   grantedScopes: Set<string>

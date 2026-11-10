@@ -59,6 +59,7 @@ import {
   isKnownBlockScope,
   PRIVATE_RUN_BUZZ_CAP,
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
+  REVOKE_SCOPES_MAX_PER_CALL,
 } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
@@ -3585,7 +3586,7 @@ export const blocksRouter = router({
     .input(
       z.object({
         appBlockId: z.string().min(1).max(64),
-        scopes: z.array(z.string().min(1).max(64)).min(1).max(32),
+        scopes: z.array(z.string().min(1).max(64)).min(1).max(REVOKE_SCOPES_MAX_PER_CALL),
         /**
          * The per-UTC-day Buzz ceiling the viewer sets for THIS app, captured at
          * consent time. Bounded above by the platform's own per-user daily cap: a

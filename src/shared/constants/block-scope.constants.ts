@@ -856,10 +856,6 @@ export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): number
 }
 
 /**
- * Intersects the scopes the token would otherwise carry with the user's
- * granted scopes, returning the granted subset to sign + the withheld scopes
- * the host must re-consent for.
- *
  * The per-user storage scopes (`apps:storage:read` / `apps:storage:write`, the per-user
  * KV, and `apps:storage`, the document store's base scope) are intentionally NOT
  * consent-gated here — NOT the whole `apps:storage:*` family, since `apps:storage:publish`
@@ -937,7 +933,7 @@ export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): number
  * reactions already made stay (decision on civitai-app-starters#669).
  *
  * 🔴 MEMBERSHIP HERE MAKES A SCOPE UN-REVOKABLE, AND A REVOKE CONTROL ON ONE WOULD BE A
- * LIE. `partitionByConsent` below signs on `CONSENT_EXEMPT_SCOPES.has(scope) ||
+ * LIE. `partitionByConsent` (scope-grant.service.ts) signs on `CONSENT_EXEMPT_SCOPES.has(scope) ||
  * grantedScopes.has(scope)` — the exempt test comes FIRST and never consults the grant —
  * so a suppression entry for a member of this set would be stored and enforce NOTHING.
  * `blocks.revokeScopes` therefore REFUSES every member of this set with a specific error rather than
@@ -993,3 +989,6 @@ export const CONSENT_EXEMPT_SCOPES: ReadonlySet<string> = new Set([
 export function isConsentExemptScope(scope: string): boolean {
   return CONSENT_EXEMPT_SCOPES.has(scope);
 }
+
+/** `blocks.revokeScopes` takes at most this many scopes per call; the router schema and the client share it. */
+export const REVOKE_SCOPES_MAX_PER_CALL = 32;

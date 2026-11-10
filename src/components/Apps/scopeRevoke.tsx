@@ -8,7 +8,10 @@ import {
   SCOPE_WITHHELD_NOTE,
 } from '~/components/Apps/scopeConsentRows';
 import { blockScopeTitle } from '~/components/Apps/listingPermissions';
-import { BLOCK_SPEND_SCOPE } from '~/shared/constants/block-scope.constants';
+import {
+  BLOCK_SPEND_SCOPE,
+  REVOKE_SCOPES_MAX_PER_CALL,
+} from '~/shared/constants/block-scope.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showWarningNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -111,9 +114,6 @@ export function ScopeRevokeConfirmBody({ appName, scope }: { appName: string; sc
     </Stack>
   );
 }
-
-/** `blocks.revokeScopes` takes at most this many scopes per call (its input schema). */
-export const REVOKE_SCOPES_MAX_PER_CALL = 32;
 
 /** The pending marker for a Remove all, which is no single row's scope. */
 const REMOVE_ALL_PENDING = '*';

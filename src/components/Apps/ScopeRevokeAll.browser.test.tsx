@@ -114,9 +114,9 @@ describe('Remove all', () => {
     await page.getByTestId('scope-revoke-all').click();
     await expect.element(page.getByTestId('scope-revoke-all-kept-note')).toBeVisible();
     await page.getByTestId('scope-revoke-all-confirm').click();
+    await expect.poll(() => m.success.mock.calls.length).toBe(1);
     expect(sent()).toEqual([['ai:write:budgeted', 'posts:write:self']]);
     expect(m.calls[0].appBlockId).toBe('ab_seam');
-    expect(m.success).toHaveBeenCalledTimes(1);
   });
 
   test('cancelling the confirm sends nothing', async () => {
@@ -138,9 +138,9 @@ describe('Remove all', () => {
     mount();
     await page.getByTestId('scope-revoke-all').click();
     await page.getByTestId('scope-revoke-all-confirm').click();
+    await expect.poll(() => m.success.mock.calls.length).toBe(1);
     expect(sent()).toEqual([['ai:write:budgeted', 'posts:write:self'], ['posts:write:self']]);
     expect(m.fetchOpts).toEqual([{ staleTime: 0 }]);
-    expect(m.success).toHaveBeenCalledTimes(1);
   });
 
   test('🔴 the retry never adds a permission the viewer did not confirm', async () => {
@@ -155,6 +155,7 @@ describe('Remove all', () => {
     mount();
     await page.getByTestId('scope-revoke-all').click();
     await page.getByTestId('scope-revoke-all-confirm').click();
+    await expect.poll(() => m.calls.length).toBe(2);
     expect(m.calls[1].scopes).toEqual(['posts:write:self']);
   });
 
@@ -164,8 +165,38 @@ describe('Remove all', () => {
     mount();
     await page.getByTestId('scope-revoke-all').click();
     await page.getByTestId('scope-revoke-all-confirm').click();
+    await expect
+      .element(page.getByTestId('scope-revoke-failure'))
+      .toHaveTextContent('you do not hold that scope');
     expect(m.calls).toHaveLength(2);
     expect(m.success).not.toHaveBeenCalled();
+  });
+
+  test('a refusal that is not BAD_REQUEST is shown after one call, with no retry', async () => {
+    m.alwaysError = { code: 'FORBIDDEN', message: 'not yours to remove' };
+    mount();
+    await page.getByTestId('scope-revoke-all').click();
+    await page.getByTestId('scope-revoke-all-confirm').click();
+    await expect
+      .element(page.getByTestId('scope-revoke-failure'))
+      .toHaveTextContent('not yours to remove');
+    expect(m.calls).toHaveLength(1);
+    expect(m.fetchOpts).toHaveLength(0);
+    expect(m.success).not.toHaveBeenCalled();
+  });
+
+  test('🔴 a 503 means they were removed: the rows show the removed marker', async () => {
+    m.alwaysError = { code: 'SERVICE_UNAVAILABLE', message: 'removed, enforcement lags' };
+    mount();
+    await page.getByTestId('scope-revoke-all').click();
+    await page.getByTestId('scope-revoke-all-confirm').click();
+    await expect
+      .element(page.getByTestId('scope-revoke-failure'))
+      .toHaveAttribute('data-degraded', 'true');
+    await expect
+      .poll(() => document.querySelectorAll('[data-testid="scope-revoked-mark"]').length)
+      .toBe(2);
+    expect(m.calls).toHaveLength(1);
   });
 
   test('more than 32 removable permissions disable the button and say why', async () => {

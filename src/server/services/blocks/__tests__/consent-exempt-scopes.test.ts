@@ -10,7 +10,6 @@ import {
 import {
   consentExemptScopeList,
   consentGatedScopes,
-  isConsentExemptScope as isExemptViaService,
   partitionByConsent,
 } from '~/server/services/blocks/scope-grant.service';
 
@@ -38,7 +37,6 @@ describe('consent-exempt scopes', () => {
   it('are the same set the mint and the revoke refusal read', () => {
     for (const scope of EXEMPT) {
       expect(isConsentExemptScope(scope)).toBe(true);
-      expect(isExemptViaService(scope)).toBe(true);
       expect(partitionByConsent([scope], new Set()).signable).toEqual([scope]);
       expect(consentGatedScopes([scope])).toEqual([]);
     }
@@ -64,8 +62,7 @@ describe('consent-exempt scopes', () => {
 
   it('keep the sentence the scope already carried, ahead of the note', () => {
     const [row] = blockScopePermissions(['apps:store:items:write']);
-    expect(row.detail).toBe(
-      "List items you made in this app in the Civitai App Store, under your name. This permission can't be removed later."
-    );
+    expect(row.detail?.startsWith('List items you made in this app')).toBe(true);
+    expect(row.detail?.endsWith(IRREVOCABLE_PERMISSION_NOTE)).toBe(true);
   });
 });

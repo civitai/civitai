@@ -2,8 +2,8 @@ import { Button, Stack, Text } from '@mantine/core';
 import { blockScopePermissions } from '~/components/Apps/listingPermissions';
 import { ListingPermissionGroups } from '~/components/Apps/ListingPermissionsDisclosure';
 import { buildScopeConsentRows } from '~/components/Apps/scopeConsentRows';
+import { REVOKE_SCOPES_MAX_PER_CALL } from '~/shared/constants/block-scope.constants';
 import {
-  REVOKE_SCOPES_MAX_PER_CALL,
   ScopeConsentAction,
   ScopeRevokeFailureNotice,
   ScopeGrantWithheldLine,
