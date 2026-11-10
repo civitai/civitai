@@ -805,6 +805,48 @@ describe('assertGenerationInputsUsable', () => {
       expect(await opaque([`https://civitai.com/api/redirect/${KEY}`])).toBe('refused');
     });
 
+    describe('with app external refusal off', () => {
+      const out = (url: string) => encodeURIComponent(url);
+      beforeEach(async () => {
+        holder.refuseExternal = false;
+        holder.refuseExternalApp = false;
+        await givenImage({ postId: null });
+      });
+
+      it.each([
+        [`https://civitai.com/api/redirect/${KEY}`],
+        [`HTTP://civitai.com/api/redirect/${KEY}`],
+        [`https://civitai.com/r?to=${out(`https://example.com/${KEY}.png`)}`],
+        [`https://civitai.com/_next/image?url=${out(`https://example.com/${KEY}.png`)}`],
+        [`https://proxy.example/fetch?u=${out(`https://example.com/${KEY}.png`)}`],
+      ])("refuses %s, which carries another user's private image key", async (url) => {
+        expect(await opaque([url])).toBe('refused');
+      });
+
+      it.each([
+        ['https://civitai.com/models/123'],
+        ['http://civitai.com/models/123'],
+        [`https://civitai.com/leaving?url=${out('https://example.com/post')}`],
+        ['https://proxy.example/fetch?u=https%3A%2F%2Fexample.com%2Fa.png'],
+      ])('counts %s, which carries no key, and lets it through', async (url) => {
+        expect(await opaque([url])).toBe('accepted');
+      });
+
+      it('refuses our image optimizer url even without a key: it fetches its target', async () => {
+        expect(
+          await opaque([`https://civitai.com/_next/image?url=${out('https://example.com/a.png')}`])
+        ).toBe('refused');
+      });
+
+      it('checks every url in one call, whatever comes before it', async () => {
+        const counted = 'https://example.com/a.png';
+        const refused = `https://civitai.com/api/redirect/${KEY}`;
+        expect(await opaque([counted, refused])).toBe('refused');
+        expect(await opaque([refused, counted])).toBe('refused');
+        expect(await opaque([counted, 'https://example.org/b.png'])).toBe('accepted');
+      });
+    });
+
     it('reads many unrelated uuids in batches, and refuses past the bound', async () => {
       const uuids = (n: number) =>
         Array.from(
