@@ -1539,7 +1539,7 @@ export const chatCompletionStep = {
   // The AIR scan above is a separate check and is NOT narrowed by this.
   //
   // `tools[].function.**`: a tool's name, description and JSON Schema `parameters` are text
-  // sent to the model, never fetched — a schema's `$schema`/`$id` url included, and a
+  // sent to the model, never fetched (orchestrator side, not enforced here) — a schema's `$schema`/`$id` url included, and a
   // `{ $ref }`-shaped object in `parameters` only writes into the schema the model is shown
   // (this arm's body has no `arguments` and no other step). Keys and links naming one of our
   // images there are still checked. Sound because `chatToolSchema` is `.strict()` with `type`

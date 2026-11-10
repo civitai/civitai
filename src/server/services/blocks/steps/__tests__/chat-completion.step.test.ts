@@ -1789,7 +1789,8 @@ describe('free-text param paths', () => {
       );
     });
 
-    it('the built step input carries no other step, no arguments, and the tools as given', () => {
+    // Inspects the built step's input, not the workflow body it is submitted in.
+    it('INVARIANT GUARD: the built step input carries no other step, no arguments, and the tools as given', () => {
       const params = parse(withTools(tool()));
       expect(params.success).toBe(true);
       const built = chatCompletionStep.buildStep(params.data as ChatCompletionStepParams);
