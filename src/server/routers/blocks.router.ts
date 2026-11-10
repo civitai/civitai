@@ -12389,6 +12389,7 @@ async function estimatePassThroughStepWorkflow(opts: {
   const userId = await assertStepRequestAllowed(claims);
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
+  await assertBlockTrainingModelsAllowed([body]);
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
   // The token mint is INSIDE the quote's catch on this path and outside it on
@@ -12603,6 +12604,7 @@ async function submitPassThroughStepWorkflow(opts: {
   // refund. A denylist the wire does not consult is decoration.
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
+  await assertBlockTrainingModelsAllowed([body]);
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   // A pass-through body carries no `accountType` (its `.strict()` wire shape has
@@ -13182,6 +13184,7 @@ async function estimateMultiStepWorkflow(opts: {
   const prepared = prepareMultiStepWorkflow(body);
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
+  await assertBlockTrainingModelsAllowed(prepared.steps);
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
   // A mint failure is a missing quote here (`unavailable`), not a throw as on the
@@ -13265,6 +13268,7 @@ async function submitMultiStepWorkflow(opts: {
   const prepared = prepareMultiStepWorkflow(body);
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
+  await assertBlockTrainingModelsAllowed(prepared.steps);
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
@@ -14064,7 +14068,7 @@ type QuotedGrantSubmitArm = {
   /** Extra fields on the submit-failure log line. */
   logFields: Record<string, unknown>;
   /** Kind refusals that must run before anything costs something (after the gate). */
-  preflight?: () => void;
+  preflight?: () => void | Promise<void>;
   /**
    * The orchestrator `externalId` this job is submitted under, and what a DEFINITE
    * submit records. Computed before the replay claim.
@@ -14103,7 +14107,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
   const copy = QUOTED_GRANT_COPY[arm.kind];
   const auth = await assertQuotedGrantRequestAllowed(arm.kind, claims, ctx);
   const { userId } = auth;
-  arm.preflight?.();
+  await arm.preflight?.();
   const quoteId = arm.quoteId;
   if (!quoteId) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: arm.missingQuoteMessage });
@@ -14717,9 +14721,10 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
       logFields: { stepType: body.$type },
       // Before anything that costs something: the platform denylist (the same rule as
       // the unconfirmed arm), then no training `$type` through this door.
-      preflight: () => {
+      preflight: async () => {
         assertPassThroughStepTypeAllowed(body.$type, body.input);
         assertNotTrainingStepType(body.$type);
+        await assertBlockTrainingModelsAllowed([body]);
       },
       runIdentity: async (_auth, quoteId) => ({
         externalId: composeConfirmedStepBlockExternalId(quoteId),
@@ -14941,6 +14946,28 @@ async function assertBlockTrainingTriggerWordsAllowed(opts: {
       log: { userId, source: 'app-blocks', appBlockId: claims.appBlockId },
     });
   }
+}
+
+/**
+ * The training-model rule for a training `$type` an app names itself (a pass-through
+ * `kind:'step'`, every step of a `kind:'workflow'`): the training service's status and the
+ * blocked and disabled base models, as `kind:'training'` applies them through
+ * `resolveBlockTrainingRun`. Called by each estimate and submit before any quote or reservation.
+ */
+async function assertBlockTrainingModelsAllowed(
+  steps: ReadonlyArray<{ $type: string; input: unknown }>
+): Promise<void> {
+  const { collectTrainingStepModels, trainingStepModelRefusal } = await import(
+    '~/server/services/blocks/block-training-model-check'
+  );
+  const collected = collectTrainingStepModels(steps);
+  if ('error' in collected) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: collected.error });
+  }
+  if (collected.models.length === 0) return;
+  const { getTrainingServiceStatus } = await import('~/server/services/training.service');
+  const refusal = trainingStepModelRefusal(collected.models, await getTrainingServiceStatus());
+  if (refusal) throw new TRPCError({ code: 'BAD_REQUEST', message: refusal });
 }
 
 /** A `kind:'training'` body as the one training step the trigger-word rule reads. */
