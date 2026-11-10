@@ -59,9 +59,15 @@ const REPO_ROOT = path.resolve(__dirname, '../..');
 const DOCKERFILE = 'Dockerfile';
 
 /**
- * How many `FROM node:` stages the root Dockerfile has today (deps + runner), and
- * how many `FROM` directives it has in TOTAL (those two, plus `FROM deps` and
- * `FROM scratch`).
+ * How many `FROM node:` stages the root Dockerfile has today, and how many `FROM`
+ * directives it has in TOTAL.
+ *
+ * The three node stages are the per-libc bases selected by the `LIBC` build-arg:
+ * `base-musl` and `runtime-musl` (Alpine: the production image's build and runtime
+ * bases) and `base-glibc` (Debian, an opt-in measurement variant; its runtime stage is
+ * `FROM base-glibc`). The other five directives are `FROM base-${LIBC}` (deps),
+ * `FROM deps` (builder), `FROM scratch` (maps), `FROM base-glibc` (runtime-glibc) and
+ * `FROM runtime-${LIBC}` (runner).
  *
  * Together these are the controls that stop the whole file passing vacuously. Every
  * verdict below is universally quantified over the tags the extractor returns — and
@@ -79,8 +85,8 @@ const DOCKERFILE = 'Dockerfile';
  * coverage control below (which compares two readers of the same file) precisely so
  * that a blind spot shared by both readers still trips something.
  */
-const EXPECTED_NODE_STAGES = 2;
-const EXPECTED_FROM_DIRECTIVES = 4;
+const EXPECTED_NODE_STAGES = 3;
+const EXPECTED_FROM_DIRECTIVES = 8;
 
 /**
  * `FROM node:<tag>`, tolerating the spellings Docker accepts and a reader writing
@@ -184,6 +190,18 @@ function versionOf(tag: string | undefined): string | undefined {
   return tag?.match(EXACT_PATCH_TAG)?.[1] ?? tag;
 }
 
+/**
+ * `FROM <ref> AS <name>` -> { name: ref }, for the stages the libc pairing verdict below
+ * names. Same tolerance for flags, case and indentation as FROM_NODE_TAG.
+ */
+const FROM_NAMED_STAGE = /^[ \t]*FROM[ \t]+(?:--\S+[ \t]+)*(\S+)[ \t]+AS[ \t]+(\S+)/gim;
+
+function namedStages(dockerfile: string): Record<string, string> {
+  return Object.fromEntries(
+    [...dockerfile.matchAll(FROM_NAMED_STAGE)].map((m) => [m[2].toLowerCase(), m[1]])
+  );
+}
+
 function majorOf(tag: string | undefined): number {
   return Number(tag?.match(/^(\d+)/)?.[1]);
 }
@@ -226,6 +244,8 @@ function formatEmptyExtractionNote(tags: string[], digestRefs: string[]): string
     `message are absent rather than wrong — read the CONTROL failures first.${digests}`
   );
 }
+
+const stages = namedStages(dockerfileText);
 
 const emptyExtractionNote = () => formatEmptyExtractionNote(nodeTags, digestPinnedNodeRefs);
 
@@ -432,13 +452,50 @@ describe('node version is pinned and consistent across the repo', () => {
     ).toEqual([]);
   });
 
-  it('all root Dockerfile node stages use the SAME tag', () => {
+  it('all root Dockerfile node stages pin the SAME Node version', () => {
+    // The musl (production) and glibc (measurement) bases are different images, so their
+    // TAGS differ; the Node patch must not, or a glibc-vs-musl comparison also compares
+    // two engines.
     expect(
-      [...new Set(nodeTags)],
-      `${DOCKERFILE} builds its stages on different node tags (${nodeTags.join(', ')}). The ` +
-        `build stage and the runtime stage must be the same engine, or the app is compiled ` +
-        `against one Node and executed on another.${emptyExtractionNote()}`
+      [...new Set(nodeTags.map(versionOf))],
+      `${DOCKERFILE} builds its stages on different Node versions (${nodeTags.join(', ')}). ` +
+        `Every stage must be the same engine, or the app is compiled against one Node and ` +
+        `executed on another.${emptyExtractionNote()}`
     ).toHaveLength(1);
+  });
+
+  it('CONTROL: the stage reader maps stage names to their base references', () => {
+    expect(
+      namedStages(
+        [
+          'FROM node:24.19.0-alpine3.24 AS base-musl',
+          'from --platform=$BUILDPLATFORM node:24.19.0-bookworm-slim as Base-Glibc',
+          'FROM base-${LIBC} AS deps',
+          'FROM scratch',
+        ].join('\n')
+      )
+    ).toEqual({
+      'base-musl': 'node:24.19.0-alpine3.24',
+      'base-glibc': 'node:24.19.0-bookworm-slim',
+      deps: 'base-${LIBC}',
+    });
+  });
+
+  it('each libc variant builds and runs on ONE base image', () => {
+    // The production (musl) pair are two separate `FROM node:` lines, so they can drift
+    // apart; the glibc runtime is `FROM base-glibc` and cannot.
+    expect(stages['base-musl'], `${DOCKERFILE} has no \`AS base-musl\` stage`).toMatch(/^node:/i);
+    expect(
+      stages['runtime-musl'],
+      `${DOCKERFILE}'s musl runtime base differs from its musl build base: the production ` +
+        `image would be compiled on one image and executed on another.`
+    ).toBe(stages['base-musl']);
+    expect(stages['base-glibc'], `${DOCKERFILE} has no \`AS base-glibc\` stage`).toMatch(/^node:/i);
+    expect(stages['runtime-glibc']).toBe('base-glibc');
+    // The default must stay the production (musl) image.
+    expect(dockerfileText).toMatch(/^ARG LIBC=musl$/m);
+    expect(stages['deps']).toBe('base-${LIBC}');
+    expect(stages['runner']).toBe('runtime-${LIBC}');
   });
 
   it('.nvmrc matches the Dockerfile pin', () => {
