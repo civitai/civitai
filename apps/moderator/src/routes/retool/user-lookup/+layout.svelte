@@ -7,6 +7,10 @@
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import type { LayoutData } from './$types';
+  import {
+    FEEDBACK_CAPTURE_ACCOUNT_NOTE,
+    isFeedbackCaptureOwner,
+  } from '@civitai/shared/feedback-capture';
   import { ADMIN_SECTIONS, DEFAULT_SECTION, SECTIONS, SECTION_LINKS } from './sections';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
@@ -41,6 +45,11 @@
        it applies to being visible. -->
   <!-- Keyed: a `?q=` search does not remount the layout, and the card's open CSAM sheet would carry
        over to — and fetch for — the next account. -->
+  {#if isFeedbackCaptureOwner(data.result.identity.id)}
+    <div class="mb-3 rounded-md border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-sm text-sky-200" role="note">
+      {FEEDBACK_CAPTURE_ACCOUNT_NOTE}
+    </div>
+  {/if}
   {#key data.result.identity.id}
   <UserCard card={data.result} class="mb-4">
     {#snippet actions()}

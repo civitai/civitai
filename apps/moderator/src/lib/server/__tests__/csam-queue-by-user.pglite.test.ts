@@ -311,6 +311,77 @@ describe('the CSAM queue filtered to one user', () => {
   });
 });
 
+describe('feedback page captures in the CSAM queue', () => {
+  // Two captures one reporter sent, each showing content that may be anyone's.
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "User" ("id", "username") VALUES (-2, 'civitai-feedback-captures'), (201, 'reporter');
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion", "nsfwLevel", "metadata") VALUES
+        (301, -2, 'csam', 'Scanned', 4, '{"feedbackCapture": {"feedbackId": 77, "reporterId": 201}}'),
+        (302, -2, 'csam', 'Scanned', 4, '{"feedbackCapture": {"feedbackId": 78, "reporterId": 201}}');
+    `);
+  });
+  afterAll(async () => {
+    await db.exec(
+      `DELETE FROM "Image" WHERE id IN (301, 302); DELETE FROM "User" WHERE id IN (-2, 201);`
+    );
+  });
+
+  it('lists each capture as a row of its own, never one row for the capture account', async () => {
+    const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+    const captures = users.filter((u) => u.capture);
+    expect(
+      captures.map(({ userId, flagged, capture, reported, heldBy }) => ({
+        userId,
+        flagged,
+        capture,
+        reported,
+        heldBy,
+      }))
+    ).toEqual([
+      {
+        userId: -2,
+        flagged: 1,
+        capture: { imageId: 301, feedbackId: 77 },
+        reported: false,
+        heldBy: [],
+      },
+      {
+        userId: -2,
+        flagged: 1,
+        capture: { imageId: 302, feedbackId: 78 },
+        reported: false,
+        heldBy: [],
+      },
+    ]);
+    expect(users.find((u) => u.userId === 101)?.capture).toBeNull();
+  });
+
+  it("names each capture's report and reporter, and no other image's", async () => {
+    const { items } = await getImageReviewQueue({
+      needsReview: 'csam',
+      browsingLevel: ALL_LEVELS,
+      limit: 50,
+    });
+    expect(items.find((i) => i.id === 301)?.capture).toEqual({
+      feedbackId: 77,
+      reporterId: 201,
+      reporterUsername: 'reporter',
+    });
+    expect(items.find((i) => i.id === 3)?.capture).toBeNull();
+  });
+
+  it('lists only captures under the Feedback captures filter', async () => {
+    const { items } = await getImageReviewQueue({
+      needsReview: 'csam',
+      browsingLevel: ALL_LEVELS,
+      capturesOnly: true,
+      limit: 50,
+    });
+    expect(items.map((i) => i.id)).toEqual([302, 301]);
+  });
+});
+
 describe('images set aside from the CSAM queue', () => {
   // 301 is not held: dismissed 400 days ago (61), set aside after a report (63), no row (64). 302 is
   // held, with the same two rows (65, 66): a hold changes nothing here.

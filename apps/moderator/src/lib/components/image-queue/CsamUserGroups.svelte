@@ -7,7 +7,12 @@
     TableHeader,
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
-  import { csamReportUrl, csamSupplementalReportUrl } from '$lib/entity-url';
+  import {
+    csamCaptureReportUrl,
+    csamReportUrl,
+    csamSupplementalReportUrl,
+    imageLookupUrl,
+  } from '$lib/entity-url';
   import { holdLegLabels } from '$lib/csam-hold-legs';
   import { dateTime, num, LINK_CLASS } from '$lib/format';
   import type { CsamQueueUser } from '$lib/server/image-review.service';
@@ -83,11 +88,16 @@
     </TableRow>
   </TableHeader>
   <TableBody>
-    {#each users as user (user.userId)}
+    {#each users as user (user.capture ? `c${user.capture.imageId}` : user.userId)}
       <TableRow>
         <TableCell>
-          {user.username ?? '[deleted]'}
-          <span class="text-xs text-dark-2">#{user.userId}</span>
+          {#if user.capture}
+            Feedback page capture
+            <span class="text-xs text-dark-2">image #{user.capture.imageId}</span>
+          {:else}
+            {user.username ?? '[deleted]'}
+            <span class="text-xs text-dark-2">#{user.userId}</span>
+          {/if}
         </TableCell>
         <TableCell class="text-right tabular-nums">{num(user.pending)}</TableCell>
         <TableCell class="text-right tabular-nums">{num(user.flagged)}</TableCell>
@@ -101,6 +111,16 @@
           {/if}
         </TableCell>
         <TableCell class="whitespace-nowrap text-right text-sm">
+          {#if user.capture}
+            <a href={imageLookupUrl(user.capture.imageId)} class={LINK_CLASS}>Image</a>
+            <span class="text-dark-4">·</span>
+            <a
+              href={csamCaptureReportUrl(data.civitaiUrl, user.capture.imageId, user.capture.feedbackId)}
+              target="_blank"
+              rel="noreferrer"
+              class={LINK_CLASS}>Report page</a
+            >
+          {:else}
           <a href={queueHref(user.userId)} class={LINK_CLASS}>Images</a>
           <span class="text-dark-4">·</span>
           <a
@@ -121,6 +141,7 @@
               rel="noreferrer"
               class={LINK_CLASS}>Supplemental report</a
             >
+          {/if}
           {/if}
         </TableCell>
         <TableCell class="whitespace-nowrap text-sm">
