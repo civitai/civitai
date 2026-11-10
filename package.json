@@ -422,6 +422,9 @@
     "overrides": {
       "eslint-config-next": "15",
       "vite": "6.4.4",
+      "@opentelemetry/sdk-node>@opentelemetry/propagator-jaeger": "2.9.0",
+      "draft-js>immutable": "3.8.4",
+      "postcss": "^8.5.23",
       "protobufjs@7": "^7.5.6",
       "fast-xml-parser": "^5.9.3",
       "@aws-sdk/core>fast-xml-parser": "5.2.5",

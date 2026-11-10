@@ -30,6 +30,9 @@ export type BearerTokenOptions = {
  * single-purpose: it resolves to no session unless the caller opts in.
  */
 export async function getSessionFromBearerToken(key: string, options: BearerTokenOptions = {}) {
+  // A per-provider download token (`<provider>:<secret>`) is accepted by the download route alone
+  // and never stands for a session. No API key contains `:`.
+  if (key.includes(':')) return null;
   const token = generateSecretHash(key.trim());
 
   const now = new Date();
