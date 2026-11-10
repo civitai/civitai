@@ -563,6 +563,7 @@ export const getInfiniteImagesHandler = async ({
         ...scopedInput,
         user,
         holdExempt: moderatorView(ctx),
+        galleryOwnerId: galleryOwnerId(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],

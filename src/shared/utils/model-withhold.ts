@@ -1,8 +1,8 @@
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 
 /**
- * A taken-down model's images and files are withheld from everyone but its owner and moderators.
- * Each caller decides who bypasses it; what counts as withheld lives here once.
+ * Whether a model's images and files are withheld: it is taken down. Who still sees them (its
+ * owner, moderators, or no one) is each caller's decision.
  */
 export const isModelWithheld = (model: { mode?: string | null }) =>
   model.mode === ModelModifier.TakenDown;
