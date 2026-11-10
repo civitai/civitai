@@ -149,6 +149,11 @@ export const handle: Handle = async ({ event, resolve }) => {
       navigation: isNavigationRequest(event.request),
     });
   }
+  // A signed-in account that may not use this app never falls back to a sheet cookie.
+  if (webSession?.status === 'forbidden') {
+    console.warn('[held-sheet] sheet cookie refused beside a non-moderator session');
+    return new Response(null, { status: 403, headers: { 'cache-control': 'no-store' } });
+  }
   if (webSession && webSession.status !== 'ok') {
     // Two sheet cookies (one set from elsewhere on the domain) answer as an invalid session.
     // Counted by the parser's own rule: the name before the first '=', trimmed.

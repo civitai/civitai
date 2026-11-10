@@ -404,15 +404,31 @@ describe('hook: the sheet cookie', () => {
   });
 
   it.each([
-    ['forbidden', { status: 'forbidden', user: { id: 5 } }],
     ['login', { status: 'login', redirect: 'https://hub.test/login' }],
-  ])('uses the sheet when the web session is %s', async (_n, web) => {
+    ['reauth', { status: 'reauth', authorize: 'https://hub.test/a' }],
+  ])('uses the sheet when there is no web session (%s)', async (_n, web) => {
     const token = await signIn();
     guardCheck.mockResolvedValue(web);
     const { res, locals } = await run('/api/held-media/7', `__Secure-held_sheet=${token}`);
     expect(res.status).toBe(299);
     expect(locals.heldCredential).toBe('sheet');
     expect(locals.user).toMatchObject({ id: 42 });
+  });
+
+  it('refuses a sheet cookie beside a signed-in non-moderator, without looking it up', async () => {
+    const token = await signIn();
+    guardCheck.mockResolvedValue({ status: 'forbidden', user: { id: 5 } });
+    redis.get.mockClear();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { res, resolve, locals } = await run('/api/held-media/7', `__Secure-held_sheet=${token}`);
+    expect(res.status).toBe(403);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(locals.heldCredential).toBeUndefined();
+    expect(redis.get).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      '[held-sheet] sheet cookie refused beside a non-moderator session'
+    );
+    warn.mockRestore();
   });
 
   it('answers 401 to two sheet cookies, even when one is valid', async () => {
