@@ -38,8 +38,7 @@ export const sessionClient = createSessionClient({
     observeSessionLeg('identity-by-id', outcome, durationSeconds),
   onHubWriteLeg: (outcome, durationSeconds) =>
     observeSessionLeg('hub-write', outcome, durationSeconds),
-  // The same civ-token arrives on every request; verify its signature once a minute at most.
-  // Revocation (`isRevoked` above) is still checked on every request.
+  // Signature only; isRevoked still runs on every request.
   verifiedTokenCache: { maxEntries: 10_000, maxTtlMs: 60_000 },
 });
 // Session-token lifecycle (rolling refresh / revoke) — the hub contract lives in the package, not inline here.

@@ -71,9 +71,10 @@ export interface AuthVerifierConfig {
    * Opt-in: remember a successful ES256 signature + `iss`/`aud`/`exp` check per token (keyed on a
    * SHA-256 of it) so a token presented on every request is cryptographically verified once per
    * `maxTtlMs`, never past its own `exp`. Only that step is cached: failures are not, and the
-   * purpose, lineage and `isRevoked` checks still run on every call. A key dropped from the JWKS is
-   * already honoured until jose's JWKS cache refreshes, so a `maxTtlMs` well under that window
-   * adds no new staleness. A cache hit fires no `onJwksLeg`.
+   * purpose, lineage and `isRevoked` checks still run on every call. This widens key-removal
+   * staleness: a token verified just before a JWKS refresh stays cached for up to `maxTtlMs`, so a
+   * signing key dropped from the JWKS stays usable for jose's JWKS cache window plus up to
+   * `maxTtlMs`. A cache hit fires no `onJwksLeg`.
    */
   verifiedTokenCache?: { maxEntries: number; maxTtlMs: number };
 }

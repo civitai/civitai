@@ -78,7 +78,7 @@ export interface SessionClientConfig {
    * (the write still throws, per its contract — the callback is fire-and-forget observability only).
    */
   onHubWriteLeg?: (outcome: 'hit' | 'timeout' | 'error', durationSeconds: number) => void;
-  /** Forwarded to the internal `createAuthVerifier` — see AuthVerifierConfig.verifiedTokenCache. */
+  /** See AuthVerifierConfig.verifiedTokenCache. */
   verifiedTokenCache?: AuthVerifierConfig['verifiedTokenCache'];
 }
 

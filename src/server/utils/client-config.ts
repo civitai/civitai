@@ -14,10 +14,7 @@ import { SITE_ALERTS_VERSION_FIELD } from '~/shared/constants/site-alert.constan
 // TTL / pod. Only successful reads are cached, so callers' fail-open behavior is
 // preserved.
 const CLIENT_CONFIG_TTL_MS = 5_000;
-let clientConfigCache: {
-  value: Record<string, string>;
-  expiresAt: number;
-} | null = null;
+let clientConfigCache: { value: Record<string, string>; expiresAt: number } | null = null;
 
 export async function getClientConfigCached(): Promise<Record<string, string>> {
   const now = Date.now();
@@ -59,9 +56,7 @@ export function peekSiteAlertsVersion() {
   return client ? readSiteAlertsVersion(client) : 0;
 }
 
-// Every web tRPC request parses the CLIENT hash version and its own `x-client-version` header here,
-// and only a handful of distinct versions are live at once. A header is client-controlled, so the
-// memo is capped (in entries and key length) and cleared when full.
+// x-client-version is client-controlled, so the memo is capped in entries and key length and cleared when full.
 type ParsedVersion = ReturnType<typeof semver.parse>;
 const versionParseCache = new Map<string, ParsedVersion>();
 const VERSION_PARSE_CACHE_MAX = 256;

@@ -163,11 +163,7 @@ function getSerializeConfig(now: number = Date.now()): SerializeLogConfig {
   return cachedConfig;
 }
 
-// The kill-switch, read from env ONCE per process on first use and memoised. It is checked on
-// every tRPC response serialize and every tRPC request (runWithSerializeCtx), so re-reading
-// `process.env` there was a per-call cost for a value that cannot change under a running
-// process: an env change reaches a pod only through a restart. Both call sites read this one
-// memo, so the request-scope seed and the serialize wrapper can never disagree.
+// Read once per process: checked on every request; an env change needs a restart.
 let enabledMemo: boolean | undefined;
 
 function serializeLogEnabled(): boolean {
@@ -432,10 +428,7 @@ function emit(payload: SerializeLogPayload): void {
  *                      value is passed through verbatim.
  */
 export function instrumentSerialize<T>(rawSerialize: () => T): T {
-  // FIRST: kill-switch (memoised, no env read per call). Disabled → a single boolean
-  // branch, before any config is built and before any timestamp is taken (mirrors
-  // runWithSerializeCtx's short-circuit). The timing below is needed whenever logging
-  // is enabled: the floor gate, the slow trigger and the log line all read serializeMs.
+  // FIRST: kill-switch, before any config or timestamp work (mirrors runWithSerializeCtx).
   if (!serializeLogEnabled()) return rawSerialize();
 
   const cfg = getSerializeConfig(); // cached — not rebuilt per call

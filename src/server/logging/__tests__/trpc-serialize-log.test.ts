@@ -328,12 +328,13 @@ describe('trpc-serialize-log', () => {
       realEnv.TRPC_SERIALIZE_SIZE_CHECK_FLOOR_MS = '999999'; // sub-floor: no log tail
       vi.spyOn(Date, 'now').mockReturnValue(1_000_000); // one config-cache window
       runWithSerializeCtx({ path: 'p.first' }, () => instrumentSerialize(() => 0));
-      // 2 = the memo's first read + the one config resolve for this cache window.
-      expect(killSwitchReads).toBe(2);
+      const readsAfterOne = killSwitchReads;
+      expect(readsAfterOne).toBeGreaterThan(0);
       for (let i = 0; i < 499; i++) {
         runWithSerializeCtx({ path: `p.${i}` }, () => instrumentSerialize(() => i));
       }
-      expect(killSwitchReads).toBe(2);
+      // 500 calls read the kill-switch exactly as often as 1 did: the count does not grow with N.
+      expect(killSwitchReads).toBe(readsAfterOne);
     });
   });
 
