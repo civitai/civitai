@@ -67,7 +67,8 @@ const sessionKey = (token: string) =>
  */
 export function sheetCallbackUrl(): string | null {
   const raw = env.HELD_SHEET_CALLBACK_URL?.trim();
-  if (!raw) return null;
+  // A bare trailing `?` or `#` parses to an empty search/hash but would mangle the redirect.
+  if (!raw || /[?#]/.test(raw)) return null;
   let url: URL;
   try {
     url = new URL(raw);

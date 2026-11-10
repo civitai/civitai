@@ -207,6 +207,7 @@ describe('auth/start', () => {
     ['a fragment', { redirect_uri: `${CALLBACK}#a` }],
     ['http', { redirect_uri: CALLBACK.replace('https:', 'http:') }],
     ['a different case', { redirect_uri: CALLBACK.toUpperCase() }],
+    ['a different host case', { redirect_uri: 'https://SHEET.test/held-media/callback' }],
     ['a port', { redirect_uri: 'https://sheet.test:8443/held-media/callback' }],
     ['no redirect', { redirect_uri: null }],
   ])('refuses %s with 400 and no code, on GET and POST', async (_n, overrides) => {
@@ -220,6 +221,12 @@ describe('auth/start', () => {
     ['http', CALLBACK.replace('https:', 'http:')],
     ['with a query', `${CALLBACK}?a=1`],
     ['not normalised', 'https://SHEET.test/held-media/callback'],
+    ['ending in ?', `${CALLBACK}?`],
+    ['ending in #', `${CALLBACK}#`],
+    ['with credentials', 'https://u:p@sheet.test/held-media/callback'],
+    ['with the default port', 'https://sheet.test:443/held-media/callback'],
+    ['a bare origin', 'https://sheet.test'],
+    ['a unicode host', 'https://bücher.test/held-media/callback'],
   ])('refuses every redirect when the callback setting is %s', async (_n, value) => {
     if (value === undefined) delete process.env.HELD_SHEET_CALLBACK_URL;
     else process.env.HELD_SHEET_CALLBACK_URL = value;
@@ -227,6 +234,11 @@ describe('auth/start', () => {
     expect((await startGet(query)).status).toBe(400);
     expect((await startPost(query)).status).toBe(400);
     expect(store.size).toBe(0);
+  });
+
+  it('reads the callback setting with surrounding whitespace trimmed', async () => {
+    process.env.HELD_SHEET_CALLBACK_URL = `  ${CALLBACK}\n`;
+    expect((await startPost()).status).toBe(303);
   });
 
   it('lets the confirmed form go only to the callback origin', async () => {
