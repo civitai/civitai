@@ -44,11 +44,7 @@ export function createBoardCache(store: BoardStore, timeoutMs = REDIS_TIMEOUT_MS
   let held: { key: string; board: CachedBoard } | undefined;
   const inFlight = new Map<string, Promise<CachedBoard>>();
 
-  async function load(
-    key: string,
-    now: Date,
-    build: () => Promise<Board>
-  ): Promise<CachedBoard> {
+  async function load(key: string, now: Date, build: () => Promise<Board>): Promise<CachedBoard> {
     let storeUp = true;
     try {
       const cached = parse(await within(store.get(key), timeoutMs));

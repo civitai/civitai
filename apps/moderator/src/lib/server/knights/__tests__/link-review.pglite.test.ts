@@ -80,7 +80,10 @@ beforeAll(async () => {
     const off = -value.getTimezoneOffset();
     return (
       `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}` +
-      `T${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}.${pad(value.getMilliseconds(), 3)}` +
+      `T${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}.${pad(
+        value.getMilliseconds(),
+        3
+      )}` +
       `${off < 0 ? '-' : '+'}${pad(Math.trunc(off / 60))}:${pad(off % 60)}`
     );
   };

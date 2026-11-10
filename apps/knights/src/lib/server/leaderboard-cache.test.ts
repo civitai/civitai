@@ -1,10 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  BOARD_FRESH_MS,
-  createBoardCache,
-  utcDay,
-  type BoardStore,
-} from './leaderboard-cache';
+import { BOARD_FRESH_MS, createBoardCache, utcDay, type BoardStore } from './leaderboard-cache';
 import type { Board } from './leaderboard';
 
 const board: Board = {

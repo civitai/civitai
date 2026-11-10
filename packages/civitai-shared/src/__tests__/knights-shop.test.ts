@@ -8,6 +8,7 @@ import {
   utcDay,
   withheldCosmeticIds,
   type CosmeticListing,
+  type CosmeticOwnerRow,
   type ShopItem,
 } from '../knights-shop';
 
@@ -118,9 +119,10 @@ describe('withheldCosmeticIds', () => {
     rejectionReason: null,
     ...over,
   });
-  const withheld = (cosmetics = [creator(1)], listings: CosmeticListing[] = []) => [
-    ...withheldCosmeticIds(cosmetics, listings),
-  ];
+  const withheld = (
+    cosmetics: CosmeticOwnerRow[] = [creator(1)],
+    listings: CosmeticListing[] = []
+  ) => [...withheldCosmeticIds(cosmetics, listings)];
 
   it('withholds a creator cosmetic whose listing is waiting for review', () => {
     expect(withheld([creator(1)], [listing()])).toEqual([1]);

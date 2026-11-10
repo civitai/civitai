@@ -50,8 +50,14 @@ describe('on a host that is not on UTC', () => {
     expect(await escalateExpired(db, { now: justBefore })).toEqual({
       escalated: 0,
       toInquisitor: 0,
+      extended: 0,
     });
     const atExpiry = new Date('2026-12-18T12:00:00Z');
-    expect(await escalateExpired(db, { now: atExpiry })).toEqual({ escalated: 1, toInquisitor: 0 });
+    // No higher rank is staffed here, so the voted item goes straight to the Inquisitors.
+    expect(await escalateExpired(db, { now: atExpiry })).toEqual({
+      escalated: 0,
+      toInquisitor: 1,
+      extended: 0,
+    });
   });
 });
