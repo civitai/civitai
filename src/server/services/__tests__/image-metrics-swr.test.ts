@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { isFliptSyncMock, refreshIncMock, idsIncMock } = vi.hoisted(() => ({
@@ -33,8 +35,31 @@ import {
   resetImageMetricsSwrGateForTests,
   resolveMetricsStaleWhileRevalidate,
   SWR_MAX_STALE_SECONDS,
+  SWR_POPULATED_AT_FIELD,
   SWR_REFRESH_AFTER_SECONDS,
+  SWR_UNSTAMPED_REFRESH_CHANCE,
 } from '../image-metrics-swr';
+
+const EVENT_ENGINE_METRICS_SOURCE = readFileSync(
+  path.resolve(__dirname, '../../../../event-engine-common/services/metrics.ts'),
+  'utf8'
+);
+
+// A top-level `const NAME = <value>;` in event-engine-common/services/metrics.ts: a quoted string,
+// or a product of numeric literals (`60 * 60`). Anything else fails the match, so a constant that
+// moved or changed form turns this red instead of comparing against nothing.
+const readMirrored = (name: string): number | string => {
+  const match = new RegExp(`^const ${name} = ('[^']*'|[\\d_.\\s*]+);`, 'm').exec(
+    EVENT_ENGINE_METRICS_SOURCE
+  );
+  expect(match, `const ${name} in event-engine-common/services/metrics.ts`).not.toBeNull();
+  const value = (match as RegExpExecArray)[1].trim();
+  if (value.startsWith("'")) return value.slice(1, -1);
+  return value
+    .split('*')
+    .map((factor) => Number(factor.replace(/_/g, '').trim()))
+    .reduce((product, factor) => product * factor, 1);
+};
 
 // A fixed "now" that no age constant equals, so an age computed against the wrong clock reads as
 // a different class instead of happening to land on a boundary.
@@ -69,8 +94,15 @@ describe('classifyMetricHash', () => {
     expect(classifyMetricHash(stamped(10, { notFound: '1' }), NOW)).toBe('fresh');
   });
 
-  it('pins the refresh age to event-engine-common REFRESH_AFTER and a bound under the 12h TTL', () => {
-    expect(SWR_REFRESH_AFTER_SECONDS).toBe(3600);
+  it('mirrors event-engine-common: the same refresh age, unstamped share and stamp field', () => {
+    // Read from the submodule's source: it does not export these. A missing constant fails here
+    // rather than skipping (`readMirrored` asserts the match).
+    expect(SWR_REFRESH_AFTER_SECONDS).toBe(readMirrored('REFRESH_AFTER'));
+    expect(SWR_UNSTAMPED_REFRESH_CHANCE).toBe(readMirrored('UNSTAMPED_REFRESH_CHANCE'));
+    expect(SWR_POPULATED_AT_FIELD).toBe(readMirrored('POPULATED_AT_FIELD'));
+  });
+
+  it('bounds the max staleness between the refresh age and the 12h TTL', () => {
     expect(SWR_MAX_STALE_SECONDS).toBeGreaterThan(SWR_REFRESH_AFTER_SECONDS);
     expect(SWR_MAX_STALE_SECONDS).toBeLessThan(12 * 60 * 60);
   });

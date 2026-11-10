@@ -1,22 +1,16 @@
-import {
-  ensureFliptInitialized,
-  FLIPT_FEATURE_FLAGS,
-  getFliptClientSync,
-  isFliptSync,
-} from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
-import { createCachedFlagGate } from '~/server/utils/otel-withspan-gate';
+import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 
 /**
  * Stale-while-revalidate read of image metric counts, behind the `image-metrics-swr` flag.
  *
  * With the flag OFF, `getImageMetricsObject` reads every id through MetricService.fetch
- * (event-engine-common), which reads the `metrics:Image:<id>` hashes, slides some TTLs, fires an
- * unbounded fire-and-forget repopulate per request for entries past their refresh age, and runs a
- * cold miss's ClickHouse populate inline.
+ * (event-engine-common), which repopulates entries past their refresh age on every request.
  *
- * With it ON, the hashes are read here directly and an id whose hash exists is answered from it,
- * however old, up to `SWR_MAX_STALE_SECONDS`. An entry past its refresh age is handed to ONE
+ * With it ON, the hashes come from the caller's `readHashes` (image.service's
+ * `readImageMetricHashesForSwr`), and an id whose hash exists is answered from it, however old, up
+ * to `SWR_MAX_STALE_SECONDS`. An entry past its refresh age is handed to ONE
  * per-process refresher that coalesces ids across requests, runs at most `maxConcurrent`
  * repopulates at a time, de-duplicates ids already queued or in flight, and does not retry an id
  * it refreshed within `cooldownMs`. The repopulate itself is MetricService's own (same per-id
@@ -29,8 +23,8 @@ import { createCachedFlagGate } from '~/server/utils/otel-withspan-gate';
  */
 
 // Mirrors event-engine-common/services/metrics.ts (REFRESH_AFTER, UNSTAMPED_REFRESH_CHANCE,
-// POPULATED_AT_FIELD). Not imported: the submodule does not export them. If they drift, this path
-// refreshes on a different schedule from the OFF path; it still serves the same hash.
+// POPULATED_AT_FIELD). Not imported: the submodule does not export them. image-metrics-swr.test.ts
+// reads them from the submodule's source and fails if these drift.
 export const SWR_REFRESH_AFTER_SECONDS = 60 * 60;
 export const SWR_UNSTAMPED_REFRESH_CHANCE = 0.05;
 export const SWR_POPULATED_AT_FIELD = '_populatedAt';
@@ -293,13 +287,7 @@ export async function resolveMetricsStaleWhileRevalidate<T>(
   return result;
 }
 
-const readSwrFlag = () => {
-  const on = isFliptSync(FLIPT_FEATURE_FLAGS.IMAGE_METRICS_SWR);
-  // `isFliptSync` answers null until the client is initialized; start it rather than wait for an
-  // unrelated async flag read to do so.
-  if (on === null && !getFliptClientSync()) void ensureFliptInitialized().catch(() => undefined);
-  return on;
-};
+const readSwrFlag = readFliptSwitch(() => FLIPT_FEATURE_FLAGS.IMAGE_METRICS_SWR);
 
 let swrGate = createCachedFlagGate(readSwrFlag);
 

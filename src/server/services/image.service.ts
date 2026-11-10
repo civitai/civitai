@@ -6222,7 +6222,8 @@ export const getImageMetricsObject = async (
 // The flag-OFF read, and the SWR arm's read for ids the cache cannot answer. `timeoutMs` bounds
 // the MetricService read; the SWR arm passes what is left of its budget. With none left the
 // MetricService read is skipped and the ids are answered from the cache, as on a timeout.
-const getImageMetricsObjectDirect = async (
+// Exported for its tests.
+export const getImageMetricsObjectDirect = async (
   data: { id: number }[],
   timeoutMs: number = env.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS
 ): Promise<ImageMetricsObject> => {

@@ -50,7 +50,7 @@ vi.mock('~/env/server', () => ({
 }));
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-import { getImageMetricsObject } from '../image.service';
+import { getImageMetricsObject, getImageMetricsObjectDirect } from '../image.service';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -212,6 +212,54 @@ describe('getImageMetricsObject with image-metrics-swr', () => {
     // Unknown, not zero: both ids stay absent, as on OFF.
     expect(await on).toEqual({});
   });
+
+  // A budget no larger than the 500ms cache-read deadline is all spent by that read, so the ids it
+  // could not answer reach getImageMetricsObjectDirect with 0ms left. `withTimeoutFallback` reads a
+  // non-positive deadline as NO deadline, so without the exhausted-budget guard there they would
+  // wait on MetricService (here: forever). Two budgets: under the deadline, and exactly on it.
+  it.each([300, 500])(
+    'flag ON: a %ims budget spent by the cache read answers from the cache, never MetricService',
+    async (budgetMs) => {
+      vi.useFakeTimers();
+      envValues.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS = budgetMs;
+      swrGateMock.mockReturnValue(true);
+      fetchMock.mockImplementation(never);
+      // Each key's FIRST read (the SWR arm's) hangs; the cache path's read after it answers, so a
+      // value in the result can only have come from the cache path.
+      const readOnce = new Set<string>();
+      redisMock.redis.hGetAll.mockImplementation(async (key: string) => {
+        if (!readOnce.has(key)) {
+          readOnce.add(key);
+          return never();
+        }
+        return hashes()[key] ?? {};
+      });
+
+      const pending = getImageMetricsObject([{ id: 1 }, { id: 2 }]);
+      // Bounded by flag OFF's worst case (budget + the cache path's own 500ms deadline).
+      expect(await settledWithin(pending, budgetMs + 500)).toBe(true);
+      expect(fetchMock).not.toHaveBeenCalled();
+      const result = await pending;
+      expect(result[1]?.reactionLike).toBe(62);
+      expect(result[2]?.reactionLike).toBe(8);
+    }
+  );
+
+  it.each([0, -1])(
+    'getImageMetricsObjectDirect with a %ims budget skips MetricService and serves the cache',
+    async (timeoutMs) => {
+      vi.useFakeTimers();
+      fetchMock.mockImplementation(never);
+
+      const pending = getImageMetricsObjectDirect([{ id: 1 }, { id: 3 }], timeoutMs);
+      expect(await settledWithin(pending, 500)).toBe(true);
+      expect(fetchMock).not.toHaveBeenCalled();
+      const result = await pending;
+      expect(result[1]?.reactionLike).toBe(62);
+      // Nothing cached for id 3: absent (unknown), not zero.
+      expect(result).not.toHaveProperty('3');
+    }
+  );
 
   it('flag ON: when the SWR arm THROWS, every id is read the OFF way and the failure is logged', async () => {
     swrGateMock.mockReturnValue(true);
