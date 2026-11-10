@@ -111,8 +111,11 @@ export const config = {
     ],
 
     // Streamed by the connector but not consumed by the metrics watcher (only by
-    // vector-sync). Adding a table here changes the Debezium publication, and the
-    // watcher recreates the connector on startup, so each entry is opt-in.
+    // vector-sync), so each entry is opt-in. A watcher with DEBEZIUM_CONNECT_URL set
+    // applies this list and recreates the connector on startup. Without it the
+    // connector is configured outside this app, which must list the same tables (and
+    // add them to the publication); the flags then only tell vector-sync processes
+    // which tables to expect.
     cdcOnlyTables: [
       ...(process.env.CDC_IMAGE_ENABLED === 'true' ? ['public.Image'] : []),
       ...(process.env.CDC_MODEL_ENABLED === 'true' ? ['public.Model', 'public.ModelVersion'] : []),
