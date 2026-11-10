@@ -4,6 +4,7 @@ import {
 } from '~/server/services/blocks/scope-descriptions.constants';
 import {
   BLOCK_SCOPE_TO_OAUTH_BIT,
+  isConsentExemptScope,
   isSensitiveBlockScope,
 } from '~/shared/constants/block-scope.constants';
 import {
@@ -38,22 +39,36 @@ export type ListingPermission = {
   rank: number;
 };
 
+/** Appended to the description of every consent-exempt scope unless `noteIrrevocable` is off; see `permissionDetail`. */
+export const IRREVOCABLE_PERMISSION_NOTE = "This permission can't be removed later.";
+
 /**
  * On-site block scope ids → rows. A scope with no plain title falls back to its description,
  * then to a humanised form of the id, so a new scope is never silently dropped from the
  * disclosure and a viewer never reads a raw id.
  */
-export function blockScopePermissions(scopes: string[]): ListingPermission[] {
+export function blockScopePermissions(
+  scopes: string[],
+  { noteIrrevocable = true }: { noteIrrevocable?: boolean } = {}
+): ListingPermission[] {
   return scopes.map((scope) => {
     const bit = BLOCK_SCOPE_TO_OAUTH_BIT[scope];
     return {
       id: scope,
       title: SCOPE_PLAIN_TITLES[scope] ?? SCOPE_DESCRIPTIONS[scope] ?? humaniseScopeId(scope),
-      detail: SCOPE_PLAIN_TITLES[scope] ? SCOPE_DESCRIPTIONS[scope] : undefined,
+      detail: permissionDetail(scope, noteIrrevocable),
       sensitive: isSensitiveBlockScope(scope),
       rank: typeof bit === 'number' ? bit : Number.POSITIVE_INFINITY,
     };
   });
+}
+
+function permissionDetail(scope: string, noteIrrevocable: boolean): string | undefined {
+  const description = SCOPE_PLAIN_TITLES[scope] ? SCOPE_DESCRIPTIONS[scope] : undefined;
+  if (!noteIrrevocable || !isConsentExemptScope(scope)) return description;
+  return description
+    ? `${description.replace(/\.$/, '')}. ${IRREVOCABLE_PERMISSION_NOTE}`
+    : IRREVOCABLE_PERMISSION_NOTE;
 }
 
 /** The plain-language name a viewer reads for one block scope. */
