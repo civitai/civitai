@@ -317,8 +317,6 @@ export default MixedAuthEndpoint(async function handler(
   // narrows for the block below.
   const trainingResults = useEpochUrl ? targetFile.metadata.trainingResults : undefined;
 
-  let withheldFromCaller = false;
-
   if (trainingResults) {
     const epoch =
       trainingResults.epochs?.find((e) => {
@@ -364,7 +362,9 @@ export default MixedAuthEndpoint(async function handler(
         ownerId: modelVersion.modelUserId,
         mode,
       });
-      withheldFromCaller = caller.withhold;
+      // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
+      // 404 to a caller who would be served.
+      if (caller.withhold) return res.status(404).json({ error: 'Model not found' });
     }
   } else {
     // this does not work for things like Flux
@@ -545,8 +545,7 @@ export default MixedAuthEndpoint(async function handler(
     model: { status: modelVersion.modelStatus, mode: modelVersion.modelMode },
   };
   const withholdEpochUrl =
-    withheldFromCaller ||
-    (!!trainingResults && !user?.isModerator && (isModelDeleted(gated) || isModelTakenDown(gated)));
+    !!trainingResults && !user?.isModerator && (isModelDeleted(gated) || isModelTakenDown(gated));
 
   const data = {
     air,
