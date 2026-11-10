@@ -3,10 +3,12 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import type * as ImageService from '~/server/services/image.service';
 import type * as ModelService from '~/server/services/model.service';
+import type * as PostService from '~/server/services/post.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 
-const { fetches, versionImages } = vi.hoisted(() => ({
+const { fetches, versionImages, posts } = vi.hoisted(() => ({
+  posts: vi.fn(async () => ({ items: [{ id: 100 }], nextCursor: undefined })),
   fetches: vi.fn(async () => ({
     items: [{ id: 1, postId: 100, nsfwLevel: 1, user: { id: 5 } }],
     nextCursor: undefined,
@@ -29,6 +31,10 @@ vi.mock('~/server/services/model.service', async (importOriginal) => ({
   getHeldGalleryLevel: async () => undefined,
   getHeldLevelsByPost: async () => new Map(),
 }));
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PostService>()),
+  getPostsInfinite: posts,
+}));
 vi.mock('~/server/services/promotion.service', () => ({
   getSponsoredGalleryPost: async () => undefined,
 }));
@@ -38,6 +44,7 @@ const {
   getImagesAsPostsInfiniteHandler,
   getImagesForModelVersionHandler,
 } = await import('~/server/controllers/image.controller');
+const { getPostsInfiniteHandler } = await import('~/server/controllers/post.controller');
 
 const OWNER = 5;
 // Model 1 (version 10) is taken down; model 2 (version 20) is not.
@@ -102,6 +109,14 @@ const surfaces = [
     (user?: User, subject?: unknown, versionId = 10) =>
       getImagesAsPostsInfiniteHandler({
         input: feedInput({ modelId: versionId / 10, modelVersionId: versionId }),
+        ctx: ctx(user, subject),
+      }).then((result) => result.items),
+  ],
+  [
+    'post.getInfinite by version',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getPostsInfiniteHandler({
+        input: feedInput({ modelVersionId: versionId }),
         ctx: ctx(user, subject),
       }).then((result) => result.items),
   ],
