@@ -102,6 +102,7 @@ export async function findHashCandidates({
           ${isMod}::boolean
           OR (
             v."modelStatus" <> 'Deleted'
+            AND v.mode IS DISTINCT FROM 'TakenDown'
             AND v."pickleScanResult" IS DISTINCT FROM 'Danger'
             AND v."virusScanResult" IS DISTINCT FROM 'Danger'
             AND (

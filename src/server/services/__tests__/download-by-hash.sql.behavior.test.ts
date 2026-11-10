@@ -366,6 +366,21 @@ describe('the pre-filter only drops copies the gate would refuse this caller', (
     expect(tried(gate)).toEqual([1]);
   });
 
+  it('taken-down models are not downloadable except by moderators', async () => {
+    await copy(1, { ownerId: OWNER, mode: 'TakenDown' });
+    await copy(2, { ownerId: OWNER });
+
+    for (const viewer of [{ id: OWNER }, { id: STRANGER }, undefined]) {
+      const gate = fakeGate([]);
+      await pick(gate, viewer);
+      expect(tried(gate)).toEqual([2]);
+    }
+    // Control: a moderator is still offered it.
+    const mod = fakeGate([]);
+    await pick(mod, { id: STRANGER, isModerator: true });
+    expect(tried(mod)).toEqual([1, 2]);
+  });
+
   it('never offers an owner the copy on their own deleted model', async () => {
     await copy(1, { ownerId: OWNER, modelStatus: 'Deleted' });
     await copy(2, { ownerId: OWNER, versionStatus: 'Draft' });
