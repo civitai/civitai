@@ -14,7 +14,6 @@ import {
   getUserCollectionPermissionsById,
   removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
-import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import {
   leaveQueuesAfterModeratorRating,
   updatePendingImageRatings,
@@ -1298,8 +1297,9 @@ export async function handleUpdateImageNsfwLevel({
       (await raiseOwnImageNsfwLevel({ id: input.id, nsfwLevel: input.nsfwLevel, userId }));
     const updatedNsfwLevel = await updateImageNsfwLevel({ ...input, userId, isModerator });
 
-    if (isModerator && isV1KnightsLive()) {
-      // Update knights of new order pending votes and remove it from new order queue
+    if (isModerator) {
+      // Update knights of new order pending votes and remove it from new order queue. Not gated on the
+      // cutover: it settles v1 votes still pending while the old game drains, and is removed with it.
       await updatePendingImageRatings({ imageId: input.id, rating: input.nsfwLevel });
       await leaveQueuesAfterModeratorRating(input.id);
     }

@@ -28,7 +28,7 @@ import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 const run = (name: string) => {
   const job = newOrderJobs.find((j) => j.name === name);
   if (!job) throw new Error(`no job ${name}`);
-  return job.run({});
+  return job.run({}).result;
 };
 
 beforeEach(() => {
@@ -39,41 +39,41 @@ beforeEach(() => {
 
 describe('v1-only jobs', () => {
   it('daily-reset reads players while v1 is live and not once it is retired', async () => {
-    v1Live.mockReturnValue(true);
+    v1Live.mockResolvedValue(true);
     await run('new-order-daily-reset');
     expect(dbMock.dbRead.newOrderPlayer.findMany).toHaveBeenCalled();
 
     vi.clearAllMocks();
-    v1Live.mockReturnValue(false);
+    v1Live.mockResolvedValue(false);
     await run('new-order-daily-reset');
     expect(dbMock.dbRead.newOrderPlayer.findMany).not.toHaveBeenCalled();
   });
 
   it('cleanse-smites reads smites while v1 is live and not once it is retired', async () => {
-    v1Live.mockReturnValue(true);
+    v1Live.mockResolvedValue(true);
     await run('new-order-cleanse-smites');
     expect(dbMock.dbRead.newOrderSmite.findMany).toHaveBeenCalled();
 
     vi.clearAllMocks();
-    v1Live.mockReturnValue(false);
+    v1Live.mockResolvedValue(false);
     await run('new-order-cleanse-smites');
     expect(dbMock.dbRead.newOrderSmite.findMany).not.toHaveBeenCalled();
   });
 
   it('change-fill-target rotates the filling slot while v1 is live and not once it is retired', async () => {
-    v1Live.mockReturnValue(true);
+    v1Live.mockResolvedValue(true);
     await run('new-order-change-fill-target');
     expect(setActiveSlot).toHaveBeenCalledWith('Knight', 'filling', 'b');
 
     vi.clearAllMocks();
-    v1Live.mockReturnValue(false);
+    v1Live.mockResolvedValue(false);
     await run('new-order-change-fill-target');
     expect(setActiveSlot).not.toHaveBeenCalled();
   });
 });
 
 describe('v1 jobs that outlive the cutover', () => {
-  beforeEach(() => v1Live.mockReturnValue(false));
+  beforeEach(() => v1Live.mockResolvedValue(false));
 
   it('change-rate-target still rotates the rating slot', async () => {
     await run('new-order-change-rate-target');

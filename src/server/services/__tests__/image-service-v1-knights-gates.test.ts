@@ -8,7 +8,7 @@ import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 // The v2 owner-rating hook next to them is not gated.
 
 const { v1Live, addImageToQueue, queueOwnerRating, poolReset } = vi.hoisted(() => ({
-  v1Live: vi.fn(() => true),
+  v1Live: vi.fn(async () => true),
   addImageToQueue: vi.fn(() => Promise.resolve()),
   queueOwnerRating: vi.fn(() => Promise.resolve()),
   poolReset: vi.fn(() => Promise.resolve()),
@@ -80,7 +80,7 @@ const OWNER = 4242;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  v1Live.mockReturnValue(true);
+  v1Live.mockResolvedValue(true);
   dbMock.dbWrite.image.findFirst.mockResolvedValue({
     nsfwLevel: NsfwLevel.PG,
     userId: OWNER,
@@ -106,7 +106,7 @@ describe('owner rating vote', () => {
   });
 
   it('skips the v1 queue but still feeds v2 once the v1 game is retired', async () => {
-    v1Live.mockReturnValue(false);
+    v1Live.mockResolvedValue(false);
 
     await ownerVote();
 
@@ -126,7 +126,7 @@ describe('search-index delete and the v1 pool counters', () => {
   });
 
   it('leaves the pool counters alone once the v1 game is retired', async () => {
-    v1Live.mockReturnValue(false);
+    v1Live.mockResolvedValue(false);
 
     await queueImageSearchIndexUpdate({
       ids: [IMAGE_ID],

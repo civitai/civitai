@@ -8321,7 +8321,7 @@ export async function updateImageNsfwLevel({
       });
 
       if (current.userId === userId) {
-        if (isV1KnightsLive()) {
+        if (await isV1KnightsLive()) {
           await addImageToQueue({
             imageIds: id,
             rankType: NewOrderRankType.Knight,
@@ -9122,7 +9122,7 @@ export async function queueImageSearchIndexUpdate({
   if (action === SearchIndexUpdateQueueAction.Delete) {
     await refreshThumbnailCache(ids);
     // Remove the image from the knights of new order pool counters
-    if (isV1KnightsLive()) {
+    if (await isV1KnightsLive()) {
       await Promise.all([
         ...poolCounters.Knight.a.map((queue) => queue.reset({ id: ids })),
         ...poolCounters.Knight.b.map((queue) => queue.reset({ id: ids })),

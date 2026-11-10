@@ -1084,7 +1084,8 @@ export async function applyIngestionSideEffects({
       }
 
       if (!reviewKey && image.type === 'image' && image.userId !== FEEDBACK_CAPTURE_OWNER_ID) {
-        if (isV1KnightsLive()) await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
+        if (await isV1KnightsLive())
+          await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
         await queueScanSampleForKnights({ imageId: image.id, nsfw: audit.nsfw });
       }
     }

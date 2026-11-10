@@ -4,7 +4,7 @@ import type * as NewOrderService from '~/server/services/games/new-order.service
 import type * as Shadow from '~/server/services/shadow-sexual-prompt.service';
 
 const { submit, queueImageSearchIndexUpdate, addImageToQueue, v1Live } = vi.hoisted(() => ({
-  v1Live: vi.fn(() => true),
+  v1Live: vi.fn(async () => true),
   submit: vi.fn(),
   queueImageSearchIndexUpdate: vi.fn(() => Promise.resolve()),
   addImageToQueue: vi.fn(() => Promise.resolve()),
@@ -65,7 +65,7 @@ async function run() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  v1Live.mockReturnValue(true);
+  v1Live.mockResolvedValue(true);
 });
 
 describe('applyIngestionSideEffects: the shadow sexual-prompt scan', () => {
@@ -129,7 +129,7 @@ describe('applyIngestionSideEffects: feedback page captures', () => {
 
 describe('applyIngestionSideEffects: the v1 Knights rating queue', () => {
   it('stops queueing scanned images once the v1 game is retired', async () => {
-    v1Live.mockReturnValue(false);
+    v1Live.mockResolvedValue(false);
     await applyIngestionSideEffects({ image, outcome });
     expect(addImageToQueue).not.toHaveBeenCalled();
   });

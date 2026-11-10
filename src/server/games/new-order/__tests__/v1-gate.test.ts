@@ -1,18 +1,29 @@
 import { describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 
-vi.mock('~/server/services/feature-flags.service', () => ({ getFeatureFlags: vi.fn() }));
+const { isFlipt } = vi.hoisted(() => ({ isFlipt: vi.fn() }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt,
+}));
 
 import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 describe('isV1KnightsLive', () => {
-  it('is true while newOrderGame is on', () => {
-    vi.mocked(getFeatureFlags).mockReturnValue({ newOrderGame: true } as never);
-    expect(isV1KnightsLive()).toBe(true);
+  it('is over once the Knights app flag is on for an anonymous entity', async () => {
+    isFlipt.mockResolvedValue(true);
+    expect(await isV1KnightsLive()).toBe(false);
+    expect(isFlipt).toHaveBeenCalledWith('knights-of-new-order-app', 'anonymous');
   });
 
-  it('is false when newOrderGame is off or absent from the sparse flag payload', () => {
-    vi.mocked(getFeatureFlags).mockReturnValue({} as never);
-    expect(isV1KnightsLive()).toBe(false);
+  it('is live while the flag is off or only a tester segment has it', async () => {
+    isFlipt.mockResolvedValue(false);
+    expect(await isV1KnightsLive()).toBe(true);
+  });
+
+  it('stays live when Flipt errors', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    isFlipt.mockRejectedValue(new Error('flipt down'));
+    expect(await isV1KnightsLive()).toBe(true);
   });
 });

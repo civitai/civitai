@@ -6,8 +6,7 @@ import '~/__tests__/mocks/db.mock';
 // A moderator's NSFW rating settles the image's New Order votes and takes it out of the queues;
 // a member's vote does neither.
 
-const { updateLevel, raiseOwn, settle, leaveQueues, v1Live } = vi.hoisted(() => ({
-  v1Live: vi.fn(),
+const { updateLevel, raiseOwn, settle, leaveQueues } = vi.hoisted(() => ({
   updateLevel: vi.fn(),
   raiseOwn: vi.fn(),
   settle: vi.fn(),
@@ -18,7 +17,6 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   updateImageNsfwLevel: updateLevel,
   raiseOwnImageNsfwLevel: raiseOwn,
 }));
-vi.mock('~/server/games/new-order/v1-gate', () => ({ isV1KnightsLive: v1Live }));
 vi.mock('~/server/services/games/new-order.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NewOrderService>()),
   updatePendingImageRatings: settle,
@@ -36,7 +34,6 @@ const rate = (isModerator: boolean) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  v1Live.mockReturnValue(true);
   updateLevel.mockResolvedValue(8);
   raiseOwn.mockResolvedValue(false);
   settle.mockResolvedValue(undefined);
@@ -57,16 +54,6 @@ describe('handleUpdateImageNsfwLevel and New Order', () => {
 
     await rate(false);
 
-    expect(settle).not.toHaveBeenCalled();
-    expect(leaveQueues).not.toHaveBeenCalled();
-  });
-
-  it('once the v1 game is retired, a moderator rating still lands but New Order is left alone', async () => {
-    v1Live.mockReturnValue(false);
-
-    expect(await rate(true)).toEqual({ nsfwLevel: 8, applied: true });
-
-    expect(updateLevel).toHaveBeenCalledTimes(1);
     expect(settle).not.toHaveBeenCalled();
     expect(leaveQueues).not.toHaveBeenCalled();
   });
