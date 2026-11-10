@@ -216,7 +216,7 @@ const versionRow = {
   baseModel: 'SD 1.5',
   status: 'Published',
   modelStatus: 'Published',
-  modelMode: null,
+  modelMode: null as string | null,
   type: 'Checkpoint',
   requireAuth: false,
   checkPermission: false,
