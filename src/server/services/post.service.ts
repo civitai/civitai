@@ -2054,6 +2054,10 @@ export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostIma
   return transaction;
 };
 
+/** Every resource row of the post, from all its images: for its owner or a moderator only. */
+const readPostResourceRows = (id: number) =>
+  dbRead.postResourceHelper.findMany({ where: { postId: id }, orderBy: { modelName: 'asc' } });
+
 /**
  * The resources of the post's images the viewer may open (`getImageIdsVisibleToViewer`). The view
  * keeps one row per resource from any of the post's images, so for anyone but a moderator a row
@@ -2063,11 +2067,12 @@ export const getPostResources = async ({
   id,
   userId,
   isModerator,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
-  const rows = await dbRead.postResourceHelper.findMany({
-    where: { postId: id },
-    orderBy: { modelName: 'asc' },
-  });
+}: GetByIdInput & {
+  // Required, though either may be undefined: every caller says whose view it reads.
+  userId: number | undefined;
+  isModerator: boolean | undefined;
+}) => {
+  const rows = await readPostResourceRows(id);
   if (isModerator || !rows.length) return rows;
 
   const images = await dbRead.image.findMany({ where: { postId: id }, select: { id: true } });
@@ -2113,7 +2118,7 @@ export const getPostResourceCovers = async ({
   const post = await dbRead.post.findUnique({ where: { id }, select: { userId: true } });
   if (!post || (post.userId !== user.id && !user.isModerator)) throw throwAuthorizationError();
 
-  const resources = await getPostResources({ id });
+  const resources = await readPostResourceRows(id);
   const versionIds = [
     ...new Set(resources.filter((x) => x.name !== 'vae').map((x) => x.modelVersionId)),
   ].filter(isDefined);
