@@ -88,8 +88,20 @@ describe('knobBelowFor', () => {
   it('comes back above once the sticker is clear of the edge', () => {
     // A hat dragged from the top edge back to the middle.
     expect(at(200, 200, 0, true)).toBe(false);
-    // Below no longer fits: back above.
-    expect(at(200, 340, 0, true)).toBe(false);
+  });
+
+  it('comes back above when below no longer fits, even inside the return margin', () => {
+    // A 150px-tall clip: above fits by 10px (inside the margin), below is 4px past the bottom.
+    expect(
+      knobBelowFor({
+        centre: { x: 200, y: 82 },
+        height: 100,
+        rotation: 0,
+        knobOffset: 0.22,
+        clip: { top: 0, left: 0, right: 400, bottom: 150 },
+        current: true,
+      })
+    ).toBe(false);
   });
 
   it('stays above when neither side fits', () => {

@@ -76,9 +76,10 @@ export function chromeClearance({
   const sin = Math.abs(Math.sin(radians));
 
   // The local rectangle to clear, about the sticker's centre. Asymmetric,
-  // because the rotate knob only hangs off the top — and it is what makes this
-  // more than the usual `h·|cos| + w·|sin|` extent: that formula is for a
-  // rectangle centred on the point it turns about, and the knob is not.
+  // because the rotate knob hangs off one end (the top, or the bottom when
+  // `knobBelow`) — and it is what makes this more than the usual
+  // `h·|cos| + w·|sin|` extent: that formula is for a rectangle centred on the
+  // point it turns about, and the knob is not.
   const knob = Math.max(knobOffset * height, outset);
   const top = -(height / 2 + (knobBelow ? outset : knob));
   const bottom = height / 2 + (knobBelow ? knob : outset);
