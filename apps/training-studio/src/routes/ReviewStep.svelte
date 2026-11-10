@@ -60,8 +60,7 @@
     runVersionLabel,
     blockedSelectionMessage,
     filledPrompts,
-    teLocked,
-    teLockReason,
+    paramLockReason,
     withTrigger,
     type LaunchedRun,
     type NumericInput,
@@ -332,8 +331,8 @@
     isExtra(field) ? capsAt(i)[field].bound : boundsFor(i)[field];
   const helpFor = (i: number, field: ParamField): string => {
     const run = selection.runs[i]!;
-    const teReason = field === 'textEncoderLr' ? teLockReason(run) : undefined;
-    if (teReason) return teReason;
+    const lockReason = paramLockReason(run, field);
+    if (lockReason) return lockReason;
     return paramHelpText(field, run.cardType, defaultsAt(i), paramsAt(i));
   };
 
@@ -557,7 +556,7 @@
 {/snippet}
 
 {#snippet paramRow(i: number, f: FieldDef, last: boolean)}
-  {@const locked = f.field === 'textEncoderLr' && teLocked(selection.runs[i]!)}
+  {@const locked = paramLockReason(selection.runs[i]!, f.field) !== undefined}
   {@const changed = deviates(i, f.field)}
   {@const bound = fieldBound(i, f.field)}
   {@const unacknowledged = fieldLocked(i, f.field)}
