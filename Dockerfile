@@ -1,7 +1,41 @@
+##### LIBC VARIANT
+#
+# Which C library the image is built on and runs on. `musl` (the default) is the production
+# image: Alpine, exactly as before this build-arg existed. `glibc` builds the SAME source on
+# Debian bookworm-slim instead, for a measurement of the allocator/memcpy share of the Prisma
+# query engine's CPU (the engine is a native library loaded into the Node process, so it uses
+# whichever libc the image has). Nothing deploys a `glibc` image by default; it has to be built
+# on purpose with `--build-arg LIBC=glibc` (or `--opt build-arg:LIBC=glibc`) and tagged apart.
+#
+# Only the stage selected below is built: BuildKit skips stages nothing references, so a
+# default (musl) build never pulls the Debian base, and its layers are the same instructions
+# on the same base as before.
+#
+# Both variants pin the SAME Node patch (src/__tests__/node-version-consistency.test.ts), so the
+# only difference between them is the OS userland and libc. Prisma's generator uses its default
+# `native` binary target, and `prisma generate` runs in the deps stage on the selected base, so
+# each variant generates (and ships) the engine for its own libc: linux-musl-openssl-3.0.x or
+# debian-openssl-3.0.x. No `binaryTargets` change is needed, and the musl image does not carry a
+# second engine. Native npm packages with per-libc builds (sharp's @img/sharp-*, Next's swc,
+# esbuild) resolve to the variant for the libc they are installed and traced on, for the same
+# reason: the deps, builder and runner stages always share one libc.
+ARG LIBC=musl
+
+FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS base-musl
+RUN apk add --no-cache libc6-compat
+
+# openssl: Prisma detects the OpenSSL version to pick its engine and loads libssl at runtime;
+# the slim image ships neither (no libssl3 package). adduser is already in the slim image; it
+# is listed so the runner stage's `addgroup`/`adduser` lines, shared with Alpine, do not rely
+# on that.
+FROM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS base-glibc
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends openssl ca-certificates adduser && \
+    rm -rf /var/lib/apt/lists/*
+
 ##### DEPENDENCIES
 
-FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS deps
-RUN apk add --no-cache libc6-compat
+FROM base-${LIBC} AS deps
 WORKDIR /app
 
 # Enable corepack for pnpm
@@ -174,7 +208,12 @@ COPY --from=builder /app/server-maps/ /server-maps/
 
 ##### RUNNER
 
-FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS runner
+# The runtime bases, one per LIBC (see the top of this file). The musl one is the bare Alpine
+# image, exactly what the runner stage used before (no libc6-compat: only the deps stage has it).
+FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS runtime-musl
+FROM base-glibc AS runtime-glibc
+
+FROM runtime-${LIBC} AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
