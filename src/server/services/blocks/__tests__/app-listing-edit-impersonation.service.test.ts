@@ -28,8 +28,9 @@ vi.mock('~/server/services/blocks/review-autodeploy.service', async (importOrigi
 const {
   listingEditChanges,
   listingEditCheckKey,
-  listingEditCheckSummaries,
+  listingEditQueueChecks,
   runListingEditImpersonationCheck,
+  startListingEditImpersonationCheck,
   summariseListingEditCheck,
 } = await import('~/server/services/blocks/app-listing-edit-impersonation.service');
 
@@ -63,7 +64,7 @@ const shadow = (over: Record<string, unknown> = {}) => ({
 });
 
 function seed(opts: { shadow?: Record<string, unknown>; parent?: Record<string, unknown> } = {}) {
-  dbMock.dbRead.appListingPublishRequest.findUnique.mockResolvedValue({
+  dbMock.dbWrite.appListingPublishRequest.findUnique.mockResolvedValue({
     id: ALPR,
     appListingId: 'apl_shadow',
     status: 'pending',
@@ -72,7 +73,7 @@ function seed(opts: { shadow?: Record<string, unknown>; parent?: Record<string, 
     apl_shadow: shadow(opts.shadow),
     apl_parent: { ...parent, ...opts.parent },
   };
-  dbMock.dbRead.appListing.findUnique.mockImplementation(
+  dbMock.dbWrite.appListing.findUnique.mockImplementation(
     (async (args: { where: { id: string } }) => rows[args.where.id] ?? null) as never
   );
   dbMock.dbRead.appListing.findMany.mockResolvedValue([] as never);
@@ -177,46 +178,127 @@ describe('runListingEditImpersonationCheck', () => {
   });
 
   it('a database failure is reported, never thrown', async () => {
-    dbMock.dbRead.appListingPublishRequest.findUnique.mockRejectedValue(new Error('db down'));
+    dbMock.dbWrite.appListingPublishRequest.findUnique.mockRejectedValue(new Error('db down'));
     expect(await runListingEditImpersonationCheck(ALPR, { callModel: model })).toBe('error');
   });
 });
 
-describe('summariseListingEditCheck / listingEditCheckSummaries', () => {
-  const stored = (status: string, severities: string[]) => ({
+describe('🔴 startListingEditImpersonationCheck — gated, budgeted, and never silent', () => {
+  const gate = (over: Record<string, unknown> = {}) => ({
+    featureOn: async () => true,
+    spendTodayUsd: async () => 1,
+    dailyBudgetUsd: () => 40,
+    ...over,
+  });
+  const run = vi.fn(async (_id: string) => 'checked' as const);
+  beforeEach(() => run.mockClear());
+  const upserted = () =>
+    dbMock.dbWrite.keyValue.upsert.mock.calls.map(
+      (c) => (c[0] as { create: { value: { status: string; reason?: string } } }).create.value
+    );
+
+  it('feature flags OFF: nothing runs and nothing is stored (no badge from deploy)', async () => {
+    seed({ shadow: { name: 'Zorblex Sketch' } });
+    expect(
+      await startListingEditImpersonationCheck(ALPR, {
+        gate: gate({ featureOn: async () => false }),
+        run,
+      })
+    ).toBe('disabled');
+    expect(run).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.keyValue.upsert).not.toHaveBeenCalled();
+  });
+
+  it('an identity change writes a PENDING row synchronously, then starts the check', async () => {
+    seed({ shadow: { name: 'Zorblex Sketch' } });
+    expect(await startListingEditImpersonationCheck(ALPR, { gate: gate(), run })).toBe('started');
+    expect(upserted()).toEqual([expect.objectContaining({ status: 'pending' })]);
+    expect(run).toHaveBeenCalledWith(ALPR);
+  });
+
+  it('the daily budget is spent: refused, and the row says so', async () => {
+    seed({ shadow: { name: 'Zorblex Sketch' } });
+    expect(
+      await startListingEditImpersonationCheck(ALPR, {
+        gate: gate({ spendTodayUsd: async () => 40 }),
+        run,
+      })
+    ).toBe('skipped-budget');
+    expect(upserted()).toEqual([expect.objectContaining({ status: 'skipped', reason: 'budget' })]);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('no identity change: nothing stored, nothing run', async () => {
+    seed({ shadow: { tagline: 'new' } });
+    expect(await startListingEditImpersonationCheck(ALPR, { gate: gate(), run })).toBe('unchanged');
+    expect(dbMock.dbWrite.keyValue.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('summariseListingEditCheck / listingEditQueueChecks', () => {
+  const stored = (status: string, severities: Array<string | undefined>, extra = {}) => ({
+    status,
     changed: ['name'],
     record: { status },
     findings: severities.map((severity, i) => ({ severity, title: `finding ${i}` })),
+    ...extra,
   });
 
-  it('counts medium-or-worse findings and keeps their titles', () => {
-    expect(summariseListingEditCheck(stored('complete', ['medium', 'low', 'high']))).toEqual({
+  it('counts medium-or-worse findings — and findings with no severity — and keeps their titles', () => {
+    expect(
+      summariseListingEditCheck(stored('complete', ['medium', 'low', 'high', undefined]))
+    ).toEqual({
       status: 'complete',
-      flagging: 2,
-      titles: ['finding 0', 'finding 2'],
+      flagging: 3,
+      titles: ['finding 0', 'finding 2', 'finding 3'],
     });
-    expect(summariseListingEditCheck(stored('failed', []))).toEqual({
-      status: 'failed',
-      flagging: 0,
-      titles: [],
-    });
+  });
+
+  it.each([
+    ['pending', 'pending'],
+    ['skipped', 'skipped'],
+    ['failed', 'failed'],
+    ['weird', 'failed'],
+  ])('a stored %s row reads as %s', (status, expected) => {
+    expect(summariseListingEditCheck(stored(status, [])).status).toBe(expected);
   });
 
   it('a malformed stored value reads as a FAILED check, never as clear', () => {
-    expect(summariseListingEditCheck({ nonsense: true })).toEqual({
-      status: 'failed',
-      flagging: 0,
-      titles: [],
-    });
+    expect(summariseListingEditCheck({ nonsense: true }).status).toBe('failed');
   });
 
-  it('reads one page of requests in one query, keyed by request id', async () => {
-    dbMock.dbRead.keyValue.findMany.mockResolvedValue([
-      { key: listingEditCheckKey('alpr_a'), value: stored('complete', ['high']) },
+  const page = [
+    { id: 'alpr_hit', appListingId: 'apl_s1' },
+    { id: 'alpr_nochange', appListingId: 'apl_s2' },
+    { id: 'alpr_lost', appListingId: 'apl_s3' },
+    { id: 'alpr_new', appListingId: 'apl_new' },
+  ];
+  function seedQueue() {
+    const parentRow = { name: 'Sketch', iconId: 1, coverId: 2, status: 'approved' };
+    dbMock.dbRead.appListing.findMany.mockResolvedValue([
+      { id: 'apl_s1', name: 'Zorblex', iconId: 1, coverId: 2, revisionOf: parentRow },
+      { id: 'apl_s2', name: 'Sketch', iconId: 1, coverId: 2, revisionOf: parentRow },
+      { id: 'apl_s3', name: 'Sketch', iconId: 9, coverId: 2, revisionOf: parentRow },
+      // A first listing (not a revision of an approved app) is not this check's business.
+      { id: 'apl_new', name: 'Zorblex', iconId: 1, coverId: 2, revisionOf: null },
     ] as never);
-    const map = await listingEditCheckSummaries(['alpr_a', 'alpr_b']);
-    expect(dbMock.dbRead.keyValue.findMany).toHaveBeenCalledTimes(1);
-    expect(map.get('alpr_a')?.flagging).toBe(1);
-    expect(map.has('alpr_b')).toBe(false);
+    dbMock.dbRead.keyValue.findMany.mockResolvedValue([
+      { key: listingEditCheckKey('alpr_hit'), value: stored('complete', ['high']) },
+    ] as never);
+  }
+
+  it('🔴 an identity-changing edit with NO stored row reads as missing (never as no-change)', async () => {
+    seedQueue();
+    const map = await listingEditQueueChecks(page, { featureOn: async () => true });
+    expect(map.get('alpr_hit')?.flagging).toBe(1);
+    expect(map.get('alpr_lost')?.status).toBe('missing');
+    expect(map.has('alpr_nochange')).toBe(false);
+    expect(map.has('alpr_new')).toBe(false);
+  });
+
+  it('feature flags OFF: no listing-edit badges at all', async () => {
+    seedQueue();
+    const map = await listingEditQueueChecks(page, { featureOn: async () => false });
+    expect(map.size).toBe(0);
   });
 });

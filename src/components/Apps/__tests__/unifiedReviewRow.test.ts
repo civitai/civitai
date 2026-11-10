@@ -841,6 +841,7 @@ describe('fast lane — agent-clean submissions sort first on the pending queue'
     inaccurate: 0,
     sectionsOk: true,
     impersonationCheck: 'complete',
+    impersonationStale: false,
   };
   const pending = (id: string, at: string, agentReview: unknown, previewState = 'preview-live') =>
     onsiteRequestToUnifiedRow(
@@ -900,6 +901,17 @@ describe('fast lane — agent-clean submissions sort first on the pending queue'
     expect(reviewRowLane(newClean).lane).toBe('agent-clean');
   });
 
+  it.each([null, 'preview-expired', 'preview-building', 'preview-queued'])(
+    '🔴 only a LIVE preview can be agent-clean: %s is not',
+    (previewState) => {
+      const row = pending('p', '2026-01-05T00:00:00Z', cleanReview, previewState as never);
+      expect(reviewRowLane(row)).toEqual({
+        lane: 'flagged',
+        reasons: ['the review preview is not live'],
+      });
+    }
+  );
+
   it('a viewer without the agentic surface (no agentReview field) gets no lane', () => {
     const noSurface = onsiteRequestToUnifiedRow(
       onsite({ id: 'x', previewState: 'preview-live' } as never),
@@ -932,6 +944,7 @@ describe('listing-edit impersonation check on the pending queue', () => {
       inaccurate: 0,
       sectionsOk: true,
       impersonationCheck: 'complete',
+      impersonationStale: false,
     };
     const code = onsiteRequestToUnifiedRow(
       onsite({

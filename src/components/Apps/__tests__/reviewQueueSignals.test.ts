@@ -10,6 +10,8 @@ import {
   AGENT_REVIEW_LANE_BADGES,
   agentReviewDisplay,
   agentReviewLane,
+  agentReviewSummaryFromQueueRow,
+  isImpersonationCheckStale,
   listingEditCheckBadge,
   type AgentReviewSummary,
 } from '~/shared/utils/agent-review-findings';
@@ -136,6 +138,7 @@ describe('agentReviewLane — the fast lane is positive evidence only', () => {
     inaccurate: 0,
     sectionsOk: true,
     impersonationCheck: 'complete',
+    impersonationStale: false,
   };
   const s = (over: Partial<AgentReviewSummary>): AgentReviewSummary => ({ ...clean, ...over });
 
@@ -172,6 +175,38 @@ describe('agentReviewLane — the fast lane is positive evidence only', () => {
     }
   );
 
+  it('🔴 a listing changed after the check (stale fingerprint) is flagged, telling the moderator to re-run', () => {
+    expect(agentReviewLane(s({ impersonationStale: true }))).toEqual({
+      lane: 'flagged',
+      reasons: ['the listing changed after the impersonation check: re-run the review'],
+    });
+    expect(agentReviewLane(s({ impersonationStale: false })).lane).toBe('agent-clean');
+    // Not known to be fresh (an older payload) is not fresh.
+    expect(agentReviewLane(s({ impersonationStale: undefined })).lane).toBe('flagged');
+  });
+
+  it('isImpersonationCheckStale: only an equal, present fingerprint is fresh', () => {
+    expect(isImpersonationCheckStale('abc', 'abc')).toBe(false);
+    expect(isImpersonationCheckStale('abc', 'abd')).toBe(true);
+    expect(isImpersonationCheckStale(null, 'abc')).toBe(true);
+    expect(isImpersonationCheckStale('abc', null)).toBe(true);
+  });
+
+  it('🔴 a finding with NO severity counts as unrated, so the row is not agent-clean', () => {
+    const summary = agentReviewSummaryFromQueueRow({
+      status: 'complete',
+      severities: [null, 'low'],
+      overBroad: 0,
+      underDeclared: 0,
+      inaccurate: 0,
+      sectionsOk: true,
+      impersonationCheck: 'complete',
+      impersonationFingerprint: 'fp',
+    });
+    expect(summary.severities).toEqual(['unrated', 'low']);
+    expect(agentReviewLane({ ...summary, impersonationStale: false }).lane).toBe('flagged');
+  });
+
   it('the badges say what to do next — never that the submission passed or is safe', () => {
     expect(AGENT_REVIEW_LANE_BADGES).toEqual({
       'agent-clean': { label: 'Fast lane: read the report, then decide', color: 'teal' },
@@ -200,6 +235,14 @@ describe("listingEditCheckBadge — an approved app's listing edit", () => {
       color: 'orange',
       title: 'a; b',
     });
+  });
+
+  it.each([
+    ['pending', 'Impersonation not checked yet: check the listing by hand'],
+    ['missing', 'Impersonation check incomplete: check the listing by hand'],
+    ['skipped', 'Impersonation check skipped (daily budget spent): check the listing by hand'],
+  ] as const)('🔴 a %s check → %s', (status, label) => {
+    expect(listingEditCheckBadge({ status, flagging: 0, titles: [] })?.label).toBe(label);
   });
 
   it('🔴 an incomplete check → check it by hand', () => {

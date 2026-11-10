@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   impersonationSkeleton,
   listingNameMatchFindings,
+  impersonationFingerprint,
   mergeImpersonationIntoSecurityAudit,
-  modelJudgementFindings,
+  parseModelJudgement,
   protectedTermFindings,
   stripImpersonationRecord,
   type ImpersonationCheckRecord,
@@ -53,6 +54,27 @@ describe('impersonationSkeleton — names that render alike compare equal', () =
     ['Quaddle VVorks', 'quaddieworks'],
   ])('%s → %s', (input, expected) => {
     expect(impersonationSkeleton(input)).toBe(expected);
+  });
+
+  it.each([
+    // Greek capitals fold to the Latin capital they look like — BEFORE lowercasing, which would
+    // turn Η into η (n), Ν into ν (v) and Υ into υ (u).
+    ['ΗΕLLΟ', 'HELLO'],
+    ['ΝΟVΑ', 'NOVA'],
+    ['ΥΑΚ', 'YAK'],
+    ['ΜΑΖΕ', 'MAZE'],
+    ['ΒΙΤΡΚΧ', 'BITPKX'],
+    // Cyrillic capitals.
+    ['АВЕКМНОРСТХ', 'ABEKMHOPCTX'],
+    // Lower-case look-alikes outside the Latin block.
+    ['zoı', 'zoi'],
+    ['ɑpp', 'app'],
+    ['ɡame', 'game'],
+    ['һello', 'hello'],
+    ['ԍame', 'game'],
+    ['bօt', 'bot'],
+  ])('%s reads as %s', (lookalike, latin) => {
+    expect(impersonationSkeleton(lookalike)).toBe(impersonationSkeleton(latin));
   });
 
   it('a different name stays different', () => {
@@ -167,32 +189,69 @@ describe('protectedTermFindings (deterministic)', () => {
   });
 });
 
-describe('modelJudgementFindings', () => {
-  it('normalises severities (unknown → medium), drops untitled entries, caps the count', () => {
-    const findings = modelJudgementFindings({
+describe('parseModelJudgement — malformed model output is an ERROR, never a clear check', () => {
+  it('normalises severities (unknown → medium), keeps untitled findings with a placeholder, caps the count', () => {
+    const r = parseModelJudgement({
       findings: [
         { severity: 'HIGH', title: 'Uses the Zorblex logo', detail: 'Icon is the Zorblex mark' },
         { severity: 'catastrophic', title: 'Odd severity' },
         { severity: 'low', title: '' },
-        'not an object',
+        { severity: 'medium' },
         ...Array.from({ length: 10 }, (_, i) => ({ severity: 'low', title: `extra ${i}` })),
       ],
     });
-    expect(findings).toHaveLength(5);
-    expect(findings.map((f) => f.title)).toEqual([
+    if (!r.ok) throw new Error('expected ok');
+    expect(r.findings.map((f) => f.title)).toEqual([
       'Uses the Zorblex logo',
       'Odd severity',
+      'Untitled impersonation finding',
+      'Untitled impersonation finding',
       'extra 0',
-      'extra 1',
-      'extra 2',
     ]);
-    expect(findings.map((f) => f.severity)).toEqual(['high', 'medium', 'low', 'low', 'low']);
-    expect(findings.every((f) => f.check === 'model-judgement')).toBe(true);
+    expect(r.findings.map((f) => f.severity)).toEqual(['high', 'medium', 'low', 'medium', 'low']);
+    expect(r.findings.every((f) => f.check === 'model-judgement')).toBe(true);
   });
 
-  it('a malformed answer yields nothing', () => {
-    expect(modelJudgementFindings(null)).toEqual([]);
-    expect(modelJudgementFindings({ findings: 'none' })).toEqual([]);
+  it('an empty findings array is a clean answer', () => {
+    expect(parseModelJudgement({ findings: [] })).toEqual({ ok: true, findings: [] });
+  });
+
+  it.each([
+    [null],
+    ['a string'],
+    [{}],
+    [{ findings: 'none' }],
+    [{ findings: { title: 'x' } }],
+    [{ findings: ['not an object'] }],
+    [{ findings: [null] }],
+  ])('🔴 %o → not ok (the check is incomplete)', (judgement) => {
+    const r = parseModelJudgement(judgement);
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe('impersonationFingerprint — what the check looked at', () => {
+  const base = {
+    name: 'Sketch Helper',
+    slug: 'sketch-helper',
+    tagline: 'Draw',
+    description: 'Draws things',
+    iconId: 1,
+    coverId: 2,
+  };
+  it('is stable for the same listing and moves when ANY identity field moves', () => {
+    const fp = impersonationFingerprint(base);
+    expect(impersonationFingerprint({ ...base })).toBe(fp);
+    for (const change of [
+      { name: 'Sketch Helper 2' },
+      { slug: 'other' },
+      { tagline: 'Paint' },
+      { description: 'Paints things' },
+      { iconId: 3 },
+      { coverId: null },
+    ]) {
+      expect(impersonationFingerprint({ ...base, ...change }), JSON.stringify(change)).not.toBe(fp);
+    }
   });
 });
 
