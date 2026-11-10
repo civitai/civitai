@@ -3,11 +3,13 @@ import { IconPencil, IconPhoto } from '@tabler/icons-react';
 import React from 'react';
 import type { ControlledImage } from '~/components/Post/EditV2/PostEditProvider';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
+import { AddedAudio } from '~/components/Post/EditV2/PostImageCards/AddedAudio';
 import { AddedImage } from '~/components/Post/EditV2/PostImageCards/AddedImage';
 import { BlockedImage } from '~/components/Post/EditV2/PostImageCards/BlockedImage';
 import { ErrorImage } from '~/components/Post/EditV2/PostImageCards/ErrorImage';
 import { PendingImage } from '~/components/Post/EditV2/PostImageCards/PendingImage';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 export function PostImageCards() {
   const images = usePostEditStore((state) => state.images);
@@ -59,7 +61,11 @@ export function PostImageCards() {
 function PostImageCard({ image }: { image: ControlledImage }) {
   switch (image.type) {
     case 'added':
-      return <AddedImage image={image.data} />;
+      return image.data.type === MediaType.audio ? (
+        <AddedAudio image={image.data} />
+      ) : (
+        <AddedImage image={image.data} />
+      );
     case 'blocked':
       return <BlockedImage image={image.data} />;
     case 'resolving':

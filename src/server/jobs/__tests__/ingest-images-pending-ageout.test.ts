@@ -288,3 +288,29 @@ describe('ingest-images pending age-out — rate-limited uploads', () => {
     expect(sentIds()).not.toContain(7);
   });
 });
+
+// A song has no scan until T3. The cron must neither re-send it nor age it to Error (where the
+// ingestion-error review queue would list it), so it stays Pending and hidden.
+describe('ingest-images — audio rows', () => {
+  it('neither sends nor ages out an old Pending song, and drops it from the queue', async () => {
+    const song = {
+      ...mkRow({
+        id: 9,
+        ingestion: 'Pending',
+        createdAt: OLD,
+        isBackfill: false,
+        scanRequestedAt: null,
+      }),
+      type: 'audio',
+    };
+    mockDbRead.jobQueue.findMany.mockImplementationOnce(async () => [{ entityId: 9 }]);
+    mockDbWrite.$queryRaw.mockImplementationOnce(async () => [song]);
+
+    const result = (await runJob(ingestImages)) as { agedOutPending: number };
+
+    expect(result.agedOutPending).toBe(0);
+    expect(ageOutUpdate()).toBeUndefined();
+    expect(sentIds()).toEqual([]);
+    expect(targetIds(pruneDelete())).toEqual([9]);
+  });
+});

@@ -1,6 +1,7 @@
 import type { NextRouter } from 'next/router';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
+import type { SongDetails } from '~/shared/form-graph/generation/audio/song-metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 
 /**
@@ -25,6 +26,9 @@ export type PostableGeneratedMedia = {
   url: string;
   meta?: Record<string, unknown>;
   generationWorkflowId?: string;
+  /** A song is posted as audio even when its blob is a video (an ACE song with a cover). */
+  mediaType?: 'audio';
+  audioMetadata?: SongDetails;
 };
 
 /**

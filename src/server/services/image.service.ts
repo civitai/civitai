@@ -1,3 +1,4 @@
+import { SONGS_UNAVAILABLE_MESSAGE } from '~/shared/form-graph/generation/audio/song-metadata';
 import { Prisma } from '@prisma/client';
 import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 import type { EventViewer } from '~/server/events/event-access';
@@ -1778,6 +1779,10 @@ export const ingestImage = async ({
   if (!parsedImage.success) throw new Error('Failed to parse image data');
 
   const { url, id, type } = parsedImage.data;
+
+  // No audio scan exists yet, and the frame-extraction path below would run on a song. The row stays
+  // Pending with no scan requested, which no feed reads as visible.
+  if (type === MediaType.audio) return false;
 
   if (!isAllowedImageScanUrl(url)) {
     // Same guard createImageIngestionRequest applies (which would throw here); checking
@@ -7129,10 +7134,16 @@ export async function createImage({
   feedbackCapture,
   assertPostOwnedBy = createPostOwnerCheck(),
   clientUrl,
+  allowAudio,
   ...image
 }: ImageSchema & {
   userId: number;
   skipIngestion?: boolean;
+  /**
+   * The caller has checked the owner may store a song (the `music` flag). Without it audio is
+   * refused here, because `imageSchema` accepts `type: 'audio'` on every route that creates an image.
+   */
+  allowAudio?: boolean;
   /**
    * Derivation the caller proved (see remix-provenance.ts). Nothing else can put
    * `meta.extra.sourceImageIds` on a row — every other caller's claim is stripped
@@ -7163,6 +7174,8 @@ export async function createImage({
   if (blockProvenance && !blockProvenance.appId) {
     throw new Error('createImage: blockProvenance requires an appId');
   }
+  if (image.type === MediaType.audio && !allowAudio)
+    throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
   if (image.postId != null) await assertPostOwnedBy({ postId: image.postId, userId: image.userId });
 
   /**
@@ -7456,6 +7469,12 @@ export async function checkEntityImageKeys({
   return urls;
 }
 
+/** Entity writes insert rows without `createImage`, so they refuse songs themselves. */
+function assertNoAudio(images: ImageReferenceInput[]) {
+  if (images.some((i) => i.type === MediaType.audio))
+    throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
+}
+
 export const createEntityImages = async ({
   tx,
   entityId,
@@ -7478,6 +7497,8 @@ export const createEntityImages = async ({
     return [];
   }
 
+  // Every entry is inserted (an `id` is dropped by pickClientImageColumns), so none may be a song.
+  assertNoAudio(images);
   await assertClientImageUrlsUsable({ urls: images.map((i) => i.url), userId, db: dbClient });
   await assertClientKeysIssuedToCaller({
     urls: uncheckedUrls(images, keysCheckedFor),
@@ -7958,6 +7979,8 @@ export const updateEntityImages = async ({
   keysCheckedFor?: string[];
 }) => {
   const dbClient = tx ?? dbWrite;
+  // An entry with an `id` is linked, not inserted.
+  assertNoAudio(images.filter((i) => !i.id));
   const connections = await dbClient.imageConnection.findMany({
     select: { imageId: true },
     where: {

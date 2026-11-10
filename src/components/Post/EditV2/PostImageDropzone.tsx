@@ -10,6 +10,7 @@ import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal'
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
+import type { MediaUploadFile } from '~/hooks/useMediaUpload';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { addPostImageSchema } from '~/server/schema/post.schema';
@@ -129,9 +130,7 @@ export function PostImageDropzone({
   // #endregion
 
   // #region [handlers]
-  function handleUpload(
-    fileData: { file: File; meta?: Record<string, unknown>; generationWorkflowId?: string }[]
-  ) {
+  function handleUpload(fileData: MediaUploadFile[]) {
     if (currentUser?.muted) return;
     if (post) upload(fileData);
     else {

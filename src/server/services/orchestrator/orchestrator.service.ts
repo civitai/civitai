@@ -143,6 +143,8 @@ export async function createImageIngestionRequest({
   // ledger is asserted by `media-fetch-funnel-ledger.test.ts`, which fails when a new
   // funnel appears un-gated, so do not maintain that list by hand here.
   if (!isAllowedImageScanUrl(url)) throw new ImageIngestionUrlBlockedError(url);
+  // Every non-image goes down the video frame-extraction path below, which has nothing to extract from a song.
+  if (type === 'audio') throw new Error('Audio has no ingestion scan yet.');
 
   const metadata = { imageId };
   // Submit the NORMALIZED form: an absolute url goes out as its parsed `href`, so the host
