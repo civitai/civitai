@@ -1,6 +1,6 @@
 {
   "name": "@civitai/event-engine",
-  "version": "1.9.30",
+  "version": "1.9.31",
   "private": true,
   "description": "Kafka consumer that listens to database events from postgres and clickhouse and processes them (metrics, signals, CDC side effects).",
   "main": "dist/index.js",
@@ -26,7 +26,9 @@
     "vector-backfill": "tsx -r tsconfig-paths/register src/vector-sync/backfill.ts",
     "vector-reconcile": "tsx -r tsconfig-paths/register src/vector-sync/reconcile.ts",
     "model-vector-backfill": "tsx -r tsconfig-paths/register src/vector-sync/models/backfill.ts",
-    "model-vector-sync": "tsx -r tsconfig-paths/register src/vector-sync/models/consumer.ts"
+    "model-vector-sync": "tsx -r tsconfig-paths/register src/vector-sync/models/consumer.ts",
+    "content-vector-backfill": "tsx -r tsconfig-paths/register src/vector-sync/content/backfill.ts",
+    "content-vector-sync": "tsx -r tsconfig-paths/register src/vector-sync/content/consumer.ts"
   },
   "keywords": [
     "kafka",

@@ -105,7 +105,7 @@ An entry that passes is accepted. When the judge can't score an entry, or the re
 
 ## Team points for entrants
 
-During an event, a crucible carrying the event's rally tag gives the entrant's team points for each accepted entrant, once per person per crucible. The entrant must hold the event's joined team cosmetic and be able to earn event points. The team total moves as soon as the entry is accepted. An accept writes an add to the event points ledger, and a revoke writes a remove. Each hourly settle recounts the points from the ledger. An award counts while its entry's latest row is an add, the entry is still in the crucible and judgeable, and its entrant is not banned, deleted or excluded. A person counts once per crucible, so a second entry keeps the award when the first leaves. The points come off at the next settle when:
+During an event, a crucible carrying the event's rally tag gives the entrant's team points for each accepted entrant, once per person per crucible. The entrant must hold the event's joined team cosmetic and be able to earn event points. The team total moves as soon as the person's first entry in the crucible is accepted. An accept writes an add to the event points ledger, and a revoke writes a remove. Each hourly settle recounts the points from the ledger. An award counts while its entry's latest row is an add, the entry is still in the crucible and judgeable, and its entrant is not banned, deleted or excluded. A person counts once per crucible, so a second entry keeps the award when the first leaves. The points come off at the next settle when:
 
 - a moderator or the owner removes the entry, or the entrant withdraws it;
 - the entry's image is deleted, or the entrant's account is deleted (which removes the entry);

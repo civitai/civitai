@@ -34,6 +34,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+    CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text, "nsfwLevel" int DEFAULT 1, width int, height int,
       hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
@@ -49,7 +50,8 @@ beforeAll(async () => {
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "Model" (
-      id int PRIMARY KEY, "userId" int, status text, availability "Availability" DEFAULT 'Public'
+      id int PRIMARY KEY, "userId" int, status text, availability "Availability" DEFAULT 'Public',
+      mode "ModelModifier"
     );
     CREATE TABLE "ModelVersion" (
       id int PRIMARY KEY, "modelId" int, index int, status text, "publishedAt" timestamp,

@@ -148,9 +148,11 @@ const svg = (w: number, h: number) =>
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="#3b5bdb"/></svg>`
   )}`;
 
+/** Where the draft opens; reset before each test. */
+const openAt = { x: 0.5, y: 0.5 };
 function OpenDraft() {
   const card = useHatTurfCard();
-  useEffect(() => card?.setDraft({ x: 0.5, y: 0.5 }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => card?.setDraft({ ...openAt }), []); // eslint-disable-line react-hooks/exhaustive-deps
   return null;
 }
 
@@ -295,6 +297,7 @@ beforeEach(() => {
   h.stock = { available: 3, optedIn: true };
   h.user = { id: 1 };
   h.mutate.mockReset();
+  Object.assign(openAt, { x: 0.5, y: 0.5 });
 });
 afterEach(() => cleanup());
 
@@ -328,6 +331,30 @@ describe('a hat is placed with the sticker editor', () => {
     });
 
     expect((await saved()).scale).toBeCloseTo(HAT_MAX_SCALE, 10);
+  });
+
+  // The DraftSticker geometry tests cover what `knobFlips` does; this one fails if the hat
+  // editor stops passing it, which is the fix a user at the top edge depends on.
+  test('at the top of the picture the rotate knob hangs below the hat, inside the card', async () => {
+    // On a 171px card the hat is small enough that its knob fits above even at the top edge;
+    // on a 390px card it does not.
+    const card = { width: 390, height: 520 };
+    openAt.y = 0.02;
+    renderPictures([['cover', [card.width, card.height]]], card);
+    await editorPart(BODY);
+    await vi.waitFor(() => {
+      const knob = document.body.querySelector<HTMLElement>('[data-testid="draft-rotate-knob"]')!;
+      const k = knob.getBoundingClientRect();
+      const body = document.body.querySelector<HTMLElement>(BODY)!.getBoundingClientRect();
+      const frame = q('frame')!.getBoundingClientRect();
+      expect(body.height, 'hat drawn').toBeGreaterThan(0);
+      expect(body.top - frame.top, 'hat at the top edge').toBeLessThan(k.height);
+      expect(k.top - frame.top, "knob top, from the card's top").toBeGreaterThanOrEqual(0);
+      expect(frame.bottom - k.bottom, "knob bottom, from the card's bottom").toBeGreaterThanOrEqual(
+        0
+      );
+      expect(knob.dataset.knobBelow, 'knob hung below').toBe('true');
+    });
   });
 
   test('the rotate knob saves a rotation', async () => {

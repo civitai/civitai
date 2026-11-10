@@ -72,9 +72,16 @@ export default MixedAuthEndpoint(async function handler(
     if (!published || !browsable || !servedAvailability.has(post.availability)) return notFound();
 
     // Loaded on demand: the model service's import graph is large.
-    const { getHeldGalleryLevel } = await import('~/server/services/model.service');
-    const heldLevel = await getHeldGalleryLevel({ postId: post.id });
-    if (heldLevel !== undefined) browsingLevel = Flags.intersection(browsingLevel, heldLevel);
+    const { getHeldGalleryLevel, isModelGalleryWithheld } = await import(
+      '~/server/services/model.service'
+    );
+    // A taken-down model's post is served with no images, to everyone.
+    const [heldLevel, withheld] = await Promise.all([
+      getHeldGalleryLevel({ postId: post.id }),
+      isModelGalleryWithheld({ postId: post.id }),
+    ]);
+    if (withheld) browsingLevel = 0;
+    else if (heldLevel !== undefined) browsingLevel = Flags.intersection(browsingLevel, heldLevel);
     const respond = (images: unknown[]) =>
       res.status(200).json({
         id: post.id,

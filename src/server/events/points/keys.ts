@@ -68,6 +68,8 @@ export function eventSeasonKeys(event: string, season: EventPointSeason) {
     base: (scope: TotalScope) => `${root}:base:${scope}` as const,
     // points granted live in one 5-minute bucket
     live: (bucket: number, scope: TotalScope) => `${root}:live:${bucket}:${scope}` as const,
+    // user ids whose crucible-entrant award is already in the live team total for this crucible
+    crucibleAwarded: (crucibleId: number) => `${root}:crucible-awarded:${crucibleId}` as const,
     // the bucket the referee last settled up to
     cut: `${root}:cut` as const,
     // UTC day -> JSON { team: points per UTC hour (24) }, plus `cut`: when the hours were settled to
