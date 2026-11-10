@@ -177,7 +177,6 @@ export const cosmeticRouter = router({
       equipCosmeticToEntity({
         ...input,
         userId: ctx.user.id,
-        // The placement gate's moderator: only on a session or a full-access key.
         isModerator: eventViewerOf(ctx).isModerator,
       })
     ),

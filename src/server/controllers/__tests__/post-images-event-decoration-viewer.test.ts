@@ -70,7 +70,6 @@ describe('getInfiniteImagesHandler for a post', () => {
   );
 });
 
-// The feed with no post goes to the index when the index feed is on.
 describe('getInfiniteImagesHandler on the index feed', () => {
   it.each([
     ['a session', session, true],
