@@ -2,7 +2,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
+import { COMICS_SEARCH_INDEX } from '~/server/common/constants';
+import { indexBrowsingLevelClause } from '~/components/Search/search-filters';
 import { buildSearchRules } from '~/server/meilisearch/search-token';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 const { mockGetServerAuthSession } = vi.hoisted(() => ({ mockGetServerAuthSession: vi.fn() }));
 
@@ -61,7 +64,9 @@ afterEach(() => resetEnv());
 describe('GET /api/search/token', () => {
   it('gives an anonymous caller the anonymous rules, never cacheable', async () => {
     const { body, cacheControl } = await requestToken();
-    expect(decodeRules(body.token)).toEqual(buildSearchRules(null));
+    expect(decodeRules(body.token)).toEqual(
+      buildSearchRules({ browsingLevelCap: publicBrowsingLevelsFlag })
+    );
     expect(cacheControl).toBe('private, no-store');
   });
 
@@ -79,6 +84,13 @@ describe('GET /api/search/token', () => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 7, isModerator: true } });
     const { body } = await requestToken();
     expect(decodeRules(body.token)).toEqual(buildSearchRules({ id: 7, isModerator: true }));
+  });
+
+  it('holds the token to the site content level', async () => {
+    const { body } = await requestToken();
+    expect(decodeRules(body.token)[COMICS_SEARCH_INDEX].filter).toBe(
+      indexBrowsingLevelClause(COMICS_SEARCH_INDEX, publicBrowsingLevelsFlag)
+    );
   });
 
   it('answers { token: null } while no signing key is configured', async () => {

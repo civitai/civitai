@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
-import { IMAGES_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import {
+  ARTICLES_SEARCH_INDEX,
+  BOUNTIES_SEARCH_INDEX,
+  COLLECTIONS_SEARCH_INDEX,
+  COMICS_SEARCH_INDEX,
+  IMAGES_SEARCH_INDEX,
+  MODELS_SEARCH_INDEX,
+} from '~/server/common/constants';
 import {
   BROWSER_SEARCH_INDEXES,
   SEARCH_TOKEN_TTL_MS,
@@ -9,6 +16,11 @@ import {
 } from '~/server/meilisearch/search-token';
 import { filterableAttributesByIndex } from '~/server/search-index/filterable-attributes';
 import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
+import { indexBrowsingLevelClause } from '~/components/Search/search-filters';
+import {
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 const PARENT_UID = '6062abda-a5aa-4414-ac91-ecd7944c0f8d';
 
@@ -19,6 +31,9 @@ afterEach(() => resetEnv());
 
 describe('buildSearchRules', () => {
   const anonModels = '(poi != true) AND (availability != Private)';
+  // The privacy rules, less the content-level clause the next describe covers.
+  const privacy = (rule: { filter?: unknown } | undefined) =>
+    String(rule?.filter).replace(/^\((.*)\) AND \(nsfwLevel=[^()]*\)$/, '$1');
   const viewers = [undefined, { id: 42 }, { id: 7, isModerator: true }];
 
   it.each([
@@ -28,21 +43,21 @@ describe('buildSearchRules', () => {
     ['a non-integer id', { id: 1.5 }],
     ['a zero id', { id: 0 }],
   ])('%s gets the filters with no owner carve-out', (_label, viewer) => {
-    expect(buildSearchRules(viewer)[MODELS_SEARCH_INDEX]).toEqual({ filter: anonModels });
-    expect(buildSearchRules(viewer, [])[IMAGES_SEARCH_INDEX]).toEqual({ filter: 'poi != true' });
+    expect(privacy(buildSearchRules(viewer)[MODELS_SEARCH_INDEX])).toBe(anonModels);
+    expect(privacy(buildSearchRules(viewer, [])[IMAGES_SEARCH_INDEX])).toBe('poi != true');
   });
 
   it('a signed-in user also sees their own models, keyed on user.id', () => {
     const rules = buildSearchRules({ id: 42, isModerator: false }, []);
-    expect(rules[MODELS_SEARCH_INDEX]).toEqual({
-      filter: '(poi != true OR user.id = 42) AND (availability != Private OR user.id = 42)',
-    });
+    expect(privacy(rules[MODELS_SEARCH_INDEX])).toBe(
+      '(poi != true OR user.id = 42) AND (availability != Private OR user.id = 42)'
+    );
     // Images carry no owner carve-out.
-    expect(rules[IMAGES_SEARCH_INDEX]).toEqual({ filter: 'poi != true' });
+    expect(privacy(rules[IMAGES_SEARCH_INDEX])).toBe('poi != true');
   });
 
-  it('moderators get no filters on any index', () => {
-    const rules = buildSearchRules({ id: 7, isModerator: true });
+  it('moderators on an uncapped site get no filters on any index', () => {
+    const rules = buildSearchRules({ id: 7, isModerator: true, browsingLevelCap: null });
     expect(Object.values(rules)).toEqual(BROWSER_SEARCH_INDEXES.map(() => ({})));
   });
 
@@ -70,7 +85,7 @@ describe('buildSearchRules', () => {
 
   it('restoring a retired index grants it with its filter, never without', () => {
     for (const viewer of [undefined, { id: 42 }]) {
-      expect(buildSearchRules(viewer, [])[IMAGES_SEARCH_INDEX]).toEqual({ filter: 'poi != true' });
+      expect(privacy(buildSearchRules(viewer, [])[IMAGES_SEARCH_INDEX])).toBe('poi != true');
     }
   });
 
@@ -80,7 +95,7 @@ describe('buildSearchRules', () => {
     for (const viewer of [undefined, { id: 42 }]) {
       for (const [index, rule] of Object.entries(buildSearchRules(viewer, []))) {
         const filter = typeof rule.filter === 'string' ? rule.filter : '';
-        for (const [, attribute] of filter.matchAll(/([\w.]+)\s*(?:!=|>=|<=|=|<|>)/g)) {
+        for (const [, attribute] of filter.matchAll(/([\w.]+)\s*(?:!=|>=|<=|=|<|>|IS |NOT IN)/g)) {
           expect(filterable[index], `${index}: ${attribute}`).toContain(attribute);
           checked.push(`${index}:${attribute}`);
         }
@@ -93,8 +108,56 @@ describe('buildSearchRules', () => {
         `${MODELS_SEARCH_INDEX}:availability`,
         `${MODELS_SEARCH_INDEX}:user.id`,
         `${IMAGES_SEARCH_INDEX}:poi`,
+        ...LEVELLED_INDEXES.map((index) => `${index}:nsfwLevel`),
       ])
     );
+  });
+});
+
+const LEVELLED_INDEXES = [
+  MODELS_SEARCH_INDEX,
+  IMAGES_SEARCH_INDEX,
+  ARTICLES_SEARCH_INDEX,
+  COLLECTIONS_SEARCH_INDEX,
+  BOUNTIES_SEARCH_INDEX,
+  COMICS_SEARCH_INDEX,
+];
+
+describe('buildSearchRules: the site content level', () => {
+  // Each levelled index is held to the same clause the site-search proxy applies; the opt-in
+  // real-Meilisearch test shows Meilisearch refusing what that clause excludes.
+  const levelClauses = (viewer: Parameters<typeof buildSearchRules>[0], cap: number) => {
+    const rules = buildSearchRules(viewer, []);
+    return LEVELLED_INDEXES.map((index) => {
+      const filter = String(rules[index]?.filter ?? '');
+      const clause = indexBrowsingLevelClause(index, cap);
+      return { index, held: filter === clause || filter.includes(`(${clause})`) };
+    });
+  };
+  const allHeld = LEVELLED_INDEXES.map((index) => ({ index, held: true }));
+
+  it('a capped site holds every levelled index to its cap, moderators included', () => {
+    for (const isModerator of [false, true]) {
+      const viewer = { id: 42, isModerator, browsingLevelCap: publicBrowsingLevelsFlag };
+      expect(levelClauses(viewer, publicBrowsingLevelsFlag)).toEqual(allHeld);
+    }
+  });
+
+  it('a missing or unusable cap fails closed to the SFW cap', () => {
+    for (const viewer of [
+      null,
+      undefined,
+      { id: 42 },
+      { id: 42, browsingLevelCap: 0 },
+      { id: 42, browsingLevelCap: NaN },
+    ])
+      expect(levelClauses(viewer, sfwBrowsingLevelsFlag)).toEqual(allHeld);
+  });
+
+  it('an uncapped site adds no level clause', () => {
+    const rules = buildSearchRules({ id: 42, browsingLevelCap: null }, []);
+    for (const index of LEVELLED_INDEXES)
+      expect(String(rules[index]?.filter ?? ''), index).not.toContain('nsfwLevel');
   });
 });
 
