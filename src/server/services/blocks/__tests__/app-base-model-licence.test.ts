@@ -41,6 +41,20 @@ describe('assertNoRestrictedBaseModels', () => {
     );
   });
 
+  it.each([
+    [
+      'urn:air:flux2:diffusion_model:huggingface:black-forest-labs/FLUX.2-klein-9B/model.safetensors',
+    ],
+    [
+      'urn:air:flux2:diffusion_model:huggingface:black-forest-labs/FLUX.2-dev/sub/dir/model.safetensors',
+    ],
+    ['urn:air:flux2:diffusion_model:huggingface:black-forest-labs/FLUX.2-dev'],
+  ])('refuses a listed repo named without a version: %s', (air) => {
+    expect(() => assertNoRestrictedBaseModels({ airs: [air] })).toThrow(
+      expect.objectContaining({ code: 'FORBIDDEN' })
+    );
+  });
+
   it('allows unrestricted models and repos', () => {
     expect(() =>
       assertNoRestrictedBaseModels({
