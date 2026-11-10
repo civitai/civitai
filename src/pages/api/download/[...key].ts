@@ -134,12 +134,11 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
  * moderators-only, as on the download route. Walks from the caller's models (indexed on userId),
  * so it never scans every file's url.
  *
- * `key` arrives decoded, but a stored url may percent-encode its name or its separators
- * (`bucket/model%2F42%2Fname`), so the url is matched against each of those spellings.
+ * `key` arrives decoded, but a stored url may carry a query string and percent-encode its name or
+ * its separators (`bucket/model%2F42%2Fname`), so the url without its query is matched against
+ * each of those spellings.
  */
 async function isWithheldModelFile(userId: number, key: string) {
-  const encoded = key.split('/').map(encodeURIComponent);
-  const suffixes = [...new Set([`/${key}`, `/${encoded.join('/')}`, `/${encoded.join('%2F')}`])];
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT mf.id
     FROM "Model" m
@@ -148,10 +147,30 @@ async function isWithheldModelFile(userId: number, key: string) {
     WHERE m."userId" = ${userId}
       AND (m.mode = 'TakenDown' OR m.status = 'Deleted')
       AND EXISTS (
-        SELECT 1 FROM unnest(${suffixes}::text[]) AS s(suffix)
-        WHERE lower(right(mf.url, length(s.suffix))) = lower(s.suffix)
+        SELECT 1 FROM unnest(${keySpellings(key)}::text[]) AS s(suffix)
+        WHERE right(split_part(mf.url, '?', 1), length(s.suffix)) = s.suffix
       )
     LIMIT 1
   `;
   return rows.length > 0;
+}
+
+/** `/<key>` raw, and as encodeURIComponent or the S3 presigner (which also escapes !'()*) would
+ * write it, with plain or encoded separators, and with upper- or lower-case escapes. */
+function keySpellings(key: string) {
+  const segments = key.split('/');
+  const presignerEscape = (segment: string) =>
+    encodeURIComponent(segment).replace(
+      /[!'()*]/g,
+      (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
+    );
+  const spellings = new Set([`/${key}`]);
+  for (const escape of [encodeURIComponent, presignerEscape]) {
+    for (const separator of ['/', '%2F']) {
+      const spelling = `/${segments.map(escape).join(separator)}`;
+      spellings.add(spelling);
+      spellings.add(spelling.replace(/%[0-9A-F]{2}/g, (escaped) => escaped.toLowerCase()));
+    }
+  }
+  return [...spellings];
 }
