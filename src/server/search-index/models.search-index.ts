@@ -177,6 +177,10 @@ type PullDataResult = {
   images: ImagesForModelVersions[];
 };
 
+/** A taken-down model's document names none of its images: its cover ids are cleared. */
+export const withheldCoverIds = (model: { mode?: string | null }) =>
+  isModelWithheld(model) ? { coverImageId: null, sfwCoverImageId: null } : {};
+
 /**
  * The images a model's search document carries: the newest version of each distinct base model
  * keeps its images, so base-model-filtered cards can show a matching version's cover. The latest
@@ -409,6 +413,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       return {
         ...model,
+        ...withheldCoverIds(model),
         // All four keys written unconditionally — see the merge argument above. `?? null`
         // and never `?? 0`: a version can legitimately be judged 0 with high confidence,
         // and `?.qualityScore ?? null` keeps that 0 while still clearing an absent label.

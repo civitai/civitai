@@ -273,6 +273,8 @@ const hidden: [string, string, number, number][] = [
   ['a Private bounty', 'Bounty', 1, 101],
   ['a taken-down model', 'Model', 1601, 1631],
   ["a taken-down model's version", 'ModelVersion', 1611, 1631],
+  ["a taken-down model's image", 'Image', 1631, 1631],
+  ["a post on a taken-down model's version", 'Post', 1621, 1631],
   ['a flagged image', 'Image', 1211, 1211],
   ['a post whose only image is flagged', 'Post', 1201, 1211],
   ['an article whose cover is flagged', 'Article', 1401, 1411],
@@ -418,10 +420,12 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
   });
 
   it.each(['anonymous', 'stranger'] as const)(
-    'keeps the cover of an archived model and its version for a %s viewer',
+    'keeps the covers of an archived model, its version, image and post for a %s viewer',
     async (who) => {
       expect(await coverOf('Model', 1602, viewers[who])).toBe(1632);
       expect(await coverOf('ModelVersion', 1612, viewers[who])).toBe(1632);
+      expect(await coverOf('Image', 1632, viewers[who])).toBe(1632);
+      expect(await coverOf('Post', 1622, viewers[who])).toBe(1632);
     }
   );
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pickModelIndexImages } from '~/server/search-index/models.search-index';
+import { pickModelIndexImages, withheldCoverIds } from '~/server/search-index/models.search-index';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 
 const versions = [{ id: 10, baseModel: 'SDXL 1.0' }];
@@ -24,5 +24,20 @@ describe("a model's search document images", () => {
   ])('keeps the images of %s, its cover first', (_name, mode) => {
     const picked = pickModelIndexImages({ mode, coverImageId: 2 }, versions, images);
     expect(picked.map((image) => image.id)).toEqual([2, 1]);
+  });
+});
+
+describe("a model's search document cover ids", () => {
+  const model = { coverImageId: 2, sfwCoverImageId: 1 };
+
+  it('clears both for a taken-down model', () => {
+    expect({ ...model, ...withheldCoverIds({ mode: ModelModifier.TakenDown }) }).toEqual({
+      coverImageId: null,
+      sfwCoverImageId: null,
+    });
+  });
+
+  it('keeps them for an archived model', () => {
+    expect({ ...model, ...withheldCoverIds({ mode: ModelModifier.Archived }) }).toEqual(model);
   });
 });
