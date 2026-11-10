@@ -18,6 +18,7 @@ const { world } = vi.hoisted(() => ({
     files: [] as Record<string, any>[],
     paidAccess: new Map<number, { endsAt: Date | null }>(),
     inReview: new Set<number>(),
+    removedWithOwner: new Set<number>(),
   },
 }));
 
@@ -28,7 +29,10 @@ vi.mock('~/server/services/file.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/download-link/moderator-review.reads', async (importOriginal) => ({
   ...(await importOriginal<typeof ReviewReads>()),
-  readInModeratorReview: async (_db: unknown, id: number) => world.inReview.has(id),
+  readModeratorFlags: async (_db: unknown, id: number) => ({
+    inReview: world.inReview.has(id),
+    removedWithOwner: world.removedWithOwner.has(id),
+  }),
 }));
 vi.mock('~/server/services/hot-reads-5.reads', async (importOriginal) => ({
   ...(await importOriginal<typeof HotReads5>()),
@@ -146,6 +150,7 @@ beforeEach(() => {
   world.files.length = 0;
   world.paidAccess.clear();
   world.inReview.clear();
+  world.removedWithOwner.clear();
   clearGateReadCache();
 });
 
@@ -201,6 +206,15 @@ describe('a provider is refused', () => {
     expect(await asProvider(id)).toEqual({ ok: false, error: 'in-review' });
   });
 
+  it("a draft kept after its owner's content was removed", async () => {
+    const id = version({ status: 'Draft', modelStatus: 'Draft' });
+    // Control: the same draft is served without the flag.
+    expect(await asProvider(id)).toMatchObject({ ok: true });
+    world.removedWithOwner.add(id);
+    clearGateReadCache();
+    expect(await asProvider(id)).toEqual({ ok: false, error: 'not-found' });
+  });
+
   it('a failed scan', async () => {
     const id = version({}, [{ virusScanResult: 'Danger' }]);
     expect(await asProvider(id)).toEqual({ ok: false, error: 'failed-scan' });
@@ -219,6 +233,22 @@ describe("a provider's file selectors", () => {
       { metadata: { format: 'GGUF', fp: 'fp16' } },
     ]);
     expect(await asProvider(id, { selectors: { format: 'GGUF' } })).toMatchObject({
+      ok: true,
+      fileId: id * 100 + 1,
+    });
+  });
+
+  // Each wanted value is the one the default file preference would NOT pick.
+  it.each([
+    ['size', { size: 'pruned' }, { size: 'full' }],
+    ['fp', { fp: 'fp16' }, { fp: 'fp8' }],
+    ['quantType', { quantType: 'Q4_K_M' }, { quantType: 'Q8_0' }],
+  ] as const)('pick the requested %s, not the primary file', async (key, primary, wanted) => {
+    const id = version({}, [
+      { metadata: { format: 'GGUF', ...primary } },
+      { metadata: { format: 'GGUF', ...wanted } },
+    ]);
+    expect(await asProvider(id, { selectors: { [key]: wanted[key] } })).toMatchObject({
       ok: true,
       fileId: id * 100 + 1,
     });

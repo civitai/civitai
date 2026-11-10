@@ -20,8 +20,12 @@ export async function takeProviderDownload(
     now / HOUR_MS
   )}` as const;
   try {
-    const count = await withSysReadDeadline(sysRedis.incr(key));
-    if (count === 1) await withSysReadDeadline(sysRedis.expire(key, KEY_TTL_S));
+    // One MULTI, so the key never exists without its TTL.
+    const reply = await withSysReadDeadline(
+      sysRedis.multi().set(key, '0', { NX: true, EX: KEY_TTL_S }).incr(key).exec()
+    );
+    const count = Number(reply?.[1]);
+    if (!Number.isFinite(count)) throw new Error('unexpected counter reply');
     return count <= hourlyCeiling;
   } catch (error) {
     logToAxiom({

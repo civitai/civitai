@@ -7,7 +7,7 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename } from '~/server/services/file.service';
 import { readModelVersionForFileViaKysely } from '~/server/services/hot-reads-5.reads';
 import { readDownloadFilesViaKysely } from '~/server/services/hot-reads-6.reads';
-import { readInModeratorReview } from '~/server/services/download-link/moderator-review.reads';
+import { readModeratorFlags } from '~/server/services/download-link/moderator-review.reads';
 import { hasFailedScan } from '~/server/utils/failed-scan';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import {
@@ -111,12 +111,14 @@ export const clearGateReadCache = () => gateReads.clear();
 const refuse = (error: GenerationFetchRefusal): GenerationFetchResult => ({ ok: false, error });
 
 /**
- * May `principal` have this file fetched for a generation job? Used by download-link mint and use
- * only; the download route keeps `getFileForModelVersion`.
+ * May `principal` have this file fetched for a generation job? Used by download-link mint and use,
+ * and by the download route for a per-provider download token; other downloads keep
+ * `getFileForModelVersion`.
  *
- * Unlike a download, a generation-only (download-disabled) file is allowed. Nothing else is
- * looser: deleted, taken-down and archived models, failed scans and POI models are refused for
- * everyone, the owner included, and nobody is treated as a moderator.
+ * For a user or public principal, a generation-only (download-disabled) file is allowed and nothing
+ * else is looser. A provider principal is served what generation is served (see
+ * `ProviderFetchPrincipal`). For everyone, the owner included, deleted, taken-down and archived
+ * models, failed scans and POI models are refused, and nobody is treated as a moderator.
  *
  * `principal: null` is a public link: it names no user, so only a published, open-access version
  * outside early access passes.
@@ -162,8 +164,9 @@ export async function checkGenerationFetch({
       !PROVIDER_FETCHABLE_STATUSES.has(version.model.status)
     )
       return refuse('not-found');
-    if (await read('review', () => readInModeratorReview(kyselyRead, modelVersionId)))
-      return refuse('in-review');
+    const flags = await read('flags', () => readModeratorFlags(kyselyRead, modelVersionId));
+    if (flags.removedWithOwner) return refuse('not-found');
+    if (flags.inReview) return refuse('in-review');
     allFiles = true;
   } else {
     const isOwner = !!principal && version.model.userId === principal.id;

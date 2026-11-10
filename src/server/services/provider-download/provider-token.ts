@@ -6,8 +6,8 @@ import type { NextApiRequest } from 'next';
  * `provider` is the orchestrator's provider name as spelled on `WorkerClient.provider` (`RunPods`,
  * `FalAI`); `secret` is 64 hex characters. Only the SHA-256 of the secret is stored.
  *
- * A user API key is 32 hex characters with no `:`, so any `?token=` containing `:` is treated as a
- * provider token, and one that does not resolve is refused rather than read as anonymous.
+ * No API key or OAuth token this repo mints contains `:` (hex, or `civitai_` plus hex), so any
+ * `?token=` containing `:` is treated as a provider token, and one that does not resolve is refused rather than read as anonymous.
  */
 export const PROVIDER_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
@@ -101,8 +101,8 @@ export type ProviderTokenParam =
 
 /**
  * Reads `?token=` for a per-provider download token. When one is present it is removed from
- * `req.query` and `req.url` before anything else reads the request, so no session code sees it and
- * no log line carries it. A `?token=` without `:` is left alone: it is a user API key.
+ * `req.query` and `req.url`, so no session code sees it and no log line this app writes after this
+ * point carries it. A `?token=` without `:` is left alone: it is a user API key.
  */
 export function takeProviderToken(req: NextApiRequest): ProviderTokenParam {
   const raw = req.query.token;

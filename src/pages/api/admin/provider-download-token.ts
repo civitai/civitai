@@ -17,9 +17,12 @@ import { webhookTokenValues } from '~/server/utils/webhook-token';
 
 /**
  * Mints, retires and unretires per-provider download tokens, and sets a provider's hourly ceiling.
- * A minted token is returned once, in the mint response, and never again. Each change normally
- * reaches the download routes at once, and always within a minute (provider-token.store.ts).
+ * A minted token is returned once, in the mint response, and never again. Each change reaches the
+ * download routes at once through the shared cache; if that cache write fails, once the cached entry
+ * goes stale, normally within a minute (provider-token.store.ts).
  */
+
+const SYSTEM_ACTOR_ID = -1;
 
 const actorUserId = z.preprocess(
   (v) => (v === null || v === '' ? undefined : v),
@@ -129,7 +132,9 @@ export default HeaderTokenSecuredEndpoint(
 
     if (input.action !== 'list') {
       const subject = 'provider' in input ? input.provider : input.id;
-      const auditRecorded = await trackModActivity(input.actorUserId, {
+      // Recorded as the system, as system-account-api-key does: `actorUserId` is asserted by the
+      // caller, so it goes in the log line, not in the audit row's actor.
+      const auditRecorded = await trackModActivity(SYSTEM_ACTOR_ID, {
         entityType: 'user',
         activity: `providerDownloadToken:${input.action}:${subject}`,
       })

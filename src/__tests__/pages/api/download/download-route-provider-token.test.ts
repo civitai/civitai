@@ -14,6 +14,7 @@ const {
   mockCheckGenerationFetch,
   mockResolveDownloadUrl,
   mockModelVersionEvent,
+  mockTrackerCtor,
 } = vi.hoisted(() => ({
   mockGetServerAuthSession: vi.fn(),
   mockGetFileForModelVersion: vi.fn(),
@@ -21,6 +22,7 @@ const {
   mockCheckGenerationFetch: vi.fn(),
   mockResolveDownloadUrl: vi.fn(),
   mockModelVersionEvent: vi.fn(),
+  mockTrackerCtor: vi.fn(),
 }));
 
 vi.mock('~/server/auth/get-server-auth-session', () => ({
@@ -36,6 +38,9 @@ vi.mock('~/server/services/user.service', () => ({
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: undefined,
   Tracker: class {
+    constructor(...args: unknown[]) {
+      mockTrackerCtor(...args);
+    }
     modelVersionEvent = mockModelVersionEvent;
   },
 }));
@@ -65,20 +70,28 @@ vi.mock('~/utils/delivery-worker', async (importOriginal) => ({
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resetEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import handler from '~/pages/api/download/models/[modelVersionId]';
 import { hashProviderSecret } from '~/server/services/provider-download/provider-token';
 
 const SECRET = 'ab'.repeat(32);
+/** The hourly counter's value after this request's INCR. */
+const mockCounter = vi.fn<() => Promise<number>>();
+const mockCounterSet = vi.fn();
 const LIVE = [{ provider: 'RunPods', hash: hashProviderSecret(SECRET), hourlyCeiling: 100 }];
 const PUBLIC_VERSION = 123;
 
-async function run(query: Record<string, string | string[]>, headers: Record<string, string> = {}) {
+async function run(
+  query: Record<string, string | string[]>,
+  headers: Record<string, string> = {},
+  url?: string
+) {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(query))
     for (const v of Array.isArray(value) ? value : [value]) search.append(key, v);
   const req = {
     method: 'GET',
-    url: `/api/download/models/${PUBLIC_VERSION}?${search}`,
+    url: url ?? `/api/download/models/${PUBLIC_VERSION}?${search}`,
     query: { modelVersionId: String(PUBLIC_VERSION), ...query },
     headers: { 'user-agent': 'python-requests/2.31', ...headers },
     socket: { remoteAddress: '203.0.113.7' },
@@ -139,7 +152,19 @@ beforeEach(() => {
     urlExpiryDate: new Date(Date.now() + 3600_000),
   });
   mockModelVersionEvent.mockResolvedValue(true);
-  redisMock.sysRedis.incr.mockReset().mockResolvedValue(1);
+  mockCounter.mockReset().mockResolvedValue(1);
+  mockCounterSet.mockReset();
+  redisMock.sysRedis.multi.mockReset().mockImplementation(() => {
+    const chain = {
+      set: (...args: unknown[]) => {
+        mockCounterSet(...args);
+        return chain;
+      },
+      incr: () => chain,
+      exec: async () => ['OK', await mockCounter()],
+    };
+    return chain;
+  });
 });
 
 describe('an unknown provider token', () => {
@@ -149,12 +174,13 @@ describe('an unknown provider token', () => {
     expect(anonymous.res.redirect).toHaveBeenCalledWith('https://storage.example/public');
 
     const before = await counter('unknown', 'refused_401');
+    const beforeRunPods = await counter('RunPods', 'refused_401');
     const { res } = await run({ token: `RunPods:${'cd'.repeat(32)}` });
 
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith({ error: 'invalid provider token' });
     expect(res.redirect).not.toHaveBeenCalled();
-    expect(await counter('RunPods', 'refused_401')).toBe(1);
+    expect(await counter('RunPods', 'refused_401')).toBe(beforeRunPods + 1);
     expect(await counter('unknown', 'refused_401')).toBe(before);
   });
 
@@ -176,6 +202,8 @@ describe('a live provider token', () => {
         principal: { kind: 'provider', provider: 'RunPods' },
       })
     );
+    // The event is recorded with no user, even when the request carries one.
+    expect(mockTrackerCtor).toHaveBeenCalledWith(expect.anything(), expect.anything(), null);
     expect(mockModelVersionEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'GenerationFetch', provider: 'RunPods', fileId: 7 })
     );
@@ -190,13 +218,31 @@ describe('a live provider token', () => {
     expect(mockGetServerAuthSession).not.toHaveBeenCalled();
   });
 
-  it('is removed from the request before anything else reads it', async () => {
+  it('is removed from req.query and req.url, so later code never sees it', async () => {
     mockResolveDownloadUrl.mockRejectedValue(new Error('storage down'));
     const { req, res } = await run({ token: `RunPods:${SECRET}`, type: 'Model' });
 
     expect(res.status).toHaveBeenCalledWith(500);
     expect(req.query.token).toBeUndefined();
     expect(req.url).toBe(`/api/download/models/${PUBLIC_VERSION}?type=Model`);
+  });
+
+  it('never reaches a log line, through the split-query repair, a bad query or a 401', async () => {
+    const token = `RunPods:${SECRET}`;
+    // A client that appended a second `?`: the repair recovers `token` from inside `type`.
+    await run(
+      { type: `Model?token=${token}` },
+      {},
+      `/api/download/models/${PUBLIC_VERSION}?type=Model?token=${token}`
+    );
+    await run({ token, type: 'NotAType' });
+    await run({ token: `RunPods:${'cd'.repeat(32)}` });
+
+    const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls);
+    // Control: the repair log, written while the token was still on the request, did fire.
+    expect(logged).toContain('split-query-repaired');
+    expect(logged).not.toContain(SECRET);
+    expect(logged).not.toContain('cd'.repeat(32));
   });
 
   it('passes the file selectors to the gate', async () => {
@@ -216,14 +262,29 @@ describe('a live provider token', () => {
 
 describe('the hourly ceiling', () => {
   it('429s past the ceiling', async () => {
-    redisMock.sysRedis.incr.mockResolvedValue(101);
+    mockCounter.mockResolvedValue(101);
     const { res } = await run({ token: `RunPods:${SECRET}` });
     expect(res.status).toHaveBeenCalledWith(429);
     expect(mockCheckGenerationFetch).not.toHaveBeenCalled();
   });
 
+  it('creates the hour counter with its expiry in the same MULTI as the count', async () => {
+    await run({ token: `RunPods:${SECRET}` });
+    expect(mockCounterSet).toHaveBeenCalledWith(
+      expect.stringMatching(/^download:provider:RunPods:\d+$/),
+      '0',
+      { NX: true, EX: 7200 }
+    );
+  });
+
+  it('allows the download that reaches the ceiling exactly', async () => {
+    mockCounter.mockResolvedValue(100);
+    const { res } = await run({ token: `RunPods:${SECRET}` });
+    expect(res.redirect).toHaveBeenCalledWith('https://storage.example/private?sig=1');
+  });
+
   it('allows the download when the counter is unavailable', async () => {
-    redisMock.sysRedis.incr.mockRejectedValue(new Error('redis down'));
+    mockCounter.mockRejectedValue(new Error('redis down'));
     const { res } = await run({ token: `RunPods:${SECRET}` });
     expect(res.redirect).toHaveBeenCalledWith('https://storage.example/private?sig=1');
   });

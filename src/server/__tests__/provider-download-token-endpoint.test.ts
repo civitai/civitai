@@ -12,7 +12,12 @@ const TOKEN = 'test-provider-download-admin-token-0';
 
 const { trackModActivity, store } = vi.hoisted(() => ({
   trackModActivity: vi.fn<(...args: unknown[]) => Promise<undefined>>(async () => undefined),
-  store: { row: null as { key: string; value: unknown } | null, providers: [] as string[] },
+  store: {
+    row: null as { key: string; value: unknown } | null,
+    providers: [] as string[],
+    inTransaction: false,
+    lockReads: [] as { sql: string; inTransaction: boolean }[],
+  },
 }));
 
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
@@ -80,9 +85,20 @@ beforeEach(() => {
     store.row = { ...store.row!, value: data.value };
     return store.row;
   }) as never);
-  dbMock.dbWrite.$queryRaw.mockImplementation((async () =>
-    store.row ? [store.row] : []) as never);
-  dbMock.dbWrite.$transaction.mockImplementation((async (fn: any) => fn(dbMock.dbWrite)) as never);
+  store.inTransaction = false;
+  store.lockReads = [];
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: TemplateStringsArray) => {
+    store.lockReads.push({ sql: sql.join('?'), inTransaction: store.inTransaction });
+    return store.row ? [store.row] : [];
+  }) as never);
+  dbMock.dbWrite.$transaction.mockImplementation((async (fn: any) => {
+    store.inTransaction = true;
+    try {
+      return await fn(dbMock.dbWrite);
+    } finally {
+      store.inTransaction = false;
+    }
+  }) as never);
 });
 
 describe('mint', () => {
@@ -95,10 +111,20 @@ describe('mint', () => {
     expect(JSON.stringify(store.row)).not.toContain(secret);
     expect(res.body.hash).toBeUndefined();
     expect(await resolves(res.body.token)).toBe(true);
-    expect(trackModActivity).toHaveBeenCalledWith(9, {
+    expect(trackModActivity).toHaveBeenCalledWith(-1, {
       entityType: 'user',
       activity: 'providerDownloadToken:mint:RunPods',
     });
+  });
+
+  it('reads the records under a row lock, inside the write transaction', async () => {
+    await call({ action: 'mint', provider: 'RunPods', hourlyCeiling: 5 });
+    expect(store.lockReads).toEqual([
+      {
+        sql: expect.stringMatching(/FROM "KeyValue" WHERE key = \? FOR UPDATE$/),
+        inTransaction: true,
+      },
+    ]);
   });
 
   it('refuses a provider no worker client uses', async () => {
@@ -127,7 +153,7 @@ describe('mint', () => {
     expect((await call({ action: 'ceiling', provider: 'RunPods', hourlyCeiling: 50 })).status).toBe(
       200
     );
-    expect(trackModActivity).toHaveBeenCalledWith(9, {
+    expect(trackModActivity).toHaveBeenCalledWith(-1, {
       entityType: 'user',
       activity: 'providerDownloadToken:ceiling:RunPods',
     });
@@ -198,6 +224,18 @@ describe('through the cache the download route reads', () => {
     expect(await resolves(minted.token)).toBe(false);
   });
 
+  it('requests that find the cache cold while another refill holds the lock share one row read', async () => {
+    const minted = (await call({ action: 'mint', provider: 'RunPods', hourlyCeiling: 5 })).body;
+    redisMock.redis.packed.get.mockResolvedValue(null as never);
+    redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(false as never);
+    dbMock.dbWrite.keyValue.findUnique.mockClear();
+
+    const results = await Promise.all(Array.from({ length: 5 }, () => resolves(minted.token)));
+
+    expect(results).toEqual([true, true, true, true, true]);
+    expect(dbMock.dbWrite.keyValue.findUnique).toHaveBeenCalledTimes(1);
+  });
+
   it('a cache that cannot be read falls back to the row', async () => {
     const minted = (await call({ action: 'mint', provider: 'RunPods', hourlyCeiling: 5 })).body;
     redisMock.redis.packed.get.mockRejectedValue(new Error('cache down'));
@@ -207,6 +245,11 @@ describe('through the cache the download route reads', () => {
   it('a row that cannot be read throws, so the route answers 503 rather than 401', async () => {
     redisMock.redis.packed.get.mockRejectedValue(new Error('cache down'));
     dbMock.dbWrite.keyValue.findUnique.mockRejectedValue(new Error('db down'));
+    await expect(getLiveProviderTokens()).rejects.toThrow('db down');
+  });
+
+  it('a refill whose row read fails throws, rather than retrying the row', async () => {
+    dbMock.dbWrite.keyValue.findUnique.mockRejectedValueOnce(new Error('db down'));
     await expect(getLiveProviderTokens()).rejects.toThrow('db down');
   });
 });

@@ -69,12 +69,23 @@ export async function getLiveProviderTokens(): Promise<LiveProviderToken[]> {
   } catch (error) {
     if (originFailed) throw error;
   }
-  return readLiveTokens(dbWrite);
+  return readLiveTokensShared();
+}
+
+let sharedRead: Promise<LiveProviderToken[]> | undefined;
+
+/** One row read per pod at a time, for requests that found no cached value they could use. */
+function readLiveTokensShared() {
+  sharedRead ??= readLiveTokens(dbWrite).finally(() => {
+    sharedRead = undefined;
+  });
+  return sharedRead;
 }
 
 /**
  * Applies `change` to the stored records under a lock, then replaces the cached live set, so the
- * change reaches downloads at once unless that cache write fails (then within `CACHE_TTL`). `change` returns the new records (omitted: nothing is
+ * change reaches downloads at once unless that cache write fails (then once the cached entry goes
+ * stale, normally within `CACHE_TTL`). `change` returns the new records (omitted: nothing is
  * written), or an error to refuse.
  */
 export async function updateProviderTokenRecords<T>(

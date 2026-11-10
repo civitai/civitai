@@ -23,7 +23,7 @@
 -- POST-APPLY: restart civitai-clickhouse-tracker by pod delete, then confirm with a real event.
 --
 -- Rollback: `ALTER TABLE default.modelVersionEvents DROP COLUMN provider`, only once nothing sends
--- it. The enum value stays (removing a value with rows is not a metadata-only change).
+-- it, then restart the tracker as in POST-APPLY so it stops expecting the column. The enum value stays (removing a value with rows is not a metadata-only change).
 
 -- Verify, AFTER applying:
 --
@@ -32,7 +32,7 @@
 --     -- `provider` LowCardinality(String) DEFAULT ''.
 --
 -- Positive control once the tracker is restarted and a provider token is live: one download with
--- it, wait for the batch to flush, then (time bound first: the table is ORDER BY time):
+-- it, wait for the batch to flush, then (time bound first, as for every query on this table):
 --
 --   SELECT provider, count() FROM default.modelVersionEvents
 --   WHERE time > now() - INTERVAL 1 HOUR AND type = 'GenerationFetch'
