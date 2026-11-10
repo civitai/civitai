@@ -35,6 +35,23 @@ export function templateOf(compiled: CompiledQuery): [string[], ...unknown[]] {
 }
 
 /**
+ * Throws as Postgres does when a statement binds an integer past int4 where it reads an int4 (an
+ * `id = $1` on an int4 column, an `$1::int[]`): the pg pools send parameters untyped, so the server
+ * types them from the statement and rejects the value. Opt-in, for a handler whose statement binds
+ * only int4-typed numbers: call it first. Arrays are checked element by element.
+ */
+export function rejectPastInt4(values: readonly unknown[]): void {
+  for (const value of values.flat()) {
+    if (
+      typeof value === 'number' &&
+      Number.isInteger(value) &&
+      (value > 2_147_483_647 || value < -2_147_483_648)
+    )
+      throw new Error(`value "${value}" is out of range for type integer`);
+  }
+}
+
+/**
  * A Kysely client whose every statement goes to `handler` instead of a database. Most tests want
  * it through `fakeKyselyDbLazy` below.
  *

@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { CacheTTL } from '~/server/common/constants';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { queryPrismaSql } from '~/server/db/prisma-sql-kysely';
+import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createCachedObject } from '~/server/utils/cache-helpers';
@@ -36,6 +36,8 @@ type HostWithEntries = { hostId: number };
 
 /** The ids among `hostIds` with any placement of this surface, from the replica. */
 export async function queryHostsWithEntries(hostIds: number[]): Promise<number[]> {
+  // An id past int4 is no image, so it has no placement; dropped rather than failing the cast.
+  hostIds = hostIds.filter(isPgInt4);
   if (!hostIds.length) return [];
   const { kyselyRead } = await loadKyselyDb();
   const rows = await queryPrismaSql<{ hostId: number }>(
@@ -79,7 +81,8 @@ function remixGalleryHostsCache() {
 
 /** The ids among `hostIds` that have any remix-gallery placement (see the module comment). */
 export async function getRemixGalleryHostsWithEntries(hostIds: number[]): Promise<Set<number>> {
-  const ids = [...new Set(hostIds)];
+  // An id past int4 has no placement (see queryHostsWithEntries), and is not worth a cache key.
+  const ids = [...new Set(hostIds)].filter(isPgInt4);
   if (!ids.length) return new Set();
   const cached = await remixGalleryHostsCache().fetch(ids);
   return new Set(Object.values(cached).map((entry) => entry.hostId));

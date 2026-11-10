@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { sql, type Kysely, type RawBuilder } from 'kysely';
+import { PG_INT4_MAX, PG_INT4_MIN } from '~/server/common/constants';
 
 /**
  * A statement built with `Prisma.sql`, run through Kysely over the app's pg pools instead of the
@@ -21,6 +22,16 @@ export function fromPrismaSql<T>(statement: Prisma.Sql): RawBuilder<T> {
   // TemplateStringsArray its signature names.
   return sql<T>(statement.strings as unknown as TemplateStringsArray, ...statement.values);
 }
+
+/**
+ * Whether `id` fits an int4 column. 🔴 Binding is another difference: Prisma's raw reads answered
+ * `id = ${n}` against an int4 column with no rows for an `n` past int4, while the pg pools send
+ * the value as an untyped parameter that Postgres reads as int4 and rejects as out of range, an
+ * error where Prisma answered "not found". A ported statement whose id comes from a caller drops
+ * or short-circuits ids that fail this before it runs.
+ */
+export const isPgInt4 = (id: number) =>
+  Number.isInteger(id) && id >= PG_INT4_MIN && id <= PG_INT4_MAX;
 
 /** The rows of a `Prisma.sql` statement, run through Kysely (see `fromPrismaSql`). */
 export async function queryPrismaSql<T>(

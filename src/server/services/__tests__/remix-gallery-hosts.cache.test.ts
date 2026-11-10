@@ -25,6 +25,8 @@ const HOST = 7103;
 const ENTRY = 7204;
 const ENTRY_2 = 7205;
 const KEY = 'packed:caches:remix-gallery-hosts';
+// One past int4: no image has this id, and Postgres rejects it where it reads an int4.
+const PAST_INT4 = 2 ** 31;
 
 const isHostsLookup = (strings: readonly string[]) =>
   strings.join('?').includes('SELECT DISTINCT pl."targetId" AS "hostId"');
@@ -49,6 +51,9 @@ beforeEach(() => {
   kysely.read
     .mockReset()
     .mockImplementation(async (strings: readonly string[], ...values: unknown[]) => {
+      // Both statements bind ids where Postgres reads an int4 (`ANY(?::int[])`, `IN (...)`).
+      const { rejectPastInt4 } = await import('~/test-utils/kysely-raw-fake');
+      rejectPastInt4(values);
       if (isHostsLookup(strings)) {
         const asked = values[2] as number[];
         lookups.push(asked);
@@ -150,6 +155,44 @@ describe('the lookup', () => {
       'FROM "Placement" pl WHERE pl.surface = ? AND pl."targetType" = ? AND pl."targetId" = ANY(?::int[])'
     );
     expect(values).toEqual(['remixGallery', 'image', [EMPTY_HOST, HOST]]);
+  });
+});
+
+describe('ids past int4', () => {
+  // Prisma's raw reads answered them with no rows; through the pg pools the same statements are a
+  // range error. So they are dropped before any statement: a card with one still answers.
+  it('are dropped before the lookup and the summaries, and the rest still answer', async () => {
+    withPlacement = [HOST];
+    summaryRows = [
+      {
+        hostId: HOST,
+        imageId: ENTRY,
+        url: 'entry-a',
+        type: 'image',
+        nsfwLevel: 1,
+        username: 'a',
+        total: 1,
+      },
+    ];
+
+    const result = await getRemixGalleryCardSummaries({
+      imageIds: [PAST_INT4, HOST],
+      browsingLevel: 1,
+    });
+
+    expect(result).toStrictEqual({
+      [HOST]: {
+        count: 1,
+        entries: [{ imageId: ENTRY, url: 'entry-a', type: 'image', username: 'a', nsfwLevel: 1 }],
+      },
+    });
+    expect(lookups).toEqual([[HOST]]);
+    expect(summaryIds).toEqual([[HOST]]);
+  });
+
+  it('alone, ask the database nothing and have no entries', async () => {
+    expect(await getRemixGalleryHostsWithEntries([PAST_INT4, -PAST_INT4 - 1])).toEqual(new Set());
+    expect(kysely.read).not.toHaveBeenCalled();
   });
 });
 

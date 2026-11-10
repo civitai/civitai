@@ -5,7 +5,7 @@ import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { queryPrismaSql } from '~/server/db/prisma-sql-kysely';
+import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import {
   bustRemixGalleryHosts,
   getRemixGalleryHostsWithEntries,
@@ -1309,6 +1309,8 @@ const hostIsShowable = (alias = 'i') => {
  */
 async function readHostImage(hostImageId: number) {
   // Through Kysely, not Prisma's `$queryRaw` (see queryPrismaSql): an int4 and two booleans.
+  // An id past int4 is no image: null, as Prisma answered, rather than a range error.
+  if (!isPgInt4(hostImageId)) return null;
   const { kyselyRead } = await loadKyselyDb();
   const [row] = await queryPrismaSql<{ nsfwLevel: number; minor: boolean; showable: boolean }>(
     kyselyRead,

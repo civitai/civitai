@@ -3,7 +3,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { queryPrismaSql } from '~/server/db/prisma-sql-kysely';
+import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 
@@ -130,6 +130,8 @@ export async function assertImageVisibleToViewer({
   // Through Kysely over the pg pools, not Prisma's `$queryRaw`: one of the hottest single-image
   // reads, and the same statement and parameters either way (`queryPrismaSql`). Every column is
   // int4 or boolean, which both executors parse alike.
+  // An id past int4 names no image: not found, as Prisma answered, rather than a range error.
+  if (!isPgInt4(id)) throw throwNotFoundError();
   const { kyselyRead } = await loadKyselyDb();
   const [visible] = await queryPrismaSql<{
     id: number;

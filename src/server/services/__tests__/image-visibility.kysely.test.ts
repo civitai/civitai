@@ -52,6 +52,20 @@ describe('assertImageVisibleToViewer', () => {
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 
+  // Prisma's raw read answered an id past int4 with no row, so NOT_FOUND. Through the pg pools the
+  // same statement is a range error, a 500: the id is answered without the read.
+  it('is NOT_FOUND, without a read, for an id past int4', async () => {
+    const { rejectPastInt4 } = await import('~/test-utils/kysely-raw-fake');
+    kysely.read.mockImplementation(async (_strings: readonly string[], ...values: unknown[]) => {
+      rejectPastInt4(values);
+      return [];
+    });
+    await expect(
+      assertImageVisibleToViewer({ id: 2 ** 31, isModerator: true })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(kysely.read).not.toHaveBeenCalled();
+  });
+
   it('is NOT_FOUND when the read finds no row', async () => {
     kysely.read.mockResolvedValue([]);
     await expect(
