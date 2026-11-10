@@ -4,6 +4,11 @@ import { escapeClickhouseString } from '~/server/clickhouse/escape';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
+import {
+  FEEDBACK_CAPTURE_METADATA_KEY,
+  isFeedbackCaptureOwner,
+  type FeedbackCaptureMetadata,
+} from '@civitai/shared/feedback-capture';
 
 /** How long before an image row was created its upload key may have been minted. */
 const UPLOAD_LOOKBACK_HOURS = 24;
@@ -51,11 +56,29 @@ export async function recordMintedUploadKey(
 export const UPLOAD_REQUEST_IP_NOTE =
   "Upload IP addresses are either the address that created the post containing the image or the address that requested the image's upload.";
 
+/**
+ * Shown with a report's IP events when one is a feedback page capture's upload, which the reporter
+ * requested. Only ever filed when the report's subject is that reporter.
+ */
+export const FEEDBACK_CAPTURE_UPLOAD_IP_NOTE =
+  "One or more upload IP addresses belong to a page capture submitted by a reporter: a screenshot of a Civitai page that this user attached to a feedback report sent to Civitai. That address is the one that requested the screenshot's upload.";
+
 const chTime = (d: Date) => `parseDateTimeBestEffort('${d.toISOString()}')`;
+
+/** The reporter a feedback page capture's stamp names, or null for any other image. */
+function captureReporterId(image: { userId: number; metadata: unknown }): number | null {
+  if (!isFeedbackCaptureOwner(image.userId)) return null;
+  const stamp = (image.metadata as Record<string, unknown> | null)?.[FEEDBACK_CAPTURE_METADATA_KEY];
+  const reporterId = Number((stamp as Partial<FeedbackCaptureMetadata> | undefined)?.reporterId);
+  return Number.isSafeInteger(reporterId) && reporterId > 0 ? reporterId : null;
+}
 
 /**
  * The IP that requested each image's upload key, for `userId`'s images among `imageIds`. Matched
  * on the key that became `Image.url`; an image created without a client upload has none.
+ *
+ * A feedback page capture's key was requested by its reporter, so its IP is `userId`'s only when
+ * `userId` is that reporter, and is then marked as a capture's upload. Otherwise it is left out.
  */
 export async function getImageUploadIpEvents({
   userId,
@@ -66,9 +89,16 @@ export async function getImageUploadIpEvents({
 }) {
   // No user, no match: rows a failed session lookup wrote carry userId 0.
   if (!clickhouse || !userId || !imageIds.length) return [];
-  const images = await dbRead.image.findMany({
+  const found = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
-    select: { id: true, url: true, createdAt: true },
+    select: { id: true, url: true, createdAt: true, userId: true, metadata: true },
+  });
+  const captureIds = new Set<number>();
+  const images = found.filter((image) => {
+    if (!isFeedbackCaptureOwner(image.userId)) return true;
+    if (captureReporterId(image) !== Number(userId)) return false;
+    captureIds.add(image.id);
+    return true;
   });
   if (!images.length) return [];
 
@@ -89,8 +119,9 @@ export async function getImageUploadIpEvents({
   return rows.flatMap(({ key, ip, time }) => {
     const id = idByKey.get(key);
     if (id === undefined) return [];
-    return [
-      { ip, time, type: 'Upload' as const, details: { type: 'image-upload-request' as const, id } },
-    ];
+    const type = captureIds.has(id)
+      ? ('feedback-capture-upload' as const)
+      : ('image-upload-request' as const);
+    return [{ ip, time, type: 'Upload' as const, details: { type, id } }];
   });
 }
