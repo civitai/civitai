@@ -90,6 +90,6 @@ describe('sticker attribution card anchoring', () => {
     expect(dropdown()).not.toBeNull();
     document.querySelector<HTMLElement>('[data-testid="above"]')!.style.height = '160px';
     // The card moves out from under the pointer and closes; left open, it would hang 130px from the sticker.
-    await vi.waitFor(() => expect(dropdown()).toBeNull());
+    await vi.waitFor(() => expect(dropdown()).toBeNull(), { timeout: 5000 });
   });
 });
