@@ -10,7 +10,6 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const mocks = vi.hoisted(() => ({ toggleBan: vi.fn(), removeV2: vi.fn(), removeV3: vi.fn() }));
 
 // Hand-listed: only the decision's own SQL runs against the real label store here.
-vi.mock('~/server/services/comment.service', () => ({ bulkSetCommentTosViolation: vi.fn() }));
 vi.mock('~/server/services/commentsv2.service', () => ({
   bulkSetCommentV2TosViolation: mocks.removeV2,
 }));

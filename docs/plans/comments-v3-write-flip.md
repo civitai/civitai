@@ -84,7 +84,8 @@ type CommentSurface = {
 The event engine counts every `v3ReadSurfaces` surface from CommentV3 already, before the flip: the
 mirror copies each CommentV2 write into it, so the count does not depend on which table a comment
 was written to. `comment-v2.ts` skips those surfaces by the thread's entity column and now counts only
-`UserMetric.commentCount`, on model, 3D-model-review and club-post threads; an orphaned thread has
+`UserMetric.commentCount`, on 3D-model-review and club-post threads (model joined the CommentV3
+surfaces in the model flip, `comments-v3-model-flip.md`); an orphaned thread has
 no owner and counts nothing. `comment-v3-surfaces.parity.test.ts` pins its list to
 `v3ReadSurfaces`. Crucible and storyline have no entry, as CommentV2 never counted them.
 
@@ -95,8 +96,8 @@ backfill, reverse copy and mirror, the old-row sync and the delete and ToS funct
 `commentsv2.service.ts`, or a
 moderation path (reports, account wipe, scam cleanup, block-hide) that routes CommentV3
 rows by `v3WriteSurfaces`, so it follows the flip. Old reports still key on the old link tables
-until Phase 6. Release 2 deleted the v2 write path; model comments write v1, and 3D model reviews
-have no comment UI.
+until Phase 6. Release 2 deleted the v2 write path; model comments wrote v1 until the model flip
+(`comments-v3-model-flip.md`, built 2026-11-06), and 3D model reviews have no comment UI.
 
 ## ClickHouse comment tracking (open)
 
@@ -133,7 +134,7 @@ writes CommentV3 (model comments write through the v1 `comment` router):
 
 Kept until release 2 has soaked, as the rollback path: the old tables, the mirror trigger, the
 reverse copy and the old-row sync (old reports still key on the old link tables). Code shared with
-v1 model comments waits for the model flip and Phase 6.
+v1 model comments went with the model flip (`comments-v3-model-flip.md`), or waits for Phase 6.
 
 **Dev rollback rehearsal, 2026-11-05: passed.** On every write surface, release 2 shaped writes on
 the dev database (a top-level comment, a reply to it, a reply to a pre-flip comment, an edit of a

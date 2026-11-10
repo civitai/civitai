@@ -191,7 +191,8 @@ describe('TurfSummaryProvider', () => {
 
   // Only a viewer who joined Hat Turf sees turf. The
   // others keep the context (the join invite needs it) but get no hats, counts or pushes. The joined
-  // row is the positive control for the rest.
+  // row is the positive control for the rest. On the feed a signed-out viewer has nothing that reads
+  // the summaries, so they are not asked for.
   test.each([
     { who: 'joined', user: { id: 1 }, stock: { available: 3, optedIn: true }, joined: true },
     { who: 'not joined', user: { id: 1 }, stock: { available: 3, optedIn: false }, joined: false },
@@ -212,12 +213,29 @@ describe('TurfSummaryProvider', () => {
     await mount([1, 3]);
     await vi.waitFor(() => expect(latest).not.toBeNull());
     const procs = new Set(h.asked.map((a) => a.proc));
-    expect(procs.has('getSummaries')).toBe(true);
+    expect(procs.has('getSummaries')).toBe(user !== null);
     expect(procs.has('getStickersForImages')).toBe(joined);
     expect(Object.keys(latest!.images).length).toBe(joined ? 2 : 0);
     expect(Object.keys(latest!.stickers).length).toBe(joined ? 2 : 0);
     expect(h.viewers.size).toBe(joined ? 1 : 0);
     expect(latest!.joined).toBe(joined);
+  });
+
+  // Image detail's signed-out badge and panel read `hidden` and `open`, so its own gate keeps them.
+  test('signed out on image detail (its own gate): the summaries are still read', async () => {
+    h.user = null;
+    h.gate = null;
+    await renderWithProviders(
+      <TurfSummaryProvider imageIds={[1, 4, 6]} gate={{ event: 'birthday2026' }}>
+        <Probe />
+      </TurfSummaryProvider>
+    );
+    await vi.waitFor(() => expect(latest).not.toBeNull());
+    const procs = h.asked.map((a) => a.proc);
+    expect(procs).toContain('getSummaries');
+    expect(procs).not.toContain('getStickersForImages');
+    expect(latest!.open[4]).toBe(false);
+    expect(latest!.hidden).toEqual({ 6: true });
   });
 
   test('a push replaces the image’s counts, keeps hatted, and reads its hats back once', async () => {
@@ -309,6 +327,29 @@ describe('TurfSummaryProvider', () => {
       expect(h.mark).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1_000);
       expect(h.mark.mock.calls.map(([arg]) => arg.imageIds)).toEqual([[11, 12, 13, 14, 15]]);
+      stops.forEach((stop) => stop());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A long scroll mounts a few cards every few hundred ms. After the first mark, the cards that follow
+  // wait for the next one at least 2s later, instead of one mark per 250ms window.
+  test('a long scroll sends one mark per two seconds, not one per few cards', async () => {
+    vi.useFakeTimers();
+    try {
+      await mount([1]);
+      const stops: (() => void)[] = [latest!.watch(21)];
+      await vi.advanceTimersByTimeAsync(500);
+      expect(h.mark.mock.calls.map(([arg]) => arg.imageIds)).toEqual([[21]]);
+      for (const id of [22, 23, 24]) {
+        stops.push(latest!.watch(id));
+        await vi.advanceTimersByTimeAsync(500);
+      }
+      // 250ms + 2s after the first mark, not yet.
+      expect(h.mark).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(h.mark.mock.calls.map(([arg]) => arg.imageIds)).toEqual([[21], [22, 23, 24]]);
       stops.forEach((stop) => stop());
     } finally {
       vi.useRealTimers();

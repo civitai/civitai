@@ -24,6 +24,22 @@
   padding: 12px 14px;
 }
 
+.showHats {
+  align-items: center;
+}
+
+@media (max-width: $mantine-breakpoint-sm) {
+  /* A tap row taller than the switch, centred in a slimmer pad: at 44px in the 12px pad the row
+     read as too much padding around one switch. */
+  .showHatsPad {
+    padding-block: 6px;
+  }
+
+  .showHats {
+    min-height: 36px;
+  }
+}
+
 .divider {
   margin: 0;
   border: 0;

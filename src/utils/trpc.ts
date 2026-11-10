@@ -25,9 +25,11 @@ import type { AppRouter } from '~/server/routers';
 import { clientTransformer } from '~/shared/utils/trpc-union-transformer';
 import { isDev } from '~/env/other';
 import { pageRouteHeaders } from '~/utils/page-route-header';
+import { trpcClientHeaders } from '~/utils/trpc-client-headers';
 import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
+import { feedbackErrorLink } from '~/utils/feedback/trpcErrorLink';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 import { BLOCK_TOKEN_QUERY_PROCEDURES } from '~/shared/constants/block-token-transport.constants';
 import {
@@ -35,12 +37,6 @@ import {
   getTrpcUnifiedBatchWindowEnabled,
   registerBatchingApplies,
 } from '~/utils/trpc-batch-window';
-
-type RequestHeaders = {
-  'x-client-date': string;
-  'x-client': string;
-  'x-client-version'?: string;
-};
 
 const url = '/api/trpc';
 
@@ -460,11 +456,7 @@ function batchStreamLink({
     maxItems: TRPC_MAX_BATCH_SIZE,
   });
 }
-const headers: RequestHeaders = {
-  'x-client-version': process.env.version,
-  'x-client-date': Date.now().toString(),
-  'x-client': 'web',
-};
+const headers = trpcClientHeaders;
 
 /**
  * Shared QueryClient config. Used by both the per-request server `QueryClient`
@@ -609,6 +601,7 @@ export const trpcVanilla: CreateTRPCClient<AppRouter> = createTRPCClient<AppRout
         (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
         (opts.direction === 'down' && opts.result instanceof Error),
     }),
+    feedbackErrorLink,
     batchWindowLink,
     terminatingLink({ url, headers: getHeaders() }),
   ],
@@ -640,6 +633,7 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<A
             (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
             (opts.direction === 'down' && opts.result instanceof Error),
         }),
+        feedbackErrorLink,
         batchWindowLink,
         terminatingLink({
           url: isClient ? url : `${env.NEXT_PUBLIC_BASE_URL as string}${url}`,

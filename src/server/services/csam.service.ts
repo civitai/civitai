@@ -34,6 +34,8 @@ import { bulkAddBlockedImages } from '~/server/services/image.service';
 import { csamSendClaimCutoff } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
+import type { CsamContextText } from '~/server/services/csam-context-text';
+import { foldContextText } from '~/server/services/csam-context-text';
 
 type CsamReportImage = {
   id: number;
@@ -159,6 +161,11 @@ function foldDetails(stored: unknown, added: CsamReportFormOutput | undefined) {
     const list = unionLists<unknown>(prior[key], next[key], (item) => item);
     if (list) folded[key] = list;
   }
+  const contextText = foldContextText(
+    prior.contextText,
+    (next as { contextText?: CsamContextText[] }).contextText
+  );
+  if (contextText) folded.contextText = contextText;
   const generatedImages = foldGeneratedImages(prior.generatedImages, next.generatedImages);
   if (generatedImages) folded.generatedImages = generatedImages;
   const nextEvidence = (next as Record<string, unknown>).generatorEvidence;
@@ -481,6 +488,7 @@ async function getTrainingDataZipStream({
     user: reportingUser ?? undefined,
     // Fetched server-side to build a report, not on a user's behalf.
     attribution: { caller: 'other', actor: 'internal' },
+    redCapable: true,
   });
   if (modelFile.status !== 'success') throw new Error('training data not found');
 

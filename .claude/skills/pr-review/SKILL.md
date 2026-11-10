@@ -21,14 +21,17 @@ pushed to such a PR, if it is not a draft and was updated recently, a set of rev
 - Drafts are skipped. A round starts when the PR is marked ready.
 
 Nothing here needs to be run by hand. The repo's PostToolUse hook (`.claude/hooks/pr-review-nudge.mjs`)
-points you here when a Bash call opens or readies a PR whose branch is in this repo, not a fork,
-and `hq` is installed and signed in. If you opened or readied it some other way (the web UI, an MCP
-tool), start at step 1 yourself.
+points you here when a PR whose branch is in this repo, not a fork, is opened or marked ready by
+`gh pr create` / `gh pr ready` in Bash, or by the GitHub MCP tools `create_pull_request` /
+`update_pull_request` (with `draft: false`). It fires whether you reach HQ through the `hq` CLI or
+the HQ MCP tools. If you opened or readied the PR some other way, start at step 1 yourself: the
+web UI, the GitHub MCP `update_pull_request_draft_state` tool, or a GitHub MCP form you submit
+yourself.
 
 ## What you need
 
-- The `hq` CLI, signed in as yourself, or a session with the HQ MCP tools. The MCP tool names are
-  given next to each command below.
+- Either the `hq` CLI, signed in as yourself, or a session with the HQ MCP tools. The hook does not
+  check which you have. The MCP tool names are given next to each command below.
 - If `hq` answers `403` on a PR review command, you have no grant on the review collections yet.
   Tell the user to ask an HQ admin. Don't work around it.
 
@@ -49,8 +52,13 @@ keeps it internal. It never goes into the PR body.
 ## 2. Wait for the round
 
 ```bash
-hq pr-review watch civitai/civitai#<n>          # in the background; --head <sha> for one push
+hq pr-review watch civitai/civitai#<n>          # in the background; --head <sha> for one push; MCP: pr_review_watch
 ```
+
+With the HQ MCP, call `pr_review_watch`. It does not run in the background: it waits a bounded
+time and answers with an `outcome`. If the outcome is `intent_needed`, record the intent (step 1)
+and call it again. Whenever its `next` says to call again, do so, but stop after two hours without
+a round, as the CLI watch does.
 
 It waits for the newest round to finish and prints it with its blocking findings. Exit `10` means
 the round has blocking findings. Exit `11` means watch again: you usually pushed while the round

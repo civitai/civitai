@@ -4,7 +4,10 @@ import { logger } from './logger';
 export class SimpleClickhouse {
   constructor(private ch: IClickhouseClient) {}
 
-  public async query<T extends object>(query: TemplateStringsArray | string, ...values: any[]): Promise<T[]> {
+  public async query<T extends object>(
+    query: TemplateStringsArray | string,
+    ...values: any[]
+  ): Promise<T[]> {
     if (typeof query !== 'string') {
       query = query.reduce((acc, part, i) => acc + part + this.formatSqlType(values[i] ?? ''), '');
     }
@@ -20,8 +23,10 @@ export class SimpleClickhouse {
   private formatSqlType(value: any): string {
     // Catch any dates being passed in as a string
 
-
-    if (typeof value === 'string' && (value.endsWith('(Coordinated Universal Time)') || /\.\d{3}Z$/.test(value))) {
+    if (
+      typeof value === 'string' &&
+      (value.endsWith('(Coordinated Universal Time)') || /\.\d{3}Z$/.test(value))
+    ) {
       value = new Date(value);
     }
     if (value instanceof Date) return "parseDateTimeBestEffort('" + value.toISOString() + "')";
@@ -57,13 +62,19 @@ const redisHelpers = (redis: IRedisClient) => {
     // re-applying the same delta becomes a no-op — the Redis equivalent of the
     // ClickHouse ReplacingMergeTree dedup. The marker is set BEFORE the
     // existence check on KEYS[1], so an event that arrives while the metric key
-    // is cold (not yet populated) still records "seen": if a reader populates
-    // the key from ClickHouse (which already has this event's row) before the
-    // redelivery lands, the redelivery won't double-count it.
-    // KEYS[2] MUST be hash-tagged to KEYS[1]'s slot (e.g. {<KEYS[1]>}:...)
-    // so both keys co-locate on one cluster node.
+    // is cold still records "seen" and a redelivery can't double-count it.
+    // When ARGV[4] > 0, a first-seen event also sets KEYS[3], the entity's
+    // recent-event marker, with that TTL: a populate that reads ClickHouse before
+    // this event reaches it would skip or wipe the increment, and the marker tells
+    // that populate to refresh again soon (see MetricService.populate in
+    // event-engine-common). ARGV[4] = 0 sets no marker (SET EX 0 is an error).
+    // KEYS[2] and KEYS[3] MUST be hash-tagged to KEYS[1]'s slot (e.g.
+    // {<KEYS[1]>}:...) so all three keys co-locate on one cluster node.
     hIncrIfExistsOnce: `
       if redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[3]) then
+        if tonumber(ARGV[4]) > 0 then
+          redis.call('SET', KEYS[3], '1', 'EX', ARGV[4])
+        end
         if redis.call('EXISTS', KEYS[1]) == 1 then
           return redis.call('HINCRBY', KEYS[1], ARGV[1], ARGV[2])
         end
@@ -71,6 +82,17 @@ const redisHelpers = (redis: IRedisClient) => {
       else
         return 0
       end
+    `,
+    // hReplaceEx that also stamps ARGV[2]: ARGV[3] normally, ARGV[4] when the marker
+    // KEYS[2] exists. Checked in the same script as the write, so a marker set just
+    // before it can't be missed. ARGV[5..] are field/value pairs. KEYS[2] must be
+    // hash-tagged to KEYS[1]'s cluster slot.
+    hReplaceStampedEx: `
+      redis.call('DEL', KEYS[1])
+      local stamp = ARGV[3]
+      if redis.call('EXISTS', KEYS[2]) == 1 then stamp = ARGV[4] end
+      redis.call('HSET', KEYS[1], ARGV[2], stamp, unpack(ARGV, 5))
+      return redis.call('EXPIRE', KEYS[1], ARGV[1])
     `,
   };
   const scriptShas: Partial<Record<keyof typeof scripts, string>> = {};
@@ -80,7 +102,7 @@ const redisHelpers = (redis: IRedisClient) => {
       if ('masters' in (redis as any)) {
         const cluster = redis as any;
         const masters = cluster.masters ? Object.values(cluster.masters) : [];
-        for (const master of masters as {client: IRedisClient}[]) {
+        for (const master of masters as { client: IRedisClient }[]) {
           const sha = await master.client.sendCommand?.(['SCRIPT', 'LOAD', script.trim()]);
           if (sha) scriptShas[name as keyof typeof scripts] = sha;
         }
@@ -89,14 +111,14 @@ const redisHelpers = (redis: IRedisClient) => {
         if (sha) scriptShas[name as keyof typeof scripts] = sha;
       }
     }
-  }
+  };
 
   const addScripts = (redis: IRedisClient | IRedisMulti) => {
     const executeScript = async (name: keyof typeof scripts, keys: string[], args: string[]) => {
       const sha = scriptShas[name];
       if (!sha) return await redis.eval(scripts[name], { keys, arguments: args });
       else return redis.evalSha(sha, { keys, arguments: args });
-    }
+    };
 
     return {
       async setNxKeepTtlWithEx(key: string, value: string, ttl: number) {
@@ -107,16 +129,41 @@ const redisHelpers = (redis: IRedisClient) => {
         const result = await executeScript('hIncrIfExists', [key], [field, incrBy.toString()]);
         return result !== 0;
       },
-      // Idempotent hIncrIfExists. `dedupeKey` must be hash-tagged to `key`'s
-      // cluster slot. The increment runs once per unique dedupeKey within ttl
+      // Idempotent hIncrIfExists. `dedupeKey` and `recentEventKey` must be
+      // hash-tagged to `key`'s cluster slot. The increment runs once per unique dedupeKey within ttl
       // seconds; replays are no-ops. Returns false when the increment was
       // skipped (duplicate or cold key).
-      async hIncrIfExistsOnce(key: string, dedupeKey: string, field: string, incrBy: number, ttl: number) {
-        const result = await executeScript('hIncrIfExistsOnce', [key, dedupeKey], [field, incrBy.toString(), String(ttl)]);
+      async hIncrIfExistsOnce(
+        key: string,
+        dedupeKey: string,
+        recentEventKey: string,
+        field: string,
+        incrBy: number,
+        ttl: number,
+        recentEventTtl: number
+      ) {
+        const result = await executeScript(
+          'hIncrIfExistsOnce',
+          [key, dedupeKey, recentEventKey],
+          [field, incrBy.toString(), String(ttl), String(recentEventTtl)]
+        );
         return result !== 0;
       },
-    }
-  }
+      async hReplaceStampedEx(
+        key: string,
+        markerKey: string,
+        stamp: { field: string; value: string; ifMarker: string },
+        fields: Record<string, string>,
+        ttl: number
+      ) {
+        return executeScript(
+          'hReplaceStampedEx',
+          [key, markerKey],
+          [String(ttl), stamp.field, stamp.value, stamp.ifMarker, ...Object.entries(fields).flat()]
+        );
+      },
+    };
+  };
 
   const helpers = {
     async hSetEx(key: string, fields: Record<string, string>, ttl: number) {
@@ -139,9 +186,12 @@ export type RedisWithHelpers<TRedis extends IRedisClient = IRedisClient> = Omit<
 // Extract the return type of TRedis's multi method, or default to IRedisMulti
 type ExtractMultiType<T> = T extends { multi(): infer M } ? M : IRedisMulti;
 
-export type MultiWithHelpers<TRedis extends IRedisClient> = ExtractMultiType<TRedis> & ReturnType<ReturnType<typeof redisHelpers>['addScripts']>;
+export type MultiWithHelpers<TRedis extends IRedisClient> = ExtractMultiType<TRedis> &
+  ReturnType<ReturnType<typeof redisHelpers>['addScripts']>;
 
-export function withRedisHelpers<TRedis extends IRedisClient>(redis: TRedis): RedisWithHelpers<TRedis> {
+export function withRedisHelpers<TRedis extends IRedisClient>(
+  redis: TRedis
+): RedisWithHelpers<TRedis> {
   const { addScripts, ...helpers } = redisHelpers(redis);
 
   return new Proxy(redis as unknown as RedisWithHelpers<TRedis>, {
@@ -164,7 +214,7 @@ export function withRedisHelpers<TRedis extends IRedisClient>(redis: TRedis): Re
               // Return original multi methods
               const val = Reflect.get(multiTarget, multiProp);
               return typeof val === 'function' ? val.bind(multiTarget) : val;
-            }
+            },
           }) as MultiWithHelpers<TRedis>;
         };
       }
@@ -175,7 +225,7 @@ export function withRedisHelpers<TRedis extends IRedisClient>(redis: TRedis): Re
         if (logger.isDebugEnabled) {
           logger.redis(`Binding function: ${String(prop)}`);
         }
-        return function(...args: any[]) {
+        return function (...args: any[]) {
           if (logger.isDebugEnabled) {
             logger.redis(`Calling ${String(prop)} with args:`, args.length);
           }

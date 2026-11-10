@@ -32,8 +32,8 @@ type Props<T extends string | number> = {
 };
 
 const COLUMNS = 4;
-/** Must equal the grid's `gap-1.5`; the fit maths uses it. */
-const GAP = 6;
+/** Must equal the grid's `gap-1.5`; the fit maths and OverflowSegmentedControl's More anchor use it. */
+export const CHOICE_GROUP_GAP = 6;
 
 /**
  * One of a few options as equal-width tiles: the generator's tile control for a pick-one. Four to a
@@ -133,7 +133,9 @@ function useColumnsThatFit(
     // Mounted hidden, it measured nothing; measure again now there is a width.
     if (!widest.current) measure(el);
     if (!widest.current) return;
-    const room = Math.floor((el.clientWidth + GAP) / (widest.current + GAP));
+    const room = Math.floor(
+      (el.clientWidth + CHOICE_GROUP_GAP) / (widest.current + CHOICE_GROUP_GAP)
+    );
     const perRow = Math.max(1, Math.min(cap, room));
     setFitted(Math.ceil(count / Math.ceil(count / perRow)));
   };

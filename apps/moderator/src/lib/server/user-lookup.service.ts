@@ -690,15 +690,15 @@ async function getModelFlags(userId: number) {
 }
 
 /**
- * "Model comments" = rows with an old `Comment` id (the lists' split); "Image comments" is Retool's
- * label for everything else. Tombstones keep their `userId`, so are excluded.
+ * "Model comments" are comments on models (the lists' split); "Image comments" is Retool's label for
+ * everything else. Tombstones keep their `userId`, so are excluded.
  */
 async function getCommentCounts(userId: number) {
   const r = await dbRead
     .selectFrom('CommentV3')
     .select((eb) => [
-      eb.fn.count<string>(sql`CASE WHEN "legacyV1Id" IS NOT NULL THEN 1 END`).as('model'),
-      eb.fn.count<string>(sql`CASE WHEN "legacyV1Id" IS NULL THEN 1 END`).as('other'),
+      eb.fn.count<string>(sql`CASE WHEN "entityType" = 'model' THEN 1 END`).as('model'),
+      eb.fn.count<string>(sql`CASE WHEN "entityType" <> 'model' THEN 1 END`).as('other'),
     ])
     .where('userId', '=', userId)
     .where('deletedAt', 'is', null)
@@ -727,7 +727,7 @@ async function getCommentFlags(userId: number) {
       eb.fn.count<string>(sql`CASE WHEN "hidden" THEN 1 END`).as('hidden'),
     ])
     .where('userId', '=', userId)
-    .where('legacyV1Id', 'is not', null)
+    .where('entityType', '=', 'model')
     .where('deletedAt', 'is', null)
     .executeTakeFirst();
   return [

@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useHatTurfFeed } from '~/components/HatTurf/useHatTurfFeed';
 import type { HatTurfFeedArm } from '~/components/HatTurf/useHatTurfFeed';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
@@ -25,6 +26,10 @@ const WATCH_BATCH = 50;
 const WATCH_REFRESH_MS = 30_000;
 // Cards mount a few at a time while scrolling; their marks go out together.
 const WATCH_COALESCE_MS = 250;
+// Newly mounted cards wait at least this long after a mark for the next, so a scroll stays under
+// the watch's per-caller rate limit. A change landing during the wait is not pushed to the new
+// card, which shows its page's read.
+const WATCH_MIN_GAP_MS = 2_000;
 // A card that watches again rereads its image's counts when what is drawn is older than this: a
 // change made while nobody watched it was pushed to nobody.
 const CATCH_UP_STALE_MS = 30_000;
@@ -79,7 +84,9 @@ export function TurfSummaryProvider({
   children: React.ReactNode;
 }) {
   const feedGate = useHatTurfFeed();
-  const gate = gateOverride === undefined ? feedGate : gateOverride;
+  // Event cosmetics off: no Hat Turf at all for this viewer, as if they never joined.
+  const shown = useShowEventCosmetics();
+  const gate = !shown ? null : gateOverride === undefined ? feedGate : gateOverride;
   const event = gate?.event;
   const arm = gateOverride === undefined ? feedGate?.arm ?? null : null;
   const utils = trpc.useUtils();
@@ -91,6 +98,10 @@ export function TurfSummaryProvider({
   );
   const joined = !!user && stock?.optedIn === true;
 
+  // On the feed nothing reads the summaries for a signed-out viewer: the hat button waits for a
+  // stock (signed in only), and the badge and the hat layer for a joined viewer. Image detail passes
+  // its own gate and keeps them: its signed-out badge and panel read `hidden` and `open`.
+  const readsSummaries = !!event && (gateOverride !== undefined || !!user);
   const chunks = useMemo(
     () => (event ? chunkIds(imageIds, SUMMARY_CHUNK) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -98,7 +109,7 @@ export function TurfSummaryProvider({
   );
 
   const summaryQueries = trpc.useQueries((t) =>
-    chunks.map((chunk) =>
+    (readsSummaries ? chunks : []).map((chunk) =>
       t.hatTurf.getSummaries({ event: event ?? '', imageIds: chunk }, { staleTime: 30_000 })
     )
   );
@@ -365,7 +376,10 @@ function TurfPushes({ onPush }: { onPush: (raw: unknown) => void }) {
   return null;
 }
 
-/** New cards are marked at once; the whole set is re-marked on the interval. */
+/**
+ * New cards are marked together after a short wait, and at most once every WATCH_MIN_GAP_MS; the
+ * whole set is re-marked on the interval.
+ */
 function TurfWatcher({
   event,
   watching,
@@ -390,20 +404,23 @@ function TurfWatcher({
   );
 
   const flush = useRef<ReturnType<typeof setTimeout>>();
+  const lastFlushSent = useRef(-Infinity);
   useEffect(() => {
     if (flush.current) return;
+    const wait = Math.max(WATCH_COALESCE_MS, lastFlushSent.current + WATCH_MIN_GAP_MS - Date.now());
     flush.current = setTimeout(() => {
       flush.current = undefined;
       const current = [...watching.current.keys()];
       const added = current.filter((id) => !marked.current.has(id));
       marked.current = new Set(current);
       if (added.length) {
+        lastFlushSent.current = Date.now();
         send(added);
         const again = added.filter((id) => everMarked.current.has(id));
         added.forEach((id) => everMarked.current.add(id));
         if (again.length) onAdded(again);
       }
-    }, WATCH_COALESCE_MS);
+    }, wait);
   }, [version, watching, send, onAdded]);
   useEffect(() => () => clearTimeout(flush.current), []);
 

@@ -10,7 +10,7 @@ import {
 } from '$lib/server/user-lookup.service';
 import type { HoldContext, HoldParent, HoldProfile } from './hold-context';
 
-type HoldRef = Pick<CsamHoldRow, 'id' | 'entityType' | 'entityId' | 'commentModelId'>;
+type HoldRef = Pick<CsamHoldRow, 'id' | 'entityType' | 'entityId' | 'commentV3Id'>;
 
 const toTile = (media: ProfileMedia, caption: string): AppealCoverImage | null =>
   media.id === undefined
@@ -192,16 +192,18 @@ const bare = ({ type, id }: ParentRef): HoldParent => ({
 
 async function parentContexts(holds: HoldRef[]): Promise<Map<number, HoldParent>> {
   // `commentParents` reads `CommentV3`, which shares its ids with `CommentV2`, so it answers both.
-  const isThreadComment = (hold: HoldRef) =>
-    hold.entityType === 'CommentV2' || hold.entityType === 'CommentV3';
-  const threadIds = holds.filter(isThreadComment).map((h) => h.entityId);
-  const threads = threadIds.length ? await commentParents(threadIds) : new Map<number, ParentRef>();
-  const refOf = (hold: HoldRef): ParentRef | null =>
-    isThreadComment(hold)
-      ? threads.get(hold.entityId) ?? null
-      : hold.entityType === 'Comment' && hold.commentModelId
-      ? { type: 'model', id: hold.commentModelId }
+  const v3IdOf = (hold: HoldRef) =>
+    hold.entityType === 'CommentV2' || hold.entityType === 'CommentV3'
+      ? hold.entityId
+      : hold.entityType === 'Comment'
+      ? hold.commentV3Id
       : null;
+  const threadIds = holds.flatMap((h) => v3IdOf(h) ?? []);
+  const threads = threadIds.length ? await commentParents(threadIds) : new Map<number, ParentRef>();
+  const refOf = (hold: HoldRef): ParentRef | null => {
+    const id = v3IdOf(hold);
+    return id ? threads.get(id) ?? null : null;
+  };
 
   const refs = holds.flatMap((h) => refOf(h) ?? []);
   if (!refs.length) return new Map();

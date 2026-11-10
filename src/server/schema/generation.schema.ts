@@ -361,6 +361,7 @@ export const prepareModelSchema = z.object({
 export type GetResourceDataByIdsInput = z.infer<typeof getResourceDataByIdsSchema>;
 export const getResourceDataByIdsSchema = z.object({
   ids: z.array(z.number()).min(1).max(100),
+  acceptBoostRequired: z.boolean().optional(),
 });
 
 export type ResolveImageMetaInput = z.infer<typeof resolveImageMetaSchema>;

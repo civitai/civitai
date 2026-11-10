@@ -139,16 +139,19 @@ describe('reactions', () => {
   it('awards a hatted image reaction with a per-(entity, actor) sourceId', async () => {
     hatted.add('Image:7');
     await onReactionCreated({ entityType: 'image', entityId: 7, userId: ACTOR });
-    expect(awardEventPoints).toHaveBeenCalledWith([
-      {
-        type: 'reaction',
-        actorId: ACTOR,
-        entityType: 'Image',
-        entityId: 7,
-        time: expect.any(Date),
-        sourceId: `ImageReaction:7:${ACTOR}`,
-      },
-    ]);
+    expect(awardEventPoints).toHaveBeenCalledWith(
+      [
+        {
+          type: 'reaction',
+          actorId: ACTOR,
+          entityType: 'Image',
+          entityId: 7,
+          time: expect.any(Date),
+          sourceId: `ImageReaction:7:${ACTOR}`,
+        },
+      ],
+      expect.any(Function)
+    );
   });
 
   it('ignores reactions on other entity types and on unhatted content', async () => {

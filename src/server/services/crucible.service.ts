@@ -134,8 +134,9 @@ import {
   afterPostsPublish,
   afterPostsUnpublish,
 } from '~/server/services/post.service';
+import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import { NotificationCategory } from '~/server/common/enums';
-import { imageResourcesCache } from '~/server/redis/caches';
+import { imageResourcesCache, refreshHasReceivedReviews } from '~/server/redis/caches';
 import {
   areCrucibleEntriesClosed,
   getCrucibleLiveMinVotes,
@@ -4450,7 +4451,7 @@ async function revealCrucibleEntryPosts(entries: { crucibleId: number } | { imag
         )`
       : Prisma.sql`i.id = ${entries.imageId}`;
   try {
-    const posts = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
+    const posts = await dbWrite.$queryRaw<{ id: number; userId: number; hidden: boolean }[]>`
       WITH entry_posts AS (
         SELECT DISTINCT p.id, p."userId", p."publishedAt" > now() AS hidden
         FROM "Image" i
@@ -4463,9 +4464,14 @@ async function revealCrucibleEntryPosts(entries: { crucibleId: number } | { imag
         FROM entry_posts e
         WHERE p.id = e.id AND e.hidden
       )
-      SELECT id, "userId" FROM entry_posts
+      SELECT id, "userId", hidden FROM entry_posts
     `;
     await afterPostsPublish(posts.map((post) => ({ postId: post.id, userId: post.userId })));
+    syncReviewsOfMovedPosts({
+      change: 'publish',
+      postIds: posts.filter((post) => post.hidden).map((post) => post.id),
+      onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+    });
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -4478,7 +4484,8 @@ async function revealCrucibleEntryPosts(entries: { crucibleId: number } | { imag
 
 type EntryRemover =
   | { role: 'moderator'; userId: number }
-  | { role: 'owner'; userId: number; reasonText: string };
+  | { role: 'owner'; userId: number; reasonText: string }
+  | { role: 'review'; userId: number; reasonText: string };
 
 const OWNER_CAP_REACHED = `You've already removed ${CRUCIBLE_OWNER_REMOVAL_CAP} entries from this crucible, the most an owner can. Ask a moderator to remove any others.`;
 
@@ -4508,9 +4515,23 @@ export const removeCrucibleEntryAsOwner = async ({
   });
 };
 
+/** The AI theme review removes an off-theme entry: a moderator's removal, with its reason shown. */
+export const removeCrucibleEntryForThemeReview = ({
+  entryId,
+  reasonText,
+}: {
+  entryId: number;
+  reasonText: string;
+}) => removeEntry(entryId, { role: 'review', userId: constants.system.user.id, reasonText });
+
 async function removeEntry(entryId: number, remover: EntryRemover) {
   const isOwnerRemoval = remover.role === 'owner';
-  const actor = isOwnerRemoval ? { ownerId: remover.userId } : { moderatorId: remover.userId };
+  const actor =
+    remover.role === 'owner'
+      ? { ownerId: remover.userId }
+      : remover.role === 'review'
+      ? { reviewerId: remover.userId }
+      : { moderatorId: remover.userId };
   const moderatorId = remover.userId;
   const entry = await dbWrite.crucibleEntry.findUnique({
     where: { id: entryId },
@@ -4671,7 +4692,7 @@ async function removeEntry(entryId: number, remover: EntryRemover) {
       crucibleId,
       crucibleName: getCruciblePublishableName(crucible),
       refundedAmount: fee,
-      ...(isOwnerRemoval && { removedBy: 'owner' as const, reason: remover.reasonText }),
+      ...(remover.role !== 'moderator' && { removedBy: remover.role, reason: remover.reasonText }),
     },
   });
 

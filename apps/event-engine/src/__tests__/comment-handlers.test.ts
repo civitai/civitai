@@ -1,7 +1,6 @@
 import { expect, test } from 'vitest';
 import { commentV2Handler } from '@/handlers/comment-v2';
 import { COMMENT_V3_SURFACES, commentV3Handler } from '@/handlers/comment-v3';
-import { commentHandler } from '@/handlers/comments';
 
 type Add = { entityType: string; entityId: number; as: number; metric: string; value: number };
 
@@ -224,6 +223,7 @@ test('the owner query still mentions every commentable surface', async () => {
     model3d: 'model3dId',
     appListing: 'appListingId',
     comicChapter: 'comicProjectId',
+    model: 'modelId',
   };
   for (const surface of COMMENT_V3_SURFACES) {
     const column = surfaceColumn[surface];
@@ -258,42 +258,13 @@ test('the owner query still mentions every commentable surface', async () => {
   }
 });
 
-test('a model comment counts for the model and its creator', async () => {
-  const { adds, actions } = recorder();
-  const { pg, calls } = pgReturning({ userId: 555 });
-
-  await commentHandler.process({
-    operation: 'create',
-    record: { userId: 42, modelId: 9 },
-    actions,
-    pg,
-  } as never);
-
-  expectAdds(adds, [entity('Model', 9, 42, 1), user(555, 42, 1)]);
-  expect(calls[0].params).toEqual([9]);
-  // One round trip per event, on the highest-volume comment surface.
-  expect(calls).toHaveLength(1);
-});
-
-test('deleting a model comment backs out both counts', async () => {
-  const { adds, actions } = recorder();
-  const { pg } = pgReturning({ userId: 555 });
-
-  // Without this, a sign flip on the delete path inflates the largest comment surface on the site
-  // forever — nothing replays these events to repair it.
-  await commentHandler.process({
-    operation: 'delete',
-    record: { userId: 42, modelId: 9 },
-    actions,
-    pg,
-  } as never);
-
-  expectAdds(adds, [entity('Model', 9, 42, -1), user(555, 42, -1)]);
-});
-
 test.each([
   ['commentV2Handler', commentV2Handler, { userId: 42, threadId: 1 }],
-  ['commentHandler', commentHandler, { userId: 42, modelId: 9 }],
+  [
+    'commentV3Handler',
+    commentV3Handler,
+    { id: 1, userId: 42, entityType: 'model', entityId: 7, deletedAt: null },
+  ],
 ])('%s emits nothing when the owner lookup fails', async (_name, handler, record) => {
   const { adds, actions } = recorder();
   const pg = {
@@ -312,20 +283,6 @@ test.each([
     handler.process({ operation: 'create', record, actions, pg } as never)
   ).rejects.toThrow('connection terminated');
   expect(adds).toEqual([]);
-});
-
-test('a creator commenting on their own model counts for the model but not for themselves', async () => {
-  const { adds, actions } = recorder();
-  const { pg } = pgReturning({ userId: 42 });
-
-  await commentHandler.process({
-    operation: 'create',
-    record: { userId: 42, modelId: 9 },
-    actions,
-    pg,
-  } as never);
-
-  expectAdds(adds, [entity('Model', 9, 42, 1)]);
 });
 
 const v3 = (
@@ -390,9 +347,8 @@ test('a CommentV3 delete backs a live comment out, and a tombstone only once', a
 
 test('CommentV3 skips self-comments for the owner and surfaces it does not count', async () => {
   expectAdds((await v3('create', {}, { ownerId: 42 })).adds, [entity('Article', 77, 42, 1)]);
-  // Model comments are counted from `Comment` and CommentV2, not here; crucible and storyline are
-  // not counted.
-  for (const entityType of ['model', 'crucible', 'storyline'])
+  // Crucible and storyline are not counted.
+  for (const entityType of ['crucible', 'storyline'])
     expect((await v3('create', { entityType }, { ownerId: 555 })).adds).toEqual([]);
 });
 
@@ -400,6 +356,7 @@ test.each([
   ['image', 'Image'],
   ['post', 'Post'],
   ['bounty', 'Bounty'],
+  ['model', 'Model'],
 ])('a CommentV3 %s comment counts for the entity and its owner', async (entityType, metric) => {
   const { adds, calls } = await v3('create', { entityType }, { ownerId: 555 });
   expectAdds(adds, [user(555, 42, 1), entity(metric, 77, 42, 1)]);

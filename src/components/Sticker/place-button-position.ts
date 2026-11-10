@@ -52,6 +52,7 @@ export function chromeClearance({
   height,
   rotation,
   knobOffset,
+  knobBelow = false,
   outset,
   gap,
 }: {
@@ -63,6 +64,8 @@ export function chromeClearance({
   rotation: number;
   /** The rotate knob hangs this fraction of the sticker's height above it. */
   knobOffset: number;
+  /** The knob hangs below instead (knobBelowFor). */
+  knobBelow?: boolean;
   /** How far the corner handles stick out past the box on every side. */
   outset: number;
   /** Clear air between the furthest thing on the sticker and the chrome. */
@@ -73,11 +76,13 @@ export function chromeClearance({
   const sin = Math.abs(Math.sin(radians));
 
   // The local rectangle to clear, about the sticker's centre. Asymmetric,
-  // because the rotate knob only hangs off the top — and it is what makes this
-  // more than the usual `h·|cos| + w·|sin|` extent: that formula is for a
-  // rectangle centred on the point it turns about, and the knob is not.
-  const top = -(height / 2 + Math.max(knobOffset * height, outset));
-  const bottom = height / 2 + outset;
+  // because the rotate knob hangs off one end (the top, or the bottom when
+  // `knobBelow`) — and it is what makes this more than the usual
+  // `h·|cos| + w·|sin|` extent: that formula is for a rectangle centred on the
+  // point it turns about, and the knob is not.
+  const knob = Math.max(knobOffset * height, outset);
+  const top = -(height / 2 + (knobBelow ? outset : knob));
+  const bottom = height / 2 + (knobBelow ? knob : outset);
   // Every corner shares the same |x·sin| reach, so only the y term differs.
   const side = (width / 2 + outset) * sin;
 
@@ -219,8 +224,11 @@ export function placeButtonPosition({
   tray,
   clip,
   flipped,
+  lift = 0,
+  liftOverTray = false,
   rotation,
   knobOffset,
+  knobBelow = false,
   outset,
   gap,
 }: {
@@ -229,11 +237,16 @@ export function placeButtonPosition({
   tray: Box | null;
   clip: Box | null;
   flipped: boolean;
+  /** How far the cluster is pulled in toward the sticker now, from the last result. */
+  lift?: number;
+  /** Also lift a cluster the tray covers. A Hat Turf hat opts in: its player has to reach Place. */
+  liftOverTray?: boolean;
   rotation: number;
   knobOffset: number;
+  knobBelow?: boolean;
   outset: number;
   gap: number;
-}): { flipped: boolean; below: number; above: number } | null {
+}): { flipped: boolean; below: number; above: number; lift: number } | null {
   // The artwork rotates inside the sticker's element, so the element's box is
   // the unrotated one the chrome is laid out against.
 
@@ -250,24 +263,60 @@ export function placeButtonPosition({
   // `placementControlPosition`.
   if (!(height > 0) || !(width > 0)) return null;
 
-  const clearance = chromeClearance({ width, height, rotation, knobOffset, outset, gap });
+  const clearance = chromeClearance({
+    width,
+    height,
+    rotation,
+    knobOffset,
+    knobBelow,
+    outset,
+    gap,
+  });
   // From the cluster's own measured rect, both times: the pair that comes out
   // is the same whichever side it is currently on.
-  const current = cluster.getBoundingClientRect();
+  const measured = cluster.getBoundingClientRect();
+  // Where the cluster would be without its lift, so the lift never feeds its own decision.
+  const current = shiftDown(measured, flipped ? -lift : lift);
   const boxes = placeButtonBoxes({
     current,
     flipped,
     distance: candidateDistance({
       height,
-      clusterHeight: current.height,
+      clusterHeight: measured.height,
       below: clearance.below,
       above: clearance.above,
     }),
   });
 
+  const nextFlipped = shouldFlipPlaceButton({ ...boxes, tray, clip, flipped });
   return {
-    flipped: shouldFlipPlaceButton({ ...boxes, tray, clip, flipped }),
+    flipped: nextFlipped,
     below: clearance.below,
     above: clearance.above,
+    lift: placeButtonLift(
+      nextFlipped ? boxes.above : boxes.below,
+      nextFlipped,
+      liftOverTray ? tray : null,
+      clip
+    ),
   };
+}
+
+/**
+ * How far to pull the cluster in over the sticker when neither side fits, so its buttons stay
+ * reachable. A tall cluster on a sticker low in a short viewport
+ * otherwise hangs past the clipping edge, where nothing can press Place.
+ *
+ * `tray` is passed only by a host that opts in. A sticker draft leaves it out: scrolling brings
+ * its cluster out from under the tray, and lifting for it covered the sticker while the tray
+ * stayed open.
+ */
+export function placeButtonLift(box: Box, flipped: boolean, tray: Box | null, clip: Box | null) {
+  if (flipped) return Math.max(0, Math.ceil((clip?.top ?? 0) - box.top));
+  const limits = [
+    clip?.bottom,
+    tray && box.right > tray.left && box.left < tray.right ? tray.top : undefined,
+  ].filter((limit): limit is number => limit != null);
+  if (!limits.length) return 0;
+  return Math.max(0, Math.ceil(box.bottom - Math.min(...limits)));
 }

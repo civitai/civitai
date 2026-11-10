@@ -39,6 +39,7 @@ export const watchOpenNowpaymentsJob = createJob(
       ...result.counts,
       checked: result.checked,
       closed: result.closed,
+      lateFinished: result.lateFinished,
       lookupFailed: result.lookupFailed,
       digestSent,
       listed: listed.length,

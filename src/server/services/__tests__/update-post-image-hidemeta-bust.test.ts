@@ -84,6 +84,8 @@ const { mockPurgeResizeCache } = vi.hoisted(() => ({
 const mockFindUniqueOrThrow = dbMock.dbWrite.image.findUniqueOrThrow;
 const mockImageUpdate = dbMock.dbWrite.image.update;
 
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+
 // The heavy image.service graph — replaced wholesale with the named exports post.service
 // imports. `purgeResizeCache` is spied so we can assert the hide-only path independently.
 vi.mock('~/server/services/image.service', () => ({

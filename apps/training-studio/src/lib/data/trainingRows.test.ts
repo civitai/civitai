@@ -4,12 +4,16 @@ import {
   ARCHIVE_TOKEN_BUDGET,
   MAX_ARCHIVE_ENTRIES,
   UNKNOWN_BASE,
+  canDeleteRun,
   epochArchiveParts,
   estimateArchiveTokenLength,
   namedDownloadUrl,
   runFileStem,
   workflowToDetail,
+  workflowToRow,
 } from './trainingRows';
+import { sampleReviewWorkflows } from './sampleReviewRuns';
+import { canRaiseTrainingReview } from '@civitai/shared/training-review';
 
 const workflow = (over: Record<string, unknown> = {}): Workflow =>
   ({
@@ -305,5 +309,83 @@ describe('workflowToDetail dataset', () => {
     expect(workflowToDetail(workflow())!.dataset).toEqual([
       { air: 'https://x/blobs/A.png?sig=1', caption: 'ohwx, 1girl' },
     ]);
+  });
+});
+
+describe('a run held for review', () => {
+  // The orchestrator keeps the workflow `processing` while the gate holds it; only the training
+  // step's output says why it isn't moving.
+  const held = (moderationStatus: string, status = 'processing') =>
+    workflow({
+      status,
+      steps: [
+        {
+          $type: 'training',
+          input: { engine: 'ai-toolkit', ecosystem: 'sdxl', epochs: 10 },
+          output: { moderationStatus, epochs: [] },
+        },
+      ],
+    });
+
+  it('reads as pending review, not training, on the list and the detail', () => {
+    expect(workflowToRow(held('underReview'))?.state).toBe('review');
+    expect(workflowToDetail(held('underReview'))?.state).toBe('review');
+  });
+
+  it('reads the manager API spelling too', () => {
+    expect(workflowToRow(held('UnderReview'))?.state).toBe('review');
+  });
+
+  it('keeps an approved run that is training as training', () => {
+    expect(workflowToRow(held('approved'))?.state).toBe('training');
+  });
+
+  it('reads a rejected run as not approved, not as a crash', () => {
+    expect(workflowToRow(held('rejected'))?.state).toBe('rejected');
+    expect(workflowToDetail(held('rejected'))?.state).toBe('rejected');
+    expect(workflowToRow(held('rejected', 'failed'))?.state).toBe('rejected');
+    expect(workflowToRow(held('rejected', 'canceled'))?.state).toBe('rejected');
+  });
+
+  it('reads a run that expired at the gate as not reviewed in time, not as a crash', () => {
+    expect(workflowToRow(held('rejected', 'expired'))?.state).toBe('unreviewed');
+    expect(workflowToRow(held('underReview', 'expired'))?.state).toBe('unreviewed');
+  });
+
+  it('only reads as pending review while the workflow is still running', () => {
+    expect(workflowToRow(held('underReview', 'failed'))?.state).toBe('failed');
+    expect(workflowToRow(held('underReview', 'succeeded'))?.state).toBe('ready');
+  });
+
+  it('still drops a workflow with no status, held or not', () => {
+    const w = held('underReview');
+    delete (w as { status?: unknown }).status;
+    expect(workflowToRow(w)).toBeNull();
+  });
+
+  it('keeps a published run published', () => {
+    const w = held('underReview');
+    (w as { metadata: Record<string, unknown> }).metadata = { name: 'x', published: true };
+    expect(workflowToRow(w)?.state).toBe('published');
+  });
+
+  it('offers a support ticket only once the preview run has been held long enough', () => {
+    const now = Date.parse('2026-11-09T12:00:00Z');
+    const byId = new Map(sampleReviewWorkflows(now).map((w) => [w.id, workflowToDetail(w)]));
+    const raisable = (id: string) => canRaiseTrainingReview(byId.get(id)?.heldSince, new Date(now));
+    expect(raisable('preview-held')).toBe(false);
+    expect(raisable('preview-held-long')).toBe(true);
+    expect(byId.get('preview-not-approved')?.heldSince).toBeUndefined();
+  });
+
+  it('leaves a run that failed after it was approved as failed', () => {
+    expect(workflowToRow(held('approved', 'failed'))?.state).toBe('failed');
+    expect(workflowToRow(held('approved', 'expired'))?.state).toBe('failed');
+  });
+
+  it('cannot be deleted while held, and can once it ended at the gate', () => {
+    expect(canDeleteRun({ state: 'review', hasModel: false })).toBe(false);
+    expect(canDeleteRun({ state: 'rejected', hasModel: false })).toBe(true);
+    expect(canDeleteRun({ state: 'unreviewed', hasModel: false })).toBe(true);
   });
 });

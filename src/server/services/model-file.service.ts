@@ -50,6 +50,14 @@ import {
 } from '~/server/utils/model-file-replace';
 import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound';
 import {
+  cappedStudioDatasetVisibility,
+  isStudioDataset,
+  versionHasStudioDataset,
+  withoutEpochUrls,
+  withoutServerOnlyKeys,
+} from '~/server/services/training-data-restricted.service';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
+import {
   liveRunDatasetTrainingStatuses,
   reviewedDatasetTrainingStatuses,
 } from '~/shared/constants/training.constants';
@@ -181,6 +189,14 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   });
   if (!ownsVersion) throw throwNotFoundError();
 
+  if (
+    !isModerator &&
+    file.type === 'Training Data' &&
+    file.visibility !== ModelFileVisibility.Private &&
+    (await versionHasStudioDataset(dbWrite, data.modelVersionId))
+  )
+    file.visibility = ModelFileVisibility.Private;
+
   const result = await dbWrite.modelFile.create({
     data: {
       ...file,
@@ -253,6 +269,14 @@ export async function updateFile({
         modelVersionId: modelFile.modelVersionId,
         op: 'replace',
       });
+    // New content on a Training Studio version is unrated, so it is Private whatever was stored or sent.
+    if (
+      !isModerator &&
+      (inputData.type ?? modelFile.type) === 'Training Data' &&
+      (inputData.visibility ?? modelFile.visibility) !== ModelFileVisibility.Private &&
+      (await versionHasStudioDataset(dbWrite, modelFile.modelVersionId))
+    )
+      inputData.visibility = ModelFileVisibility.Private;
     return replaceFileContent({
       file: modelFile,
       input: { ...inputData, url: inputData.url, metadata },
@@ -261,6 +285,27 @@ export async function updateFile({
       uploadDomain: uploadDomain ?? null,
     });
   }
+
+  // An owner's direct edit cannot share a Studio dataset the share rules would keep unshared.
+  if (
+    !isModerator &&
+    isStudioDataset(modelFile) &&
+    (inputData.visibility !== undefined || metadata !== undefined)
+  )
+    inputData.visibility = await cappedStudioDatasetVisibility(dbWrite, {
+      modelVersionId: modelFile.modelVersionId,
+      sizeKB: modelFile.sizeKB,
+      metadata: (metadata ?? modelFile.metadata ?? {}) as Record<string, unknown>,
+      requested: inputData.visibility ?? modelFile.visibility,
+    });
+  else if (
+    !isModerator &&
+    modelFile.type === 'Training Data' &&
+    inputData.visibility !== undefined &&
+    inputData.visibility !== ModelFileVisibility.Private &&
+    (await versionHasStudioDataset(dbWrite, modelFile.modelVersionId))
+  )
+    inputData.visibility = ModelFileVisibility.Private;
 
   const typeChanged = inputData.type !== undefined && inputData.type !== modelFile.type;
   // The file kind can change the version's AIR (a diffusion model or UNet), and the bust after the
@@ -356,6 +401,10 @@ async function replaceFileContent({
   // uploaded it, whatever the request said its type was.
   delete metadata.uploadDomain;
   if (type === 'Training Data' && uploadDomain) metadata.uploadDomain = uploadDomain;
+  // A dataset's rating and archive state describe the zip they were taken from; new content has neither.
+  delete (metadata as Record<string, unknown>).nsfwLevel;
+  delete (metadata as Record<string, unknown>).fullyRated;
+  delete (metadata as Record<string, unknown>).datasetArchive;
   const prepared = prepareFile({
     name: fields.name ?? file.name,
     url: fields.url,
@@ -727,10 +776,11 @@ export async function restoreReplacedFile({ id }: { id: number }) {
 
 export const getRecentTrainingData = async ({
   userId,
+  isModerator = false,
   limit,
   cursor = 0,
   ...filters
-}: RecentTrainingDataInput & { userId: number }) => {
+}: RecentTrainingDataInput & { userId: number; isModerator?: boolean }) => {
   const where: Prisma.ModelFileWhereInput[] = [
     { type: 'Training Data' },
     { dataPurged: false },
@@ -786,6 +836,8 @@ export const getRecentTrainingData = async ({
               select: {
                 id: true,
                 name: true,
+                status: true,
+                mode: true,
               },
             },
           },
@@ -803,7 +855,13 @@ export const getRecentTrainingData = async ({
     }
 
     return {
-      items: data,
+      items: data.map((file) => {
+        const item = { ...file, metadata: withoutServerOnlyKeys(file.metadata) };
+        // A deleted or taken-down model's epoch urls are withheld from everyone but moderators.
+        return !isModerator && isModelDeletedOrTakenDown(file.modelVersion.model)
+          ? withoutEpochUrls([item])[0]
+          : item;
+      }),
       nextCursor,
     };
   } catch (error) {

@@ -33,7 +33,7 @@ type ModelModActivity = {
 
 type ModelVersionModActivity = {
   entityType: 'modelVersion';
-  activity: TagActivities | 'review';
+  activity: TagActivities | 'review' | `trainingData:${'approve' | 'deny'}`;
 };
 
 type ImageTagModActivity = {
@@ -83,6 +83,9 @@ type UserModActivity = {
     | 'revokeTimedMute'
     | 'createSystemAccount'
     | 'mintSystemAccountApiKey'
+    // An admin minted, retired, unretired or re-ceilinged a per-provider download token
+    // (`providerDownloadToken:<action>:<provider>`). `userId` is the asserted actor.
+    | `providerDownloadToken:${string}`
     | 'setSystemAccountProfile'
     // A moderator gave a Stripe member free days (membership-extend.service). Counts toward its cooldown.
     | 'extendMembership'
@@ -143,10 +146,11 @@ type PlacementModActivity = {
   activity: 'removePlacement';
 };
 
-/** A moderator hid an `app-block` report from the app's developer, or unhid it. */
+/** A moderator hid an `app-block` report from the app's developer, or unhid it — or closed it with
+ *  a Buzz refund for the generations it reported (`/api/mod/apps/refund-workflows`). */
 type FeedbackModActivity = {
   entityType: 'feedback';
-  activity: 'hideFromOwner' | 'unhideFromOwner';
+  activity: 'hideFromOwner' | 'unhideFromOwner' | 'refundAppBuzz';
 };
 
 /** A moderator cleared a bounty entry file's check result

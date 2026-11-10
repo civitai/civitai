@@ -20,6 +20,8 @@ export const getCommentSectionSchema = z.object({
   entityId: z.number().int().positive(),
   sort,
   cursor,
+  /** Only the hidden top-level comments, on a surface whose section leaves them out. */
+  hidden: z.boolean().optional(),
 });
 
 export type GetCommentRepliesInput = z.infer<typeof getCommentRepliesSchema>;
@@ -36,6 +38,8 @@ export const getCommentThreadSchema = z.object({
   entityType: z.enum(CommentEntityType),
   entityId: z.number().int().positive(),
   sort,
+  /** The comment a link marks, which a model-page link may name by its old id. */
+  highlight: z.number().int().positive().optional(),
 });
 
 export const commentContentSchema = getSanitizedStringSchema({

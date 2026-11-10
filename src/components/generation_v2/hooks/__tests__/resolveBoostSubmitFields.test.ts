@@ -29,14 +29,14 @@ describe('resolveBoostSubmitFields', () => {
   it('sends the boost the desktop switch already priced, without asking again', async () => {
     await expect(
       resolveBoostSubmitFields({ preBoost: true, download, askFirst: true })
-    ).resolves.toEqual({ downloadPriority: 'high' });
+    ).resolves.toEqual({ acceptBoostRequired: true, downloadPriority: 'high' });
     expect(confirmDownloadBoost).not.toHaveBeenCalled();
   });
 
   it('never asks on desktop — the footer alert is the offer there', async () => {
     await expect(
       resolveBoostSubmitFields({ preBoost: false, download, askFirst: false })
-    ).resolves.toEqual({});
+    ).resolves.toEqual({ acceptBoostRequired: true });
     expect(confirmDownloadBoost).not.toHaveBeenCalled();
   });
 
@@ -47,7 +47,7 @@ describe('resolveBoostSubmitFields', () => {
   ])('does not ask when there is %s', async (_case, value) => {
     await expect(
       resolveBoostSubmitFields({ preBoost: false, download: value, askFirst: true })
-    ).resolves.toEqual({});
+    ).resolves.toEqual({ acceptBoostRequired: true });
     expect(confirmDownloadBoost).not.toHaveBeenCalled();
   });
 
@@ -55,14 +55,14 @@ describe('resolveBoostSubmitFields', () => {
     confirmDownloadBoost.mockResolvedValue('boost');
     await expect(
       resolveBoostSubmitFields({ preBoost: false, download, askFirst: true })
-    ).resolves.toEqual({ downloadPriority: 'high' });
+    ).resolves.toEqual({ acceptBoostRequired: true, downloadPriority: 'high' });
   });
 
   it('charges nothing when the user chooses to continue', async () => {
     confirmDownloadBoost.mockResolvedValue('continue');
     await expect(
       resolveBoostSubmitFields({ preBoost: false, download, askFirst: true })
-    ).resolves.toEqual({});
+    ).resolves.toEqual({ acceptBoostRequired: true });
   });
 
   // Null is the submit's "stop" signal. Returning `{}` here spends nothing but sends a generation
@@ -72,6 +72,34 @@ describe('resolveBoostSubmitFields', () => {
     await expect(
       resolveBoostSubmitFields({ preBoost: false, download, askFirst: true })
     ).resolves.toBeNull();
+  });
+});
+
+describe('resolveBoostSubmitFields — a boost a free account must buy', () => {
+  const required = { ...download, required: true };
+
+  // The phone shows no switch, so a forced `preBoost` alone would charge without the fee ever
+  // being on screen.
+  it('still asks on a phone, in required mode', async () => {
+    confirmDownloadBoost.mockResolvedValue('boost');
+    await expect(
+      resolveBoostSubmitFields({ preBoost: true, download: required, askFirst: true })
+    ).resolves.toEqual({ acceptBoostRequired: true, downloadPriority: 'high' });
+    expect(confirmDownloadBoost).toHaveBeenCalledWith(expect.objectContaining({ required: true }));
+  });
+
+  it('abandons the submit when that dialog is dismissed', async () => {
+    confirmDownloadBoost.mockResolvedValue(null);
+    await expect(
+      resolveBoostSubmitFields({ preBoost: true, download: required, askFirst: true })
+    ).resolves.toBeNull();
+  });
+
+  it('sends it without asking on desktop, where the locked switch shows the fee', async () => {
+    await expect(
+      resolveBoostSubmitFields({ preBoost: true, download: required, askFirst: false })
+    ).resolves.toEqual({ acceptBoostRequired: true, downloadPriority: 'high' });
+    expect(confirmDownloadBoost).not.toHaveBeenCalled();
   });
 });
 

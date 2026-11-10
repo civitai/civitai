@@ -157,9 +157,14 @@ export default AuthedEndpoint(
         res.status(403).json({ message: err.message });
         return;
       }
-      const [{ isStorageMigrationRefusal }, { isStorageHookRefusal }] = await Promise.all([
+      const [
+        { isStorageMigrationRefusal },
+        { isStorageHookRefusal },
+        { isManifestValidationRefusal },
+      ] = await Promise.all([
         import('~/server/services/apps/storage-schema-migrations'),
         import('~/server/services/apps/storage-hooks'),
+        import('~/server/services/blocks/manifest-submit-validation'),
       ]);
       // A schema-migration refusal also carries the structured list (collection, pointer,
       // keyword, old → new) so a client can show each breaking change.
@@ -168,6 +173,8 @@ export default AuthedEndpoint(
         ...(isStorageMigrationRefusal(err) ? { storageBreakingChanges: err.breaking } : {}),
         // A permission-hook refusal carries one entry per refused hook (collection, file, reason).
         ...(isStorageHookRefusal(err) ? { storageHookErrors: err.problems } : {}),
+        // A manifest the approve-time validator refuses carries every validator error.
+        ...(isManifestValidationRefusal(err) ? { manifestErrors: err.errors } : {}),
       });
     }
   },

@@ -1,10 +1,16 @@
 import { PGlite } from '@electric-sql/pglite';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Runs the real statement against a Postgres stand-in: a $queryRaw fake returning a fixture row
 // would pass whatever the WHERE clause filters on.
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+// The lookup runs through Kysely; both clients' statements go to PGlite (see beforeEach).
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
 
 import { getCachedImageDeliveryMetadata } from '~/server/services/image-delivery.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -61,8 +67,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   redisMock.redis.packed.get.mockResolvedValue(null);
   redisMock.redis.packed.set.mockResolvedValue(undefined);
-  vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation(runAgainstPglite as never);
-  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(runAgainstPglite as never);
+  kysely.read.mockReset().mockImplementation(runAgainstPglite);
+  kysely.write.mockReset().mockImplementation(runAgainstPglite);
+});
+
+afterEach(() => {
+  // Every read here went through Kysely: the Prisma query engine is never reached.
+  expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
 });
 
 describe('image delivery lookup — source known missing', () => {
@@ -73,12 +85,12 @@ describe('image delivery lookup — source known missing', () => {
   });
 
   it('applies the same filter on the primary fallback when the replica query fails', async () => {
-    vi.mocked(dbMock.dbRead.$queryRaw).mockRejectedValueOnce(new Error('replica error'));
+    kysely.read.mockRejectedValueOnce(new Error('replica error'));
 
     expect(
       await getCachedImageDeliveryMetadata(urlFor(ImageIngestionStatus.NotFound, false))
     ).toBeNull();
-    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(kysely.write).toHaveBeenCalledTimes(1);
   });
 
   // Invariant guard (passes before and after): hideMeta rows are still returned when NotFound.
@@ -121,12 +133,12 @@ describe('image delivery lookup — rows sharing a url', () => {
   });
 
   it('prefers the hidden row on the primary fallback too', async () => {
-    vi.mocked(dbMock.dbRead.$queryRaw).mockRejectedValueOnce(new Error('replica error'));
+    kysely.read.mockRejectedValueOnce(new Error('replica error'));
 
     expect(await getCachedImageDeliveryMetadata(SHARED_URL)).toMatchObject({
       id: 301,
       hideMeta: true,
     });
-    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(kysely.write).toHaveBeenCalledTimes(1);
   });
 });

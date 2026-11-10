@@ -713,3 +713,65 @@ export async function modSetAppFeedbackHidden({
     return { id: input.id, hidden: input.hidden };
   });
 }
+
+export type AppFeedbackForRefund = {
+  id: number;
+  area: string;
+  userId: number;
+  /** The app block the report was filed on, when its listing still exists and hosts one. */
+  appBlockId: string | null;
+};
+
+/** The columns the moderator App refund checks before it moves money against a report. */
+export async function getAppFeedbackForRefund(id: number): Promise<AppFeedbackForRefund | null> {
+  const rows = await dbWrite.$queryRaw<AppFeedbackForRefund[]>`
+    SELECT f."id", f."area", f."userId", al."app_block_id" AS "appBlockId"
+    FROM "Feedback" f
+    LEFT JOIN "app_listings" al ON al."id" = f."appListingId"
+    WHERE f."id" = ${id}
+  `;
+  return rows[0] ?? null;
+}
+
+/**
+ * Record a moderator App refund on its report: append the note, and with `resolve` set moderator status
+ * `actioned`. `ownerStatus` is left alone because changing it notifies the reporter in the
+ * developer's name; the note is appended because an overwritten note cannot be recovered.
+ */
+export async function modResolveAppFeedbackWithRefund({
+  moderatorId,
+  feedbackId,
+  reporterUserId,
+  note,
+  resolve,
+}: {
+  moderatorId: number;
+  feedbackId: number;
+  reporterUserId: number;
+  note: string;
+  resolve: boolean;
+}): Promise<boolean> {
+  return dbWrite.$transaction(async (tx) => {
+    const close = resolve
+      ? Prisma.sql`"status" = 'actioned', "handledById" = ${moderatorId}, "handledAt" = now(),`
+      : Prisma.empty;
+    const count = await tx.$executeRaw`
+      UPDATE "Feedback"
+      SET ${close}
+          "triageNote" = CASE
+            WHEN COALESCE("triageNote", '') = '' THEN ${note}
+            ELSE "triageNote" || E'\n' || ${note}
+          END
+      WHERE "id" = ${feedbackId}
+        AND "area" = ${APP_BLOCK_FEEDBACK_AREA}
+        AND "userId" = ${reporterUserId}
+    `;
+    if (count === 0) return false;
+    await trackModActivity(
+      moderatorId,
+      { entityType: 'feedback', activity: 'refundAppBuzz', entityId: feedbackId },
+      tx
+    );
+    return true;
+  });
+}

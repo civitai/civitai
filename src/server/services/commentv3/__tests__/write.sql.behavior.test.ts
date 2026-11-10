@@ -10,6 +10,7 @@ import {
   isCommentWriteLocked,
   isTopicMuted,
   setCommentFlags,
+  toggleCommentLock,
   toggleCommentMute,
   toggleTopicLock,
   toggleTopicMute,
@@ -294,6 +295,95 @@ describe('comment v3 writes', () => {
     await deleteComments(db, [old.id]);
     expect(await v2()).toBeUndefined();
     expect(await getStoredComment(db, old.id)).toBeUndefined();
+  });
+
+  it('keeps a pre-flip v2 comment’s reply-thread lock in step with its lock', async () => {
+    await pg.exec(`INSERT INTO "Article" VALUES (34)`);
+    const thread = await one<{ id: number }>(
+      `INSERT INTO "Thread"("articleId") VALUES (34) RETURNING id`
+    );
+    const old = await one<{ id: number }>(
+      `INSERT INTO "CommentV2"(content, "userId", "threadId") VALUES ('in v2', 1, ${thread?.id}) RETURNING id`
+    );
+    const replies = await one<{ id: number }>(
+      `INSERT INTO "Thread"("commentId", "rootThreadId") VALUES (${old?.id}, ${thread?.id}) RETURNING id`
+    );
+    const lockedThread = async () =>
+      (await one<{ locked: boolean }>(`SELECT locked FROM "Thread" WHERE id = ${replies?.id}`))
+        ?.locked;
+
+    expect(await toggleCommentLock(db, old?.id ?? 0)).toMatchObject({ locked: true });
+    expect(await lockedThread()).toBe(true);
+    expect(await toggleCommentLock(db, old?.id ?? 0)).toMatchObject({ locked: false });
+    expect(await lockedThread()).toBe(false);
+  });
+
+  // A model comment written before the model flip keeps its v1 row for a rollback, in step as above.
+  it('keeps a pre-flip model comment’s v1 row in step, and only blanks it as a tombstone', async () => {
+    await pg.exec(`INSERT INTO "Model" VALUES (501)`);
+    const root = await one<{ id: number }>(
+      `INSERT INTO "Comment"(content, "userId", "modelId") VALUES ('in v1', 1, 501) RETURNING id`
+    );
+    const reply = await one<{ id: number }>(
+      `INSERT INTO "Comment"(content, "userId", "modelId", "parentId") VALUES ('reply', 2, 501, ${root?.id}) RETURNING id`
+    );
+    const v3Id = async (legacy?: number) =>
+      (await one<{ id: number }>(`SELECT id FROM "CommentV3" WHERE "legacyV1Id" = ${legacy}`))
+        ?.id ?? 0;
+    const [rootV3, replyV3] = [await v3Id(root?.id), await v3Id(reply?.id)];
+    const v1 = (id?: number) =>
+      one<{ content: string; hidden: boolean; pinnedAt: Date | null; locked: boolean }>(
+        `SELECT content, hidden, "pinnedAt", locked FROM "Comment" WHERE id = ${id}`
+      );
+
+    await updateCommentContent(db, { id: rootV3, content: 'edited' });
+    await setCommentFlags(db, [rootV3], { hidden: true, pinned: true });
+    expect(await toggleCommentLock(db, rootV3)).toMatchObject({ locked: true });
+    expect(await v1(root?.id)).toMatchObject({ content: 'edited', hidden: true, locked: true });
+    expect((await v1(root?.id))?.pinnedAt).not.toBeNull();
+    // The v1 update fires the mirror, which must leave the CommentV3 row as written.
+    expect(await getStoredComment(db, rootV3)).toMatchObject({ content: 'edited', hidden: true });
+
+    // Deleting the v1 row would cascade to the reply's, and through the mirror to the live reply.
+    await deleteComments(db, [rootV3]);
+    expect(await v1(root?.id)).toMatchObject({ content: '' });
+    expect(await getStoredComment(db, replyV3)).toMatchObject({
+      deletedAt: null,
+      content: 'reply',
+    });
+
+    await deleteComments(db, [replyV3]);
+    expect(await v1(reply?.id)).toBeUndefined();
+    expect(await getStoredComment(db, replyV3)).toBeUndefined();
+  });
+
+  it('delete: a pinned comment kept as a tombstone loses its pin, in its v1 row too', async () => {
+    await pg.exec(`INSERT INTO "Article" VALUES (35)`);
+    const root = await post(35, 1);
+    await post(35, 2, root.id);
+    await setCommentFlags(db, [root.id], { pinned: true });
+    expect((await getStoredComment(db, root.id))?.pinnedAt).not.toBeNull();
+    await deleteComments(db, [root.id]);
+    expect(await getStoredComment(db, root.id)).toMatchObject({ content: '', pinnedAt: null });
+
+    // A pre-flip model comment: blanking its v1 row fires the mirror, which copies v1's pinnedAt back.
+    await pg.exec(`INSERT INTO "Model" VALUES (502)`);
+    const v1Root = await one<{ id: number }>(
+      `INSERT INTO "Comment"(content, "userId", "modelId") VALUES ('in v1', 1, 502) RETURNING id`
+    );
+    await pg.exec(
+      `INSERT INTO "Comment"(content, "userId", "modelId", "parentId") VALUES ('reply', 2, 502, ${v1Root?.id})`
+    );
+    const rootV3 =
+      (await one<{ id: number }>(`SELECT id FROM "CommentV3" WHERE "legacyV1Id" = ${v1Root?.id}`))
+        ?.id ?? 0;
+    await setCommentFlags(db, [rootV3], { pinned: true });
+    expect((await getStoredComment(db, rootV3))?.pinnedAt).not.toBeNull();
+    await deleteComments(db, [rootV3]);
+    expect(await getStoredComment(db, rootV3)).toMatchObject({ content: '', pinnedAt: null });
+    expect(await one(`SELECT content, "pinnedAt" FROM "Comment" WHERE id = ${v1Root?.id}`)).toEqual(
+      { content: '', pinnedAt: null }
+    );
   });
 
   it('an edit is refused under a locked ancestor or topic, as the update handler asks', async () => {

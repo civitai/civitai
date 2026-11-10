@@ -13,11 +13,7 @@ import { checkNotUpToDate } from '~/server/db/db-helpers';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import {
-  credentialLogFields,
-  getRequestCredential,
-  type RequestCredential,
-} from '~/server/auth/request-credential';
+import { credentialLogFields, getRequestCredential } from '~/server/auth/request-credential';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 import { generateSecretHash } from '~/server/utils/key-generator';
@@ -922,32 +918,6 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
   }
 }
 
-// Off while `orchestrator-endpoint-scope-would-refuse` counts show which keys call these routes
-// without the route's scope; true refuses them on every `OrchestratorEndpoint` route.
-let enforceOrchestratorEndpointScope = false;
-
-export const orchestratorEndpointScopeTesting = {
-  isEnforcing: () => enforceOrchestratorEndpointScope,
-  setEnforce(value: boolean) {
-    enforceOrchestratorEndpointScope = value;
-  },
-};
-
-/** Records a call `OrchestratorEndpoint` would refuse once enforcing. No user, key or IP. */
-function logScopeWouldRefuse(
-  req: AxiomAPIRequest,
-  requiredScope: number,
-  credential: RequestCredential
-) {
-  logToAxiom({
-    name: 'orchestrator-endpoint-scope-would-refuse',
-    type: 'info',
-    route: req.url?.split('?')[0],
-    requiredScope,
-    ...credentialLogFields(credential),
-  }).catch(() => undefined);
-}
-
 export function OrchestratorEndpoint(
   handler: (
     req: AxiomAPIRequest,
@@ -965,11 +935,17 @@ export function OrchestratorEndpoint(
       credential.tokenScope !== TokenScope.Full &&
       !Flags.hasFlag(credential.tokenScope, requiredScope)
     ) {
-      if (enforceOrchestratorEndpointScope)
-        return res
-          .status(403)
-          .json({ error: 'Your API key does not have the required scope for this action' });
-      logScopeWouldRefuse(req, requiredScope, credential);
+      // No user, key or IP.
+      logToAxiom({
+        name: 'orchestrator-endpoint-scope-refused',
+        type: 'info',
+        route: req.url?.split('?')[0],
+        requiredScope,
+        ...credentialLogFields(credential),
+      }).catch(() => undefined);
+      return res
+        .status(403)
+        .json({ error: 'Your API key does not have the required scope for this action' });
     }
     let token: string;
     try {

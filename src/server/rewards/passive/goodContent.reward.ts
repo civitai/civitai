@@ -97,7 +97,6 @@ export const goodContentReward = createBuzzEvent({
 
 const typeToTable: Partial<Record<ReactionEntityType, string>> = {
   comment: 'CommentV2',
-  commentOld: 'Comment',
   image: 'Image',
   article: 'Article',
 };
