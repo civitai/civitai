@@ -4,6 +4,7 @@ import { modelFileUpsertSchema } from '~/server/schema/model-file.schema';
 import { clickupWebhookSchema, hqWebhookSchema } from '~/server/schema/bug.schema';
 import { getFlaggedModelsSchema } from '~/server/schema/model-flag.schema';
 import { getBuzzTransactionResponse } from '~/server/schema/buzz.schema';
+import { appStorageSetInput } from '~/server/services/apps/app-storage.service';
 
 // From zod 4.4 an object key whose schema accepts `undefined` without `.optional()` (z.unknown(),
 // z.any(), z.undefined()) must be PRESENT; an absent key fails with `expected nonoptional`. Each
@@ -49,6 +50,10 @@ describe('keys a caller may leave out', () => {
   it('a flagged-model filter without a value', () => {
     const parsed = getFlaggedModelsSchema.parse({ filters: [{ id: 'name' }] });
     expect(parsed.filters).toEqual([{ id: 'name' }]);
+  });
+
+  it('an app-storage write without a value', () => {
+    expect(appStorageSetInput.parse({ key: 'k' })).toEqual({ key: 'k' });
   });
 
   it('a buzz transaction without a type reads as no type', () => {
