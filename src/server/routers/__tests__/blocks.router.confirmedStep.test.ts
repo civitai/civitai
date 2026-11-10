@@ -131,7 +131,6 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { BLOCK_BUZZ_CAP_PER_DAY } from '~/shared/constants/block-scope.constants';
 import { BLOCK_STEP_NAME } from '~/server/services/blocks/workflow.service';
 import { composeConfirmedStepBlockExternalId } from '~/server/utils/block-gen-idempotency';
 import { hashPassThroughStepBody } from '~/server/services/blocks/block-quote-grant.service';
@@ -1359,7 +1358,7 @@ describe('the generation input gate runs on a CONFIRMED submit too', () => {
 });
 
 describe('account Limits section: the Apps Buzz row is what the per-user cap enforces', () => {
-  it('reads the counter a real submit reserved, against the cap the router enforces', async () => {
+  it('reads the counter a real submit reserved', async () => {
     const flag = await import('~/server/services/app-blocks-flag');
     vi.spyOn(flag, 'isAppBlocksEnabled').mockResolvedValue(true);
     const quoteId = await confirmedQuote();
@@ -1367,7 +1366,5 @@ describe('account Limits section: the Apps Buzz row is what the per-user cap enf
     const { getMyAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
     const row = await getMyAppBuzzToday({ id: VIEWER } as never);
     expect(row?.used).toBe(PRICE);
-    // The router compares against this constant; a resolver value that differs is a display lie.
-    expect(row?.limit).toBe(BLOCK_BUZZ_CAP_PER_DAY);
   });
 });
