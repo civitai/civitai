@@ -347,6 +347,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.6",
+    "@electric-sql/pglite-socket": "0.1.6",
     "@faker-js/faker": "^9.0.3",
     "@ladle/react": "^5.1.1",
     "@playwright/test": "^1.57.0",
