@@ -131,6 +131,55 @@ export async function distributeParticipationPrizes(args: {
   return payUserIds;
 }
 
+/**
+ * A banned entrant's paid per-entry review is skipped while the ban stands, so one still waiting
+ * when the challenge completes is refunded. Keyed like the rejected-entry refund in
+ * reviewEntriesForChallenge, so an entry is refunded at most once across both paths and re-runs.
+ * Flat-rate purchases are not refunded, matching that path.
+ */
+export async function refundBannedEntrantReviews(args: {
+  challengeId: number;
+  collectionId: number;
+  reviewMeTagId: number;
+}): Promise<number[]> {
+  const { challengeId, collectionId, reviewMeTagId } = args;
+
+  const challenge = await dbWrite.challenge.findUnique({
+    where: { id: challengeId },
+    select: { reviewCost: true },
+  });
+  if (!challenge?.reviewCost || challenge.reviewCost <= 0) return [];
+  const { reviewCost } = challenge;
+
+  const unreviewed = await dbWrite.$queryRaw<{ imageId: number; userId: number }[]>`
+    SELECT ci."imageId", i."userId"
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    JOIN "User" u ON u.id = i."userId"
+    WHERE ci."collectionId" = ${collectionId}
+      AND ci.status = 'ACCEPTED'
+      AND ci."tagId" = ${reviewMeTagId}
+      AND ci.note LIKE 'challenge-review-%'
+      AND ci.note NOT LIKE 'challenge-review-flat-%'
+      AND u."bannedAt" IS NOT NULL
+  `;
+  if (unreviewed.length === 0) return [];
+
+  await withRetries(() =>
+    createBuzzTransactionMany(
+      unreviewed.map((e) => ({
+        fromAccountId: 0,
+        toAccountId: e.userId,
+        type: TransactionType.Refund,
+        amount: reviewCost,
+        description: `Challenge review refund: entry ${e.imageId}`,
+        externalTransactionId: `challenge-review-refund-${challengeId}-${e.imageId}`,
+      }))
+    )
+  );
+  return unreviewed.map((e) => e.imageId);
+}
+
 export async function reconcileCompletedChallenge(
   challenge: DailyChallengeDetails,
   config: ChallengeConfig

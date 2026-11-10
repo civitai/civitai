@@ -23,7 +23,10 @@ import { sysRedis } from '~/server/redis/client';
 import { resolveChallengeCollectionOwnerId } from '~/server/games/daily-challenge/challenge-collection-owner';
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
-import { distributeParticipationPrizes } from '~/server/games/daily-challenge/challenge-rewards';
+import {
+  distributeParticipationPrizes,
+  refundBannedEntrantReviews,
+} from '~/server/games/daily-challenge/challenge-rewards';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import {
@@ -2983,6 +2986,14 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
     // Hoisted so it's still in scope for sendChallengeResultsNotification's excludeUserIds below,
     // even though it's only populated inside the conditional (participation prizes are optional).
     const participationUserIds: number[] = [];
+    if (challenge.collectionId) {
+      const refundedReviews = await refundBannedEntrantReviews({
+        challengeId,
+        collectionId: challenge.collectionId,
+        reviewMeTagId: config.reviewMeTagId,
+      });
+      log('Paid reviews refunded to banned entrants:', refundedReviews.length);
+    }
     if (challenge.entryPrize && challenge.collectionId) {
       // Winners are excluded: they get winner prizes instead.
       const paid = await distributeParticipationPrizes({

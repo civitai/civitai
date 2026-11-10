@@ -28,6 +28,7 @@ import {
 import {
   distributeParticipationPrizes,
   promoteChallengeEntries,
+  refundBannedEntrantReviews,
 } from '~/server/games/daily-challenge/challenge-rewards';
 import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
 import {
@@ -1977,6 +1978,13 @@ export async function pickWinnersForChallenge(
     });
     const awardedPrizes = await withRetries(() => createPrizes(winnerPrizes));
     log('Prizes awarded');
+
+    const refundedReviews = await refundBannedEntrantReviews({
+      challengeId: currentChallenge.challengeId,
+      collectionId: currentChallenge.collectionId,
+      reviewMeTagId: config.reviewMeTagId,
+    });
+    log('Paid reviews refunded to banned entrants:', refundedReviews.length);
 
     // 6. Distribute entry participation prizes
     const participationKeyId = currentChallenge.challengeId ?? currentChallenge.collectionId;

@@ -138,6 +138,7 @@ vi.mock('~/server/games/daily-challenge/challenge-rewards', async (importOrigina
   return {
     ...actual,
     distributeParticipationPrizes: vi.fn(actual.distributeParticipationPrizes),
+    refundBannedEntrantReviews: vi.fn().mockResolvedValue([]),
     promoteChallengeEntries: vi.fn().mockResolvedValue(0),
   };
 });
@@ -399,6 +400,15 @@ describe('mod -> job completion boundary — prize Buzz is counted exactly once'
     expect(mockCreatePrizes.mock.calls.length).toBeGreaterThanOrEqual(2);
     // The job's claim-conditional Completed write landed.
     expect(mockCompleteChallengeIfClaimHeld).toHaveBeenCalledTimes(1);
+
+    // Both runs refund a banned entrant's waiting paid reviews; the shared refund key settles once.
+    const { refundBannedEntrantReviews } = await import(
+      '~/server/games/daily-challenge/challenge-rewards'
+    );
+    expect(vi.mocked(refundBannedEntrantReviews).mock.calls).toEqual([
+      [expect.objectContaining({ challengeId: 1, collectionId: 100 })],
+      [expect.objectContaining({ challengeId: 1, collectionId: 100 })],
+    ]);
 
     // ...and the Buzz was counted ONCE.
     expect(recordChallengePrizePaidBuzz).toHaveBeenCalledTimes(1);
