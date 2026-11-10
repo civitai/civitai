@@ -56,6 +56,38 @@ const meilisearch = withUserHydration(
   )
 );
 
+// Mantine bounds the option list at `maxDropdownHeight` but never bounds the popover to the window,
+// so in a short window the list can hang past the bottom edge with its own scroll ending off-screen.
+// The `size` middleware hands over the room left on the chosen side; the list's scroll area shrinks
+// to that, so its last row stays reachable. (Mantine's own `size: true` caps only the outer box,
+// which would clip the scroll area instead.)
+const MAX_DROPDOWN_HEIGHT = 300;
+const AVAILABLE_HEIGHT_VAR = '--quick-search-available-height';
+const dropdownMiddlewares = {
+  flip: true,
+  shift: true,
+  size: {
+    padding: 8,
+    apply({
+      availableHeight,
+      elements,
+    }: {
+      availableHeight: number;
+      elements: { floating: HTMLElement };
+    }) {
+      const style = getComputedStyle(elements.floating);
+      const chrome = ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'].reduce(
+        (sum, key) => sum + (parseFloat(style[key as keyof CSSStyleDeclaration] as string) || 0),
+        0
+      );
+      elements.floating.style.setProperty(
+        AVAILABLE_HEIGHT_VAR,
+        `${Math.max(availableHeight - chrome, 0)}px`
+      );
+    },
+  },
+};
+
 // TODO: These styles were taken from the original SearchBar component. We should probably migrate that searchbar to use this component.
 // const useStyles = createStyles((theme) => ({
 //   root: {
@@ -410,7 +442,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
       classNames={classes}
       placeholder={placeholder ?? 'Search Civitai'}
       type="search"
-      maxDropdownHeight={300}
+      maxDropdownHeight={`min(${MAX_DROPDOWN_HEIGHT}px, var(${AVAILABLE_HEIGHT_VAR}, ${MAX_DROPDOWN_HEIGHT}px))`}
       // TODO: Mantine7
       // nothingFound={
       //   !hits.length ? (
@@ -462,6 +494,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
       {...autocompleteProps}
       comboboxProps={{
         zIndex: dialogZIndex ? dialogZIndex + 1 : undefined,
+        middlewares: dropdownMiddlewares,
         ...autocompleteProps.comboboxProps,
       }}
     />
