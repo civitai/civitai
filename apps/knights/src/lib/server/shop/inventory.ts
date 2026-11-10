@@ -1,5 +1,6 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { STREAK_BADGE_IDS } from '../daily/streak-badges';
 import { RANK_BADGE_COSMETICS } from '../rank-badges';
 import { cosmeticImageKey } from './cosmetics';
 
@@ -10,7 +11,7 @@ export type InventoryItem = {
   equipped: boolean;
   /** Null: not a consumable, or an unlimited sticker. */
   uses: number | null;
-  origin: 'shop' | 'rank';
+  origin: 'shop' | 'rank' | 'streak';
   imageKey: string | null;
 };
 
@@ -21,9 +22,11 @@ const RANK_BADGE_IDS = Object.values(RANK_BADGE_COSMETICS);
 
 /**
  * What a player owns that Knights put there: cosmetics bought in the shop (their `claimKey` is a purchase's
- * `externalKey`) and the rank badges. Stickers add up across purchases and are used, never equipped.
+ * `externalKey`), the rank badges and the Watch-streak badges. Stickers add up across purchases and are used, never
+ * equipped.
  */
 export async function listInventory(db: Kysely<DB>, playerId: number): Promise<InventoryItem[]> {
+  const streakBadgeIds = Object.values(STREAK_BADGE_IDS).filter((id) => id !== null);
   const rows = await db
     .selectFrom('UserCosmetic as uc')
     .innerJoin('Cosmetic as c', 'c.id', 'uc.cosmeticId')
@@ -50,7 +53,7 @@ export async function listInventory(db: Kysely<DB>, playerId: number): Promise<I
             .where('playerId', '=', playerId)
             .where('kind', '=', 'cosmetic')
         ),
-        eb('uc.cosmeticId', 'in', RANK_BADGE_IDS),
+        eb('uc.cosmeticId', 'in', [...RANK_BADGE_IDS, ...streakBadgeIds]),
       ])
     )
     .execute();
@@ -65,7 +68,7 @@ export async function listInventory(db: Kysely<DB>, playerId: number): Promise<I
       type: row.type,
       equipped: false,
       uses: sticker ? 0 : null,
-      origin: row.fromShop ? 'shop' : 'rank',
+      origin: row.fromShop ? 'shop' : streakBadgeIds.includes(row.id) ? 'streak' : 'rank',
       imageKey: cosmeticImageKey(row.data),
     };
     item.equipped ||= row.equippedAt !== null;

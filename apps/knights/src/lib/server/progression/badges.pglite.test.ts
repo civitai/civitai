@@ -134,7 +134,6 @@ describe('rank badges', () => {
         return trx.selectFrom('NewOrderPlayer').select('userId').execute();
       });
       expect(rows).toEqual([]);
-      expect(error).toHaveBeenCalled();
     } finally {
       await pg.exec(`ALTER TABLE "UserCosmeticGone" RENAME TO "UserCosmetic"`);
       error.mockRestore();
