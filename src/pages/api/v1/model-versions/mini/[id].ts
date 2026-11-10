@@ -355,6 +355,8 @@ export default MixedAuthEndpoint(async function handler(
 
     const mode = await getMiniEpochGateMode();
     if (mode !== 'off') {
+      // The body now depends on the caller, so no shared cache may hold it.
+      res.setHeader('Cache-Control', 'private, no-store');
       const caller = await evaluateMiniEpochCaller({
         req,
         user,

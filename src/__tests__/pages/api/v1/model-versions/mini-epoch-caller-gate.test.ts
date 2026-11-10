@@ -141,7 +141,10 @@ async function request(
   );
   const body = json.mock.calls.at(-1)?.[0] as Record<string, unknown>;
   const status = (res.status as unknown as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
-  return { status, body };
+  const cacheControl = (res.setHeader as unknown as ReturnType<typeof vi.fn>).mock.calls
+    .filter(([name]) => name === 'Cache-Control')
+    .at(-1)?.[1];
+  return { status, body, cacheControl };
 }
 
 function callerLogs() {
@@ -233,6 +236,12 @@ describe('mini/[id] epoch arm, enforce', () => {
     expect(callerLogs()[0]).toMatchObject({ callerClass: 'anonymous', resolvedAs: 'unrecognized' });
   });
 
+  it('does not accept a blank configured token', async () => {
+    setEnv({ ORCHESTRATOR_SERVICE_TOKEN: '\t' });
+    const { body } = await request({ authorization: 'Bearer \t' });
+    expect(body.downloadUrls).toEqual([]);
+  });
+
   it('does not accept an empty configured token against an empty bearer', async () => {
     setEnv({ ORCHESTRATOR_SERVICE_TOKEN: '' });
     const { body } = await request({ authorization: 'Bearer ' });
@@ -297,9 +306,35 @@ describe('mini/[id] epoch arm, log', () => {
     await request({ authorization: 'Bearer some-user-key-value' });
     const logged = JSON.stringify(callerLogs());
     expect(callerLogs()).toHaveLength(2);
+    for (const entry of callerLogs())
+      expect(Object.keys(entry).sort()).toEqual([
+        'authHeader',
+        'callerClass',
+        'enforced',
+        'modelVersionId',
+        'name',
+        'resolvedAs',
+        'type',
+        'wouldRefuse',
+      ]);
     expect(logged).not.toContain(SERVICE_TOKEN.slice(0, 6));
     expect(logged).not.toContain('some-user');
     expect(logged).not.toMatch(/bearer/i);
+  });
+});
+
+describe('mini/[id] epoch arm, cache', () => {
+  it.each(['log', 'enforce'])('%s: no shared cache may store the response', async (variant) => {
+    h.variant.value = variant;
+    for (const caller of [anonymous, owner, service]) {
+      const { cacheControl } = await request(caller);
+      expect(cacheControl).toBe('private, no-store');
+    }
+  });
+
+  it('off: the cache header is left as it was', async () => {
+    const { cacheControl } = await request(anonymous);
+    expect(cacheControl).toBeUndefined();
   });
 });
 
