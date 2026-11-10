@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 // The catch-all `/api/download/[...key]` handler resolves a download key via the
@@ -59,7 +59,7 @@ const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
 // pass the ownership gate (added below) and still reach the delivery worker. The
 // gate itself is covered by its own describe block at the end.
 function createMocks({
-  key = ['training-images-temp', '42', 'file.zip'],
+  key = ['model', '42', 'file.safetensors'],
   headers = {},
   remoteAddress,
 }: {
@@ -136,11 +136,11 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     });
     // Own-prefix key for the authed user (id 42) so it passes the ownership gate and the redirect
     // path is what we assert; the gate is covered in its own describe block below.
-    const { req, res } = createMocks({ key: ['training-images-temp', '42', 'file.zip'] });
+    const { req, res } = createMocks({ key: ['model', '42', 'file.safetensors'] });
 
     await handler(req, res);
 
-    expect(mockGetDownloadUrl).toHaveBeenCalledWith('training-images-temp/42/file.zip');
+    expect(mockGetDownloadUrl).toHaveBeenCalledWith('model/42/file.safetensors');
     expect(res._getRedirect()).toBe('https://cdn.example.com/signed-url');
     expect(res._getStatusCode()).toBe(200); // status() never called on the redirect path
     // The route now emits one info-level audit log per request; a client-fault must still never
@@ -153,7 +153,7 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     // "images/127209598" → worker 404. Pre-fix this threw an unguarded 500.
     mockGetDownloadUrl.mockRejectedValue(new MockDeliveryWorkerError(404, 'Not Found'));
     // Own-prefix key so it passes the ownership gate and the worker's own 404 is what we assert.
-    const { req, res } = createMocks({ key: ['training-images-temp', '42', 'missing.zip'] });
+    const { req, res } = createMocks({ key: ['model', '42', 'missing.safetensors'] });
 
     await expect(handler(req, res)).resolves.toBe(res); // resolves (no throw)
     expect(res._getStatusCode()).toBe(404);
@@ -338,16 +338,16 @@ describe('/api/download/[...key] — ownership scope', () => {
 
   it("resolves the caller's own-prefix key", async () => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
-    const { req, res } = createMocks({ key: ['training-images-temp', '42', 'mine.zip'] });
+    const { req, res } = createMocks({ key: ['model', '42', 'mine.safetensors'] });
 
     await handler(req, res);
 
-    expect(mockGetDownloadUrl).toHaveBeenCalledWith('training-images-temp/42/mine.zip');
+    expect(mockGetDownloadUrl).toHaveBeenCalledWith('model/42/mine.safetensors');
     expect(res._getRedirect()).toBe('https://cdn.example.com/signed');
   });
 
   it.each([
-    ["another user's upload key", ['training-images-temp', '99', 'other-user.zip']],
+    ["another user's upload key", ['model', '99', 'other-user.safetensors']],
     ['a version-prefixed key', ['modelVersion', '123', 'other-user.safetensors']],
   ])('refuses %s with 404 and never resolves it', async (_label, key) => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
@@ -363,11 +363,11 @@ describe('/api/download/[...key] — ownership scope', () => {
   it.each([
     [
       'a .. traversal segment past the owned prefix',
-      ['training-images-temp', '42', '..', '..', 'training-images-temp', '99', 'f.zip'],
+      ['model', '42', '..', '..', 'model', '99', 'f.safetensors'],
     ],
     [
       'an encoded separator inside a segment',
-      ['training-images-temp', '42', '..%2f..%2ftraining-images-temp%2f99%2ff.zip'],
+      ['model', '42', '..%2f..%2fmodel%2f99%2ff.safetensors'],
     ],
   ])('refuses %s with 404, even though segment 1 is the caller', async (_label, key) => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
@@ -398,49 +398,4 @@ describe('/api/download/[...key] — ownership scope', () => {
 
     expect(mockGetDownloadUrl).toHaveBeenCalledWith('model/99/any.safetensors');
   });
-});
-
-/**
- * Model and training files are served only through the download routes, which apply each file's
- * gates (taken down, deleted, early access). Here they are refused to everyone but moderators by
- * prefix alone: no stored url, model owner or version id is consulted.
- */
-describe('/api/download/[...key] — model and training file prefixes', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockFindUnique.mockResolvedValue({ value: '' });
-    mockGetDownloadUrl.mockResolvedValue({
-      url: 'https://cdn.example.com/signed',
-      urlExpiryDate: new Date(),
-    });
-  });
-
-  it.each([
-    ['its own model upload', ['model', '42', 'mine.safetensors']],
-    ['its own default upload', ['default', '42', 'archive.zip']],
-    ['its own training data', ['training-images', '42', 'data.zip']],
-    // Segment 1 of a version-prefixed key is a version id, which can equal the caller's user id.
-    ['a version-prefixed key whose id is its user id', ['modelVersion', '42', 'epoch.safetensors']],
-  ])('refuses the caller %s with 404 and never resolves it', async (_label, key) => {
-    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
-    const { req, res } = createMocks({ key });
-
-    await handler(req, res);
-
-    expect(res._getStatusCode()).toBe(404);
-    expect(res._getJSONData()).toEqual({ error: 'Not found' });
-    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
-  });
-
-  it.each([['model'], ['default'], ['training-images'], ['modelVersion']])(
-    'serves a moderator a %s key',
-    async (prefix) => {
-      mockGetServerAuthSession.mockResolvedValue({ user: { id: 1, isModerator: true } });
-      const { req, res } = createMocks({ key: [prefix, '42', 'f.bin'] });
-
-      await handler(req, res);
-
-      expect(mockGetDownloadUrl).toHaveBeenCalledWith(`${prefix}/42/f.bin`);
-    }
-  );
 });

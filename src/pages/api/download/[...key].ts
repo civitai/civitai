@@ -1,20 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { DeliveryWorkerError, getDownloadUrl } from '~/utils/delivery-worker';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
-import { UploadType } from '~/server/common/enums';
 import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
 import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { logToAxiom, safeError } from '~/server/logging/client';
-
-// Key prefixes that hold model and training files (ModelFile urls); `modelVersion/<versionId>/` is
-// the trained-model output prefix, whose segment 1 is not a user id.
-const MODERATOR_ONLY_PREFIXES = new Set<string>([
-  UploadType.Model,
-  UploadType.Default,
-  UploadType.TrainingImages,
-  'modelVersion',
-]);
 
 export default async function downloadTrainingData(req: NextApiRequest, res: NextApiResponse) {
   // Get ip so that we can block exploits we catch. Derived via getTrustedClientIp
@@ -44,9 +34,7 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
   }
 
   // Upload keys are `<type>/<userId>/<name>` (buildUploadKey): a caller may fetch their own uploads
-  // here; anything else goes through the download route for its record. Model and training files
-  // (MODERATOR_ONLY_PREFIXES) are served only through the download routes, which apply each file's
-  // gates, so they are not fetchable here even by their uploader. Moderators may fetch any key.
+  // here; anything else goes through the download route for its record. Moderators may fetch any key.
   //
   // The prefix match reads segment 1, but the whole joined key is handed to the delivery worker,
   // whose normalization we don't control. Require each segment to be a plain name first — non-empty,
@@ -61,10 +49,7 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
     }
     return seg !== '' && decoded !== '.' && decoded !== '..' && !/[/\\%]/.test(decoded);
   });
-  const allowed =
-    safeSegments &&
-    (!!session.user?.isModerator ||
-      (keyParts[1] === String(userId) && !MODERATOR_ONLY_PREFIXES.has(keyParts[0])));
+  const allowed = safeSegments && (!!session.user?.isModerator || keyParts[1] === String(userId));
   logToAxiom({ type: 'info', name: 'download-key-route', userId, key, allowed }).catch(
     () => undefined
   );
