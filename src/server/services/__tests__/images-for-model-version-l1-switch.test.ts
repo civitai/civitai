@@ -10,11 +10,12 @@ import type * as FliptClient from '~/server/flipt/client';
  * `images-for-model-version-2` (imagesForModelVersionsCache) behind MODEL_VERSION_IMAGES_L1,
  * through the real cache definition with the cache cluster faked as a store and its entries
  * planted, so the origin query is not involved. Off, no L1 (as before): every read goes to Redis
- * and re-reads each image's tag ids. On, a 30s per-pod L1 holding the value after that tag read.
+ * and re-reads each image's tag ids. On, a 30s per-pod L1 holding the value after that tag read,
+ * read only by a fetch that passes `allowLocal: true`.
  *
  * The viewer case runs a real consumer (`getEligibleModels`, which picks a cover with
- * `pickPreviewImage`) for two viewers off ONE cached entry: viewer filtering must happen after the
- * read and never be written into the entry.
+ * `pickPreviewImage`, and reads past the L1) for two viewers: viewer filtering must happen after the
+ * read and never be written into the entry, which a later L1 read checks.
  *
  * The cache is one module-level instance for the whole file, so each case uses its own version
  * ids. The L1 clock is a mocked `performance.now` (see letLruClockClear); the Redis fake reads
@@ -129,9 +130,9 @@ describe('imagesForModelVersionsCache L1: MODEL_VERSION_IMAGES_L1', () => {
   it('off (flag absent): no L1 — every read goes to Redis and re-reads the tags, as before', async () => {
     flag = null;
     plant(301);
-    const first = await imagesForModelVersionsCache.fetch([301]);
+    const first = await imagesForModelVersionsCache.fetch([301], { allowLocal: true });
     await advance(1);
-    const second = await imagesForModelVersionsCache.fetch([301]);
+    const second = await imagesForModelVersionsCache.fetch([301], { allowLocal: true });
 
     expect(first).toEqual({ 301: withTags(301) });
     expect(second).toEqual(first);
@@ -143,18 +144,18 @@ describe('imagesForModelVersionsCache L1: MODEL_VERSION_IMAGES_L1', () => {
   it('on: inside 30s a read makes no Redis call and no tag read; past 30s it reads both again', async () => {
     flag = true;
     plant(402);
-    const first = await imagesForModelVersionsCache.fetch([402]);
+    const first = await imagesForModelVersionsCache.fetch([402], { allowLocal: true });
     expect(first).toEqual({ 402: withTags(402) });
     expect([redisReads(), tagReads.mock.calls.length]).toEqual([1, 1]);
 
     await advance(15);
-    expect(await imagesForModelVersionsCache.fetch([402])).toEqual(first);
+    expect(await imagesForModelVersionsCache.fetch([402], { allowLocal: true })).toEqual(first);
     await advance(14); // 29s
-    expect(await imagesForModelVersionsCache.fetch([402])).toEqual(first);
+    expect(await imagesForModelVersionsCache.fetch([402], { allowLocal: true })).toEqual(first);
     expect([redisReads(), tagReads.mock.calls.length]).toEqual([1, 1]);
 
     await advance(2); // 31s
-    expect(await imagesForModelVersionsCache.fetch([402])).toEqual(first);
+    expect(await imagesForModelVersionsCache.fetch([402], { allowLocal: true })).toEqual(first);
     expect([redisReads(), tagReads.mock.calls.length]).toEqual([2, 2]);
     expect(vi.mocked(isFliptSync).mock.calls).toContainEqual(['model-version-images-l1']);
   });
@@ -162,8 +163,8 @@ describe('imagesForModelVersionsCache L1: MODEL_VERSION_IMAGES_L1', () => {
   it("on: a bust still rewrites the Redis entry, and this pod's next read goes to Redis", async () => {
     flag = true;
     plant(503);
-    await imagesForModelVersionsCache.fetch([503]);
-    await imagesForModelVersionsCache.fetch([503]);
+    await imagesForModelVersionsCache.fetch([503], { allowLocal: true });
+    await imagesForModelVersionsCache.fetch([503], { allowLocal: true });
     expect(redisReads()).toBe(1);
 
     redisMock.redis.packed.set.mockClear();
@@ -171,26 +172,26 @@ describe('imagesForModelVersionsCache L1: MODEL_VERSION_IMAGES_L1', () => {
     expect(redisMock.redis.packed.set.mock.calls.map(([key]) => key)).toEqual([`${PREFIX}503`]);
 
     const readsAfterBust = redisReads();
-    await imagesForModelVersionsCache.fetch([503]);
+    await imagesForModelVersionsCache.fetch([503], { allowLocal: true });
     expect(redisReads()).toBe(readsAfterBust + 1);
   });
 
   it("on: a consumer editing what it got in place cannot change the next reader's value", async () => {
     flag = true;
     plant(604);
-    const first = (await imagesForModelVersionsCache.fetch([604]))[604];
+    const first = (await imagesForModelVersionsCache.fetch([604], { allowLocal: true }))[604];
     first.images.splice(0, 1);
     first.images[0].nsfwLevel = NsfwLevel.XXX;
     first.images[0].tags?.push(1);
 
-    const second = (await imagesForModelVersionsCache.fetch([604]))[604];
+    const second = (await imagesForModelVersionsCache.fetch([604], { allowLocal: true }))[604];
     expect(redisReads()).toBe(1); // served from the L1
     expect(second).toEqual(withTags(604));
   });
 });
 
 describe('viewer filtering stays after the cache read (MODEL_VERSION_IMAGES_L1 on)', () => {
-  it('two viewers with different browsing levels get different covers from one cached entry', async () => {
+  it('two viewers with different browsing levels get different covers from one entry', async () => {
     flag = true;
     plant(705);
     const [rImage, pgImage] = entryFor(705).images;
@@ -199,8 +200,8 @@ describe('viewer filtering stays after the cache read (MODEL_VERSION_IMAGES_L1 o
     const asR = await getEligibleModels([705], { viewerLevel: NsfwLevel.R });
     const unfiltered = await getEligibleModels([705]);
 
-    // One Redis read for all three: the second and third came from the L1 entry the first filled.
-    expect(redisReads()).toBe(1);
+    // A public reader: each read goes to Redis.
+    expect(redisReads()).toBe(3);
     expect(asPg.map((m) => m.image?.id)).toEqual([pgImage.id]);
     expect(asR.map((m) => m.image?.id)).toEqual([rImage.id]);
     expect(unfiltered.map((m) => m.image?.id)).toEqual([rImage.id]);
@@ -213,9 +214,11 @@ describe('viewer filtering stays after the cache read (MODEL_VERSION_IMAGES_L1 o
       height: pgImage.height,
       type: pgImage.type,
     });
-    // The entry itself still holds every image, unfiltered.
-    expect(await imagesForModelVersionsCache.fetch([705])).toEqual({ 705: withTags(705) });
-    expect(redisReads()).toBe(1);
+    // The L1 entry those reads filled still holds every image, unfiltered.
+    expect(await imagesForModelVersionsCache.fetch([705], { allowLocal: true })).toEqual({
+      705: withTags(705),
+    });
+    expect(redisReads()).toBe(3);
   });
 
   it('the R viewer reading first does not narrow what the PG viewer gets either', async () => {
@@ -226,7 +229,7 @@ describe('viewer filtering stays after the cache read (MODEL_VERSION_IMAGES_L1 o
     const asR = await getEligibleModels([806], { viewerLevel: NsfwLevel.R });
     const asPg = await getEligibleModels([806], { viewerLevel: NsfwLevel.PG });
 
-    expect(redisReads()).toBe(1);
+    expect(redisReads()).toBe(2);
     expect(asR.map((m) => m.image?.id)).toEqual([rImage.id]);
     expect(asPg.map((m) => m.image?.id)).toEqual([pgImage.id]);
   });

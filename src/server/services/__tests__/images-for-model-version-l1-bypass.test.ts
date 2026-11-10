@@ -20,11 +20,9 @@ import {
   imagesForModelVersionsCache,
 } from '~/server/services/image.service';
 import { getModelsWithVersions } from '~/server/services/model.service';
-import {
-  getModelSearchIndexRecords,
-  pullModelsData,
-} from '~/server/search-index/models.search-index';
+import { pullModelsData } from '~/server/search-index/models.search-index';
 import { getEcosystemSeoData } from '~/server/services/ecosystem-seo.service';
+import { getEligibleModels } from '~/server/services/eligible-models.service';
 import {
   dataForModelsCache,
   modelTagCache,
@@ -34,16 +32,17 @@ import {
 import { resetL1SwitchesForTests } from '~/server/redis/l1-switches';
 
 /**
- * The `bypassLocal` chain past this process's `images-for-model-version-2` L1, with
- * MODEL_VERSION_IMAGES_L1 on, through the real image.service, model.service, models search index
- * and ecosystem SEO code. Only the bottom is faked: the cache cluster (a store), the database, and
- * services off the images path that getModelsWithVersions also calls (paid access, creator
- * program, user cosmetics, files, blocked tags) plus sibling caches (model data, user basics,
- * model tags, image tag ids).
+ * Public readers of `images-for-model-version-2` read past this process's L1, with
+ * MODEL_VERSION_IMAGES_L1 on, through the real image.service, model.service, eligible-models,
+ * models search index and ecosystem SEO code. Only the bottom is faked: the cache cluster (a store),
+ * the database, and services off the images path that getModelsWithVersions also calls (paid
+ * access, creator program, user cosmetics, files, blocked tags) plus sibling caches (model data,
+ * user basics, model tags, image tag ids).
  *
- * Each case leaves this process's L1 holding an OLD entry while Redis holds a NEWER one (what a
- * refresh on another process leaves behind), checks that a plain read still gets the old one,
- * then reads through the caller under test.
+ * Each case leaves this process's L1 holding an entry with an image that has since been removed
+ * (moderation block, delete, unpublish) while Redis holds the refreshed entry without it: what a
+ * refresh on another process leaves behind. It checks that an `allowLocal` read still gets the
+ * removed image, then reads through the public caller under test.
  *
  * The cache is one module-level instance for the whole file, so each case uses its own version.
  */
@@ -100,28 +99,30 @@ const PREFIX = 'packed:caches:images-for-model-version-2:';
 const MODEL_ID = 61;
 const USER_ID = 62;
 
-// One image per entry. The old and new entries differ in image id and url, so a caller that got
-// the wrong one cannot pass.
-type Generation = 'old' | 'new';
-const imageId = (versionId: number, gen: Generation) => versionId * 10 + (gen === 'old' ? 1 : 2);
-const urlFor = (versionId: number, gen: Generation) => `url-${versionId}-${gen}`;
+// Before the removal the entry holds a kept and a removed image; after it, only the kept one. Ids,
+// urls and hashes are pairwise distinct, so a caller served the stale entry cannot pass.
+type Generation = 'stale' | 'current';
+const keptId = (versionId: number) => versionId * 10 + 1;
+const removedId = (versionId: number) => versionId * 10 + 2;
+const image = (versionId: number, id: number) => ({
+  id,
+  modelVersionId: versionId,
+  userId: USER_ID,
+  name: `img-${id}`,
+  url: `url-${id}`,
+  nsfwLevel: NsfwLevel.PG,
+  width: 512,
+  height: 768,
+  hash: `hash-${id}`,
+  type: 'image',
+  metadata: {},
+});
 const entryFor = (versionId: number, gen: Generation) => ({
   modelVersionId: versionId,
-  images: [
-    {
-      id: imageId(versionId, gen),
-      modelVersionId: versionId,
-      userId: USER_ID,
-      name: `img-${versionId}-${gen}`,
-      url: urlFor(versionId, gen),
-      nsfwLevel: NsfwLevel.PG,
-      width: 512,
-      height: 768,
-      hash: `hash-${versionId}-${gen}`,
-      type: 'image',
-      metadata: {},
-    },
-  ],
+  images:
+    gen === 'stale'
+      ? [image(versionId, removedId(versionId)), image(versionId, keptId(versionId))]
+      : [image(versionId, keptId(versionId))],
 });
 
 let fs: ReturnType<typeof installFakeCacheRedis>;
@@ -129,22 +130,19 @@ let tagReads: MockInstance<(typeof tagIdsForImagesCache)['fetch']>;
 const plant = (versionId: number, gen: Generation) =>
   fs.plant(`${PREFIX}${versionId}`, { ...entryFor(versionId, gen), cachedAt: new Date() }, 86400);
 
-const urlsOf = (entry: { images: { url: string }[] } | undefined) =>
-  entry?.images.map((i) => i.url);
+const idsOf = (entry: { images: { id: number }[] } | undefined) => entry?.images.map((i) => i.id);
 
 /**
- * Leave this process's L1 holding the old entry for `versionId` and Redis the new one, and check a
- * plain read still gets the old one (the precondition every case below depends on).
+ * Leave this process's L1 holding the entry with the removed image and Redis the refreshed one,
+ * and check an L1 reader still gets the removed image (the precondition every case depends on).
  */
-async function oldInL1NewInRedis(versionId: number) {
-  plant(versionId, 'old');
-  expect(urlsOf((await getImagesForModelVersionCache([versionId]))[versionId])).toEqual([
-    urlFor(versionId, 'old'),
-  ]);
-  plant(versionId, 'new');
-  expect(urlsOf((await imagesForModelVersionsCache.fetch([versionId]))[versionId])).toEqual([
-    urlFor(versionId, 'old'),
-  ]);
+async function removedInL1Only(versionId: number) {
+  plant(versionId, 'stale');
+  const l1Read = async () =>
+    idsOf((await imagesForModelVersionsCache.fetch([versionId], { allowLocal: true }))[versionId]);
+  expect(await l1Read()).toEqual([removedId(versionId), keptId(versionId)]);
+  plant(versionId, 'current');
+  expect(await l1Read()).toEqual([removedId(versionId), keptId(versionId)]);
 }
 
 /** One published model with one version, as getModelsRaw reads it. */
@@ -190,11 +188,10 @@ function primeOneModel(versionId: number) {
   dbMock.dbRead.modelVersion.findMany.mockResolvedValue([{ id: versionId, meta: null }] as never);
 }
 
-const callGetModelsWithVersions = (bypassImagesL1?: boolean) =>
+const callGetModelsWithVersions = () =>
   getModelsWithVersions({
     input: { browsingLevel: 1, take: 10, period: 'AllTime' } as never,
     user: { id: USER_ID, isModerator: true },
-    bypassImagesL1,
   });
 
 beforeEach(async () => {
@@ -218,36 +215,49 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('images-for-model-version-2 L1 bypass (MODEL_VERSION_IMAGES_L1 on)', () => {
-  it('getImagesForModelVersionCache: without bypassLocal the L1 copy, with it the Redis value', async () => {
-    await oldInL1NewInRedis(9101);
+describe('images-for-model-version-2 public readers skip the L1 (MODEL_VERSION_IMAGES_L1 on)', () => {
+  it('getImagesForModelVersionCache (image.getImagesForModelVersion, model feed, covers)', async () => {
+    await removedInL1Only(9101);
 
-    const plain = await getImagesForModelVersionCache([9101]);
-    const bypassed = await getImagesForModelVersionCache([9101], { bypassLocal: true });
+    const result = await getImagesForModelVersionCache([9101]);
 
-    expect(urlsOf(plain[9101])).toEqual([urlFor(9101, 'old')]);
-    expect(urlsOf(bypassed[9101])).toEqual([urlFor(9101, 'new')]);
+    expect(idsOf(result[9101])).toEqual([keptId(9101)]);
     expect(tagReads).toHaveBeenCalled();
   });
 
-  it('getModelsWithVersions: without bypassImagesL1 the L1 copy, with it the Redis value', async () => {
-    await oldInL1NewInRedis(9202);
+  it('getModelsWithVersions (model search, /api/v1/models)', async () => {
+    await removedInL1Only(9202);
     primeOneModel(9202);
 
-    const plain = await callGetModelsWithVersions();
-    expect(plain.items).toHaveLength(1);
-    expect(plain.items[0].modelVersions[0].images.map((i) => [i.id, i.url])).toEqual([
-      [imageId(9202, 'old'), urlFor(9202, 'old')],
-    ]);
+    const { items } = await callGetModelsWithVersions();
 
-    const bypassed = await callGetModelsWithVersions(true);
-    expect(bypassed.items[0].modelVersions[0].images.map((i) => [i.id, i.url])).toEqual([
-      [imageId(9202, 'new'), urlFor(9202, 'new')],
+    expect(items).toHaveLength(1);
+    expect(items[0].modelVersions[0].images.map((i) => [i.id, i.url])).toEqual([
+      [keptId(9202), `url-${keptId(9202)}`],
     ]);
   });
 
+  it('imagesForModelVersionsCache.fetch with no options (downloads, auctions, generation)', async () => {
+    await removedInL1Only(9606);
+
+    const result = await imagesForModelVersionsCache.fetch([9606]);
+
+    expect(idsOf(result[9606])).toEqual([keptId(9606)]);
+  });
+
+  it('getEligibleModels (challenge models)', async () => {
+    await removedInL1Only(9707);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      { id: 9707, name: 'v1', baseModel: 'SDXL 1.0', model: { id: MODEL_ID, name: 'model' } },
+    ] as never);
+
+    const models = await getEligibleModels([9707]);
+
+    expect(models.map((m) => m.image?.id)).toEqual([keptId(9707)]);
+  });
+
   it('models search index pullModelsData: builds the documents from the Redis value', async () => {
-    await oldInL1NewInRedis(9303);
+    await removedInL1Only(9303);
     const db = {
       model: { findMany: vi.fn(async () => [{ id: MODEL_ID, modelVersions: [{ id: 9303 }] }]) },
     };
@@ -260,25 +270,11 @@ describe('images-for-model-version-2 L1 bypass (MODEL_VERSION_IMAGES_L1 on)', ()
       } as never
     );
 
-    expect(result.images.map((i) => i.url)).toEqual([urlFor(9303, 'new')]);
-  });
-
-  it('models search index getModelSearchIndexRecords: reads the cache with bypassLocal', async () => {
-    // A call-argument check rather than a full read: what follows the read (transformData) pulls
-    // category tags, paid-access terms and resource insights, none of which bear on the L1.
-    dbMock.dbRead.model.findMany.mockResolvedValueOnce([
-      { id: MODEL_ID, modelVersions: [{ id: 9404 }] },
-    ] as never);
-    const stop = new Error('stop after the images read');
-    const fetch = vi.spyOn(imagesForModelVersionsCache, 'fetch').mockRejectedValueOnce(stop);
-
-    await expect(getModelSearchIndexRecords([MODEL_ID])).rejects.toBe(stop);
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch).toHaveBeenCalledWith([9404], { bypassLocal: true });
+    expect(result.images.map((i) => i.id)).toEqual([keptId(9303)]);
   });
 
   it('ecosystem SEO getTopLoras: the stored LoRA cover comes from the Redis value', async () => {
-    await oldInL1NewInRedis(9505);
+    await removedInL1Only(9505);
     dbMock.dbRead.$queryRaw.mockImplementation((async (query: Prisma.Sql) =>
       query.sql.includes('eco_loras')
         ? [
@@ -295,7 +291,7 @@ describe('images-for-model-version-2 L1 bypass (MODEL_VERSION_IMAGES_L1 on)', ()
     const data = await getEcosystemSeoData('SDXL', { refresh: true });
 
     expect(data?.topLoras.map((l) => [l.versionId, l.imageUrl])).toEqual([
-      [9505, urlFor(9505, 'new')],
+      [9505, `url-${keptId(9505)}`],
     ]);
   });
 });
