@@ -599,6 +599,7 @@ export const collectionItemsInfiniteHandler = async ({
     input,
     user: ctx.user,
     coverage: await coverageAudience(ctx.user ?? undefined),
+    requireRead: true,
   });
 
   return {

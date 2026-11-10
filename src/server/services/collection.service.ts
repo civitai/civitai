@@ -2007,6 +2007,7 @@ export const getCollectionItemsByCollectionId = async ({
   user,
   imagesAsPublicCatalog = false,
   coverage,
+  requireRead = false,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
@@ -2019,6 +2020,11 @@ export const getCollectionItemsByCollectionId = async ({
   imagesAsPublicCatalog?: boolean;
   /** See `getModelsRaw`. */
   coverage?: CoverageAudience;
+  /**
+   * Answer a collection the viewer may not read (collection.getById's rule) as a missing one. Off
+   * for server-side readers that choose the collection themselves (home blocks).
+   */
+  requireRead?: boolean;
 }): Promise<CollectionItemsResult> => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -2038,6 +2044,9 @@ export const getCollectionItemsByCollectionId = async ({
     userId: user?.id,
     isModerator: user?.isModerator,
   });
+
+  if (requireRead && !permission.read && !permission.write && !permission.manage)
+    throw throwNotFoundError('Collection not found');
 
   if (
     (forReview ||
@@ -4119,10 +4128,21 @@ export const getCollectionItemById = ({ id }: GetByIdInput) => {
 export async function getCollectionEntryCount({
   collectionId,
   userId,
+  isModerator,
 }: {
   collectionId: number;
   userId: number;
+  isModerator?: boolean;
 }) {
+  // A collection the viewer may neither read nor submit to answers as a missing one.
+  const permission = await getUserCollectionPermissionsById({
+    id: collectionId,
+    userId,
+    isModerator,
+  });
+  if (!permission.read && !permission.write && !permission.writeReview && !permission.manage)
+    throw throwNotFoundError('Collection not found');
+
   const [collection] = await dbRead.$queryRaw<{ total: number }[]>`
     SELECT
       CAST(c.metadata->'maxItemsPerUser' as int) as total

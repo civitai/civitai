@@ -230,9 +230,20 @@ export const collectionRouter = router({
   getEntryCount: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .input(getByIdSchema)
-    .query(({ input, ctx }: { input: GetByIdInput; ctx: { user: { id: number } } }) => {
-      return getCollectionEntryCount({ collectionId: input.id, userId: ctx.user.id });
-    }),
+    .query(
+      ({
+        input,
+        ctx,
+      }: {
+        input: GetByIdInput;
+        ctx: { user: { id: number; isModerator?: boolean } };
+      }) =>
+        getCollectionEntryCount({
+          collectionId: input.id,
+          userId: ctx.user.id,
+          isModerator: ctx.user.isModerator,
+        })
+    ),
   joinCollectionAsManager: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(getByIdSchema)
