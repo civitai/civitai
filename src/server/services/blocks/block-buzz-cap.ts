@@ -14,3 +14,16 @@ export function buzzCapRedisKey(
 ): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${string}` {
   return `${REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${userId}:${buzzCapWindowKey()}`;
 }
+
+/**
+ * Set for the UTC day once the viewer opts in to continue on their own Buzz past their plan's
+ * daily cap. Same window as `buzzCapRedisKey`, so the two roll over together.
+ */
+export function buzzOptInRedisKey(
+  userId: number
+): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP_OPT_IN}:${string}` {
+  return `${REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP_OPT_IN}:${userId}:${buzzCapWindowKey()}`;
+}
+
+/** Outlives the UTC day it names, like the cap counter; the day in the key is what expires it. */
+export const BUZZ_OPT_IN_TTL_SECONDS = 25 * 60 * 60;

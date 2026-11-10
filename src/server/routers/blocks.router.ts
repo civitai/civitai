@@ -52,7 +52,6 @@ import {
   BLOCK_POST_TITLE_MAX,
 } from '~/server/services/blocks/block-post.logic';
 import {
-  BLOCK_BUZZ_CAP_PER_DAY,
   BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
@@ -65,6 +64,7 @@ import {
 } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { buzzCapRedisKey, buzzCapWindowKey } from '~/server/services/blocks/block-buzz-cap';
+import { resolveUserAppCaps } from '~/server/services/blocks/user-app-caps.service';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import {
@@ -1515,7 +1515,7 @@ async function reservePrivateRunBuzzSpend(
 // ---- CONSENT BUDGET — the per-(USER, APP BLOCK, UTC-day) ceiling the VIEWER set
 //      for THIS app at consent time (`app_user_scope_grants.buzz_budget_per_day`).
 //
-// The two caps above are PLATFORM caps: BLOCK_BUZZ_CAP_PER_DAY bounds one user
+// The two caps above are PLATFORM caps: the daily cap (`resolveUserAppCaps`) bounds one user
 // across ALL their apps (deliberately no appBlockId in the key), and the G8
 // per-app cap bounds one app across ALL users. Neither can express "I am happy for
 // THIS app to spend 500 of my Buzz a day and no more" — which is the thing a user
@@ -1689,8 +1689,13 @@ async function reserveBlockBuzzSpendForClaims(
     const { total, key } = await reservePrivateRunBuzzSpend(userId, claims.appBlockId, cost);
     return { total, key, cap: PRIVATE_RUN_BUZZ_CAP, consent: null };
   }
+  // The per-user daily cap is the viewer's plan cap from `resolveUserAppCaps` — THE source the
+  // account Limits section reads too, so the cap shown is the cap enforced. It never throws (a
+  // failed read serves the strictest tier's cap), and it is read before the reservation so a
+  // read cannot strand one.
+  const { buzzPerDay } = await resolveUserAppCaps(userId);
   const { total, key } = await reserveBlockBuzzSpend(userId, cost);
-  const platform = { total, key, cap: BLOCK_BUZZ_CAP_PER_DAY };
+  const platform = { total, key, cap: buzzPerDay };
   if (claims.dev === true) return { ...platform, consent: null };
 
   // From here any throw must undo the platform reservation just taken — otherwise a

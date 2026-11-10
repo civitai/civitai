@@ -25,6 +25,7 @@ import type {
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
 import { getDocStoreViewerData } from '~/server/services/apps/doc-store-viewer-data.instance';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
+import { docStoreUserLimits } from '~/server/services/blocks/user-app-caps.service';
 import type {
   StorageFigure,
   StorageHoldings,
@@ -63,18 +64,20 @@ const lookupAppNames: AppNameLookup = async (ids) =>
     })
   ).map((b) => ({ id: b.id, blockId: b.blockId, listingName: b.appListing?.name ?? null }));
 
-const viewerLimits = (limits: ViewerStorageLimits): ViewerStorageLimits => ({
-  userBytes: limits.userBytes,
-  userDocs: limits.userDocs,
-});
+export type ViewerLimitsLookup = (userId: number) => Promise<ViewerStorageLimits>;
 
 /** Every app the user holds production documents in, by name, with their usage against the ceiling. */
 export async function getMyAppStorage(
   userId: number,
-  deps: { viewerData?: DocStoreViewerData; lookup?: AppNameLookup } = {}
+  deps: {
+    viewerData?: DocStoreViewerData;
+    lookup?: AppNameLookup;
+    limits?: ViewerLimitsLookup;
+  } = {}
 ): Promise<MyAppStorage> {
   const viewerData = deps.viewerData ?? getDocStoreViewerData();
   const lookup = deps.lookup ?? lookupAppNames;
+  const limitsOf = deps.limits ?? docStoreUserLimits;
   let rows: ViewerAppUsage[];
   try {
     rows = await viewerData.listViewerUsage(userId);
@@ -82,7 +85,8 @@ export async function getMyAppStorage(
     if (isDocStoreError(err, 'storage_disabled')) return { status: 'disabled' };
     throw err;
   }
-  const limits = viewerLimits(viewerData.limits);
+  // The ceiling the store charges this user's writes against: their membership tier's.
+  const limits = await limitsOf(userId);
   if (rows.length === 0) return { status: 'ok', limits, apps: [] };
 
   const byId = new Map((await lookup(rows.map((r) => r.appId))).map((a) => [a.id, a]));
@@ -114,9 +118,11 @@ export async function getMyAppStorage(
  */
 export async function getMyAppStorageForApp(
   userId: number,
-  appBlockId: string
+  appBlockId: string,
+  deps: { limits?: ViewerLimitsLookup } = {}
 ): Promise<MyAppStorageForApp> {
   const store = getDocStore();
+  const limitsOf = deps.limits ?? docStoreUserLimits;
   try {
     const { viewer } = await store.usage({
       appId: appBlockId,
@@ -125,7 +131,7 @@ export async function getMyAppStorageForApp(
     });
     return {
       status: 'ok',
-      limits: viewerLimits(store.limits),
+      limits: await limitsOf(userId),
       usage: viewer ?? { bytes: 0, docs: 0 },
     };
   } catch (err) {

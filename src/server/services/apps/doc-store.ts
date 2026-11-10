@@ -146,6 +146,12 @@ export type DocStoreDeps = {
   /** The least-privilege appdata pool, or null when it is not configured (→ `storage_disabled`). */
   db: DocStoreDb | null;
   limits?: DocStoreLimits;
+  /**
+   * The per-user ceiling of user `uid`, in place of `limits.userBytes` / `limits.userDocs`.
+   * Production wires the viewer's membership-tier caps (`docStoreUserLimits`); read only for a
+   * charge that adds bytes or documents to that user, never for one that frees them.
+   */
+  userLimits?: (uid: number) => Promise<{ userBytes: number; userDocs: number }>;
   /** Called once, the first time the connected role is found to be superuser or BYPASSRLS. */
   onRefused?: (role: { name: string; superuser: boolean; bypassRls: boolean }) => void;
   /**
@@ -1548,14 +1554,19 @@ function buildDocStore(deps: DocStoreDeps) {
       throw new DocStoreError('quota_exceeded', 'app storage quota exceeded', { ceiling: 'app' });
     }
     if (user.bytes !== 0 || user.docs !== 0) {
+      // A charge that only frees passes whatever the ceiling (SQL_CHARGE_USER), so it reads none.
+      const ceiling =
+        deps.userLimits && (user.bytes > 0 || user.docs > 0)
+          ? await deps.userLimits(user.uid)
+          : limits;
       const res = await c.query(SQL_CHARGE_USER, [
         ctx.appId,
         ctx.ns,
         user.uid,
         user.bytes,
         user.docs,
-        limits.userBytes,
-        limits.userDocs,
+        ceiling.userBytes,
+        ceiling.userDocs,
       ]);
       if (res.rows.length === 0) {
         throw new DocStoreError('quota_exceeded', 'storage quota exceeded', {

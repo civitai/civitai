@@ -2231,6 +2231,11 @@ export const REDIS_SYS_KEYS = {
     EMERGENCY_KILL_LIST: 'system:blocks:emergency-kill-list',
     // Cumulative Buzz-spend cap counter, keyed `system:blocks:buzz-cap:${userId}:${appBlockId}:${day}`.
     BUZZ_CAP: 'system:blocks:buzz-cap',
+    // The viewer chose to continue on their own Buzz past their plan's daily app Buzz cap, for
+    // one UTC day: `system:blocks:buzz-opt-in:${userId}:${UTC-day}` = '1', 25h TTL. Per user
+    // only (no appBlockId): it widens the BUZZ_CAP ceiling, which is per user. Deliberately NOT
+    // prefixed `buzz-cap`, so a prefix match on the counters never takes it in.
+    BUZZ_CAP_OPT_IN: 'system:blocks:buzz-opt-in',
     // Cumulative TIP-spend cap counter for the block tip endpoint, keyed
     // `system:blocks:tip-cap:${userId}:${UTC-day}`. DISTINCT from BUZZ_CAP: that
     // bounds a user's daily generation SPEND; this bounds a user's daily Buzz

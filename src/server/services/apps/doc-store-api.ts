@@ -98,6 +98,7 @@ import {
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
 import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
+import { docStoreUserLimits } from '~/server/services/blocks/user-app-caps.service';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import { rateLimitMetaFor } from '~/server/utils/rate-limit-error';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
@@ -965,7 +966,12 @@ async function run(
   }
 
   if (route.op === 'info') {
-    const usage = await store.usage(ctx);
+    // The per-viewer figures are the viewer's membership tier's (the ceiling their writes are
+    // charged against, `docStoreUserLimits`); the app ceilings are the store's own.
+    const [usage, viewerLimits] = await Promise.all([
+      store.usage(ctx),
+      docStoreUserLimits(requireViewer(access)),
+    ]);
     const L = store.limits;
     return ok({
       collections: Object.fromEntries(
@@ -975,8 +981,8 @@ async function run(
         docBytes: DOC_STORE_BOUNDS.docBytes,
         appBytes: L.appBytes,
         appDocs: L.appDocs,
-        viewerBytes: L.userBytes,
-        viewerDocs: L.userDocs,
+        viewerBytes: viewerLimits.userBytes,
+        viewerDocs: viewerLimits.userDocs,
         listLimitMax: DOC_STORE_BOUNDS.listLimitMax,
         getManyMax: DOC_STORE_BOUNDS.getManyMax,
         rate: {

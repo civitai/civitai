@@ -8,6 +8,8 @@ import { BlockFallback } from './BlockFallback';
 import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { AppStorageNearLimitNotice } from './AppStorageNearLimitNotice';
+import { AppBuzzCapNotice } from './AppBuzzCapNotice';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   APP_STORAGE_BASE_SCOPE,
   APP_STORAGE_PUBLISH_SCOPE,
@@ -2440,6 +2442,10 @@ export function PageBlockHost({
   // path surfaces no_token/error terminal states above). A missing requestId is
   // likewise dropped without replying — mirrors IframeHost.
   const submitWorkflowMutation = trpc.blocks.submitWorkflow.useMutation();
+  // The paused-at-the-daily-cap notice re-reads after a refused submit (`AppBuzzCapNotice`).
+  const buzzCapUtils = trpc.useUtils();
+  // Non-throwing: the host also renders outside a flags provider, where this is off.
+  const showBuzzCapNotice = useOptionalFeatureFlags()?.appLimitsUpgradePrompt === true;
   const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
@@ -2552,6 +2558,10 @@ export function PageBlockHost({
         });
         if (!reviewMode) reportAppSubmitResult(appBlockId, 'submit', { snapshot });
         send('WORKFLOW_SUBMITTED', { requestId, snapshot });
+        // A refused generation may be the daily cap: re-read the paused notice's state.
+        if (showBuzzCapNotice && snapshot.status === 'failed') {
+          buzzCapUtils.user.getAppBuzzCap.invalidate().catch(() => undefined);
+        }
       } catch (err) {
         if (!reviewMode) reportAppSubmitError(appBlockId, 'submit', err);
         send('WORKFLOW_SUBMITTED', { requestId, snapshot: failureSnapshot(err) });
@@ -2568,6 +2578,8 @@ export function PageBlockHost({
     reviewMode,
     appBlockId,
     countAppSubmit,
+    buzzCapUtils,
+    showBuzzCapNotice,
   ]);
 
   // ESTIMATE_WORKFLOW → blocks.estimateWorkflow → ESTIMATE_RESULT.
@@ -5971,6 +5983,13 @@ export function PageBlockHost({
         declaredScopes.includes(APP_STORAGE_BASE_SCOPE) && (
           <AppStorageNearLimitNotice appBlockId={appBlockId} appName={appName} />
         )}
+      {/* Paused at the plan's daily app Buzz limit, with the upgrade and the continue-on-own-Buzz
+          opt-in (`AppBuzzCapNotice`). Live runs only, behind `appLimitsUpgradePrompt`. */}
+      {showBuzzCapNotice &&
+        !reviewMode &&
+        surface === 'page-run' &&
+        viewer !== null &&
+        status === 'ready' && <AppBuzzCapNotice />}
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —
           SURVIVING the upload modal's close — and on a verdict fires

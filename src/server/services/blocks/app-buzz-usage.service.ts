@@ -1,12 +1,28 @@
+import { TRPCError } from '@trpc/server';
 import { sysRedis } from '~/server/redis/client';
-import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
-import { buzzCapRedisKey } from '~/server/services/blocks/block-buzz-cap';
+import {
+  isAppBlocksEnabled,
+  isAppLimitsUpgradePromptEnabled,
+} from '~/server/services/app-blocks-flag';
+import {
+  BUZZ_OPT_IN_TTL_SECONDS,
+  buzzCapRedisKey,
+  buzzOptInRedisKey,
+} from '~/server/services/blocks/block-buzz-cap';
 import { resolveUserAppCaps } from '~/server/services/blocks/user-app-caps.service';
 import { calendarWindow } from '~/server/services/usage-limit-counters';
 import type { UsageLimit } from '~/server/services/usage-limits.service';
 import type { SessionUser } from '~/types/session';
 
 export const APP_BUZZ_DAILY_ID = 'apps.buzz-daily';
+
+/** Today's figure on the counter the per-user cap reserves against; never below zero. */
+async function readUsedToday(userId: number): Promise<number> {
+  // A refund racing the key's first write can leave it below zero.
+  return Math.max(0, Number((await sysRedis.get(buzzCapRedisKey(userId))) ?? 0) || 0);
+}
+
+const resetAtIso = () => calendarWindow('utc-day', Date.now()).end.toISOString();
 
 /**
  * Buzz the user has spent through apps today, read from the counter the per-user cap reserves
@@ -17,14 +33,12 @@ export const APP_BUZZ_DAILY_ID = 'apps.buzz-daily';
 export async function getMyAppBuzzToday(user: SessionUser): Promise<UsageLimit | null> {
   if (!(await isAppBlocksEnabled({ user }))) return null;
   const userId = user.id;
-  const [{ buzzPerDay }, raw] = await Promise.all([
+  const [{ buzzPerDay }, used] = await Promise.all([
     resolveUserAppCaps(userId),
-    sysRedis.get(buzzCapRedisKey(userId)),
+    readUsedToday(userId),
   ]);
-  // A refund racing the key's first write can leave it below zero.
-  const used = Math.max(0, Number(raw ?? 0) || 0);
   const remaining = Math.max(0, buzzPerDay - used);
-  const resetAt = calendarWindow('utc-day', Date.now()).end.toISOString();
+  const resetAt = resetAtIso();
   return {
     id: APP_BUZZ_DAILY_ID,
     area: 'apps',
@@ -37,4 +51,68 @@ export async function getMyAppBuzzToday(user: SessionUser): Promise<UsageLimit |
     nextAt: remaining > 0 ? null : resetAt,
     resetAt,
   };
+}
+
+export type MyAppBuzzCap = {
+  /** Spent through apps today. */
+  used: number;
+  /** The cap enforced now. */
+  limit: number;
+  /** The plan's cap, and what opting in raises it to. */
+  planLimit: number;
+  optInLimit: number;
+  optedIn: boolean;
+  /** At the plan's cap: the running app is paused until the reset, an upgrade, or an opt-in. */
+  paused: boolean;
+  /** Opting in would raise the cap (and has not happened yet today). */
+  canOptIn: boolean;
+  resetAt: string;
+};
+
+/**
+ * The running app's view of the daily app Buzz cap, for the paused notice: `null` where apps are
+ * off or the upgrade-prompt flag is off for this viewer, so with the flag off nothing is read.
+ * Every number is `resolveUserAppCaps`'s, the cap the reservation enforces.
+ */
+export async function getMyAppBuzzCap(user: SessionUser): Promise<MyAppBuzzCap | null> {
+  if (!(await isAppBlocksEnabled({ user }))) return null;
+  if (!(await isAppLimitsUpgradePromptEnabled({ user }))) return null;
+  const [caps, used] = await Promise.all([resolveUserAppCaps(user.id), readUsedToday(user.id)]);
+  return {
+    used,
+    limit: caps.buzzPerDay,
+    planLimit: caps.planBuzzPerDay,
+    optInLimit: caps.optInBuzzPerDay,
+    optedIn: caps.optedIn,
+    paused: used >= caps.buzzPerDay,
+    canOptIn: !caps.optedIn && caps.optInBuzzPerDay > caps.planBuzzPerDay,
+    resetAt: resetAtIso(),
+  };
+}
+
+/**
+ * The viewer opts in to continue on their OWN Buzz past their plan's daily app cap, for the rest
+ * of the UTC day. It records one per-user flag and moves no Buzz: every spend after it is still
+ * charged to the viewer, as every app spend is, and still reserved against the per-user counter
+ * (now under `optInBuzzPerDay`), the per-app consent budget the viewer set, and the per-app cap.
+ * Nothing here names or reaches an app or its owner, so an owner is never billed for it.
+ *
+ * Refused where the flag is off for this viewer (FORBIDDEN) and where opting in would raise
+ * nothing (BAD_REQUEST). Idempotent within the day.
+ */
+export async function optInAppBuzzToday(user: SessionUser): Promise<MyAppBuzzCap> {
+  if (!(await isAppBlocksEnabled({ user })) || !(await isAppLimitsUpgradePromptEnabled({ user }))) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'not available' });
+  }
+  const caps = await resolveUserAppCaps(user.id);
+  if (caps.optInBuzzPerDay <= caps.planBuzzPerDay) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'your plan has no higher daily app Buzz limit to continue to',
+    });
+  }
+  await sysRedis.set(buzzOptInRedisKey(user.id), '1', { EX: BUZZ_OPT_IN_TTL_SECONDS });
+  const status = await getMyAppBuzzCap(user);
+  if (!status) throw new TRPCError({ code: 'FORBIDDEN', message: 'not available' });
+  return status;
 }

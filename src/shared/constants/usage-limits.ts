@@ -16,7 +16,9 @@ export type UsageLimitWindow =
   | { type: 'rolling'; seconds: number }
   /** Calendar windows in UTC. Not countable in a rate-limit bucket: the limit's owner counts them. */
   | { type: 'utc-day' }
-  | { type: 'utc-month' };
+  | { type: 'utc-month' }
+  /** A standing allowance with no window (storage held): it frees up only when usage drops. */
+  | { type: 'standing' };
 
 export const usageLimitTiers = ['free', 'founder', 'bronze', 'silver', 'gold'] as const;
 export type UsageLimitTier = (typeof usageLimitTiers)[number];
@@ -273,6 +275,52 @@ export const usageLimitDefs = [
       `You've claimed your ${numberWithCommas(limit)} ${
         limit === 1 ? 'gift' : 'gifts'
       } for this month. To get this one, reach out to the person who gave you the link.`,
+  },
+  // ── Per-user App Platform caps, by membership tier. Read ONLY through `resolveUserAppCaps`
+  // (`server/services/blocks/user-app-caps.service.ts`), which both enforcement and the
+  // account Limits section call, so the two cannot disagree. Never `rateLimit()` rules.
+  //
+  // Every tier is at the pre-tier constants (`BLOCK_BUZZ_CAP_PER_DAY`, the doc store's
+  // `userBytes` / `userDocs`) until per-tier numbers are set: set them with a `byTier` override
+  // in the `usage-limits` KeyValue row, no deploy needed. `kind: 'abuse'` so an override can
+  // raise or lower these but never `disabled` them (an unbounded spend or storage ceiling).
+  {
+    // Buzz spent through apps per UTC day, across all of a user's apps.
+    id: 'apps.buzz-daily',
+    area: 'apps',
+    kind: 'abuse',
+    label: 'Daily Buzz cap across apps',
+    window: { type: 'utc-day' },
+    base: 50_000,
+  },
+  {
+    // What `apps.buzz-daily` rises to for the rest of the UTC day once the viewer opts in to
+    // continue on their own Buzz at the limit. Never below the plan cap: where it is not above
+    // it, there is nothing to opt in to and no prompt offers it.
+    id: 'apps.buzz-daily-opt-in',
+    area: 'apps',
+    kind: 'abuse',
+    label: 'Daily Buzz cap across apps after opting in',
+    window: { type: 'utc-day' },
+    base: 50_000,
+  },
+  {
+    // Bytes one user may hold in one app.
+    id: 'apps.storage-bytes',
+    area: 'apps',
+    kind: 'abuse',
+    label: 'Storage per app',
+    window: { type: 'standing' },
+    base: 2 * 1024 * 1024,
+  },
+  {
+    // Documents one user may hold in one app.
+    id: 'apps.storage-docs',
+    area: 'apps',
+    kind: 'abuse',
+    label: 'Documents per app',
+    window: { type: 'standing' },
+    base: 1_000,
   },
 ] as const satisfies readonly UsageLimitDef[];
 
