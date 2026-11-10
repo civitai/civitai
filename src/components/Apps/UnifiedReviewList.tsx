@@ -40,7 +40,11 @@ import {
   PREVIEW_CHIP_LABELS,
   sensitiveChipLabel,
 } from '~/components/Apps/reviewQueueSignals';
-import { agentReviewDisplay, AGENT_REVIEW_LANE_BADGES } from '~/shared/utils/agent-review-findings';
+import {
+  agentReviewDisplay,
+  AGENT_REVIEW_LANE_BADGES,
+  listingEditCheckBadge,
+} from '~/shared/utils/agent-review-findings';
 import classes from './UnifiedReviewList.module.scss';
 import {
   failedBuildSummary,
