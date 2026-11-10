@@ -195,7 +195,7 @@ describe('publishModelById only touches the model’s own versions', () => {
     });
 
     expect(mockTx.modelVersion.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: [OWN_VERSION_ID] }, modelId: MODEL_ID },
+      where: expect.objectContaining({ id: { in: [OWN_VERSION_ID] }, modelId: MODEL_ID }),
       data: { status: 'Scheduled' },
     });
     const versionPublishedAt = rawSql().find((sql) => sql.includes('UPDATE "ModelVersion"'));
