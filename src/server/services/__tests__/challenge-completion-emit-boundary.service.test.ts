@@ -85,7 +85,9 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async () => {
     deriveChallengeNsfwLevel: vi.fn(() => 1),
     endChallenge: mockEndChallenge,
     getActiveChallenges: vi.fn(),
-    getChallengeConfig: vi.fn().mockResolvedValue({ defaultJudgeId: 1, defaultJudge: null }),
+    getChallengeConfig: vi
+      .fn()
+      .mockResolvedValue({ defaultJudgeId: 1, defaultJudge: null, reviewMeTagId: 13 }),
     getJudgingConfig: vi.fn().mockResolvedValue({
       judgeId: 1,
       userId: 999,
@@ -358,6 +360,7 @@ describe('entry prizes stay automatic and blue', () => {
     const { distributeParticipationPrizes } = await import(
       '~/server/games/daily-challenge/challenge-rewards'
     );
+    expect(distributeParticipationPrizes).toHaveBeenCalledTimes(1);
     expect(distributeParticipationPrizes).toHaveBeenCalledWith(
       expect.objectContaining({ challengeId: 1, excludeUserIds: [1] })
     );
@@ -406,8 +409,9 @@ describe('mod -> job completion boundary — prize Buzz is counted exactly once'
       '~/server/games/daily-challenge/challenge-rewards'
     );
     expect(vi.mocked(refundBannedEntrantReviews).mock.calls).toEqual([
-      [expect.objectContaining({ challengeId: 1, collectionId: 100 })],
-      [expect.objectContaining({ challengeId: 1, collectionId: 100 })],
+      // Moderator run (its config's tag), then the job (JOB_CONFIG's tag).
+      [{ challengeId: 1, collectionId: 100, reviewMeTagId: 13 }],
+      [{ challengeId: 1, collectionId: 100, reviewMeTagId: 12 }],
     ]);
 
     // ...and the Buzz was counted ONCE.

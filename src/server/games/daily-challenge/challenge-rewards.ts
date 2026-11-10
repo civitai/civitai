@@ -3,9 +3,13 @@ import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { NotificationCategory } from '~/server/common/enums';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import {
+  createBuzzTransactionMany,
+  getTransactionByExternalId,
+} from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
 import { withRetries } from '~/utils/errorHandling';
+import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { getChallengeById } from '~/server/games/daily-challenge/challenge-helpers';
 import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
 import {
@@ -131,11 +135,15 @@ export async function distributeParticipationPrizes(args: {
   return payUserIds;
 }
 
+export const challengeReviewRefundTxId = (challengeId: number, imageId: number) =>
+  `challenge-review-refund-${challengeId}-${imageId}`;
+
 /**
  * A banned entrant's paid per-entry review is skipped while the ban stands, so one still waiting
- * when the challenge completes is refunded. Keyed like the rejected-entry refund in
- * reviewEntriesForChallenge, so an entry is refunded at most once across both paths and re-runs.
- * Flat-rate purchases are not refunded, matching that path.
+ * when the challenge completes is refunded: the amount of its own purchase transaction, under the
+ * rejected-entry refund's key. The entry then leaves the paid-review queue (tag and note), so a
+ * later pass neither refunds it again nor reviews it after a lifted ban.
+ * Flat-rate purchases are not refunded, matching the rejected-entry path.
  */
 export async function refundBannedEntrantReviews(args: {
   challengeId: number;
@@ -144,40 +152,53 @@ export async function refundBannedEntrantReviews(args: {
 }): Promise<number[]> {
   const { challengeId, collectionId, reviewMeTagId } = args;
 
-  const challenge = await dbWrite.challenge.findUnique({
-    where: { id: challengeId },
-    select: { reviewCost: true },
-  });
-  if (!challenge?.reviewCost || challenge.reviewCost <= 0) return [];
-  const { reviewCost } = challenge;
-
-  const unreviewed = await dbWrite.$queryRaw<{ imageId: number; userId: number }[]>`
+  const waiting = await dbWrite.$queryRaw<{ imageId: number; userId: number }[]>`
     SELECT ci."imageId", i."userId"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
     WHERE ci."collectionId" = ${collectionId}
-      AND ci.status = 'ACCEPTED'
+      -- REVIEW: still awaiting its scan, but the review was paid for.
+      AND ci.status IN ('ACCEPTED', 'REVIEW')
       AND ci."tagId" = ${reviewMeTagId}
-      AND ci.note LIKE 'challenge-review-%'
-      AND ci.note NOT LIKE 'challenge-review-flat-%'
+      AND ci.note = 'challenge-review-' || ${String(challengeId)} || '-' || ci."imageId"
       AND u."bannedAt" IS NOT NULL
+    ORDER BY ci."imageId"
   `;
-  if (unreviewed.length === 0) return [];
+  if (waiting.length === 0) return [];
+
+  const refunds: { imageId: number; userId: number; amount: number }[] = [];
+  for (const entry of waiting) {
+    const purchase = await getTransactionByExternalId(
+      `challenge-review-${challengeId}-${entry.imageId}`
+    );
+    if (!purchase || purchase.fromAccountId !== entry.userId || purchase.amount <= 0) continue;
+    refunds.push({ ...entry, amount: purchase.amount });
+  }
+  if (refunds.length === 0) return [];
 
   await withRetries(() =>
     createBuzzTransactionMany(
-      unreviewed.map((e) => ({
+      refunds.map((e) => ({
         fromAccountId: 0,
         toAccountId: e.userId,
         type: TransactionType.Refund,
-        amount: reviewCost,
+        amount: e.amount,
         description: `Challenge review refund: entry ${e.imageId}`,
-        externalTransactionId: `challenge-review-refund-${challengeId}-${e.imageId}`,
+        externalTransactionId: challengeReviewRefundTxId(challengeId, e.imageId),
       }))
     )
   );
-  return unreviewed.map((e) => e.imageId);
+
+  const refundedIds = refunds.map((e) => e.imageId);
+  await dbWrite.$executeRaw`
+    UPDATE "CollectionItem"
+    SET note = 'refunded-' || note, "tagId" = NULL
+    WHERE "collectionId" = ${collectionId}
+      AND "imageId" = ANY(${refundedIds}::int[])
+  `;
+  await bustContestCollectionItemsCache(refundedIds);
+  return refundedIds;
 }
 
 export async function reconcileCompletedChallenge(

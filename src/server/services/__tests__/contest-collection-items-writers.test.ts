@@ -83,9 +83,11 @@ const LEDGER: Record<string, { writes: number; busts: number; why: string }> = {
     why: 'updatedAt only, which is not cached',
   },
   'src/server/games/daily-challenge/challenge-rewards.ts': {
-    writes: 1,
-    busts: 0,
-    why: `collection-wide REVIEW -> ACCEPTED/REJECTED at challenge end, by predicate: ${TTL}`,
+    writes: 2,
+    busts: 1,
+    why:
+      `collection-wide REVIEW -> ACCEPTED/REJECTED at challenge end, by predicate: ${TTL}; ` +
+      'refundBannedEntrantReviews clears the tag of the entries it refunded and busts them',
   },
   'src/server/jobs/daily-challenge-processing.ts': {
     writes: 3,

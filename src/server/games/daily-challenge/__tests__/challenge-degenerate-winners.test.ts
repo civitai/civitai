@@ -289,6 +289,13 @@ describe('pickWinnersForChallenge degenerate guard', () => {
     expect(mockGenerateWinners).not.toHaveBeenCalled();
     expect(mockCreateChallengeWinner).not.toHaveBeenCalled();
     expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1);
+    // A field emptied by bans still refunds the banned entrants' waiting paid reviews.
+    const { refundBannedEntrantReviews } = await import(
+      '~/server/games/daily-challenge/challenge-rewards'
+    );
+    expect(refundBannedEntrantReviews).toHaveBeenCalledWith(
+      expect.objectContaining({ challengeId: 1, reviewMeTagId: 12 })
+    );
     expect(mockCompleteChallengeIfClaimHeld).toHaveBeenCalledWith(
       expect.objectContaining({ challengeId: 1 })
     );

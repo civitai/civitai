@@ -27,6 +27,7 @@ import {
 } from '~/server/games/daily-challenge/challenge-helpers';
 import {
   distributeParticipationPrizes,
+  challengeReviewRefundTxId,
   promoteChallengeEntries,
   refundBannedEntrantReviews,
 } from '~/server/games/daily-challenge/challenge-rewards';
@@ -845,7 +846,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           type: TransactionType.Refund,
           amount: challenge.reviewCost,
           description: `Challenge review refund: entry ${e.imageId}`,
-          externalTransactionId: `challenge-review-refund-${currentChallenge.challengeId}-${e.imageId}`,
+          externalTransactionId: challengeReviewRefundTxId(currentChallenge.challengeId, e.imageId),
         }))
       );
     }
@@ -959,9 +960,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     ? Prisma.empty
     : Prisma.sql`AND ci."reviewedAt" >= ${lastReviewedAt}`;
 
-  // Banned entrants are skipped in all three selections below: they can't place (getJudgedEntries),
-  // so a review would be LLM spend for nothing. An owed review of a banned entrant is resolved
-  // rather than kept, so it can't hold the challenge's completion back.
+  // A banned entrant's owed review is resolved, not retried, so it can't hold completion back.
   const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
     SELECT
       ci."imageId",
@@ -1584,6 +1583,14 @@ export async function pickWinnersForChallenge(
     // If so, skip LLM generation entirely to avoid non-deterministic re-picks.
     const existingWinners = await getExistingWinnersForRetry(currentChallenge.challengeId);
 
+    // Before any early return: a challenge left with no judged entries still owes these.
+    const refundedReviews = await refundBannedEntrantReviews({
+      challengeId: currentChallenge.challengeId,
+      collectionId: currentChallenge.collectionId,
+      reviewMeTagId: config.reviewMeTagId,
+    });
+    log('Paid reviews refunded to banned entrants:', refundedReviews.length);
+
     let winningEntries: Array<{
       userId: number;
       imageId: number | null;
@@ -1978,13 +1985,6 @@ export async function pickWinnersForChallenge(
     });
     const awardedPrizes = await withRetries(() => createPrizes(winnerPrizes));
     log('Prizes awarded');
-
-    const refundedReviews = await refundBannedEntrantReviews({
-      challengeId: currentChallenge.challengeId,
-      collectionId: currentChallenge.collectionId,
-      reviewMeTagId: config.reviewMeTagId,
-    });
-    log('Paid reviews refunded to banned entrants:', refundedReviews.length);
 
     // 6. Distribute entry participation prizes
     const participationKeyId = currentChallenge.challengeId ?? currentChallenge.collectionId;

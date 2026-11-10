@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ChallengeRewards from '~/server/games/daily-challenge/challenge-rewards';
 const mockDbWrite = dbMock.dbWrite;
 dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
 dbMock.dbWrite.challenge.findUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
@@ -50,6 +51,11 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
   getChallengeWinners: vi.fn().mockResolvedValue([]),
   getExistingWinnersForRetry: mockGetExistingWinnersForRetry,
   resolveEventContext: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('~/server/games/daily-challenge/challenge-rewards', async (importOriginal) => ({
+  ...(await importOriginal<typeof ChallengeRewards>()),
+  refundBannedEntrantReviews: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({

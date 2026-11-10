@@ -2769,6 +2769,16 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
     let process: string | undefined;
     let outcome: string | undefined;
 
+    // Before any early return: a challenge left with no judged entries still owes these.
+    if (challenge.collectionId) {
+      const refundedReviews = await refundBannedEntrantReviews({
+        challengeId,
+        collectionId: challenge.collectionId,
+        reviewMeTagId: config.reviewMeTagId,
+      });
+      log('Paid reviews refunded to banned entrants:', refundedReviews.length);
+    }
+
     if (existingWinners.length > 0) {
       log('Reusing existing winners from previous run (retry-safe):', existingWinners.length);
       winningEntries = existingWinners.map((w) => ({
@@ -2986,16 +2996,7 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
     // Hoisted so it's still in scope for sendChallengeResultsNotification's excludeUserIds below,
     // even though it's only populated inside the conditional (participation prizes are optional).
     const participationUserIds: number[] = [];
-    if (challenge.collectionId) {
-      const refundedReviews = await refundBannedEntrantReviews({
-        challengeId,
-        collectionId: challenge.collectionId,
-        reviewMeTagId: config.reviewMeTagId,
-      });
-      log('Paid reviews refunded to banned entrants:', refundedReviews.length);
-    }
     if (challenge.entryPrize && challenge.collectionId) {
-      // Winners are excluded: they get winner prizes instead.
       const paid = await distributeParticipationPrizes({
         challengeId,
         collectionId: challenge.collectionId,
