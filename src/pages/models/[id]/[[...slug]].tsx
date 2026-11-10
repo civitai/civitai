@@ -94,6 +94,7 @@ import { Gated } from '~/components/Gated/Gated';
 import { buildModelMetaDescription } from '~/components/Model/model-meta-description';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { modelOgEndpoint } from '~/components/Meta/og-image-url';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
@@ -402,7 +403,8 @@ export const getServerSideProps = createServerSideProps({
           // match useQueryImages exactly — browsingLevel and the addon-derived
           // excludedTagIds/disablePoi/disableMinor all key the query — or the React
           // Query key won't line up and the client refetches. Fail-soft on any miss.
-          model && modelVersionIdParsed
+          // A taken-down model's images are withheld; its owner's carousel fetches them client-side.
+          model && modelVersionIdParsed && !isModelWithheld(model)
             ? (async () => {
                 // Mirror ModelCarousel: a minor model forces its carousel to SFW for
                 // non-moderators, so SSR must resolve at that same forced level. Using
@@ -874,7 +876,11 @@ export default function ModelDetailsV2({
     return <NotFound />;
   }
 
-  const image = versionImages.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
+  // Crawlers and link unfurlers get no image of a taken-down model, whoever rendered the page.
+  const withheld = isModelWithheld(model);
+  const image = withheld
+    ? undefined
+    : versionImages.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
   const imageUrl = image ? getEdgeUrl(image.url, { width: 1200 }) : undefined;
   const thumbsUpCount = model.rank?.thumbsUpCountAllTime ?? 0;
   const thumbsDownCount = model.rank?.thumbsDownCountAllTime ?? 0;
@@ -955,8 +961,8 @@ export default function ModelDetailsV2({
           likes: model.rank?.thumbsUpCountAllTime,
           description: plainDescription,
         }),
-        images: versionImages,
-        ogEndpoint: modelOgEndpoint(model),
+        images: withheld ? undefined : versionImages,
+        ogEndpoint: withheld ? undefined : modelOgEndpoint(model),
         canonical: `/models/${model.id}/${slugit(model.name)}`,
         alternate: `/models/${model.id}`,
         schema: metaSchema,
