@@ -2061,6 +2061,7 @@ export const publishModelVersionById = async ({
       name: true,
       baseModel: true,
       publishedAt: true,
+      status: true,
       meta: true,
       model: {
         select: {
@@ -2152,7 +2153,10 @@ export const publishModelVersionById = async ({
         updatedVersion = await tx.modelVersion.update({
           where: { id },
           data: {
-            status,
+            // A live version stays live: put back to Scheduled with its past date, the job would
+            // re-release it at once, taking a scheduled model with it.
+            status:
+              currentVersion.status === ModelStatus.Published ? ModelStatus.Published : status,
             meta,
             availability: currentVersion.model.availability,
           },
