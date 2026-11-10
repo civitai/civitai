@@ -54,7 +54,13 @@ import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { getImageTagRows } from '~/server/redis/image-tag-rows';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
-import { basicTagsLocalTtl, cosmeticsLocalTtl } from '~/server/redis/l1-switches';
+import {
+  basicTagsLocalTtl,
+  cosmeticsLocalTtl,
+  TAG_IDS_FOR_IMAGES_L1,
+  tagIdsForImagesLocalLimits,
+  tagIdsForImagesLocalTtl,
+} from '~/server/redis/l1-switches';
 import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
 import { foldUserMultipliers } from '~/server/redis/user-multipliers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
@@ -101,10 +107,15 @@ export const tagIdsForImagesCache = createCachedObject<{
   // ~3min window + 50k hot entries so cross-user popular-image overlap + scroll-back
   // land as L1 hits. Strictly byte-bounded (see l1-cache-budget) — the byte cap, not
   // the entry cap, is the binding heap guard. The longer localTtl is safe here BECAUSE
-  // this value gates nothing (only delays a busted tag-list edit by ≤localTtl).
-  localTtl: 180,
-  localMax: 50000,
-  localMaxBytes: L1_CACHE_BYTE_BUDGETS.tagIdsForImages,
+  // this value gates nothing in the feed SQL (only delays a busted tag-list edit by ≤localTtl; the
+  // client's hidden-tag filter reads these ids, so that filter can lag a tag edit by as much).
+  // `tag-ids-for-images-l1-large` switches to a larger tier (TTL and caps in l1-switches); off is the
+  // tier above. On the feed pools the off tier fills faster than it ages out, so its caps, not its
+  // TTL, bound its hit ratio.
+  localTtl: tagIdsForImagesLocalTtl,
+  localLimits: tagIdsForImagesLocalLimits,
+  localMax: TAG_IDS_FOR_IMAGES_L1.max,
+  localMaxBytes: TAG_IDS_FOR_IMAGES_L1.maxBytes,
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
