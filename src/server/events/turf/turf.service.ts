@@ -1,6 +1,8 @@
 import { chunk } from 'lodash-es';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { flagAudienceAmong } from '~/server/events/event-access';
 import { eventPlayerEligibleSql } from '~/server/events/player-eligibility';
 import { loadEvents } from '~/server/events/load-events';
@@ -104,27 +106,23 @@ const contestEntry = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
 )`;
 
 /**
- * FROM and WHERE for `userId`'s own stickers drawn on the feed: live, on an image anyone may see whose
- * owner allows turf, not a contest entry, as getTurfStickersForImages draws them. Aliases s, i and p.
+ * FROM and WHERE for the stickers the feed draws, narrowed by `and`: live, placed by an active user,
+ * on an image anyone may see whose owner allows turf, not a contest entry. Aliases s, u, i and p.
  */
-export function ownDrawnStickers(event: TurfEvent, userId: number, now: Date) {
+function drawnStickers(event: TurfEvent, now: Date, and: Prisma.Sql) {
   return Prisma.sql`FROM "EventTurfSticker" s
+    JOIN "User" u ON u.id = s."userId"
     JOIN "Image" i ON i.id = s."imageId"
     JOIN "Post" p ON p.id = i."postId"
-    WHERE s.event = ${event.name} AND s."userId" = ${userId}
+    WHERE s.event = ${event.name} AND ${and}
       AND s."removedAt" IS NULL ${unexpired(event, now)} AND ${imageVisible}
+      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
       AND NOT ${contestEntry(Prisma.sql`s."imageId"`)} AND ${ownerAllowsTurf(event.name)}`;
 }
 
-/** The images among `imageIds` that are entries in a contest (see contestEntry). */
-async function contestImageIds(imageIds: number[], db: typeof dbRead | typeof dbWrite) {
-  if (!imageIds.length) return new Set<number>();
-  const rows = await db.$queryRaw<{ imageId: number }[]>`
-    SELECT DISTINCT ci."imageId" FROM "CollectionItem" ci
-    JOIN "Collection" c ON c.id = ci."collectionId"
-    WHERE ci."imageId" = ANY(${imageIds}::int[]) AND c.mode = 'Contest'
-  `;
-  return new Set((rows ?? []).map((r) => r.imageId));
+/** FROM and WHERE for `userId`'s own stickers the feed draws (drawnStickers). */
+export function ownDrawnStickers(event: TurfEvent, userId: number, now: Date) {
+  return drawnStickers(event, now, Prisma.sql`s."userId" = ${userId}`);
 }
 
 /**
@@ -246,25 +244,28 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
     userTeam && stepAt(event.turf.catchUp ?? [], now)
       ? userTeam.then((team) => turfCatchUpAt(event, team, now))
       : 1;
+  const { kyselyRead } = await loadKyselyDb();
   const [row, [user], multiplier, creditedByTeam, team] = await Promise.all([
     dbRead.eventTurfStock.findUnique({
       where: { event_userId: { event: event.name, userId } },
       select: { stock: true, refilledAt: true },
     }),
-    dbRead.$queryRaw<
-      {
-        optedIn: boolean | null;
-        left: boolean | null;
-        ownerOff: boolean | null;
-        liveHats: number | null;
-      }[]
-    >`
+    // Through Kysely, not Prisma's `$queryRaw` (see queryPrismaSql). Booleans and an int4 count.
+    queryPrismaSql<{
+      optedIn: boolean | null;
+      left: boolean | null;
+      ownerOff: boolean | null;
+      liveHats: number | null;
+    }>(
+      kyselyRead,
+      Prisma.sql`
       SELECT ${inTurf('u', event.name)} AS "optedIn",
         (u.settings -> ${TURF_SETTING} ->> ${event.name}) = 'false' AS "left",
         (u.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event.name}) = 'true' AS "ownerOff",
         (SELECT count(*)::int ${ownDrawnStickers(event, userId, now)}) AS "liveHats"
       FROM "User" u WHERE u.id = ${userId}
-    `,
+    `
+    ),
     catchUp,
     turfCreditedByTeam(event, now),
     userTeam,
@@ -992,10 +993,13 @@ export async function reconcileAllTurf(now = new Date()) {
  */
 export async function getTurfSummaries(
   eventName: string,
-  imageIds: number[],
+  askedIds: number[],
   viewerId?: number,
   now = new Date()
 ) {
+  // Caller ids, bound as `int[]`: one past int4 would fail the whole statement (see isPgInt4). No
+  // image has such an id, so it is answered like one never asked about.
+  const imageIds = askedIds.filter(isPgInt4);
   const event = await getTurfEvent(eventName, now);
   if (!event || event.turf.mode === 'off' || !imageIds.length)
     return { team: null, images: {}, open: {}, mine: {}, hidden: {} };
@@ -1004,29 +1008,42 @@ export async function getTurfSummaries(
   const mineStillBlocks = liveAfter
     ? Prisma.sql`AND (s."removedAt" IS NOT NULL OR s."createdAt" > ${liveAfter})`
     : Prisma.empty;
-  const [counts, hats, openRows, mineRows, contestRows] = await Promise.all([
+  const { kyselyRead } = await loadKyselyDb();
+  const [counts, hats, flags] = await Promise.all([
     sysRedis.hmGet(turfKeys(event.name).counts, keys),
     sysRedis.hmGet(eventPointKeys(event.name).hats, keys),
-    dbRead.$queryRaw<{ id: number }[]>`
-      SELECT i.id FROM "Image" i
-      JOIN "Post" p ON p.id = i."postId"
-      WHERE i.id = ANY(${imageIds}::int[]) AND ${imageVisible} AND ${ownerAllowsTurf(event.name)}
-    `,
-    // Removed ones too: placing again refuses them. Not expired ones, which placing renews.
-    viewerId
-      ? dbRead.$queryRaw<{ imageId: number }[]>`
-          SELECT s."imageId" FROM "EventTurfSticker" s
+    // One statement for what were three (open, mine, contest entry), each answered per asked id by
+    // the same predicate the separate reads applied, and through Kysely rather than Prisma's
+    // `$queryRaw` (see queryPrismaSql). `mine` counts removed stickers too, since placing again
+    // refuses them, but not expired ones, which placing renews.
+    queryPrismaSql<{ id: number; open: boolean; mine: boolean; contest: boolean }>(
+      kyselyRead,
+      Prisma.sql`
+      SELECT x.id,
+        EXISTS (
+          SELECT 1 FROM "Image" i
+          JOIN "Post" p ON p.id = i."postId"
+          WHERE i.id = x.id AND ${imageVisible} AND ${ownerAllowsTurf(event.name)}
+        ) AS open,
+        ${
+          viewerId
+            ? Prisma.sql`EXISTS (
+          SELECT 1 FROM "EventTurfSticker" s
           WHERE s.event = ${event.name} AND s."userId" = ${viewerId}
-            AND s."imageId" = ANY(${imageIds}::int[]) ${mineStillBlocks}
-        `
-      : [],
-    contestImageIds(imageIds, dbRead),
+            AND s."imageId" = x.id ${mineStillBlocks}
+        )`
+            : Prisma.sql`false`
+        } AS mine,
+        ${contestEntry(Prisma.sql`x.id`)} AS contest
+      FROM unnest(${imageIds}::int[]) AS x(id)
+    `
+    ),
   ]);
-  const hiddenIds = contestRows;
+  const hiddenIds = new Set(flags.filter((r) => r.contest).map((r) => r.id));
   const hidden = Object.fromEntries([...hiddenIds].map((id) => [id, true]));
-  const mineIds = new Set(mineRows.map((r) => r.imageId));
+  const mineIds = new Set(flags.filter((r) => r.mine).map((r) => r.id));
   const mine = Object.fromEntries(imageIds.map((id) => [id, mineIds.has(id)]));
-  const openIds = new Set(openRows.map((r) => r.id));
+  const openIds = new Set(flags.filter((r) => r.open).map((r) => r.id));
   const open = Object.fromEntries(
     imageIds.map((id) => [id, openIds.has(id) && !hiddenIds.has(id)])
   );
@@ -1169,14 +1186,7 @@ export async function getTurfStickersForImages(
       SELECT s.id, s."imageId", s."userId", s.team, s."cosmeticId", s.data, s."createdAt",
         row_number() OVER (PARTITION BY s."imageId", s.team ORDER BY s."createdAt" DESC, s.id DESC)
           AS "teamRank"
-      FROM "EventTurfSticker" s
-      JOIN "User" u ON u.id = s."userId"
-      JOIN "Image" i ON i.id = s."imageId"
-      JOIN "Post" p ON p.id = i."postId"
-      WHERE s.event = ${event.name} AND s."imageId" = ANY(${imageIds}::int[])
-        AND s."removedAt" IS NULL ${unexpired(event, now)} AND ${imageVisible}
-        AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
-        AND NOT ${contestEntry(Prisma.sql`s."imageId"`)} AND ${ownerAllowsTurf(event.name)}
+      ${drawnStickers(event, now, Prisma.sql`s."imageId" = ANY(${imageIds}::int[])`)}
     ), picked AS (
       SELECT id, "imageId", "userId", team, "cosmeticId", data, "createdAt", row_number() OVER (
         PARTITION BY "imageId" ORDER BY "teamRank", "createdAt" DESC, id DESC

@@ -1956,7 +1956,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     .
                   </Text>
                   <Checkbox
-                    label="I own the rights to all these files"
+                    label="I have the right, or the rightholder’s explicit permission, to redistribute these files"
                     checked={ownRights}
                     onChange={(event) => {
                       setOwnRights(model.id, thisMediaType, event.currentTarget.checked);

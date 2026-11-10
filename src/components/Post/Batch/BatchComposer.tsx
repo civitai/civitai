@@ -526,6 +526,7 @@ function ReviewScreen({
     closeReview,
     updateReviewPost,
     removeReviewPost,
+    reorderReviewMedia,
     markSubmitted,
     reset,
   ] = useBatchComposerStore((state) => [
@@ -534,6 +535,7 @@ function ReviewScreen({
     state.closeReview,
     state.updateReviewPost,
     state.removeReviewPost,
+    state.reorderReviewMedia,
     state.markSubmitted,
     state.reset,
   ]);
@@ -643,6 +645,7 @@ function ReviewScreen({
         onTitleChange={(key, title) => updateReviewPost(key, { title })}
         onTimeChange={(key, publishedAt) => updateReviewPost(key, { publishedAt })}
         onRemove={removeReviewPost}
+        onReorderMedia={reorderReviewMedia}
       />
       {sharedLine && (
         <Text size="sm" c="dimmed">

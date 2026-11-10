@@ -177,6 +177,19 @@ describe('triggerApplyReview / deleteReviewResources', () => {
   const jobPosts = () =>
     calls.filter((c) => c.method === 'POST' && c.url.endsWith('/jobs')).map((c) => c.body as any);
   const scriptOf = (job: any) => job.spec.template.spec.containers[0].args[0] as string;
+  /** The resource kinds the label sweep LISTed for this request, by the review label selector. */
+  const sweptKinds = () =>
+    calls
+      .filter(
+        (c) =>
+          c.method === 'GET' &&
+          decodeURIComponent(c.url).includes(
+            `civitai.com/review-mode=true,civitai.com/publish-request-id=${PUBREQ}`
+          )
+      )
+      .map((c) => /\/([a-z]+)\?labelSelector=/.exec(c.url)?.[1])
+      .sort();
+  const SWEPT_KINDS = ['deployments', 'ingressroutes', 'middlewares', 'services'];
   const envOf = (job: any) =>
     Object.fromEntries(
       (job.spec.template.spec.containers[0].env as Array<{ name: string; value: string }>).map(
@@ -227,7 +240,7 @@ describe('triggerApplyReview / deleteReviewResources', () => {
       PUBLISH_REQUEST_ID: PUBREQ,
     });
     // The label sweep still runs (objects a pre-flag preview may still have).
-    expect(calls.filter((c) => c.method === 'GET')).toHaveLength(4);
+    expect(sweptKinds()).toEqual(SWEPT_KINDS);
   });
 
   it('shared server OFF: teardown creates no Job (the sweep only, as before)', async () => {
@@ -239,7 +252,7 @@ describe('triggerApplyReview / deleteReviewResources', () => {
     flags.on.add('app-blocks-review-shared-server');
     await deleteReviewResources({ slug: 'my-app', sha: '', publishRequestId: PUBREQ });
     expect(jobPosts()).toHaveLength(0);
-    expect(calls.filter((c) => c.method === 'GET')).toHaveLength(4);
+    expect(sweptKinds()).toEqual(SWEPT_KINDS);
   });
 
   it('live unpublish: a Job running the live unpublish script for the slug', async () => {
@@ -322,7 +335,7 @@ describe('triggerApplyReview / deleteReviewResources', () => {
     });
     expect(jobPosts()).toHaveLength(0);
     // Both still sweep the per-preview objects.
-    expect(calls.filter((c) => c.method === 'GET')).toHaveLength(4);
+    expect(sweptKinds()).toEqual(SWEPT_KINDS);
   });
 
   it('parses the readiness-probe app list: one per line, comments and blanks ignored', () => {

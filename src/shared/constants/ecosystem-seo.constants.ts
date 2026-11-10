@@ -4209,9 +4209,11 @@ export const ECOSYSTEM_SEO_PAGES: EcosystemSeoPage[] = [
   { slug: 'stable-diffusion', label: 'Stable Diffusion', ecosystemKeys: ['SD1'] },
   { slug: 'hidream', label: 'HiDream', ecosystemKeys: ['HiDream'] },
   { slug: 'krea2', label: 'Krea 2', ecosystemKeys: ['Krea2'] },
+  { slug: 'krea3', label: 'Krea 3', ecosystemKeys: ['Krea3'] },
   { slug: 'anima', label: 'Anima', ecosystemKeys: ['Anima'] },
   { slug: 'gpt-image', label: 'GPT Image', ecosystemKeys: ['OpenAI'] },
   { slug: 'z-image', label: 'Z-Image', ecosystemKeys: ['ZImageTurbo', 'ZImageBase'] },
+  { slug: 'moss-image', label: 'MOSS Image', ecosystemKeys: ['MossImage'] },
 ];
 
 /** True once an announced sunset date has arrived — the ecosystem's endpoints are gone. */

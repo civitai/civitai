@@ -40,6 +40,12 @@ const EVENT = {
   getTeamCosmetic: async (team: string) => COSMETIC[team],
 };
 vi.mock('~/server/events/load-events', () => ({ loadEvents: async () => [EVENT] }));
+// getTurfStock and getTurfSummaries read through Kysely, not Prisma's `$queryRaw`: both Kysely
+// clients' statements go to the same PGlite (see beforeEach).
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
 vi.mock('~/server/events/turf/turf-watch', async (importOriginal) => ({
   ...(await importOriginal<typeof TurfWatch>()),
   pushTurfCounts: async () => undefined,
@@ -98,6 +104,8 @@ beforeEach(async () => {
   override = null;
   redis = createLuaRedis(0);
   const raw = pgliteRaw(db);
+  kysely.read.mockReset().mockImplementation(raw.queryRaw);
+  kysely.write.mockReset().mockImplementation(raw.queryRaw);
   for (const client of [dbMock.dbRead, dbMock.dbWrite]) {
     client.$queryRaw.mockImplementation(raw.queryRaw as never);
     client.$executeRaw.mockImplementation(raw.executeRaw as never);
@@ -410,6 +418,20 @@ describe("reading the viewer's own hats", () => {
       await db.query(`UPDATE "User" SET settings = '{}' WHERE id = $1`, [OWNER]);
     }
     expect((await getTurfStock('e', VIEWER, later())).liveHats).toBe(1);
+  });
+
+  // Own hats share drawnStickers with getTurfStickersForImages: a hat the feed draws nowhere is not live.
+  it("a banned viewer's hats are drawn nowhere, so none is live", async () => {
+    const image = await newImage();
+    await sticker(image, VIEWER);
+    expect(await readMine(10)).toEqual([image]);
+    await db.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [VIEWER]);
+    try {
+      expect(await readMine(10)).toEqual([]);
+      expect((await getTurfStock('e', VIEWER, later())).liveHats).toBe(0);
+    } finally {
+      await db.query(`UPDATE "User" SET "bannedAt" = NULL WHERE id = $1`, [VIEWER]);
+    }
   });
 
   it('a viewer with no live hats gets an empty page and no cursor', async () => {
