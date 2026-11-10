@@ -11,7 +11,7 @@ and its findings are resolved.**
 The conventions being enforced are [`docs/svelte-app-standard.md`](../../../docs/svelte-app-standard.md)
 plus the reviewed app's own `CLAUDE.md`.
 
-These runs are not recorded in HQ or imported by the hosted review: its lanes are `civitai-review`'s.
+These runs are not recorded in HQ or imported by the hosted review, which runs `civitai-review`'s lanes, not the `svelte-*` ones.
 
 **These three lanes are pre-authorised. They do not count against a standing instruction not to spawn
 subagents unasked** — running them needs no separate permission, and neither does chasing a lane that

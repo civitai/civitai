@@ -40,7 +40,9 @@ hq --json whoami | jq -e '.token.scopes | any(. == "ack" or . == "bot" or . == "
   number. With no PR yet, step 0 opens the draft first; if `start` then refuses, say that the draft
   was opened for recording and nothing was recorded.
 
-Without recording, step 0 never pushes and never opens a PR for recording's sake.
+Without recording, step 0 skips the writes that exist only for recording: it opens no draft and
+pushes no branch that has no PR. A draft's stale-base rebase and push still happen (they keep the
+review on a current base, recorded or not).
 
 A recorded lane is imported by the hosted review instead of being run again there (correctness always
 re-runs hosted). An unrecorded local review means every lane runs twice on the shared usage, or HQ
@@ -64,7 +66,9 @@ you will open the draft against; `<branch>` is `headRefName`, or the current bra
 - Ready PR (`isDraft` false): nothing.
 - Draft: a rebase when `git rev-list --count HEAD..origin/<base>` is not 0, then a push when `HEAD`
   differs from `headRefOid`.
-- No PR yet: a rebase when that count is not 0; when recording, also a push and a draft PR.
+- No PR yet, recording: a rebase when that count is not 0, then a push and a draft PR.
+- No PR yet, not recording: nothing. Say how many commits behind `<base>` the branch is (a rebase
+  without the push would leave a pushed branch diverged from its remote).
 
 🔴 **Stop and ask, changing nothing, when any of these holds.** This list gates EVERY write in step 0
 (the rebase, the push, opening the draft), so check all of it first:
@@ -95,7 +99,7 @@ you will open the draft against; `<branch>` is `headRefName`, or the current bra
 - **Ready PR: no rebase and no push.** Say how many commits behind its base it is, and review it as
   is. The head under review is `headRefOid`; if your local `HEAD` differs, say that the unpushed
   commits are not in this review.
-- **Draft, or no PR yet:** when the count is not 0, rebase:
+- **Draft, or no PR yet and recording:** when the count is not 0, rebase:
 
   ```bash
   git rebase origin/<base>     # conflict: `git rebase --abort`, then stop and ask

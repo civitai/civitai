@@ -127,7 +127,7 @@ anything committed counts as disclosed and must be fixed and rotated.
 4. Test the change locally
 5. Before merging, check the PR's CI and its `pr-review` round (the `pr-review` skill) — `main` has no
    required checks, so a red run doesn't block.
-6. Run the `cleanup` skill: `comment-review`, `docs-drift-review` and `claim-review`, the lanes no build or test checks (`comment-review`
+6. Run the `cleanup` skill: `comment-review`, `docs-drift-review` and `claim-review`, lanes that no build or test covers (`comment-review`
    is also the hosted review's `comments` lane, and `civitai-review` runs it locally when recording). Required when you moved a file, renamed a script or command, retired an env var,
    completed a tracked item, or a pushback has turned up an overstatement.
 

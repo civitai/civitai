@@ -1,9 +1,9 @@
 ---
 name: cleanup
-description: "Runs the three review lanes no build or test checks over everything this session touched, consolidates them, and APPLIES the fixes: comment-review (comment necessity + false claims), docs-drift-review (docs the session made wrong) and claim-review (behaviour the session's prose asserts, traced to the code). Session-scoped, not segment-scoped. Use partway through a long session, before opening a PR, and whenever a pushback has turned up an overstatement."
+description: "Runs the three review lanes that no build or test covers over everything this session touched, consolidates them, and APPLIES the fixes: comment-review (comment necessity + false claims), docs-drift-review (docs the session made wrong) and claim-review (behaviour the session's prose asserts, traced to the code). Session-scoped, not segment-scoped. Use partway through a long session, before opening a PR, and whenever a pushback has turned up an overstatement."
 ---
 
-# Cleanup — the three lanes no build or test checks
+# Cleanup — the three lanes no build or test covers
 
 Runs **`comment-review`**, **`docs-drift-review`** and **`claim-review`** over the whole session's work,
 consolidates them into one list, and **applies the fixes** — the lanes produce exact replacement text, so
