@@ -1,3 +1,4 @@
+import JSZip from 'jszip';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
@@ -493,6 +494,64 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
         requestId: 'rq_save_bin',
         ok: false,
         error: 'file type is not allowed',
+      });
+    });
+    expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  /** A real jszip-written DEFLATE zip, as an app would build it. */
+  const zipBytes = async (files: Record<string, string | Uint8Array>) => {
+    const zip = new JSZip();
+    for (const [name, content] of Object.entries(files)) zip.file(name, content);
+    const u8 = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+    return u8.slice().buffer;
+  };
+
+  test('SAVE_IMAGE bytes variant: a valid zip is saved as application/zip under .zip', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    const bytes = await zipBytes({
+      'images/001.png': new Uint8Array(PNG_BYTES()),
+      'images/001.txt': 'a cat, sitting',
+    });
+
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_save_zip', bytes, filename: 'dataset.html' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_save_zip', ok: true });
+    });
+    expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
+    const [savedBytes, savedType, savedName] = mocks.saveBytesDownload.mock.calls[0];
+    expect(savedBytes).toBe(bytes);
+    expect([savedType, savedName]).toEqual(['application/zip', 'dataset.zip']);
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE bytes variant: a zip whose entry inflates past its declared size is refused BEFORE the download', async () => {
+    // The seam: processSaveBytes accepts this zip (its declared sizes are within every bound), so
+    // only the handler awaiting the inflate check can stop it. Lie consistently in BOTH headers.
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    const bytes = await zipBytes({ 'zeros.txt': new Uint8Array(3 * 1024 * 1024 + 5) });
+    const view = new DataView(bytes);
+    const cd = view.getUint32(bytes.byteLength - 22 + 16, true);
+    view.setUint32(22, 4_321, true);
+    view.setUint32(cd + 24, 4_321, true);
+
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_save_zip_lie', bytes, filename: 'dataset.zip' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_zip_lie',
+        ok: false,
+        error: 'zip entry does not inflate to its declared size',
       });
     });
     expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
