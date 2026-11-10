@@ -10,6 +10,7 @@ import { dbRead } from '~/server/db/client';
 import { getUserFollows, imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import {
   getUserCollectionPermissionsById,
   removeEntityFromAllCollections,
@@ -116,6 +117,7 @@ import {
   getPostImageCounts,
 } from './../services/image.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
+import { withSharedFeedUsers } from '~/server/utils/feed-shared-users';
 import { buildPostImagesWire } from '~/server/utils/images-as-posts-wire';
 import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
@@ -1067,10 +1069,12 @@ export const getImagesAsPostsInfiniteHandler = async ({
       });
     }
 
-    return {
+    // One `user` object per creator on the wire (`image-feed-shared-users`, dark): the decoded
+    // response is unchanged, devalue writes each creator once. See `feed-shared-users.ts`.
+    return withSharedFeedUsers({
       nextCursor: cursor,
       items: results,
-    };
+    });
   } catch (error) {
     console.log({ error });
     if (error instanceof TRPCError) throw error;
@@ -1223,10 +1227,22 @@ export const getImageContestCollectionDetailsHandler = async ({
   ctx: Context;
 }) => {
   try {
+    const userId = ctx.user?.id;
+    const isModerator = ctx.user?.isModerator;
+    // An image the viewer may not open gets the same answer as an id with no contest entries.
+    const visible = await assertImageVisibleToViewer({ id: input.id, userId, isModerator }).then(
+      () => true,
+      (error) => {
+        if (error instanceof TRPCError && error.code === 'NOT_FOUND') return false;
+        throw error;
+      }
+    );
+    if (!visible) return { collectionItems: [], post: null };
+
     const collectionItems = await getImageContestCollectionDetails({
       ...input,
-      userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
+      userId,
+      isModerator,
     });
     const imageId = collectionItems?.[0]?.imageId;
     if (!imageId) return { collectionItems, post: null };

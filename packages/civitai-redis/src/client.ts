@@ -2197,6 +2197,10 @@ export const REDIS_SYS_KEYS = {
     // Per-app page-access overrides (`app:page-access:${app}`) — a JSON path→role map mirroring the
     // AppPageAccess table, read on every gated request so the gate doesn't hit Postgres per hit.
     PAGE_ACCESS: 'app:page-access',
+    // `app:held-sheet:code:<sha256(code)>` — one sign-in code for the held-media sheet, 60 s, single use.
+    HELD_SHEET_CODE: 'app:held-sheet:code',
+    // `app:held-sheet:session:<sha256(token)>` — one held-media sheet session, sliding idle expiry.
+    HELD_SHEET_SESSION: 'app:held-sheet:session',
   },
   DEVICE: {
     // Per-browser account-switch set — hash `device:accounts:${deviceId}` of userId → lastSwitchedAt.

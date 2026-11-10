@@ -79,6 +79,12 @@ export type CachedLookupOptions<T extends object> = {
   // total L1 footprint is bounded regardless of per-value size spikes. A single value larger than the
   // budget is simply not stored (falls through to Redis) — never an error.
   localMaxBytes?: number;
+  // The L1's entry and byte caps for a given L1 TTL, for a switchable L1 whose switch changes how much
+  // it holds as well as for how long. Must be a pure function of the TTL. Whenever the switchable
+  // TTL changes (which empties the L1 anyway), the L1 is rebuilt with `localLimits(ttl)`, so a larger
+  // tier's preallocated LRU only exists while that tier is selected. Without it (the default), the
+  // L1 keeps `localMax` / `localMaxBytes` for its whole life.
+  localLimits?: (ttlSeconds: number) => { max: number; maxBytes?: number };
   // Opt-in brotli compression of the packed value at rest (sentinel-tagged). Enable only for caches
   // whose values are LARGE and repetitive enough to pay the codec — most per-id values are tiny.
   //
@@ -250,6 +256,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     localTtl,
     localMax = 10000,
     localMaxBytes,
+    localLimits,
     localClone = (value: T) => ({ ...value }),
     compress = false,
   }: CachedLookupOptions<T>) {
@@ -278,20 +285,32 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     // whether to use it and with which TTL; a static one has an LRU only when its TTL is positive.
     const localTtlFn = typeof localTtl === 'function' ? localTtl : undefined;
     const staticLocalTtl = typeof localTtl === 'number' && localTtl > 0 ? localTtl : undefined;
-    const localCache =
+    const buildLocalCache = (max: number, maxSize: number | undefined) =>
+      createLruCache<number, T>({
+        name: `${key}:l1`,
+        max,
+        maxSize,
+        // A switchable L1 passes each entry's TTL on `set`; this default is never relied on.
+        ttl: (staticLocalTtl ?? 1) * 1000,
+        keyFn: (id) => String(id),
+        fetchFn: () => {
+          throw new Error(`createCachedArray L1 fetchFn must not be called [${key}]`);
+        },
+      });
+    const staticLimits = staticLocalTtl && localLimits ? localLimits(staticLocalTtl) : undefined;
+    // `let`: a switchable L1 with `localLimits` is rebuilt when its TTL changes (resolveLocalTtl).
+    let localCache =
       localTtlFn || staticLocalTtl
-        ? createLruCache<number, T>({
-            name: `${key}:l1`,
-            max: localMax,
-            maxSize: localMaxBytes,
-            // A switchable L1 passes each entry's TTL on `set`; this default is never relied on.
-            ttl: (staticLocalTtl ?? 1) * 1000,
-            keyFn: (id) => String(id),
-            fetchFn: () => {
-              throw new Error(`createCachedArray L1 fetchFn must not be called [${key}]`);
-            },
-          })
+        ? buildLocalCache(
+            staticLimits?.max ?? localMax,
+            staticLimits ? staticLimits.maxBytes : localMaxBytes
+          )
         : null;
+    // The caps the current L1 was built with, so a rebuild happens only when they differ.
+    let localCacheLimits = {
+      max: staticLimits?.max ?? localMax,
+      maxBytes: staticLimits ? staticLimits.maxBytes : localMaxBytes,
+    };
     // The switchable L1's TTL as of the last fetch, so a change empties the L1 (see `localTtl`).
     let lastLocalTtl: number | undefined;
 
@@ -307,7 +326,17 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       }
       if (!(typeof next === 'number' && next > 0)) next = undefined;
       if (next !== lastLocalTtl) {
-        localCache.clear();
+        const limits = next !== undefined && localLimits ? localLimits(next) : undefined;
+        if (
+          limits &&
+          (limits.max !== localCacheLimits.max || limits.maxBytes !== localCacheLimits.maxBytes)
+        ) {
+          // A new, empty LRU at the new caps; the old one (and its preallocated slots) is dropped.
+          localCache = buildLocalCache(limits.max, limits.maxBytes);
+          localCacheLimits = { max: limits.max, maxBytes: limits.maxBytes };
+        } else {
+          localCache.clear();
+        }
         lastLocalTtl = next;
       }
       return next;
