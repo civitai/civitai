@@ -61,7 +61,7 @@ export const UPLOAD_REQUEST_IP_NOTE =
  * requested. Only ever filed when the report's subject is that reporter.
  */
 export const FEEDBACK_CAPTURE_UPLOAD_IP_NOTE =
-  "One or more upload IP addresses belong to a page capture submitted by a reporter: a screenshot of a Civitai page that this user attached to a feedback report sent to Civitai. That address is the one that requested the screenshot's upload.";
+  "One or more upload IP addresses come from a page capture this user submitted: a screenshot of a Civitai page that this user attached to a feedback report sent to Civitai. Each such address is the one that requested that screenshot's upload.";
 
 const chTime = (d: Date) => `parseDateTimeBestEffort('${d.toISOString()}')`;
 
