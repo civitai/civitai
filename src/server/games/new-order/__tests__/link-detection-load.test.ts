@@ -72,15 +72,9 @@ describe('findLinkedClusters earner loading', () => {
     query.mock.calls.map(([sql]) => String(sql)).find((s) => /FROM default.userActivities/.test(s));
   const earnersIn = () => {
     const m = ipQuery()?.match(/targetUserId IN \(([\d,]+)\)/);
-    return m ? m[1].split(',').map(Number) : [];
+    if (!m) throw new Error('no IP query was issued');
+    return m[1].split(',').map(Number);
   };
-  const voteSql = () =>
-    String(
-      dbMock.dbRead.$queryRaw.mock.calls
-        .map(([strings]) => (Array.isArray(strings) ? strings.join('?') : String(strings)))
-        .find((s) => /KnightsVote/.test(s))
-    );
-
   const mockV1 = (ids: number[]) =>
     query.mockImplementation(async (sql: string) => {
       if (/FROM knights_new_order_image_rating/.test(sql)) return ids.map((userId) => ({ userId }));
@@ -135,33 +129,6 @@ describe('findLinkedClusters earner loading', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'new-order-link-detection-v1-earners' })
     );
-  });
-
-  it('counts only positive-gold votes in the window and excludes banned users', async () => {
-    mockV1([]);
-    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
-
-    await findLinkedClusters(config);
-
-    const sql = voteSql();
-    expect(sql).toMatch(/gold" > 0/);
-    expect(sql).toMatch(/"createdAt" >= now\(\)/);
-    expect(sql).toMatch(/"bannedAt" IS NULL/);
-    expect(sql).toMatch(/ORDER BY sum\(g.gold\) DESC/);
-  });
-
-  it('counts acolyte level gold and watch bonus gold as earning', async () => {
-    mockV1([]);
-    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
-
-    await findLinkedClusters(config);
-
-    const sql = voteSql();
-    expect(sql).toMatch(/"KnightsAcolyteLevelGold"/);
-    expect(sql).toMatch(/"KnightsPlayerDay"/);
-    expect(sql).toMatch(/"bonusGold" > 0/);
-    expect(sql).toMatch(/UNION ALL/);
-    expect(sql).toMatch(/sum\(/);
   });
 
   it('still returns v1 earners when the v2 query throws, and logs the failure', async () => {

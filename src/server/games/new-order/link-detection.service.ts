@@ -56,7 +56,7 @@ async function loadV1Earners(config: LinkDetectionConfig) {
   return players.map((p) => p.userId);
 }
 
-async function loadV2Earners(config: LinkDetectionConfig) {
+export async function loadV2Earners(config: LinkDetectionConfig) {
   const days = Math.trunc(config.lookbackDays);
   const rows = await dbRead.$queryRaw<{ playerId: number }[]>`
     SELECT g."playerId"
