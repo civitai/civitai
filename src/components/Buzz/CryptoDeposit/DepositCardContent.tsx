@@ -29,6 +29,7 @@ import type { DepositCardProps } from './DepositAddressCard';
 import {
   CurrencyBadges,
   MinDepositInfo,
+  MinDepositWarning,
   useCurrencySelection,
 } from '~/components/Buzz/CryptoDeposit/CurrencySelector';
 import { getFiatDisplay, outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
@@ -330,12 +331,7 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                 )}
                 {/* Minimum deposit — below address */}
                 <MinDepositInfo state={currencyState} />
-                <Group gap="xs" wrap="nowrap" align="flex-start">
-                  <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
-                  <Text size="xs" c="dimmed">
-                    Deposits below the minimum will be lost
-                  </Text>
-                </Group>
+                <MinDepositWarning />
                 {chain === 'btc' && (
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />

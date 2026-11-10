@@ -6,8 +6,9 @@ import {
 import {
   CommentNotificationPriority,
   commentDedupeKeyByShape,
-  isV1Shaped,
-  legacyId,
+  isModelComment,
+  modelPageId,
+  notOnHiddenModel,
   notOnUnpublishedArticle,
   threadTypeLabel,
   threadUrlMap,
@@ -144,12 +145,12 @@ export const mentionNotifications = createNotificationProcessor({
           -- from these WHERE clauses. The author is carried out instead, and the block filter runs
           -- once on the outer query where both sides are finally in scope.
           c."userId" "actorId",
-          CASE WHEN ${isV1Shaped('c')} THEN JSONB_BUILD_OBJECT(
-            'version', 3,
+          CASE WHEN ${isModelComment('c')} THEN JSONB_BUILD_OBJECT(
+            'version', 4,
             'mentionedIn', 'comment',
             'modelId', c."entityId",
-            'commentId', ${legacyId('c')},
-            'parentId', ${legacyId('p')},
+            'commentId', ${modelPageId('c')},
+            'parentId', ${modelPageId('p')},
             'parentType', CASE WHEN c."parentId" IS NOT NULL THEN 'comment' ELSE 'review' END,
             'modelName', m.name,
             'username', u.username
@@ -157,16 +158,17 @@ export const mentionNotifications = createNotificationProcessor({
         FROM "CommentV3" c
         JOIN "User" u ON c."userId" = u.id
         LEFT JOIN "CommentV3" p ON p.id = c."parentId"
-        LEFT JOIN "Model" m ON ${isV1Shaped('c')} AND m.id = c."entityId"
+        LEFT JOIN "Model" m ON ${isModelComment('c')} AND m.id = c."entityId"
         ${v3EntityJoins('c')}
         WHERE ${liveCommentCreatedOrEditedSince(lastSent)}
           AND c."deletedAt" IS NULL
           AND c.content LIKE '%"mention:%'
-          AND (NOT ${isV1Shaped('c')} OR m."userId" > 0)
+          AND (NOT ${isModelComment('c')} OR m."userId" > 0)
           -- Same slug-resolution guard the reply processors carry: those threads are addressed by
           -- SLUG, the join above supplies it, and only a row the join failed on is dropped.
           AND ${v3AppListingResolved('c')}
           AND ${notOnUnpublishedArticle('c')}
+          AND ${notOnHiddenModel('c')}
 
         UNION
 

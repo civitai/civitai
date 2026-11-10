@@ -19,6 +19,7 @@ import { nextCoverageEnabled } from '~/server/services/generation/coverage-sourc
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { ModelFileVisibility, ModelModifier, ModelType } from '~/shared/utils/prisma/enums';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { Flags } from '~/shared/utils/flags';
 import { inArray } from '~/shared/utils/meili-filter';
@@ -357,7 +358,7 @@ export async function runModelSearch(
         if (primaryFileOnly === true) castedFiles = [primaryFile];
 
         const includeDownloadUrl = model.mode !== ModelModifier.Archived;
-        const includeImages = model.mode !== ModelModifier.TakenDown;
+        const includeImages = !isModelWithheld(model);
 
         return {
           ...version,

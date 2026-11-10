@@ -2,7 +2,7 @@
   "_comment": "Type errors in test files, which pnpm typecheck excludes. Entries may shrink or disappear freely; adding one, or raising a count, is a deliberate act visible in review. Regenerate with: node scripts/ci/typecheck-tests-gate.mjs --write-baseline",
   "config": "tsconfig.tests.json",
   "testFilesInProgram": 4759,
-  "totalErrors": 2670,
+  "totalErrors": 2668,
   "files": {
     "src/__tests__/pages/api/download/attachment-blocklist.test.ts": 1,
     "src/__tests__/pages/api/mod/bounty-entry-file/clear-check.test.ts": 1,
@@ -286,7 +286,6 @@
     "src/server/jobs/__tests__/blob-retraction-writer-reachability.test.ts": 2,
     "src/server/jobs/__tests__/challenge-jobs-scale.test.ts": 1,
     "src/server/jobs/__tests__/collection-ai-review.test.ts": 1,
-    "src/server/jobs/__tests__/comment-v3-parity.test.ts": 2,
     "src/server/jobs/__tests__/confirm-pending-block-attributions.test.ts": 7,
     "src/server/jobs/__tests__/deliver-creator-compensation.test.ts": 1,
     "src/server/jobs/__tests__/evidence-hold-expiry-alert.test.ts": 2,

@@ -341,6 +341,8 @@ describe('a run held for review', () => {
   });
 
   it('reads a rejected run as not approved, not as a crash', () => {
+    expect(workflowToRow(held('rejected'))?.state).toBe('rejected');
+    expect(workflowToDetail(held('rejected'))?.state).toBe('rejected');
     expect(workflowToRow(held('rejected', 'failed'))?.state).toBe('rejected');
     expect(workflowToRow(held('rejected', 'canceled'))?.state).toBe('rejected');
   });

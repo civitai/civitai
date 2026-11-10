@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { matches, type Where } from './prisma-where.fixture';
 import type * as AgentReviewService from '~/server/services/blocks/agent-review.service';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 import type * as ModAlert from '~/server/common/mod-alert';
@@ -74,22 +75,6 @@ type Row = {
 let rows: Row[] = [];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-type Where = Record<string, unknown>;
-function matches(row: Row, where: Where): boolean {
-  return Object.entries(where).every(([key, cond]) => {
-    if (key === 'OR') return (cond as Where[]).some((w) => matches(row, w));
-    const value = (row as unknown as Record<string, unknown>)[key];
-    if (cond && typeof cond === 'object' && !(cond instanceof Date)) {
-      const c = cond as { in?: unknown[]; gt?: Date; gte?: Date; not?: unknown; contains?: string };
-      if (c.in) return c.in.includes(value);
-      if (c.contains !== undefined) return typeof value === 'string' && value.includes(c.contains);
-      if (c.gt) return value instanceof Date && value.getTime() > c.gt.getTime();
-      if (c.gte) return value instanceof Date && value.getTime() >= c.gte.getTime();
-      if ('not' in c) return value !== c.not;
-    }
-    return value === cond;
-  });
-}
 const table = {
   // The read a statement sees is taken when it STARTS; the delay is how long it then takes.
   // That is what lets an unlocked second claim count the slots before the first claim's

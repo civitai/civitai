@@ -43,12 +43,17 @@ export function useCloseOnEscape(close: () => void) {
       lastInteracted.current = { target: event.target, openBefore: visibleOverlays() };
     }
   }, []);
-  const snapshot = useCallback((event: KeyboardEvent) => {
-    // Only Enter and Space activate a trigger; the target of Tab is the element focus is leaving.
-    if (event.key === 'Enter' || event.key === ' ') return record(event);
-    if (event.key !== 'Escape') return;
-    overlayWasOpen.current = visibleOverlays().some((el) => isEngaged(el, lastInteracted.current));
-  }, [record]);
+  const snapshot = useCallback(
+    (event: KeyboardEvent) => {
+      // Only Enter and Space activate a trigger; the target of Tab is the element focus is leaving.
+      if (event.key === 'Enter' || event.key === ' ') return record(event);
+      if (event.key !== 'Escape') return;
+      overlayWasOpen.current = visibleOverlays().some((el) =>
+        isEngaged(el, lastInteracted.current)
+      );
+    },
+    [record]
+  );
   useWindowEvent('keydown', snapshot, { capture: true });
   useWindowEvent('pointerdown', record, { capture: true });
 

@@ -374,7 +374,7 @@ describe('assertViewerEntitledToInlineResources — AIR shape', () => {
     const shipped = [
       'urn:air:zimageturbo:diffusion_model:huggingface:Comfy-Org/z_image_turbo@main/split_files/diffusion_models/z_image_turbo_bf16.safetensors',
       'urn:air:qwen:clip:huggingface:Comfy-Org/z_image_turbo@main/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors',
-      'urn:air:flux1:vae:huggingface:black-forest-labs/FLUX.1-dev@main/ae.safetensors',
+      'urn:air:flux1:vae:huggingface:Comfy-Org/Z-Image-Turbo@6fc90a3b1b653e935a0d175e260736de25b84df5/split_files/vae/ae.safetensors',
       'urn:air:qwen:diffusion_model:huggingface:unsloth/Qwen-Image-2512-GGUF@main/qwen-image-2512-Q5_K_M.gguf',
       'urn:air:flux2:text_encoders:huggingface:Comfy-Org/vae-text-encorder-for-flux-klein-9b@main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors',
       'urn:air:zimageturbo:lora:civitai:118025@2702227',

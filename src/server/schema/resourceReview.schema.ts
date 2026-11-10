@@ -54,6 +54,8 @@ export const getResourceReviewsInfiniteSchema = z.object({
 export type UpsertResourceReviewInput = z.infer<typeof upsertResourceReviewSchema>;
 export const upsertResourceReviewSchema = z.object({
   id: z.number().optional(),
+  /** The post the review is written from. Read on create only. */
+  postId: z.number().optional(),
   modelId: z.number(),
   modelVersionId: z.number(),
   rating: z.number(),

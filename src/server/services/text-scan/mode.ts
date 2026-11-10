@@ -21,8 +21,6 @@ export const TEXT_SCAN_ENTITY_TYPES = [
   'BountyEntry',
   'Challenge',
   'ChatMessage',
-  'Comment',
-  'CommentV2',
   'CommentV3',
   'ResourceReview',
   'User',
@@ -43,11 +41,13 @@ export type TextScanRollout = { shadow: number; active: number };
 export type TextScanRollouts = Partial<Record<TextScanEntityType, TextScanRollout>>;
 
 /**
- * An entity type's rollout. CommentV3 follows CommentV2's until it is given its own: a surface's
- * comments move from one type to the other when its writes flip, and their scanning must not lapse.
+ * An entity type's rollout. CommentV3 follows the stored CommentV2 rollout until it is given its own.
  */
 export const rolloutFor = (rollouts: TextScanRollouts, entityType: TextScanEntityType) =>
-  rollouts[entityType] ?? (entityType === 'CommentV3' ? rollouts.CommentV2 : undefined);
+  rollouts[entityType] ??
+  (entityType === 'CommentV3'
+    ? (rollouts as Record<string, TextScanRollout | undefined>).CommentV2
+    : undefined);
 
 export const ROLLOUT_CACHE_MS = 15_000;
 
@@ -78,6 +78,9 @@ export async function readTextScanRollouts(): Promise<TextScanRollouts> {
     const rollout = parseTextScanRollout(raw?.[entityType]);
     if (rollout) rollouts[entityType] = rollout;
   }
+  // The stored CommentV2 rollout, which `rolloutFor` gives CommentV3 until it has its own.
+  const legacy = parseTextScanRollout(raw?.CommentV2);
+  if (legacy) (rollouts as Record<string, TextScanRollout>).CommentV2 = legacy;
   return rollouts;
 }
 

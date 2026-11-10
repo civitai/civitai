@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
-import type * as CommentService from '~/server/services/comment.service';
+import type * as CommentModeration from '~/server/services/commentv3/moderation.service';
 import type * as JobLock from '~/server/jobs/job-lock';
 import type * as DailyChallengeUtils from '~/server/games/daily-challenge/daily-challenge.utils';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
@@ -15,9 +15,8 @@ const JUDGED_TAG = 11;
 const REVIEW_ME_TAG = 12;
 
 const { mockBulkDeleteComments, mockAcquireJobLock } = vi.hoisted(() => ({
-  mockBulkDeleteComments: vi.fn<typeof CommentService.bulkDeleteComments>(async () => ({
-    commentDeleted: 0,
-    commentV2Deleted: 0,
+  mockBulkDeleteComments: vi.fn<typeof CommentModeration.bulkDeleteComments>(async () => ({
+    deleted: 0,
   })),
   mockAcquireJobLock: vi.fn(),
 }));
@@ -25,8 +24,8 @@ vi.mock('~/server/jobs/job-lock', async (importOriginal) => ({
   ...(await importOriginal<typeof JobLock>()),
   acquireJobLock: mockAcquireJobLock,
 }));
-vi.mock('~/server/services/comment.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof CommentService>()),
+vi.mock('~/server/services/commentv3/moderation.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CommentModeration>()),
   bulkDeleteComments: mockBulkDeleteComments,
 }));
 vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async (importOriginal) => ({
@@ -135,10 +134,9 @@ describe('rejudgeChallenge', () => {
     await rejudgeChallenge({ id: 1, moderatorId: 2 });
 
     expect(mockBulkDeleteComments).toHaveBeenCalledWith({
-      commentIds: [],
-      commentV2Ids: expect.arrayContaining([10, 11]),
+      ids: expect.arrayContaining([10, 11]),
     });
-    expect(mockBulkDeleteComments.mock.calls[0]?.[0].commentV2Ids).toHaveLength(2);
+    expect(mockBulkDeleteComments.mock.calls[0]?.[0].ids).toHaveLength(2);
     expect(dbMock.dbWrite.imageReaction.deleteMany).toHaveBeenCalledWith({
       where: { imageId: { in: expect.arrayContaining([1, 2]) }, userId: JUDGE_USER },
     });

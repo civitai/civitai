@@ -279,7 +279,7 @@ export function normalizeEmailDomain(email: string | null): string | null {
  * `selectCohortMembers` and `buildFinding`.
  *
  * The rule, per surface, and what each clause excludes:
- *  - `Comment` / `CommentV2`: `hidden` is not true, `tosViolation` is false. Both are moderation
+ *  - `CommentV3`: `hidden` is not true, `tosViolation` is false. Both are moderation
  *    outcomes: the comment is already gone from the page. `hidden` is a NULLABLE boolean, so
  *    `{ not: true }` and not `false` — the repo's own idiom (`jobs/entity-moderation.ts`), and the
  *    one that keeps the never-hidden rows whose column is NULL.

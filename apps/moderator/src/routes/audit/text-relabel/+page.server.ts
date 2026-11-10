@@ -37,7 +37,7 @@ const handOffsFor = (user: SessionUser | null | undefined, items: HandOffItem[])
   resolveHandOffs(items, {
     civitaiUrl: civitaiLinkUrl(),
     canOpen: (path) => canAccess(user ?? null, path),
-    lookup: (item) => reportReachability(item.entityType, item.entityId, item.reportId),
+    lookup: (item) => reportReachability(item.entityType, item.reportId),
   });
 
 export const load: PageServerLoad = async ({ locals, url }) => {

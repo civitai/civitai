@@ -21,7 +21,6 @@
     truncated,
     userId,
     canBulkAct,
-    field,
     link,
     badges,
   }: {
@@ -30,7 +29,6 @@
     truncated: boolean;
     userId: number;
     canBulkAct: boolean;
-    field: 'commentIds' | 'commentV2Ids';
     link: Snippet<[T]>;
     badges?: Snippet<[T]>;
   } = $props();
@@ -140,7 +138,7 @@
       <!-- Posted from the selection rather than from the row checkboxes, so a select-all still acts on
            the rows the card has not expanded to yet. -->
       {#each posting as id (id)}
-        <input type="hidden" name={field} value={id} />
+        <input type="hidden" name="commentIds" value={id} />
       {/each}
       <ul class="space-y-2 text-sm">
         {#each shown.slice(0, limit) as c (c.id)}

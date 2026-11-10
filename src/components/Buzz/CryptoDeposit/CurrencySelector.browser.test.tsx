@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderWithProviders } from '../../../../test/component-setup';
 
 import type { CurrencySelectionState } from '~/components/Buzz/CryptoDeposit/CurrencySelector';
-import { MinDepositInfo } from '~/components/Buzz/CryptoDeposit/CurrencySelector';
+import {
+  MinDepositInfo,
+  MinDepositWarning,
+} from '~/components/Buzz/CryptoDeposit/CurrencySelector';
 
 // This line is the only thing between a depositor and a sub-minimum send, which NowPayments neither
 // sweeps nor refunds. `fiat_equivalent` is nullish in the NowPayments response, so the fiat branch
@@ -43,5 +46,23 @@ describe('MinDepositInfo', () => {
       <MinDepositInfo state={state({ minAmount: null, fiatEquivalent: null })} />
     );
     await expect.element(page.getByText(/Minimum BTC deposit:\s*unavailable/)).toBeInTheDocument();
+  });
+});
+
+describe('MinDepositWarning', () => {
+  it('says a sub-minimum send is neither credited nor refunded, next to the minimum', async () => {
+    renderWithProviders(
+      <>
+        <MinDepositInfo state={state({ minAmount: 0.0002, fiatEquivalent: 17.44 })} />
+        <MinDepositWarning />
+      </>
+    );
+    await expect.element(page.getByText(/Minimum BTC deposit/)).toBeInTheDocument();
+    await expect
+      .element(page.getByText(/can't be credited or refunded.*larger than the payment/))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText(/after your exchange's withdrawal fee/))
+      .toBeInTheDocument();
   });
 });
