@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.472",
+  "version": "5.1.474",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -284,7 +284,7 @@
     "motion": "^11.11.17",
     "msgpackr": "^1.10.2",
     "next": "16.4.5",
-    "nodemailer": "^7.0.11",
+    "nodemailer": "^10.4.1",
     "obscenity": "^0.4.5",
     "openai": "^4.73.0",
     "p-limit": "^6.2.0",
