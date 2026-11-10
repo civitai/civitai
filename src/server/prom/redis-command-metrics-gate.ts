@@ -2,13 +2,8 @@ import {
   setRedisCommandHistogramBatchGate,
   setRedisInflightGaugeModeResolver,
 } from '@civitai/telemetry/redis-command-metrics';
-import {
-  ensureFliptInitialized,
-  FLIPT_FEATURE_FLAGS,
-  getFliptClientSync,
-  isFliptSync,
-} from '~/server/flipt/client';
-import { createCachedFlagGate } from '~/server/utils/otel-withspan-gate';
+import { ensureFliptInitialized, FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
+import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 
 /**
  * Arm the batched `redis_command_duration_seconds` handle behind the `redis-command-metrics-batched`
@@ -18,14 +13,7 @@ import { createCachedFlagGate } from '~/server/utils/otel-withspan-gate';
  */
 export function registerRedisCommandMetricsBatchGate(): void {
   setRedisCommandHistogramBatchGate(
-    createCachedFlagGate(() => {
-      const on = isFliptSync(FLIPT_FEATURE_FLAGS.REDIS_COMMAND_METRICS_BATCHED);
-      // `isFliptSync` answers null until the client is initialized; start it rather than wait for
-      // an unrelated async flag read to do so (as ~/server/redis/l1-switches does).
-      if (on === null && !getFliptClientSync())
-        void ensureFliptInitialized().catch(() => undefined);
-      return on;
-    })
+    createCachedFlagGate(readFliptSwitch(() => FLIPT_FEATURE_FLAGS.REDIS_COMMAND_METRICS_BATCHED))
   );
 }
 
