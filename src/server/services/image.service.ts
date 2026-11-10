@@ -6673,7 +6673,10 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
   // Staleness: a write that refreshes or busts the Redis entry also drops it from that pod's L1, but
   // there is no cross-pod L1 bust, so other pods can serve the previous images — including a
   // re-rated or replaced image's old `nsfwLevel`, which preview pickers filter on — for up to 30s
-  // on top of whatever the Redis entry already lags.
+  // on top of whatever the Redis entry already lags. Readers that store what they build read past
+  // the L1 (`bypassLocal`): the models search document and the public /api/v1/models/:id body,
+  // which a version edit rebuilds right after refreshing this entry, and the day-long ecosystem
+  // SEO covers.
   //
   // Its own LRU and byte budget, so it cannot evict another cache's L1 entries; an entry larger than
   // the budget is not held.
@@ -6689,8 +6692,12 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
   }),
 });
 
-export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
-  const images = await imagesForModelVersionsCache.fetch(modelVersionIds);
+export async function getImagesForModelVersionCache(
+  modelVersionIds: number[],
+  // For a caller that stores what it builds from this beyond the L1 TTL (see the cache's L1 note).
+  { bypassLocal = false }: { bypassLocal?: boolean } = {}
+) {
+  const images = await imagesForModelVersionsCache.fetch(modelVersionIds, { bypassLocal });
   // `images` is keyed by model version id, so this lookup treats version ids as image ids and the
   // entry-level `tags` it attaches belong to an unrelated image; no consumer reads them. Each
   // image's own `tags` come from the cache's appendFn and are unaffected.
