@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { QueryClient, useQuery } from '@tanstack/react-query';
+import type * as NotificationsModule from '~/utils/notifications';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,7 +23,10 @@ const store = vi.hoisted(() => ({
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => state.currentUser }));
-vi.mock('~/utils/notifications', () => ({ showErrorNotification }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
+  showErrorNotification,
+}));
 vi.mock('~/components/Post/EditV2/PostEditProvider', () => ({
   usePostEditStore: (select: (s: { images: unknown[] }) => unknown) =>
     select({ images: store.images }),

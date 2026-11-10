@@ -1,4 +1,5 @@
 import { QueryClient, useQuery } from '@tanstack/react-query';
+import type * as NotificationsModule from '~/utils/notifications';
 import type { ReactNode } from 'react';
 import { useFormContext } from 'react-hook-form';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -13,7 +14,10 @@ const upsert = vi.hoisted(() => vi.fn());
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7, muted: false }) }));
 vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false }));
-vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
+  showErrorNotification: vi.fn(),
+}));
 vi.mock('~/components/Dialog/DialogProvider', () => ({
   useDialogContext: () => ({ opened: true, onClose: vi.fn() }),
 }));

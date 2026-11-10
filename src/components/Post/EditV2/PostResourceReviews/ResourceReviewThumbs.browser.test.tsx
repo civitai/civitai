@@ -1,4 +1,5 @@
 import { QueryClient, useQuery } from '@tanstack/react-query';
+import type * as NotificationsModule from '~/utils/notifications';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
@@ -12,7 +13,10 @@ const upsert = vi.hoisted(() => vi.fn());
 const fetchResources = vi.hoisted(() => vi.fn());
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => state.currentUser }));
-vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
+  showErrorNotification: vi.fn(),
+}));
 vi.mock('~/components/Post/EditV2/PostEditProvider', () => ({
   usePostEditStore: (select: (s: { images: unknown[] }) => unknown) =>
     select({

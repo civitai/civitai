@@ -150,8 +150,10 @@ export function usePostResourceReviews({ postId, ownerId }: { postId: number; ow
           apply(patch);
           const input = { postId, modelId: row.modelId, modelVersionId, ...body };
           let saved = await upsert({ ...input, id: row.reviewId ?? undefined });
-          // A create that lost the unique-constraint race returns the existing review untouched.
+          // A create that lost the unique-constraint race returns the existing review untouched,
+          // sometimes as a bare id row without its fields.
           const differs =
+            !('recommended' in saved) ||
             saved.recommended !== body.recommended ||
             saved.rating !== body.rating ||
             (body.details !== undefined && saved.details !== body.details);

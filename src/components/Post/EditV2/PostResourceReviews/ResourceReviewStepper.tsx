@@ -313,7 +313,6 @@ export function ResourceReviewStepper({
     <Group
       justify="space-between"
       p="md"
-      pb={isMobile ? 'calc(env(safe-area-inset-bottom) + 12px)' : undefined}
       // Site-wide floating buttons sit bottom-right above dialogs on phones.
       pr={isMobile ? 72 : undefined}
       className="shrink-0 border-0 border-t border-solid border-gray-3 dark:border-dark-4"
