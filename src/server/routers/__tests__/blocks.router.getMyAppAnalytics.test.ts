@@ -184,8 +184,6 @@ beforeEach(() => {
 });
 
 describe('app-developer ranges', () => {
-  // Each procedure turns the range into a Date, which is the same instant with or without the
-  // padding, so the procedure's own input parser is what shows the helper ran.
   it.each(['getMyRevenue', 'getMyAppAnalytics', 'getMyAppCustomEvents'] as const)(
     '%s reads a minute-precision range as :00',
     (name) => {

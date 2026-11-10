@@ -298,7 +298,6 @@ describe('what it accepts', () => {
   });
 
   it('takes a minute-precision predictedAt, read as :00', async () => {
-    // The stored instant is the same either way; only the parsed string shows the helper ran.
     const parsed = handler.spec.input!.parse({
       predictions: [prediction({ predictedAt: '2026-02-03T04:05+02:00' })],
     }) as { predictions: Array<{ predictedAt?: string }> };
