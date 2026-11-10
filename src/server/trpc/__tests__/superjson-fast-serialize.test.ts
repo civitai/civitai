@@ -406,7 +406,7 @@ describe('fastSuperjsonSerialize — sharedRefs', () => {
       'a BigInt beside a shared object',
       (() => {
         const o = {};
-        return { o, p: o, n: 1n };
+        return { o, p: o, n: BigInt(1) };
       })(),
     ],
   ])('%s', (_label, value) => {
