@@ -68,6 +68,8 @@ const routers = {
   resourceReview: () => import('./resourceReview.router').then((m) => m.resourceReviewRouter),
   semanticImageSearch: () =>
     import('./semantic-image-search.router').then((m) => m.semanticImageSearchRouter),
+  semanticArticleSearch: () =>
+    import('./semantic-article-search.router').then((m) => m.semanticArticleSearchRouter),
   signals: () => import('./signals.router').then((m) => m.signalsRouter),
   stickerBook: () => import('./sticker-book.router').then((m) => m.stickerBookRouter),
   stripe: () => import('./stripe.router').then((m) => m.stripeRouter),
