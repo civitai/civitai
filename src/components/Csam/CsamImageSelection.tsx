@@ -29,7 +29,7 @@ import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { useInView } from '~/hooks/useInView';
 import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.store';
 import { splitLinkedImages } from '~/components/Csam/csam-linked-image-ids';
-import { useCsamContext } from '~/components/Csam/CsamProvider';
+import { useCsamContext, useCsamSubjectId } from '~/components/Csam/CsamProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 
@@ -52,7 +52,7 @@ export function CsamImageSelection({
     isLoading,
     isError,
     refetch,
-  } = trpc.image.getImagesByUserIdForModeration.useQuery({ userId });
+  } = trpc.image.getImagesByUserIdForModeration.useQuery({ userId, captureImageIds: imageIds });
 
   const { linkedImages, missingImageIds, gridImages } = useMemo(
     () => splitLinkedImages(images ?? [], imageIds),
@@ -232,13 +232,16 @@ export function CsamImageCard({
   const { ref, inView } = useInView();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const userId = image.userId;
+  // Selected under the report's subject. A feedback page capture is owned by the capture account,
+  // not the subject, and its shown record names that owner.
+  const ownerId = image.userId;
+  const userId = useCsamSubjectId() ?? ownerId;
   const imageId = image.id;
   const checked = useCsamImageSelectStore((state) => state.selected[userId]?.[imageId] ?? false);
   const preselected = useCsamImageSelectStore((state) => !!state.seeded[`${userId}:${imageId}`]);
   const shownRow = useCsamImageSelectStore((state) => state.shownRows[`${userId}:${imageId}`]);
   const record = (action: 'open' | 'select', rendition: ShownRendition) =>
-    void recordShown({ imageId, userId, action, rendition }).then((ok) =>
+    void recordShown({ imageId, userId: ownerId, action, rendition }).then((ok) =>
       useCsamImageSelectStore.getState().setShownRow(userId, imageId, ok ? 'recorded' : 'refused')
     );
   // What the tile has put on screen so far; a selection made before then is not recorded.
