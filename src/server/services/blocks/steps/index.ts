@@ -787,6 +787,10 @@ interface BlockStepBase<P> {
    * PATH — no content-part array, no `$ref` object. Pinned for every entry by
    * "free-text param paths" in `chat-completion.step.test.ts`; an entry that
    * widens such a field goes red there. Applies to the registry arm only.
+   *
+   * `list[].field.**` declares everything under `field` text (JSON the model is
+   * shown, such as a tool's schema). Sound only for a subtree NOTHING fetches;
+   * each such path is pinned by its own case there.
    */
   freeTextParamPaths?: readonly string[];
   /**
