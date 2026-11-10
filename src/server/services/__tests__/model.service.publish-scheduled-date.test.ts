@@ -203,6 +203,12 @@ describe('publishModelById :: the date of a scheduled model', () => {
     expect(await modelDate()).toEqual(at(-1));
   });
 
+  it('leaves the date of a model already public', async () => {
+    await seed(at(-2), [[V1, 'Published', at(-1)]]);
+    await publishModelById({ id: MODEL_ID, versionIds: [V2], publishedAt: at(3) });
+    expect(await modelDate()).toEqual(at(-2));
+  });
+
   it('follows a lone version rescheduled later', async () => {
     await seed(at(1), [[V1, 'Scheduled', at(1)]]);
     await publishModelById({ id: MODEL_ID, versionIds: [V1], publishedAt: at(4) });

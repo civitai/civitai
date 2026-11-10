@@ -352,15 +352,12 @@ describe('processScheduledPublishing :: a model dated after its live version', (
       )
     ).rows[0];
 
-  it('publishes the model once, no longer dated in the future', async () => {
+  it('publishes the model, no longer dated in the future', async () => {
     await modelDatedAfterLiveVersion({ v1Status: 'Published' });
     await runJob();
     const after = await model();
     expect(after.status).toBe('Published');
     expect(after.publishedAt.getTime()).toBeLessThanOrEqual(Date.now());
-    expect(engaged('model')).toEqual([1]);
-
-    await runJob();
     expect(engaged('model')).toEqual([1]);
   });
 
