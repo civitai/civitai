@@ -14,7 +14,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 
 import type { SessionUser } from '~/types/session';
-import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
+import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
+import { getFeatureFliptKey, getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 
 // `knightsApp` follows the Knights app's own access flag: dark for everyone, moderators included,
 // until Flipt turns it on for that user.
@@ -35,5 +36,9 @@ describe('knightsApp is dark until its Flipt flag says so', () => {
     );
     const user = { id: 9202, isModerator: false, tier: 'free' } as SessionUser;
     expect((await getFeatureFlagsAsync({ user })).knightsApp).toBe(true);
+  });
+
+  it('is the same Flipt key the server-side cutover gate reads', () => {
+    expect(getFeatureFliptKey('knightsApp')).toBe(FLIPT_FEATURE_FLAGS.KNIGHTS_APP);
   });
 });

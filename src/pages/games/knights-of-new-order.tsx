@@ -48,10 +48,9 @@ let rankUpTimer: NodeJS.Timeout | null = null;
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features }) => {
-    if (!features?.newOrderGame || !(await isV1KnightsLive()))
-      return {
-        redirect: { destination: KNIGHTS_APP_URL, permanent: false },
-      };
+    if (!features?.newOrderGame) return { redirect: { destination: '/', permanent: false } };
+    if (!(await isV1KnightsLive()))
+      return { redirect: { destination: KNIGHTS_APP_URL, permanent: false } };
   },
 });
 

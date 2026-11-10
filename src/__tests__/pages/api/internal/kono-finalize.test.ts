@@ -1,11 +1,17 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ settle: vi.fn(), leaveQueues: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  settle: vi.fn(),
+  leaveQueues: vi.fn(),
+  v1Live: vi.fn(async () => false),
+}));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));
+// Retired on purpose: a gate added to the handler would skip the settlement below and fail this test.
+vi.mock('~/server/games/new-order/v1-gate', () => ({ isV1KnightsLive: mocks.v1Live }));
 vi.mock('~/server/services/games/new-order.service', () => ({
   updatePendingImageRatings: mocks.settle,
   leaveQueuesAfterModeratorRating: mocks.leaveQueues,
@@ -13,10 +19,8 @@ vi.mock('~/server/services/games/new-order.service', () => ({
 
 import handler from '~/pages/api/internal/kono-finalize';
 
-beforeEach(() => vi.clearAllMocks());
-
 describe('kono-finalize', () => {
-  it('settles pending votes and leaves the queues, whatever the state of the v1 cutover', async () => {
+  it('settles pending votes and leaves the queues even after v1 is retired', async () => {
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() };
 
     await (handler as unknown as (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>)(
