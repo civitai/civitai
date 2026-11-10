@@ -1255,6 +1255,8 @@ type QueueRow = {
 type RetractFailures = { seq: string | null; count: number; since: string; alerted: boolean };
 
 export const CDN_ACCESS_SYNC_BATCH = 500;
+const earliest = (dates: Date[]) =>
+  dates.length ? new Date(Math.min(...dates.map((d) => d.getTime()))) : undefined;
 const CALL_CONCURRENCY = 8;
 const QUEUE_AGE_ALERT_MS = 15 * 60 * 1000;
 const DEFERRED_AGE_ALERT_MS = 24 * 60 * 60 * 1000;
@@ -1363,7 +1365,9 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     ].slice(0, maxRetracts)
   );
   let denyFailed = 0;
+  let liftFailed = 0;
   const retractFailed = new Set<string>();
+  const retractSent = new Set<string>();
   await limitConcurrency(
     planned.map((url) => async () => {
       let call: CdnCall | null = null;
@@ -1380,13 +1384,22 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
           calls++;
           if (call === 'retract') retracts++;
           await applyCall(url, call, gate, claim);
+          if (call === 'retract') retractSent.add(url);
         });
         if (!result.claimed) pending.add(url);
       } catch (error) {
         pending.add(url);
         failed++;
-        if ((call as CdnCall | null) === 'deny') denyFailed++;
-        if ((call as CdnCall | null) === 'retract' && !(error instanceof ClaimLostError))
+        const failedCall = call as CdnCall | null;
+        if (failedCall === 'deny') denyFailed++;
+        if (failedCall === 'allow') liftFailed++;
+        // As in the persist retry: held back unsent, a lost claim and load shedding are not failures.
+        if (
+          failedCall === 'retract' &&
+          !(error instanceof RetractionHeldBackError) &&
+          !(error instanceof ImageServerBusyError) &&
+          !(error instanceof CloudflarePurgeBusyError)
+        )
           retractFailed.add(url);
         logToAxiom({
           type: error instanceof RetractionNotDoneError ? 'warning' : 'error',
@@ -1426,9 +1439,9 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     (q, i) =>
       !q.deferred && !urlsByRow[i].every(settled) && urlsByRow[i].every((url) => !pending.has(url))
   );
-  // Kept in the row's data under the current `seq`: a re-queue starts a new count, and a row whose
-  // retractions all go through is removed with it.
-  const failuresNext = new Map<QueueRow, RetractFailures>();
+  // Kept in the row's data under the current `seq`: a re-queue starts a new count, and a retraction
+  // of the row that goes through ends it (null clears it).
+  const failuresNext = new Map<QueueRow, RetractFailures | null>();
   queue.forEach((q, i) => {
     if (!q.data || !('deferred' in q.data)) return;
     const seq = q.data.seq ?? null;
@@ -1440,13 +1453,17 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
         since: prior?.since ?? new Date().toISOString(),
         alerted: prior?.alerted ?? false,
       });
+    else if (q.data.retractFailures && urlsByRow[i].some((url) => retractSent.has(url)))
+      failuresNext.set(q, null);
   });
 
   for (const q of rotate) {
     await dbWrite.$executeRaw`
       UPDATE "JobQueue"
       SET "createdAt" = CASE WHEN data ? 'deferred' THEN "createdAt" ELSE now() END,
-          data = COALESCE(data, '{}'::jsonb) || jsonb_build_object('deferred', data->'seq')
+          data = (COALESCE(data, '{}'::jsonb) - ${
+            failuresNext.get(q) === null ? 'retractFailures' : ''
+          }::text) || jsonb_build_object('deferred', data->'seq')
       WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
         AND "entityType" = ${q.entityType}::"EntityType"
         AND "entityId" = ${q.entityId}
@@ -1464,24 +1481,32 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     `;
   }
 
-  // A failing url stays pending, so none of these rows was rotated or removed above.
+  // A failing url stays pending, so only a cleared count can belong to a rotated or removed row.
+  const rotated = new Set(rotate);
+  const removed = new Set(done);
   let retractFailing = 0;
   for (const [q, next] of failuresNext) {
+    if (removed.has(q) || (!next && rotated.has(q))) continue;
     const due =
+      !!next &&
       !next.alerted &&
       (next.count >= RETRACT_FAILING_ALERT_COUNT ||
         Date.now() - new Date(next.since).getTime() > RETRACT_FAILING_ALERT_MS);
     const written = await dbWrite.$executeRaw`
       UPDATE "JobQueue"
-      SET data = data || jsonb_build_object(
-        'retractFailures', ${JSON.stringify({ ...next, alerted: next.alerted || due })}::jsonb
-      )
+      SET data = ${
+        next
+          ? Prisma.sql`data || jsonb_build_object(
+              'retractFailures', ${JSON.stringify({ ...next, alerted: next.alerted || due })}::jsonb
+            )`
+          : Prisma.sql`data - 'retractFailures'`
+      }
       WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
         AND "entityType" = ${q.entityType}::"EntityType"
         AND "entityId" = ${q.entityId}
         AND data IS NOT DISTINCT FROM ${JSON.stringify(q.data)}::jsonb
     `;
-    if (!due || !written) continue;
+    if (!due || !written || !next) continue;
     retractFailing++;
     logToAxiom({
       type: 'error',
@@ -1494,8 +1519,10 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
     }).catch(() => undefined);
   }
 
-  // A row deferred before carries its first-deferral time and has the 24h bound below instead.
-  const oldest = queue.find((q) => !q.data || !('deferred' in q.data))?.createdAt;
+  // A re-queued row still carries its first-deferral time, so its wait counts from the re-queue.
+  const waitedSince = (q: QueueRow) =>
+    q.data && 'deferred' in q.data && q.data.seq ? new Date(q.data.seq) : q.createdAt;
+  const oldest = earliest(queue.filter((q) => !q.deferred).map(waitedSince));
   if (failed && oldest && Date.now() - oldest.getTime() > QUEUE_AGE_ALERT_MS)
     logToAxiom({
       type: 'error',
@@ -1505,7 +1532,9 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       failed,
     }).catch(() => undefined);
 
-  const oldestDeferred = queue.find((q) => q.deferred)?.createdAt;
+  const oldestDeferred = earliest(
+    queue.filter((q) => q.data && 'deferred' in q.data).map((q) => q.createdAt)
+  );
   if (oldestDeferred && Date.now() - oldestDeferred.getTime() > DEFERRED_AGE_ALERT_MS)
     logToAxiom({
       type: 'error',
@@ -1515,12 +1544,13 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       deferredInBatch: waitingTake,
     }).catch(() => undefined);
 
-  if (denyFailed)
+  if (denyFailed || liftFailed)
     logToAxiom({
       type: 'error',
-      name: 'cdn-access-sync-deny-failed',
-      message: 'takedown CDN deny calls failed; will retry',
+      name: 'cdn-access-sync-call-failed',
+      message: 'takedown CDN deny or lift calls failed; will retry',
       denyFailed,
+      liftFailed,
     }).catch(() => undefined);
 
   if (retracts || deferred.size)

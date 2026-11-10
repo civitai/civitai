@@ -2854,7 +2854,7 @@ describe('retractions per run', () => {
 
 describe('new rows before deferred ones', () => {
   const range = (from: number, n: number) => Array.from({ length: n }, (_, i) => from + i);
-  /** `n` images from `from`, each blocked by a moderator, in three statements. */
+  /** `n` images from `from`, each blocked by a moderator. */
   const blockRange = async (from: number, n: number) => {
     const to = from + n - 1;
     await sql`INSERT INTO "Image" (id, "userId", url)
@@ -2879,7 +2879,7 @@ describe('new rows before deferred ones', () => {
       await sql`SELECT data, "createdAt" FROM "JobQueue"
                 WHERE type = 'CdnAccessSync' AND "entityType" = 'Image' AND "entityId" = ${id}`
     ).rows[0] as { data: Record<string, unknown>; createdAt: Date } | undefined;
-  /** 45 blocks and one run: 1-15 retracted, 16-45 denied and deferred. */
+  /** Blocks 1-45 and one run, leaving 30 deferred. */
   const thirtyDeferred = async () => {
     await blockRange(1, 45);
     await syncCdnAccess();
@@ -2916,7 +2916,7 @@ describe('new rows before deferred ones', () => {
   it('keeps retracting the oldest deferrals through a burst of 600 new blocks', async () => {
     const old = await thirtyDeferred();
     await blockRange(1000, 600);
-    await syncCdnAccess();
+    expect(await syncCdnAccess()).toMatchObject({ queued: 500 });
     await syncCdnAccess();
     expect(await countIn(old, 'Retracted')).toBe(30);
     expect(await countIn(range(1000, 600))).toBe(600);
@@ -2979,11 +2979,10 @@ describe('new rows before deferred ones', () => {
 
   it('leaves a row queued again mid-run in place, unmarked', async () => {
     await blockRange(1, 16);
-    respond = async (c) => {
-      if (onUrl(u(16))(c) && kind(c) === 'deny')
-        await sql`SELECT queue_cdn_access_sync(16, 'Image', NULL)`;
-      return undefined;
-    };
+    respond = (c) =>
+      onUrl(u(16))(c) && kind(c) === 'deny'
+        ? sql`SELECT queue_cdn_access_sync(16, 'Image', NULL)`.then(() => 202)
+        : undefined;
     await syncCdnAccess();
     expect(callsFor(u(16))).toEqual(['deny']);
     expect((await row(16))?.data).not.toHaveProperty('deferred');
@@ -2998,8 +2997,8 @@ describe('new rows before deferred ones', () => {
     calls.length = 0;
     await syncCdnAccess();
     expect(callsFor(u(31))[0]).toBe('deny');
-    expect(errorLogs('cdn-access-sync-deny-failed')).toEqual([
-      expect.objectContaining({ denyFailed: 1 }),
+    expect(errorLogs('cdn-access-sync-call-failed')).toEqual([
+      expect.objectContaining({ denyFailed: 1, liftFailed: 0 }),
     ]);
 
     loggingMock.logToAxiom.mockClear();
@@ -3007,8 +3006,8 @@ describe('new rows before deferred ones', () => {
     await scannerBlock(5000);
     respond = (c) => (onUrl(u(5000))(c) ? 503 : undefined);
     await syncCdnAccess();
-    expect(errorLogs('cdn-access-sync-deny-failed')).toEqual([
-      expect.objectContaining({ denyFailed: 1 }),
+    expect(errorLogs('cdn-access-sync-call-failed')).toEqual([
+      expect.objectContaining({ denyFailed: 1, liftFailed: 0 }),
     ]);
   });
 
@@ -3041,6 +3040,105 @@ describe('new rows before deferred ones', () => {
       expect(failingAlerts()).toHaveLength(2);
     });
 
+    it('does not count load shedding, and still alerts on a real failure after it', async () => {
+      await deferOne();
+      respond = (c) => (kind(c) === 'retract' ? 429 : undefined);
+      for (let run = 1; run <= 6; run++) await syncCdnAccess();
+      expect(callsFor(u(16))).toContain('retract');
+      expect(failingAlerts()).toEqual([]);
+      expect((await row(16))?.data).not.toHaveProperty('retractFailures');
+
+      respond = (c) => (kind(c) === 'retract' ? 503 : undefined);
+      for (let run = 1; run <= 5; run++) await syncCdnAccess();
+      expect(failingAlerts()).toEqual([expect.objectContaining({ entityId: 16, failures: 5 })]);
+    });
+
+    it('does not count a retraction whose url claim was lost', async () => {
+      const { callCdnAccess } = await import('~/server/services/cdn-access.service');
+      await deferOne();
+      // Holds every retraction slot, so the drain waits with its claim while a newer run takes it.
+      const loseClaim = async () => {
+        let release!: () => void;
+        const held = new Promise<number>((resolve) => (release = () => resolve(202)));
+        const holderKeys = [...Array(5).keys()].map((i) => u(90 + i));
+        respond = (c) => (holderKeys.some((k) => onUrl(k)(c)) ? held : undefined);
+        const holders = holderKeys.map((k) => callCdnAccess(k, 'retract'));
+        const run = syncCdnAccess();
+        for (let i = 0; i < 200; i++) {
+          const { rows } = await sql`SELECT 1 FROM "ImageCdnAccessClaim" WHERE url = ${u(16)}`;
+          if (rows.length) break;
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        await sql`UPDATE "ImageCdnAccessClaim" SET token = gen_random_uuid() WHERE url = ${u(16)}`;
+        release();
+        await Promise.all(holders);
+        await run;
+        await sql`DELETE FROM "ImageCdnAccessClaim" WHERE url = ${u(16)}`;
+      };
+      for (let run = 1; run <= 5; run++) await loseClaim();
+      expect(callsFor(u(16))).not.toContain('retract');
+      expect(failingAlerts()).toEqual([]);
+      expect((await row(16))?.data).not.toHaveProperty('retractFailures');
+    });
+
+    it('a retraction of the row that goes through starts the count again', async () => {
+      setEnv({ CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: 1 });
+      await publishedPost(50);
+      for (const id of [101, 102, 103]) await image(id, { postId: 50 });
+      await moderatorPostUnpublish(50);
+      const postRow = async () =>
+        (
+          await sql`SELECT data FROM "JobQueue"
+                    WHERE type = 'CdnAccessSync' AND "entityType" = 'Post' AND "entityId" = 50`
+        ).rows[0] as { data: Record<string, unknown> };
+
+      await syncCdnAccess();
+      expect((await postRow()).data.deferred).toBeDefined();
+      respond = (c) => (kind(c) === 'retract' ? 503 : undefined);
+      await syncCdnAccess();
+      expect((await postRow()).data.retractFailures).toMatchObject({ count: 1 });
+      respond = null;
+      await syncCdnAccess();
+      expect((await postRow()).data).not.toHaveProperty('retractFailures');
+
+      respond = (c) => (kind(c) === 'retract' ? 503 : undefined);
+      for (let run = 1; run <= 4; run++) await syncCdnAccess();
+      expect(failingAlerts()).toEqual([]);
+      await syncCdnAccess();
+      expect(failingAlerts()).toEqual([expect.objectContaining({ entityId: 50, failures: 5 })]);
+    });
+
+    it('does not count a row that was never deferred', async () => {
+      await image(1);
+      await moderatorBlock(1);
+      respond = (c) => (kind(c) === 'retract' ? 503 : undefined);
+      for (let run = 1; run <= 5; run++) await syncCdnAccess();
+      expect(failingAlerts()).toEqual([]);
+      expect((await row(1))?.data).not.toHaveProperty('retractFailures');
+    });
+
+    it('a re-queued row past 24 hours with a failing retraction still alerts', async () => {
+      await deferOne();
+      await sql`UPDATE "JobQueue" SET "createdAt" = now() - interval '25 hours'
+                WHERE type = 'CdnAccessSync' AND "entityId" = 16`;
+      await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+                VALUES (${MOD}, 'review', 'image', 16)`;
+      await syncCdnAccess();
+      expect(callsFor(u(16))).toContain('retract');
+      expect(errorLogs('cdn-access-sync-deferred-stale')).toHaveLength(1);
+    });
+
+    it('a re-queued row waiting over 15 minutes since its re-queue trips the stale alert', async () => {
+      await deferOne();
+      await sql`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+                VALUES (${MOD}, 'review', 'image', 16)`;
+      const requeuedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+      await sql`UPDATE "JobQueue" SET data = jsonb_set(data, '{seq}', to_jsonb(${requeuedAt}::text))
+                WHERE type = 'CdnAccessSync' AND "entityId" = 16`;
+      await syncCdnAccess();
+      expect(errorLogs('cdn-access-sync-stale')).toHaveLength(1);
+    });
+
     it('alerts once a failure run passes an hour', async () => {
       await deferOne();
       await syncCdnAccess();
@@ -3052,6 +3150,19 @@ describe('new rows before deferred ones', () => {
       await syncCdnAccess();
       expect(failingAlerts()).toEqual([expect.objectContaining({ entityId: 16, failures: 2 })]);
     });
+  });
+
+  it('alerts on a failed lift of a row deferred before', async () => {
+    await blockRange(1, 16);
+    await syncCdnAccess();
+    await acceptImage(16);
+    respond = (c) => (onUrl(u(16))(c) && kind(c) === 'allow' ? 503 : undefined);
+    calls.length = 0;
+    await syncCdnAccess();
+    expect(callsFor(u(16))[0]).toBe('allow');
+    expect(errorLogs('cdn-access-sync-call-failed')).toEqual([
+      expect.objectContaining({ denyFailed: 0, liftFailed: 1 }),
+    ]);
   });
 
   it('alerts on a retraction deferred for over 24 hours, not on a younger one that failed', async () => {
@@ -3066,7 +3177,7 @@ describe('new rows before deferred ones', () => {
     await syncCdnAccess();
     expect(errorLogs('cdn-access-sync-stale')).toEqual([]);
     expect(errorLogs('cdn-access-sync-deferred-stale')).toEqual([]);
-    expect(errorLogs('cdn-access-sync-deny-failed')).toEqual([]);
+    expect(errorLogs('cdn-access-sync-call-failed')).toEqual([]);
 
     await age(25);
     await syncCdnAccess();
