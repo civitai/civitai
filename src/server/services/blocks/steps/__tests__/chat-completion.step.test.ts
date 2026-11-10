@@ -1789,7 +1789,6 @@ describe('free-text param paths', () => {
       );
     });
 
-    // Inspects the built step's input, not the workflow body it is submitted in.
     it('INVARIANT GUARD: the built step input carries no other step, no arguments, and the tools as given', () => {
       const params = parse(withTools(tool()));
       expect(params.success).toBe(true);
