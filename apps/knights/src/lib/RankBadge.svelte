@@ -3,8 +3,8 @@
 
   let { rank, src = null, size }: { rank: string; src?: string | null; size: number } = $props();
 
-  // Keyed on the address, so a new one gets a fresh try after an earlier one failed. A rank with no badge image (Paladin
-  // has none yet), or an image that will not load, shows the crest.
+  // Keyed on the address, so a new one gets a fresh try after an earlier one failed. A rank with no badge image, or an
+  // image that will not load, shows the crest.
   let failedSrc = $state<string | null>(null);
   const showImage = $derived(Boolean(src) && failedSrc !== src);
 </script>

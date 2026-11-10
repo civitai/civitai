@@ -5,10 +5,11 @@ import { RANK_LADDER } from './config';
 type Executor = Kysely<DB> | Transaction<DB>;
 
 /**
- * The original game's rank badges, `newOrderConfig.cosmetics.badgeIds` in the main app's `constants.ts`: Trophy
- * cosmetics keyed by an id the game itself hardcodes (no table maps a rank to its cosmetic). Paladin has none.
+ * Rank badge Trophy cosmetics, keyed by hardcoded id since no table maps a rank to its cosmetic. Knight and Templar
+ * match the main app's `newOrderConfig.cosmetics.badgeIds`; Paladin (4208) is not in it, as the original game has no
+ * Paladin rank.
  */
-export const RANK_BADGE_IDS = { Knight: 859, Templar: 860 } as const;
+export const RANK_BADGE_IDS = { Knight: 859, Templar: 860, Paladin: 4208 } as const;
 
 const SAVEPOINT = sql`grant_rank_badges`;
 

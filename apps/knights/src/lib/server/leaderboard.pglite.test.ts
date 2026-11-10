@@ -137,9 +137,20 @@ describe('queryBoard', () => {
     expect(rows.map((r) => r.image)).toEqual(['pic-pg', 'img-2', 'pic-x', null, 'img-5']);
   });
 
-  it('reads each rank badge cosmetic image from the Trophy cosmetics, and none for Paladin', async () => {
+  it('reads each rank badge cosmetic image from the Trophy cosmetics, Paladin included', async () => {
     await pg.exec(`INSERT INTO "Cosmetic" ("id","source","data") VALUES
-      (859,'Trophy','{"url":"knight-key"}'),(860,'Purchase','{"url":"not-a-trophy"}')`);
+      (859,'Trophy','{"url":"knight-key"}'),(860,'Purchase','{"url":"not-a-trophy"}'),
+      (4208,'Trophy','{"url":"paladin-key"}')`);
+
+    expect((await queryBoard(db, NOW)).badges).toEqual({
+      Knight: 'knight-key',
+      Paladin: 'paladin-key',
+    });
+  });
+
+  it('leaves out the Paladin badge when its cosmetic is not a Trophy', async () => {
+    await pg.exec(`INSERT INTO "Cosmetic" ("id","source","data") VALUES
+      (859,'Trophy','{"url":"knight-key"}'),(4208,'Purchase','{"url":"paladin-key"}')`);
 
     expect((await queryBoard(db, NOW)).badges).toEqual({ Knight: 'knight-key' });
   });
