@@ -16,11 +16,23 @@ vi.mock('~/server/services/feature-flags.service', () => ({
   computeUserFeatureFlagsOverlay: h.overlay,
   getFliptGatedEligibility: vi.fn(() => ({})),
 }));
+const flipt = vi.hoisted(() => ({
+  isFliptSync: vi.fn((): boolean | null => false),
+  ensure: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/flipt/client', () => ({
+  FLIPT_FEATURE_FLAGS: { TRAINING_STUDIO: 'trainingStudio' },
+  ensureFliptInitialized: flipt.ensure,
+  isFliptSync: flipt.isFliptSync,
+}));
 vi.mock('~/server/services/user.service', () => ({
   getUserSettings: vi.fn(async () => ({ features: {} })),
 }));
 
-import { allowTrainingStudio } from '~/server/utils/training-studio-access';
+import {
+  allowTrainingStudio,
+  isStandaloneStudioAllowed,
+} from '~/server/utils/training-studio-access';
 
 const user = (over: Record<string, unknown> = {}) =>
   ({ id: 1, onboarding: OnboardingSteps.Buzz, emailVerified: new Date(), ...over } as never);
@@ -91,5 +103,39 @@ describe('allowTrainingStudio', () => {
         pageFlag: false,
       })
     ).toBe(false);
+  });
+});
+
+describe('isStandaloneStudioAllowed', () => {
+  beforeEach(() => {
+    flipt.isFliptSync.mockReset().mockReturnValue(false);
+    flipt.ensure.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("follows the standalone Studio's beta flag, evaluated with the user's context", async () => {
+    expect(await isStandaloneStudioAllowed(user({ id: 5, tier: 'gold' }))).toBe(false);
+    flipt.isFliptSync.mockReturnValue(true);
+    expect(await isStandaloneStudioAllowed(user({ id: 5, tier: 'gold' }))).toBe(true);
+    expect(flipt.isFliptSync).toHaveBeenCalledWith(
+      'trainingStudio',
+      '5',
+      expect.objectContaining({ userId: '5', tier: 'gold' })
+    );
+  });
+
+  it('lets the segment refuse a moderator when the flag exists', async () => {
+    expect(await isStandaloneStudioAllowed(user({ isModerator: true }))).toBe(false);
+  });
+
+  it('falls back to moderators only when the flag cannot be evaluated', async () => {
+    flipt.isFliptSync.mockReturnValue(null);
+    expect(await isStandaloneStudioAllowed(user({ isModerator: true }))).toBe(true);
+    expect(await isStandaloneStudioAllowed(user())).toBe(false);
+  });
+
+  it('fails closed to moderators when Flipt throws', async () => {
+    flipt.ensure.mockRejectedValue(new Error('flipt down'));
+    expect(await isStandaloneStudioAllowed(user({ isModerator: true }))).toBe(true);
+    expect(await isStandaloneStudioAllowed(user())).toBe(false);
   });
 });

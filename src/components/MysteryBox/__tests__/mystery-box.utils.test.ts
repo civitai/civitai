@@ -32,6 +32,7 @@ const view = (overrides: Partial<MysteryBoxView> = {}): MysteryBoxView => ({
   version: 3,
   art: null,
   listing: { shopItemId: 42, title: 'Box', unitAmount: 500, availableTo: null },
+  packListing: null,
   tiers: [
     { id: COMMON, key: 'common', name: 'Common', color: null, weight: 3, sortOrder: 0 },
     { id: RARE, key: 'rare', name: 'Rare', color: '#3b82f6', weight: 1, sortOrder: 1 },
@@ -62,6 +63,14 @@ describe('tierSummaries', () => {
 });
 
 describe('boxActions', () => {
+  const pack = {
+    shopItemId: 43,
+    title: 'Box 2-pack',
+    unitAmount: 900,
+    availableTo: null,
+    size: 2,
+    guaranteedTierIds: [RARE],
+  };
   it.each([
     ['nothing held: buy', {}, { complete: false, canOpen: false, canBuy: true, covered: false }],
     [
@@ -92,8 +101,34 @@ describe('boxActions', () => {
       },
       { complete: true, canOpen: false, canBuy: false, covered: false },
     ],
+    [
+      'a pack with its size left and a guaranteed hat left: buy the pack',
+      { packListing: pack },
+      { complete: false, canOpen: false, canBuy: true, covered: false, canBuyPack: true },
+    ],
+    [
+      'a pack needs its size left beyond the boxes held',
+      { packListing: pack, heldBoxItemIds: ['501', '502'] },
+      { complete: false, canOpen: true, canBuy: true, covered: false, canBuyPack: false },
+    ],
+    [
+      'a pack with nothing left in its guaranteed tiers',
+      {
+        packListing: pack,
+        contents: [
+          content(1, COMMON),
+          content(2, COMMON),
+          content(4, COMMON),
+          content(3, RARE, false),
+        ],
+      },
+      { complete: false, canOpen: false, canBuy: true, covered: false, canBuyPack: false },
+    ],
   ])('%s', (_, overrides, expected) => {
-    expect(boxActions(view(overrides as Partial<MysteryBoxView>))).toEqual(expected);
+    expect(boxActions(view(overrides as Partial<MysteryBoxView>))).toEqual({
+      canBuyPack: false,
+      ...expected,
+    });
   });
 });
 
@@ -110,6 +145,7 @@ describe('afterOpen', () => {
       rewardType: 'cosmetic',
       cosmeticId: 1002,
       odds: { tierWeight: 3, eligibleWeight: 4, tierPoolSize: 2 },
+      guaranteed: false,
       replayed: false,
     });
 

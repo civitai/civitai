@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { knobRotation } from '~/components/Sticker/draft-gesture';
+import { knobBelowFor, knobRotation } from '~/components/Sticker/draft-gesture';
 import { STICKER_PLACEMENT_MAX_ROTATION } from '~/shared/utils/sticker-placement';
 
 /**
@@ -46,5 +46,74 @@ describe('knobRotation', () => {
       expect(rotation).toBeGreaterThanOrEqual(-STICKER_PLACEMENT_MAX_ROTATION);
       expect(rotation).toBeLessThanOrEqual(STICKER_PLACEMENT_MAX_ROTATION);
     }
+  });
+});
+
+describe('a knob hanging below the sticker', () => {
+  // The knob points away from the sticker's top: hung below, it points at rotation + 180, so the
+  // sticker turns to put its top opposite the pointer. Without this a grab snaps a half turn.
+  it('reads the pointer as the opposite side', () => {
+    expect(knobRotation(0, 1, true)).toBe(0);
+    expect(knobRotation(-1, 0, true)).toBe(90);
+    expect(knobRotation(1, 0, true)).toBe(-90);
+    expect(knobRotation(0, -1, true)).toBe(-180);
+  });
+});
+
+describe('knobBelowFor', () => {
+  // A 100px-tall sticker: its knob's outer edge is 50 + 22 = 72px from the centre.
+  const clip = { top: 0, left: 0, right: 400, bottom: 400 };
+  const at = (x: number, y: number, rotation = 0, current = false) =>
+    knobBelowFor({ centre: { x, y }, height: 100, rotation, knobOffset: 0.22, clip, current });
+
+  it('keeps the knob above wherever it fits there', () => {
+    expect(at(200, 200)).toBe(false);
+    expect(at(200, 72)).toBe(false);
+  });
+
+  it('hangs it below at the top edge, where above is past the clip', () => {
+    expect(at(200, 71)).toBe(true);
+  });
+
+  it('follows the rotation: turned a quarter, the knob points right, so the right edge flips it', () => {
+    expect(at(340, 200, 90)).toBe(true);
+    expect(at(340, 200, -90)).toBe(false);
+  });
+
+  it('stays below near the edge, so it does not swap back and forth there', () => {
+    // Above would fit by 10px: inside the 24px return margin.
+    expect(at(200, 82, 0, true)).toBe(true);
+  });
+
+  it('comes back above once the sticker is clear of the edge', () => {
+    // A hat dragged from the top edge back to the middle.
+    expect(at(200, 200, 0, true)).toBe(false);
+  });
+
+  it('comes back above when below no longer fits, even inside the return margin', () => {
+    // A 150px-tall clip: above fits by 10px (inside the margin), below is 4px past the bottom.
+    expect(
+      knobBelowFor({
+        centre: { x: 200, y: 82 },
+        height: 100,
+        rotation: 0,
+        knobOffset: 0.22,
+        clip: { top: 0, left: 0, right: 400, bottom: 150 },
+        current: true,
+      })
+    ).toBe(false);
+  });
+
+  it('stays above when neither side fits', () => {
+    expect(
+      knobBelowFor({
+        centre: { x: 200, y: 50 },
+        height: 100,
+        rotation: 0,
+        knobOffset: 0.22,
+        clip: { top: 0, left: 0, right: 400, bottom: 100 },
+        current: false,
+      })
+    ).toBe(false);
   });
 });

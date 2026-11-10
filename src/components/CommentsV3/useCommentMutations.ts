@@ -22,6 +22,7 @@ export function useCommentMutations() {
   const tos = trpc.commentv3.setTosViolation.useMutation({
     onError: fail('Unable to remove comment'),
   });
+  const lock = trpc.commentv3.toggleLock.useMutation({ onError: fail('Unable to lock replies') });
   const mute = trpc.commentv3.toggleThreadMute.useMutation({
     onError: fail('Unable to update thread notifications'),
   });
@@ -62,6 +63,10 @@ export function useCommentMutations() {
     },
     async togglePin(comment: CommentV3Comment) {
       await pin.mutateAsync({ id: comment.id });
+      await refresh();
+    },
+    async toggleLock(comment: CommentV3Comment) {
+      await lock.mutateAsync({ id: comment.id });
       await refresh();
     },
     settingTos: tos.isPending,

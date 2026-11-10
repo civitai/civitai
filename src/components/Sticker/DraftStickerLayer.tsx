@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { DraftSticker } from '~/components/Sticker/DraftSticker';
+import { StickerMotionGuides } from '~/components/Sticker/StickerMotionGuides';
 import { useDraftGestures } from '~/components/Sticker/useDraftGestures';
 import { freeOfferFor } from '~/components/Sticker/free-offer';
 import {
@@ -35,10 +36,15 @@ import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.s
  * element, so it travels and rotates with the sticker rather than sitting in a
  * panel across the screen from the thing it is buying.
  */
-export function DraftStickerLayer({ video = null }: { video?: HTMLVideoElement | null }) {
+export function DraftStickerLayer() {
   const drafts = useStickerPlacementDraftStore((state) => state.drafts);
   const selectedDraftId = useStickerPlacementDraftStore((state) => state.selectedDraftId);
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
+  const playheadMs = useStickerPlacementDraftStore((state) => state.playheadMs);
+  // Previewing shows the stickers as viewers see them, so no guides.
+  const showGuides = useStickerPlacementDraftStore(
+    (state) => !state.videoPlaying && !state.previewing && !state.trayOpen
+  );
   const { sticker } = useOwnedSticker();
   // A draft dragged out of the shop is a sticker the placer does not own yet, so
   // its artwork is not in `useOwnedSticker` — without this it renders nothing and
@@ -99,12 +105,18 @@ export function DraftStickerLayer({ video = null }: { video?: HTMLVideoElement |
   );
 
   const onGesture = useDraftGestures(maxScale);
+  const artFor = (cosmeticId: number) =>
+    sticker.find((option) => option.id === cosmeticId) ?? shopArt.get(cosmeticId);
+  const selectedDraft = drafts.find((draft) => draft.id === selectedDraftId);
+  const selectedArt = selectedDraft && artFor(selectedDraft.cosmeticId);
 
   return (
     <>
+      {showGuides && selectedDraft && selectedArt && (
+        <StickerMotionGuides draft={selectedDraft} art={selectedArt} playheadMs={playheadMs} />
+      )}
       {drafts.map((draft) => {
-        const art =
-          sticker.find((option) => option.id === draft.cosmeticId) ?? shopArt.get(draft.cosmeticId);
+        const art = artFor(draft.cosmeticId);
         if (!art) return null;
 
         return (
@@ -120,7 +132,6 @@ export function DraftStickerLayer({ video = null }: { video?: HTMLVideoElement |
             ownerUsername={space?.ownerUsername}
             onGesture={onGesture}
             onDuplicate={onDuplicate}
-            video={video}
             // The sticker-not-owned-yet gate belongs to the draft; the
             // is-there-a-use-left gate belongs to the set and is decided above.
             purchase={

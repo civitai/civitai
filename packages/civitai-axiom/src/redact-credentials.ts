@@ -68,8 +68,9 @@ export const isCredentialField = (name: string) => {
 // `name=value` at the start, after `?`, `&`, `#` (a URL or bare query string such as OTel's
 // `url.query`), or after whitespace ("retrying with token=..." in a message).
 const QUERY_PARAM_RE = /(^|[?&#\s])([^=?&#\s"'<>]+)=([^&#\s"'<>]*)/g;
-// 16+ chars so prose ("the bearer of bad news") is not mistaken for a credential.
-const BEARER_RE = /\b(Bearer)\s+[A-Za-z0-9._~+/=-]{16,}/gi;
+// 16+ chars so prose ("the bearer of bad news") is not mistaken for a credential. `:` for a
+// per-provider download token (`<provider>:<secret>`).
+const BEARER_RE = /\b(Bearer)\s+[A-Za-z0-9._~+/=:-]{16,}/gi;
 // A download link carries its credential in the path, not the query: `/api/download/l/<id>`.
 const DOWNLOAD_LINK_PREFIX = '/api/download/l/';
 const DOWNLOAD_LINK_PATH_RE = /(\/api\/download\/l\/)[^/?#&\s"'<>]+/g;

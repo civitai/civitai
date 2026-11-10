@@ -130,6 +130,7 @@ export async function resolveResourceFileForUser({
     fileId: chosen.id,
     user: { ...user, isModerator: false },
     attribution: { caller: 'other', actor: resolveActorFor(user) },
+    redCapable: false,
   });
   if (resolved.status === 'resolve-failed') {
     // Transient storage failure: report it as retryable, not as missing.

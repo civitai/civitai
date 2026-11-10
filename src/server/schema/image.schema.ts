@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { HAT_SORTS } from '~/shared/constants/hat-turf-feed.constants';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { constants } from '~/server/common/constants';
@@ -532,6 +533,14 @@ export const getInfiniteImagesSchema = baseQuerySchema
     minorOnly: z.boolean().optional(),
     // Mod only: restrict a collection feed to entries still under review (CollectionItem.status = REVIEW).
     pendingReviewOnly: z.boolean().optional(),
+    // Hat Turf players only (getHatTurfFeedEvent); the handler drops these for anyone else.
+    hatSort: z.enum(HAT_SORTS).optional(),
+    // Whose hats a Hat Turf sort counts; none, every team's.
+    hatTeams: z.string().max(32).array().max(8).optional(),
+    // Only the images the viewer has a live Turf hat on.
+    hatTurfMine: z.boolean().optional(),
+    hideTurfHats: z.boolean().optional(),
+    hideWornHats: z.boolean().optional(),
     // Client-only on green: opt-in PG-13 on public feeds. Passes through the
     // schema so the type lines up with client filter state; the server does
     // not read it (browsing level is the authoritative cap).

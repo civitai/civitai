@@ -108,15 +108,25 @@ export async function upsertBlockWorkflowOnSubmit(input: {
 }
 
 /**
- * Update the queue row's status + updated_at on the orchestrator completion
- * callback. Best-effort + FAIL-SAFE: wrapped in try/catch and returns the
- * affected-row count (0 when no row exists — e.g. the submit-time write was lost
- * or this is a non-block workflow), NEVER throws. A missed update degrades to a
+ * Update the queue row's status + updated_at when a terminal status is observed:
+ * by `blocks.pollWorkflow` on every terminal poll, and by the orchestrator
+ * completion callback (`workflow-completed.ts`). Best-effort + FAIL-SAFE: wrapped
+ * in try/catch and returns the affected-row count (0 when no row exists — e.g.
+ * the submit-time write was lost or this is a non-block workflow — and 0 when
+ * the row already holds this status), NEVER throws. A missed update degrades to a
  * stale status HINT — the block can always poll the orchestrator for the live
  * status — so the callback stays a no-throw 200 path.
  *
- * Idempotent by construction: the UPDATE is a pure set of (status, updated_at)
- * on the primary key, so a retry is harmless; the callback's own 7-day dedup
+ * 🔴 TRANSITION-ONLY: the UPDATE matches only a row whose status DIFFERS from
+ * the new one, so the return value is 1 exactly once per real status change and
+ * 0 on every repeat. That is load-bearing, not tidiness: `blocks.pollWorkflow`
+ * calls this on EVERY poll of a finished workflow, and it reads a 1 as "this
+ * poll observed the transition" to count `succeeded_without_media` once per
+ * workflow. A repeat also no longer moves `updated_at`, so it records when the
+ * status changed rather than when it was last polled. Under concurrent polls
+ * Postgres re-checks the WHERE on the locked row, so only one of them gets 1.
+ *
+ * Still idempotent: a retry is a 0-row no-op; the callback's own 7-day dedup
  * marker additionally short-circuits duplicate deliveries before this runs.
  */
 export async function updateBlockWorkflowStatus(input: {
@@ -130,6 +140,7 @@ export async function updateBlockWorkflowStatus(input: {
       UPDATE "block_workflows"
       SET "status" = ${status}, "updated_at" = now()
       WHERE "workflow_id" = ${workflowId}
+        AND "status" IS DISTINCT FROM ${status}
     `;
     return typeof affected === 'number' ? affected : 0;
   } catch {

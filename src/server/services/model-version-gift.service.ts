@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { isPaidAccessActive, type ModelVersionTerms } from '@civitai/buzz';
@@ -7,7 +7,10 @@ import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   getModelVersionAccessPermissions,
+  GIFT_PERMISSIONS_KEY,
+  giftedPermissions,
   grantModelVersionAccess,
+  purchasedPermissions,
 } from '~/server/services/model-version-access.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { getPaidAccess } from '~/server/services/paid-access.service';
@@ -17,15 +20,28 @@ import {
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
 import {
+  GIFT_CLAIM_NOTICE,
+  GIFT_CLAIMER_NAMES_VISIBLE_SINCE,
+  GIFT_CLAIM_LOCK_CLASS,
+  GIFT_CLAIMS_PAGE_MAX,
+  GIFT_INDEX_PAGE_MAX,
   GIFT_LIVE_CODES_MAX_PER_VERSION,
   GIFT_LIST_HISTORY,
+  GIFT_MINT_LOCK_CLASS,
   GIFT_MINT_MAX_PER_CALL,
 } from '~/server/services/model-version-gift.constants';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
+import { throwRateLimited } from '~/server/utils/rate-limit-error';
+import { countGiftClaims } from '~/server/services/gift-claim-count';
+import { calendarWindow } from '~/server/services/usage-limit-counters';
+import { resolveUsageLimit } from '~/server/services/usage-limit-config.service';
+import { type UsageLimitSubject, usageLimitMessage } from '~/shared/constants/usage-limits';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 const GIFT_CLAIM_RATE_LIMIT = { max: 10, windowSeconds: 60 };
 const GIFT_MINT_RATE_LIMIT = { max: 20, windowSeconds: 3600 };
+const GIFT_REMOVE_RATE_LIMIT = { max: 100, windowSeconds: 3600 };
 
 export const GIFT_CODE_PREFIX = 'cvg_';
 // Crockford base32: no I, L, O or U. 26 characters of 5 bits each is 130 bits of entropy.
@@ -111,9 +127,6 @@ async function assertCanManageGifts({
 const assertOwnsVersion = (userId: number, modelVersionId: number) =>
   assertCanManageGifts({ userId, isModerator: false, modelVersionId });
 
-// Namespaces the advisory lock so it never collides with another single-key lock on the same id.
-const GIFT_MINT_LOCK_CLASS = 0x47490001;
-
 /**
  * Runs `insert` only if it keeps the version within its live-code cap. The per-version lock makes
  * the count and the insert atomic: without it two mints each count under the cap and together pass it.
@@ -156,7 +169,7 @@ export async function createGiftLink({
 }: {
   userId: number;
   modelVersionId: number;
-  maxRedemptions?: number | null;
+  maxRedemptions: number;
   expiresAt?: Date | null;
   label?: string | null;
 }) {
@@ -170,7 +183,7 @@ export async function createGiftLink({
         modelVersionId,
         createdById: userId,
         ...newCodeRow(code),
-        maxRedemptions: maxRedemptions ?? null,
+        maxRedemptions,
         expiresAt: expiresAt ?? null,
         label: label ?? null,
       },
@@ -229,6 +242,19 @@ export async function listGiftLinks({
   return queryGiftList(dbWrite, modelVersionId);
 }
 
+/** One bulk batch's summary columns, over its "ModelVersionGiftLink" rows grouped by "batchId". */
+const batchSummarySql = Prisma.sql`
+  min("label") AS "label",
+  count(*)::int AS "total",
+  count(*) FILTER (WHERE "redemptionCount" > 0)::int AS "claimed",
+  count(*) FILTER (
+    WHERE "revokedAt" IS NULL AND "redemptionCount" < "maxRedemptions"
+      AND ("expiresAt" IS NULL OR "expiresAt" > now())
+  )::int AS "live",
+  min("createdAt") AS "createdAt",
+  max("expiresAt") AS "expiresAt"
+`;
+
 export async function queryGiftList(
   client: Pick<typeof dbWrite, '$queryRaw'>,
   modelVersionId: number
@@ -251,16 +277,7 @@ export async function queryGiftList(
     `,
     client.$queryRaw<GiftBatchSummary[]>`
       SELECT * FROM (
-        SELECT "batchId",
-               min("label") AS "label",
-               count(*)::int AS "total",
-               count(*) FILTER (WHERE "redemptionCount" > 0)::int AS "claimed",
-               count(*) FILTER (
-                 WHERE "revokedAt" IS NULL AND "redemptionCount" < "maxRedemptions"
-                   AND ("expiresAt" IS NULL OR "expiresAt" > now())
-               )::int AS "live",
-               min("createdAt") AS "createdAt",
-               max("expiresAt") AS "expiresAt"
+        SELECT "batchId", ${batchSummarySql}
           FROM "ModelVersionGiftLink"
          WHERE "modelVersionId" = ${modelVersionId} AND "batchId" IS NOT NULL
          GROUP BY "batchId"
@@ -294,6 +311,288 @@ export type GiftBatchSummary = {
   expiresAt: Date | null;
 };
 
+type GiftIndexVersion = {
+  modelVersionId: number;
+  versionName: string;
+  modelId: number;
+  modelName: string;
+};
+export type GiftIndexItem =
+  | ({ kind: 'link' } & Omit<GiftLinkSummary, 'live'> & GiftIndexVersion)
+  | ({ kind: 'batch' } & GiftBatchSummary & GiftIndexVersion);
+
+type GiftIndexRow = GiftIndexVersion & {
+  kind: 'link' | 'batch';
+  key: string;
+  createdAt: Date;
+  expiresAt: Date | null;
+  label: string | null;
+  id: number | null;
+  codeHint: string | null;
+  maxRedemptions: number | null;
+  redemptionCount: number | null;
+  revokedAt: Date | null;
+  total: number | null;
+  claimed: number | null;
+  live: number | null;
+};
+
+/** Opaque keyset cursor over (createdAt, key). */
+export function encodeGiftIndexCursor(row: { createdAt: Date; key: string }) {
+  return Buffer.from(`${row.createdAt.toISOString()}|${row.key}`).toString('base64url');
+}
+
+export function decodeGiftIndexCursor(cursor: string) {
+  const [at, key] = Buffer.from(cursor, 'base64url').toString().split('|');
+  // Exactly what encodeGiftIndexCursor writes, and a real date: the timestamp cast refuses month 13.
+  if (!at || !key || Number.isNaN(Date.parse(at)) || new Date(at).toISOString() !== at)
+    throw throwBadRequestError('Invalid cursor.');
+  return { createdAt: at, key };
+}
+
+/**
+ * The owner's links and bulk batches across every version of every model they own, newest first.
+ * A link's key is its id and a batch's its batchId, so the two never collide.
+ */
+export function giftIndexSql({
+  userId,
+  cursor,
+  limit,
+}: {
+  userId: number;
+  cursor: { createdAt: string; key: string } | null;
+  limit: number;
+}) {
+  return Prisma.sql`
+    WITH owned AS (
+      SELECT mv.id, mv.name AS "versionName", m.id AS "modelId", m.name AS "modelName"
+        FROM "ModelVersion" mv
+        JOIN "Model" m ON m.id = mv."modelId"
+       WHERE m."userId" = ${userId}
+    ), items AS (
+      SELECT 'link' AS kind, l.id::text AS key, l."modelVersionId", l."createdAt", l."expiresAt",
+             l.label, l.id, l."codeHint", l."maxRedemptions", l."redemptionCount", l."revokedAt",
+             NULL::int AS total, NULL::int AS claimed, NULL::int AS live
+        FROM "ModelVersionGiftLink" l
+       WHERE l."modelVersionId" IN (SELECT id FROM owned) AND l."batchId" IS NULL
+      UNION ALL
+      -- Aggregates every batch of the creator's on each page; past a few thousand batches, move the
+      -- cursor and a LIMIT into each branch.
+      SELECT 'batch', b."batchId", b."modelVersionId", b."createdAt", b."expiresAt", b.label,
+             NULL, NULL, NULL, NULL, NULL, b.total, b.claimed, b.live
+        FROM (
+          SELECT "batchId", "modelVersionId", ${batchSummarySql}
+            FROM "ModelVersionGiftLink"
+           WHERE "modelVersionId" IN (SELECT id FROM owned) AND "batchId" IS NOT NULL
+           GROUP BY "batchId", "modelVersionId"
+        ) b
+    )
+    SELECT i.*, o."versionName", o."modelId", o."modelName"
+      FROM items i
+      JOIN owned o ON o.id = i."modelVersionId"
+     ${
+       cursor
+         ? Prisma.sql`WHERE (i."createdAt", i.key) < (${cursor.createdAt}::timestamp(3), ${cursor.key})`
+         : Prisma.empty
+     }
+     ORDER BY i."createdAt" DESC, i.key DESC
+     LIMIT ${limit + 1}
+  `;
+}
+
+export type GiftClaim = {
+  giftLinkId: number;
+  userId: number;
+  username: string | null;
+  claimedAt: Date;
+  /** When the claimer's gifted access was removed; null while it stands. */
+  revokedAt: Date | null;
+};
+
+/** Opaque keyset cursor over (claimedAt, giftLinkId, userId), newest first. */
+function encodeGiftClaimsCursor(c: GiftClaim) {
+  return Buffer.from(`${c.claimedAt.toISOString()}|${c.giftLinkId}|${c.userId}`).toString(
+    'base64url'
+  );
+}
+
+export function decodeGiftClaimsCursor(cursor: string) {
+  const [at, link, user] = Buffer.from(cursor, 'base64url').toString().split('|');
+  const ids = [Number(link), Number(user)];
+  if (
+    !at ||
+    // Exactly what encodeGiftClaimsCursor writes, and a real date (no month 13).
+    Number.isNaN(Date.parse(at)) ||
+    new Date(at).toISOString() !== at ||
+    !ids.every((n) => Number.isInteger(n) && n > 0)
+  )
+    throw throwBadRequestError('Invalid cursor.');
+  return { claimedAt: at, giftLinkId: ids[0], userId: ids[1] };
+}
+
+type GiftClaimsTarget = { modelVersionId: number; id?: number; batchId?: string };
+
+const claimsOf = ({ modelVersionId, id, batchId }: GiftClaimsTarget) => Prisma.sql`
+  l."modelVersionId" = ${modelVersionId}
+  AND ${id != null ? Prisma.sql`l.id = ${id}` : Prisma.sql`l."batchId" = ${batchId}`}
+`;
+
+/**
+ * Who claimed one gift link, or any code of one batch, of this version, from `visibleSince` on:
+ * earlier claimers were never told the creator would see them.
+ */
+export function giftClaimsSql({
+  cursor,
+  limit,
+  visibleSince,
+  ...target
+}: GiftClaimsTarget & {
+  cursor: { claimedAt: string; giftLinkId: number; userId: number } | null;
+  limit: number;
+  visibleSince: Date;
+}) {
+  return Prisma.sql`
+    SELECT r."giftLinkId", r."userId", u.username, r."claimedAt", r."revokedAt"
+      FROM "ModelVersionGiftRedemption" r
+      JOIN "ModelVersionGiftLink" l ON l.id = r."giftLinkId"
+      JOIN "User" u ON u.id = r."userId"
+     WHERE ${claimsOf(target)}
+       AND r."claimedAt" >= ${visibleSince.toISOString()}::timestamp(3)
+       ${
+         cursor
+           ? Prisma.sql`AND (r."claimedAt", r."giftLinkId", r."userId")
+                 < (${cursor.claimedAt}::timestamp(3), ${cursor.giftLinkId}, ${cursor.userId})`
+           : Prisma.empty
+       }
+     ORDER BY r."claimedAt" DESC, r."giftLinkId" DESC, r."userId" DESC
+     LIMIT ${limit + 1}
+  `;
+}
+
+/** Shapes one page of `giftIndexSql` rows: the extra row only says there is a next page. */
+export function toGiftIndexPage(rows: GiftIndexRow[], limit: number) {
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  const items: GiftIndexItem[] = page.map((r) => {
+    const version = {
+      modelVersionId: r.modelVersionId,
+      versionName: r.versionName,
+      modelId: r.modelId,
+      modelName: r.modelName,
+    };
+    return r.kind === 'link'
+      ? {
+          kind: 'link',
+          id: r.id as number,
+          codeHint: r.codeHint as string,
+          label: r.label,
+          maxRedemptions: r.maxRedemptions,
+          redemptionCount: r.redemptionCount as number,
+          expiresAt: r.expiresAt,
+          revokedAt: r.revokedAt,
+          createdAt: r.createdAt,
+          ...version,
+        }
+      : {
+          kind: 'batch',
+          batchId: r.key,
+          label: r.label,
+          total: r.total as number,
+          claimed: r.claimed as number,
+          live: r.live as number,
+          createdAt: r.createdAt,
+          expiresAt: r.expiresAt,
+          ...version,
+        };
+  });
+  return {
+    items,
+    nextCursor: rows.length > limit && last ? encodeGiftIndexCursor(last) : null,
+  };
+}
+
+/** Every gift link and batch on the caller's own models. Owner only: moderators use the per-version list. */
+export async function listMyGiftLinks({
+  userId,
+  cursor,
+  limit = GIFT_INDEX_PAGE_MAX,
+  fresh = false,
+}: {
+  userId: number;
+  cursor?: string | null;
+  limit?: number;
+  /** Read the primary: the caller has just written (a revoke) and must see it. */
+  fresh?: boolean;
+}) {
+  const take = Math.min(Math.max(1, Math.floor(limit)), GIFT_INDEX_PAGE_MAX);
+  const decoded = cursor ? decodeGiftIndexCursor(cursor) : null;
+  const rows = await (fresh ? dbWrite : dbRead).$queryRaw<GiftIndexRow[]>(
+    giftIndexSql({ userId, cursor: decoded, limit: take })
+  );
+  return toGiftIndexPage(rows, take);
+}
+
+/** How many of the same claims came before `visibleSince`: counted, never named. */
+export function giftHiddenClaimsSql({
+  visibleSince,
+  ...target
+}: GiftClaimsTarget & { visibleSince: Date }) {
+  return Prisma.sql`
+    SELECT count(*)::int AS hidden
+      FROM "ModelVersionGiftRedemption" r
+      JOIN "ModelVersionGiftLink" l ON l.id = r."giftLinkId"
+     WHERE ${claimsOf(target)}
+       AND r."claimedAt" < ${visibleSince.toISOString()}::timestamp(3)
+  `;
+}
+
+/** The claimers of a link or batch, for its owner or a moderator. */
+export async function listGiftClaims({
+  userId,
+  isModerator,
+  modelVersionId,
+  id,
+  batchId,
+  cursor,
+  limit = GIFT_CLAIMS_PAGE_MAX,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  modelVersionId: number;
+  id?: number;
+  batchId?: string;
+  cursor?: string | null;
+  limit?: number;
+}) {
+  if ((id == null) === (batchId == null))
+    throw throwBadRequestError('Pass exactly one of id or batchId.');
+  await assertCanManageGifts({ userId, isModerator, modelVersionId });
+  const take = Math.min(Math.max(1, Math.floor(limit)), GIFT_CLAIMS_PAGE_MAX);
+  const target = { modelVersionId, id, batchId, visibleSince: GIFT_CLAIMER_NAMES_VISIBLE_SINCE };
+  // The hidden count doesn't change between pages, so only the first page asks for it.
+  const [rows, hidden] = await Promise.all([
+    dbRead.$queryRaw<GiftClaim[]>(
+      giftClaimsSql({
+        ...target,
+        cursor: cursor ? decodeGiftClaimsCursor(cursor) : null,
+        limit: take,
+      })
+    ),
+    cursor
+      ? null
+      : dbRead
+          .$queryRaw<{ hidden: number }[]>(giftHiddenClaimsSql(target))
+          .then((r) => r[0]?.hidden ?? 0),
+  ]);
+  const claims = rows.slice(0, take);
+  const last = claims[claims.length - 1];
+  return {
+    claims,
+    nextCursor: rows.length > take && last ? encodeGiftClaimsCursor(last) : null,
+    hiddenCount: hidden,
+  };
+}
+
 /** Revokes one link, or every link of a bulk batch. Already-granted access is kept. */
 export async function revokeGiftLinks({
   userId,
@@ -323,6 +622,111 @@ export async function revokeGiftLinks({
   return { revoked: count };
 }
 
+/**
+ * Takes back what one claim granted, in one transaction. The claim's slot stays spent, and the
+ * claimer can't claim that link again. Access stays while another of the claimer's claims on the
+ * version stands; otherwise the gift's bits go, except those a purchase on the row pays for.
+ * Claims from before `visibleSince` are refused like missing ones: their claimers are not named.
+ */
+export async function revokeGiftRedemption(
+  client: Pick<typeof dbWrite, '$transaction'>,
+  {
+    giftLinkId,
+    claimerId,
+    modelVersionId,
+    revokedById,
+    visibleSince,
+  }: {
+    giftLinkId: number;
+    claimerId: number;
+    modelVersionId: number;
+    revokedById: number;
+    visibleSince: Date;
+  }
+) {
+  return client.$transaction(async (tx) => {
+    const marked = await tx.$executeRaw`
+      UPDATE "ModelVersionGiftRedemption" r
+         SET "revokedAt" = now(), "revokedById" = ${revokedById}
+        FROM "ModelVersionGiftLink" l
+       WHERE r."giftLinkId" = ${giftLinkId} AND r."userId" = ${claimerId}
+         AND l.id = r."giftLinkId" AND l."modelVersionId" = ${modelVersionId}
+         AND r."revokedAt" IS NULL
+         AND r."claimedAt" >= ${visibleSince.toISOString()}::timestamp(3)
+    `;
+    if (marked === 0) throw throwNotFoundError('No claim to remove.');
+
+    // Locked before the check below: a concurrent claim's grant then lands after this commits and
+    // restores its bits, or commits first and shows up in the check.
+    const [access] = await tx.$queryRaw<{ permissions: number; meta: unknown }[]>`
+      SELECT permissions, meta FROM "EntityAccess"
+       WHERE "accessToId" = ${modelVersionId} AND "accessToType" = 'ModelVersion'
+         AND "accessorId" = ${claimerId} AND "accessorType" = 'User'
+       FOR UPDATE
+    `;
+    const otherClaims = await tx.$queryRaw<unknown[]>`
+      SELECT 1 FROM "ModelVersionGiftRedemption" r
+        JOIN "ModelVersionGiftLink" l ON l.id = r."giftLinkId"
+       WHERE l."modelVersionId" = ${modelVersionId} AND r."userId" = ${claimerId}
+         AND r."revokedAt" IS NULL
+       LIMIT 1
+    `;
+    if (otherClaims.length > 0) return { accessKept: true };
+    if (!access) return { accessKept: false };
+
+    const meta =
+      access.meta && typeof access.meta === 'object' && !Array.isArray(access.meta)
+        ? (access.meta as Record<string, unknown>)
+        : {};
+    const purchased = purchasedPermissions(meta);
+    const permissions = access.permissions & ~(giftedPermissions(meta) & ~purchased);
+    const where = Prisma.sql`
+      "accessToId" = ${modelVersionId} AND "accessToType" = 'ModelVersion'
+      AND "accessorId" = ${claimerId} AND "accessorType" = 'User'
+    `;
+    if (permissions === 0 && purchased === 0)
+      await tx.$executeRaw`DELETE FROM "EntityAccess" WHERE ${where}`;
+    else
+      await tx.$executeRaw`
+        UPDATE "EntityAccess"
+           SET permissions = ${permissions},
+               meta = ${asJsonbObjectSql('meta')} - ${['giftLinkId', GIFT_PERMISSIONS_KEY]}::text[]
+         WHERE ${where}
+      `;
+    return { accessKept: false };
+  });
+}
+
+/**
+ * Removes one claimer's gifted access, for the version's owner or a moderator. Whether access was
+ * kept is not returned: the claim that kept it can be one from before the claimer names were shown.
+ */
+export async function removeGiftClaim({
+  userId,
+  isModerator,
+  modelVersionId,
+  giftLinkId,
+  claimerId,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  modelVersionId: number;
+  giftLinkId: number;
+  claimerId: number;
+}) {
+  await assertRateLimit('remove', userId, GIFT_REMOVE_RATE_LIMIT);
+  await assertCanManageGifts({ userId, isModerator, modelVersionId });
+  await revokeGiftRedemption(dbWrite, {
+    giftLinkId,
+    claimerId,
+    modelVersionId,
+    revokedById: userId,
+    visibleSince: GIFT_CLAIMER_NAMES_VISIBLE_SINCE,
+  });
+  await bustOrchestratorModelCache(modelVersionId, claimerId);
+  return { removed: true };
+}
+
 export type GiftRedemptionOutcome = 'granted' | 'unavailable';
 
 /**
@@ -338,12 +742,15 @@ export async function redeemGiftLink(
     modelVersionId,
     permissions,
     addedById,
+    allowance,
   }: {
     giftLinkId: number;
     userId: number;
     modelVersionId: number;
     permissions: number;
     addedById: number;
+    /** The claimer's monthly allowance; a new redemption past `limit` in [start, end) is refused. */
+    allowance?: { limit: number; start: Date; end: Date };
   }
 ): Promise<GiftRedemptionOutcome> {
   try {
@@ -353,16 +760,27 @@ export async function redeemGiftLink(
         VALUES (${giftLinkId}, ${userId})
         ON CONFLICT DO NOTHING
       `;
-      // A repeat claim takes no new slot. It re-grants while the link is live, because the first grant
-      // can be gone (the early-access refund deletes the whole EntityAccess row).
+      if (inserted === 1 && allowance) {
+        // Serialises the claimer's new redemptions, so two claims at limit - 1 cannot both count
+        // under it: the second count runs after the first commits and sees its row.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${GIFT_CLAIM_LOCK_CLASS}::int, ${userId}::int)`;
+        const used = await countGiftClaims(tx, userId, allowance.start, allowance.end);
+        if (used > allowance.limit) throw new GiftAllowanceUsed(used - 1);
+      }
+      // A repeat claim takes no new slot. It re-grants while the link is live and the claim not
+      // removed, because the first grant can be gone (the early-access refund deletes the whole
+      // EntityAccess row). FOR SHARE waits out a removal in flight, then sees its revokedAt.
       const taken =
         inserted === 0
           ? (
               await tx.$queryRaw<unknown[]>`
-                SELECT 1 FROM "ModelVersionGiftLink"
-                 WHERE id = ${giftLinkId}
-                   AND "revokedAt" IS NULL
-                   AND ("expiresAt" IS NULL OR "expiresAt" > now())
+                SELECT 1 FROM "ModelVersionGiftLink" l
+                  JOIN "ModelVersionGiftRedemption" r
+                    ON r."giftLinkId" = l.id AND r."userId" = ${userId}
+                 WHERE l.id = ${giftLinkId}
+                   AND l."revokedAt" IS NULL
+                   AND (l."expiresAt" IS NULL OR l."expiresAt" > now())
+                   AND r."revokedAt" IS NULL
                  FOR SHARE
               `
             ).length
@@ -381,7 +799,7 @@ export async function redeemGiftLink(
         userId,
         modelVersionId,
         permissions,
-        meta: { giftLinkId },
+        meta: { giftLinkId, [GIFT_PERMISSIONS_KEY]: permissions },
         addedById,
       });
       return 'granted' as const;
@@ -394,7 +812,21 @@ export async function redeemGiftLink(
 
 class GiftUnavailable extends Error {}
 
-export async function claimGift({ userId, code }: { userId: number; code: string }) {
+/** A new claim past the claimer's monthly allowance; rolls the claim back. */
+class GiftAllowanceUsed extends Error {
+  constructor(readonly used: number) {
+    super('Gift allowance used');
+  }
+}
+
+export async function claimGift({
+  user,
+  code,
+}: {
+  user: UsageLimitSubject & { id: number };
+  code: string;
+}) {
+  const userId = user.id;
   // Before the lookup, so failed guesses count against the limit too.
   await assertRateLimit('claim', userId, GIFT_CLAIM_RATE_LIMIT);
 
@@ -421,20 +853,46 @@ export async function claimGift({ userId, code }: { userId: number; code: string
   const held = await getModelVersionAccessPermissions(userId, version.id);
   if ((held & permissions) === permissions) return { ...result, alreadyHadAccess: true };
 
-  const outcome = await redeemGiftLink(dbWrite, {
-    giftLinkId: link.id,
-    userId,
-    modelVersionId: version.id,
-    permissions,
-    // The claimer, as purchases record the buyer: the personal-data export keys EntityAccess on
-    // addedById, so the creator here would put every recipient in the creator's export.
-    addedById: userId,
-  });
+  const resolved = await resolveUsageLimit('gifts.monthly', user);
+  const now = Date.now();
+  const window = calendarWindow('utc-month', now);
+  let outcome: GiftRedemptionOutcome;
+  try {
+    outcome = await redeemGiftLink(dbWrite, {
+      giftLinkId: link.id,
+      userId,
+      modelVersionId: version.id,
+      permissions,
+      // The claimer, as purchases record the buyer: the personal-data export keys EntityAccess on
+      // addedById, so the creator here would put every recipient in the creator's export.
+      addedById: userId,
+      allowance: resolved.applies ? { limit: resolved.limit, ...window } : undefined,
+    });
+  } catch (error) {
+    if (!(error instanceof GiftAllowanceUsed)) throw error;
+    const message = usageLimitMessage(resolved.def, resolved) ?? 'Monthly gift limit reached.';
+    const retryAfterSeconds = Math.max(1, Math.ceil((window.end.getTime() - now) / 1000));
+    const resetAt = window.end.toISOString();
+    throwRateLimited(
+      {
+        retryAfterSeconds,
+        retryAt: resetAt,
+        id: 'gifts.monthly',
+        kind: 'product',
+        limit: resolved.limit,
+        used: error.used,
+        remaining: 0,
+        windowSeconds: (window.end.getTime() - window.start.getTime()) / 1000,
+        resetAt,
+      },
+      message
+    );
+  }
   if (outcome === 'unavailable') throw throwBadRequestError(INVALID_GIFT_MESSAGE);
 
   // Not bustMvCache: its caches are per version, and an uncapped link would refresh them per claim.
   await bustOrchestratorModelCache(version.id, userId);
-  return { ...result, alreadyHadAccess: false };
+  return { ...result, alreadyHadAccess: false, notice: GIFT_CLAIM_NOTICE };
 }
 
 export type ClaimGiftResult = Awaited<ReturnType<typeof claimGift>>;

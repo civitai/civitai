@@ -63,8 +63,11 @@ const v3PageBudgetOverrides: Record<string, number> = {
   bountyEntry: 10,
   review: 10,
   post: 15,
+  model: 8,
 };
 const v3PageBudget = 40;
+/** Surfaces whose section leaves hidden top-level comments out, where every other shows them folded. */
+const hiddenCommentsLeftOut = new Set(['model']);
 const v3ReadSurfaces: string[] = [
   'article',
   'post',
@@ -78,6 +81,7 @@ const v3ReadSurfaces: string[] = [
   'model3d',
   'appListing',
   'comicChapter',
+  'model',
 ];
 
 function getCommentAutoExpandDepth(entityType: string) {
@@ -461,6 +465,9 @@ export const constants = {
     v3PageBudget,
     getV3PageBudget({ entityType }: { entityType: string }) {
       return v3PageBudgetOverrides[entityType] ?? v3PageBudget;
+    },
+    leavesOutHiddenComments({ entityType }: { entityType: string }) {
+      return hiddenCommentsLeftOut.has(entityType);
     },
     /**
      * Surfaces whose comments are read from CommentV3 through the v3 suite. A surface's flip adds

@@ -99,15 +99,15 @@ describe('comment-v3-parity job', () => {
   });
 
   it('pages once with the drift when a finding is nonzero', async () => {
-    reports.parity = { ...blank(PARITY), v2_ghosts: { count: 2, sample: [5000, 5001] } };
+    reports.parity = { ...blank(PARITY), v1_ghosts: { count: 2, sample: [5000, 5001] } };
     const result = await run();
     expect(notifyModAlert).toHaveBeenCalledTimes(1);
-    expect(notifyModAlert.mock.calls[0]?.[1]).toContain('v2_ghosts: 2 (e.g. 5000, 5001)');
+    expect(notifyModAlert.mock.calls[0]?.[1]).toContain('v1_ghosts: 2 (e.g. 5000, 5001)');
     expect(result).toMatchObject({ healthy: false, paged: true });
   });
 
   it('reports an undelivered page as not paged, without throwing', async () => {
-    reports.parity = { ...blank(PARITY), v2_ghosts: { count: 1, sample: [1] } };
+    reports.parity = { ...blank(PARITY), v1_ghosts: { count: 1, sample: [1] } };
     notifyModAlert.mockResolvedValueOnce('unconfigured' as never);
     expect(await run()).toMatchObject({ healthy: false, paged: false });
   });
@@ -127,7 +127,7 @@ describe('comment-v3-parity job', () => {
   });
 
   it('fails the run when the notifier is down, before writing the record', async () => {
-    reports.parity = { ...blank(PARITY), v2_ghosts: { count: 1, sample: [1] } };
+    reports.parity = { ...blank(PARITY), v1_ghosts: { count: 1, sample: [1] } };
     notifyModAlert.mockRejectedValueOnce(new Error('webhook 503'));
     await expect(run()).rejects.toThrow('webhook 503');
     expect(upsert).not.toHaveBeenCalled();

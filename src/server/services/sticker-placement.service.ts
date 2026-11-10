@@ -59,10 +59,16 @@ import {
   stickerMaxScale,
   stickerRemovableAt,
   STICKER_AUTO_SPACE_KEY,
+  STICKER_PLACEMENT_MIN_OPACITY,
   STICKER_PLACEMENT_QUEUE_LIMIT,
 } from '~/shared/utils/sticker-placement';
 import type { StickerTrack } from '~/shared/utils/sticker-track';
-import { sampleStickerTrack, stickerTrackMaxScale } from '~/shared/utils/sticker-track';
+import {
+  sampleStickerTrack,
+  stickerTrackFaintestShown,
+  stickerTrackMaxScale,
+  stickerTrackRefusal,
+} from '~/shared/utils/sticker-track';
 
 const SURFACE = 'sticker' as const;
 const TARGET_TYPE = 'image' as const;
@@ -303,6 +309,16 @@ export async function createStickerPlacement({
       `placement: this creator allows stickers up to ${Math.round(
         maxScale * 100
       )}% of the image width`
+    );
+
+  // A key multiplies the placer's own opacity, so the floor applies to the product. The schema
+  // checks each factor; only here are both known.
+  const faintest = track && stickerTrackFaintestShown(track);
+  if (faintest != null && faintest * (data.opacity ?? 1) < STICKER_PLACEMENT_MIN_OPACITY - 1e-9)
+    throw throwBadRequestError(
+      `placement: a shown sticker must be at least ${Math.round(
+        STICKER_PLACEMENT_MIN_OPACITY * 100
+      )}% opaque`
     );
 
   // Only the resolved space knows the image's type, so this cannot sit in the schema.
@@ -731,7 +747,9 @@ async function keptOffPlacementIds(
   const cosmeticIds = [...new Set(rows.map((row) => row.cosmeticId).filter(isDefined))];
   if (!cosmeticIds.length) return new Set<number>();
 
-  const cosmetics = await cosmeticCache.fetch(cosmeticIds);
+  // Past this pod's L1: a moderator's rating refreshes Redis at once, and hiding the sticker should
+  // not wait for another pod's L1 entry to expire.
+  const cosmetics = await cosmeticCache.fetch(cosmeticIds, { bypassLocal: true });
   const flagged = rows.filter(
     (row) =>
       row.cosmeticId != null &&
@@ -901,6 +919,20 @@ export async function getStickerPlacements({
   return toStickerPlacementViews(parsed, keptOff, viewerId);
 }
 
+/**
+ * Every write goes through the schema, but a row that does not (a hand edit, a backfill) would
+ * break the player for everyone who opens the video, so a track that fails the rules is dropped.
+ */
+function isPlayableTrack(track: unknown) {
+  try {
+    return (
+      !!track && typeof track === 'object' && stickerTrackRefusal(track as StickerTrack) === null
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** For the detail view of one video; the listing never carries tracks. */
 export async function getStickerPlacementTracks({
   imageId,
@@ -919,7 +951,7 @@ export async function getStickerPlacementTracks({
     ? new Set<number>()
     : await keptOffPlacementIds(keptOffInputs(parseRows(rows)));
   return rows
-    .filter(({ id }) => !keptOff.has(id))
+    .filter(({ id, track }) => !keptOff.has(id) && isPlayableTrack(track))
     .map(({ id, track }) => ({ id, track: track as StickerTrack }));
 }
 

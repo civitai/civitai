@@ -52,6 +52,9 @@ import {
   upsertArticleHandler,
 } from '~/server/controllers/article.controller';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
+import { logToAxiom } from '~/server/logging/client';
+import { getEventDecorationsForEntity } from '~/server/services/cosmetic.service';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -113,13 +116,32 @@ export const articleRouter = router({
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getByIdSchema)
-    .query(({ input, ctx }) =>
-      getArticleById({
-        ...input,
-        userId: ctx.user?.id,
-        isModerator: ctx.user?.isModerator,
-      })
-    ),
+    .query(async ({ input, ctx }) => {
+      const [article, eventDecorations] = await Promise.all([
+        getArticleById({
+          ...input,
+          userId: ctx.user?.id,
+          isModerator: ctx.user?.isModerator,
+        }),
+        // The hat the cover wears. A signed-out response is edge-cached for every signed-out
+        // viewer (createContext), so the hat gate must read nothing but the user.
+        // A hat is decoration: its lookup failing must not fail the article.
+        getEventDecorationsForEntity({
+          ids: [input.id],
+          entity: 'Article',
+          viewer: eventViewerOf(ctx),
+        }).catch((error) => {
+          logToAxiom({
+            type: 'error',
+            name: 'article-get-event-decoration',
+            message: (error as Error).message,
+            articleId: input.id,
+          }).catch(() => undefined);
+          return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
+        }),
+      ]);
+      return { ...article, eventDecoration: eventDecorations[article.id] ?? null };
+    }),
   // Deliberately narrower than `getScanStatus`, which is owner/moderator-facing and returns
   // per-image blocked/error detail. This answers only "come back in a minute" for a viewer
   // `getById` just refused, so it must not distinguish Blocked from never-existed.

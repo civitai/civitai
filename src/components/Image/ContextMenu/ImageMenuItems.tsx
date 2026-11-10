@@ -134,7 +134,7 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
           View Post
         </Menu.Item>
       )}
-      {features.semanticImageSearch && isImage && image.type === 'image' && (
+      {features.imageSearch && isImage && image.type === 'image' && (
         <Menu.Item
           component={NextLink}
           href={`/search/semantic?imageId=${imageId}`}

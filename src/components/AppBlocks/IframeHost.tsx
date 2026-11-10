@@ -65,6 +65,11 @@ import { resolveChromeGeometry } from './chromeGeometry';
 import type { ChromeGeometry } from './chromeGeometry';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { createBlockEventRecorder } from './blockEventBeacon';
+import {
+  reportAppSubmitError,
+  reportAppSubmitResult,
+  useAppSessionTelemetry,
+} from './appInAppTelemetry';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import {
@@ -1454,12 +1459,20 @@ export function IframeHost({
     [effectiveSandbox]
   );
 
+  // App_Session: one row per host session (see appInAppTelemetry.ts).
+  const { countSubmit: countAppSubmit, countMessage: countAppMessage } = useAppSessionTelemetry({
+    appBlockId: install.appBlockId,
+    host: 'iframe',
+    enabled: true,
+  });
+
   const { send, onMessage, reportNoToken } = usePostMessage({
     iframeRef,
     expectedOrigin,
     opaqueOrigin,
     host: 'IframeHost',
     appBlockId: install.appBlockId,
+    onInbound: countAppMessage,
   });
 
   // The last height the BLOCK ITSELF stated, before any clamping — stashed so a
@@ -2199,6 +2212,7 @@ export function IframeHost({
         typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
           ? raw.idempotencyKey
           : undefined;
+      countAppSubmit();
       try {
         const { snapshot } = await submitWorkflowMutation.mutateAsync({
           blockToken: token,
@@ -2206,8 +2220,10 @@ export function IframeHost({
           body: raw.body as never,
           ...(idempotencyKey ? { idempotencyKey } : {}),
         });
+        reportAppSubmitResult(install.appBlockId, 'submit', { snapshot });
         send('WORKFLOW_SUBMITTED', { requestId, snapshot });
       } catch (err) {
+        reportAppSubmitError(install.appBlockId, 'submit', err);
         send('WORKFLOW_SUBMITTED', {
           requestId,
           snapshot: failureSnapshot(err),
@@ -2215,7 +2231,7 @@ export function IframeHost({
       }
     });
     return off;
-  }, [onMessage, send, token, submitWorkflowMutation]);
+  }, [onMessage, send, token, submitWorkflowMutation, countAppSubmit, install.appBlockId]);
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(

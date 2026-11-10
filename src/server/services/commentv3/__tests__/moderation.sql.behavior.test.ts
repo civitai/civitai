@@ -229,9 +229,10 @@ describe('removing CommentV3 comments as ToS violations', () => {
   describe('a ban', () => {
     it('removes the user’s live comments on a CommentV3 surface, and nothing else', async () => {
       await pg.exec(`
-      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('model', 1);
+      INSERT INTO "Model3DReview" VALUES (1) ON CONFLICT DO NOTHING;
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('model3dReview', 1);
       INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "deletedAt") VALUES
-        (43, 'article', 1, 5, 'live', NULL), (44, 'article', 1, 5, '', now()), (45, 'model', 1, 5, 'model', NULL),
+        (43, 'article', 1, 5, 'live', NULL), (44, 'article', 1, 5, '', now()), (45, 'model3dReview', 1, 5, '3D model review', NULL),
         (46, 'article', 1, 6, 'someone else', NULL);
     `);
       await setUserCommentsV3Tos(5);

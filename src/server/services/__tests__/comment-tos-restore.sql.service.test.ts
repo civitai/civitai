@@ -39,7 +39,6 @@ dbMock.dbWrite.$queryRaw.mockImplementation(async (first: unknown, ...rest: unkn
 );
 
 const { bulkClearCommentV2TosViolation } = await import('~/server/services/commentsv2.service');
-const { bulkClearCommentTosViolation } = await import('~/server/services/comment.service');
 
 describe('clearing a comment ToS flag', () => {
   beforeEach(() => {
@@ -94,17 +93,6 @@ describe('clearing a comment ToS flag', () => {
 
     expect(result).toEqual({ count: 0, reopenedReports: 0, failed: 0 });
     expect(statements).toHaveLength(0);
-  });
-
-  it('the legacy twin carries the same predicate against its own report table', async () => {
-    // v1 deliberately does NOT reuse `updateCommentReportStatusByReason`, whose `<> target` guard is
-    // wrong for reopening. If it ever starts reusing it, this fails.
-    await bulkClearCommentTosViolation({ ids: [7] });
-
-    const sql = reopen();
-    expect(sql).toContain('"CommentReport"');
-    expect(sql).toContain('link."commentId"');
-    expect(sql).not.toMatch(/r\.status <> /);
   });
 });
 

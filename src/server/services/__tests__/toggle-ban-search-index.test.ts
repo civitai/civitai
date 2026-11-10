@@ -75,6 +75,12 @@ vi.mock('~/server/events/points/sync', async (importOriginal) => ({
 const roster = vi.hoisted(() => ({ member: vi.fn() }));
 vi.mock('~/server/events/points/roster-sync', () => ({ syncEventRosterMember: roster.member }));
 
+const { syncReviewsOfMovedPosts } = vi.hoisted(() => ({ syncReviewsOfMovedPosts: vi.fn() }));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  syncReviewsOfMovedPosts,
+}));
+
 const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
 const { BanReasonCode } = await import('~/server/common/enums');
 
@@ -91,7 +97,6 @@ const userFindFirst = dbMock.dbWrite.user.findFirst;
 // default for a write verb, so an undeclared one returns `undefined` and the fan-out throws.
 const userLinkDeleteMany = dbMock.dbWrite.userLink.deleteMany;
 const imageUpdateMany = dbMock.dbWrite.image.updateMany;
-const commentUpdateMany = dbMock.dbWrite.comment.updateMany;
 const commentV2Updates = () =>
   dbMock.dbWrite.$executeRaw.mock.calls
     .map(([strings, ...values]) => ({
@@ -114,7 +119,6 @@ beforeEach(() => {
   userFindFirst.mockResolvedValue(null);
   userLinkDeleteMany.mockResolvedValue({ count: 0 });
   imageUpdateMany.mockResolvedValue({ count: 0 });
-  commentUpdateMany.mockResolvedValue({ count: 0 });
 });
 
 describe('toggleBan -> user search index', () => {
@@ -204,13 +208,9 @@ describe('toggleBan -> removeComments', () => {
     });
   });
 
-  it('flags both comment tables when asked, and does not touch the author-owned hide', async () => {
+  it('flags the author’s comments when asked, and does not touch the author-owned hide', async () => {
     await ban(true);
 
-    expect(commentUpdateMany).toHaveBeenCalledWith({
-      where: { userId: USER_ID, tosViolation: false },
-      data: { tosViolation: true },
-    });
     const [v2] = commentV2Updates();
     expect(v2.sql).toContain('SET "tosViolation" = true');
     expect(v2.sql).not.toContain('hidden');
@@ -236,7 +236,6 @@ describe('toggleBan -> removeComments', () => {
   it('leaves comments alone otherwise — it is opt-in, like removeMedia', async () => {
     await ban();
 
-    expect(commentUpdateMany).not.toHaveBeenCalled();
     expect(commentV2Updates()).toEqual([]);
     expect(v3Tos).not.toHaveBeenCalled();
   });
@@ -481,5 +480,31 @@ describe('toggleBan onlyBan', () => {
 
     expect(user).toMatchObject({ id: USER_ID });
     expect(user).not.toHaveProperty('subscriptionId');
+  });
+});
+
+describe('toggleBan -> reviews written from the posts its model unpublish takes down', () => {
+  it('recounts the reviews of the posts the bulk unpublish took down', async () => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+    dbMock.dbRead.model.findMany.mockResolvedValue([
+      { id: 1, modelVersions: [{ id: 2 }] },
+    ] as never);
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      Array.isArray(strings) && strings.join('?').includes('UPDATE "Post"')
+        ? [{ id: 9 }]
+        : []) as never);
+
+    await call();
+
+    await vi.waitFor(() =>
+      expect(syncReviewsOfMovedPosts).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ change: 'unpublish', postIds: [9] })
+      )
+    );
   });
 });

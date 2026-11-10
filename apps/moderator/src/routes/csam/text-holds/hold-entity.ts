@@ -4,7 +4,6 @@ import {
   commentV2Url,
   commentV3Url,
   entityUrl,
-  modelCommentUrl,
   userLookupUrl,
   userUrl,
 } from '$lib/entity-url';
@@ -205,10 +204,10 @@ type HoldRef = {
   userId: number | null;
   username: string | null;
   chatId: number | null;
-  commentModelId?: number | null;
+  commentV3Id?: number | null;
 };
 
-/** Where the held text lives. Null for a legacy model `Comment` whose model could not be read. */
+/** Where the held text lives. Null for a `Comment` hold whose comment is gone. */
 export function holdEntityHref(civitaiUrl: string, hold: HoldRef): string | null {
   switch (hold.entityType) {
     case 'CommentV2':
@@ -216,9 +215,7 @@ export function holdEntityHref(civitaiUrl: string, hold: HoldRef): string | null
     case 'CommentV3':
       return commentV3Url(civitaiUrl, hold.entityId);
     case 'Comment':
-      return hold.commentModelId
-        ? modelCommentUrl(civitaiUrl, hold.commentModelId, hold.entityId)
-        : null;
+      return hold.commentV3Id ? commentV3Url(civitaiUrl, hold.commentV3Id) : null;
     case 'ChatMessage':
       return hold.chatId ? chatAuditChatUrl(hold.chatId) : null;
     case 'UserProfile':

@@ -60,6 +60,7 @@ import {
 import {
   hasBlockMarker,
   imageReviewedSql,
+  pendingLevelImageSql,
   pendingOthersImageConditions,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
 } from '~/server/common/image-visibility';
@@ -287,6 +288,10 @@ import {
   stripBlockProvenanceMetadata,
   type BlockProvenanceMetadataKey,
 } from '~/shared/utils/block-provenance-metadata';
+import {
+  FEEDBACK_CAPTURE_METADATA_KEY,
+  type FeedbackCaptureMetadata,
+} from '@civitai/shared/feedback-capture';
 import type {
   DomainColor,
   ModelType,
@@ -305,6 +310,7 @@ import {
   ImageIngestionStatus,
   JobQueueType,
   MediaType,
+  ModelModifier,
   NewOrderRankType,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
@@ -1609,7 +1615,13 @@ export const getOpenImageReportIds = async (id: number, reason: ReportReason) =>
   return rows.map((r) => r.id);
 };
 
-export const getImageDetail = async ({ id }: GetByIdInput) => {
+export const getImageDetail = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+  // The resource and tag caches are keyed by image id alone, so the viewer check runs first.
+  await assertImageVisibleToViewer({ id, userId, isModerator });
   const [resourcesData, tagsData] = await Promise.all([
     imageResourcesCache.fetch([id]),
     imageTagsCache.fetch([id]),
@@ -1998,6 +2010,8 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   postIdsInRequestedSort?: boolean;
   // Server-only: a hub's held models do not hold this viewer (a moderator on a full credential).
   holdExempt?: boolean;
+  // Server-only: the viewer a hub still shows their own taken-down models to (session or full key).
+  galleryOwnerId?: number;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
@@ -2010,7 +2024,10 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
 // `Omit<..., IMAGE_INFINITE_DROPPED_FIELDS>`. Any consumer that reads a dropped field
 // (client component or internal server caller) is a compile error. See
 // `~/server/utils/image-infinite-wire.ts`.
-export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
+export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0] & {
+  /** Only in the Hat Turf feed of the viewer's own hats: when their hat on it was placed. */
+  turfPlacedAt?: Date;
+};
 
 // Per-call ceiling for the image-feed raw query. The `civitai` postgres role
 // has statement_timeout=0 (overriding the cluster's 300s), so a single slow
@@ -2835,8 +2852,14 @@ const getAllImagesUncaptured = async (
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
-    // Acceptable in collections, need to check for contest collection only
     if (!collectionId) AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
+    // In a collection the image's owner and moderators still see it; a collection manager does not.
+    else if (!isModerator) {
+      // Not isPersonalized: the bound userId already keys the cached query per viewer.
+      if (userId) {
+        AND.push(Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`);
+      } else AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
+    }
     if (browsingLevel)
       AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
     AND.push(imageReviewedSql());
@@ -3939,6 +3962,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   currentUserId?: number;
   isModerator?: boolean;
   holdExempt?: boolean;
+  galleryOwnerId?: number;
   offset?: number;
   entry?: number;
   blockedFor?: string[];
@@ -4316,6 +4340,7 @@ async function resolvedHubSources(input: ImageSearchInput) {
     userId: input.currentUserId,
     isModerator: input.isModerator,
     holdExempt: input.holdExempt,
+    galleryOwnerId: input.galleryOwnerId,
     excludedSources: input.hubExcludedSources,
   });
 }
@@ -6316,7 +6341,20 @@ export const getImage = async ({
   return image;
 };
 
-export const getImageResources = async ({ id }: GetByIdInput) => {
+/**
+ * The resources on an image the viewer may open by id (`assertImageVisibleToViewer`), else
+ * NOT_FOUND, and whether a signed-out viewer may open it too.
+ */
+export const getImageResources = async ({
+  id,
+  viewer,
+}: GetByIdInput & { viewer?: { id: number; isModerator?: boolean } }) => {
+  const { visibleSignedOut } = await assertImageVisibleToViewer({
+    id,
+    userId: viewer?.id,
+    isModerator: viewer?.isModerator,
+    withSignedOutVerdict: true,
+  });
   const resources = await dbRead.$queryRaw<
     (ImageResourceHelperModel & { sfwName: string | null })[]
   >`
@@ -6348,7 +6386,7 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
     AND irh."modelVersionId" IS NOT NULL
   `;
 
-  return resources;
+  return { resources, visibleSignedOut: !!visibleSignedOut };
 };
 
 export type ImagesForModelVersions = {
@@ -6438,9 +6476,9 @@ export const getImagesForModelVersion = async ({
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(...pendingOthersImageConditions(userId));
       imageWhere.push(
-        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
+        ...pendingOthersImageConditions(userId),
+        pendingLevelImageSql(userId, browsingLevel)
       );
     }
   } else {
@@ -6697,9 +6735,9 @@ export const getImagesForPosts = async ({
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(...pendingOthersImageConditions(userId));
       imageWhere.push(
-        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
+        ...pendingOthersImageConditions(userId),
+        pendingLevelImageSql(userId, browsingLevel)
       );
     } else {
       imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
@@ -7068,6 +7106,7 @@ export async function createImage({
   skipIngestion,
   verifiedSourceImageIds,
   blockProvenance,
+  feedbackCapture,
   assertPostOwnedBy = createPostOwnerCheck(),
   clientUrl,
   ...image
@@ -7085,6 +7124,11 @@ export async function createImage({
    * row gets a `BLOCK_PROVENANCE_METADATA_KEYS` entry: any copy in `metadata` is dropped.
    */
   blockProvenance?: { key: BlockProvenanceMetadataKey; appId: string } | null;
+  /**
+   * The feedback report this page capture belongs to, verified by the caller. The only way a row
+   * gets `FEEDBACK_CAPTURE_METADATA_KEY`: any copy in `metadata` is dropped.
+   */
+  feedbackCapture?: FeedbackCaptureMetadata | null;
   /**
    * The request's post-owner check, from {@link createPostOwnerCheck}. A caller adding several
    * images to one post passes one so the post is looked up once; without it, each call checks.
@@ -7290,6 +7334,8 @@ export async function createImage({
       index: image.index,
       metadata: blockProvenance
         ? { ...metadata, [blockProvenance.key]: blockProvenance.appId }
+        : feedbackCapture
+        ? { ...metadata, [FEEDBACK_CAPTURE_METADATA_KEY]: feedbackCapture }
         : metadata,
       meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
       generationProcess: meta ? getImageGenerationProcess(meta as ImageMetaProps) : null,
@@ -7521,9 +7567,27 @@ export const getEntityCoverImage = async ({
   const isModerator = !!viewer?.isModerator;
   // TRUE keeps Prisma.join non-empty: the helper returns no conditions for moderators.
   const imageVisible = Prisma.join(
-    [Prisma.sql`TRUE`, ...imageVisibilityConditions({ userId: viewer?.id, isModerator })],
+    [
+      Prisma.sql`TRUE`,
+      ...imageVisibilityConditions({
+        userId: signedIn ? viewerId ?? undefined : undefined,
+        isModerator,
+      }),
+    ],
     ' AND '
   );
+  // The IMAGES branch has this through imageVisible; the others pick a cover among many images, so
+  // they apply it before DISTINCT ON and fall back to the next image.
+  const imageNotFlagged = Prisma.sql`(
+    i."acceptableMinor" = FALSE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean
+  )`;
+
+  // A taken-down model's images are its owner's and moderators' alone. Also true with no model
+  // (a NULL mode), so the image and post arms keep images on no model version.
+  const modelNotWithheld = Prisma.sql`(
+    m.mode IS DISTINCT FROM ${ModelModifier.TakenDown}::"ModelModifier"
+    OR (${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean
+  )`;
 
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.
@@ -7592,6 +7656,7 @@ export const getEntityCoverImage = async ({
           JOIN "Post" p ON mv.id = p."modelVersionId" AND p."userId" = m."userId"
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'Model'
+          AND ${modelNotWithheld}
           -- The version and post rules sit before DISTINCT ON so a hidden first version or post
           -- falls back to the next visible one rather than leaving the model without a cover.
           AND (
@@ -7605,6 +7670,7 @@ export const getEntityCoverImage = async ({
           )
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND ${imageNotFlagged}
           AND (
             (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
             OR NOT i."modelRestricted"
@@ -7631,6 +7697,7 @@ export const getEntityCoverImage = async ({
           JOIN "Post" p ON mv.id = p."modelVersionId" AND (p."userId" = m."userId" OR m."userId" = -1)
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'ModelVersion'
+          AND ${modelNotWithheld}
           -- canViewModelVersionStatus plus the private-version rule; access grantees are not resolved here.
           AND (
             (
@@ -7643,6 +7710,7 @@ export const getEntityCoverImage = async ({
           )
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND ${imageNotFlagged}
           AND (
             (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
             OR NOT i."modelRestricted"
@@ -7663,8 +7731,11 @@ export const getEntityCoverImage = async ({
         FROM entities e
         JOIN "Image" i ON i.id = e."entityId"
         LEFT JOIN "Post" p ON p.id = i."postId"
+        LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+        LEFT JOIN "Model" m ON m.id = mv."modelId"
         WHERE e."entityType" = 'Image'
           AND ${imageVisible}
+          AND ${modelNotWithheld}
 
         UNION
         -- ARTICLES
@@ -7687,6 +7758,7 @@ export const getEntityCoverImage = async ({
           )
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
+              AND ${imageNotFlagged}
         ) t
 
         UNION
@@ -7703,14 +7775,17 @@ export const getEntityCoverImage = async ({
           FROM entities e
           JOIN "Post" p ON p.id = e."entityId"
           LEFT JOIN "ModelVersion" mv ON p."modelVersionId" = mv.id
+          LEFT JOIN "Model" m ON m.id = mv."modelId"
           JOIN "Image" i ON i."postId" = p.id
           WHERE e."entityType" = 'Post'
+            AND ${modelNotWithheld}
             AND (
               (p."publishedAt" < now() AND p.availability <> 'Private')
               OR (${signedIn}::boolean AND p."userId" = ${viewerId}) OR ${isModerator}::boolean
             )
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
+            AND ${imageNotFlagged}
             AND (
               (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
               OR NOT i."modelRestricted"
@@ -7767,6 +7842,7 @@ export const getEntityCoverImage = async ({
           LEFT JOIN "Article" a ON e."entityType" = 'Article' AND a.id = e."entityId"
           WHERE i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
+            AND ${imageNotFlagged}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
             AND (

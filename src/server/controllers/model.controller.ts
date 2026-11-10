@@ -124,6 +124,7 @@ import {
   getLinkedVaeIds,
   withPairedStrength,
 } from '~/server/services/model-version.service';
+import { getLinkedFileData } from '~/server/services/linked-file-data.service';
 import { getModelVersionCountsByModelId } from '~/server/services/model-version-count.service';
 import {
   copyGallerySettingsToAllModelsByUser,
@@ -222,15 +223,24 @@ import {
   ModelUploadType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
+import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { failedScanFileWhere } from '~/server/utils/failed-scan';
 import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
+import { notifyNewlyPinnedPosts } from '~/server/services/model-gallery-pin-notify.service';
+import { logToAxiom } from '~/server/logging/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import { withoutRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
 import { isRemovedWithOwner } from '~/server/utils/legal-hold';
+import {
+  trainingDataOwnerView,
+  withoutEpochUrls,
+} from '~/server/services/training-data-restricted.service';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import {
   getResourceData,
   resolveCanGenerateForVersions,
@@ -378,23 +388,7 @@ export const getModelHandler = async ({
         )
       ),
     ];
-    const linkedFileDataMap = new Map<
-      number,
-      { name: string; sizeKB: number; type: string; metadata: Record<string, unknown> | null }
-    >();
-    if (allLinkedFileIds.length > 0) {
-      const fileData = await dbRead.modelFile.findMany({
-        where: { id: { in: allLinkedFileIds } },
-        select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
-      });
-      for (const f of fileData)
-        linkedFileDataMap.set(f.id, {
-          name: f.name,
-          sizeKB: f.sizeKB,
-          type: f.type,
-          metadata: f.metadata as Record<string, unknown> | null,
-        });
-    }
+    const linkedFileDataMap = await getLinkedFileData(allLinkedFileIds);
 
     // Creator Controls metric privacy: resolve once per request. Owners/mods bypass;
     // otherwise flags apply only while the owner holds a valid CP membership.
@@ -556,9 +550,7 @@ export const getModelHandler = async ({
                 fileName: fileData?.name ?? s.fileName,
                 sizeKB: fileData?.sizeKB,
                 fileType: fileData?.type,
-                fileMetadata: fileData?.metadata as
-                  | { format?: string | null; size?: string | null; fp?: string | null }
-                  | undefined,
+                fileMetadata: fileData?.metadata ?? undefined,
                 isRequired: s.isRequired,
               };
             }),
@@ -1257,6 +1249,7 @@ export const getDownloadCommandHandler = async ({
       where: { modelId, id: modelVersionId },
       select: {
         id: true,
+        status: true,
         model: {
           select: {
             id: true,
@@ -1296,6 +1289,10 @@ export const getDownloadCommandHandler = async ({
       orderBy: { index: 'asc' },
     });
     if (!modelVersion) throw throwNotFoundError();
+    // Matches the download route: a deleted or taken-down model is moderators-only, and that is
+    // decided before any other refusal.
+    if ((isModelDeleted(modelVersion) || isModelTakenDown(modelVersion)) && !ctx.user?.isModerator)
+      throw throwNotFoundError();
 
     const isOwner = ctx.user?.id === modelVersion.model.userId;
     const isDownloadable =
@@ -1554,6 +1551,7 @@ export const getMyTrainingModelsHandler = async ({
             id: true,
             name: true,
             status: true,
+            mode: true,
             // `_count: { select: { modelVersions: true } }` intentionally
             // omitted — see getMyDraftModelsHandler: Prisma compiles it to a
             // full-table grouped subquery (~1344ms) instead of pushing the id
@@ -1608,13 +1606,21 @@ export const getMyTrainingModelsHandler = async ({
 
     return {
       ...results,
-      items: results.items.map((item) => ({
-        ...applyTrainingWorkflowOverlay(item, overlay),
-        model: {
-          ...item.model,
-          _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },
-        },
-      })),
+      items: results.items.map((item) => {
+        const version = applyTrainingWorkflowOverlay(item, overlay);
+        const ownerFiles = trainingDataOwnerView(version.files);
+        return {
+          ...version,
+          files:
+            isModelDeletedOrTakenDown(item.model) && !ctx.user.isModerator
+              ? withoutEpochUrls(ownerFiles)
+              : ownerFiles,
+          model: {
+            ...item.model,
+            _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },
+          },
+        };
+      }),
     };
   } catch (error) {
     throw throwDbError(error);
@@ -2112,7 +2118,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
             collectedCount: rank?.collectedCountAllTime ?? 0,
             tippedAmountCount: hiddenMetrics.buzz ? null : rank?.tippedAmountCountAllTime ?? 0,
           },
-          images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
+          images: !isModelWithheld(model) ? (versionImages as typeof images) : [],
           canGenerate,
           version,
         };
@@ -2344,6 +2350,7 @@ export const updateGallerySettingsHandler = async ({
   try {
     const { id, gallerySettings } = input;
     const { user: sessionUser } = ctx;
+    let prevPinnedPosts: ModelGallerySettingsSchema['pinnedPosts'];
 
     const updatedModel = await updateModelById({
       id,
@@ -2351,6 +2358,7 @@ export const updateGallerySettingsHandler = async ({
       data: (model) => {
         if (!model || (model.userId !== sessionUser.id && !sessionUser.isModerator))
           throw throwNotFoundError(`No model with id ${id}`);
+        prevPinnedPosts = (model.gallerySettings as ModelGallerySettingsSchema | null)?.pinnedPosts;
 
         // A minor/sfwOnly flag is a moderator decision; an owner must not be able to raise the
         // gallery back above SFW from here. Moderators keep full control.
@@ -2371,6 +2379,27 @@ export const updateGallerySettingsHandler = async ({
       },
     });
     await bustModelGallerySettings([id]);
+
+    // A moderator's pin on someone else's model is curation, not the creator's credit.
+    if (gallerySettings && updatedModel.userId === sessionUser.id) {
+      await notifyNewlyPinnedPosts({
+        model: { id, name: updatedModel.name },
+        owner: { id: sessionUser.id, username: sessionUser.username },
+        prev: prevPinnedPosts,
+        next: {
+          pinnedPosts: gallerySettings.pinnedPosts,
+          hiddenUserIds: gallerySettings.hiddenUsers.map(({ id }) => id),
+          hiddenImages: gallerySettings.hiddenImages,
+        },
+      }).catch((e) =>
+        logToAxiom({
+          type: 'warning',
+          name: 'model-gallery-post-pinned',
+          message: (e as Error).message,
+          details: { modelId: id },
+        }).catch()
+      );
+    }
 
     return { ...updatedModel, gallerySettings };
   } catch (error) {

@@ -2,7 +2,9 @@ import type { NextApiRequest } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { COMMENT_V3_RATE_LIMIT_KEY } from '~/server/schema/comment.schema';
 import { POST_CREATE_RATE_LIMIT_KEY } from '~/server/schema/post.schema';
+import { isBucketCountable, usageLimitDefs } from '~/shared/constants/usage-limits';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
 
@@ -18,6 +20,9 @@ const NOW = Date.UTC(2026, 10, 5, 12, 0, 0);
 const HOUR = 3600_000;
 const req = { headers: {}, socket: {} } as unknown as NextApiRequest;
 const BUCKET = `${REDIS_KEYS.TRPC.LIMIT.BASE}:${POST_CREATE_RATE_LIMIT_KEY}`;
+const COMMENTS_BUCKET = `${REDIS_KEYS.TRPC.LIMIT.BASE}:${COMMENT_V3_RATE_LIMIT_KEY}`;
+const postsOnly = <T extends { area: string }>(limits: T[]) =>
+  limits.filter((l) => l.area === 'posts');
 
 const veteran = { id: 7, tier: 'free', createdAt: new Date(2020, 0, 1) } as unknown as SessionUser;
 const newcomer = { id: 8, tier: 'free', createdAt: new Date(NOW - HOUR) } as unknown as SessionUser;
@@ -26,14 +31,20 @@ const moderator = { ...newcomer, id: 10, isModerator: true } as unknown as Sessi
 
 const hGet = redisMock.redis.packed.hGet as unknown as ReturnType<typeof vi.fn>;
 const attemptsBy: Record<string, number[]> = {};
+const commentAttemptsBy: Record<string, number[]> = {};
 
 beforeEach(() => {
   vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
   hSetWithTTL.mockReset();
   for (const key of Object.keys(attemptsBy)) delete attemptsBy[key];
+  for (const key of Object.keys(commentAttemptsBy)) delete commentAttemptsBy[key];
   hGet.mockReset();
   hGet.mockImplementation(async (cacheKey: string, field: string) =>
-    cacheKey === BUCKET ? attemptsBy[field] ?? null : null
+    cacheKey === BUCKET
+      ? attemptsBy[field] ?? null
+      : cacheKey === COMMENTS_BUCKET
+      ? commentAttemptsBy[field] ?? null
+      : null
   );
 });
 
@@ -46,7 +57,7 @@ describe('getUsageLimits', () => {
 
     expect(hGet).toHaveBeenCalledWith(BUCKET, 'user:7');
     expect(hGet).not.toHaveBeenCalledWith(BUCKET, 'user:999');
-    expect(limits).toEqual([
+    expect(postsOnly(limits)).toEqual([
       {
         id: 'posts.daily',
         area: 'posts',
@@ -55,6 +66,7 @@ describe('getUsageLimits', () => {
         used: 2,
         remaining: 18,
         windowSeconds: 86400,
+        window: 'rolling',
         nextAt: null,
         resetAt: new Date(NOW - 2 * HOUR + 24 * HOUR).toISOString(),
       },
@@ -74,7 +86,7 @@ describe('getUsageLimits', () => {
     attemptsBy['user:8'] = [NOW - 1000];
     const day1 = (await getUsageLimits({ tokenScope: TokenScope.Full, user: newcomer, req }))
       .limits;
-    expect(day1.map((l) => [l.id, l.limit, l.used])).toEqual([
+    expect(postsOnly(day1).map((l) => [l.id, l.limit, l.used])).toEqual([
       ['posts.hourly', 2, 1],
       ['posts.daily', 20, 1],
     ]);
@@ -82,7 +94,7 @@ describe('getUsageLimits', () => {
       (await getUsageLimits({ tokenScope: TokenScope.Full, user: veteran, req })).limits.map(
         (l) => l.id
       )
-    ).toEqual(['posts.daily']);
+    ).toEqual(['posts.daily', 'comments.hourly', 'comments.daily']);
   });
 
   it('gives a paid member the multiplied daily limit', async () => {
@@ -120,7 +132,8 @@ describe('getUsageLimits', () => {
 
   it('reports no limit for a moderator, whom rateLimit() never counts', async () => {
     const { limits } = await getUsageLimits({ tokenScope: TokenScope.Full, user: moderator, req });
-    expect(limits).toEqual([
+    expect(limits.every((l) => l.limit === null && l.window === null)).toBe(true);
+    expect(postsOnly(limits)).toEqual([
       expect.objectContaining({ id: 'posts.hourly', limit: null, used: null, remaining: null }),
       expect.objectContaining({
         id: 'posts.daily',
@@ -148,7 +161,25 @@ describe('getUsageLimits', () => {
     expect(asMediaWrite.limits.map((l) => [l.id, l.limit, l.used])).toEqual([
       ['posts.hourly', 2, 0],
       ['posts.daily', 20, 0],
+      ['comments.hourly', 10, 0],
+      ['comments.daily', 40, 0],
     ]);
+  });
+
+  it('has a row for every product limit in the registry, comments read from the v3 bucket', async () => {
+    commentAttemptsBy['user:8'] = [NOW - 1000, NOW - 2 * HOUR];
+    const { limits } = await getUsageLimits({ tokenScope: TokenScope.Full, user: newcomer, req });
+    const productIds = usageLimitDefs
+      .filter((d) => d.kind === 'product' && isBucketCountable(d.window))
+      .map((d) => d.id);
+    expect(limits.map((l) => l.id)).toEqual(productIds);
+    expect(limits.find((l) => l.id === 'comments.hourly')).toMatchObject({
+      area: 'comments',
+      label: 'Comments per hour',
+      used: 1,
+      window: 'rolling',
+    });
+    expect(limits.find((l) => l.id === 'comments.daily')).toMatchObject({ used: 2 });
   });
 
   it('never records an attempt', async () => {

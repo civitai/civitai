@@ -1,5 +1,9 @@
 import * as z from 'zod';
-import { GIFT_MINT_MAX_PER_CALL } from '~/server/services/model-version-gift.constants';
+import {
+  GIFT_LINK_DEFAULT_REDEMPTIONS,
+  GIFT_LINK_MAX_REDEMPTIONS,
+  GIFT_MINT_MAX_PER_CALL,
+} from '~/server/services/model-version-gift.constants';
 
 const expiresAt = z.coerce
   .date()
@@ -9,7 +13,13 @@ const label = z.string().trim().max(100).nullish();
 
 export const createGiftLinkSchema = z.object({
   modelVersionId: z.number().int().positive(),
-  maxRedemptions: z.number().int().min(1).max(1_000_000).nullish(),
+  // Omitted gets the default; null (uncapped) is refused.
+  maxRedemptions: z
+    .number()
+    .int()
+    .min(1)
+    .max(GIFT_LINK_MAX_REDEMPTIONS)
+    .default(GIFT_LINK_DEFAULT_REDEMPTIONS),
   expiresAt,
   label,
 });

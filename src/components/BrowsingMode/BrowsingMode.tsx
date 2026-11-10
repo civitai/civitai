@@ -2,7 +2,7 @@ import { Group, Text, Stack, Checkbox, Button, Anchor, Indicator } from '@mantin
 import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { IconProps } from '@tabler/icons-react';
-import { IconAlertTriangle, IconEyeExclamation, IconSword } from '@tabler/icons-react';
+import { IconAlertTriangle, IconEye, IconSword } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
@@ -13,6 +13,7 @@ import { useIsRegionRestricted } from '~/hooks/useIsRegionRestricted';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import { EventPointPopsSetting } from '~/components/HatTurf/EventPointPopsSetting';
 
 const HiddenTagsModal = dynamic(() => import('~/components/Tags/HiddenTagsModal'), { ssr: false });
 
@@ -24,7 +25,7 @@ export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
       <Popover.Target>
         <Indicator className="flex items-center" color="red" disabled={!isRestricted}>
           <LegacyActionIcon variant="subtle" color="gray" aria-label="Browsing mode">
-            <IconEyeExclamation {...iconProps} />
+            <IconEye {...iconProps} />
           </LegacyActionIcon>
         </Indicator>
       </Popover.Target>
@@ -161,6 +162,7 @@ export function BrowsingModeMenu({
           size={compact ? 'sm' : 'md'}
           data-testid="browsing-show-event-cosmetics"
         />
+        <EventPointPopsSetting size={compact ? 'sm' : 'md'} />
       </Stack>
     </div>
   );

@@ -5,6 +5,7 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import type { NavBanner } from '~/shared/constants/nav-banner.constants';
 import type { SiteAlertsPayload } from '~/shared/constants/site-alert.constants';
+import type { EventSeed } from '~/server/services/event-seeds.service';
 import {
   SHELL_BYPASS_PARAM,
   SHELL_BYPASS_VALUE,
@@ -23,6 +24,7 @@ export type ShellPageData = {
   following?: number[];
   navBanners?: NavBanner[];
   siteAlerts?: SiteAlertsPayload;
+  eventSeeds?: EventSeed[];
   liveNow?: boolean;
   flags: FeatureAccess;
   userFeatureFlags?: FeatureAccess;

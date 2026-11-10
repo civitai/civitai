@@ -1948,6 +1948,10 @@ export type BoxOpening = {
    * granted | refunded (text + CHECK)
    */
   rewardStatus: string;
+  /**
+   * Drawn from a pack's guaranteed tiers only.
+   */
+  guaranteed: Generated<boolean>;
   createdAt: Generated<Timestamp>;
 };
 export type BoxRevision = {
@@ -2439,6 +2443,7 @@ export type Collection = {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Timestamp | null;
+  archivedAt: Timestamp | null;
 };
 export type CollectionContributor = {
   createdAt: Generated<Timestamp | null>;
@@ -4330,6 +4335,11 @@ export type ModelVersionGiftRedemption = {
   giftLinkId: number;
   userId: number;
   claimedAt: Generated<Timestamp>;
+  /**
+   * Set when the link's owner or a moderator removed this claimer's gifted access.
+   */
+  revokedAt: Timestamp | null;
+  revokedById: number | null;
 };
 export type ModelVersionMetric = {
   modelVersionId: number;
@@ -4919,14 +4929,6 @@ export type Product = {
   defaultPriceId: string | null;
   provider: Generated<PaymentProvider>;
 };
-export type ProfilePictureHold = {
-  id: Generated<number>;
-  userId: number;
-  imageId: number;
-  reason: string;
-  exportable: Generated<boolean>;
-  createdAt: Generated<Timestamp>;
-};
 export type PurchasableReward = {
   id: Generated<number>;
   createdAt: Generated<Timestamp>;
@@ -5210,6 +5212,15 @@ export type ResourceReview = {
   nsfw: Generated<boolean>;
   tosViolation: Generated<boolean>;
   metadata: unknown | null;
+  /**
+   * The unpublished post the review was written from. The review stays hidden until that post is live.
+   */
+  postId: number | null;
+  /**
+   * When a review linked to a post was announced: notified and recounted. Cleared when the post is
+   * unpublished, so the next go-live announces it again.
+   */
+  releasedAt: Timestamp | null;
 };
 export type ResourceReviewHelper = {
   resourceReviewId: number;
@@ -6856,7 +6867,6 @@ export type DB = {
   PricingSlot: PricingSlot;
   Prize: Prize;
   Product: Product;
-  ProfilePictureHold: ProfilePictureHold;
   PurchasableReward: PurchasableReward;
   Purchase: Purchase;
   PushSubscription: PushSubscription;

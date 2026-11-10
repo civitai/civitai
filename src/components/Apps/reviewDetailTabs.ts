@@ -18,24 +18,29 @@ import { parseReportHash } from '~/components/Apps/agentReviewReport';
 /**
  * Every tab the page renders, in RENDER ORDER.
  *
- * 🔴 `permissions` LEADS, AND THAT IS THE REDESIGN'S POINT, not a cosmetic reorder. The
- * declared scopes and their developer-supplied justifications were previously the LAST
- * thing on the page — buried inside the manifest card, below the files, the code diff and
- * the manifest diff. Judging whether a requested permission is justified is the moderator's
- * primary job on this surface, so it is what the page must open on.
+ * 🔴 `overview` LEADS AND IS THE DEFAULT. It composes the decision signals a moderator needs
+ * for most submissions on ONE screen — the agentic review's finding counts, the requested permissions
+ * with their justifications, the running app and its store art — so a routine approve needs no
+ * tab at all. The other tabs are the evidence behind each signal, in the order a moderator
+ * digs: the code, then the permissions in full, the manifest, the AI report, the preview.
+ *
+ * (`permissions` led before this; it is still one click away and still deep-linkable as
+ * `?tab=permissions`. The reason it led — scopes and their justifications were buried at the
+ * bottom of the old single scroll — is now served by the Overview's permission summary.)
  */
 export const REVIEW_DETAIL_TAB_VALUES = [
-  'permissions',
+  'overview',
   'code',
-  'agent',
+  'permissions',
   'manifest',
+  'agent',
   'preview',
 ] as const;
 
 export type ReviewDetailTab = (typeof REVIEW_DETAIL_TAB_VALUES)[number];
 
 /** The tab a bare `/apps/review/<id>` opens on. */
-export const DEFAULT_REVIEW_DETAIL_TAB: ReviewDetailTab = 'permissions';
+export const DEFAULT_REVIEW_DETAIL_TAB: ReviewDetailTab = 'overview';
 
 /** The query-string key the selection round-trips through. */
 export const REVIEW_DETAIL_TAB_QUERY_KEY = 'tab';
@@ -47,10 +52,11 @@ export const REVIEW_DETAIL_TAB_QUERY_KEY = 'tab';
  * React-free.
  */
 export const REVIEW_DETAIL_TAB_LABELS: Record<ReviewDetailTab, string> = {
-  permissions: 'Permissions',
+  overview: 'Overview',
   code: 'Code',
-  agent: 'Agent report',
+  permissions: 'Permissions',
   manifest: 'Manifest',
+  agent: 'AI report',
   preview: 'Preview',
 };
 
@@ -77,7 +83,7 @@ export function isReviewDetailTab(value: unknown): value is ReviewDetailTab {
  * without it this redesign would have silently broken them. `ReportTabs` already ships a
  * copy-link affordance that produces `…/apps/review/<id>#finding-security-2`, and it
  * selects its OWN inner tab from that hash. Once the agent report moved behind a tab that
- * is not the default, such a link landed on Permissions and the finding it names was not
+ * is not the default, such a link landed on the default tab and the finding it names was not
  * on screen at all. So a hash that `parseReportHash` recognises — a bare `#scopes` /
  * `#security` / `#code`, or a `#finding-<tab>-<n>` anchor — resolves the OUTER tab to
  * `agent`. An explicit `?tab=` always wins: it is the more specific instruction, and it
@@ -100,7 +106,7 @@ export type ReviewDetailRouteQuery = Record<string, string | string[] | undefine
 /**
  * The `query` object for a tab selection, given the route's CURRENT query.
  *
- * 🔴 THE DEFAULT TAB DROPS THE KEY RATHER THAN WRITING `?tab=permissions`. The canonical
+ * 🔴 THE DEFAULT TAB DROPS THE KEY RATHER THAN WRITING `?tab=overview`. The canonical
  * URL for the page's own default is the bare route; otherwise every arrival that touches a
  * tab and comes back leaves a redundant parameter in the address bar and in anything that
  * copies it.

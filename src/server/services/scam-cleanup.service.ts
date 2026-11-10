@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import { commentV3IdsByOldId } from '~/server/services/commentv3/moderation.service';
 import {
   hasV3SurfaceTwinSql,
   prismaRunner,
@@ -7,11 +8,12 @@ import {
   v3SurfaceCommentIds,
 } from '~/server/services/commentv3/write.service';
 
-export type ScamCleanup = 'chatMessages' | 'comments' | 'commentsV2' | 'none';
+export type ScamCleanup = 'chatMessages' | 'commentsV2' | 'none';
 export const SCAM_CLEANUP_MAX_RECORDED_IDS = 5000;
 
 export type ScamCleanupRecord = {
-  kind: Exclude<ScamCleanup, 'none'>;
+  /** `comments`: a record from before the model flip, of old `Comment` ids. */
+  kind: Exclude<ScamCleanup, 'none'> | 'comments';
   /** ISO. For chat it is the exact `deletedAt` written, which is what the restore matches on. */
   at: string;
   count: number;
@@ -46,15 +48,9 @@ function affectedRows(kind: Exclude<ScamCleanup, 'none'>, userId: number, at: Da
           AND "userId" = ${userId} AND "deletedAt" IS NULL
         RETURNING id
       `;
-    case 'comments':
+    case 'commentsV2':
       // `hidden`, not the ToS removal: that is the ban path, which notifies and settles rewards per
       // comment. This one has to be undone by id when a moderator overturns the mute.
-      return dbWrite.$queryRaw<IdRow[]>`
-        UPDATE "Comment" SET hidden = true, "updatedAt" = ${at}
-        WHERE "userId" = ${userId} AND hidden IS NOT TRUE
-        RETURNING id
-      `;
-    case 'commentsV2':
       return (async () => [
         ...(await dbWrite.$queryRaw<IdRow[]>`
           UPDATE "CommentV2" c2 SET hidden = true, "updatedAt" = ${at}
@@ -93,10 +89,8 @@ function restore(userId: number, record: ScamCleanupRecord) {
           AND "userId" = ${userId} AND "deletedAt" = ${new Date(record.at)}
       `;
     case 'comments':
-      return dbWrite.$executeRaw`
-        UPDATE "Comment" SET hidden = false
-        WHERE id = ANY(${record.ids}::int[]) AND "userId" = ${userId} AND hidden
-      `;
+      return (async () =>
+        (await setV3SurfaceHidden(userId, false, await commentV3IdsByOldId(record.ids))).length)();
     case 'commentsV2':
       return (async () => {
         const v2 = await dbWrite.$executeRaw`

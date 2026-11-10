@@ -186,7 +186,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry" | "ProfilePictureSync";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -260,7 +260,7 @@ export type Model3DEngagementType = "Favorite" | "Hide" | "Notify";
 
 export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
-export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
+export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion" | "Comic";
 
 export type StorylineStatus = "Ongoing" | "Complete";
 
@@ -1557,6 +1557,9 @@ export interface ResourceReview {
   reactions?: ResourceReviewReaction[];
   helper?: ResourceReviewHelper | null;
   reports?: ResourceReviewReport[];
+  postId: number | null;
+  post?: Post | null;
+  releasedAt: Date | null;
 }
 
 export interface ResourceReviewReaction {
@@ -1672,6 +1675,7 @@ export interface Post {
   collectionItems?: CollectionItem[];
   storylineChapter?: StorylineChapter | null;
   storylinePendingChapter?: StorylinePendingChapter | null;
+  resourceReviews?: ResourceReview[];
 }
 
 export interface PostMetric {
@@ -1724,7 +1728,6 @@ export interface Image {
   blockedFor: string | null;
   scanJobs: JsonValue | null;
   assignedUser?: User | null;
-  profilePictureHold?: ProfilePictureHold | null;
   sortAt: Date;
   minor: boolean;
   poi: boolean;
@@ -3779,6 +3782,7 @@ export interface BoxOpening {
   tierPoolSize: number;
   itemRoll: number;
   rewardStatus: string;
+  guaranteed: boolean;
   createdAt: Date;
 }
 
@@ -3972,6 +3976,7 @@ export interface Collection {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Date | null;
+  archivedAt: Date | null;
   items?: CollectionItem[];
   contributors?: CollectionContributor[];
   invites?: CollectionInvite[];
@@ -4403,6 +4408,8 @@ export interface ModelVersionGiftRedemption {
   userId: number;
   user?: User;
   claimedAt: Date;
+  revokedAt: Date | null;
+  revokedById: number | null;
 }
 
 export interface PaidAccess {
@@ -4744,16 +4751,6 @@ export interface ImageCdnAccessClaim {
   url: string;
   token: string;
   claimedUntil: Date;
-}
-
-export interface ProfilePictureHold {
-  id: number;
-  userId: number;
-  imageId: number;
-  image?: Image;
-  reason: string;
-  exportable: boolean;
-  createdAt: Date;
 }
 
 export interface JobQueue {

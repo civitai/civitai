@@ -57,8 +57,8 @@ describe('reporting a CommentV3 comment', () => {
     const filter = lookup()
       .values.map((v) => (v as { sql?: string })?.sql)
       .find((s) => s?.startsWith(`"entityType"::text IN (`));
-    // Model is the one surface that does not write CommentV3.
-    expect(filter).toContain(`'image'`);
-    expect(filter).not.toContain(`'model'`);
+    // 3D model reviews are the one entity type that does not write CommentV3.
+    expect(filter).toContain(`'model'`);
+    expect(filter).not.toContain(`'model3dReview'`);
   });
 });

@@ -226,6 +226,10 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
     symbol: 'resolveClientIp',
     why: 'Public-API rate-limit bucket key.',
   },
+  'server/utils/app-visit-rate-limit.ts': {
+    symbol: 'resolveClientIp',
+    why: 'Rate-limit bucket key for the off-site visit redirect (/apps/go) — a limiter, not the control.',
+  },
   // ── Enforcement ──────────────────────────────────────────────────────────
   'pages/api/v1/block-tokens/index.ts': {
     symbol: 'getTrustedClientIp',
@@ -241,6 +245,7 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
 const MUST_NOT_HOLD_EDGE = [
   'server/utils/rate-limit-bucket.ts',
   'server/utils/public-api-rate-limit.ts',
+  'server/utils/app-visit-rate-limit.ts',
 ];
 
 function walk(dir: string, out: string[] = []): string[] {

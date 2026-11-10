@@ -338,9 +338,10 @@ describe('deleteArticleById', () => {
     await expect(deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR })).resolves.toEqual({
       coverId: OWN_COVER.id,
     });
-    expect(queueUpdate).toHaveBeenCalledWith([
-      { id: ARTICLE_ID, action: SearchIndexUpdateQueueAction.Delete },
-    ]);
+    expect(queueUpdate).toHaveBeenCalledWith(
+      [{ id: ARTICLE_ID, action: SearchIndexUpdateQueueAction.Delete }],
+      { reason: 'delete' }
+    );
     expect(deletedIds()).toEqual([]);
   });
 });
@@ -369,7 +370,6 @@ const PART_OF_THE_IMAGE: Record<string, string> = {
   imageResourceNew: 'resources detected in it',
   imageTagsForReview: 'tags queued for review on it',
   caption: 'its storyline caption',
-  profilePictureHold: 'its profile-picture record, which lives only as long as the image',
 };
 
 describe('unusedAuthorImage', () => {

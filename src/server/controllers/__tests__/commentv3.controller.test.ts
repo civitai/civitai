@@ -19,6 +19,8 @@ const read = vi.hoisted(() => ({
   getCommentThread: vi.fn(),
   getCommentEntity: vi.fn(),
   getCommentLock: vi.fn(async () => ({ locked: false })),
+  resolveModelPageCommentId: vi.fn(async (_db: unknown, _modelId: number, id: number) => id),
+  countSectionComments: vi.fn(async () => ({ visible: 20, hidden: 3 })),
 }));
 vi.mock('~/server/services/commentv3/read.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReadService>()),
@@ -148,6 +150,43 @@ describe('getSection tells the read service who is asking', () => {
   });
 });
 
+describe('getSection on a surface that leaves hidden comments out', () => {
+  const model = (over: Record<string, unknown> = {}) =>
+    ({ entityType: 'model', entityId: 7, sort: 'Newest', ...over } as never);
+  const hiddenOption = () => read.getCommentSection.mock.calls[0][3].hidden;
+
+  it('leaves them out of the list and counts both on the first page', async () => {
+    const result = await getCommentSectionHandler({ ctx: ctxFor({ id: 2 }), input: model() });
+    expect(hiddenOption()).toBe('exclude');
+    expect(read.countSectionComments).toHaveBeenCalledTimes(1);
+    expect(result.counts).toEqual({ visible: 20, hidden: 3 });
+  });
+
+  it('lists only them when asked', async () => {
+    await getCommentSectionHandler({ ctx: ctxFor({ id: 2 }), input: model({ hidden: true }) });
+    expect(hiddenOption()).toBe('only');
+  });
+
+  it('counts nothing on a later page', async () => {
+    const result = await getCommentSectionHandler({
+      ctx: ctxFor({ id: 2 }),
+      input: model({ cursor: 'next' }),
+    });
+    expect(read.countSectionComments).not.toHaveBeenCalled();
+    expect(result.counts).toBeUndefined();
+  });
+
+  it('leaves any other surface as it was, whatever the input asks', async () => {
+    const result = await getCommentSectionHandler({
+      ctx: ctxFor({ id: 2 }),
+      input: { ...(sectionInput as object), hidden: true } as never,
+    });
+    expect(hiddenOption()).toBeUndefined();
+    expect(read.countSectionComments).not.toHaveBeenCalled();
+    expect(result.counts).toBeUndefined();
+  });
+});
+
 describe('getReplies and getThread take the entity from the stored comment', () => {
   it('gates replies on the comment’s own entity', async () => {
     read.getCommentEntity.mockResolvedValue({ entityType: 'image', entityId: 7, path: '5' });
@@ -173,11 +212,48 @@ describe('getReplies and getThread take the entity from the stored comment', () 
     );
   });
 
+  it('reads a model-page link’s comment by the id it resolves to, an old v1 id included', async () => {
+    read.resolveModelPageCommentId.mockResolvedValueOnce(950);
+    read.getCommentEntity.mockResolvedValue({ entityType: 'model', entityId: 7, path: '950' });
+    read.getCommentThread.mockResolvedValue(null);
+    const input = { commentId: 100, entityType: 'model', entityId: 7, sort: 'Oldest' } as never;
+    await expect(getCommentThreadHandler({ ctx: ctxFor(), input })).rejects.toThrow();
+    expect(read.resolveModelPageCommentId.mock.calls[0].slice(1)).toEqual([7, 100]);
+    expect(read.getCommentEntity.mock.calls[0][1]).toBe(950);
+    expect(read.getCommentThread.mock.calls[0][1]).toBe(950);
+  });
+
+  it('answers which comment a model-page link marks, an old v1 id included', async () => {
+    read.resolveModelPageCommentId.mockImplementation(async (_db, _modelId, id) =>
+      id === 100 ? 950 : id === 101 ? 951 : id
+    );
+    read.getCommentEntity.mockResolvedValue({ entityType: 'model', entityId: 7, path: '950' });
+    read.getCommentThread.mockResolvedValue({
+      comment: { id: 950, user: { id: 3, username: 'ann' } },
+      replies: { ...page, comments: [] },
+    });
+    const thread = await getCommentThreadHandler({
+      ctx: ctxFor(),
+      input: {
+        commentId: 100,
+        highlight: 101,
+        entityType: 'model',
+        entityId: 7,
+        sort: 'Oldest',
+      } as never,
+    });
+    expect(thread.highlightId).toBe(951);
+  });
+
   it('asks the read for the page’s entity, so another entity’s comment is not found', async () => {
     read.getCommentEntity.mockResolvedValue({ entityType: 'article', entityId: 99, path: '5' });
     read.getCommentThread.mockResolvedValue(null);
     const input = { commentId: 5, entityType: 'article', entityId: 10, sort: 'Oldest' } as never;
-    await expect(getCommentThreadHandler({ ctx: ctxFor(), input })).rejects.toThrow();
+    await expect(getCommentThreadHandler({ ctx: ctxFor(), input })).rejects.toThrow(
+      'Comment not found'
+    );
+    // Only a model-page link may carry an old v1 id.
+    expect(read.resolveModelPageCommentId).not.toHaveBeenCalled();
     expect(read.getCommentThread.mock.calls[0][3]).toMatchObject({
       entity: { entityType: 'article', entityId: 10 },
     });

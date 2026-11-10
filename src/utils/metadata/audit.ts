@@ -34,21 +34,57 @@ export function getPossibleBlockedNsfwWords(value?: string | null) {
   return blockedNSFW.filter((word) => regex.test(word));
 }
 
-export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) => {
+export interface MetaAuditResult {
+  blockedFor: string[];
+  success: boolean;
+  /** Set when every match is one the generator lets a user click through. */
+  softBlock?: boolean;
+}
+
+export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean): MetaAuditResult => {
   if (!meta) return { blockedFor: [], success: true };
   const prompt = normalizeText(meta.prompt);
 
   // Add minor check
   if (nsfw) {
     const { found, age } = includesMinorAge(prompt);
-    if (found && age != null) return { blockedFor: [`${age} year old`], success: false };
+    if (found && age != null)
+      return { blockedFor: [`${age} year old`], success: false, softBlock: false };
   }
 
   const blockList = nsfw ? blockedNSFWRegexLazy() : blockedRegexLazy();
   const blockedFor = blockList
     .filter(({ regex }) => meta?.prompt && regex.test(prompt))
     .map((x) => x.word);
-  return { blockedFor, success: !blockedFor.length };
+  return {
+    blockedFor,
+    success: !blockedFor.length,
+    // Severity is the generator's per-word rule. Every overridable word on the SFW list is also on
+    // the NSFW list (pinned by a test), so labelling an SFW-list hit `nsfw_blocklist` looks it up
+    // in the same overridable set the generator uses.
+    softBlock: isSoftBlock(
+      blockedFor.map((word) => ({ category: 'nsfw_blocklist', message: word, matchedWord: word }))
+    ),
+  };
+};
+
+/**
+ * The verdict for an image added to a post, on the client and in the server scan alike: a hit
+ * whose every word the generator lets through does not block, so a generation the generator
+ * allowed can be posted. `auditMetaData` alone stays strict for its other callers.
+ *
+ * The pass also needs the generator's own regex audit to be clean or soft: the generator runs its
+ * hard checks (minor age, real people, minor or real-person content, harmful combinations) before
+ * it ever reaches an overridable word, so the pass must not skip them. It never blocks a prompt
+ * `auditMetaData` passed.
+ */
+export const auditPostImageMeta = (meta: ImageMetaProps | undefined, nsfw: boolean) => {
+  const audit = auditMetaData(meta, nsfw);
+  const strict = { ...audit, softBlockedFor: [] as string[] };
+  if (audit.success || !audit.softBlock) return strict;
+  const generator = auditPromptEnriched(meta?.prompt ?? '', meta?.negativePrompt ?? undefined);
+  if (!generator.success && !isSoftBlock(generator.triggers)) return strict;
+  return { blockedFor: [] as string[], success: true, softBlockedFor: audit.blockedFor };
 };
 
 // #region [enriched audit]

@@ -180,17 +180,6 @@ export async function getOrchestratorToken(
   return token;
 }
 
-// Off while `orchestrator-token-system-read-would-refuse` counts show which system integrations
-// still use a key without AI Services write scope.
-let enforceSystemReadRefusal = false;
-
-export const __testing = {
-  isEnforcing: () => enforceSystemReadRefusal,
-  setEnforceSystemReadRefusal(value: boolean) {
-    enforceSystemReadRefusal = value;
-  },
-};
-
 type RequestSessionUser = { id?: number; meta?: unknown };
 
 /**
@@ -220,16 +209,14 @@ async function assertCredentialMayUseOrchestrator(userId: number, ctx?: Context)
     .catch(() => undefined);
   if (account !== undefined && !isSystemAccountMeta(account?.meta)) return;
 
-  if (!enforceSystemReadRefusal) {
-    logToAxiom({
-      name: 'orchestrator-token-system-read-would-refuse',
-      type: 'info',
-      route: ctx.req.url?.split('?')[0],
-      accountUnreadable: account === undefined,
-      ...credentialLogFields(credential),
-    }).catch(() => undefined);
-    return;
-  }
+  // No user, key or IP.
+  logToAxiom({
+    name: 'orchestrator-token-system-read-refused',
+    type: 'info',
+    route: ctx.req.url?.split('?')[0],
+    accountUnreadable: account === undefined,
+    ...credentialLogFields(credential),
+  }).catch(() => undefined);
   throw new TRPCError({
     code: 'FORBIDDEN',
     message: 'Your API key does not have the required scope for this action',

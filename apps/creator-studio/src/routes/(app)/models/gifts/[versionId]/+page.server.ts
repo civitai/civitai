@@ -1,13 +1,13 @@
 import { z } from 'zod';
 import { error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { MODEL_GIFT_LINKS_FLAG } from '$lib/gift-links';
+import { GIFT_LINK_MAX_REDEMPTIONS, MODEL_GIFT_LINKS_FLAG } from '$lib/gift-links';
 import { dbRead } from '$lib/server/db';
 import { callMainApp } from '$lib/server/main-app';
 import { firstError } from '$lib/server/form-errors';
 import { darkFlagEnabled } from '$lib/server/main-app-flags';
 import { sessionCookies } from '$lib/server/session-cookies';
-import type { GiftList } from './gift-links';
+import type { GiftList } from '../gift-links';
 
 const versionIdSchema = z.coerce.number().int().positive();
 // The page sends the end of the picked day in the creator's zone. A post that ran before hydration sends
@@ -25,11 +25,7 @@ const optionalLabel = z
   .transform((v) => v || null);
 
 const createSchema = z.object({
-  maxRedemptions: z
-    .string()
-    .optional()
-    .transform((v) => (v ? Number(v) : null))
-    .pipe(z.number().int().min(1).nullable()),
+  maxRedemptions: z.coerce.number().int().min(1).max(GIFT_LINK_MAX_REDEMPTIONS),
   expiresAt: optionalDate,
   label: optionalLabel,
 });
@@ -50,7 +46,15 @@ async function versionOrThrow(versionId: string, user: App.Locals['user']) {
   const version = await dbRead
     .selectFrom('ModelVersion as mv')
     .innerJoin('Model as m', 'm.id', 'mv.modelId')
-    .select(['mv.id', 'mv.name', 'm.id as modelId', 'm.name as modelName', 'm.userId', 'm.nsfw', 'm.nsfwLevel'])
+    .select([
+      'mv.id',
+      'mv.name',
+      'm.id as modelId',
+      'm.name as modelName',
+      'm.userId',
+      'm.nsfw',
+      'm.nsfwLevel',
+    ])
     .where('mv.id', '=', id.data)
     .executeTakeFirst();
   // The main app re-checks ownership on every call; this only keeps the page from rendering.

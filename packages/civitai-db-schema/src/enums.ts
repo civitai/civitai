@@ -960,7 +960,6 @@ export const JobQueueType = {
   ImageStorageDelete: 'ImageStorageDelete',
   CdnAccessSync: 'CdnAccessSync',
   ImageCdnPersistRetry: 'ImageCdnPersistRetry',
-  ProfilePictureSync: 'ProfilePictureSync',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
@@ -1300,6 +1299,7 @@ export const OutboxEntity = {
   Model: 'Model',
   Post: 'Post',
   ModelVersion: 'ModelVersion',
+  Comic: 'Comic',
 } as const;
 
 export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];

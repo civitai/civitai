@@ -7,6 +7,11 @@ import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { getModel } from '~/server/services/model.service';
+import {
+  trainingDataOwnerView,
+  withoutEpochUrls,
+} from '~/server/services/training-data-restricted.service';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import {
@@ -37,6 +42,7 @@ export const getModelData = async ({ input, ctx }: { input: GetByIdInput; ctx: C
         userId: true,
         name: true,
         status: true,
+        mode: true,
         type: true,
         uploadType: true,
         availability: true,
@@ -69,7 +75,7 @@ export const getModelData = async ({ input, ctx }: { input: GetByIdInput; ctx: C
     // response — adding it to the returned shape would change the public query type.
     if (!model || (!ctx.user?.isModerator && ctx.user?.id !== model.userId))
       throw throwNotFoundError(`No model with id ${input.id}`);
-    const { userId: _ownerId, ...modelData } = model;
+    const { userId: _ownerId, mode: _mode, ...modelData } = model;
 
     // TODO(replica-toast): overlay is a workaround — the data-packet logical subscriber drops
     // TOASTed jsonb on UPDATE, leaving trainingResults empty. Remove once replication is fixed.
@@ -88,7 +94,17 @@ export const getModelData = async ({ input, ctx }: { input: GetByIdInput; ctx: C
       }
     }
 
-    return modelData;
+    if (ctx.user?.isModerator) return modelData;
+    const withheld = isModelDeletedOrTakenDown(model);
+    return {
+      ...modelData,
+      modelVersions: modelData.modelVersions.map((v) => ({
+        ...v,
+        files: withheld
+          ? withoutEpochUrls(trainingDataOwnerView(v.files))
+          : trainingDataOwnerView(v.files),
+      })),
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
